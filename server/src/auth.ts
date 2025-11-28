@@ -8,6 +8,7 @@ const authDb = new Database(DATABASE_PATH, { create: true });
 
 export const auth = betterAuth({
   database: authDb,
+  secret: Bun.env.AUTH_SECRET,
   emailAndPassword: {
     enabled: true,
   },
