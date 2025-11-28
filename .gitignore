@@ -8,6 +8,13 @@ public
 *.db
 *.db-wal
 *.db-shm
+server/data/
+
+# TLS Certificates
+server/certs/
+*.pem
+*.key
+*.crt
 
 # Environment
 .env
