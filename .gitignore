@@ -1,0 +1,28 @@
+node_modules
+dist
+public
+*.log
+.DS_Store
+
+# Database
+data/*.db
+data/*.db-wal
+data/*.db-shm
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# IDE
+.idea
+.vscode/*
+!.vscode/settings.json
+!.vscode/extensions.json
+
+# Build artifacts
+*.tsbuildinfo
+bun.lockb
+
+# Test coverage
+coverage

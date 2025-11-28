@@ -1,0 +1,114 @@
+@import '../styles/base.css';
+
+/* Popup-specific styles */
+html {
+  font-size: 14px;
+  line-height: 1.4;
+}
+
+body {
+  inline-size: 320px;
+  padding: var(--space-md);
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-block-end: var(--space-md);
+}
+
+.header h1 {
+  font-size: 1rem;
+  font-weight: 600;
+}
+
+.settings-btn {
+  background: none;
+  border: none;
+  color: var(--color-text-muted);
+  cursor: pointer;
+  padding: var(--space-xs);
+  border-radius: var(--radius-sm);
+}
+
+.settings-btn:hover {
+  color: var(--color-text);
+  background: var(--color-surface);
+}
+
+.status-message {
+  text-align: center;
+  padding: var(--space-lg);
+  color: var(--color-text-muted);
+}
+
+.error-message {
+  text-align: center;
+  padding: var(--space-sm);
+}
+
+.login-prompt {
+  text-align: center;
+  padding: var(--space-md);
+}
+
+.login-prompt p {
+  margin-block-end: var(--space-md);
+  color: var(--color-text-muted);
+}
+
+.btn {
+  inline-size: 100%;
+}
+
+.form-group select {
+  cursor: pointer;
+}
+
+.btn-stop {
+  background: var(--color-casting);
+  color: white;
+}
+
+.btn-stop:hover {
+  background: color-mix(in oklch, var(--color-casting), black 10%);
+}
+
+.casting-status {
+  background: var(--color-surface);
+  border-radius: var(--radius-md);
+  padding: var(--space-md);
+  margin-block-end: var(--space-md);
+  text-align: center;
+}
+
+.casting-status .label {
+  font-size: 0.75rem;
+  color: var(--color-text-muted);
+  margin-block-end: var(--space-xs);
+}
+
+.casting-status .value {
+  font-weight: 500;
+}
+
+.casting-indicator {
+  display: inline-block;
+  inline-size: 8px;
+  block-size: 8px;
+  background: var(--color-success);
+  border-radius: 50%;
+  margin-inline-end: var(--space-sm);
+  animation: pulse 1.5s infinite;
+}
+
+@keyframes pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.5;
+  }
+}

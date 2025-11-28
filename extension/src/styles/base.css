@@ -1,0 +1,130 @@
+/* Shared design tokens and base styles for extension UI */
+
+:root {
+  /* Colors */
+  --color-bg: oklch(15% 0.01 250);
+  --color-surface: oklch(20% 0.015 250);
+  --color-surface-hover: oklch(25% 0.02 250);
+  --color-border: oklch(30% 0.02 250);
+  --color-text: oklch(95% 0 0);
+  --color-text-muted: oklch(70% 0 0);
+  --color-primary: oklch(65% 0.2 250);
+  --color-primary-hover: oklch(60% 0.2 250);
+  --color-error: oklch(60% 0.2 25);
+  --color-success: oklch(65% 0.15 145);
+  --color-focus: oklch(70% 0.2 250);
+  --color-casting: oklch(65% 0.15 30);
+
+  /* Spacing */
+  --space-xs: 0.25rem;
+  --space-sm: 0.5rem;
+  --space-md: 1rem;
+  --space-lg: 1.5rem;
+  --space-xl: 2rem;
+
+  /* Radii */
+  --radius-sm: 4px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html {
+  font-family:
+    system-ui,
+    -apple-system,
+    sans-serif;
+  color: var(--color-text);
+  background: var(--color-bg);
+}
+
+:focus-visible {
+  outline: 2px solid var(--color-focus);
+  outline-offset: 2px;
+}
+
+/* Form elements */
+.form-group {
+  margin-block-end: var(--space-md);
+}
+
+.form-group:last-child {
+  margin-block-end: 0;
+}
+
+.form-group label {
+  display: block;
+  font-size: 0.75rem;
+  font-weight: 500;
+  margin-block-end: var(--space-xs);
+  color: var(--color-text-muted);
+}
+
+.form-group input,
+.form-group select {
+  inline-size: 100%;
+  padding: var(--space-sm) var(--space-md);
+  font-size: 0.875rem;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  color: var(--color-text);
+}
+
+.form-group input:focus,
+.form-group select:focus {
+  border-color: var(--color-primary);
+}
+
+.form-group .hint {
+  font-size: 0.75rem;
+  color: var(--color-text-muted);
+  margin-block-start: var(--space-xs);
+}
+
+/* Buttons */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-sm);
+  padding: var(--space-sm) var(--space-md);
+  font-size: 0.875rem;
+  font-weight: 500;
+  border: none;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.btn-primary {
+  background: var(--color-primary);
+  color: white;
+}
+
+.btn-primary:hover:not(:disabled) {
+  background: var(--color-primary-hover);
+}
+
+.btn-primary:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+/* Messages */
+.error-message {
+  color: var(--color-error);
+  font-size: 0.875rem;
+}
+
+.success-message {
+  color: var(--color-success);
+  font-size: 0.875rem;
+}

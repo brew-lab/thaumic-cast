@@ -1,0 +1,22 @@
+{
+  "manifest_version": 3,
+  "name": "Thaumic Cast",
+  "description": "Cast any browser tab's audio to your Sonos speakers",
+  "version": "0.1.0",
+  "permissions": ["tabCapture", "offscreen", "storage", "tabs"],
+  "host_permissions": ["https://*/*"],
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "action": {
+    "default_popup": "popup/index.html",
+    "default_title": "Thaumic Cast"
+  },
+  "options_page": "options/index.html",
+  "icons": {
+    "16": "icons/icon-16.png",
+    "48": "icons/icon-48.png",
+    "128": "icons/icon-128.png"
+  }
+}
