@@ -199,5 +199,33 @@ export async function handleApiRoutes(req: Request, url: URL): Promise<Response>
     return jsonResponse({ success: true }, 200, cors);
   }
 
+  // DEV ONLY: POST /api/test/stream - Create test stream without Sonos
+  if (url.pathname === '/api/test/stream' && req.method === 'POST') {
+    if (Bun.env.NODE_ENV === 'production') {
+      return jsonResponse({ error: 'not_found', message: 'Endpoint not found' }, 404, cors);
+    }
+
+    const session = await auth.api.getSession({ headers: req.headers });
+    if (!session?.user) {
+      return jsonResponse({ error: 'unauthorized', message: 'Not authenticated' }, 401, cors);
+    }
+
+    const streamId = crypto.randomUUID();
+
+    // Initialize stream in manager (no DB, no Sonos)
+    StreamManager.getOrCreate(streamId);
+
+    // Generate ingest token
+    const ingestToken = await signIngestToken(session.user.id, streamId);
+
+    // Build URLs
+    const playbackUrl = `${PUBLIC_URL}/streams/${streamId}/live.mp3`;
+    const wsProtocol = PUBLIC_URL.startsWith('https') ? 'wss' : 'ws';
+    const wsHost = PUBLIC_URL.replace(/^https?:\/\//, '');
+    const ingestUrl = `${wsProtocol}://${wsHost}/ws/ingest?streamId=${streamId}&token=${ingestToken}`;
+
+    return jsonResponse({ streamId, ingestUrl, playbackUrl }, 201, cors);
+  }
+
   return jsonResponse({ error: 'not_found', message: 'Endpoint not found' }, 404, cors);
 }

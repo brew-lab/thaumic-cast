@@ -10,6 +10,7 @@ const secret = new TextEncoder().encode(STREAM_JWT_SECRET || 'dev-secret-change-
 
 export async function signIngestToken(userId: string, streamId: string): Promise<string> {
   return new SignJWT({ streamId })
+    .setProtectedHeader({ alg: 'HS256' })
     .setSubject(userId)
     .setExpirationTime('5m')
     .setIssuedAt()
