@@ -1,14 +1,30 @@
 import { useState, useEffect, useRef } from 'preact/hooks';
 import { getSession } from '../lib/auth-client';
-import { getSonosStatus, getSonosGroups, getGroupVolume, setGroupVolume } from '../api/client';
-import type { CastStatus, QualityPreset, SonosGroup } from '@thaumic-cast/shared';
+import {
+  getSonosStatus,
+  getSonosGroups,
+  getGroupVolume,
+  setGroupVolume,
+  getLocalGroups,
+  getLocalVolume,
+  setLocalVolume,
+} from '../api/client';
+import type { CastStatus, QualityPreset, SonosMode } from '@thaumic-cast/shared';
+
+// Unified group type for UI
+interface DisplayGroup {
+  id: string;
+  name: string;
+  coordinatorIp?: string; // Only for local mode
+}
 
 export function Popup() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [isLoggedIn, setIsLoggedIn] = useState(false);
+  const [sonosMode, setSonosMode] = useState<SonosMode>('cloud');
   const [sonosLinked, setSonosLinked] = useState(false);
-  const [groups, setGroups] = useState<SonosGroup[]>([]);
+  const [groups, setGroups] = useState<DisplayGroup[]>([]);
   const [selectedGroup, setSelectedGroup] = useState<string>('');
   const [quality, setQuality] = useState<QualityPreset>('medium');
   const [castStatus, setCastStatus] = useState<CastStatus>({ isActive: false });
@@ -24,17 +40,30 @@ export function Popup() {
   // Fetch volume when group is selected or casting starts
   useEffect(() => {
     const groupId = castStatus.isActive ? castStatus.groupId : selectedGroup;
-    if (groupId && sonosLinked) {
+    if (groupId && (sonosLinked || sonosMode === 'local')) {
       fetchVolume(groupId);
     }
-  }, [selectedGroup, sonosLinked, castStatus.isActive, castStatus.groupId]);
+  }, [selectedGroup, sonosLinked, sonosMode, castStatus.isActive, castStatus.groupId]);
 
   async function fetchVolume(groupId: string) {
     setVolumeLoading(true);
-    const { data, error: volError } = await getGroupVolume(groupId);
-    if (data && !volError) {
-      setVolume(data.volume);
+
+    if (sonosMode === 'local') {
+      // For local mode, find the coordinator IP
+      const group = groups.find((g) => g.id === groupId);
+      if (group?.coordinatorIp) {
+        const { data, error: volError } = await getLocalVolume(group.coordinatorIp);
+        if (data && !volError) {
+          setVolume(data.volume);
+        }
+      }
+    } else {
+      const { data, error: volError } = await getGroupVolume(groupId);
+      if (data && !volError) {
+        setVolume(data.volume);
+      }
     }
+
     setVolumeLoading(false);
   }
 
@@ -51,9 +80,21 @@ export function Popup() {
 
     volumeTimeoutRef.current = setTimeout(async () => {
       if (groupId) {
-        const { error: volError } = await setGroupVolume(groupId, newVolume);
-        if (volError) {
-          setError(`Volume error: ${volError}`);
+        if (sonosMode === 'local') {
+          // For local mode, use coordinator IP
+          const group = groups.find((g) => g.id === groupId);
+          const ip = castStatus.isActive ? castStatus.coordinatorIp : group?.coordinatorIp;
+          if (ip) {
+            const { error: volError } = await setLocalVolume(ip, newVolume);
+            if (volError) {
+              setError(`Volume error: ${volError}`);
+            }
+          }
+        } else {
+          const { error: volError } = await setGroupVolume(groupId, newVolume);
+          if (volError) {
+            setError(`Volume error: ${volError}`);
+          }
         }
       }
     }, 300);
@@ -64,6 +105,15 @@ export function Popup() {
     setError(null);
 
     try {
+      // Get settings
+      const storage = (await chrome.storage.sync.get(['sonosMode', 'speakerIp'])) as {
+        sonosMode?: SonosMode;
+        speakerIp?: string;
+      };
+      const mode = storage.sonosMode || 'cloud';
+      const configuredSpeakerIp = storage.speakerIp || '';
+      setSonosMode(mode);
+
       // Get current cast status from background
       const response = await chrome.runtime.sendMessage({ type: 'GET_STATUS' });
       if (response?.status) {
@@ -74,7 +124,6 @@ export function Popup() {
       const { data: session, error: sessionError } = await getSession();
 
       if (sessionError) {
-        // Not logged in or error - show login prompt
         setIsLoggedIn(false);
         setLoading(false);
         return;
@@ -88,32 +137,66 @@ export function Popup() {
 
       setIsLoggedIn(true);
 
-      // Check Sonos link status
-      const { data: sonosStatus, error: sonosError } = await getSonosStatus();
-      if (sonosError) {
-        setError(sonosError);
-        setLoading(false);
-        return;
-      }
-
-      setSonosLinked(sonosStatus?.linked ?? false);
-
-      if (sonosStatus?.linked) {
-        // Fetch Sonos groups
-        const { data: groupsData, error: groupsError } = await getSonosGroups();
-        if (groupsError) {
-          setError(groupsError);
-        } else if (groupsData) {
-          setGroups(groupsData.groups);
-          if (groupsData.groups.length > 0 && !selectedGroup) {
-            setSelectedGroup(groupsData.groups[0]?.id || '');
-          }
-        }
+      if (mode === 'local') {
+        // Local mode: fetch groups via UPnP
+        await initLocalMode(configuredSpeakerIp);
+      } else {
+        // Cloud mode: check OAuth and fetch groups via Sonos API
+        await initCloudMode();
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Unknown error');
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function initCloudMode() {
+    // Check Sonos link status
+    const { data: sonosStatus, error: sonosError } = await getSonosStatus();
+    if (sonosError) {
+      setError(sonosError);
+      return;
+    }
+
+    setSonosLinked(sonosStatus?.linked ?? false);
+
+    if (sonosStatus?.linked) {
+      // Fetch Sonos groups via cloud API
+      const { data: groupsData, error: groupsError } = await getSonosGroups();
+      if (groupsError) {
+        setError(groupsError);
+      } else if (groupsData) {
+        const displayGroups: DisplayGroup[] = groupsData.groups.map((g) => ({
+          id: g.id,
+          name: g.name,
+        }));
+        setGroups(displayGroups);
+        if (displayGroups.length > 0 && !selectedGroup) {
+          setSelectedGroup(displayGroups[0]?.id || '');
+        }
+      }
+    }
+  }
+
+  async function initLocalMode(speakerIp?: string) {
+    // For local mode, we don't need Sonos OAuth
+    setSonosLinked(true);
+
+    // Fetch groups via local UPnP (pass speaker IP if configured)
+    const { data: groupsData, error: groupsError } = await getLocalGroups(speakerIp || undefined);
+    if (groupsError) {
+      setError(groupsError);
+    } else if (groupsData) {
+      const displayGroups: DisplayGroup[] = groupsData.groups.map((g) => ({
+        id: g.id,
+        name: g.name,
+        coordinatorIp: g.coordinatorIp,
+      }));
+      setGroups(displayGroups);
+      if (displayGroups.length > 0 && !selectedGroup) {
+        setSelectedGroup(displayGroups[0]?.id || '');
+      }
     }
   }
 
@@ -138,7 +221,7 @@ export function Popup() {
 
       const group = groups.find((g) => g.id === selectedGroup);
 
-      // Send to background
+      // Send to background with mode info
       const response = await chrome.runtime.sendMessage({
         type: 'START_CAST',
         tabId: tab.id,
@@ -146,6 +229,8 @@ export function Popup() {
         groupName: group?.name || 'Unknown',
         quality,
         mediaStreamId,
+        mode: sonosMode,
+        coordinatorIp: group?.coordinatorIp, // Only for local mode
       });
 
       if (response?.error) {
@@ -158,6 +243,8 @@ export function Popup() {
           groupId: selectedGroup,
           groupName: group?.name,
           quality,
+          mode: sonosMode,
+          coordinatorIp: group?.coordinatorIp,
         });
       }
     } catch (err) {
@@ -172,6 +259,8 @@ export function Popup() {
       await chrome.runtime.sendMessage({
         type: 'STOP_CAST',
         streamId: castStatus.streamId,
+        mode: castStatus.mode,
+        coordinatorIp: castStatus.coordinatorIp,
       });
       setCastStatus({ isActive: false });
     } catch (err) {
@@ -218,7 +307,8 @@ export function Popup() {
     );
   }
 
-  if (!sonosLinked) {
+  // For cloud mode, show Sonos link prompt if not linked
+  if (sonosMode === 'cloud' && !sonosLinked) {
     return (
       <div>
         <Header onSettings={openOptions} />
@@ -227,6 +317,24 @@ export function Popup() {
           <button class="btn btn-primary" onClick={openSonosLink}>
             Connect Sonos
           </button>
+        </div>
+      </div>
+    );
+  }
+
+  // For local mode, show message if no speakers found
+  if (sonosMode === 'local' && groups.length === 0) {
+    return (
+      <div>
+        <Header onSettings={openOptions} />
+        <div class="login-prompt">
+          <p>No Sonos speakers found on network</p>
+          <button class="btn btn-secondary" onClick={init}>
+            Retry
+          </button>
+          <p class="hint" style={{ marginTop: '8px', fontSize: '12px', opacity: 0.7 }}>
+            Make sure the server is on the same network as your speakers
+          </p>
         </div>
       </div>
     );
@@ -241,6 +349,8 @@ export function Popup() {
           {error}
         </p>
       )}
+
+      {sonosMode === 'local' && <div class="mode-badge">Local Mode</div>}
 
       {castStatus.isActive ? (
         <>

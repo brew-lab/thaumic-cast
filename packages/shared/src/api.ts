@@ -4,6 +4,8 @@ export type QualityPreset = 'low' | 'medium' | 'high';
 
 export type StreamStatus = 'starting' | 'active' | 'stopped' | 'error';
 
+export type SonosMode = 'cloud' | 'local';
+
 // GET /api/me
 export interface MeResponse {
   user: {
@@ -47,4 +49,28 @@ export interface SonosStatusResponse {
 export interface ApiError {
   error: string;
   message: string;
+}
+
+// Local mode types
+export interface LocalSpeaker {
+  uuid: string;
+  ip: string;
+  zoneName: string;
+  model: string;
+}
+
+export interface LocalGroup {
+  id: string;
+  name: string;
+  coordinatorUuid: string;
+  coordinatorIp: string;
+  members: LocalSpeaker[];
+}
+
+export interface LocalDiscoveryResponse {
+  speakers: Array<{ uuid: string; ip: string }>;
+}
+
+export interface LocalGroupsResponse {
+  groups: LocalGroup[];
 }

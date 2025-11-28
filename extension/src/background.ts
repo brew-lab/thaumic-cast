@@ -2,8 +2,10 @@ import type {
   ExtensionMessage,
   CastStatus,
   StartCastMessage,
+  StopCastMessage,
   CastErrorMessage,
   CastEndedMessage,
+  SonosMode,
 } from '@thaumic-cast/shared';
 import type { CreateStreamResponse } from '@thaumic-cast/shared';
 
@@ -62,7 +64,7 @@ async function closeOffscreen(): Promise<void> {
   offscreenCreated = false;
 }
 
-async function stopCurrentStream(): Promise<void> {
+async function stopCurrentStream(mode?: SonosMode, coordinatorIp?: string): Promise<void> {
   if (!activeStream.isActive || !activeStream.streamId) return;
 
   // Notify offscreen to stop
@@ -75,9 +77,27 @@ async function stopCurrentStream(): Promise<void> {
     // Offscreen might not exist
   }
 
-  // Notify server
+  const serverUrl = await getServerUrl();
+
+  // For local mode, stop playback on the speaker
+  const effectiveMode = mode || activeStream.mode;
+  const effectiveIp = coordinatorIp || activeStream.coordinatorIp;
+
+  if (effectiveMode === 'local' && effectiveIp) {
+    try {
+      await fetch(`${serverUrl}/api/local/stop`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ coordinatorIp: effectiveIp }),
+      });
+    } catch {
+      // Server might be unavailable
+    }
+  }
+
+  // Notify server to clean up stream
   try {
-    const serverUrl = await getServerUrl();
     await fetch(`${serverUrl}/api/streams/${activeStream.streamId}/stop`, {
       method: 'POST',
       credentials: 'include',
@@ -106,20 +126,28 @@ async function handleMessage(
     }
 
     case 'START_CAST': {
-      const { tabId, groupId, groupName, quality, mediaStreamId } = message as StartCastMessage;
+      const { tabId, groupId, groupName, quality, mediaStreamId, mode, coordinatorIp } =
+        message as StartCastMessage;
 
       // Stop any existing stream
       await stopCurrentStream();
 
       try {
         const serverUrl = await getServerUrl();
+        const isLocalMode = mode === 'local';
 
         // Create stream on server
+        // For local mode, pass mode='local' so server doesn't call Sonos Cloud API
         const response = await fetch(`${serverUrl}/api/streams`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           credentials: 'include',
-          body: JSON.stringify({ groupId, quality }),
+          body: JSON.stringify({
+            groupId,
+            quality,
+            mode: isLocalMode ? 'local' : 'cloud',
+            coordinatorIp: isLocalMode ? coordinatorIp : undefined,
+          }),
         });
 
         if (!response.ok) {
@@ -128,7 +156,8 @@ async function handleMessage(
           return;
         }
 
-        const { streamId, ingestUrl } = (await response.json()) as CreateStreamResponse;
+        const { streamId, ingestUrl, playbackUrl } =
+          (await response.json()) as CreateStreamResponse;
 
         // Ensure offscreen document exists
         await ensureOffscreen();
@@ -144,6 +173,30 @@ async function handleMessage(
         });
         console.log('[Background] OFFSCREEN_START response:', offscreenResult);
 
+        // For local mode, tell Sonos to play the stream via UPnP
+        if (isLocalMode && coordinatorIp) {
+          console.log('[Background] Starting local playback on', coordinatorIp);
+
+          // Small delay to allow some frames to buffer
+          await new Promise((resolve) => setTimeout(resolve, 500));
+
+          const playResponse = await fetch(`${serverUrl}/api/local/play`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            credentials: 'include',
+            body: JSON.stringify({
+              coordinatorIp,
+              streamUrl: playbackUrl,
+            }),
+          });
+
+          if (!playResponse.ok) {
+            const error = await playResponse.json();
+            console.error('[Background] Local play failed:', error);
+            // Don't fail the whole cast, just log the error
+          }
+        }
+
         // Update state
         activeStream = {
           isActive: true,
@@ -152,6 +205,8 @@ async function handleMessage(
           groupId,
           groupName,
           quality,
+          mode: isLocalMode ? 'local' : 'cloud',
+          coordinatorIp: isLocalMode ? coordinatorIp : undefined,
         };
 
         sendResponse({ success: true, streamId });
@@ -162,7 +217,8 @@ async function handleMessage(
     }
 
     case 'STOP_CAST': {
-      await stopCurrentStream();
+      const { mode, coordinatorIp } = message as StopCastMessage;
+      await stopCurrentStream(mode, coordinatorIp);
       await closeOffscreen();
       sendResponse({ success: true });
       break;

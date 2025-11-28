@@ -1,6 +1,6 @@
 // Extension messaging types between popup, service worker, and offscreen document
 
-import type { QualityPreset } from './api';
+import type { QualityPreset, SonosMode } from './api';
 
 // Message types
 export type MessageType =
@@ -9,6 +9,7 @@ export type MessageType =
   | 'STOP_CAST'
   | 'OFFSCREEN_START'
   | 'OFFSCREEN_STOP'
+  | 'OFFSCREEN_READY'
   | 'CAST_ERROR'
   | 'CAST_ENDED'
   | 'STATUS_UPDATE';
@@ -31,12 +32,16 @@ export interface StartCastMessage extends BaseMessage {
   groupName: string;
   quality: QualityPreset;
   mediaStreamId: string;
+  mode?: SonosMode;
+  coordinatorIp?: string; // Only for local mode
 }
 
 // STOP_CAST: popup -> service worker
 export interface StopCastMessage extends BaseMessage {
   type: 'STOP_CAST';
   streamId: string;
+  mode?: SonosMode;
+  coordinatorIp?: string; // Only for local mode
 }
 
 // OFFSCREEN_START: service worker -> offscreen
@@ -52,6 +57,11 @@ export interface OffscreenStartMessage extends BaseMessage {
 export interface OffscreenStopMessage extends BaseMessage {
   type: 'OFFSCREEN_STOP';
   streamId: string;
+}
+
+// OFFSCREEN_READY: offscreen -> service worker
+export interface OffscreenReadyMessage extends BaseMessage {
+  type: 'OFFSCREEN_READY';
 }
 
 // CAST_ERROR: offscreen -> service worker -> popup
@@ -82,6 +92,8 @@ export interface CastStatus {
   groupId?: string;
   groupName?: string;
   quality?: QualityPreset;
+  mode?: SonosMode;
+  coordinatorIp?: string; // Only for local mode
 }
 
 // Union of all messages
@@ -91,6 +103,7 @@ export type ExtensionMessage =
   | StopCastMessage
   | OffscreenStartMessage
   | OffscreenStopMessage
+  | OffscreenReadyMessage
   | CastErrorMessage
   | CastEndedMessage
   | StatusUpdateMessage;

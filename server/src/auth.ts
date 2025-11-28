@@ -19,7 +19,9 @@ export const auth = betterAuth({
     },
   },
   trustedOrigins: [
-    // Extension origins will be added dynamically or via env
+    // Chrome extension origins - accept any extension origin
+    'chrome-extension://*',
+    // Additional origins from env
     ...(Bun.env.TRUSTED_ORIGINS?.split(',').filter(Boolean) || []),
   ],
 });

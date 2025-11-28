@@ -4,6 +4,8 @@ import type {
   CreateStreamRequest,
   CreateStreamResponse,
   ApiError,
+  LocalDiscoveryResponse,
+  LocalGroupsResponse,
 } from '@thaumic-cast/shared';
 
 async function getServerUrl(): Promise<string> {
@@ -90,4 +92,63 @@ export async function setGroupVolume(
     method: 'POST',
     body: JSON.stringify({ volume }),
   });
+}
+
+// Local mode API functions
+
+export async function discoverLocalSpeakers(
+  forceRefresh = false
+): Promise<{ data: LocalDiscoveryResponse | null; error: string | null }> {
+  const params = forceRefresh ? '?refresh=true' : '';
+  return request<LocalDiscoveryResponse>(`/api/local/discover${params}`);
+}
+
+export async function getLocalGroups(speakerIp?: string): Promise<{
+  data: LocalGroupsResponse | null;
+  error: string | null;
+}> {
+  const params = speakerIp ? `?ip=${encodeURIComponent(speakerIp)}` : '';
+  return request<LocalGroupsResponse>(`/api/local/groups${params}`);
+}
+
+export async function playLocalStream(
+  coordinatorIp: string,
+  streamUrl: string
+): Promise<{ data: { success: boolean } | null; error: string | null }> {
+  return request<{ success: boolean }>('/api/local/play', {
+    method: 'POST',
+    body: JSON.stringify({ coordinatorIp, streamUrl }),
+  });
+}
+
+export async function stopLocalStream(
+  coordinatorIp: string
+): Promise<{ data: { success: boolean } | null; error: string | null }> {
+  return request<{ success: boolean }>('/api/local/stop', {
+    method: 'POST',
+    body: JSON.stringify({ coordinatorIp }),
+  });
+}
+
+export async function getLocalVolume(
+  speakerIp: string
+): Promise<{ data: { volume: number } | null; error: string | null }> {
+  return request<{ volume: number }>(`/api/local/volume/${encodeURIComponent(speakerIp)}`);
+}
+
+export async function setLocalVolume(
+  speakerIp: string,
+  volume: number
+): Promise<{ data: { success: boolean } | null; error: string | null }> {
+  return request<{ success: boolean }>(`/api/local/volume/${encodeURIComponent(speakerIp)}`, {
+    method: 'POST',
+    body: JSON.stringify({ volume }),
+  });
+}
+
+export async function getServerLocalIp(): Promise<{
+  data: { ip: string } | null;
+  error: string | null;
+}> {
+  return request<{ ip: string }>('/api/local/server-ip');
 }

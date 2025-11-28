@@ -3,6 +3,7 @@ import { db } from './db';
 import { StreamManager } from './stream-manager';
 import { handleApiRoutes } from './routes/api';
 import { handleSonosRoutes } from './routes/sonos';
+import { handleLocalSonosRoutes } from './routes/local-sonos';
 
 const PORT = Number(Bun.env.PORT) || 3000;
 const HOST = Bun.env.HOST || '0.0.0.0';
@@ -72,14 +73,46 @@ export const server = Bun.serve<WebSocketData>({
       });
     }
 
-    // Better Auth routes
+    // Better Auth routes - add CORS for extension
     if (url.pathname.startsWith('/api/auth')) {
-      return auth.handler(req);
+      const origin = req.headers.get('Origin');
+
+      // Handle preflight
+      if (req.method === 'OPTIONS') {
+        return new Response(null, {
+          status: 204,
+          headers: {
+            'Access-Control-Allow-Origin': origin || '*',
+            'Access-Control-Allow-Credentials': 'true',
+            'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+            'Access-Control-Allow-Headers': 'Content-Type',
+          },
+        });
+      }
+
+      const response = await auth.handler(req);
+
+      // Add CORS headers to auth response
+      const newHeaders = new Headers(response.headers);
+      newHeaders.set('Access-Control-Allow-Origin', origin || '*');
+      newHeaders.set('Access-Control-Allow-Credentials', 'true');
+
+      return new Response(response.body, {
+        status: response.status,
+        statusText: response.statusText,
+        headers: newHeaders,
+      });
     }
 
     // Sonos routes
     if (url.pathname.startsWith('/api/sonos')) {
       return handleSonosRoutes(req, url);
+    }
+
+    // Local Sonos routes (UPnP/SOAP)
+    if (url.pathname.startsWith('/api/local')) {
+      const response = await handleLocalSonosRoutes(req, url);
+      if (response) return response;
     }
 
     // API routes

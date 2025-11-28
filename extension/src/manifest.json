@@ -4,7 +4,7 @@
   "description": "Cast any browser tab's audio to your Sonos speakers",
   "version": "0.1.0",
   "permissions": ["tabCapture", "offscreen", "storage", "tabs"],
-  "host_permissions": ["https://*/*"],
+  "host_permissions": ["https://*/*", "http://*/*"],
   "content_security_policy": {
     "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'"
   },

@@ -2,15 +2,18 @@ import { auth } from '../auth';
 import { db } from '../db';
 import { signIngestToken } from '../jwt';
 import { SonosClient } from '../lib/sonos-client';
+import { getLocalIp } from '../lib/sonos-local-client';
 import { StreamManager } from '../stream-manager';
 import type {
   MeResponse,
   CreateStreamRequest,
   CreateStreamResponse,
   QualityPreset,
+  SonosMode,
 } from '@thaumic-cast/shared';
 
 const PUBLIC_URL = Bun.env.PUBLIC_URL || 'http://localhost:3000';
+const PORT = Number(Bun.env.PORT) || 3000;
 
 function corsHeaders(origin?: string | null): HeadersInit {
   return {
@@ -70,23 +73,19 @@ export async function handleApiRoutes(req: Request, url: URL): Promise<Response>
       return jsonResponse({ error: 'unauthorized', message: 'Not authenticated' }, 401, cors);
     }
 
-    const sonosClient = new SonosClient(session.user.id);
-    if (!sonosClient.isLinked) {
-      return jsonResponse(
-        { error: 'sonos_not_linked', message: 'Sonos account not linked' },
-        400,
-        cors
-      );
-    }
-
-    let body: CreateStreamRequest;
+    let body: CreateStreamRequest & { mode?: SonosMode; coordinatorIp?: string };
     try {
-      body = (await req.json()) as CreateStreamRequest;
+      body = (await req.json()) as CreateStreamRequest & {
+        mode?: SonosMode;
+        coordinatorIp?: string;
+      };
     } catch {
       return jsonResponse({ error: 'invalid_json', message: 'Invalid request body' }, 400, cors);
     }
 
-    const { groupId, quality } = body;
+    const { groupId, quality, mode } = body;
+    const isLocalMode = mode === 'local';
+
     if (!groupId || !quality) {
       return jsonResponse(
         { error: 'missing_fields', message: 'groupId and quality required' },
@@ -104,20 +103,34 @@ export async function handleApiRoutes(req: Request, url: URL): Promise<Response>
       );
     }
 
-    // Get household ID
-    const sonosAccount = db
-      .query<
-        { household_id: string },
-        [string]
-      >('SELECT household_id FROM sonos_accounts WHERE user_id = ?')
-      .get(session.user.id);
+    // For cloud mode, verify Sonos is linked
+    let householdId = 'local';
+    if (!isLocalMode) {
+      const sonosClient = new SonosClient(session.user.id);
+      if (!sonosClient.isLinked) {
+        return jsonResponse(
+          { error: 'sonos_not_linked', message: 'Sonos account not linked' },
+          400,
+          cors
+        );
+      }
 
-    if (!sonosAccount?.household_id) {
-      return jsonResponse(
-        { error: 'no_household', message: 'No Sonos household found' },
-        400,
-        cors
-      );
+      // Get household ID
+      const sonosAccount = db
+        .query<
+          { household_id: string },
+          [string]
+        >('SELECT household_id FROM sonos_accounts WHERE user_id = ?')
+        .get(session.user.id);
+
+      if (!sonosAccount?.household_id) {
+        return jsonResponse(
+          { error: 'no_household', message: 'No Sonos household found' },
+          400,
+          cors
+        );
+      }
+      householdId = sonosAccount.household_id;
     }
 
     // Generate stream ID
@@ -126,7 +139,7 @@ export async function handleApiRoutes(req: Request, url: URL): Promise<Response>
     // Create database record
     db.query(
       'INSERT INTO streams (id, user_id, household_id, group_id, quality, status) VALUES (?, ?, ?, ?, ?, ?)'
-    ).run(streamId, session.user.id, sonosAccount.household_id, groupId, quality, 'starting');
+    ).run(streamId, session.user.id, householdId, groupId, quality, 'starting');
 
     // Initialize stream in manager
     StreamManager.getOrCreate(streamId);
@@ -134,22 +147,37 @@ export async function handleApiRoutes(req: Request, url: URL): Promise<Response>
     // Generate ingest token
     const ingestToken = await signIngestToken(session.user.id, streamId);
 
-    // Build URLs
-    const playbackUrl = `${PUBLIC_URL}/streams/${streamId}/live.mp3`;
-    const wsProtocol = PUBLIC_URL.startsWith('https') ? 'wss' : 'ws';
-    const wsHost = PUBLIC_URL.replace(/^https?:\/\//, '');
-    const ingestUrl = `${wsProtocol}://${wsHost}/ws/ingest?streamId=${streamId}&token=${ingestToken}`;
+    // Build URLs - for local mode, use server's LAN IP
+    let playbackUrl: string;
+    let ingestUrl: string;
 
-    // Create Sonos playback session and load stream URL
-    console.log('[Streams] Creating Sonos playback session for group:', groupId);
-    const sessionIdResult = await sonosClient.createPlaybackSession(groupId);
-    console.log('[Streams] Sonos session result:', sessionIdResult);
-    if (sessionIdResult) {
-      const loadResult = await sonosClient.loadStreamUrl(sessionIdResult, playbackUrl, true);
-      console.log('[Streams] Sonos loadStreamUrl result:', loadResult);
+    if (isLocalMode) {
+      // LOCAL_SERVER_IP env var takes precedence (needed for WSL2 where getLocalIp returns internal IP)
+      const localIp = Bun.env.LOCAL_SERVER_IP || getLocalIp() || 'localhost';
+      playbackUrl = `http://${localIp}:${PORT}/streams/${streamId}/live.mp3`;
+      ingestUrl = `ws://${localIp}:${PORT}/ws/ingest?streamId=${streamId}&token=${ingestToken}`;
+      console.log('[Streams] Local mode - playbackUrl:', playbackUrl);
     } else {
-      console.log('[Streams] Failed to create Sonos playback session');
+      playbackUrl = `${PUBLIC_URL}/streams/${streamId}/live.mp3`;
+      const wsProtocol = PUBLIC_URL.startsWith('https') ? 'wss' : 'ws';
+      const wsHost = PUBLIC_URL.replace(/^https?:\/\//, '');
+      ingestUrl = `${wsProtocol}://${wsHost}/ws/ingest?streamId=${streamId}&token=${ingestToken}`;
     }
+
+    // For cloud mode, create Sonos playback session and load stream URL
+    if (!isLocalMode) {
+      const sonosClient = new SonosClient(session.user.id);
+      console.log('[Streams] Creating Sonos playback session for group:', groupId);
+      const sessionIdResult = await sonosClient.createPlaybackSession(groupId);
+      console.log('[Streams] Sonos session result:', sessionIdResult);
+      if (sessionIdResult) {
+        const loadResult = await sonosClient.loadStreamUrl(sessionIdResult, playbackUrl, true);
+        console.log('[Streams] Sonos loadStreamUrl result:', loadResult);
+      } else {
+        console.log('[Streams] Failed to create Sonos playback session');
+      }
+    }
+    // For local mode, the extension will call /api/local/play after receiving this response
 
     // Update status to active
     db.query('UPDATE streams SET status = ?, updated_at = unixepoch() WHERE id = ?').run(
