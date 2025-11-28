@@ -5,18 +5,22 @@
   "version": "0.1.0",
   "permissions": ["tabCapture", "offscreen", "storage", "tabs"],
   "host_permissions": ["https://*/*"],
+  "content_security_policy": {
+    "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'"
+  },
   "background": {
-    "service_worker": "background.js",
+    "service_worker": "src/background.ts",
     "type": "module"
   },
   "action": {
-    "default_popup": "popup/index.html",
+    "default_popup": "src/popup/index.html",
     "default_title": "Thaumic Cast"
   },
-  "options_page": "options/index.html",
-  "icons": {
-    "16": "icons/icon-16.png",
-    "48": "icons/icon-48.png",
-    "128": "icons/icon-128.png"
-  }
+  "options_page": "src/options/index.html",
+  "web_accessible_resources": [
+    {
+      "resources": ["audio-worklet.js"],
+      "matches": ["<all_urls>"]
+    }
+  ]
 }

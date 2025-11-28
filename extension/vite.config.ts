@@ -8,5 +8,10 @@ export default defineConfig({
   build: {
     outDir: 'dist',
     emptyOutDir: true,
+    rollupOptions: {
+      input: {
+        offscreen: 'src/offscreen/offscreen.html',
+      },
+    },
   },
 });

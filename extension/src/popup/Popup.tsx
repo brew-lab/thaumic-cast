@@ -1,5 +1,6 @@
-import { useState, useEffect } from 'preact/hooks';
-import { getMe, getSonosGroups } from '../api/client';
+import { useState, useEffect, useRef } from 'preact/hooks';
+import { getSession } from '../lib/auth-client';
+import { getSonosStatus, getSonosGroups, getGroupVolume, setGroupVolume } from '../api/client';
 import type { CastStatus, QualityPreset, SonosGroup } from '@thaumic-cast/shared';
 
 export function Popup() {
@@ -12,10 +13,51 @@ export function Popup() {
   const [quality, setQuality] = useState<QualityPreset>('medium');
   const [castStatus, setCastStatus] = useState<CastStatus>({ isActive: false });
   const [casting, setCasting] = useState(false);
+  const [volume, setVolume] = useState<number>(50);
+  const [volumeLoading, setVolumeLoading] = useState(false);
+  const volumeTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     init();
   }, []);
+
+  // Fetch volume when group is selected or casting starts
+  useEffect(() => {
+    const groupId = castStatus.isActive ? castStatus.groupId : selectedGroup;
+    if (groupId && sonosLinked) {
+      fetchVolume(groupId);
+    }
+  }, [selectedGroup, sonosLinked, castStatus.isActive, castStatus.groupId]);
+
+  async function fetchVolume(groupId: string) {
+    setVolumeLoading(true);
+    const { data, error: volError } = await getGroupVolume(groupId);
+    if (data && !volError) {
+      setVolume(data.volume);
+    }
+    setVolumeLoading(false);
+  }
+
+  function handleVolumeChange(newVolume: number) {
+    setVolume(newVolume);
+
+    // Use active group when casting, otherwise use selected group
+    const groupId = castStatus.isActive ? castStatus.groupId : selectedGroup;
+
+    // Debounce API call
+    if (volumeTimeoutRef.current) {
+      clearTimeout(volumeTimeoutRef.current);
+    }
+
+    volumeTimeoutRef.current = setTimeout(async () => {
+      if (groupId) {
+        const { error: volError } = await setGroupVolume(groupId, newVolume);
+        if (volError) {
+          setError(`Volume error: ${volError}`);
+        }
+      }
+    }, 300);
+  }
 
   async function init() {
     setLoading(true);
@@ -28,24 +70,35 @@ export function Popup() {
         setCastStatus(response.status as CastStatus);
       }
 
-      // Check auth status
-      const { data: meData, error: meError } = await getMe();
-      if (meError) {
-        setError(meError);
+      // Check auth status using Better Auth client
+      const { data: session, error: sessionError } = await getSession();
+
+      if (sessionError) {
+        // Not logged in or error - show login prompt
+        setIsLoggedIn(false);
         setLoading(false);
         return;
       }
 
-      if (!meData?.user) {
+      if (!session?.user) {
         setIsLoggedIn(false);
         setLoading(false);
         return;
       }
 
       setIsLoggedIn(true);
-      setSonosLinked(meData.sonosLinked);
 
-      if (meData.sonosLinked) {
+      // Check Sonos link status
+      const { data: sonosStatus, error: sonosError } = await getSonosStatus();
+      if (sonosError) {
+        setError(sonosError);
+        setLoading(false);
+        return;
+      }
+
+      setSonosLinked(sonosStatus?.linked ?? false);
+
+      if (sonosStatus?.linked) {
         // Fetch Sonos groups
         const { data: groupsData, error: groupsError } = await getSonosGroups();
         if (groupsError) {
@@ -80,7 +133,7 @@ export function Popup() {
 
       // Get media stream ID for tab capture
       const mediaStreamId = await chrome.tabCapture.getMediaStreamId({
-        consumerTabId: tab.id,
+        targetTabId: tab.id,
       });
 
       const group = groups.find((g) => g.id === selectedGroup);
@@ -198,6 +251,20 @@ export function Popup() {
             </div>
             <div class="value">{castStatus.groupName}</div>
           </div>
+          <div class="form-group">
+            <label htmlFor="volume-casting">Volume: {volume}%</label>
+            <input
+              id="volume-casting"
+              type="range"
+              min="0"
+              max="100"
+              value={volume}
+              disabled={volumeLoading}
+              onInput={(e) =>
+                handleVolumeChange(parseInt((e.target as HTMLInputElement).value, 10))
+              }
+            />
+          </div>
           <button class="btn btn-stop" onClick={handleStop}>
             Stop Casting
           </button>
@@ -230,6 +297,21 @@ export function Popup() {
               <option value="medium">Medium (192 kbps)</option>
               <option value="high">High (320 kbps)</option>
             </select>
+          </div>
+
+          <div class="form-group">
+            <label htmlFor="volume">Volume: {volume}%</label>
+            <input
+              id="volume"
+              type="range"
+              min="0"
+              max="100"
+              value={volume}
+              disabled={volumeLoading || !selectedGroup}
+              onInput={(e) =>
+                handleVolumeChange(parseInt((e.target as HTMLInputElement).value, 10))
+              }
+            />
           </div>
 
           <button class="btn btn-primary" onClick={handleCast} disabled={casting || !selectedGroup}>

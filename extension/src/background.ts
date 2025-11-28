@@ -12,6 +12,7 @@ let activeStream: CastStatus = { isActive: false };
 
 // Offscreen document tracking
 let offscreenCreated = false;
+let offscreenReadyResolve: (() => void) | null = null;
 
 async function getServerUrl(): Promise<string> {
   const result = (await chrome.storage.sync.get('serverUrl')) as { serverUrl?: string };
@@ -30,12 +31,23 @@ async function ensureOffscreen(): Promise<void> {
     return;
   }
 
+  // Create a promise that resolves when offscreen sends OFFSCREEN_READY
+  const readyPromise = new Promise<void>((resolve) => {
+    offscreenReadyResolve = resolve;
+  });
+
   await chrome.offscreen.createDocument({
-    url: 'offscreen/offscreen.html',
+    url: 'src/offscreen/offscreen.html',
     reasons: [chrome.offscreen.Reason.USER_MEDIA],
     justification: 'Capture and encode tab audio for streaming to Sonos',
   });
 
+  // Wait for offscreen to signal it's ready (with timeout)
+  const timeoutPromise = new Promise<void>((_, reject) =>
+    setTimeout(() => reject(new Error('Offscreen ready timeout')), 5000)
+  );
+
+  await Promise.race([readyPromise, timeoutPromise]);
   offscreenCreated = true;
 }
 
@@ -122,13 +134,15 @@ async function handleMessage(
         await ensureOffscreen();
 
         // Start capture in offscreen
-        await chrome.runtime.sendMessage({
+        console.log('[Background] Sending OFFSCREEN_START with ingestUrl:', ingestUrl);
+        const offscreenResult = await chrome.runtime.sendMessage({
           type: 'OFFSCREEN_START',
           streamId,
           mediaStreamId,
           quality,
           ingestUrl,
         });
+        console.log('[Background] OFFSCREEN_START response:', offscreenResult);
 
         // Update state
         activeStream = {
@@ -167,6 +181,21 @@ async function handleMessage(
       activeStream = { isActive: false };
       break;
     }
+
+    case 'OFFSCREEN_READY': {
+      // Offscreen document is ready to receive messages
+      console.log('[Background] Offscreen ready');
+      if (offscreenReadyResolve) {
+        offscreenReadyResolve();
+        offscreenReadyResolve = null;
+      }
+      break;
+    }
+
+    // These messages are for the offscreen document, not us - ignore them
+    case 'OFFSCREEN_START':
+    case 'OFFSCREEN_STOP':
+      break;
 
     default:
       sendResponse({ error: 'Unknown message type' });

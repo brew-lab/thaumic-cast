@@ -6,6 +6,7 @@ import { handleSonosRoutes } from './routes/sonos';
 
 const PORT = Number(Bun.env.PORT) || 3000;
 const HOST = Bun.env.HOST || '0.0.0.0';
+const USE_TLS = Bun.env.USE_TLS !== 'false'; // Disable TLS with USE_TLS=false
 
 // Ensure database is initialized
 db.exec('SELECT 1');
@@ -14,12 +15,22 @@ interface WebSocketData {
   streamId: string;
 }
 
+// TLS config only if enabled and certs exist
+const tlsConfig = USE_TLS
+  ? {
+      cert: Bun.file('./certs/cert.pem'),
+      key: Bun.file('./certs/key.pem'),
+    }
+  : undefined;
+
 export const server = Bun.serve<WebSocketData>({
   port: PORT,
   hostname: HOST,
+  ...(tlsConfig && { tls: tlsConfig }),
 
   async fetch(req, server) {
     const url = new URL(req.url);
+    console.log(`[HTTP] ${req.method} ${url.pathname}`);
 
     // WebSocket upgrade for ingest
     if (url.pathname === '/ws/ingest') {
@@ -118,4 +129,5 @@ export const server = Bun.serve<WebSocketData>({
   },
 });
 
-console.log(`Server running on http://${HOST}:${PORT}`);
+const protocol = USE_TLS ? 'https' : 'http';
+console.log(`Server running on ${protocol}://${HOST}:${PORT}`);

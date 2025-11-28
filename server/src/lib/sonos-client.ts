@@ -160,6 +160,8 @@ export class SonosClient {
     streamUrl: string,
     playOnCompletion = true
   ): Promise<boolean> {
+    console.log('[Sonos] loadStreamUrl request:', { sessionId, streamUrl, playOnCompletion });
+
     const result = await this.request(
       `/playbackSessions/${sessionId}/playbackSession/loadStreamUrl`,
       {
@@ -171,6 +173,7 @@ export class SonosClient {
       }
     );
 
+    console.log('[Sonos] loadStreamUrl response:', result);
     return result !== null;
   }
 
@@ -187,12 +190,63 @@ export class SonosClient {
       return null;
     }
 
+    const appId = Bun.env.SONOS_CLIENT_ID;
+    if (!appId) {
+      console.error('[Sonos] Missing SONOS_CLIENT_ID for playback session');
+      return null;
+    }
+
     const result = await this.request<{ sessionId: string }>(
       `/households/${row.household_id}/groups/${groupId}/playbackSession`,
-      { method: 'POST' }
+      {
+        method: 'POST',
+        body: JSON.stringify({
+          appId,
+          appContext: 'thaumic-cast',
+        }),
+      }
     );
 
     return result?.sessionId ?? null;
+  }
+
+  async getGroupVolume(groupId: string): Promise<number | null> {
+    const row = db
+      .query<
+        { household_id: string },
+        [string]
+      >('SELECT household_id FROM sonos_accounts WHERE user_id = ?')
+      .get(this.userId);
+
+    if (!row?.household_id) return null;
+
+    const result = await this.request<{ volume: number }>(
+      `/households/${row.household_id}/groups/${groupId}/groupVolume`
+    );
+    return result?.volume ?? null;
+  }
+
+  async setGroupVolume(groupId: string, volume: number): Promise<boolean> {
+    const row = db
+      .query<
+        { household_id: string },
+        [string]
+      >('SELECT household_id FROM sonos_accounts WHERE user_id = ?')
+      .get(this.userId);
+
+    if (!row?.household_id) return false;
+
+    // Clamp volume to 0-100
+    const clampedVolume = Math.max(0, Math.min(100, Math.round(volume)));
+
+    const result = await this.request(
+      `/households/${row.household_id}/groups/${groupId}/groupVolume`,
+      {
+        method: 'POST',
+        body: JSON.stringify({ volume: clampedVolume }),
+      }
+    );
+    return result !== null;
   }
 
   get isLinked(): boolean {

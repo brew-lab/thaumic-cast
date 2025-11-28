@@ -40,8 +40,14 @@ let currentSession: StreamSession | null = null;
 
 // Listen for messages from background
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+  console.log('[Offscreen] Received message:', message.type);
+
   if (message.type === 'OFFSCREEN_START') {
-    handleStart(message as OffscreenStartMessage).then(sendResponse);
+    console.log('[Offscreen] Starting capture...');
+    handleStart(message as OffscreenStartMessage).then((result) => {
+      console.log('[Offscreen] handleStart result:', result);
+      sendResponse(result);
+    });
     return true;
   }
 
@@ -50,6 +56,10 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     return true;
   }
 });
+
+// Signal to background that offscreen is ready to receive messages
+console.log('[Offscreen] Ready');
+chrome.runtime.sendMessage({ type: 'OFFSCREEN_READY' });
 
 async function handleStart(
   message: OffscreenStartMessage
@@ -78,8 +88,8 @@ async function handleStart(
     // Create audio context
     const audioContext = new AudioContext({ sampleRate: settings.sampleRate });
 
-    // Load audio worklet
-    await audioContext.audioWorklet.addModule(new URL('./audio-worklet.ts', import.meta.url).href);
+    // Load audio worklet from static file (blob URLs blocked by MV3 CSP)
+    await audioContext.audioWorklet.addModule(chrome.runtime.getURL('audio-worklet.js'));
 
     // Create audio graph
     const source = audioContext.createMediaStreamSource(mediaStream);

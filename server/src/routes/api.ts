@@ -141,9 +141,14 @@ export async function handleApiRoutes(req: Request, url: URL): Promise<Response>
     const ingestUrl = `${wsProtocol}://${wsHost}/ws/ingest?streamId=${streamId}&token=${ingestToken}`;
 
     // Create Sonos playback session and load stream URL
+    console.log('[Streams] Creating Sonos playback session for group:', groupId);
     const sessionIdResult = await sonosClient.createPlaybackSession(groupId);
+    console.log('[Streams] Sonos session result:', sessionIdResult);
     if (sessionIdResult) {
-      await sonosClient.loadStreamUrl(sessionIdResult, playbackUrl, true);
+      const loadResult = await sonosClient.loadStreamUrl(sessionIdResult, playbackUrl, true);
+      console.log('[Streams] Sonos loadStreamUrl result:', loadResult);
+    } else {
+      console.log('[Streams] Failed to create Sonos playback session');
     }
 
     // Update status to active

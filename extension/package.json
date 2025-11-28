@@ -10,6 +10,7 @@
   },
   "dependencies": {
     "@thaumic-cast/shared": "workspace:*",
+    "better-auth": "^1.4.3",
     "preact": "^10.27.2",
     "wasm-media-encoders": "^0.7.0"
   },

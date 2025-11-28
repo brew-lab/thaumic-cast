@@ -1,5 +1,4 @@
 import type {
-  MeResponse,
   SonosGroupsResponse,
   SonosStatusResponse,
   CreateStreamRequest,
@@ -46,10 +45,6 @@ async function request<T>(
   }
 }
 
-export async function getMe(): Promise<{ data: MeResponse | null; error: string | null }> {
-  return request<MeResponse>('/api/me');
-}
-
 export async function getSonosStatus(): Promise<{
   data: SonosStatusResponse | null;
   error: string | null;
@@ -78,5 +73,21 @@ export async function stopStream(
 ): Promise<{ data: { success: boolean } | null; error: string | null }> {
   return request<{ success: boolean }>(`/api/streams/${streamId}/stop`, {
     method: 'POST',
+  });
+}
+
+export async function getGroupVolume(
+  groupId: string
+): Promise<{ data: { volume: number } | null; error: string | null }> {
+  return request<{ volume: number }>(`/api/sonos/groups/${groupId}/volume`);
+}
+
+export async function setGroupVolume(
+  groupId: string,
+  volume: number
+): Promise<{ data: { success: boolean } | null; error: string | null }> {
+  return request<{ success: boolean }>(`/api/sonos/groups/${groupId}/volume`, {
+    method: 'POST',
+    body: JSON.stringify({ volume }),
   });
 }

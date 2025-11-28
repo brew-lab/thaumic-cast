@@ -245,5 +245,79 @@ export async function handleSonosRoutes(req: Request, url: URL): Promise<Respons
     return jsonResponse(response, 200, cors);
   }
 
+  // GET /api/sonos/groups/:groupId/volume - Get group volume
+  const getVolumeMatch = url.pathname.match(/^\/api\/sonos\/groups\/([^/]+)\/volume$/);
+  if (getVolumeMatch && req.method === 'GET') {
+    const session = await auth.api.getSession({ headers: req.headers });
+    if (!session?.user) {
+      return jsonResponse({ error: 'unauthorized', message: 'Not authenticated' }, 401, cors);
+    }
+
+    const groupId = getVolumeMatch[1];
+    if (!groupId) {
+      return jsonResponse({ error: 'invalid_group_id', message: 'Invalid group ID' }, 400, cors);
+    }
+
+    const sonosClient = new SonosClient(session.user.id);
+    if (!sonosClient.isLinked) {
+      return jsonResponse(
+        { error: 'sonos_not_linked', message: 'Sonos account not linked' },
+        400,
+        cors
+      );
+    }
+
+    const volume = await sonosClient.getGroupVolume(groupId);
+    if (volume === null) {
+      return jsonResponse({ error: 'volume_error', message: 'Failed to get volume' }, 500, cors);
+    }
+
+    return jsonResponse({ volume }, 200, cors);
+  }
+
+  // POST /api/sonos/groups/:groupId/volume - Set group volume
+  if (getVolumeMatch && req.method === 'POST') {
+    const session = await auth.api.getSession({ headers: req.headers });
+    if (!session?.user) {
+      return jsonResponse({ error: 'unauthorized', message: 'Not authenticated' }, 401, cors);
+    }
+
+    const groupId = getVolumeMatch[1];
+    if (!groupId) {
+      return jsonResponse({ error: 'invalid_group_id', message: 'Invalid group ID' }, 400, cors);
+    }
+
+    let body: { volume?: number };
+    try {
+      body = (await req.json()) as { volume?: number };
+    } catch {
+      return jsonResponse({ error: 'invalid_json', message: 'Invalid request body' }, 400, cors);
+    }
+
+    if (typeof body.volume !== 'number') {
+      return jsonResponse(
+        { error: 'missing_volume', message: 'volume (number) required' },
+        400,
+        cors
+      );
+    }
+
+    const sonosClient = new SonosClient(session.user.id);
+    if (!sonosClient.isLinked) {
+      return jsonResponse(
+        { error: 'sonos_not_linked', message: 'Sonos account not linked' },
+        400,
+        cors
+      );
+    }
+
+    const success = await sonosClient.setGroupVolume(groupId, body.volume);
+    if (!success) {
+      return jsonResponse({ error: 'volume_error', message: 'Failed to set volume' }, 500, cors);
+    }
+
+    return jsonResponse({ success: true }, 200, cors);
+  }
+
   return jsonResponse({ error: 'not_found', message: 'Endpoint not found' }, 404, cors);
 }
