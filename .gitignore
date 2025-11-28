@@ -5,9 +5,9 @@ public
 .DS_Store
 
 # Database
-data/*.db
-data/*.db-wal
-data/*.db-shm
+*.db
+*.db-wal
+*.db-shm
 
 # Environment
 .env

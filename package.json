@@ -9,6 +9,7 @@
     "extension"
   ],
   "scripts": {
+    "setup": "./scripts/setup.sh",
     "dev": "bun run --filter '*' dev",
     "build": "bun run --filter '*' build",
     "lint": "eslint .",
