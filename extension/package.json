@@ -9,6 +9,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@better-auth/core": "^1.4.3",
     "@thaumic-cast/shared": "workspace:*",
     "better-auth": "^1.4.3",
     "preact": "^10.27.2",

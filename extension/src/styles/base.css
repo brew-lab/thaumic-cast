@@ -11,6 +11,7 @@
   --color-primary: oklch(65% 0.2 250);
   --color-primary-hover: oklch(60% 0.2 250);
   --color-error: oklch(60% 0.2 25);
+  --color-warning: oklch(70% 0.15 75);
   --color-success: oklch(65% 0.15 145);
   --color-focus: oklch(70% 0.2 250);
   --color-casting: oklch(65% 0.15 30);

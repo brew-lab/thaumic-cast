@@ -46,6 +46,42 @@ body {
 .error-message {
   text-align: center;
   padding: var(--space-sm);
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-sm);
+}
+
+.warning-message {
+  text-align: center;
+  padding: var(--space-sm);
+  background: color-mix(in oklch, var(--color-warning) 15%, transparent);
+  border: 1px solid var(--color-warning);
+  border-radius: var(--radius-sm);
+  color: var(--color-warning);
+  font-size: 0.85rem;
+  margin-block-end: var(--space-md);
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-sm);
+}
+
+.dismiss-btn {
+  background: none;
+  border: none;
+  color: inherit;
+  cursor: pointer;
+  padding: 0;
+  font-size: 1.2rem;
+  line-height: 1;
+  opacity: 0.7;
+}
+
+.dismiss-btn:hover {
+  opacity: 1;
 }
 
 .login-prompt {

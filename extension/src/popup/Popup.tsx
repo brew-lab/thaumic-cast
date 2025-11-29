@@ -20,7 +20,9 @@ interface DisplayGroup {
 
 export function Popup() {
   const [loading, setLoading] = useState(true);
+  const [groupsLoading, setGroupsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [warning, setWarning] = useState<string | null>(null);
   const [isLoggedIn, setIsLoggedIn] = useState(false);
   const [sonosMode, setSonosMode] = useState<SonosMode>('cloud');
   const [sonosLinked, setSonosLinked] = useState(false);
@@ -29,13 +31,64 @@ export function Popup() {
   const [quality, setQuality] = useState<QualityPreset>('medium');
   const [castStatus, setCastStatus] = useState<CastStatus>({ isActive: false });
   const [casting, setCasting] = useState(false);
+  const [castingPhase, setCastingPhase] = useState<string>('');
   const [volume, setVolume] = useState<number>(50);
   const [volumeLoading, setVolumeLoading] = useState(false);
   const volumeTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const errorTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Auto-clear errors after 8 seconds
+  useEffect(() => {
+    if (error) {
+      if (errorTimeoutRef.current) {
+        clearTimeout(errorTimeoutRef.current);
+      }
+      errorTimeoutRef.current = setTimeout(() => {
+        setError(null);
+      }, 8000);
+    }
+    return () => {
+      if (errorTimeoutRef.current) {
+        clearTimeout(errorTimeoutRef.current);
+      }
+    };
+  }, [error]);
+
+  // Auto-clear warnings after 5 seconds
+  useEffect(() => {
+    if (warning) {
+      const timeout = setTimeout(() => setWarning(null), 5000);
+      return () => clearTimeout(timeout);
+    }
+  }, [warning]);
 
   useEffect(() => {
     init();
   }, []);
+
+  // Periodic group refresh during active casting to detect stale state
+  useEffect(() => {
+    if (!castStatus.isActive || sonosMode !== 'local') return;
+
+    const interval = setInterval(async () => {
+      // Fetch current groups
+      const storage = (await chrome.storage.sync.get('speakerIp')) as { speakerIp?: string };
+      const { data: groupsData } = await getLocalGroups(storage.speakerIp || undefined);
+
+      if (groupsData) {
+        // Check if active group still exists with same coordinator
+        const activeGroup = groupsData.groups.find((g) => g.id === castStatus.groupId);
+
+        if (!activeGroup) {
+          setWarning('Speaker group may have changed. Consider stopping and restarting the cast.');
+        } else if (activeGroup.coordinatorIp !== castStatus.coordinatorIp) {
+          setWarning('Speaker coordinator changed. Audio may not be playing correctly.');
+        }
+      }
+    }, 30000); // Check every 30 seconds
+
+    return () => clearInterval(interval);
+  }, [castStatus.isActive, castStatus.groupId, castStatus.coordinatorIp, sonosMode]);
 
   // Fetch volume when group is selected or casting starts
   useEffect(() => {
@@ -182,9 +235,12 @@ export function Popup() {
   async function initLocalMode(speakerIp?: string) {
     // For local mode, we don't need Sonos OAuth
     setSonosLinked(true);
+    setGroupsLoading(true);
 
     // Fetch groups via local UPnP (pass speaker IP if configured)
     const { data: groupsData, error: groupsError } = await getLocalGroups(speakerIp || undefined);
+    setGroupsLoading(false);
+
     if (groupsError) {
       setError(groupsError);
     } else if (groupsData) {
@@ -204,10 +260,13 @@ export function Popup() {
     if (!selectedGroup) return;
 
     setCasting(true);
+    setCastingPhase('Preparing...');
     setError(null);
+    setWarning(null);
 
     try {
       // Get current tab
+      setCastingPhase('Getting tab...');
       const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
       if (!tab?.id) {
         setError('No active tab');
@@ -215,6 +274,7 @@ export function Popup() {
       }
 
       // Get media stream ID for tab capture
+      setCastingPhase('Capturing audio...');
       const mediaStreamId = await chrome.tabCapture.getMediaStreamId({
         targetTabId: tab.id,
       });
@@ -222,6 +282,7 @@ export function Popup() {
       const group = groups.find((g) => g.id === selectedGroup);
 
       // Send to background with mode info
+      setCastingPhase('Starting stream...');
       const response = await chrome.runtime.sendMessage({
         type: 'START_CAST',
         tabId: tab.id,
@@ -236,6 +297,11 @@ export function Popup() {
       if (response?.error) {
         setError(response.error);
       } else {
+        // Check for warning from background (e.g., speaker may not be playing)
+        if (response?.warning) {
+          setWarning(response.warning);
+        }
+
         setCastStatus({
           isActive: true,
           streamId: response.streamId,
@@ -251,6 +317,7 @@ export function Popup() {
       setError(err instanceof Error ? err.message : 'Failed to start cast');
     } finally {
       setCasting(false);
+      setCastingPhase('');
     }
   }
 
@@ -323,14 +390,19 @@ export function Popup() {
   }
 
   // For local mode, show message if no speakers found
-  if (sonosMode === 'local' && groups.length === 0) {
+  if (sonosMode === 'local' && groups.length === 0 && !groupsLoading) {
     return (
       <div>
         <Header onSettings={openOptions} />
+        {error && (
+          <p class="error-message" role="alert">
+            {error}
+          </p>
+        )}
         <div class="login-prompt">
           <p>No Sonos speakers found on network</p>
-          <button class="btn btn-secondary" onClick={init}>
-            Retry
+          <button class="btn btn-secondary" onClick={init} disabled={groupsLoading}>
+            {groupsLoading ? 'Scanning...' : 'Retry'}
           </button>
           <p class="hint" style={{ marginTop: '8px', fontSize: '12px', opacity: 0.7 }}>
             Make sure the server is on the same network as your speakers
@@ -347,10 +419,24 @@ export function Popup() {
       {error && (
         <p class="error-message" role="alert">
           {error}
+          <button class="dismiss-btn" onClick={() => setError(null)} aria-label="Dismiss error">
+            ×
+          </button>
+        </p>
+      )}
+
+      {warning && (
+        <p class="warning-message" role="alert">
+          {warning}
+          <button class="dismiss-btn" onClick={() => setWarning(null)} aria-label="Dismiss warning">
+            ×
+          </button>
         </p>
       )}
 
       {sonosMode === 'local' && <div class="mode-badge">Local Mode</div>}
+
+      {groupsLoading && <p class="status-message">Finding speakers...</p>}
 
       {castStatus.isActive ? (
         <>
@@ -424,8 +510,12 @@ export function Popup() {
             />
           </div>
 
-          <button class="btn btn-primary" onClick={handleCast} disabled={casting || !selectedGroup}>
-            {casting ? 'Starting...' : 'Cast This Tab'}
+          <button
+            class="btn btn-primary"
+            onClick={handleCast}
+            disabled={casting || !selectedGroup || groupsLoading}
+          >
+            {casting ? castingPhase || 'Starting...' : 'Cast This Tab'}
           </button>
         </>
       )}

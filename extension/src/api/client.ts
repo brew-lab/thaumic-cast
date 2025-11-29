@@ -7,27 +7,40 @@ import type {
   LocalDiscoveryResponse,
   LocalGroupsResponse,
 } from '@thaumic-cast/shared';
+import { API_TIMEOUT_MS } from '@thaumic-cast/shared';
 
 async function getServerUrl(): Promise<string> {
   const result = (await chrome.storage.sync.get('serverUrl')) as { serverUrl?: string };
   return result.serverUrl || 'http://localhost:3000';
 }
 
+interface RequestOptions extends RequestInit {
+  timeoutMs?: number;
+}
+
 async function request<T>(
   endpoint: string,
-  options: RequestInit = {}
+  options: RequestOptions = {}
 ): Promise<{ data: T | null; error: string | null }> {
   const serverUrl = await getServerUrl();
+  const { timeoutMs = API_TIMEOUT_MS, ...fetchOptions } = options;
+
+  // Create abort controller for timeout
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
 
   try {
     const response = await fetch(`${serverUrl}${endpoint}`, {
-      ...options,
+      ...fetchOptions,
+      signal: controller.signal,
       credentials: 'include',
       headers: {
         'Content-Type': 'application/json',
-        ...options.headers,
+        ...fetchOptions.headers,
       },
     });
+
+    clearTimeout(timeoutId);
 
     if (!response.ok) {
       const errorData: ApiError = await response.json().catch(() => ({
@@ -40,6 +53,24 @@ async function request<T>(
     const data = (await response.json()) as T;
     return { data, error: null };
   } catch (err) {
+    clearTimeout(timeoutId);
+
+    // Handle abort/timeout specifically
+    if (err instanceof Error && err.name === 'AbortError') {
+      return {
+        data: null,
+        error: 'Request timed out. Check your server connection.',
+      };
+    }
+
+    // Handle network errors with more context
+    if (err instanceof TypeError && err.message.includes('fetch')) {
+      return {
+        data: null,
+        error: 'Cannot reach server. Check the server URL in settings.',
+      };
+    }
+
     return {
       data: null,
       error: err instanceof Error ? err.message : 'Network error',
@@ -151,4 +182,48 @@ export async function getServerLocalIp(): Promise<{
   error: string | null;
 }> {
   return request<{ ip: string }>('/api/local/server-ip');
+}
+
+/**
+ * Test if the server is reachable
+ * @param url Optional URL to test. If not provided, uses the saved server URL.
+ */
+export async function testServerConnection(url?: string): Promise<{
+  success: boolean;
+  error: string | null;
+  latencyMs?: number;
+}> {
+  const start = performance.now();
+
+  try {
+    const serverUrl = url || (await getServerUrl());
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 5000); // 5s timeout for test
+
+    const response = await fetch(`${serverUrl}/api/health`, {
+      method: 'GET',
+      signal: controller.signal,
+    });
+
+    clearTimeout(timeoutId);
+    const latencyMs = Math.round(performance.now() - start);
+
+    if (response.ok) {
+      return { success: true, error: null, latencyMs };
+    }
+
+    return {
+      success: false,
+      error: `Server returned ${response.status}`,
+      latencyMs,
+    };
+  } catch (err) {
+    if (err instanceof Error && err.name === 'AbortError') {
+      return { success: false, error: 'Connection timed out' };
+    }
+    return {
+      success: false,
+      error: err instanceof Error ? err.message : 'Connection failed',
+    };
+  }
 }

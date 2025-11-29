@@ -8,9 +8,37 @@ import type {
   SonosMode,
 } from '@thaumic-cast/shared';
 import type { CreateStreamResponse } from '@thaumic-cast/shared';
+import { API_TIMEOUT_MS } from '@thaumic-cast/shared';
 
 // Active stream state
 let activeStream: CastStatus = { isActive: false };
+
+/**
+ * Fetch with timeout support
+ */
+async function fetchWithTimeout(
+  url: string,
+  options: RequestInit = {},
+  timeoutMs = API_TIMEOUT_MS
+): Promise<Response> {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    const response = await fetch(url, {
+      ...options,
+      signal: controller.signal,
+    });
+    clearTimeout(timeoutId);
+    return response;
+  } catch (err) {
+    clearTimeout(timeoutId);
+    if (err instanceof Error && err.name === 'AbortError') {
+      throw new Error('Request timed out');
+    }
+    throw err;
+  }
+}
 
 // Offscreen document tracking
 let offscreenCreated = false;
@@ -85,25 +113,35 @@ async function stopCurrentStream(mode?: SonosMode, coordinatorIp?: string): Prom
 
   if (effectiveMode === 'local' && effectiveIp) {
     try {
-      await fetch(`${serverUrl}/api/local/stop`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'include',
-        body: JSON.stringify({ coordinatorIp: effectiveIp }),
-      });
+      await fetchWithTimeout(
+        `${serverUrl}/api/local/stop`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'include',
+          body: JSON.stringify({ coordinatorIp: effectiveIp }),
+        },
+        5000 // Shorter timeout for stop operations
+      );
     } catch {
-      // Server might be unavailable
+      // Server might be unavailable - continue with cleanup
+      console.warn('[Background] Failed to stop playback on speaker');
     }
   }
 
   // Notify server to clean up stream
   try {
-    await fetch(`${serverUrl}/api/streams/${activeStream.streamId}/stop`, {
-      method: 'POST',
-      credentials: 'include',
-    });
+    await fetchWithTimeout(
+      `${serverUrl}/api/streams/${activeStream.streamId}/stop`,
+      {
+        method: 'POST',
+        credentials: 'include',
+      },
+      5000
+    );
   } catch {
-    // Server might be unavailable
+    // Server might be unavailable - continue with cleanup
+    console.warn('[Background] Failed to notify server of stream stop');
   }
 
   activeStream = { isActive: false };
@@ -138,7 +176,7 @@ async function handleMessage(
 
         // Create stream on server
         // For local mode, pass mode='local' so server doesn't call Sonos Cloud API
-        const response = await fetch(`${serverUrl}/api/streams`, {
+        const response = await fetchWithTimeout(`${serverUrl}/api/streams`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           credentials: 'include',
@@ -151,7 +189,7 @@ async function handleMessage(
         });
 
         if (!response.ok) {
-          const error = await response.json();
+          const error = await response.json().catch(() => ({ message: `HTTP ${response.status}` }));
           sendResponse({ error: error.message || 'Failed to create stream' });
           return;
         }
@@ -174,26 +212,32 @@ async function handleMessage(
         console.log('[Background] OFFSCREEN_START response:', offscreenResult);
 
         // For local mode, tell Sonos to play the stream via UPnP
+        let localPlayError: string | null = null;
         if (isLocalMode && coordinatorIp) {
           console.log('[Background] Starting local playback on', coordinatorIp);
 
           // Small delay to allow some frames to buffer
           await new Promise((resolve) => setTimeout(resolve, 500));
 
-          const playResponse = await fetch(`${serverUrl}/api/local/play`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            credentials: 'include',
-            body: JSON.stringify({
-              coordinatorIp,
-              streamUrl: playbackUrl,
-            }),
-          });
+          try {
+            const playResponse = await fetchWithTimeout(`${serverUrl}/api/local/play`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              credentials: 'include',
+              body: JSON.stringify({
+                coordinatorIp,
+                streamUrl: playbackUrl,
+              }),
+            });
 
-          if (!playResponse.ok) {
-            const error = await playResponse.json();
-            console.error('[Background] Local play failed:', error);
-            // Don't fail the whole cast, just log the error
+            if (!playResponse.ok) {
+              const error = await playResponse.json().catch(() => ({ message: 'Unknown error' }));
+              localPlayError = error.message || 'Failed to start playback on speaker';
+              console.error('[Background] Local play failed:', localPlayError);
+            }
+          } catch (err) {
+            localPlayError = err instanceof Error ? err.message : 'Failed to connect to speaker';
+            console.error('[Background] Local play error:', localPlayError);
           }
         }
 
@@ -209,9 +253,24 @@ async function handleMessage(
           coordinatorIp: isLocalMode ? coordinatorIp : undefined,
         };
 
-        sendResponse({ success: true, streamId });
+        // Return success but include warning if local play had issues
+        if (localPlayError) {
+          sendResponse({
+            success: true,
+            streamId,
+            warning: `Streaming started but speaker may not be playing: ${localPlayError}`,
+          });
+        } else {
+          sendResponse({ success: true, streamId });
+        }
       } catch (err) {
-        sendResponse({ error: err instanceof Error ? err.message : 'Unknown error' });
+        const errorMessage =
+          err instanceof Error
+            ? err.message.includes('timed out')
+              ? 'Server connection timed out. Check server URL in settings.'
+              : err.message
+            : 'Unknown error';
+        sendResponse({ error: errorMessage });
       }
       break;
     }
