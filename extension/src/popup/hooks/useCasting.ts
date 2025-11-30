@@ -296,6 +296,15 @@ export function useCasting({
       const group = groups.find((g) => g.id === selectedGroup);
 
       setCastingPhase('Starting stream...');
+
+      // Build metadata from selected source or active tab
+      const metadata = {
+        title: selectedSource?.title || activeTab?.title || 'Browser Audio',
+        artist: selectedSource?.artist,
+        album: selectedSource?.album,
+        artwork: selectedSource?.artwork,
+      };
+
       const response = await chrome.runtime.sendMessage({
         type: 'START_CAST',
         tabId: targetTabId,
@@ -305,6 +314,7 @@ export function useCasting({
         mediaStreamId,
         mode: sonosMode,
         coordinatorIp: group?.coordinatorIp,
+        metadata,
       });
 
       if (response?.error) {

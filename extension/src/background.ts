@@ -40,7 +40,7 @@ async function handleMessage(
     }
 
     case 'START_CAST': {
-      const { tabId, groupId, groupName, quality, mediaStreamId, mode, coordinatorIp } =
+      const { tabId, groupId, groupName, quality, mediaStreamId, mode, coordinatorIp, metadata } =
         message as StartCastMessage;
 
       const result = await startStream({
@@ -51,6 +51,7 @@ async function handleMessage(
         mediaStreamId,
         mode: mode || 'cloud',
         coordinatorIp,
+        metadata,
       });
 
       sendResponse(result);

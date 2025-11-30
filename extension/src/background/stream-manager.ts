@@ -1,4 +1,4 @@
-import type { CastStatus, QualityPreset, SonosMode } from '@thaumic-cast/shared';
+import type { CastStatus, QualityPreset, SonosMode, StreamMetadata } from '@thaumic-cast/shared';
 import type { CreateStreamResponse } from '@thaumic-cast/shared';
 import { fetchWithTimeout } from '../lib/http';
 import { getServerUrl } from '../lib/settings';
@@ -17,6 +17,7 @@ interface StartStreamParams {
   mediaStreamId: string;
   mode: SonosMode;
   coordinatorIp?: string;
+  metadata?: StreamMetadata;
 }
 
 function logEvent(message: string, context?: Record<string, unknown>) {
@@ -35,7 +36,8 @@ export async function startStream(params: StartStreamParams): Promise<{
   warning?: string;
   error?: string;
 }> {
-  const { tabId, groupId, groupName, quality, mediaStreamId, mode, coordinatorIp } = params;
+  const { tabId, groupId, groupName, quality, mediaStreamId, mode, coordinatorIp, metadata } =
+    params;
 
   await stopCurrentStream();
 
@@ -53,6 +55,7 @@ export async function startStream(params: StartStreamParams): Promise<{
         quality,
         mode: isLocalMode ? 'local' : 'cloud',
         coordinatorIp: isLocalMode ? coordinatorIp : undefined,
+        metadata,
       }),
     });
 
@@ -91,6 +94,7 @@ export async function startStream(params: StartStreamParams): Promise<{
           body: JSON.stringify({
             coordinatorIp,
             streamUrl: playbackUrl,
+            metadata,
           }),
         });
 

@@ -2,6 +2,7 @@
  * Sonos Local Client - Control Sonos speakers via UPnP/SOAP on LAN
  */
 
+import type { StreamMetadata } from '@thaumic-cast/shared';
 import { discoverSpeakers, getLocalIp, type DiscoveredSpeaker } from './ssdp-discovery';
 import { sendSoapRequest, extractSoapValue, unescapeXml } from './soap-client';
 
@@ -34,6 +35,48 @@ export interface LocalGroup {
 let cachedSpeakers: DiscoveredSpeaker[] = [];
 let lastDiscoveryTime = 0;
 const CACHE_TTL_MS = 60000; // 1 minute
+
+/**
+ * Escape XML special characters
+ */
+function escapeXml(str: string): string {
+  return str
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&apos;');
+}
+
+/**
+ * Format DIDL-Lite metadata for Sonos display
+ * This is the XML format Sonos uses to show track info in the app
+ */
+function formatDidlLite(streamUrl: string, metadata?: StreamMetadata): string {
+  const title = metadata?.title || 'Browser Audio';
+  const artist = metadata?.artist || 'Thaumic Cast';
+  const album = metadata?.album || '';
+  const artwork = metadata?.artwork || '';
+
+  // Build DIDL-Lite XML - Sonos expects this format for track metadata
+  let didl =
+    '<DIDL-Lite xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:upnp="urn:schemas-upnp-org:metadata-1-0/upnp/" xmlns="urn:schemas-upnp-org:metadata-1-0/DIDL-Lite/">';
+  didl += `<item id="0" parentID="-1" restricted="true">`;
+  didl += `<dc:title>${escapeXml(title)}</dc:title>`;
+  didl += `<dc:creator>${escapeXml(artist)}</dc:creator>`;
+  if (album) {
+    didl += `<upnp:album>${escapeXml(album)}</upnp:album>`;
+  }
+  if (artwork) {
+    didl += `<upnp:albumArtURI>${escapeXml(artwork)}</upnp:albumArtURI>`;
+  }
+  didl += `<upnp:class>object.item.audioItem.audioBroadcast</upnp:class>`;
+  didl += `<res protocolInfo="http-get:*:audio/mpeg:*">${escapeXml(streamUrl)}</res>`;
+  didl += `</item>`;
+  didl += `</DIDL-Lite>`;
+
+  return didl;
+}
 
 /**
  * Discover Sonos speakers with caching
@@ -163,9 +206,16 @@ export async function getZoneGroups(speakerIp?: string): Promise<LocalGroup[]> {
  * Set the audio stream URL on a Sonos group coordinator
  * Uses x-rincon-mp3radio:// protocol for HTTP streams
  */
-export async function setAVTransportURI(coordinatorIp: string, streamUrl: string): Promise<void> {
+export async function setAVTransportURI(
+  coordinatorIp: string,
+  streamUrl: string,
+  metadata?: StreamMetadata
+): Promise<void> {
   // Convert http:// to x-rincon-mp3radio:// for Sonos compatibility
   const sonosUrl = streamUrl.replace(/^https?:\/\//, 'x-rincon-mp3radio://');
+
+  // Format DIDL-Lite metadata for Sonos display
+  const didlMetadata = formatDidlLite(streamUrl, metadata);
 
   console.log(`[SonosLocal] SetAVTransportURI: ${sonosUrl}`);
 
@@ -177,7 +227,7 @@ export async function setAVTransportURI(coordinatorIp: string, streamUrl: string
     params: {
       InstanceID: 0,
       CurrentURI: sonosUrl,
-      CurrentURIMetaData: '',
+      CurrentURIMetaData: didlMetadata,
     },
   });
 }
@@ -270,8 +320,12 @@ export async function setVolume(speakerIp: string, volume: number): Promise<void
 /**
  * Load a stream URL and start playback in one call
  */
-export async function playStream(coordinatorIp: string, streamUrl: string): Promise<void> {
-  await setAVTransportURI(coordinatorIp, streamUrl);
+export async function playStream(
+  coordinatorIp: string,
+  streamUrl: string,
+  metadata?: StreamMetadata
+): Promise<void> {
+  await setAVTransportURI(coordinatorIp, streamUrl, metadata);
   await play(coordinatorIp);
 }
 

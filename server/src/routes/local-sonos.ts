@@ -4,7 +4,7 @@
 
 import { auth } from '../auth';
 import * as sonosLocal from '../lib/sonos-local-client';
-import { isValidIPv4, ErrorCode } from '@thaumic-cast/shared';
+import { isValidIPv4, ErrorCode, type StreamMetadata } from '@thaumic-cast/shared';
 
 function corsHeaders(origin?: string | null): HeadersInit {
   return {
@@ -163,7 +163,11 @@ export async function handleLocalSonosRoutes(req: Request, url: URL): Promise<Re
   // POST /api/local/play - Load stream URL and play
   if (url.pathname === '/api/local/play' && req.method === 'POST') {
     try {
-      const body = (await req.json()) as { coordinatorIp?: string; streamUrl?: string };
+      const body = (await req.json()) as {
+        coordinatorIp?: string;
+        streamUrl?: string;
+        metadata?: StreamMetadata;
+      };
 
       if (!body.coordinatorIp || !body.streamUrl) {
         return errorResponse(
@@ -190,7 +194,7 @@ export async function handleLocalSonosRoutes(req: Request, url: URL): Promise<Re
         );
       }
 
-      await sonosLocal.playStream(body.coordinatorIp, body.streamUrl);
+      await sonosLocal.playStream(body.coordinatorIp, body.streamUrl, body.metadata);
 
       return jsonResponse({ success: true }, 200, cors);
     } catch (error) {
