@@ -1,0 +1,21 @@
+{
+  "name": "@thaumic-cast/desktop",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "tauri": "tauri"
+  },
+  "dependencies": {
+    "preact": "^10.27.2"
+  },
+  "devDependencies": {
+    "@preact/preset-vite": "^2.10.2",
+    "@tauri-apps/api": "^2",
+    "typescript": "^5.9.3",
+    "vite": "^7.2.4"
+  }
+}

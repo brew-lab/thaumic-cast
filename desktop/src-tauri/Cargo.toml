@@ -1,0 +1,67 @@
+[package]
+name = "thaumic-cast-desktop"
+version = "0.1.0"
+description = "Thaumic Cast Desktop - Stream browser audio to Sonos speakers"
+authors = ["Thaumic Cast"]
+edition = "2021"
+rust-version = "1.77"
+
+[lib]
+name = "thaumic_cast_desktop_lib"
+crate-type = ["lib", "cdylib", "staticlib"]
+
+[[bin]]
+name = "thaumic-cast-desktop"
+path = "src/main.rs"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+# Tauri core
+tauri = { version = "2", features = ["tray-icon", "image-ico", "image-png"] }
+tauri-plugin-shell = "2"
+
+# Async runtime
+tokio = { version = "1", features = ["full"] }
+
+# HTTP server
+axum = { version = "0.8", features = ["ws", "macros"] }
+tower = "0.5"
+tower-http = { version = "0.6", features = ["cors"] }
+
+# WebSocket
+tokio-tungstenite = "0.26"
+futures-util = "0.3"
+
+# HTTP client for SOAP
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
+
+# XML parsing (for SOAP responses)
+quick-xml = "0.37"
+
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# Utilities
+uuid = { version = "1", features = ["v4"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+thiserror = "2"
+parking_lot = "0.12"
+regex-lite = "0.1"
+local-ip-address = "0.6"
+bytes = "1"
+async-stream = "0.3"
+tokio-stream = { version = "0.1", features = ["sync"] }
+
+[features]
+default = ["custom-protocol"]
+custom-protocol = ["tauri/custom-protocol"]
+
+[profile.release]
+strip = true
+lto = true
+codegen-units = 1
+panic = "abort"

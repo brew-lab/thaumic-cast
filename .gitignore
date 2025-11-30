@@ -33,3 +33,16 @@ bun.lockb
 
 # Test coverage
 coverage
+
+# Rust / Cargo
+target/
+Cargo.lock
+**/*.rs.bk
+
+# Tauri
+desktop/src-tauri/target/
+desktop/src-tauri/Cargo.lock
+desktop/dist/
+
+# Generated Tauri files
+desktop/src-tauri/gen/

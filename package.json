@@ -6,17 +6,21 @@
     "packages/*",
     "server",
     "server/ui",
-    "extension"
+    "extension",
+    "desktop"
   ],
   "scripts": {
     "setup": "./scripts/setup.sh",
-    "dev": "bun run --filter '*' dev",
-    "build": "bun run --filter '*' build",
+    "dev": "bun run --filter '*' --filter '!@thaumic-cast/desktop' dev",
+    "build": "bun run --filter '*' --filter '!@thaumic-cast/desktop' build",
     "lint": "eslint .",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
-    "typecheck": "bun run --filter '*' typecheck",
-    "prepare": "husky"
+    "typecheck": "bun run --filter '*' --filter '!@thaumic-cast/desktop' typecheck",
+    "prepare": "husky",
+    "desktop:dev": "cd desktop && cargo tauri dev",
+    "desktop:build": "cd desktop && cargo tauri build",
+    "desktop:icons": "cd desktop && cargo tauri icon src-tauri/icons/icon.png && rm -rf src-tauri/icons/ios src-tauri/icons/android src-tauri/icons/mipmap-* src-tauri/icons/AppIcon-* src-tauri/icons/Square* src-tauri/icons/StoreLogo* src-tauri/icons/*.icns"
   },
   "devDependencies": {
     "@typescript-eslint/eslint-plugin": "^8.48.0",
