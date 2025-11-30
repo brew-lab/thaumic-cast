@@ -1,13 +1,16 @@
 import type { SonosMode } from '@thaumic-cast/shared';
+import type { SupportedLocale } from './i18n';
 
 // Centralized defaults for extension configuration
 const DEFAULT_SERVER_URL = 'http://localhost:3000';
 const DEFAULT_SONOS_MODE: SonosMode = 'cloud';
+const DEFAULT_LANGUAGE: SupportedLocale = 'en';
 
 export interface ExtensionSettings {
   serverUrl: string;
   sonosMode: SonosMode;
   speakerIp: string;
+  language: SupportedLocale;
 }
 
 // Normalize and return all persisted settings with defaults
@@ -16,12 +19,14 @@ export async function getExtensionSettings(): Promise<ExtensionSettings> {
     'serverUrl',
     'sonosMode',
     'speakerIp',
+    'language',
   ])) as Partial<ExtensionSettings>;
 
   return {
     serverUrl: normalizeServerUrl(result.serverUrl) || DEFAULT_SERVER_URL,
     sonosMode: (result.sonosMode as SonosMode) || DEFAULT_SONOS_MODE,
     speakerIp: result.speakerIp || '',
+    language: (result.language as SupportedLocale) || DEFAULT_LANGUAGE,
   };
 }
 
@@ -32,6 +37,7 @@ export async function saveExtensionSettings(partial: Partial<ExtensionSettings>)
     ...partial,
     serverUrl: normalizeServerUrl(partial.serverUrl) || current.serverUrl,
     speakerIp: partial.speakerIp?.trim() ?? current.speakerIp,
+    language: (partial.language as SupportedLocale) || current.language,
   };
 
   await chrome.storage.sync.set(next);
