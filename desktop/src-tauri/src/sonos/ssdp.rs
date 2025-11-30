@@ -83,8 +83,8 @@ pub fn discover(timeout_ms: u64) -> Result<Vec<DiscoveredSpeaker>, SsdpError> {
 
     // Create UDP socket
     let socket = UdpSocket::bind("0.0.0.0:0")?;
-    socket.set_read_timeout(Some(Duration::from_millis(timeout_ms)))?;
-    socket.set_broadcast(true)?;
+    // Short read timeout so we can check the deadline frequently
+    socket.set_read_timeout(Some(Duration::from_millis(200)))?;
 
     let multicast_addr = SocketAddrV4::new(SSDP_MULTICAST_IP, SSDP_PORT);
     let msearch = build_msearch();
@@ -116,13 +116,12 @@ pub fn discover(timeout_ms: u64) -> Result<Vec<DiscoveredSpeaker>, SsdpError> {
                     }
                 }
             }
-            Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
-                // Timeout, continue
-                break;
-            }
-            Err(ref e) if e.kind() == std::io::ErrorKind::TimedOut => {
-                // Timeout, continue
-                break;
+            Err(ref e)
+                if e.kind() == std::io::ErrorKind::WouldBlock
+                    || e.kind() == std::io::ErrorKind::TimedOut =>
+            {
+                // Read timeout - continue waiting until overall deadline
+                continue;
             }
             Err(e) => {
                 tracing::warn!("SSDP receive error: {}", e);

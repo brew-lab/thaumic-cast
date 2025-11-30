@@ -73,19 +73,32 @@ function parseZoneGroupState(xml: string): LocalGroup[] {
 
     if (!coordinatorUuid || !groupContent) continue;
 
-    // Match ZoneGroupMember elements
-    const memberRegex =
-      /<ZoneGroupMember[^>]+UUID="([^"]+)"[^>]+Location="http:\/\/([^:]+):\d+[^"]*"[^>]+ZoneName="([^"]+)"[^>]*(?:Icon="[^"]*sonos-([^-]+)[^"]*")?[^>]*\/?>/g;
+    // Match ZoneGroupMember elements - capture opening tag with all attributes
+    const memberRegex = /<ZoneGroupMember\s+([^>]+)>/g;
     let memberMatch;
     const members: LocalSpeaker[] = [];
     let groupName = '';
     let coordinatorIp = '';
 
     while ((memberMatch = memberRegex.exec(groupContent)) !== null) {
-      const uuid = memberMatch[1];
-      const ip = memberMatch[2];
-      const zoneName = memberMatch[3];
-      const model = memberMatch[4] || 'Unknown';
+      const attrs = memberMatch[1];
+      if (!attrs) continue;
+
+      // Skip zone bridges (BOOST devices) - they can't play audio
+      if (attrs.includes('IsZoneBridge="1"')) {
+        continue;
+      }
+
+      // Extract attributes
+      const uuidMatch = attrs.match(/UUID="([^"]+)"/);
+      const locationMatch = attrs.match(/Location="http:\/\/([^:]+):\d+/);
+      const zoneNameMatch = attrs.match(/ZoneName="([^"]+)"/);
+      const modelMatch = attrs.match(/Icon="[^"]*sonos-([^-"]+)/);
+
+      const uuid = uuidMatch?.[1];
+      const ip = locationMatch?.[1];
+      const zoneName = zoneNameMatch?.[1];
+      const model = modelMatch?.[1] || 'Unknown';
 
       if (!uuid || !ip || !zoneName) continue;
 

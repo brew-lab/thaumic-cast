@@ -145,20 +145,52 @@ fn parse_zone_group_state(xml: &str) -> Vec<LocalGroup> {
             continue;
         }
 
-        // Match ZoneGroupMember elements
+        // Match ZoneGroupMember elements - capture the opening tag with all attributes
+        // Handles both self-closing and elements with nested content (like Satellites)
         let member_re = regex_lite::Regex::new(
-            r#"<ZoneGroupMember[^>]+UUID="([^"]+)"[^>]+Location="http://([^:]+):\d+[^"]*"[^>]+ZoneName="([^"]+)"[^>]*(?:Icon="[^"]*sonos-([^-]+)[^"]*")?[^>]*/>"#
+            r#"<ZoneGroupMember\s+([^>]+)>"#
         ).unwrap();
 
         let mut members = Vec::new();
         let mut coordinator_ip = String::new();
 
         for member_cap in member_re.captures_iter(group_content) {
-            let uuid = member_cap.get(1).map(|m| m.as_str()).unwrap_or("");
-            let ip = member_cap.get(2).map(|m| m.as_str()).unwrap_or("");
-            let zone_name = member_cap.get(3).map(|m| m.as_str()).unwrap_or("");
-            let model = member_cap
-                .get(4)
+            let attrs = member_cap.get(1).map(|m| m.as_str()).unwrap_or("");
+
+            // Skip zone bridges (BOOST devices) - they can't play audio
+            if attrs.contains("IsZoneBridge=\"1\"") {
+                continue;
+            }
+
+            // Skip invisible devices that aren't the coordinator
+            // (satellites are invisible but we still want the main speaker)
+
+            // Extract attributes using individual regex
+            let uuid = regex_lite::Regex::new(r#"UUID="([^"]+)""#)
+                .ok()
+                .and_then(|re| re.captures(attrs))
+                .and_then(|c| c.get(1))
+                .map(|m| m.as_str())
+                .unwrap_or("");
+
+            let ip = regex_lite::Regex::new(r#"Location="http://([^:]+):\d+"#)
+                .ok()
+                .and_then(|re| re.captures(attrs))
+                .and_then(|c| c.get(1))
+                .map(|m| m.as_str())
+                .unwrap_or("");
+
+            let zone_name = regex_lite::Regex::new(r#"ZoneName="([^"]+)""#)
+                .ok()
+                .and_then(|re| re.captures(attrs))
+                .and_then(|c| c.get(1))
+                .map(|m| m.as_str())
+                .unwrap_or("");
+
+            let model = regex_lite::Regex::new(r#"Icon="[^"]*sonos-([^-"]+)"#)
+                .ok()
+                .and_then(|re| re.captures(attrs))
+                .and_then(|c| c.get(1))
                 .map(|m| m.as_str())
                 .unwrap_or("Unknown");
 

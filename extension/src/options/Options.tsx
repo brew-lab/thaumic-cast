@@ -4,7 +4,7 @@ import { getExtensionSettings, saveExtensionSettings } from '../lib/settings';
 import { isValidIPv4, isValidUrl } from '@thaumic-cast/shared';
 import type { SonosMode } from '@thaumic-cast/shared';
 import { t, setLocale, type SupportedLocale } from '../lib/i18n';
-import { getSession, signOut } from '../lib/auth-client';
+import { useAuthStatus } from '../hooks/useAuthStatus';
 
 export function Options() {
   const [serverUrl, setServerUrl] = useState('http://localhost:3000');
@@ -16,10 +16,8 @@ export function Options() {
   const [speakerCount, setSpeakerCount] = useState<number | null>(null);
   const [discoveryError, setDiscoveryError] = useState<string | null>(null);
 
-  // Authentication state
-  const [isLoggedIn, setIsLoggedIn] = useState(false);
-  const [userEmail, setUserEmail] = useState<string | null>(null);
-  const [signingOut, setSigningOut] = useState(false);
+  // Authentication
+  const { isLoggedIn, userEmail, signingOut, handleSignOut } = useAuthStatus();
 
   // Validation states
   const [urlError, setUrlError] = useState<string | null>(null);
@@ -37,14 +35,6 @@ export function Options() {
       setSpeakerIp(settings.speakerIp);
       setLanguage(settings.language);
       setLocale(settings.language);
-    });
-
-    // Check authentication status
-    getSession().then(({ data: session }) => {
-      if (session?.user) {
-        setIsLoggedIn(true);
-        setUserEmail(session.user.email || null);
-      }
     });
   }, []);
 
@@ -133,21 +123,8 @@ export function Options() {
     setDiscovering(false);
   };
 
-  const handleSignIn = async () => {
+  const handleSignIn = () => {
     chrome.tabs.create({ url: `${serverUrl}/login` });
-  };
-
-  const handleSignOut = async () => {
-    setSigningOut(true);
-    try {
-      await signOut();
-      setIsLoggedIn(false);
-      setUserEmail(null);
-    } catch (err) {
-      console.error('Failed to sign out:', err);
-    } finally {
-      setSigningOut(false);
-    }
   };
 
   const hasValidationErrors = !!urlError || !!ipError;
