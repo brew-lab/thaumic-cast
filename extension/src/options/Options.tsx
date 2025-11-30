@@ -3,11 +3,13 @@ import { discoverLocalSpeakers, testServerConnection } from '../api/client';
 import { getExtensionSettings, saveExtensionSettings } from '../lib/settings';
 import { isValidIPv4, isValidUrl } from '@thaumic-cast/shared';
 import type { SonosMode } from '@thaumic-cast/shared';
+import { t, setLocale, type SupportedLocale } from '../lib/i18n';
 
 export function Options() {
   const [serverUrl, setServerUrl] = useState('http://localhost:3000');
   const [sonosMode, setSonosMode] = useState<SonosMode>('cloud');
   const [speakerIp, setSpeakerIp] = useState('');
+  const [language, setLanguage] = useState<SupportedLocale>('en');
   const [saved, setSaved] = useState(false);
   const [discovering, setDiscovering] = useState(false);
   const [speakerCount, setSpeakerCount] = useState<number | null>(null);
@@ -27,6 +29,8 @@ export function Options() {
       setServerUrl(settings.serverUrl);
       setSonosMode(settings.sonosMode);
       setSpeakerIp(settings.speakerIp);
+      setLanguage(settings.language);
+      setLocale(settings.language);
     });
   }, []);
 
@@ -90,9 +94,11 @@ export function Options() {
       serverUrl: normalizedUrl,
       sonosMode,
       speakerIp: trimmedIp,
+      language,
     });
     setServerUrl(normalizedUrl);
     setSpeakerIp(trimmedIp);
+    setLocale(language);
     setSaved(true);
     setTimeout(() => setSaved(false), 2000);
   };
@@ -117,12 +123,12 @@ export function Options() {
 
   return (
     <div>
-      <h1>Thaumic Cast Settings</h1>
+      <h1>{t('app.title')}</h1>
 
       <div class="card">
         <h2>Server Configuration</h2>
         <div class="form-group">
-          <label htmlFor="serverUrl">Server URL</label>
+          <label htmlFor="serverUrl">{t('labels.serverUrl')}</label>
           <input
             id="serverUrl"
             type="url"
@@ -137,10 +143,7 @@ export function Options() {
             class={urlError ? 'input-error' : ''}
           />
           {urlError && <p class="field-error">{urlError}</p>}
-          <p class="hint">
-            The URL of your Thaumic Cast server. For Local Mode, use the server's LAN IP (e.g.,
-            http://192.168.1.100:3000). You must also log in via this URL.
-          </p>
+          <p class="hint">{t('hints.serverUrl')}</p>
         </div>
         <div class="form-group">
           <button
@@ -148,7 +151,7 @@ export function Options() {
             onClick={handleTestConnection}
             disabled={testingConnection || !!urlError}
           >
-            {testingConnection ? 'Testing...' : 'Test Connection'}
+            {testingConnection ? 'Testing...' : t('actions.testConnection')}
           </button>
           {connectionResult && (
             <p class={connectionResult.success ? 'success-message' : 'error-message'}>
@@ -159,7 +162,7 @@ export function Options() {
       </div>
 
       <div class="card">
-        <h2>Sonos Connection Mode</h2>
+        <h2>{t('labels.sonosMode')}</h2>
         <div class="form-group">
           <label>
             <input
@@ -169,12 +172,9 @@ export function Options() {
               checked={sonosMode === 'cloud'}
               onChange={() => setSonosMode('cloud')}
             />
-            Cloud Mode
+            {t('labels.cloudMode')}
           </label>
-          <p class="hint">
-            Uses Sonos Cloud API. Requires OAuth login and a public server URL (via tunnel or
-            domain).
-          </p>
+          <p class="hint">{t('hints.cloud')}</p>
         </div>
         <div class="form-group">
           <label>
@@ -185,12 +185,9 @@ export function Options() {
               checked={sonosMode === 'local'}
               onChange={() => setSonosMode('local')}
             />
-            Local Mode
+            {t('labels.localMode')}
           </label>
-          <p class="hint">
-            Uses UPnP/SOAP on local network. No public URL needed, but server and speakers must be
-            on the same network.
-          </p>
+          <p class="hint">{t('hints.local')}</p>
         </div>
 
         {sonosMode === 'local' && (
@@ -236,8 +233,23 @@ export function Options() {
         )}
       </div>
 
+      <div class="card">
+        <h2>{t('labels.language')}</h2>
+        <div class="form-group">
+          <label htmlFor="language">{t('labels.language')}</label>
+          <select
+            id="language"
+            value={language}
+            onChange={(e) => setLanguage((e.target as HTMLSelectElement).value as SupportedLocale)}
+          >
+            <option value="en">English</option>
+          </select>
+          <p class="hint">{t('hints.language')}</p>
+        </div>
+      </div>
+
       <button class="btn btn-primary" onClick={handleSave} disabled={hasValidationErrors}>
-        Save Settings
+        {t('actions.saveSettings')}
       </button>
       {saved && <p class="success-message">Settings saved!</p>}
       {hasValidationErrors && (

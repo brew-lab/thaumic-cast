@@ -10,6 +10,7 @@ import {
   setLocalVolume,
 } from '../../api/client';
 import { getExtensionSettings } from '../../lib/settings';
+import type { LocaleKey } from '../../lib/i18n';
 import { getSession } from '../../lib/auth-client';
 
 export interface DisplayGroup {
@@ -339,17 +340,17 @@ export function useCasting({
     }
   }
 
-  function getCastButtonLabel() {
+  function getCastButtonLabel(translate: (key: LocaleKey) => string) {
     if (isCurrentTabSelected) {
       const label = selectedSource?.title || activeTab?.title || 'Current Tab';
       const truncated = label.slice(0, 20) + (label.length > 20 ? '...' : '');
-      return `Cast: ${truncated}`;
+      return `${translate('actions.cast')}: ${truncated}`;
     } else if (selectedSource?.title) {
       const truncated =
         selectedSource.title.slice(0, 20) + (selectedSource.title.length > 20 ? '...' : '');
-      return `Cast: ${truncated}`;
+      return `${translate('actions.cast')}: ${truncated}`;
     }
-    return 'Cast';
+    return translate('actions.cast');
   }
 
   return {

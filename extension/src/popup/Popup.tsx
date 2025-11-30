@@ -1,14 +1,22 @@
-import { useState } from 'preact/hooks';
+import { useEffect, useState } from 'preact/hooks';
 import type { QualityPreset } from '@thaumic-cast/shared';
-import { getExtensionSettings } from '../lib/settings';
 import { Header, CurrentTabCard, MediaSourceCard, PlaybackControls } from './components';
 import { useMediaSources } from './hooks/useMediaSources';
 import { useCasting } from './hooks/useCasting';
 import type { DisplayGroup } from './hooks/useCasting';
+import { t, setLocale } from '../lib/i18n';
+import { getExtensionSettings } from '../lib/settings';
 
 export function Popup() {
   const [selectedGroup, setSelectedGroup] = useState<string>('');
   const [quality, setQuality] = useState<QualityPreset>('medium');
+
+  // Initialize locale from settings
+  useEffect(() => {
+    getExtensionSettings().then((settings) => {
+      setLocale(settings.language);
+    });
+  }, []);
 
   const media = useMediaSources();
 
@@ -64,7 +72,7 @@ export function Popup() {
     return (
       <div>
         <Header onSettings={openOptions} />
-        <p class="status-message">Loading...</p>
+        <p class="status-message">{t('messages.loading')}</p>
       </div>
     );
   }
@@ -74,9 +82,9 @@ export function Popup() {
       <div>
         <Header onSettings={openOptions} />
         <div class="login-prompt">
-          <p>Sign in to start casting</p>
+          <p>{t('messages.signInPrompt')}</p>
           <button class="btn btn-primary" onClick={openServerLogin}>
-            Sign In
+            {t('actions.signIn')}
           </button>
         </div>
       </div>
@@ -88,9 +96,9 @@ export function Popup() {
       <div>
         <Header onSettings={openOptions} />
         <div class="login-prompt">
-          <p>Connect your Sonos account</p>
+          <p>{t('messages.connectSonos')}</p>
           <button class="btn btn-primary" onClick={openSonosLink}>
-            Connect Sonos
+            {t('actions.connectSonos')}
           </button>
         </div>
       </div>
@@ -107,12 +115,12 @@ export function Popup() {
           </p>
         )}
         <div class="login-prompt">
-          <p>No Sonos speakers found on network</p>
+          <p>{t('messages.noSpeakers')}</p>
           <button class="btn btn-secondary" onClick={reload} disabled={groupsLoading}>
-            {groupsLoading ? 'Scanning...' : 'Retry'}
+            {groupsLoading ? 'Scanning...' : t('actions.retry')}
           </button>
           <p class="hint" style={{ marginTop: '8px', fontSize: '12px', opacity: 0.7 }}>
-            Make sure the server is on the same network as your speakers
+            {t('messages.retryHint')}
           </p>
         </div>
       </div>
@@ -145,12 +153,12 @@ export function Popup() {
         </p>
       )}
 
-      {sonosMode === 'local' && <div class="mode-badge">Local Mode</div>}
+      {sonosMode === 'local' && <div class="mode-badge">{t('mode.localBadge')}</div>}
 
       {groupsLoading && <p class="status-message">Finding speakers...</p>}
 
       <div class="media-sources">
-        <div class="media-sources-header">Cast Source</div>
+        <div class="media-sources-header">{t('labels.castSource')}</div>
         <div class="media-source-list">
           {media.activeTab && (
             <CurrentTabCard
@@ -203,12 +211,14 @@ export function Popup() {
           <div class="casting-status">
             <div class="label">
               <span class="casting-indicator" aria-hidden="true" />
-              Casting to
+              {t('status.castingTo')}
             </div>
             <div class="value">{castStatus.groupName}</div>
           </div>
           <div class="form-group">
-            <label htmlFor="volume-casting">Volume: {volume}%</label>
+            <label htmlFor="volume-casting">
+              {t('labels.volumeCasting')}: {volume}%
+            </label>
             <input
               id="volume-casting"
               type="range"
@@ -222,13 +232,13 @@ export function Popup() {
             />
           </div>
           <button class="btn btn-primary btn-stop" onClick={handleStop} disabled={stopping}>
-            {stopping ? 'Stopping...' : 'Stop Casting'}
+            {stopping ? t('actions.stopBusy') : t('actions.stop')}
           </button>
         </>
       ) : (
         <>
           <div class="form-group">
-            <label htmlFor="group">Speaker Group</label>
+            <label htmlFor="group">{t('labels.speakerGroup')}</label>
             <select
               id="group"
               value={selectedGroup}
@@ -243,7 +253,7 @@ export function Popup() {
           </div>
 
           <div class="form-group">
-            <label htmlFor="quality">Quality</label>
+            <label htmlFor="quality">{t('labels.quality')}</label>
             <select
               id="quality"
               value={quality}
@@ -256,7 +266,9 @@ export function Popup() {
           </div>
 
           <div class="form-group">
-            <label htmlFor="volume">Volume: {volume}%</label>
+            <label htmlFor="volume">
+              {t('labels.volume')}: {volume}%
+            </label>
             <input
               id="volume"
               type="range"
@@ -275,7 +287,7 @@ export function Popup() {
             onClick={handleCast}
             disabled={isCasting || !selectedGroup || groupsLoading}
           >
-            {isCasting ? castingPhase || 'Starting...' : getCastButtonLabel()}
+            {isCasting ? castingPhase || t('actions.cast') : getCastButtonLabel(t)}
           </button>
         </>
       )}

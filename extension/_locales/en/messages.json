@@ -1,0 +1,6 @@
+{
+  "appName": { "message": "Thaumic Cast" },
+  "appDescription": { "message": "Cast any browser tab's audio to your Sonos speakers" },
+  "actionTitle": { "message": "Thaumic Cast" },
+  "optionsTitle": { "message": "Thaumic Cast Settings" }
+}
