@@ -1,10 +1,16 @@
 import type { MediaInfo } from '@thaumic-cast/shared';
+import { t } from '../lib/i18n';
 
 export function Header({ onSettings }: { onSettings: () => void }) {
   return (
     <div class="header">
-      <h1>Thaumic Cast</h1>
-      <button class="settings-btn" onClick={onSettings} aria-label="Settings" title="Settings">
+      <h1>{t('app.title')}</h1>
+      <button
+        class="settings-btn"
+        onClick={onSettings}
+        aria-label={t('aria.settings')}
+        title={t('labels.settings')}
+      >
         <svg
           width="16"
           height="16"
@@ -32,9 +38,11 @@ interface CurrentTabCardProps {
 export function CurrentTabCard({ tab, mediaInfo, isSelected, onClick }: CurrentTabCardProps) {
   const hasMedia = mediaInfo && (mediaInfo.hasMetadata || mediaInfo.isPlaying);
   const title = hasMedia
-    ? mediaInfo.title || tab.title || 'Current Tab'
-    : tab.title || 'Current Tab';
-  const subtitle = hasMedia ? mediaInfo.artist || 'Audio playing' : 'No media detected';
+    ? mediaInfo.title || tab.title || t('media.currentTab')
+    : tab.title || t('media.currentTab');
+  const subtitle = hasMedia
+    ? mediaInfo.artist || t('media.audioPlaying')
+    : t('media.noMediaDetected');
   const artwork = hasMedia ? mediaInfo.artwork : null;
 
   return (
@@ -110,7 +118,9 @@ export function MediaSourceCard({ source, isSelected, onClick }: MediaSourceCard
       </div>
       <div class="media-info">
         <div class="media-title">{source.title || source.tabTitle}</div>
-        <div class="media-artist">{source.hasMetadata ? source.artist : 'Audio playing'}</div>
+        <div class="media-artist">
+          {source.hasMetadata ? source.artist : t('media.audioPlaying')}
+        </div>
       </div>
       <div class={`media-select-indicator ${isSelected ? 'selected' : ''}`}>
         {isSelected ? (
@@ -152,8 +162,8 @@ export function PlaybackControls({
       <button
         class="playback-btn"
         onClick={onPrevious}
-        aria-label="Previous track"
-        title="Previous"
+        aria-label={t('playback.previousTrack')}
+        title={t('playback.previous')}
       >
         <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
           <path d="M6 6h2v12H6zm3.5 6l8.5 6V6z" />
@@ -162,8 +172,8 @@ export function PlaybackControls({
       <button
         class="playback-btn playback-btn-main"
         onClick={onPlayPause}
-        aria-label={isPlaying ? 'Pause' : 'Play'}
-        title={isPlaying ? 'Pause' : 'Play'}
+        aria-label={isPlaying ? t('playback.pause') : t('playback.play')}
+        title={isPlaying ? t('playback.pause') : t('playback.play')}
       >
         {isPlaying ? (
           <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
@@ -175,7 +185,12 @@ export function PlaybackControls({
           </svg>
         )}
       </button>
-      <button class="playback-btn" onClick={onNext} aria-label="Next track" title="Next">
+      <button
+        class="playback-btn"
+        onClick={onNext}
+        aria-label={t('playback.nextTrack')}
+        title={t('playback.next')}
+      >
         <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
           <path d="M6 18l8.5-6L6 6v12zM16 6v12h2V6h-2z" />
         </svg>

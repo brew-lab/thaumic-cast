@@ -71,7 +71,7 @@ export function Options() {
     } else {
       setConnectionResult({
         success: false,
-        message: result.error || 'Connection failed',
+        message: result.error || t('errors.connectionFailed'),
       });
     }
 

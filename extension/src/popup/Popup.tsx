@@ -142,7 +142,7 @@ export function Popup() {
         <div class="login-prompt">
           <p>{t('messages.noSpeakers')}</p>
           <button class="btn btn-secondary" onClick={reload} disabled={groupsLoading}>
-            {groupsLoading ? 'Scanning...' : t('actions.retry')}
+            {groupsLoading ? t('casting.scanning') : t('actions.retry')}
           </button>
           <p class="hint" style={{ marginTop: '8px', fontSize: '12px', opacity: 0.7 }}>
             {t('messages.retryHint')}
@@ -163,7 +163,11 @@ export function Popup() {
       {error && (
         <p class="error-message" role="alert">
           {error}
-          <button class="dismiss-btn" onClick={() => setError(null)} aria-label="Dismiss error">
+          <button
+            class="dismiss-btn"
+            onClick={() => setError(null)}
+            aria-label={t('aria.dismissError')}
+          >
             ×
           </button>
         </p>
@@ -172,7 +176,11 @@ export function Popup() {
       {warning && (
         <p class="warning-message" role="alert">
           {warning}
-          <button class="dismiss-btn" onClick={() => setWarning(null)} aria-label="Dismiss warning">
+          <button
+            class="dismiss-btn"
+            onClick={() => setWarning(null)}
+            aria-label={t('aria.dismissWarning')}
+          >
             ×
           </button>
         </p>
@@ -284,9 +292,9 @@ export function Popup() {
               value={quality}
               onChange={(e) => setQuality((e.target as HTMLSelectElement).value as QualityPreset)}
             >
-              <option value="low">Low (128 kbps)</option>
-              <option value="medium">Medium (192 kbps)</option>
-              <option value="high">High (320 kbps)</option>
+              <option value="low">{t('quality.low')}</option>
+              <option value="medium">{t('quality.medium')}</option>
+              <option value="high">{t('quality.high')}</option>
             </select>
           </div>
 

@@ -15,7 +15,7 @@ import {
   detectDesktopApp,
   DEFAULT_SERVER_URL,
 } from '../../lib/settings';
-import type { LocaleKey } from '../../lib/i18n';
+import { t, type LocaleKey } from '../../lib/i18n';
 import { getSession } from '../../lib/auth-client';
 
 export interface DisplayGroup {
@@ -103,9 +103,9 @@ export function useCasting({
         const activeGroup = groupsData.groups.find((g) => g.id === castStatus.groupId);
 
         if (!activeGroup) {
-          setWarning('Speaker group may have changed. Consider stopping and restarting the cast.');
+          setWarning(t('warnings.speakerGroupChanged'));
         } else if (activeGroup.coordinatorIp !== castStatus.coordinatorIp) {
-          setWarning('Speaker coordinator changed. Audio may not be playing correctly.');
+          setWarning(t('warnings.coordinatorChanged'));
         }
       }
     }, 30000);
@@ -202,7 +202,7 @@ export function useCasting({
       }
       // If cloud mode and not logged in, show disabled state (handled in Popup.tsx)
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Unknown error');
+      setError(err instanceof Error ? err.message : t('errors.unknownError'));
     } finally {
       setLoading(false);
       initInFlight.current = false;
@@ -269,7 +269,7 @@ export function useCasting({
     if (!selectedGroup) return;
 
     setCasting(true);
-    setCastingPhase('Preparing...');
+    setCastingPhase(t('casting.preparing'));
     setError(null);
     setWarning(null);
 
@@ -279,27 +279,27 @@ export function useCasting({
       if (selectedSourceTabId !== null) {
         targetTabId = selectedSourceTabId;
       } else {
-        setCastingPhase('Getting tab...');
+        setCastingPhase(t('casting.gettingTab'));
         const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
         if (!tab?.id) {
-          setError('No active tab');
+          setError(t('errors.noActiveTab'));
           return;
         }
         targetTabId = tab.id;
       }
 
-      setCastingPhase('Capturing audio...');
+      setCastingPhase(t('casting.capturingAudio'));
       const mediaStreamId = await chrome.tabCapture.getMediaStreamId({
         targetTabId,
       });
 
       const group = groups.find((g) => g.id === selectedGroup);
 
-      setCastingPhase('Starting stream...');
+      setCastingPhase(t('casting.startingStream'));
 
       // Build metadata from selected source or active tab
       const metadata = {
-        title: selectedSource?.title || activeTab?.title || 'Browser Audio',
+        title: selectedSource?.title || activeTab?.title || t('media.browserAudio'),
         artist: selectedSource?.artist,
         album: selectedSource?.album,
         artwork: selectedSource?.artwork,
@@ -309,7 +309,7 @@ export function useCasting({
         type: 'START_CAST',
         tabId: targetTabId,
         groupId: selectedGroup,
-        groupName: group?.name || 'Unknown',
+        groupName: group?.name || t('media.unknownGroup'),
         quality,
         mediaStreamId,
         mode: sonosMode,
@@ -336,7 +336,7 @@ export function useCasting({
         });
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to start cast');
+      setError(err instanceof Error ? err.message : t('errors.failedToStartCast'));
     } finally {
       setCasting(false);
       setCastingPhase('');
@@ -355,7 +355,7 @@ export function useCasting({
       });
       setCastStatus({ isActive: false });
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to stop cast');
+      setError(err instanceof Error ? err.message : t('errors.failedToStopCast'));
     } finally {
       setStopping(false);
     }
@@ -363,7 +363,7 @@ export function useCasting({
 
   function getCastButtonLabel(translate: (key: LocaleKey) => string) {
     if (isCurrentTabSelected) {
-      const label = selectedSource?.title || activeTab?.title || 'Current Tab';
+      const label = selectedSource?.title || activeTab?.title || translate('media.currentTab');
       const truncated = label.slice(0, 20) + (label.length > 20 ? '...' : '');
       return `${translate('actions.cast')}: ${truncated}`;
     } else if (selectedSource?.title) {
