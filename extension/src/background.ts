@@ -6,12 +6,20 @@ import type {
   CastErrorMessage,
   CastEndedMessage,
   SonosMode,
+  MediaInfo,
+  ControlMediaMessage,
 } from '@thaumic-cast/shared';
 import type { CreateStreamResponse } from '@thaumic-cast/shared';
 import { API_TIMEOUT_MS } from '@thaumic-cast/shared';
 
 // Active stream state
 let activeStream: CastStatus = { isActive: false };
+
+// Media state tracking for all tabs
+const mediaByTab = new Map<number, MediaInfo>();
+
+// Track when each tab's media was first detected (for stable sorting)
+const firstDetectedByTab = new Map<number, number>();
 
 /**
  * Fetch with timeout support
@@ -148,13 +156,14 @@ async function stopCurrentStream(mode?: SonosMode, coordinatorIp?: string): Prom
 }
 
 // Message handler
-chrome.runtime.onMessage.addListener((message: ExtensionMessage, _sender, sendResponse) => {
-  handleMessage(message, sendResponse);
+chrome.runtime.onMessage.addListener((message: ExtensionMessage, sender, sendResponse) => {
+  handleMessage(message, sender, sendResponse);
   return true; // Keep channel open for async response
 });
 
 async function handleMessage(
-  message: ExtensionMessage,
+  message: ExtensionMessage & { media?: unknown },
+  sender: chrome.runtime.MessageSender,
   sendResponse: (response: unknown) => void
 ): Promise<void> {
   switch (message.type) {
@@ -312,10 +321,132 @@ async function handleMessage(
     case 'OFFSCREEN_STOP':
       break;
 
+    // Media detection messages
+    case 'MEDIA_UPDATE': {
+      handleMediaUpdate(message.media, sender);
+      sendResponse({ success: true });
+      break;
+    }
+
+    case 'GET_MEDIA_SOURCES': {
+      const sources = await getMediaSources();
+      console.log('[Background] GET_MEDIA_SOURCES returning:', sources);
+      sendResponse({ sources });
+      break;
+    }
+
+    case 'CONTROL_MEDIA': {
+      handleMediaControl(message as ControlMediaMessage, sendResponse);
+      break;
+    }
+
     default:
+      console.warn('[Background] Unknown message type:', message.type);
       sendResponse({ error: 'Unknown message type' });
   }
 }
+
+// Handle media update from content script
+function handleMediaUpdate(
+  media: Omit<MediaInfo, 'tabId' | 'tabTitle' | 'tabFavicon'> | null,
+  sender: chrome.runtime.MessageSender
+) {
+  const tabId = sender.tab?.id;
+  console.log('[Background] Media update from tab', tabId, media);
+  if (!tabId) return;
+
+  if (!media) {
+    // Tab no longer has media
+    mediaByTab.delete(tabId);
+    firstDetectedByTab.delete(tabId);
+    return;
+  }
+
+  // Track when this source was first detected (for stable ordering)
+  if (!firstDetectedByTab.has(tabId)) {
+    firstDetectedByTab.set(tabId, Date.now());
+  }
+
+  // Build full media info with tab details
+  const fullInfo: MediaInfo = {
+    tabId,
+    tabTitle: sender.tab?.title || 'Unknown tab',
+    tabFavicon: sender.tab?.favIconUrl,
+    title: media.title,
+    artist: media.artist,
+    album: media.album,
+    artwork: media.artwork,
+    isPlaying: media.isPlaying,
+    lastUpdated: Date.now(),
+    hasMetadata: media.hasMetadata ?? false,
+  };
+
+  mediaByTab.set(tabId, fullInfo);
+}
+
+// Get all active media sources, sorted by first detected (stable order)
+// Verifies tabs still exist and removes stale entries
+async function getMediaSources(): Promise<MediaInfo[]> {
+  const sources: MediaInfo[] = [];
+
+  // Verify each tab still exists and collect valid sources
+  for (const [tabId, info] of mediaByTab) {
+    try {
+      await chrome.tabs.get(tabId);
+      // Tab exists, include this source
+      sources.push(info);
+    } catch {
+      // Tab no longer exists, clean up
+      mediaByTab.delete(tabId);
+      firstDetectedByTab.delete(tabId);
+    }
+  }
+
+  // Stable sort by first detected time only (oldest first)
+  // Do NOT sort by playing status to avoid UI jumping
+  sources.sort((a, b) => {
+    const aFirst = firstDetectedByTab.get(a.tabId) || 0;
+    const bFirst = firstDetectedByTab.get(b.tabId) || 0;
+    return aFirst - bFirst;
+  });
+
+  return sources;
+}
+
+// Forward media control command to content script
+async function handleMediaControl(
+  message: ControlMediaMessage,
+  sendResponse: (response: unknown) => void
+) {
+  const { tabId, action } = message;
+
+  try {
+    await chrome.tabs.sendMessage(tabId, {
+      type: 'CONTROL_MEDIA',
+      action,
+    });
+    sendResponse({ success: true });
+  } catch (err) {
+    console.error('[Background] Failed to send control to tab:', err);
+    sendResponse({ error: 'Failed to control media' });
+  }
+}
+
+// Clean up media state when tabs close
+chrome.tabs.onRemoved.addListener((tabId) => {
+  mediaByTab.delete(tabId);
+  firstDetectedByTab.delete(tabId);
+});
+
+// Clean up media state when tab navigates to a different page
+// This handles cases where user navigates away from media page
+chrome.webNavigation.onBeforeNavigate.addListener(({ tabId, frameId }) => {
+  // Only react to main frame navigation (not iframes)
+  if (frameId === 0) {
+    mediaByTab.delete(tabId);
+    firstDetectedByTab.delete(tabId);
+  }
+});
 
 // Clean up on extension unload
 chrome.runtime.onSuspend?.addListener(async () => {

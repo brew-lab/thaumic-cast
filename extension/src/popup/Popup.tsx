@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'preact/hooks';
+import { useState, useEffect, useRef, useCallback } from 'preact/hooks';
 import { getSession } from '../lib/auth-client';
 import {
   getSonosStatus,
@@ -9,7 +9,13 @@ import {
   getLocalVolume,
   setLocalVolume,
 } from '../api/client';
-import type { CastStatus, QualityPreset, SonosMode } from '@thaumic-cast/shared';
+import type {
+  CastStatus,
+  QualityPreset,
+  SonosMode,
+  MediaInfo,
+  MediaAction,
+} from '@thaumic-cast/shared';
 
 // Unified group type for UI
 interface DisplayGroup {
@@ -36,6 +42,13 @@ export function Popup() {
   const [volumeLoading, setVolumeLoading] = useState(false);
   const volumeTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const errorTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Media source state
+  const [mediaSources, setMediaSources] = useState<MediaInfo[]>([]);
+  const [selectedSourceTabId, setSelectedSourceTabId] = useState<number | null>(null);
+  const [showAllSources, setShowAllSources] = useState(false);
+  const [activeTab, setActiveTab] = useState<chrome.tabs.Tab | null>(null);
+  const MAX_VISIBLE_SOURCES = 3;
 
   // Auto-clear errors after 8 seconds
   useEffect(() => {
@@ -65,6 +78,34 @@ export function Popup() {
   useEffect(() => {
     init();
   }, []);
+
+  // Poll for media sources and track active tab
+  useEffect(() => {
+    async function fetchMediaSources() {
+      try {
+        // Get active tab info
+        const [currentTab] = await chrome.tabs.query({ active: true, currentWindow: true });
+        setActiveTab(currentTab || null);
+
+        const response = await chrome.runtime.sendMessage({ type: 'GET_MEDIA_SOURCES' });
+        console.log('[Popup] Media sources response:', response);
+        if (response?.sources) {
+          setMediaSources(response.sources);
+
+          // Auto-select current tab on first load (when selectedSourceTabId is null)
+          if (selectedSourceTabId === null && currentTab?.id) {
+            setSelectedSourceTabId(currentTab.id);
+          }
+        }
+      } catch {
+        // Extension context may be invalidated
+      }
+    }
+
+    fetchMediaSources();
+    const interval = setInterval(fetchMediaSources, 2000);
+    return () => clearInterval(interval);
+  }, [selectedSourceTabId]);
 
   // Periodic group refresh during active casting to detect stale state
   useEffect(() => {
@@ -119,6 +160,49 @@ export function Popup() {
 
     setVolumeLoading(false);
   }
+
+  // Send media control command to selected source
+  const handleMediaControl = useCallback(
+    async (action: MediaAction) => {
+      if (selectedSourceTabId === null) return;
+
+      // Optimistically update UI for play/pause
+      if (action === 'play' || action === 'pause') {
+        setMediaSources((prev) =>
+          prev.map((source) =>
+            source.tabId === selectedSourceTabId
+              ? { ...source, isPlaying: action === 'play' }
+              : source
+          )
+        );
+      }
+
+      try {
+        await chrome.runtime.sendMessage({
+          type: 'CONTROL_MEDIA',
+          tabId: selectedSourceTabId,
+          action,
+        });
+      } catch {
+        // Failed to send control
+      }
+    },
+    [selectedSourceTabId]
+  );
+
+  // Get the currently selected source (could be current tab or another media source)
+  const selectedSource = mediaSources.find((s) => s.tabId === selectedSourceTabId);
+
+  // Get media info for current tab (if it has detected media)
+  const currentTabMedia = activeTab?.id ? mediaSources.find((s) => s.tabId === activeTab.id) : null;
+
+  // Filter out current tab from other media sources to avoid duplication
+  const otherMediaSources = activeTab?.id
+    ? mediaSources.filter((s) => s.tabId !== activeTab.id)
+    : mediaSources;
+
+  // Check if current tab is selected
+  const isCurrentTabSelected = activeTab?.id === selectedSourceTabId;
 
   function handleVolumeChange(newVolume: number) {
     setVolume(newVolume);
@@ -265,18 +349,27 @@ export function Popup() {
     setWarning(null);
 
     try {
-      // Get current tab
-      setCastingPhase('Getting tab...');
-      const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-      if (!tab?.id) {
-        setError('No active tab');
-        return;
+      // Determine which tab to capture
+      let targetTabId: number;
+
+      if (selectedSourceTabId !== null) {
+        // Cast from selected media source
+        targetTabId = selectedSourceTabId;
+      } else {
+        // Fall back to active tab
+        setCastingPhase('Getting tab...');
+        const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+        if (!tab?.id) {
+          setError('No active tab');
+          return;
+        }
+        targetTabId = tab.id;
       }
 
       // Get media stream ID for tab capture
       setCastingPhase('Capturing audio...');
       const mediaStreamId = await chrome.tabCapture.getMediaStreamId({
-        targetTabId: tab.id,
+        targetTabId,
       });
 
       const group = groups.find((g) => g.id === selectedGroup);
@@ -285,7 +378,7 @@ export function Popup() {
       setCastingPhase('Starting stream...');
       const response = await chrome.runtime.sendMessage({
         type: 'START_CAST',
-        tabId: tab.id,
+        tabId: targetTabId,
         groupId: selectedGroup,
         groupName: group?.name || 'Unknown',
         quality,
@@ -305,7 +398,7 @@ export function Popup() {
         setCastStatus({
           isActive: true,
           streamId: response.streamId,
-          tabId: tab.id,
+          tabId: targetTabId,
           groupId: selectedGroup,
           groupName: group?.name,
           quality,
@@ -438,6 +531,51 @@ export function Popup() {
 
       {groupsLoading && <p class="status-message">Finding speakers...</p>}
 
+      {/* Media Sources Section */}
+      <div class="media-sources">
+        <div class="media-sources-header">Cast Source</div>
+        <div class="media-source-list">
+          {/* Current Tab Card - always shown first */}
+          {activeTab && (
+            <CurrentTabCard
+              tab={activeTab}
+              mediaInfo={currentTabMedia}
+              isSelected={isCurrentTabSelected}
+              onClick={() => {
+                if (activeTab.id) {
+                  setSelectedSourceTabId(activeTab.id);
+                }
+              }}
+            />
+          )}
+          {/* Other media sources from different tabs */}
+          {(showAllSources
+            ? otherMediaSources
+            : otherMediaSources.slice(0, MAX_VISIBLE_SOURCES - 1)
+          ).map((source) => (
+            <MediaSourceCard
+              key={source.tabId}
+              source={source}
+              isSelected={source.tabId === selectedSourceTabId}
+              onClick={() => setSelectedSourceTabId(source.tabId)}
+            />
+          ))}
+        </div>
+        {otherMediaSources.length > MAX_VISIBLE_SOURCES - 1 && (
+          <button class="see-all-btn" onClick={() => setShowAllSources(!showAllSources)}>
+            {showAllSources ? 'Show less' : `See all sources (${otherMediaSources.length + 1})`}
+          </button>
+        )}
+        {selectedSource && (
+          <PlaybackControls
+            isPlaying={selectedSource.isPlaying}
+            onPrevious={() => handleMediaControl('previoustrack')}
+            onPlayPause={() => handleMediaControl(selectedSource.isPlaying ? 'pause' : 'play')}
+            onNext={() => handleMediaControl('nexttrack')}
+          />
+        )}
+      </div>
+
       {castStatus.isActive ? (
         <>
           <div class="casting-status">
@@ -515,7 +653,22 @@ export function Popup() {
             onClick={handleCast}
             disabled={casting || !selectedGroup || groupsLoading}
           >
-            {casting ? castingPhase || 'Starting...' : 'Cast This Tab'}
+            {casting
+              ? castingPhase || 'Starting...'
+              : (() => {
+                  // Determine cast button label based on selection
+                  if (isCurrentTabSelected) {
+                    const label = currentTabMedia?.title || activeTab?.title || 'Current Tab';
+                    const truncated = label.slice(0, 20) + (label.length > 20 ? '...' : '');
+                    return `Cast: ${truncated}`;
+                  } else if (selectedSource?.title) {
+                    const truncated =
+                      selectedSource.title.slice(0, 20) +
+                      (selectedSource.title.length > 20 ? '...' : '');
+                    return `Cast: ${truncated}`;
+                  }
+                  return 'Cast';
+                })()}
           </button>
         </>
       )}
@@ -539,6 +692,165 @@ function Header({ onSettings }: { onSettings: () => void }) {
         >
           <circle cx="12" cy="12" r="3" />
           <path d="M12 1v4M12 19v4M4.2 4.2l2.8 2.8M17 17l2.8 2.8M1 12h4M19 12h4M4.2 19.8l2.8-2.8M17 7l2.8-2.8" />
+        </svg>
+      </button>
+    </div>
+  );
+}
+
+interface CurrentTabCardProps {
+  tab: chrome.tabs.Tab;
+  mediaInfo: MediaInfo | null | undefined;
+  isSelected: boolean;
+  onClick: () => void;
+}
+
+function CurrentTabCard({ tab, mediaInfo, isSelected, onClick }: CurrentTabCardProps) {
+  // If current tab has detected media, show media info; otherwise show tab info
+  const hasMedia = mediaInfo && (mediaInfo.hasMetadata || mediaInfo.isPlaying);
+  const title = hasMedia
+    ? mediaInfo.title || tab.title || 'Current Tab'
+    : tab.title || 'Current Tab';
+  const subtitle = hasMedia ? mediaInfo.artist || 'Audio playing' : 'No media detected';
+  const artwork = hasMedia ? mediaInfo.artwork : null;
+
+  return (
+    <button
+      class={`media-source-card ${isSelected ? 'selected' : ''}`}
+      onClick={onClick}
+      type="button"
+    >
+      <div class="media-artwork">
+        {artwork ? (
+          <img src={artwork} alt="" />
+        ) : tab.favIconUrl ? (
+          <img src={tab.favIconUrl} alt="" />
+        ) : (
+          <div class="media-artwork-placeholder">
+            {/* Browser tab icon */}
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+              <path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm0 16H5V7h14v12z" />
+            </svg>
+          </div>
+        )}
+      </div>
+      <div class="media-info">
+        <div class="media-title">{title}</div>
+        <div class="media-artist">{subtitle}</div>
+      </div>
+      <div class={`media-select-indicator ${isSelected ? 'selected' : ''}`}>
+        {isSelected ? (
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+            <circle cx="12" cy="12" r="8" />
+          </svg>
+        ) : (
+          <svg
+            width="16"
+            height="16"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+          >
+            <circle cx="12" cy="12" r="8" />
+          </svg>
+        )}
+      </div>
+    </button>
+  );
+}
+
+interface MediaSourceCardProps {
+  source: MediaInfo;
+  isSelected: boolean;
+  onClick: () => void;
+}
+
+function MediaSourceCard({ source, isSelected, onClick }: MediaSourceCardProps) {
+  return (
+    <button
+      class={`media-source-card ${isSelected ? 'selected' : ''}`}
+      onClick={onClick}
+      type="button"
+    >
+      <div class="media-artwork">
+        {source.artwork ? (
+          <img src={source.artwork} alt="" />
+        ) : source.tabFavicon ? (
+          <img src={source.tabFavicon} alt="" />
+        ) : (
+          <div class="media-artwork-placeholder">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+              <path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z" />
+            </svg>
+          </div>
+        )}
+      </div>
+      <div class="media-info">
+        <div class="media-title">{source.title || source.tabTitle}</div>
+        <div class="media-artist">{source.hasMetadata ? source.artist : 'Audio playing'}</div>
+      </div>
+      <div class={`media-select-indicator ${isSelected ? 'selected' : ''}`}>
+        {isSelected ? (
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+            <circle cx="12" cy="12" r="8" />
+          </svg>
+        ) : (
+          <svg
+            width="16"
+            height="16"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+          >
+            <circle cx="12" cy="12" r="8" />
+          </svg>
+        )}
+      </div>
+    </button>
+  );
+}
+
+interface PlaybackControlsProps {
+  isPlaying: boolean;
+  onPrevious: () => void;
+  onPlayPause: () => void;
+  onNext: () => void;
+}
+
+function PlaybackControls({ isPlaying, onPrevious, onPlayPause, onNext }: PlaybackControlsProps) {
+  return (
+    <div class="playback-controls">
+      <button
+        class="playback-btn"
+        onClick={onPrevious}
+        aria-label="Previous track"
+        title="Previous"
+      >
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+          <path d="M6 6h2v12H6zm3.5 6l8.5 6V6z" />
+        </svg>
+      </button>
+      <button
+        class="playback-btn playback-btn-main"
+        onClick={onPlayPause}
+        aria-label={isPlaying ? 'Pause' : 'Play'}
+        title={isPlaying ? 'Pause' : 'Play'}
+      >
+        {isPlaying ? (
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
+            <path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z" />
+          </svg>
+        ) : (
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
+            <path d="M8 5v14l11-7z" />
+          </svg>
+        )}
+      </button>
+      <button class="playback-btn" onClick={onNext} aria-label="Next track" title="Next">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+          <path d="M6 18l8.5-6L6 6v12zM16 6v12h2V6h-2z" />
         </svg>
       </button>
     </div>

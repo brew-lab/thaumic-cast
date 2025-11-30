@@ -12,7 +12,29 @@ export type MessageType =
   | 'OFFSCREEN_READY'
   | 'CAST_ERROR'
   | 'CAST_ENDED'
-  | 'STATUS_UPDATE';
+  | 'STATUS_UPDATE'
+  // Media detection messages
+  | 'MEDIA_UPDATE'
+  | 'GET_MEDIA_SOURCES'
+  | 'MEDIA_SOURCES'
+  | 'CONTROL_MEDIA';
+
+// Media info from a tab
+export interface MediaInfo {
+  tabId: number;
+  tabTitle: string;
+  tabFavicon?: string;
+  title?: string;
+  artist?: string;
+  album?: string;
+  artwork?: string;
+  isPlaying: boolean;
+  lastUpdated: number;
+  hasMetadata: boolean; // true if we have rich metadata from Media Session API
+}
+
+// Media control actions
+export type MediaAction = 'play' | 'pause' | 'previoustrack' | 'nexttrack';
 
 // Base message interface
 interface BaseMessage {
@@ -84,6 +106,30 @@ export interface StatusUpdateMessage extends BaseMessage {
   status: CastStatus;
 }
 
+// MEDIA_UPDATE: content script -> service worker
+export interface MediaUpdateMessage extends BaseMessage {
+  type: 'MEDIA_UPDATE';
+  media: Omit<MediaInfo, 'tabId' | 'tabTitle' | 'tabFavicon'>;
+}
+
+// GET_MEDIA_SOURCES: popup -> service worker
+export interface GetMediaSourcesMessage extends BaseMessage {
+  type: 'GET_MEDIA_SOURCES';
+}
+
+// MEDIA_SOURCES: service worker -> popup
+export interface MediaSourcesMessage extends BaseMessage {
+  type: 'MEDIA_SOURCES';
+  sources: MediaInfo[];
+}
+
+// CONTROL_MEDIA: popup -> service worker -> content script
+export interface ControlMediaMessage extends BaseMessage {
+  type: 'CONTROL_MEDIA';
+  tabId: number;
+  action: MediaAction;
+}
+
 // Cast status
 export interface CastStatus {
   isActive: boolean;
@@ -106,9 +152,17 @@ export type ExtensionMessage =
   | OffscreenReadyMessage
   | CastErrorMessage
   | CastEndedMessage
-  | StatusUpdateMessage;
+  | StatusUpdateMessage
+  | MediaUpdateMessage
+  | GetMediaSourcesMessage
+  | MediaSourcesMessage
+  | ControlMediaMessage;
 
 // Response types
 export interface StatusResponse {
   status: CastStatus;
+}
+
+export interface MediaSourcesResponse {
+  sources: MediaInfo[];
 }
