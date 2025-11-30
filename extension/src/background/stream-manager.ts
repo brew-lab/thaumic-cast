@@ -158,19 +158,36 @@ export async function stopCurrentStream(mode?: SonosMode, coordinatorIp?: string
   const effectiveIp = coordinatorIp || activeStream.coordinatorIp;
 
   if (effectiveMode === 'local' && effectiveIp) {
-    try {
-      await fetchWithTimeout(
-        `${serverUrl}/api/local/stop`,
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          credentials: 'include',
-          body: JSON.stringify({ coordinatorIp: effectiveIp }),
-        },
-        5000
-      );
-    } catch {
-      logError('failed to stop playback on speaker', { coordinatorIp: effectiveIp });
+    const stopPayload = {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include' as const,
+      body: JSON.stringify({ coordinatorIp: effectiveIp }),
+    };
+
+    let stopError: unknown = null;
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      try {
+        const res = await fetchWithTimeout(`${serverUrl}/api/local/stop`, stopPayload, 5000);
+        if (res.ok) {
+          stopError = null;
+          break;
+        }
+        stopError = `HTTP ${res.status}`;
+      } catch (err) {
+        stopError = err;
+      }
+
+      if (stopError && attempt < 2) {
+        await new Promise((resolve) => setTimeout(resolve, 300));
+      }
+    }
+
+    if (stopError) {
+      logError('failed to stop playback on speaker', {
+        coordinatorIp: effectiveIp,
+        message: stopError instanceof Error ? stopError.message : String(stopError),
+      });
     }
   }
 

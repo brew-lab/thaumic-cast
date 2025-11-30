@@ -107,8 +107,13 @@ body {
   color: white;
 }
 
-.btn-stop:hover {
+.btn-stop:hover:not(:disabled) {
   background: color-mix(in oklch, var(--color-casting), black 10%);
+}
+
+.btn-stop:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
 }
 
 .casting-status {

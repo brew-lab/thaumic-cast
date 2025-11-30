@@ -39,6 +39,7 @@ export function Popup() {
     volume,
     volumeLoading,
     handleVolumeChange,
+    stopping,
     handleCast,
     handleStop,
     getCastButtonLabel,
@@ -220,8 +221,8 @@ export function Popup() {
               }
             />
           </div>
-          <button class="btn btn-stop" onClick={handleStop}>
-            Stop Casting
+          <button class="btn btn-primary btn-stop" onClick={handleStop} disabled={stopping}>
+            {stopping ? 'Stopping...' : 'Stop Casting'}
           </button>
         </>
       ) : (
