@@ -1,16 +1,25 @@
+use socket2::{Domain, Protocol, SockAddr, Socket, Type};
 use std::collections::HashMap;
-use std::net::{Ipv4Addr, SocketAddrV4, UdpSocket};
-use std::time::Duration;
+use std::net::{IpAddr, Ipv4Addr, SocketAddrV4, UdpSocket};
+use std::time::{Duration, Instant};
 use thiserror::Error;
 
 const SSDP_MULTICAST_IP: Ipv4Addr = Ipv4Addr::new(239, 255, 255, 250);
 const SSDP_PORT: u16 = 1900;
 const SONOS_SEARCH_TARGET: &str = "urn:schemas-upnp-org:device:ZonePlayer:1";
 
+// Discovery parameters
+const MX_VALUE: u8 = 3; // Devices respond within 0-MX seconds
+const RETRY_COUNT: usize = 3;
+const RETRY_INTERVAL_MS: u64 = 800;
+const DEFAULT_TIMEOUT_MS: u64 = 5000;
+
 #[derive(Debug, Error)]
 pub enum SsdpError {
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
+    #[error("No valid network interfaces found")]
+    NoInterfaces,
 }
 
 /// Internal speaker info from SSDP discovery
@@ -23,16 +32,72 @@ pub struct DiscoveredSpeaker {
     pub location: String,
 }
 
+/// Get all valid local IPv4 addresses for discovery
+/// Filters out loopback and virtual interfaces (docker, veth, etc.)
+fn get_valid_interfaces() -> Vec<(String, Ipv4Addr)> {
+    let mut result = Vec::new();
+
+    match local_ip_address::list_afinet_netifas() {
+        Ok(interfaces) => {
+            for (name, addr) in interfaces {
+                if let IpAddr::V4(v4) = addr {
+                    // Skip loopback
+                    if v4.is_loopback() {
+                        continue;
+                    }
+
+                    // Skip virtual interfaces
+                    if name.starts_with("docker")
+                        || name.starts_with("veth")
+                        || name.starts_with("br-")
+                        || name.starts_with("virbr")
+                    {
+                        continue;
+                    }
+
+                    result.push((name, v4));
+                }
+            }
+        }
+        Err(e) => {
+            tracing::warn!("Failed to list network interfaces: {}", e);
+        }
+    }
+
+    result
+}
+
+/// Create a UDP socket bound to a specific interface
+fn create_socket_for_interface(interface_ip: Ipv4Addr) -> std::io::Result<UdpSocket> {
+    let socket = Socket::new(Domain::IPV4, Type::DGRAM, Some(Protocol::UDP))?;
+
+    // Allow address reuse
+    socket.set_reuse_address(true)?;
+
+    #[cfg(unix)]
+    socket.set_reuse_port(true)?;
+
+    // Bind to interface with random port
+    let bind_addr = SocketAddrV4::new(interface_ip, 0);
+    socket.bind(&SockAddr::from(bind_addr))?;
+
+    // Set read timeout for polling
+    socket.set_read_timeout(Some(Duration::from_millis(100)))?;
+    socket.set_write_timeout(Some(Duration::from_millis(1000)))?;
+
+    Ok(socket.into())
+}
+
 /// Build the M-SEARCH message for SSDP discovery
 fn build_msearch() -> String {
     format!(
         "M-SEARCH * HTTP/1.1\r\n\
          HOST: {}:{}\r\n\
          MAN: \"ssdp:discover\"\r\n\
-         MX: 1\r\n\
+         MX: {}\r\n\
          ST: {}\r\n\
          \r\n",
-        SSDP_MULTICAST_IP, SSDP_PORT, SONOS_SEARCH_TARGET
+        SSDP_MULTICAST_IP, SSDP_PORT, MX_VALUE, SONOS_SEARCH_TARGET
     )
 }
 
@@ -78,58 +143,104 @@ fn parse_ssdp_response(response: &str) -> Option<DiscoveredSpeaker> {
 }
 
 /// Discover Sonos speakers on the local network using SSDP
+/// Creates a socket per network interface for reliable discovery
 pub fn discover(timeout_ms: u64) -> Result<Vec<DiscoveredSpeaker>, SsdpError> {
     let mut discovered: HashMap<String, DiscoveredSpeaker> = HashMap::new();
+    let interfaces = get_valid_interfaces();
 
-    // Create UDP socket
-    let socket = UdpSocket::bind("0.0.0.0:0")?;
-    // Short read timeout so we can check the deadline frequently
-    socket.set_read_timeout(Some(Duration::from_millis(200)))?;
+    if interfaces.is_empty() {
+        tracing::warn!("[SSDP] No valid network interfaces found");
+        return Err(SsdpError::NoInterfaces);
+    }
 
-    let multicast_addr = SocketAddrV4::new(SSDP_MULTICAST_IP, SSDP_PORT);
+    let interface_names: Vec<_> = interfaces.iter().map(|(name, _)| name.as_str()).collect();
+    tracing::info!(
+        "[SSDP] Discovering on {} interface(s): {}",
+        interfaces.len(),
+        interface_names.join(", ")
+    );
+
     let msearch = build_msearch();
+    let multicast_addr = SocketAddrV4::new(SSDP_MULTICAST_IP, SSDP_PORT);
 
-    // Send M-SEARCH twice for reliability
-    socket.send_to(msearch.as_bytes(), multicast_addr)?;
+    // Create sockets for each interface
+    let mut sockets: Vec<(String, UdpSocket)> = Vec::new();
 
-    // Wait a bit and send again
-    std::thread::sleep(Duration::from_millis(500));
-    socket.send_to(msearch.as_bytes(), multicast_addr)?;
-
-    // Receive responses until timeout
-    let mut buf = [0u8; 2048];
-    let deadline = std::time::Instant::now() + Duration::from_millis(timeout_ms);
-
-    while std::time::Instant::now() < deadline {
-        match socket.recv_from(&mut buf) {
-            Ok((len, _addr)) => {
-                if let Ok(response) = std::str::from_utf8(&buf[..len]) {
-                    if let Some(speaker) = parse_ssdp_response(response) {
-                        if !discovered.contains_key(&speaker.uuid) {
-                            tracing::debug!(
-                                "Discovered speaker: {} at {}",
-                                speaker.uuid,
-                                speaker.ip
-                            );
-                            discovered.insert(speaker.uuid.clone(), speaker);
-                        }
-                    }
-                }
-            }
-            Err(ref e)
-                if e.kind() == std::io::ErrorKind::WouldBlock
-                    || e.kind() == std::io::ErrorKind::TimedOut =>
-            {
-                // Read timeout - continue waiting until overall deadline
-                continue;
+    for (name, ip) in &interfaces {
+        match create_socket_for_interface(*ip) {
+            Ok(socket) => {
+                tracing::debug!("[SSDP] Created socket bound to {} ({})", name, ip);
+                sockets.push((name.clone(), socket));
             }
             Err(e) => {
-                tracing::warn!("SSDP receive error: {}", e);
-                break;
+                tracing::warn!("[SSDP] Failed to create socket for {} ({}): {}", name, ip, e);
             }
         }
     }
 
+    if sockets.is_empty() {
+        return Err(SsdpError::Io(std::io::Error::new(
+            std::io::ErrorKind::Other,
+            "No sockets could be created",
+        )));
+    }
+
+    // Send M-SEARCH multiple times with spacing
+    for i in 0..RETRY_COUNT {
+        for (name, socket) in &sockets {
+            if let Err(e) = socket.send_to(msearch.as_bytes(), multicast_addr) {
+                tracing::warn!("[SSDP] Failed to send M-SEARCH on {}: {}", name, e);
+            }
+        }
+        if i < RETRY_COUNT - 1 {
+            std::thread::sleep(Duration::from_millis(RETRY_INTERVAL_MS));
+        }
+    }
+
+    // Receive responses until timeout
+    let mut buf = [0u8; 2048];
+    let timeout = timeout_ms.max(DEFAULT_TIMEOUT_MS);
+    let deadline = Instant::now() + Duration::from_millis(timeout);
+
+    while Instant::now() < deadline {
+        for (name, socket) in &sockets {
+            match socket.recv_from(&mut buf) {
+                Ok((len, addr)) => {
+                    if let Ok(response) = std::str::from_utf8(&buf[..len]) {
+                        if let Some(speaker) = parse_ssdp_response(response) {
+                            if !discovered.contains_key(&speaker.uuid) {
+                                tracing::info!(
+                                    "[SSDP] Discovered: {} at {} (via {} from {})",
+                                    speaker.uuid,
+                                    speaker.ip,
+                                    name,
+                                    addr
+                                );
+                                discovered.insert(speaker.uuid.clone(), speaker);
+                            }
+                        }
+                    }
+                }
+                Err(ref e)
+                    if e.kind() == std::io::ErrorKind::WouldBlock
+                        || e.kind() == std::io::ErrorKind::TimedOut =>
+                {
+                    // Read timeout - continue polling other sockets
+                    continue;
+                }
+                Err(e) => {
+                    tracing::trace!("[SSDP] Socket recv error on {}: {}", name, e);
+                }
+            }
+        }
+        // Small sleep to avoid busy-waiting
+        std::thread::sleep(Duration::from_millis(10));
+    }
+
+    tracing::info!(
+        "[SSDP] Discovery complete: found {} speaker(s)",
+        discovered.len()
+    );
     Ok(discovered.into_values().collect())
 }
 
