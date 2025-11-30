@@ -50,6 +50,7 @@ export function useCasting({
   const [castingPhase, setCastingPhase] = useState<string>('');
   const [volume, setVolume] = useState<number>(50);
   const [volumeLoading, setVolumeLoading] = useState(false);
+  const [stopping, setStopping] = useState(false);
   const volumeTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const errorTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const initInFlight = useRef(false);
@@ -321,6 +322,8 @@ export function useCasting({
   }
 
   async function handleStop() {
+    if (stopping) return;
+    setStopping(true);
     try {
       await chrome.runtime.sendMessage({
         type: 'STOP_CAST',
@@ -331,6 +334,8 @@ export function useCasting({
       setCastStatus({ isActive: false });
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to stop cast');
+    } finally {
+      setStopping(false);
     }
   }
 
@@ -364,6 +369,7 @@ export function useCasting({
     volume,
     volumeLoading,
     handleVolumeChange,
+    stopping,
     handleCast,
     handleStop,
     getCastButtonLabel,
