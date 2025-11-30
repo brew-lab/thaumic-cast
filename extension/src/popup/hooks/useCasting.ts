@@ -9,7 +9,12 @@ import {
   setGroupVolume,
   setLocalVolume,
 } from '../../api/client';
-import { getExtensionSettings } from '../../lib/settings';
+import {
+  getExtensionSettings,
+  saveExtensionSettings,
+  detectDesktopApp,
+  DEFAULT_SERVER_URL,
+} from '../../lib/settings';
 import type { LocaleKey } from '../../lib/i18n';
 import { getSession } from '../../lib/auth-client';
 
@@ -43,6 +48,7 @@ export function useCasting({
   const [error, setError] = useState<string | null>(null);
   const [warning, setWarning] = useState<string | null>(null);
   const [isLoggedIn, setIsLoggedIn] = useState(false);
+  const [desktopDetected, setDesktopDetected] = useState(false);
   const [sonosMode, setSonosMode] = useState<SonosMode>('cloud');
   const [sonosLinked, setSonosLinked] = useState(false);
   const [groups, setGroups] = useState<DisplayGroup[]>([]);
@@ -173,23 +179,28 @@ export function useCasting({
         setCastStatus(response.status as CastStatus);
       }
 
-      const { data: session, error: sessionError } = await getSession();
+      // Check session but don't block on it
+      const { data: session } = await getSession();
+      const loggedIn = !!session?.user;
+      setIsLoggedIn(loggedIn);
 
-      if (sessionError) {
-        setIsLoggedIn(false);
-        setLoading(false);
-        return;
+      // Auto-detect desktop app if not signed in and mode is cloud
+      if (!loggedIn && mode === 'cloud') {
+        const desktopAvailable = await detectDesktopApp();
+        if (desktopAvailable) {
+          setDesktopDetected(true);
+        }
       }
 
-      if (!session?.user) {
-        setIsLoggedIn(false);
-        setLoading(false);
-        return;
+      // Initialize based on mode and auth state
+      if (mode === 'local') {
+        // Local mode works without auth
+        await initMode(mode, configuredSpeakerIp);
+      } else if (loggedIn) {
+        // Cloud mode requires auth
+        await initMode(mode, configuredSpeakerIp);
       }
-
-      setIsLoggedIn(true);
-
-      await initMode(mode, configuredSpeakerIp);
+      // If cloud mode and not logged in, show disabled state (handled in Popup.tsx)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Unknown error');
     } finally {
@@ -353,6 +364,19 @@ export function useCasting({
     return translate('actions.cast');
   }
 
+  async function switchToLocalMode() {
+    // Update settings to use local mode with default server URL
+    await saveExtensionSettings({
+      sonosMode: 'local',
+      serverUrl: DEFAULT_SERVER_URL,
+    });
+    setSonosMode('local');
+    setDesktopDetected(false);
+    // Re-initialize with local mode
+    const settings = await getExtensionSettings();
+    await initMode('local', settings.speakerIp || '');
+  }
+
   return {
     loading,
     groupsLoading,
@@ -361,6 +385,7 @@ export function useCasting({
     warning,
     setWarning,
     isLoggedIn,
+    desktopDetected,
     sonosMode,
     sonosLinked,
     groups,
@@ -374,6 +399,7 @@ export function useCasting({
     handleCast,
     handleStop,
     getCastButtonLabel,
+    switchToLocalMode,
     reload: init,
   };
 }

@@ -4,6 +4,7 @@ import { getExtensionSettings, saveExtensionSettings } from '../lib/settings';
 import { isValidIPv4, isValidUrl } from '@thaumic-cast/shared';
 import type { SonosMode } from '@thaumic-cast/shared';
 import { t, setLocale, type SupportedLocale } from '../lib/i18n';
+import { getSession, signOut } from '../lib/auth-client';
 
 export function Options() {
   const [serverUrl, setServerUrl] = useState('http://localhost:3000');
@@ -14,6 +15,11 @@ export function Options() {
   const [discovering, setDiscovering] = useState(false);
   const [speakerCount, setSpeakerCount] = useState<number | null>(null);
   const [discoveryError, setDiscoveryError] = useState<string | null>(null);
+
+  // Authentication state
+  const [isLoggedIn, setIsLoggedIn] = useState(false);
+  const [userEmail, setUserEmail] = useState<string | null>(null);
+  const [signingOut, setSigningOut] = useState(false);
 
   // Validation states
   const [urlError, setUrlError] = useState<string | null>(null);
@@ -32,12 +38,20 @@ export function Options() {
       setLanguage(settings.language);
       setLocale(settings.language);
     });
+
+    // Check authentication status
+    getSession().then(({ data: session }) => {
+      if (session?.user) {
+        setIsLoggedIn(true);
+        setUserEmail(session.user.email || null);
+      }
+    });
   }, []);
 
   // Validate URL on blur
   const validateUrl = () => {
     if (serverUrl && !isValidUrl(serverUrl)) {
-      setUrlError('Please enter a valid URL (e.g., http://192.168.1.100:3000)');
+      setUrlError(t('errors.invalidUrlExample'));
     } else {
       setUrlError(null);
     }
@@ -46,7 +60,7 @@ export function Options() {
   // Validate IP on blur
   const validateIp = () => {
     if (speakerIp && !isValidIPv4(speakerIp.trim())) {
-      setIpError('Please enter a valid IP address (e.g., 192.168.1.50)');
+      setIpError(t('errors.invalidIpExample'));
     } else {
       setIpError(null);
     }
@@ -77,12 +91,12 @@ export function Options() {
   const handleSave = async () => {
     // Validate before saving
     if (!isValidUrl(serverUrl)) {
-      setUrlError('Please enter a valid URL');
+      setUrlError(t('errors.invalidUrl'));
       return;
     }
 
     if (speakerIp && !isValidIPv4(speakerIp.trim())) {
-      setIpError('Please enter a valid IP address');
+      setIpError(t('errors.invalidIp'));
       return;
     }
 
@@ -119,6 +133,23 @@ export function Options() {
     setDiscovering(false);
   };
 
+  const handleSignIn = async () => {
+    chrome.tabs.create({ url: `${serverUrl}/login` });
+  };
+
+  const handleSignOut = async () => {
+    setSigningOut(true);
+    try {
+      await signOut();
+      setIsLoggedIn(false);
+      setUserEmail(null);
+    } catch (err) {
+      console.error('Failed to sign out:', err);
+    } finally {
+      setSigningOut(false);
+    }
+  };
+
   const hasValidationErrors = !!urlError || !!ipError;
 
   return (
@@ -126,7 +157,7 @@ export function Options() {
       <h1>{t('app.title')}</h1>
 
       <div class="card">
-        <h2>Server Configuration</h2>
+        <h2>{t('labels.serverConfig')}</h2>
         <div class="form-group">
           <label htmlFor="serverUrl">{t('labels.serverUrl')}</label>
           <input
@@ -139,7 +170,7 @@ export function Options() {
               setConnectionResult(null);
             }}
             onBlur={validateUrl}
-            placeholder="https://your-server.com"
+            placeholder={t('placeholders.serverUrl')}
             class={urlError ? 'input-error' : ''}
           />
           {urlError && <p class="field-error">{urlError}</p>}
@@ -151,7 +182,7 @@ export function Options() {
             onClick={handleTestConnection}
             disabled={testingConnection || !!urlError}
           >
-            {testingConnection ? 'Testing...' : t('actions.testConnection')}
+            {testingConnection ? t('placeholders.testing') : t('actions.testConnection')}
           </button>
           {connectionResult && (
             <p class={connectionResult.success ? 'success-message' : 'error-message'}>
@@ -193,7 +224,7 @@ export function Options() {
         {sonosMode === 'local' && (
           <>
             <div class="form-group">
-              <label htmlFor="speakerIp">Speaker IP Address (optional)</label>
+              <label htmlFor="speakerIp">{t('labels.speakerIp')}</label>
               <input
                 id="speakerIp"
                 type="text"
@@ -203,29 +234,28 @@ export function Options() {
                   setIpError(null);
                 }}
                 onBlur={validateIp}
-                placeholder="e.g., 192.168.1.50"
+                placeholder={t('placeholders.speakerIp')}
                 class={ipError ? 'input-error' : ''}
               />
               {ipError && <p class="field-error">{ipError}</p>}
-              <p class="hint">
-                Enter the IP address of any Sonos speaker on your network. This bypasses
-                auto-discovery (useful for WSL2 or VPN setups). Find it in the Sonos app under
-                Settings → About My System.
-              </p>
+              <p class="hint">{t('hints.speakerIp')}</p>
             </div>
             {!speakerIp && (
               <div class="form-group">
                 <button class="btn btn-secondary" onClick={handleDiscover} disabled={discovering}>
-                  {discovering ? 'Scanning network...' : 'Scan for Speakers'}
+                  {discovering ? t('placeholders.scanning') : t('placeholders.scanSpeakers')}
                 </button>
                 {speakerCount !== null && (
                   <p class="success-message">
-                    Found {speakerCount} speaker{speakerCount !== 1 ? 's' : ''} on network
+                    {t('messages.discoveryFound', {
+                      count: speakerCount,
+                      plural: speakerCount !== 1 ? 's' : '',
+                    })}
                   </p>
                 )}
                 {discoveryError && <p class="error-message">{discoveryError}</p>}
                 <p class="hint" style={{ marginTop: '8px' }}>
-                  Scans the local network using SSDP. May not work in WSL2 or VPN setups.
+                  {t('hints.discovery')}
                 </p>
               </div>
             )}
@@ -248,13 +278,33 @@ export function Options() {
         </div>
       </div>
 
+      <div class="card">
+        <h2>{t('settings.account')}</h2>
+        {isLoggedIn ? (
+          <div class="account-info">
+            <div class="account-email">
+              <span class="account-label">{t('labels.signedInAs')}</span>
+              <span class="account-value">{userEmail}</span>
+            </div>
+            <button class="btn btn-secondary" onClick={handleSignOut} disabled={signingOut}>
+              {signingOut ? t('actions.signingOut') : t('actions.signOut')}
+            </button>
+          </div>
+        ) : (
+          <div class="sign-in-section">
+            <p class="hint">{t('messages.signInForCloud')}</p>
+            <button class="btn btn-primary" onClick={handleSignIn}>
+              {t('actions.signIn')}
+            </button>
+          </div>
+        )}
+      </div>
+
       <button class="btn btn-primary" onClick={handleSave} disabled={hasValidationErrors}>
         {t('actions.saveSettings')}
       </button>
-      {saved && <p class="success-message">Settings saved!</p>}
-      {hasValidationErrors && (
-        <p class="error-message">Please fix the errors above before saving.</p>
-      )}
+      {saved && <p class="success-message">{t('messages.settingsSaved')}</p>}
+      {hasValidationErrors && <p class="error-message">{t('errors.fixBeforeSaving')}</p>}
     </div>
   );
 }

@@ -311,3 +311,121 @@ body {
 .playback-btn-main:hover {
   background: color-mix(in oklch, var(--color-primary), white 10%);
 }
+
+/* Mode Badge */
+.mode-badge {
+  display: inline-block;
+  padding: var(--space-xs) var(--space-sm);
+  background: color-mix(in oklch, var(--color-primary) 20%, transparent);
+  border-radius: var(--radius-sm);
+  font-size: 0.75rem;
+  font-weight: 500;
+  color: var(--color-primary);
+  margin-block-end: var(--space-md);
+}
+
+/* Desktop App Detection Banner */
+.desktop-detected-banner {
+  background: color-mix(in oklch, var(--color-success) 15%, transparent);
+  border: 1px solid var(--color-success);
+  border-radius: var(--radius-md);
+  padding: var(--space-md);
+  margin-block-end: var(--space-md);
+  text-align: center;
+}
+
+.desktop-detected-banner p {
+  color: var(--color-success);
+  font-size: 0.875rem;
+  margin-block-end: var(--space-sm);
+}
+
+.desktop-detected-banner .btn {
+  background: var(--color-success);
+}
+
+.desktop-detected-banner .btn:hover {
+  background: color-mix(in oklch, var(--color-success), black 10%);
+}
+
+/* Mode Selector */
+.mode-selector {
+  margin-block-end: var(--space-md);
+}
+
+.mode-selector-title {
+  font-size: 0.75rem;
+  font-weight: 500;
+  color: var(--color-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-block-end: var(--space-sm);
+}
+
+.mode-option {
+  display: block;
+  inline-size: 100%;
+  padding: var(--space-md);
+  background: var(--color-surface);
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
+  margin-block-end: var(--space-sm);
+  text-align: start;
+}
+
+.mode-option-clickable {
+  cursor: pointer;
+  transition:
+    border-color 0.15s,
+    background 0.15s;
+}
+
+.mode-option-clickable:hover {
+  border-color: var(--color-primary);
+  background: color-mix(in oklch, var(--color-primary) 10%, var(--color-surface));
+}
+
+.mode-option-disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.mode-option-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-block-end: var(--space-xs);
+}
+
+.mode-option-name {
+  font-weight: 500;
+}
+
+.mode-option-hint {
+  font-size: 0.75rem;
+  color: var(--color-text-muted);
+  margin: 0;
+}
+
+.mode-badge-disabled {
+  font-size: 0.7rem;
+  padding: 2px 6px;
+  background: color-mix(in oklch, var(--color-error) 20%, transparent);
+  color: var(--color-error);
+  border-radius: var(--radius-sm);
+}
+
+.mode-badge-available {
+  font-size: 0.7rem;
+  padding: 2px 6px;
+  background: color-mix(in oklch, var(--color-success) 20%, transparent);
+  color: var(--color-success);
+  border-radius: var(--radius-sm);
+}
+
+/* Settings Hint */
+.settings-hint {
+  font-size: 0.75rem;
+  color: var(--color-text-muted);
+  text-align: center;
+}

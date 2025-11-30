@@ -38,6 +38,7 @@ export function Popup() {
     warning,
     setWarning,
     isLoggedIn,
+    desktopDetected,
     sonosMode,
     sonosLinked,
     groups,
@@ -51,16 +52,12 @@ export function Popup() {
     handleCast,
     handleStop,
     getCastButtonLabel,
+    switchToLocalMode,
     reload,
   } = casting;
 
   function openOptions() {
     chrome.runtime.openOptionsPage();
-  }
-
-  async function openServerLogin() {
-    const { serverUrl } = await getExtensionSettings();
-    chrome.tabs.create({ url: `${serverUrl}/login` });
   }
 
   async function openSonosLink() {
@@ -77,16 +74,44 @@ export function Popup() {
     );
   }
 
-  if (!isLoggedIn) {
+  // Not logged in and in cloud mode - show mode selector with cloud disabled
+  if (!isLoggedIn && sonosMode === 'cloud') {
     return (
       <div>
         <Header onSettings={openOptions} />
-        <div class="login-prompt">
-          <p>{t('messages.signInPrompt')}</p>
-          <button class="btn btn-primary" onClick={openServerLogin}>
-            {t('actions.signIn')}
+
+        {desktopDetected && (
+          <div class="desktop-detected-banner">
+            <p>{t('messages.desktopDetected')}</p>
+            <button class="btn btn-primary" onClick={switchToLocalMode}>
+              {t('actions.useLocalMode')}
+            </button>
+          </div>
+        )}
+
+        <div class="mode-selector">
+          <h3 class="mode-selector-title">{t('labels.sonosMode')}</h3>
+
+          <div class="mode-option mode-option-disabled">
+            <div class="mode-option-header">
+              <span class="mode-option-name">{t('labels.cloudMode')}</span>
+              <span class="mode-badge-disabled">{t('messages.signInRequired')}</span>
+            </div>
+            <p class="mode-option-hint">{t('hints.cloud')}</p>
+          </div>
+
+          <button class="mode-option mode-option-clickable" onClick={switchToLocalMode}>
+            <div class="mode-option-header">
+              <span class="mode-option-name">{t('labels.localMode')}</span>
+              {desktopDetected && (
+                <span class="mode-badge-available">{t('messages.available')}</span>
+              )}
+            </div>
+            <p class="mode-option-hint">{t('hints.local')}</p>
           </button>
         </div>
+
+        <p class="settings-hint">{t('messages.signInHint')}</p>
       </div>
     );
   }
@@ -155,7 +180,7 @@ export function Popup() {
 
       {sonosMode === 'local' && <div class="mode-badge">{t('mode.localBadge')}</div>}
 
-      {groupsLoading && <p class="status-message">Finding speakers...</p>}
+      {groupsLoading && <p class="status-message">{t('messages.findingSpeakers')}</p>}
 
       <div class="media-sources">
         <div class="media-sources-header">{t('labels.castSource')}</div>
@@ -190,8 +215,8 @@ export function Popup() {
             onClick={() => media.setShowAllSources(!media.showAllSources)}
           >
             {media.showAllSources
-              ? 'Show less'
-              : `See all sources (${otherMediaSources.length + 1})`}
+              ? t('messages.showLess')
+              : t('messages.showAll', { count: otherMediaSources.length + 1 })}
           </button>
         )}
         {selectedSource && (

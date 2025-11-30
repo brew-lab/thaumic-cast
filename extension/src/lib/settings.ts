@@ -2,7 +2,7 @@ import type { SonosMode } from '@thaumic-cast/shared';
 import type { SupportedLocale } from './i18n';
 
 // Centralized defaults for extension configuration
-const DEFAULT_SERVER_URL = 'http://localhost:3000';
+export const DEFAULT_SERVER_URL = 'http://localhost:3000';
 const DEFAULT_SONOS_MODE: SonosMode = 'cloud';
 const DEFAULT_LANGUAGE: SupportedLocale = 'en';
 
@@ -53,4 +53,20 @@ function normalizeServerUrl(url?: string): string | undefined {
   // Trim whitespace and trailing slashes
   const trimmed = url.trim().replace(/\/+$/, '');
   return trimmed;
+}
+
+/**
+ * Detect if the desktop app is running at the default server URL
+ * Returns true if the health endpoint responds successfully
+ */
+export async function detectDesktopApp(): Promise<boolean> {
+  try {
+    const response = await fetch(`${DEFAULT_SERVER_URL}/api/health`, {
+      method: 'GET',
+      signal: AbortSignal.timeout(1000),
+    });
+    return response.ok;
+  } catch {
+    return false;
+  }
 }
