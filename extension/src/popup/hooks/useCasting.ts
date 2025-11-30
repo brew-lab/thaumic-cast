@@ -14,6 +14,8 @@ import {
   saveExtensionSettings,
   detectDesktopApp,
   DEFAULT_SERVER_URL,
+  getCachedGroups,
+  setCachedGroups,
 } from '../../lib/settings';
 import { t, type LocaleKey } from '../../lib/i18n';
 import { getSession } from '../../lib/auth-client';
@@ -210,9 +212,26 @@ export function useCasting({
   }
 
   async function initMode(mode: SonosMode, speakerIp: string) {
-    setGroupsLoading(true);
-
     if (mode === 'local') {
+      // Step 1: Try to load from cache first (instant)
+      const cached = await getCachedGroups();
+      if (cached && cached.groups.length > 0) {
+        const displayGroups: DisplayGroup[] = cached.groups.map((g) => ({
+          id: g.id,
+          name: g.name,
+          coordinatorIp: g.coordinatorIp,
+        }));
+        setGroups(displayGroups);
+        if (!selectedGroup) {
+          setSelectedGroup(displayGroups[0]?.id || '');
+        }
+        setSonosLinked(true);
+        // No loading state needed - cache is instant
+        return;
+      }
+
+      // Step 2: No cache - fetch from server (show loading state)
+      setGroupsLoading(true);
       const { data: groupsData, error: groupsError } = await getLocalGroups(speakerIp || undefined);
       setSonosLinked(true);
       setGroupsLoading(false);
@@ -229,6 +248,8 @@ export function useCasting({
           coordinatorIp: g.coordinatorIp,
         }));
         setGroups(displayGroups);
+        // Cache for next time
+        await setCachedGroups(displayGroups);
         if (displayGroups.length > 0 && !selectedGroup) {
           setSelectedGroup(displayGroups[0]?.id || '');
         }

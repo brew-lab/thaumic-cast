@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'preact/hooks';
 import { discoverLocalSpeakers, testServerConnection } from '../api/client';
-import { getExtensionSettings, saveExtensionSettings } from '../lib/settings';
+import { getExtensionSettings, saveExtensionSettings, clearCachedGroups } from '../lib/settings';
 import { isValidIPv4, isValidUrl } from '@thaumic-cast/shared';
 import type { SonosMode } from '@thaumic-cast/shared';
 import { t, setLocale, type SupportedLocale } from '../lib/i18n';
@@ -15,6 +15,10 @@ export function Options() {
   const [discovering, setDiscovering] = useState(false);
   const [speakerCount, setSpeakerCount] = useState<number | null>(null);
   const [discoveryError, setDiscoveryError] = useState<string | null>(null);
+
+  // Track original values to detect changes for cache invalidation
+  const [originalMode, setOriginalMode] = useState<SonosMode>('cloud');
+  const [originalSpeakerIp, setOriginalSpeakerIp] = useState('');
 
   // Authentication
   const { isLoggedIn, userEmail, signingOut, handleSignOut } = useAuthStatus();
@@ -35,6 +39,9 @@ export function Options() {
       setSpeakerIp(settings.speakerIp);
       setLanguage(settings.language);
       setLocale(settings.language);
+      // Track original values for cache invalidation
+      setOriginalMode(settings.sonosMode);
+      setOriginalSpeakerIp(settings.speakerIp);
     });
   }, []);
 
@@ -94,6 +101,12 @@ export function Options() {
     const normalizedUrl = serverUrl.replace(/\/+$/, '');
     // Trim speaker IP
     const trimmedIp = speakerIp.trim();
+
+    // Clear speaker cache if mode or speaker IP changed
+    if (sonosMode !== originalMode || trimmedIp !== originalSpeakerIp) {
+      await clearCachedGroups();
+    }
+
     await saveExtensionSettings({
       serverUrl: normalizedUrl,
       sonosMode,
@@ -103,6 +116,9 @@ export function Options() {
     setServerUrl(normalizedUrl);
     setSpeakerIp(trimmedIp);
     setLocale(language);
+    // Update tracked originals
+    setOriginalMode(sonosMode);
+    setOriginalSpeakerIp(trimmedIp);
     setSaved(true);
     setTimeout(() => setSaved(false), 2000);
   };
@@ -111,6 +127,9 @@ export function Options() {
     setDiscovering(true);
     setDiscoveryError(null);
     setSpeakerCount(null);
+
+    // Clear cache so next popup open fetches fresh data
+    await clearCachedGroups();
 
     const { data, error } = await discoverLocalSpeakers(true);
 

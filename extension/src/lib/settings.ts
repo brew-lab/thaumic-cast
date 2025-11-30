@@ -70,3 +70,43 @@ export async function detectDesktopApp(): Promise<boolean> {
     return false;
   }
 }
+
+// ============ Speaker Groups Cache ============
+
+export interface CachedGroup {
+  id: string;
+  name: string;
+  coordinatorIp?: string;
+}
+
+export interface CachedSpeakerGroups {
+  groups: CachedGroup[];
+  cachedAt: number;
+}
+
+/**
+ * Get cached speaker groups from local storage
+ */
+export async function getCachedGroups(): Promise<CachedSpeakerGroups | null> {
+  const result = await chrome.storage.local.get(['cachedGroups']);
+  return (result.cachedGroups as CachedSpeakerGroups) || null;
+}
+
+/**
+ * Save speaker groups to local storage cache
+ */
+export async function setCachedGroups(groups: CachedGroup[]): Promise<void> {
+  await chrome.storage.local.set({
+    cachedGroups: {
+      groups,
+      cachedAt: Date.now(),
+    } satisfies CachedSpeakerGroups,
+  });
+}
+
+/**
+ * Clear cached speaker groups
+ */
+export async function clearCachedGroups(): Promise<void> {
+  await chrome.storage.local.remove(['cachedGroups']);
+}
