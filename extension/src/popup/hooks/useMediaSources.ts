@@ -23,9 +23,19 @@ export function useMediaSources(): MediaSourcesState {
   const [selectedSourceTabId, setSelectedSourceTabIdState] = useState<number | null>(null);
   const [showAllSources, setShowAllSources] = useState(false);
   const [activeTab, setActiveTab] = useState<chrome.tabs.Tab | null>(null);
+  const [isVisible, setIsVisible] = useState(!document.hidden);
+
+  // Track visibility to avoid polling when popup is hidden
+  useEffect(() => {
+    const onVisibility = () => setIsVisible(!document.hidden);
+    document.addEventListener('visibilitychange', onVisibility);
+    return () => document.removeEventListener('visibilitychange', onVisibility);
+  }, []);
 
   // Poll for media sources and track active tab
   useEffect(() => {
+    if (!isVisible) return;
+
     async function fetchMediaSources() {
       try {
         const [currentTab] = await chrome.tabs.query({ active: true, currentWindow: true });
@@ -47,7 +57,7 @@ export function useMediaSources(): MediaSourcesState {
     fetchMediaSources();
     const interval = setInterval(fetchMediaSources, 2000);
     return () => clearInterval(interval);
-  }, [selectedSourceTabId]);
+  }, [selectedSourceTabId, isVisible]);
 
   const selectedSource = useMemo(
     () => mediaSources.find((s) => s.tabId === selectedSourceTabId),

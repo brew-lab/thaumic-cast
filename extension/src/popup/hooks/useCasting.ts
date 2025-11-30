@@ -52,6 +52,7 @@ export function useCasting({
   const [volumeLoading, setVolumeLoading] = useState(false);
   const volumeTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const errorTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const initInFlight = useRef(false);
 
   // Auto-clear errors after 8 seconds
   useEffect(() => {
@@ -108,26 +109,21 @@ export function useCasting({
   useEffect(() => {
     const groupId = castStatus.isActive ? castStatus.groupId : selectedGroup;
     if (groupId && (sonosLinked || sonosMode === 'local')) {
-      fetchVolume(groupId);
+      fetchVolumeForGroup(groupId);
     }
-  }, [selectedGroup, sonosLinked, sonosMode, castStatus.isActive, castStatus.groupId]);
+  }, [selectedGroup, sonosLinked, sonosMode, castStatus.isActive, castStatus.groupId, groups]);
 
-  async function fetchVolume(groupId: string) {
+  async function fetchVolumeForGroup(groupId: string) {
     setVolumeLoading(true);
 
-    if (sonosMode === 'local') {
-      const group = groups.find((g) => g.id === groupId);
-      if (group?.coordinatorIp) {
-        const { data, error: volError } = await getLocalVolume(group.coordinatorIp);
-        if (data && !volError) {
-          setVolume(data.volume);
-        }
-      }
-    } else {
-      const { data, error: volError } = await getGroupVolume(groupId);
-      if (data && !volError) {
-        setVolume(data.volume);
-      }
+    const group = groups.find((g) => g.id === groupId);
+    const volResponse =
+      sonosMode === 'local' && group?.coordinatorIp
+        ? await getLocalVolume(group.coordinatorIp)
+        : await getGroupVolume(groupId);
+
+    if (volResponse.data && !volResponse.error) {
+      setVolume(volResponse.data.volume);
     }
 
     setVolumeLoading(false);
@@ -143,26 +139,24 @@ export function useCasting({
 
     volumeTimeoutRef.current = setTimeout(async () => {
       if (groupId) {
-        if (sonosMode === 'local') {
-          const group = groups.find((g) => g.id === groupId);
-          const ip = castStatus.isActive ? castStatus.coordinatorIp : group?.coordinatorIp;
-          if (ip) {
-            const { error: volError } = await setLocalVolume(ip, newVolume);
-            if (volError) {
-              setError(`Volume error: ${volError}`);
-            }
-          }
-        } else {
-          const { error: volError } = await setGroupVolume(groupId, newVolume);
-          if (volError) {
-            setError(`Volume error: ${volError}`);
-          }
+        const group = groups.find((g) => g.id === groupId);
+        const ip = castStatus.isActive ? castStatus.coordinatorIp : group?.coordinatorIp;
+
+        const { error: volError } =
+          sonosMode === 'local' && ip
+            ? await setLocalVolume(ip, newVolume)
+            : await setGroupVolume(groupId, newVolume);
+
+        if (volError) {
+          setError(`Volume error: ${volError}`);
         }
       }
     }, 300);
   }
 
   async function init() {
+    if (initInFlight.current) return;
+    initInFlight.current = true;
     setLoading(true);
     setError(null);
 
@@ -193,62 +187,67 @@ export function useCasting({
 
       setIsLoggedIn(true);
 
-      if (mode === 'local') {
-        await initLocalMode(configuredSpeakerIp);
-      } else {
-        await initCloudMode();
-      }
+      await initMode(mode, configuredSpeakerIp);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Unknown error');
     } finally {
       setLoading(false);
+      initInFlight.current = false;
     }
   }
 
-  async function initCloudMode() {
-    const { data: sonosStatus, error: sonosError } = await getSonosStatus();
-    if (sonosError) {
-      setError(sonosError);
-      return;
-    }
+  async function initMode(mode: SonosMode, speakerIp: string) {
+    setGroupsLoading(true);
 
-    setSonosLinked(sonosStatus?.linked ?? false);
+    if (mode === 'local') {
+      const { data: groupsData, error: groupsError } = await getLocalGroups(speakerIp || undefined);
+      setSonosLinked(true);
+      setGroupsLoading(false);
 
-    if (sonosStatus?.linked) {
-      const { data: groupsData, error: groupsError } = await getSonosGroups();
       if (groupsError) {
         setError(groupsError);
-      } else if (groupsData) {
+        return;
+      }
+
+      if (groupsData) {
         const displayGroups: DisplayGroup[] = groupsData.groups.map((g) => ({
           id: g.id,
           name: g.name,
+          coordinatorIp: g.coordinatorIp,
         }));
         setGroups(displayGroups);
         if (displayGroups.length > 0 && !selectedGroup) {
           setSelectedGroup(displayGroups[0]?.id || '');
         }
       }
-    }
-  }
+    } else {
+      const { data: sonosStatus, error: sonosError } = await getSonosStatus();
+      if (sonosError) {
+        setGroupsLoading(false);
+        setError(sonosError);
+        return;
+      }
 
-  async function initLocalMode(speakerIp?: string) {
-    setSonosLinked(true);
-    setGroupsLoading(true);
+      setSonosLinked(sonosStatus?.linked ?? false);
 
-    const { data: groupsData, error: groupsError } = await getLocalGroups(speakerIp || undefined);
-    setGroupsLoading(false);
+      if (sonosStatus?.linked) {
+        const { data: groupsData, error: groupsError } = await getSonosGroups();
+        setGroupsLoading(false);
 
-    if (groupsError) {
-      setError(groupsError);
-    } else if (groupsData) {
-      const displayGroups: DisplayGroup[] = groupsData.groups.map((g) => ({
-        id: g.id,
-        name: g.name,
-        coordinatorIp: g.coordinatorIp,
-      }));
-      setGroups(displayGroups);
-      if (displayGroups.length > 0 && !selectedGroup) {
-        setSelectedGroup(displayGroups[0]?.id || '');
+        if (groupsError) {
+          setError(groupsError);
+        } else if (groupsData) {
+          const displayGroups: DisplayGroup[] = groupsData.groups.map((g) => ({
+            id: g.id,
+            name: g.name,
+          }));
+          setGroups(displayGroups);
+          if (displayGroups.length > 0 && !selectedGroup) {
+            setSelectedGroup(displayGroups[0]?.id || '');
+          }
+        }
+      } else {
+        setGroupsLoading(false);
       }
     }
   }

@@ -9,9 +9,25 @@ export async function ensureOffscreen(): Promise<void> {
     contextTypes: [chrome.runtime.ContextType.OFFSCREEN_DOCUMENT],
   });
 
-  if (existingContexts.length > 0) {
+  const expectedUrl = chrome.runtime.getURL('src/offscreen/offscreen.html');
+  const hasMatchingContext = existingContexts.some(
+    (ctx) => (ctx as { url?: string }).url === expectedUrl
+  );
+
+  if (hasMatchingContext) {
     offscreenCreated = true;
     return;
+  }
+
+  // Clean up stale offscreen documents pointing somewhere else
+  for (const ctx of existingContexts) {
+    if ((ctx as { url?: string }).url && (ctx as { url?: string }).url !== expectedUrl) {
+      try {
+        await chrome.offscreen.closeDocument();
+      } catch {
+        // Ignore failures closing stale contexts
+      }
+    }
   }
 
   // Create a promise that resolves when offscreen sends OFFSCREEN_READY

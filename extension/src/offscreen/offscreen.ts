@@ -18,6 +18,7 @@ interface StreamSession {
   reconnectAttempts: number;
   frameBuffer: Uint8Array[];
   stopped: boolean;
+  heartbeatTimer: ReturnType<typeof setInterval> | null;
 }
 
 // wasm-media-encoders expects specific CBR bitrate values
@@ -116,6 +117,7 @@ async function handleStart(
       reconnectAttempts: 0,
       frameBuffer: [],
       stopped: false,
+      heartbeatTimer: null,
     };
 
     currentSession = session;
@@ -147,6 +149,8 @@ async function handleStart(
       }
     });
 
+    startHeartbeat(session);
+
     return { success: true };
   } catch (error) {
     return { success: false, error: error instanceof Error ? error.message : 'Unknown error' };
@@ -163,6 +167,7 @@ async function handleStop(message: OffscreenStopMessage): Promise<{ success: boo
 
 async function stopSession(session: StreamSession): Promise<void> {
   session.stopped = true;
+  stopHeartbeat(session);
 
   // Flush encoder
   if (session.encoder) {
@@ -253,4 +258,26 @@ function encodeFrame(
 
   // wasm-media-encoders expects interleaved Float32Array samples
   return session.encoder.encode([pcmData.left, pcmData.right]);
+}
+
+function startHeartbeat(session: StreamSession): void {
+  stopHeartbeat(session);
+  session.heartbeatTimer = setInterval(() => {
+    if (session.stopped) {
+      stopHeartbeat(session);
+      return;
+    }
+
+    chrome.runtime.sendMessage({
+      type: 'OFFSCREEN_HEARTBEAT',
+      streamId: session.streamId,
+    });
+  }, 3000);
+}
+
+function stopHeartbeat(session: StreamSession): void {
+  if (session.heartbeatTimer) {
+    clearInterval(session.heartbeatTimer);
+    session.heartbeatTimer = null;
+  }
 }

@@ -17,6 +17,7 @@ import {
   stopCurrentStream,
   getActiveStream,
   clearActiveStream,
+  recordHeartbeat,
 } from './background/stream-manager';
 
 // Message handler
@@ -26,7 +27,9 @@ chrome.runtime.onMessage.addListener((message: ExtensionMessage, sender, sendRes
 });
 
 async function handleMessage(
-  message: ExtensionMessage & { media?: unknown },
+  message: (ExtensionMessage | { type: 'OFFSCREEN_HEARTBEAT'; streamId?: string }) & {
+    media?: unknown;
+  },
   sender: chrome.runtime.MessageSender,
   sendResponse: (response: unknown) => void
 ): Promise<void> {
@@ -87,6 +90,12 @@ async function handleMessage(
     case 'OFFSCREEN_START':
     case 'OFFSCREEN_STOP':
       break;
+    case 'OFFSCREEN_HEARTBEAT': {
+      if ((message as { streamId?: string }).streamId) {
+        recordHeartbeat((message as { streamId: string }).streamId);
+      }
+      break;
+    }
 
     // Media detection messages
     case 'MEDIA_UPDATE': {

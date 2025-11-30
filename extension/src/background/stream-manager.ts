@@ -5,6 +5,9 @@ import { getServerUrl } from '../lib/settings';
 import { ensureOffscreen } from './offscreen-manager';
 
 let activeStream: CastStatus = { isActive: false };
+let lastHeartbeatAt = 0;
+let heartbeatInterval: ReturnType<typeof setInterval> | null = null;
+const HEARTBEAT_TIMEOUT_MS = 10000;
 
 interface StartStreamParams {
   tabId: number;
@@ -14,6 +17,16 @@ interface StartStreamParams {
   mediaStreamId: string;
   mode: SonosMode;
   coordinatorIp?: string;
+}
+
+function logEvent(message: string, context?: Record<string, unknown>) {
+  const payload = context ? ` ${JSON.stringify(context)}` : '';
+  console.log(`[StreamManager] ${message}${payload}`);
+}
+
+function logError(message: string, context?: Record<string, unknown>) {
+  const payload = context ? ` ${JSON.stringify(context)}` : '';
+  console.error(`[StreamManager] ${message}${payload}`);
 }
 
 export async function startStream(params: StartStreamParams): Promise<{
@@ -27,6 +40,7 @@ export async function startStream(params: StartStreamParams): Promise<{
   await stopCurrentStream();
 
   try {
+    logEvent('start requested', { mode, groupId, tabId });
     const serverUrl = await getServerUrl();
     const isLocalMode = mode === 'local';
 
@@ -44,6 +58,7 @@ export async function startStream(params: StartStreamParams): Promise<{
 
     if (!response.ok) {
       const error = await response.json().catch(() => ({ message: `HTTP ${response.status}` }));
+      logError('failed to create stream', { status: response.status, groupId });
       return { success: false, error: error.message || 'Failed to create stream' };
     }
 
@@ -60,6 +75,7 @@ export async function startStream(params: StartStreamParams): Promise<{
     });
 
     if (offscreenResult?.error) {
+      logError('offscreen failed to start', { error: offscreenResult.error });
       return { success: false, error: offscreenResult.error };
     }
 
@@ -81,11 +97,11 @@ export async function startStream(params: StartStreamParams): Promise<{
         if (!playResponse.ok) {
           const error = await playResponse.json().catch(() => ({ message: 'Unknown error' }));
           localPlayError = error.message || 'Failed to start playback on speaker';
-          console.error('[StreamManager] Local play failed:', localPlayError);
+          logError('local play failed', { coordinatorIp, message: localPlayError });
         }
       } catch (err) {
         localPlayError = err instanceof Error ? err.message : 'Failed to connect to speaker';
-        console.error('[StreamManager] Local play error:', localPlayError);
+        logError('local play error', { coordinatorIp, message: localPlayError });
       }
     }
 
@@ -99,6 +115,8 @@ export async function startStream(params: StartStreamParams): Promise<{
       mode: isLocalMode ? 'local' : 'cloud',
       coordinatorIp: isLocalMode ? coordinatorIp : undefined,
     };
+    lastHeartbeatAt = Date.now();
+    startHeartbeatMonitor();
 
     if (localPlayError) {
       return {
@@ -116,12 +134,15 @@ export async function startStream(params: StartStreamParams): Promise<{
           ? 'Server connection timed out. Check server URL in settings.'
           : err.message
         : 'Unknown error';
+    logError('start failed', { message: errorMessage });
     return { success: false, error: errorMessage };
   }
 }
 
 export async function stopCurrentStream(mode?: SonosMode, coordinatorIp?: string): Promise<void> {
   if (!activeStream.isActive || !activeStream.streamId) return;
+
+  stopHeartbeatMonitor();
 
   try {
     await chrome.runtime.sendMessage({
@@ -149,7 +170,7 @@ export async function stopCurrentStream(mode?: SonosMode, coordinatorIp?: string
         5000
       );
     } catch {
-      console.warn('[StreamManager] Failed to stop playback on speaker');
+      logError('failed to stop playback on speaker', { coordinatorIp: effectiveIp });
     }
   }
 
@@ -163,7 +184,7 @@ export async function stopCurrentStream(mode?: SonosMode, coordinatorIp?: string
       5000
     );
   } catch {
-    console.warn('[StreamManager] Failed to notify server of stream stop');
+    logError('failed to notify server of stream stop');
   }
 
   activeStream = { isActive: false };
@@ -174,5 +195,35 @@ export function getActiveStream(): CastStatus {
 }
 
 export function clearActiveStream(): void {
+  stopHeartbeatMonitor();
   activeStream = { isActive: false };
+}
+
+export function recordHeartbeat(streamId: string): void {
+  if (activeStream.streamId !== streamId) return;
+  lastHeartbeatAt = Date.now();
+}
+
+function startHeartbeatMonitor() {
+  stopHeartbeatMonitor();
+  heartbeatInterval = setInterval(() => {
+    if (!activeStream.isActive || !activeStream.streamId) {
+      stopHeartbeatMonitor();
+      return;
+    }
+
+    const elapsed = Date.now() - lastHeartbeatAt;
+    if (elapsed > HEARTBEAT_TIMEOUT_MS) {
+      logError('heartbeat timeout, stopping stream', { streamId: activeStream.streamId });
+      stopCurrentStream(activeStream.mode, activeStream.coordinatorIp);
+      clearActiveStream();
+    }
+  }, 3000);
+}
+
+function stopHeartbeatMonitor() {
+  if (heartbeatInterval) {
+    clearInterval(heartbeatInterval);
+    heartbeatInterval = null;
+  }
 }
