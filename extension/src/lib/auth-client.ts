@@ -1,10 +1,23 @@
 import { createAuthClient } from 'better-auth/client';
+import { getServerUrl } from './settings';
 
-// Create auth client with default URL
-// Note: baseURL is set at creation time
-export const authClient = createAuthClient({
-  baseURL: 'http://localhost:3000',
-});
+type AuthClient = ReturnType<typeof createAuthClient>;
 
-// Export commonly used methods
-export const { signIn, signUp, signOut, getSession } = authClient;
+let cachedBaseUrl: string | null = null;
+let cachedClient: AuthClient | null = null;
+
+async function getAuthClient(): Promise<AuthClient> {
+  const baseURL = await getServerUrl();
+
+  if (!cachedClient || cachedBaseUrl !== baseURL) {
+    cachedBaseUrl = baseURL;
+    cachedClient = createAuthClient({ baseURL });
+  }
+
+  return cachedClient;
+}
+
+export async function getSession() {
+  const client = await getAuthClient();
+  return client.getSession();
+}

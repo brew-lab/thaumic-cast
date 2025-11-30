@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'preact/hooks';
 import { discoverLocalSpeakers, testServerConnection } from '../api/client';
+import { getExtensionSettings, saveExtensionSettings } from '../lib/settings';
 import { isValidIPv4, isValidUrl } from '@thaumic-cast/shared';
 import type { SonosMode } from '@thaumic-cast/shared';
 
@@ -22,20 +23,11 @@ export function Options() {
   } | null>(null);
 
   useEffect(() => {
-    chrome.storage.sync.get(
-      ['serverUrl', 'sonosMode', 'speakerIp'],
-      (result: { serverUrl?: string; sonosMode?: SonosMode; speakerIp?: string }) => {
-        if (result.serverUrl) {
-          setServerUrl(result.serverUrl);
-        }
-        if (result.sonosMode) {
-          setSonosMode(result.sonosMode);
-        }
-        if (result.speakerIp) {
-          setSpeakerIp(result.speakerIp);
-        }
-      }
-    );
+    getExtensionSettings().then((settings) => {
+      setServerUrl(settings.serverUrl);
+      setSonosMode(settings.sonosMode);
+      setSpeakerIp(settings.speakerIp);
+    });
   }, []);
 
   // Validate URL on blur
@@ -94,7 +86,11 @@ export function Options() {
     const normalizedUrl = serverUrl.replace(/\/+$/, '');
     // Trim speaker IP
     const trimmedIp = speakerIp.trim();
-    await chrome.storage.sync.set({ serverUrl: normalizedUrl, sonosMode, speakerIp: trimmedIp });
+    await saveExtensionSettings({
+      serverUrl: normalizedUrl,
+      sonosMode,
+      speakerIp: trimmedIp,
+    });
     setServerUrl(normalizedUrl);
     setSpeakerIp(trimmedIp);
     setSaved(true);
