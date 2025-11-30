@@ -27,10 +27,19 @@ export interface SonosGroupsResponse {
   groups: SonosGroup[];
 }
 
+// Stream metadata for Sonos display
+export interface StreamMetadata {
+  title?: string; // Song title or tab title
+  artist?: string; // Artist name
+  album?: string; // Album name
+  artwork?: string; // Album art URL
+}
+
 // POST /api/streams
 export interface CreateStreamRequest {
   groupId: string;
   quality: QualityPreset;
+  metadata?: StreamMetadata;
 }
 
 export interface CreateStreamResponse {

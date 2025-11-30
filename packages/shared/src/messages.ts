@@ -1,6 +1,6 @@
 // Extension messaging types between popup, service worker, and offscreen document
 
-import type { QualityPreset, SonosMode } from './api';
+import type { QualityPreset, SonosMode, StreamMetadata } from './api';
 
 // Message types
 export type MessageType =
@@ -56,6 +56,7 @@ export interface StartCastMessage extends BaseMessage {
   mediaStreamId: string;
   mode?: SonosMode;
   coordinatorIp?: string; // Only for local mode
+  metadata?: StreamMetadata; // Media info for Sonos display
 }
 
 // STOP_CAST: popup -> service worker

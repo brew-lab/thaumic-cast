@@ -100,10 +100,11 @@ struct PlayRequest {
     coordinator_ip: String,
     #[serde(rename = "streamUrl")]
     stream_url: String,
+    metadata: Option<sonos::StreamMetadata>,
 }
 
 async fn play_stream(Json(body): Json<PlayRequest>) -> impl IntoResponse {
-    match sonos::play_stream(&body.coordinator_ip, &body.stream_url).await {
+    match sonos::play_stream(&body.coordinator_ip, &body.stream_url, body.metadata.as_ref()).await {
         Ok(_) => Json(serde_json::json!({ "success": true })).into_response(),
         Err(e) => {
             tracing::error!("Play error: {}", e);

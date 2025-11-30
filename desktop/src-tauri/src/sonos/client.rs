@@ -2,7 +2,7 @@ use super::soap::{extract_soap_value, send_soap_request, unescape_xml, SoapError
 use super::ssdp::{discover as ssdp_discover, DiscoveredSpeaker, SsdpError};
 use parking_lot::RwLock;
 use reqwest::Client;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::OnceLock;
 use std::time::{Duration, Instant};
@@ -57,6 +57,59 @@ pub struct LocalGroup {
     #[serde(rename = "coordinatorIp")]
     pub coordinator_ip: String,
     pub members: Vec<LocalSpeaker>,
+}
+
+/// Stream metadata for Sonos display
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct StreamMetadata {
+    pub title: Option<String>,
+    pub artist: Option<String>,
+    pub album: Option<String>,
+    pub artwork: Option<String>,
+}
+
+/// Escape XML special characters
+fn escape_xml(s: &str) -> String {
+    s.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+        .replace('\'', "&apos;")
+}
+
+/// Format DIDL-Lite metadata for Sonos display
+fn format_didl_lite(stream_url: &str, metadata: Option<&StreamMetadata>) -> String {
+    let title = metadata
+        .and_then(|m| m.title.as_deref())
+        .unwrap_or("Browser Audio");
+    let artist = metadata
+        .and_then(|m| m.artist.as_deref())
+        .unwrap_or("Thaumic Cast");
+    let album = metadata.and_then(|m| m.album.as_deref());
+    let artwork = metadata.and_then(|m| m.artwork.as_deref());
+
+    let mut didl = String::from(r#"<DIDL-Lite xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:upnp="urn:schemas-upnp-org:metadata-1-0/upnp/" xmlns="urn:schemas-upnp-org:metadata-1-0/DIDL-Lite/">"#);
+    didl.push_str(r#"<item id="0" parentID="-1" restricted="true">"#);
+    didl.push_str(&format!("<dc:title>{}</dc:title>", escape_xml(title)));
+    didl.push_str(&format!("<dc:creator>{}</dc:creator>", escape_xml(artist)));
+    if let Some(album) = album {
+        didl.push_str(&format!("<upnp:album>{}</upnp:album>", escape_xml(album)));
+    }
+    if let Some(artwork) = artwork {
+        didl.push_str(&format!(
+            "<upnp:albumArtURI>{}</upnp:albumArtURI>",
+            escape_xml(artwork)
+        ));
+    }
+    didl.push_str("<upnp:class>object.item.audioItem.audioBroadcast</upnp:class>");
+    didl.push_str(&format!(
+        r#"<res protocolInfo="http-get:*:audio/mpeg:*">{}</res>"#,
+        escape_xml(stream_url)
+    ));
+    didl.push_str("</item>");
+    didl.push_str("</DIDL-Lite>");
+
+    didl
 }
 
 // Cached speakers
@@ -263,7 +316,11 @@ pub async fn get_zone_groups(speaker_ip: Option<&str>) -> Result<Vec<LocalGroup>
 }
 
 /// Set the audio stream URL on a Sonos group coordinator
-pub async fn set_av_transport_uri(coordinator_ip: &str, stream_url: &str) -> Result<(), SonosError> {
+pub async fn set_av_transport_uri(
+    coordinator_ip: &str,
+    stream_url: &str,
+    metadata: Option<&StreamMetadata>,
+) -> Result<(), SonosError> {
     // Convert http:// to x-rincon-mp3radio:// for Sonos compatibility
     let sonos_url = if stream_url.starts_with("https://") {
         stream_url.replace("https://", "x-rincon-mp3radio://")
@@ -271,12 +328,15 @@ pub async fn set_av_transport_uri(coordinator_ip: &str, stream_url: &str) -> Res
         stream_url.replace("http://", "x-rincon-mp3radio://")
     };
 
+    // Format DIDL-Lite metadata for Sonos display
+    let didl_metadata = format_didl_lite(stream_url, metadata);
+
     tracing::info!("SetAVTransportURI: {}", sonos_url);
 
     let mut params = HashMap::new();
     params.insert("InstanceID".to_string(), "0".to_string());
     params.insert("CurrentURI".to_string(), sonos_url);
-    params.insert("CurrentURIMetaData".to_string(), String::new());
+    params.insert("CurrentURIMetaData".to_string(), didl_metadata);
 
     send_soap_request(
         get_client(),
@@ -388,7 +448,11 @@ pub async fn set_volume(speaker_ip: &str, volume: u8) -> Result<(), SonosError> 
 }
 
 /// Load a stream URL and start playback in one call
-pub async fn play_stream(coordinator_ip: &str, stream_url: &str) -> Result<(), SonosError> {
-    set_av_transport_uri(coordinator_ip, stream_url).await?;
+pub async fn play_stream(
+    coordinator_ip: &str,
+    stream_url: &str,
+    metadata: Option<&StreamMetadata>,
+) -> Result<(), SonosError> {
+    set_av_transport_uri(coordinator_ip, stream_url, metadata).await?;
     play(coordinator_ip).await
 }
