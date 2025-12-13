@@ -1,6 +1,7 @@
 use super::AppState;
 use crate::network::get_local_ip;
 use crate::sonos;
+use crate::stream::{format_icy_metadata, ICY_METAINT};
 use axum::{
     body::Body,
     extract::{
@@ -343,8 +344,6 @@ async fn stream_audio(
     headers: axum::http::HeaderMap,
     State(state): State<AppState>,
 ) -> impl IntoResponse {
-    use crate::stream::{format_icy_metadata, ICY_METAINT};
-
     let stream = match state.streams.get(&stream_id) {
         Some(s) => s,
         None => {
