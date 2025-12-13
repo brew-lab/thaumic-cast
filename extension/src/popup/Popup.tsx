@@ -5,16 +5,20 @@ import { useMediaSources } from './hooks/useMediaSources';
 import { useCasting } from './hooks/useCasting';
 import type { DisplayGroup } from './hooks/useCasting';
 import { t, setLocale } from '../lib/i18n';
-import { getExtensionSettings } from '../lib/settings';
+import { getExtensionSettings, saveExtensionSettings } from '../lib/settings';
 
 export function Popup() {
   const [selectedGroup, setSelectedGroup] = useState<string>('');
   const [quality, setQuality] = useState<QualityPreset>('medium');
 
-  // Initialize locale from settings
+  // Initialize from settings
   useEffect(() => {
     getExtensionSettings().then((settings) => {
       setLocale(settings.language);
+      setQuality(settings.quality);
+      if (settings.selectedGroupId) {
+        setSelectedGroup(settings.selectedGroupId);
+      }
     });
   }, []);
 
@@ -56,6 +60,19 @@ export function Popup() {
     switchToLocalMode,
     reload,
   } = casting;
+
+  // Validate selected group exists in available groups
+  useEffect(() => {
+    if (groups.length > 0 && selectedGroup) {
+      const groupExists = groups.some((g) => g.id === selectedGroup);
+      if (!groupExists) {
+        // Saved group no longer exists, fall back to first group
+        const firstGroupId = groups[0]?.id || '';
+        setSelectedGroup(firstGroupId);
+        saveExtensionSettings({ selectedGroupId: firstGroupId });
+      }
+    }
+  }, [groups, selectedGroup]);
 
   function openOptions() {
     chrome.runtime.openOptionsPage();
@@ -294,7 +311,11 @@ export function Popup() {
             <select
               id="group"
               value={selectedGroup}
-              onChange={(e) => setSelectedGroup((e.target as HTMLSelectElement).value)}
+              onChange={(e) => {
+                const newGroup = (e.target as HTMLSelectElement).value;
+                setSelectedGroup(newGroup);
+                saveExtensionSettings({ selectedGroupId: newGroup });
+              }}
             >
               {groups.map((group: DisplayGroup) => (
                 <option key={group.id} value={group.id}>
@@ -309,7 +330,11 @@ export function Popup() {
             <select
               id="quality"
               value={quality}
-              onChange={(e) => setQuality((e.target as HTMLSelectElement).value as QualityPreset)}
+              onChange={(e) => {
+                const newQuality = (e.target as HTMLSelectElement).value as QualityPreset;
+                setQuality(newQuality);
+                saveExtensionSettings({ quality: newQuality });
+              }}
             >
               <option value="low">{t('quality.low')}</option>
               <option value="medium">{t('quality.medium')}</option>

@@ -1,4 +1,4 @@
-import type { SonosMode } from '@thaumic-cast/shared';
+import type { SonosMode, QualityPreset } from '@thaumic-cast/shared';
 import type { SupportedLocale } from './i18n';
 
 // Centralized defaults for extension configuration
@@ -14,6 +14,8 @@ export interface ExtensionSettings {
   speakerIp: string;
   language: SupportedLocale;
   backendType: BackendType;
+  selectedGroupId: string;
+  quality: QualityPreset;
 }
 
 // Normalize and return all persisted settings with defaults
@@ -24,6 +26,8 @@ export async function getExtensionSettings(): Promise<ExtensionSettings> {
     'speakerIp',
     'language',
     'backendType',
+    'selectedGroupId',
+    'quality',
   ])) as Partial<ExtensionSettings>;
 
   return {
@@ -32,6 +36,8 @@ export async function getExtensionSettings(): Promise<ExtensionSettings> {
     speakerIp: result.speakerIp || '',
     language: (result.language as SupportedLocale) || DEFAULT_LANGUAGE,
     backendType: (result.backendType as BackendType) || 'unknown',
+    selectedGroupId: result.selectedGroupId || '',
+    quality: (result.quality as QualityPreset) || 'medium',
   };
 }
 
@@ -44,6 +50,8 @@ export async function saveExtensionSettings(partial: Partial<ExtensionSettings>)
     speakerIp: partial.speakerIp?.trim() ?? current.speakerIp,
     language: (partial.language as SupportedLocale) || current.language,
     backendType: partial.backendType ?? current.backendType,
+    selectedGroupId: partial.selectedGroupId ?? current.selectedGroupId,
+    quality: partial.quality ?? current.quality,
   };
 
   await chrome.storage.sync.set(next);
