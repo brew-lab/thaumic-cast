@@ -209,6 +209,7 @@ struct CreateStreamRequest {
     mode: Option<String>,
     #[serde(rename = "coordinatorIp")]
     coordinator_ip: Option<String>,
+    codec: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -230,13 +231,20 @@ async fn create_stream(
 
     // Log stream creation details
     tracing::info!(
-        "Creating stream: id={}, group={:?}, quality={:?}, mode={:?}, coordinator={:?}",
+        "Creating stream: id={}, group={:?}, quality={:?}, mode={:?}, coordinator={:?}, codec={:?}",
         stream_id,
         body.group_id,
         body.quality,
         body.mode,
-        body.coordinator_ip
+        body.coordinator_ip,
+        body.codec
     );
+
+    // Determine file extension based on codec
+    let format = match body.codec.as_deref() {
+        Some("he-aac") | Some("aac-lc") => "aac",
+        _ => "mp3",
+    };
 
     // Pre-create the stream
     let _ = state.streams.get_or_create(&stream_id);
@@ -250,7 +258,10 @@ async fn create_stream(
             "ws://{}:{}/ws/ingest?streamId={}",
             local_ip, port, stream_id
         ),
-        playback_url: format!("http://{}:{}/streams/{}/live.mp3", local_ip, port, stream_id),
+        playback_url: format!(
+            "http://{}:{}/streams/{}/live.{}",
+            local_ip, port, stream_id, format
+        ),
     };
 
     (StatusCode::CREATED, Json(response))

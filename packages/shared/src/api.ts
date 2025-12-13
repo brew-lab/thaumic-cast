@@ -42,6 +42,7 @@ export interface CreateStreamRequest {
   groupId: string;
   quality: QualityPreset;
   metadata?: StreamMetadata;
+  codec?: AudioCodec;
 }
 
 export interface CreateStreamResponse {

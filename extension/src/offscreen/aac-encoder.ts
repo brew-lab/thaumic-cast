@@ -27,6 +27,7 @@ export interface AacEncoder {
  */
 export async function isAacSupported(config: AacEncoderConfig): Promise<boolean> {
   if (typeof AudioEncoder === 'undefined') {
+    console.log('[AAC Encoder] AudioEncoder is undefined in this context');
     return false;
   }
 
@@ -37,8 +38,10 @@ export async function isAacSupported(config: AacEncoderConfig): Promise<boolean>
       numberOfChannels: config.channels,
       bitrate: config.bitrate,
     });
+    console.log('[AAC Encoder] isConfigSupported result:', result);
     return result.supported === true;
-  } catch {
+  } catch (error) {
+    console.log('[AAC Encoder] isConfigSupported error:', error);
     return false;
   }
 }

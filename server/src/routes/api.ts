@@ -5,6 +5,7 @@ import { SonosClient } from '../lib/sonos-client';
 import { getLocalIp } from '../lib/sonos-local-client';
 import { StreamManager } from '../stream-manager';
 import type {
+  AudioCodec,
   MeResponse,
   CreateStreamRequest,
   CreateStreamResponse,
@@ -74,17 +75,22 @@ export async function handleApiRoutes(req: Request, url: URL): Promise<Response>
       return jsonResponse({ error: 'unauthorized', message: 'Not authenticated' }, 401, cors);
     }
 
-    let body: CreateStreamRequest & { mode?: SonosMode; coordinatorIp?: string };
+    let body: CreateStreamRequest & {
+      mode?: SonosMode;
+      coordinatorIp?: string;
+      codec?: AudioCodec;
+    };
     try {
       body = (await req.json()) as CreateStreamRequest & {
         mode?: SonosMode;
         coordinatorIp?: string;
+        codec?: AudioCodec;
       };
     } catch {
       return jsonResponse({ error: 'invalid_json', message: 'Invalid request body' }, 400, cors);
     }
 
-    const { groupId, quality, mode } = body;
+    const { groupId, quality, mode, codec } = body;
     const isLocalMode = mode === 'local';
 
     if (!groupId || !quality) {
@@ -95,7 +101,7 @@ export async function handleApiRoutes(req: Request, url: URL): Promise<Response>
       );
     }
 
-    const validQualities: QualityPreset[] = ['low', 'medium', 'high'];
+    const validQualities: QualityPreset[] = ['ultra-low', 'low', 'medium', 'high'];
     if (!validQualities.includes(quality)) {
       return jsonResponse(
         { error: 'invalid_quality', message: 'Invalid quality preset' },
@@ -103,6 +109,9 @@ export async function handleApiRoutes(req: Request, url: URL): Promise<Response>
         cors
       );
     }
+
+    // Determine file extension based on codec
+    const streamFormat = codec === 'he-aac' || codec === 'aac-lc' ? 'aac' : 'mp3';
 
     // For cloud mode, verify Sonos is linked
     let householdId = 'local';
@@ -155,11 +164,11 @@ export async function handleApiRoutes(req: Request, url: URL): Promise<Response>
     if (isLocalMode) {
       // LOCAL_SERVER_IP env var takes precedence (needed for WSL2 where getLocalIp returns internal IP)
       const localIp = Bun.env.LOCAL_SERVER_IP || getLocalIp() || 'localhost';
-      playbackUrl = `http://${localIp}:${PORT}/streams/${streamId}/live.mp3`;
+      playbackUrl = `http://${localIp}:${PORT}/streams/${streamId}/live.${streamFormat}`;
       ingestUrl = `ws://${localIp}:${PORT}/ws/ingest?streamId=${streamId}&token=${ingestToken}`;
-      console.log('[Streams] Local mode - playbackUrl:', playbackUrl);
+      console.log('[Streams] Local mode - playbackUrl:', playbackUrl, 'codec:', codec);
     } else {
-      playbackUrl = `${PUBLIC_URL}/streams/${streamId}/live.mp3`;
+      playbackUrl = `${PUBLIC_URL}/streams/${streamId}/live.${streamFormat}`;
       const wsProtocol = PUBLIC_URL.startsWith('https') ? 'wss' : 'ws';
       const wsHost = PUBLIC_URL.replace(/^https?:\/\//, '');
       ingestUrl = `${wsProtocol}://${wsHost}/ws/ingest?streamId=${streamId}&token=${ingestToken}`;

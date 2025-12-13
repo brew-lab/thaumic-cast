@@ -1,4 +1,10 @@
-import type { CastStatus, QualityPreset, SonosMode, StreamMetadata } from '@thaumic-cast/shared';
+import type {
+  AudioCodec,
+  CastStatus,
+  QualityPreset,
+  SonosMode,
+  StreamMetadata,
+} from '@thaumic-cast/shared';
 import type { CreateStreamResponse } from '@thaumic-cast/shared';
 import { fetchWithTimeout } from '../lib/http';
 import { getServerUrl } from '../lib/settings';
@@ -47,6 +53,24 @@ export async function startStream(params: StartStreamParams): Promise<{
     const serverUrl = await getServerUrl();
     const isLocalMode = mode === 'local';
 
+    // Ensure offscreen is ready before querying codec
+    await ensureOffscreen();
+
+    // Query offscreen for the best available codec for this quality
+    let codec: AudioCodec = 'mp3';
+    try {
+      const codecResult = (await chrome.runtime.sendMessage({
+        type: 'OFFSCREEN_CHECK_CODEC',
+        quality,
+      })) as { codec: AudioCodec } | undefined;
+      if (codecResult?.codec) {
+        codec = codecResult.codec;
+      }
+    } catch {
+      logEvent('codec detection failed, defaulting to mp3');
+    }
+    logEvent('detected codec', { codec, quality });
+
     const response = await fetchWithTimeout(`${serverUrl}/api/streams`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -57,6 +81,7 @@ export async function startStream(params: StartStreamParams): Promise<{
         mode: isLocalMode ? 'local' : 'cloud',
         coordinatorIp: isLocalMode ? coordinatorIp : undefined,
         metadata,
+        codec,
       }),
     });
 
@@ -67,8 +92,6 @@ export async function startStream(params: StartStreamParams): Promise<{
     }
 
     const { streamId, ingestUrl, playbackUrl } = (await response.json()) as CreateStreamResponse;
-
-    await ensureOffscreen();
 
     const offscreenResult = await chrome.runtime.sendMessage({
       type: 'OFFSCREEN_START',

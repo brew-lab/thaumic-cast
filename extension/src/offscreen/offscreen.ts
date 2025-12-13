@@ -57,14 +57,14 @@ const QUALITY_SETTINGS: Record<QualityPreset, QualityConfig> = {
   },
   medium: {
     preferredCodec: 'mp4a.40.2', // AAC-LC
-    bitrate: 192000,
+    bitrate: 128000,
     sampleRate: 48000,
     channels: 2,
     mp3Fallback: { bitrate: 192, sampleRate: 48000 },
   },
   high: {
     preferredCodec: 'mp4a.40.2', // AAC-LC
-    bitrate: 320000,
+    bitrate: 192000, // WebCodecs AAC-LC max is 192kbps (still better quality than 320kbps MP3)
     sampleRate: 48000,
     channels: 2,
     mp3Fallback: { bitrate: 320, sampleRate: 48000 },
@@ -93,11 +93,43 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     handleStop(message as OffscreenStopMessage).then(sendResponse);
     return true;
   }
+
+  if (message.type === 'OFFSCREEN_CHECK_CODEC') {
+    detectBestCodec(message.quality as QualityPreset).then((codec) => {
+      sendResponse({ codec });
+    });
+    return true;
+  }
 });
 
 // Signal to background that offscreen is ready to receive messages
 console.log('[Offscreen] Ready');
 chrome.runtime.sendMessage({ type: 'OFFSCREEN_READY' });
+
+/**
+ * Detect the best available codec for a given quality preset.
+ * Returns the codec that will actually be used (AAC if supported, MP3 fallback).
+ */
+async function detectBestCodec(quality: QualityPreset): Promise<AudioCodec> {
+  const settings = QUALITY_SETTINGS[quality];
+
+  if (settings.preferredCodec === 'mp3') {
+    return 'mp3';
+  }
+
+  const aacSupported = await isAacSupported({
+    codec: settings.preferredCodec,
+    sampleRate: settings.sampleRate,
+    channels: settings.channels,
+    bitrate: settings.bitrate,
+  });
+
+  if (aacSupported) {
+    return settings.preferredCodec === 'mp4a.40.5' ? 'he-aac' : 'aac-lc';
+  }
+
+  return 'mp3';
+}
 
 async function handleStart(
   message: OffscreenStartMessage
