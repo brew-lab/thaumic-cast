@@ -154,8 +154,9 @@ struct UpdateMetadataRequest {
 }
 
 async fn update_metadata(Json(body): Json<UpdateMetadataRequest>) -> impl IntoResponse {
-    // Update metadata and resume playback
-    match sonos::play_stream(&body.coordinator_ip, &body.stream_url, body.metadata.as_ref()).await {
+    match sonos::set_av_transport_uri(&body.coordinator_ip, &body.stream_url, body.metadata.as_ref())
+        .await
+    {
         Ok(_) => Json(serde_json::json!({ "success": true })).into_response(),
         Err(e) => {
             tracing::error!("Metadata update error: {}", e);
