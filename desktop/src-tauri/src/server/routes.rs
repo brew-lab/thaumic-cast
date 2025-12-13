@@ -28,11 +28,11 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/local/groups", get(get_groups))
         .route("/api/local/play", post(play_stream))
         .route("/api/local/stop", post(stop_stream))
-        .route("/api/local/metadata", post(update_metadata))
         .route("/api/local/volume/{ip}", get(get_volume).post(set_volume))
         .route("/api/local/server-ip", get(get_server_ip))
         // Stream endpoints
         .route("/api/streams", post(create_stream))
+        .route("/api/streams/{id}/metadata", post(update_stream_metadata))
         .route("/streams/{id}/live.mp3", get(stream_audio))
         // WebSocket ingest
         .route("/ws/ingest", get(ws_ingest_handler))
@@ -136,34 +136,6 @@ async fn stop_stream(Json(body): Json<StopRequest>) -> impl IntoResponse {
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(serde_json::json!({
                     "error": "stop_failed",
-                    "message": e.to_string()
-                })),
-            )
-                .into_response()
-        }
-    }
-}
-
-#[derive(Deserialize)]
-struct UpdateMetadataRequest {
-    #[serde(rename = "coordinatorIp")]
-    coordinator_ip: String,
-    #[serde(rename = "streamUrl")]
-    stream_url: String,
-    metadata: Option<sonos::StreamMetadata>,
-}
-
-async fn update_metadata(Json(body): Json<UpdateMetadataRequest>) -> impl IntoResponse {
-    match sonos::set_av_transport_uri(&body.coordinator_ip, &body.stream_url, body.metadata.as_ref())
-        .await
-    {
-        Ok(_) => Json(serde_json::json!({ "success": true })).into_response(),
-        Err(e) => {
-            tracing::error!("Metadata update error: {}", e);
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(serde_json::json!({
-                    "error": "metadata_failed",
                     "message": e.to_string()
                 })),
             )
@@ -283,6 +255,46 @@ async fn create_stream(
 }
 
 #[derive(Deserialize)]
+struct UpdateStreamMetadataRequest {
+    title: Option<String>,
+    artist: Option<String>,
+    album: Option<String>,
+    artwork: Option<String>,
+}
+
+async fn update_stream_metadata(
+    Path(stream_id): Path<String>,
+    State(state): State<AppState>,
+    Json(body): Json<UpdateStreamMetadataRequest>,
+) -> impl IntoResponse {
+    let stream = match state.streams.get(&stream_id) {
+        Some(s) => s,
+        None => {
+            return (
+                StatusCode::NOT_FOUND,
+                Json(serde_json::json!({
+                    "error": "stream_not_found",
+                    "message": "Stream not found"
+                })),
+            )
+                .into_response();
+        }
+    };
+
+    let metadata = sonos::StreamMetadata {
+        title: body.title,
+        artist: body.artist,
+        album: body.album,
+        artwork: body.artwork,
+    };
+
+    stream.set_metadata(metadata);
+    tracing::info!("Updated metadata for stream: {}", stream_id);
+
+    Json(serde_json::json!({ "success": true })).into_response()
+}
+
+#[derive(Deserialize)]
 struct IngestQuery {
     #[serde(rename = "streamId")]
     stream_id: String,
@@ -328,8 +340,11 @@ async fn handle_ingest(socket: WebSocket, stream_id: String, state: AppState) {
 
 async fn stream_audio(
     Path(stream_id): Path<String>,
+    headers: axum::http::HeaderMap,
     State(state): State<AppState>,
 ) -> impl IntoResponse {
+    use crate::stream::{format_icy_metadata, ICY_METAINT};
+
     let stream = match state.streams.get(&stream_id) {
         Some(s) => s,
         None => {
@@ -358,38 +373,96 @@ async fn stream_audio(
         }
     };
 
-    tracing::info!("New subscriber for stream: {}", stream_id);
+    // Check if client requested ICY metadata
+    let wants_icy = headers
+        .get("icy-metadata")
+        .and_then(|v| v.to_str().ok())
+        .map(|v| v == "1")
+        .unwrap_or(false);
 
-    // Create a stream from buffered frames + broadcast receiver
+    tracing::info!(
+        "New subscriber for stream: {} (icy_metadata: {})",
+        stream_id,
+        wants_icy
+    );
+
     let buffered_frames = subscription.buffered_frames;
     let receiver = subscription.receiver;
-
     let stream_clone = stream.clone();
 
     let body_stream = async_stream::stream! {
+        let mut bytes_since_meta: usize = 0;
+
+        // Helper to process a chunk with ICY metadata injection
+        let mut process_chunk = |chunk: Bytes, stream_ref: &std::sync::Arc<crate::stream::StreamState>| -> Vec<Bytes> {
+            if !wants_icy {
+                return vec![chunk];
+            }
+
+            let mut result = Vec::new();
+            let mut remaining = chunk.as_ref();
+
+            while !remaining.is_empty() {
+                let bytes_until_meta = ICY_METAINT - bytes_since_meta;
+
+                if remaining.len() < bytes_until_meta {
+                    result.push(Bytes::copy_from_slice(remaining));
+                    bytes_since_meta += remaining.len();
+                    break;
+                } else {
+                    // Output audio up to metadata point
+                    result.push(Bytes::copy_from_slice(&remaining[..bytes_until_meta]));
+
+                    // Inject metadata
+                    let metadata = stream_ref.get_metadata();
+                    let meta_block = format_icy_metadata(metadata.as_ref());
+                    result.push(Bytes::from(meta_block));
+
+                    remaining = &remaining[bytes_until_meta..];
+                    bytes_since_meta = 0;
+                }
+            }
+
+            result
+        };
+
         // First, yield all buffered frames
         for frame in buffered_frames {
-            yield Ok::<_, Infallible>(frame);
+            for chunk in process_chunk(frame, &stream_clone) {
+                yield Ok::<_, Infallible>(chunk);
+            }
         }
 
         // Then stream live frames
         let mut broadcast_stream = BroadcastStream::new(receiver);
         while let Some(result) = broadcast_stream.next().await {
             match result {
-                Ok(frame) => yield Ok(frame),
-                Err(_) => break, // Lagged or closed
+                Ok(frame) => {
+                    for chunk in process_chunk(frame, &stream_clone) {
+                        yield Ok(chunk);
+                    }
+                }
+                Err(_) => break,
             }
         }
 
-        // Unsubscribe when done
         stream_clone.unsubscribe();
     };
 
-    Response::builder()
+    let mut response = Response::builder()
         .status(StatusCode::OK)
         .header(header::CONTENT_TYPE, "audio/mpeg")
         .header(header::CACHE_CONTROL, "no-store")
-        .header(header::CONNECTION, "keep-alive")
+        .header(header::CONNECTION, "keep-alive");
+
+    // Add ICY headers if client requested metadata
+    if wants_icy {
+        response = response
+            .header("icy-metaint", ICY_METAINT.to_string())
+            .header("icy-name", "Thaumic Cast");
+    }
+
+    response
         .body(Body::from_stream(body_stream))
         .unwrap()
         .into_response()

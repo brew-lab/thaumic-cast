@@ -262,14 +262,14 @@ function clearMetadataDebounce(): void {
 }
 
 /**
- * Update stream metadata on Sonos speaker (local mode only).
- * Debounced to avoid flooding the speaker with updates.
+ * Update stream metadata for ICY injection.
+ * Works for both local and cloud modes - metadata is embedded in the MP3 stream.
+ * Debounced to avoid flooding the server with updates.
  */
 export async function updateStreamMetadata(tabId: number, metadata: StreamMetadata): Promise<void> {
-  // Guard: only if active, local mode, and from casting tab
-  if (!activeStream.isActive || activeStream.mode !== 'local') return;
+  // Guard: only if active and from casting tab
+  if (!activeStream.isActive || !activeStream.streamId) return;
   if (activeStream.tabId !== tabId) return;
-  if (!activeStream.coordinatorIp || !activeStream.playbackUrl) return;
 
   // Skip if unchanged (compare title, artist, album)
   const prev = activeStream.metadata;
@@ -281,20 +281,16 @@ export async function updateStreamMetadata(tabId: number, metadata: StreamMetada
     return;
   }
 
-  // Debounce 1s to avoid flooding speaker
+  // Debounce 1s to avoid flooding server
   clearMetadataDebounce();
   metadataDebounceTimer = setTimeout(async () => {
     try {
       const serverUrl = await getServerUrl();
-      await fetchWithTimeout(`${serverUrl}/api/local/metadata`, {
+      await fetchWithTimeout(`${serverUrl}/api/streams/${activeStream.streamId}/metadata`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
-        body: JSON.stringify({
-          coordinatorIp: activeStream.coordinatorIp,
-          streamUrl: activeStream.playbackUrl,
-          metadata,
-        }),
+        body: JSON.stringify(metadata),
       });
       activeStream.metadata = metadata;
       logEvent('metadata updated', { title: metadata.title });

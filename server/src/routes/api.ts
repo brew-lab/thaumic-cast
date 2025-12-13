@@ -10,6 +10,7 @@ import type {
   CreateStreamResponse,
   QualityPreset,
   SonosMode,
+  StreamMetadata,
 } from '@thaumic-cast/shared';
 
 const PUBLIC_URL = Bun.env.PUBLIC_URL || 'http://localhost:3000';
@@ -228,6 +229,40 @@ export async function handleApiRoutes(req: Request, url: URL): Promise<Response>
 
     // Remove from manager
     StreamManager.remove(streamId);
+
+    return jsonResponse({ success: true }, 200, cors);
+  }
+
+  // POST /api/streams/:id/metadata - Update stream metadata (for ICY injection)
+  const metadataMatch = url.pathname.match(/^\/api\/streams\/([^/]+)\/metadata$/);
+  if (metadataMatch && req.method === 'POST') {
+    const session = await auth.api.getSession({ headers: req.headers });
+    if (!session?.user) {
+      return jsonResponse({ error: 'unauthorized', message: 'Not authenticated' }, 401, cors);
+    }
+
+    const streamId = metadataMatch[1];
+    if (!streamId) {
+      return jsonResponse({ error: 'invalid_stream_id', message: 'Invalid stream ID' }, 400, cors);
+    }
+
+    // Get the stream from manager
+    const stream = StreamManager.get(streamId);
+    if (!stream) {
+      return jsonResponse({ error: 'not_found', message: 'Stream not found' }, 404, cors);
+    }
+
+    // Parse request body
+    let body: StreamMetadata;
+    try {
+      body = (await req.json()) as StreamMetadata;
+    } catch {
+      return jsonResponse({ error: 'invalid_json', message: 'Invalid request body' }, 400, cors);
+    }
+
+    // Update metadata
+    stream.setMetadata(body);
+    console.log(`[Streams] Updated metadata for stream ${streamId}:`, body.title);
 
     return jsonResponse({ success: true }, 200, cors);
   }

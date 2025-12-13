@@ -4,9 +4,14 @@ use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 use tokio::sync::broadcast;
 
+use crate::sonos::StreamMetadata;
+
 const MAX_BUFFER_FRAMES: usize = 300; // ~10 seconds at 30fps MP3 frames
 const MAX_SUBSCRIBERS: usize = 5;
 const CHANNEL_CAPACITY: usize = 100;
+
+/// ICY metadata interval (bytes between metadata blocks)
+pub const ICY_METAINT: usize = 8192;
 
 /// State for a single active stream
 pub struct StreamState {
@@ -14,6 +19,7 @@ pub struct StreamState {
     buffer: RwLock<VecDeque<Bytes>>,
     sender: broadcast::Sender<Bytes>,
     subscriber_count: RwLock<usize>,
+    metadata: RwLock<Option<StreamMetadata>>,
 }
 
 impl StreamState {
@@ -24,7 +30,18 @@ impl StreamState {
             buffer: RwLock::new(VecDeque::with_capacity(MAX_BUFFER_FRAMES)),
             sender,
             subscriber_count: RwLock::new(0),
+            metadata: RwLock::new(None),
         }
+    }
+
+    /// Set stream metadata for ICY injection
+    pub fn set_metadata(&self, metadata: StreamMetadata) {
+        *self.metadata.write() = Some(metadata);
+    }
+
+    /// Get current stream metadata
+    pub fn get_metadata(&self) -> Option<StreamMetadata> {
+        self.metadata.read().clone()
     }
 
     /// Push a frame to the stream buffer and broadcast to subscribers
@@ -125,6 +142,42 @@ impl Default for StreamManager {
     fn default() -> Self {
         Self::new()
     }
+}
+
+/// Format metadata as an ICY metadata block
+/// Format: [1 byte length (N*16)] [StreamTitle='...'; padded to N*16 bytes]
+pub fn format_icy_metadata(metadata: Option<&StreamMetadata>) -> Vec<u8> {
+    let title = match metadata {
+        Some(m) => {
+            match (&m.artist, &m.title) {
+                (Some(artist), Some(title)) => format!("{} - {}", artist, title),
+                (None, Some(title)) => title.clone(),
+                (Some(artist), None) => artist.clone(),
+                (None, None) => String::new(),
+            }
+        }
+        None => String::new(),
+    };
+
+    if title.is_empty() {
+        // Empty metadata block (just a zero byte)
+        return vec![0];
+    }
+
+    // Escape single quotes in title
+    let title = title.replace('\'', "\\'");
+    let meta_str = format!("StreamTitle='{}';", title);
+    let meta_bytes = meta_str.as_bytes();
+
+    // Calculate number of 16-byte blocks needed
+    let len_blocks = (meta_bytes.len() + 15) / 16;
+    let padded_len = len_blocks * 16;
+
+    let mut result = Vec::with_capacity(padded_len + 1);
+    result.push(len_blocks as u8);
+    result.extend_from_slice(meta_bytes);
+    result.resize(padded_len + 1, 0); // Pad with zeros
+    result
 }
 
 #[cfg(test)]

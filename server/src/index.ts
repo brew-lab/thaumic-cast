@@ -1,6 +1,6 @@
 import { auth } from './auth';
 import { db } from './db';
-import { StreamManager } from './stream-manager';
+import { StreamManager, ICY_METAINT, formatIcyMetadata } from './stream-manager';
 import { handleApiRoutes } from './routes/api';
 import { handleSonosRoutes } from './routes/sonos';
 import { handleLocalSonosRoutes } from './routes/local-sonos';
@@ -64,11 +64,64 @@ export const server = Bun.serve<WebSocketData>({
         return new Response('Stream not found', { status: 404 });
       }
 
-      return new Response(stream.createReadableStream(), {
+      // Check if client requested ICY metadata
+      const wantsIcy = req.headers.get('icy-metadata') === '1';
+      console.log(`[Stream] New subscriber for ${streamId} (icy_metadata: ${wantsIcy})`);
+
+      const baseStream = stream.createReadableStream();
+
+      // If ICY metadata not requested, return plain stream
+      if (!wantsIcy) {
+        return new Response(baseStream, {
+          headers: {
+            'Content-Type': 'audio/mpeg',
+            'Cache-Control': 'no-store',
+            'Transfer-Encoding': 'chunked',
+          },
+        });
+      }
+
+      // Wrap stream with ICY metadata injection
+      let bytesSinceMeta = 0;
+
+      const icyStream = new TransformStream<Uint8Array, Uint8Array>({
+        transform(chunk, controller) {
+          let offset = 0;
+
+          while (offset < chunk.length) {
+            const bytesUntilMeta = ICY_METAINT - bytesSinceMeta;
+            const bytesRemaining = chunk.length - offset;
+
+            if (bytesRemaining < bytesUntilMeta) {
+              // Not enough bytes to reach metadata point
+              controller.enqueue(chunk.subarray(offset));
+              bytesSinceMeta += bytesRemaining;
+              break;
+            } else {
+              // Output audio up to metadata point
+              controller.enqueue(chunk.subarray(offset, offset + bytesUntilMeta));
+
+              // Inject metadata
+              const metadata = stream.getMetadata();
+              const metaBlock = formatIcyMetadata(metadata);
+              controller.enqueue(metaBlock);
+
+              offset += bytesUntilMeta;
+              bytesSinceMeta = 0;
+            }
+          }
+        },
+      });
+
+      const wrappedStream = baseStream.pipeThrough(icyStream);
+
+      return new Response(wrappedStream, {
         headers: {
           'Content-Type': 'audio/mpeg',
           'Cache-Control': 'no-store',
           'Transfer-Encoding': 'chunked',
+          'icy-metaint': String(ICY_METAINT),
+          'icy-name': 'Thaumic Cast',
         },
       });
     }

@@ -1,8 +1,12 @@
 import type { ServerWebSocket } from 'bun';
+import type { StreamMetadata } from '@thaumic-cast/shared';
 import { verifyIngestToken } from './jwt';
 
 const MAX_BUFFER_FRAMES = 300; // ~10 seconds at 30fps MP3 frames
 const MAX_SUBSCRIBERS = 5;
+
+/** ICY metadata interval (bytes between metadata blocks) */
+export const ICY_METAINT = 8192;
 
 interface WebSocketData {
   streamId: string;
@@ -18,9 +22,18 @@ class StreamState {
   private ingressSockets: Set<ServerWebSocket<WebSocketData>> = new Set();
   private subscribers: Set<Subscriber> = new Set();
   private buffer: Uint8Array[] = [];
+  private metadata: StreamMetadata = {};
 
   constructor(id: string) {
     this.id = id;
+  }
+
+  setMetadata(metadata: StreamMetadata): void {
+    this.metadata = metadata;
+  }
+
+  getMetadata(): StreamMetadata {
+    return this.metadata;
   }
 
   attachIngress(ws: ServerWebSocket<WebSocketData>): void {
@@ -128,3 +141,35 @@ class StreamManagerClass {
 }
 
 export const StreamManager = new StreamManagerClass();
+
+/**
+ * Format metadata as an ICY metadata block
+ * Format: [1 byte length (N*16)] [StreamTitle='...'; padded to N*16 bytes]
+ */
+export function formatIcyMetadata(metadata: StreamMetadata): Uint8Array {
+  const title =
+    metadata.artist && metadata.title
+      ? `${metadata.artist} - ${metadata.title}`
+      : metadata.title || metadata.artist || '';
+
+  if (!title) {
+    // Empty metadata block (just a zero byte)
+    return new Uint8Array([0]);
+  }
+
+  // Escape single quotes in title
+  const escapedTitle = title.replace(/'/g, "\\'");
+  const metaStr = `StreamTitle='${escapedTitle}';`;
+  const encoder = new TextEncoder();
+  const metaBytes = encoder.encode(metaStr);
+
+  // Calculate number of 16-byte blocks needed
+  const lenBlocks = Math.ceil(metaBytes.length / 16);
+  const paddedLen = lenBlocks * 16;
+
+  const result = new Uint8Array(paddedLen + 1);
+  result[0] = lenBlocks;
+  result.set(metaBytes, 1);
+  // Rest is already zeros (Uint8Array default)
+  return result;
+}
