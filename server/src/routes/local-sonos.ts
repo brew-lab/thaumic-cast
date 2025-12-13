@@ -377,8 +377,8 @@ export async function handleLocalSonosRoutes(req: Request, url: URL): Promise<Re
         );
       }
 
-      // Reuse existing function - just SetAVTransportURI, no Play
-      await sonosLocal.setAVTransportURI(body.coordinatorIp, body.streamUrl, body.metadata);
+      // Update metadata and resume playback
+      await sonosLocal.playStream(body.coordinatorIp, body.streamUrl, body.metadata);
 
       return jsonResponse({ success: true }, 200, cors);
     } catch (error) {
