@@ -1,7 +1,7 @@
 use super::AppState;
 use crate::network::get_local_ip;
 use crate::sonos;
-use crate::stream::{format_icy_metadata, ICY_METAINT};
+use crate::stream::{format_icy_metadata, StreamState, ICY_METAINT};
 use axum::{
     body::Body,
     extract::{
@@ -389,45 +389,15 @@ async fn stream_audio(
     let receiver = subscription.receiver;
     let stream_clone = stream.clone();
 
+    // Capture values outside macro for proper dead code analysis
+    let icy_interval = ICY_METAINT;
+
     let body_stream = async_stream::stream! {
         let mut bytes_since_meta: usize = 0;
 
-        // Helper to process a chunk with ICY metadata injection
-        let mut process_chunk = |chunk: Bytes, stream_ref: &std::sync::Arc<crate::stream::StreamState>| -> Vec<Bytes> {
-            if !wants_icy {
-                return vec![chunk];
-            }
-
-            let mut result = Vec::new();
-            let mut remaining = chunk.as_ref();
-
-            while !remaining.is_empty() {
-                let bytes_until_meta = ICY_METAINT - bytes_since_meta;
-
-                if remaining.len() < bytes_until_meta {
-                    result.push(Bytes::copy_from_slice(remaining));
-                    bytes_since_meta += remaining.len();
-                    break;
-                } else {
-                    // Output audio up to metadata point
-                    result.push(Bytes::copy_from_slice(&remaining[..bytes_until_meta]));
-
-                    // Inject metadata
-                    let metadata = stream_ref.get_metadata();
-                    let meta_block = format_icy_metadata(metadata.as_ref());
-                    result.push(Bytes::from(meta_block));
-
-                    remaining = &remaining[bytes_until_meta..];
-                    bytes_since_meta = 0;
-                }
-            }
-
-            result
-        };
-
         // First, yield all buffered frames
         for frame in buffered_frames {
-            for chunk in process_chunk(frame, &stream_clone) {
+            for chunk in process_icy_chunk(frame, &stream_clone, wants_icy, &mut bytes_since_meta, icy_interval) {
                 yield Ok::<_, Infallible>(chunk);
             }
         }
@@ -437,7 +407,7 @@ async fn stream_audio(
         while let Some(result) = broadcast_stream.next().await {
             match result {
                 Ok(frame) => {
-                    for chunk in process_chunk(frame, &stream_clone) {
+                    for chunk in process_icy_chunk(frame, &stream_clone, wants_icy, &mut bytes_since_meta, icy_interval) {
                         yield Ok(chunk);
                     }
                 }
@@ -465,4 +435,43 @@ async fn stream_audio(
         .body(Body::from_stream(body_stream))
         .unwrap()
         .into_response()
+}
+
+/// Process a chunk with ICY metadata injection
+fn process_icy_chunk(
+    chunk: Bytes,
+    stream: &std::sync::Arc<StreamState>,
+    wants_icy: bool,
+    bytes_since_meta: &mut usize,
+    icy_interval: usize,
+) -> Vec<Bytes> {
+    if !wants_icy {
+        return vec![chunk];
+    }
+
+    let mut result = Vec::new();
+    let mut remaining = chunk.as_ref();
+
+    while !remaining.is_empty() {
+        let bytes_until_meta = icy_interval - *bytes_since_meta;
+
+        if remaining.len() < bytes_until_meta {
+            result.push(Bytes::copy_from_slice(remaining));
+            *bytes_since_meta += remaining.len();
+            break;
+        } else {
+            // Output audio up to metadata point
+            result.push(Bytes::copy_from_slice(&remaining[..bytes_until_meta]));
+
+            // Inject metadata
+            let metadata = stream.get_metadata();
+            let meta_block = format_icy_metadata(metadata.as_ref());
+            result.push(Bytes::from(meta_block));
+
+            remaining = &remaining[bytes_until_meta..];
+            *bytes_since_meta = 0;
+        }
+    }
+
+    result
 }
