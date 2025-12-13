@@ -7,7 +7,7 @@ import type {
   LocalGroupsResponse,
 } from '@thaumic-cast/shared';
 import { requestJson } from '../lib/http';
-import { getServerUrl } from '../lib/settings';
+import { getServerUrl, type BackendType } from '../lib/settings';
 
 export async function getSonosStatus(): Promise<{
   data: SonosStatusResponse | null;
@@ -123,6 +123,7 @@ export async function testServerConnection(url?: string): Promise<{
   success: boolean;
   error: string | null;
   latencyMs?: number;
+  backendType?: BackendType;
 }> {
   const start = performance.now();
 
@@ -140,7 +141,16 @@ export async function testServerConnection(url?: string): Promise<{
     const latencyMs = Math.round(performance.now() - start);
 
     if (response.ok) {
-      return { success: true, error: null, latencyMs };
+      // Parse the response to detect backend type
+      let backendType: BackendType = 'unknown';
+      try {
+        const data = (await response.json()) as { service?: string };
+        if (data.service === 'thaumic-cast-desktop') backendType = 'desktop';
+        else if (data.service === 'thaumic-cast-server') backendType = 'server';
+      } catch {
+        // Ignore JSON parse errors, keep backendType as 'unknown'
+      }
+      return { success: true, error: null, latencyMs, backendType };
     }
 
     return {

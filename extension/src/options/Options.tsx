@@ -1,6 +1,11 @@
 import { useState, useEffect } from 'preact/hooks';
 import { discoverLocalSpeakers, testServerConnection } from '../api/client';
-import { getExtensionSettings, saveExtensionSettings, clearCachedGroups } from '../lib/settings';
+import {
+  getExtensionSettings,
+  saveExtensionSettings,
+  clearCachedGroups,
+  type BackendType,
+} from '../lib/settings';
 import { isValidIPv4, isValidUrl } from '@thaumic-cast/shared';
 import type { SonosMode } from '@thaumic-cast/shared';
 import { t, setLocale, type SupportedLocale } from '../lib/i18n';
@@ -71,9 +76,25 @@ export function Options() {
     const result = await testServerConnection(serverUrl);
 
     if (result.success) {
+      // Save the detected backend type for use in popup
+      if (result.backendType) {
+        await saveExtensionSettings({ backendType: result.backendType });
+      }
+
+      // Show backend type in the success message
+      const backendLabel =
+        result.backendType === 'desktop'
+          ? t('connection.desktopApp')
+          : result.backendType === 'server'
+            ? t('connection.cloudServer')
+            : t('connection.server');
+
       setConnectionResult({
         success: true,
-        message: `Connected! (${result.latencyMs}ms)`,
+        message: t('connection.successMessage', {
+          backend: backendLabel,
+          latency: result.latencyMs ?? 0,
+        }),
       });
     } else {
       setConnectionResult({
@@ -107,11 +128,23 @@ export function Options() {
       await clearCachedGroups();
     }
 
+    // Detect backend type for the new URL (don't block on failure)
+    let backendType: BackendType = 'unknown';
+    try {
+      const result = await testServerConnection(normalizedUrl);
+      if (result.success && result.backendType) {
+        backendType = result.backendType;
+      }
+    } catch {
+      // Ignore errors, keep backendType as 'unknown'
+    }
+
     await saveExtensionSettings({
       serverUrl: normalizedUrl,
       sonosMode,
       speakerIp: trimmedIp,
       language,
+      backendType,
     });
     setServerUrl(normalizedUrl);
     setSpeakerIp(trimmedIp);

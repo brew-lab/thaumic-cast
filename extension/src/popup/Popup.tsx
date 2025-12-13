@@ -39,6 +39,7 @@ export function Popup() {
     setWarning,
     isLoggedIn,
     desktopDetected,
+    needsAuthForLocalMode,
     sonosMode,
     sonosLinked,
     groups,
@@ -112,6 +113,24 @@ export function Popup() {
         </div>
 
         <p class="settings-hint">{t('messages.signInHint')}</p>
+      </div>
+    );
+  }
+
+  // Local mode on cloud server without auth - show sign-in prompt
+  if (needsAuthForLocalMode) {
+    return (
+      <div>
+        <Header onSettings={openOptions} />
+        <div class="login-prompt">
+          <p>{t('messages.localModeAuthRequired')}</p>
+          <button class="btn btn-primary" onClick={openOptions}>
+            {t('actions.signIn')}
+          </button>
+          <p class="hint" style={{ marginTop: '12px', fontSize: '12px', opacity: 0.7 }}>
+            {t('messages.localModeDesktopHint')}
+          </p>
+        </div>
       </div>
     );
   }

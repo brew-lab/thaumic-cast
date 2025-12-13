@@ -76,13 +76,16 @@ export const server = Bun.serve<WebSocketData>({
     // Health check endpoint (no auth required)
     if (url.pathname === '/api/health') {
       const origin = req.headers.get('Origin');
-      return new Response(JSON.stringify({ status: 'ok', timestamp: Date.now() }), {
-        headers: {
-          'Content-Type': 'application/json',
-          'Access-Control-Allow-Origin': origin || '*',
-          'Access-Control-Allow-Credentials': 'true',
-        },
-      });
+      return new Response(
+        JSON.stringify({ status: 'ok', service: 'thaumic-cast-server', timestamp: Date.now() }),
+        {
+          headers: {
+            'Content-Type': 'application/json',
+            'Access-Control-Allow-Origin': origin || '*',
+            'Access-Control-Allow-Credentials': 'true',
+          },
+        }
+      );
     }
 
     // Better Auth routes - add CORS for extension

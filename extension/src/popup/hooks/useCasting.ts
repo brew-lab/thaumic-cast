@@ -51,6 +51,7 @@ export function useCasting({
   const [warning, setWarning] = useState<string | null>(null);
   const [isLoggedIn, setIsLoggedIn] = useState(false);
   const [desktopDetected, setDesktopDetected] = useState(false);
+  const [needsAuthForLocalMode, setNeedsAuthForLocalMode] = useState(false);
   const [sonosMode, setSonosMode] = useState<SonosMode>('cloud');
   const [sonosLinked, setSonosLinked] = useState(false);
   const [groups, setGroups] = useState<DisplayGroup[]>([]);
@@ -196,8 +197,17 @@ export function useCasting({
 
       // Initialize based on mode and auth state
       if (mode === 'local') {
-        // Local mode works without auth
-        await initMode(mode, configuredSpeakerIp);
+        // Use cached backend type from settings (set during "Test Connection" in Options)
+        const backendType = settings.backendType;
+
+        if (backendType === 'desktop' || loggedIn) {
+          // Desktop backend: no auth needed
+          // Cloud server + logged in: auth present
+          await initMode(mode, configuredSpeakerIp);
+        } else {
+          // Cloud server without auth, or unknown backend - show sign-in prompt
+          setNeedsAuthForLocalMode(true);
+        }
       } else if (loggedIn) {
         // Cloud mode requires auth
         await initMode(mode, configuredSpeakerIp);
@@ -417,6 +427,7 @@ export function useCasting({
     setWarning,
     isLoggedIn,
     desktopDetected,
+    needsAuthForLocalMode,
     sonosMode,
     sonosLinked,
     groups,

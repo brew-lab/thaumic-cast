@@ -6,11 +6,14 @@ export const DEFAULT_SERVER_URL = 'http://localhost:3000';
 const DEFAULT_SONOS_MODE: SonosMode = 'cloud';
 const DEFAULT_LANGUAGE: SupportedLocale = 'en';
 
+export type BackendType = 'desktop' | 'server' | 'unknown';
+
 export interface ExtensionSettings {
   serverUrl: string;
   sonosMode: SonosMode;
   speakerIp: string;
   language: SupportedLocale;
+  backendType: BackendType;
 }
 
 // Normalize and return all persisted settings with defaults
@@ -20,6 +23,7 @@ export async function getExtensionSettings(): Promise<ExtensionSettings> {
     'sonosMode',
     'speakerIp',
     'language',
+    'backendType',
   ])) as Partial<ExtensionSettings>;
 
   return {
@@ -27,6 +31,7 @@ export async function getExtensionSettings(): Promise<ExtensionSettings> {
     sonosMode: (result.sonosMode as SonosMode) || DEFAULT_SONOS_MODE,
     speakerIp: result.speakerIp || '',
     language: (result.language as SupportedLocale) || DEFAULT_LANGUAGE,
+    backendType: (result.backendType as BackendType) || 'unknown',
   };
 }
 
@@ -38,6 +43,7 @@ export async function saveExtensionSettings(partial: Partial<ExtensionSettings>)
     serverUrl: normalizeServerUrl(partial.serverUrl) || current.serverUrl,
     speakerIp: partial.speakerIp?.trim() ?? current.speakerIp,
     language: (partial.language as SupportedLocale) || current.language,
+    backendType: partial.backendType ?? current.backendType,
   };
 
   await chrome.storage.sync.set(next);
@@ -68,6 +74,32 @@ export async function detectDesktopApp(): Promise<boolean> {
     return response.ok;
   } catch {
     return false;
+  }
+}
+
+// ============ Backend Type Detection ============
+
+/**
+ * Detect the backend type by checking the service field in the health response.
+ * - 'desktop': thaumic-cast-desktop (no auth required for local mode)
+ * - 'server': thaumic-cast-server (auth required for local mode)
+ * - 'unknown': could not determine (treat as requiring auth)
+ */
+export async function detectBackendType(): Promise<BackendType> {
+  try {
+    const serverUrl = await getServerUrl();
+    const response = await fetch(`${serverUrl}/api/health`, {
+      method: 'GET',
+      signal: AbortSignal.timeout(2000),
+    });
+    if (!response.ok) return 'unknown';
+
+    const data = (await response.json()) as { service?: string };
+    if (data.service === 'thaumic-cast-desktop') return 'desktop';
+    if (data.service === 'thaumic-cast-server') return 'server';
+    return 'unknown';
+  } catch {
+    return 'unknown';
   }
 }
 
