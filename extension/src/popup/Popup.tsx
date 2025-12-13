@@ -282,7 +282,10 @@ export function Popup() {
               <span class="casting-indicator" aria-hidden="true" />
               {t('status.castingTo')}
             </div>
-            <div class="value">{castStatus.groupName}</div>
+            <div class="value">
+              {castStatus.groupName}
+              <span class="quality-indicator"> · {t(`quality.${quality}Label`)}</span>
+            </div>
           </div>
           <div class="form-group">
             <label htmlFor="volume-casting">

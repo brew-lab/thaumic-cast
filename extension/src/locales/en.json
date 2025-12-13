@@ -93,5 +93,8 @@
   "aria.dismissWarning": "Dismiss warning",
   "quality.low": "Low (128 kbps)",
   "quality.medium": "Medium (192 kbps)",
-  "quality.high": "High (320 kbps)"
+  "quality.high": "High (320 kbps)",
+  "quality.lowLabel": "Low",
+  "quality.mediumLabel": "Medium",
+  "quality.highLabel": "High"
 }
