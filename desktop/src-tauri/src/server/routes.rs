@@ -35,6 +35,7 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/streams", post(create_stream))
         .route("/api/streams/{id}/metadata", post(update_stream_metadata))
         .route("/streams/{id}/live.mp3", get(stream_audio))
+        .route("/streams/{id}/live.aac", get(stream_audio))
         // WebSocket ingest
         .route("/ws/ingest", get(ws_ingest_handler))
         .with_state(state)
@@ -342,8 +343,12 @@ async fn handle_ingest(socket: WebSocket, stream_id: String, state: AppState) {
 async fn stream_audio(
     Path(stream_id): Path<String>,
     headers: axum::http::HeaderMap,
+    uri: axum::http::Uri,
     State(state): State<AppState>,
 ) -> impl IntoResponse {
+    // Determine format from URL extension
+    let is_aac = uri.path().ends_with(".aac");
+    let content_type = if is_aac { "audio/aac" } else { "audio/mpeg" };
     let stream = match state.streams.get(&stream_id) {
         Some(s) => s,
         None => {
@@ -380,8 +385,9 @@ async fn stream_audio(
         .unwrap_or(false);
 
     tracing::info!(
-        "New subscriber for stream: {} (icy_metadata: {})",
+        "New subscriber for stream: {} (format: {}, icy_metadata: {})",
         stream_id,
+        if is_aac { "aac" } else { "mp3" },
         wants_icy
     );
 
@@ -420,7 +426,7 @@ async fn stream_audio(
 
     let mut response = Response::builder()
         .status(StatusCode::OK)
-        .header(header::CONTENT_TYPE, "audio/mpeg")
+        .header(header::CONTENT_TYPE, content_type)
         .header(header::CACHE_CONTROL, "no-store")
         .header(header::CONNECTION, "keep-alive");
 

@@ -91,9 +91,11 @@
   "aria.settings": "Settings",
   "aria.dismissError": "Dismiss error",
   "aria.dismissWarning": "Dismiss warning",
-  "quality.low": "Low (128 kbps)",
+  "quality.ultra-low": "Ultra Low (64 kbps)",
+  "quality.low": "Low (96 kbps)",
   "quality.medium": "Medium (192 kbps)",
   "quality.high": "High (320 kbps)",
+  "quality.ultra-lowLabel": "Ultra Low",
   "quality.lowLabel": "Low",
   "quality.mediumLabel": "Medium",
   "quality.highLabel": "High"

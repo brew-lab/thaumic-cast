@@ -2,11 +2,17 @@ import type {
   OffscreenStartMessage,
   OffscreenStopMessage,
   QualityPreset,
+  AudioCodec,
 } from '@thaumic-cast/shared';
 import { createMp3Encoder } from 'wasm-media-encoders';
+import { createAacEncoder, isAacSupported, type AacCodec } from './aac-encoder';
 
-// Use the actual encoder type from the library
-type WasmEncoder = Awaited<ReturnType<typeof createMp3Encoder>>;
+// Unified encoder interface for both AAC and MP3
+interface UnifiedEncoder {
+  encode(samples: [Float32Array, Float32Array]): Uint8Array | null;
+  finalize(): Uint8Array | null;
+  close?(): void;
+}
 
 interface StreamSession {
   streamId: string;
@@ -14,7 +20,8 @@ interface StreamSession {
   mediaStream: MediaStream | null;
   workletNode: AudioWorkletNode | null;
   websocket: WebSocket | null;
-  encoder: WasmEncoder | null;
+  encoder: UnifiedEncoder | null;
+  codec: AudioCodec;
   reconnectAttempts: number;
   frameBuffer: Uint8Array[];
   stopped: boolean;
@@ -25,13 +32,43 @@ interface StreamSession {
 type Mp3Bitrate = 128 | 192 | 320;
 type Channels = 1 | 2;
 
-const QUALITY_SETTINGS: Record<
-  QualityPreset,
-  { bitrate: Mp3Bitrate; sampleRate: 44100 | 48000; channels: Channels }
-> = {
-  low: { bitrate: 128, sampleRate: 44100, channels: 2 },
-  medium: { bitrate: 192, sampleRate: 48000, channels: 2 },
-  high: { bitrate: 320, sampleRate: 48000, channels: 2 },
+interface QualityConfig {
+  preferredCodec: AacCodec | 'mp3';
+  bitrate: number;
+  sampleRate: 44100 | 48000;
+  channels: Channels;
+  mp3Fallback: { bitrate: Mp3Bitrate; sampleRate: 44100 | 48000 };
+}
+
+const QUALITY_SETTINGS: Record<QualityPreset, QualityConfig> = {
+  'ultra-low': {
+    preferredCodec: 'mp4a.40.5', // HE-AAC
+    bitrate: 64000,
+    sampleRate: 48000,
+    channels: 2,
+    mp3Fallback: { bitrate: 128, sampleRate: 44100 },
+  },
+  low: {
+    preferredCodec: 'mp4a.40.5', // HE-AAC
+    bitrate: 96000,
+    sampleRate: 48000,
+    channels: 2,
+    mp3Fallback: { bitrate: 128, sampleRate: 44100 },
+  },
+  medium: {
+    preferredCodec: 'mp4a.40.2', // AAC-LC
+    bitrate: 192000,
+    sampleRate: 48000,
+    channels: 2,
+    mp3Fallback: { bitrate: 192, sampleRate: 48000 },
+  },
+  high: {
+    preferredCodec: 'mp4a.40.2', // AAC-LC
+    bitrate: 320000,
+    sampleRate: 48000,
+    channels: 2,
+    mp3Fallback: { bitrate: 320, sampleRate: 48000 },
+  },
 };
 
 const MAX_RECONNECT_ATTEMPTS = 10;
@@ -86,8 +123,60 @@ async function handleStart(
       video: false,
     });
 
-    // Create audio context
-    const audioContext = new AudioContext({ sampleRate: settings.sampleRate });
+    // Check AAC support and select encoder
+    let encoder: UnifiedEncoder;
+    let codec: AudioCodec;
+    let sampleRate: number;
+
+    if (settings.preferredCodec !== 'mp3') {
+      const aacSupported = await isAacSupported({
+        codec: settings.preferredCodec,
+        sampleRate: settings.sampleRate,
+        channels: settings.channels,
+        bitrate: settings.bitrate,
+      });
+
+      if (aacSupported) {
+        // Use native AAC encoding
+        const aacEncoder = await createAacEncoder();
+        aacEncoder.configure({
+          codec: settings.preferredCodec,
+          sampleRate: settings.sampleRate,
+          channels: settings.channels,
+          bitrate: settings.bitrate,
+        });
+        encoder = aacEncoder;
+        codec = settings.preferredCodec === 'mp4a.40.5' ? 'he-aac' : 'aac-lc';
+        sampleRate = settings.sampleRate;
+        console.log(`[Offscreen] Using native ${codec} encoding at ${settings.bitrate / 1000}kbps`);
+      } else {
+        // Fallback to MP3
+        console.log('[Offscreen] AAC not supported, falling back to MP3');
+        const mp3Encoder = await createMp3Encoder();
+        mp3Encoder.configure({
+          channels: settings.channels,
+          sampleRate: settings.mp3Fallback.sampleRate,
+          bitrate: settings.mp3Fallback.bitrate,
+        });
+        encoder = mp3Encoder;
+        codec = 'mp3';
+        sampleRate = settings.mp3Fallback.sampleRate;
+      }
+    } else {
+      // MP3 explicitly requested
+      const mp3Encoder = await createMp3Encoder();
+      mp3Encoder.configure({
+        channels: settings.channels,
+        sampleRate: settings.mp3Fallback.sampleRate,
+        bitrate: settings.mp3Fallback.bitrate,
+      });
+      encoder = mp3Encoder;
+      codec = 'mp3';
+      sampleRate = settings.mp3Fallback.sampleRate;
+    }
+
+    // Create audio context with the appropriate sample rate
+    const audioContext = new AudioContext({ sampleRate });
 
     // Load audio worklet from static file (blob URLs blocked by MV3 CSP)
     await audioContext.audioWorklet.addModule(chrome.runtime.getURL('audio-worklet.js'));
@@ -98,14 +187,6 @@ async function handleStart(
 
     source.connect(workletNode);
 
-    // Initialize encoder
-    const encoder = await createMp3Encoder();
-    encoder.configure({
-      channels: settings.channels,
-      sampleRate: settings.sampleRate,
-      bitrate: settings.bitrate,
-    });
-
     // Create session
     const session: StreamSession = {
       streamId,
@@ -114,6 +195,7 @@ async function handleStart(
       workletNode,
       websocket: null,
       encoder,
+      codec,
       reconnectAttempts: 0,
       frameBuffer: [],
       stopped: false,
@@ -130,10 +212,10 @@ async function handleStart(
       if (!currentSession || currentSession.stopped) return;
 
       const pcmData = event.data as { left: Float32Array; right: Float32Array };
-      const mp3Frame = encodeFrame(currentSession, pcmData);
+      const encodedFrame = encodeFrame(currentSession, pcmData);
 
-      if (mp3Frame && mp3Frame.length > 0) {
-        sendFrame(currentSession, mp3Frame);
+      if (encodedFrame && encodedFrame.length > 0) {
+        sendFrame(currentSession, encodedFrame);
       }
     };
 
@@ -169,11 +251,15 @@ async function stopSession(session: StreamSession): Promise<void> {
   session.stopped = true;
   stopHeartbeat(session);
 
-  // Flush encoder
+  // Flush and close encoder
   if (session.encoder) {
     const finalFrame = session.encoder.finalize();
     if (finalFrame && finalFrame.length > 0 && session.websocket?.readyState === WebSocket.OPEN) {
       session.websocket.send(finalFrame);
+    }
+    // Close AAC encoder (MP3 encoder doesn't have close method)
+    if (session.encoder.close) {
+      session.encoder.close();
     }
   }
 

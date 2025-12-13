@@ -71,7 +71,8 @@ function formatDidlLite(streamUrl: string, metadata?: StreamMetadata): string {
     didl += `<upnp:albumArtURI>${escapeXml(artwork)}</upnp:albumArtURI>`;
   }
   didl += `<upnp:class>object.item.audioItem.audioBroadcast</upnp:class>`;
-  didl += `<res protocolInfo="http-get:*:audio/mpeg:*">${escapeXml(streamUrl)}</res>`;
+  // Use audio/* to allow Sonos to auto-detect format (supports MP3, AAC-LC, HE-AAC)
+  didl += `<res protocolInfo="http-get:*:audio/*:*">${escapeXml(streamUrl)}</res>`;
   didl += `</item>`;
   didl += `</DIDL-Lite>`;
 

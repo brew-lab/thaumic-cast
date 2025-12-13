@@ -1,6 +1,8 @@
 // API request/response types shared between server and extension
 
-export type QualityPreset = 'low' | 'medium' | 'high';
+export type QualityPreset = 'ultra-low' | 'low' | 'medium' | 'high';
+
+export type AudioCodec = 'he-aac' | 'aac-lc' | 'mp3';
 
 export type StreamStatus = 'starting' | 'active' | 'stopped' | 'error';
 

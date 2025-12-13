@@ -102,8 +102,9 @@ fn format_didl_lite(stream_url: &str, metadata: Option<&StreamMetadata>) -> Stri
         ));
     }
     didl.push_str("<upnp:class>object.item.audioItem.audioBroadcast</upnp:class>");
+    // Use audio/* to allow Sonos to auto-detect format (supports MP3, AAC-LC, HE-AAC)
     didl.push_str(&format!(
-        r#"<res protocolInfo="http-get:*:audio/mpeg:*">{}</res>"#,
+        r#"<res protocolInfo="http-get:*:audio/*:*">{}</res>"#,
         escape_xml(stream_url)
     ));
     didl.push_str("</item>");

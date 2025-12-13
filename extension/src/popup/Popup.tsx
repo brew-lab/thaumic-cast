@@ -339,6 +339,7 @@ export function Popup() {
                 saveExtensionSettings({ quality: newQuality });
               }}
             >
+              <option value="ultra-low">{t('quality.ultra-low')}</option>
               <option value="low">{t('quality.low')}</option>
               <option value="medium">{t('quality.medium')}</option>
               <option value="high">{t('quality.high')}</option>

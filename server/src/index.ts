@@ -51,10 +51,11 @@ export const server = Bun.serve<WebSocketData>({
       return upgraded ? undefined : new Response('WebSocket upgrade failed', { status: 400 });
     }
 
-    // HTTP live stream endpoint
-    const streamMatch = url.pathname.match(/^\/streams\/([^/]+)\/live\.mp3$/);
+    // HTTP live stream endpoint (supports both .mp3 and .aac)
+    const streamMatch = url.pathname.match(/^\/streams\/([^/]+)\/live\.(mp3|aac)$/);
     if (streamMatch && req.method === 'GET') {
       const streamId = streamMatch[1];
+      const format = streamMatch[2] as 'mp3' | 'aac';
       if (!streamId) {
         return new Response('Invalid stream ID', { status: 400 });
       }
@@ -64,9 +65,14 @@ export const server = Bun.serve<WebSocketData>({
         return new Response('Stream not found', { status: 404 });
       }
 
+      // Set Content-Type based on format
+      const contentType = format === 'aac' ? 'audio/aac' : 'audio/mpeg';
+
       // Check if client requested ICY metadata
       const wantsIcy = req.headers.get('icy-metadata') === '1';
-      console.log(`[Stream] New subscriber for ${streamId} (icy_metadata: ${wantsIcy})`);
+      console.log(
+        `[Stream] New subscriber for ${streamId} (format: ${format}, icy_metadata: ${wantsIcy})`
+      );
 
       const baseStream = stream.createReadableStream();
 
@@ -74,7 +80,7 @@ export const server = Bun.serve<WebSocketData>({
       if (!wantsIcy) {
         return new Response(baseStream, {
           headers: {
-            'Content-Type': 'audio/mpeg',
+            'Content-Type': contentType,
             'Cache-Control': 'no-store',
             'Transfer-Encoding': 'chunked',
           },
@@ -117,7 +123,7 @@ export const server = Bun.serve<WebSocketData>({
 
       return new Response(wrappedStream, {
         headers: {
-          'Content-Type': 'audio/mpeg',
+          'Content-Type': contentType,
           'Cache-Control': 'no-store',
           'Transfer-Encoding': 'chunked',
           'icy-metaint': String(ICY_METAINT),
