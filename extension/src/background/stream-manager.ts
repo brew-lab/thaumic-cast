@@ -7,6 +7,7 @@ import { ensureOffscreen } from './offscreen-manager';
 let activeStream: CastStatus = { isActive: false };
 let lastHeartbeatAt = 0;
 let heartbeatInterval: ReturnType<typeof setInterval> | null = null;
+let metadataDebounceTimer: ReturnType<typeof setTimeout> | null = null;
 const HEARTBEAT_TIMEOUT_MS = 10000;
 
 interface StartStreamParams {
@@ -118,6 +119,8 @@ export async function startStream(params: StartStreamParams): Promise<{
       quality,
       mode: isLocalMode ? 'local' : 'cloud',
       coordinatorIp: isLocalMode ? coordinatorIp : undefined,
+      playbackUrl,
+      metadata,
     };
     lastHeartbeatAt = Date.now();
     startHeartbeatMonitor();
@@ -147,6 +150,7 @@ export async function stopCurrentStream(mode?: SonosMode, coordinatorIp?: string
   if (!activeStream.isActive || !activeStream.streamId) return;
 
   stopHeartbeatMonitor();
+  clearMetadataDebounce();
 
   try {
     await chrome.runtime.sendMessage({
@@ -217,6 +221,7 @@ export function getActiveStream(): CastStatus {
 
 export function clearActiveStream(): void {
   stopHeartbeatMonitor();
+  clearMetadataDebounce();
   activeStream = { isActive: false };
 }
 
@@ -247,4 +252,56 @@ function stopHeartbeatMonitor() {
     clearInterval(heartbeatInterval);
     heartbeatInterval = null;
   }
+}
+
+function clearMetadataDebounce(): void {
+  if (metadataDebounceTimer) {
+    clearTimeout(metadataDebounceTimer);
+    metadataDebounceTimer = null;
+  }
+}
+
+/**
+ * Update stream metadata on Sonos speaker (local mode only).
+ * Debounced to avoid flooding the speaker with updates.
+ */
+export async function updateStreamMetadata(tabId: number, metadata: StreamMetadata): Promise<void> {
+  // Guard: only if active, local mode, and from casting tab
+  if (!activeStream.isActive || activeStream.mode !== 'local') return;
+  if (activeStream.tabId !== tabId) return;
+  if (!activeStream.coordinatorIp || !activeStream.playbackUrl) return;
+
+  // Skip if unchanged (compare title, artist, album)
+  const prev = activeStream.metadata;
+  if (
+    prev?.title === metadata.title &&
+    prev?.artist === metadata.artist &&
+    prev?.album === metadata.album
+  ) {
+    return;
+  }
+
+  // Debounce 1s to avoid flooding speaker
+  clearMetadataDebounce();
+  metadataDebounceTimer = setTimeout(async () => {
+    try {
+      const serverUrl = await getServerUrl();
+      await fetchWithTimeout(`${serverUrl}/api/local/metadata`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({
+          coordinatorIp: activeStream.coordinatorIp,
+          streamUrl: activeStream.playbackUrl,
+          metadata,
+        }),
+      });
+      activeStream.metadata = metadata;
+      logEvent('metadata updated', { title: metadata.title });
+    } catch (err) {
+      logError('metadata update failed', {
+        error: err instanceof Error ? err.message : 'unknown',
+      });
+    }
+  }, 1000);
 }

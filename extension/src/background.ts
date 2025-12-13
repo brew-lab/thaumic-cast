@@ -18,6 +18,7 @@ import {
   getActiveStream,
   clearActiveStream,
   recordHeartbeat,
+  updateStreamMetadata,
 } from './background/stream-manager';
 
 // Message handler
@@ -101,6 +102,15 @@ async function handleMessage(
     // Media detection messages
     case 'MEDIA_UPDATE': {
       updateMediaRegistry(message.media, sender);
+      // Update Sonos metadata if casting from this tab
+      if (message.media && sender.tab?.id) {
+        updateStreamMetadata(sender.tab.id, {
+          title: message.media.title,
+          artist: message.media.artist,
+          album: message.media.album,
+          artwork: message.media.artwork,
+        });
+      }
       sendResponse({ success: true });
       break;
     }

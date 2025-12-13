@@ -141,6 +141,8 @@ export interface CastStatus {
   quality?: QualityPreset;
   mode?: SonosMode;
   coordinatorIp?: string; // Only for local mode
+  playbackUrl?: string; // Stream URL for metadata updates
+  metadata?: StreamMetadata; // Current metadata sent to speaker
 }
 
 // Union of all messages

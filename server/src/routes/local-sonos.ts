@@ -344,6 +344,58 @@ export async function handleLocalSonosRoutes(req: Request, url: URL): Promise<Re
     }
   }
 
+  // POST /api/local/metadata - Update metadata on playing stream
+  if (url.pathname === '/api/local/metadata' && req.method === 'POST') {
+    try {
+      const body = (await req.json()) as {
+        coordinatorIp?: string;
+        streamUrl?: string;
+        metadata?: StreamMetadata;
+      };
+
+      if (!body.coordinatorIp || !body.streamUrl) {
+        return errorResponse(
+          {
+            error: 'invalid_request',
+            message: 'coordinatorIp and streamUrl are required',
+            code: ErrorCode.INVALID_IP_ADDRESS,
+          },
+          400,
+          cors
+        );
+      }
+
+      if (!isValidIPv4(body.coordinatorIp)) {
+        return errorResponse(
+          {
+            error: 'invalid_ip',
+            message: `Invalid coordinator IP address: ${body.coordinatorIp}`,
+            code: ErrorCode.INVALID_IP_ADDRESS,
+          },
+          400,
+          cors
+        );
+      }
+
+      // Reuse existing function - just SetAVTransportURI, no Play
+      await sonosLocal.setAVTransportURI(body.coordinatorIp, body.streamUrl, body.metadata);
+
+      return jsonResponse({ success: true }, 200, cors);
+    } catch (error) {
+      console.error('[LocalSonos] Metadata update error:', error);
+      const { message, code } = parseError(error);
+      return errorResponse(
+        {
+          error: 'metadata_failed',
+          message,
+          code,
+        },
+        500,
+        cors
+      );
+    }
+  }
+
   // GET /api/local/server-ip - Get server's local IP address
   if (url.pathname === '/api/local/server-ip' && req.method === 'GET') {
     const localIp = sonosLocal.getLocalIp();

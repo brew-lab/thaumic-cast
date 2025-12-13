@@ -28,6 +28,7 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/local/groups", get(get_groups))
         .route("/api/local/play", post(play_stream))
         .route("/api/local/stop", post(stop_stream))
+        .route("/api/local/metadata", post(update_metadata))
         .route("/api/local/volume/{ip}", get(get_volume).post(set_volume))
         .route("/api/local/server-ip", get(get_server_ip))
         // Stream endpoints
@@ -135,6 +136,34 @@ async fn stop_stream(Json(body): Json<StopRequest>) -> impl IntoResponse {
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(serde_json::json!({
                     "error": "stop_failed",
+                    "message": e.to_string()
+                })),
+            )
+                .into_response()
+        }
+    }
+}
+
+#[derive(Deserialize)]
+struct UpdateMetadataRequest {
+    #[serde(rename = "coordinatorIp")]
+    coordinator_ip: String,
+    #[serde(rename = "streamUrl")]
+    stream_url: String,
+    metadata: Option<sonos::StreamMetadata>,
+}
+
+async fn update_metadata(Json(body): Json<UpdateMetadataRequest>) -> impl IntoResponse {
+    match sonos::set_av_transport_uri(&body.coordinator_ip, &body.stream_url, body.metadata.as_ref())
+        .await
+    {
+        Ok(_) => Json(serde_json::json!({ "success": true })).into_response(),
+        Err(e) => {
+            tracing::error!("Metadata update error: {}", e);
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({
+                    "error": "metadata_failed",
                     "message": e.to_string()
                 })),
             )
