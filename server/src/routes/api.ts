@@ -311,6 +311,12 @@ export async function handleApiRoutes(req: Request, url: URL): Promise<Response>
     return jsonResponse({ success: true }, 200, cors);
   }
 
+  // DEV ONLY: GET /api/debug/gena - Check GENA listener status
+  if (url.pathname === '/api/debug/gena' && req.method === 'GET') {
+    const diagnostics = GenaListener.getDiagnostics();
+    return jsonResponse(diagnostics, 200, cors);
+  }
+
   // DEV ONLY: POST /api/test/stream - Create test stream without Sonos
   if (url.pathname === '/api/test/stream' && req.method === 'POST') {
     if (Bun.env.NODE_ENV === 'production') {

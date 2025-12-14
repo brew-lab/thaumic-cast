@@ -267,7 +267,7 @@ impl GenaListener {
         let callback_url = format!("http://{}:{}{}", self.local_ip, port, callback_path);
 
         tracing::info!("[GENA] Subscribing to {:?} on {}", service, speaker_ip);
-        tracing::debug!("[GENA] Callback URL: {}", callback_url);
+        tracing::info!("[GENA] Callback URL: {}", callback_url);
 
         let response = self
             .client
@@ -440,6 +440,16 @@ impl GenaListener {
         self.state.subscriptions.read().len()
     }
 
+    /// Get details of all active subscriptions for debugging
+    pub fn get_subscriptions(&self) -> Vec<(String, String, GenaService)> {
+        self.state
+            .subscriptions
+            .read()
+            .values()
+            .map(|sub| (sub.sid.clone(), sub.speaker_ip.clone(), sub.service))
+            .collect()
+    }
+
     /// Schedule subscription renewal
     fn schedule_renewal(&self, sid: String, timeout_seconds: u64) {
         let renewal_delay = timeout_seconds.saturating_sub(RENEWAL_MARGIN_SECONDS).max(60);
@@ -610,6 +620,8 @@ async fn notify_handler(
     Path((_ip, service)): Path<(String, String)>,
     request: Request<Body>,
 ) -> impl IntoResponse {
+    tracing::info!("[GENA] Received NOTIFY callback for service: {}", service);
+
     // Only handle NOTIFY method
     if request.method().as_str() != "NOTIFY" {
         return StatusCode::METHOD_NOT_ALLOWED;
@@ -623,13 +635,18 @@ async fn notify_handler(
         }
     };
 
+    tracing::debug!("[GENA] NOTIFY SID: {}", sid);
+
     // Verify subscription exists
     let speaker_ip = {
         let subs = state.subscriptions.read();
+        let known_sids: Vec<_> = subs.keys().collect();
+        tracing::debug!("[GENA] Known SIDs: {:?}", known_sids);
+
         match subs.get(&sid) {
             Some(sub) => sub.speaker_ip.clone(),
             None => {
-                tracing::warn!("[GENA] NOTIFY for unknown SID: {}", sid);
+                tracing::warn!("[GENA] NOTIFY for unknown SID: {} (known: {:?})", sid, known_sids);
                 return StatusCode::PRECONDITION_FAILED;
             }
         }

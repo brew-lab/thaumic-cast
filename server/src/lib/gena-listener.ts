@@ -44,7 +44,8 @@ class GenaListenerClass {
       return;
     }
 
-    this.localIp = getLocalIp();
+    // LOCAL_SERVER_IP env var takes precedence (needed for WSL2 where getLocalIp returns internal IP)
+    this.localIp = Bun.env.LOCAL_SERVER_IP || getLocalIp();
 
     if (!this.localIp) {
       throw new Error('Could not determine local IP address for GENA callbacks');
@@ -297,6 +298,27 @@ class GenaListenerClass {
   }
 
   /**
+   * Get diagnostic info for debugging
+   */
+  getDiagnostics(): {
+    running: boolean;
+    port: number;
+    localIp: string | null;
+    subscriptions: Array<{ sid: string; speakerIp: string; service: string }>;
+  } {
+    return {
+      running: this.server !== null,
+      port: this.port,
+      localIp: this.localIp,
+      subscriptions: Array.from(this.subscriptions.values()).map((sub) => ({
+        sid: sub.sid,
+        speakerIp: sub.speakerIp,
+        service: sub.service,
+      })),
+    };
+  }
+
+  /**
    * Schedule subscription renewal
    */
   private scheduleRenewal(sub: SubscriptionState): void {
@@ -316,6 +338,7 @@ class GenaListenerClass {
    * Handle NOTIFY callback from Sonos speaker
    */
   private async handleNotify(req: Request, _url: URL): Promise<Response> {
+    console.log('[GENA] Received NOTIFY callback');
     const sid = req.headers.get('SID');
 
     if (!sid) {
@@ -326,8 +349,11 @@ class GenaListenerClass {
     const sub = this.subscriptions.get(sid);
     if (!sub) {
       console.warn(`[GENA] NOTIFY for unknown SID: ${sid}`);
+      console.warn(`[GENA] Known SIDs: ${Array.from(this.subscriptions.keys()).join(', ')}`);
       return new Response('Unknown subscription', { status: 412 });
     }
+
+    console.log(`[GENA] NOTIFY for ${sub.service} from ${sub.speakerIp}`);
 
     try {
       const body = await req.text();
