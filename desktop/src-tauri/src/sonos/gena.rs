@@ -874,17 +874,19 @@ fn parse_notify(
 }
 
 /// Check if current URI matches expected stream URL
-/// Handles different URL schemes (http, x-rincon-mp3radio, etc.)
+/// Sonos uses various internal schemes and can nest them (e.g., aac://http://...)
+/// We extract just the host+path portion for comparison.
 fn is_matching_stream_url(current_uri: &str, expected_uri: &str) -> bool {
-    // Normalize both URLs by removing protocol and comparing the rest
-    fn normalize_url(url: &str) -> String {
-        url.replace("http://", "")
-            .replace("https://", "")
-            .replace("x-rincon-mp3radio://", "")
-            .to_lowercase()
+    // Extract everything after the last "://" to get host+path
+    // This handles nested schemes like "aac://http://host/path" -> "host/path"
+    fn extract_host_path(url: &str) -> &str {
+        match url.rfind("://") {
+            Some(idx) => &url[idx + 3..],
+            None => url,
+        }
     }
 
-    normalize_url(current_uri) == normalize_url(expected_uri)
+    extract_host_path(current_uri).eq_ignore_ascii_case(extract_host_path(expected_uri))
 }
 
 /// Extract LastChange content from NOTIFY body

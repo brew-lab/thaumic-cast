@@ -516,14 +516,19 @@ class GenaListenerClass {
 
   /**
    * Check if current URI matches expected stream URL
-   * Handles different URL schemes (http, x-rincon-mp3radio, etc.)
+   * Sonos uses various internal schemes and can nest them (e.g., aac://http://...)
+   * We extract just the host+path portion for comparison.
    */
   private isMatchingStreamUrl(currentUri: string, expectedUri: string): boolean {
-    // Normalize both URLs by removing protocol and comparing the rest
-    const normalizeUrl = (url: string) =>
-      url.replace(/^(https?|x-rincon-mp3radio):\/\//, '').toLowerCase();
+    // Extract everything after the last "://" to get host+path
+    // This handles nested schemes like "aac://http://host/path" -> "host/path"
+    const extractHostPath = (url: string): string => {
+      const lastSchemeIndex = url.lastIndexOf('://');
+      if (lastSchemeIndex === -1) return url.toLowerCase();
+      return url.slice(lastSchemeIndex + 3).toLowerCase();
+    };
 
-    return normalizeUrl(currentUri) === normalizeUrl(expectedUri);
+    return extractHostPath(currentUri) === extractHostPath(expectedUri);
   }
 }
 
