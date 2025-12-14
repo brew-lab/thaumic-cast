@@ -5,6 +5,7 @@ import type {
   CastErrorMessage,
   CastEndedMessage,
   ControlMediaMessage,
+  SonosEventMessage,
 } from '@thaumic-cast/shared';
 import { closeOffscreen, markOffscreenReady } from './background/offscreen-manager';
 import {
@@ -127,6 +128,12 @@ async function handleMessage(
       break;
     }
 
+    case 'SONOS_EVENT': {
+      handleSonosEvent(message as SonosEventMessage);
+      sendResponse({ success: true });
+      break;
+    }
+
     default:
       console.warn('[Background] Unknown message type:', message.type);
       sendResponse({ error: 'Unknown message type' });
@@ -149,6 +156,65 @@ async function handleMediaControl(
   } catch (err) {
     console.error('[Background] Failed to send control to tab:', err);
     sendResponse({ error: 'Failed to control media' });
+  }
+}
+
+// Handle Sonos events from server (via WebSocket)
+function handleSonosEvent(message: SonosEventMessage): void {
+  const { payload } = message;
+
+  console.log('[Background] Received Sonos event:', payload.type, payload);
+
+  switch (payload.type) {
+    case 'transportState': {
+      // If Sonos stopped playback (user pressed stop in Sonos app)
+      if (payload.state === 'STOPPED') {
+        console.log('[Background] Sonos playback stopped by external source');
+        // Clear our active stream state - don't try to stop again on speaker
+        clearActiveStream();
+        // Close the offscreen document since we're no longer streaming
+        closeOffscreen().catch((err) => {
+          console.error('[Background] Failed to close offscreen:', err);
+        });
+      }
+      break;
+    }
+
+    case 'volume': {
+      // Volume changed on Sonos speaker - broadcast to popup
+      console.log('[Background] Sonos volume changed:', payload.volume);
+      chrome.runtime
+        .sendMessage({
+          type: 'VOLUME_UPDATE',
+          volume: payload.volume,
+          speakerIp: payload.speakerIp,
+        })
+        .catch(() => {
+          // Popup may not be open
+        });
+      break;
+    }
+
+    case 'mute': {
+      // Mute state changed on Sonos speaker - broadcast to popup
+      console.log('[Background] Sonos mute changed:', payload.mute);
+      chrome.runtime
+        .sendMessage({
+          type: 'MUTE_UPDATE',
+          mute: payload.mute,
+          speakerIp: payload.speakerIp,
+        })
+        .catch(() => {
+          // Popup may not be open
+        });
+      break;
+    }
+
+    case 'zoneChange': {
+      // Zone topology changed (speakers grouped/ungrouped)
+      console.log('[Background] Sonos zone configuration changed');
+      break;
+    }
   }
 }
 

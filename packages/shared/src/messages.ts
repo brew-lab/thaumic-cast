@@ -1,6 +1,7 @@
 // Extension messaging types between popup, service worker, and offscreen document
 
 import type { QualityPreset, SonosMode, StreamMetadata } from './api';
+import type { SonosEvent } from './events';
 
 // Message types
 export type MessageType =
@@ -17,7 +18,12 @@ export type MessageType =
   | 'MEDIA_UPDATE'
   | 'GET_MEDIA_SOURCES'
   | 'MEDIA_SOURCES'
-  | 'CONTROL_MEDIA';
+  | 'CONTROL_MEDIA'
+  // Sonos event messages (bidirectional sync)
+  | 'SONOS_EVENT'
+  // Volume/mute updates from GENA
+  | 'VOLUME_UPDATE'
+  | 'MUTE_UPDATE';
 
 // Media info from a tab
 export interface MediaInfo {
@@ -131,6 +137,26 @@ export interface ControlMediaMessage extends BaseMessage {
   action: MediaAction;
 }
 
+// SONOS_EVENT: offscreen -> service worker (forwarded from server via WebSocket)
+export interface SonosEventMessage extends BaseMessage {
+  type: 'SONOS_EVENT';
+  payload: SonosEvent;
+}
+
+// VOLUME_UPDATE: service worker -> popup (from GENA event)
+export interface VolumeUpdateMessage extends BaseMessage {
+  type: 'VOLUME_UPDATE';
+  volume: number;
+  speakerIp: string;
+}
+
+// MUTE_UPDATE: service worker -> popup (from GENA event)
+export interface MuteUpdateMessage extends BaseMessage {
+  type: 'MUTE_UPDATE';
+  mute: boolean;
+  speakerIp: string;
+}
+
 // Cast status
 export interface CastStatus {
   isActive: boolean;
@@ -159,7 +185,10 @@ export type ExtensionMessage =
   | MediaUpdateMessage
   | GetMediaSourcesMessage
   | MediaSourcesMessage
-  | ControlMediaMessage;
+  | ControlMediaMessage
+  | SonosEventMessage
+  | VolumeUpdateMessage
+  | MuteUpdateMessage;
 
 // Response types
 export interface StatusResponse {

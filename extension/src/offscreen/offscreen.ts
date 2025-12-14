@@ -334,6 +334,24 @@ function connectWebSocket(session: StreamSession, url: string): void {
     console.error('[Offscreen] WebSocket error:', error);
   };
 
+  // Handle incoming messages (Sonos events from server)
+  ws.onmessage = (event) => {
+    // Events come as text (JSON), audio frames would be binary (but we only send, not receive audio)
+    if (typeof event.data === 'string') {
+      try {
+        const sonosEvent = JSON.parse(event.data);
+        console.log('[Offscreen] Received Sonos event:', sonosEvent);
+        // Forward to background script
+        chrome.runtime.sendMessage({
+          type: 'SONOS_EVENT',
+          payload: sonosEvent,
+        });
+      } catch (err) {
+        console.error('[Offscreen] Failed to parse WebSocket message:', err);
+      }
+    }
+  };
+
   session.websocket = ws;
 }
 

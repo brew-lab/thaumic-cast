@@ -49,6 +49,7 @@ export interface CreateStreamResponse {
   streamId: string;
   ingestUrl: string;
   playbackUrl: string;
+  warning?: string; // Non-fatal issues (e.g., GENA subscription failed)
 }
 
 // GET /api/sonos/status

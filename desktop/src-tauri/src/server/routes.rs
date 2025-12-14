@@ -1,6 +1,7 @@
 use super::AppState;
 use crate::network::get_local_ip;
 use crate::sonos;
+use crate::sonos::GenaService;
 use crate::stream::{format_icy_metadata, StreamState, ICY_METAINT};
 use axum::{
     body::Body,
@@ -106,9 +107,29 @@ struct PlayRequest {
     metadata: Option<sonos::StreamMetadata>,
 }
 
-async fn play_stream(Json(body): Json<PlayRequest>) -> impl IntoResponse {
+async fn play_stream(
+    State(state): State<AppState>,
+    Json(body): Json<PlayRequest>,
+) -> impl IntoResponse {
     match sonos::play_stream(&body.coordinator_ip, &body.stream_url, body.metadata.as_ref()).await {
-        Ok(_) => Json(serde_json::json!({ "success": true })).into_response(),
+        Ok(_) => {
+            // Subscribe to GENA events for this speaker (spawn in background)
+            let gena_clone = state.gena.clone();
+            let coordinator_ip = body.coordinator_ip.clone();
+            tokio::spawn(async move {
+                if let Some(ref gena) = *gena_clone.read().await {
+                    // Subscribe to AVTransport (playback state) and RenderingControl (volume)
+                    if let Err(e) = gena.subscribe(&coordinator_ip, GenaService::AVTransport).await {
+                        tracing::warn!("[Routes] Failed to subscribe to AVTransport: {}", e);
+                    }
+                    if let Err(e) = gena.subscribe(&coordinator_ip, GenaService::RenderingControl).await {
+                        tracing::warn!("[Routes] Failed to subscribe to RenderingControl: {}", e);
+                    }
+                }
+            });
+
+            Json(serde_json::json!({ "success": true })).into_response()
+        }
         Err(e) => {
             tracing::error!("Play error: {}", e);
             (
@@ -129,7 +150,21 @@ struct StopRequest {
     coordinator_ip: String,
 }
 
-async fn stop_stream(Json(body): Json<StopRequest>) -> impl IntoResponse {
+async fn stop_stream(
+    State(state): State<AppState>,
+    Json(body): Json<StopRequest>,
+) -> impl IntoResponse {
+    // Unsubscribe from GENA events for this speaker (spawn in background)
+    let gena_clone = state.gena.clone();
+    let coordinator_ip = body.coordinator_ip.clone();
+    tokio::spawn(async move {
+        if let Some(ref gena) = *gena_clone.read().await {
+            if let Err(e) = gena.unsubscribe_all(&coordinator_ip).await {
+                tracing::warn!("[Routes] Failed to unsubscribe from GENA: {}", e);
+            }
+        }
+    });
+
     match sonos::stop(&body.coordinator_ip).await {
         Ok(_) => Json(serde_json::json!({ "success": true })).into_response(),
         Err(e) => {
@@ -247,7 +282,12 @@ async fn create_stream(
     };
 
     // Pre-create the stream
-    let _ = state.streams.get_or_create(&stream_id);
+    let stream = state.streams.get_or_create(&stream_id);
+
+    // Store coordinator IP if provided (for GENA event routing)
+    if let Some(ref coordinator_ip) = body.coordinator_ip {
+        stream.set_speaker_ip(coordinator_ip.clone());
+    }
 
     // Get local IP for URLs
     let local_ip = get_local_ip().unwrap_or_else(|| "localhost".to_string());
@@ -327,7 +367,10 @@ async fn handle_ingest(socket: WebSocket, stream_id: String, state: AppState) {
     tracing::info!("WebSocket ingest connected for stream: {}", stream_id);
 
     let stream = state.streams.get_or_create(&stream_id);
-    let (mut _sender, mut receiver) = socket.split();
+    let (sender, mut receiver) = socket.split();
+
+    // Store the sender for sending events back to the extension
+    stream.set_ws_sender(sender).await;
 
     while let Some(msg) = receiver.next().await {
         match msg {
@@ -344,6 +387,18 @@ async fn handle_ingest(socket: WebSocket, stream_id: String, state: AppState) {
             }
             _ => {}
         }
+    }
+
+    // Unsubscribe from GENA for this speaker when stream disconnects (spawn in background)
+    if let Some(speaker_ip) = stream.get_speaker_ip() {
+        let gena_clone = state.gena.clone();
+        tokio::spawn(async move {
+            if let Some(ref gena) = *gena_clone.read().await {
+                if let Err(e) = gena.unsubscribe_all(&speaker_ip).await {
+                    tracing::warn!("[Routes] Failed to unsubscribe from GENA on disconnect: {}", e);
+                }
+            }
+        });
     }
 
     // Cleanup stream when ingest disconnects

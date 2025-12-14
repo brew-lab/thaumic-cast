@@ -85,7 +85,7 @@ pub fn extract_soap_value(xml: &str, tag_name: &str) -> Option<String> {
         .map(|m| m.as_str().to_string())
 }
 
-/// Unescape XML entities
+/// Unescape XML entities (used by both SOAP and GENA modules)
 pub fn unescape_xml(xml: &str) -> String {
     xml.replace("&lt;", "<")
         .replace("&gt;", ">")

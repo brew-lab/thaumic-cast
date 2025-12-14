@@ -41,11 +41,13 @@ pub fn run() {
         .setup(|app| {
             let config = Arc::new(RwLock::new(Config::default()));
             let streams = Arc::new(StreamManager::new());
+            let gena = Arc::new(tokio::sync::RwLock::new(None));
 
             // Create app state
             let state = AppState {
                 config: config.clone(),
                 streams: streams.clone(),
+                gena,
             };
 
             // Store state in Tauri

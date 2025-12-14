@@ -94,6 +94,39 @@ export function useCasting({
     init();
   }, []);
 
+  // Listen for status and volume/mute updates from background
+  useEffect(() => {
+    function handleMessage(
+      message: {
+        type: string;
+        status?: CastStatus;
+        volume?: number;
+        mute?: boolean;
+        speakerIp?: string;
+      },
+      _sender: chrome.runtime.MessageSender,
+      _sendResponse: (response?: unknown) => void
+    ) {
+      if (message.type === 'STATUS_UPDATE' && message.status) {
+        setCastStatus(message.status);
+      } else if (message.type === 'VOLUME_UPDATE' && message.volume !== undefined) {
+        // Only update if this is for our active speaker
+        const activeIp = castStatus.coordinatorIp;
+        if (!activeIp || message.speakerIp === activeIp) {
+          setVolume(message.volume);
+        }
+      } else if (message.type === 'MUTE_UPDATE' && message.mute !== undefined) {
+        // Log mute changes for now - could add UI indicator later
+        console.log('[useCasting] Mute state changed:', message.mute);
+      }
+    }
+
+    chrome.runtime.onMessage.addListener(handleMessage);
+    return () => {
+      chrome.runtime.onMessage.removeListener(handleMessage);
+    };
+  }, [castStatus.coordinatorIp]);
+
   // Periodic group refresh during active casting to detect stale state
   useEffect(() => {
     if (!castStatus.isActive || sonosMode !== 'local') return;

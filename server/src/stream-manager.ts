@@ -1,5 +1,5 @@
 import type { ServerWebSocket } from 'bun';
-import type { StreamMetadata } from '@thaumic-cast/shared';
+import type { StreamMetadata, SonosEvent } from '@thaumic-cast/shared';
 import { verifyIngestToken } from './jwt';
 
 const MAX_BUFFER_FRAMES = 300; // ~10 seconds at 30fps MP3 frames
@@ -23,6 +23,7 @@ class StreamState {
   private subscribers: Set<Subscriber> = new Set();
   private buffer: Uint8Array[] = [];
   private metadata: StreamMetadata = {};
+  private _speakerIp: string | null = null;
 
   constructor(id: string) {
     this.id = id;
@@ -36,12 +37,42 @@ class StreamState {
     return this.metadata;
   }
 
+  /**
+   * Set the Sonos speaker IP this stream is playing on
+   * Used for GENA event routing
+   */
+  setSpeakerIp(ip: string): void {
+    this._speakerIp = ip;
+  }
+
+  /**
+   * Get the Sonos speaker IP this stream is playing on
+   */
+  get speakerIp(): string | null {
+    return this._speakerIp;
+  }
+
   attachIngress(ws: ServerWebSocket<WebSocketData>): void {
     this.ingressSockets.add(ws);
   }
 
   detachIngress(ws: ServerWebSocket<WebSocketData>): void {
     this.ingressSockets.delete(ws);
+  }
+
+  /**
+   * Send a Sonos event to all connected ingress WebSockets
+   * Events are sent as JSON text (not binary) so extension can distinguish from audio
+   */
+  sendEvent(event: SonosEvent): void {
+    const json = JSON.stringify(event);
+    for (const ws of this.ingressSockets) {
+      try {
+        ws.send(json);
+      } catch (err) {
+        console.error(`[StreamState] Failed to send event to WebSocket:`, err);
+      }
+    }
   }
 
   pushFrame(frame: Uint8Array): void {
@@ -123,6 +154,46 @@ class StreamManagerClass {
 
   get(id: string): StreamState | undefined {
     return this.streams.get(id);
+  }
+
+  /**
+   * Find stream by speaker IP address
+   * Used by GENA listener to route events to the correct stream
+   */
+  getByIp(speakerIp: string): StreamState | undefined {
+    for (const stream of this.streams.values()) {
+      if (stream.speakerIp === speakerIp) {
+        return stream;
+      }
+    }
+    return undefined;
+  }
+
+  /**
+   * Send event to stream by ID
+   */
+  sendEvent(streamId: string, event: SonosEvent): boolean {
+    const stream = this.streams.get(streamId);
+    if (stream) {
+      stream.sendEvent(event);
+      return true;
+    }
+    return false;
+  }
+
+  /**
+   * Send event to stream by speaker IP
+   * Returns true if a matching stream was found
+   */
+  sendEventByIp(speakerIp: string, event: SonosEvent): boolean {
+    const stream = this.getByIp(speakerIp);
+    if (stream) {
+      stream.sendEvent(event);
+      console.log(`[StreamManager] Sent ${event.type} event to stream ${stream.id}`);
+      return true;
+    }
+    console.log(`[StreamManager] No stream found for speaker IP ${speakerIp}`);
+    return false;
   }
 
   async validateToken(streamId: string, token: string): Promise<boolean> {

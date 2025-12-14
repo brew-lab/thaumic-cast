@@ -246,6 +246,22 @@ export function clearActiveStream(): void {
   stopHeartbeatMonitor();
   clearMetadataDebounce();
   activeStream = { isActive: false };
+  broadcastStatusUpdate();
+}
+
+/**
+ * Broadcast current status to any open popup/UI.
+ * Uses chrome.runtime.sendMessage which will be received by any listeners.
+ */
+export function broadcastStatusUpdate(): void {
+  chrome.runtime
+    .sendMessage({
+      type: 'STATUS_UPDATE',
+      status: activeStream,
+    })
+    .catch(() => {
+      // Ignore errors - popup may not be open
+    });
 }
 
 export function recordHeartbeat(streamId: string): void {

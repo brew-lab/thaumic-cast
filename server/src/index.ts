@@ -4,13 +4,27 @@ import { StreamManager, ICY_METAINT, formatIcyMetadata } from './stream-manager'
 import { handleApiRoutes } from './routes/api';
 import { handleSonosRoutes } from './routes/sonos';
 import { handleLocalSonosRoutes } from './routes/local-sonos';
+import { GenaListener } from './lib/gena-listener';
 
 const PORT = Number(Bun.env.PORT) || 3000;
 const HOST = Bun.env.HOST || '0.0.0.0';
+const GENA_PORT = Number(Bun.env.GENA_PORT) || 3001;
 const USE_TLS = Bun.env.USE_TLS !== 'false'; // Disable TLS with USE_TLS=false
 
 // Ensure database is initialized
 db.exec('SELECT 1');
+
+// Start GENA listener for Sonos UPnP events
+GenaListener.start(GENA_PORT)
+  .then(() => {
+    // Wire up GENA events to StreamManager
+    GenaListener.onEvent((speakerIp, event) => {
+      StreamManager.sendEventByIp(speakerIp, event);
+    });
+  })
+  .catch((err) => {
+    console.error('[GENA] Failed to start listener:', err);
+  });
 
 interface WebSocketData {
   streamId: string;

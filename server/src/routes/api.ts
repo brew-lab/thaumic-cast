@@ -3,6 +3,7 @@ import { db } from '../db';
 import { signIngestToken } from '../jwt';
 import { SonosClient } from '../lib/sonos-client';
 import { getLocalIp } from '../lib/sonos-local-client';
+import { GenaListener } from '../lib/gena-listener';
 import { StreamManager } from '../stream-manager';
 import type {
   AudioCodec,
@@ -152,7 +153,29 @@ export async function handleApiRoutes(req: Request, url: URL): Promise<Response>
     ).run(streamId, session.user.id, householdId, groupId, quality, 'starting');
 
     // Initialize stream in manager
-    StreamManager.getOrCreate(streamId);
+    const stream = StreamManager.getOrCreate(streamId);
+
+    // For local mode, store the coordinator IP and subscribe to GENA events
+    let genaWarning: string | undefined;
+    if (isLocalMode && body.coordinatorIp) {
+      stream.setSpeakerIp(body.coordinatorIp);
+
+      // Subscribe to GENA events for this speaker
+      // We await these to ensure subscriptions are established before responding
+      const subscriptionResults = await Promise.allSettled([
+        GenaListener.subscribe(body.coordinatorIp, 'AVTransport'),
+        GenaListener.subscribe(body.coordinatorIp, 'RenderingControl'),
+      ]);
+
+      const failedSubscriptions = subscriptionResults
+        .filter((r): r is PromiseRejectedResult => r.status === 'rejected')
+        .map((r) => r.reason);
+
+      if (failedSubscriptions.length > 0) {
+        console.warn('[Streams] Some GENA subscriptions failed:', failedSubscriptions);
+        genaWarning = 'Real-time speaker feedback may be unavailable';
+      }
+    }
 
     // Generate ingest token
     const ingestToken = await signIngestToken(session.user.id, streamId);
@@ -199,6 +222,7 @@ export async function handleApiRoutes(req: Request, url: URL): Promise<Response>
       streamId,
       ingestUrl,
       playbackUrl,
+      ...(genaWarning && { warning: genaWarning }),
     };
 
     return jsonResponse(response, 201, cors);
@@ -228,6 +252,17 @@ export async function handleApiRoutes(req: Request, url: URL): Promise<Response>
 
     if (stream.user_id !== session.user.id) {
       return jsonResponse({ error: 'forbidden', message: 'Not your stream' }, 403, cors);
+    }
+
+    // Get stream from manager before removing (to get speaker IP for GENA cleanup)
+    const managedStream = StreamManager.get(streamId);
+    const speakerIp = managedStream?.speakerIp;
+
+    // Unsubscribe from GENA for this speaker
+    if (speakerIp) {
+      GenaListener.unsubscribeAll(speakerIp).catch((err) => {
+        console.error('[Streams] Failed to unsubscribe from GENA:', err);
+      });
     }
 
     // Update status
