@@ -701,12 +701,19 @@ fn parse_notify(body: &str, service: GenaService, speaker_ip: &str) -> Vec<Sonos
 
     // Extract LastChange from propertyset
     let last_change = match extract_last_change(body) {
-        Some(lc) => lc,
-        None => return events,
+        Some(lc) => {
+            tracing::debug!("[GENA] Extracted LastChange: {} chars", lc.len());
+            lc
+        }
+        None => {
+            tracing::warn!("[GENA] Failed to extract LastChange from body");
+            return events;
+        }
     };
 
     // Unescape XML entities
     let last_change_xml = unescape_xml(&last_change);
+    tracing::debug!("[GENA] Unescaped LastChange: {}", &last_change_xml.chars().take(200).collect::<String>());
 
     match service {
         GenaService::AVTransport => {
@@ -758,7 +765,8 @@ fn parse_notify(body: &str, service: GenaService, speaker_ip: &str) -> Vec<Sonos
 
 /// Extract LastChange content from NOTIFY body
 fn extract_last_change(xml: &str) -> Option<String> {
-    let re = regex_lite::Regex::new(r"<LastChange>([^]*?)</LastChange>").ok()?;
+    // Use [\s\S]*? to match any character including newlines (more portable than [^]*?)
+    let re = regex_lite::Regex::new(r"<LastChange>([\s\S]*?)</LastChange>").ok()?;
     re.captures(xml)
         .and_then(|caps| caps.get(1))
         .map(|m| m.as_str().to_string())
