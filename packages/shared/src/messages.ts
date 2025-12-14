@@ -10,6 +10,8 @@ export type MessageType =
   | 'STOP_CAST'
   | 'OFFSCREEN_START'
   | 'OFFSCREEN_STOP'
+  | 'OFFSCREEN_PAUSE'
+  | 'OFFSCREEN_RESUME'
   | 'OFFSCREEN_READY'
   | 'CAST_ERROR'
   | 'CAST_ENDED'
@@ -88,6 +90,18 @@ export interface OffscreenStopMessage extends BaseMessage {
   streamId: string;
 }
 
+// OFFSCREEN_PAUSE: service worker -> offscreen (pause audio capture but keep stream alive)
+export interface OffscreenPauseMessage extends BaseMessage {
+  type: 'OFFSCREEN_PAUSE';
+  streamId: string;
+}
+
+// OFFSCREEN_RESUME: service worker -> offscreen (resume audio capture after pause)
+export interface OffscreenResumeMessage extends BaseMessage {
+  type: 'OFFSCREEN_RESUME';
+  streamId: string;
+}
+
 // OFFSCREEN_READY: offscreen -> service worker
 export interface OffscreenReadyMessage extends BaseMessage {
   type: 'OFFSCREEN_READY';
@@ -160,6 +174,7 @@ export interface MuteUpdateMessage extends BaseMessage {
 // Cast status
 export interface CastStatus {
   isActive: boolean;
+  isPaused?: boolean; // True when stream is paused (Sonos stopped but stream kept alive)
   streamId?: string;
   tabId?: number;
   groupId?: string;
@@ -178,6 +193,8 @@ export type ExtensionMessage =
   | StopCastMessage
   | OffscreenStartMessage
   | OffscreenStopMessage
+  | OffscreenPauseMessage
+  | OffscreenResumeMessage
   | OffscreenReadyMessage
   | CastErrorMessage
   | CastEndedMessage

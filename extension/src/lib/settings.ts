@@ -7,6 +7,7 @@ const DEFAULT_SONOS_MODE: SonosMode = 'cloud';
 const DEFAULT_LANGUAGE: SupportedLocale = 'en';
 
 export type BackendType = 'desktop' | 'server' | 'unknown';
+export type StopBehavior = 'stop' | 'pause';
 
 export interface ExtensionSettings {
   serverUrl: string;
@@ -16,6 +17,7 @@ export interface ExtensionSettings {
   backendType: BackendType;
   selectedGroupId: string;
   quality: QualityPreset;
+  stopBehavior: StopBehavior;
 }
 
 // Normalize and return all persisted settings with defaults
@@ -28,6 +30,7 @@ export async function getExtensionSettings(): Promise<ExtensionSettings> {
     'backendType',
     'selectedGroupId',
     'quality',
+    'stopBehavior',
   ])) as Partial<ExtensionSettings>;
 
   return {
@@ -38,6 +41,7 @@ export async function getExtensionSettings(): Promise<ExtensionSettings> {
     backendType: (result.backendType as BackendType) || 'unknown',
     selectedGroupId: result.selectedGroupId || '',
     quality: (result.quality as QualityPreset) || 'medium',
+    stopBehavior: (result.stopBehavior as StopBehavior) || 'stop',
   };
 }
 
@@ -52,6 +56,7 @@ export async function saveExtensionSettings(partial: Partial<ExtensionSettings>)
     backendType: partial.backendType ?? current.backendType,
     selectedGroupId: partial.selectedGroupId ?? current.selectedGroupId,
     quality: partial.quality ?? current.quality,
+    stopBehavior: partial.stopBehavior ?? current.stopBehavior,
   };
 
   await chrome.storage.sync.set(next);

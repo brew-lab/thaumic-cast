@@ -1,6 +1,8 @@
 import type {
   OffscreenStartMessage,
   OffscreenStopMessage,
+  OffscreenPauseMessage,
+  OffscreenResumeMessage,
   QualityPreset,
   AudioCodec,
 } from '@thaumic-cast/shared';
@@ -19,13 +21,16 @@ interface StreamSession {
   audioContext: AudioContext | null;
   mediaStream: MediaStream | null;
   workletNode: AudioWorkletNode | null;
+  sourceNode: MediaStreamAudioSourceNode | null;
   websocket: WebSocket | null;
   encoder: UnifiedEncoder | null;
   codec: AudioCodec;
   reconnectAttempts: number;
   frameBuffer: Uint8Array[];
   stopped: boolean;
+  paused: boolean;
   heartbeatTimer: ReturnType<typeof setInterval> | null;
+  ingestUrl: string;
 }
 
 // wasm-media-encoders expects specific CBR bitrate values
@@ -91,6 +96,16 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 
   if (message.type === 'OFFSCREEN_STOP') {
     handleStop(message as OffscreenStopMessage).then(sendResponse);
+    return true;
+  }
+
+  if (message.type === 'OFFSCREEN_PAUSE') {
+    handlePause(message as OffscreenPauseMessage).then(sendResponse);
+    return true;
+  }
+
+  if (message.type === 'OFFSCREEN_RESUME') {
+    handleResume(message as OffscreenResumeMessage).then(sendResponse);
     return true;
   }
 
@@ -225,13 +240,16 @@ async function handleStart(
       audioContext,
       mediaStream,
       workletNode,
+      sourceNode: source,
       websocket: null,
       encoder,
       codec,
       reconnectAttempts: 0,
       frameBuffer: [],
       stopped: false,
+      paused: false,
       heartbeatTimer: null,
+      ingestUrl,
     };
 
     currentSession = session;
@@ -241,7 +259,7 @@ async function handleStart(
 
     // Handle PCM data from worklet
     workletNode.port.onmessage = (event) => {
-      if (!currentSession || currentSession.stopped) return;
+      if (!currentSession || currentSession.stopped || currentSession.paused) return;
 
       const pcmData = event.data as { left: Float32Array; right: Float32Array };
       const encodedFrame = encodeFrame(currentSession, pcmData);
@@ -276,6 +294,50 @@ async function handleStop(message: OffscreenStopMessage): Promise<{ success: boo
     await stopSession(currentSession);
     currentSession = null;
   }
+  return { success: true };
+}
+
+async function handlePause(message: OffscreenPauseMessage): Promise<{ success: boolean }> {
+  if (!currentSession || currentSession.streamId !== message.streamId) {
+    return { success: false };
+  }
+
+  if (currentSession.paused) {
+    return { success: true }; // Already paused
+  }
+
+  currentSession.paused = true;
+
+  // Disconnect source from worklet to stop processing audio
+  // This stops encoding/sending but keeps everything else alive
+  currentSession.sourceNode?.disconnect();
+
+  console.log('[Offscreen] Session paused');
+  return { success: true };
+}
+
+async function handleResume(message: OffscreenResumeMessage): Promise<{ success: boolean }> {
+  if (!currentSession || currentSession.streamId !== message.streamId) {
+    return { success: false };
+  }
+
+  if (!currentSession.paused) {
+    return { success: true }; // Already running
+  }
+
+  // Reconnect source to worklet
+  if (currentSession.sourceNode && currentSession.workletNode) {
+    currentSession.sourceNode.connect(currentSession.workletNode);
+  }
+
+  currentSession.paused = false;
+
+  // If WebSocket was closed during pause, reconnect
+  if (!currentSession.websocket || currentSession.websocket.readyState !== WebSocket.OPEN) {
+    connectWebSocket(currentSession, currentSession.ingestUrl);
+  }
+
+  console.log('[Offscreen] Session resumed');
   return { success: true };
 }
 

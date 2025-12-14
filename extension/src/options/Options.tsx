@@ -5,6 +5,7 @@ import {
   saveExtensionSettings,
   clearCachedGroups,
   type BackendType,
+  type StopBehavior,
 } from '../lib/settings';
 import { isValidIPv4, isValidUrl } from '@thaumic-cast/shared';
 import type { SonosMode } from '@thaumic-cast/shared';
@@ -16,6 +17,7 @@ export function Options() {
   const [sonosMode, setSonosMode] = useState<SonosMode>('cloud');
   const [speakerIp, setSpeakerIp] = useState('');
   const [language, setLanguage] = useState<SupportedLocale>('en');
+  const [stopBehavior, setStopBehavior] = useState<StopBehavior>('stop');
   const [saved, setSaved] = useState(false);
   const [discovering, setDiscovering] = useState(false);
   const [speakerCount, setSpeakerCount] = useState<number | null>(null);
@@ -43,6 +45,7 @@ export function Options() {
       setSonosMode(settings.sonosMode);
       setSpeakerIp(settings.speakerIp);
       setLanguage(settings.language);
+      setStopBehavior(settings.stopBehavior);
       setLocale(settings.language);
       // Track original values for cache invalidation
       setOriginalMode(settings.sonosMode);
@@ -144,6 +147,7 @@ export function Options() {
       sonosMode,
       speakerIp: trimmedIp,
       language,
+      stopBehavior,
       backendType,
     });
     setServerUrl(normalizedUrl);
@@ -304,6 +308,36 @@ export function Options() {
             <option value="en">English</option>
           </select>
           <p class="hint">{t('hints.language')}</p>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>{t('settings.stopBehavior')}</h2>
+        <div class="form-group">
+          <label>
+            <input
+              type="radio"
+              name="stopBehavior"
+              value="stop"
+              checked={stopBehavior === 'stop'}
+              onChange={() => setStopBehavior('stop')}
+            />
+            {t('stopBehavior.stop')}
+          </label>
+          <p class="hint">{t('stopBehavior.stopHint')}</p>
+        </div>
+        <div class="form-group">
+          <label>
+            <input
+              type="radio"
+              name="stopBehavior"
+              value="pause"
+              checked={stopBehavior === 'pause'}
+              onChange={() => setStopBehavior('pause')}
+            />
+            {t('stopBehavior.pause')}
+          </label>
+          <p class="hint">{t('stopBehavior.pauseHint')}</p>
         </div>
       </div>
 

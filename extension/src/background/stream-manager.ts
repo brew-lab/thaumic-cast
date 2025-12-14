@@ -250,6 +250,102 @@ export function clearActiveStream(): void {
 }
 
 /**
+ * Pause the active stream (Sonos stopped but keep infrastructure alive).
+ * Audio capture stops, but WebSocket stays open for resume.
+ * Also pauses the media in the source tab.
+ */
+export async function pauseActiveStream(): Promise<void> {
+  if (!activeStream.isActive || !activeStream.streamId || activeStream.isPaused) {
+    return;
+  }
+
+  try {
+    const result = (await chrome.runtime.sendMessage({
+      type: 'OFFSCREEN_PAUSE',
+      streamId: activeStream.streamId,
+    })) as { success: boolean } | undefined;
+
+    if (!result?.success) {
+      throw new Error('Offscreen failed to pause');
+    }
+
+    // Pause media in the source tab
+    if (activeStream.tabId) {
+      try {
+        await chrome.tabs.sendMessage(activeStream.tabId, {
+          type: 'CONTROL_MEDIA',
+          action: 'pause',
+        });
+        logEvent('media paused in tab', { tabId: activeStream.tabId });
+      } catch {
+        // Tab might not have content script or media
+        logEvent('could not pause media in tab (no media or content script)');
+      }
+    }
+
+    activeStream = {
+      ...activeStream,
+      isPaused: true,
+    };
+
+    broadcastStatusUpdate();
+    logEvent('stream paused', { streamId: activeStream.streamId });
+  } catch (err) {
+    logError('failed to pause stream', {
+      error: err instanceof Error ? err.message : 'unknown',
+    });
+  }
+}
+
+/**
+ * Resume the active stream after pause.
+ * Reconnects audio capture and resumes sending frames.
+ * Also resumes the media in the source tab.
+ */
+export async function resumeActiveStream(): Promise<void> {
+  if (!activeStream.isActive || !activeStream.streamId || !activeStream.isPaused) {
+    return;
+  }
+
+  try {
+    const result = (await chrome.runtime.sendMessage({
+      type: 'OFFSCREEN_RESUME',
+      streamId: activeStream.streamId,
+    })) as { success: boolean } | undefined;
+
+    if (!result?.success) {
+      throw new Error('Offscreen failed to resume');
+    }
+
+    // Resume media in the source tab
+    if (activeStream.tabId) {
+      try {
+        await chrome.tabs.sendMessage(activeStream.tabId, {
+          type: 'CONTROL_MEDIA',
+          action: 'play',
+        });
+        logEvent('media resumed in tab', { tabId: activeStream.tabId });
+      } catch {
+        // Tab might not have content script or media
+        logEvent('could not resume media in tab (no media or content script)');
+      }
+    }
+
+    activeStream = {
+      ...activeStream,
+      isPaused: false,
+    };
+
+    broadcastStatusUpdate();
+    logEvent('stream resumed', { streamId: activeStream.streamId });
+  } catch (err) {
+    logError('failed to resume stream', {
+      error: err instanceof Error ? err.message : 'unknown',
+    });
+  }
+}
+
+/**
  * Broadcast current status to any open popup/UI.
  * Uses chrome.runtime.sendMessage which will be received by any listeners.
  */

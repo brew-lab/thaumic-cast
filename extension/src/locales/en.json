@@ -98,5 +98,10 @@
   "quality.ultra-lowLabel": "Ultra Low",
   "quality.lowLabel": "Low",
   "quality.mediumLabel": "Medium",
-  "quality.highLabel": "High"
+  "quality.highLabel": "High",
+  "settings.stopBehavior": "Sonos Stop Button",
+  "stopBehavior.stop": "Stop cast",
+  "stopBehavior.stopHint": "When stop is pressed on Sonos, the cast ends completely.",
+  "stopBehavior.pause": "Pause stream",
+  "stopBehavior.pauseHint": "When stop is pressed, the stream pauses. Press play on Sonos to resume."
 }

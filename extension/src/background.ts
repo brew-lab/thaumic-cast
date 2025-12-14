@@ -18,9 +18,16 @@ import {
   stopCurrentStream,
   getActiveStream,
   clearActiveStream,
+  pauseActiveStream,
+  resumeActiveStream,
   recordHeartbeat,
   updateStreamMetadata,
 } from './background/stream-manager';
+import { getExtensionSettings } from './lib/settings';
+
+// Debounce for transport state changes to prevent race conditions from rapid stop/play
+let lastTransportStateAt = 0;
+const TRANSPORT_STATE_DEBOUNCE_MS = 500;
 
 // Message handler
 chrome.runtime.onMessage.addListener((message: ExtensionMessage, sender, sendResponse) => {
@@ -92,6 +99,8 @@ async function handleMessage(
     // These messages are for the offscreen document, not us - ignore them
     case 'OFFSCREEN_START':
     case 'OFFSCREEN_STOP':
+    case 'OFFSCREEN_PAUSE':
+    case 'OFFSCREEN_RESUME':
       break;
     case 'OFFSCREEN_HEARTBEAT': {
       if ((message as { streamId?: string }).streamId) {
@@ -160,22 +169,48 @@ async function handleMediaControl(
 }
 
 // Handle Sonos events from server (via WebSocket)
-function handleSonosEvent(message: SonosEventMessage): void {
+async function handleSonosEvent(message: SonosEventMessage): Promise<void> {
   const { payload } = message;
 
   console.log('[Background] Received Sonos event:', payload.type, payload);
 
   switch (payload.type) {
     case 'transportState': {
-      // If Sonos stopped playback (user pressed stop in Sonos app)
+      // Debounce rapid transport state changes to prevent race conditions
+      const now = Date.now();
+      if (now - lastTransportStateAt < TRANSPORT_STATE_DEBOUNCE_MS) {
+        console.log('[Background] Ignoring transport state change (debounced)');
+        break;
+      }
+      lastTransportStateAt = now;
+
       if (payload.state === 'STOPPED') {
-        console.log('[Background] Sonos playback stopped by external source');
-        // Clear our active stream state - don't try to stop again on speaker
-        clearActiveStream();
-        // Close the offscreen document since we're no longer streaming
-        closeOffscreen().catch((err) => {
-          console.error('[Background] Failed to close offscreen:', err);
-        });
+        // User pressed stop in Sonos app - check settings for behavior
+        const settings = await getExtensionSettings();
+
+        if (settings.stopBehavior === 'pause') {
+          // Pause mode: keep stream alive, just pause capture
+          console.log('[Background] Sonos playback stopped, pausing stream (pause mode)');
+          pauseActiveStream().catch((err) => {
+            console.error('[Background] Failed to pause stream:', err);
+          });
+        } else {
+          // Stop mode (default): tear everything down
+          console.log('[Background] Sonos playback stopped, stopping stream (stop mode)');
+          clearActiveStream();
+          closeOffscreen().catch((err) => {
+            console.error('[Background] Failed to close offscreen:', err);
+          });
+        }
+      } else if (payload.state === 'PLAYING') {
+        // Check if we have a paused stream to resume
+        const stream = getActiveStream();
+        if (stream.isActive && stream.isPaused) {
+          console.log('[Background] Sonos playback resumed, resuming stream');
+          resumeActiveStream().catch((err) => {
+            console.error('[Background] Failed to resume stream:', err);
+          });
+        }
       }
       break;
     }
