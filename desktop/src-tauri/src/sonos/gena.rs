@@ -620,8 +620,6 @@ async fn notify_handler(
     Path((_ip, service)): Path<(String, String)>,
     request: Request<Body>,
 ) -> impl IntoResponse {
-    tracing::info!("[GENA] Received NOTIFY callback for service: {}", service);
-
     // Only handle NOTIFY method
     if request.method().as_str() != "NOTIFY" {
         return StatusCode::METHOD_NOT_ALLOWED;
@@ -635,18 +633,13 @@ async fn notify_handler(
         }
     };
 
-    tracing::debug!("[GENA] NOTIFY SID: {}", sid);
-
     // Verify subscription exists
     let speaker_ip = {
         let subs = state.subscriptions.read();
-        let known_sids: Vec<_> = subs.keys().collect();
-        tracing::debug!("[GENA] Known SIDs: {:?}", known_sids);
-
         match subs.get(&sid) {
             Some(sub) => sub.speaker_ip.clone(),
             None => {
-                tracing::warn!("[GENA] NOTIFY for unknown SID: {} (known: {:?})", sid, known_sids);
+                tracing::warn!("[GENA] NOTIFY for unknown SID: {}", sid);
                 return StatusCode::PRECONDITION_FAILED;
             }
         }
@@ -670,19 +663,11 @@ async fn notify_handler(
         }
     };
 
-    tracing::debug!("[GENA] NOTIFY body length: {} bytes", body.len());
-    tracing::trace!("[GENA] NOTIFY body: {}", body);
-
-    // Parse events
+    // Parse and forward events
     let events = parse_notify(&body, gena_service, &speaker_ip);
-    tracing::info!("[GENA] Parsed {} events from NOTIFY", events.len());
-
-    if events.is_empty() {
-        tracing::warn!("[GENA] No events parsed from body. First 500 chars: {}", &body.chars().take(500).collect::<String>());
-    }
 
     for event in events {
-        tracing::info!("[GENA] Event from {}: {:?}", speaker_ip, event);
+        tracing::debug!("[GENA] Event: {:?}", event);
         if let Err(e) = state.event_tx.send((speaker_ip.clone(), event)) {
             tracing::error!("[GENA] Failed to send event: {}", e);
         }
@@ -701,19 +686,12 @@ fn parse_notify(body: &str, service: GenaService, speaker_ip: &str) -> Vec<Sonos
 
     // Extract LastChange from propertyset
     let last_change = match extract_last_change(body) {
-        Some(lc) => {
-            tracing::debug!("[GENA] Extracted LastChange: {} chars", lc.len());
-            lc
-        }
-        None => {
-            tracing::warn!("[GENA] Failed to extract LastChange from body");
-            return events;
-        }
+        Some(lc) => lc,
+        None => return events,
     };
 
     // Unescape XML entities
     let last_change_xml = unescape_xml(&last_change);
-    tracing::debug!("[GENA] Unescaped LastChange: {}", &last_change_xml.chars().take(200).collect::<String>());
 
     match service {
         GenaService::AVTransport => {

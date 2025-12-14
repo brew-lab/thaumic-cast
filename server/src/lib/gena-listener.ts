@@ -338,7 +338,6 @@ class GenaListenerClass {
    * Handle NOTIFY callback from Sonos speaker
    */
   private async handleNotify(req: Request, _url: URL): Promise<Response> {
-    console.log('[GENA] Received NOTIFY callback');
     const sid = req.headers.get('SID');
 
     if (!sid) {
@@ -349,18 +348,14 @@ class GenaListenerClass {
     const sub = this.subscriptions.get(sid);
     if (!sub) {
       console.warn(`[GENA] NOTIFY for unknown SID: ${sid}`);
-      console.warn(`[GENA] Known SIDs: ${Array.from(this.subscriptions.keys()).join(', ')}`);
       return new Response('Unknown subscription', { status: 412 });
     }
-
-    console.log(`[GENA] NOTIFY for ${sub.service} from ${sub.speakerIp}`);
 
     try {
       const body = await req.text();
       const events = this.parseNotify(body, sub.service, sub.speakerIp);
 
       for (const event of events) {
-        console.log(`[GENA] Event from ${sub.speakerIp}:`, event.type, event);
         if (this.eventCallback) {
           this.eventCallback(sub.speakerIp, event);
         }
@@ -389,7 +384,6 @@ class GenaListenerClass {
 
     // LastChange content is XML-escaped
     const lastChangeXml = unescapeXml(lastChangeMatch[1]);
-    console.log(`[GENA] Parsed LastChange: ${lastChangeXml.substring(0, 200)}...`);
 
     if (service === 'AVTransport') {
       // Parse transport state
