@@ -380,14 +380,16 @@ class GenaListenerClass {
     const events: SonosEvent[] = [];
     const timestamp = Date.now();
 
-    // Extract LastChange from propertyset
-    const lastChangeMatch = body.match(/<LastChange>([^]*?)<\/LastChange>/);
+    // Extract LastChange from propertyset (use [\s\S]*? to match any char including newlines)
+    const lastChangeMatch = body.match(/<LastChange>([\s\S]*?)<\/LastChange>/);
     if (!lastChangeMatch || !lastChangeMatch[1]) {
+      console.warn('[GENA] Failed to extract LastChange from body');
       return events;
     }
 
     // LastChange content is XML-escaped
     const lastChangeXml = unescapeXml(lastChangeMatch[1]);
+    console.log(`[GENA] Parsed LastChange: ${lastChangeXml.substring(0, 200)}...`);
 
     if (service === 'AVTransport') {
       // Parse transport state
