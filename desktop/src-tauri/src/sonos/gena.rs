@@ -670,12 +670,22 @@ async fn notify_handler(
         }
     };
 
+    tracing::debug!("[GENA] NOTIFY body length: {} bytes", body.len());
+    tracing::trace!("[GENA] NOTIFY body: {}", body);
+
     // Parse events
     let events = parse_notify(&body, gena_service, &speaker_ip);
+    tracing::info!("[GENA] Parsed {} events from NOTIFY", events.len());
+
+    if events.is_empty() {
+        tracing::warn!("[GENA] No events parsed from body. First 500 chars: {}", &body.chars().take(500).collect::<String>());
+    }
 
     for event in events {
         tracing::info!("[GENA] Event from {}: {:?}", speaker_ip, event);
-        let _ = state.event_tx.send((speaker_ip.clone(), event));
+        if let Err(e) = state.event_tx.send((speaker_ip.clone(), event)) {
+            tracing::error!("[GENA] Failed to send event: {}", e);
+        }
     }
 
     StatusCode::OK
