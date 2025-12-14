@@ -32,6 +32,7 @@ pub enum GenaService {
     AVTransport,
     RenderingControl,
     ZoneGroupTopology,
+    GroupRenderingControl,
 }
 
 impl GenaService {
@@ -40,6 +41,7 @@ impl GenaService {
             GenaService::AVTransport => "/MediaRenderer/AVTransport/Event",
             GenaService::RenderingControl => "/MediaRenderer/RenderingControl/Event",
             GenaService::ZoneGroupTopology => "/ZoneGroupTopology/Event",
+            GenaService::GroupRenderingControl => "/MediaRenderer/GroupRenderingControl/Event",
         }
     }
 
@@ -48,7 +50,17 @@ impl GenaService {
             "AVTransport" => Some(GenaService::AVTransport),
             "RenderingControl" => Some(GenaService::RenderingControl),
             "ZoneGroupTopology" => Some(GenaService::ZoneGroupTopology),
+            "GroupRenderingControl" => Some(GenaService::GroupRenderingControl),
             _ => None,
+        }
+    }
+
+    fn as_str(&self) -> &'static str {
+        match self {
+            GenaService::AVTransport => "AVTransport",
+            GenaService::RenderingControl => "RenderingControl",
+            GenaService::ZoneGroupTopology => "ZoneGroupTopology",
+            GenaService::GroupRenderingControl => "GroupRenderingControl",
         }
     }
 }
@@ -112,6 +124,30 @@ pub enum SonosEvent {
     },
     #[serde(rename = "zoneChange")]
     ZoneChange { timestamp: u64 },
+    #[serde(rename = "sourceChanged")]
+    SourceChanged {
+        #[serde(rename = "currentUri")]
+        current_uri: String,
+        #[serde(rename = "expectedUri")]
+        expected_uri: Option<String>,
+        #[serde(rename = "speakerIp")]
+        speaker_ip: String,
+        timestamp: u64,
+    },
+    #[serde(rename = "groupVolume")]
+    GroupVolume {
+        volume: u8,
+        #[serde(rename = "speakerIp")]
+        speaker_ip: String,
+        timestamp: u64,
+    },
+    #[serde(rename = "groupMute")]
+    GroupMute {
+        mute: bool,
+        #[serde(rename = "speakerIp")]
+        speaker_ip: String,
+        timestamp: u64,
+    },
 }
 
 /// Subscription state
@@ -129,6 +165,8 @@ struct Subscription {
 struct GenaState {
     subscriptions: RwLock<HashMap<String, Subscription>>,
     event_tx: mpsc::UnboundedSender<(String, SonosEvent)>,
+    /// Expected stream URLs per speaker IP for source verification
+    expected_stream_urls: RwLock<HashMap<String, String>>,
 }
 
 /// GENA listener for Sonos UPnP events
@@ -154,10 +192,47 @@ impl GenaListener {
             state: Arc::new(GenaState {
                 subscriptions: RwLock::new(HashMap::new()),
                 event_tx,
+                expected_stream_urls: RwLock::new(HashMap::new()),
             }),
             event_rx: RwLock::new(Some(event_rx)),
             shutdown_tx: RwLock::new(None),
         })
+    }
+
+    /// Set expected stream URL for a speaker
+    /// Used to detect when Sonos switches to a different source
+    pub fn set_expected_stream_url(&self, speaker_ip: &str, stream_url: &str) {
+        // Normalize URL - Sonos uses x-rincon-mp3radio:// for HTTP streams
+        let normalized_url = stream_url
+            .replace("http://", "x-rincon-mp3radio://")
+            .replace("https://", "x-rincon-mp3radio://");
+        self.state
+            .expected_stream_urls
+            .write()
+            .insert(speaker_ip.to_string(), normalized_url.clone());
+        tracing::info!(
+            "[GENA] Set expected stream URL for {}: {}",
+            speaker_ip,
+            normalized_url
+        );
+    }
+
+    /// Clear expected stream URL for a speaker
+    pub fn clear_expected_stream_url(&self, speaker_ip: &str) {
+        self.state
+            .expected_stream_urls
+            .write()
+            .remove(speaker_ip);
+        tracing::info!("[GENA] Cleared expected stream URL for {}", speaker_ip);
+    }
+
+    /// Get expected stream URL for a speaker
+    pub fn get_expected_stream_url(&self, speaker_ip: &str) -> Option<String> {
+        self.state
+            .expected_stream_urls
+            .read()
+            .get(speaker_ip)
+            .cloned()
     }
 
     /// Start the GENA HTTP server
@@ -258,11 +333,7 @@ impl GenaListener {
         let callback_path = format!(
             "/notify/{}/{}",
             speaker_ip.replace('.', "-"),
-            match service {
-                GenaService::AVTransport => "AVTransport",
-                GenaService::RenderingControl => "RenderingControl",
-                GenaService::ZoneGroupTopology => "ZoneGroupTopology",
-            }
+            service.as_str()
         );
         let callback_url = format!("http://{}:{}{}", self.local_ip, port, callback_path);
 
@@ -432,6 +503,9 @@ impl GenaListener {
             let _ = self.unsubscribe(&sid).await;
         }
 
+        // Also clear expected stream URL when unsubscribing
+        self.state.expected_stream_urls.write().remove(speaker_ip);
+
         Ok(())
     }
 
@@ -538,11 +612,7 @@ async fn schedule_renewal_task(
             let callback_path = format!(
                 "/notify/{}/{}",
                 speaker_ip.replace('.', "-"),
-                match service {
-                    GenaService::AVTransport => "AVTransport",
-                    GenaService::RenderingControl => "RenderingControl",
-                    GenaService::ZoneGroupTopology => "ZoneGroupTopology",
-                }
+                service.as_str()
             );
             let callback_url = format!("http://{}:{}{}", local_ip, port, callback_path);
 
@@ -663,8 +733,20 @@ async fn notify_handler(
         }
     };
 
+    // Get expected stream URL for this speaker (if any)
+    let expected_stream_url = state
+        .expected_stream_urls
+        .read()
+        .get(&speaker_ip)
+        .cloned();
+
     // Parse and forward events
-    let events = parse_notify(&body, gena_service, &speaker_ip);
+    let events = parse_notify(
+        &body,
+        gena_service,
+        &speaker_ip,
+        expected_stream_url.as_deref(),
+    );
 
     for event in events {
         tracing::debug!("[GENA] Event: {:?}", event);
@@ -677,7 +759,12 @@ async fn notify_handler(
 }
 
 /// Parse NOTIFY body and extract events
-fn parse_notify(body: &str, service: GenaService, speaker_ip: &str) -> Vec<SonosEvent> {
+fn parse_notify(
+    body: &str,
+    service: GenaService,
+    speaker_ip: &str,
+    expected_stream_url: Option<&str>,
+) -> Vec<SonosEvent> {
     let mut events = Vec::new();
     let timestamp = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -703,6 +790,29 @@ fn parse_notify(body: &str, service: GenaService, speaker_ip: &str) -> Vec<Sonos
                         speaker_ip: speaker_ip.to_string(),
                         timestamp,
                     });
+                }
+            }
+
+            // Parse CurrentTrackURI for stream verification
+            if let Some(current_uri) = extract_attribute(&last_change_xml, "CurrentTrackURI", "val")
+            {
+                let current_uri = unescape_xml(&current_uri);
+                if let Some(expected) = expected_stream_url {
+                    // Check if source changed (current URI doesn't match expected)
+                    if !current_uri.is_empty() && !is_matching_stream_url(&current_uri, expected) {
+                        tracing::info!(
+                            "[GENA] Source changed on {}: expected={}, current={}",
+                            speaker_ip,
+                            expected,
+                            current_uri
+                        );
+                        events.push(SonosEvent::SourceChanged {
+                            current_uri,
+                            expected_uri: Some(expected.to_string()),
+                            speaker_ip: speaker_ip.to_string(),
+                            timestamp,
+                        });
+                    }
                 }
             }
         }
@@ -736,9 +846,45 @@ fn parse_notify(body: &str, service: GenaService, speaker_ip: &str) -> Vec<Sonos
             // Zone topology changed
             events.push(SonosEvent::ZoneChange { timestamp });
         }
+        GenaService::GroupRenderingControl => {
+            // Parse group volume (combined volume for all speakers in group)
+            if let Some(volume_str) = extract_attribute(&last_change_xml, "GroupVolume", "val") {
+                if let Ok(volume) = volume_str.parse::<u8>() {
+                    events.push(SonosEvent::GroupVolume {
+                        volume,
+                        speaker_ip: speaker_ip.to_string(),
+                        timestamp,
+                    });
+                }
+            }
+
+            // Parse group mute
+            if let Some(mute_str) = extract_attribute(&last_change_xml, "GroupMute", "val") {
+                let mute = mute_str == "1";
+                events.push(SonosEvent::GroupMute {
+                    mute,
+                    speaker_ip: speaker_ip.to_string(),
+                    timestamp,
+                });
+            }
+        }
     }
 
     events
+}
+
+/// Check if current URI matches expected stream URL
+/// Handles different URL schemes (http, x-rincon-mp3radio, etc.)
+fn is_matching_stream_url(current_uri: &str, expected_uri: &str) -> bool {
+    // Normalize both URLs by removing protocol and comparing the rest
+    fn normalize_url(url: &str) -> String {
+        url.replace("http://", "")
+            .replace("https://", "")
+            .replace("x-rincon-mp3radio://", "")
+            .to_lowercase()
+    }
+
+    normalize_url(current_uri) == normalize_url(expected_uri)
 }
 
 /// Extract LastChange content from NOTIFY body
@@ -781,7 +927,7 @@ mod tests {
     fn test_parse_transport_state() {
         let xml = r#"<e:propertyset><e:property><LastChange>&lt;Event&gt;&lt;InstanceID val="0"&gt;&lt;TransportState val="STOPPED"/&gt;&lt;/InstanceID&gt;&lt;/Event&gt;</LastChange></e:property></e:propertyset>"#;
 
-        let events = parse_notify(xml, GenaService::AVTransport, "192.168.1.100");
+        let events = parse_notify(xml, GenaService::AVTransport, "192.168.1.100", None);
         assert_eq!(events.len(), 1);
 
         match &events[0] {
@@ -796,7 +942,7 @@ mod tests {
     fn test_parse_volume() {
         let xml = r#"<e:propertyset><e:property><LastChange>&lt;Event&gt;&lt;InstanceID val="0"&gt;&lt;Volume channel="Master" val="50"/&gt;&lt;/InstanceID&gt;&lt;/Event&gt;</LastChange></e:property></e:propertyset>"#;
 
-        let events = parse_notify(xml, GenaService::RenderingControl, "192.168.1.100");
+        let events = parse_notify(xml, GenaService::RenderingControl, "192.168.1.100", None);
         assert_eq!(events.len(), 1);
 
         match &events[0] {

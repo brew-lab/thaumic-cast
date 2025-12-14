@@ -12,11 +12,13 @@ use thiserror::Error;
 const ZONE_GROUP_TOPOLOGY: &str = "urn:schemas-upnp-org:service:ZoneGroupTopology:1";
 const AV_TRANSPORT: &str = "urn:schemas-upnp-org:service:AVTransport:1";
 const RENDERING_CONTROL: &str = "urn:schemas-upnp-org:service:RenderingControl:1";
+const GROUP_RENDERING_CONTROL: &str = "urn:schemas-upnp-org:service:GroupRenderingControl:1";
 
 // Control URLs
 const ZONE_GROUP_CONTROL: &str = "/ZoneGroupTopology/Control";
 const AV_TRANSPORT_CONTROL: &str = "/MediaRenderer/AVTransport/Control";
 const RENDERING_CONTROL_URL: &str = "/MediaRenderer/RenderingControl/Control";
+const GROUP_RENDERING_CONTROL_URL: &str = "/MediaRenderer/GroupRenderingControl/Control";
 
 // Cache settings
 const CACHE_TTL: Duration = Duration::from_secs(60);
@@ -425,6 +427,7 @@ pub async fn get_volume(speaker_ip: &str) -> Result<u8, SonosError> {
 }
 
 /// Set volume of a speaker (0-100)
+/// @deprecated Use set_group_volume for group-wide volume control
 pub async fn set_volume(speaker_ip: &str, volume: u8) -> Result<(), SonosError> {
     let clamped_volume = volume.min(100);
 
@@ -441,6 +444,54 @@ pub async fn set_volume(speaker_ip: &str, volume: u8) -> Result<(), SonosError> 
         RENDERING_CONTROL_URL,
         RENDERING_CONTROL,
         "SetVolume",
+        params,
+    )
+    .await?;
+
+    Ok(())
+}
+
+/// Get current group volume from the coordinator (0-100)
+/// This returns the combined volume for all speakers in the group
+pub async fn get_group_volume(coordinator_ip: &str) -> Result<u8, SonosError> {
+    let mut params = HashMap::new();
+    params.insert("InstanceID".to_string(), "0".to_string());
+
+    let response = send_soap_request(
+        get_client(),
+        coordinator_ip,
+        GROUP_RENDERING_CONTROL_URL,
+        GROUP_RENDERING_CONTROL,
+        "GetGroupVolume",
+        params,
+    )
+    .await?;
+
+    let volume_str = extract_soap_value(&response, "CurrentVolume")
+        .ok_or_else(|| SonosError::ParseError("Failed to get CurrentVolume".to_string()))?;
+
+    volume_str.parse().map_err(|_| {
+        SonosError::ParseError(format!("Invalid volume value: {}", volume_str))
+    })
+}
+
+/// Set group volume on the coordinator (0-100)
+/// This adjusts volume proportionally across all speakers in the group
+pub async fn set_group_volume(coordinator_ip: &str, volume: u8) -> Result<(), SonosError> {
+    let clamped_volume = volume.min(100);
+
+    tracing::info!("SetGroupVolume {} on {}", clamped_volume, coordinator_ip);
+
+    let mut params = HashMap::new();
+    params.insert("InstanceID".to_string(), "0".to_string());
+    params.insert("DesiredVolume".to_string(), clamped_volume.to_string());
+
+    send_soap_request(
+        get_client(),
+        coordinator_ip,
+        GROUP_RENDERING_CONTROL_URL,
+        GROUP_RENDERING_CONTROL,
+        "SetGroupVolume",
         params,
     )
     .await?;

@@ -47,13 +47,49 @@ export interface ZoneChangeEvent {
 }
 
 /**
+ * Source changed event - fired when Sonos switches to a different audio source
+ * Used to detect when user switches away from our stream (e.g., opens Spotify)
+ */
+export interface SourceChangedEvent {
+  type: 'sourceChanged';
+  currentUri: string;
+  expectedUri: string | null;
+  speakerIp: string;
+  timestamp: number;
+}
+
+/**
+ * Group volume change event from GroupRenderingControl
+ * This is the combined volume for all speakers in a group
+ */
+export interface GroupVolumeChangeEvent {
+  type: 'groupVolume';
+  volume: number;
+  speakerIp: string;
+  timestamp: number;
+}
+
+/**
+ * Group mute state change event from GroupRenderingControl
+ */
+export interface GroupMuteChangeEvent {
+  type: 'groupMute';
+  mute: boolean;
+  speakerIp: string;
+  timestamp: number;
+}
+
+/**
  * Union type for all Sonos events sent via WebSocket
  */
 export type SonosEvent =
   | TransportStateEvent
   | VolumeChangeEvent
   | MuteChangeEvent
-  | ZoneChangeEvent;
+  | ZoneChangeEvent
+  | SourceChangedEvent
+  | GroupVolumeChangeEvent
+  | GroupMuteChangeEvent;
 
 /**
  * Type guard to check if data is a SonosEvent
@@ -63,7 +99,15 @@ export function isSonosEvent(data: unknown): data is SonosEvent {
   const obj = data as Record<string, unknown>;
   return (
     typeof obj.type === 'string' &&
-    ['transportState', 'volume', 'mute', 'zoneChange'].includes(obj.type)
+    [
+      'transportState',
+      'volume',
+      'mute',
+      'zoneChange',
+      'sourceChanged',
+      'groupVolume',
+      'groupMute',
+    ].includes(obj.type)
   );
 }
 
@@ -96,7 +140,11 @@ export interface GenaSubscription {
 /**
  * Sonos UPnP services we subscribe to
  */
-export type GenaService = 'AVTransport' | 'RenderingControl' | 'ZoneGroupTopology';
+export type GenaService =
+  | 'AVTransport'
+  | 'RenderingControl'
+  | 'ZoneGroupTopology'
+  | 'GroupRenderingControl';
 
 /**
  * Service endpoints for GENA subscriptions
@@ -105,4 +153,5 @@ export const GENA_SERVICE_ENDPOINTS: Record<GenaService, string> = {
   AVTransport: '/MediaRenderer/AVTransport/Event',
   RenderingControl: '/MediaRenderer/RenderingControl/Event',
   ZoneGroupTopology: '/ZoneGroupTopology/Event',
+  GroupRenderingControl: '/MediaRenderer/GroupRenderingControl/Event',
 };

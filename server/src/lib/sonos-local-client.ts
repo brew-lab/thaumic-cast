@@ -10,11 +10,13 @@ import { sendSoapRequest, extractSoapValue, unescapeXml } from './soap-client';
 const ZONE_GROUP_TOPOLOGY = 'urn:schemas-upnp-org:service:ZoneGroupTopology:1';
 const AV_TRANSPORT = 'urn:schemas-upnp-org:service:AVTransport:1';
 const RENDERING_CONTROL = 'urn:schemas-upnp-org:service:RenderingControl:1';
+const GROUP_RENDERING_CONTROL = 'urn:schemas-upnp-org:service:GroupRenderingControl:1';
 
 // Control URLs
 const ZONE_GROUP_CONTROL = '/ZoneGroupTopology/Control';
 const AV_TRANSPORT_CONTROL = '/MediaRenderer/AVTransport/Control';
 const RENDERING_CONTROL_URL = '/MediaRenderer/RenderingControl/Control';
+const GROUP_RENDERING_CONTROL_URL = '/MediaRenderer/GroupRenderingControl/Control';
 
 export interface LocalSpeaker {
   uuid: string;
@@ -299,6 +301,7 @@ export async function getVolume(speakerIp: string): Promise<number> {
 
 /**
  * Set volume of a speaker (0-100)
+ * @deprecated Use setGroupVolume for group-wide volume control
  */
 export async function setVolume(speakerIp: string, volume: number): Promise<void> {
   const clampedVolume = Math.max(0, Math.min(100, Math.round(volume)));
@@ -313,6 +316,46 @@ export async function setVolume(speakerIp: string, volume: number): Promise<void
     params: {
       InstanceID: 0,
       Channel: 'Master',
+      DesiredVolume: clampedVolume,
+    },
+  });
+}
+
+/**
+ * Get current group volume from the coordinator (0-100)
+ * This returns the combined volume for all speakers in the group
+ */
+export async function getGroupVolume(coordinatorIp: string): Promise<number> {
+  const response = await sendSoapRequest({
+    ip: coordinatorIp,
+    controlUrl: GROUP_RENDERING_CONTROL_URL,
+    serviceType: GROUP_RENDERING_CONTROL,
+    action: 'GetGroupVolume',
+    params: {
+      InstanceID: 0,
+    },
+  });
+
+  const volumeStr = extractSoapValue(response, 'CurrentVolume');
+  return volumeStr ? parseInt(volumeStr, 10) : 0;
+}
+
+/**
+ * Set group volume on the coordinator (0-100)
+ * This adjusts volume proportionally across all speakers in the group
+ */
+export async function setGroupVolume(coordinatorIp: string, volume: number): Promise<void> {
+  const clampedVolume = Math.max(0, Math.min(100, Math.round(volume)));
+
+  console.log(`[SonosLocal] SetGroupVolume ${clampedVolume} on ${coordinatorIp}`);
+
+  await sendSoapRequest({
+    ip: coordinatorIp,
+    controlUrl: GROUP_RENDERING_CONTROL_URL,
+    serviceType: GROUP_RENDERING_CONTROL,
+    action: 'SetGroupVolume',
+    params: {
+      InstanceID: 0,
       DesiredVolume: clampedVolume,
     },
   });

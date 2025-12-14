@@ -141,6 +141,13 @@ async fn play_stream(
     State(state): State<AppState>,
     Json(body): Json<PlayRequest>,
 ) -> impl IntoResponse {
+    // Set expected stream URL for source verification via GENA events
+    {
+        if let Some(ref gena) = *state.gena.read().await {
+            gena.set_expected_stream_url(&body.coordinator_ip, &body.stream_url);
+        }
+    }
+
     match sonos::play_stream(&body.coordinator_ip, &body.stream_url, body.metadata.as_ref()).await {
         Ok(_) => {
             // Subscribe to GENA events for this speaker (spawn in background)
@@ -148,12 +155,16 @@ async fn play_stream(
             let coordinator_ip = body.coordinator_ip.clone();
             tokio::spawn(async move {
                 if let Some(ref gena) = *gena_clone.read().await {
-                    // Subscribe to AVTransport (playback state) and RenderingControl (volume)
+                    // Subscribe to AVTransport (playback state), RenderingControl (per-speaker volume),
+                    // and GroupRenderingControl (group volume)
                     if let Err(e) = gena.subscribe(&coordinator_ip, GenaService::AVTransport).await {
                         tracing::warn!("[Routes] Failed to subscribe to AVTransport: {}", e);
                     }
                     if let Err(e) = gena.subscribe(&coordinator_ip, GenaService::RenderingControl).await {
                         tracing::warn!("[Routes] Failed to subscribe to RenderingControl: {}", e);
+                    }
+                    if let Err(e) = gena.subscribe(&coordinator_ip, GenaService::GroupRenderingControl).await {
+                        tracing::warn!("[Routes] Failed to subscribe to GroupRenderingControl: {}", e);
                     }
                 }
             });
@@ -211,11 +222,12 @@ async fn stop_stream(
     }
 }
 
-async fn get_volume(Path(ip): Path<String>) -> impl IntoResponse {
-    match sonos::get_volume(&ip).await {
+async fn get_volume(Path(coordinator_ip): Path<String>) -> impl IntoResponse {
+    // Use group volume for consistent multi-speaker control
+    match sonos::get_group_volume(&coordinator_ip).await {
         Ok(volume) => Json(serde_json::json!({ "volume": volume })).into_response(),
         Err(e) => {
-            tracing::error!("Get volume error: {}", e);
+            tracing::error!("Get group volume error: {}", e);
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(serde_json::json!({
@@ -233,11 +245,12 @@ struct SetVolumeRequest {
     volume: u8,
 }
 
-async fn set_volume(Path(ip): Path<String>, Json(body): Json<SetVolumeRequest>) -> impl IntoResponse {
-    match sonos::set_volume(&ip, body.volume).await {
+async fn set_volume(Path(coordinator_ip): Path<String>, Json(body): Json<SetVolumeRequest>) -> impl IntoResponse {
+    // Use group volume for consistent multi-speaker control
+    match sonos::set_group_volume(&coordinator_ip, body.volume).await {
         Ok(_) => Json(serde_json::json!({ "success": true })).into_response(),
         Err(e) => {
-            tracing::error!("Set volume error: {}", e);
+            tracing::error!("Set group volume error: {}", e);
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(serde_json::json!({

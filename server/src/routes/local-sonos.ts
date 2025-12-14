@@ -4,6 +4,7 @@
 
 import { auth } from '../auth';
 import * as sonosLocal from '../lib/sonos-local-client';
+import { GenaListener } from '../lib/gena-listener';
 import { isValidIPv4, ErrorCode, type StreamMetadata } from '@thaumic-cast/shared';
 
 function corsHeaders(origin?: string | null): HeadersInit {
@@ -194,6 +195,9 @@ export async function handleLocalSonosRoutes(req: Request, url: URL): Promise<Re
         );
       }
 
+      // Set expected stream URL for source verification via GENA events
+      GenaListener.setExpectedStreamUrl(body.coordinatorIp, body.streamUrl);
+
       await sonosLocal.playStream(body.coordinatorIp, body.streamUrl, body.metadata);
 
       return jsonResponse({ success: true }, 200, cors);
@@ -243,6 +247,9 @@ export async function handleLocalSonosRoutes(req: Request, url: URL): Promise<Re
 
       await sonosLocal.stop(body.coordinatorIp);
 
+      // Clear expected stream URL since we stopped
+      GenaListener.clearExpectedStreamUrl(body.coordinatorIp);
+
       return jsonResponse({ success: true }, 200, cors);
     } catch (error) {
       console.error('[LocalSonos] Stop error:', error);
@@ -259,17 +266,17 @@ export async function handleLocalSonosRoutes(req: Request, url: URL): Promise<Re
     }
   }
 
-  // GET /api/local/volume/:ip - Get volume
+  // GET /api/local/volume/:ip - Get group volume (from coordinator)
   const getVolumeMatch = url.pathname.match(/^\/api\/local\/volume\/(.+)$/);
   if (getVolumeMatch && getVolumeMatch[1] && req.method === 'GET') {
     try {
-      const speakerIp = decodeURIComponent(getVolumeMatch[1]);
+      const coordinatorIp = decodeURIComponent(getVolumeMatch[1]);
 
-      if (!isValidIPv4(speakerIp)) {
+      if (!isValidIPv4(coordinatorIp)) {
         return errorResponse(
           {
             error: 'invalid_ip',
-            message: `Invalid speaker IP address: ${speakerIp}`,
+            message: `Invalid coordinator IP address: ${coordinatorIp}`,
             code: ErrorCode.INVALID_IP_ADDRESS,
           },
           400,
@@ -277,11 +284,12 @@ export async function handleLocalSonosRoutes(req: Request, url: URL): Promise<Re
         );
       }
 
-      const volume = await sonosLocal.getVolume(speakerIp);
+      // Use group volume for consistent multi-speaker control
+      const volume = await sonosLocal.getGroupVolume(coordinatorIp);
 
       return jsonResponse({ volume }, 200, cors);
     } catch (error) {
-      console.error('[LocalSonos] Get volume error:', error);
+      console.error('[LocalSonos] Get group volume error:', error);
       const { message, code } = parseError(error);
       return errorResponse(
         {
@@ -295,16 +303,16 @@ export async function handleLocalSonosRoutes(req: Request, url: URL): Promise<Re
     }
   }
 
-  // POST /api/local/volume/:ip - Set volume
+  // POST /api/local/volume/:ip - Set group volume (on coordinator)
   if (getVolumeMatch && getVolumeMatch[1] && req.method === 'POST') {
     try {
-      const speakerIp = decodeURIComponent(getVolumeMatch[1]);
+      const coordinatorIp = decodeURIComponent(getVolumeMatch[1]);
 
-      if (!isValidIPv4(speakerIp)) {
+      if (!isValidIPv4(coordinatorIp)) {
         return errorResponse(
           {
             error: 'invalid_ip',
-            message: `Invalid speaker IP address: ${speakerIp}`,
+            message: `Invalid coordinator IP address: ${coordinatorIp}`,
             code: ErrorCode.INVALID_IP_ADDRESS,
           },
           400,
@@ -326,11 +334,12 @@ export async function handleLocalSonosRoutes(req: Request, url: URL): Promise<Re
         );
       }
 
-      await sonosLocal.setVolume(speakerIp, body.volume);
+      // Use group volume for consistent multi-speaker control
+      await sonosLocal.setGroupVolume(coordinatorIp, body.volume);
 
       return jsonResponse({ success: true }, 200, cors);
     } catch (error) {
-      console.error('[LocalSonos] Set volume error:', error);
+      console.error('[LocalSonos] Set group volume error:', error);
       const { message, code } = parseError(error);
       return errorResponse(
         {

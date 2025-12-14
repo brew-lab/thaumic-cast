@@ -215,6 +215,60 @@ function handleSonosEvent(message: SonosEventMessage): void {
       console.log('[Background] Sonos zone configuration changed');
       break;
     }
+
+    case 'sourceChanged': {
+      // Sonos switched to a different audio source (user opened Spotify, etc.)
+      console.log(
+        '[Background] Sonos source changed:',
+        `expected=${payload.expectedUri}, current=${payload.currentUri}`
+      );
+      // Auto-stop cast since we're no longer the active source
+      clearActiveStream();
+      closeOffscreen().catch((err) => {
+        console.error('[Background] Failed to close offscreen:', err);
+      });
+      // Notify popup that source changed
+      chrome.runtime
+        .sendMessage({
+          type: 'SOURCE_CHANGED',
+          currentUri: payload.currentUri,
+          expectedUri: payload.expectedUri,
+        })
+        .catch(() => {
+          // Popup may not be open
+        });
+      break;
+    }
+
+    case 'groupVolume': {
+      // Group volume changed - this is the combined volume for all speakers in the group
+      console.log('[Background] Sonos group volume changed:', payload.volume);
+      chrome.runtime
+        .sendMessage({
+          type: 'VOLUME_UPDATE',
+          volume: payload.volume,
+          speakerIp: payload.speakerIp,
+        })
+        .catch(() => {
+          // Popup may not be open
+        });
+      break;
+    }
+
+    case 'groupMute': {
+      // Group mute state changed
+      console.log('[Background] Sonos group mute changed:', payload.mute);
+      chrome.runtime
+        .sendMessage({
+          type: 'MUTE_UPDATE',
+          mute: payload.mute,
+          speakerIp: payload.speakerIp,
+        })
+        .catch(() => {
+          // Popup may not be open
+        });
+      break;
+    }
   }
 }
 

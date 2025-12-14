@@ -33,6 +33,8 @@ class GenaListenerClass {
   private eventCallback: EventCallback | null = null;
   private port: number = DEFAULT_GENA_PORT;
   private localIp: string | null = null;
+  // Track expected stream URLs per speaker IP for source verification
+  private expectedStreamUrls: Map<string, string> = new Map();
 
   /**
    * Start the GENA listener HTTP server
@@ -288,6 +290,34 @@ class GenaListenerClass {
     }
 
     await Promise.all(toRemove.map((sid) => this.unsubscribe(sid)));
+    // Also clear expected stream URL when unsubscribing
+    this.expectedStreamUrls.delete(speakerIp);
+  }
+
+  /**
+   * Set expected stream URL for a speaker
+   * Used to detect when Sonos switches to a different source
+   */
+  setExpectedStreamUrl(speakerIp: string, streamUrl: string): void {
+    // Normalize URL - Sonos uses x-rincon-mp3radio:// for HTTP streams
+    const normalizedUrl = streamUrl.replace(/^https?:\/\//, 'x-rincon-mp3radio://');
+    this.expectedStreamUrls.set(speakerIp, normalizedUrl);
+    console.log(`[GENA] Set expected stream URL for ${speakerIp}: ${normalizedUrl}`);
+  }
+
+  /**
+   * Clear expected stream URL for a speaker
+   */
+  clearExpectedStreamUrl(speakerIp: string): void {
+    this.expectedStreamUrls.delete(speakerIp);
+    console.log(`[GENA] Cleared expected stream URL for ${speakerIp}`);
+  }
+
+  /**
+   * Get expected stream URL for a speaker
+   */
+  getExpectedStreamUrl(speakerIp: string): string | null {
+    return this.expectedStreamUrls.get(speakerIp) || null;
   }
 
   /**
@@ -397,6 +427,27 @@ class GenaListenerClass {
           timestamp,
         });
       }
+
+      // Parse CurrentTrackURI for stream verification
+      const uriMatch = lastChangeXml.match(/<CurrentTrackURI\s+val="([^"]*)"/);
+      if (uriMatch) {
+        const currentUri = unescapeXml(uriMatch[1] || '');
+        const expectedUri = this.expectedStreamUrls.get(speakerIp);
+
+        // Only emit sourceChanged if we have an expected URL and it doesn't match
+        if (expectedUri && currentUri && !this.isMatchingStreamUrl(currentUri, expectedUri)) {
+          console.log(
+            `[GENA] Source changed on ${speakerIp}: expected=${expectedUri}, current=${currentUri}`
+          );
+          events.push({
+            type: 'sourceChanged',
+            currentUri,
+            expectedUri,
+            speakerIp,
+            timestamp,
+          });
+        }
+      }
     }
 
     if (service === 'RenderingControl') {
@@ -434,7 +485,45 @@ class GenaListenerClass {
       });
     }
 
+    if (service === 'GroupRenderingControl') {
+      // Parse group volume (this is the combined group volume, not per-speaker)
+      const groupVolumeMatch = lastChangeXml.match(/<GroupVolume\s+val="(\d+)"/);
+      if (groupVolumeMatch && groupVolumeMatch[1]) {
+        const volume = parseInt(groupVolumeMatch[1], 10);
+        events.push({
+          type: 'groupVolume',
+          volume,
+          speakerIp,
+          timestamp,
+        });
+      }
+
+      // Parse group mute
+      const groupMuteMatch = lastChangeXml.match(/<GroupMute\s+val="([01])"/);
+      if (groupMuteMatch && groupMuteMatch[1]) {
+        const mute = groupMuteMatch[1] === '1';
+        events.push({
+          type: 'groupMute',
+          mute,
+          speakerIp,
+          timestamp,
+        });
+      }
+    }
+
     return events;
+  }
+
+  /**
+   * Check if current URI matches expected stream URL
+   * Handles different URL schemes (http, x-rincon-mp3radio, etc.)
+   */
+  private isMatchingStreamUrl(currentUri: string, expectedUri: string): boolean {
+    // Normalize both URLs by removing protocol and comparing the rest
+    const normalizeUrl = (url: string) =>
+      url.replace(/^(https?|x-rincon-mp3radio):\/\//, '').toLowerCase();
+
+    return normalizeUrl(currentUri) === normalizeUrl(expectedUri);
   }
 }
 
