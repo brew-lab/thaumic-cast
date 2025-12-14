@@ -1,3 +1,5 @@
+use quick_xml::events::Event;
+use quick_xml::Reader;
 use reqwest::Client;
 use std::collections::HashMap;
 use thiserror::Error;
@@ -75,14 +77,39 @@ pub async fn send_soap_request(
     Ok(response.text().await?)
 }
 
-/// Extract a simple text value from SOAP response XML using regex
+/// Extract a simple text value from SOAP response XML using quick-xml
 pub fn extract_soap_value(xml: &str, tag_name: &str) -> Option<String> {
-    // Simple regex-based extraction
-    let pattern = format!(r"<{}[^>]*>([\s\S]*?)</{}>", tag_name, tag_name);
-    let re = regex_lite::Regex::new(&pattern).ok()?;
-    re.captures(xml)
-        .and_then(|caps| caps.get(1))
-        .map(|m| m.as_str().to_string())
+    let mut reader = Reader::from_str(xml);
+    let tag_bytes = tag_name.as_bytes();
+    let mut in_tag = false;
+    let mut result = String::new();
+
+    loop {
+        match reader.read_event() {
+            Ok(Event::Start(e)) if e.local_name().as_ref() == tag_bytes => {
+                in_tag = true;
+            }
+            Ok(Event::Text(e)) if in_tag => {
+                if let Ok(text) = e.unescape() {
+                    result.push_str(&text);
+                }
+            }
+            Ok(Event::CData(e)) if in_tag => {
+                result.push_str(&String::from_utf8_lossy(&e));
+            }
+            Ok(Event::End(e)) if e.local_name().as_ref() == tag_bytes => {
+                return if result.is_empty() {
+                    None
+                } else {
+                    Some(result)
+                };
+            }
+            Ok(Event::Eof) => break,
+            Err(_) => break,
+            _ => {}
+        }
+    }
+    None
 }
 
 /// Unescape XML entities (used by both SOAP and GENA modules)

@@ -1,13 +1,7 @@
 import { useState, useEffect } from 'preact/hooks';
 import { invoke } from '@tauri-apps/api/core';
 import { StatusPanel } from './components/StatusPanel';
-
-interface Status {
-  server_running: boolean;
-  port: number;
-  active_streams: number;
-  discovered_speakers: number;
-}
+import type { Status } from './types';
 
 export function App() {
   const [status, setStatus] = useState<Status | null>(null);
@@ -45,7 +39,7 @@ export function App() {
   );
 }
 
-const styles: Record<string, React.CSSProperties> = {
+const styles: Record<string, preact.CSSProperties> = {
   container: {
     maxWidth: '100%',
   },

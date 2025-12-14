@@ -50,7 +50,6 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 thiserror = "2"
 parking_lot = "0.12"
-regex-lite = "0.1"
 local-ip-address = "0.6"
 socket2 = { version = "0.5", features = ["all"] }
 bytes = "1"

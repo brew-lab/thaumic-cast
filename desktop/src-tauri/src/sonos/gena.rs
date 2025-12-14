@@ -13,6 +13,8 @@ use axum::{
     routing::any,
     Router,
 };
+use quick_xml::events::Event;
+use quick_xml::Reader;
 use parking_lot::RwLock;
 use reqwest::Client;
 use serde::Serialize;
@@ -889,36 +891,103 @@ fn is_matching_stream_url(current_uri: &str, expected_uri: &str) -> bool {
     extract_host_path(current_uri).eq_ignore_ascii_case(extract_host_path(expected_uri))
 }
 
-/// Extract LastChange content from NOTIFY body
+/// Extract LastChange content from NOTIFY body using quick-xml
 fn extract_last_change(xml: &str) -> Option<String> {
-    // Use [\s\S]*? to match any character including newlines (more portable than [^]*?)
-    let re = regex_lite::Regex::new(r"<LastChange>([\s\S]*?)</LastChange>").ok()?;
-    re.captures(xml)
-        .and_then(|caps| caps.get(1))
-        .map(|m| m.as_str().to_string())
+    let mut reader = Reader::from_str(xml);
+    let mut in_last_change = false;
+    let mut result = String::new();
+
+    loop {
+        match reader.read_event() {
+            Ok(Event::Start(e)) if e.local_name().as_ref() == b"LastChange" => {
+                in_last_change = true;
+            }
+            Ok(Event::Text(e)) if in_last_change => {
+                if let Ok(text) = e.unescape() {
+                    result.push_str(&text);
+                }
+            }
+            Ok(Event::CData(e)) if in_last_change => {
+                result.push_str(&String::from_utf8_lossy(&e));
+            }
+            Ok(Event::End(e)) if e.local_name().as_ref() == b"LastChange" => {
+                return if result.is_empty() {
+                    None
+                } else {
+                    Some(result)
+                };
+            }
+            Ok(Event::Eof) => break,
+            Err(_) => break,
+            _ => {}
+        }
+    }
+    None
 }
 
-/// Extract attribute value from XML element
+/// Helper to get an attribute value from quick-xml Attributes
+fn get_xml_attribute(
+    attrs: &quick_xml::events::attributes::Attributes,
+    name: &[u8],
+) -> Option<String> {
+    for attr in attrs.clone().flatten() {
+        if attr.key.as_ref() == name {
+            return attr.unescape_value().ok().map(|s| s.to_string());
+        }
+    }
+    None
+}
+
+/// Extract attribute value from XML element using quick-xml
 fn extract_attribute(xml: &str, element: &str, attr: &str) -> Option<String> {
-    let pattern = format!(r#"<{}\s+{}="([^"]+)""#, element, attr);
-    let re = regex_lite::Regex::new(&pattern).ok()?;
-    re.captures(xml)
-        .and_then(|caps| caps.get(1))
-        .map(|m| m.as_str().to_string())
+    let mut reader = Reader::from_str(xml);
+    let element_bytes = element.as_bytes();
+    let attr_bytes = attr.as_bytes();
+
+    loop {
+        match reader.read_event() {
+            Ok(Event::Start(e)) | Ok(Event::Empty(e))
+                if e.local_name().as_ref() == element_bytes =>
+            {
+                return get_xml_attribute(&e.attributes(), attr_bytes);
+            }
+            Ok(Event::Eof) => break,
+            Err(_) => break,
+            _ => {}
+        }
+    }
+    None
 }
 
-/// Extract attribute value from XML element with channel attribute
+/// Extract attribute value from XML element with channel attribute using quick-xml
 fn extract_attribute_with_channel(
     xml: &str,
     element: &str,
     channel: &str,
     attr: &str,
 ) -> Option<String> {
-    let pattern = format!(r#"<{}\s+channel="{}"\s+{}="([^"]+)""#, element, channel, attr);
-    let re = regex_lite::Regex::new(&pattern).ok()?;
-    re.captures(xml)
-        .and_then(|caps| caps.get(1))
-        .map(|m| m.as_str().to_string())
+    let mut reader = Reader::from_str(xml);
+    let element_bytes = element.as_bytes();
+    let attr_bytes = attr.as_bytes();
+
+    loop {
+        match reader.read_event() {
+            Ok(Event::Start(e)) | Ok(Event::Empty(e))
+                if e.local_name().as_ref() == element_bytes =>
+            {
+                // Check if channel matches
+                if let Some(ch) = get_xml_attribute(&e.attributes(), b"channel") {
+                    if ch == channel {
+                        return get_xml_attribute(&e.attributes(), attr_bytes);
+                    }
+                }
+            }
+            Ok(Event::Eof) => break,
+            Err(_) => break,
+            _ => {}
+        }
+    }
+    None
 }
 
 #[cfg(test)]

@@ -1,17 +1,6 @@
 import { useState } from 'preact/hooks';
 import { invoke } from '@tauri-apps/api/core';
-
-interface Speaker {
-  uuid: string;
-  ip: string;
-}
-
-interface Status {
-  server_running: boolean;
-  port: number;
-  active_streams: number;
-  discovered_speakers: number;
-}
+import type { Speaker, Status } from '../types';
 
 interface Props {
   status: Status;

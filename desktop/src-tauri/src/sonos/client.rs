@@ -1,6 +1,8 @@
 use super::soap::{extract_soap_value, send_soap_request, unescape_xml, SoapError};
 use super::ssdp::{discover as ssdp_discover, DiscoveredSpeaker, SsdpError};
 use parking_lot::RwLock;
+use quick_xml::events::Event;
+use quick_xml::Reader;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -11,13 +13,11 @@ use thiserror::Error;
 // Service URNs
 const ZONE_GROUP_TOPOLOGY: &str = "urn:schemas-upnp-org:service:ZoneGroupTopology:1";
 const AV_TRANSPORT: &str = "urn:schemas-upnp-org:service:AVTransport:1";
-const RENDERING_CONTROL: &str = "urn:schemas-upnp-org:service:RenderingControl:1";
 const GROUP_RENDERING_CONTROL: &str = "urn:schemas-upnp-org:service:GroupRenderingControl:1";
 
 // Control URLs
 const ZONE_GROUP_CONTROL: &str = "/ZoneGroupTopology/Control";
 const AV_TRANSPORT_CONTROL: &str = "/MediaRenderer/AVTransport/Control";
-const RENDERING_CONTROL_URL: &str = "/MediaRenderer/RenderingControl/Control";
 const GROUP_RENDERING_CONTROL_URL: &str = "/MediaRenderer/GroupRenderingControl/Control";
 
 // Cache settings
@@ -183,103 +183,133 @@ pub async fn discover_speakers(force_refresh: bool) -> Result<Vec<Speaker>, Sono
         .collect())
 }
 
-/// Parse ZoneGroupState XML to extract groups and members
+/// Extract an attribute value from quick-xml Attributes
+fn get_attribute(attrs: &quick_xml::events::attributes::Attributes, name: &[u8]) -> Option<String> {
+    for attr in attrs.clone().flatten() {
+        if attr.key.as_ref() == name {
+            return attr.unescape_value().ok().map(|s| s.to_string());
+        }
+    }
+    None
+}
+
+/// Extract IP from Location URL like "http://192.168.1.100:1400/xml/..."
+fn extract_ip_from_location(location: &str) -> Option<String> {
+    // Find the host part after "http://" and before the port ":"
+    let stripped = location.strip_prefix("http://")?;
+    let host_end = stripped.find(':')?;
+    Some(stripped[..host_end].to_string())
+}
+
+/// Extract model from Icon URL like "x-rincon-cpicon:sonos-one-g1"
+fn extract_model_from_icon(icon: &str) -> String {
+    // Look for "sonos-" and extract the next word
+    if let Some(pos) = icon.find("sonos-") {
+        let rest = &icon[pos + 6..];
+        // Take until next dash or end
+        if let Some(end) = rest.find('-') {
+            return rest[..end].to_string();
+        }
+        return rest.to_string();
+    }
+    "Unknown".to_string()
+}
+
+/// Parse ZoneGroupState XML to extract groups and members using quick-xml
 fn parse_zone_group_state(xml: &str) -> Vec<LocalGroup> {
     let mut groups = Vec::new();
     let unescaped_xml = unescape_xml(xml);
+    let mut reader = Reader::from_str(&unescaped_xml);
 
-    // Match ZoneGroup elements
-    let group_re =
-        regex_lite::Regex::new(r#"<ZoneGroup\s+Coordinator="([^"]+)"[^>]*>([\s\S]*?)</ZoneGroup>"#)
-            .unwrap();
+    let mut current_coordinator: Option<String> = None;
+    let mut current_members: Vec<LocalSpeaker> = Vec::new();
+    let mut coordinator_ip: Option<String> = None;
 
-    for group_cap in group_re.captures_iter(&unescaped_xml) {
-        let coordinator_uuid = group_cap.get(1).map(|m| m.as_str()).unwrap_or("");
-        let group_content = group_cap.get(2).map(|m| m.as_str()).unwrap_or("");
+    loop {
+        match reader.read_event() {
+            Ok(Event::Start(e)) | Ok(Event::Empty(e)) => {
+                match e.local_name().as_ref() {
+                    b"ZoneGroup" => {
+                        // Start of a new zone group
+                        current_coordinator = get_attribute(&e.attributes(), b"Coordinator");
+                        current_members.clear();
+                        coordinator_ip = None;
+                    }
+                    b"ZoneGroupMember" => {
+                        let attrs = e.attributes();
 
-        if coordinator_uuid.is_empty() || group_content.is_empty() {
-            continue;
-        }
+                        // Skip zone bridges (BOOST devices) - they can't play audio
+                        if get_attribute(&attrs, b"IsZoneBridge")
+                            .map(|v| v == "1")
+                            .unwrap_or(false)
+                        {
+                            continue;
+                        }
 
-        // Match ZoneGroupMember elements - capture the opening tag with all attributes
-        // Handles both self-closing and elements with nested content (like Satellites)
-        let member_re = regex_lite::Regex::new(
-            r#"<ZoneGroupMember\s+([^>]+)>"#
-        ).unwrap();
+                        let uuid = match get_attribute(&attrs, b"UUID") {
+                            Some(u) => u,
+                            None => continue,
+                        };
 
-        let mut members = Vec::new();
-        let mut coordinator_ip = String::new();
+                        let location = match get_attribute(&attrs, b"Location") {
+                            Some(l) => l,
+                            None => continue,
+                        };
 
-        for member_cap in member_re.captures_iter(group_content) {
-            let attrs = member_cap.get(1).map(|m| m.as_str()).unwrap_or("");
+                        let ip = match extract_ip_from_location(&location) {
+                            Some(i) => i,
+                            None => continue,
+                        };
 
-            // Skip zone bridges (BOOST devices) - they can't play audio
-            if attrs.contains("IsZoneBridge=\"1\"") {
-                continue;
+                        let zone_name = match get_attribute(&attrs, b"ZoneName") {
+                            Some(z) => z,
+                            None => continue,
+                        };
+
+                        let model = get_attribute(&attrs, b"Icon")
+                            .map(|i| extract_model_from_icon(&i))
+                            .unwrap_or_else(|| "Unknown".to_string());
+
+                        // Check if this is the coordinator
+                        if current_coordinator.as_ref() == Some(&uuid) {
+                            coordinator_ip = Some(ip.clone());
+                        }
+
+                        current_members.push(LocalSpeaker {
+                            uuid,
+                            ip,
+                            zone_name,
+                            model,
+                        });
+                    }
+                    _ => {}
+                }
             }
+            Ok(Event::End(e)) if e.local_name().as_ref() == b"ZoneGroup" => {
+                // End of zone group - finalize if we have valid data
+                if let (Some(coord_uuid), Some(coord_ip)) =
+                    (current_coordinator.take(), coordinator_ip.take())
+                {
+                    if !current_members.is_empty() {
+                        let group_name = current_members
+                            .iter()
+                            .map(|m| m.zone_name.as_str())
+                            .collect::<Vec<_>>()
+                            .join(" + ");
 
-            // Skip invisible devices that aren't the coordinator
-            // (satellites are invisible but we still want the main speaker)
-
-            // Extract attributes using individual regex
-            let uuid = regex_lite::Regex::new(r#"UUID="([^"]+)""#)
-                .ok()
-                .and_then(|re| re.captures(attrs))
-                .and_then(|c| c.get(1))
-                .map(|m| m.as_str())
-                .unwrap_or("");
-
-            let ip = regex_lite::Regex::new(r#"Location="http://([^:]+):\d+"#)
-                .ok()
-                .and_then(|re| re.captures(attrs))
-                .and_then(|c| c.get(1))
-                .map(|m| m.as_str())
-                .unwrap_or("");
-
-            let zone_name = regex_lite::Regex::new(r#"ZoneName="([^"]+)""#)
-                .ok()
-                .and_then(|re| re.captures(attrs))
-                .and_then(|c| c.get(1))
-                .map(|m| m.as_str())
-                .unwrap_or("");
-
-            let model = regex_lite::Regex::new(r#"Icon="[^"]*sonos-([^-"]+)"#)
-                .ok()
-                .and_then(|re| re.captures(attrs))
-                .and_then(|c| c.get(1))
-                .map(|m| m.as_str())
-                .unwrap_or("Unknown");
-
-            if uuid.is_empty() || ip.is_empty() || zone_name.is_empty() {
-                continue;
+                        groups.push(LocalGroup {
+                            id: coord_uuid.clone(),
+                            name: group_name,
+                            coordinator_uuid: coord_uuid,
+                            coordinator_ip: coord_ip,
+                            members: std::mem::take(&mut current_members),
+                        });
+                    }
+                }
             }
-
-            members.push(LocalSpeaker {
-                uuid: uuid.to_string(),
-                ip: ip.to_string(),
-                zone_name: zone_name.to_string(),
-                model: model.to_string(),
-            });
-
-            if uuid == coordinator_uuid {
-                coordinator_ip = ip.to_string();
-            }
-        }
-
-        if !members.is_empty() && !coordinator_ip.is_empty() {
-            let group_name = members
-                .iter()
-                .map(|m| m.zone_name.as_str())
-                .collect::<Vec<_>>()
-                .join(" + ");
-
-            groups.push(LocalGroup {
-                id: coordinator_uuid.to_string(),
-                name: group_name,
-                coordinator_uuid: coordinator_uuid.to_string(),
-                coordinator_ip,
-                members,
-            });
+            Ok(Event::Eof) => break,
+            Err(_) => break,
+            _ => {}
         }
     }
 
@@ -400,55 +430,6 @@ pub async fn stop(coordinator_ip: &str) -> Result<(), SonosError> {
         }
         Err(e) => Err(e.into()),
     }
-}
-
-/// Get current volume of a speaker (0-100)
-pub async fn get_volume(speaker_ip: &str) -> Result<u8, SonosError> {
-    let mut params = HashMap::new();
-    params.insert("InstanceID".to_string(), "0".to_string());
-    params.insert("Channel".to_string(), "Master".to_string());
-
-    let response = send_soap_request(
-        get_client(),
-        speaker_ip,
-        RENDERING_CONTROL_URL,
-        RENDERING_CONTROL,
-        "GetVolume",
-        params,
-    )
-    .await?;
-
-    let volume_str = extract_soap_value(&response, "CurrentVolume")
-        .ok_or_else(|| SonosError::ParseError("Failed to get CurrentVolume".to_string()))?;
-
-    volume_str.parse().map_err(|_| {
-        SonosError::ParseError(format!("Invalid volume value: {}", volume_str))
-    })
-}
-
-/// Set volume of a speaker (0-100)
-/// @deprecated Use set_group_volume for group-wide volume control
-pub async fn set_volume(speaker_ip: &str, volume: u8) -> Result<(), SonosError> {
-    let clamped_volume = volume.min(100);
-
-    tracing::info!("SetVolume {} on {}", clamped_volume, speaker_ip);
-
-    let mut params = HashMap::new();
-    params.insert("InstanceID".to_string(), "0".to_string());
-    params.insert("Channel".to_string(), "Master".to_string());
-    params.insert("DesiredVolume".to_string(), clamped_volume.to_string());
-
-    send_soap_request(
-        get_client(),
-        speaker_ip,
-        RENDERING_CONTROL_URL,
-        RENDERING_CONTROL,
-        "SetVolume",
-        params,
-    )
-    .await?;
-
-    Ok(())
 }
 
 /// Get current group volume from the coordinator (0-100)
