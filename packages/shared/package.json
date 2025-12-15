@@ -12,5 +12,8 @@
   },
   "scripts": {
     "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@thaumic-cast/protocol": "workspace:*"
   }
 }

@@ -11,6 +11,8 @@
   ],
   "scripts": {
     "setup": "./scripts/setup.sh",
+    "codegen": "bun run --filter @thaumic-cast/protocol generate",
+    "codegen:check": "tmp=$(mktemp -d) && OUTPUT_TS=\"$tmp/ts\" OUTPUT_RS=\"$tmp/rs\" bun run --filter @thaumic-cast/protocol generate && diff -rq packages/protocol/generated/typescript \"$tmp/ts\" && diff -q packages/protocol/generated/rust/mod.rs \"$tmp/rs/mod.rs\" && rm -rf \"$tmp\" || (rm -rf \"$tmp\" && echo 'Generated types are out of sync. Run: bun run codegen' && exit 1)",
     "dev": "bun run --filter '*' --filter '!@thaumic-cast/desktop' dev",
     "build": "bun run --filter '*' --filter '!@thaumic-cast/desktop' build",
     "lint": "eslint .",
@@ -33,6 +35,9 @@
     "typescript": "^5.9.3"
   },
   "lint-staged": {
+    "packages/protocol/openapi.yaml": [
+      "bash -c 'bun run codegen:check'"
+    ],
     "*.{ts,tsx}": [
       "eslint --fix",
       "prettier --write"

@@ -1,0 +1,302 @@
+export type paths = Record<string, never>;
+export type webhooks = Record<string, never>;
+export type components = {
+    schemas: {
+        /**
+         * @description Audio quality preset for streaming
+         * @enum {string}
+         */
+        QualityPreset: "ultra-low" | "low" | "medium" | "high";
+        /**
+         * @description Audio codec for encoding
+         * @enum {string}
+         */
+        AudioCodec: "he-aac" | "aac-lc" | "mp3";
+        /**
+         * @description Current status of a stream
+         * @enum {string}
+         */
+        StreamStatus: "starting" | "active" | "stopped" | "error";
+        /**
+         * @description Sonos connection mode (cloud API vs local UPnP)
+         * @enum {string}
+         */
+        SonosMode: "cloud" | "local";
+        /**
+         * @description UPnP AVTransport transport states
+         * @enum {string}
+         */
+        TransportState: "PLAYING" | "PAUSED_PLAYBACK" | "STOPPED" | "TRANSITIONING";
+        /**
+         * @description Sonos UPnP services for GENA subscriptions
+         * @enum {string}
+         */
+        GenaService: "AVTransport" | "RenderingControl" | "ZoneGroupTopology" | "GroupRenderingControl";
+        /**
+         * @description Structured error codes for error handling
+         * @enum {string}
+         */
+        ErrorCode: "NETWORK_TIMEOUT" | "NETWORK_UNREACHABLE" | "CONNECTION_REFUSED" | "SPEAKER_NOT_FOUND" | "SPEAKER_UNREACHABLE" | "DISCOVERY_FAILED" | "PLAYBACK_FAILED" | "INVALID_STREAM_URL" | "INVALID_IP_ADDRESS" | "INVALID_URL" | "INVALID_REQUEST" | "UNAUTHORIZED" | "SESSION_EXPIRED" | "UNKNOWN_ERROR";
+        /** @description Stream metadata for Sonos display (ICY metadata) */
+        StreamMetadata: {
+            /** @description Song title or tab title */
+            title?: string;
+            /** @description Artist name */
+            artist?: string;
+            /** @description Album name */
+            album?: string;
+            /** @description Album art URL */
+            artwork?: string;
+        };
+        /** @description Minimal speaker info from SSDP discovery */
+        Speaker: {
+            /** @description Unique identifier from SSDP */
+            uuid: string;
+            /** @description Local IP address */
+            ip: string;
+        };
+        /** @description Full speaker info including zone name and model */
+        LocalSpeaker: {
+            /** @description Unique identifier from zone topology */
+            uuid: string;
+            /** @description Local IP address */
+            ip: string;
+            /** @description User-configured room name */
+            zoneName: string;
+            /** @description Sonos device model (e.g., "Sonos One") */
+            model: string;
+        };
+        /** @description Sonos zone group with coordinator and members */
+        LocalGroup: {
+            /** @description Zone group identifier */
+            id: string;
+            /** @description Coordinator's zone name */
+            name: string;
+            /** @description UUID of the group coordinator */
+            coordinatorUuid: string;
+            /** @description IP address of the group coordinator */
+            coordinatorIp: string;
+            /** @description Speakers in this group */
+            members: components["schemas"]["LocalSpeaker"][];
+        };
+        /** @description Sonos group from cloud API */
+        SonosGroup: {
+            /** @description Cloud API group identifier */
+            id: string;
+            /** @description Group display name */
+            name: string;
+        };
+        /** @description Request to create a new audio stream */
+        CreateStreamRequest: {
+            groupId: string;
+            quality: components["schemas"]["QualityPreset"];
+            metadata?: components["schemas"]["StreamMetadata"];
+            codec?: components["schemas"]["AudioCodec"];
+        };
+        /** @description Response after creating a stream */
+        CreateStreamResponse: {
+            streamId: string;
+            /** @description WebSocket URL for audio ingest */
+            ingestUrl: string;
+            /** @description HTTP URL for stream playback */
+            playbackUrl: string;
+            /** @description Non-fatal issues (e.g., GENA subscription failed) */
+            warning?: string;
+        };
+        /** @description GET /api/me response */
+        MeResponse: {
+            user: null | {
+                id: string;
+                email: string;
+                name?: string;
+            };
+            sonosLinked: boolean;
+        };
+        /** @description GET /api/sonos/status response */
+        SonosStatusResponse: {
+            linked: boolean;
+            householdId?: string;
+        };
+        /** @description GET /api/sonos/groups response (cloud API) */
+        SonosGroupsResponse: {
+            householdId: string;
+            groups: components["schemas"]["SonosGroup"][];
+        };
+        /** @description GET /api/local/discover response */
+        LocalDiscoveryResponse: {
+            speakers: components["schemas"]["Speaker"][];
+        };
+        /** @description GET /api/local/groups response */
+        LocalGroupsResponse: {
+            groups: components["schemas"]["LocalGroup"][];
+        };
+        /** @description Basic API error response */
+        ApiError: {
+            error: string;
+            message: string;
+        };
+        /** @description Enhanced API error response with structured code */
+        ApiErrorResponse: {
+            error: string;
+            message: string;
+            code?: components["schemas"]["ErrorCode"];
+            details?: {
+                [key: string]: unknown;
+            };
+        };
+        /** @description GENA subscription info stored per speaker/service */
+        GenaSubscription: {
+            /** @description Subscription ID from SUBSCRIBE response */
+            sid: string;
+            speakerIp: string;
+            service: components["schemas"]["GenaService"];
+            /**
+             * Format: int64
+             * @description Unix timestamp when subscription expires
+             */
+            expiresAt: number;
+            callbackPath: string;
+        };
+        /** @description Transport state change event from Sonos speaker */
+        TransportStateEvent: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "transportState";
+            state: components["schemas"]["TransportState"];
+            speakerIp: string;
+            /** Format: int64 */
+            timestamp: number;
+        };
+        /** @description Volume change event from Sonos speaker */
+        VolumeChangeEvent: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "volume";
+            volume: number;
+            speakerIp: string;
+            /** Format: int64 */
+            timestamp: number;
+        };
+        /** @description Mute state change event from Sonos speaker */
+        MuteChangeEvent: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "mute";
+            mute: boolean;
+            speakerIp: string;
+            /** Format: int64 */
+            timestamp: number;
+        };
+        /** @description Zone group topology change event */
+        ZoneChangeEvent: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "zoneChange";
+            /** Format: int64 */
+            timestamp: number;
+        };
+        /** @description Source changed event - fired when Sonos switches audio source */
+        SourceChangedEvent: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "sourceChanged";
+            currentUri: string;
+            expectedUri?: string | null;
+            speakerIp: string;
+            /** Format: int64 */
+            timestamp: number;
+        };
+        /** @description Group volume change event from GroupRenderingControl */
+        GroupVolumeChangeEvent: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "groupVolume";
+            volume: number;
+            speakerIp: string;
+            /** Format: int64 */
+            timestamp: number;
+        };
+        /** @description Group mute state change event from GroupRenderingControl */
+        GroupMuteChangeEvent: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "groupMute";
+            mute: boolean;
+            speakerIp: string;
+            /** Format: int64 */
+            timestamp: number;
+        };
+        /** @description Union type for all Sonos events sent via WebSocket */
+        SonosEvent: components["schemas"]["TransportStateEvent"] | components["schemas"]["VolumeChangeEvent"] | components["schemas"]["MuteChangeEvent"] | components["schemas"]["ZoneChangeEvent"] | components["schemas"]["SourceChangedEvent"] | components["schemas"]["GroupVolumeChangeEvent"] | components["schemas"]["GroupMuteChangeEvent"];
+        /** @description Tauri get_status command response */
+        StatusResponse: {
+            server_running: boolean;
+            /** Format: uint16 */
+            port: number;
+            /** Format: uint64 */
+            active_streams: number;
+            /** Format: uint64 */
+            discovered_speakers: number;
+        };
+        /** @description Tauri get_config command response */
+        ConfigResponse: {
+            /** Format: uint16 */
+            port: number;
+        };
+    };
+    responses: never;
+    parameters: never;
+    requestBodies: never;
+    headers: never;
+    pathItems: never;
+};
+export type $defs = Record<string, never>;
+export type operations = Record<string, never>;
+
+// Type aliases for easier consumption
+export type QualityPreset = components["schemas"]["QualityPreset"];
+export type AudioCodec = components["schemas"]["AudioCodec"];
+export type StreamStatus = components["schemas"]["StreamStatus"];
+export type SonosMode = components["schemas"]["SonosMode"];
+export type TransportState = components["schemas"]["TransportState"];
+export type GenaService = components["schemas"]["GenaService"];
+export type ErrorCode = components["schemas"]["ErrorCode"];
+export type StreamMetadata = components["schemas"]["StreamMetadata"];
+export type Speaker = components["schemas"]["Speaker"];
+export type LocalSpeaker = components["schemas"]["LocalSpeaker"];
+export type LocalGroup = components["schemas"]["LocalGroup"];
+export type SonosGroup = components["schemas"]["SonosGroup"];
+export type CreateStreamRequest = components["schemas"]["CreateStreamRequest"];
+export type CreateStreamResponse = components["schemas"]["CreateStreamResponse"];
+export type MeResponse = components["schemas"]["MeResponse"];
+export type SonosStatusResponse = components["schemas"]["SonosStatusResponse"];
+export type SonosGroupsResponse = components["schemas"]["SonosGroupsResponse"];
+export type LocalDiscoveryResponse = components["schemas"]["LocalDiscoveryResponse"];
+export type LocalGroupsResponse = components["schemas"]["LocalGroupsResponse"];
+export type ApiError = components["schemas"]["ApiError"];
+export type ApiErrorResponse = components["schemas"]["ApiErrorResponse"];
+export type GenaSubscription = components["schemas"]["GenaSubscription"];
+export type TransportStateEvent = components["schemas"]["TransportStateEvent"];
+export type VolumeChangeEvent = components["schemas"]["VolumeChangeEvent"];
+export type MuteChangeEvent = components["schemas"]["MuteChangeEvent"];
+export type ZoneChangeEvent = components["schemas"]["ZoneChangeEvent"];
+export type SourceChangedEvent = components["schemas"]["SourceChangedEvent"];
+export type GroupVolumeChangeEvent = components["schemas"]["GroupVolumeChangeEvent"];
+export type GroupMuteChangeEvent = components["schemas"]["GroupMuteChangeEvent"];
+export type SonosEvent = components["schemas"]["SonosEvent"];
+export type StatusResponse = components["schemas"]["StatusResponse"];
+export type ConfigResponse = components["schemas"]["ConfigResponse"];

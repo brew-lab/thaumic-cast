@@ -1,9 +1,13 @@
 mod commands;
+mod generated;
 mod network;
 mod server;
 mod sonos;
 mod stream;
 mod tray;
+
+// Re-export generated types for use across the crate
+pub use generated::*;
 
 use std::sync::Arc;
 use parking_lot::RwLock;

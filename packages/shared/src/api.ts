@@ -1,128 +1,29 @@
-// API request/response types shared between server and extension
+// Re-exported from @thaumic-cast/protocol (OpenAPI-generated types)
 
-export type QualityPreset = 'ultra-low' | 'low' | 'medium' | 'high';
+// Re-export all generated types from protocol
+export type {
+  QualityPreset,
+  AudioCodec,
+  StreamStatus,
+  SonosMode,
+  StreamMetadata,
+  Speaker,
+  LocalSpeaker,
+  LocalGroup,
+  SonosGroup,
+  CreateStreamRequest,
+  CreateStreamResponse,
+  MeResponse,
+  SonosStatusResponse,
+  SonosGroupsResponse,
+  LocalDiscoveryResponse,
+  LocalGroupsResponse,
+  ApiError,
+  ApiErrorResponse,
+  ErrorCode,
+} from '@thaumic-cast/protocol';
 
-export type AudioCodec = 'he-aac' | 'aac-lc' | 'mp3';
-
-export type StreamStatus = 'starting' | 'active' | 'stopped' | 'error';
-
-export type SonosMode = 'cloud' | 'local';
-
-// GET /api/me
-export interface MeResponse {
-  user: {
-    id: string;
-    email: string;
-    name?: string;
-  } | null;
-  sonosLinked: boolean;
-}
-
-// GET /api/sonos/groups
-export interface SonosGroup {
-  id: string;
-  name: string;
-}
-
-export interface SonosGroupsResponse {
-  householdId: string;
-  groups: SonosGroup[];
-}
-
-// Stream metadata for Sonos display
-export interface StreamMetadata {
-  title?: string; // Song title or tab title
-  artist?: string; // Artist name
-  album?: string; // Album name
-  artwork?: string; // Album art URL
-}
-
-// POST /api/streams
-export interface CreateStreamRequest {
-  groupId: string;
-  quality: QualityPreset;
-  metadata?: StreamMetadata;
-  codec?: AudioCodec;
-}
-
-export interface CreateStreamResponse {
-  streamId: string;
-  ingestUrl: string;
-  playbackUrl: string;
-  warning?: string; // Non-fatal issues (e.g., GENA subscription failed)
-}
-
-// GET /api/sonos/status
-export interface SonosStatusResponse {
-  linked: boolean;
-  householdId?: string;
-}
-
-// Error response
-export interface ApiError {
-  error: string;
-  message: string;
-}
-
-// Local mode types
-export interface LocalSpeaker {
-  uuid: string;
-  ip: string;
-  zoneName: string;
-  model: string;
-}
-
-export interface LocalGroup {
-  id: string;
-  name: string;
-  coordinatorUuid: string;
-  coordinatorIp: string;
-  members: LocalSpeaker[];
-}
-
-export interface LocalDiscoveryResponse {
-  speakers: Array<{ uuid: string; ip: string }>;
-}
-
-export interface LocalGroupsResponse {
-  groups: LocalGroup[];
-}
-
-// Error codes for structured error handling
-export enum ErrorCode {
-  // Network errors
-  NETWORK_TIMEOUT = 'NETWORK_TIMEOUT',
-  NETWORK_UNREACHABLE = 'NETWORK_UNREACHABLE',
-  CONNECTION_REFUSED = 'CONNECTION_REFUSED',
-
-  // Sonos errors
-  SPEAKER_NOT_FOUND = 'SPEAKER_NOT_FOUND',
-  SPEAKER_UNREACHABLE = 'SPEAKER_UNREACHABLE',
-  DISCOVERY_FAILED = 'DISCOVERY_FAILED',
-  PLAYBACK_FAILED = 'PLAYBACK_FAILED',
-  INVALID_STREAM_URL = 'INVALID_STREAM_URL',
-
-  // Validation errors
-  INVALID_IP_ADDRESS = 'INVALID_IP_ADDRESS',
-  INVALID_URL = 'INVALID_URL',
-
-  // Auth errors
-  UNAUTHORIZED = 'UNAUTHORIZED',
-  SESSION_EXPIRED = 'SESSION_EXPIRED',
-
-  // Generic
-  UNKNOWN_ERROR = 'UNKNOWN_ERROR',
-}
-
-// Enhanced error response with code
-export interface ApiErrorResponse {
-  error: string;
-  message: string;
-  code?: ErrorCode;
-  details?: Record<string, unknown>;
-}
-
-// Validation utilities
+// Validation utilities (not generated - hand-written)
 
 /**
  * Validates an IPv4 address format

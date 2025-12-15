@@ -3,6 +3,10 @@
 //! Subscribes to Sonos speaker services and receives NOTIFY callbacks when state changes.
 //! Events are routed to the StreamManager to forward to connected extensions.
 
+use crate::generated::{
+    GenaService as GeneratedGenaService, SonosEvent as GeneratedSonosEvent,
+    TransportState as GeneratedTransportState,
+};
 use crate::network::get_local_ip;
 use crate::sonos::soap::unescape_xml;
 use axum::{
@@ -13,11 +17,10 @@ use axum::{
     routing::any,
     Router,
 };
+use parking_lot::RwLock;
 use quick_xml::events::Event;
 use quick_xml::Reader;
-use parking_lot::RwLock;
 use reqwest::Client;
-use serde::Serialize;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -28,16 +31,20 @@ const GENA_PORT_RANGE: [u16; 5] = [3001, 3002, 3003, 3004, 3005]; // Fallback po
 const DEFAULT_TIMEOUT_SECONDS: u64 = 3600;
 const RENEWAL_MARGIN_SECONDS: u64 = 300; // Renew 5 minutes before expiry
 
-/// Sonos UPnP services we subscribe to
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum GenaService {
-    AVTransport,
-    RenderingControl,
-    ZoneGroupTopology,
-    GroupRenderingControl,
+// Re-export generated types with extensions
+pub type GenaService = GeneratedGenaService;
+pub type TransportState = GeneratedTransportState;
+pub type SonosEvent = GeneratedSonosEvent;
+
+/// Extension trait adding methods to the generated GenaService enum.
+/// Required because the OpenAPI codegen only produces data types, not behavior.
+pub trait GenaServiceExt {
+    fn endpoint(&self) -> &'static str;
+    fn from_str(s: &str) -> Option<GenaService>;
+    fn as_str(&self) -> &'static str;
 }
 
-impl GenaService {
+impl GenaServiceExt for GenaService {
     fn endpoint(&self) -> &'static str {
         match self {
             GenaService::AVTransport => "/MediaRenderer/AVTransport/Event",
@@ -47,7 +54,7 @@ impl GenaService {
         }
     }
 
-    fn from_str(s: &str) -> Option<Self> {
+    fn from_str(s: &str) -> Option<GenaService> {
         match s {
             "AVTransport" => Some(GenaService::AVTransport),
             "RenderingControl" => Some(GenaService::RenderingControl),
@@ -67,19 +74,14 @@ impl GenaService {
     }
 }
 
-/// Transport state from AVTransport service
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
-pub enum TransportState {
-    Playing,
-    #[serde(rename = "PAUSED_PLAYBACK")]
-    PausedPlayback,
-    Stopped,
-    Transitioning,
+/// Extension trait adding parsing to the generated TransportState enum.
+/// Required because the OpenAPI codegen only produces data types, not behavior.
+pub trait TransportStateExt {
+    fn from_str(s: &str) -> Option<TransportState>;
 }
 
-impl TransportState {
-    fn from_str(s: &str) -> Option<Self> {
+impl TransportStateExt for TransportState {
+    fn from_str(s: &str) -> Option<TransportState> {
         match s {
             "PLAYING" => Some(TransportState::Playing),
             "PAUSED_PLAYBACK" => Some(TransportState::PausedPlayback),
@@ -88,68 +90,6 @@ impl TransportState {
             _ => None,
         }
     }
-
-    fn as_str(&self) -> &'static str {
-        match self {
-            TransportState::Playing => "PLAYING",
-            TransportState::PausedPlayback => "PAUSED_PLAYBACK",
-            TransportState::Stopped => "STOPPED",
-            TransportState::Transitioning => "TRANSITIONING",
-        }
-    }
-}
-
-/// Events received from Sonos speakers via GENA
-#[derive(Debug, Clone, Serialize)]
-#[serde(tag = "type", rename_all = "camelCase")]
-pub enum SonosEvent {
-    #[serde(rename = "transportState")]
-    TransportState {
-        state: String, // Send as string for JSON compatibility
-        #[serde(rename = "speakerIp")]
-        speaker_ip: String,
-        timestamp: u64,
-    },
-    #[serde(rename = "volume")]
-    Volume {
-        volume: u8,
-        #[serde(rename = "speakerIp")]
-        speaker_ip: String,
-        timestamp: u64,
-    },
-    #[serde(rename = "mute")]
-    Mute {
-        mute: bool,
-        #[serde(rename = "speakerIp")]
-        speaker_ip: String,
-        timestamp: u64,
-    },
-    #[serde(rename = "zoneChange")]
-    ZoneChange { timestamp: u64 },
-    #[serde(rename = "sourceChanged")]
-    SourceChanged {
-        #[serde(rename = "currentUri")]
-        current_uri: String,
-        #[serde(rename = "expectedUri")]
-        expected_uri: Option<String>,
-        #[serde(rename = "speakerIp")]
-        speaker_ip: String,
-        timestamp: u64,
-    },
-    #[serde(rename = "groupVolume")]
-    GroupVolume {
-        volume: u8,
-        #[serde(rename = "speakerIp")]
-        speaker_ip: String,
-        timestamp: u64,
-    },
-    #[serde(rename = "groupMute")]
-    GroupMute {
-        mute: bool,
-        #[serde(rename = "speakerIp")]
-        speaker_ip: String,
-        timestamp: u64,
-    },
 }
 
 /// Subscription state
@@ -785,10 +725,10 @@ fn parse_notify(
     match service {
         GenaService::AVTransport => {
             // Parse transport state
-            if let Some(state) = extract_attribute(&last_change_xml, "TransportState", "val") {
-                if let Some(ts) = TransportState::from_str(&state) {
+            if let Some(state_str) = extract_attribute(&last_change_xml, "TransportState", "val") {
+                if let Some(state) = TransportState::from_str(&state_str) {
                     events.push(SonosEvent::TransportState {
-                        state: ts.as_str().to_string(),
+                        state,
                         speaker_ip: speaker_ip.to_string(),
                         timestamp,
                     });
@@ -1003,7 +943,7 @@ mod tests {
 
         match &events[0] {
             SonosEvent::TransportState { state, .. } => {
-                assert_eq!(state, "STOPPED");
+                assert_eq!(*state, TransportState::Stopped);
             }
             _ => panic!("Expected TransportState event"),
         }
@@ -1029,5 +969,46 @@ mod tests {
         let xml = "<root><LastChange>test content</LastChange></root>";
         let result = extract_last_change(xml);
         assert_eq!(result, Some("test content".to_string()));
+    }
+
+    /// Verify wire format matches what TypeScript extension expects
+    #[test]
+    fn test_sonos_event_serialization() {
+        // Test TransportState event serialization
+        let event = SonosEvent::TransportState {
+            state: TransportState::Playing,
+            speaker_ip: "192.168.1.100".to_string(),
+            timestamp: 1234567890,
+        };
+        let json = serde_json::to_string(&event).unwrap();
+        assert!(json.contains(r#""type":"transportState""#));
+        assert!(json.contains(r#""state":"PLAYING""#));
+        assert!(json.contains(r#""speakerIp":"192.168.1.100""#));
+
+        // Test PausedPlayback variant (the one that had naming inconsistency)
+        let event = SonosEvent::TransportState {
+            state: TransportState::PausedPlayback,
+            speaker_ip: "192.168.1.100".to_string(),
+            timestamp: 1234567890,
+        };
+        let json = serde_json::to_string(&event).unwrap();
+        assert!(json.contains(r#""state":"PAUSED_PLAYBACK""#));
+
+        // Test Volume event
+        let event = SonosEvent::Volume {
+            volume: 50,
+            speaker_ip: "192.168.1.100".to_string(),
+            timestamp: 1234567890,
+        };
+        let json = serde_json::to_string(&event).unwrap();
+        assert!(json.contains(r#""type":"volume""#));
+        assert!(json.contains(r#""volume":50"#));
+
+        // Test ZoneChange event
+        let event = SonosEvent::ZoneChange {
+            timestamp: 1234567890,
+        };
+        let json = serde_json::to_string(&event).unwrap();
+        assert!(json.contains(r#""type":"zoneChange""#));
     }
 }

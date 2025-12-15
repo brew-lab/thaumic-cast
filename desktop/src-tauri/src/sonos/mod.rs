@@ -3,8 +3,13 @@ pub mod gena;
 pub(crate) mod soap;
 mod ssdp;
 
+// Re-export functions from client
 pub use client::{
     discover_speakers, get_group_volume, get_zone_groups, play_stream, set_group_volume, stop,
-    Speaker, StreamMetadata,
 };
+
+// Re-export types from generated module
+pub use crate::generated::StreamMetadata;
+
+// Re-export GENA types (with local extension traits)
 pub use gena::{GenaListener, GenaService, SonosEvent};

@@ -46,3 +46,6 @@ desktop/dist/
 
 # Generated Tauri files
 desktop/src-tauri/gen/
+
+# Generated protocol types (copied by codegen for Windows compatibility)
+desktop/src-tauri/src/generated/

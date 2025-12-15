@@ -54,6 +54,10 @@ cd server
 bunx --bun @better-auth/cli migrate --config ./src/auth.ts --yes
 cd ..
 
+# Generate protocol types (also copies to desktop/src-tauri/src/generated/)
+echo "🔧 Generating protocol types..."
+bun run codegen
+
 # Build the UI
 echo "🎨 Building server UI..."
 bun run --filter @thaumic-cast/server-ui build

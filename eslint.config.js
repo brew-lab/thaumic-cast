@@ -7,7 +7,13 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 export default [
   {
-    ignores: ['**/dist/**', '**/public/**', '**/node_modules/**'],
+    ignores: [
+      '**/dist/**',
+      '**/public/**',
+      '**/node_modules/**',
+      '**/target/**',
+      '**/generated/**', // Codegen output
+    ],
   },
   {
     files: ['**/*.{ts,tsx}'],

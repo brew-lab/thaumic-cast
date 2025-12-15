@@ -1,114 +1,69 @@
 // Sonos event types for bidirectional state sync (GENA/webhooks → extension)
+// Re-exported from @thaumic-cast/protocol (OpenAPI-generated types)
 
-/**
- * UPnP AVTransport transport states
- * @see https://sonos.svrooij.io/services/av-transport
- */
-export type TransportState = 'PLAYING' | 'PAUSED_PLAYBACK' | 'STOPPED' | 'TRANSITIONING';
+// Re-export all generated event types from protocol
+export type {
+  TransportState,
+  TransportStateEvent,
+  VolumeChangeEvent,
+  MuteChangeEvent,
+  ZoneChangeEvent,
+  SourceChangedEvent,
+  GroupVolumeChangeEvent,
+  GroupMuteChangeEvent,
+  SonosEvent,
+  GenaService,
+  GenaSubscription,
+} from '@thaumic-cast/protocol';
 
-/**
- * Transport state change event from Sonos speaker
- */
-export interface TransportStateEvent {
-  type: 'transportState';
-  state: TransportState;
-  speakerIp: string;
-  timestamp: number;
-}
+// Import types used in this file (re-exports don't make them available locally)
+import type { SonosEvent, GenaService } from '@thaumic-cast/protocol';
 
-/**
- * Volume change event from Sonos speaker
- * Note: Mute state is sent as a separate MuteChangeEvent
- */
-export interface VolumeChangeEvent {
-  type: 'volume';
-  volume: number;
-  speakerIp: string;
-  timestamp: number;
-}
-
-/**
- * Mute state change event from Sonos speaker
- */
-export interface MuteChangeEvent {
-  type: 'mute';
-  mute: boolean;
-  speakerIp: string;
-  timestamp: number;
-}
-
-/**
- * Zone group topology change event
- * Fired when speakers are grouped/ungrouped
- */
-export interface ZoneChangeEvent {
-  type: 'zoneChange';
-  timestamp: number;
-}
-
-/**
- * Source changed event - fired when Sonos switches to a different audio source
- * Used to detect when user switches away from our stream (e.g., opens Spotify)
- */
-export interface SourceChangedEvent {
-  type: 'sourceChanged';
-  currentUri: string;
-  expectedUri: string | null;
-  speakerIp: string;
-  timestamp: number;
-}
-
-/**
- * Group volume change event from GroupRenderingControl
- * This is the combined volume for all speakers in a group
- */
-export interface GroupVolumeChangeEvent {
-  type: 'groupVolume';
-  volume: number;
-  speakerIp: string;
-  timestamp: number;
-}
-
-/**
- * Group mute state change event from GroupRenderingControl
- */
-export interface GroupMuteChangeEvent {
-  type: 'groupMute';
-  mute: boolean;
-  speakerIp: string;
-  timestamp: number;
-}
-
-/**
- * Union type for all Sonos events sent via WebSocket
- */
-export type SonosEvent =
-  | TransportStateEvent
-  | VolumeChangeEvent
-  | MuteChangeEvent
-  | ZoneChangeEvent
-  | SourceChangedEvent
-  | GroupVolumeChangeEvent
-  | GroupMuteChangeEvent;
+// Type guards and utilities (not generated - hand-written)
 
 /**
  * Type guard to check if data is a SonosEvent
+ * Validates both the discriminator and required fields for each event type
  */
 export function isSonosEvent(data: unknown): data is SonosEvent {
   if (typeof data !== 'object' || data === null) return false;
   const obj = data as Record<string, unknown>;
-  return (
-    typeof obj.type === 'string' &&
-    [
-      'transportState',
-      'volume',
-      'mute',
-      'zoneChange',
-      'sourceChanged',
-      'groupVolume',
-      'groupMute',
-    ].includes(obj.type)
-  );
+
+  if (typeof obj.type !== 'string') return false;
+
+  // Validate required fields based on event type
+  switch (obj.type) {
+    case 'transportState':
+      return (
+        typeof obj.state === 'string' &&
+        typeof obj.speakerIp === 'string' &&
+        typeof obj.timestamp === 'number'
+      );
+    case 'volume':
+    case 'groupVolume':
+      return (
+        typeof obj.volume === 'number' &&
+        typeof obj.speakerIp === 'string' &&
+        typeof obj.timestamp === 'number'
+      );
+    case 'mute':
+    case 'groupMute':
+      return (
+        typeof obj.mute === 'boolean' &&
+        typeof obj.speakerIp === 'string' &&
+        typeof obj.timestamp === 'number'
+      );
+    case 'zoneChange':
+      return typeof obj.timestamp === 'number';
+    case 'sourceChanged':
+      return (
+        typeof obj.currentUri === 'string' &&
+        typeof obj.speakerIp === 'string' &&
+        typeof obj.timestamp === 'number'
+      );
+    default:
+      return false;
+  }
 }
 
 /**
@@ -125,26 +80,6 @@ export function parseSonosEvent(json: string): SonosEvent | null {
     return null;
   }
 }
-
-/**
- * GENA subscription info stored per speaker/service
- */
-export interface GenaSubscription {
-  sid: string; // Subscription ID from SUBSCRIBE response
-  speakerIp: string;
-  service: GenaService;
-  expiresAt: number; // Unix timestamp
-  callbackPath: string;
-}
-
-/**
- * Sonos UPnP services we subscribe to
- */
-export type GenaService =
-  | 'AVTransport'
-  | 'RenderingControl'
-  | 'ZoneGroupTopology'
-  | 'GroupRenderingControl';
 
 /**
  * Service endpoints for GENA subscriptions

@@ -1,0 +1,22 @@
+{
+  "name": "@thaumic-cast/protocol",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./generated/typescript/index.ts"
+  },
+  "files": [
+    "generated/typescript",
+    "openapi.yaml"
+  ],
+  "scripts": {
+    "generate": "bun run scripts/generate-ts.ts && bun run scripts/generate-rs.ts",
+    "generate:ts": "bun run scripts/generate-ts.ts",
+    "generate:rs": "bun run scripts/generate-rs.ts"
+  },
+  "devDependencies": {
+    "openapi-typescript": "^7.10.1",
+    "yaml": "^2.8.2"
+  }
+}

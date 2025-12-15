@@ -5,7 +5,7 @@
 import { auth } from '../auth';
 import * as sonosLocal from '../lib/sonos-local-client';
 import { GenaListener } from '../lib/gena-listener';
-import { isValidIPv4, ErrorCode, type StreamMetadata } from '@thaumic-cast/shared';
+import { isValidIPv4, type ErrorCode, type StreamMetadata } from '@thaumic-cast/shared';
 
 function corsHeaders(origin?: string | null): HeadersInit {
   return {
@@ -49,34 +49,34 @@ function parseError(error: unknown): { message: string; code: ErrorCode } {
       return {
         message:
           'Cannot connect to speaker. Verify the IP address and that the speaker is powered on.',
-        code: ErrorCode.CONNECTION_REFUSED,
+        code: 'CONNECTION_REFUSED',
       };
     }
     if (msg.includes('etimedout') || msg.includes('timeout')) {
       return {
         message: 'Speaker did not respond. It may be unreachable or on a different network.',
-        code: ErrorCode.NETWORK_TIMEOUT,
+        code: 'NETWORK_TIMEOUT',
       };
     }
     if (msg.includes('enetunreach') || msg.includes('network is unreachable')) {
       return {
         message:
           'Network unreachable. Check that the server is on the same network as your speakers.',
-        code: ErrorCode.NETWORK_UNREACHABLE,
+        code: 'NETWORK_UNREACHABLE',
       };
     }
     if (msg.includes('no sonos speakers found')) {
       return {
         message: 'No Sonos speakers found on the network. Try entering an IP address manually.',
-        code: ErrorCode.SPEAKER_NOT_FOUND,
+        code: 'SPEAKER_NOT_FOUND',
       };
     }
 
     // Return original message with generic code
-    return { message: error.message, code: ErrorCode.UNKNOWN_ERROR };
+    return { message: error.message, code: 'UNKNOWN_ERROR' };
   }
 
-  return { message: 'An unknown error occurred', code: ErrorCode.UNKNOWN_ERROR };
+  return { message: 'An unknown error occurred', code: 'UNKNOWN_ERROR' };
 }
 
 export async function handleLocalSonosRoutes(req: Request, url: URL): Promise<Response | null> {
@@ -136,7 +136,7 @@ export async function handleLocalSonosRoutes(req: Request, url: URL): Promise<Re
           {
             error: 'invalid_ip',
             message: `Invalid IP address format: ${speakerIp}`,
-            code: ErrorCode.INVALID_IP_ADDRESS,
+            code: 'INVALID_IP_ADDRESS',
           },
           400,
           cors
@@ -175,7 +175,7 @@ export async function handleLocalSonosRoutes(req: Request, url: URL): Promise<Re
           {
             error: 'invalid_request',
             message: 'coordinatorIp and streamUrl are required',
-            code: ErrorCode.INVALID_IP_ADDRESS,
+            code: 'INVALID_REQUEST',
           },
           400,
           cors
@@ -188,7 +188,7 @@ export async function handleLocalSonosRoutes(req: Request, url: URL): Promise<Re
           {
             error: 'invalid_ip',
             message: `Invalid coordinator IP address: ${body.coordinatorIp}`,
-            code: ErrorCode.INVALID_IP_ADDRESS,
+            code: 'INVALID_IP_ADDRESS',
           },
           400,
           cors
@@ -226,7 +226,7 @@ export async function handleLocalSonosRoutes(req: Request, url: URL): Promise<Re
           {
             error: 'invalid_request',
             message: 'coordinatorIp is required',
-            code: ErrorCode.INVALID_IP_ADDRESS,
+            code: 'INVALID_REQUEST',
           },
           400,
           cors
@@ -238,7 +238,7 @@ export async function handleLocalSonosRoutes(req: Request, url: URL): Promise<Re
           {
             error: 'invalid_ip',
             message: `Invalid coordinator IP address: ${body.coordinatorIp}`,
-            code: ErrorCode.INVALID_IP_ADDRESS,
+            code: 'INVALID_IP_ADDRESS',
           },
           400,
           cors
@@ -277,7 +277,7 @@ export async function handleLocalSonosRoutes(req: Request, url: URL): Promise<Re
           {
             error: 'invalid_ip',
             message: `Invalid coordinator IP address: ${coordinatorIp}`,
-            code: ErrorCode.INVALID_IP_ADDRESS,
+            code: 'INVALID_IP_ADDRESS',
           },
           400,
           cors
@@ -313,7 +313,7 @@ export async function handleLocalSonosRoutes(req: Request, url: URL): Promise<Re
           {
             error: 'invalid_ip',
             message: `Invalid coordinator IP address: ${coordinatorIp}`,
-            code: ErrorCode.INVALID_IP_ADDRESS,
+            code: 'INVALID_IP_ADDRESS',
           },
           400,
           cors
@@ -327,7 +327,7 @@ export async function handleLocalSonosRoutes(req: Request, url: URL): Promise<Re
           {
             error: 'invalid_request',
             message: 'volume (number) is required',
-            code: ErrorCode.UNKNOWN_ERROR,
+            code: 'INVALID_REQUEST',
           },
           400,
           cors

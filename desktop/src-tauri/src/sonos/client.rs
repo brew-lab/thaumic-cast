@@ -1,10 +1,10 @@
 use super::soap::{extract_soap_value, send_soap_request, unescape_xml, SoapError};
 use super::ssdp::{discover as ssdp_discover, DiscoveredSpeaker, SsdpError};
+use crate::generated::{LocalGroup, LocalSpeaker, Speaker, StreamMetadata};
 use parking_lot::RwLock;
 use quick_xml::events::Event;
 use quick_xml::Reader;
 use reqwest::Client;
-use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::OnceLock;
 use std::time::{Duration, Instant};
@@ -33,41 +33,6 @@ pub enum SonosError {
     NoSpeakersFound,
     #[error("Failed to parse response: {0}")]
     ParseError(String),
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct Speaker {
-    pub uuid: String,
-    pub ip: String,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct LocalSpeaker {
-    pub uuid: String,
-    pub ip: String,
-    #[serde(rename = "zoneName")]
-    pub zone_name: String,
-    pub model: String,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct LocalGroup {
-    pub id: String,
-    pub name: String,
-    #[serde(rename = "coordinatorUuid")]
-    pub coordinator_uuid: String,
-    #[serde(rename = "coordinatorIp")]
-    pub coordinator_ip: String,
-    pub members: Vec<LocalSpeaker>,
-}
-
-/// Stream metadata for Sonos display
-#[derive(Debug, Clone, Default, Deserialize)]
-pub struct StreamMetadata {
-    pub title: Option<String>,
-    pub artist: Option<String>,
-    pub album: Option<String>,
-    pub artwork: Option<String>,
 }
 
 /// Escape XML special characters
