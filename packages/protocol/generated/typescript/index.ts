@@ -245,12 +245,30 @@ export type components = {
         /** @description Tauri get_status command response */
         StatusResponse: {
             server_running: boolean;
-            /** Format: uint16 */
+            /**
+             * Format: uint16
+             * @description HTTP server port
+             */
             port: number;
+            /**
+             * Format: uint16
+             * @description GENA listener port (null if not started)
+             */
+            gena_port?: number | null;
+            /** @description Local network IP address */
+            local_ip?: string | null;
             /** Format: uint64 */
             active_streams: number;
-            /** Format: uint64 */
+            /**
+             * Format: uint64
+             * @description Number of speakers from last discovery
+             */
             discovered_speakers: number;
+            /**
+             * Format: uint64
+             * @description Number of active GENA subscriptions
+             */
+            gena_subscriptions: number;
         };
         /** @description Tauri get_config command response */
         ConfigResponse: {

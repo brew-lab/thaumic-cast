@@ -268,9 +268,17 @@ pub struct GenaSubscription {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct StatusResponse {
     pub server_running: bool,
+    /// HTTP server port
     pub port: u16,
+    /// GENA listener port (null if not started)
+    pub gena_port: Option<u16>,
+    /// Local network IP address
+    pub local_ip: Option<String>,
     pub active_streams: u64,
+    /// Number of speakers from last discovery
     pub discovered_speakers: u64,
+    /// Number of active GENA subscriptions
+    pub gena_subscriptions: u64,
 }
 
 /// Tauri get_config command response

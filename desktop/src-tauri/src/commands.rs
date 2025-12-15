@@ -1,5 +1,7 @@
 use crate::generated::{ConfigResponse, Speaker, StatusResponse};
+use crate::network::get_local_ip;
 use crate::server::AppState;
+use crate::sonos::get_cached_speaker_count;
 use tauri::{AppHandle, State};
 use tauri_plugin_store::StoreExt;
 
@@ -7,18 +9,32 @@ use tauri_plugin_store::StoreExt;
 pub async fn get_status(state: State<'_, AppState>) -> Result<StatusResponse, String> {
     let stream_count = state.streams.count();
 
-    // Get actual bound port from server state
-    let actual_ports = state.actual_ports.read();
-    let (server_running, port) = match actual_ports.as_ref() {
-        Some(ports) => (true, ports.http_port),
-        None => (false, 0),
+    // Get actual bound ports from server state (drop guard before await)
+    let (server_running, port, gena_port) = {
+        let actual_ports = state.actual_ports.read();
+        match actual_ports.as_ref() {
+            Some(ports) => (true, ports.http_port, ports.gena_port),
+            None => (false, 0, None),
+        }
+    };
+
+    // Get GENA subscription count
+    let gena_subscriptions = {
+        let gena_guard = state.gena.read().await;
+        gena_guard
+            .as_ref()
+            .map(|g| g.active_subscriptions() as u64)
+            .unwrap_or(0)
     };
 
     Ok(StatusResponse {
         server_running,
         port,
+        gena_port,
+        local_ip: get_local_ip(),
         active_streams: stream_count as u64,
-        discovered_speakers: 0, // Will be updated when speakers are cached
+        discovered_speakers: get_cached_speaker_count(),
+        gena_subscriptions,
     })
 }
 

@@ -1,6 +1,6 @@
 mod routes;
 
-use crate::network::{find_available_port, HTTP_PORT_RANGE, GENA_PORT_RANGE};
+use crate::network::{find_available_port, GENA_PORT_RANGE, HTTP_PORT_RANGE};
 use crate::sonos::GenaListener;
 use crate::stream::StreamManager;
 use crate::Config;
@@ -24,9 +24,13 @@ pub struct AppState {
     pub actual_ports: Arc<RwLock<Option<ServerPorts>>>,
 }
 
-pub async fn start_server(state: AppState, preferred_port: Option<u16>) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+pub async fn start_server(
+    state: AppState,
+    preferred_port: Option<u16>,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     // Find an available HTTP port using shared utility
-    let (http_port, listener) = find_available_port(HTTP_PORT_RANGE, preferred_port, [0, 0, 0, 0]).await?;
+    let (http_port, listener) =
+        find_available_port(HTTP_PORT_RANGE, preferred_port, [0, 0, 0, 0]).await?;
 
     // Start GENA listener with shared port range
     let mut gena_port = None;

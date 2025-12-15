@@ -539,18 +539,34 @@ components:
         - port
         - active_streams
         - discovered_speakers
+        - gena_subscriptions
       properties:
         server_running:
           type: boolean
         port:
           type: integer
           format: uint16
+          description: HTTP server port
+        gena_port:
+          type: integer
+          format: uint16
+          nullable: true
+          description: GENA listener port (null if not started)
+        local_ip:
+          type: string
+          nullable: true
+          description: Local network IP address
         active_streams:
           type: integer
           format: uint64
         discovered_speakers:
           type: integer
           format: uint64
+          description: Number of speakers from last discovery
+        gena_subscriptions:
+          type: integer
+          format: uint64
+          description: Number of active GENA subscriptions
 
     ConfigResponse:
       type: object

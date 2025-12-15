@@ -55,7 +55,9 @@ fn format_didl_lite(stream_url: &str, metadata: Option<&StreamMetadata>) -> Stri
     let album = metadata.and_then(|m| m.album.as_deref());
     let artwork = metadata.and_then(|m| m.artwork.as_deref());
 
-    let mut didl = String::from(r#"<DIDL-Lite xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:upnp="urn:schemas-upnp-org:metadata-1-0/upnp/" xmlns="urn:schemas-upnp-org:metadata-1-0/DIDL-Lite/">"#);
+    let mut didl = String::from(
+        r#"<DIDL-Lite xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:upnp="urn:schemas-upnp-org:metadata-1-0/upnp/" xmlns="urn:schemas-upnp-org:metadata-1-0/DIDL-Lite/">"#,
+    );
     didl.push_str(r#"<item id="0" parentID="-1" restricted="true">"#);
     didl.push_str(&format!("<dc:title>{}</dc:title>", escape_xml(title)));
     didl.push_str(&format!("<dc:creator>{}</dc:creator>", escape_xml(artist)));
@@ -93,6 +95,15 @@ fn get_cache() -> &'static RwLock<Option<SpeakerCache>> {
     SPEAKER_CACHE.get_or_init(|| RwLock::new(None))
 }
 
+/// Get the number of cached speakers (from last discovery)
+pub fn get_cached_speaker_count() -> u64 {
+    get_cache()
+        .read()
+        .as_ref()
+        .map(|c| c.speakers.len() as u64)
+        .unwrap_or(0)
+}
+
 fn get_client() -> &'static Client {
     HTTP_CLIENT.get_or_init(|| {
         Client::builder()
@@ -126,7 +137,9 @@ pub async fn discover_speakers(force_refresh: bool) -> Result<Vec<Speaker>, Sono
 
     // Run discovery in blocking task (uses UDP)
     tracing::info!("Running SSDP discovery...");
-    let speakers = tokio::task::spawn_blocking(|| ssdp_discover(3000)).await.unwrap()?;
+    let speakers = tokio::task::spawn_blocking(|| ssdp_discover(3000))
+        .await
+        .unwrap()?;
 
     tracing::info!("Found {} speakers", speakers.len());
 
@@ -416,9 +429,9 @@ pub async fn get_group_volume(coordinator_ip: &str) -> Result<u8, SonosError> {
     let volume_str = extract_soap_value(&response, "CurrentVolume")
         .ok_or_else(|| SonosError::ParseError("Failed to get CurrentVolume".to_string()))?;
 
-    volume_str.parse().map_err(|_| {
-        SonosError::ParseError(format!("Invalid volume value: {}", volume_str))
-    })
+    volume_str
+        .parse()
+        .map_err(|_| SonosError::ParseError(format!("Invalid volume value: {}", volume_str)))
 }
 
 /// Set group volume on the coordinator (0-100)
