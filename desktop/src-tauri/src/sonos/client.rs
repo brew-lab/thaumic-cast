@@ -224,7 +224,7 @@ fn parse_zone_group_state(xml: &str) -> Vec<LocalGroup> {
                         current_members.clear();
                         coordinator_ip = None;
                     }
-                    b"ZoneGroupMember" => {
+                    b"ZoneGroupMember" | b"Satellite" => {
                         let attrs = e.attributes();
 
                         // Skip zone bridges (BOOST devices) - they can't play audio
