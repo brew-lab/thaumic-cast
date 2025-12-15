@@ -22,18 +22,34 @@ const DISCOVERY_INTERVAL: Duration = Duration::from_secs(300);
 pub use server::AppState;
 use stream::StreamManager;
 
+/// Default trusted origin for the Thaumic Cast Chrome extension
+const DEFAULT_EXTENSION_ORIGIN: &str = "chrome-extension://ogckmcojbnambmcpionhaeokhcopikbj";
+
 /// Configuration for the desktop app (persisted to config.json)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
     /// Preferred HTTP port (None = auto-allocate from range)
     #[serde(default)]
     pub preferred_port: Option<u16>,
+
+    /// Trusted origins for CORS (extension origins that can make requests)
+    #[serde(default = "default_trusted_origins")]
+    pub trusted_origins: Vec<String>,
+}
+
+fn default_trusted_origins() -> Vec<String> {
+    vec![
+        DEFAULT_EXTENSION_ORIGIN.to_string(),
+        "http://localhost".to_string(),
+        "http://127.0.0.1".to_string(),
+    ]
 }
 
 impl Default for Config {
     fn default() -> Self {
         Self {
             preferred_port: None,
+            trusted_origins: default_trusted_origins(),
         }
     }
 }
@@ -47,7 +63,21 @@ fn load_config_from_store(app: &tauri::App) -> Config {
                 .and_then(|v| v.as_u64())
                 .map(|v| v as u16);
 
-            let config = Config { preferred_port };
+            let trusted_origins = store
+                .get("trusted_origins")
+                .and_then(|v| {
+                    v.as_array().map(|arr| {
+                        arr.iter()
+                            .filter_map(|v| v.as_str().map(String::from))
+                            .collect::<Vec<_>>()
+                    })
+                })
+                .unwrap_or_else(default_trusted_origins);
+
+            let config = Config {
+                preferred_port,
+                trusted_origins,
+            };
             tracing::info!("Loaded config from store: {:?}", config);
             config
         }

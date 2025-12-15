@@ -4,9 +4,10 @@ use crate::network::{find_available_port, GENA_PORT_RANGE, HTTP_PORT_RANGE};
 use crate::sonos::GenaListener;
 use crate::stream::StreamManager;
 use crate::Config;
+use axum::http::{header, HeaderValue, Method};
 use parking_lot::RwLock;
 use std::sync::Arc;
-use tower_http::cors::{Any, CorsLayer};
+use tower_http::cors::{AllowOrigin, CorsLayer};
 
 /// Result of starting the server, containing actual bound ports
 #[derive(Debug, Clone)]
@@ -79,10 +80,21 @@ pub async fn start_server(
         gena_port,
     });
 
+    // CORS restricted to configured trusted origins
+    // Note: Sonos speakers fetch streams via plain HTTP (no Origin header), so CORS doesn't affect them
+    let trusted_origins = state.config.read().trusted_origins.clone();
+    tracing::info!("CORS trusted origins: {:?}", trusted_origins);
+
     let cors = CorsLayer::new()
-        .allow_origin(Any)
-        .allow_methods(Any)
-        .allow_headers(Any)
+        .allow_origin(AllowOrigin::predicate(move |origin: &HeaderValue, _| {
+            let origin_str = origin.to_str().unwrap_or("");
+            // Check against configured trusted origins (includes localhost by default)
+            trusted_origins
+                .iter()
+                .any(|allowed| origin_str.starts_with(allowed))
+        }))
+        .allow_methods([Method::GET, Method::POST, Method::OPTIONS])
+        .allow_headers([header::CONTENT_TYPE, header::AUTHORIZATION])
         .allow_credentials(false);
 
     let app = routes::create_router(state).layer(cors);
