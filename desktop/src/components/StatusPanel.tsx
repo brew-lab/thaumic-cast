@@ -26,7 +26,6 @@ export function StatusPanel({ status }: Props) {
         // Ensure speakers are cached first
         await invoke('get_speakers');
         const result = await invoke<LocalGroup[]>('get_groups');
-        console.log('Groups response:', JSON.stringify(result, null, 2));
         setGroups(result);
       } catch (e) {
         console.error('Failed to load groups:', e);
@@ -139,7 +138,7 @@ export function StatusPanel({ status }: Props) {
           <span style={styles.statusValue}>{formatTimestamp(status.last_discovery_at)}</span>
         </div>
         <div style={styles.statusRow}>
-          <span style={styles.statusLabel}>Speakers</span>
+          <span style={styles.statusLabel}>Devices</span>
           <span style={styles.statusValue}>{status.discovered_speakers}</span>
         </div>
         <div style={styles.statusRow}>

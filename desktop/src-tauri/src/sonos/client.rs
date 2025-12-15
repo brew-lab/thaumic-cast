@@ -204,6 +204,28 @@ fn extract_model_from_icon(icon: &str) -> String {
     "Unknown".to_string()
 }
 
+/// Parse channel role from HTSatChanMapSet for a given UUID
+/// Format: "UUID1:LF,RF;UUID2:SW;UUID3:LR;UUID4:RR"
+fn get_channel_role(ht_sat_chan_map: &str, uuid: &str) -> Option<String> {
+    for mapping in ht_sat_chan_map.split(';') {
+        if let Some((map_uuid, channels)) = mapping.split_once(':') {
+            if map_uuid == uuid {
+                return Some(match channels {
+                    "LF,RF" => "Soundbar",
+                    "SW" => "Subwoofer",
+                    "LR" => "Surround Left",
+                    "RR" => "Surround Right",
+                    "LF" => "Left",
+                    "RF" => "Right",
+                    other => other,
+                }
+                .to_string());
+            }
+        }
+    }
+    None
+}
+
 /// Parse ZoneGroupState XML to extract groups and members using quick-xml
 fn parse_zone_group_state(xml: &str) -> Vec<LocalGroup> {
     let mut groups = Vec::new();
@@ -213,6 +235,8 @@ fn parse_zone_group_state(xml: &str) -> Vec<LocalGroup> {
     let mut current_coordinator: Option<String> = None;
     let mut current_members: Vec<LocalSpeaker> = Vec::new();
     let mut coordinator_ip: Option<String> = None;
+    let mut coordinator_zone_name: Option<String> = None;
+    let mut ht_sat_chan_map: Option<String> = None;
 
     loop {
         match reader.read_event() {
@@ -223,6 +247,8 @@ fn parse_zone_group_state(xml: &str) -> Vec<LocalGroup> {
                         current_coordinator = get_attribute(&e.attributes(), b"Coordinator");
                         current_members.clear();
                         coordinator_ip = None;
+                        coordinator_zone_name = None;
+                        ht_sat_chan_map = None;
                     }
                     b"ZoneGroupMember" | b"Satellite" => {
                         let attrs = e.attributes();
@@ -255,14 +281,25 @@ fn parse_zone_group_state(xml: &str) -> Vec<LocalGroup> {
                             None => continue,
                         };
 
-                        let model = get_attribute(&attrs, b"Icon")
-                            .map(|i| extract_model_from_icon(&i))
-                            .unwrap_or_else(|| "Unknown".to_string());
-
-                        // Check if this is the coordinator
-                        if current_coordinator.as_ref() == Some(&uuid) {
+                        // Check if this is the coordinator (main ZoneGroupMember)
+                        let is_coordinator = current_coordinator.as_ref() == Some(&uuid);
+                        if is_coordinator {
                             coordinator_ip = Some(ip.clone());
+                            coordinator_zone_name = Some(zone_name.clone());
+                            // Get HTSatChanMapSet from coordinator for channel roles
+                            ht_sat_chan_map = get_attribute(&attrs, b"HTSatChanMapSet");
                         }
+
+                        // Determine model: prefer channel role, then Icon, then fallback
+                        let model = ht_sat_chan_map
+                            .as_ref()
+                            .and_then(|map| get_channel_role(map, &uuid))
+                            .or_else(|| {
+                                get_attribute(&attrs, b"Icon")
+                                    .map(|i| extract_model_from_icon(&i))
+                                    .filter(|m| m != "Unknown")
+                            })
+                            .unwrap_or_else(|| "Speaker".to_string());
 
                         current_members.push(LocalSpeaker {
                             uuid,
@@ -280,11 +317,16 @@ fn parse_zone_group_state(xml: &str) -> Vec<LocalGroup> {
                     (current_coordinator.take(), coordinator_ip.take())
                 {
                     if !current_members.is_empty() {
-                        let group_name = current_members
-                            .iter()
-                            .map(|m| m.zone_name.as_str())
-                            .collect::<Vec<_>>()
-                            .join(" + ");
+                        // Use coordinator's zone name, or deduplicate for multi-room groups
+                        let group_name = coordinator_zone_name.take().unwrap_or_else(|| {
+                            let mut unique_names: Vec<&str> = Vec::new();
+                            for m in &current_members {
+                                if !unique_names.contains(&m.zone_name.as_str()) {
+                                    unique_names.push(&m.zone_name);
+                                }
+                            }
+                            unique_names.join(" + ")
+                        });
 
                         groups.push(LocalGroup {
                             id: coord_uuid.clone(),
@@ -307,7 +349,6 @@ fn parse_zone_group_state(xml: &str) -> Vec<LocalGroup> {
 
 /// Get zone groups from a Sonos speaker
 pub async fn get_zone_groups(speaker_ip: Option<&str>) -> Result<Vec<LocalGroup>, SonosError> {
-    log::debug!("get_zone_groups called with speaker_ip: {:?}", speaker_ip);
     let ip = match speaker_ip {
         Some(ip) => ip.to_string(),
         None => {
@@ -335,12 +376,7 @@ pub async fn get_zone_groups(speaker_ip: Option<&str>) -> Result<Vec<LocalGroup>
     let zone_group_state = extract_soap_value(&response, "ZoneGroupState")
         .ok_or_else(|| SonosError::ParseError("Failed to get ZoneGroupState".to_string()))?;
 
-    log::debug!("Raw ZoneGroupState XML: {}", zone_group_state);
-    let groups = parse_zone_group_state(&zone_group_state);
-    log::debug!("Parsed {} groups with {} total members",
-        groups.len(),
-        groups.iter().map(|g| g.members.len()).sum::<usize>());
-    Ok(groups)
+    Ok(parse_zone_group_state(&zone_group_state))
 }
 
 /// Set the audio stream URL on a Sonos group coordinator
