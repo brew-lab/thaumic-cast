@@ -19,9 +19,19 @@ export function StatusPanel({ status }: Props) {
   const [autostartEnabled, setAutostartEnabled] = useState<boolean | null>(null);
   const [autostartLoading, setAutostartLoading] = useState(false);
 
-  // Load groups on mount
+  // Load groups on mount (requires speakers to be cached first)
   useEffect(() => {
-    invoke<LocalGroup[]>('get_groups').then(setGroups).catch(console.error);
+    const loadGroups = async () => {
+      try {
+        // Ensure speakers are cached first
+        await invoke('get_speakers');
+        const result = await invoke<LocalGroup[]>('get_groups');
+        setGroups(result);
+      } catch (e) {
+        console.error('Failed to load groups:', e);
+      }
+    };
+    loadGroups();
   }, []);
 
   useEffect(() => {
