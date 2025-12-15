@@ -279,6 +279,8 @@ pub struct StatusResponse {
     pub discovered_speakers: u64,
     /// Number of active GENA subscriptions
     pub gena_subscriptions: u64,
+    /// Non-fatal errors encountered during startup
+    pub startup_errors: Option<Vec<String>>,
 }
 
 /// Tauri get_config command response

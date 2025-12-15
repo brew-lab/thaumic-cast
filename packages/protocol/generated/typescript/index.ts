@@ -269,6 +269,8 @@ export type components = {
              * @description Number of active GENA subscriptions
              */
             gena_subscriptions: number;
+            /** @description Non-fatal errors encountered during startup */
+            startup_errors?: string[];
         };
         /** @description Tauri get_config command response */
         ConfigResponse: {

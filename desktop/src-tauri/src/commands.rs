@@ -27,6 +27,9 @@ pub async fn get_status(state: State<'_, AppState>) -> Result<StatusResponse, St
             .unwrap_or(0)
     };
 
+    // Get startup errors
+    let startup_errors = state.startup_errors.read().clone();
+
     Ok(StatusResponse {
         server_running,
         port,
@@ -35,6 +38,7 @@ pub async fn get_status(state: State<'_, AppState>) -> Result<StatusResponse, St
         active_streams: stream_count as u64,
         discovered_speakers: get_cached_speaker_count(),
         gena_subscriptions,
+        startup_errors: Some(startup_errors),
     })
 }
 

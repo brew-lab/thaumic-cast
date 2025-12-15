@@ -77,6 +77,7 @@ pub fn run() {
             let streams = Arc::new(StreamManager::new());
             let gena = Arc::new(tokio::sync::RwLock::new(None));
             let actual_ports = Arc::new(RwLock::new(None));
+            let startup_errors = Arc::new(RwLock::new(Vec::new()));
 
             // Create app state
             let state = AppState {
@@ -84,6 +85,7 @@ pub fn run() {
                 streams: streams.clone(),
                 gena,
                 actual_ports,
+                startup_errors,
             };
 
             // Store state in Tauri

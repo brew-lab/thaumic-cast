@@ -22,6 +22,15 @@ pub struct AppState {
     pub gena: Arc<tokio::sync::RwLock<Option<GenaListener>>>,
     /// Actual ports the server bound to (set after startup)
     pub actual_ports: Arc<RwLock<Option<ServerPorts>>>,
+    /// Non-fatal errors encountered during startup
+    pub startup_errors: Arc<RwLock<Vec<String>>>,
+}
+
+impl AppState {
+    /// Record a non-fatal startup error for display to users
+    pub fn add_startup_error(&self, error: impl ToString) {
+        self.startup_errors.write().push(error.to_string());
+    }
 }
 
 pub async fn start_server(
@@ -37,7 +46,9 @@ pub async fn start_server(
     match GenaListener::new(*GENA_PORT_RANGE.start()) {
         Ok(gena) => {
             if let Err(e) = gena.start().await {
-                tracing::error!("[GENA] Failed to start listener: {}", e);
+                let msg = format!("GENA listener failed to start: {}", e);
+                tracing::error!("[GENA] {}", msg);
+                state.add_startup_error(msg);
             } else {
                 // Get the actual GENA port after it binds
                 gena_port = Some(gena.get_port());
@@ -56,7 +67,9 @@ pub async fn start_server(
             }
         }
         Err(e) => {
-            tracing::error!("[GENA] Failed to create listener: {}", e);
+            let msg = format!("GENA listener failed to initialize: {}", e);
+            tracing::error!("[GENA] {}", msg);
+            state.add_startup_error(msg);
         }
     }
 

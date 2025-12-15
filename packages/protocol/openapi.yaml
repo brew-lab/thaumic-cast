@@ -567,6 +567,11 @@ components:
           type: integer
           format: uint64
           description: Number of active GENA subscriptions
+        startup_errors:
+          type: array
+          items:
+            type: string
+          description: Non-fatal errors encountered during startup
 
     ConfigResponse:
       type: object
