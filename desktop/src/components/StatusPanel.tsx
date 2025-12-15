@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'preact/hooks';
+import { invoke } from '@tauri-apps/api/core';
 import { enable, disable, isEnabled } from '@tauri-apps/plugin-autostart';
-import type { Status } from '../types';
+import type { Speaker, Status } from '../types';
 
 interface Props {
   status: Status;
@@ -13,12 +14,31 @@ function formatTimestamp(unixTimestamp: number | null | undefined): string {
 }
 
 export function StatusPanel({ status }: Props) {
+  const [speakers, setSpeakers] = useState<Speaker[]>([]);
+  const [scanning, setScanning] = useState(false);
   const [autostartEnabled, setAutostartEnabled] = useState<boolean | null>(null);
   const [autostartLoading, setAutostartLoading] = useState(false);
+
+  // Load cached speakers on mount
+  useEffect(() => {
+    invoke<Speaker[]>('get_speakers').then(setSpeakers).catch(console.error);
+  }, []);
 
   useEffect(() => {
     isEnabled().then(setAutostartEnabled).catch(console.error);
   }, []);
+
+  const handleScan = async () => {
+    setScanning(true);
+    try {
+      const result = await invoke<Speaker[]>('refresh_speakers');
+      setSpeakers(result);
+    } catch (e) {
+      console.error('Failed to scan for speakers:', e);
+    } finally {
+      setScanning(false);
+    }
+  };
 
   const toggleAutostart = async () => {
     setAutostartLoading(true);
@@ -95,16 +115,28 @@ export function StatusPanel({ status }: Props) {
 
       {/* Speakers */}
       <div style={styles.section}>
-        <h3 style={styles.sectionTitle}>Speakers</h3>
-        <div style={styles.statusRow}>
-          <span style={styles.statusLabel}>Discovered</span>
-          <span style={styles.statusValue}>{status.discovered_speakers}</span>
+        <div style={styles.sectionHeader}>
+          <h3 style={{ ...styles.sectionTitle, marginBottom: 0 }}>Speakers</h3>
+          <button style={styles.scanButton} onClick={handleScan} disabled={scanning}>
+            {scanning ? 'Scanning...' : 'Scan'}
+          </button>
         </div>
         <div style={styles.statusRow}>
           <span style={styles.statusLabel}>Last Scan</span>
           <span style={styles.statusValue}>{formatTimestamp(status.last_discovery_at)}</span>
         </div>
-        <p style={styles.hintText}>Speakers are discovered automatically every 5 minutes.</p>
+        {speakers.length > 0 ? (
+          <ul style={styles.speakerList}>
+            {speakers.map((speaker) => (
+              <li key={speaker.uuid} style={styles.speakerItem}>
+                <span style={styles.speakerIp}>{speaker.ip}</span>
+                <span style={styles.speakerUuid}>{speaker.uuid}</span>
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <p style={styles.hintText}>No speakers discovered yet.</p>
+        )}
       </div>
 
       {/* Settings */}
@@ -159,6 +191,12 @@ const styles: Record<string, preact.CSSProperties> = {
   section: {
     marginBottom: '20px',
   },
+  sectionHeader: {
+    display: 'flex',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: '12px',
+  },
   sectionTitle: {
     fontSize: '0.75rem',
     fontWeight: 600,
@@ -187,6 +225,40 @@ const styles: Record<string, preact.CSSProperties> = {
     fontSize: '0.75rem',
     marginTop: '8px',
     fontStyle: 'italic',
+  },
+  scanButton: {
+    background: '#0f3460',
+    color: '#fff',
+    border: 'none',
+    padding: '4px 12px',
+    borderRadius: '4px',
+    cursor: 'pointer',
+    fontSize: '0.7rem',
+    fontWeight: 500,
+  },
+  speakerList: {
+    listStyle: 'none',
+    padding: 0,
+    margin: '8px 0 0 0',
+  },
+  speakerItem: {
+    display: 'flex',
+    flexDirection: 'column',
+    padding: '8px',
+    background: '#1a1a2e',
+    borderRadius: '4px',
+    marginBottom: '6px',
+  },
+  speakerIp: {
+    fontWeight: 500,
+    color: '#fff',
+    fontSize: '0.875rem',
+  },
+  speakerUuid: {
+    fontSize: '0.7rem',
+    color: '#555',
+    fontFamily: 'monospace',
+    marginTop: '2px',
   },
   settingsRow: {
     display: 'flex',
