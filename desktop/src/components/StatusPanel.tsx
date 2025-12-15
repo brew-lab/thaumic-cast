@@ -26,6 +26,7 @@ export function StatusPanel({ status }: Props) {
         // Ensure speakers are cached first
         await invoke('get_speakers');
         const result = await invoke<LocalGroup[]>('get_groups');
+        console.log('Groups response:', JSON.stringify(result, null, 2));
         setGroups(result);
       } catch (e) {
         console.error('Failed to load groups:', e);
@@ -68,8 +69,6 @@ export function StatusPanel({ status }: Props) {
       setAutostartLoading(false);
     }
   };
-
-  const totalSpeakers = groups.reduce((sum, g) => sum + g.members.length, 0);
 
   return (
     <div style={styles.panel}>
@@ -141,7 +140,7 @@ export function StatusPanel({ status }: Props) {
         </div>
         <div style={styles.statusRow}>
           <span style={styles.statusLabel}>Speakers</span>
-          <span style={styles.statusValue}>{totalSpeakers}</span>
+          <span style={styles.statusValue}>{status.discovered_speakers}</span>
         </div>
         <div style={styles.statusRow}>
           <span style={styles.statusLabel}>Groups</span>

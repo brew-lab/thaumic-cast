@@ -307,6 +307,7 @@ fn parse_zone_group_state(xml: &str) -> Vec<LocalGroup> {
 
 /// Get zone groups from a Sonos speaker
 pub async fn get_zone_groups(speaker_ip: Option<&str>) -> Result<Vec<LocalGroup>, SonosError> {
+    log::debug!("get_zone_groups called with speaker_ip: {:?}", speaker_ip);
     let ip = match speaker_ip {
         Some(ip) => ip.to_string(),
         None => {
@@ -334,7 +335,12 @@ pub async fn get_zone_groups(speaker_ip: Option<&str>) -> Result<Vec<LocalGroup>
     let zone_group_state = extract_soap_value(&response, "ZoneGroupState")
         .ok_or_else(|| SonosError::ParseError("Failed to get ZoneGroupState".to_string()))?;
 
-    Ok(parse_zone_group_state(&zone_group_state))
+    log::debug!("Raw ZoneGroupState XML: {}", zone_group_state);
+    let groups = parse_zone_group_state(&zone_group_state);
+    log::debug!("Parsed {} groups with {} total members",
+        groups.len(),
+        groups.iter().map(|g| g.members.len()).sum::<usize>());
+    Ok(groups)
 }
 
 /// Set the audio stream URL on a Sonos group coordinator
