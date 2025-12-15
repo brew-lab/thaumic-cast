@@ -36,7 +36,7 @@ pub async fn get_status(state: State<'_, AppState>) -> Result<StatusResponse, St
         gena_port,
         local_ip: get_local_ip(),
         active_streams: stream_count as u64,
-        discovered_speakers: get_cached_speaker_count(),
+        discovered_devices: get_cached_speaker_count(),
         gena_subscriptions,
         startup_errors: Some(startup_errors),
         last_discovery_at: get_last_discovery_timestamp(),

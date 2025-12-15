@@ -261,9 +261,9 @@ export type components = {
             active_streams: number;
             /**
              * Format: uint64
-             * @description Number of speakers from last discovery
+             * @description Number of Sonos devices from last discovery
              */
-            discovered_speakers: number;
+            discovered_devices: number;
             /**
              * Format: uint64
              * @description Number of active GENA subscriptions

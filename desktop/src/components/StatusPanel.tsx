@@ -139,7 +139,7 @@ export function StatusPanel({ status }: Props) {
         </div>
         <div style={styles.statusRow}>
           <span style={styles.statusLabel}>Devices</span>
-          <span style={styles.statusValue}>{status.discovered_speakers}</span>
+          <span style={styles.statusValue}>{status.discovered_devices}</span>
         </div>
         <div style={styles.statusRow}>
           <span style={styles.statusLabel}>Groups</span>

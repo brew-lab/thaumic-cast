@@ -538,7 +538,7 @@ components:
         - server_running
         - port
         - active_streams
-        - discovered_speakers
+        - discovered_devices
         - gena_subscriptions
       properties:
         server_running:
@@ -559,10 +559,10 @@ components:
         active_streams:
           type: integer
           format: uint64
-        discovered_speakers:
+        discovered_devices:
           type: integer
           format: uint64
-          description: Number of speakers from last discovery
+          description: Number of Sonos devices from last discovery
         gena_subscriptions:
           type: integer
           format: uint64
