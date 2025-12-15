@@ -1,34 +1,61 @@
-import { useState } from 'preact/hooks';
-import { invoke } from '@tauri-apps/api/core';
-import type { Speaker, Status } from '../types';
+import { useState, useEffect } from 'preact/hooks';
+import { enable, disable, isEnabled } from '@tauri-apps/plugin-autostart';
+import type { Status } from '../types';
 
 interface Props {
   status: Status;
-  onRefresh: () => void;
 }
 
-export function StatusPanel({ status, onRefresh }: Props) {
-  const [speakers, setSpeakers] = useState<Speaker[]>([]);
-  const [loadingSpeakers, setLoadingSpeakers] = useState(false);
+function formatTimestamp(unixTimestamp: number | null | undefined): string {
+  if (!unixTimestamp) return 'Never';
+  const date = new Date(unixTimestamp * 1000);
+  return date.toLocaleTimeString();
+}
 
-  const discoverSpeakers = async () => {
-    setLoadingSpeakers(true);
+export function StatusPanel({ status }: Props) {
+  const [autostartEnabled, setAutostartEnabled] = useState<boolean | null>(null);
+  const [autostartLoading, setAutostartLoading] = useState(false);
+
+  useEffect(() => {
+    isEnabled().then(setAutostartEnabled).catch(console.error);
+  }, []);
+
+  const toggleAutostart = async () => {
+    setAutostartLoading(true);
     try {
-      const result = await invoke<Speaker[]>('get_speakers');
-      setSpeakers(result);
+      if (autostartEnabled) {
+        await disable();
+        setAutostartEnabled(false);
+      } else {
+        await enable();
+        setAutostartEnabled(true);
+      }
     } catch (e) {
-      console.error('Failed to discover speakers:', e);
+      console.error('Failed to toggle autostart:', e);
     } finally {
-      setLoadingSpeakers(false);
+      setAutostartLoading(false);
     }
   };
 
   return (
     <div style={styles.panel}>
+      {/* Startup Errors */}
+      {status.startup_errors && status.startup_errors.length > 0 && (
+        <div style={styles.errorSection}>
+          <h3 style={styles.errorTitle}>Startup Issues</h3>
+          {status.startup_errors.map((error, i) => (
+            <div key={i} style={styles.errorItem}>
+              {error}
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Server Status */}
       <div style={styles.section}>
-        <h3 style={styles.sectionTitle}>Server Status</h3>
+        <h3 style={styles.sectionTitle}>Server</h3>
         <div style={styles.statusRow}>
-          <span style={styles.statusLabel}>Status:</span>
+          <span style={styles.statusLabel}>Status</span>
           <span
             style={{ ...styles.statusValue, color: status.server_running ? '#4caf50' : '#f44336' }}
           >
@@ -36,66 +63,106 @@ export function StatusPanel({ status, onRefresh }: Props) {
           </span>
         </div>
         <div style={styles.statusRow}>
-          <span style={styles.statusLabel}>Port:</span>
+          <span style={styles.statusLabel}>HTTP Port</span>
           <span style={styles.statusValue}>{status.port}</span>
         </div>
-        <div style={styles.statusRow}>
-          <span style={styles.statusLabel}>Active Streams:</span>
-          <span style={styles.statusValue}>{status.active_streams}</span>
-        </div>
-      </div>
-
-      <div style={styles.section}>
-        <div style={styles.sectionHeader}>
-          <h3 style={styles.sectionTitle}>Speakers</h3>
-          <button style={styles.button} onClick={discoverSpeakers} disabled={loadingSpeakers}>
-            {loadingSpeakers ? 'Scanning...' : 'Discover'}
-          </button>
-        </div>
-        {speakers.length > 0 ? (
-          <ul style={styles.speakerList}>
-            {speakers.map((speaker) => (
-              <li key={speaker.uuid} style={styles.speakerItem}>
-                <span style={styles.speakerIp}>{speaker.ip}</span>
-                <span style={styles.speakerUuid}>{speaker.uuid}</span>
-              </li>
-            ))}
-          </ul>
-        ) : (
-          <p style={styles.emptyText}>
-            No speakers discovered. Click "Discover" to scan your network.
-          </p>
+        {status.gena_port && (
+          <div style={styles.statusRow}>
+            <span style={styles.statusLabel}>GENA Port</span>
+            <span style={styles.statusValue}>{status.gena_port}</span>
+          </div>
+        )}
+        {status.local_ip && (
+          <div style={styles.statusRow}>
+            <span style={styles.statusLabel}>Local IP</span>
+            <span style={styles.statusValue}>{status.local_ip}</span>
+          </div>
         )}
       </div>
 
-      <div style={styles.footer}>
-        <button style={styles.refreshButton} onClick={onRefresh}>
-          Refresh Status
-        </button>
+      {/* Activity */}
+      <div style={styles.section}>
+        <h3 style={styles.sectionTitle}>Activity</h3>
+        <div style={styles.statusRow}>
+          <span style={styles.statusLabel}>Active Streams</span>
+          <span style={styles.statusValue}>{status.active_streams}</span>
+        </div>
+        <div style={styles.statusRow}>
+          <span style={styles.statusLabel}>GENA Subscriptions</span>
+          <span style={styles.statusValue}>{status.gena_subscriptions}</span>
+        </div>
+      </div>
+
+      {/* Speakers */}
+      <div style={styles.section}>
+        <h3 style={styles.sectionTitle}>Speakers</h3>
+        <div style={styles.statusRow}>
+          <span style={styles.statusLabel}>Discovered</span>
+          <span style={styles.statusValue}>{status.discovered_speakers}</span>
+        </div>
+        <div style={styles.statusRow}>
+          <span style={styles.statusLabel}>Last Scan</span>
+          <span style={styles.statusValue}>{formatTimestamp(status.last_discovery_at)}</span>
+        </div>
+        <p style={styles.hintText}>Speakers are discovered automatically every 5 minutes.</p>
+      </div>
+
+      {/* Settings */}
+      <div style={styles.section}>
+        <h3 style={styles.sectionTitle}>Settings</h3>
+        <div style={styles.settingsRow}>
+          <div>
+            <span style={styles.settingsLabel}>Start on Login</span>
+            <span style={styles.settingsHint}>Launch minimized when your computer starts</span>
+          </div>
+          <button
+            style={{
+              ...styles.toggleButton,
+              background: autostartEnabled ? '#4caf50' : '#333',
+            }}
+            onClick={toggleAutostart}
+            disabled={autostartLoading || autostartEnabled === null}
+          >
+            {autostartLoading ? '...' : autostartEnabled ? 'On' : 'Off'}
+          </button>
+        </div>
       </div>
     </div>
   );
 }
 
-const styles: Record<string, React.CSSProperties> = {
+const styles: Record<string, preact.CSSProperties> = {
   panel: {
     background: '#16213e',
     borderRadius: '8px',
     padding: '16px',
   },
+  errorSection: {
+    background: '#3d1a1a',
+    borderRadius: '6px',
+    padding: '12px',
+    marginBottom: '16px',
+  },
+  errorTitle: {
+    fontSize: '0.75rem',
+    fontWeight: 600,
+    color: '#f44336',
+    textTransform: 'uppercase',
+    letterSpacing: '0.5px',
+    marginBottom: '8px',
+  },
+  errorItem: {
+    fontSize: '0.8rem',
+    color: '#ff8a80',
+    marginBottom: '4px',
+  },
   section: {
     marginBottom: '20px',
   },
-  sectionHeader: {
-    display: 'flex',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: '12px',
-  },
   sectionTitle: {
-    fontSize: '0.875rem',
+    fontSize: '0.75rem',
     fontWeight: 600,
-    color: '#aaa',
+    color: '#666',
     textTransform: 'uppercase',
     letterSpacing: '0.5px',
     marginBottom: '12px',
@@ -108,61 +175,44 @@ const styles: Record<string, React.CSSProperties> = {
   },
   statusLabel: {
     color: '#888',
+    fontSize: '0.875rem',
   },
   statusValue: {
     fontWeight: 500,
     color: '#fff',
+    fontSize: '0.875rem',
   },
-  button: {
-    background: '#0f3460',
-    color: '#fff',
-    border: 'none',
-    padding: '6px 12px',
-    borderRadius: '4px',
-    cursor: 'pointer',
+  hintText: {
+    color: '#555',
     fontSize: '0.75rem',
-    fontWeight: 500,
+    marginTop: '8px',
+    fontStyle: 'italic',
   },
-  speakerList: {
-    listStyle: 'none',
-    padding: 0,
-    margin: 0,
-  },
-  speakerItem: {
+  settingsRow: {
     display: 'flex',
-    flexDirection: 'column',
-    padding: '8px',
-    background: '#1a1a2e',
-    borderRadius: '4px',
-    marginBottom: '8px',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    padding: '8px 0',
   },
-  speakerIp: {
-    fontWeight: 500,
-    color: '#fff',
-    marginBottom: '2px',
-  },
-  speakerUuid: {
-    fontSize: '0.75rem',
-    color: '#666',
-    fontFamily: 'monospace',
-  },
-  emptyText: {
-    color: '#666',
+  settingsLabel: {
+    color: '#ccc',
     fontSize: '0.875rem',
+    display: 'block',
   },
-  footer: {
-    marginTop: '20px',
-    paddingTop: '16px',
-    borderTop: '1px solid #1a1a2e',
+  settingsHint: {
+    color: '#555',
+    fontSize: '0.75rem',
+    display: 'block',
+    marginTop: '2px',
   },
-  refreshButton: {
-    background: 'transparent',
-    color: '#888',
-    border: '1px solid #333',
-    padding: '8px 16px',
+  toggleButton: {
+    border: 'none',
+    padding: '6px 16px',
     borderRadius: '4px',
     cursor: 'pointer',
-    fontSize: '0.875rem',
-    width: '100%',
+    fontSize: '0.75rem',
+    fontWeight: 600,
+    color: '#fff',
+    minWidth: '50px',
   },
 };

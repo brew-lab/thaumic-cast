@@ -30,11 +30,7 @@ export function App() {
 
       {error && <div style={styles.error}>{error}</div>}
 
-      {status ? (
-        <StatusPanel status={status} onRefresh={fetchStatus} />
-      ) : (
-        <div style={styles.loading}>Loading...</div>
-      )}
+      {status ? <StatusPanel status={status} /> : <div style={styles.loading}>Loading...</div>}
     </div>
   );
 }

@@ -674,8 +674,7 @@ attachConsole();
 - [x] Run `bun run codegen` to regenerate types _(11b9f0b)_
 - [x] Update `get_status` command with real values (speaker count, GENA subscriptions) _(11b9f0b)_
 - [x] Add startup error collection _(08832e4)_
-- [ ] Update frontend to use store plugin
-- [ ] Update frontend to display enhanced status
+- [x] Update frontend to display enhanced status
 
 ### Phase 2: Port & Network
 
@@ -684,8 +683,8 @@ attachConsole();
 - [x] Implement auto-discovery on startup _(5283885)_
 - [x] Add discovery interval (5 min default) _(5283885)_
 - [x] Add `last_discovery_at` to StatusResponse _(5283885)_
-- [ ] Remove manual Discover/Refresh buttons from UI
-- [ ] Add "last updated" timestamp display
+- [x] Remove manual Discover/Refresh buttons from UI
+- [x] Add "last updated" timestamp display
 
 ### Phase 3: Security
 
@@ -701,11 +700,11 @@ attachConsole();
 - [x] Configure `thaumic-cast://` URI scheme _(04ddb60)_
 - [x] Implement deep link handler _(04ddb60)_
 - [x] Add `tauri-plugin-autostart` dependency _(2916d70)_
-- [ ] Add autostart toggle to settings UI
+- [x] Add autostart toggle to settings UI
 - [x] Add `tauri-plugin-log` dependency
 - [x] Configure log rotation (5MB files, keep last 3)
 - [x] Switch from tracing to log crate
-- [ ] Add console forwarding in frontend
+- [x] Add console forwarding in frontend
 
 ---
 
