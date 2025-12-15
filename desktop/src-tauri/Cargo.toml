@@ -55,6 +55,7 @@ socket2 = { version = "0.5", features = ["all"] }
 bytes = "1"
 async-stream = "0.3"
 tokio-stream = { version = "0.1", features = ["sync"] }
+tauri-plugin-store = "2"
 
 [features]
 default = ["custom-protocol"]

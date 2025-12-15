@@ -231,14 +231,12 @@ impl Default for StreamManager {
 /// Format: [1 byte length (N*16)] [StreamTitle='...'; padded to N*16 bytes]
 pub fn format_icy_metadata(metadata: Option<&StreamMetadata>) -> Vec<u8> {
     let title = match metadata {
-        Some(m) => {
-            match (&m.artist, &m.title) {
-                (Some(artist), Some(title)) => format!("{} - {}", artist, title),
-                (None, Some(title)) => title.clone(),
-                (Some(artist), None) => artist.clone(),
-                (None, None) => String::new(),
-            }
-        }
+        Some(m) => match (&m.artist, &m.title) {
+            (Some(artist), Some(title)) => format!("{} - {}", artist, title),
+            (None, Some(title)) => title.clone(),
+            (Some(artist), None) => artist.clone(),
+            (None, None) => String::new(),
+        },
         None => String::new(),
     };
 

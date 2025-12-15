@@ -162,10 +162,7 @@ impl GenaListener {
 
     /// Clear expected stream URL for a speaker
     pub fn clear_expected_stream_url(&self, speaker_ip: &str) {
-        self.state
-            .expected_stream_urls
-            .write()
-            .remove(speaker_ip);
+        self.state.expected_stream_urls.write().remove(speaker_ip);
         tracing::info!("[GENA] Cleared expected stream URL for {}", speaker_ip);
     }
 
@@ -209,7 +206,11 @@ impl GenaListener {
                     break;
                 }
                 Err(e) => {
-                    tracing::warn!("[GENA] Port {} unavailable: {}, trying next...", try_port, e);
+                    tracing::warn!(
+                        "[GENA] Port {} unavailable: {}, trying next...",
+                        try_port,
+                        e
+                    );
                     last_error = Some(e);
                 }
             }
@@ -230,7 +231,11 @@ impl GenaListener {
         let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel();
         *self.shutdown_tx.write() = Some(shutdown_tx);
 
-        tracing::info!("[GENA] Listener started on http://{}:{}", local_ip, actual_port);
+        tracing::info!(
+            "[GENA] Listener started on http://{}:{}",
+            local_ip,
+            actual_port
+        );
 
         tokio::spawn(async move {
             axum::serve(listener, app)
@@ -474,7 +479,9 @@ impl GenaListener {
 
     /// Schedule subscription renewal
     fn schedule_renewal(&self, sid: String, timeout_seconds: u64) {
-        let renewal_delay = timeout_seconds.saturating_sub(RENEWAL_MARGIN_SECONDS).max(60);
+        let renewal_delay = timeout_seconds
+            .saturating_sub(RENEWAL_MARGIN_SECONDS)
+            .max(60);
         let state = Arc::clone(&self.state);
         let client = self.client.clone();
         let local_ip = self.local_ip.clone();
@@ -578,10 +585,8 @@ async fn schedule_renewal_task(
             // If re-subscribe succeeded, schedule renewal for the new subscription
             if let Ok(response) = resubscribe_result {
                 if response.status().is_success() {
-                    if let Some(new_sid) = response
-                        .headers()
-                        .get("SID")
-                        .and_then(|v| v.to_str().ok())
+                    if let Some(new_sid) =
+                        response.headers().get("SID").and_then(|v| v.to_str().ok())
                     {
                         let timeout = response
                             .headers()
@@ -682,11 +687,7 @@ async fn notify_handler(
     };
 
     // Get expected stream URL for this speaker (if any)
-    let expected_stream_url = state
-        .expected_stream_urls
-        .read()
-        .get(&speaker_ip)
-        .cloned();
+    let expected_stream_url = state.expected_stream_urls.read().get(&speaker_ip).cloned();
 
     // Parse and forward events
     let events = parse_notify(

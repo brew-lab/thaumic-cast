@@ -1,6 +1,7 @@
 use crate::generated::{ConfigResponse, Speaker, StatusResponse};
 use crate::server::AppState;
-use tauri::State;
+use tauri::{AppHandle, State};
+use tauri_plugin_store::StoreExt;
 
 #[tauri::command]
 pub async fn get_status(state: State<'_, AppState>) -> Result<StatusResponse, String> {
@@ -47,10 +48,23 @@ pub async fn get_config(state: State<'_, AppState>) -> Result<ConfigResponse, St
 }
 
 #[tauri::command]
-pub async fn set_port(port: u16, state: State<'_, AppState>) -> Result<(), String> {
-    // Note: Changing port requires server restart
-    let mut config = state.config.write();
-    config.preferred_port = Some(port);
-    tracing::info!("Preferred port changed to {}. Restart required.", port);
+pub async fn set_port(
+    port: u16,
+    state: State<'_, AppState>,
+    app: AppHandle,
+) -> Result<(), String> {
+    // Update in-memory config
+    {
+        let mut config = state.config.write();
+        config.preferred_port = Some(port);
+    }
+
+    // Persist to store
+    let store = app.store("config.json").map_err(|e| e.to_string())?;
+    store
+        .set("preferred_port", serde_json::json!(port));
+    store.save().map_err(|e| e.to_string())?;
+
+    tracing::info!("Preferred port changed to {} and saved. Restart required.", port);
     Ok(())
 }

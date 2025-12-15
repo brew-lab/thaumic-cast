@@ -148,7 +148,13 @@ async fn play_stream(
         }
     }
 
-    match sonos::play_stream(&body.coordinator_ip, &body.stream_url, body.metadata.as_ref()).await {
+    match sonos::play_stream(
+        &body.coordinator_ip,
+        &body.stream_url,
+        body.metadata.as_ref(),
+    )
+    .await
+    {
         Ok(_) => {
             // Subscribe to GENA events for this speaker (spawn in background)
             let gena_clone = state.gena.clone();
@@ -157,14 +163,26 @@ async fn play_stream(
                 if let Some(ref gena) = *gena_clone.read().await {
                     // Subscribe to AVTransport (playback state), RenderingControl (per-speaker volume),
                     // and GroupRenderingControl (group volume)
-                    if let Err(e) = gena.subscribe(&coordinator_ip, GenaService::AVTransport).await {
+                    if let Err(e) = gena
+                        .subscribe(&coordinator_ip, GenaService::AVTransport)
+                        .await
+                    {
                         tracing::warn!("[Routes] Failed to subscribe to AVTransport: {}", e);
                     }
-                    if let Err(e) = gena.subscribe(&coordinator_ip, GenaService::RenderingControl).await {
+                    if let Err(e) = gena
+                        .subscribe(&coordinator_ip, GenaService::RenderingControl)
+                        .await
+                    {
                         tracing::warn!("[Routes] Failed to subscribe to RenderingControl: {}", e);
                     }
-                    if let Err(e) = gena.subscribe(&coordinator_ip, GenaService::GroupRenderingControl).await {
-                        tracing::warn!("[Routes] Failed to subscribe to GroupRenderingControl: {}", e);
+                    if let Err(e) = gena
+                        .subscribe(&coordinator_ip, GenaService::GroupRenderingControl)
+                        .await
+                    {
+                        tracing::warn!(
+                            "[Routes] Failed to subscribe to GroupRenderingControl: {}",
+                            e
+                        );
                     }
                 }
             });
@@ -245,7 +263,10 @@ struct SetVolumeRequest {
     volume: u8,
 }
 
-async fn set_volume(Path(coordinator_ip): Path<String>, Json(body): Json<SetVolumeRequest>) -> impl IntoResponse {
+async fn set_volume(
+    Path(coordinator_ip): Path<String>,
+    Json(body): Json<SetVolumeRequest>,
+) -> impl IntoResponse {
     // Use group volume for consistent multi-speaker control
     match sonos::set_group_volume(&coordinator_ip, body.volume).await {
         Ok(_) => Json(serde_json::json!({ "success": true })).into_response(),
@@ -443,7 +464,10 @@ async fn handle_ingest(socket: WebSocket, stream_id: String, state: AppState) {
         tokio::spawn(async move {
             if let Some(ref gena) = *gena_clone.read().await {
                 if let Err(e) = gena.unsubscribe_all(&speaker_ip).await {
-                    tracing::warn!("[Routes] Failed to unsubscribe from GENA on disconnect: {}", e);
+                    tracing::warn!(
+                        "[Routes] Failed to unsubscribe from GENA on disconnect: {}",
+                        e
+                    );
                 }
             }
         });

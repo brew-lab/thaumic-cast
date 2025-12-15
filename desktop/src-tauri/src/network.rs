@@ -40,10 +40,7 @@ pub async fn find_available_port(
         }
     }
 
-    Err(format!(
-        "No available ports in range {:?}",
-        range
-    ))
+    Err(format!("No available ports in range {:?}", range))
 }
 
 #[cfg(test)]

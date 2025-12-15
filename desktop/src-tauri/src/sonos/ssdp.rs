@@ -117,11 +117,7 @@ fn parse_ssdp_response(response: &str) -> Option<DiscoveredSpeaker> {
     let usn = headers.get("usn")?;
 
     // Extract UUID from USN (format: uuid:RINCON_xxxx::urn:schemas-upnp-org:device:ZonePlayer:1)
-    let uuid = usn
-        .split("::")
-        .next()?
-        .strip_prefix("uuid:")?
-        .to_string();
+    let uuid = usn.split("::").next()?.strip_prefix("uuid:")?.to_string();
 
     // Validate it's a Sonos device (RINCON prefix)
     if !uuid.starts_with("RINCON_") {
@@ -173,7 +169,12 @@ pub fn discover(timeout_ms: u64) -> Result<Vec<DiscoveredSpeaker>, SsdpError> {
                 sockets.push((name.clone(), socket));
             }
             Err(e) => {
-                tracing::warn!("[SSDP] Failed to create socket for {} ({}): {}", name, ip, e);
+                tracing::warn!(
+                    "[SSDP] Failed to create socket for {} ({}): {}",
+                    name,
+                    ip,
+                    e
+                );
             }
         }
     }

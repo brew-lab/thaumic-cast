@@ -9,23 +9,48 @@ mod tray;
 // Re-export generated types for use across the crate
 pub use generated::*;
 
-use std::sync::Arc;
 use parking_lot::RwLock;
+use serde::{Deserialize, Serialize};
+use std::sync::Arc;
 use tauri::{Emitter, Manager};
+use tauri_plugin_store::StoreExt;
 
 pub use server::AppState;
 use stream::StreamManager;
 
-/// Configuration for the desktop app
-#[derive(Debug, Clone)]
+/// Configuration for the desktop app (persisted to config.json)
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
     /// Preferred HTTP port (None = auto-allocate from range)
+    #[serde(default)]
     pub preferred_port: Option<u16>,
 }
 
 impl Default for Config {
     fn default() -> Self {
-        Self { preferred_port: None }
+        Self {
+            preferred_port: None,
+        }
+    }
+}
+
+/// Load config from store, falling back to defaults if not found
+fn load_config_from_store(app: &tauri::App) -> Config {
+    match app.store("config.json") {
+        Ok(store) => {
+            let preferred_port = store
+                .get("preferred_port")
+                .and_then(|v| v.as_u64())
+                .map(|v| v as u16);
+
+            let config = Config { preferred_port };
+            tracing::info!("Loaded config from store: {:?}", config);
+            config
+        }
+        Err(e) => {
+            tracing::warn!("Could not load config store, using defaults: {}", e);
+            Config::default()
+        }
     }
 }
 
@@ -42,9 +67,13 @@ pub fn run() {
     tracing::info!("Starting Thaumic Cast Desktop");
 
     tauri::Builder::default()
+        .plugin(tauri_plugin_store::Builder::new().build())
         .plugin(tauri_plugin_shell::init())
         .setup(|app| {
-            let config = Arc::new(RwLock::new(Config::default()));
+            // Load config from persistent store
+            let loaded_config = load_config_from_store(app);
+            let config = Arc::new(RwLock::new(loaded_config));
+
             let streams = Arc::new(StreamManager::new());
             let gena = Arc::new(tokio::sync::RwLock::new(None));
             let actual_ports = Arc::new(RwLock::new(None));
