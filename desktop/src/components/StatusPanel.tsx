@@ -160,12 +160,12 @@ export function StatusPanel({ status }: Props) {
                   {group.members.map((member) => (
                     <li key={member.uuid} style={styles.memberItem}>
                       <span style={styles.memberName}>
-                        {member.zoneName}
+                        {member.model}
                         {member.uuid === group.coordinatorUuid && (
                           <span style={styles.coordinatorBadge}>coordinator</span>
                         )}
                       </span>
-                      <span style={styles.memberModel}>{member.model}</span>
+                      <span style={styles.memberIp}>{member.ip}</span>
                     </li>
                   ))}
                 </ul>
@@ -317,9 +317,10 @@ const styles: Record<string, preact.CSSProperties> = {
     alignItems: 'center',
     gap: '6px',
   },
-  memberModel: {
+  memberIp: {
     color: '#555',
     fontSize: '0.7rem',
+    fontFamily: 'monospace',
   },
   coordinatorBadge: {
     fontSize: '0.6rem',
