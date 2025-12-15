@@ -26,8 +26,9 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::mpsc;
 
+use crate::network::GENA_PORT_RANGE;
+
 const SONOS_PORT: u16 = 1400;
-const GENA_PORT_RANGE: [u16; 5] = [3001, 3002, 3003, 3004, 3005]; // Fallback ports to try
 const DEFAULT_TIMEOUT_SECONDS: u64 = 3600;
 const RENEWAL_MARGIN_SECONDS: u64 = 300; // Renew 5 minutes before expiry
 
@@ -191,7 +192,7 @@ impl GenaListener {
 
         // Build list of ports to try, starting with the configured port
         let mut ports_to_try: Vec<u16> = vec![configured_port];
-        for p in GENA_PORT_RANGE {
+        for p in GENA_PORT_RANGE.clone() {
             if p != configured_port {
                 ports_to_try.push(p);
             }
@@ -217,8 +218,8 @@ impl GenaListener {
         let (actual_port, listener) = bound_port.ok_or_else(|| {
             format!(
                 "Could not start GENA listener: all ports in range {}-{} are in use. Last error: {:?}",
-                GENA_PORT_RANGE[0],
-                GENA_PORT_RANGE[GENA_PORT_RANGE.len() - 1],
+                GENA_PORT_RANGE.start(),
+                GENA_PORT_RANGE.end(),
                 last_error
             )
         })?;
@@ -454,6 +455,11 @@ impl GenaListener {
     /// Get the number of active subscriptions
     pub fn active_subscriptions(&self) -> usize {
         self.state.subscriptions.read().len()
+    }
+
+    /// Get the actual port the GENA listener is bound to
+    pub fn get_port(&self) -> u16 {
+        *self.port.read()
     }
 
     /// Get details of all active subscriptions for debugging

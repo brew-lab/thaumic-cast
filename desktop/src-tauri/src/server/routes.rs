@@ -305,7 +305,12 @@ async fn create_stream(
     Json(body): Json<CreateStreamRequest>,
 ) -> impl IntoResponse {
     let stream_id = Uuid::new_v4().to_string();
-    let port = state.config.read().port;
+    let port = state
+        .actual_ports
+        .read()
+        .as_ref()
+        .map(|p| p.http_port)
+        .unwrap_or(45100);
 
     // Log stream creation details
     tracing::info!(

@@ -19,12 +19,13 @@ use stream::StreamManager;
 /// Configuration for the desktop app
 #[derive(Debug, Clone)]
 pub struct Config {
-    pub port: u16,
+    /// Preferred HTTP port (None = auto-allocate from range)
+    pub preferred_port: Option<u16>,
 }
 
 impl Default for Config {
     fn default() -> Self {
-        Self { port: 3000 }
+        Self { preferred_port: None }
     }
 }
 
@@ -46,12 +47,14 @@ pub fn run() {
             let config = Arc::new(RwLock::new(Config::default()));
             let streams = Arc::new(StreamManager::new());
             let gena = Arc::new(tokio::sync::RwLock::new(None));
+            let actual_ports = Arc::new(RwLock::new(None));
 
             // Create app state
             let state = AppState {
                 config: config.clone(),
                 streams: streams.clone(),
                 gena,
+                actual_ports,
             };
 
             // Store state in Tauri
@@ -61,18 +64,18 @@ pub fn run() {
             tray::setup_tray(app)?;
 
             // Start the HTTP server in background
-            let port = config.read().port;
+            let preferred_port = config.read().preferred_port;
             let app_handle = app.handle().clone();
 
             tauri::async_runtime::spawn(async move {
-                if let Err(e) = server::start_server(state, port).await {
+                if let Err(e) = server::start_server(state, preferred_port).await {
                     tracing::error!("Server error: {}", e);
                     // Notify the app about the error
                     let _ = app_handle.emit("server-error", e.to_string());
                 }
             });
 
-            tracing::info!("Server starting on port {}", port);
+            tracing::info!("Server starting (port will be auto-allocated if not specified)");
 
             Ok(())
         })
