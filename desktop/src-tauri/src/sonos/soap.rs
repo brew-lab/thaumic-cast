@@ -52,7 +52,7 @@ pub async fn send_soap_request(
     let body = build_soap_envelope(action, service_type, &params);
     let soap_action = format!("\"{}#{}\"", service_type, action);
 
-    tracing::debug!("SOAP {} -> {}", action, url);
+    log::debug!("SOAP {} -> {}", action, url);
 
     let response = client
         .post(&url)
@@ -66,7 +66,7 @@ pub async fn send_soap_request(
     if !response.status().is_success() {
         let status = response.status();
         let error_text = response.text().await.unwrap_or_default();
-        tracing::error!("SOAP error {}: {}", status, error_text);
+        log::error!("SOAP error {}: {}", status, error_text);
         return Err(SoapError::SoapFault(format!(
             "SOAP request failed: {} {}",
             status.as_u16(),

@@ -195,7 +195,7 @@ impl StreamManager {
         if let Some(stream) = self.get_by_speaker_ip(speaker_ip) {
             match stream.send_event(event).await {
                 Ok(_) => {
-                    tracing::debug!(
+                    log::debug!(
                         "[StreamManager] Sent event to stream {} for speaker {}",
                         stream.id,
                         speaker_ip
@@ -203,7 +203,7 @@ impl StreamManager {
                     true
                 }
                 Err(e) => {
-                    tracing::warn!(
+                    log::warn!(
                         "[StreamManager] Failed to send event to stream {}: {}",
                         stream.id,
                         e
@@ -212,7 +212,7 @@ impl StreamManager {
                 }
             }
         } else {
-            tracing::debug!(
+            log::debug!(
                 "[StreamManager] No stream found for speaker IP: {}",
                 speaker_ip
             );

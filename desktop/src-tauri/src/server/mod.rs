@@ -48,7 +48,7 @@ pub async fn start_server(
         Ok(gena) => {
             if let Err(e) = gena.start().await {
                 let msg = format!("GENA listener failed to start: {}", e);
-                tracing::error!("[GENA] {}", msg);
+                log::error!("[GENA] {}", msg);
                 state.add_startup_error(msg);
             } else {
                 // Get the actual GENA port after it binds
@@ -59,7 +59,7 @@ pub async fn start_server(
                     let streams = Arc::clone(&state.streams);
                     tokio::spawn(async move {
                         while let Some((speaker_ip, event)) = event_rx.recv().await {
-                            tracing::info!("[GENA] Forwarding event from {} to stream", speaker_ip);
+                            log::info!("[GENA] Forwarding event from {} to stream", speaker_ip);
                             streams.send_event_by_ip(&speaker_ip, &event).await;
                         }
                     });
@@ -69,7 +69,7 @@ pub async fn start_server(
         }
         Err(e) => {
             let msg = format!("GENA listener failed to initialize: {}", e);
-            tracing::error!("[GENA] {}", msg);
+            log::error!("[GENA] {}", msg);
             state.add_startup_error(msg);
         }
     }
@@ -83,7 +83,7 @@ pub async fn start_server(
     // CORS restricted to configured trusted origins
     // Note: Sonos speakers fetch streams via plain HTTP (no Origin header), so CORS doesn't affect them
     let trusted_origins = state.config.read().trusted_origins.clone();
-    tracing::info!("CORS trusted origins: {:?}", trusted_origins);
+    log::info!("CORS trusted origins: {:?}", trusted_origins);
 
     let cors = CorsLayer::new()
         .allow_origin(AllowOrigin::predicate(move |origin: &HeaderValue, _| {
@@ -99,9 +99,9 @@ pub async fn start_server(
 
     let app = routes::create_router(state).layer(cors);
 
-    tracing::info!("HTTP server listening on 0.0.0.0:{}", http_port);
+    log::info!("HTTP server listening on 0.0.0.0:{}", http_port);
     if let Some(gp) = gena_port {
-        tracing::info!("GENA listener on port {}", gp);
+        log::info!("GENA listener on port {}", gp);
     }
 
     axum::serve(listener, app).await?;

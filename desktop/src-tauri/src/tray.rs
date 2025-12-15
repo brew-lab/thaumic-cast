@@ -23,7 +23,7 @@ pub fn setup_tray(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
                 toggle_window(app);
             }
             "quit" => {
-                tracing::info!("Quit requested from tray");
+                log::info!("Quit requested from tray");
                 app.exit(0);
             }
             _ => {}

@@ -153,7 +153,7 @@ impl GenaListener {
             .expected_stream_urls
             .write()
             .insert(speaker_ip.to_string(), normalized_url.clone());
-        tracing::info!(
+        log::info!(
             "[GENA] Set expected stream URL for {}: {}",
             speaker_ip,
             normalized_url
@@ -163,7 +163,7 @@ impl GenaListener {
     /// Clear expected stream URL for a speaker
     pub fn clear_expected_stream_url(&self, speaker_ip: &str) {
         self.state.expected_stream_urls.write().remove(speaker_ip);
-        tracing::info!("[GENA] Cleared expected stream URL for {}", speaker_ip);
+        log::info!("[GENA] Cleared expected stream URL for {}", speaker_ip);
     }
 
     /// Get expected stream URL for a speaker
@@ -206,7 +206,7 @@ impl GenaListener {
                     break;
                 }
                 Err(e) => {
-                    tracing::warn!(
+                    log::warn!(
                         "[GENA] Port {} unavailable: {}, trying next...",
                         try_port,
                         e
@@ -231,7 +231,7 @@ impl GenaListener {
         let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel();
         *self.shutdown_tx.write() = Some(shutdown_tx);
 
-        tracing::info!(
+        log::info!(
             "[GENA] Listener started on http://{}:{}",
             local_ip,
             actual_port
@@ -262,7 +262,7 @@ impl GenaListener {
             let _ = self.unsubscribe(&sid).await;
         }
 
-        tracing::info!("[GENA] Listener stopped");
+        log::info!("[GENA] Listener stopped");
     }
 
     /// Take the event receiver for processing events
@@ -285,8 +285,8 @@ impl GenaListener {
         );
         let callback_url = format!("http://{}:{}{}", self.local_ip, port, callback_path);
 
-        tracing::info!("[GENA] Subscribing to {:?} on {}", service, speaker_ip);
-        tracing::info!("[GENA] Callback URL: {}", callback_url);
+        log::info!("[GENA] Subscribing to {:?} on {}", service, speaker_ip);
+        log::info!("[GENA] Callback URL: {}", callback_url);
 
         let response = self
             .client
@@ -303,7 +303,7 @@ impl GenaListener {
         if !response.status().is_success() {
             let status = response.status();
             let error_text = response.text().await.unwrap_or_default();
-            tracing::error!("[GENA] Subscribe failed: {} - {}", status, error_text);
+            log::error!("[GENA] Subscribe failed: {} - {}", status, error_text);
             return Err(format!("GENA subscribe failed: {}", status).into());
         }
 
@@ -340,7 +340,7 @@ impl GenaListener {
         // Schedule renewal
         self.schedule_renewal(sid.clone(), timeout_seconds);
 
-        tracing::info!(
+        log::info!(
             "[GENA] Subscribed: SID={}, expires in {}s",
             sid,
             timeout_seconds
@@ -358,7 +358,7 @@ impl GenaListener {
 
         let event_url = service.endpoint();
 
-        tracing::info!("[GENA] Renewing subscription {}", sid);
+        log::info!("[GENA] Renewing subscription {}", sid);
 
         let response = self
             .client
@@ -372,7 +372,7 @@ impl GenaListener {
             .await?;
 
         if !response.status().is_success() {
-            tracing::warn!("[GENA] Renewal failed, re-subscribing");
+            log::warn!("[GENA] Renewal failed, re-subscribing");
             self.state.subscriptions.write().remove(sid);
             self.subscribe(&speaker_ip, service).await?;
             return Ok(());
@@ -396,7 +396,7 @@ impl GenaListener {
         // Schedule next renewal
         self.schedule_renewal(sid.to_string(), timeout_seconds);
 
-        tracing::info!(
+        log::info!(
             "[GENA] Renewed: SID={}, expires in {}s",
             sid,
             timeout_seconds
@@ -429,7 +429,7 @@ impl GenaListener {
             .send()
             .await;
 
-        tracing::info!("[GENA] Unsubscribed: {}", sid);
+        log::info!("[GENA] Unsubscribed: {}", sid);
         Ok(())
     }
 
@@ -542,7 +542,7 @@ async fn schedule_renewal_task(
                 sub.expires_at = Instant::now() + Duration::from_secs(timeout);
             }
 
-            tracing::info!("[GENA] Auto-renewed: SID={}", sid);
+            log::info!("[GENA] Auto-renewed: SID={}", sid);
 
             // Schedule next renewal recursively
             let next_renewal_delay = timeout.saturating_sub(RENEWAL_MARGIN_SECONDS).max(60);
@@ -557,7 +557,7 @@ async fn schedule_renewal_task(
             .await;
         }
         _ => {
-            tracing::warn!(
+            log::warn!(
                 "[GENA] Auto-renewal failed for {}, attempting re-subscribe",
                 sid
             );
@@ -611,7 +611,7 @@ async fn schedule_renewal_task(
                             .write()
                             .insert(new_sid.to_string(), subscription);
 
-                        tracing::info!("[GENA] Re-subscribed with new SID={}", new_sid);
+                        log::info!("[GENA] Re-subscribed with new SID={}", new_sid);
 
                         // Schedule renewal for new subscription
                         let next_renewal_delay =
@@ -651,7 +651,7 @@ async fn notify_handler(
     let sid = match request.headers().get("SID").and_then(|v| v.to_str().ok()) {
         Some(sid) => sid.to_string(),
         None => {
-            tracing::warn!("[GENA] NOTIFY without SID");
+            log::warn!("[GENA] NOTIFY without SID");
             return StatusCode::BAD_REQUEST;
         }
     };
@@ -662,7 +662,7 @@ async fn notify_handler(
         match subs.get(&sid) {
             Some(sub) => sub.speaker_ip.clone(),
             None => {
-                tracing::warn!("[GENA] NOTIFY for unknown SID: {}", sid);
+                log::warn!("[GENA] NOTIFY for unknown SID: {}", sid);
                 return StatusCode::PRECONDITION_FAILED;
             }
         }
@@ -672,7 +672,7 @@ async fn notify_handler(
     let gena_service = match GenaService::from_str(&service) {
         Some(s) => s,
         None => {
-            tracing::warn!("[GENA] Unknown service: {}", service);
+            log::warn!("[GENA] Unknown service: {}", service);
             return StatusCode::BAD_REQUEST;
         }
     };
@@ -681,7 +681,7 @@ async fn notify_handler(
     let body = match axum::body::to_bytes(request.into_body(), 64 * 1024).await {
         Ok(bytes) => String::from_utf8_lossy(&bytes).to_string(),
         Err(e) => {
-            tracing::error!("[GENA] Failed to read body: {}", e);
+            log::error!("[GENA] Failed to read body: {}", e);
             return StatusCode::BAD_REQUEST;
         }
     };
@@ -698,9 +698,9 @@ async fn notify_handler(
     );
 
     for event in events {
-        tracing::debug!("[GENA] Event: {:?}", event);
+        log::debug!("[GENA] Event: {:?}", event);
         if let Err(e) = state.event_tx.send((speaker_ip.clone(), event)) {
-            tracing::error!("[GENA] Failed to send event: {}", e);
+            log::error!("[GENA] Failed to send event: {}", e);
         }
     }
 
@@ -749,7 +749,7 @@ fn parse_notify(
                 if let Some(expected) = expected_stream_url {
                     // Check if source changed (current URI doesn't match expected)
                     if !current_uri.is_empty() && !is_matching_stream_url(&current_uri, expected) {
-                        tracing::info!(
+                        log::info!(
                             "[GENA] Source changed on {}: expected={}, current={}",
                             speaker_ip,
                             expected,

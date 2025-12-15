@@ -25,7 +25,7 @@ pub async fn find_available_port(
         if let Ok(listener) = TcpListener::bind(SocketAddr::from((bind_addr, port))).await {
             return Ok((port, listener));
         }
-        tracing::warn!("Preferred port {} unavailable, trying fallback range", port);
+        log::warn!("Preferred port {} unavailable, trying fallback range", port);
     }
 
     // Try ports in the range
@@ -35,7 +35,7 @@ pub async fn find_available_port(
                 return Ok((port, listener));
             }
             Err(e) => {
-                tracing::debug!("Port {} unavailable: {}", port, e);
+                log::debug!("Port {} unavailable: {}", port, e);
             }
         }
     }

@@ -63,7 +63,7 @@ async fn discover_speakers(Query(params): Query<DiscoverQuery>) -> impl IntoResp
     match sonos::discover_speakers(force_refresh).await {
         Ok(speakers) => Json(serde_json::json!({ "speakers": speakers })).into_response(),
         Err(e) => {
-            tracing::error!("Discovery error: {}", e);
+            log::error!("Discovery error: {}", e);
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(serde_json::json!({
@@ -85,7 +85,7 @@ async fn get_groups(Query(params): Query<GroupsQuery>) -> impl IntoResponse {
     match sonos::get_zone_groups(params.ip.as_deref()).await {
         Ok(groups) => Json(serde_json::json!({ "groups": groups })).into_response(),
         Err(e) => {
-            tracing::error!("Get groups error: {}", e);
+            log::error!("Get groups error: {}", e);
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(serde_json::json!({
@@ -137,19 +137,19 @@ async fn play_stream(
                         .subscribe(&coordinator_ip, GenaService::AVTransport)
                         .await
                     {
-                        tracing::warn!("[Routes] Failed to subscribe to AVTransport: {}", e);
+                        log::warn!("[Routes] Failed to subscribe to AVTransport: {}", e);
                     }
                     if let Err(e) = gena
                         .subscribe(&coordinator_ip, GenaService::RenderingControl)
                         .await
                     {
-                        tracing::warn!("[Routes] Failed to subscribe to RenderingControl: {}", e);
+                        log::warn!("[Routes] Failed to subscribe to RenderingControl: {}", e);
                     }
                     if let Err(e) = gena
                         .subscribe(&coordinator_ip, GenaService::GroupRenderingControl)
                         .await
                     {
-                        tracing::warn!(
+                        log::warn!(
                             "[Routes] Failed to subscribe to GroupRenderingControl: {}",
                             e
                         );
@@ -160,7 +160,7 @@ async fn play_stream(
             Json(serde_json::json!({ "success": true })).into_response()
         }
         Err(e) => {
-            tracing::error!("Play error: {}", e);
+            log::error!("Play error: {}", e);
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(serde_json::json!({
@@ -189,7 +189,7 @@ async fn stop_stream(
     tokio::spawn(async move {
         if let Some(ref gena) = *gena_clone.read().await {
             if let Err(e) = gena.unsubscribe_all(&coordinator_ip).await {
-                tracing::warn!("[Routes] Failed to unsubscribe from GENA: {}", e);
+                log::warn!("[Routes] Failed to unsubscribe from GENA: {}", e);
             }
         }
     });
@@ -197,7 +197,7 @@ async fn stop_stream(
     match sonos::stop(&body.coordinator_ip).await {
         Ok(_) => Json(serde_json::json!({ "success": true })).into_response(),
         Err(e) => {
-            tracing::error!("Stop error: {}", e);
+            log::error!("Stop error: {}", e);
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(serde_json::json!({
@@ -215,7 +215,7 @@ async fn get_volume(Path(coordinator_ip): Path<String>) -> impl IntoResponse {
     match sonos::get_group_volume(&coordinator_ip).await {
         Ok(volume) => Json(serde_json::json!({ "volume": volume })).into_response(),
         Err(e) => {
-            tracing::error!("Get group volume error: {}", e);
+            log::error!("Get group volume error: {}", e);
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(serde_json::json!({
@@ -241,7 +241,7 @@ async fn set_volume(
     match sonos::set_group_volume(&coordinator_ip, body.volume).await {
         Ok(_) => Json(serde_json::json!({ "success": true })).into_response(),
         Err(e) => {
-            tracing::error!("Set group volume error: {}", e);
+            log::error!("Set group volume error: {}", e);
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(serde_json::json!({
@@ -304,7 +304,7 @@ async fn create_stream(
         .unwrap_or(45100);
 
     // Log stream creation details
-    tracing::info!(
+    log::info!(
         "Creating stream: id={}, group={:?}, quality={:?}, mode={:?}, coordinator={:?}, codec={:?}",
         stream_id,
         body.group_id,
@@ -381,7 +381,7 @@ async fn update_stream_metadata(
     };
 
     stream.set_metadata(metadata);
-    tracing::info!("Updated metadata for stream: {}", stream_id);
+    log::info!("Updated metadata for stream: {}", stream_id);
 
     Json(serde_json::json!({ "success": true })).into_response()
 }
@@ -403,7 +403,7 @@ async fn ws_ingest_handler(
 }
 
 async fn handle_ingest(socket: WebSocket, stream_id: String, state: AppState) {
-    tracing::info!("WebSocket ingest connected for stream: {}", stream_id);
+    log::info!("WebSocket ingest connected for stream: {}", stream_id);
 
     let stream = state.streams.get_or_create(&stream_id);
     let (sender, mut receiver) = socket.split();
@@ -417,11 +417,11 @@ async fn handle_ingest(socket: WebSocket, stream_id: String, state: AppState) {
                 stream.push_frame(Bytes::from(data));
             }
             Ok(Message::Close(_)) => {
-                tracing::info!("WebSocket ingest closed for stream: {}", stream_id);
+                log::info!("WebSocket ingest closed for stream: {}", stream_id);
                 break;
             }
             Err(e) => {
-                tracing::error!("WebSocket error: {}", e);
+                log::error!("WebSocket error: {}", e);
                 break;
             }
             _ => {}
@@ -434,7 +434,7 @@ async fn handle_ingest(socket: WebSocket, stream_id: String, state: AppState) {
         tokio::spawn(async move {
             if let Some(ref gena) = *gena_clone.read().await {
                 if let Err(e) = gena.unsubscribe_all(&speaker_ip).await {
-                    tracing::warn!(
+                    log::warn!(
                         "[Routes] Failed to unsubscribe from GENA on disconnect: {}",
                         e
                     );
@@ -445,7 +445,7 @@ async fn handle_ingest(socket: WebSocket, stream_id: String, state: AppState) {
 
     // Cleanup stream when ingest disconnects
     state.streams.remove(&stream_id);
-    tracing::info!("Stream removed: {}", stream_id);
+    log::info!("Stream removed: {}", stream_id);
 }
 
 async fn stream_audio(
@@ -492,7 +492,7 @@ async fn stream_audio(
         .map(|v| v == "1")
         .unwrap_or(false);
 
-    tracing::info!(
+    log::info!(
         "New subscriber for stream: {} (format: {}, icy_metadata: {})",
         stream_id,
         if is_aac { "aac" } else { "mp3" },

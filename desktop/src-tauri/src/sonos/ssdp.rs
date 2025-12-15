@@ -60,7 +60,7 @@ fn get_valid_interfaces() -> Vec<(String, Ipv4Addr)> {
             }
         }
         Err(e) => {
-            tracing::warn!("Failed to list network interfaces: {}", e);
+            log::warn!("Failed to list network interfaces: {}", e);
         }
     }
 
@@ -145,12 +145,12 @@ pub fn discover(timeout_ms: u64) -> Result<Vec<DiscoveredSpeaker>, SsdpError> {
     let interfaces = get_valid_interfaces();
 
     if interfaces.is_empty() {
-        tracing::warn!("[SSDP] No valid network interfaces found");
+        log::warn!("[SSDP] No valid network interfaces found");
         return Err(SsdpError::NoInterfaces);
     }
 
     let interface_names: Vec<_> = interfaces.iter().map(|(name, _)| name.as_str()).collect();
-    tracing::info!(
+    log::info!(
         "[SSDP] Discovering on {} interface(s): {}",
         interfaces.len(),
         interface_names.join(", ")
@@ -165,11 +165,11 @@ pub fn discover(timeout_ms: u64) -> Result<Vec<DiscoveredSpeaker>, SsdpError> {
     for (name, ip) in &interfaces {
         match create_socket_for_interface(*ip) {
             Ok(socket) => {
-                tracing::debug!("[SSDP] Created socket bound to {} ({})", name, ip);
+                log::debug!("[SSDP] Created socket bound to {} ({})", name, ip);
                 sockets.push((name.clone(), socket));
             }
             Err(e) => {
-                tracing::warn!(
+                log::warn!(
                     "[SSDP] Failed to create socket for {} ({}): {}",
                     name,
                     ip,
@@ -190,7 +190,7 @@ pub fn discover(timeout_ms: u64) -> Result<Vec<DiscoveredSpeaker>, SsdpError> {
     for i in 0..RETRY_COUNT {
         for (name, socket) in &sockets {
             if let Err(e) = socket.send_to(msearch.as_bytes(), multicast_addr) {
-                tracing::warn!("[SSDP] Failed to send M-SEARCH on {}: {}", name, e);
+                log::warn!("[SSDP] Failed to send M-SEARCH on {}: {}", name, e);
             }
         }
         if i < RETRY_COUNT - 1 {
@@ -210,7 +210,7 @@ pub fn discover(timeout_ms: u64) -> Result<Vec<DiscoveredSpeaker>, SsdpError> {
                     if let Ok(response) = std::str::from_utf8(&buf[..len]) {
                         if let Some(speaker) = parse_ssdp_response(response) {
                             if !discovered.contains_key(&speaker.uuid) {
-                                tracing::info!(
+                                log::info!(
                                     "[SSDP] Discovered: {} at {} (via {} from {})",
                                     speaker.uuid,
                                     speaker.ip,
@@ -230,7 +230,7 @@ pub fn discover(timeout_ms: u64) -> Result<Vec<DiscoveredSpeaker>, SsdpError> {
                     continue;
                 }
                 Err(e) => {
-                    tracing::trace!("[SSDP] Socket recv error on {}: {}", name, e);
+                    log::trace!("[SSDP] Socket recv error on {}: {}", name, e);
                 }
             }
         }
@@ -238,7 +238,7 @@ pub fn discover(timeout_ms: u64) -> Result<Vec<DiscoveredSpeaker>, SsdpError> {
         std::thread::sleep(Duration::from_millis(10));
     }
 
-    tracing::info!(
+    log::info!(
         "[SSDP] Discovery complete: found {} speaker(s)",
         discovered.len()
     );

@@ -81,7 +81,7 @@ pub async fn set_port(port: u16, state: State<'_, AppState>, app: AppHandle) -> 
     store.set("preferred_port", serde_json::json!(port));
     store.save().map_err(|e| e.to_string())?;
 
-    tracing::info!(
+    log::info!(
         "Preferred port changed to {} and saved. Restart required.",
         port
     );

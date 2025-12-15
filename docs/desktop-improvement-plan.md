@@ -700,10 +700,11 @@ attachConsole();
 - [x] Add `tauri-plugin-deep-link` dependency _(04ddb60)_
 - [x] Configure `thaumic-cast://` URI scheme _(04ddb60)_
 - [x] Implement deep link handler _(04ddb60)_
-- [x] Add `tauri-plugin-autostart` dependency
+- [x] Add `tauri-plugin-autostart` dependency _(2916d70)_
 - [ ] Add autostart toggle to settings UI
-- [ ] Add `tauri-plugin-log` dependency
-- [ ] Configure log rotation
+- [x] Add `tauri-plugin-log` dependency
+- [x] Configure log rotation (5MB files, keep last 3)
+- [x] Switch from tracing to log crate
 - [ ] Add console forwarding in frontend
 
 ---

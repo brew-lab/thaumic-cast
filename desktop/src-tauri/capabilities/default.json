@@ -3,5 +3,11 @@
   "identifier": "default",
   "description": "Default capabilities for the desktop app",
   "windows": ["main"],
-  "permissions": ["core:default", "shell:allow-open", "store:default", "deep-link:default"]
+  "permissions": [
+    "core:default",
+    "shell:allow-open",
+    "store:default",
+    "deep-link:default",
+    "log:default"
+  ]
 }

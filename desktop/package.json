@@ -12,6 +12,7 @@
   "dependencies": {
     "@tauri-apps/plugin-autostart": "~2",
     "@tauri-apps/plugin-deep-link": "~2",
+    "@tauri-apps/plugin-log": "~2",
     "@tauri-apps/plugin-store": "~2",
     "@thaumic-cast/protocol": "workspace:*",
     "@thaumic-cast/shared": "workspace:*",

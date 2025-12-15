@@ -133,7 +133,7 @@ pub async fn discover_speakers(force_refresh: bool) -> Result<Vec<Speaker>, Sono
         let cache_read = cache.read();
         if let Some(ref cached) = *cache_read {
             if cached.last_update.elapsed() < CACHE_TTL {
-                tracing::debug!("Using cached speakers");
+                log::debug!("Using cached speakers");
                 return Ok(cached
                     .speakers
                     .iter()
@@ -147,12 +147,12 @@ pub async fn discover_speakers(force_refresh: bool) -> Result<Vec<Speaker>, Sono
     }
 
     // Run discovery in blocking task (uses UDP)
-    tracing::info!("Running SSDP discovery...");
+    log::info!("Running SSDP discovery...");
     let speakers = tokio::task::spawn_blocking(|| ssdp_discover(3000))
         .await
         .unwrap()?;
 
-    tracing::info!("Found {} speakers", speakers.len());
+    log::info!("Found {} speakers", speakers.len());
 
     // Update cache
     {
@@ -353,7 +353,7 @@ pub async fn set_av_transport_uri(
     // Format DIDL-Lite metadata for Sonos display
     let didl_metadata = format_didl_lite(stream_url, metadata);
 
-    tracing::info!("SetAVTransportURI: {}", sonos_url);
+    log::info!("SetAVTransportURI: {}", sonos_url);
 
     let mut params = HashMap::new();
     params.insert("InstanceID".to_string(), "0".to_string());
@@ -375,7 +375,7 @@ pub async fn set_av_transport_uri(
 
 /// Start playback on a Sonos group
 pub async fn play(coordinator_ip: &str) -> Result<(), SonosError> {
-    tracing::info!("Play on {}", coordinator_ip);
+    log::info!("Play on {}", coordinator_ip);
 
     let mut params = HashMap::new();
     params.insert("InstanceID".to_string(), "0".to_string());
@@ -396,7 +396,7 @@ pub async fn play(coordinator_ip: &str) -> Result<(), SonosError> {
 
 /// Stop playback on a Sonos group
 pub async fn stop(coordinator_ip: &str) -> Result<(), SonosError> {
-    tracing::info!("Stop on {}", coordinator_ip);
+    log::info!("Stop on {}", coordinator_ip);
 
     let mut params = HashMap::new();
     params.insert("InstanceID".to_string(), "0".to_string());
@@ -414,7 +414,7 @@ pub async fn stop(coordinator_ip: &str) -> Result<(), SonosError> {
     {
         Ok(_) => Ok(()),
         Err(SoapError::SoapFault(msg)) if msg.contains("500") => {
-            tracing::debug!("Stop: Speaker may already be stopped (ignoring error)");
+            log::debug!("Stop: Speaker may already be stopped (ignoring error)");
             Ok(())
         }
         Err(e) => Err(e.into()),
@@ -450,7 +450,7 @@ pub async fn get_group_volume(coordinator_ip: &str) -> Result<u8, SonosError> {
 pub async fn set_group_volume(coordinator_ip: &str, volume: u8) -> Result<(), SonosError> {
     let clamped_volume = volume.min(100);
 
-    tracing::info!("SetGroupVolume {} on {}", clamped_volume, coordinator_ip);
+    log::info!("SetGroupVolume {} on {}", clamped_volume, coordinator_ip);
 
     let mut params = HashMap::new();
     params.insert("InstanceID".to_string(), "0".to_string());

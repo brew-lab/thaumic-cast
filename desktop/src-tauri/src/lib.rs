@@ -79,11 +79,11 @@ fn load_config_from_store(app: &tauri::App) -> Config {
                 preferred_port,
                 trusted_origins,
             };
-            tracing::info!("Loaded config from store: {:?}", config);
+            log::info!("Loaded config from store: {:?}", config);
             config
         }
         Err(e) => {
-            tracing::warn!("Could not load config store, using defaults: {}", e);
+            log::warn!("Could not load config store, using defaults: {}", e);
             Config::default()
         }
     }
@@ -91,18 +91,27 @@ fn load_config_from_store(app: &tauri::App) -> Config {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    // Initialize logging
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::from_default_env()
-                .add_directive("thaumic_cast_desktop=debug".parse().unwrap()),
-        )
-        .init();
-
-    tracing::info!("Starting Thaumic Cast Desktop");
+    use tauri_plugin_log::{RotationStrategy, Target, TargetKind};
 
     tauri::Builder::default()
-        .plugin(tauri_plugin_autostart::Builder::new().args(["--minimized"]).build())
+        .plugin(
+            tauri_plugin_log::Builder::new()
+                .targets([
+                    Target::new(TargetKind::Stdout),
+                    Target::new(TargetKind::LogDir { file_name: None }),
+                    Target::new(TargetKind::Webview),
+                ])
+                .max_file_size(5_000_000) // 5MB per file
+                .rotation_strategy(RotationStrategy::KeepSome(3)) // Keep last 3 log files
+                .level(log::LevelFilter::Info)
+                .level_for("thaumic_cast_desktop", log::LevelFilter::Debug)
+                .build(),
+        )
+        .plugin(
+            tauri_plugin_autostart::Builder::new()
+                .args(["--minimized"])
+                .build(),
+        )
         .plugin(tauri_plugin_deep_link::init())
         .plugin(tauri_plugin_store::Builder::new().build())
         .plugin(tauri_plugin_shell::init())
@@ -135,7 +144,7 @@ pub fn run() {
             let app_handle = app.handle().clone();
             app.deep_link().on_open_url(move |event| {
                 for url in event.urls() {
-                    tracing::info!("Deep link received: {}", url);
+                    log::info!("Deep link received: {}", url);
                     // thaumic-cast://launch - bring app window to foreground
                     if url.host_str() == Some("launch") {
                         if let Some(window) = app_handle.get_webview_window("main") {
@@ -152,26 +161,26 @@ pub fn run() {
 
             tauri::async_runtime::spawn(async move {
                 if let Err(e) = server::start_server(state, preferred_port).await {
-                    tracing::error!("Server error: {}", e);
+                    log::error!("Server error: {}", e);
                     // Notify the app about the error
                     let _ = app_handle.emit("server-error", e.to_string());
                 }
             });
 
-            tracing::info!("Server starting (port will be auto-allocated if not specified)");
+            log::info!("Server starting (port will be auto-allocated if not specified)");
 
             // Start speaker discovery task (runs immediately, then every DISCOVERY_INTERVAL)
             tauri::async_runtime::spawn(async {
                 let mut interval = tokio::time::interval(DISCOVERY_INTERVAL);
                 loop {
                     interval.tick().await;
-                    tracing::debug!("Running speaker discovery...");
+                    log::debug!("Running speaker discovery...");
                     match sonos::discover_speakers(true).await {
                         Ok(speakers) => {
-                            tracing::info!("Discovery complete: found {} speakers", speakers.len());
+                            log::info!("Discovery complete: found {} speakers", speakers.len());
                         }
                         Err(e) => {
-                            tracing::warn!("Speaker discovery failed: {}", e);
+                            log::warn!("Speaker discovery failed: {}", e);
                         }
                     }
                 }
