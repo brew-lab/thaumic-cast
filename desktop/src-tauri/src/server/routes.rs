@@ -25,8 +25,6 @@ pub fn create_router(state: AppState) -> Router {
     Router::new()
         // Health check
         .route("/api/health", get(health_check))
-        // Debug endpoint for GENA status
-        .route("/api/debug/gena", get(debug_gena))
         // Local Sonos endpoints
         .route("/api/local/discover", get(discover_speakers))
         .route("/api/local/groups", get(get_groups))
@@ -51,34 +49,6 @@ async fn health_check() -> impl IntoResponse {
         "status": "ok",
         "service": "thaumic-cast-desktop"
     }))
-}
-
-async fn debug_gena(State(state): State<AppState>) -> impl IntoResponse {
-    let gena_guard = state.gena.read().await;
-
-    if let Some(ref gena) = *gena_guard {
-        let subscriptions = gena.get_subscriptions();
-        let local_ip = get_local_ip().unwrap_or_else(|| "unknown".to_string());
-
-        Json(serde_json::json!({
-            "running": true,
-            "localIp": local_ip,
-            "port": 3001,
-            "subscriptionCount": gena.active_subscriptions(),
-            "subscriptions": subscriptions.iter().map(|(sid, speaker_ip, service)| {
-                serde_json::json!({
-                    "sid": sid,
-                    "speakerIp": speaker_ip,
-                    "service": format!("{:?}", service)
-                })
-            }).collect::<Vec<_>>()
-        }))
-    } else {
-        Json(serde_json::json!({
-            "running": false,
-            "error": "GENA listener not initialized"
-        }))
-    }
 }
 
 // ============ Local Sonos Routes ============
