@@ -69,11 +69,7 @@ pub async fn get_config(state: State<'_, AppState>) -> Result<ConfigResponse, St
 }
 
 #[tauri::command]
-pub async fn set_port(
-    port: u16,
-    state: State<'_, AppState>,
-    app: AppHandle,
-) -> Result<(), String> {
+pub async fn set_port(port: u16, state: State<'_, AppState>, app: AppHandle) -> Result<(), String> {
     // Update in-memory config
     {
         let mut config = state.config.write();
@@ -82,10 +78,12 @@ pub async fn set_port(
 
     // Persist to store
     let store = app.store("config.json").map_err(|e| e.to_string())?;
-    store
-        .set("preferred_port", serde_json::json!(port));
+    store.set("preferred_port", serde_json::json!(port));
     store.save().map_err(|e| e.to_string())?;
 
-    tracing::info!("Preferred port changed to {} and saved. Restart required.", port);
+    tracing::info!(
+        "Preferred port changed to {} and saved. Restart required.",
+        port
+    );
     Ok(())
 }

@@ -14,6 +14,7 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use std::time::Duration;
 use tauri::{Emitter, Manager};
+use tauri_plugin_deep_link::DeepLinkExt;
 use tauri_plugin_store::StoreExt;
 
 /// Interval between automatic speaker discoveries (5 minutes)
@@ -101,6 +102,7 @@ pub fn run() {
     tracing::info!("Starting Thaumic Cast Desktop");
 
     tauri::Builder::default()
+        .plugin(tauri_plugin_deep_link::init())
         .plugin(tauri_plugin_store::Builder::new().build())
         .plugin(tauri_plugin_shell::init())
         .setup(|app| {
@@ -127,6 +129,21 @@ pub fn run() {
 
             // Setup system tray
             tray::setup_tray(app)?;
+
+            // Setup deep link handler
+            let app_handle = app.handle().clone();
+            app.deep_link().on_open_url(move |event| {
+                for url in event.urls() {
+                    tracing::info!("Deep link received: {}", url);
+                    // thaumic-cast://launch - bring app window to foreground
+                    if url.host_str() == Some("launch") {
+                        if let Some(window) = app_handle.get_webview_window("main") {
+                            let _ = window.show();
+                            let _ = window.set_focus();
+                        }
+                    }
+                }
+            });
 
             // Start the HTTP server in background
             let preferred_port = config.read().preferred_port;

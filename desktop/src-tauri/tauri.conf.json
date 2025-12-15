@@ -3,6 +3,13 @@
   "productName": "Thaumic Cast",
   "version": "0.1.0",
   "identifier": "com.thaumic-cast.desktop",
+  "plugins": {
+    "deep-link": {
+      "desktop": {
+        "schemes": ["thaumic-cast"]
+      }
+    }
+  },
   "build": {
     "frontendDist": "../dist",
     "devUrl": "http://localhost:5173",
