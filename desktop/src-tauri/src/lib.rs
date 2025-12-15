@@ -192,6 +192,7 @@ pub fn run() {
             commands::get_status,
             commands::get_speakers,
             commands::refresh_speakers,
+            commands::get_groups,
             commands::get_config,
             commands::set_port,
         ])

@@ -2,4 +2,10 @@
 // Re-exported from @thaumic-cast/protocol (OpenAPI-generated types)
 
 // Tauri command response types
-export type { StatusResponse as Status, ConfigResponse, Speaker } from '@thaumic-cast/protocol';
+export type {
+  StatusResponse as Status,
+  ConfigResponse,
+  Speaker,
+  LocalGroup,
+  LocalSpeaker,
+} from '@thaumic-cast/protocol';

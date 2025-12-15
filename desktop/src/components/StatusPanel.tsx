@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'preact/hooks';
 import { invoke } from '@tauri-apps/api/core';
 import { enable, disable, isEnabled } from '@tauri-apps/plugin-autostart';
-import type { Speaker, Status } from '../types';
+import type { LocalGroup, Status } from '../types';
 
 interface Props {
   status: Status;
@@ -14,14 +14,14 @@ function formatTimestamp(unixTimestamp: number | null | undefined): string {
 }
 
 export function StatusPanel({ status }: Props) {
-  const [speakers, setSpeakers] = useState<Speaker[]>([]);
+  const [groups, setGroups] = useState<LocalGroup[]>([]);
   const [scanning, setScanning] = useState(false);
   const [autostartEnabled, setAutostartEnabled] = useState<boolean | null>(null);
   const [autostartLoading, setAutostartLoading] = useState(false);
 
-  // Load cached speakers on mount
+  // Load groups on mount
   useEffect(() => {
-    invoke<Speaker[]>('get_speakers').then(setSpeakers).catch(console.error);
+    invoke<LocalGroup[]>('get_groups').then(setGroups).catch(console.error);
   }, []);
 
   useEffect(() => {
@@ -31,8 +31,10 @@ export function StatusPanel({ status }: Props) {
   const handleScan = async () => {
     setScanning(true);
     try {
-      const result = await invoke<Speaker[]>('refresh_speakers');
-      setSpeakers(result);
+      // Refresh speakers first, then get updated groups
+      await invoke('refresh_speakers');
+      const result = await invoke<LocalGroup[]>('get_groups');
+      setGroups(result);
     } catch (e) {
       console.error('Failed to scan for speakers:', e);
     } finally {
@@ -56,6 +58,8 @@ export function StatusPanel({ status }: Props) {
       setAutostartLoading(false);
     }
   };
+
+  const totalSpeakers = groups.reduce((sum, g) => sum + g.members.length, 0);
 
   return (
     <div style={styles.panel}>
@@ -113,10 +117,10 @@ export function StatusPanel({ status }: Props) {
         </div>
       </div>
 
-      {/* Speakers */}
+      {/* Sonos */}
       <div style={styles.section}>
         <div style={styles.sectionHeader}>
-          <h3 style={{ ...styles.sectionTitle, marginBottom: 0 }}>Speakers</h3>
+          <h3 style={{ ...styles.sectionTitle, marginBottom: 0 }}>Sonos</h3>
           <button style={styles.scanButton} onClick={handleScan} disabled={scanning}>
             {scanning ? 'Scanning...' : 'Scan'}
           </button>
@@ -125,15 +129,41 @@ export function StatusPanel({ status }: Props) {
           <span style={styles.statusLabel}>Last Scan</span>
           <span style={styles.statusValue}>{formatTimestamp(status.last_discovery_at)}</span>
         </div>
-        {speakers.length > 0 ? (
-          <ul style={styles.speakerList}>
-            {speakers.map((speaker) => (
-              <li key={speaker.uuid} style={styles.speakerItem}>
-                <span style={styles.speakerIp}>{speaker.ip}</span>
-                <span style={styles.speakerUuid}>{speaker.uuid}</span>
-              </li>
+        <div style={styles.statusRow}>
+          <span style={styles.statusLabel}>Speakers</span>
+          <span style={styles.statusValue}>{totalSpeakers}</span>
+        </div>
+        <div style={styles.statusRow}>
+          <span style={styles.statusLabel}>Groups</span>
+          <span style={styles.statusValue}>{groups.length}</span>
+        </div>
+
+        {groups.length > 0 ? (
+          <div style={styles.groupList}>
+            {groups.map((group) => (
+              <div key={group.id} style={styles.groupItem}>
+                <div style={styles.groupHeader}>
+                  <span style={styles.groupName}>{group.name}</span>
+                  <span style={styles.groupMemberCount}>
+                    {group.members.length} {group.members.length === 1 ? 'speaker' : 'speakers'}
+                  </span>
+                </div>
+                <ul style={styles.memberList}>
+                  {group.members.map((member) => (
+                    <li key={member.uuid} style={styles.memberItem}>
+                      <span style={styles.memberName}>
+                        {member.zoneName}
+                        {member.uuid === group.coordinatorUuid && (
+                          <span style={styles.coordinatorBadge}>coordinator</span>
+                        )}
+                      </span>
+                      <span style={styles.memberModel}>{member.model}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
             ))}
-          </ul>
+          </div>
         ) : (
           <p style={styles.hintText}>No speakers discovered yet.</p>
         )}
@@ -236,29 +266,59 @@ const styles: Record<string, preact.CSSProperties> = {
     fontSize: '0.7rem',
     fontWeight: 500,
   },
-  speakerList: {
-    listStyle: 'none',
-    padding: 0,
-    margin: '8px 0 0 0',
+  groupList: {
+    marginTop: '12px',
   },
-  speakerItem: {
-    display: 'flex',
-    flexDirection: 'column',
-    padding: '8px',
+  groupItem: {
     background: '#1a1a2e',
-    borderRadius: '4px',
-    marginBottom: '6px',
+    borderRadius: '6px',
+    padding: '10px',
+    marginBottom: '8px',
   },
-  speakerIp: {
-    fontWeight: 500,
+  groupHeader: {
+    display: 'flex',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: '8px',
+  },
+  groupName: {
+    fontWeight: 600,
     color: '#fff',
     fontSize: '0.875rem',
   },
-  speakerUuid: {
+  groupMemberCount: {
     fontSize: '0.7rem',
+    color: '#666',
+  },
+  memberList: {
+    listStyle: 'none',
+    padding: 0,
+    margin: 0,
+  },
+  memberItem: {
+    display: 'flex',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    padding: '4px 0',
+    borderTop: '1px solid #252545',
+  },
+  memberName: {
+    color: '#ccc',
+    fontSize: '0.8rem',
+    display: 'flex',
+    alignItems: 'center',
+    gap: '6px',
+  },
+  memberModel: {
     color: '#555',
-    fontFamily: 'monospace',
-    marginTop: '2px',
+    fontSize: '0.7rem',
+  },
+  coordinatorBadge: {
+    fontSize: '0.6rem',
+    color: '#4caf50',
+    background: '#1a3d1a',
+    padding: '1px 4px',
+    borderRadius: '3px',
   },
   settingsRow: {
     display: 'flex',

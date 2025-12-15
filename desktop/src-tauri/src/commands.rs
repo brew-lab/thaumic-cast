@@ -1,4 +1,4 @@
-use crate::generated::{ConfigResponse, Speaker, StatusResponse};
+use crate::generated::{ConfigResponse, LocalGroup, Speaker, StatusResponse};
 use crate::network::get_local_ip;
 use crate::server::AppState;
 use crate::sonos::{get_cached_speaker_count, get_last_discovery_timestamp};
@@ -53,6 +53,13 @@ pub async fn get_speakers(_state: State<'_, AppState>) -> Result<Vec<Speaker>, S
 #[tauri::command]
 pub async fn refresh_speakers(_state: State<'_, AppState>) -> Result<Vec<Speaker>, String> {
     crate::sonos::discover_speakers(true)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn get_groups(_state: State<'_, AppState>) -> Result<Vec<LocalGroup>, String> {
+    crate::sonos::get_zone_groups(None)
         .await
         .map_err(|e| e.to_string())
 }
