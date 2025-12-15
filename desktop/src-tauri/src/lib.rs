@@ -104,7 +104,7 @@ pub fn run() {
                 .max_file_size(5_000_000) // 5MB per file
                 .rotation_strategy(RotationStrategy::KeepSome(3)) // Keep last 3 log files
                 .level(log::LevelFilter::Info)
-                .level_for("thaumic_cast_desktop", log::LevelFilter::Debug)
+                .level_for("thaumic_cast_desktop_lib", log::LevelFilter::Debug)
                 .build(),
         )
         .plugin(
