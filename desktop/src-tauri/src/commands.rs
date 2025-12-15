@@ -1,7 +1,7 @@
 use crate::generated::{ConfigResponse, Speaker, StatusResponse};
 use crate::network::get_local_ip;
 use crate::server::AppState;
-use crate::sonos::get_cached_speaker_count;
+use crate::sonos::{get_cached_speaker_count, get_last_discovery_timestamp};
 use tauri::{AppHandle, State};
 use tauri_plugin_store::StoreExt;
 
@@ -39,6 +39,7 @@ pub async fn get_status(state: State<'_, AppState>) -> Result<StatusResponse, St
         discovered_speakers: get_cached_speaker_count(),
         gena_subscriptions,
         startup_errors: Some(startup_errors),
+        last_discovery_at: get_last_discovery_timestamp(),
     })
 }
 

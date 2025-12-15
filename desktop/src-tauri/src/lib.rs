@@ -12,8 +12,12 @@ pub use generated::*;
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
+use std::time::Duration;
 use tauri::{Emitter, Manager};
 use tauri_plugin_store::StoreExt;
+
+/// Interval between automatic speaker discoveries (5 minutes)
+const DISCOVERY_INTERVAL: Duration = Duration::from_secs(300);
 
 pub use server::AppState;
 use stream::StreamManager;
@@ -107,6 +111,23 @@ pub fn run() {
             });
 
             tracing::info!("Server starting (port will be auto-allocated if not specified)");
+
+            // Start speaker discovery task (runs immediately, then every DISCOVERY_INTERVAL)
+            tauri::async_runtime::spawn(async {
+                let mut interval = tokio::time::interval(DISCOVERY_INTERVAL);
+                loop {
+                    interval.tick().await;
+                    tracing::debug!("Running speaker discovery...");
+                    match sonos::discover_speakers(true).await {
+                        Ok(speakers) => {
+                            tracing::info!("Discovery complete: found {} speakers", speakers.len());
+                        }
+                        Err(e) => {
+                            tracing::warn!("Speaker discovery failed: {}", e);
+                        }
+                    }
+                }
+            });
 
             Ok(())
         })

@@ -5,8 +5,8 @@ mod ssdp;
 
 // Re-export functions from client
 pub use client::{
-    discover_speakers, get_cached_speaker_count, get_group_volume, get_zone_groups, play_stream,
-    set_group_volume, stop,
+    discover_speakers, get_cached_speaker_count, get_group_volume, get_last_discovery_timestamp,
+    get_zone_groups, play_stream, set_group_volume, stop,
 };
 
 // Re-export types from generated module

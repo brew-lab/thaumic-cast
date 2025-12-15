@@ -281,6 +281,8 @@ pub struct StatusResponse {
     pub gena_subscriptions: u64,
     /// Non-fatal errors encountered during startup
     pub startup_errors: Option<Vec<String>>,
+    /// Unix timestamp of last successful speaker discovery
+    pub last_discovery_at: Option<u64>,
 }
 
 /// Tauri get_config command response

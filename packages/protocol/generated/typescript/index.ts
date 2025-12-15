@@ -271,6 +271,11 @@ export type components = {
             gena_subscriptions: number;
             /** @description Non-fatal errors encountered during startup */
             startup_errors?: string[];
+            /**
+             * Format: uint64
+             * @description Unix timestamp of last successful speaker discovery
+             */
+            last_discovery_at?: number | null;
         };
         /** @description Tauri get_config command response */
         ConfigResponse: {

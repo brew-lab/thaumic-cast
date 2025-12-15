@@ -572,6 +572,11 @@ components:
           items:
             type: string
           description: Non-fatal errors encountered during startup
+        last_discovery_at:
+          type: integer
+          format: uint64
+          nullable: true
+          description: Unix timestamp of last successful speaker discovery
 
     ConfigResponse:
       type: object
