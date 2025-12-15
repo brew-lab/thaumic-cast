@@ -102,6 +102,7 @@ pub fn run() {
     tracing::info!("Starting Thaumic Cast Desktop");
 
     tauri::Builder::default()
+        .plugin(tauri_plugin_autostart::Builder::new().args(["--minimized"]).build())
         .plugin(tauri_plugin_deep_link::init())
         .plugin(tauri_plugin_store::Builder::new().build())
         .plugin(tauri_plugin_shell::init())

@@ -670,7 +670,7 @@ attachConsole();
 - [x] Add `tauri-plugin-store` dependency _(084aaba)_
 - [x] Load config from store on startup _(084aaba)_
 - [x] Persist config changes to store _(084aaba)_
-- [x] Update `StatusResponse` in protocol schema (added gena_port, local_ip, gena_subscriptions) _(11b9f0b)_
+- [x] Update `StatusResponse` in protocol schema (added gena*port, local_ip, gena_subscriptions) *(11b9f0b)\_
 - [x] Run `bun run codegen` to regenerate types _(11b9f0b)_
 - [x] Update `get_status` command with real values (speaker count, GENA subscriptions) _(11b9f0b)_
 - [x] Add startup error collection _(08832e4)_
@@ -681,28 +681,26 @@ attachConsole();
 
 - [x] Change default port range to 45100-45120 _(aebee91)_
 - [x] Add `local_ip` and ports to status response _(11b9f0b)_
-- [x] Implement auto-discovery on startup
-- [x] Add discovery interval (5 min default)
-- [x] Add `last_discovery_at` to StatusResponse
+- [x] Implement auto-discovery on startup _(5283885)_
+- [x] Add discovery interval (5 min default) _(5283885)_
+- [x] Add `last_discovery_at` to StatusResponse _(5283885)_
 - [ ] Remove manual Discover/Refresh buttons from UI
 - [ ] Add "last updated" timestamp display
 
 ### Phase 3: Security
 
-- [ ] Implement CORS origin allowlist
-- [ ] Add session token generation
-- [ ] Create auth middleware for mutating routes
-- [ ] Add `get_session_token` command
-- [ ] Update extension HTTP client with token header
-- [ ] Default to loopback binding
-- [ ] Add config options for security settings
+- [x] Implement CORS origin allowlist _(f5c3305)_
+- [x] Add configurable `trusted_origins` to Config _(f5c3305)_
+- [x] Remove debug endpoint `/api/debug/gena` _(3340109)_
+- [~] Session token - removed (CORS is sufficient, no secure way to distribute token to extension)
+- [~] Loopback binding - skipped (HTTP server must be LAN-accessible for Sonos streaming)
 
 ### Phase 4: Extended Features
 
-- [ ] Add `tauri-plugin-deep-link` dependency
-- [ ] Configure `thaumic-cast://` URI scheme
-- [ ] Implement deep link handler
-- [ ] Add `tauri-plugin-autostart` dependency
+- [x] Add `tauri-plugin-deep-link` dependency _(04ddb60)_
+- [x] Configure `thaumic-cast://` URI scheme _(04ddb60)_
+- [x] Implement deep link handler _(04ddb60)_
+- [x] Add `tauri-plugin-autostart` dependency
 - [ ] Add autostart toggle to settings UI
 - [ ] Add `tauri-plugin-log` dependency
 - [ ] Configure log rotation

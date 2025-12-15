@@ -67,3 +67,6 @@ strip = true
 lto = true
 codegen-units = 1
 panic = "abort"
+
+[target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
+tauri-plugin-autostart = "2"
