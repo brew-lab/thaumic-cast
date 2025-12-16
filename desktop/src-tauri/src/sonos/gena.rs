@@ -860,11 +860,43 @@ fn parse_notify(
         .map(|d| d.as_millis() as u64)
         .unwrap_or(0);
 
-    // Extract LastChange from propertyset
+    // GroupRenderingControl uses a different XML format - handle separately
+    if service == GenaService::GroupRenderingControl {
+        // Parse GroupVolume element content (e.g., <GroupVolume>50</GroupVolume>)
+        if let Some(volume_str) = extract_element_content(body, "GroupVolume") {
+            log::info!("[GENA] Parsed GroupVolume: {}", volume_str);
+            if let Ok(volume) = volume_str.parse::<u8>() {
+                events.push(SonosEvent::GroupVolume {
+                    volume,
+                    speaker_ip: speaker_ip.to_string(),
+                    timestamp,
+                });
+            }
+        }
+
+        // Parse GroupMute element content (e.g., <GroupMute>0</GroupMute>)
+        if let Some(mute_str) = extract_element_content(body, "GroupMute") {
+            log::info!("[GENA] Parsed GroupMute: {}", mute_str);
+            let mute = mute_str == "1";
+            events.push(SonosEvent::GroupMute {
+                mute,
+                speaker_ip: speaker_ip.to_string(),
+                timestamp,
+            });
+        }
+
+        return ParsedNotify {
+            events,
+            transport_state: None,
+            current_uri: None,
+        };
+    }
+
+    // For other services, extract LastChange from propertyset
     let last_change = match extract_last_change(body) {
         Some(lc) => lc,
         None => {
-            log::info!(
+            log::warn!(
                 "[GENA] No LastChange found in {:?} body: {}",
                 service,
                 body
@@ -926,37 +958,8 @@ fn parse_notify(
             events.push(SonosEvent::ZoneChange { timestamp });
         }
         GenaService::GroupRenderingControl => {
-            // DEBUG: Log raw XML for GroupRenderingControl
-            log::info!(
-                "[GENA] GroupRenderingControl raw XML from {}: {}",
-                speaker_ip,
-                last_change_xml
-            );
-
-            // Parse group volume (combined volume for all speakers in group)
-            if let Some(volume_str) = extract_attribute(&last_change_xml, "GroupVolume", "val") {
-                log::info!("[GENA] Parsed GroupVolume: {}", volume_str);
-                if let Ok(volume) = volume_str.parse::<u8>() {
-                    events.push(SonosEvent::GroupVolume {
-                        volume,
-                        speaker_ip: speaker_ip.to_string(),
-                        timestamp,
-                    });
-                }
-            } else {
-                log::info!("[GENA] No GroupVolume found in XML");
-            }
-
-            // Parse group mute
-            if let Some(mute_str) = extract_attribute(&last_change_xml, "GroupMute", "val") {
-                log::info!("[GENA] Parsed GroupMute: {}", mute_str);
-                let mute = mute_str == "1";
-                events.push(SonosEvent::GroupMute {
-                    mute,
-                    speaker_ip: speaker_ip.to_string(),
-                    timestamp,
-                });
-            }
+            // Handled earlier - this case shouldn't be reached
+            unreachable!("GroupRenderingControl is handled before LastChange extraction");
         }
     }
 
@@ -1042,6 +1045,31 @@ fn extract_attribute(xml: &str, element: &str, attr: &str) -> Option<String> {
                 if e.local_name().as_ref() == element_bytes =>
             {
                 return get_xml_attribute(&e.attributes(), attr_bytes);
+            }
+            Ok(Event::Eof) => break,
+            Err(_) => break,
+            _ => {}
+        }
+    }
+    None
+}
+
+/// Extract element text content from XML (e.g., `<GroupVolume>50</GroupVolume>` -> "50")
+fn extract_element_content(xml: &str, element: &str) -> Option<String> {
+    let mut reader = Reader::from_str(xml);
+    let element_bytes = element.as_bytes();
+    let mut in_element = false;
+
+    loop {
+        match reader.read_event() {
+            Ok(Event::Start(e)) if e.local_name().as_ref() == element_bytes => {
+                in_element = true;
+            }
+            Ok(Event::Text(e)) if in_element => {
+                return e.unescape().ok().map(|s| s.to_string());
+            }
+            Ok(Event::End(e)) if e.local_name().as_ref() == element_bytes => {
+                return None; // Empty element
             }
             Ok(Event::Eof) => break,
             Err(_) => break,
