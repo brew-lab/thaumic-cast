@@ -192,50 +192,58 @@ pub fn run() {
             tauri::async_runtime::spawn(async move {
                 let mut interval = tokio::time::interval(DISCOVERY_INTERVAL);
                 loop {
-                    interval.tick().await;
                     log::debug!("Running speaker discovery...");
 
                     // Mark discovery as in progress
                     sonos_state_for_discovery.set_discovery_state(true, 0, None);
 
-                    match sonos::discover_speakers(true).await {
+                    // Phase 1: SSDP discovery
+                    let (speakers, groups) = match sonos::discover_speakers(true).await {
                         Ok(speakers) => {
-                            log::info!("Discovery complete: found {} speakers", speakers.len());
+                            log::info!("SSDP complete: found {} speakers", speakers.len());
 
-                            // Update device count and timestamp
-                            let timestamp = std::time::SystemTime::now()
-                                .duration_since(std::time::UNIX_EPOCH)
-                                .map(|d| d.as_secs())
-                                .ok();
-                            sonos_state_for_discovery.set_discovery_state(
-                                false,
-                                speakers.len() as u64,
-                                timestamp,
-                            );
+                            // Phase 2: Get zone groups via SOAP
+                            let groups = sonos::get_zone_groups(None).await.unwrap_or_else(|e| {
+                                log::warn!("Failed to get zone groups: {}", e);
+                                vec![]
+                            });
 
-                            // After discovery, get groups and auto-subscribe
-                            if let Ok(groups) = sonos::get_zone_groups(None).await {
-                                // Update groups in centralized state
-                                sonos_state_for_discovery.set_groups(groups.clone());
-
-                                let coordinator_ips: Vec<String> =
-                                    groups.iter().map(|g| g.coordinator_ip.clone()).collect();
-
-                                let gena_guard = gena_for_discovery.read().await;
-                                if let Some(ref gena) = *gena_guard {
-                                    gena.auto_subscribe_to_groups(&coordinator_ips).await;
-                                    // Update subscription count
-                                    sonos_state_for_discovery
-                                        .set_gena_subscriptions(gena.active_subscriptions() as u64);
-                                }
-                            }
+                            (speakers, groups)
                         }
                         Err(e) => {
                             log::warn!("Speaker discovery failed: {}", e);
-                            // Mark discovery as complete (failed)
-                            sonos_state_for_discovery.set_discovery_state(false, 0, None);
+                            (vec![], vec![])
+                        }
+                    };
+
+                    // Compute timestamp
+                    let timestamp = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .map(|d| d.as_secs())
+                        .ok();
+
+                    // Atomic state update - single emit with complete data
+                    sonos_state_for_discovery.complete_discovery(
+                        speakers.len() as u64,
+                        groups.clone(),
+                        timestamp,
+                    );
+
+                    // Auto-subscribe to GENA after successful group fetch
+                    if !groups.is_empty() {
+                        let coordinator_ips: Vec<String> =
+                            groups.iter().map(|g| g.coordinator_ip.clone()).collect();
+
+                        let gena_guard = gena_for_discovery.read().await;
+                        if let Some(ref gena) = *gena_guard {
+                            gena.auto_subscribe_to_groups(&coordinator_ips).await;
+                            sonos_state_for_discovery
+                                .set_gena_subscriptions(gena.active_subscriptions() as u64);
                         }
                     }
+
+                    // Wait for next discovery cycle
+                    interval.tick().await;
                 }
             });
 

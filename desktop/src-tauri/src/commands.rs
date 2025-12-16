@@ -1,7 +1,6 @@
 use crate::generated::{ConfigResponse, SonosStateSnapshot, Speaker, StatusResponse};
 use crate::network::get_local_ip;
 use crate::server::AppState;
-use crate::sonos::{get_cached_speaker_count, get_last_discovery_timestamp};
 use tauri::{AppHandle, State};
 use tauri_plugin_store::StoreExt;
 
@@ -33,17 +32,20 @@ pub async fn get_status(state: State<'_, AppState>) -> Result<StatusResponse, St
     // Get startup errors
     let startup_errors = state.startup_errors.read().clone();
 
+    // Get discovery info from SonosState (single source of truth)
+    let sonos_snapshot = state.sonos_state.snapshot();
+
     Ok(StatusResponse {
         server_running,
         port,
         gena_port,
         local_ip: get_local_ip(),
         active_streams: stream_count as u64,
-        discovered_devices: get_cached_speaker_count(),
+        discovered_devices: sonos_snapshot.discovered_devices,
         gena_subscriptions,
         connected_clients,
         startup_errors: Some(startup_errors),
-        last_discovery_at: get_last_discovery_timestamp(),
+        last_discovery_at: sonos_snapshot.last_discovery_at,
     })
 }
 

@@ -95,26 +95,6 @@ fn get_cache() -> &'static RwLock<Option<SpeakerCache>> {
     SPEAKER_CACHE.get_or_init(|| RwLock::new(None))
 }
 
-/// Get the number of cached speakers (from last discovery)
-pub fn get_cached_speaker_count() -> u64 {
-    get_cache()
-        .read()
-        .as_ref()
-        .map(|c| c.speakers.len() as u64)
-        .unwrap_or(0)
-}
-
-/// Get the timestamp of the last successful discovery (as Unix timestamp in seconds)
-pub fn get_last_discovery_timestamp() -> Option<u64> {
-    get_cache().read().as_ref().map(|c| {
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs()
-            - c.last_update.elapsed().as_secs()
-    })
-}
-
 fn get_client() -> &'static Client {
     HTTP_CLIENT.get_or_init(|| {
         Client::builder()

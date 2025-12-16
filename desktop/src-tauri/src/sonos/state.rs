@@ -83,6 +83,26 @@ impl SonosState {
         self.emit();
     }
 
+    /// Atomically complete discovery with all results in a single emit.
+    /// This prevents race conditions where device count and groups are out of sync.
+    pub fn complete_discovery(
+        &self,
+        devices: u64,
+        groups: Vec<LocalGroup>,
+        timestamp: Option<u64>,
+    ) {
+        {
+            let mut inner = self.inner.write();
+            inner.is_discovering = false;
+            inner.discovered_devices = devices;
+            inner.groups = groups;
+            if timestamp.is_some() {
+                inner.last_discovery_at = timestamp;
+            }
+        }
+        self.emit();
+    }
+
     /// Update GENA subscription count
     pub fn set_gena_subscriptions(&self, count: u64) {
         {
