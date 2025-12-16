@@ -922,7 +922,7 @@ fn parse_notify(
         }
         GenaService::GroupRenderingControl => {
             // DEBUG: Log raw XML for GroupRenderingControl
-            log::debug!(
+            log::info!(
                 "[GENA] GroupRenderingControl raw XML from {}: {}",
                 speaker_ip,
                 last_change_xml
@@ -930,7 +930,7 @@ fn parse_notify(
 
             // Parse group volume (combined volume for all speakers in group)
             if let Some(volume_str) = extract_attribute(&last_change_xml, "GroupVolume", "val") {
-                log::debug!("[GENA] Parsed GroupVolume: {}", volume_str);
+                log::info!("[GENA] Parsed GroupVolume: {}", volume_str);
                 if let Ok(volume) = volume_str.parse::<u8>() {
                     events.push(SonosEvent::GroupVolume {
                         volume,
@@ -939,12 +939,12 @@ fn parse_notify(
                     });
                 }
             } else {
-                log::debug!("[GENA] No GroupVolume found in XML");
+                log::info!("[GENA] No GroupVolume found in XML");
             }
 
             // Parse group mute
             if let Some(mute_str) = extract_attribute(&last_change_xml, "GroupMute", "val") {
-                log::debug!("[GENA] Parsed GroupMute: {}", mute_str);
+                log::info!("[GENA] Parsed GroupMute: {}", mute_str);
                 let mute = mute_str == "1";
                 events.push(SonosEvent::GroupMute {
                     mute,
