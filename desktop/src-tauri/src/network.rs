@@ -3,6 +3,7 @@ use std::net::SocketAddr;
 use tokio::net::TcpListener;
 
 /// HTTP server port range (high-numbered to avoid dev port conflicts)
+/// Keep in sync with packages/shared/src/api.ts DESKTOP_PORT_RANGE
 pub const HTTP_PORT_RANGE: std::ops::RangeInclusive<u16> = 45100..=45110;
 
 /// GENA listener port range (high-numbered, separate from HTTP)

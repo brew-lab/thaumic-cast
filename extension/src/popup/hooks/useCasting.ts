@@ -51,6 +51,7 @@ export function useCasting({
   const [warning, setWarning] = useState<string | null>(null);
   const [isLoggedIn, setIsLoggedIn] = useState(false);
   const [desktopDetected, setDesktopDetected] = useState(false);
+  const [discoveredDesktopUrl, setDiscoveredDesktopUrl] = useState<string | null>(null);
   const [needsAuthForLocalMode, setNeedsAuthForLocalMode] = useState(false);
   const [sonosMode, setSonosMode] = useState<SonosMode>('cloud');
   const [sonosLinked, setSonosLinked] = useState(false);
@@ -222,9 +223,10 @@ export function useCasting({
 
       // Auto-detect desktop app if not signed in and mode is cloud
       if (!loggedIn && mode === 'cloud') {
-        const desktopAvailable = await detectDesktopApp();
-        if (desktopAvailable) {
+        const { found, url } = await detectDesktopApp();
+        if (found && url) {
           setDesktopDetected(true);
+          setDiscoveredDesktopUrl(url);
         }
       }
 
@@ -439,13 +441,15 @@ export function useCasting({
   }
 
   async function switchToLocalMode() {
-    // Update settings to use local mode with default server URL
+    // Update settings to use local mode with discovered or default server URL
     await saveExtensionSettings({
       sonosMode: 'local',
-      serverUrl: DEFAULT_SERVER_URL,
+      serverUrl: discoveredDesktopUrl || DEFAULT_SERVER_URL,
+      backendType: 'desktop',
     });
     setSonosMode('local');
     setDesktopDetected(false);
+    setDiscoveredDesktopUrl(null);
     // Re-initialize with local mode
     const settings = await getExtensionSettings();
     await initMode('local', settings.speakerIp || '');

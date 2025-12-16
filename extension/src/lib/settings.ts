@@ -1,4 +1,5 @@
 import type { SonosMode, QualityPreset } from '@thaumic-cast/shared';
+import { DESKTOP_PORT_RANGE } from '@thaumic-cast/shared';
 import type { SupportedLocale } from './i18n';
 
 // Centralized defaults for extension configuration
@@ -75,18 +76,35 @@ function normalizeServerUrl(url?: string): string | undefined {
 }
 
 /**
- * Detect if the desktop app is running at the default server URL
- * Returns true if the health endpoint responds successfully
+ * Detect if the desktop app is running on any port in the expected range.
+ * Scans ports 45100-45110 in parallel and returns as soon as one responds.
+ * Verifies the service name to ensure it's actually the desktop app.
  */
-export async function detectDesktopApp(): Promise<boolean> {
+export async function detectDesktopApp(): Promise<{ found: boolean; url: string | null }> {
+  const ports = Array.from(
+    { length: DESKTOP_PORT_RANGE.end - DESKTOP_PORT_RANGE.start + 1 },
+    (_, i) => DESKTOP_PORT_RANGE.start + i
+  );
+
   try {
-    const response = await fetch(`${DEFAULT_SERVER_URL}/api/health`, {
-      method: 'GET',
-      signal: AbortSignal.timeout(1000),
-    });
-    return response.ok;
+    // Returns as soon as ANY port responds with valid desktop app
+    const url = await Promise.any(
+      ports.map(async (port) => {
+        const url = `http://localhost:${port}`;
+        const response = await fetch(`${url}/api/health`, {
+          method: 'GET',
+          signal: AbortSignal.timeout(500),
+        });
+        if (!response.ok) throw new Error('Not OK');
+        const data = (await response.json()) as { service?: string };
+        if (data.service !== 'thaumic-cast-desktop') throw new Error('Wrong service');
+        return url;
+      })
+    );
+    return { found: true, url };
   } catch {
-    return false;
+    // AggregateError - no desktop app found on any port
+    return { found: false, url: null };
   }
 }
 
