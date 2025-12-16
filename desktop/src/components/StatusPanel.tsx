@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'preact/hooks';
 import { invoke } from '@tauri-apps/api/core';
 import { enable, disable, isEnabled } from '@tauri-apps/plugin-autostart';
-import type { LocalGroup, Status } from '../types';
+import type { LocalGroup, Status, GroupStatus } from '../types';
 
 interface Props {
   status: Status;
@@ -13,8 +13,52 @@ function formatTimestamp(unixTimestamp: number | null | undefined): string {
   return date.toLocaleTimeString();
 }
 
+/** Status indicator for a group based on transport state and source */
+function GroupStatusIndicator({ status }: { status?: GroupStatus }) {
+  if (!status) return null;
+
+  const getIndicator = (): { color: string; label: string } => {
+    if (status.transportState === 'STOPPED') {
+      return { color: '#666', label: 'Idle' };
+    }
+    if (status.transportState === 'PLAYING') {
+      if (status.isPlayingOurStream === true) {
+        return { color: '#4caf50', label: 'Casting' };
+      }
+      if (status.isPlayingOurStream === false) {
+        return { color: '#ff9800', label: 'Busy' };
+      }
+      return { color: '#2196f3', label: 'Playing' };
+    }
+    if (status.transportState === 'PAUSED_PLAYBACK') {
+      return { color: '#9e9e9e', label: 'Paused' };
+    }
+    if (status.transportState === 'TRANSITIONING') {
+      return { color: '#9e9e9e', label: '...' };
+    }
+    return { color: '#666', label: '' };
+  };
+
+  const { color, label } = getIndicator();
+  if (!label) return null;
+
+  return <span style={{ ...indicatorStyles.badge, color }}>{label}</span>;
+}
+
+const indicatorStyles = {
+  badge: {
+    fontSize: '0.65rem',
+    fontWeight: 500,
+    marginLeft: '6px',
+    padding: '1px 6px',
+    borderRadius: '3px',
+    background: 'rgba(255,255,255,0.05)',
+  },
+};
+
 export function StatusPanel({ status }: Props) {
   const [groups, setGroups] = useState<LocalGroup[]>([]);
+  const [groupStatuses, setGroupStatuses] = useState<Map<string, GroupStatus>>(new Map());
   const [scanning, setScanning] = useState(false);
   const [autostartEnabled, setAutostartEnabled] = useState<boolean | null>(null);
   const [autostartLoading, setAutostartLoading] = useState(false);
@@ -32,6 +76,22 @@ export function StatusPanel({ status }: Props) {
       }
     };
     loadGroups();
+  }, []);
+
+  // Poll for group status every 2 seconds
+  useEffect(() => {
+    const fetchStatus = async () => {
+      try {
+        const statuses = await invoke<GroupStatus[]>('get_group_status');
+        setGroupStatuses(new Map(statuses.map((s) => [s.coordinatorIp, s])));
+      } catch (e) {
+        console.error('Failed to fetch group status:', e);
+      }
+    };
+
+    fetchStatus();
+    const interval = setInterval(fetchStatus, 2000);
+    return () => clearInterval(interval);
   }, []);
 
   useEffect(() => {
@@ -151,7 +211,10 @@ export function StatusPanel({ status }: Props) {
             {groups.map((group) => (
               <div key={group.id} style={styles.groupItem}>
                 <div style={styles.groupHeader}>
-                  <span style={styles.groupName}>{group.name}</span>
+                  <span style={styles.groupName}>
+                    {group.name}
+                    <GroupStatusIndicator status={groupStatuses.get(group.coordinatorIp)} />
+                  </span>
                   <span style={styles.groupMemberCount}>
                     {group.members.length} {group.members.length === 1 ? 'speaker' : 'speakers'}
                   </span>

@@ -1,4 +1,4 @@
-use crate::generated::{ConfigResponse, LocalGroup, Speaker, StatusResponse};
+use crate::generated::{ConfigResponse, GroupStatus, LocalGroup, Speaker, StatusResponse};
 use crate::network::get_local_ip;
 use crate::server::AppState;
 use crate::sonos::{get_cached_speaker_count, get_last_discovery_timestamp};
@@ -93,4 +93,13 @@ pub async fn set_port(port: u16, state: State<'_, AppState>, app: AppHandle) -> 
         port
     );
     Ok(())
+}
+
+#[tauri::command]
+pub async fn get_group_status(state: State<'_, AppState>) -> Result<Vec<GroupStatus>, String> {
+    let gena_guard = state.gena.read().await;
+    Ok(match gena_guard.as_ref() {
+        Some(gena) => gena.get_all_group_statuses(),
+        None => vec![],
+    })
 }

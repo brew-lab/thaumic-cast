@@ -8,4 +8,6 @@ export type {
   Speaker,
   LocalGroup,
   LocalSpeaker,
+  GroupStatus,
+  TransportState,
 } from '@thaumic-cast/protocol';

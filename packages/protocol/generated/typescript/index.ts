@@ -86,6 +86,16 @@ export type components = {
             /** @description Group display name */
             name: string;
         };
+        /** @description Runtime status of a Sonos group from GENA events */
+        GroupStatus: {
+            /** @description IP address of the group coordinator */
+            coordinatorIp: string;
+            transportState: components["schemas"]["TransportState"];
+            /** @description Current track/source URI */
+            currentUri?: string | null;
+            /** @description True if playing our stream, false if playing other source, null if unknown */
+            isPlayingOurStream?: boolean | null;
+        };
         /** @description Request to create a new audio stream */
         CreateStreamRequest: {
             groupId: string;
@@ -305,6 +315,7 @@ export type Speaker = components["schemas"]["Speaker"];
 export type LocalSpeaker = components["schemas"]["LocalSpeaker"];
 export type LocalGroup = components["schemas"]["LocalGroup"];
 export type SonosGroup = components["schemas"]["SonosGroup"];
+export type GroupStatus = components["schemas"]["GroupStatus"];
 export type CreateStreamRequest = components["schemas"]["CreateStreamRequest"];
 export type CreateStreamResponse = components["schemas"]["CreateStreamResponse"];
 export type MeResponse = components["schemas"]["MeResponse"];

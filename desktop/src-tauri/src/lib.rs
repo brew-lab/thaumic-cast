@@ -159,6 +159,9 @@ pub fn run() {
             let preferred_port = config.read().preferred_port;
             let app_handle = app.handle().clone();
 
+            // Clone gena reference for discovery task before state is moved to server
+            let gena_for_discovery = state.gena.clone();
+
             tauri::async_runtime::spawn(async move {
                 if let Err(e) = server::start_server(state, preferred_port).await {
                     log::error!("Server error: {}", e);
@@ -170,7 +173,7 @@ pub fn run() {
             log::info!("Server starting (port will be auto-allocated if not specified)");
 
             // Start speaker discovery task (runs immediately, then every DISCOVERY_INTERVAL)
-            tauri::async_runtime::spawn(async {
+            tauri::async_runtime::spawn(async move {
                 let mut interval = tokio::time::interval(DISCOVERY_INTERVAL);
                 loop {
                     interval.tick().await;
@@ -178,6 +181,17 @@ pub fn run() {
                     match sonos::discover_speakers(true).await {
                         Ok(speakers) => {
                             log::info!("Discovery complete: found {} speakers", speakers.len());
+
+                            // After discovery, auto-subscribe to groups for status tracking
+                            if let Ok(groups) = sonos::get_zone_groups(None).await {
+                                let coordinator_ips: Vec<String> =
+                                    groups.iter().map(|g| g.coordinator_ip.clone()).collect();
+
+                                let gena_guard = gena_for_discovery.read().await;
+                                if let Some(ref gena) = *gena_guard {
+                                    gena.auto_subscribe_to_groups(&coordinator_ips).await;
+                                }
+                            }
                         }
                         Err(e) => {
                             log::warn!("Speaker discovery failed: {}", e);
@@ -193,6 +207,7 @@ pub fn run() {
             commands::get_speakers,
             commands::refresh_speakers,
             commands::get_groups,
+            commands::get_group_status,
             commands::get_config,
             commands::set_port,
         ])

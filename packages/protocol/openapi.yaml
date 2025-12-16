@@ -192,6 +192,27 @@ components:
           type: string
           description: Group display name
 
+    GroupStatus:
+      type: object
+      description: Runtime status of a Sonos group from GENA events
+      required:
+        - coordinatorIp
+        - transportState
+      properties:
+        coordinatorIp:
+          type: string
+          description: IP address of the group coordinator
+        transportState:
+          $ref: "#/components/schemas/TransportState"
+        currentUri:
+          type: string
+          nullable: true
+          description: Current track/source URI
+        isPlayingOurStream:
+          type: boolean
+          nullable: true
+          description: True if playing our stream, false if playing other source, null if unknown
+
     # ============================================================
     # API Request/Response Types
     # ============================================================

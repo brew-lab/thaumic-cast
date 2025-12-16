@@ -4,7 +4,7 @@
 //! Events are routed to the StreamManager to forward to connected extensions.
 
 use crate::generated::{
-    GenaService as GeneratedGenaService, SonosEvent as GeneratedSonosEvent,
+    GenaService as GeneratedGenaService, GroupStatus, SonosEvent as GeneratedSonosEvent,
     TransportState as GeneratedTransportState,
 };
 use crate::network::get_local_ip;
@@ -110,6 +110,10 @@ struct GenaState {
     event_tx: mpsc::UnboundedSender<(String, SonosEvent)>,
     /// Expected stream URLs per speaker IP for source verification
     expected_stream_urls: RwLock<HashMap<String, String>>,
+    /// Current transport state per speaker IP (from GENA events)
+    transport_states: RwLock<HashMap<String, TransportState>>,
+    /// Current track URI per speaker IP (from GENA events)
+    current_uris: RwLock<HashMap<String, String>>,
 }
 
 /// GENA listener for Sonos UPnP events
@@ -136,6 +140,8 @@ impl GenaListener {
                 subscriptions: RwLock::new(HashMap::new()),
                 event_tx,
                 expected_stream_urls: RwLock::new(HashMap::new()),
+                transport_states: RwLock::new(HashMap::new()),
+                current_uris: RwLock::new(HashMap::new()),
             }),
             event_rx: RwLock::new(Some(event_rx)),
             shutdown_tx: RwLock::new(None),
@@ -173,6 +179,50 @@ impl GenaListener {
             .read()
             .get(speaker_ip)
             .cloned()
+    }
+
+    /// Get transport state for a speaker
+    pub fn get_transport_state(&self, speaker_ip: &str) -> Option<TransportState> {
+        self.state.transport_states.read().get(speaker_ip).copied()
+    }
+
+    /// Get current URI for a speaker
+    pub fn get_current_uri(&self, speaker_ip: &str) -> Option<String> {
+        self.state.current_uris.read().get(speaker_ip).cloned()
+    }
+
+    /// Check if a speaker is playing our stream
+    pub fn is_playing_our_stream(&self, speaker_ip: &str) -> Option<bool> {
+        let expected = self.get_expected_stream_url(speaker_ip)?;
+        let current = self.get_current_uri(speaker_ip)?;
+        Some(is_matching_stream_url(&current, &expected))
+    }
+
+    /// Get all tracked speaker statuses as GroupStatus structs
+    pub fn get_all_group_statuses(&self) -> Vec<GroupStatus> {
+        let transport_states = self.state.transport_states.read();
+        let current_uris = self.state.current_uris.read();
+        let expected_urls = self.state.expected_stream_urls.read();
+
+        // Collect all unique speaker IPs from transport states
+        transport_states
+            .iter()
+            .map(|(ip, transport_state)| {
+                let current_uri = current_uris.get(ip).cloned();
+                let is_playing_our_stream = expected_urls.get(ip).and_then(|expected| {
+                    current_uri
+                        .as_ref()
+                        .map(|current| is_matching_stream_url(current, expected))
+                });
+
+                GroupStatus {
+                    coordinator_ip: ip.clone(),
+                    transport_state: *transport_state,
+                    current_uri,
+                    is_playing_our_stream,
+                }
+            })
+            .collect()
     }
 
     /// Start the GENA HTTP server
@@ -477,6 +527,36 @@ impl GenaListener {
             .collect()
     }
 
+    /// Auto-subscribe to AVTransport for all discovered groups
+    /// Also subscribes to ZoneGroupTopology on one coordinator for zone change events
+    pub async fn auto_subscribe_to_groups(&self, coordinator_ips: &[String]) {
+        log::info!(
+            "[GENA] Auto-subscribing to {} group coordinator(s)",
+            coordinator_ips.len()
+        );
+
+        for ip in coordinator_ips {
+            // Subscribe to AVTransport to track transport state
+            if let Err(e) = self.subscribe(ip, GenaService::AVTransport).await {
+                log::warn!(
+                    "[GENA] Auto-subscribe AVTransport failed for {}: {}",
+                    ip,
+                    e
+                );
+            }
+        }
+
+        // Subscribe to ZoneGroupTopology on first coordinator (system-wide event)
+        if let Some(first_ip) = coordinator_ips.first() {
+            if let Err(e) = self
+                .subscribe(first_ip, GenaService::ZoneGroupTopology)
+                .await
+            {
+                log::warn!("[GENA] Auto-subscribe ZoneGroupTopology failed: {}", e);
+            }
+        }
+    }
+
     /// Schedule subscription renewal
     fn schedule_renewal(&self, sid: String, timeout_seconds: u64) {
         let renewal_delay = timeout_seconds
@@ -689,15 +769,32 @@ async fn notify_handler(
     // Get expected stream URL for this speaker (if any)
     let expected_stream_url = state.expected_stream_urls.read().get(&speaker_ip).cloned();
 
-    // Parse and forward events
-    let events = parse_notify(
+    // Parse NOTIFY body
+    let parsed = parse_notify(
         &body,
         gena_service,
         &speaker_ip,
         expected_stream_url.as_deref(),
     );
 
-    for event in events {
+    // Update state tracking for transport state
+    if let Some(transport_state) = parsed.transport_state {
+        state
+            .transport_states
+            .write()
+            .insert(speaker_ip.clone(), transport_state);
+    }
+
+    // Update state tracking for current URI
+    if let Some(current_uri) = parsed.current_uri {
+        state
+            .current_uris
+            .write()
+            .insert(speaker_ip.clone(), current_uri);
+    }
+
+    // Forward events
+    for event in parsed.events {
         log::debug!("[GENA] Event: {:?}", event);
         if let Err(e) = state.event_tx.send((speaker_ip.clone(), event)) {
             log::error!("[GENA] Failed to send event: {}", e);
@@ -707,14 +804,26 @@ async fn notify_handler(
     StatusCode::OK
 }
 
+/// Result of parsing a NOTIFY body
+struct ParsedNotify {
+    events: Vec<SonosEvent>,
+    /// Transport state extracted from AVTransport (if present)
+    transport_state: Option<TransportState>,
+    /// Current track URI extracted from AVTransport (if present)
+    current_uri: Option<String>,
+}
+
 /// Parse NOTIFY body and extract events
 fn parse_notify(
     body: &str,
     service: GenaService,
     speaker_ip: &str,
     expected_stream_url: Option<&str>,
-) -> Vec<SonosEvent> {
+) -> ParsedNotify {
     let mut events = Vec::new();
+    let mut extracted_transport_state = None;
+    let mut extracted_current_uri = None;
+
     let timestamp = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_millis() as u64)
@@ -723,7 +832,13 @@ fn parse_notify(
     // Extract LastChange from propertyset
     let last_change = match extract_last_change(body) {
         Some(lc) => lc,
-        None => return events,
+        None => {
+            return ParsedNotify {
+                events,
+                transport_state: None,
+                current_uri: None,
+            }
+        }
     };
 
     // Unescape XML entities
@@ -734,6 +849,7 @@ fn parse_notify(
             // Parse transport state
             if let Some(state_str) = extract_attribute(&last_change_xml, "TransportState", "val") {
                 if let Some(state) = TransportState::from_str(&state_str) {
+                    extracted_transport_state = Some(state);
                     events.push(SonosEvent::TransportState {
                         state,
                         speaker_ip: speaker_ip.to_string(),
@@ -742,25 +858,29 @@ fn parse_notify(
                 }
             }
 
-            // Parse CurrentTrackURI for stream verification
+            // Parse CurrentTrackURI - always extract for status tracking
             if let Some(current_uri) = extract_attribute(&last_change_xml, "CurrentTrackURI", "val")
             {
                 let current_uri = unescape_xml(&current_uri);
-                if let Some(expected) = expected_stream_url {
+                if !current_uri.is_empty() {
+                    extracted_current_uri = Some(current_uri.clone());
+
                     // Check if source changed (current URI doesn't match expected)
-                    if !current_uri.is_empty() && !is_matching_stream_url(&current_uri, expected) {
-                        log::info!(
-                            "[GENA] Source changed on {}: expected={}, current={}",
-                            speaker_ip,
-                            expected,
-                            current_uri
-                        );
-                        events.push(SonosEvent::SourceChanged {
-                            current_uri,
-                            expected_uri: Some(expected.to_string()),
-                            speaker_ip: speaker_ip.to_string(),
-                            timestamp,
-                        });
+                    if let Some(expected) = expected_stream_url {
+                        if !is_matching_stream_url(&current_uri, expected) {
+                            log::info!(
+                                "[GENA] Source changed on {}: expected={}, current={}",
+                                speaker_ip,
+                                expected,
+                                current_uri
+                            );
+                            events.push(SonosEvent::SourceChanged {
+                                current_uri,
+                                expected_uri: Some(expected.to_string()),
+                                speaker_ip: speaker_ip.to_string(),
+                                timestamp,
+                            });
+                        }
                     }
                 }
             }
@@ -819,7 +939,11 @@ fn parse_notify(
         }
     }
 
-    events
+    ParsedNotify {
+        events,
+        transport_state: extracted_transport_state,
+        current_uri: extracted_current_uri,
+    }
 }
 
 /// Check if current URI matches expected stream URL
@@ -945,10 +1069,11 @@ mod tests {
     fn test_parse_transport_state() {
         let xml = r#"<e:propertyset><e:property><LastChange>&lt;Event&gt;&lt;InstanceID val="0"&gt;&lt;TransportState val="STOPPED"/&gt;&lt;/InstanceID&gt;&lt;/Event&gt;</LastChange></e:property></e:propertyset>"#;
 
-        let events = parse_notify(xml, GenaService::AVTransport, "192.168.1.100", None);
-        assert_eq!(events.len(), 1);
+        let parsed = parse_notify(xml, GenaService::AVTransport, "192.168.1.100", None);
+        assert_eq!(parsed.events.len(), 1);
+        assert_eq!(parsed.transport_state, Some(TransportState::Stopped));
 
-        match &events[0] {
+        match &parsed.events[0] {
             SonosEvent::TransportState { state, .. } => {
                 assert_eq!(*state, TransportState::Stopped);
             }
@@ -960,10 +1085,10 @@ mod tests {
     fn test_parse_volume() {
         let xml = r#"<e:propertyset><e:property><LastChange>&lt;Event&gt;&lt;InstanceID val="0"&gt;&lt;Volume channel="Master" val="50"/&gt;&lt;/InstanceID&gt;&lt;/Event&gt;</LastChange></e:property></e:propertyset>"#;
 
-        let events = parse_notify(xml, GenaService::RenderingControl, "192.168.1.100", None);
-        assert_eq!(events.len(), 1);
+        let parsed = parse_notify(xml, GenaService::RenderingControl, "192.168.1.100", None);
+        assert_eq!(parsed.events.len(), 1);
 
-        match &events[0] {
+        match &parsed.events[0] {
             SonosEvent::Volume { volume, .. } => {
                 assert_eq!(*volume, 50);
             }

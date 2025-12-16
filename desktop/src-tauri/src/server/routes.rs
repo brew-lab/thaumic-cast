@@ -28,6 +28,7 @@ pub fn create_router(state: AppState) -> Router {
         // Local Sonos endpoints
         .route("/api/local/discover", get(discover_speakers))
         .route("/api/local/groups", get(get_groups))
+        .route("/api/local/status", get(get_group_status))
         .route("/api/local/play", post(play_stream))
         .route("/api/local/stop", post(stop_stream))
         .route("/api/local/volume/{ip}", get(get_volume).post(set_volume))
@@ -96,6 +97,16 @@ async fn get_groups(Query(params): Query<GroupsQuery>) -> impl IntoResponse {
                 .into_response()
         }
     }
+}
+
+/// Get runtime status of all subscribed groups (transport state, current URI, etc.)
+async fn get_group_status(State(state): State<AppState>) -> impl IntoResponse {
+    let gena_guard = state.gena.read().await;
+    let statuses = match gena_guard.as_ref() {
+        Some(gena) => gena.get_all_group_statuses(),
+        None => vec![],
+    };
+    Json(serde_json::json!({ "statuses": statuses }))
 }
 
 #[derive(Deserialize)]

@@ -176,6 +176,19 @@ pub struct SonosGroup {
     pub name: String,
 }
 
+/// Runtime status of a Sonos group from GENA events
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GroupStatus {
+    /// IP address of the group coordinator
+    pub coordinator_ip: String,
+    pub transport_state: TransportState,
+    /// Current track/source URI
+    pub current_uri: Option<String>,
+    /// True if playing our stream, false if playing other source, null if unknown
+    pub is_playing_our_stream: Option<bool>,
+}
+
 /// Request to create a new audio stream
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
