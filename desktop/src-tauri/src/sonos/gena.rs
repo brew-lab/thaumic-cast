@@ -544,6 +544,17 @@ impl GenaListener {
                     e
                 );
             }
+            // Subscribe to GroupRenderingControl for group volume events
+            if let Err(e) = self
+                .subscribe(ip, GenaService::GroupRenderingControl)
+                .await
+            {
+                log::warn!(
+                    "[GENA] Auto-subscribe GroupRenderingControl failed for {}: {}",
+                    ip,
+                    e
+                );
+            }
         }
 
         // Subscribe to ZoneGroupTopology on first coordinator (system-wide event)

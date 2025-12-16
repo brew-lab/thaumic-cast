@@ -191,20 +191,10 @@ struct StopRequest {
 }
 
 async fn stop_stream(
-    State(state): State<AppState>,
+    State(_state): State<AppState>,
     Json(body): Json<StopRequest>,
 ) -> impl IntoResponse {
-    // Unsubscribe from GENA events for this speaker (spawn in background)
-    let gena_clone = state.gena.clone();
-    let coordinator_ip = body.coordinator_ip.clone();
-    tokio::spawn(async move {
-        if let Some(ref gena) = *gena_clone.read().await {
-            if let Err(e) = gena.unsubscribe_all(&coordinator_ip).await {
-                log::warn!("[Routes] Failed to unsubscribe from GENA: {}", e);
-            }
-        }
-    });
-
+    // Note: We keep GENA subscriptions active for continuous status monitoring
     match sonos::stop(&body.coordinator_ip).await {
         Ok(_) => Json(serde_json::json!({ "success": true })).into_response(),
         Err(e) => {
@@ -439,20 +429,7 @@ async fn handle_ingest(socket: WebSocket, stream_id: String, state: AppState) {
         }
     }
 
-    // Unsubscribe from GENA for this speaker when stream disconnects (spawn in background)
-    if let Some(speaker_ip) = stream.get_speaker_ip() {
-        let gena_clone = state.gena.clone();
-        tokio::spawn(async move {
-            if let Some(ref gena) = *gena_clone.read().await {
-                if let Err(e) = gena.unsubscribe_all(&speaker_ip).await {
-                    log::warn!(
-                        "[Routes] Failed to unsubscribe from GENA on disconnect: {}",
-                        e
-                    );
-                }
-            }
-        });
-    }
+    // Note: We keep GENA subscriptions active for continuous status monitoring
 
     // Cleanup stream when ingest disconnects
     state.streams.remove(&stream_id);
