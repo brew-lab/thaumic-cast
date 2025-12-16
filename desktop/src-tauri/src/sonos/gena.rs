@@ -864,6 +864,11 @@ fn parse_notify(
     let last_change = match extract_last_change(body) {
         Some(lc) => lc,
         None => {
+            log::info!(
+                "[GENA] No LastChange found in {:?} body: {}",
+                service,
+                body
+            );
             return ParsedNotify {
                 events,
                 transport_state: None,
