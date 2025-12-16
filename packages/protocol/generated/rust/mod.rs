@@ -185,6 +185,10 @@ pub struct GroupStatus {
     pub current_uri: Option<String>,
     /// True if playing our stream, false if playing other source, null if unknown
     pub is_playing_our_stream: Option<bool>,
+    /// Group volume level (0-100)
+    pub volume: u8,
+    /// Whether the group is muted
+    pub is_muted: bool,
 }
 
 /// Complete Sonos state snapshot emitted on any change

@@ -95,6 +95,10 @@ export type components = {
             currentUri?: string | null;
             /** @description True if playing our stream, false if playing other source, null if unknown */
             isPlayingOurStream?: boolean | null;
+            /** @description Group volume level (0-100) */
+            volume: number;
+            /** @description Whether the group is muted */
+            isMuted: boolean;
         };
         /** @description Complete Sonos state snapshot emitted on any change */
         SonosStateSnapshot: {

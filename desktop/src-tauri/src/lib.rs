@@ -130,6 +130,9 @@ pub fn run() {
             // Set app handle on SonosState for event emission
             sonos_state.set_app_handle(app.handle().clone());
 
+            // Set app handle on StreamManager for event emission
+            streams.set_app_handle(app.handle().clone());
+
             // Create app state
             let state = AppState {
                 config: config.clone(),
@@ -237,8 +240,6 @@ pub fn run() {
             commands::get_status,
             commands::get_speakers,
             commands::refresh_speakers,
-            commands::get_groups,
-            commands::get_group_status,
             commands::get_sonos_state,
             commands::get_config,
             commands::set_port,

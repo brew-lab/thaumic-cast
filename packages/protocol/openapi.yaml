@@ -197,6 +197,8 @@ components:
       required:
         - coordinatorIp
         - transportState
+        - volume
+        - isMuted
       properties:
         coordinatorIp:
           type: string
@@ -211,6 +213,14 @@ components:
           type: boolean
           nullable: true
           description: True if playing our stream, false if playing other source, null if unknown
+        volume:
+          type: integer
+          minimum: 0
+          maximum: 100
+          description: Group volume level (0-100)
+        isMuted:
+          type: boolean
+          description: Whether the group is muted
 
     SonosStateSnapshot:
       type: object

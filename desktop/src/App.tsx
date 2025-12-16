@@ -4,27 +4,36 @@ import { listen } from '@tauri-apps/api/event';
 import { StatusPanel } from './components/StatusPanel';
 import type { Status, SonosStateSnapshot } from './types';
 
+interface StreamsChangedPayload {
+  active_streams: number;
+}
+
 export function App() {
   const [status, setStatus] = useState<Status | null>(null);
   const [sonosState, setSonosState] = useState<SonosStateSnapshot | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  // Fetch server status (ports, running state, etc.)
-  const fetchStatus = async () => {
-    try {
-      const result = await invoke<Status>('get_status');
-      setStatus(result);
-      setError(null);
-    } catch (e) {
-      setError(String(e));
-    }
-  };
-
-  // Server status polling (less frequent since Sonos state is event-driven)
+  // Fetch server status once on mount (static fields: ports, IP, etc.)
   useEffect(() => {
-    fetchStatus();
-    const interval = setInterval(fetchStatus, 10000); // 10 seconds
-    return () => clearInterval(interval);
+    invoke<Status>('get_status')
+      .then((result) => {
+        setStatus(result);
+        setError(null);
+      })
+      .catch((e) => setError(String(e)));
+  }, []);
+
+  // Listen for streams-changed event (updates active_streams count)
+  useEffect(() => {
+    const unlisten = listen<StreamsChangedPayload>('streams-changed', (event) => {
+      setStatus((prev) =>
+        prev ? { ...prev, active_streams: event.payload.active_streams } : prev
+      );
+    });
+
+    return () => {
+      unlisten.then((fn) => fn());
+    };
   }, []);
 
   // Sonos state is event-driven (no polling needed)

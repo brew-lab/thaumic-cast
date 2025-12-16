@@ -1,6 +1,4 @@
-use crate::generated::{
-    ConfigResponse, GroupStatus, LocalGroup, SonosStateSnapshot, Speaker, StatusResponse,
-};
+use crate::generated::{ConfigResponse, SonosStateSnapshot, Speaker, StatusResponse};
 use crate::network::get_local_ip;
 use crate::server::AppState;
 use crate::sonos::{get_cached_speaker_count, get_last_discovery_timestamp};
@@ -60,13 +58,6 @@ pub async fn refresh_speakers(_state: State<'_, AppState>) -> Result<Vec<Speaker
 }
 
 #[tauri::command]
-pub async fn get_groups(_state: State<'_, AppState>) -> Result<Vec<LocalGroup>, String> {
-    crate::sonos::get_zone_groups(None)
-        .await
-        .map_err(|e| e.to_string())
-}
-
-#[tauri::command]
 pub async fn get_config(state: State<'_, AppState>) -> Result<ConfigResponse, String> {
     // Return actual bound port, or preferred port, or 0 if not started
     let actual_ports = state.actual_ports.read();
@@ -95,15 +86,6 @@ pub async fn set_port(port: u16, state: State<'_, AppState>, app: AppHandle) -> 
         port
     );
     Ok(())
-}
-
-#[tauri::command]
-pub async fn get_group_status(state: State<'_, AppState>) -> Result<Vec<GroupStatus>, String> {
-    let gena_guard = state.gena.read().await;
-    Ok(match gena_guard.as_ref() {
-        Some(gena) => gena.get_all_group_statuses(),
-        None => vec![],
-    })
 }
 
 /// Get the complete Sonos state snapshot (groups, statuses, discovery info)

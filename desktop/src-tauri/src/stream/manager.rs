@@ -2,8 +2,10 @@ use axum::extract::ws::{Message, WebSocket};
 use bytes::Bytes;
 use futures_util::SinkExt;
 use parking_lot::RwLock;
+use serde::Serialize;
 use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
+use tauri::Emitter;
 use tokio::sync::broadcast;
 
 use crate::sonos::{SonosEvent, StreamMetadata};
@@ -141,15 +143,41 @@ pub struct StreamSubscription {
     pub buffered_frames: Vec<Bytes>,
 }
 
+/// Event payload emitted when active_streams count changes
+#[derive(Debug, Clone, Serialize)]
+pub struct StreamsChangedPayload {
+    pub active_streams: u64,
+}
+
 /// Manages all active streams
 pub struct StreamManager {
     streams: RwLock<HashMap<String, Arc<StreamState>>>,
+    app_handle: RwLock<Option<tauri::AppHandle>>,
 }
 
 impl StreamManager {
     pub fn new() -> Self {
         Self {
             streams: RwLock::new(HashMap::new()),
+            app_handle: RwLock::new(None),
+        }
+    }
+
+    /// Set the app handle for emitting events
+    pub fn set_app_handle(&self, handle: tauri::AppHandle) {
+        *self.app_handle.write() = Some(handle);
+    }
+
+    /// Emit streams-changed event
+    fn emit_streams_changed(&self) {
+        let count = self.streams.read().len() as u64;
+        if let Some(ref handle) = *self.app_handle.read() {
+            let payload = StreamsChangedPayload {
+                active_streams: count,
+            };
+            if let Err(e) = handle.emit("streams-changed", &payload) {
+                log::warn!("[StreamManager] Failed to emit streams-changed: {}", e);
+            }
         }
     }
 
@@ -163,7 +191,9 @@ impl StreamManager {
 
         let stream = Arc::new(StreamState::new(id.to_string()));
         streams.insert(id.to_string(), Arc::clone(&stream));
-        stream
+        drop(streams); // Release lock before emitting
+        self.emit_streams_changed();
+        self.streams.read().get(id).unwrap().clone()
     }
 
     /// Get an existing stream by ID
@@ -173,7 +203,10 @@ impl StreamManager {
 
     /// Remove a stream
     pub fn remove(&self, id: &str) {
-        self.streams.write().remove(id);
+        let removed = self.streams.write().remove(id).is_some();
+        if removed {
+            self.emit_streams_changed();
+        }
     }
 
     /// Get the number of active streams

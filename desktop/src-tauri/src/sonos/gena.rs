@@ -111,6 +111,10 @@ struct GenaState {
     transport_states: RwLock<HashMap<String, TransportState>>,
     /// Current track URI per speaker IP (from GENA events)
     current_uris: RwLock<HashMap<String, String>>,
+    /// Current group volume per speaker IP (from GroupRenderingControl events)
+    volumes: RwLock<HashMap<String, u8>>,
+    /// Current group mute state per speaker IP (from GroupRenderingControl events)
+    mutes: RwLock<HashMap<String, bool>>,
 }
 
 /// GENA listener for Sonos UPnP events
@@ -139,6 +143,8 @@ impl GenaListener {
                 expected_stream_urls: RwLock::new(HashMap::new()),
                 transport_states: RwLock::new(HashMap::new()),
                 current_uris: RwLock::new(HashMap::new()),
+                volumes: RwLock::new(HashMap::new()),
+                mutes: RwLock::new(HashMap::new()),
             }),
             event_rx: RwLock::new(Some(event_rx)),
             shutdown_tx: RwLock::new(None),
@@ -200,6 +206,8 @@ impl GenaListener {
         let transport_states = self.state.transport_states.read();
         let current_uris = self.state.current_uris.read();
         let expected_urls = self.state.expected_stream_urls.read();
+        let volumes = self.state.volumes.read();
+        let mutes = self.state.mutes.read();
 
         // Collect all unique speaker IPs from transport states
         transport_states
@@ -217,6 +225,8 @@ impl GenaListener {
                     transport_state: *transport_state,
                     current_uri,
                     is_playing_our_stream,
+                    volume: *volumes.get(ip).unwrap_or(&0),
+                    is_muted: *mutes.get(ip).unwrap_or(&false),
                 }
             })
             .collect()
@@ -817,6 +827,14 @@ async fn notify_handler(
             .insert(speaker_ip.clone(), current_uri);
     }
 
+    // Update state tracking for volume/mute
+    if let Some(volume) = parsed.volume {
+        state.volumes.write().insert(speaker_ip.clone(), volume);
+    }
+    if let Some(mute) = parsed.mute {
+        state.mutes.write().insert(speaker_ip.clone(), mute);
+    }
+
     // Forward events
     for event in parsed.events {
         log::debug!("[GENA] Event: {:?}", event);
@@ -835,6 +853,10 @@ struct ParsedNotify {
     transport_state: Option<TransportState>,
     /// Current track URI extracted from AVTransport (if present)
     current_uri: Option<String>,
+    /// Group volume extracted from GroupRenderingControl (if present)
+    volume: Option<u8>,
+    /// Group mute state extracted from GroupRenderingControl (if present)
+    mute: Option<bool>,
 }
 
 /// Parse NOTIFY body and extract events
@@ -855,9 +877,13 @@ fn parse_notify(
 
     // GroupRenderingControl uses a different XML format - handle separately
     if service == GenaService::GroupRenderingControl {
+        let mut extracted_volume = None;
+        let mut extracted_mute = None;
+
         // Parse GroupVolume element content (e.g., <GroupVolume>50</GroupVolume>)
         if let Some(volume_str) = extract_element_content(body, "GroupVolume") {
             if let Ok(volume) = volume_str.parse::<u8>() {
+                extracted_volume = Some(volume);
                 events.push(SonosEvent::GroupVolume {
                     volume,
                     speaker_ip: speaker_ip.to_string(),
@@ -869,6 +895,7 @@ fn parse_notify(
         // Parse GroupMute element content (e.g., <GroupMute>0</GroupMute>)
         if let Some(mute_str) = extract_element_content(body, "GroupMute") {
             let mute = mute_str == "1";
+            extracted_mute = Some(mute);
             events.push(SonosEvent::GroupMute {
                 mute,
                 speaker_ip: speaker_ip.to_string(),
@@ -880,6 +907,8 @@ fn parse_notify(
             events,
             transport_state: None,
             current_uri: None,
+            volume: extracted_volume,
+            mute: extracted_mute,
         };
     }
 
@@ -891,6 +920,8 @@ fn parse_notify(
                 events,
                 transport_state: None,
                 current_uri: None,
+                volume: None,
+                mute: None,
             }
         }
     };
@@ -953,6 +984,8 @@ fn parse_notify(
         events,
         transport_state: extracted_transport_state,
         current_uri: extracted_current_uri,
+        volume: None,
+        mute: None,
     }
 }
 
