@@ -781,13 +781,6 @@ async fn notify_handler(
         }
     };
 
-    log::info!(
-        "[GENA] Received NOTIFY for {:?} from {} (SID: {})",
-        gena_service,
-        speaker_ip,
-        sid
-    );
-
     // Read body
     let body = match axum::body::to_bytes(request.into_body(), 64 * 1024).await {
         Ok(bytes) => String::from_utf8_lossy(&bytes).to_string(),
@@ -864,7 +857,6 @@ fn parse_notify(
     if service == GenaService::GroupRenderingControl {
         // Parse GroupVolume element content (e.g., <GroupVolume>50</GroupVolume>)
         if let Some(volume_str) = extract_element_content(body, "GroupVolume") {
-            log::info!("[GENA] Parsed GroupVolume: {}", volume_str);
             if let Ok(volume) = volume_str.parse::<u8>() {
                 events.push(SonosEvent::GroupVolume {
                     volume,
@@ -876,7 +868,6 @@ fn parse_notify(
 
         // Parse GroupMute element content (e.g., <GroupMute>0</GroupMute>)
         if let Some(mute_str) = extract_element_content(body, "GroupMute") {
-            log::info!("[GENA] Parsed GroupMute: {}", mute_str);
             let mute = mute_str == "1";
             events.push(SonosEvent::GroupMute {
                 mute,
@@ -896,11 +887,6 @@ fn parse_notify(
     let last_change = match extract_last_change(body) {
         Some(lc) => lc,
         None => {
-            log::warn!(
-                "[GENA] No LastChange found in {:?} body: {}",
-                service,
-                body
-            );
             return ParsedNotify {
                 events,
                 transport_state: None,

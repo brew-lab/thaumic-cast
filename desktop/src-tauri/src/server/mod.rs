@@ -64,13 +64,7 @@ pub async fn start_server(
                     let app = app_handle.clone();
                     tokio::spawn(async move {
                         while let Some((speaker_ip, event)) = event_rx.recv().await {
-                            log::info!(
-                                "[GENA] Forwarding event {:?} from {} to stream",
-                                event,
-                                speaker_ip
-                            );
-                            let sent = streams.send_event_by_ip(&speaker_ip, &event).await;
-                            log::info!("[GENA] Event forwarded to WebSocket: {}", sent);
+                            streams.send_event_by_ip(&speaker_ip, &event).await;
 
                             // Emit group status changes to Tauri frontend
                             if matches!(
