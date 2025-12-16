@@ -392,7 +392,6 @@ async fn handle_ws_connection(socket: WebSocket, initial_stream_id: Option<Strin
                         // Audio frame - push to stream if we have one
                         if let Some(ref stream_id) = current_stream_id {
                             if let Some(stream) = state.streams.get(stream_id) {
-                                log::debug!("Received audio frame ({} bytes) for stream {}", data.len(), stream_id);
                                 stream.push_frame(Bytes::from(data));
                             } else {
                                 log::warn!("Stream {} not found in manager", stream_id);
