@@ -781,6 +781,13 @@ async fn notify_handler(
         }
     };
 
+    log::info!(
+        "[GENA] Received NOTIFY for {:?} from {} (SID: {})",
+        gena_service,
+        speaker_ip,
+        sid
+    );
+
     // Read body
     let body = match axum::body::to_bytes(request.into_body(), 64 * 1024).await {
         Ok(bytes) => String::from_utf8_lossy(&bytes).to_string(),
@@ -914,8 +921,16 @@ fn parse_notify(
             events.push(SonosEvent::ZoneChange { timestamp });
         }
         GenaService::GroupRenderingControl => {
+            // DEBUG: Log raw XML for GroupRenderingControl
+            log::debug!(
+                "[GENA] GroupRenderingControl raw XML from {}: {}",
+                speaker_ip,
+                last_change_xml
+            );
+
             // Parse group volume (combined volume for all speakers in group)
             if let Some(volume_str) = extract_attribute(&last_change_xml, "GroupVolume", "val") {
+                log::debug!("[GENA] Parsed GroupVolume: {}", volume_str);
                 if let Ok(volume) = volume_str.parse::<u8>() {
                     events.push(SonosEvent::GroupVolume {
                         volume,
@@ -923,10 +938,13 @@ fn parse_notify(
                         timestamp,
                     });
                 }
+            } else {
+                log::debug!("[GENA] No GroupVolume found in XML");
             }
 
             // Parse group mute
             if let Some(mute_str) = extract_attribute(&last_change_xml, "GroupMute", "val") {
+                log::debug!("[GENA] Parsed GroupMute: {}", mute_str);
                 let mute = mute_str == "1";
                 events.push(SonosEvent::GroupMute {
                     mute,
