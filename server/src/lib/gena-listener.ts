@@ -450,32 +450,6 @@ class GenaListenerClass {
       }
     }
 
-    if (service === 'RenderingControl') {
-      // Parse volume
-      const volumeMatch = lastChangeXml.match(/<Volume\s+channel="Master"\s+val="(\d+)"/);
-      if (volumeMatch && volumeMatch[1]) {
-        const volume = parseInt(volumeMatch[1], 10);
-        events.push({
-          type: 'volume',
-          volume,
-          speakerIp,
-          timestamp,
-        });
-      }
-
-      // Parse mute
-      const muteMatch = lastChangeXml.match(/<Mute\s+channel="Master"\s+val="([01])"/);
-      if (muteMatch && muteMatch[1]) {
-        const mute = muteMatch[1] === '1';
-        events.push({
-          type: 'mute',
-          mute,
-          speakerIp,
-          timestamp,
-        });
-      }
-    }
-
     if (service === 'ZoneGroupTopology') {
       // Zone topology changed - just emit a generic event
       // The extension can refresh groups if needed

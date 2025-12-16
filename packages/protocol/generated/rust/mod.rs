@@ -72,8 +72,6 @@ pub enum TransportState {
 pub enum GenaService {
     #[serde(rename = "AVTransport")]
     AVTransport,
-    #[serde(rename = "RenderingControl")]
-    RenderingControl,
     #[serde(rename = "ZoneGroupTopology")]
     ZoneGroupTopology,
     #[serde(rename = "GroupRenderingControl")]
@@ -320,20 +318,6 @@ pub enum SonosEvent {
     #[serde(rename = "transportState")]
     TransportState {
         state: TransportState,
-        #[serde(rename = "speakerIp")]
-        speaker_ip: String,
-        timestamp: u64,
-    },
-    #[serde(rename = "volume")]
-    Volume {
-        volume: u8,
-        #[serde(rename = "speakerIp")]
-        speaker_ip: String,
-        timestamp: u64,
-    },
-    #[serde(rename = "mute")]
-    Mute {
-        mute: bool,
         #[serde(rename = "speakerIp")]
         speaker_ip: String,
         timestamp: u64,

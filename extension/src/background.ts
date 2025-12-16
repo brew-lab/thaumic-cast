@@ -215,36 +215,6 @@ async function handleSonosEvent(message: SonosEventMessage): Promise<void> {
       break;
     }
 
-    case 'volume': {
-      // Volume changed on Sonos speaker - broadcast to popup
-      console.log('[Background] Sonos volume changed:', payload.volume);
-      chrome.runtime
-        .sendMessage({
-          type: 'VOLUME_UPDATE',
-          volume: payload.volume,
-          speakerIp: payload.speakerIp,
-        })
-        .catch(() => {
-          // Popup may not be open
-        });
-      break;
-    }
-
-    case 'mute': {
-      // Mute state changed on Sonos speaker - broadcast to popup
-      console.log('[Background] Sonos mute changed:', payload.mute);
-      chrome.runtime
-        .sendMessage({
-          type: 'MUTE_UPDATE',
-          mute: payload.mute,
-          speakerIp: payload.speakerIp,
-        })
-        .catch(() => {
-          // Popup may not be open
-        });
-      break;
-    }
-
     case 'zoneChange': {
       // Zone topology changed (speakers grouped/ungrouped)
       console.log('[Background] Sonos zone configuration changed');

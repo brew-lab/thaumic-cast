@@ -49,7 +49,6 @@ impl GenaServiceExt for GenaService {
     fn endpoint(&self) -> &'static str {
         match self {
             GenaService::AVTransport => "/MediaRenderer/AVTransport/Event",
-            GenaService::RenderingControl => "/MediaRenderer/RenderingControl/Event",
             GenaService::ZoneGroupTopology => "/ZoneGroupTopology/Event",
             GenaService::GroupRenderingControl => "/MediaRenderer/GroupRenderingControl/Event",
         }
@@ -58,7 +57,6 @@ impl GenaServiceExt for GenaService {
     fn from_str(s: &str) -> Option<GenaService> {
         match s {
             "AVTransport" => Some(GenaService::AVTransport),
-            "RenderingControl" => Some(GenaService::RenderingControl),
             "ZoneGroupTopology" => Some(GenaService::ZoneGroupTopology),
             "GroupRenderingControl" => Some(GenaService::GroupRenderingControl),
             _ => None,
@@ -68,7 +66,6 @@ impl GenaServiceExt for GenaService {
     fn as_str(&self) -> &'static str {
         match self {
             GenaService::AVTransport => "AVTransport",
-            GenaService::RenderingControl => "RenderingControl",
             GenaService::ZoneGroupTopology => "ZoneGroupTopology",
             GenaService::GroupRenderingControl => "GroupRenderingControl",
         }
@@ -912,32 +909,6 @@ fn parse_notify(
                 }
             }
         }
-        GenaService::RenderingControl => {
-            // Parse volume
-            if let Some(volume_str) =
-                extract_attribute_with_channel(&last_change_xml, "Volume", "Master", "val")
-            {
-                if let Ok(volume) = volume_str.parse::<u8>() {
-                    events.push(SonosEvent::Volume {
-                        volume,
-                        speaker_ip: speaker_ip.to_string(),
-                        timestamp,
-                    });
-                }
-            }
-
-            // Parse mute
-            if let Some(mute_str) =
-                extract_attribute_with_channel(&last_change_xml, "Mute", "Master", "val")
-            {
-                let mute = mute_str == "1";
-                events.push(SonosEvent::Mute {
-                    mute,
-                    speaker_ip: speaker_ip.to_string(),
-                    timestamp,
-                });
-            }
-        }
         GenaService::ZoneGroupTopology => {
             // Zone topology changed
             events.push(SonosEvent::ZoneChange { timestamp });
@@ -1057,37 +1028,6 @@ fn extract_attribute(xml: &str, element: &str, attr: &str) -> Option<String> {
     None
 }
 
-/// Extract attribute value from XML element with channel attribute using quick-xml
-fn extract_attribute_with_channel(
-    xml: &str,
-    element: &str,
-    channel: &str,
-    attr: &str,
-) -> Option<String> {
-    let mut reader = Reader::from_str(xml);
-    let element_bytes = element.as_bytes();
-    let attr_bytes = attr.as_bytes();
-
-    loop {
-        match reader.read_event() {
-            Ok(Event::Start(e)) | Ok(Event::Empty(e))
-                if e.local_name().as_ref() == element_bytes =>
-            {
-                // Check if channel matches
-                if let Some(ch) = get_xml_attribute(&e.attributes(), b"channel") {
-                    if ch == channel {
-                        return get_xml_attribute(&e.attributes(), attr_bytes);
-                    }
-                }
-            }
-            Ok(Event::Eof) => break,
-            Err(_) => break,
-            _ => {}
-        }
-    }
-    None
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1105,21 +1045,6 @@ mod tests {
                 assert_eq!(*state, TransportState::Stopped);
             }
             _ => panic!("Expected TransportState event"),
-        }
-    }
-
-    #[test]
-    fn test_parse_volume() {
-        let xml = r#"<e:propertyset><e:property><LastChange>&lt;Event&gt;&lt;InstanceID val="0"&gt;&lt;Volume channel="Master" val="50"/&gt;&lt;/InstanceID&gt;&lt;/Event&gt;</LastChange></e:property></e:propertyset>"#;
-
-        let parsed = parse_notify(xml, GenaService::RenderingControl, "192.168.1.100", None);
-        assert_eq!(parsed.events.len(), 1);
-
-        match &parsed.events[0] {
-            SonosEvent::Volume { volume, .. } => {
-                assert_eq!(*volume, 50);
-            }
-            _ => panic!("Expected Volume event"),
         }
     }
 
@@ -1153,14 +1078,14 @@ mod tests {
         let json = serde_json::to_string(&event).unwrap();
         assert!(json.contains(r#""state":"PAUSED_PLAYBACK""#));
 
-        // Test Volume event
-        let event = SonosEvent::Volume {
+        // Test GroupVolume event
+        let event = SonosEvent::GroupVolume {
             volume: 50,
             speaker_ip: "192.168.1.100".to_string(),
             timestamp: 1234567890,
         };
         let json = serde_json::to_string(&event).unwrap();
-        assert!(json.contains(r#""type":"volume""#));
+        assert!(json.contains(r#""type":"groupVolume""#));
         assert!(json.contains(r#""volume":50"#));
 
         // Test ZoneChange event

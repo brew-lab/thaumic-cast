@@ -31,7 +31,7 @@ export type components = {
          * @description Sonos UPnP services for GENA subscriptions
          * @enum {string}
          */
-        GenaService: "AVTransport" | "RenderingControl" | "ZoneGroupTopology" | "GroupRenderingControl";
+        GenaService: "AVTransport" | "ZoneGroupTopology" | "GroupRenderingControl";
         /**
          * @description Structured error codes for error handling
          * @enum {string}
@@ -179,30 +179,6 @@ export type components = {
             /** Format: int64 */
             timestamp: number;
         };
-        /** @description Volume change event from Sonos speaker */
-        VolumeChangeEvent: {
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            type: "volume";
-            volume: number;
-            speakerIp: string;
-            /** Format: int64 */
-            timestamp: number;
-        };
-        /** @description Mute state change event from Sonos speaker */
-        MuteChangeEvent: {
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            type: "mute";
-            mute: boolean;
-            speakerIp: string;
-            /** Format: int64 */
-            timestamp: number;
-        };
         /** @description Zone group topology change event */
         ZoneChangeEvent: {
             /**
@@ -251,7 +227,7 @@ export type components = {
             timestamp: number;
         };
         /** @description Union type for all Sonos events sent via WebSocket */
-        SonosEvent: components["schemas"]["TransportStateEvent"] | components["schemas"]["VolumeChangeEvent"] | components["schemas"]["MuteChangeEvent"] | components["schemas"]["ZoneChangeEvent"] | components["schemas"]["SourceChangedEvent"] | components["schemas"]["GroupVolumeChangeEvent"] | components["schemas"]["GroupMuteChangeEvent"];
+        SonosEvent: components["schemas"]["TransportStateEvent"] | components["schemas"]["ZoneChangeEvent"] | components["schemas"]["SourceChangedEvent"] | components["schemas"]["GroupVolumeChangeEvent"] | components["schemas"]["GroupMuteChangeEvent"];
         /** @description Tauri get_status command response */
         StatusResponse: {
             server_running: boolean;
@@ -327,8 +303,6 @@ export type ApiError = components["schemas"]["ApiError"];
 export type ApiErrorResponse = components["schemas"]["ApiErrorResponse"];
 export type GenaSubscription = components["schemas"]["GenaSubscription"];
 export type TransportStateEvent = components["schemas"]["TransportStateEvent"];
-export type VolumeChangeEvent = components["schemas"]["VolumeChangeEvent"];
-export type MuteChangeEvent = components["schemas"]["MuteChangeEvent"];
 export type ZoneChangeEvent = components["schemas"]["ZoneChangeEvent"];
 export type SourceChangedEvent = components["schemas"]["SourceChangedEvent"];
 export type GroupVolumeChangeEvent = components["schemas"]["GroupVolumeChangeEvent"];

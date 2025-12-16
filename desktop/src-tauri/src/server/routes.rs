@@ -142,19 +142,12 @@ async fn play_stream(
             let coordinator_ip = body.coordinator_ip.clone();
             tokio::spawn(async move {
                 if let Some(ref gena) = *gena_clone.read().await {
-                    // Subscribe to AVTransport (playback state), RenderingControl (per-speaker volume),
-                    // and GroupRenderingControl (group volume)
+                    // Subscribe to AVTransport (playback state) and GroupRenderingControl (group volume)
                     if let Err(e) = gena
                         .subscribe(&coordinator_ip, GenaService::AVTransport)
                         .await
                     {
                         log::warn!("[Routes] Failed to subscribe to AVTransport: {}", e);
-                    }
-                    if let Err(e) = gena
-                        .subscribe(&coordinator_ip, GenaService::RenderingControl)
-                        .await
-                    {
-                        log::warn!("[Routes] Failed to subscribe to RenderingControl: {}", e);
                     }
                     if let Err(e) = gena
                         .subscribe(&coordinator_ip, GenaService::GroupRenderingControl)

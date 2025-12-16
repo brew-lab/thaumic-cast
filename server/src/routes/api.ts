@@ -164,7 +164,6 @@ export async function handleApiRoutes(req: Request, url: URL): Promise<Response>
       // We await these to ensure subscriptions are established before responding
       const subscriptionResults = await Promise.allSettled([
         GenaListener.subscribe(body.coordinatorIp, 'AVTransport'),
-        GenaListener.subscribe(body.coordinatorIp, 'RenderingControl'),
         GenaListener.subscribe(body.coordinatorIp, 'GroupRenderingControl'),
       ]);
 

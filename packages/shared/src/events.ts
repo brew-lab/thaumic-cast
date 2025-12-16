@@ -5,8 +5,6 @@
 export type {
   TransportState,
   TransportStateEvent,
-  VolumeChangeEvent,
-  MuteChangeEvent,
   ZoneChangeEvent,
   SourceChangedEvent,
   GroupVolumeChangeEvent,
@@ -39,14 +37,12 @@ export function isSonosEvent(data: unknown): data is SonosEvent {
         typeof obj.speakerIp === 'string' &&
         typeof obj.timestamp === 'number'
       );
-    case 'volume':
     case 'groupVolume':
       return (
         typeof obj.volume === 'number' &&
         typeof obj.speakerIp === 'string' &&
         typeof obj.timestamp === 'number'
       );
-    case 'mute':
     case 'groupMute':
       return (
         typeof obj.mute === 'boolean' &&
@@ -86,7 +82,6 @@ export function parseSonosEvent(json: string): SonosEvent | null {
  */
 export const GENA_SERVICE_ENDPOINTS: Record<GenaService, string> = {
   AVTransport: '/MediaRenderer/AVTransport/Event',
-  RenderingControl: '/MediaRenderer/RenderingControl/Event',
   ZoneGroupTopology: '/ZoneGroupTopology/Event',
   GroupRenderingControl: '/MediaRenderer/GroupRenderingControl/Event',
 };
