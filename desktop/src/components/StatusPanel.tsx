@@ -61,6 +61,7 @@ export function StatusPanel({ status, sonosState }: Props) {
   const [scanning, setScanning] = useState(false);
   const [autostartEnabled, setAutostartEnabled] = useState<boolean | null>(null);
   const [autostartLoading, setAutostartLoading] = useState(false);
+  const [copied, setCopied] = useState(false);
 
   // Derive groups and statuses from centralized sonosState
   const groups = sonosState?.groups ?? [];
@@ -102,6 +103,26 @@ export function StatusPanel({ status, sonosState }: Props) {
     }
   };
 
+  const copyServerUrl = async () => {
+    if (!status.local_ip) return;
+    const url = `http://${status.local_ip}:${status.port}`;
+    try {
+      await navigator.clipboard.writeText(url);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch (e) {
+      console.error('Failed to copy:', e);
+    }
+  };
+
+  const handleClearActivity = async () => {
+    try {
+      await invoke('clear_activity');
+    } catch (e) {
+      console.error('Failed to clear activity:', e);
+    }
+  };
+
   return (
     <div style={styles.panel}>
       {/* Startup Errors */}
@@ -139,15 +160,43 @@ export function StatusPanel({ status, sonosState }: Props) {
         )}
         {status.local_ip && (
           <div style={styles.statusRow}>
-            <span style={styles.statusLabel}>Local IP</span>
-            <span style={styles.statusValue}>{status.local_ip}</span>
+            <span style={styles.statusLabel}>Server URL</span>
+            <span
+              style={{ ...styles.statusValue, display: 'flex', alignItems: 'center', gap: '8px' }}
+            >
+              http://{status.local_ip}:{status.port}
+              <button style={styles.copyButton} onClick={copyServerUrl} title="Copy server URL">
+                {copied ? 'Copied!' : 'Copy'}
+              </button>
+            </span>
           </div>
         )}
+        <div style={styles.statusRow}>
+          <span style={styles.statusLabel}>Connected Extensions</span>
+          <span
+            style={{
+              ...styles.statusValue,
+              color: status.connected_clients > 0 ? '#4caf50' : '#666',
+            }}
+          >
+            {status.connected_clients}
+          </span>
+        </div>
       </div>
 
       {/* Activity */}
       <div style={styles.section}>
-        <h3 style={styles.sectionTitle}>Activity</h3>
+        <div style={styles.sectionHeader}>
+          <h3 style={{ ...styles.sectionTitle, marginBottom: 0 }}>Activity</h3>
+          <button
+            style={styles.clearButton}
+            onClick={handleClearActivity}
+            disabled={status.active_streams === 0 && (sonosState?.gena_subscriptions ?? 0) === 0}
+            title="Clear all streams and subscriptions"
+          >
+            Clear
+          </button>
+        </div>
         <div style={styles.statusRow}>
           <span style={styles.statusLabel}>Active Streams</span>
           <span style={styles.statusValue}>{status.active_streams}</span>
@@ -307,6 +356,26 @@ const styles: Record<string, preact.CSSProperties> = {
   scanButton: {
     background: '#0f3460',
     color: '#fff',
+    border: 'none',
+    padding: '4px 12px',
+    borderRadius: '4px',
+    cursor: 'pointer',
+    fontSize: '0.7rem',
+    fontWeight: 500,
+  },
+  copyButton: {
+    background: '#0f3460',
+    color: '#fff',
+    border: 'none',
+    padding: '2px 8px',
+    borderRadius: '3px',
+    cursor: 'pointer',
+    fontSize: '0.65rem',
+    fontWeight: 500,
+  },
+  clearButton: {
+    background: '#3d1a1a',
+    color: '#ff8a80',
     border: 'none',
     padding: '4px 12px',
     borderRadius: '4px',

@@ -334,6 +334,8 @@ pub struct StatusResponse {
     pub discovered_devices: u64,
     /// Number of active GENA subscriptions
     pub gena_subscriptions: u64,
+    /// Number of connected WebSocket clients (extensions)
+    pub connected_clients: u64,
     /// Non-fatal errors encountered during startup
     pub startup_errors: Option<Vec<String>>,
     /// Unix timestamp of last successful speaker discovery

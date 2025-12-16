@@ -240,6 +240,13 @@ pub fn run() {
 
             Ok(())
         })
+        .on_window_event(|window, event| {
+            // Intercept close to hide window instead of quitting app
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                api.prevent_close();
+                let _ = window.hide();
+            }
+        })
         .invoke_handler(tauri::generate_handler![
             commands::get_status,
             commands::get_speakers,
@@ -247,6 +254,7 @@ pub fn run() {
             commands::get_sonos_state,
             commands::get_config,
             commands::set_port,
+            commands::clear_activity,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

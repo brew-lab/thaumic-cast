@@ -283,6 +283,11 @@ export type components = {
              * @description Number of active GENA subscriptions
              */
             gena_subscriptions: number;
+            /**
+             * Format: uint64
+             * @description Number of connected WebSocket clients (extensions)
+             */
+            connected_clients: number;
             /** @description Non-fatal errors encountered during startup */
             startup_errors?: string[];
             /**

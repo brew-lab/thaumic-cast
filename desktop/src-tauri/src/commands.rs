@@ -27,6 +27,9 @@ pub async fn get_status(state: State<'_, AppState>) -> Result<StatusResponse, St
             .unwrap_or(0)
     };
 
+    // Get connected WebSocket clients count
+    let connected_clients = state.ws_broadcast.client_count().await as u64;
+
     // Get startup errors
     let startup_errors = state.startup_errors.read().clone();
 
@@ -38,6 +41,7 @@ pub async fn get_status(state: State<'_, AppState>) -> Result<StatusResponse, St
         active_streams: stream_count as u64,
         discovered_devices: get_cached_speaker_count(),
         gena_subscriptions,
+        connected_clients,
         startup_errors: Some(startup_errors),
         last_discovery_at: get_last_discovery_timestamp(),
     })
@@ -92,4 +96,24 @@ pub async fn set_port(port: u16, state: State<'_, AppState>, app: AppHandle) -> 
 #[tauri::command]
 pub async fn get_sonos_state(state: State<'_, AppState>) -> Result<SonosStateSnapshot, String> {
     Ok(state.sonos_state.snapshot())
+}
+
+/// Clear all activity (streams and GENA subscriptions)
+#[tauri::command]
+pub async fn clear_activity(state: State<'_, AppState>) -> Result<(), String> {
+    // Clear all streams
+    state.streams.clear_all();
+
+    // Clear all GENA subscriptions
+    {
+        let gena_guard = state.gena.read().await;
+        if let Some(ref gena) = *gena_guard {
+            gena.clear_all_subscriptions().await;
+            // Update subscription count in sonos state
+            state.sonos_state.set_gena_subscriptions(0);
+        }
+    }
+
+    log::info!("Cleared all activity");
+    Ok(())
 }

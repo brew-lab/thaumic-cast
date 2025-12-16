@@ -550,6 +550,26 @@ impl GenaListener {
             .collect()
     }
 
+    /// Clear all subscriptions (unsubscribe from all speakers)
+    pub async fn clear_all_subscriptions(&self) {
+        // Get unique speaker IPs
+        let speaker_ips: Vec<String> = self
+            .state
+            .subscriptions
+            .read()
+            .values()
+            .map(|sub| sub.speaker_ip.clone())
+            .collect::<std::collections::HashSet<_>>()
+            .into_iter()
+            .collect();
+
+        for speaker_ip in speaker_ips {
+            let _ = self.unsubscribe_all(&speaker_ip).await;
+        }
+
+        log::info!("[GENA] Cleared all subscriptions");
+    }
+
     /// Auto-subscribe to AVTransport for all discovered groups
     /// Also subscribes to ZoneGroupTopology on one coordinator for zone change events
     pub async fn auto_subscribe_to_groups(&self, coordinator_ips: &[String]) {

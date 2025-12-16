@@ -182,6 +182,15 @@ impl StreamManager {
         self.streams.read().len()
     }
 
+    /// Clear all streams
+    pub fn clear_all(&self) {
+        let had_streams = !self.streams.read().is_empty();
+        self.streams.write().clear();
+        if had_streams {
+            self.emit_streams_changed();
+        }
+    }
+
     /// Find a stream by speaker IP
     pub fn get_by_speaker_ip(&self, speaker_ip: &str) -> Option<Arc<StreamState>> {
         self.streams

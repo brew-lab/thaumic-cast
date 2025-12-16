@@ -561,6 +561,7 @@ components:
         - active_streams
         - discovered_devices
         - gena_subscriptions
+        - connected_clients
       properties:
         server_running:
           type: boolean
@@ -588,6 +589,10 @@ components:
           type: integer
           format: uint64
           description: Number of active GENA subscriptions
+        connected_clients:
+          type: integer
+          format: uint64
+          description: Number of connected WebSocket clients (extensions)
         startup_errors:
           type: array
           items:
