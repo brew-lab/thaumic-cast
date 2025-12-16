@@ -1,12 +1,14 @@
 mod routes;
 
 use crate::network::{find_available_port, GENA_PORT_RANGE, HTTP_PORT_RANGE};
+use crate::sonos::gena::SonosEvent;
 use crate::sonos::GenaListener;
 use crate::stream::StreamManager;
 use crate::Config;
 use axum::http::{header, HeaderValue, Method};
 use parking_lot::RwLock;
 use std::sync::Arc;
+use tauri::Emitter;
 use tower_http::cors::{AllowOrigin, CorsLayer};
 
 /// Result of starting the server, containing actual bound ports
@@ -37,6 +39,7 @@ impl AppState {
 pub async fn start_server(
     state: AppState,
     preferred_port: Option<u16>,
+    app_handle: tauri::AppHandle,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     // Find an available HTTP port using shared utility
     let (http_port, listener) =
@@ -54,13 +57,27 @@ pub async fn start_server(
                 // Get the actual GENA port after it binds
                 gena_port = Some(gena.get_port());
 
-                // Connect GENA events to stream manager
+                // Connect GENA events to stream manager and Tauri frontend
                 if let Some(mut event_rx) = gena.take_event_receiver() {
                     let streams = Arc::clone(&state.streams);
+                    let gena_ref = state.gena.clone();
+                    let app = app_handle.clone();
                     tokio::spawn(async move {
                         while let Some((speaker_ip, event)) = event_rx.recv().await {
                             log::info!("[GENA] Forwarding event from {} to stream", speaker_ip);
                             streams.send_event_by_ip(&speaker_ip, &event).await;
+
+                            // Emit group status changes to Tauri frontend
+                            if matches!(
+                                event,
+                                SonosEvent::TransportState { .. } | SonosEvent::SourceChanged { .. }
+                            ) {
+                                let gena_guard = gena_ref.read().await;
+                                if let Some(ref gena) = *gena_guard {
+                                    let statuses = gena.get_all_group_statuses();
+                                    let _ = app.emit("group-status-changed", &statuses);
+                                }
+                            }
                         }
                     });
                 }

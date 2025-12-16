@@ -163,7 +163,8 @@ pub fn run() {
             let gena_for_discovery = state.gena.clone();
 
             tauri::async_runtime::spawn(async move {
-                if let Err(e) = server::start_server(state, preferred_port).await {
+                if let Err(e) = server::start_server(state, preferred_port, app_handle.clone()).await
+                {
                     log::error!("Server error: {}", e);
                     // Notify the app about the error
                     let _ = app_handle.emit("server-error", e.to_string());

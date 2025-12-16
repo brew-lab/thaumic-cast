@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'preact/hooks';
 import { invoke } from '@tauri-apps/api/core';
+import { listen } from '@tauri-apps/api/event';
 import { enable, disable, isEnabled } from '@tauri-apps/plugin-autostart';
 import type { LocalGroup, Status, GroupStatus } from '../types';
 
@@ -78,8 +79,9 @@ export function StatusPanel({ status }: Props) {
     loadGroups();
   }, []);
 
-  // Poll for group status every 2 seconds
+  // Subscribe to group status events from GENA
   useEffect(() => {
+    // Initial fetch on mount
     const fetchStatus = async () => {
       try {
         const statuses = await invoke<GroupStatus[]>('get_group_status');
@@ -88,10 +90,16 @@ export function StatusPanel({ status }: Props) {
         console.error('Failed to fetch group status:', e);
       }
     };
-
     fetchStatus();
-    const interval = setInterval(fetchStatus, 2000);
-    return () => clearInterval(interval);
+
+    // Listen for real-time updates from GENA events
+    const unlisten = listen<GroupStatus[]>('group-status-changed', (event) => {
+      setGroupStatuses(new Map(event.payload.map((s) => [s.coordinatorIp, s])));
+    });
+
+    return () => {
+      unlisten.then((fn) => fn());
+    };
   }, []);
 
   useEffect(() => {
