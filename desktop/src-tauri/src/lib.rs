@@ -133,6 +133,9 @@ pub fn run() {
             // Set app handle on StreamManager for event emission
             streams.set_app_handle(app.handle().clone());
 
+            // Create WebSocket broadcast manager
+            let ws_broadcast = Arc::new(server::WsBroadcast::new());
+
             // Create app state
             let state = AppState {
                 config: config.clone(),
@@ -141,6 +144,7 @@ pub fn run() {
                 actual_ports,
                 startup_errors,
                 sonos_state: sonos_state.clone(),
+                ws_broadcast,
             };
 
             // Store state in Tauri

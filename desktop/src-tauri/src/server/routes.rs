@@ -39,9 +39,8 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/streams/{id}/metadata", post(update_stream_metadata))
         .route("/streams/{id}/live.mp3", get(stream_audio))
         .route("/streams/{id}/live.aac", get(stream_audio))
-        // WebSocket endpoints
+        // WebSocket endpoint (handles commands, events, and audio frames)
         .route("/ws", get(ws_handler))
-        .route("/ws/ingest", get(ws_ingest_handler))
         .with_state(state)
 }
 
@@ -382,56 +381,7 @@ async fn update_stream_metadata(
     Json(serde_json::json!({ "success": true })).into_response()
 }
 
-#[derive(Deserialize)]
-struct IngestQuery {
-    #[serde(rename = "streamId")]
-    stream_id: String,
-    #[allow(dead_code)]
-    token: Option<String>, // Ignored in desktop app (no auth)
-}
-
-async fn ws_ingest_handler(
-    ws: WebSocketUpgrade,
-    Query(params): Query<IngestQuery>,
-    State(state): State<AppState>,
-) -> impl IntoResponse {
-    ws.on_upgrade(move |socket| handle_ingest(socket, params.stream_id, state))
-}
-
-async fn handle_ingest(socket: WebSocket, stream_id: String, state: AppState) {
-    log::info!("WebSocket ingest connected for stream: {}", stream_id);
-
-    let stream = state.streams.get_or_create(&stream_id);
-    let (sender, mut receiver) = socket.split();
-
-    // Store the sender for sending events back to the extension
-    stream.set_ws_sender(sender).await;
-
-    while let Some(msg) = receiver.next().await {
-        match msg {
-            Ok(Message::Binary(data)) => {
-                stream.push_frame(Bytes::from(data));
-            }
-            Ok(Message::Close(_)) => {
-                log::info!("WebSocket ingest closed for stream: {}", stream_id);
-                break;
-            }
-            Err(e) => {
-                log::error!("WebSocket error: {}", e);
-                break;
-            }
-            _ => {}
-        }
-    }
-
-    // Note: We keep GENA subscriptions active for continuous status monitoring
-
-    // Cleanup stream when ingest disconnects
-    state.streams.remove(&stream_id);
-    log::info!("Stream removed: {}", stream_id);
-}
-
-// ============ WebSocket Command Handler ============
+// ============ WebSocket Handler ============
 
 /// Event sent on WebSocket connection with initial state
 #[derive(Serialize)]
@@ -440,15 +390,26 @@ struct WsConnectedEvent {
     state: SonosStateSnapshot,
 }
 
-async fn ws_handler(
-    ws: WebSocketUpgrade,
-    State(state): State<AppState>,
-) -> impl IntoResponse {
-    ws.on_upgrade(move |socket| handle_ws_connection(socket, state))
+/// Optional query params for /ws endpoint
+#[derive(Deserialize, Default)]
+struct WsQuery {
+    #[serde(rename = "streamId")]
+    stream_id: Option<String>,
 }
 
-async fn handle_ws_connection(socket: WebSocket, state: AppState) {
-    log::info!("WebSocket control connection established");
+async fn ws_handler(
+    ws: WebSocketUpgrade,
+    Query(params): Query<WsQuery>,
+    State(state): State<AppState>,
+) -> impl IntoResponse {
+    ws.on_upgrade(move |socket| handle_ws_connection(socket, params.stream_id, state))
+}
+
+async fn handle_ws_connection(socket: WebSocket, initial_stream_id: Option<String>, state: AppState) {
+    log::info!(
+        "WebSocket connection established (stream_id: {:?})",
+        initial_stream_id
+    );
 
     let (mut sender, mut receiver) = socket.split();
 
@@ -464,36 +425,85 @@ async fn handle_ws_connection(socket: WebSocket, state: AppState) {
         }
     }
 
-    // Process incoming messages
-    while let Some(msg) = receiver.next().await {
-        match msg {
-            Ok(Message::Text(text)) => {
-                log::debug!("Received WS command: {}", text);
-                let response = handle_ws_command(&text, &state).await;
-                log::debug!("Sending WS response: {:?}", response);
-                if let Ok(json) = serde_json::to_string(&response) {
-                    if let Err(e) = sender.send(Message::Text(json.into())).await {
-                        log::error!("Failed to send response: {}", e);
-                        break;
-                    }
+    // Create channel for receiving broadcast events
+    let (event_tx, mut event_rx) = tokio::sync::mpsc::channel::<String>(32);
+
+    // Register with broadcast manager
+    state.ws_broadcast.register(event_tx).await;
+    log::debug!("[WS] Registered for broadcasts, {} clients connected",
+        state.ws_broadcast.client_count().await);
+
+    // Track associated stream (can be set via query param or createStream command)
+    let mut current_stream_id = initial_stream_id.clone();
+
+    // If stream_id was provided, get/create the stream
+    if let Some(ref stream_id) = current_stream_id {
+        state.streams.get_or_create(stream_id);
+    }
+
+    // Process incoming messages and broadcast events
+    loop {
+        tokio::select! {
+            // Handle broadcast events
+            Some(event_json) = event_rx.recv() => {
+                if let Err(e) = sender.send(Message::Text(event_json.into())).await {
+                    log::debug!("Failed to send broadcast event: {}", e);
+                    break;
                 }
             }
-            Ok(Message::Close(_)) => {
-                log::info!("WebSocket control connection closed");
-                break;
+            // Handle incoming WebSocket messages
+            msg = receiver.next() => {
+                match msg {
+                    Some(Ok(Message::Text(text))) => {
+                        log::debug!("Received WS command: {}", text);
+                        let response = handle_ws_command(&text, &state, &mut current_stream_id).await;
+                        log::debug!("Sending WS response: {:?}", response);
+                        if let Ok(json) = serde_json::to_string(&response) {
+                            if let Err(e) = sender.send(Message::Text(json.into())).await {
+                                log::error!("Failed to send response: {}", e);
+                                break;
+                            }
+                        }
+                    }
+                    Some(Ok(Message::Binary(data))) => {
+                        // Audio frame - push to stream if we have one
+                        if let Some(ref stream_id) = current_stream_id {
+                            if let Some(stream) = state.streams.get(stream_id) {
+                                stream.push_frame(Bytes::from(data));
+                            }
+                        } else {
+                            log::warn!("Received audio frame but no stream associated");
+                        }
+                    }
+                    Some(Ok(Message::Close(_))) => {
+                        log::info!("WebSocket connection closed");
+                        break;
+                    }
+                    Some(Err(e)) => {
+                        log::error!("WebSocket error: {}", e);
+                        break;
+                    }
+                    None => break,
+                    _ => {}
+                }
             }
-            Err(e) => {
-                log::error!("WebSocket error: {}", e);
-                break;
-            }
-            _ => {}
         }
     }
 
-    log::info!("WebSocket control connection ended");
+    // Remove stream if we created one
+    if let Some(ref stream_id) = current_stream_id {
+        state.streams.remove(stream_id);
+        log::info!("Stream removed: {}", stream_id);
+    }
+
+    log::info!("WebSocket connection ended");
 }
 
-async fn handle_ws_command(text: &str, state: &AppState) -> WsResponse {
+async fn handle_ws_command(
+    text: &str,
+    state: &AppState,
+    current_stream_id: &mut Option<String>,
+) -> WsResponse {
     let command: WsCommand = match serde_json::from_str(text) {
         Ok(cmd) => cmd,
         Err(e) => {
@@ -675,21 +685,32 @@ async fn handle_ws_command(text: &str, state: &AppState) -> WsResponse {
                 .as_ref()
                 .and_then(|p| p.get("metadata"))
                 .and_then(|v| serde_json::from_value(v.clone()).ok());
+            let coordinator_ip = command
+                .payload
+                .as_ref()
+                .and_then(|p| p.get("coordinatorIp"))
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string());
 
             let stream_id = Uuid::new_v4().to_string();
-            let _stream = state.streams.get_or_create(&stream_id);
+            let stream = state.streams.get_or_create(&stream_id);
+
+            // Set coordinator IP for GENA event routing
+            if let Some(ref ip) = coordinator_ip {
+                stream.set_speaker_ip(ip.clone());
+            }
 
             if let Some(meta) = metadata {
-                if let Some(stream) = state.streams.get(&stream_id) {
-                    stream.set_metadata(meta);
-                }
+                stream.set_metadata(meta);
             }
+
+            // Associate this connection with the stream for audio frames
+            *current_stream_id = Some(stream_id.clone());
 
             let local_ip = get_local_ip().unwrap_or_else(|| "127.0.0.1".to_string());
             let actual_ports = state.actual_ports.read();
             let port = actual_ports.as_ref().map(|p| p.http_port).unwrap_or(45100);
 
-            let ingest_url = format!("ws://{}:{}/ws/ingest?streamId={}", local_ip, port, stream_id);
             let playback_url = format!("http://{}:{}/streams/{}/live.mp3", local_ip, port, stream_id);
 
             WsResponse {
@@ -698,7 +719,6 @@ async fn handle_ws_command(text: &str, state: &AppState) -> WsResponse {
                 data: Some(
                     serde_json::json!({
                         "streamId": stream_id,
-                        "ingestUrl": ingest_url,
                         "playbackUrl": playback_url
                     })
                     .as_object()
@@ -717,6 +737,11 @@ async fn handle_ws_command(text: &str, state: &AppState) -> WsResponse {
                 .unwrap_or("");
 
             state.streams.remove(stream_id);
+
+            // Clear current stream if it matches
+            if current_stream_id.as_deref() == Some(stream_id) {
+                *current_stream_id = None;
+            }
 
             WsResponse {
                 id,

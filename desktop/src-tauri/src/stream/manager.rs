@@ -1,6 +1,4 @@
-use axum::extract::ws::{Message, WebSocket};
 use bytes::Bytes;
-use futures_util::SinkExt;
 use parking_lot::RwLock;
 use serde::Serialize;
 use std::collections::{HashMap, VecDeque};
@@ -8,7 +6,7 @@ use std::sync::Arc;
 use tauri::Emitter;
 use tokio::sync::broadcast;
 
-use crate::sonos::{SonosEvent, StreamMetadata};
+use crate::sonos::StreamMetadata;
 
 const MAX_BUFFER_FRAMES: usize = 300; // ~10 seconds at 30fps MP3 frames
 const MAX_SUBSCRIBERS: usize = 5;
@@ -16,9 +14,6 @@ const CHANNEL_CAPACITY: usize = 100;
 
 /// ICY metadata interval (bytes between metadata blocks)
 pub const ICY_METAINT: usize = 8192;
-
-/// WebSocket sender for sending events back to the extension
-pub type WsSender = futures_util::stream::SplitSink<WebSocket, Message>;
 
 /// State for a single active stream
 pub struct StreamState {
@@ -28,7 +23,6 @@ pub struct StreamState {
     subscriber_count: RwLock<usize>,
     metadata: RwLock<Option<StreamMetadata>>,
     speaker_ip: RwLock<Option<String>>,
-    ws_sender: tokio::sync::Mutex<Option<WsSender>>,
 }
 
 impl StreamState {
@@ -41,7 +35,6 @@ impl StreamState {
             subscriber_count: RwLock::new(0),
             metadata: RwLock::new(None),
             speaker_ip: RwLock::new(None),
-            ws_sender: tokio::sync::Mutex::new(None),
         }
     }
 
@@ -63,31 +56,6 @@ impl StreamState {
     /// Get the speaker IP for this stream
     pub fn get_speaker_ip(&self) -> Option<String> {
         self.speaker_ip.read().clone()
-    }
-
-    /// Set the WebSocket sender for sending events back to the extension
-    pub async fn set_ws_sender(&self, sender: WsSender) {
-        *self.ws_sender.lock().await = Some(sender);
-    }
-
-    /// Take the WebSocket sender (removes it from the stream)
-    pub async fn take_ws_sender(&self) -> Option<WsSender> {
-        self.ws_sender.lock().await.take()
-    }
-
-    /// Send an event to the extension via WebSocket
-    pub async fn send_event(&self, event: &SonosEvent) -> Result<(), &'static str> {
-        let json = serde_json::to_string(event).map_err(|_| "Failed to serialize event")?;
-
-        let mut sender = self.ws_sender.lock().await;
-        if let Some(ref mut ws) = *sender {
-            ws.send(Message::Text(json.into()))
-                .await
-                .map_err(|_| "Failed to send event")?;
-            Ok(())
-        } else {
-            Err("No WebSocket sender attached")
-        }
     }
 
     /// Push a frame to the stream buffer and broadcast to subscribers
@@ -223,35 +191,6 @@ impl StreamManager {
             .cloned()
     }
 
-    /// Send an event to the stream associated with the given speaker IP
-    pub async fn send_event_by_ip(&self, speaker_ip: &str, event: &SonosEvent) -> bool {
-        if let Some(stream) = self.get_by_speaker_ip(speaker_ip) {
-            match stream.send_event(event).await {
-                Ok(_) => {
-                    log::debug!(
-                        "[StreamManager] Sent event to stream {} for speaker {}",
-                        stream.id,
-                        speaker_ip
-                    );
-                    true
-                }
-                Err(e) => {
-                    log::warn!(
-                        "[StreamManager] Failed to send event to stream {}: {}",
-                        stream.id,
-                        e
-                    );
-                    false
-                }
-            }
-        } else {
-            log::debug!(
-                "[StreamManager] No stream found for speaker IP: {}",
-                speaker_ip
-            );
-            false
-        }
-    }
 }
 
 impl Default for StreamManager {

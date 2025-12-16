@@ -14,7 +14,7 @@ pub use client::{
 pub use crate::generated::StreamMetadata;
 
 // Re-export GENA types (with local extension traits)
-pub use gena::{GenaListener, GenaService, SonosEvent};
+pub use gena::{GenaListener, GenaService};
 
 // Re-export state manager
 pub use state::SonosState;

@@ -10,6 +10,59 @@ use parking_lot::RwLock;
 use std::sync::Arc;
 use tower_http::cors::{AllowOrigin, CorsLayer};
 
+/// Channel sender for a WebSocket client
+pub type WsEventSender = tokio::sync::mpsc::Sender<String>;
+
+/// Manages all connected WebSocket clients for event broadcasting
+pub struct WsBroadcast {
+    senders: tokio::sync::Mutex<Vec<WsEventSender>>,
+}
+
+impl WsBroadcast {
+    pub fn new() -> Self {
+        Self {
+            senders: tokio::sync::Mutex::new(Vec::new()),
+        }
+    }
+
+    /// Register a new client channel for broadcasting
+    pub async fn register(&self, sender: WsEventSender) {
+        self.senders.lock().await.push(sender);
+    }
+
+    /// Broadcast an event to all connected clients
+    /// Removes disconnected clients automatically
+    pub async fn broadcast(&self, event: &SonosEvent) {
+        let json = match serde_json::to_string(event) {
+            Ok(j) => j,
+            Err(e) => {
+                log::error!("[WsBroadcast] Failed to serialize event: {}", e);
+                return;
+            }
+        };
+
+        let mut senders = self.senders.lock().await;
+        let mut failed_indices = Vec::new();
+
+        for (i, sender) in senders.iter().enumerate() {
+            if sender.send(json.clone()).await.is_err() {
+                log::debug!("[WsBroadcast] Client {} disconnected", i);
+                failed_indices.push(i);
+            }
+        }
+
+        // Remove failed senders in reverse order to preserve indices
+        for i in failed_indices.into_iter().rev() {
+            senders.swap_remove(i);
+        }
+    }
+
+    /// Get the number of connected clients
+    pub async fn client_count(&self) -> usize {
+        self.senders.lock().await.len()
+    }
+}
+
 /// Result of starting the server, containing actual bound ports
 #[derive(Debug, Clone)]
 pub struct ServerPorts {
@@ -28,6 +81,8 @@ pub struct AppState {
     pub startup_errors: Arc<RwLock<Vec<String>>>,
     /// Centralized Sonos state for event-driven frontend updates
     pub sonos_state: Arc<SonosState>,
+    /// WebSocket broadcast for pushing events to all connected clients
+    pub ws_broadcast: Arc<WsBroadcast>,
 }
 
 impl AppState {
@@ -58,14 +113,15 @@ pub async fn start_server(
                 // Get the actual GENA port after it binds
                 gena_port = Some(gena.get_port());
 
-                // Connect GENA events to stream manager and SonosState
+                // Connect GENA events to WebSocket broadcast and SonosState
                 if let Some(mut event_rx) = gena.take_event_receiver() {
-                    let streams = Arc::clone(&state.streams);
                     let gena_ref = state.gena.clone();
                     let sonos_state = Arc::clone(&state.sonos_state);
+                    let ws_broadcast = Arc::clone(&state.ws_broadcast);
                     tokio::spawn(async move {
-                        while let Some((speaker_ip, event)) = event_rx.recv().await {
-                            streams.send_event_by_ip(&speaker_ip, &event).await;
+                        while let Some((_speaker_ip, event)) = event_rx.recv().await {
+                            // Broadcast to all connected WebSocket clients
+                            ws_broadcast.broadcast(&event).await;
 
                             // Update centralized Sonos state (which emits to frontend)
                             if matches!(

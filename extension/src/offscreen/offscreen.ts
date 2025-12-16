@@ -25,15 +25,12 @@ interface StreamSession {
   mediaStream: MediaStream | null;
   workletNode: AudioWorkletNode | null;
   sourceNode: MediaStreamAudioSourceNode | null;
-  websocket: WebSocket | null;
   encoder: UnifiedEncoder | null;
   codec: AudioCodec;
-  reconnectAttempts: number;
   frameBuffer: Uint8Array[];
   stopped: boolean;
   paused: boolean;
   heartbeatTimer: ReturnType<typeof setInterval> | null;
-  ingestUrl: string;
 }
 
 // wasm-media-encoders expects specific CBR bitrate values
@@ -116,6 +113,15 @@ function connectControlWebSocket(url: string): void {
     console.log('[Offscreen] Control WebSocket connected');
     if (controlConnection) {
       controlConnection.reconnectAttempts = 0;
+    }
+
+    // Flush any buffered audio frames from current session
+    if (currentSession && currentSession.frameBuffer.length > 0) {
+      console.log(`[Offscreen] Flushing ${currentSession.frameBuffer.length} buffered frames`);
+      for (const frame of currentSession.frameBuffer) {
+        ws.send(frame);
+      }
+      currentSession.frameBuffer = [];
     }
   };
 
@@ -303,7 +309,12 @@ async function detectBestCodec(quality: QualityPreset): Promise<AudioCodec> {
 async function handleStart(
   message: OffscreenStartMessage
 ): Promise<{ success: boolean; error?: string }> {
-  const { streamId, mediaStreamId, quality, ingestUrl } = message;
+  const { streamId, mediaStreamId, quality } = message;
+
+  // Ensure control WebSocket is connected (audio frames go over the same connection)
+  if (!controlConnection?.ws || controlConnection.ws.readyState !== WebSocket.OPEN) {
+    return { success: false, error: 'WebSocket not connected. Connect first with WS_CONNECT.' };
+  }
 
   // Stop any existing session
   if (currentSession) {
@@ -388,28 +399,22 @@ async function handleStart(
 
     source.connect(workletNode);
 
-    // Create session
+    // Create session (audio frames sent via controlConnection)
     const session: StreamSession = {
       streamId,
       audioContext,
       mediaStream,
       workletNode,
       sourceNode: source,
-      websocket: null,
       encoder,
       codec,
-      reconnectAttempts: 0,
       frameBuffer: [],
       stopped: false,
       paused: false,
       heartbeatTimer: null,
-      ingestUrl,
     };
 
     currentSession = session;
-
-    // Connect WebSocket
-    connectWebSocket(session, ingestUrl);
 
     // Handle PCM data from worklet
     workletNode.port.onmessage = (event) => {
@@ -486,11 +491,6 @@ async function handleResume(message: OffscreenResumeMessage): Promise<{ success:
 
   currentSession.paused = false;
 
-  // If WebSocket was closed during pause, reconnect
-  if (!currentSession.websocket || currentSession.websocket.readyState !== WebSocket.OPEN) {
-    connectWebSocket(currentSession, currentSession.ingestUrl);
-  }
-
   console.log('[Offscreen] Session resumed');
   return { success: true };
 }
@@ -502,8 +502,12 @@ async function stopSession(session: StreamSession): Promise<void> {
   // Flush and close encoder
   if (session.encoder) {
     const finalFrame = session.encoder.finalize();
-    if (finalFrame && finalFrame.length > 0 && session.websocket?.readyState === WebSocket.OPEN) {
-      session.websocket.send(finalFrame);
+    if (
+      finalFrame &&
+      finalFrame.length > 0 &&
+      controlConnection?.ws?.readyState === WebSocket.OPEN
+    ) {
+      controlConnection.ws.send(finalFrame);
     }
     // Close AAC encoder (MP3 encoder doesn't have close method)
     if (session.encoder.close) {
@@ -511,8 +515,7 @@ async function stopSession(session: StreamSession): Promise<void> {
     }
   }
 
-  // Close WebSocket
-  session.websocket?.close();
+  // Note: Don't close controlConnection - it's shared and handles its own lifecycle
 
   // Stop audio
   session.workletNode?.disconnect();
@@ -522,77 +525,9 @@ async function stopSession(session: StreamSession): Promise<void> {
   session.mediaStream?.getTracks().forEach((track) => track.stop());
 }
 
-function connectWebSocket(session: StreamSession, url: string): void {
-  if (session.stopped) return;
-
-  const ws = new WebSocket(url);
-  ws.binaryType = 'arraybuffer';
-
-  ws.onopen = () => {
-    console.log('[Offscreen] WebSocket connected');
-    session.reconnectAttempts = 0;
-
-    // Send buffered frames
-    for (const frame of session.frameBuffer) {
-      ws.send(frame);
-    }
-    session.frameBuffer = [];
-  };
-
-  ws.onclose = () => {
-    if (session.stopped) return;
-
-    console.log('[Offscreen] WebSocket closed, attempting reconnect...');
-    attemptReconnect(session, url);
-  };
-
-  ws.onerror = (error) => {
-    console.error('[Offscreen] WebSocket error:', error);
-  };
-
-  // Handle incoming messages (Sonos events from server)
-  ws.onmessage = (event) => {
-    // Events come as text (JSON), audio frames would be binary (but we only send, not receive audio)
-    if (typeof event.data === 'string') {
-      try {
-        const sonosEvent = JSON.parse(event.data);
-        console.log('[Offscreen] Received Sonos event:', sonosEvent);
-        // Forward to background script
-        chrome.runtime.sendMessage({
-          type: 'SONOS_EVENT',
-          payload: sonosEvent,
-        });
-      } catch (err) {
-        console.error('[Offscreen] Failed to parse WebSocket message:', err);
-      }
-    }
-  };
-
-  session.websocket = ws;
-}
-
-function attemptReconnect(session: StreamSession, url: string): void {
-  if (session.stopped) return;
-
-  session.reconnectAttempts++;
-
-  if (session.reconnectAttempts > MAX_RECONNECT_ATTEMPTS) {
-    console.error('[Offscreen] Max reconnect attempts exceeded');
-    chrome.runtime.sendMessage({
-      type: 'CAST_ERROR',
-      reason: 'connection_lost',
-    });
-    stopSession(session);
-    return;
-  }
-
-  const delay = Math.min(500 * Math.pow(2, session.reconnectAttempts - 1), 5000);
-  setTimeout(() => connectWebSocket(session, url), delay);
-}
-
 function sendFrame(session: StreamSession, frame: Uint8Array): void {
-  if (session.websocket?.readyState === WebSocket.OPEN) {
-    session.websocket.send(frame);
+  if (controlConnection?.ws?.readyState === WebSocket.OPEN) {
+    controlConnection.ws.send(frame);
   } else {
     // Buffer frames during reconnection
     session.frameBuffer.push(frame);
