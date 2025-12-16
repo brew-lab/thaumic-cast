@@ -187,6 +187,23 @@ pub struct GroupStatus {
     pub is_playing_our_stream: Option<bool>,
 }
 
+/// Complete Sonos state snapshot emitted on any change
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SonosStateSnapshot {
+    /// Zone groups with their members
+    pub groups: Vec<LocalGroup>,
+    /// Runtime status for each group coordinator
+    pub group_statuses: Vec<GroupStatus>,
+    /// Number of Sonos devices from last discovery
+    pub discovered_devices: u64,
+    /// Number of active GENA subscriptions
+    pub gena_subscriptions: u64,
+    /// Unix timestamp of last successful speaker discovery
+    pub last_discovery_at: Option<u64>,
+    /// True while SSDP discovery is running
+    pub is_discovering: bool,
+}
+
 /// Request to create a new audio stream
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

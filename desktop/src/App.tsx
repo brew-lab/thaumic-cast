@@ -1,12 +1,15 @@
 import { useState, useEffect } from 'preact/hooks';
 import { invoke } from '@tauri-apps/api/core';
+import { listen } from '@tauri-apps/api/event';
 import { StatusPanel } from './components/StatusPanel';
-import type { Status } from './types';
+import type { Status, SonosStateSnapshot } from './types';
 
 export function App() {
   const [status, setStatus] = useState<Status | null>(null);
+  const [sonosState, setSonosState] = useState<SonosStateSnapshot | null>(null);
   const [error, setError] = useState<string | null>(null);
 
+  // Fetch server status (ports, running state, etc.)
   const fetchStatus = async () => {
     try {
       const result = await invoke<Status>('get_status');
@@ -17,10 +20,28 @@ export function App() {
     }
   };
 
+  // Server status polling (less frequent since Sonos state is event-driven)
   useEffect(() => {
     fetchStatus();
-    const interval = setInterval(fetchStatus, 5000);
+    const interval = setInterval(fetchStatus, 10000); // 10 seconds
     return () => clearInterval(interval);
+  }, []);
+
+  // Sonos state is event-driven (no polling needed)
+  useEffect(() => {
+    // Initial fetch
+    invoke<SonosStateSnapshot>('get_sonos_state')
+      .then(setSonosState)
+      .catch((e) => console.error('Failed to get Sonos state:', e));
+
+    // Listen for state changes
+    const unlisten = listen<SonosStateSnapshot>('sonos-state-changed', (event) => {
+      setSonosState(event.payload);
+    });
+
+    return () => {
+      unlisten.then((fn) => fn());
+    };
   }, []);
 
   return (
@@ -30,7 +51,11 @@ export function App() {
 
       {error && <div style={styles.error}>{error}</div>}
 
-      {status ? <StatusPanel status={status} /> : <div style={styles.loading}>Loading...</div>}
+      {status ? (
+        <StatusPanel status={status} sonosState={sonosState} />
+      ) : (
+        <div style={styles.loading}>Loading...</div>
+      )}
     </div>
   );
 }

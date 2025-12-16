@@ -1,11 +1,11 @@
-import { useState, useEffect } from 'preact/hooks';
+import { useState, useEffect, useMemo } from 'preact/hooks';
 import { invoke } from '@tauri-apps/api/core';
-import { listen } from '@tauri-apps/api/event';
 import { enable, disable, isEnabled } from '@tauri-apps/plugin-autostart';
-import type { LocalGroup, Status, GroupStatus } from '../types';
+import type { Status, GroupStatus, SonosStateSnapshot } from '../types';
 
 interface Props {
   status: Status;
+  sonosState: SonosStateSnapshot | null;
 }
 
 function formatTimestamp(unixTimestamp: number | null | undefined): string {
@@ -57,50 +57,17 @@ const indicatorStyles = {
   },
 };
 
-export function StatusPanel({ status }: Props) {
-  const [groups, setGroups] = useState<LocalGroup[]>([]);
-  const [groupStatuses, setGroupStatuses] = useState<Map<string, GroupStatus>>(new Map());
+export function StatusPanel({ status, sonosState }: Props) {
   const [scanning, setScanning] = useState(false);
   const [autostartEnabled, setAutostartEnabled] = useState<boolean | null>(null);
   const [autostartLoading, setAutostartLoading] = useState(false);
 
-  // Load groups on mount (requires speakers to be cached first)
-  useEffect(() => {
-    const loadGroups = async () => {
-      try {
-        // Ensure speakers are cached first
-        await invoke('get_speakers');
-        const result = await invoke<LocalGroup[]>('get_groups');
-        setGroups(result);
-      } catch (e) {
-        console.error('Failed to load groups:', e);
-      }
-    };
-    loadGroups();
-  }, []);
-
-  // Subscribe to group status events from GENA
-  useEffect(() => {
-    // Initial fetch on mount
-    const fetchStatus = async () => {
-      try {
-        const statuses = await invoke<GroupStatus[]>('get_group_status');
-        setGroupStatuses(new Map(statuses.map((s) => [s.coordinatorIp, s])));
-      } catch (e) {
-        console.error('Failed to fetch group status:', e);
-      }
-    };
-    fetchStatus();
-
-    // Listen for real-time updates from GENA events
-    const unlisten = listen<GroupStatus[]>('group-status-changed', (event) => {
-      setGroupStatuses(new Map(event.payload.map((s) => [s.coordinatorIp, s])));
-    });
-
-    return () => {
-      unlisten.then((fn) => fn());
-    };
-  }, []);
+  // Derive groups and statuses from centralized sonosState
+  const groups = sonosState?.groups ?? [];
+  const groupStatuses = useMemo(() => {
+    if (!sonosState?.group_statuses) return new Map<string, GroupStatus>();
+    return new Map(sonosState.group_statuses.map((s) => [s.coordinatorIp, s]));
+  }, [sonosState?.group_statuses]);
 
   useEffect(() => {
     isEnabled().then(setAutostartEnabled).catch(console.error);
@@ -109,10 +76,8 @@ export function StatusPanel({ status }: Props) {
   const handleScan = async () => {
     setScanning(true);
     try {
-      // Refresh speakers first, then get updated groups
+      // Just trigger a refresh - state will update via sonos-state-changed event
       await invoke('refresh_speakers');
-      const result = await invoke<LocalGroup[]>('get_groups');
-      setGroups(result);
     } catch (e) {
       console.error('Failed to scan for speakers:', e);
     } finally {
@@ -189,7 +154,7 @@ export function StatusPanel({ status }: Props) {
         </div>
         <div style={styles.statusRow}>
           <span style={styles.statusLabel}>GENA Subscriptions</span>
-          <span style={styles.statusValue}>{status.gena_subscriptions}</span>
+          <span style={styles.statusValue}>{sonosState?.gena_subscriptions ?? 0}</span>
         </div>
       </div>
 
@@ -197,17 +162,21 @@ export function StatusPanel({ status }: Props) {
       <div style={styles.section}>
         <div style={styles.sectionHeader}>
           <h3 style={{ ...styles.sectionTitle, marginBottom: 0 }}>Sonos</h3>
-          <button style={styles.scanButton} onClick={handleScan} disabled={scanning}>
-            {scanning ? 'Scanning...' : 'Scan'}
+          <button
+            style={styles.scanButton}
+            onClick={handleScan}
+            disabled={scanning || sonosState?.is_discovering}
+          >
+            {scanning || sonosState?.is_discovering ? 'Scanning...' : 'Scan'}
           </button>
         </div>
         <div style={styles.statusRow}>
           <span style={styles.statusLabel}>Last Scan</span>
-          <span style={styles.statusValue}>{formatTimestamp(status.last_discovery_at)}</span>
+          <span style={styles.statusValue}>{formatTimestamp(sonosState?.last_discovery_at)}</span>
         </div>
         <div style={styles.statusRow}>
           <span style={styles.statusLabel}>Devices</span>
-          <span style={styles.statusValue}>{status.discovered_devices}</span>
+          <span style={styles.statusValue}>{sonosState?.discovered_devices ?? 0}</span>
         </div>
         <div style={styles.statusRow}>
           <span style={styles.statusLabel}>Groups</span>

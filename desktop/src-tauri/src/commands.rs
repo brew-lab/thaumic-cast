@@ -1,4 +1,6 @@
-use crate::generated::{ConfigResponse, GroupStatus, LocalGroup, Speaker, StatusResponse};
+use crate::generated::{
+    ConfigResponse, GroupStatus, LocalGroup, SonosStateSnapshot, Speaker, StatusResponse,
+};
 use crate::network::get_local_ip;
 use crate::server::AppState;
 use crate::sonos::{get_cached_speaker_count, get_last_discovery_timestamp};
@@ -102,4 +104,10 @@ pub async fn get_group_status(state: State<'_, AppState>) -> Result<Vec<GroupSta
         Some(gena) => gena.get_all_group_statuses(),
         None => vec![],
     })
+}
+
+/// Get the complete Sonos state snapshot (groups, statuses, discovery info)
+#[tauri::command]
+pub async fn get_sonos_state(state: State<'_, AppState>) -> Result<SonosStateSnapshot, String> {
+    Ok(state.sonos_state.snapshot())
 }

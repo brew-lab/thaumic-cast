@@ -21,6 +21,7 @@ use tauri_plugin_store::StoreExt;
 const DISCOVERY_INTERVAL: Duration = Duration::from_secs(300);
 
 pub use server::AppState;
+use sonos::SonosState;
 use stream::StreamManager;
 
 /// Default trusted origin for the Thaumic Cast Chrome extension
@@ -124,6 +125,10 @@ pub fn run() {
             let gena = Arc::new(tokio::sync::RwLock::new(None));
             let actual_ports = Arc::new(RwLock::new(None));
             let startup_errors = Arc::new(RwLock::new(Vec::new()));
+            let sonos_state = Arc::new(SonosState::new());
+
+            // Set app handle on SonosState for event emission
+            sonos_state.set_app_handle(app.handle().clone());
 
             // Create app state
             let state = AppState {
@@ -132,6 +137,7 @@ pub fn run() {
                 gena,
                 actual_ports,
                 startup_errors,
+                sonos_state: sonos_state.clone(),
             };
 
             // Store state in Tauri
@@ -159,8 +165,9 @@ pub fn run() {
             let preferred_port = config.read().preferred_port;
             let app_handle = app.handle().clone();
 
-            // Clone gena reference for discovery task before state is moved to server
+            // Clone references for discovery task before state is moved to server
             let gena_for_discovery = state.gena.clone();
+            let sonos_state_for_discovery = sonos_state.clone();
 
             tauri::async_runtime::spawn(async move {
                 if let Err(e) = server::start_server(state, preferred_port, app_handle.clone()).await
@@ -179,23 +186,46 @@ pub fn run() {
                 loop {
                     interval.tick().await;
                     log::debug!("Running speaker discovery...");
+
+                    // Mark discovery as in progress
+                    sonos_state_for_discovery.set_discovery_state(true, 0, None);
+
                     match sonos::discover_speakers(true).await {
                         Ok(speakers) => {
                             log::info!("Discovery complete: found {} speakers", speakers.len());
 
-                            // After discovery, auto-subscribe to groups for status tracking
+                            // Update device count and timestamp
+                            let timestamp = std::time::SystemTime::now()
+                                .duration_since(std::time::UNIX_EPOCH)
+                                .map(|d| d.as_secs())
+                                .ok();
+                            sonos_state_for_discovery.set_discovery_state(
+                                false,
+                                speakers.len() as u64,
+                                timestamp,
+                            );
+
+                            // After discovery, get groups and auto-subscribe
                             if let Ok(groups) = sonos::get_zone_groups(None).await {
+                                // Update groups in centralized state
+                                sonos_state_for_discovery.set_groups(groups.clone());
+
                                 let coordinator_ips: Vec<String> =
                                     groups.iter().map(|g| g.coordinator_ip.clone()).collect();
 
                                 let gena_guard = gena_for_discovery.read().await;
                                 if let Some(ref gena) = *gena_guard {
                                     gena.auto_subscribe_to_groups(&coordinator_ips).await;
+                                    // Update subscription count
+                                    sonos_state_for_discovery
+                                        .set_gena_subscriptions(gena.active_subscriptions() as u64);
                                 }
                             }
                         }
                         Err(e) => {
                             log::warn!("Speaker discovery failed: {}", e);
+                            // Mark discovery as complete (failed)
+                            sonos_state_for_discovery.set_discovery_state(false, 0, None);
                         }
                     }
                 }
@@ -209,6 +239,7 @@ pub fn run() {
             commands::refresh_speakers,
             commands::get_groups,
             commands::get_group_status,
+            commands::get_sonos_state,
             commands::get_config,
             commands::set_port,
         ])

@@ -96,6 +96,30 @@ export type components = {
             /** @description True if playing our stream, false if playing other source, null if unknown */
             isPlayingOurStream?: boolean | null;
         };
+        /** @description Complete Sonos state snapshot emitted on any change */
+        SonosStateSnapshot: {
+            /** @description Zone groups with their members */
+            groups: components["schemas"]["LocalGroup"][];
+            /** @description Runtime status for each group coordinator */
+            group_statuses: components["schemas"]["GroupStatus"][];
+            /**
+             * Format: uint64
+             * @description Number of Sonos devices from last discovery
+             */
+            discovered_devices: number;
+            /**
+             * Format: uint64
+             * @description Number of active GENA subscriptions
+             */
+            gena_subscriptions: number;
+            /**
+             * Format: uint64
+             * @description Unix timestamp of last successful speaker discovery
+             */
+            last_discovery_at?: number | null;
+            /** @description True while SSDP discovery is running */
+            is_discovering: boolean;
+        };
         /** @description Request to create a new audio stream */
         CreateStreamRequest: {
             groupId: string;
@@ -292,6 +316,7 @@ export type LocalSpeaker = components["schemas"]["LocalSpeaker"];
 export type LocalGroup = components["schemas"]["LocalGroup"];
 export type SonosGroup = components["schemas"]["SonosGroup"];
 export type GroupStatus = components["schemas"]["GroupStatus"];
+export type SonosStateSnapshot = components["schemas"]["SonosStateSnapshot"];
 export type CreateStreamRequest = components["schemas"]["CreateStreamRequest"];
 export type CreateStreamResponse = components["schemas"]["CreateStreamResponse"];
 export type MeResponse = components["schemas"]["MeResponse"];

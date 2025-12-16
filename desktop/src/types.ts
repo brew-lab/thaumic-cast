@@ -10,4 +10,5 @@ export type {
   LocalSpeaker,
   GroupStatus,
   TransportState,
+  SonosStateSnapshot,
 } from '@thaumic-cast/protocol';

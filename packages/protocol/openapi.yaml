@@ -212,6 +212,43 @@ components:
           nullable: true
           description: True if playing our stream, false if playing other source, null if unknown
 
+    SonosStateSnapshot:
+      type: object
+      description: Complete Sonos state snapshot emitted on any change
+      required:
+        - groups
+        - group_statuses
+        - discovered_devices
+        - gena_subscriptions
+        - is_discovering
+      properties:
+        groups:
+          type: array
+          description: Zone groups with their members
+          items:
+            $ref: "#/components/schemas/LocalGroup"
+        group_statuses:
+          type: array
+          description: Runtime status for each group coordinator
+          items:
+            $ref: "#/components/schemas/GroupStatus"
+        discovered_devices:
+          type: integer
+          format: uint64
+          description: Number of Sonos devices from last discovery
+        gena_subscriptions:
+          type: integer
+          format: uint64
+          description: Number of active GENA subscriptions
+        last_discovery_at:
+          type: integer
+          format: uint64
+          nullable: true
+          description: Unix timestamp of last successful speaker discovery
+        is_discovering:
+          type: boolean
+          description: True while SSDP discovery is running
+
     # ============================================================
     # API Request/Response Types
     # ============================================================

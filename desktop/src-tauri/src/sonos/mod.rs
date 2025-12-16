@@ -2,6 +2,7 @@ mod client;
 pub mod gena;
 pub(crate) mod soap;
 mod ssdp;
+pub mod state;
 
 // Re-export functions from client
 pub use client::{
@@ -14,3 +15,6 @@ pub use crate::generated::StreamMetadata;
 
 // Re-export GENA types (with local extension traits)
 pub use gena::{GenaListener, GenaService, SonosEvent};
+
+// Re-export state manager
+pub use state::SonosState;
