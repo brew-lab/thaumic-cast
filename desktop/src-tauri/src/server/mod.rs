@@ -13,16 +13,21 @@ use tower_http::cors::{AllowOrigin, CorsLayer};
 /// Channel sender for a WebSocket client
 pub type WsEventSender = tokio::sync::mpsc::Sender<String>;
 
+/// Unique ID for a WebSocket client connection
+pub type WsClientId = u64;
+
 /// Manages all connected WebSocket clients for event broadcasting
 pub struct WsBroadcast {
-    senders: tokio::sync::Mutex<Vec<WsEventSender>>,
+    clients: tokio::sync::Mutex<std::collections::HashMap<WsClientId, WsEventSender>>,
+    next_id: std::sync::atomic::AtomicU64,
     app_handle: std::sync::RwLock<Option<tauri::AppHandle>>,
 }
 
 impl WsBroadcast {
     pub fn new() -> Self {
         Self {
-            senders: tokio::sync::Mutex::new(Vec::new()),
+            clients: tokio::sync::Mutex::new(std::collections::HashMap::new()),
+            next_id: std::sync::atomic::AtomicU64::new(1),
             app_handle: std::sync::RwLock::new(None),
         }
     }
@@ -43,14 +48,34 @@ impl WsBroadcast {
     }
 
     /// Register a new client channel for broadcasting
-    pub async fn register(&self, sender: WsEventSender) {
+    /// Returns a unique client ID for later unregistration
+    pub async fn register(&self, sender: WsEventSender) -> WsClientId {
+        let id = self
+            .next_id
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let count = {
-            let mut senders = self.senders.lock().await;
-            senders.push(sender);
-            senders.len()
+            let mut clients = self.clients.lock().await;
+            clients.insert(id, sender);
+            clients.len()
         };
         self.emit_clients_changed(count);
-        log::debug!("[WsBroadcast] Client registered, {} total", count);
+        log::debug!("[WsBroadcast] Client {} registered, {} total", id, count);
+        id
+    }
+
+    /// Unregister a client by ID (called when connection closes)
+    pub async fn unregister(&self, client_id: WsClientId) {
+        let count = {
+            let mut clients = self.clients.lock().await;
+            clients.remove(&client_id);
+            clients.len()
+        };
+        self.emit_clients_changed(count);
+        log::debug!(
+            "[WsBroadcast] Client {} unregistered, {} remaining",
+            client_id,
+            count
+        );
     }
 
     /// Broadcast an event to all connected clients
@@ -64,33 +89,33 @@ impl WsBroadcast {
             }
         };
 
-        let mut senders = self.senders.lock().await;
-        let mut failed_indices = Vec::new();
+        let mut clients = self.clients.lock().await;
+        let mut failed_ids = Vec::new();
 
-        for (i, sender) in senders.iter().enumerate() {
+        for (&id, sender) in clients.iter() {
             if sender.send(json.clone()).await.is_err() {
-                log::debug!("[WsBroadcast] Client {} disconnected", i);
-                failed_indices.push(i);
+                log::debug!("[WsBroadcast] Client {} disconnected during broadcast", id);
+                failed_ids.push(id);
             }
         }
 
-        // Remove failed senders in reverse order to preserve indices
-        let had_failures = !failed_indices.is_empty();
-        for i in failed_indices.into_iter().rev() {
-            senders.swap_remove(i);
+        // Remove failed clients
+        let had_failures = !failed_ids.is_empty();
+        for id in failed_ids {
+            clients.remove(&id);
         }
 
         // Emit event if any clients were removed
         if had_failures {
-            let count = senders.len();
-            drop(senders); // Release lock before emitting
+            let count = clients.len();
+            drop(clients); // Release lock before emitting
             self.emit_clients_changed(count);
         }
     }
 
     /// Get the number of connected clients
     pub async fn client_count(&self) -> usize {
-        self.senders.lock().await.len()
+        self.clients.lock().await.len()
     }
 }
 

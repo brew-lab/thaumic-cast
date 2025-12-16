@@ -601,3 +601,8 @@ function stopHeartbeat(session: StreamSession): void {
     session.heartbeatTimer = null;
   }
 }
+
+// Fallback: close WebSocket gracefully when offscreen document is being destroyed
+window.addEventListener('beforeunload', () => {
+  disconnectControlWebSocket();
+});

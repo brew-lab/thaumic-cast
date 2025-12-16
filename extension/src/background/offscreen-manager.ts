@@ -54,6 +54,10 @@ export async function closeOffscreen(): Promise<void> {
   if (!offscreenCreated) return;
 
   try {
+    // Send disconnect message to close WebSocket gracefully before destroying document
+    await chrome.runtime.sendMessage({ type: 'WS_DISCONNECT' });
+    // Small delay to allow WebSocket close to complete
+    await new Promise((resolve) => setTimeout(resolve, 100));
     await chrome.offscreen.closeDocument();
   } catch {
     // Already closed or not yet created

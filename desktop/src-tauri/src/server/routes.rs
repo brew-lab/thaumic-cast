@@ -19,8 +19,13 @@ use bytes::Bytes;
 use futures_util::{SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
 use std::convert::Infallible;
+use std::time::{Duration, Instant};
 use tokio_stream::wrappers::BroadcastStream;
 use uuid::Uuid;
+
+// WebSocket heartbeat settings
+const PING_INTERVAL: Duration = Duration::from_secs(30);
+const PONG_TIMEOUT: Duration = Duration::from_secs(10);
 
 pub fn create_router(state: AppState) -> Router {
     Router::new()
@@ -351,10 +356,10 @@ async fn handle_ws_connection(socket: WebSocket, initial_stream_id: Option<Strin
     // Create channel for receiving broadcast events
     let (event_tx, mut event_rx) = tokio::sync::mpsc::channel::<String>(32);
 
-    // Register with broadcast manager
-    state.ws_broadcast.register(event_tx).await;
-    log::debug!("[WS] Registered for broadcasts, {} clients connected",
-        state.ws_broadcast.client_count().await);
+    // Register with broadcast manager (save client_id for cleanup)
+    let client_id = state.ws_broadcast.register(event_tx).await;
+    log::debug!("[WS] Registered client {}, {} clients connected",
+        client_id, state.ws_broadcast.client_count().await);
 
     // Track associated stream (can be set via query param or createStream command)
     let mut current_stream_id = initial_stream_id.clone();
@@ -363,6 +368,10 @@ async fn handle_ws_connection(socket: WebSocket, initial_stream_id: Option<Strin
     if let Some(ref stream_id) = current_stream_id {
         state.streams.get_or_create(stream_id);
     }
+
+    // Ping/pong heartbeat state
+    let mut ping_interval = tokio::time::interval(PING_INTERVAL);
+    let mut last_pong = Instant::now();
 
     // Process incoming messages and broadcast events
     loop {
@@ -400,8 +409,12 @@ async fn handle_ws_connection(socket: WebSocket, initial_stream_id: Option<Strin
                             log::warn!("Received audio frame but no stream associated with this connection");
                         }
                     }
+                    Some(Ok(Message::Pong(_))) => {
+                        // Client responded to ping - connection is alive
+                        last_pong = Instant::now();
+                    }
                     Some(Ok(Message::Close(_))) => {
-                        log::info!("WebSocket connection closed");
+                        log::info!("WebSocket connection closed by client");
                         break;
                     }
                     Some(Err(e)) => {
@@ -412,8 +425,24 @@ async fn handle_ws_connection(socket: WebSocket, initial_stream_id: Option<Strin
                     _ => {}
                 }
             }
+            // Send periodic pings to detect dead connections
+            _ = ping_interval.tick() => {
+                // Check if we've exceeded the timeout since last pong
+                if last_pong.elapsed() > PING_INTERVAL + PONG_TIMEOUT {
+                    log::info!("[WS] Client timed out (no pong received), closing connection");
+                    break;
+                }
+                // Send ping
+                if sender.send(Message::Ping(vec![].into())).await.is_err() {
+                    log::debug!("[WS] Failed to send ping, closing connection");
+                    break;
+                }
+            }
         }
     }
+
+    // Unregister from broadcast manager (immediately updates client count)
+    state.ws_broadcast.unregister(client_id).await;
 
     // Remove stream if we created one
     if let Some(ref stream_id) = current_stream_id {
@@ -421,7 +450,7 @@ async fn handle_ws_connection(socket: WebSocket, initial_stream_id: Option<Strin
         log::info!("Stream removed: {}", stream_id);
     }
 
-    log::info!("WebSocket connection ended");
+    log::info!("WebSocket connection ended (client {})", client_id);
 }
 
 async fn handle_ws_command(
