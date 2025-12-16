@@ -4,6 +4,7 @@ import type { SupportedLocale } from './i18n';
 
 // Centralized defaults for extension configuration
 export const DEFAULT_SERVER_URL = 'http://localhost:3000';
+export const DESKTOP_APP_DEEPLINK = 'thaumic-cast://';
 const DEFAULT_SONOS_MODE: SonosMode = 'cloud';
 const DEFAULT_LANGUAGE: SupportedLocale = 'en';
 

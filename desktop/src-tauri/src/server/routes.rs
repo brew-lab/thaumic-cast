@@ -1,4 +1,5 @@
 use super::AppState;
+use crate::generated::{SonosStateSnapshot, WsAction, WsCommand, WsResponse};
 use crate::network::get_local_ip;
 use crate::sonos;
 use crate::sonos::GenaService;
@@ -15,7 +16,7 @@ use axum::{
     Json, Router,
 };
 use bytes::Bytes;
-use futures_util::StreamExt;
+use futures_util::{SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
 use std::convert::Infallible;
 use tokio_stream::wrappers::BroadcastStream;
@@ -38,7 +39,8 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/streams/{id}/metadata", post(update_stream_metadata))
         .route("/streams/{id}/live.mp3", get(stream_audio))
         .route("/streams/{id}/live.aac", get(stream_audio))
-        // WebSocket ingest
+        // WebSocket endpoints
+        .route("/ws", get(ws_handler))
         .route("/ws/ingest", get(ws_ingest_handler))
         .with_state(state)
 }
@@ -427,6 +429,335 @@ async fn handle_ingest(socket: WebSocket, stream_id: String, state: AppState) {
     // Cleanup stream when ingest disconnects
     state.streams.remove(&stream_id);
     log::info!("Stream removed: {}", stream_id);
+}
+
+// ============ WebSocket Command Handler ============
+
+/// Event sent on WebSocket connection with initial state
+#[derive(Serialize)]
+struct WsConnectedEvent {
+    r#type: &'static str,
+    state: SonosStateSnapshot,
+}
+
+async fn ws_handler(
+    ws: WebSocketUpgrade,
+    State(state): State<AppState>,
+) -> impl IntoResponse {
+    ws.on_upgrade(move |socket| handle_ws_connection(socket, state))
+}
+
+async fn handle_ws_connection(socket: WebSocket, state: AppState) {
+    log::info!("WebSocket control connection established");
+
+    let (mut sender, mut receiver) = socket.split();
+
+    // Send connected event with initial state
+    let connected_event = WsConnectedEvent {
+        r#type: "connected",
+        state: state.sonos_state.snapshot(),
+    };
+    if let Ok(json) = serde_json::to_string(&connected_event) {
+        if let Err(e) = sender.send(Message::Text(json.into())).await {
+            log::error!("Failed to send connected event: {}", e);
+            return;
+        }
+    }
+
+    // Process incoming messages
+    while let Some(msg) = receiver.next().await {
+        match msg {
+            Ok(Message::Text(text)) => {
+                log::debug!("Received WS command: {}", text);
+                let response = handle_ws_command(&text, &state).await;
+                log::debug!("Sending WS response: {:?}", response);
+                if let Ok(json) = serde_json::to_string(&response) {
+                    if let Err(e) = sender.send(Message::Text(json.into())).await {
+                        log::error!("Failed to send response: {}", e);
+                        break;
+                    }
+                }
+            }
+            Ok(Message::Close(_)) => {
+                log::info!("WebSocket control connection closed");
+                break;
+            }
+            Err(e) => {
+                log::error!("WebSocket error: {}", e);
+                break;
+            }
+            _ => {}
+        }
+    }
+
+    log::info!("WebSocket control connection ended");
+}
+
+async fn handle_ws_command(text: &str, state: &AppState) -> WsResponse {
+    let command: WsCommand = match serde_json::from_str(text) {
+        Ok(cmd) => cmd,
+        Err(e) => {
+            return WsResponse {
+                id: String::new(),
+                success: false,
+                data: None,
+                error: Some(format!("Invalid command: {}", e)),
+            };
+        }
+    };
+
+    let id = command.id.clone();
+
+    match command.action {
+        WsAction::GetGroups => {
+            let ip = command
+                .payload
+                .as_ref()
+                .and_then(|p| p.get("speakerIp"))
+                .and_then(|v| v.as_str());
+
+            match sonos::get_zone_groups(ip).await {
+                Ok(groups) => WsResponse {
+                    id,
+                    success: true,
+                    data: Some(serde_json::json!({ "groups": groups }).as_object().unwrap().clone()),
+                    error: None,
+                },
+                Err(e) => WsResponse {
+                    id,
+                    success: false,
+                    data: None,
+                    error: Some(e.to_string()),
+                },
+            }
+        }
+        WsAction::GetVolume => {
+            let ip = command
+                .payload
+                .as_ref()
+                .and_then(|p| p.get("speakerIp"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+
+            match sonos::get_group_volume(ip).await {
+                Ok(volume) => WsResponse {
+                    id,
+                    success: true,
+                    data: Some(serde_json::json!({ "volume": volume }).as_object().unwrap().clone()),
+                    error: None,
+                },
+                Err(e) => WsResponse {
+                    id,
+                    success: false,
+                    data: None,
+                    error: Some(e.to_string()),
+                },
+            }
+        }
+        WsAction::SetVolume => {
+            let ip = command
+                .payload
+                .as_ref()
+                .and_then(|p| p.get("speakerIp"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let volume = command
+                .payload
+                .as_ref()
+                .and_then(|p| p.get("volume"))
+                .and_then(|v| v.as_u64())
+                .unwrap_or(50) as u8;
+
+            match sonos::set_group_volume(ip, volume).await {
+                Ok(_) => WsResponse {
+                    id,
+                    success: true,
+                    data: None,
+                    error: None,
+                },
+                Err(e) => WsResponse {
+                    id,
+                    success: false,
+                    data: None,
+                    error: Some(e.to_string()),
+                },
+            }
+        }
+        WsAction::Play => {
+            let coordinator_ip = command
+                .payload
+                .as_ref()
+                .and_then(|p| p.get("coordinatorIp"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let stream_url = command
+                .payload
+                .as_ref()
+                .and_then(|p| p.get("streamUrl"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let metadata: Option<crate::generated::StreamMetadata> = command
+                .payload
+                .as_ref()
+                .and_then(|p| p.get("metadata"))
+                .and_then(|v| serde_json::from_value(v.clone()).ok());
+
+            match sonos::play_stream(coordinator_ip, stream_url, metadata.as_ref()).await {
+                Ok(_) => WsResponse {
+                    id,
+                    success: true,
+                    data: None,
+                    error: None,
+                },
+                Err(e) => WsResponse {
+                    id,
+                    success: false,
+                    data: None,
+                    error: Some(e.to_string()),
+                },
+            }
+        }
+        WsAction::Stop => {
+            let coordinator_ip = command
+                .payload
+                .as_ref()
+                .and_then(|p| p.get("coordinatorIp"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+
+            match sonos::stop(coordinator_ip).await {
+                Ok(_) => WsResponse {
+                    id,
+                    success: true,
+                    data: None,
+                    error: None,
+                },
+                Err(e) => WsResponse {
+                    id,
+                    success: false,
+                    data: None,
+                    error: Some(e.to_string()),
+                },
+            }
+        }
+        WsAction::Discover => {
+            let refresh = command
+                .payload
+                .as_ref()
+                .and_then(|p| p.get("refresh"))
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+
+            match sonos::discover_speakers(refresh).await {
+                Ok(speakers) => WsResponse {
+                    id,
+                    success: true,
+                    data: Some(serde_json::json!({ "speakers": speakers }).as_object().unwrap().clone()),
+                    error: None,
+                },
+                Err(e) => WsResponse {
+                    id,
+                    success: false,
+                    data: None,
+                    error: Some(e.to_string()),
+                },
+            }
+        }
+        WsAction::CreateStream => {
+            let _quality_str = command
+                .payload
+                .as_ref()
+                .and_then(|p| p.get("quality"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("medium");
+            let metadata = command
+                .payload
+                .as_ref()
+                .and_then(|p| p.get("metadata"))
+                .and_then(|v| serde_json::from_value(v.clone()).ok());
+
+            let stream_id = Uuid::new_v4().to_string();
+            let _stream = state.streams.get_or_create(&stream_id);
+
+            if let Some(meta) = metadata {
+                if let Some(stream) = state.streams.get(&stream_id) {
+                    stream.set_metadata(meta);
+                }
+            }
+
+            let local_ip = get_local_ip().unwrap_or_else(|| "127.0.0.1".to_string());
+            let actual_ports = state.actual_ports.read();
+            let port = actual_ports.as_ref().map(|p| p.http_port).unwrap_or(45100);
+
+            let ingest_url = format!("ws://{}:{}/ws/ingest?streamId={}", local_ip, port, stream_id);
+            let playback_url = format!("http://{}:{}/streams/{}/live.mp3", local_ip, port, stream_id);
+
+            WsResponse {
+                id,
+                success: true,
+                data: Some(
+                    serde_json::json!({
+                        "streamId": stream_id,
+                        "ingestUrl": ingest_url,
+                        "playbackUrl": playback_url
+                    })
+                    .as_object()
+                    .unwrap()
+                    .clone(),
+                ),
+                error: None,
+            }
+        }
+        WsAction::StopStream => {
+            let stream_id = command
+                .payload
+                .as_ref()
+                .and_then(|p| p.get("streamId"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+
+            state.streams.remove(stream_id);
+
+            WsResponse {
+                id,
+                success: true,
+                data: None,
+                error: None,
+            }
+        }
+        WsAction::UpdateMetadata => {
+            let stream_id = command
+                .payload
+                .as_ref()
+                .and_then(|p| p.get("streamId"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let metadata = command
+                .payload
+                .as_ref()
+                .and_then(|p| p.get("metadata"))
+                .and_then(|v| serde_json::from_value(v.clone()).ok());
+
+            if let Some(stream) = state.streams.get(stream_id) {
+                if let Some(meta) = metadata {
+                    stream.set_metadata(meta);
+                }
+                WsResponse {
+                    id,
+                    success: true,
+                    data: None,
+                    error: None,
+                }
+            } else {
+                WsResponse {
+                    id,
+                    success: false,
+                    data: None,
+                    error: Some("Stream not found".to_string()),
+                }
+            }
+        }
+    }
 }
 
 async fn stream_audio(

@@ -4,6 +4,7 @@ import {
   getExtensionSettings,
   saveExtensionSettings,
   clearCachedGroups,
+  DESKTOP_APP_DEEPLINK,
   type BackendType,
   type StopBehavior,
 } from '../lib/settings';
@@ -26,6 +27,7 @@ export function Options() {
   // Track original values to detect changes for cache invalidation
   const [originalMode, setOriginalMode] = useState<SonosMode>('cloud');
   const [originalSpeakerIp, setOriginalSpeakerIp] = useState('');
+  const [backendType, setBackendType] = useState<BackendType>('unknown');
 
   // Authentication
   const { isLoggedIn, userEmail, signingOut, handleSignOut } = useAuthStatus();
@@ -46,6 +48,7 @@ export function Options() {
       setSpeakerIp(settings.speakerIp);
       setLanguage(settings.language);
       setStopBehavior(settings.stopBehavior);
+      setBackendType(settings.backendType);
       setLocale(settings.language);
       // Track original values for cache invalidation
       setOriginalMode(settings.sonosMode);
@@ -168,7 +171,8 @@ export function Options() {
     // Clear cache so next popup open fetches fresh data
     await clearCachedGroups();
 
-    const { data, error } = await discoverLocalSpeakers(true);
+    // Use current input value (not saved settings) so user can test before saving
+    const { data, error } = await discoverLocalSpeakers(true, serverUrl);
 
     if (error) {
       setDiscoveryError(error);
@@ -182,6 +186,13 @@ export function Options() {
   const handleSignIn = () => {
     chrome.tabs.create({ url: `${serverUrl}/login` });
   };
+
+  const openDesktopApp = () => {
+    chrome.tabs.create({ url: DESKTOP_APP_DEEPLINK });
+  };
+
+  // Show desktop app link when in local mode (unless explicitly using cloud server)
+  const showDesktopAppLink = sonosMode === 'local' && backendType !== 'server';
 
   const hasValidationErrors = !!urlError || !!ipError;
 
@@ -218,9 +229,16 @@ export function Options() {
             {testingConnection ? t('placeholders.testing') : t('actions.testConnection')}
           </button>
           {connectionResult && (
-            <p class={connectionResult.success ? 'success-message' : 'error-message'}>
-              {connectionResult.message}
-            </p>
+            <div>
+              <p class={connectionResult.success ? 'success-message' : 'error-message'}>
+                {connectionResult.message}
+              </p>
+              {!connectionResult.success && showDesktopAppLink && (
+                <button class="btn-link" onClick={openDesktopApp} style={{ marginTop: '8px' }}>
+                  {t('messages.openDesktopApp')}
+                </button>
+              )}
+            </div>
           )}
         </div>
       </div>
@@ -286,7 +304,20 @@ export function Options() {
                     })}
                   </p>
                 )}
-                {discoveryError && <p class="error-message">{discoveryError}</p>}
+                {discoveryError && (
+                  <div>
+                    <p class="error-message">{discoveryError}</p>
+                    {showDesktopAppLink && (
+                      <button
+                        class="btn-link"
+                        onClick={openDesktopApp}
+                        style={{ marginTop: '4px' }}
+                      >
+                        {t('messages.openDesktopApp')}
+                      </button>
+                    )}
+                  </div>
+                )}
                 <p class="hint" style={{ marginTop: '8px' }}>
                   {t('hints.discovery')}
                 </p>

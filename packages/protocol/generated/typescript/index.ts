@@ -296,6 +296,39 @@ export type components = {
             /** Format: uint16 */
             port: number;
         };
+        /**
+         * @description WebSocket command actions
+         * @enum {string}
+         */
+        WsAction: "getGroups" | "getVolume" | "setVolume" | "play" | "stop" | "createStream" | "stopStream" | "updateMetadata" | "discover";
+        /** @description WebSocket command from client to server */
+        WsCommand: {
+            /** @description Unique request ID for response correlation */
+            id: string;
+            action: components["schemas"]["WsAction"];
+            /** @description Action-specific payload data */
+            payload?: {
+                [key: string]: unknown;
+            };
+        };
+        /** @description WebSocket response from server to client */
+        WsResponse: {
+            /** @description Request ID this response correlates to */
+            id: string;
+            success: boolean;
+            /** @description Response payload on success */
+            data?: {
+                [key: string]: unknown;
+            };
+            /** @description Error message on failure */
+            error?: string;
+        };
+        /** @description Event sent on WebSocket connection with initial state */
+        WsConnectedEvent: {
+            /** @constant */
+            type: "connected";
+            state: components["schemas"]["SonosStateSnapshot"];
+        };
     };
     responses: never;
     parameters: never;
@@ -339,3 +372,7 @@ export type GroupMuteChangeEvent = components["schemas"]["GroupMuteChangeEvent"]
 export type SonosEvent = components["schemas"]["SonosEvent"];
 export type StatusResponse = components["schemas"]["StatusResponse"];
 export type ConfigResponse = components["schemas"]["ConfigResponse"];
+export type WsAction = components["schemas"]["WsAction"];
+export type WsCommand = components["schemas"]["WsCommand"];
+export type WsResponse = components["schemas"]["WsResponse"];
+export type WsConnectedEvent = components["schemas"]["WsConnectedEvent"];

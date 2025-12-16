@@ -3,8 +3,11 @@ import type {
   OffscreenStopMessage,
   OffscreenPauseMessage,
   OffscreenResumeMessage,
+  WsConnectMessage,
+  WsCommandMessage,
   QualityPreset,
   AudioCodec,
+  SonosStateSnapshot,
 } from '@thaumic-cast/shared';
 import { createMp3Encoder } from 'wasm-media-encoders';
 import { createAacEncoder, isAacSupported, type AacCodec } from './aac-encoder';
@@ -81,6 +84,136 @@ const MAX_BUFFER_FRAMES = 60; // ~2 seconds
 
 let currentSession: StreamSession | null = null;
 
+// ============ Control WebSocket (for commands, separate from audio ingest) ============
+
+interface ControlConnection {
+  ws: WebSocket | null;
+  url: string;
+  reconnectAttempts: number;
+  reconnectTimer: ReturnType<typeof setTimeout> | null;
+}
+
+let controlConnection: ControlConnection | null = null;
+
+function connectControlWebSocket(url: string): void {
+  if (controlConnection?.ws?.readyState === WebSocket.OPEN) {
+    console.log('[Offscreen] Control WS already connected');
+    return;
+  }
+
+  console.log('[Offscreen] Connecting control WebSocket to:', url);
+
+  const ws = new WebSocket(url);
+
+  controlConnection = {
+    ws,
+    url,
+    reconnectAttempts: 0,
+    reconnectTimer: null,
+  };
+
+  ws.onopen = () => {
+    console.log('[Offscreen] Control WebSocket connected');
+    if (controlConnection) {
+      controlConnection.reconnectAttempts = 0;
+    }
+  };
+
+  ws.onmessage = (event) => {
+    if (typeof event.data !== 'string') return;
+
+    try {
+      const message = JSON.parse(event.data);
+      console.log('[Offscreen] Control WS received:', message);
+
+      if (message.type === 'connected') {
+        // Initial connection event with state
+        chrome.runtime.sendMessage({
+          type: 'WS_CONNECTED',
+          state: message.state as SonosStateSnapshot,
+        });
+      } else if (message.id !== undefined) {
+        // Command response (has id field)
+        chrome.runtime.sendMessage({
+          type: 'WS_RESPONSE',
+          id: message.id,
+          success: message.success,
+          data: message.data,
+          error: message.error,
+        });
+      } else if (message.type) {
+        // Sonos event (has type field but no id)
+        chrome.runtime.sendMessage({
+          type: 'SONOS_EVENT',
+          payload: message,
+        });
+      }
+    } catch (err) {
+      console.error('[Offscreen] Failed to parse control WS message:', err);
+    }
+  };
+
+  ws.onclose = () => {
+    console.log('[Offscreen] Control WebSocket closed');
+    attemptControlReconnect();
+  };
+
+  ws.onerror = (error) => {
+    console.error('[Offscreen] Control WebSocket error:', error);
+  };
+}
+
+function attemptControlReconnect(): void {
+  if (!controlConnection) return;
+
+  controlConnection.reconnectAttempts++;
+
+  if (controlConnection.reconnectAttempts > MAX_RECONNECT_ATTEMPTS) {
+    console.error('[Offscreen] Control WS max reconnect attempts exceeded');
+    controlConnection = null;
+    return;
+  }
+
+  const delay = Math.min(500 * Math.pow(2, controlConnection.reconnectAttempts - 1), 5000);
+  console.log(`[Offscreen] Reconnecting control WS in ${delay}ms...`);
+
+  controlConnection.reconnectTimer = setTimeout(() => {
+    if (controlConnection) {
+      connectControlWebSocket(controlConnection.url);
+    }
+  }, delay);
+}
+
+function disconnectControlWebSocket(): void {
+  if (!controlConnection) return;
+
+  console.log('[Offscreen] Disconnecting control WebSocket');
+
+  if (controlConnection.reconnectTimer) {
+    clearTimeout(controlConnection.reconnectTimer);
+  }
+
+  controlConnection.ws?.close();
+  controlConnection = null;
+}
+
+function sendControlCommand(id: string, action: string, payload?: Record<string, unknown>): void {
+  if (!controlConnection?.ws || controlConnection.ws.readyState !== WebSocket.OPEN) {
+    console.error('[Offscreen] Control WS not connected, cannot send command');
+    chrome.runtime.sendMessage({
+      type: 'WS_RESPONSE',
+      id,
+      success: false,
+      error: 'WebSocket not connected',
+    });
+    return;
+  }
+
+  const command = { id, action, payload };
+  console.log('[Offscreen] Sending control command:', command);
+  controlConnection.ws.send(JSON.stringify(command));
+}
+
 // Listen for messages from background
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   console.log('[Offscreen] Received message:', message.type);
@@ -113,6 +246,27 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     detectBestCodec(message.quality as QualityPreset).then((codec) => {
       sendResponse({ codec });
     });
+    return true;
+  }
+
+  // WebSocket control messages
+  if (message.type === 'WS_CONNECT') {
+    const { url } = message as WsConnectMessage;
+    connectControlWebSocket(url);
+    sendResponse({ success: true });
+    return true;
+  }
+
+  if (message.type === 'WS_DISCONNECT') {
+    disconnectControlWebSocket();
+    sendResponse({ success: true });
+    return true;
+  }
+
+  if (message.type === 'WS_COMMAND') {
+    const { id, action, payload } = message as WsCommandMessage;
+    sendControlCommand(id, action, payload);
+    sendResponse({ success: true });
     return true;
   }
 });

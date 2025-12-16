@@ -19,6 +19,8 @@
   "messages.connectSonos": "Connect your Sonos account",
   "messages.noSpeakers": "No Sonos speakers found on network",
   "messages.retryHint": "Make sure the server is on the same network as your speakers",
+  "messages.openDesktopApp": "Open Desktop App",
+  "messages.desktopAppHint": "Make sure the desktop app is running",
   "messages.desktopDetected": "Desktop app detected! Switch to local mode for quick setup.",
   "messages.localModeAuthRequired": "Sign in required to use local mode with this server.",
   "messages.localModeDesktopHint": "Using the desktop app? No sign-in needed — just set the server URL to your desktop app.",

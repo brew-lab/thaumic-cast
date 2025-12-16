@@ -5,7 +5,7 @@ import { useMediaSources } from './hooks/useMediaSources';
 import { useCasting } from './hooks/useCasting';
 import type { DisplayGroup } from './hooks/useCasting';
 import { t, setLocale } from '../lib/i18n';
-import { getExtensionSettings, saveExtensionSettings } from '../lib/settings';
+import { getExtensionSettings, saveExtensionSettings, DESKTOP_APP_DEEPLINK } from '../lib/settings';
 
 export function Popup() {
   const [selectedGroup, setSelectedGroup] = useState<string>('');
@@ -45,6 +45,7 @@ export function Popup() {
     desktopDetected,
     needsAuthForLocalMode,
     sonosMode,
+    backendType,
     sonosLinked,
     groups,
     castStatus,
@@ -77,6 +78,14 @@ export function Popup() {
   function openOptions() {
     chrome.runtime.openOptionsPage();
   }
+
+  function openDesktopApp() {
+    chrome.tabs.create({ url: DESKTOP_APP_DEEPLINK });
+  }
+
+  // Show desktop app link when in local mode (unless explicitly using cloud server)
+  // This helps users who haven't run "Test Connection" yet or when the app isn't running
+  const showDesktopAppLink = sonosMode === 'local' && backendType !== 'server';
 
   async function openSonosLink() {
     const { serverUrl } = await getExtensionSettings();
@@ -183,6 +192,16 @@ export function Popup() {
           <p class="hint" style={{ marginTop: '8px', fontSize: '12px', opacity: 0.7 }}>
             {t('messages.retryHint')}
           </p>
+          {showDesktopAppLink && (
+            <div style={{ marginTop: '12px' }}>
+              <p class="hint" style={{ fontSize: '12px', opacity: 0.7, marginBottom: '8px' }}>
+                {t('messages.desktopAppHint')}
+              </p>
+              <button class="btn btn-link" onClick={openDesktopApp}>
+                {t('messages.openDesktopApp')}
+              </button>
+            </div>
+          )}
         </div>
       </div>
     );
@@ -197,16 +216,23 @@ export function Popup() {
       <Header onSettings={openOptions} />
 
       {error && (
-        <p class="error-message" role="alert">
-          {error}
-          <button
-            class="dismiss-btn"
-            onClick={() => setError(null)}
-            aria-label={t('aria.dismissError')}
-          >
-            ×
-          </button>
-        </p>
+        <div class="error-container" role="alert">
+          <p class="error-message">
+            {error}
+            <button
+              class="dismiss-btn"
+              onClick={() => setError(null)}
+              aria-label={t('aria.dismissError')}
+            >
+              ×
+            </button>
+          </p>
+          {showDesktopAppLink && (
+            <button class="btn btn-link btn-sm" onClick={openDesktopApp}>
+              {t('messages.openDesktopApp')}
+            </button>
+          )}
+        </div>
       )}
 
       {warning && (

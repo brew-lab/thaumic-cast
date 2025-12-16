@@ -43,6 +43,10 @@ body {
   color: var(--color-text-muted);
 }
 
+.error-container {
+  margin-block-end: var(--space-md);
+}
+
 .error-message {
   text-align: center;
   padding: var(--space-sm);
@@ -51,6 +55,10 @@ body {
   align-items: center;
   justify-content: center;
   gap: var(--space-sm);
+}
+
+.error-container .error-message {
+  margin-block-end: var(--space-xs);
 }
 
 .warning-message {
@@ -96,6 +104,11 @@ body {
 
 .btn {
   inline-size: 100%;
+}
+
+.btn-sm {
+  font-size: 0.75rem;
+  padding: var(--space-xs) var(--space-sm);
 }
 
 .form-group select {

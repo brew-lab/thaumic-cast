@@ -1,6 +1,6 @@
 // Extension messaging types between popup, service worker, and offscreen document
 
-import type { QualityPreset, SonosMode, StreamMetadata } from './api';
+import type { QualityPreset, SonosMode, StreamMetadata, WsAction, SonosStateSnapshot } from './api';
 import type { SonosEvent } from './events';
 
 // Message types
@@ -25,7 +25,16 @@ export type MessageType =
   | 'SONOS_EVENT'
   // Volume/mute updates from GENA
   | 'VOLUME_UPDATE'
-  | 'MUTE_UPDATE';
+  | 'MUTE_UPDATE'
+  // WebSocket control messages
+  | 'CONNECT_WS' // popup -> background (request connection)
+  | 'DISCONNECT_WS' // popup -> background (request disconnection)
+  | 'WS_CONNECT' // background -> offscreen (connect to server)
+  | 'WS_DISCONNECT' // background -> offscreen (disconnect from server)
+  | 'WS_COMMAND' // background -> offscreen (send command)
+  | 'WS_RESPONSE' // offscreen -> background (command response)
+  | 'WS_CONNECTED' // offscreen -> background (connection established)
+  | 'WS_STATE_CHANGED'; // background -> popup (state update)
 
 // Media info from a tab
 export interface MediaInfo {
@@ -171,6 +180,57 @@ export interface MuteUpdateMessage extends BaseMessage {
   speakerIp: string;
 }
 
+// CONNECT_WS: popup -> service worker (request WebSocket connection)
+export interface ConnectWsMessage extends BaseMessage {
+  type: 'CONNECT_WS';
+  serverUrl: string; // Server base URL (e.g., http://localhost:45100)
+}
+
+// DISCONNECT_WS: popup -> service worker (request WebSocket disconnection)
+export interface DisconnectWsMessage extends BaseMessage {
+  type: 'DISCONNECT_WS';
+}
+
+// WS_CONNECT: service worker -> offscreen (connect to server WebSocket)
+export interface WsConnectMessage extends BaseMessage {
+  type: 'WS_CONNECT';
+  url: string; // WebSocket URL (e.g., ws://localhost:45100/ws)
+}
+
+// WS_DISCONNECT: service worker -> offscreen (disconnect from server WebSocket)
+export interface WsDisconnectMessage extends BaseMessage {
+  type: 'WS_DISCONNECT';
+}
+
+// WS_COMMAND: service worker -> offscreen (send command to server)
+export interface WsCommandMessage extends BaseMessage {
+  type: 'WS_COMMAND';
+  id: string; // Request ID for correlation
+  action: WsAction;
+  payload?: Record<string, unknown>;
+}
+
+// WS_RESPONSE: offscreen -> service worker (response from server)
+export interface WsResponseMessage extends BaseMessage {
+  type: 'WS_RESPONSE';
+  id: string; // Request ID for correlation
+  success: boolean;
+  data?: Record<string, unknown>;
+  error?: string;
+}
+
+// WS_CONNECTED: offscreen -> service worker (connection established with initial state)
+export interface WsConnectedMessage extends BaseMessage {
+  type: 'WS_CONNECTED';
+  state: SonosStateSnapshot;
+}
+
+// WS_STATE_CHANGED: service worker -> popup (Sonos state changed)
+export interface WsStateChangedMessage extends BaseMessage {
+  type: 'WS_STATE_CHANGED';
+  state: SonosStateSnapshot;
+}
+
 // Cast status
 export interface CastStatus {
   isActive: boolean;
@@ -205,7 +265,15 @@ export type ExtensionMessage =
   | ControlMediaMessage
   | SonosEventMessage
   | VolumeUpdateMessage
-  | MuteUpdateMessage;
+  | MuteUpdateMessage
+  | ConnectWsMessage
+  | DisconnectWsMessage
+  | WsConnectMessage
+  | WsDisconnectMessage
+  | WsCommandMessage
+  | WsResponseMessage
+  | WsConnectedMessage
+  | WsStateChangedMessage;
 
 // Response types
 export interface StatusResponse {

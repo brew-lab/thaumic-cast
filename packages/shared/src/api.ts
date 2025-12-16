@@ -11,6 +11,8 @@ export type {
   LocalSpeaker,
   LocalGroup,
   SonosGroup,
+  GroupStatus,
+  SonosStateSnapshot,
   CreateStreamRequest,
   CreateStreamResponse,
   MeResponse,
@@ -21,6 +23,11 @@ export type {
   ApiError,
   ApiErrorResponse,
   ErrorCode,
+  // WebSocket protocol types
+  WsAction,
+  WsCommand,
+  WsResponse,
+  WsConnectedEvent,
 } from '@thaumic-cast/protocol';
 
 // Validation utilities (not generated - hand-written)

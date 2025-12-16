@@ -59,9 +59,15 @@ export async function setGroupVolume(
 // Local mode API functions
 
 export async function discoverLocalSpeakers(
-  forceRefresh = false
+  forceRefresh = false,
+  baseUrl?: string
 ): Promise<{ data: LocalDiscoveryResponse | null; error: string | null }> {
   const params = forceRefresh ? '?refresh=true' : '';
+  if (baseUrl) {
+    return requestJson<LocalDiscoveryResponse>(`${baseUrl}/api/local/discover${params}`, {
+      absolute: true,
+    });
+  }
   return requestJson<LocalDiscoveryResponse>(`/api/local/discover${params}`);
 }
 

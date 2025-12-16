@@ -608,3 +608,71 @@ components:
         port:
           type: integer
           format: uint16
+
+    # ============================================================
+    # WebSocket Command/Response Protocol
+    # ============================================================
+
+    WsAction:
+      type: string
+      enum:
+        - getGroups
+        - getVolume
+        - setVolume
+        - play
+        - stop
+        - createStream
+        - stopStream
+        - updateMetadata
+        - discover
+      description: WebSocket command actions
+
+    WsCommand:
+      type: object
+      description: WebSocket command from client to server
+      required:
+        - id
+        - action
+      properties:
+        id:
+          type: string
+          description: Unique request ID for response correlation
+        action:
+          $ref: "#/components/schemas/WsAction"
+        payload:
+          type: object
+          additionalProperties: true
+          description: Action-specific payload data
+
+    WsResponse:
+      type: object
+      description: WebSocket response from server to client
+      required:
+        - id
+        - success
+      properties:
+        id:
+          type: string
+          description: Request ID this response correlates to
+        success:
+          type: boolean
+        data:
+          type: object
+          additionalProperties: true
+          description: Response payload on success
+        error:
+          type: string
+          description: Error message on failure
+
+    WsConnectedEvent:
+      type: object
+      description: Event sent on WebSocket connection with initial state
+      required:
+        - type
+        - state
+      properties:
+        type:
+          type: string
+          const: connected
+        state:
+          $ref: "#/components/schemas/SonosStateSnapshot"

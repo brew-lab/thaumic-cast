@@ -6,8 +6,17 @@ import type {
   CastEndedMessage,
   ControlMediaMessage,
   SonosEventMessage,
+  WsConnectedMessage,
+  WsResponseMessage,
+  ConnectWsMessage,
+  WsAction,
+  SonosStateSnapshot,
 } from '@thaumic-cast/shared';
-import { closeOffscreen, markOffscreenReady } from './background/offscreen-manager';
+import {
+  closeOffscreen,
+  markOffscreenReady,
+  ensureOffscreen,
+} from './background/offscreen-manager';
 import {
   getMediaSources,
   handleMediaUpdate as updateMediaRegistry,
@@ -24,6 +33,90 @@ import {
   updateStreamMetadata,
 } from './background/stream-manager';
 import { getExtensionSettings } from './lib/settings';
+
+// ============ WebSocket Command/Response Correlation ============
+
+interface PendingRequest {
+  resolve: (data: Record<string, unknown> | undefined) => void;
+  reject: (error: Error) => void;
+  timeout: ReturnType<typeof setTimeout>;
+}
+
+const pendingRequests = new Map<string, PendingRequest>();
+let currentSonosState: SonosStateSnapshot | null = null;
+let wsConnected = false;
+
+/**
+ * Send a command to the server via the offscreen WebSocket.
+ * Returns a promise that resolves with the response data.
+ */
+export async function sendWsCommand(
+  action: WsAction,
+  payload?: Record<string, unknown>
+): Promise<Record<string, unknown> | undefined> {
+  if (!wsConnected) {
+    throw new Error('WebSocket not connected');
+  }
+
+  const id = crypto.randomUUID();
+
+  return new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      pendingRequests.delete(id);
+      reject(new Error('Command timeout'));
+    }, 10000);
+
+    pendingRequests.set(id, { resolve, reject, timeout });
+
+    chrome.runtime.sendMessage({
+      type: 'WS_COMMAND',
+      id,
+      action,
+      payload,
+    });
+  });
+}
+
+/**
+ * Connect to the server WebSocket via offscreen document.
+ */
+export async function connectWebSocket(serverUrl: string): Promise<void> {
+  await ensureOffscreen();
+
+  const wsUrl = serverUrl.replace(/^http/, 'ws') + '/ws';
+  console.log('[Background] Connecting WebSocket to:', wsUrl);
+
+  chrome.runtime.sendMessage({
+    type: 'WS_CONNECT',
+    url: wsUrl,
+  });
+}
+
+/**
+ * Disconnect from the server WebSocket.
+ */
+export function disconnectWebSocket(): void {
+  wsConnected = false;
+  currentSonosState = null;
+
+  chrome.runtime.sendMessage({
+    type: 'WS_DISCONNECT',
+  });
+}
+
+/**
+ * Get the current Sonos state from the WebSocket connection.
+ */
+export function getSonosState(): SonosStateSnapshot | null {
+  return currentSonosState;
+}
+
+/**
+ * Check if WebSocket is connected.
+ */
+export function isWsConnected(): boolean {
+  return wsConnected;
+}
 
 // Debounce for transport state changes to prevent race conditions from rapid stop/play
 let lastTransportStateAt = 0;
@@ -143,6 +236,60 @@ async function handleMessage(
       break;
     }
 
+    case 'WS_CONNECTED': {
+      const { state } = message as WsConnectedMessage;
+      console.log('[Background] WebSocket connected with initial state:', state);
+      wsConnected = true;
+      currentSonosState = state;
+      // Notify popup of state change
+      chrome.runtime
+        .sendMessage({
+          type: 'WS_STATE_CHANGED',
+          state,
+        })
+        .catch(() => {
+          // Popup may not be open
+        });
+      sendResponse({ success: true });
+      break;
+    }
+
+    case 'WS_RESPONSE': {
+      const { id, success, data, error } = message as WsResponseMessage;
+      const pending = pendingRequests.get(id);
+      if (pending) {
+        clearTimeout(pending.timeout);
+        pendingRequests.delete(id);
+        if (success) {
+          pending.resolve(data);
+        } else {
+          pending.reject(new Error(error || 'Command failed'));
+        }
+      }
+      sendResponse({ success: true });
+      break;
+    }
+
+    case 'CONNECT_WS': {
+      const { serverUrl } = message as ConnectWsMessage;
+      connectWebSocket(serverUrl)
+        .then(() => sendResponse({ success: true }))
+        .catch((err) => sendResponse({ success: false, error: err.message }));
+      break;
+    }
+
+    case 'DISCONNECT_WS': {
+      disconnectWebSocket();
+      sendResponse({ success: true });
+      break;
+    }
+
+    // Ignore messages meant for offscreen (handled by offscreen.ts)
+    case 'WS_CONNECT':
+    case 'WS_DISCONNECT':
+    case 'WS_COMMAND':
+      break;
+
     default:
       console.warn('[Background] Unknown message type:', message.type);
       sendResponse({ error: 'Unknown message type' });
@@ -217,7 +364,34 @@ async function handleSonosEvent(message: SonosEventMessage): Promise<void> {
 
     case 'zoneChange': {
       // Zone topology changed (speakers grouped/ungrouped)
-      console.log('[Background] Sonos zone configuration changed');
+      console.log('[Background] Sonos zone configuration changed, fetching updated groups');
+      // Request fresh groups via WebSocket and update the popup
+      if (wsConnected) {
+        sendWsCommand('getGroups' as WsAction)
+          .then((data) => {
+            if (data && Array.isArray(data.groups)) {
+              // Update our cached state
+              if (currentSonosState) {
+                currentSonosState = {
+                  ...currentSonosState,
+                  groups: data.groups as SonosStateSnapshot['groups'],
+                };
+              }
+              // Notify popup of updated groups
+              chrome.runtime
+                .sendMessage({
+                  type: 'WS_STATE_CHANGED',
+                  state: currentSonosState,
+                })
+                .catch(() => {
+                  // Popup may not be open
+                });
+            }
+          })
+          .catch((err) => {
+            console.error('[Background] Failed to fetch groups after zoneChange:', err);
+          });
+      }
       break;
     }
 

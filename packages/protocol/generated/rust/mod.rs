@@ -111,6 +111,29 @@ pub enum ErrorCode {
     UnknownError,
 }
 
+/// WebSocket command actions
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum WsAction {
+    #[serde(rename = "getGroups")]
+    GetGroups,
+    #[serde(rename = "getVolume")]
+    GetVolume,
+    #[serde(rename = "setVolume")]
+    SetVolume,
+    #[serde(rename = "play")]
+    Play,
+    #[serde(rename = "stop")]
+    Stop,
+    #[serde(rename = "createStream")]
+    CreateStream,
+    #[serde(rename = "stopStream")]
+    StopStream,
+    #[serde(rename = "updateMetadata")]
+    UpdateMetadata,
+    #[serde(rename = "discover")]
+    Discover,
+}
+
 // ============ Structs ============
 
 /// Stream metadata for Sonos display (ICY metadata)
@@ -321,6 +344,28 @@ pub struct StatusResponse {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ConfigResponse {
     pub port: u16,
+}
+
+/// WebSocket command from client to server
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct WsCommand {
+    /// Unique request ID for response correlation
+    pub id: String,
+    pub action: WsAction,
+    /// Action-specific payload data
+    pub payload: Option<serde_json::Map<String, serde_json::Value>>,
+}
+
+/// WebSocket response from server to client
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct WsResponse {
+    /// Request ID this response correlates to
+    pub id: String,
+    pub success: bool,
+    /// Response payload on success
+    pub data: Option<serde_json::Map<String, serde_json::Value>>,
+    /// Error message on failure
+    pub error: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

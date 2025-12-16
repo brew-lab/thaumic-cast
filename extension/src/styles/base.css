@@ -119,6 +119,20 @@ html {
   cursor: not-allowed;
 }
 
+.btn-link {
+  background: none;
+  border: none;
+  color: var(--color-primary);
+  cursor: pointer;
+  font-size: 0.875rem;
+  padding: var(--space-xs) var(--space-sm);
+  text-decoration: underline;
+}
+
+.btn-link:hover {
+  color: color-mix(in oklch, var(--color-primary), white 20%);
+}
+
 /* Messages */
 .error-message {
   color: var(--color-error);
