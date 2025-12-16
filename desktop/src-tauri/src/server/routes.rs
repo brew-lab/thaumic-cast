@@ -392,10 +392,13 @@ async fn handle_ws_connection(socket: WebSocket, initial_stream_id: Option<Strin
                         // Audio frame - push to stream if we have one
                         if let Some(ref stream_id) = current_stream_id {
                             if let Some(stream) = state.streams.get(stream_id) {
+                                log::debug!("Received audio frame ({} bytes) for stream {}", data.len(), stream_id);
                                 stream.push_frame(Bytes::from(data));
+                            } else {
+                                log::warn!("Stream {} not found in manager", stream_id);
                             }
                         } else {
-                            log::warn!("Received audio frame but no stream associated");
+                            log::warn!("Received audio frame but no stream associated with this connection");
                         }
                     }
                     Some(Ok(Message::Close(_))) => {
@@ -603,6 +606,12 @@ async fn handle_ws_command(
                 .and_then(|p| p.get("quality"))
                 .and_then(|v| v.as_str())
                 .unwrap_or("medium");
+            let codec = command
+                .payload
+                .as_ref()
+                .and_then(|p| p.get("codec"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("mp3");
             let metadata = command
                 .payload
                 .as_ref()
@@ -629,12 +638,18 @@ async fn handle_ws_command(
 
             // Associate this connection with the stream for audio frames
             *current_stream_id = Some(stream_id.clone());
+            log::info!("Stream created: {} (codec: {}), associated with this WS connection", stream_id, codec);
 
             let local_ip = get_local_ip().unwrap_or_else(|| "127.0.0.1".to_string());
             let actual_ports = state.actual_ports.read();
             let port = actual_ports.as_ref().map(|p| p.http_port).unwrap_or(45100);
 
-            let playback_url = format!("http://{}:{}/streams/{}/live.mp3", local_ip, port, stream_id);
+            // Use correct file extension based on codec
+            let format = match codec {
+                "he-aac" | "aac-lc" => "aac",
+                _ => "mp3",
+            };
+            let playback_url = format!("http://{}:{}/streams/{}/live.{}", local_ip, port, stream_id, format);
 
             WsResponse {
                 id,

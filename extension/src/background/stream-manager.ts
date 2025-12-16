@@ -224,17 +224,11 @@ export async function stopCurrentStream(mode?: SonosMode, coordinatorIp?: string
     }
   }
 
+  // Stop stream via WebSocket command (clears current_stream_id on server)
   try {
-    await fetchWithTimeout(
-      `${serverUrl}/api/streams/${activeStream.streamId}/stop`,
-      {
-        method: 'POST',
-        credentials: 'include',
-      },
-      5000
-    );
+    await sendWsCommand('stopStream' as WsAction, { streamId: activeStream.streamId });
   } catch {
-    logError('failed to notify server of stream stop');
+    logError('failed to stop stream via WebSocket');
   }
 
   activeStream = { isActive: false };

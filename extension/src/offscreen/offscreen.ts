@@ -311,10 +311,19 @@ async function handleStart(
 ): Promise<{ success: boolean; error?: string }> {
   const { streamId, mediaStreamId, quality } = message;
 
+  console.log('[Offscreen] handleStart called with:', { streamId, mediaStreamId, quality });
+
   // Ensure control WebSocket is connected (audio frames go over the same connection)
   if (!controlConnection?.ws || controlConnection.ws.readyState !== WebSocket.OPEN) {
+    console.error('[Offscreen] WebSocket not connected!', {
+      hasControlConnection: !!controlConnection,
+      hasWs: !!controlConnection?.ws,
+      readyState: controlConnection?.ws?.readyState,
+    });
     return { success: false, error: 'WebSocket not connected. Connect first with WS_CONNECT.' };
   }
+
+  console.log('[Offscreen] WebSocket is connected, proceeding with audio setup');
 
   // Stop any existing session
   if (currentSession) {
@@ -416,15 +425,25 @@ async function handleStart(
 
     currentSession = session;
 
+    // Counter for PCM logging
+    let pcmCounter = 0;
+
     // Handle PCM data from worklet
     workletNode.port.onmessage = (event) => {
       if (!currentSession || currentSession.stopped || currentSession.paused) return;
+
+      pcmCounter++;
+      if (pcmCounter === 1) {
+        console.log('[Offscreen] First PCM data received from worklet');
+      }
 
       const pcmData = event.data as { left: Float32Array; right: Float32Array };
       const encodedFrame = encodeFrame(currentSession, pcmData);
 
       if (encodedFrame && encodedFrame.length > 0) {
         sendFrame(currentSession, encodedFrame);
+      } else if (pcmCounter <= 5) {
+        console.log('[Offscreen] Encoder returned empty frame (normal during startup)');
       }
     };
 
@@ -441,6 +460,12 @@ async function handleStart(
     });
 
     startHeartbeat(session);
+
+    console.log('[Offscreen] Audio capture started successfully', {
+      streamId,
+      codec: session.codec,
+      sampleRate: audioContext.sampleRate,
+    });
 
     return { success: true };
   } catch (error) {
@@ -525,8 +550,15 @@ async function stopSession(session: StreamSession): Promise<void> {
   session.mediaStream?.getTracks().forEach((track) => track.stop());
 }
 
+// Counter for logging - log every 100th frame to avoid spam
+let frameCounter = 0;
+
 function sendFrame(session: StreamSession, frame: Uint8Array): void {
   if (controlConnection?.ws?.readyState === WebSocket.OPEN) {
+    frameCounter++;
+    if (frameCounter === 1 || frameCounter % 100 === 0) {
+      console.log(`[Offscreen] Sending frame #${frameCounter} (${frame.length} bytes)`);
+    }
     controlConnection.ws.send(frame);
   } else {
     // Buffer frames during reconnection
@@ -534,6 +566,7 @@ function sendFrame(session: StreamSession, frame: Uint8Array): void {
     if (session.frameBuffer.length > MAX_BUFFER_FRAMES) {
       session.frameBuffer.shift();
     }
+    console.warn('[Offscreen] WebSocket not open, buffering frame');
   }
 }
 
