@@ -90,7 +90,6 @@ export interface OffscreenStartMessage extends BaseMessage {
   streamId: string;
   mediaStreamId: string;
   quality: QualityPreset;
-  ingestUrl: string;
 }
 
 // OFFSCREEN_STOP: service worker -> offscreen

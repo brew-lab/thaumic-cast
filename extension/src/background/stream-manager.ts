@@ -4,11 +4,12 @@ import type {
   QualityPreset,
   SonosMode,
   StreamMetadata,
+  WsAction,
 } from '@thaumic-cast/shared';
-import type { CreateStreamResponse } from '@thaumic-cast/shared';
 import { fetchWithTimeout } from '../lib/http';
 import { getServerUrl } from '../lib/settings';
 import { ensureOffscreen } from './offscreen-manager';
+import { sendWsCommand, isWsConnected } from './ws-client';
 
 let activeStream: CastStatus = { isActive: false };
 let lastHeartbeatAt = 0;
@@ -56,6 +57,12 @@ export async function startStream(params: StartStreamParams): Promise<{
     // Ensure offscreen is ready before querying codec
     await ensureOffscreen();
 
+    // Check WebSocket is connected
+    if (!isWsConnected()) {
+      logError('WebSocket not connected');
+      return { success: false, error: 'WebSocket not connected. Please reconnect.' };
+    }
+
     // Query offscreen for the best available codec for this quality
     let codec: AudioCodec = 'mp3';
     try {
@@ -71,34 +78,29 @@ export async function startStream(params: StartStreamParams): Promise<{
     }
     logEvent('detected codec', { codec, quality });
 
-    const response = await fetchWithTimeout(`${serverUrl}/api/streams`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      credentials: 'include',
-      body: JSON.stringify({
-        groupId,
-        quality,
-        mode: isLocalMode ? 'local' : 'cloud',
-        coordinatorIp: isLocalMode ? coordinatorIp : undefined,
-        metadata,
-        codec,
-      }),
+    // Create stream via WebSocket command (this associates the WS connection with the stream)
+    const createResult = await sendWsCommand('createStream' as WsAction, {
+      groupId,
+      quality,
+      mode: isLocalMode ? 'local' : 'cloud',
+      coordinatorIp: isLocalMode ? coordinatorIp : undefined,
+      metadata,
+      codec,
     });
 
-    if (!response.ok) {
-      const error = await response.json().catch(() => ({ message: `HTTP ${response.status}` }));
-      logError('failed to create stream', { status: response.status, groupId });
-      return { success: false, error: error.message || 'Failed to create stream' };
+    if (!createResult?.streamId || !createResult?.playbackUrl) {
+      logError('failed to create stream via WebSocket');
+      return { success: false, error: 'Failed to create stream' };
     }
 
-    const { streamId, ingestUrl, playbackUrl } = (await response.json()) as CreateStreamResponse;
+    const streamId = createResult.streamId as string;
+    const playbackUrl = createResult.playbackUrl as string;
 
     const offscreenResult = await chrome.runtime.sendMessage({
       type: 'OFFSCREEN_START',
       streamId,
       mediaStreamId,
       quality,
-      ingestUrl,
     });
 
     if (offscreenResult?.error) {

@@ -35,7 +35,6 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/local/volume/{ip}", get(get_volume).post(set_volume))
         .route("/api/local/server-ip", get(get_server_ip))
         // Stream endpoints
-        .route("/api/streams", post(create_stream))
         .route("/api/streams/{id}/metadata", post(update_stream_metadata))
         .route("/streams/{id}/live.mp3", get(stream_audio))
         .route("/streams/{id}/live.aac", get(stream_audio))
@@ -264,82 +263,6 @@ async fn get_server_ip() -> impl IntoResponse {
 }
 
 // ============ Stream Routes ============
-
-#[derive(Deserialize)]
-struct CreateStreamRequest {
-    #[serde(rename = "groupId")]
-    group_id: Option<String>,
-    quality: Option<String>,
-    mode: Option<String>,
-    #[serde(rename = "coordinatorIp")]
-    coordinator_ip: Option<String>,
-    codec: Option<String>,
-}
-
-#[derive(Serialize)]
-struct CreateStreamResponse {
-    #[serde(rename = "streamId")]
-    stream_id: String,
-    #[serde(rename = "ingestUrl")]
-    ingest_url: String,
-    #[serde(rename = "playbackUrl")]
-    playback_url: String,
-}
-
-async fn create_stream(
-    State(state): State<AppState>,
-    Json(body): Json<CreateStreamRequest>,
-) -> impl IntoResponse {
-    let stream_id = Uuid::new_v4().to_string();
-    let port = state
-        .actual_ports
-        .read()
-        .as_ref()
-        .map(|p| p.http_port)
-        .unwrap_or(45100);
-
-    // Log stream creation details
-    log::info!(
-        "Creating stream: id={}, group={:?}, quality={:?}, mode={:?}, coordinator={:?}, codec={:?}",
-        stream_id,
-        body.group_id,
-        body.quality,
-        body.mode,
-        body.coordinator_ip,
-        body.codec
-    );
-
-    // Determine file extension based on codec
-    let format = match body.codec.as_deref() {
-        Some("he-aac") | Some("aac-lc") => "aac",
-        _ => "mp3",
-    };
-
-    // Pre-create the stream
-    let stream = state.streams.get_or_create(&stream_id);
-
-    // Store coordinator IP if provided (for GENA event routing)
-    if let Some(ref coordinator_ip) = body.coordinator_ip {
-        stream.set_speaker_ip(coordinator_ip.clone());
-    }
-
-    // Get local IP for URLs
-    let local_ip = get_local_ip().unwrap_or_else(|| "localhost".to_string());
-
-    let response = CreateStreamResponse {
-        stream_id: stream_id.clone(),
-        ingest_url: format!(
-            "ws://{}:{}/ws/ingest?streamId={}",
-            local_ip, port, stream_id
-        ),
-        playback_url: format!(
-            "http://{}:{}/streams/{}/live.{}",
-            local_ip, port, stream_id, format
-        ),
-    };
-
-    (StatusCode::CREATED, Json(response))
-}
 
 #[derive(Deserialize)]
 struct UpdateStreamMetadataRequest {

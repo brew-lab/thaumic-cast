@@ -32,50 +32,19 @@ import {
   recordHeartbeat,
   updateStreamMetadata,
 } from './background/stream-manager';
+import {
+  sendWsCommand,
+  handleWsResponse,
+  setWsConnected,
+  setWsDisconnected,
+  getSonosState,
+  updateSonosState,
+  isWsConnected,
+} from './background/ws-client';
 import { getExtensionSettings } from './lib/settings';
 
-// ============ WebSocket Command/Response Correlation ============
-
-interface PendingRequest {
-  resolve: (data: Record<string, unknown> | undefined) => void;
-  reject: (error: Error) => void;
-  timeout: ReturnType<typeof setTimeout>;
-}
-
-const pendingRequests = new Map<string, PendingRequest>();
-let currentSonosState: SonosStateSnapshot | null = null;
-let wsConnected = false;
-
-/**
- * Send a command to the server via the offscreen WebSocket.
- * Returns a promise that resolves with the response data.
- */
-export async function sendWsCommand(
-  action: WsAction,
-  payload?: Record<string, unknown>
-): Promise<Record<string, unknown> | undefined> {
-  if (!wsConnected) {
-    throw new Error('WebSocket not connected');
-  }
-
-  const id = crypto.randomUUID();
-
-  return new Promise((resolve, reject) => {
-    const timeout = setTimeout(() => {
-      pendingRequests.delete(id);
-      reject(new Error('Command timeout'));
-    }, 10000);
-
-    pendingRequests.set(id, { resolve, reject, timeout });
-
-    chrome.runtime.sendMessage({
-      type: 'WS_COMMAND',
-      id,
-      action,
-      payload,
-    });
-  });
-}
+// Re-export for external use
+export { sendWsCommand, getSonosState, isWsConnected };
 
 /**
  * Connect to the server WebSocket via offscreen document.
@@ -96,26 +65,11 @@ export async function connectWebSocket(serverUrl: string): Promise<void> {
  * Disconnect from the server WebSocket.
  */
 export function disconnectWebSocket(): void {
-  wsConnected = false;
-  currentSonosState = null;
+  setWsDisconnected();
 
   chrome.runtime.sendMessage({
     type: 'WS_DISCONNECT',
   });
-}
-
-/**
- * Get the current Sonos state from the WebSocket connection.
- */
-export function getSonosState(): SonosStateSnapshot | null {
-  return currentSonosState;
-}
-
-/**
- * Check if WebSocket is connected.
- */
-export function isWsConnected(): boolean {
-  return wsConnected;
 }
 
 // Debounce for transport state changes to prevent race conditions from rapid stop/play
@@ -163,7 +117,7 @@ async function handleMessage(
     case 'STOP_CAST': {
       const { mode, coordinatorIp } = message as StopCastMessage;
       await stopCurrentStream(mode, coordinatorIp);
-      await closeOffscreen();
+      // Note: Don't close offscreen - it maintains the WebSocket for events
       sendResponse({ success: true });
       break;
     }
@@ -239,8 +193,7 @@ async function handleMessage(
     case 'WS_CONNECTED': {
       const { state } = message as WsConnectedMessage;
       console.log('[Background] WebSocket connected with initial state:', state);
-      wsConnected = true;
-      currentSonosState = state;
+      setWsConnected(state);
       // Notify popup of state change
       chrome.runtime
         .sendMessage({
@@ -256,16 +209,7 @@ async function handleMessage(
 
     case 'WS_RESPONSE': {
       const { id, success, data, error } = message as WsResponseMessage;
-      const pending = pendingRequests.get(id);
-      if (pending) {
-        clearTimeout(pending.timeout);
-        pendingRequests.delete(id);
-        if (success) {
-          pending.resolve(data);
-        } else {
-          pending.reject(new Error(error || 'Command failed'));
-        }
-      }
+      handleWsResponse(id, success, data, error);
       sendResponse({ success: true });
       break;
     }
@@ -343,11 +287,9 @@ async function handleSonosEvent(message: SonosEventMessage): Promise<void> {
           });
         } else {
           // Stop mode (default): tear everything down
+          // Note: Don't close offscreen - keep WS alive for event monitoring
           console.log('[Background] Sonos playback stopped, stopping stream (stop mode)');
           clearActiveStream();
-          closeOffscreen().catch((err) => {
-            console.error('[Background] Failed to close offscreen:', err);
-          });
         }
       } else if (payload.state === 'PLAYING') {
         // Check if we have a paused stream to resume
@@ -366,26 +308,28 @@ async function handleSonosEvent(message: SonosEventMessage): Promise<void> {
       // Zone topology changed (speakers grouped/ungrouped)
       console.log('[Background] Sonos zone configuration changed, fetching updated groups');
       // Request fresh groups via WebSocket and update the popup
-      if (wsConnected) {
+      if (isWsConnected()) {
         sendWsCommand('getGroups' as WsAction)
           .then((data) => {
             if (data && Array.isArray(data.groups)) {
               // Update our cached state
-              if (currentSonosState) {
-                currentSonosState = {
-                  ...currentSonosState,
+              const currentState = getSonosState();
+              if (currentState) {
+                const updatedState = {
+                  ...currentState,
                   groups: data.groups as SonosStateSnapshot['groups'],
                 };
+                updateSonosState(updatedState);
+                // Notify popup of updated groups
+                chrome.runtime
+                  .sendMessage({
+                    type: 'WS_STATE_CHANGED',
+                    state: updatedState,
+                  })
+                  .catch(() => {
+                    // Popup may not be open
+                  });
               }
-              // Notify popup of updated groups
-              chrome.runtime
-                .sendMessage({
-                  type: 'WS_STATE_CHANGED',
-                  state: currentSonosState,
-                })
-                .catch(() => {
-                  // Popup may not be open
-                });
             }
           })
           .catch((err) => {
@@ -402,10 +346,8 @@ async function handleSonosEvent(message: SonosEventMessage): Promise<void> {
         `expected=${payload.expectedUri}, current=${payload.currentUri}`
       );
       // Auto-stop cast since we're no longer the active source
+      // Note: Don't close offscreen - keep WS alive for event monitoring
       clearActiveStream();
-      closeOffscreen().catch((err) => {
-        console.error('[Background] Failed to close offscreen:', err);
-      });
       // Notify popup that source changed
       chrome.runtime
         .sendMessage({
