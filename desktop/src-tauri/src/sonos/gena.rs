@@ -326,6 +326,22 @@ impl GenaListener {
         speaker_ip: &str,
         service: GenaService,
     ) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
+        // Check for existing subscription to avoid duplicates
+        {
+            let subs = self.state.subscriptions.read();
+            for (sid, sub) in subs.iter() {
+                if sub.speaker_ip == speaker_ip && sub.service == service {
+                    log::debug!(
+                        "[GENA] Already subscribed to {:?} on {}, SID={}",
+                        service,
+                        speaker_ip,
+                        sid
+                    );
+                    return Ok(sid.clone());
+                }
+            }
+        }
+
         let port = *self.port.read();
         let event_url = service.endpoint();
         let callback_path = format!(
