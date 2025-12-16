@@ -135,6 +135,7 @@ pub fn run() {
 
             // Create WebSocket broadcast manager
             let ws_broadcast = Arc::new(server::WsBroadcast::new());
+            ws_broadcast.set_app_handle(app.handle().clone());
 
             // Create app state
             let state = AppState {

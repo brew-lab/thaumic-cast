@@ -99,12 +99,24 @@ pub async fn get_sonos_state(state: State<'_, AppState>) -> Result<SonosStateSna
 }
 
 /// Clear all activity (streams and GENA subscriptions)
+/// Properly stops Sonos speakers before clearing state
 #[tauri::command]
 pub async fn clear_activity(state: State<'_, AppState>) -> Result<(), String> {
-    // Clear all streams
+    // 1. Collect unique speaker IPs from active streams
+    let speaker_ips = state.streams.get_all_speaker_ips();
+
+    // 2. Stop Sonos playback on each speaker
+    for ip in &speaker_ips {
+        if let Err(e) = crate::sonos::stop(ip).await {
+            log::warn!("Failed to stop speaker {}: {}", ip, e);
+            // Continue with other speakers
+        }
+    }
+
+    // 3. Clear all streams
     state.streams.clear_all();
 
-    // Clear all GENA subscriptions
+    // 4. Clear all GENA subscriptions
     {
         let gena_guard = state.gena.read().await;
         if let Some(ref gena) = *gena_guard {
@@ -114,6 +126,9 @@ pub async fn clear_activity(state: State<'_, AppState>) -> Result<(), String> {
         }
     }
 
-    log::info!("Cleared all activity");
+    log::info!(
+        "Cleared all activity (stopped {} speakers)",
+        speaker_ips.len()
+    );
     Ok(())
 }

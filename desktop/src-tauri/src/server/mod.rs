@@ -16,18 +16,41 @@ pub type WsEventSender = tokio::sync::mpsc::Sender<String>;
 /// Manages all connected WebSocket clients for event broadcasting
 pub struct WsBroadcast {
     senders: tokio::sync::Mutex<Vec<WsEventSender>>,
+    app_handle: std::sync::RwLock<Option<tauri::AppHandle>>,
 }
 
 impl WsBroadcast {
     pub fn new() -> Self {
         Self {
             senders: tokio::sync::Mutex::new(Vec::new()),
+            app_handle: std::sync::RwLock::new(None),
+        }
+    }
+
+    /// Set the app handle for emitting Tauri events
+    pub fn set_app_handle(&self, handle: tauri::AppHandle) {
+        *self.app_handle.write().unwrap() = Some(handle);
+    }
+
+    /// Emit clients-changed event to Tauri frontend
+    fn emit_clients_changed(&self, count: usize) {
+        if let Some(ref handle) = *self.app_handle.read().unwrap() {
+            use tauri::Emitter;
+            if let Err(e) = handle.emit("clients-changed", count as u64) {
+                log::warn!("[WsBroadcast] Failed to emit clients-changed: {}", e);
+            }
         }
     }
 
     /// Register a new client channel for broadcasting
     pub async fn register(&self, sender: WsEventSender) {
-        self.senders.lock().await.push(sender);
+        let count = {
+            let mut senders = self.senders.lock().await;
+            senders.push(sender);
+            senders.len()
+        };
+        self.emit_clients_changed(count);
+        log::debug!("[WsBroadcast] Client registered, {} total", count);
     }
 
     /// Broadcast an event to all connected clients
@@ -52,8 +75,16 @@ impl WsBroadcast {
         }
 
         // Remove failed senders in reverse order to preserve indices
+        let had_failures = !failed_indices.is_empty();
         for i in failed_indices.into_iter().rev() {
             senders.swap_remove(i);
+        }
+
+        // Emit event if any clients were removed
+        if had_failures {
+            let count = senders.len();
+            drop(senders); // Release lock before emitting
+            self.emit_clients_changed(count);
         }
     }
 

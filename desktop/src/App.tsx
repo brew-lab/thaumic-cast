@@ -36,6 +36,17 @@ export function App() {
     };
   }, []);
 
+  // Listen for clients-changed event (updates connected_clients count)
+  useEffect(() => {
+    const unlisten = listen<number>('clients-changed', (event) => {
+      setStatus((prev) => (prev ? { ...prev, connected_clients: event.payload } : prev));
+    });
+
+    return () => {
+      unlisten.then((fn) => fn());
+    };
+  }, []);
+
   // Sonos state is event-driven (no polling needed)
   useEffect(() => {
     // Initial fetch

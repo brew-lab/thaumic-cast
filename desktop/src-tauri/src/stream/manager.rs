@@ -191,6 +191,17 @@ impl StreamManager {
         }
     }
 
+    /// Get all unique speaker IPs from active streams
+    pub fn get_all_speaker_ips(&self) -> Vec<String> {
+        self.streams
+            .read()
+            .values()
+            .filter_map(|s| s.get_speaker_ip())
+            .collect::<std::collections::HashSet<_>>()
+            .into_iter()
+            .collect()
+    }
+
     /// Find a stream by speaker IP
     pub fn get_by_speaker_ip(&self, speaker_ip: &str) -> Option<Arc<StreamState>> {
         self.streams
