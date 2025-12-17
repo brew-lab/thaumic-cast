@@ -289,7 +289,7 @@ async function handleSonosEvent(message: SonosEventMessage): Promise<void> {
           // Stop mode (default): tear everything down
           // Note: Don't close offscreen - keep WS alive for event monitoring
           console.log('[Background] Sonos playback stopped, stopping stream (stop mode)');
-          clearActiveStream();
+          await stopCurrentStream();
         }
       } else if (payload.state === 'PLAYING') {
         // Check if we have a paused stream to resume
@@ -364,9 +364,9 @@ async function handleSonosEvent(message: SonosEventMessage): Promise<void> {
         '[Background] Sonos source changed:',
         `expected=${payload.expectedUri}, current=${payload.currentUri}`
       );
-      // Auto-stop cast since we're no longer the active source
+      // Fully stop stream (releases tab capture, clears server state)
       // Note: Don't close offscreen - keep WS alive for event monitoring
-      clearActiveStream();
+      await stopCurrentStream();
       // Notify popup that source changed
       chrome.runtime
         .sendMessage({

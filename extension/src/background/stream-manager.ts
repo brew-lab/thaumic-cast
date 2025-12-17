@@ -232,6 +232,7 @@ export async function stopCurrentStream(mode?: SonosMode, coordinatorIp?: string
   }
 
   activeStream = { isActive: false };
+  broadcastStatusUpdate();
 }
 
 export function getActiveStream(): CastStatus {
