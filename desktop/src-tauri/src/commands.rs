@@ -1,6 +1,7 @@
 use crate::generated::{ConfigResponse, SonosStateSnapshot, Speaker, StatusResponse};
 use crate::network::get_local_ip;
 use crate::server::AppState;
+use crate::sonos::gena::{SonosEvent, TransportState};
 use tauri::{AppHandle, State};
 use tauri_plugin_store::StoreExt;
 
@@ -107,7 +108,25 @@ pub async fn clear_activity(state: State<'_, AppState>) -> Result<(), String> {
     // 1. Collect unique speaker IPs from active streams
     let speaker_ips = state.streams.get_all_speaker_ips();
 
-    // 2. Stop Sonos playback on each speaker
+    // 2. Broadcast transportState: STOPPED to all WebSocket clients
+    //    This notifies extensions to stop casting (uses existing event handling)
+    let timestamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_millis() as u64;
+
+    for ip in &speaker_ips {
+        state
+            .ws_broadcast
+            .broadcast(&SonosEvent::TransportState {
+                state: TransportState::Stopped,
+                speaker_ip: ip.clone(),
+                timestamp,
+            })
+            .await;
+    }
+
+    // 3. Stop Sonos playback on each speaker
     for ip in &speaker_ips {
         if let Err(e) = crate::sonos::stop(ip).await {
             log::warn!("Failed to stop speaker {}: {}", ip, e);
@@ -115,10 +134,10 @@ pub async fn clear_activity(state: State<'_, AppState>) -> Result<(), String> {
         }
     }
 
-    // 3. Clear all streams
+    // 4. Clear all streams
     state.streams.clear_all();
 
-    // 4. Clear all GENA subscriptions
+    // 5. Clear all GENA subscriptions
     {
         let gena_guard = state.gena.read().await;
         if let Some(ref gena) = *gena_guard {
