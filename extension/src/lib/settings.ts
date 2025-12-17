@@ -78,7 +78,7 @@ function normalizeServerUrl(url?: string): string | undefined {
 
 /**
  * Detect if the desktop app is running on any port in the expected range.
- * Scans ports 45100-45110 in parallel and returns as soon as one responds.
+ * Scans ports 49400-49410 in parallel and returns as soon as one responds.
  * Verifies the service name to ensure it's actually the desktop app.
  */
 export async function detectDesktopApp(): Promise<{ found: boolean; url: string | null }> {

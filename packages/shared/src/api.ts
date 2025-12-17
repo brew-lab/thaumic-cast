@@ -70,4 +70,4 @@ export const API_TIMEOUT_MS = 10000;
  * Port range the desktop app binds to for HTTP server
  * Keep in sync with desktop/src-tauri/src/network.rs HTTP_PORT_RANGE
  */
-export const DESKTOP_PORT_RANGE = { start: 45100, end: 45110 } as const;
+export const DESKTOP_PORT_RANGE = { start: 49400, end: 49410 } as const;

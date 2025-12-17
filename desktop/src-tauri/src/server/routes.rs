@@ -751,7 +751,7 @@ async fn handle_ws_command(
 
             let local_ip = get_local_ip().unwrap_or_else(|| "127.0.0.1".to_string());
             let actual_ports = state.actual_ports.read();
-            let port = actual_ports.as_ref().map(|p| p.http_port).unwrap_or(45100);
+            let port = actual_ports.as_ref().map(|p| p.http_port).unwrap_or(49400);
 
             // Use correct file extension based on codec
             let format = match codec {

@@ -2,12 +2,12 @@ use local_ip_address::local_ip;
 use std::net::SocketAddr;
 use tokio::net::TcpListener;
 
-/// HTTP server port range (high-numbered to avoid dev port conflicts)
+/// HTTP server port range (IANA dynamic/private range to avoid conflicts)
 /// Keep in sync with packages/shared/src/api.ts DESKTOP_PORT_RANGE
-pub const HTTP_PORT_RANGE: std::ops::RangeInclusive<u16> = 45100..=45110;
+pub const HTTP_PORT_RANGE: std::ops::RangeInclusive<u16> = 49400..=49410;
 
-/// GENA listener port range (high-numbered, separate from HTTP)
-pub const GENA_PORT_RANGE: std::ops::RangeInclusive<u16> = 45111..=45120;
+/// GENA listener port range (IANA dynamic/private range, separate from HTTP)
+pub const GENA_PORT_RANGE: std::ops::RangeInclusive<u16> = 49411..=49420;
 
 /// Get the local IP address of this machine
 pub fn get_local_ip() -> Option<String> {
