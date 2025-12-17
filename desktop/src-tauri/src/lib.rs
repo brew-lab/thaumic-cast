@@ -12,13 +12,9 @@ pub use generated::*;
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
-use std::time::Duration;
 use tauri::{Emitter, Manager};
 use tauri_plugin_deep_link::DeepLinkExt;
 use tauri_plugin_store::StoreExt;
-
-/// Interval between automatic speaker discoveries (5 minutes)
-const DISCOVERY_INTERVAL: Duration = Duration::from_secs(300);
 
 pub use server::AppState;
 use sonos::SonosState;
@@ -188,63 +184,66 @@ pub fn run() {
 
             log::info!("Server starting (port will be auto-allocated if not specified)");
 
-            // Start speaker discovery task (runs immediately, then every DISCOVERY_INTERVAL)
+            // Run initial speaker discovery once at startup
+            // Subsequent updates come via GENA ZoneGroupTopology events
             tauri::async_runtime::spawn(async move {
-                let mut interval = tokio::time::interval(DISCOVERY_INTERVAL);
-                loop {
-                    log::debug!("Running speaker discovery...");
+                log::debug!("Running initial speaker discovery...");
 
-                    // Mark discovery as in progress
-                    sonos_state_for_discovery.set_discovery_state(true, 0, None);
+                // Mark discovery as in progress
+                sonos_state_for_discovery.set_discovery_state(true, 0, None);
 
-                    // Phase 1: SSDP discovery
-                    let (speakers, groups) = match sonos::discover_speakers(true).await {
-                        Ok(speakers) => {
-                            log::info!("SSDP complete: found {} speakers", speakers.len());
-
-                            // Phase 2: Get zone groups via SOAP
-                            let groups = sonos::get_zone_groups(None).await.unwrap_or_else(|e| {
-                                log::warn!("Failed to get zone groups: {}", e);
-                                vec![]
-                            });
-
-                            (speakers, groups)
-                        }
-                        Err(e) => {
-                            log::warn!("Speaker discovery failed: {}", e);
-                            (vec![], vec![])
-                        }
-                    };
-
-                    // Compute timestamp
-                    let timestamp = std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .map(|d| d.as_secs())
-                        .ok();
-
-                    // Atomic state update - single emit with complete data
-                    sonos_state_for_discovery.complete_discovery(
-                        speakers.len() as u64,
-                        groups.clone(),
-                        timestamp,
-                    );
-
-                    // Auto-subscribe to GENA after successful group fetch
-                    if !groups.is_empty() {
-                        let coordinator_ips: Vec<String> =
-                            groups.iter().map(|g| g.coordinator_ip.clone()).collect();
-
-                        let gena_guard = gena_for_discovery.read().await;
-                        if let Some(ref gena) = *gena_guard {
-                            gena.auto_subscribe_to_groups(&coordinator_ips).await;
-                            sonos_state_for_discovery
-                                .set_gena_subscriptions(gena.active_subscriptions() as u64);
-                        }
+                // Phase 1: SSDP discovery
+                let speakers = match sonos::discover_speakers(true).await {
+                    Ok(s) => {
+                        log::info!("SSDP complete: found {} speakers", s.len());
+                        s
                     }
+                    Err(e) => {
+                        log::warn!("Initial discovery failed: {}", e);
+                        sonos_state_for_discovery.complete_discovery(0, vec![], None);
+                        return;
+                    }
+                };
 
-                    // Wait for next discovery cycle
-                    interval.tick().await;
+                // Phase 2: Bootstrap zone groups with retry logic
+                let groups = sonos::bootstrap_zone_groups(&speakers)
+                    .await
+                    .unwrap_or_else(|e| {
+                        log::warn!("Failed to bootstrap zone groups: {}", e);
+                        vec![]
+                    });
+
+                // Compute timestamp
+                let timestamp = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_secs())
+                    .ok();
+
+                // Atomic state update - single emit with complete data
+                sonos_state_for_discovery.complete_discovery(
+                    speakers.len() as u64,
+                    groups.clone(),
+                    timestamp,
+                );
+
+                // Auto-subscribe to GENA - events will keep groups updated
+                if !groups.is_empty() {
+                    let coordinator_ips: Vec<String> =
+                        groups.iter().map(|g| g.coordinator_ip.clone()).collect();
+
+                    let gena_guard = gena_for_discovery.read().await;
+                    if let Some(ref gena) = *gena_guard {
+                        gena.auto_subscribe_to_groups(&coordinator_ips).await;
+                        sonos_state_for_discovery
+                            .set_gena_subscriptions(gena.active_subscriptions() as u64);
+                    }
                 }
+
+                log::info!(
+                    "Initial discovery complete: {} speakers, {} groups. GENA subscribed for updates.",
+                    speakers.len(),
+                    groups.len()
+                );
             });
 
             Ok(())

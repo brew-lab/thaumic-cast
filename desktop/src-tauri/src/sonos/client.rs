@@ -206,8 +206,9 @@ fn get_channel_role(ht_sat_chan_map: &str, uuid: &str) -> Option<String> {
     None
 }
 
-/// Parse ZoneGroupState XML to extract groups and members using quick-xml
-fn parse_zone_group_state(xml: &str) -> Vec<LocalGroup> {
+/// Parse ZoneGroupState XML into LocalGroup structs.
+/// This is used both for SOAP responses and GENA NOTIFY events.
+pub fn parse_zone_group_state(xml: &str) -> Vec<LocalGroup> {
     let mut groups = Vec::new();
     let unescaped_xml = unescape_xml(xml);
     let mut reader = Reader::from_str(&unescaped_xml);
@@ -327,25 +328,12 @@ fn parse_zone_group_state(xml: &str) -> Vec<LocalGroup> {
     groups
 }
 
-/// Get zone groups from a Sonos speaker
-pub async fn get_zone_groups(speaker_ip: Option<&str>) -> Result<Vec<LocalGroup>, SonosError> {
-    let ip = match speaker_ip {
-        Some(ip) => ip.to_string(),
-        None => {
-            // Use cached speakers if available
-            let speakers = discover_speakers(false).await?;
-            speakers
-                .first()
-                .ok_or(SonosError::NoSpeakersFound)?
-                .ip
-                .clone()
-        }
-    };
-
+/// Query zone groups from a specific speaker IP
+async fn query_zone_groups_from_speaker(ip: &str) -> Result<Vec<LocalGroup>, SonosError> {
     let params = HashMap::new();
     let response = send_soap_request(
         get_client(),
-        &ip,
+        ip,
         ZONE_GROUP_CONTROL,
         ZONE_GROUP_TOPOLOGY,
         "GetZoneGroupState",
@@ -357,6 +345,45 @@ pub async fn get_zone_groups(speaker_ip: Option<&str>) -> Result<Vec<LocalGroup>
         .ok_or_else(|| SonosError::ParseError("Failed to get ZoneGroupState".to_string()))?;
 
     Ok(parse_zone_group_state(&zone_group_state))
+}
+
+/// Bootstrap zone groups by querying speakers until we get valid data.
+/// Tries multiple speakers to handle cases where some speakers return empty groups.
+pub async fn bootstrap_zone_groups(speakers: &[Speaker]) -> Result<Vec<LocalGroup>, SonosError> {
+    if speakers.is_empty() {
+        return Err(SonosError::NoSpeakersFound);
+    }
+
+    // Try up to 3 speakers
+    for speaker in speakers.iter().take(3) {
+        match query_zone_groups_from_speaker(&speaker.ip).await {
+            Ok(groups) if !groups.is_empty() => {
+                log::info!("Got {} group(s) from {}", groups.len(), speaker.ip);
+                return Ok(groups);
+            }
+            Ok(_) => {
+                log::debug!("Speaker {} returned empty groups, trying next", speaker.ip);
+            }
+            Err(e) => {
+                log::debug!("Speaker {} failed: {}, trying next", speaker.ip, e);
+            }
+        }
+    }
+
+    log::warn!("All speakers returned empty zone groups");
+    Ok(vec![])
+}
+
+/// Get zone groups from a Sonos speaker (legacy function for backward compatibility)
+pub async fn get_zone_groups(speaker_ip: Option<&str>) -> Result<Vec<LocalGroup>, SonosError> {
+    match speaker_ip {
+        Some(ip) => query_zone_groups_from_speaker(ip).await,
+        None => {
+            // Use cached speakers and bootstrap with retry logic
+            let speakers = discover_speakers(false).await?;
+            bootstrap_zone_groups(&speakers).await
+        }
+    }
 }
 
 /// Set the audio stream URL on a Sonos group coordinator

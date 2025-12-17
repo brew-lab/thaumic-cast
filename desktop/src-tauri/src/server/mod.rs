@@ -180,21 +180,112 @@ pub async fn start_server(
                             ws_broadcast.broadcast(&event).await;
 
                             // Update centralized Sonos state (which emits to frontend)
-                            if matches!(
-                                event,
-                                SonosEvent::TransportState { .. }
-                                    | SonosEvent::SourceChanged { .. }
-                                    | SonosEvent::GroupVolume { .. }
-                                    | SonosEvent::GroupMute { .. }
-                            ) {
-                                let gena_guard = gena_ref.read().await;
-                                if let Some(ref gena) = *gena_guard {
-                                    let statuses = gena.get_all_group_statuses();
-                                    sonos_state.set_group_statuses(statuses);
-                                    // Also update subscription count
-                                    sonos_state
-                                        .set_gena_subscriptions(gena.active_subscriptions() as u64);
+                            match &event {
+                                SonosEvent::ZoneGroupsUpdated { groups, .. } => {
+                                    // Zone topology changed - update groups directly
+                                    log::info!(
+                                        "[Server] Received ZoneGroupsUpdated with {} group(s)",
+                                        groups.len()
+                                    );
+                                    sonos_state.set_groups(groups.clone());
+
+                                    // Re-subscribe to new coordinators if needed
+                                    let coordinator_ips: Vec<String> = groups
+                                        .iter()
+                                        .map(|g| g.coordinator_ip.clone())
+                                        .collect();
+                                    let gena_guard = gena_ref.read().await;
+                                    if let Some(ref gena) = *gena_guard {
+                                        gena.auto_subscribe_to_groups(&coordinator_ips).await;
+                                        sonos_state.set_gena_subscriptions(
+                                            gena.active_subscriptions() as u64,
+                                        );
+                                    }
                                 }
+                                SonosEvent::TransportState { .. }
+                                | SonosEvent::SourceChanged { .. }
+                                | SonosEvent::GroupVolume { .. }
+                                | SonosEvent::GroupMute { .. } => {
+                                    let gena_guard = gena_ref.read().await;
+                                    if let Some(ref gena) = *gena_guard {
+                                        let statuses = gena.get_all_group_statuses();
+                                        sonos_state.set_group_statuses(statuses);
+                                        // Also update subscription count
+                                        sonos_state
+                                            .set_gena_subscriptions(gena.active_subscriptions() as u64);
+                                    }
+                                }
+                                SonosEvent::SubscriptionLost { speaker_ip, .. } => {
+                                    // GENA subscription lost - trigger full re-discovery
+                                    log::warn!(
+                                        "[Server] Subscription lost for {}, triggering re-discovery",
+                                        speaker_ip
+                                    );
+
+                                    // Clone what we need for the recovery task
+                                    let sonos_state_recovery = Arc::clone(&sonos_state);
+                                    let gena_recovery = Arc::clone(&gena_ref);
+
+                                    // Spawn recovery task to avoid blocking the event loop
+                                    tokio::spawn(async move {
+                                        // Mark discovery as in progress
+                                        sonos_state_recovery.set_discovery_state(true, 0, None);
+
+                                        // Phase 1: SSDP discovery
+                                        let speakers = match crate::sonos::discover_speakers(true).await {
+                                            Ok(s) => s,
+                                            Err(e) => {
+                                                log::error!("[Recovery] SSDP discovery failed: {}", e);
+                                                sonos_state_recovery.complete_discovery(0, vec![], None);
+                                                return;
+                                            }
+                                        };
+
+                                        log::info!("[Recovery] SSDP found {} speakers", speakers.len());
+
+                                        // Phase 2: Bootstrap zone groups
+                                        let groups = crate::sonos::bootstrap_zone_groups(&speakers)
+                                            .await
+                                            .unwrap_or_else(|e| {
+                                                log::warn!("[Recovery] Failed to bootstrap groups: {}", e);
+                                                vec![]
+                                            });
+
+                                        // Compute timestamp
+                                        let timestamp = std::time::SystemTime::now()
+                                            .duration_since(std::time::UNIX_EPOCH)
+                                            .map(|d| d.as_secs())
+                                            .ok();
+
+                                        // Update state
+                                        sonos_state_recovery.complete_discovery(
+                                            speakers.len() as u64,
+                                            groups.clone(),
+                                            timestamp,
+                                        );
+
+                                        // Re-subscribe to GENA
+                                        if !groups.is_empty() {
+                                            let coordinator_ips: Vec<String> =
+                                                groups.iter().map(|g| g.coordinator_ip.clone()).collect();
+
+                                            let gena_guard = gena_recovery.read().await;
+                                            if let Some(ref gena) = *gena_guard {
+                                                gena.auto_subscribe_to_groups(&coordinator_ips).await;
+                                                sonos_state_recovery.set_gena_subscriptions(
+                                                    gena.active_subscriptions() as u64,
+                                                );
+                                            }
+                                        }
+
+                                        log::info!(
+                                            "[Recovery] Complete: {} speakers, {} groups",
+                                            speakers.len(),
+                                            groups.len()
+                                        );
+                                    });
+                                }
+                                _ => {}
                             }
                         }
                     });

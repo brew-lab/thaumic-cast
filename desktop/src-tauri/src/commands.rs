@@ -57,11 +57,47 @@ pub async fn get_speakers(_state: State<'_, AppState>) -> Result<Vec<Speaker>, S
         .map_err(|e| e.to_string())
 }
 
-#[tauri::command]
-pub async fn refresh_speakers(_state: State<'_, AppState>) -> Result<Vec<Speaker>, String> {
-    crate::sonos::discover_speakers(true)
+/// Run discovery: SSDP scan, bootstrap groups, subscribe to GENA
+async fn run_discovery(state: &AppState) -> Vec<Speaker> {
+    state.sonos_state.set_discovery_state(true, 0, None);
+
+    let speakers = match crate::sonos::discover_speakers(true).await {
+        Ok(s) => s,
+        Err(e) => {
+            log::warn!("Discovery failed: {}", e);
+            state.sonos_state.complete_discovery(0, vec![], None);
+            return vec![];
+        }
+    };
+
+    let groups = crate::sonos::bootstrap_zone_groups(&speakers)
         .await
-        .map_err(|e| e.to_string())
+        .unwrap_or_default();
+
+    let timestamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .ok();
+
+    state.sonos_state.complete_discovery(speakers.len() as u64, groups.clone(), timestamp);
+
+    if !groups.is_empty() {
+        let coordinator_ips: Vec<String> = groups.iter().map(|g| g.coordinator_ip.clone()).collect();
+        let gena_guard = state.gena.read().await;
+        if let Some(ref gena) = *gena_guard {
+            gena.auto_subscribe_to_groups(&coordinator_ips).await;
+            state.sonos_state.set_gena_subscriptions(gena.active_subscriptions() as u64);
+        }
+    }
+
+    log::info!("Discovery complete: {} speakers, {} groups", speakers.len(), groups.len());
+    speakers
+}
+
+/// Manual refresh: re-discover speakers and update zone groups
+#[tauri::command]
+pub async fn refresh_speakers(state: State<'_, AppState>) -> Result<Vec<Speaker>, String> {
+    Ok(run_discovery(&state).await)
 }
 
 #[tauri::command]
@@ -101,15 +137,12 @@ pub async fn get_sonos_state(state: State<'_, AppState>) -> Result<SonosStateSna
     Ok(state.sonos_state.snapshot())
 }
 
-/// Clear all activity (streams and GENA subscriptions)
-/// Properly stops Sonos speakers before clearing state
+/// Clear all activity, then re-discover to restore GENA subscriptions
 #[tauri::command]
 pub async fn clear_activity(state: State<'_, AppState>) -> Result<(), String> {
-    // 1. Collect unique speaker IPs from active streams
     let speaker_ips = state.streams.get_all_speaker_ips();
 
-    // 2. Broadcast transportState: STOPPED to all WebSocket clients
-    //    This notifies extensions to stop casting (uses existing event handling)
+    // Broadcast STOPPED to extensions
     let timestamp = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
@@ -126,30 +159,24 @@ pub async fn clear_activity(state: State<'_, AppState>) -> Result<(), String> {
             .await;
     }
 
-    // 3. Stop Sonos playback on each speaker
+    // Stop Sonos playback
     for ip in &speaker_ips {
-        if let Err(e) = crate::sonos::stop(ip).await {
-            log::warn!("Failed to stop speaker {}: {}", ip, e);
-            // Continue with other speakers
-        }
+        let _ = crate::sonos::stop(ip).await;
     }
 
-    // 4. Clear all streams
+    // Clear streams and GENA
     state.streams.clear_all();
-
-    // 5. Clear all GENA subscriptions
     {
         let gena_guard = state.gena.read().await;
         if let Some(ref gena) = *gena_guard {
             gena.clear_all_subscriptions().await;
-            // Update subscription count in sonos state
-            state.sonos_state.set_gena_subscriptions(0);
         }
     }
 
-    log::info!(
-        "Cleared all activity (stopped {} speakers)",
-        speaker_ips.len()
-    );
+    log::info!("Cleared activity, re-discovering...");
+
+    // Re-discover to restore GENA subscriptions
+    run_discovery(&state).await;
+
     Ok(())
 }

@@ -7,6 +7,7 @@ use crate::generated::{
     GenaService as GeneratedGenaService, GroupStatus, SonosEvent as GeneratedSonosEvent,
     TransportState as GeneratedTransportState,
 };
+use super::client::parse_zone_group_state;
 use crate::network::get_local_ip;
 use crate::sonos::soap::unescape_xml;
 use axum::{
@@ -717,7 +718,7 @@ async fn schedule_renewal_task(
                 .await;
 
             // If re-subscribe succeeded, schedule renewal for the new subscription
-            if let Ok(response) = resubscribe_result {
+            let resubscribed = if let Ok(response) = resubscribe_result {
                 if response.status().is_success() {
                     if let Some(new_sid) =
                         response.headers().get("SID").and_then(|v| v.to_str().ok())
@@ -753,14 +754,41 @@ async fn schedule_renewal_task(
                         Box::pin(schedule_renewal_task(
                             new_sid.to_string(),
                             next_renewal_delay,
-                            state,
+                            state.clone(),
                             client,
                             local_ip,
                             port,
                         ))
                         .await;
+                        true
+                    } else {
+                        false
                     }
+                } else {
+                    false
                 }
+            } else {
+                false
+            };
+
+            // If re-subscription failed, emit SubscriptionLost event to trigger recovery
+            if !resubscribed {
+                log::error!(
+                    "[GENA] Re-subscription failed for {} {:?}, emitting SubscriptionLost",
+                    speaker_ip,
+                    service
+                );
+                let timestamp = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_millis() as u64)
+                    .unwrap_or(0);
+                let _ = state.event_tx.send((
+                    speaker_ip.clone(),
+                    SonosEvent::SubscriptionLost {
+                        speaker_ip,
+                        timestamp,
+                    },
+                ));
             }
         }
     }
@@ -991,7 +1019,20 @@ fn parse_notify(
             }
         }
         GenaService::ZoneGroupTopology => {
-            // Zone topology changed
+            // Zone topology changed - extract ZoneGroupState from the NOTIFY body
+            // The ZoneGroupState is in the propertyset, similar to how we extract LastChange
+            if let Some(zone_group_state) = extract_zone_group_state(body) {
+                let unescaped = unescape_xml(&zone_group_state);
+                let groups = parse_zone_group_state(&unescaped);
+                if !groups.is_empty() {
+                    log::info!(
+                        "[GENA] Zone topology updated: {} group(s)",
+                        groups.len()
+                    );
+                    events.push(SonosEvent::ZoneGroupsUpdated { groups, timestamp });
+                }
+            }
+            // Also emit the legacy ZoneChange event for backward compatibility
             events.push(SonosEvent::ZoneChange { timestamp });
         }
         GenaService::GroupRenderingControl => {
@@ -1045,6 +1086,41 @@ fn extract_last_change(xml: &str) -> Option<String> {
                 result.push_str(&String::from_utf8_lossy(&e));
             }
             Ok(Event::End(e)) if e.local_name().as_ref() == b"LastChange" => {
+                return if result.is_empty() {
+                    None
+                } else {
+                    Some(result)
+                };
+            }
+            Ok(Event::Eof) => break,
+            Err(_) => break,
+            _ => {}
+        }
+    }
+    None
+}
+
+/// Extract ZoneGroupState content from NOTIFY body using quick-xml
+/// The ZoneGroupTopology NOTIFY has a propertyset with ZoneGroupState element
+fn extract_zone_group_state(xml: &str) -> Option<String> {
+    let mut reader = Reader::from_str(xml);
+    let mut in_zone_group_state = false;
+    let mut result = String::new();
+
+    loop {
+        match reader.read_event() {
+            Ok(Event::Start(e)) if e.local_name().as_ref() == b"ZoneGroupState" => {
+                in_zone_group_state = true;
+            }
+            Ok(Event::Text(e)) if in_zone_group_state => {
+                if let Ok(text) = e.unescape() {
+                    result.push_str(&text);
+                }
+            }
+            Ok(Event::CData(e)) if in_zone_group_state => {
+                result.push_str(&String::from_utf8_lossy(&e));
+            }
+            Ok(Event::End(e)) if e.local_name().as_ref() == b"ZoneGroupState" => {
                 return if result.is_empty() {
                     None
                 } else {
