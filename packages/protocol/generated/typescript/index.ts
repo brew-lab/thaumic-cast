@@ -254,8 +254,30 @@ export type components = {
             /** Format: int64 */
             timestamp: number;
         };
+        /** @description Zone groups have been updated (from ZoneGroupTopology GENA event) */
+        ZoneGroupsUpdatedEvent: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "zoneGroupsUpdated";
+            groups: components["schemas"]["LocalGroup"][];
+            /** Format: int64 */
+            timestamp: number;
+        };
+        /** @description GENA subscription was lost and needs recovery */
+        SubscriptionLostEvent: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "subscriptionLost";
+            speakerIp: string;
+            /** Format: int64 */
+            timestamp: number;
+        };
         /** @description Union type for all Sonos events sent via WebSocket */
-        SonosEvent: components["schemas"]["TransportStateEvent"] | components["schemas"]["ZoneChangeEvent"] | components["schemas"]["SourceChangedEvent"] | components["schemas"]["GroupVolumeChangeEvent"] | components["schemas"]["GroupMuteChangeEvent"];
+        SonosEvent: components["schemas"]["TransportStateEvent"] | components["schemas"]["ZoneChangeEvent"] | components["schemas"]["SourceChangedEvent"] | components["schemas"]["GroupVolumeChangeEvent"] | components["schemas"]["GroupMuteChangeEvent"] | components["schemas"]["ZoneGroupsUpdatedEvent"] | components["schemas"]["SubscriptionLostEvent"];
         /** @description Tauri get_status command response */
         StatusResponse: {
             server_running: boolean;
@@ -374,6 +396,8 @@ export type ZoneChangeEvent = components["schemas"]["ZoneChangeEvent"];
 export type SourceChangedEvent = components["schemas"]["SourceChangedEvent"];
 export type GroupVolumeChangeEvent = components["schemas"]["GroupVolumeChangeEvent"];
 export type GroupMuteChangeEvent = components["schemas"]["GroupMuteChangeEvent"];
+export type ZoneGroupsUpdatedEvent = components["schemas"]["ZoneGroupsUpdatedEvent"];
+export type SubscriptionLostEvent = components["schemas"]["SubscriptionLostEvent"];
 export type SonosEvent = components["schemas"]["SonosEvent"];
 export type StatusResponse = components["schemas"]["StatusResponse"];
 export type ConfigResponse = components["schemas"]["ConfigResponse"];

@@ -418,5 +418,16 @@ pub enum SonosEvent {
         speaker_ip: String,
         timestamp: u64,
     },
+    #[serde(rename = "zoneGroupsUpdated")]
+    ZoneGroupsUpdated {
+        groups: Vec<LocalGroup>,
+        timestamp: u64,
+    },
+    #[serde(rename = "subscriptionLost")]
+    SubscriptionLost {
+        #[serde(rename = "speakerIp")]
+        speaker_ip: String,
+        timestamp: u64,
+    },
 }
 

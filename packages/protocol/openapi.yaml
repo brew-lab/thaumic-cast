@@ -531,6 +531,42 @@ components:
           type: integer
           format: int64
 
+    ZoneGroupsUpdatedEvent:
+      type: object
+      description: Zone groups have been updated (from ZoneGroupTopology GENA event)
+      required:
+        - type
+        - groups
+        - timestamp
+      properties:
+        type:
+          type: string
+          const: zoneGroupsUpdated
+        groups:
+          type: array
+          items:
+            $ref: "#/components/schemas/LocalGroup"
+        timestamp:
+          type: integer
+          format: int64
+
+    SubscriptionLostEvent:
+      type: object
+      description: GENA subscription was lost and needs recovery
+      required:
+        - type
+        - speakerIp
+        - timestamp
+      properties:
+        type:
+          type: string
+          const: subscriptionLost
+        speakerIp:
+          type: string
+        timestamp:
+          type: integer
+          format: int64
+
     SonosEvent:
       description: Union type for all Sonos events sent via WebSocket
       oneOf:
@@ -539,6 +575,8 @@ components:
         - $ref: "#/components/schemas/SourceChangedEvent"
         - $ref: "#/components/schemas/GroupVolumeChangeEvent"
         - $ref: "#/components/schemas/GroupMuteChangeEvent"
+        - $ref: "#/components/schemas/ZoneGroupsUpdatedEvent"
+        - $ref: "#/components/schemas/SubscriptionLostEvent"
       discriminator:
         propertyName: type
         mapping:
@@ -547,6 +585,8 @@ components:
           sourceChanged: "#/components/schemas/SourceChangedEvent"
           groupVolume: "#/components/schemas/GroupVolumeChangeEvent"
           groupMute: "#/components/schemas/GroupMuteChangeEvent"
+          zoneGroupsUpdated: "#/components/schemas/ZoneGroupsUpdatedEvent"
+          subscriptionLost: "#/components/schemas/SubscriptionLostEvent"
 
     # ============================================================
     # Tauri Command Types (snake_case for Rust IPC)
