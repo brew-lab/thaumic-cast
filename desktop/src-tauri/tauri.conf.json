@@ -30,7 +30,7 @@
         "height": 500,
         "resizable": false,
         "visible": false,
-        "skipTaskbar": true,
+        "skipTaskbar": false,
         "center": true,
         "decorations": true
       }
