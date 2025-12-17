@@ -101,6 +101,11 @@ async function handleMessage(
       break;
     }
 
+    case 'GET_SONOS_STATE': {
+      sendResponse({ state: getSonosState(), connected: isWsConnected() });
+      break;
+    }
+
     case 'START_CAST': {
       const { tabId, groupId, groupName, quality, mediaStreamId, mode, coordinatorIp, metadata } =
         message as StartCastMessage;
@@ -231,6 +236,18 @@ async function handleMessage(
     case 'DISCONNECT_WS': {
       disconnectWebSocket();
       sendResponse({ success: true });
+      break;
+    }
+
+    case 'SET_MUTE': {
+      const { speakerIp, mute } = message as { speakerIp: string; mute: boolean };
+      if (isWsConnected()) {
+        sendWsCommand('setMute' as WsAction, { speakerIp, mute })
+          .then(() => sendResponse({ success: true }))
+          .catch((err) => sendResponse({ success: false, error: err.message }));
+      } else {
+        sendResponse({ success: false, error: 'WebSocket not connected' });
+      }
       break;
     }
 
@@ -389,6 +406,16 @@ async function handleSonosEvent(message: SonosEventMessage): Promise<void> {
     case 'groupVolume': {
       // Group volume changed - this is the combined volume for all speakers in the group
       console.log('[Background] Sonos group volume changed:', payload.volume);
+
+      // Persist in currentSonosState for when popup opens
+      const volumeState = getSonosState();
+      if (volumeState && payload.speakerIp) {
+        const updatedStatuses = volumeState.group_statuses.map((s) =>
+          s.coordinatorIp === payload.speakerIp ? { ...s, volume: payload.volume } : s
+        );
+        updateSonosState({ ...volumeState, group_statuses: updatedStatuses });
+      }
+
       chrome.runtime
         .sendMessage({
           type: 'VOLUME_UPDATE',
@@ -404,6 +431,16 @@ async function handleSonosEvent(message: SonosEventMessage): Promise<void> {
     case 'groupMute': {
       // Group mute state changed
       console.log('[Background] Sonos group mute changed:', payload.mute);
+
+      // Persist in currentSonosState for when popup opens
+      const muteState = getSonosState();
+      if (muteState && payload.speakerIp) {
+        const updatedStatuses = muteState.group_statuses.map((s) =>
+          s.coordinatorIp === payload.speakerIp ? { ...s, isMuted: payload.mute } : s
+        );
+        updateSonosState({ ...muteState, group_statuses: updatedStatuses });
+      }
+
       chrome.runtime
         .sendMessage({
           type: 'MUTE_UPDATE',

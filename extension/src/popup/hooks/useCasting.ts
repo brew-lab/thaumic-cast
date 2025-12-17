@@ -8,9 +8,7 @@ import type {
   LocalGroup,
 } from '@thaumic-cast/shared';
 import {
-  getGroupVolume,
   getLocalGroups,
-  getLocalVolume,
   getSonosGroups,
   getSonosStatus,
   setGroupVolume,
@@ -68,7 +66,8 @@ export function useCasting({
   const [casting, setCasting] = useState(false);
   const [castingPhase, setCastingPhase] = useState<string>('');
   const [volume, setVolume] = useState<number>(50);
-  const [volumeLoading, setVolumeLoading] = useState(false);
+  const [isMuted, setIsMuted] = useState(false);
+  const [muteLoading, setMuteLoading] = useState(false);
   const [stopping, setStopping] = useState(false);
   const volumeTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const errorTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -126,8 +125,11 @@ export function useCasting({
           setVolume(message.volume);
         }
       } else if (message.type === 'MUTE_UPDATE' && message.mute !== undefined) {
-        // Log mute changes for now - could add UI indicator later
-        console.log('[useCasting] Mute state changed:', message.mute);
+        // Only update if this is for our active speaker
+        const activeIp = castStatus.coordinatorIp;
+        if (!activeIp || message.speakerIp === activeIp) {
+          setIsMuted(message.mute);
+        }
       } else if (message.type === 'WS_STATE_CHANGED' && message.state) {
         // Update groups from WebSocket state
         handleSonosStateUpdate(message.state);
@@ -144,29 +146,8 @@ export function useCasting({
   // The server pushes zoneChange events when groups change, and the
   // handleSonosStateUpdate function updates groups in real-time.
 
-  // Fetch volume when group is selected or casting starts
-  useEffect(() => {
-    const groupId = castStatus.isActive ? castStatus.groupId : selectedGroup;
-    if (groupId && (sonosLinked || sonosMode === 'local')) {
-      fetchVolumeForGroup(groupId);
-    }
-  }, [selectedGroup, sonosLinked, sonosMode, castStatus.isActive, castStatus.groupId, groups]);
-
-  async function fetchVolumeForGroup(groupId: string) {
-    setVolumeLoading(true);
-
-    const group = groups.find((g) => g.id === groupId);
-    const volResponse =
-      sonosMode === 'local' && group?.coordinatorIp
-        ? await getLocalVolume(group.coordinatorIp)
-        : await getGroupVolume(groupId);
-
-    if (volResponse.data && !volResponse.error) {
-      setVolume(volResponse.data.volume);
-    }
-
-    setVolumeLoading(false);
-  }
+  // Note: Volume/mute fetching on init is no longer needed - we get it from
+  // stored WebSocket state via GET_SONOS_STATE in init().
 
   function handleVolumeChange(newVolume: number) {
     setVolume(newVolume);
@@ -193,12 +174,49 @@ export function useCasting({
     }, 300);
   }
 
+  async function handleMuteToggle() {
+    const groupId = castStatus.isActive ? castStatus.groupId : selectedGroup;
+    if (!groupId) return;
+
+    const group = groups.find((g) => g.id === groupId);
+    const ip = castStatus.isActive ? castStatus.coordinatorIp : group?.coordinatorIp;
+    if (!ip) return;
+
+    const newMuteState = !isMuted;
+
+    // Optimistic update
+    setIsMuted(newMuteState);
+    setMuteLoading(true);
+
+    try {
+      const response = await chrome.runtime.sendMessage({
+        type: 'SET_MUTE',
+        speakerIp: ip,
+        mute: newMuteState,
+      });
+
+      if (response?.error) {
+        // Revert on error
+        setIsMuted(!newMuteState);
+        setError(`Mute error: ${response.error}`);
+      }
+    } catch (err) {
+      // Revert on error
+      setIsMuted(!newMuteState);
+      setError(err instanceof Error ? err.message : 'Failed to toggle mute');
+    } finally {
+      setMuteLoading(false);
+    }
+  }
+
   /**
    * Handle Sonos state updates from WebSocket.
    * Updates groups and volume from the snapshot.
    */
   function handleSonosStateUpdate(state: SonosStateSnapshot) {
     console.log('[useCasting] Received Sonos state update:', state);
+
+    let effectiveGroupId = castStatus.isActive ? castStatus.groupId : selectedGroup;
 
     // Update groups
     if (state.groups && state.groups.length > 0) {
@@ -213,22 +231,28 @@ export function useCasting({
       // Select first group if none selected
       if (!selectedGroup && displayGroups.length > 0 && displayGroups[0]) {
         setSelectedGroup(displayGroups[0].id);
+        // Use the newly selected group for status lookup below
+        effectiveGroupId = displayGroups[0].id;
       }
 
       // Cache the groups
       setCachedGroups(state.groups);
     }
 
-    // Update volume from group status if we have an active/selected group
-    const activeGroupId = castStatus.isActive ? castStatus.groupId : selectedGroup;
-    if (activeGroupId && state.group_statuses) {
-      const group = state.groups?.find((g: LocalGroup) => g.id === activeGroupId);
+    // Update volume and mute state from group status if we have an active/selected group
+    if (effectiveGroupId && state.group_statuses) {
+      const group = state.groups?.find((g: LocalGroup) => g.id === effectiveGroupId);
       if (group) {
         const status = state.group_statuses.find(
           (s: { coordinatorIp: string }) => s.coordinatorIp === group.coordinatorIp
         );
-        if (status && typeof status.volume === 'number') {
-          setVolume(status.volume);
+        if (status) {
+          if (typeof status.volume === 'number') {
+            setVolume(status.volume);
+          }
+          if (typeof status.isMuted === 'boolean') {
+            setIsMuted(status.isMuted);
+          }
         }
       }
     }
@@ -237,71 +261,27 @@ export function useCasting({
   async function init() {
     if (initInFlight.current) return;
     initInFlight.current = true;
-    setLoading(true);
     setError(null);
 
     try {
-      const settings = await getExtensionSettings();
+      // STEP 1: Load cached/fast state IMMEDIATELY (unblock UI quickly)
+      const [settings, statusResponse, cached, sonosStateResponse] = await Promise.all([
+        getExtensionSettings(),
+        chrome.runtime.sendMessage({ type: 'GET_STATUS' }),
+        getCachedGroups(),
+        chrome.runtime.sendMessage({ type: 'GET_SONOS_STATE' }),
+      ]);
+
       const mode = settings.sonosMode || 'cloud';
       const configuredSpeakerIp = settings.speakerIp || '';
       setSonosMode(mode);
+      setBackendType(settings.backendType);
 
-      const response = await chrome.runtime.sendMessage({ type: 'GET_STATUS' });
-      if (response?.status) {
-        setCastStatus(response.status as CastStatus);
+      if (statusResponse?.status) {
+        setCastStatus(statusResponse.status as CastStatus);
       }
 
-      // Check session but don't block on it
-      const { data: session } = await getSession();
-      const loggedIn = !!session?.user;
-      setIsLoggedIn(loggedIn);
-
-      // Auto-detect desktop app if not signed in and mode is cloud
-      if (!loggedIn && mode === 'cloud') {
-        const { found, url } = await detectDesktopApp();
-        if (found && url) {
-          setDesktopDetected(true);
-          setDiscoveredDesktopUrl(url);
-          // Connect WebSocket to desktop app for real-time updates
-          chrome.runtime.sendMessage({ type: 'CONNECT_WS', serverUrl: url });
-        }
-      }
-
-      // Initialize based on mode and auth state
-      if (mode === 'local') {
-        // Use cached backend type from settings (set during "Test Connection" in Options)
-        const savedBackendType = settings.backendType;
-        setBackendType(savedBackendType);
-
-        if (savedBackendType === 'desktop') {
-          // Desktop backend: connect WebSocket for real-time updates
-          const serverUrl = settings.serverUrl || DEFAULT_SERVER_URL;
-          chrome.runtime.sendMessage({ type: 'CONNECT_WS', serverUrl });
-          await initMode(mode, configuredSpeakerIp);
-        } else if (loggedIn) {
-          // Cloud server + logged in: auth present
-          await initMode(mode, configuredSpeakerIp);
-        } else {
-          // Cloud server without auth, or unknown backend - show sign-in prompt
-          setNeedsAuthForLocalMode(true);
-        }
-      } else if (loggedIn) {
-        // Cloud mode requires auth
-        await initMode(mode, configuredSpeakerIp);
-      }
-      // If cloud mode and not logged in, show disabled state (handled in Popup.tsx)
-    } catch (err) {
-      setError(err instanceof Error ? err.message : t('errors.unknownError'));
-    } finally {
-      setLoading(false);
-      initInFlight.current = false;
-    }
-  }
-
-  async function initMode(mode: SonosMode, speakerIp: string) {
-    if (mode === 'local') {
-      // Step 1: Try to load from cache first (instant)
-      const cached = await getCachedGroups();
+      // Apply cached groups immediately if available (instant display)
       if (cached && cached.groups.length > 0) {
         const displayGroups: DisplayGroup[] = cached.groups.map((g) => ({
           id: g.id,
@@ -309,15 +289,71 @@ export function useCasting({
           coordinatorIp: g.coordinatorIp,
         }));
         setGroups(displayGroups);
-        if (!selectedGroup) {
-          setSelectedGroup(displayGroups[0]?.id || '');
-        }
         setSonosLinked(true);
-        // No loading state needed - cache is instant
-        return;
+        if (!selectedGroup && displayGroups[0]) {
+          setSelectedGroup(displayGroups[0].id);
+        }
       }
 
-      // Step 2: No cache - fetch from server (show loading state)
+      // Apply stored WebSocket state (includes volume/mute from background)
+      if (sonosStateResponse?.state && sonosStateResponse.connected) {
+        handleSonosStateUpdate(sonosStateResponse.state);
+      }
+
+      // UNBLOCK UI - we have enough to render (cache or empty state)
+      setLoading(false);
+
+      // STEP 2: Background fetches (update state as they complete)
+      // These run concurrently and don't block the UI
+
+      // Check session in background
+      getSession().then(({ data: session }) => {
+        const loggedIn = !!session?.user;
+        setIsLoggedIn(loggedIn);
+
+        // If cloud mode without login, check for desktop app
+        if (!loggedIn && mode === 'cloud') {
+          detectDesktopApp().then(({ found, url }) => {
+            if (found && url) {
+              setDesktopDetected(true);
+              setDiscoveredDesktopUrl(url);
+              chrome.runtime.sendMessage({ type: 'CONNECT_WS', serverUrl: url });
+            }
+          });
+        }
+
+        // Handle auth-dependent initialization
+        if (mode === 'local') {
+          if (settings.backendType === 'desktop') {
+            const serverUrl = settings.serverUrl || DEFAULT_SERVER_URL;
+            chrome.runtime.sendMessage({ type: 'CONNECT_WS', serverUrl });
+            // Refresh groups in background if we don't have cache
+            if (!cached || cached.groups.length === 0) {
+              initMode(mode, configuredSpeakerIp);
+            }
+          } else if (loggedIn) {
+            if (!cached || cached.groups.length === 0) {
+              initMode(mode, configuredSpeakerIp);
+            }
+          } else {
+            setNeedsAuthForLocalMode(true);
+          }
+        } else if (loggedIn) {
+          // Cloud mode - always refresh from server (no local cache for cloud)
+          initMode(mode, configuredSpeakerIp);
+        }
+      });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : t('errors.unknownError'));
+      setLoading(false);
+    } finally {
+      initInFlight.current = false;
+    }
+  }
+
+  async function initMode(mode: SonosMode, speakerIp: string) {
+    if (mode === 'local') {
+      // Fetch fresh groups from server (cache already applied in init)
       setGroupsLoading(true);
       const { data: groupsData, error: groupsError } = await getLocalGroups(speakerIp || undefined);
       setSonosLinked(true);
@@ -515,8 +551,10 @@ export function useCasting({
     casting,
     castingPhase,
     volume,
-    volumeLoading,
     handleVolumeChange,
+    isMuted,
+    muteLoading,
+    handleMuteToggle,
     stopping,
     handleCast,
     handleStop,
