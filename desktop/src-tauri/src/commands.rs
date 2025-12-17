@@ -85,7 +85,7 @@ async fn run_discovery(state: &AppState) -> Vec<Speaker> {
         let coordinator_ips: Vec<String> = groups.iter().map(|g| g.coordinator_ip.clone()).collect();
         let gena_guard = state.gena.read().await;
         if let Some(ref gena) = *gena_guard {
-            gena.auto_subscribe_to_groups(&coordinator_ips).await;
+            gena.sync_subscriptions(&coordinator_ips).await;
             state.sonos_state.set_gena_subscriptions(gena.active_subscriptions() as u64);
         }
     }
@@ -141,6 +141,15 @@ pub async fn get_sonos_state(state: State<'_, AppState>) -> Result<SonosStateSna
 #[tauri::command]
 pub async fn clear_activity(state: State<'_, AppState>) -> Result<(), String> {
     let speaker_ips = state.streams.get_all_speaker_ips();
+    let stream_count = state.streams.count();
+    let client_count = state.ws_broadcast.client_count().await;
+
+    log::info!(
+        "[clear_activity] Starting: {} streams, {} speaker IPs, {} WS clients",
+        stream_count,
+        speaker_ips.len(),
+        client_count
+    );
 
     // Broadcast STOPPED to extensions
     let timestamp = std::time::SystemTime::now()
@@ -149,6 +158,7 @@ pub async fn clear_activity(state: State<'_, AppState>) -> Result<(), String> {
         .as_millis() as u64;
 
     for ip in &speaker_ips {
+        log::info!("[clear_activity] Broadcasting STOPPED for speaker {}", ip);
         state
             .ws_broadcast
             .broadcast(&SonosEvent::TransportState {
@@ -161,6 +171,7 @@ pub async fn clear_activity(state: State<'_, AppState>) -> Result<(), String> {
 
     // Stop Sonos playback
     for ip in &speaker_ips {
+        log::info!("[clear_activity] Sending Stop SOAP to {}", ip);
         let _ = crate::sonos::stop(ip).await;
     }
 
@@ -173,7 +184,7 @@ pub async fn clear_activity(state: State<'_, AppState>) -> Result<(), String> {
         }
     }
 
-    log::info!("Cleared activity, re-discovering...");
+    log::info!("[clear_activity] Cleared streams and GENA, re-discovering...");
 
     // Re-discover to restore GENA subscriptions
     run_discovery(&state).await;

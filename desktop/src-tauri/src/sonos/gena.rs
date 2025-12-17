@@ -571,30 +571,46 @@ impl GenaListener {
         log::info!("[GENA] Cleared all subscriptions");
     }
 
-    /// Auto-subscribe to AVTransport for all discovered groups
-    /// Also subscribes to ZoneGroupTopology on one coordinator for zone change events
-    pub async fn auto_subscribe_to_groups(&self, coordinator_ips: &[String]) {
+    /// Sync GENA subscriptions to match desired coordinator list.
+    /// Unsubscribes from coordinators not in the list, subscribes to new ones.
+    pub async fn sync_subscriptions(&self, desired_coordinators: &[String]) {
+        use std::collections::HashSet;
+
+        let desired_set: HashSet<&str> = desired_coordinators.iter().map(|s| s.as_str()).collect();
+
+        // Get currently subscribed coordinator IPs
+        let current_ips: HashSet<String> = self
+            .state
+            .subscriptions
+            .read()
+            .values()
+            .map(|sub| sub.speaker_ip.clone())
+            .collect();
+
         log::info!(
-            "[GENA] Auto-subscribing to {} group coordinator(s)",
-            coordinator_ips.len()
+            "[GENA] Syncing subscriptions: {} current, {} desired",
+            current_ips.len(),
+            desired_set.len()
         );
 
-        for ip in coordinator_ips {
+        // Unsubscribe from coordinators not in desired set
+        for ip in &current_ips {
+            if !desired_set.contains(ip.as_str()) {
+                log::info!("[GENA] Removing stale subscriptions for {}", ip);
+                let _ = self.unsubscribe_all(ip).await;
+            }
+        }
+
+        // Subscribe to new coordinators (existing ones will be skipped by dedup in subscribe())
+        for ip in desired_coordinators {
             // Subscribe to AVTransport to track transport state
             if let Err(e) = self.subscribe(ip, GenaService::AVTransport).await {
-                log::warn!(
-                    "[GENA] Auto-subscribe AVTransport failed for {}: {}",
-                    ip,
-                    e
-                );
+                log::warn!("[GENA] Sync subscribe AVTransport failed for {}: {}", ip, e);
             }
             // Subscribe to GroupRenderingControl for group volume events
-            if let Err(e) = self
-                .subscribe(ip, GenaService::GroupRenderingControl)
-                .await
-            {
+            if let Err(e) = self.subscribe(ip, GenaService::GroupRenderingControl).await {
                 log::warn!(
-                    "[GENA] Auto-subscribe GroupRenderingControl failed for {}: {}",
+                    "[GENA] Sync subscribe GroupRenderingControl failed for {}: {}",
                     ip,
                     e
                 );
@@ -602,15 +618,18 @@ impl GenaListener {
         }
 
         // Subscribe to ZoneGroupTopology on first coordinator (system-wide event)
-        if let Some(first_ip) = coordinator_ips.first() {
-            if let Err(e) = self
-                .subscribe(first_ip, GenaService::ZoneGroupTopology)
-                .await
-            {
-                log::warn!("[GENA] Auto-subscribe ZoneGroupTopology failed: {}", e);
+        if let Some(first_ip) = desired_coordinators.first() {
+            if let Err(e) = self.subscribe(first_ip, GenaService::ZoneGroupTopology).await {
+                log::warn!("[GENA] Sync subscribe ZoneGroupTopology failed: {}", e);
             }
         }
+
+        log::info!(
+            "[GENA] Sync complete: {} active subscriptions",
+            self.active_subscriptions()
+        );
     }
+
 
     /// Schedule subscription renewal
     fn schedule_renewal(&self, sid: String, timeout_seconds: u64) {
@@ -1032,8 +1051,6 @@ fn parse_notify(
                     events.push(SonosEvent::ZoneGroupsUpdated { groups, timestamp });
                 }
             }
-            // Also emit the legacy ZoneChange event for backward compatibility
-            events.push(SonosEvent::ZoneChange { timestamp });
         }
         GenaService::GroupRenderingControl => {
             // Handled earlier - this case shouldn't be reached

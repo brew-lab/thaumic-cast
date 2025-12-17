@@ -226,14 +226,14 @@ pub fn run() {
                     timestamp,
                 );
 
-                // Auto-subscribe to GENA - events will keep groups updated
+                // Sync GENA subscriptions - events will keep groups updated
                 if !groups.is_empty() {
                     let coordinator_ips: Vec<String> =
                         groups.iter().map(|g| g.coordinator_ip.clone()).collect();
 
                     let gena_guard = gena_for_discovery.read().await;
                     if let Some(ref gena) = *gena_guard {
-                        gena.auto_subscribe_to_groups(&coordinator_ips).await;
+                        gena.sync_subscriptions(&coordinator_ips).await;
                         sonos_state_for_discovery
                             .set_gena_subscriptions(gena.active_subscriptions() as u64);
                     }

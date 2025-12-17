@@ -645,20 +645,49 @@ async fn handle_ws_command(
                 .as_ref()
                 .and_then(|p| p.get("metadata"))
                 .and_then(|v| serde_json::from_value(v.clone()).ok());
-            let coordinator_ip = command
+            let coordinator_ip_direct = command
                 .payload
                 .as_ref()
                 .and_then(|p| p.get("coordinatorIp"))
                 .and_then(|v| v.as_str())
                 .map(|s| s.to_string());
+            let group_id = command
+                .payload
+                .as_ref()
+                .and_then(|p| p.get("groupId"))
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string());
+
+            // Resolve coordinator IP: prefer direct coordinatorIp, otherwise look up from groupId
+            let coordinator_ip = coordinator_ip_direct.or_else(|| {
+                group_id.as_ref().and_then(|gid| {
+                    let snapshot = state.sonos_state.snapshot();
+                    snapshot.groups.iter()
+                        .find(|g| g.id == *gid)
+                        .map(|g| g.coordinator_ip.clone())
+                })
+            });
+
+            // Require coordinator IP for stream-speaker binding
+            let coordinator_ip = match coordinator_ip {
+                Some(ip) => ip,
+                None => {
+                    log::warn!("[CreateStream] Missing coordinatorIp and groupId not found in state");
+                    return WsResponse {
+                        id,
+                        success: false,
+                        data: None,
+                        error: Some("Either coordinatorIp or valid groupId is required".to_string()),
+                    };
+                }
+            };
 
             let stream_id = Uuid::new_v4().to_string();
             let stream = state.streams.get_or_create(&stream_id);
 
-            // Set coordinator IP for GENA event routing
-            if let Some(ref ip) = coordinator_ip {
-                stream.set_speaker_ip(ip.clone());
-            }
+            // Always set coordinator IP for GENA event routing and clear_activity
+            stream.set_speaker_ip(coordinator_ip.clone());
+            log::info!("[CreateStream] Stream {} bound to speaker {}", stream_id, coordinator_ip);
 
             if let Some(meta) = metadata {
                 stream.set_metadata(meta);

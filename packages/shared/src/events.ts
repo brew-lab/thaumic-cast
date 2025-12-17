@@ -9,6 +9,8 @@ export type {
   SourceChangedEvent,
   GroupVolumeChangeEvent,
   GroupMuteChangeEvent,
+  ZoneGroupsUpdatedEvent,
+  SubscriptionLostEvent,
   SonosEvent,
   GenaService,
   GenaSubscription,
@@ -57,6 +59,10 @@ export function isSonosEvent(data: unknown): data is SonosEvent {
         typeof obj.speakerIp === 'string' &&
         typeof obj.timestamp === 'number'
       );
+    case 'zoneGroupsUpdated':
+      return Array.isArray(obj.groups) && typeof obj.timestamp === 'number';
+    case 'subscriptionLost':
+      return typeof obj.speakerIp === 'string' && typeof obj.timestamp === 'number';
     default:
       return false;
   }

@@ -189,14 +189,14 @@ pub async fn start_server(
                                     );
                                     sonos_state.set_groups(groups.clone());
 
-                                    // Re-subscribe to new coordinators if needed
+                                    // Sync subscriptions to match new coordinator list
                                     let coordinator_ips: Vec<String> = groups
                                         .iter()
                                         .map(|g| g.coordinator_ip.clone())
                                         .collect();
                                     let gena_guard = gena_ref.read().await;
                                     if let Some(ref gena) = *gena_guard {
-                                        gena.auto_subscribe_to_groups(&coordinator_ips).await;
+                                        gena.sync_subscriptions(&coordinator_ips).await;
                                         sonos_state.set_gena_subscriptions(
                                             gena.active_subscriptions() as u64,
                                         );
@@ -264,14 +264,14 @@ pub async fn start_server(
                                             timestamp,
                                         );
 
-                                        // Re-subscribe to GENA
+                                        // Sync GENA subscriptions to match recovered coordinators
                                         if !groups.is_empty() {
                                             let coordinator_ips: Vec<String> =
                                                 groups.iter().map(|g| g.coordinator_ip.clone()).collect();
 
                                             let gena_guard = gena_recovery.read().await;
                                             if let Some(ref gena) = *gena_guard {
-                                                gena.auto_subscribe_to_groups(&coordinator_ips).await;
+                                                gena.sync_subscriptions(&coordinator_ips).await;
                                                 sonos_state_recovery.set_gena_subscriptions(
                                                     gena.active_subscriptions() as u64,
                                                 );

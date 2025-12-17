@@ -304,15 +304,37 @@ async function handleSonosEvent(message: SonosEventMessage): Promise<void> {
       break;
     }
 
+    case 'zoneGroupsUpdated': {
+      // Zone topology changed - groups data included directly (from desktop)
+      console.log('[Background] Zone groups updated:', payload.groups.length, 'groups');
+      const currentState = getSonosState();
+      if (currentState) {
+        const updatedState = {
+          ...currentState,
+          groups: payload.groups as SonosStateSnapshot['groups'],
+        };
+        updateSonosState(updatedState);
+        // Notify popup of updated groups
+        chrome.runtime
+          .sendMessage({
+            type: 'WS_STATE_CHANGED',
+            state: updatedState,
+          })
+          .catch(() => {
+            // Popup may not be open
+          });
+      }
+      break;
+    }
+
     case 'zoneChange': {
-      // Zone topology changed (speakers grouped/ungrouped)
-      console.log('[Background] Sonos zone configuration changed, fetching updated groups');
-      // Request fresh groups via WebSocket and update the popup
+      // Legacy event from cloud server (no data included, must fetch)
+      // Desktop now sends zoneGroupsUpdated instead, so this is cloud-only
+      console.log('[Background] Zone change (legacy), fetching groups');
       if (isWsConnected()) {
         sendWsCommand('getGroups' as WsAction)
           .then((data) => {
             if (data && Array.isArray(data.groups)) {
-              // Update our cached state
               const currentState = getSonosState();
               if (currentState) {
                 const updatedState = {
@@ -320,15 +342,12 @@ async function handleSonosEvent(message: SonosEventMessage): Promise<void> {
                   groups: data.groups as SonosStateSnapshot['groups'],
                 };
                 updateSonosState(updatedState);
-                // Notify popup of updated groups
                 chrome.runtime
                   .sendMessage({
                     type: 'WS_STATE_CHANGED',
                     state: updatedState,
                   })
-                  .catch(() => {
-                    // Popup may not be open
-                  });
+                  .catch(() => {});
               }
             }
           })
