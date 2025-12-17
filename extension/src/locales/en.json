@@ -93,6 +93,8 @@
   "aria.settings": "Settings",
   "aria.dismissError": "Dismiss error",
   "aria.dismissWarning": "Dismiss warning",
+  "aria.mute": "Mute",
+  "aria.unmute": "Unmute",
   "quality.ultra-low": "Ultra Low (64 kbps)",
   "quality.low": "Low (96 kbps)",
   "quality.medium": "Medium (128 kbps)",

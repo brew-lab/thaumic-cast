@@ -449,3 +449,52 @@ body {
   color: var(--color-text-muted);
   text-align: center;
 }
+
+/* Volume Control with Mute */
+.volume-control .volume-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+}
+
+.volume-control input[type='range'] {
+  flex: 1;
+}
+
+.mute-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  inline-size: 32px;
+  block-size: 32px;
+  padding: 0;
+  background: var(--color-surface);
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  color: var(--color-text);
+  cursor: pointer;
+  transition:
+    background 0.15s,
+    border-color 0.15s,
+    color 0.15s;
+}
+
+.mute-btn:hover:not(:disabled) {
+  background: color-mix(in oklch, var(--color-surface), white 10%);
+  border-color: var(--color-border);
+}
+
+.mute-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.mute-btn.muted {
+  color: var(--color-error);
+  background: color-mix(in oklch, var(--color-error) 10%, var(--color-surface));
+  border-color: color-mix(in oklch, var(--color-error) 30%, transparent);
+}
+
+.mute-btn.muted:hover:not(:disabled) {
+  background: color-mix(in oklch, var(--color-error) 20%, var(--color-surface));
+}

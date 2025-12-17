@@ -518,6 +518,48 @@ pub async fn set_group_volume(coordinator_ip: &str, volume: u8) -> Result<(), So
     Ok(())
 }
 
+/// Get current group mute state from the coordinator
+pub async fn get_group_mute(coordinator_ip: &str) -> Result<bool, SonosError> {
+    let mut params = HashMap::new();
+    params.insert("InstanceID".to_string(), "0".to_string());
+
+    let response = send_soap_request(
+        get_client(),
+        coordinator_ip,
+        GROUP_RENDERING_CONTROL_URL,
+        GROUP_RENDERING_CONTROL,
+        "GetGroupMute",
+        params,
+    )
+    .await?;
+
+    let mute_str = extract_soap_value(&response, "CurrentMute")
+        .ok_or_else(|| SonosError::ParseError("Failed to get CurrentMute".to_string()))?;
+
+    Ok(mute_str == "1")
+}
+
+/// Set group mute state on the coordinator
+pub async fn set_group_mute(coordinator_ip: &str, mute: bool) -> Result<(), SonosError> {
+    log::info!("SetGroupMute {} on {}", mute, coordinator_ip);
+
+    let mut params = HashMap::new();
+    params.insert("InstanceID".to_string(), "0".to_string());
+    params.insert("DesiredMute".to_string(), if mute { "1" } else { "0" }.to_string());
+
+    send_soap_request(
+        get_client(),
+        coordinator_ip,
+        GROUP_RENDERING_CONTROL_URL,
+        GROUP_RENDERING_CONTROL,
+        "SetGroupMute",
+        params,
+    )
+    .await?;
+
+    Ok(())
+}
+
 /// Load a stream URL and start playback in one call
 pub async fn play_stream(
     coordinator_ip: &str,

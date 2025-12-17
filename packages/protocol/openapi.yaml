@@ -664,6 +664,8 @@ components:
         - getGroups
         - getVolume
         - setVolume
+        - getMute
+        - setMute
         - play
         - stop
         - createStream

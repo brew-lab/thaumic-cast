@@ -6,8 +6,8 @@ pub mod state;
 
 // Re-export functions from client
 pub use client::{
-    bootstrap_zone_groups, discover_speakers, get_group_volume, get_zone_groups, play_stream,
-    set_group_volume, stop,
+    bootstrap_zone_groups, discover_speakers, get_group_mute, get_group_volume, get_zone_groups,
+    play_stream, set_group_mute, set_group_volume, stop,
 };
 
 // Re-export types from generated module

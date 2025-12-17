@@ -120,6 +120,10 @@ pub enum WsAction {
     GetVolume,
     #[serde(rename = "setVolume")]
     SetVolume,
+    #[serde(rename = "getMute")]
+    GetMute,
+    #[serde(rename = "setMute")]
+    SetMute,
     #[serde(rename = "play")]
     Play,
     #[serde(rename = "stop")]

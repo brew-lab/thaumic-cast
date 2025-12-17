@@ -327,7 +327,7 @@ export type components = {
          * @description WebSocket command actions
          * @enum {string}
          */
-        WsAction: "getGroups" | "getVolume" | "setVolume" | "play" | "stop" | "createStream" | "stopStream" | "updateMetadata" | "discover";
+        WsAction: "getGroups" | "getVolume" | "setVolume" | "getMute" | "setMute" | "play" | "stop" | "createStream" | "stopStream" | "updateMetadata" | "discover";
         /** @description WebSocket command from client to server */
         WsCommand: {
             /** @description Unique request ID for response correlation */

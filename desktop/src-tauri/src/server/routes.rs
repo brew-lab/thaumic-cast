@@ -547,6 +547,58 @@ async fn handle_ws_command(
                 },
             }
         }
+        WsAction::GetMute => {
+            let ip = command
+                .payload
+                .as_ref()
+                .and_then(|p| p.get("speakerIp"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+
+            match sonos::get_group_mute(ip).await {
+                Ok(mute) => WsResponse {
+                    id,
+                    success: true,
+                    data: Some(serde_json::json!({ "mute": mute }).as_object().unwrap().clone()),
+                    error: None,
+                },
+                Err(e) => WsResponse {
+                    id,
+                    success: false,
+                    data: None,
+                    error: Some(e.to_string()),
+                },
+            }
+        }
+        WsAction::SetMute => {
+            let ip = command
+                .payload
+                .as_ref()
+                .and_then(|p| p.get("speakerIp"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let mute = command
+                .payload
+                .as_ref()
+                .and_then(|p| p.get("mute"))
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+
+            match sonos::set_group_mute(ip, mute).await {
+                Ok(_) => WsResponse {
+                    id,
+                    success: true,
+                    data: None,
+                    error: None,
+                },
+                Err(e) => WsResponse {
+                    id,
+                    success: false,
+                    data: None,
+                    error: Some(e.to_string()),
+                },
+            }
+        }
         WsAction::Play => {
             let coordinator_ip = command
                 .payload
