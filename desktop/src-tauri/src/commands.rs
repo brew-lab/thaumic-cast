@@ -1,7 +1,7 @@
 use crate::generated::{ConfigResponse, SonosStateSnapshot, Speaker, StatusResponse};
 use crate::network::get_local_ip;
 use crate::server::AppState;
-use crate::sonos::gena::{SonosEvent, TransportState};
+use crate::sonos::gena::SonosEvent;
 use tauri::{AppHandle, State};
 use tauri_plugin_store::StoreExt;
 
@@ -151,18 +151,19 @@ pub async fn clear_activity(state: State<'_, AppState>) -> Result<(), String> {
         client_count
     );
 
-    // Broadcast STOPPED to extensions
+    // Broadcast SourceChanged to extensions (triggers full stop, ignores stopBehavior setting)
     let timestamp = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
         .as_millis() as u64;
 
     for ip in &speaker_ips {
-        log::info!("[clear_activity] Broadcasting STOPPED for speaker {}", ip);
+        log::info!("[clear_activity] Broadcasting SourceChanged for speaker {}", ip);
         state
             .ws_broadcast
-            .broadcast(&SonosEvent::TransportState {
-                state: TransportState::Stopped,
+            .broadcast(&SonosEvent::SourceChanged {
+                current_uri: String::new(),
+                expected_uri: None,
                 speaker_ip: ip.clone(),
                 timestamp,
             })
