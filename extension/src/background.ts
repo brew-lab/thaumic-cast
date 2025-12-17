@@ -21,6 +21,7 @@ import {
   getMediaSources,
   handleMediaUpdate as updateMediaRegistry,
   purgeTab,
+  restoreState as restoreMediaState,
 } from './background/media-registry';
 import {
   startStream,
@@ -45,6 +46,11 @@ import { getExtensionSettings } from './lib/settings';
 
 // Re-export for external use
 export { sendWsCommand, getSonosState, isWsConnected };
+
+// Restore media state on service worker startup (survives service worker unloads)
+restoreMediaState().catch((err) => {
+  console.error('[Background] Failed to restore media state:', err);
+});
 
 /**
  * Connect to the server WebSocket via offscreen document.
@@ -417,14 +423,10 @@ chrome.tabs.onRemoved.addListener((tabId) => {
   purgeTab(tabId);
 });
 
-// Clean up media state when tab navigates to a different page
-// This handles cases where user navigates away from media page
-chrome.webNavigation.onBeforeNavigate.addListener(({ tabId, frameId }) => {
-  // Only react to main frame navigation (not iframes)
-  if (frameId === 0) {
-    purgeTab(tabId);
-  }
-});
+// Note: We intentionally do NOT purge on navigation (onBeforeNavigate) because:
+// 1. SPA sites like YouTube/Spotify trigger navigation events during normal use
+// 2. The content script will send null when media truly stops
+// 3. Tab close (onRemoved) handles cleanup when tabs are closed
 
 // Clean up on extension unload
 chrome.runtime.onSuspend?.addListener(async () => {

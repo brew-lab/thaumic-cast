@@ -122,7 +122,15 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   return false;
 });
 
-// Clean up on unload
-window.addEventListener('beforeunload', () => {
-  chrome.runtime.sendMessage({ type: 'MEDIA_UPDATE', media: null }).catch(() => {});
+// When tab becomes visible, request immediate media update
+// This helps recover state after background tab throttling
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible') {
+    window.dispatchEvent(new CustomEvent('__thaumic_request_media__'));
+  }
 });
+
+// Note: We intentionally do NOT send null on beforeunload because:
+// 1. SPA sites trigger beforeunload during normal navigation
+// 2. The tab close handler (onRemoved) in background.ts handles cleanup
+// 3. Sending null here causes sources to disappear prematurely

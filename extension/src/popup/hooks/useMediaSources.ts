@@ -108,9 +108,10 @@ export function useMediaSources(): MediaSourcesState {
   }, [isVisible, hasInitialized]);
 
   // Combine media sources with the synthetic casting tab source if it exists
+  // Prepend casting tab to ensure consistent ordering (casting tab always first)
   const allSources = useMemo(() => {
     if (castingTabSource && !mediaSources.some((s) => s.tabId === castingTabSource.tabId)) {
-      return [...mediaSources, castingTabSource];
+      return [castingTabSource, ...mediaSources];
     }
     return mediaSources;
   }, [mediaSources, castingTabSource]);

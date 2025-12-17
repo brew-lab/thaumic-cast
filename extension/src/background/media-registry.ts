@@ -1,9 +1,56 @@
 import type { MediaInfo } from '@thaumic-cast/shared';
 
-// Media state tracking for all tabs
-const mediaByTab = new Map<number, MediaInfo>();
+// Media state tracking for all tabs (in-memory cache)
+let mediaByTab = new Map<number, MediaInfo>();
 // Track when each tab's media was first detected (for stable sorting)
-const firstDetectedByTab = new Map<number, number>();
+let firstDetectedByTab = new Map<number, number>();
+
+// Debounce persistence to avoid excessive storage writes
+let persistTimeout: ReturnType<typeof setTimeout> | null = null;
+
+/**
+ * Persist media state to chrome.storage.session.
+ * This survives service worker restarts within the same browser session.
+ * Debounced to avoid excessive writes during rapid updates.
+ */
+function persistState(): void {
+  if (persistTimeout) {
+    clearTimeout(persistTimeout);
+  }
+  persistTimeout = setTimeout(async () => {
+    try {
+      await chrome.storage.session.set({
+        mediaByTab: Array.from(mediaByTab.entries()),
+        firstDetectedByTab: Array.from(firstDetectedByTab.entries()),
+      });
+    } catch (err) {
+      console.error('[MediaRegistry] Failed to persist state:', err);
+    }
+  }, 100); // Debounce 100ms
+}
+
+/**
+ * Restore media state from chrome.storage.session.
+ * Called on service worker startup to recover state after unload.
+ */
+export async function restoreState(): Promise<void> {
+  try {
+    const data = await chrome.storage.session.get(['mediaByTab', 'firstDetectedByTab']);
+    if (data.mediaByTab && Array.isArray(data.mediaByTab)) {
+      mediaByTab = new Map(data.mediaByTab);
+      console.log(
+        '[MediaRegistry] Restored',
+        mediaByTab.size,
+        'media sources from session storage'
+      );
+    }
+    if (data.firstDetectedByTab && Array.isArray(data.firstDetectedByTab)) {
+      firstDetectedByTab = new Map(data.firstDetectedByTab);
+    }
+  } catch (err) {
+    console.error('[MediaRegistry] Failed to restore state:', err);
+  }
+}
 
 export function handleMediaUpdate(
   media: Omit<MediaInfo, 'tabId' | 'tabTitle' | 'tabFavicon'> | null,
@@ -38,6 +85,7 @@ export function handleMediaUpdate(
   };
 
   mediaByTab.set(tabId, fullInfo);
+  persistState();
 }
 
 export async function getMediaSources(): Promise<MediaInfo[]> {
@@ -65,6 +113,10 @@ export async function getMediaSources(): Promise<MediaInfo[]> {
 }
 
 export function purgeTab(tabId: number): void {
+  const hadTab = mediaByTab.has(tabId);
   mediaByTab.delete(tabId);
   firstDetectedByTab.delete(tabId);
+  if (hadTab) {
+    persistState();
+  }
 }
