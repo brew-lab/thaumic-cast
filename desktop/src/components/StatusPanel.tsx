@@ -59,9 +59,10 @@ const indicatorStyles = {
 
 export function StatusPanel({ status, sonosState }: Props) {
   const [scanning, setScanning] = useState(false);
+  const [clearing, setClearing] = useState(false);
   const [autostartEnabled, setAutostartEnabled] = useState<boolean | null>(null);
   const [autostartLoading, setAutostartLoading] = useState(false);
-  const [copied, setCopied] = useState(false);
+  const [copied, setCopied] = useState<'local' | 'ip' | null>(null);
 
   // Derive groups and statuses from centralized sonosState
   const groups = sonosState?.groups ?? [];
@@ -75,6 +76,7 @@ export function StatusPanel({ status, sonosState }: Props) {
   }, []);
 
   const handleScan = async () => {
+    if (scanning) return;
     setScanning(true);
     try {
       // Just trigger a refresh - state will update via sonos-state-changed event
@@ -103,23 +105,29 @@ export function StatusPanel({ status, sonosState }: Props) {
     }
   };
 
-  const copyServerUrl = async () => {
-    if (!status.local_ip) return;
-    const url = `http://${status.local_ip}:${status.port}`;
+  const copyServerUrl = async (type: 'local' | 'ip') => {
+    const url =
+      type === 'local'
+        ? `http://127.0.0.1:${status.port}`
+        : `http://${status.local_ip}:${status.port}`;
     try {
       await navigator.clipboard.writeText(url);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
+      setCopied(type);
+      setTimeout(() => setCopied(null), 2000);
     } catch (e) {
       console.error('Failed to copy:', e);
     }
   };
 
   const handleClearActivity = async () => {
+    if (clearing) return;
+    setClearing(true);
     try {
       await invoke('clear_activity');
     } catch (e) {
       console.error('Failed to clear activity:', e);
+    } finally {
+      setClearing(false);
     }
   };
 
@@ -158,15 +166,26 @@ export function StatusPanel({ status, sonosState }: Props) {
             <span style={styles.statusValue}>{status.gena_port}</span>
           </div>
         )}
+        <div style={styles.statusRow}>
+          <span style={styles.statusLabel}>Local URL</span>
+          <span
+            style={{ ...styles.statusValue, display: 'flex', alignItems: 'center', gap: '8px' }}
+          >
+            http://127.0.0.1:{status.port}
+            <button style={styles.copyButton} onClick={() => copyServerUrl('local')}>
+              {copied === 'local' ? 'Copied!' : 'Copy'}
+            </button>
+          </span>
+        </div>
         {status.local_ip && (
           <div style={styles.statusRow}>
-            <span style={styles.statusLabel}>Server URL</span>
+            <span style={styles.statusLabel}>Network URL</span>
             <span
               style={{ ...styles.statusValue, display: 'flex', alignItems: 'center', gap: '8px' }}
             >
               http://{status.local_ip}:{status.port}
-              <button style={styles.copyButton} onClick={copyServerUrl} title="Copy server URL">
-                {copied ? 'Copied!' : 'Copy'}
+              <button style={styles.copyButton} onClick={() => copyServerUrl('ip')}>
+                {copied === 'ip' ? 'Copied!' : 'Copy'}
               </button>
             </span>
           </div>
@@ -191,10 +210,13 @@ export function StatusPanel({ status, sonosState }: Props) {
           <button
             style={styles.clearButton}
             onClick={handleClearActivity}
-            disabled={status.active_streams === 0 && (sonosState?.gena_subscriptions ?? 0) === 0}
+            disabled={
+              clearing ||
+              (status.active_streams === 0 && (sonosState?.gena_subscriptions ?? 0) === 0)
+            }
             title="Clear all streams and subscriptions"
           >
-            Clear
+            {clearing ? 'Clearing...' : 'Clear'}
           </button>
         </div>
         <div style={styles.statusRow}>
