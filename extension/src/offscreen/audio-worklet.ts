@@ -15,7 +15,7 @@ declare function registerProcessor(
   processorCtor: new () => AudioWorkletProcessor
 ): void;
 
-const BUFFER_SIZE = 4096; // Samples per channel per message
+const BUFFER_SIZE = 2048; // Samples per channel per message (reduced from 4096 for lower latency)
 
 class PCMProcessor extends AudioWorkletProcessor {
   private leftBuffer: Float32Array;

@@ -461,8 +461,8 @@ async function handleStart(
       sampleRate = settings.mp3Fallback.sampleRate;
     }
 
-    // Create audio context with the appropriate sample rate
-    const audioContext = new AudioContext({ sampleRate });
+    // Create audio context with low latency hint for faster capture
+    const audioContext = new AudioContext({ sampleRate, latencyHint: 'interactive' });
 
     // Load audio worklet from static file (blob URLs blocked by MV3 CSP)
     await audioContext.audioWorklet.addModule(chrome.runtime.getURL('audio-worklet.js'));

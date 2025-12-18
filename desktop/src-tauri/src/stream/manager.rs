@@ -9,6 +9,7 @@ use tokio::sync::broadcast;
 use crate::sonos::StreamMetadata;
 
 const MAX_BUFFER_FRAMES: usize = 300; // ~10 seconds at 30fps MP3 frames
+const PREFILL_FRAMES: usize = 10; // Only send last ~10 frames to new subscribers for low latency
 const MAX_SUBSCRIBERS: usize = 5;
 const CHANNEL_CAPACITY: usize = 100;
 
@@ -82,9 +83,11 @@ impl StreamState {
         }
         *count += 1;
 
-        // Get buffered frames for pre-fill
+        // Get only the last PREFILL_FRAMES for low-latency start
+        // (instead of all 300 buffered frames which adds ~10s delay)
         let buffer = self.buffer.read();
-        let buffered_frames: Vec<Bytes> = buffer.iter().cloned().collect();
+        let skip_count = buffer.len().saturating_sub(PREFILL_FRAMES);
+        let buffered_frames: Vec<Bytes> = buffer.iter().skip(skip_count).cloned().collect();
 
         Ok(StreamSubscription {
             receiver: self.sender.subscribe(),
@@ -288,7 +291,8 @@ mod tests {
             stream.push_frame(Bytes::from(vec![i as u8]));
         }
 
+        // Subscriber should only receive PREFILL_FRAMES (last 10), not all 300
         let sub = stream.subscribe().unwrap();
-        assert_eq!(sub.buffered_frames.len(), MAX_BUFFER_FRAMES);
+        assert_eq!(sub.buffered_frames.len(), PREFILL_FRAMES);
     }
 }

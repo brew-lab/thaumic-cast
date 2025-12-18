@@ -111,7 +111,8 @@ export async function startStream(params: StartStreamParams): Promise<{
 
     let localPlayError: string | null = null;
     if (isLocalMode && coordinatorIp) {
-      await new Promise((resolve) => setTimeout(resolve, 500));
+      // Small delay to allow initial audio frames to reach server (reduced from 500ms for lower latency)
+      await new Promise((resolve) => setTimeout(resolve, 100));
 
       try {
         const playResponse = await fetchWithTimeout(`${serverUrl}/api/local/play`, {
