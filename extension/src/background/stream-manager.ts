@@ -8,7 +8,7 @@ import type {
 } from '@thaumic-cast/shared';
 import { fetchWithTimeout } from '../lib/http';
 import { getServerUrl } from '../lib/settings';
-import { ensureOffscreen } from './offscreen-manager';
+import { ensureOffscreen, sendToOffscreen } from './offscreen-manager';
 import { sendWsCommand, isWsConnected } from './ws-client';
 
 let activeStream: CastStatus = { isActive: false };
@@ -66,10 +66,10 @@ export async function startStream(params: StartStreamParams): Promise<{
     // Query offscreen for the best available codec for this quality
     let codec: AudioCodec = 'mp3';
     try {
-      const codecResult = (await chrome.runtime.sendMessage({
+      const codecResult = await sendToOffscreen<{ codec: AudioCodec }>({
         type: 'OFFSCREEN_CHECK_CODEC',
         quality,
-      })) as { codec: AudioCodec } | undefined;
+      });
       if (codecResult?.codec) {
         codec = codecResult.codec;
       }
@@ -96,7 +96,7 @@ export async function startStream(params: StartStreamParams): Promise<{
     const streamId = createResult.streamId as string;
     const playbackUrl = createResult.playbackUrl as string;
 
-    const offscreenResult = await chrome.runtime.sendMessage({
+    const offscreenResult = await sendToOffscreen<{ error?: string }>({
       type: 'OFFSCREEN_START',
       streamId,
       mediaStreamId,
@@ -178,7 +178,7 @@ export async function stopCurrentStream(mode?: SonosMode, coordinatorIp?: string
   clearMetadataDebounce();
 
   try {
-    await chrome.runtime.sendMessage({
+    await sendToOffscreen({
       type: 'OFFSCREEN_STOP',
       streamId: activeStream.streamId,
     });
@@ -257,10 +257,10 @@ export async function pauseActiveStream(): Promise<void> {
   }
 
   try {
-    const result = (await chrome.runtime.sendMessage({
+    const result = await sendToOffscreen<{ success: boolean }>({
       type: 'OFFSCREEN_PAUSE',
       streamId: activeStream.streamId,
-    })) as { success: boolean } | undefined;
+    });
 
     if (!result?.success) {
       throw new Error('Offscreen failed to pause');
@@ -305,10 +305,10 @@ export async function resumeActiveStream(): Promise<void> {
   }
 
   try {
-    const result = (await chrome.runtime.sendMessage({
+    const result = await sendToOffscreen<{ success: boolean }>({
       type: 'OFFSCREEN_RESUME',
       streamId: activeStream.streamId,
-    })) as { success: boolean } | undefined;
+    });
 
     if (!result?.success) {
       throw new Error('Offscreen failed to resume');

@@ -1,8 +1,6 @@
 import type {
   SonosGroupsResponse,
   SonosStatusResponse,
-  CreateStreamRequest,
-  CreateStreamResponse,
   LocalDiscoveryResponse,
   LocalGroupsResponse,
 } from '@thaumic-cast/shared';
@@ -21,39 +19,6 @@ export async function getSonosGroups(): Promise<{
   error: string | null;
 }> {
   return requestJson<SonosGroupsResponse>('/api/sonos/groups');
-}
-
-export async function createStream(
-  body: CreateStreamRequest
-): Promise<{ data: CreateStreamResponse | null; error: string | null }> {
-  return requestJson<CreateStreamResponse>('/api/streams', {
-    method: 'POST',
-    body: JSON.stringify(body),
-  });
-}
-
-export async function stopStream(
-  streamId: string
-): Promise<{ data: { success: boolean } | null; error: string | null }> {
-  return requestJson<{ success: boolean }>(`/api/streams/${streamId}/stop`, {
-    method: 'POST',
-  });
-}
-
-export async function getGroupVolume(
-  groupId: string
-): Promise<{ data: { volume: number } | null; error: string | null }> {
-  return requestJson<{ volume: number }>(`/api/sonos/groups/${groupId}/volume`);
-}
-
-export async function setGroupVolume(
-  groupId: string,
-  volume: number
-): Promise<{ data: { success: boolean } | null; error: string | null }> {
-  return requestJson<{ success: boolean }>(`/api/sonos/groups/${groupId}/volume`, {
-    method: 'POST',
-    body: JSON.stringify({ volume }),
-  });
 }
 
 // Local mode API functions
@@ -77,48 +42,6 @@ export async function getLocalGroups(speakerIp?: string): Promise<{
 }> {
   const params = speakerIp ? `?ip=${encodeURIComponent(speakerIp)}` : '';
   return requestJson<LocalGroupsResponse>(`/api/local/groups${params}`);
-}
-
-export async function playLocalStream(
-  coordinatorIp: string,
-  streamUrl: string
-): Promise<{ data: { success: boolean } | null; error: string | null }> {
-  return requestJson<{ success: boolean }>('/api/local/play', {
-    method: 'POST',
-    body: JSON.stringify({ coordinatorIp, streamUrl }),
-  });
-}
-
-export async function stopLocalStream(
-  coordinatorIp: string
-): Promise<{ data: { success: boolean } | null; error: string | null }> {
-  return requestJson<{ success: boolean }>('/api/local/stop', {
-    method: 'POST',
-    body: JSON.stringify({ coordinatorIp }),
-  });
-}
-
-export async function getLocalVolume(
-  speakerIp: string
-): Promise<{ data: { volume: number } | null; error: string | null }> {
-  return requestJson<{ volume: number }>(`/api/local/volume/${encodeURIComponent(speakerIp)}`);
-}
-
-export async function setLocalVolume(
-  speakerIp: string,
-  volume: number
-): Promise<{ data: { success: boolean } | null; error: string | null }> {
-  return requestJson<{ success: boolean }>(`/api/local/volume/${encodeURIComponent(speakerIp)}`, {
-    method: 'POST',
-    body: JSON.stringify({ volume }),
-  });
-}
-
-export async function getServerLocalIp(): Promise<{
-  data: { ip: string } | null;
-  error: string | null;
-}> {
-  return requestJson<{ ip: string }>('/api/local/server-ip');
 }
 
 /**

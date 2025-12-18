@@ -92,6 +92,9 @@ interface ControlConnection {
 
 let controlConnection: ControlConnection | null = null;
 
+// Cache Sonos state so we can restore it when service worker wakes up
+let cachedSonosState: SonosStateSnapshot | null = null;
+
 function connectControlWebSocket(url: string): void {
   if (controlConnection?.ws?.readyState === WebSocket.OPEN) {
     console.log('[Offscreen] Control WS already connected');
@@ -133,26 +136,39 @@ function connectControlWebSocket(url: string): void {
       console.log('[Offscreen] Control WS received:', message);
 
       if (message.type === 'connected') {
-        // Initial connection event with state
-        chrome.runtime.sendMessage({
-          type: 'WS_CONNECTED',
-          state: message.state as SonosStateSnapshot,
-        });
+        // Initial connection event with state - cache it for service worker recovery
+        cachedSonosState = message.state as SonosStateSnapshot;
+        chrome.runtime
+          .sendMessage({
+            type: 'WS_CONNECTED',
+            state: cachedSonosState,
+          })
+          .catch(() => {
+            // Background may be suspended - state is cached, will be recovered on wake
+          });
       } else if (message.id !== undefined) {
         // Command response (has id field)
-        chrome.runtime.sendMessage({
-          type: 'WS_RESPONSE',
-          id: message.id,
-          success: message.success,
-          data: message.data,
-          error: message.error,
-        });
+        chrome.runtime
+          .sendMessage({
+            type: 'WS_RESPONSE',
+            id: message.id,
+            success: message.success,
+            data: message.data,
+            error: message.error,
+          })
+          .catch(() => {
+            // Background may be suspended
+          });
       } else if (message.type) {
         // Sonos event (has type field but no id)
-        chrome.runtime.sendMessage({
-          type: 'SONOS_EVENT',
-          payload: message,
-        });
+        chrome.runtime
+          .sendMessage({
+            type: 'SONOS_EVENT',
+            payload: message,
+          })
+          .catch(() => {
+            // Background may be suspended
+          });
       }
     } catch (err) {
       console.error('[Offscreen] Failed to parse control WS message:', err);
@@ -176,6 +192,10 @@ function attemptControlReconnect(): void {
 
   if (controlConnection.reconnectAttempts > MAX_RECONNECT_ATTEMPTS) {
     console.error('[Offscreen] Control WS max reconnect attempts exceeded');
+    // Notify background that connection permanently failed
+    chrome.runtime.sendMessage({ type: 'WS_PERMANENTLY_DISCONNECTED' }).catch(() => {
+      // Background may not be listening
+    });
     controlConnection = null;
     return;
   }
@@ -206,12 +226,16 @@ function disconnectControlWebSocket(): void {
 function sendControlCommand(id: string, action: string, payload?: Record<string, unknown>): void {
   if (!controlConnection?.ws || controlConnection.ws.readyState !== WebSocket.OPEN) {
     console.error('[Offscreen] Control WS not connected, cannot send command');
-    chrome.runtime.sendMessage({
-      type: 'WS_RESPONSE',
-      id,
-      success: false,
-      error: 'WebSocket not connected',
-    });
+    chrome.runtime
+      .sendMessage({
+        type: 'WS_RESPONSE',
+        id,
+        success: false,
+        error: 'WebSocket not connected',
+      })
+      .catch(() => {
+        // Background may be suspended
+      });
     return;
   }
 
@@ -275,11 +299,52 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     sendResponse({ success: true });
     return true;
   }
+
+  // Allow background to trigger a reconnection attempt (resets attempt counter)
+  if (message.type === 'WS_RECONNECT') {
+    const { url } = message as { url?: string };
+    if (url) {
+      // New URL provided - disconnect and connect to new URL
+      disconnectControlWebSocket();
+      connectControlWebSocket(url);
+    } else if (controlConnection) {
+      // No URL - reset attempts and reconnect to existing URL
+      controlConnection.reconnectAttempts = 0;
+      if (controlConnection.reconnectTimer) {
+        clearTimeout(controlConnection.reconnectTimer);
+        controlConnection.reconnectTimer = null;
+      }
+      connectControlWebSocket(controlConnection.url);
+    }
+    sendResponse({ success: true });
+    return true;
+  }
+
+  // Allow background to query current WebSocket state (including cached Sonos state for recovery)
+  if (message.type === 'GET_WS_STATUS') {
+    sendResponse({
+      connected: controlConnection?.ws?.readyState === WebSocket.OPEN,
+      url: controlConnection?.url,
+      reconnectAttempts: controlConnection?.reconnectAttempts ?? 0,
+      state: cachedSonosState,
+    });
+    return true;
+  }
+
+  // Allow background to sync state updates back to offscreen for caching
+  if (message.type === 'SYNC_SONOS_STATE') {
+    const { state } = message as { state: SonosStateSnapshot };
+    cachedSonosState = state;
+    sendResponse({ success: true });
+    return true;
+  }
 });
 
 // Signal to background that offscreen is ready to receive messages
 console.log('[Offscreen] Ready');
-chrome.runtime.sendMessage({ type: 'OFFSCREEN_READY' });
+chrome.runtime.sendMessage({ type: 'OFFSCREEN_READY' }).catch(() => {
+  // Background may be suspended during startup race
+});
 
 /**
  * Detect the best available codec for a given quality preset.
@@ -450,12 +515,19 @@ async function handleStart(
     // Handle track ended (tab closed)
     mediaStream.getAudioTracks()[0]?.addEventListener('ended', () => {
       if (currentSession && !currentSession.stopped) {
-        chrome.runtime.sendMessage({
-          type: 'CAST_ENDED',
-          reason: 'tab_closed',
-          streamId: currentSession.streamId,
+        chrome.runtime
+          .sendMessage({
+            type: 'CAST_ENDED',
+            reason: 'tab_closed',
+            streamId: currentSession.streamId,
+          })
+          .catch(() => {
+            // Background may be suspended
+          });
+        // Handle the promise to prevent unhandled rejection
+        stopSession(currentSession).catch(() => {
+          // Ignore stop errors during track ended cleanup
         });
-        stopSession(currentSession);
       }
     });
 
@@ -526,28 +598,52 @@ async function stopSession(session: StreamSession): Promise<void> {
 
   // Flush and close encoder
   if (session.encoder) {
-    const finalFrame = session.encoder.finalize();
-    if (
-      finalFrame &&
-      finalFrame.length > 0 &&
-      controlConnection?.ws?.readyState === WebSocket.OPEN
-    ) {
-      controlConnection.ws.send(finalFrame);
+    try {
+      const finalFrame = session.encoder.finalize();
+      if (
+        finalFrame &&
+        finalFrame.length > 0 &&
+        controlConnection?.ws?.readyState === WebSocket.OPEN
+      ) {
+        controlConnection.ws.send(finalFrame);
+      }
+    } catch {
+      // Ignore encoder finalization errors
     }
     // Close AAC encoder (MP3 encoder doesn't have close method)
     if (session.encoder.close) {
-      session.encoder.close();
+      try {
+        session.encoder.close();
+      } catch {
+        // Ignore encoder close errors
+      }
     }
   }
 
   // Note: Don't close controlConnection - it's shared and handles its own lifecycle
 
-  // Stop audio
-  session.workletNode?.disconnect();
-  await session.audioContext?.close();
+  // Disconnect audio nodes
+  try {
+    session.workletNode?.disconnect();
+  } catch {
+    // Already disconnected
+  }
 
-  // Stop media tracks
-  session.mediaStream?.getTracks().forEach((track) => track.stop());
+  // Close audio context - may throw AbortError if already closing
+  try {
+    await session.audioContext?.close();
+  } catch {
+    // Ignore AbortError or other close errors - context may already be closed
+  }
+
+  // Stop media tracks - always do this regardless of above errors
+  session.mediaStream?.getTracks().forEach((track) => {
+    try {
+      track.stop();
+    } catch {
+      // Track may already be stopped
+    }
+  });
 }
 
 // Counter for logging - log every 100th frame to avoid spam
@@ -588,10 +684,14 @@ function startHeartbeat(session: StreamSession): void {
       return;
     }
 
-    chrome.runtime.sendMessage({
-      type: 'OFFSCREEN_HEARTBEAT',
-      streamId: session.streamId,
-    });
+    chrome.runtime
+      .sendMessage({
+        type: 'OFFSCREEN_HEARTBEAT',
+        streamId: session.streamId,
+      })
+      .catch(() => {
+        // Background may be suspended - this is fine, heartbeat is just a keep-alive
+      });
   }, 3000);
 }
 

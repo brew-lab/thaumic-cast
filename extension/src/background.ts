@@ -16,6 +16,8 @@ import {
   closeOffscreen,
   markOffscreenReady,
   ensureOffscreen,
+  recoverOffscreenState,
+  sendToOffscreen,
 } from './background/offscreen-manager';
 import {
   getMediaSources,
@@ -41,16 +43,74 @@ import {
   getSonosState,
   updateSonosState,
   isWsConnected,
+  restoreWsState,
 } from './background/ws-client';
 import { getExtensionSettings } from './lib/settings';
 
 // Re-export for external use
 export { sendWsCommand, getSonosState, isWsConnected };
 
-// Restore media state on service worker startup (survives service worker unloads)
-restoreMediaState().catch((err) => {
-  console.error('[Background] Failed to restore media state:', err);
+// Init gate - messages wait for this before processing
+let initResolve: () => void = () => {};
+const initPromise = new Promise<void>((resolve) => {
+  initResolve = resolve;
 });
+
+function signalInitComplete(): void {
+  initResolve();
+}
+
+// Restore state on service worker startup
+(async () => {
+  console.log('[Background] Service worker starting, recovering state...');
+
+  // Restore media state (survives service worker unloads)
+  try {
+    await restoreMediaState();
+  } catch (err) {
+    console.error('[Background] Failed to restore media state:', err);
+  }
+
+  // Check if offscreen document exists from before service worker restart
+  const offscreenExists = await recoverOffscreenState();
+  if (offscreenExists) {
+    // Query offscreen for current WebSocket state to sync background state
+    try {
+      const wsStatus = await sendToOffscreen<{
+        connected: boolean;
+        url?: string;
+        reconnectAttempts?: number;
+        state?: SonosStateSnapshot;
+      }>({ type: 'GET_WS_STATUS' });
+
+      // Restore state if offscreen has a WebSocket connection (even if reconnecting)
+      // or if it has cached Sonos state
+      if (wsStatus?.url || wsStatus?.state) {
+        restoreWsState(wsStatus.state ?? null, wsStatus.connected ?? false);
+        console.log('[Background] Recovered WebSocket state', {
+          connected: wsStatus.connected,
+          hasState: !!wsStatus.state,
+          groupCount: wsStatus.state?.groups?.length ?? 0,
+          reconnectAttempts: wsStatus.reconnectAttempts,
+        });
+
+        // If not currently connected but has URL, trigger reconnection
+        if (!wsStatus.connected && wsStatus.url) {
+          console.log('[Background] Triggering WebSocket reconnection...');
+          sendToOffscreen({ type: 'WS_RECONNECT' }).catch(() => {
+            // Ignore errors - best effort reconnection
+          });
+        }
+      }
+    } catch (err) {
+      console.warn('[Background] Failed to query offscreen WS status:', err);
+    }
+  }
+
+  // Signal that init is complete
+  console.log('[Background] Service worker init complete');
+  signalInitComplete();
+})();
 
 /**
  * Connect to the server WebSocket via offscreen document.
@@ -61,7 +121,7 @@ export async function connectWebSocket(serverUrl: string): Promise<void> {
   const wsUrl = serverUrl.replace(/^http/, 'ws') + '/ws';
   console.log('[Background] Connecting WebSocket to:', wsUrl);
 
-  chrome.runtime.sendMessage({
+  await sendToOffscreen({
     type: 'WS_CONNECT',
     url: wsUrl,
   });
@@ -73,18 +133,46 @@ export async function connectWebSocket(serverUrl: string): Promise<void> {
 export function disconnectWebSocket(): void {
   setWsDisconnected();
 
-  chrome.runtime.sendMessage({
-    type: 'WS_DISCONNECT',
+  sendToOffscreen({ type: 'WS_DISCONNECT' }).catch(() => {
+    // Offscreen may not exist
   });
+}
+
+/**
+ * Attempt to reconnect WebSocket (resets reconnect attempt counter).
+ * Can be called after permanent disconnection to retry.
+ */
+export async function reconnectWebSocket(serverUrl?: string): Promise<void> {
+  if (serverUrl) {
+    await connectWebSocket(serverUrl);
+  } else {
+    // Try to reconnect using existing URL in offscreen
+    await ensureOffscreen();
+    await sendToOffscreen({ type: 'WS_RECONNECT' });
+  }
 }
 
 // Debounce for transport state changes to prevent race conditions from rapid stop/play
 let lastTransportStateAt = 0;
 const TRANSPORT_STATE_DEBOUNCE_MS = 500;
 
+/**
+ * Update Sonos state and sync to offscreen cache.
+ * This ensures offscreen has the latest state for service worker recovery.
+ */
+function updateAndSyncSonosState(state: SonosStateSnapshot): void {
+  updateSonosState(state);
+  // Sync to offscreen so it can restore state if service worker restarts
+  sendToOffscreen({ type: 'SYNC_SONOS_STATE', state }).catch(() => {
+    // Offscreen may not exist
+  });
+}
+
 // Message handler
 chrome.runtime.onMessage.addListener((message: ExtensionMessage, sender, sendResponse) => {
-  handleMessage(message, sender, sendResponse);
+  // Wait for init to complete before processing messages
+  // This prevents race conditions when service worker wakes up
+  initPromise.then(() => handleMessage(message, sender, sendResponse));
   return true; // Keep channel open for async response
 });
 
@@ -137,6 +225,7 @@ async function handleMessage(
       const { reason } = message as CastErrorMessage;
       console.error('[Background] Cast error:', reason);
       clearActiveStream();
+      sendResponse({ success: true });
       break;
     }
 
@@ -144,6 +233,7 @@ async function handleMessage(
       const { reason, streamId } = message as CastEndedMessage;
       console.log('[Background] Cast ended:', reason, streamId);
       clearActiveStream();
+      sendResponse({ success: true });
       break;
     }
 
@@ -151,6 +241,7 @@ async function handleMessage(
       // Offscreen document is ready to receive messages
       console.log('[Background] Offscreen ready');
       markOffscreenReady();
+      sendResponse({ success: true });
       break;
     }
 
@@ -159,11 +250,13 @@ async function handleMessage(
     case 'OFFSCREEN_STOP':
     case 'OFFSCREEN_PAUSE':
     case 'OFFSCREEN_RESUME':
+      sendResponse({ success: true });
       break;
     case 'OFFSCREEN_HEARTBEAT': {
       if ((message as { streamId?: string }).streamId) {
         recordHeartbeat((message as { streamId: string }).streamId);
       }
+      sendResponse({ success: true });
       break;
     }
 
@@ -225,6 +318,22 @@ async function handleMessage(
       break;
     }
 
+    case 'WS_PERMANENTLY_DISCONNECTED': {
+      console.warn('[Background] WebSocket permanently disconnected after max retries');
+      setWsDisconnected();
+      // Notify popup of connection loss
+      chrome.runtime
+        .sendMessage({
+          type: 'WS_CONNECTION_LOST',
+          reason: 'max_retries_exceeded',
+        })
+        .catch(() => {
+          // Popup may not be open
+        });
+      sendResponse({ success: true });
+      break;
+    }
+
     case 'CONNECT_WS': {
       const { serverUrl } = message as ConnectWsMessage;
       connectWebSocket(serverUrl)
@@ -251,10 +360,23 @@ async function handleMessage(
       break;
     }
 
+    case 'SET_VOLUME': {
+      const { speakerIp, volume } = message as { speakerIp: string; volume: number };
+      if (isWsConnected()) {
+        sendWsCommand('setVolume' as WsAction, { speakerIp, volume })
+          .then(() => sendResponse({ success: true }))
+          .catch((err) => sendResponse({ success: false, error: err.message }));
+      } else {
+        sendResponse({ success: false, error: 'WebSocket not connected' });
+      }
+      break;
+    }
+
     // Ignore messages meant for offscreen (handled by offscreen.ts)
     case 'WS_CONNECT':
     case 'WS_DISCONNECT':
     case 'WS_COMMAND':
+      sendResponse({ success: true });
       break;
 
     default:
@@ -336,7 +458,7 @@ async function handleSonosEvent(message: SonosEventMessage): Promise<void> {
           ...currentState,
           groups: payload.groups as SonosStateSnapshot['groups'],
         };
-        updateSonosState(updatedState);
+        updateAndSyncSonosState(updatedState);
         // Notify popup of updated groups
         chrome.runtime
           .sendMessage({
@@ -364,7 +486,7 @@ async function handleSonosEvent(message: SonosEventMessage): Promise<void> {
                   ...currentState,
                   groups: data.groups as SonosStateSnapshot['groups'],
                 };
-                updateSonosState(updatedState);
+                updateAndSyncSonosState(updatedState);
                 chrome.runtime
                   .sendMessage({
                     type: 'WS_STATE_CHANGED',
@@ -413,7 +535,7 @@ async function handleSonosEvent(message: SonosEventMessage): Promise<void> {
         const updatedStatuses = volumeState.group_statuses.map((s) =>
           s.coordinatorIp === payload.speakerIp ? { ...s, volume: payload.volume } : s
         );
-        updateSonosState({ ...volumeState, group_statuses: updatedStatuses });
+        updateAndSyncSonosState({ ...volumeState, group_statuses: updatedStatuses });
       }
 
       chrome.runtime
@@ -438,7 +560,7 @@ async function handleSonosEvent(message: SonosEventMessage): Promise<void> {
         const updatedStatuses = muteState.group_statuses.map((s) =>
           s.coordinatorIp === payload.speakerIp ? { ...s, isMuted: payload.mute } : s
         );
-        updateSonosState({ ...muteState, group_statuses: updatedStatuses });
+        updateAndSyncSonosState({ ...muteState, group_statuses: updatedStatuses });
       }
 
       chrome.runtime
@@ -464,6 +586,30 @@ chrome.tabs.onRemoved.addListener((tabId) => {
 // 1. SPA sites like YouTube/Spotify trigger navigation events during normal use
 // 2. The content script will send null when media truly stops
 // 3. Tab close (onRemoved) handles cleanup when tabs are closed
+
+// Listen for tab audio state changes - this is how the browser knows audio is playing
+// When a tab becomes audible, request media info from content script
+// This catches cases where MediaSession was set up before our interceptor ran
+chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
+  if (changeInfo.audible === true) {
+    console.log('[Background] Tab became audible:', tabId);
+    // Request media info from content script
+    chrome.tabs
+      .sendMessage(tabId, { type: 'GET_MEDIA_STATE' })
+      .then((response) => {
+        if (response?.media) {
+          console.log('[Background] Got media info from audible tab:', response.media);
+          // Process as if we received a MEDIA_UPDATE
+          chrome.tabs.get(tabId).then((tab) => {
+            updateMediaRegistry(response.media, { tab });
+          });
+        }
+      })
+      .catch(() => {
+        // Content script not loaded yet - this is fine, it will send update when ready
+      });
+  }
+});
 
 // Clean up on extension unload
 chrome.runtime.onSuspend?.addListener(async () => {

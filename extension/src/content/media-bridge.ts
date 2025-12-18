@@ -3,6 +3,15 @@
 
 import type { MediaAction } from '@thaumic-cast/shared';
 
+/**
+ * Check if the extension context is still valid.
+ * Context becomes invalid when the extension is reloaded/updated
+ * or the service worker restarts in certain conditions.
+ */
+function isContextValid(): boolean {
+  return typeof chrome !== 'undefined' && !!chrome.runtime?.id;
+}
+
 interface PageMediaInfo {
   title?: string;
   artist?: string;
@@ -46,6 +55,11 @@ function getMediaInfo() {
 }
 
 function sendUpdate() {
+  // Don't try to send if extension context is invalid
+  if (!isContextValid()) {
+    return;
+  }
+
   const mediaInfo = getMediaInfo();
 
   const stateSignature = mediaInfo
@@ -67,7 +81,7 @@ function sendUpdate() {
         media: mediaInfo,
       })
       .catch(() => {
-        // Extension context invalidated
+        // Extension context invalidated - this can happen during extension reload
       });
   }
 }
@@ -107,20 +121,29 @@ function handleControl(action: MediaAction) {
 }
 
 // Listen for messages from background
-chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
-  if (message.type === 'CONTROL_MEDIA') {
-    handleControl(message.action as MediaAction);
-    sendResponse({ success: true });
-    return true;
-  }
+// Note: When context is invalidated, Chrome automatically stops delivering messages
+// but we still guard sendResponse calls to be safe
+if (isContextValid()) {
+  chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+    // Double-check context is still valid before responding
+    if (!isContextValid()) {
+      return false;
+    }
 
-  if (message.type === 'GET_MEDIA_STATE') {
-    sendResponse({ media: getMediaInfo() });
-    return true;
-  }
+    if (message.type === 'CONTROL_MEDIA') {
+      handleControl(message.action as MediaAction);
+      sendResponse({ success: true });
+      return true;
+    }
 
-  return false;
-});
+    if (message.type === 'GET_MEDIA_STATE') {
+      sendResponse({ media: getMediaInfo() });
+      return true;
+    }
+
+    return false;
+  });
+}
 
 // When tab becomes visible, request immediate media update
 // This helps recover state after background tab throttling

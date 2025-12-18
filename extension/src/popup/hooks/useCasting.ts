@@ -7,13 +7,7 @@ import type {
   SonosStateSnapshot,
   LocalGroup,
 } from '@thaumic-cast/shared';
-import {
-  getLocalGroups,
-  getSonosGroups,
-  getSonosStatus,
-  setGroupVolume,
-  setLocalVolume,
-} from '../../api/client';
+import { getLocalGroups, getSonosGroups, getSonosStatus } from '../../api/client';
 import {
   getExtensionSettings,
   saveExtensionSettings,
@@ -162,13 +156,23 @@ export function useCasting({
         const group = groups.find((g) => g.id === groupId);
         const ip = castStatus.isActive ? castStatus.coordinatorIp : group?.coordinatorIp;
 
-        const { error: volError } =
-          sonosMode === 'local' && ip
-            ? await setLocalVolume(ip, newVolume)
-            : await setGroupVolume(groupId, newVolume);
+        if (!ip) {
+          setError('Volume error: No speaker IP available');
+          return;
+        }
 
-        if (volError) {
-          setError(`Volume error: ${volError}`);
+        try {
+          const response = await chrome.runtime.sendMessage({
+            type: 'SET_VOLUME',
+            speakerIp: ip,
+            volume: newVolume,
+          });
+
+          if (response?.error) {
+            setError(`Volume error: ${response.error}`);
+          }
+        } catch (err) {
+          setError(err instanceof Error ? err.message : 'Failed to set volume');
         }
       }
     }, 300);

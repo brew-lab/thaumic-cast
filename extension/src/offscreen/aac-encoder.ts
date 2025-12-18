@@ -57,6 +57,7 @@ export async function createAacEncoder(): Promise<AacEncoder> {
   let codec: AacCodec = 'mp4a.40.2';
   let samplesProcessed = 0;
   let isConfigured = false;
+  let flushPromise: Promise<void> | null = null;
 
   // Collect encoded chunks
   const handleOutput = (chunk: EncodedAudioChunk) => {
@@ -158,7 +159,11 @@ export async function createAacEncoder(): Promise<AacEncoder> {
       }
 
       try {
-        encoder.flush();
+        // flush() returns a Promise - we need to handle it to avoid unhandled rejections
+        // when close() is called immediately after. Store the promise so close() can wait.
+        flushPromise = encoder.flush().catch(() => {
+          // Ignore flush errors (AbortError when encoder is closed during flush)
+        });
       } catch {
         // Flush may fail if encoder is already closed
       }
@@ -174,10 +179,23 @@ export async function createAacEncoder(): Promise<AacEncoder> {
 
     close(): void {
       if (encoder) {
-        try {
-          encoder.close();
-        } catch {
-          // May already be closed
+        // Wait for any pending flush to complete/abort before closing
+        // This prevents unhandled Promise rejections
+        if (flushPromise) {
+          flushPromise.finally(() => {
+            try {
+              encoder?.close();
+            } catch {
+              // May already be closed
+            }
+          });
+          flushPromise = null;
+        } else {
+          try {
+            encoder.close();
+          } catch {
+            // May already be closed
+          }
         }
         encoder = null;
       }

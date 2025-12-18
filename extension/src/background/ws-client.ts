@@ -74,6 +74,21 @@ export function setWsConnected(state: SonosStateSnapshot): void {
 }
 
 /**
+ * Restore WebSocket state after service worker restart.
+ * Called when we detect offscreen has an active connection or cached state.
+ * @param state - Cached Sonos state from offscreen
+ * @param connected - Whether WebSocket is currently connected (default true for backwards compat)
+ */
+export function restoreWsState(state: SonosStateSnapshot | null, connected: boolean = true): void {
+  wsConnected = connected;
+  currentSonosState = state;
+  console.log('[WsClient] Restored WebSocket state from offscreen cache', {
+    connected,
+    hasState: !!state,
+  });
+}
+
+/**
  * Mark WebSocket as disconnected.
  */
 export function setWsDisconnected(): void {

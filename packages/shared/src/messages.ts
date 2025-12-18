@@ -6,6 +6,7 @@ import type { SonosEvent } from './events';
 // Message types
 export type MessageType =
   | 'GET_STATUS'
+  | 'GET_SONOS_STATE' // popup -> background (get current Sonos state)
   | 'START_CAST'
   | 'STOP_CAST'
   | 'OFFSCREEN_START'
@@ -26,6 +27,8 @@ export type MessageType =
   // Volume/mute updates from GENA
   | 'VOLUME_UPDATE'
   | 'MUTE_UPDATE'
+  | 'SET_MUTE' // popup -> background (set mute state)
+  | 'SET_VOLUME' // popup -> background (set volume)
   // WebSocket control messages
   | 'CONNECT_WS' // popup -> background (request connection)
   | 'DISCONNECT_WS' // popup -> background (request disconnection)
@@ -34,7 +37,9 @@ export type MessageType =
   | 'WS_COMMAND' // background -> offscreen (send command)
   | 'WS_RESPONSE' // offscreen -> background (command response)
   | 'WS_CONNECTED' // offscreen -> background (connection established)
-  | 'WS_STATE_CHANGED'; // background -> popup (state update)
+  | 'WS_STATE_CHANGED' // background -> popup (state update)
+  | 'WS_PERMANENTLY_DISCONNECTED' // offscreen -> background (max retries exceeded)
+  | 'WS_CONNECTION_LOST'; // background -> popup (connection lost notification)
 
 // Media info from a tab
 export interface MediaInfo {
@@ -230,6 +235,36 @@ export interface WsStateChangedMessage extends BaseMessage {
   state: SonosStateSnapshot;
 }
 
+// WS_PERMANENTLY_DISCONNECTED: offscreen -> service worker (max retries exceeded)
+export interface WsPermanentlyDisconnectedMessage extends BaseMessage {
+  type: 'WS_PERMANENTLY_DISCONNECTED';
+}
+
+// WS_CONNECTION_LOST: service worker -> popup (connection lost notification)
+export interface WsConnectionLostMessage extends BaseMessage {
+  type: 'WS_CONNECTION_LOST';
+  reason: 'max_retries_exceeded' | 'server_closed' | 'network_error';
+}
+
+// GET_SONOS_STATE: popup -> service worker (get current Sonos state)
+export interface GetSonosStateMessage extends BaseMessage {
+  type: 'GET_SONOS_STATE';
+}
+
+// SET_MUTE: popup -> service worker (set mute state)
+export interface SetMuteMessage extends BaseMessage {
+  type: 'SET_MUTE';
+  speakerIp: string;
+  mute: boolean;
+}
+
+// SET_VOLUME: popup -> service worker (set volume)
+export interface SetVolumeMessage extends BaseMessage {
+  type: 'SET_VOLUME';
+  speakerIp: string;
+  volume: number;
+}
+
 // Cast status
 export interface CastStatus {
   isActive: boolean;
@@ -248,6 +283,7 @@ export interface CastStatus {
 // Union of all messages
 export type ExtensionMessage =
   | GetStatusMessage
+  | GetSonosStateMessage
   | StartCastMessage
   | StopCastMessage
   | OffscreenStartMessage
@@ -265,6 +301,8 @@ export type ExtensionMessage =
   | SonosEventMessage
   | VolumeUpdateMessage
   | MuteUpdateMessage
+  | SetMuteMessage
+  | SetVolumeMessage
   | ConnectWsMessage
   | DisconnectWsMessage
   | WsConnectMessage
@@ -272,7 +310,9 @@ export type ExtensionMessage =
   | WsCommandMessage
   | WsResponseMessage
   | WsConnectedMessage
-  | WsStateChangedMessage;
+  | WsStateChangedMessage
+  | WsPermanentlyDisconnectedMessage
+  | WsConnectionLostMessage;
 
 // Response types
 export interface StatusResponse {
