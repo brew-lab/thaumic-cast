@@ -23,6 +23,31 @@ use std::time::{Duration, Instant};
 use tokio_stream::wrappers::BroadcastStream;
 use uuid::Uuid;
 
+// Media key simulation
+use enigo::{Direction, Enigo, Key, Keyboard, Settings};
+
+/// Simulate an OS-level media key press.
+/// This allows controlling browser media players that use Web Audio API
+/// by triggering MediaSession actions through the OS media key mechanism.
+fn simulate_media_key(key: &str) -> Result<(), String> {
+    let mut enigo =
+        Enigo::new(&Settings::default()).map_err(|e| format!("Failed to create enigo: {}", e))?;
+
+    let media_key = match key {
+        "play_pause" => Key::MediaPlayPause,
+        "next" | "nexttrack" => Key::MediaNextTrack,
+        "previous" | "previoustrack" => Key::MediaPrevTrack,
+        "stop" => Key::MediaStop,
+        _ => return Err(format!("Unknown media key: {}", key)),
+    };
+
+    log::info!("[MediaKey] Simulating media key press: {}", key);
+
+    enigo
+        .key(media_key, Direction::Click)
+        .map_err(|e| format!("Failed to simulate key: {}", e))
+}
+
 // WebSocket heartbeat settings
 const PING_INTERVAL: Duration = Duration::from_secs(30);
 const PONG_TIMEOUT: Duration = Duration::from_secs(10);
@@ -827,6 +852,29 @@ async fn handle_ws_command(
                     data: None,
                     error: Some("Stream not found".to_string()),
                 }
+            }
+        }
+        WsAction::SimulateMediaKey => {
+            let key = command
+                .payload
+                .as_ref()
+                .and_then(|p| p.get("key"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("play_pause");
+
+            match simulate_media_key(key) {
+                Ok(_) => WsResponse {
+                    id,
+                    success: true,
+                    data: None,
+                    error: None,
+                },
+                Err(e) => WsResponse {
+                    id,
+                    success: false,
+                    data: None,
+                    error: Some(e),
+                },
             }
         }
     }

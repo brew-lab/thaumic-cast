@@ -136,6 +136,8 @@ pub enum WsAction {
     UpdateMetadata,
     #[serde(rename = "discover")]
     Discover,
+    #[serde(rename = "simulateMediaKey")]
+    SimulateMediaKey,
 }
 
 // ============ Structs ============

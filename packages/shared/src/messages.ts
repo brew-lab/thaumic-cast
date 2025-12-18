@@ -39,7 +39,9 @@ export type MessageType =
   | 'WS_CONNECTED' // offscreen -> background (connection established)
   | 'WS_STATE_CHANGED' // background -> popup (state update)
   | 'WS_PERMANENTLY_DISCONNECTED' // offscreen -> background (max retries exceeded)
-  | 'WS_CONNECTION_LOST'; // background -> popup (connection lost notification)
+  | 'WS_CONNECTION_LOST' // background -> popup (connection lost notification)
+  // Media key simulation (for Web Audio API players)
+  | 'SIMULATE_MEDIA_KEY'; // content script -> background -> desktop app
 
 // Media info from a tab
 export interface MediaInfo {
@@ -53,9 +55,15 @@ export interface MediaInfo {
   isPlaying: boolean;
   lastUpdated: number;
   hasMetadata: boolean; // true if we have rich metadata from Media Session API
+  // Position state from MediaSession.setPositionState()
+  duration?: number;
+  position?: number;
+  // Actions the site has registered handlers for (from setActionHandler interception)
+  // Uses string to avoid DOM type dependency in shared package
+  supportedActions?: string[];
 }
 
-// Media control actions
+// Media control actions we implement
 export type MediaAction = 'play' | 'pause' | 'previoustrack' | 'nexttrack';
 
 // Base message interface

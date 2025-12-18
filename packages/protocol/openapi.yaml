@@ -672,6 +672,7 @@ components:
         - stopStream
         - updateMetadata
         - discover
+        - simulateMediaKey
       description: WebSocket command actions
 
     WsCommand:

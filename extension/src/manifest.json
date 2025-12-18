@@ -10,13 +10,13 @@
     {
       "matches": ["http://*/*", "https://*/*"],
       "js": ["src/content/media-reader.ts"],
-      "run_at": "document_idle",
+      "run_at": "document_start",
       "world": "MAIN"
     },
     {
       "matches": ["http://*/*", "https://*/*"],
       "js": ["src/content/media-bridge.ts"],
-      "run_at": "document_idle",
+      "run_at": "document_start",
       "world": "ISOLATED"
     }
   ],

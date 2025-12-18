@@ -372,6 +372,20 @@ async function handleMessage(
       break;
     }
 
+    case 'SIMULATE_MEDIA_KEY': {
+      const { key } = message as { key: string };
+      if (isWsConnected()) {
+        console.log('[Background] Simulating media key via desktop app:', key);
+        sendWsCommand('simulateMediaKey' as WsAction, { key })
+          .then(() => sendResponse({ success: true }))
+          .catch((err) => sendResponse({ success: false, error: err.message }));
+      } else {
+        console.warn('[Background] Cannot simulate media key: desktop app not connected');
+        sendResponse({ success: false, error: 'Desktop app not connected' });
+      }
+      break;
+    }
+
     // Ignore messages meant for offscreen (handled by offscreen.ts)
     case 'WS_CONNECT':
     case 'WS_DISCONNECT':
