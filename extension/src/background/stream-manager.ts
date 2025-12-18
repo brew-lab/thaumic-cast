@@ -8,6 +8,7 @@ import type {
 } from '@thaumic-cast/shared';
 import { fetchWithTimeout } from '../lib/http';
 import { getServerUrl } from '../lib/settings';
+import { t } from '../lib/i18n';
 import { ensureOffscreen, sendToOffscreen } from './offscreen-manager';
 import { sendWsCommand, isWsConnected } from './ws-client';
 
@@ -60,7 +61,7 @@ export async function startStream(params: StartStreamParams): Promise<{
     // Check WebSocket is connected
     if (!isWsConnected()) {
       logError('WebSocket not connected');
-      return { success: false, error: 'WebSocket not connected. Please reconnect.' };
+      return { success: false, error: t('errors.wsNotConnected') };
     }
 
     // Query offscreen for the best available codec for this quality
@@ -90,7 +91,7 @@ export async function startStream(params: StartStreamParams): Promise<{
 
     if (!createResult?.streamId || !createResult?.playbackUrl) {
       logError('failed to create stream via WebSocket');
-      return { success: false, error: 'Failed to create stream' };
+      return { success: false, error: t('errors.failedToCreateStream') };
     }
 
     const streamId = createResult.streamId as string;
@@ -125,12 +126,14 @@ export async function startStream(params: StartStreamParams): Promise<{
         });
 
         if (!playResponse.ok) {
-          const error = await playResponse.json().catch(() => ({ message: 'Unknown error' }));
-          localPlayError = error.message || 'Failed to start playback on speaker';
+          const error = await playResponse
+            .json()
+            .catch(() => ({ message: t('errors.unknownError') }));
+          localPlayError = error.message || t('errors.failedToStartPlayback');
           logError('local play failed', { coordinatorIp, message: localPlayError });
         }
       } catch (err) {
-        localPlayError = err instanceof Error ? err.message : 'Failed to connect to speaker';
+        localPlayError = err instanceof Error ? err.message : t('errors.failedToConnectSpeaker');
         logError('local play error', { coordinatorIp, message: localPlayError });
       }
     }
@@ -154,7 +157,7 @@ export async function startStream(params: StartStreamParams): Promise<{
       return {
         success: true,
         streamId,
-        warning: `Streaming started but speaker may not be playing: ${localPlayError}`,
+        warning: t('warnings.speakerMayNotBePlaying', { error: localPlayError }),
       };
     }
 
@@ -163,9 +166,9 @@ export async function startStream(params: StartStreamParams): Promise<{
     const errorMessage =
       err instanceof Error
         ? err.message.includes('timed out')
-          ? 'Server connection timed out. Check server URL in settings.'
+          ? t('errors.serverTimedOut')
           : err.message
-        : 'Unknown error';
+        : t('errors.unknownError');
     logError('start failed', { message: errorMessage });
     return { success: false, error: errorMessage };
   }

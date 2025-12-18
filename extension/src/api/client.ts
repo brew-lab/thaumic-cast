@@ -6,6 +6,7 @@ import type {
 } from '@thaumic-cast/shared';
 import { requestJson } from '../lib/http';
 import { getServerUrl, type BackendType } from '../lib/settings';
+import { t } from '../lib/i18n';
 
 export async function getSonosStatus(): Promise<{
   data: SonosStatusResponse | null;
@@ -84,16 +85,16 @@ export async function testServerConnection(url?: string): Promise<{
 
     return {
       success: false,
-      error: `Server returned ${response.status}`,
+      error: t('errors.serverReturned', { status: String(response.status) }),
       latencyMs,
     };
   } catch (err) {
     if (err instanceof Error && err.name === 'AbortError') {
-      return { success: false, error: 'Connection timed out' };
+      return { success: false, error: t('errors.connectionTimedOut') };
     }
     return {
       success: false,
-      error: err instanceof Error ? err.message : 'Connection failed',
+      error: err instanceof Error ? err.message : t('errors.connectionFailed'),
     };
   }
 }

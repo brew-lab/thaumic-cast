@@ -157,7 +157,7 @@ export function useCasting({
         const ip = castStatus.isActive ? castStatus.coordinatorIp : group?.coordinatorIp;
 
         if (!ip) {
-          setError('Volume error: No speaker IP available');
+          setError(t('errors.volumeNoSpeakerIp'));
           return;
         }
 
@@ -169,10 +169,10 @@ export function useCasting({
           });
 
           if (response?.error) {
-            setError(`Volume error: ${response.error}`);
+            setError(t('errors.volumeError', { error: response.error }));
           }
         } catch (err) {
-          setError(err instanceof Error ? err.message : 'Failed to set volume');
+          setError(err instanceof Error ? err.message : t('errors.failedToSetVolume'));
         }
       }
     }, 300);
@@ -202,12 +202,12 @@ export function useCasting({
       if (response?.error) {
         // Revert on error
         setIsMuted(!newMuteState);
-        setError(`Mute error: ${response.error}`);
+        setError(t('errors.muteError', { error: response.error }));
       }
     } catch (err) {
       // Revert on error
       setIsMuted(!newMuteState);
-      setError(err instanceof Error ? err.message : 'Failed to toggle mute');
+      setError(err instanceof Error ? err.message : t('errors.failedToToggleMute'));
     } finally {
       setMuteLoading(false);
     }

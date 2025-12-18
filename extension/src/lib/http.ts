@@ -1,5 +1,6 @@
 import { API_TIMEOUT_MS } from '@thaumic-cast/shared';
 import { getServerUrl } from './settings';
+import { t } from './i18n';
 
 export interface RequestOptions extends RequestInit {
   timeoutMs?: number;
@@ -43,14 +44,14 @@ export async function requestJson<T>(
     clearTimeout(timeoutId);
 
     if (err instanceof Error && err.name === 'AbortError') {
-      return { data: null, error: 'Request timed out. Check your server connection.' };
+      return { data: null, error: t('errors.requestTimedOut') };
     }
 
     if (err instanceof TypeError && err.message.includes('fetch')) {
-      return { data: null, error: 'Cannot reach server. Check the server URL in settings.' };
+      return { data: null, error: t('errors.cannotReachServer') };
     }
 
-    return { data: null, error: err instanceof Error ? err.message : 'Network error' };
+    return { data: null, error: err instanceof Error ? err.message : t('errors.networkError') };
   }
 }
 
