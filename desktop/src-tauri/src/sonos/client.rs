@@ -33,6 +33,8 @@ pub enum SonosError {
     NoSpeakersFound,
     #[error("Failed to parse response: {0}")]
     ParseError(String),
+    #[error("Discovery task failed: {0}")]
+    TaskError(#[from] tokio::task::JoinError),
 }
 
 /// Escape XML special characters
@@ -129,13 +131,12 @@ pub async fn discover_speakers(force_refresh: bool) -> Result<Vec<Speaker>, Sono
     // Run discovery in blocking task (uses UDP)
     log::info!("Running SSDP discovery...");
     let speakers = tokio::task::spawn_blocking(|| ssdp_discover(MIN_TIMEOUT_MS))
-        .await
-        .unwrap()?;
+        .await??;
 
     log::info!("Found {} speakers", speakers.len());
 
-    // Update cache
-    {
+    // Only cache non-empty results to allow retry on transient failures
+    if !speakers.is_empty() {
         let mut cache_write = cache.write();
         *cache_write = Some(SpeakerCache {
             speakers: speakers.clone(),
