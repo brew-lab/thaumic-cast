@@ -1,5 +1,5 @@
 use super::soap::{extract_soap_value, send_soap_request, unescape_xml, SoapError};
-use super::ssdp::{discover as ssdp_discover, DiscoveredSpeaker, SsdpError};
+use super::ssdp::{discover as ssdp_discover, DiscoveredSpeaker, SsdpError, MIN_TIMEOUT_MS};
 use crate::generated::{LocalGroup, LocalSpeaker, Speaker, StreamMetadata};
 use parking_lot::RwLock;
 use quick_xml::events::Event;
@@ -128,7 +128,7 @@ pub async fn discover_speakers(force_refresh: bool) -> Result<Vec<Speaker>, Sono
 
     // Run discovery in blocking task (uses UDP)
     log::info!("Running SSDP discovery...");
-    let speakers = tokio::task::spawn_blocking(|| ssdp_discover(3000))
+    let speakers = tokio::task::spawn_blocking(|| ssdp_discover(MIN_TIMEOUT_MS))
         .await
         .unwrap()?;
 

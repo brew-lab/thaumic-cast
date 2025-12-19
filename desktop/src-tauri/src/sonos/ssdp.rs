@@ -9,10 +9,15 @@ const SSDP_PORT: u16 = 1900;
 const SONOS_SEARCH_TARGET: &str = "urn:schemas-upnp-org:device:ZonePlayer:1";
 
 // Discovery parameters
-const MX_VALUE: u8 = 3; // Devices respond within 0-MX seconds
+const MX_VALUE: u8 = 1; // Devices respond within 0-MX seconds (1s is standard for Sonos)
 const RETRY_COUNT: usize = 3;
 const RETRY_INTERVAL_MS: u64 = 800;
-const DEFAULT_TIMEOUT_MS: u64 = 5000;
+
+// Minimum timeout = time to send all retries + MX window for responses
+// Retries at t=0, t=800, t=1600, then wait MX seconds = 1600 + 1000 = 2600ms
+// Add buffer for network latency
+pub const MIN_TIMEOUT_MS: u64 =
+    (RETRY_COUNT as u64 - 1) * RETRY_INTERVAL_MS + (MX_VALUE as u64 * 1000) + 500;
 
 #[derive(Debug, Error)]
 pub enum SsdpError {
@@ -76,6 +81,9 @@ fn create_socket_for_interface(interface_ip: Ipv4Addr) -> std::io::Result<UdpSoc
 
     #[cfg(unix)]
     socket.set_reuse_port(true)?;
+
+    // UPnP 1.0 spec requires TTL=4 for multicast packets
+    socket.set_multicast_ttl_v4(4)?;
 
     // Bind to interface with random port
     let bind_addr = SocketAddrV4::new(interface_ip, 0);
@@ -200,7 +208,18 @@ pub fn discover(timeout_ms: u64) -> Result<Vec<DiscoveredSpeaker>, SsdpError> {
 
     // Receive responses until timeout
     let mut buf = [0u8; 2048];
-    let timeout = timeout_ms.max(DEFAULT_TIMEOUT_MS);
+    let timeout = if timeout_ms < MIN_TIMEOUT_MS {
+        log::debug!(
+            "[SSDP] Requested timeout {}ms below minimum {}ms (MX={}, retries={}), using minimum",
+            timeout_ms,
+            MIN_TIMEOUT_MS,
+            MX_VALUE,
+            RETRY_COUNT
+        );
+        MIN_TIMEOUT_MS
+    } else {
+        timeout_ms
+    };
     let deadline = Instant::now() + Duration::from_millis(timeout);
 
     while Instant::now() < deadline {
