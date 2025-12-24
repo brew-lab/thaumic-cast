@@ -89,12 +89,29 @@ struct WsSpeakerRequest {
     ip: String,
 }
 
+/// Encoder configuration from extension.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct EncoderConfig {
+    codec: String,
+    #[allow(dead_code)]
+    bitrate: Option<u32>,
+    #[allow(dead_code)]
+    sample_rate: Option<u32>,
+    #[allow(dead_code)]
+    channels: Option<u8>,
+}
+
 /// Handshake request payload from client.
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct HandshakeRequest {
+    /// Legacy codec field (deprecated).
     #[serde(default)]
     codec: Option<String>,
+    /// New encoder config from extension.
+    #[serde(default)]
+    encoder_config: Option<EncoderConfig>,
 }
 
 /// Outgoing WebSocket messages.
@@ -200,12 +217,25 @@ enum HandshakeResult {
 
 /// Handles a HANDSHAKE message: creates a stream and returns ack or error.
 fn handle_handshake(state: &AppState, payload: HandshakeRequest) -> HandshakeResult {
-    let codec = match payload.codec.as_deref() {
-        Some("aac") => AudioCodec::Aac,
+    // Get codec from encoder_config (preferred) or legacy codec field
+    let codec_str = payload
+        .encoder_config
+        .as_ref()
+        .map(|c| c.codec.as_str())
+        .or(payload.codec.as_deref());
+
+    let codec = match codec_str {
+        Some("aac") | Some("aac-lc") | Some("he-aac") => AudioCodec::Aac,
         Some("mp3") => AudioCodec::Mp3,
         Some("flac") => AudioCodec::Flac,
-        _ => AudioCodec::Wav,
+        Some("wav") => AudioCodec::Wav,
+        _ => {
+            log::warn!("[WS] Unknown codec {:?}, defaulting to WAV", codec_str);
+            AudioCodec::Wav
+        }
     };
+
+    log::info!("[WS] Creating stream with codec: {:?}", codec);
 
     match state.services.stream_coordinator.create_stream(codec) {
         Ok(id) => HandshakeResult::Success(id),

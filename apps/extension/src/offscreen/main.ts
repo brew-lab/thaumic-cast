@@ -263,6 +263,7 @@ class StreamSession {
   private maxReconnectAttempts = 5;
   private sourceNode: MediaStreamAudioSourceNode | null = null;
   private workletNode: AudioWorkletNode | null = null;
+  private silentGainNode: GainNode | null = null;
   private connectionState: ConnectionState = ConnectionState.IDLE;
 
   /** Unique ID assigned by the server for this stream. */
@@ -441,6 +442,30 @@ class StreamSession {
     this.workletNode.port.postMessage({ type: 'INIT_BUFFER', buffer: this.control.buffer });
     this.sourceNode.connect(this.workletNode);
 
+    // Connect to destination through a silent gain node to ensure audio processing.
+    // Without this connection, Chrome may not drive audio through the worklet.
+    this.silentGainNode = this.audioContext.createGain();
+    this.silentGainNode.gain.value = 0;
+    this.workletNode.connect(this.silentGainNode);
+    this.silentGainNode.connect(this.audioContext.destination);
+
+    // Ensure AudioContext is running (may be suspended by browser policy)
+    if (this.audioContext.state === 'suspended') {
+      log.info('AudioContext suspended, resuming...');
+      await this.audioContext.resume();
+    }
+    log.info(`AudioContext state: ${this.audioContext.state}`);
+
+    // Log media stream info for debugging
+    const audioTracks = this.mediaStream.getAudioTracks();
+    log.info(`MediaStream has ${audioTracks.length} audio track(s)`);
+    if (audioTracks.length > 0) {
+      const track = audioTracks[0];
+      log.info(
+        `Audio track: ${track.label}, enabled=${track.enabled}, muted=${track.muted}, readyState=${track.readyState}`,
+      );
+    }
+
     this.encoder = await createEncoder(this.encoderConfig);
     log.info(`Using encoder: ${this.encoder.config.codec} @ ${this.encoder.config.bitrate}kbps`);
   }
@@ -450,9 +475,14 @@ class StreamSession {
    * Monitors the shared ring buffer for new samples and checks for overflows.
    */
   private startReading(): void {
+    let totalSamplesRead = 0;
+    let lastLogTime = Date.now();
+    let frameCount = 0;
+
     const poll = () => {
       if (!this.streamId || this.isStopping) return;
 
+      frameCount++;
       const writeIdx = Atomics.load(this.control, 0);
       const readIdx = Atomics.load(this.control, 1);
 
@@ -471,6 +501,7 @@ class StreamSession {
         }
 
         if (samplesToRead > 0) {
+          totalSamplesRead += samplesToRead;
           const data = new Int16Array(samplesToRead);
 
           if (readIdx + samplesToRead <= RING_BUFFER_SIZE) {
@@ -490,6 +521,15 @@ class StreamSession {
 
           Atomics.store(this.control, 1, (readIdx + samplesToRead) % RING_BUFFER_SIZE);
         }
+      }
+
+      // Log stats every 5 seconds
+      const now = Date.now();
+      if (now - lastLogTime >= 5000) {
+        log.debug(
+          `Audio stats: ${totalSamplesRead} samples read, ${frameCount} frames, writeIdx=${writeIdx}, readIdx=${readIdx}`,
+        );
+        lastLogTime = now;
       }
 
       this.readInterval = requestAnimationFrame(poll);
@@ -539,6 +579,7 @@ class StreamSession {
 
     this.sourceNode?.disconnect();
     this.workletNode?.disconnect();
+    this.silentGainNode?.disconnect();
     this.audioContext.close().catch(() => {});
     this.mediaStream.getTracks().forEach((t) => t.stop());
   }
