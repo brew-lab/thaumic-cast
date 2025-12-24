@@ -1,0 +1,8 @@
+# Reject commits with author/generator attribution
+if grep -qiE "(Co-Authored-By|Generated with|Signed-off-by)" "$1"; then
+  echo "Error: Commit message contains forbidden attribution (Co-Authored-By, Generated with, etc.)"
+  echo "Keep commits clean - just type(scope): description"
+  exit 1
+fi
+
+bun commitlint --edit $1

@@ -1,0 +1,37 @@
+{
+  "manifest_version": 3,
+  "name": "Thaumic Cast",
+  "version": "0.1.0",
+  "permissions": ["tabCapture", "offscreen", "storage", "tabs"],
+  "host_permissions": ["http://localhost/*"],
+  "background": {
+    "service_worker": "src/background/main.ts",
+    "type": "module"
+  },
+  "action": {
+    "default_popup": "src/popup/index.html"
+  },
+  "content_scripts": [
+    {
+      "matches": ["http://*/*", "https://*/*"],
+      "js": ["src/content/media-reader.ts"],
+      "run_at": "document_start",
+      "world": "MAIN"
+    },
+    {
+      "matches": ["http://*/*", "https://*/*"],
+      "js": ["src/content/media-bridge.ts"],
+      "run_at": "document_start",
+      "world": "ISOLATED"
+    }
+  ],
+  "content_security_policy": {
+    "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'"
+  },
+  "web_accessible_resources": [
+    {
+      "resources": ["pcm-processor.js"],
+      "matches": ["<all_urls>"]
+    }
+  ]
+}

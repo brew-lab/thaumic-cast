@@ -1,0 +1,14 @@
+/**
+ * Global styles and resets for the desktop app.
+ */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+#root {
+  block-size: 100%;
+  inline-size: 100%;
+}

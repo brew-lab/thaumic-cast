@@ -1,0 +1,11 @@
+{
+  "$schema": "https://unpkg.com/@changesets/config@3.1.2/schema.json",
+  "changelog": "@changesets/changelog-github",
+  "commit": false,
+  "fixed": [],
+  "linked": [["@thaumic-cast/desktop", "@thaumic-cast/extension"]],
+  "access": "public",
+  "baseBranch": "main",
+  "updateInternalDependencies": "patch",
+  "ignore": ["@thaumic-cast/protocol", "@thaumic-cast/ui", "@thaumic-cast/shared"]
+}

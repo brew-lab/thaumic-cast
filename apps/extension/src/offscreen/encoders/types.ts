@@ -1,0 +1,41 @@
+import type { EncoderConfig, AudioCodec } from '@thaumic-cast/protocol';
+
+/**
+ * Unified interface for all audio encoders.
+ * Implementations handle codec-specific encoding logic.
+ */
+export interface AudioEncoder {
+  /**
+   * Encodes a chunk of interleaved stereo Int16 PCM samples.
+   * @param samples - Raw PCM samples from AudioWorklet
+   * @returns Encoded bytes to send over WebSocket, or null if buffering
+   */
+  encode(samples: Int16Array): Uint8Array | null;
+
+  /**
+   * Flushes any remaining buffered data.
+   * Call before stopping the stream.
+   * @returns Final encoded bytes, or null if nothing buffered
+   */
+  flush(): Uint8Array | null;
+
+  /**
+   * Releases encoder resources.
+   * Encoder cannot be used after calling close().
+   */
+  close(): void;
+
+  /**
+   * The configuration this encoder was created with.
+   */
+  readonly config: EncoderConfig;
+}
+
+/**
+ * Result of checking codec support.
+ */
+export interface CodecSupportResult {
+  codec: AudioCodec;
+  supported: boolean;
+  fallback?: AudioCodec;
+}

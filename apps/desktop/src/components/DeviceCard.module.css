@@ -1,0 +1,50 @@
+.deviceCard {
+  background-color: var(--color-surface);
+  border-radius: var(--radius-md);
+  padding-block: var(--space-md);
+  padding-inline: var(--space-md);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  border: 1px solid var(--color-border);
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+}
+
+.iconWrapper {
+  background-color: var(--color-bg);
+  padding-block: var(--space-xs);
+  padding-inline: var(--space-xs);
+  border-radius: 50%;
+  display: flex;
+  color: var(--color-primary);
+}
+
+.info {
+  display: flex;
+  flex-direction: column;
+}
+
+.name {
+  margin-block: 0;
+  margin-inline: 0;
+  font-size: 1rem;
+  color: var(--color-text);
+}
+
+.model {
+  margin-block: 0;
+  margin-inline: 0;
+  font-size: 0.8rem;
+  color: var(--color-text-muted);
+}
+
+.actions {
+  display: flex;
+  gap: var(--space-sm);
+  margin-block-start: var(--space-sm);
+}

@@ -1,0 +1,98 @@
+.settings {
+  padding-block: var(--space-xl);
+  padding-inline: var(--space-xl);
+  max-inline-size: 38rem;
+  block-size: 100%;
+  overflow-y: auto;
+}
+
+.title {
+  margin: 0;
+  margin-block-end: var(--space-lg);
+}
+
+.section {
+  background-color: var(--color-surface);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--color-border);
+  margin-block-end: var(--space-lg);
+  overflow: hidden;
+}
+
+.sectionHeader {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  padding-block: var(--space-md);
+  padding-inline: var(--space-md);
+  border-block-end: 1px solid var(--color-border);
+  color: var(--color-text-muted);
+}
+
+.sectionTitle {
+  margin: 0;
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+.sectionContent {
+  padding-block: var(--space-md);
+  padding-inline: var(--space-md);
+}
+
+.toggle {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  cursor: pointer;
+}
+
+.toggleInfo {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+}
+
+.toggleLabel {
+  font-weight: 500;
+}
+
+.toggleDescription {
+  font-size: 0.85rem;
+  color: var(--color-text-muted);
+}
+
+.checkbox {
+  inline-size: 1.25rem;
+  block-size: 1.25rem;
+  cursor: pointer;
+  accent-color: var(--color-primary);
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+.fieldLabel {
+  font-size: 0.9rem;
+  color: var(--color-text-muted);
+}
+
+.select {
+  padding-block: var(--space-sm);
+  padding-inline: var(--space-md);
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--color-border);
+  background-color: var(--color-bg);
+  color: var(--color-text);
+  font-size: 1rem;
+  cursor: pointer;
+}
+
+.select:focus {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+}

@@ -1,20 +1,15 @@
+# Node / Bun
 node_modules
 dist
-public
+build
+.bun
+bun.lockb
+
+# Logs
 *.log
-.DS_Store
-
-# Database
-*.db
-*.db-wal
-*.db-shm
-server/data/
-
-# TLS Certificates
-server/certs/
-*.pem
-*.key
-*.crt
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
 
 # Environment
 .env
@@ -26,26 +21,40 @@ server/certs/
 .vscode/*
 !.vscode/settings.json
 !.vscode/extensions.json
+!.vscode/launch.json
+.claude/
+*.swp
+*.swo
 
-# Build artifacts
+# OS
+.DS_Store
+Thumbs.db
+*:Zone.Identifier
+
+# Build Artifacts
 *.tsbuildinfo
-bun.lockb
+coverage/
 
-# Test coverage
-coverage
-
-# Rust / Cargo
+# Rust / Tauri
 target/
-Cargo.lock
 **/*.rs.bk
+apps/desktop/src-tauri/target/
+apps/desktop/src-tauri/gen/
 
-# Tauri
-desktop/src-tauri/target/
-desktop/src-tauri/Cargo.lock
-desktop/dist/
+# Database
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
 
-# Generated Tauri files
-desktop/src-tauri/gen/
+# Changesets (ignore temp files but keep config)
+.changeset/*
+!.changeset/config.json
+!.changeset/README.md
 
-# Generated protocol types (copied by codegen for Windows compatibility)
-desktop/src-tauri/src/generated/
+# Archived code
+old/
+
+# Documents
+docs/plans/*
+docs/guff.md
