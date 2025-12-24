@@ -47,10 +47,10 @@ apps/desktop/src-tauri/gen/
 *.db-wal
 *.db-shm
 
-# Changesets (ignore temp files but keep config)
+# Changesets (ignore temp files, keep config and changeset entries)
 .changeset/*
+!.changeset/*.md
 !.changeset/config.json
-!.changeset/README.md
 
 # Archived code
 old/
