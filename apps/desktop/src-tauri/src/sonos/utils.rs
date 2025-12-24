@@ -260,3 +260,31 @@ pub fn get_xml_attr(elem: &BytesStart, attr_name: &[u8]) -> Option<String> {
         .find(|a| a.key.as_ref() == attr_name)
         .map(|a| String::from_utf8_lossy(&a.value).to_string())
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// XML Encoding
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Escapes XML special characters for embedding in XML content.
+///
+/// This escapes all five XML special characters as required by the XML spec:
+/// - `&` → `&amp;`
+/// - `<` → `&lt;`
+/// - `>` → `&gt;`
+/// - `"` → `&quot;`
+/// - `'` → `&apos;`
+///
+/// Used for SOAP arguments and DIDL-Lite metadata values.
+///
+/// # Example
+/// ```ignore
+/// assert_eq!(escape_xml("Tom & Jerry"), "Tom &amp; Jerry");
+/// assert_eq!(escape_xml("<title>"), "&lt;title&gt;");
+/// ```
+pub fn escape_xml(s: &str) -> String {
+    s.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+        .replace('\'', "&apos;")
+}

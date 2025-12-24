@@ -10,4 +10,4 @@ Fix runtime errors and audio streaming issues
 - Fix undefined coordinator access causing infinite re-render loop
 - Fix AudioWorkletNode not connected to audio graph, preventing audio capture
 - Fix codec mismatch in WebSocket handshake causing wrong Content-Type for Sonos
-- Fix SOAP XML envelope whitespace causing Sonos speakers to timeout on play requests
+- Fix XML escaping in SOAP/DIDL to escape all 5 XML special characters (was missing " and ')

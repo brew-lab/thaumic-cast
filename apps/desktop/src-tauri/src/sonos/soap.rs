@@ -9,7 +9,7 @@ use std::time::Duration;
 use reqwest::Client;
 use thiserror::Error;
 
-use super::utils::{build_sonos_url, extract_xml_text};
+use super::utils::{build_sonos_url, escape_xml, extract_xml_text};
 use crate::config::SOAP_TIMEOUT_SECS;
 use crate::error::SoapResult;
 
@@ -76,9 +76,8 @@ pub async fn send_soap_request(
     );
 
     for (k, v) in args {
-        // Escape XML entities in values to prevent malformed XML
-        let escaped_v = html_escape::encode_text(v);
-        body.push_str(&format!("<{k}>{escaped_v}</{k}>"));
+        // Escape all XML special characters (& < > " ')
+        body.push_str(&format!("<{k}>{}</{k}>", escape_xml(v)));
     }
 
     body.push_str(&format!(r#"</u:{}></s:Body></s:Envelope>"#, action));

@@ -14,8 +14,8 @@ use crate::sonos::soap::{SoapError, SoapRequestBuilder};
 use crate::sonos::traits::{SonosPlayback, SonosTopology, SonosVolumeControl};
 use crate::sonos::types::{ZoneGroup, ZoneGroupMember};
 use crate::sonos::utils::{
-    extract_ip_from_location, extract_model_from_icon, extract_xml_text, get_channel_role,
-    get_xml_attr, normalize_sonos_uri,
+    escape_xml, extract_ip_from_location, extract_model_from_icon, extract_xml_text,
+    get_channel_role, get_xml_attr, normalize_sonos_uri,
 };
 use crate::stream::StreamMetadata;
 
@@ -203,27 +203,21 @@ fn format_didl_lite(stream_url: &str, metadata: Option<&StreamMetadata>) -> Stri
     let album = metadata.and_then(|m| m.album.as_deref());
     let artwork = metadata.and_then(|m| m.artwork.as_deref());
 
-    let escaped_title = html_escape::encode_text(title);
-    let escaped_artist = html_escape::encode_text(artist);
-    let escaped_url = html_escape::encode_text(stream_url);
-
     let mut didl = String::from(
         r#"<DIDL-Lite xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:upnp="urn:schemas-upnp-org:metadata-1-0/upnp/" xmlns="urn:schemas-upnp-org:metadata-1-0/DIDL-Lite/">"#,
     );
     didl.push_str(r#"<item id="0" parentID="-1" restricted="true">"#);
-    didl.push_str(&format!("<dc:title>{}</dc:title>", escaped_title));
-    didl.push_str(&format!("<dc:creator>{}</dc:creator>", escaped_artist));
+    didl.push_str(&format!("<dc:title>{}</dc:title>", escape_xml(title)));
+    didl.push_str(&format!("<dc:creator>{}</dc:creator>", escape_xml(artist)));
 
     if let Some(album) = album {
-        let escaped_album = html_escape::encode_text(album);
-        didl.push_str(&format!("<upnp:album>{}</upnp:album>", escaped_album));
+        didl.push_str(&format!("<upnp:album>{}</upnp:album>", escape_xml(album)));
     }
 
     if let Some(artwork) = artwork {
-        let escaped_artwork = html_escape::encode_text(artwork);
         didl.push_str(&format!(
             "<upnp:albumArtURI>{}</upnp:albumArtURI>",
-            escaped_artwork
+            escape_xml(artwork)
         ));
     }
 
@@ -231,7 +225,7 @@ fn format_didl_lite(stream_url: &str, metadata: Option<&StreamMetadata>) -> Stri
     // Use audio/* to allow Sonos to auto-detect format (supports MP3, AAC-LC, HE-AAC)
     didl.push_str(&format!(
         r#"<res protocolInfo="http-get:*:audio/*:*">{}</res>"#,
-        escaped_url
+        escape_xml(stream_url)
     ));
     didl.push_str("</item>");
     didl.push_str("</DIDL-Lite>");
