@@ -1,10 +1,34 @@
 import { useEffect } from 'preact/hooks';
-import { groups, fetchGroups, refreshTopology, stopAll, stats } from '../state/store';
+import {
+  groups,
+  fetchGroups,
+  refreshTopology,
+  stopAll,
+  stats,
+  type ZoneGroup,
+  type Speaker,
+} from '../state/store';
 import { DeviceCard } from '../components/DeviceCard';
 import { ActionButton } from '../components/ActionButton';
 import { RefreshCw, Square } from 'lucide-preact';
 import { useTranslation } from 'react-i18next';
 import styles from './Speakers.module.css';
+
+/**
+ * Extracts the coordinator as a Speaker from a ZoneGroup.
+ * @param group - The zone group
+ * @returns The coordinator speaker, or undefined if not found
+ */
+function getCoordinator(group: ZoneGroup): Speaker | undefined {
+  const member = group.members.find((m) => m.uuid === group.coordinatorUuid);
+  if (!member) return undefined;
+  return {
+    uuid: member.uuid,
+    name: member.zoneName,
+    model: member.model,
+    ip: member.ip,
+  };
+}
 
 /**
  * Speakers page.
@@ -24,7 +48,10 @@ export function Speakers() {
     return () => clearInterval(interval);
   }, []);
 
-  const speakerCount = groups.value.length;
+  const groupsWithCoordinators = groups.value
+    .map((group) => ({ group, coordinator: getCoordinator(group) }))
+    .filter((item): item is { group: ZoneGroup; coordinator: Speaker } => item.coordinator != null);
+  const speakerCount = groupsWithCoordinators.length;
   const streamCount = stats.value?.streamCount ?? 0;
 
   return (
@@ -56,17 +83,17 @@ export function Speakers() {
         </div>
       </div>
 
-      {groups.value.length === 0 ? (
+      {groupsWithCoordinators.length === 0 ? (
         <div className={styles.emptyState}>
           <p className={styles.emptyTitle}>{t('speakers.none')}</p>
           <p className={styles.emptyDescription}>{t('speakers.scan_hint')}</p>
         </div>
       ) : (
         <div className={styles.grid}>
-          {groups.value.map((group) => (
+          {groupsWithCoordinators.map(({ group, coordinator }) => (
             <DeviceCard
-              key={group.coordinator.uuid}
-              speaker={group.coordinator}
+              key={coordinator.uuid}
+              speaker={coordinator}
               isCoordinator={true}
               memberCount={group.members.length}
             />

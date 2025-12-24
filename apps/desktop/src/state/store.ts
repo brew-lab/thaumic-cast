@@ -9,9 +9,19 @@ export interface Speaker {
   ip: string;
 }
 
+export interface ZoneGroupMember {
+  uuid: string;
+  ip: string;
+  zoneName: string;
+  model: string;
+}
+
 export interface ZoneGroup {
-  coordinator: Speaker;
-  members: Speaker[];
+  id: string;
+  name: string;
+  coordinatorUuid: string;
+  coordinatorIp: string;
+  members: ZoneGroupMember[];
 }
 
 // Global State
