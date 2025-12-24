@@ -29,13 +29,6 @@ impl BroadcastEventBridge {
     pub fn new(tx: broadcast::Sender<BroadcastEvent>) -> Self {
         Self { tx }
     }
-
-    /// Returns a clone of the underlying broadcast sender.
-    ///
-    /// Used by WebSocket handlers that need to subscribe to the event stream.
-    pub fn sender(&self) -> broadcast::Sender<BroadcastEvent> {
-        self.tx.clone()
-    }
 }
 
 impl EventEmitter for BroadcastEventBridge {

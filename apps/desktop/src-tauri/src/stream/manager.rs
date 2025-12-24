@@ -8,8 +8,6 @@ use uuid::Uuid;
 
 use crate::config::{MAX_CONCURRENT_STREAMS, STREAM_BUFFER_FRAMES, STREAM_CHANNEL_CAPACITY};
 
-use super::icy::{IcyFormatter, ICY_METAINT};
-
 /// Supported audio codecs for the stream
 #[derive(Debug, Clone, Copy, Serialize, PartialEq)]
 #[serde(rename_all = "lowercase")]
@@ -100,17 +98,6 @@ impl StreamState {
 
         (prefill, rx)
     }
-
-    /// Formats the current metadata into an ICY metadata block.
-    ///
-    /// Per ICY spec, a single zero byte indicates no metadata change.
-    /// Otherwise, the first byte is the number of 16-byte blocks, followed
-    /// by the metadata string padded to that length.
-    #[deprecated(since = "0.2.0", note = "Use IcyFormatter::format_metadata() instead")]
-    pub fn format_icy_metadata(&self) -> Vec<u8> {
-        let meta = self.metadata.read();
-        IcyFormatter::format_metadata(&meta)
-    }
 }
 
 /// Manages all active audio streams in the application.
@@ -175,46 +162,4 @@ impl Default for StreamManager {
     fn default() -> Self {
         Self::new()
     }
-}
-
-/// Injects ICY metadata blocks into an audio chunk at the correct intervals.
-///
-/// ICY protocol requires metadata blocks to be inserted every `ICY_METAINT` bytes.
-/// This function tracks the byte position and inserts formatted metadata when needed.
-///
-/// # Arguments
-/// * `chunk` - The raw audio data chunk to process
-/// * `stream` - The stream state containing current metadata
-/// * `bytes_since_meta` - Mutable counter tracking bytes since last metadata block
-///
-/// # Returns
-/// A new `Bytes` buffer containing the audio data with ICY metadata blocks inserted.
-#[deprecated(since = "0.2.0", note = "Use IcyMetadataInjector instead")]
-#[allow(deprecated)]
-pub fn inject_icy_metadata(
-    chunk: &[u8],
-    stream: &StreamState,
-    bytes_since_meta: &mut usize,
-) -> Bytes {
-    let mut output = Vec::new();
-    let mut remaining = chunk;
-
-    while !remaining.is_empty() {
-        let bytes_to_meta = ICY_METAINT - *bytes_since_meta;
-
-        if remaining.len() < bytes_to_meta {
-            // Not enough bytes to reach next metadata point
-            output.extend_from_slice(remaining);
-            *bytes_since_meta += remaining.len();
-            break;
-        }
-
-        // Write bytes up to metadata point, then inject metadata block
-        output.extend_from_slice(&remaining[..bytes_to_meta]);
-        output.extend_from_slice(&stream.format_icy_metadata());
-        remaining = &remaining[bytes_to_meta..];
-        *bytes_since_meta = 0;
-    }
-
-    Bytes::from(output)
 }

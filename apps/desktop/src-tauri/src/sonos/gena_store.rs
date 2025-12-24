@@ -211,6 +211,7 @@ impl GenaSubscriptionStore {
 
     /// Returns true if there are no active subscriptions.
     #[must_use]
+    #[allow(dead_code)] // Standard API: len() should have is_empty()
     pub fn is_empty(&self) -> bool {
         self.subscriptions.read().is_empty()
     }

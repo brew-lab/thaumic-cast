@@ -79,10 +79,9 @@ pub const WS_HEARTBEAT_CHECK_INTERVAL_SECS: u64 = 1;
 /// Delay between M-SEARCH packet retries as a Duration.
 pub const SSDP_RETRY_DELAY: Duration = Duration::from_millis(SSDP_RETRY_DELAY_MS);
 
-/// Total discovery timeout derived from default retry timing.
+/// Total discovery timeout derived from retry timing.
 ///
-/// This uses default values. For runtime-configured discovery timeout,
-/// use [`compute_discovery_timeout`](crate::protocol_constants::compute_discovery_timeout).
+/// Calculated as: (send_count × retry_delay) + (MX × 1000) + buffer
 pub const DISCOVERY_TIMEOUT: Duration = Duration::from_millis(
     SSDP_SEND_COUNT * SSDP_RETRY_DELAY_MS + SSDP_MX_VALUE * 1000 + SSDP_BUFFER_MS,
 );

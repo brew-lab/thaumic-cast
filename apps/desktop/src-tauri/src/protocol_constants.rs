@@ -3,8 +3,6 @@
 //! These values are defined by external specifications (UPnP, GENA, audio standards)
 //! and changing them would break protocol compliance.
 
-use std::time::Duration;
-
 // ─────────────────────────────────────────────────────────────────────────────
 // SSDP / UPnP (RFC 2326, UPnP Device Architecture)
 // ─────────────────────────────────────────────────────────────────────────────
@@ -53,8 +51,9 @@ pub const DEFAULT_CHANNELS: u16 = 2;
 
 /// ICY metadata interval (bytes between metadata blocks).
 ///
-/// 16384 is the de facto standard used by Shoutcast.
-pub const ICY_METAINT: usize = 16384;
+/// 8192 bytes is the interval we use for Sonos compatibility.
+/// This is a protocol specification constant, not a tunable parameter.
+pub const ICY_METAINT: usize = 8192;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // HTTP/SOAP
@@ -70,15 +69,3 @@ pub const HTTP_FETCH_TIMEOUT_SECS: u64 = 1;
 
 /// Maximum size of GENA notification body (bytes).
 pub const MAX_GENA_BODY_SIZE: usize = 64 * 1024;
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Derived Constants
-// ─────────────────────────────────────────────────────────────────────────────
-
-/// Computes the total discovery timeout based on retry timing.
-///
-/// This is a function rather than a constant because it depends on runtime
-/// configuration values (ssdp_send_count, ssdp_retry_delay_ms).
-pub fn compute_discovery_timeout(send_count: u64, retry_delay_ms: u64) -> Duration {
-    Duration::from_millis(send_count * retry_delay_ms + SSDP_MX_VALUE * 1000 + SSDP_BUFFER_MS)
-}

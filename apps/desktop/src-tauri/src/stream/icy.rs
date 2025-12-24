@@ -6,10 +6,7 @@
 use bytes::Bytes;
 
 use super::StreamMetadata;
-
-/// ICY metadata interval (bytes between metadata blocks).
-/// This is a protocol specification constant, not a tunable parameter.
-pub const ICY_METAINT: usize = 8192;
+pub use crate::protocol_constants::ICY_METAINT;
 
 /// Formats stream metadata into ICY protocol format.
 ///
@@ -114,6 +111,7 @@ impl IcyMetadataInjector {
 
     /// Returns the current byte count since the last metadata block.
     #[must_use]
+    #[allow(dead_code)] // Used in tests
     pub fn bytes_since_meta(&self) -> usize {
         self.bytes_since_meta
     }
