@@ -117,6 +117,21 @@ export function getSessionBySpeakerIp(speakerIp: string): ActiveCastSession | un
 }
 
 /**
+ * Finds a session by stream ID.
+ * Used when the desktop app reports a stream ended to find the affected cast.
+ * @param streamId - The stream ID from the server
+ * @returns The session or undefined if not found
+ */
+export function getSessionByStreamId(streamId: string): ActiveCastSession | undefined {
+  for (const session of sessions.values()) {
+    if (session.streamId === streamId) {
+      return session;
+    }
+  }
+  return undefined;
+}
+
+/**
  * Gets all active sessions.
  * @returns Array of all active sessions
  */

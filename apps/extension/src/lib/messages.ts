@@ -374,7 +374,7 @@ export interface CastAutoStoppedMessage {
   type: 'CAST_AUTO_STOPPED';
   tabId: number;
   speakerIp: string;
-  reason: 'source_changed' | 'playback_stopped';
+  reason: 'source_changed' | 'playback_stopped' | 'stream_ended';
   message: string;
 }
 

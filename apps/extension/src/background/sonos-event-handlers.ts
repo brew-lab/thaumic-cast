@@ -17,7 +17,7 @@
 import { createLogger } from '@thaumic-cast/shared';
 import type { BroadcastEvent, SonosStateSnapshot, TransportState } from '@thaumic-cast/protocol';
 import { updateGroups, updateVolume, updateMute, updateTransportState } from './sonos-state';
-import { getSessionBySpeakerIp, removeSession } from './session-manager';
+import { getSessionBySpeakerIp, getSessionByStreamId, removeSession } from './session-manager';
 
 const log = createLogger('SonosEvents');
 
@@ -33,9 +33,9 @@ const TRANSPORT_DEBOUNCE_MS = 500;
 export async function handleSonosEvent(event: BroadcastEvent): Promise<void> {
   log.debug('Received event:', event.type);
 
-  if (event.category === 'sonos') {
-    const eventData = event as unknown as Record<string, unknown>;
+  const eventData = event as unknown as Record<string, unknown>;
 
+  if (event.category === 'sonos') {
     switch (event.type) {
       case 'transportState':
         handleTransportState(eventData.speakerIp as string, eventData.state as TransportState);
@@ -55,6 +55,16 @@ export async function handleSonosEvent(event: BroadcastEvent): Promise<void> {
 
       case 'zoneGroupsUpdated':
         handleZoneGroupsUpdated(eventData.groups as SonosStateSnapshot['groups']);
+        break;
+    }
+  } else if (event.category === 'stream') {
+    switch (event.type) {
+      case 'ended':
+        await handleStreamEnded(eventData.streamId as string);
+        break;
+
+      case 'playbackStopped':
+        await handlePlaybackStopped(eventData.speakerIp as string);
         break;
     }
   }
@@ -183,4 +193,54 @@ async function stopCastForTab(tabId: number): Promise<void> {
 
   // Remove session from manager
   removeSession(tabId);
+}
+
+/**
+ * Handles stream ended events.
+ * Cleans up the session when the desktop app ends the stream.
+ * @param streamId - The stream ID that ended
+ */
+async function handleStreamEnded(streamId: string): Promise<void> {
+  const session = getSessionByStreamId(streamId);
+
+  if (session) {
+    log.info(`Stream ${streamId} ended, cleaning up session for tab ${session.tabId}`);
+
+    // Stop the capture in offscreen
+    await stopCastForTab(session.tabId);
+
+    // Notify popup that the cast was stopped
+    notifyPopup({
+      type: 'CAST_AUTO_STOPPED',
+      tabId: session.tabId,
+      speakerIp: session.speakerIp,
+      reason: 'stream_ended',
+      message: 'Stream ended by server',
+    });
+  }
+}
+
+/**
+ * Handles playback stopped events.
+ * Cleans up the session when playback stops on a speaker.
+ * @param speakerIp - The speaker IP where playback stopped
+ */
+async function handlePlaybackStopped(speakerIp: string): Promise<void> {
+  const session = getSessionBySpeakerIp(speakerIp);
+
+  if (session) {
+    log.info(`Playback stopped on ${speakerIp}, cleaning up session for tab ${session.tabId}`);
+
+    // Stop the capture in offscreen
+    await stopCastForTab(session.tabId);
+
+    // Notify popup that the cast was stopped
+    notifyPopup({
+      type: 'CAST_AUTO_STOPPED',
+      tabId: session.tabId,
+      speakerIp,
+      reason: 'playback_stopped',
+      message: 'Playback stopped on speaker',
+    });
+  }
 }

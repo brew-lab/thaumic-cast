@@ -2,13 +2,9 @@ import { useState, useEffect } from 'preact/hooks';
 import { useTranslation } from 'react-i18next';
 import { Button, Card } from '@thaumic-cast/ui';
 import { createEncoderConfig, getSpeakerStatus } from '@thaumic-cast/protocol';
+import { Cast } from 'lucide-preact';
 import styles from './App.module.css';
-import {
-  ExtensionResponse,
-  StartCastMessage,
-  StopCastMessage,
-  GetCastStatusMessage,
-} from '../lib/messages';
+import { ExtensionResponse, StartCastMessage, StopCastMessage } from '../lib/messages';
 import type { ZoneGroup } from '@thaumic-cast/protocol';
 import { CodecSelector } from './components/CodecSelector';
 import { BitrateSelector } from './components/BitrateSelector';
@@ -27,7 +23,6 @@ import { useConnectionStatus } from './hooks/useConnectionStatus';
  */
 export function App() {
   const { t } = useTranslation();
-  const [isCasting, setIsCasting] = useState(false);
   const [selectedIp, setSelectedIp] = useState<string>('');
   const [error, setError] = useState<string | null>(null);
   const { codec, bitrate, setCodec, setBitrate, loading: settingsLoading } = useAudioSettings();
@@ -43,6 +38,11 @@ export function App() {
   // Media metadata hooks
   const { state: currentTabState } = useCurrentTabState();
   const { casts: activeCasts, stopCast } = useActiveCasts();
+
+  // Derive isCasting from activeCasts - automatically updates when sessions change
+  const isCasting = currentTabState
+    ? activeCasts.some((cast) => cast.tabId === currentTabState.tabId)
+    : false;
 
   // Sonos state hook - handles real-time updates
   const {
@@ -73,24 +73,6 @@ export function App() {
     }
   }, [connectionChecking, connectionError]);
 
-  // Check current cast status on mount
-  useEffect(() => {
-    /**
-     * Checks the current cast status from the background script.
-     */
-    async function checkCastStatus() {
-      try {
-        const statusMsg: GetCastStatusMessage = { type: 'GET_CAST_STATUS' };
-        const res: ExtensionResponse = await chrome.runtime.sendMessage(statusMsg);
-        setIsCasting(!!res.isActive);
-      } catch {
-        // Ignore - will show not casting
-      }
-    }
-
-    checkCastStatus();
-  }, []);
-
   // Update selected IP when groups change and none is selected
   useEffect(() => {
     if (groups.length > 0 && !selectedIp) {
@@ -112,11 +94,10 @@ export function App() {
       };
       const response: ExtensionResponse = await chrome.runtime.sendMessage(msg);
 
-      if (response.success) {
-        setIsCasting(true);
-      } else {
+      if (!response.success) {
         setError(response.error || 'Failed to start');
       }
+      // isCasting is derived from activeCasts - will auto-update via ACTIVE_CASTS_CHANGED
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       setError(message);
@@ -130,7 +111,7 @@ export function App() {
     try {
       const msg: StopCastMessage = { type: 'STOP_CAST' };
       await chrome.runtime.sendMessage(msg);
-      setIsCasting(false);
+      // isCasting is derived from activeCasts - will auto-update via ACTIVE_CASTS_CHANGED
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       setError(message);
@@ -214,7 +195,9 @@ export function App() {
           <Button
             onClick={handleStart}
             disabled={connectionChecking || sonosLoading || groups.length === 0 || !baseUrl}
+            className={styles.castButton}
           >
+            <Cast size={16} />
             {t('start_casting')}
           </Button>
 

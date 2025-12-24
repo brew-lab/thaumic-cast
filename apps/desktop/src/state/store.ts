@@ -24,9 +24,13 @@ export interface ZoneGroup {
   members: ZoneGroupMember[];
 }
 
+/** Map of speaker IP to transport state (Playing, Stopped, etc.). */
+export type TransportStates = Record<string, string>;
+
 // Global State
 export const speakers = signal<Speaker[]>([]);
 export const groups = signal<ZoneGroup[]>([]);
+export const transportStates = signal<TransportStates>({});
 export const serverPort = signal<number>(0);
 export const isLoading = signal<boolean>(false);
 export const stats = signal<AppStats | null>(null);
@@ -52,14 +56,27 @@ export const fetchStats = async (): Promise<void> => {
 };
 
 /**
- * Fetches zone groups and stats from the backend.
- * Updates the groups signal and triggers a stats refresh.
+ * Fetches transport states from the backend.
+ * Updates the transportStates signal.
+ */
+export const fetchTransportStates = async (): Promise<void> => {
+  const states = await invoke<TransportStates>('get_transport_states');
+  transportStates.value = states;
+};
+
+/**
+ * Fetches zone groups, transport states, and stats from the backend.
+ * Updates the groups and transportStates signals and triggers a stats refresh.
  */
 export const fetchGroups = async (): Promise<void> => {
   try {
     isLoading.value = true;
-    const fetchedGroups = await invoke<ZoneGroup[]>('get_groups');
+    const [fetchedGroups, states] = await Promise.all([
+      invoke<ZoneGroup[]>('get_groups'),
+      invoke<TransportStates>('get_transport_states'),
+    ]);
     groups.value = fetchedGroups;
+    transportStates.value = states;
     await fetchStats();
   } finally {
     isLoading.value = false;

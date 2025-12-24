@@ -24,6 +24,17 @@ pub enum TransportState {
     Transitioning,
 }
 
+impl std::fmt::Display for TransportState {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Playing => write!(f, "Playing"),
+            Self::Paused => write!(f, "Paused"),
+            Self::Stopped => write!(f, "Stopped"),
+            Self::Transitioning => write!(f, "Transitioning"),
+        }
+    }
+}
+
 /// Error returned when parsing an unknown transport state string.
 #[derive(Debug, Clone, Error)]
 #[error("unknown transport state")]

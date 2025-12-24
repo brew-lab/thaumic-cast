@@ -14,6 +14,7 @@ import {
   WsMessageSchema,
   StreamMetadata,
   SonosStateSnapshot,
+  WsControlCommand,
 } from '@thaumic-cast/protocol';
 import { createEncoder, type AudioEncoder } from './encoders';
 
@@ -192,10 +193,10 @@ function disconnectControlWebSocket(): void {
 
 /**
  * Sends a control command via WebSocket.
- * @param command - The command object to send
+ * @param command - The typed command to send (from @thaumic-cast/protocol)
  * @returns True if the command was sent successfully
  */
-function sendControlCommand(command: object): boolean {
+function sendControlCommand(command: WsControlCommand): boolean {
   if (!controlConnection?.ws || controlConnection.ws.readyState !== WebSocket.OPEN) {
     log.warn('Control WS not connected, cannot send command');
     return false;
@@ -358,7 +359,14 @@ class StreamSession {
 
       const messageHandler = (msg: MessageEvent) => {
         try {
-          const parsed = WsMessageSchema.safeParse(JSON.parse(msg.data));
+          const raw = JSON.parse(msg.data);
+
+          // Skip broadcast events (they have a category field, not meant for stream protocol)
+          if ('category' in raw) {
+            return;
+          }
+
+          const parsed = WsMessageSchema.safeParse(raw);
           if (!parsed.success) {
             log.warn('Received malformed handshake response', parsed.error);
             return;
@@ -389,7 +397,14 @@ class StreamSession {
     // Register persistent message handler
     socket.onmessage = (msg) => {
       try {
-        const parsed = WsMessageSchema.safeParse(JSON.parse(msg.data));
+        const raw = JSON.parse(msg.data);
+
+        // Skip broadcast events (they have a category field, not meant for stream protocol)
+        if ('category' in raw) {
+          return;
+        }
+
+        const parsed = WsMessageSchema.safeParse(raw);
         if (!parsed.success) {
           log.warn('Received malformed WebSocket message', parsed.error);
           return;
@@ -659,14 +674,19 @@ chrome.runtime.onMessage.addListener((msg: ExtensionMessage, _sender, sendRespon
 
   if (msg.type === 'SET_VOLUME') {
     const { speakerIp, volume } = msg as { speakerIp: string; volume: number };
-    const success = sendControlCommand({ action: 'setVolume', payload: { speakerIp, volume } });
+    // Desktop expects: { type: "SET_VOLUME", payload: { ip, volume } }
+    const success = sendControlCommand({ type: 'SET_VOLUME', payload: { ip: speakerIp, volume } });
     sendResponse({ success });
     return true;
   }
 
   if (msg.type === 'SET_MUTE') {
     const { speakerIp, muted } = msg as { speakerIp: string; muted: boolean };
-    const success = sendControlCommand({ action: 'setMute', payload: { speakerIp, muted } });
+    // Desktop expects: { type: "SET_MUTE", payload: { ip, mute } }
+    const success = sendControlCommand({
+      type: 'SET_MUTE',
+      payload: { ip: speakerIp, mute: muted },
+    });
     sendResponse({ success });
     return true;
   }

@@ -186,13 +186,19 @@ export class AacEncoder implements AudioEncoder {
 
   /**
    * Flushes any remaining encoded data.
+   * Note: WebCodecs flush() is async but we return sync for interface compatibility.
+   * Any pending flush will be aborted when close() is called.
    * @returns Remaining encoded data or null if empty
    */
   flush(): Uint8Array | null {
     if (this.isClosed) return null;
 
     try {
-      this.encoder.flush();
+      // flush() returns a Promise but we can't await here due to interface.
+      // Catch any rejection to prevent unhandled promise errors.
+      this.encoder.flush().catch(() => {
+        // Silently ignore - encoder may be closing
+      });
     } catch {
       // Encoder may already be in error state
     }
@@ -214,12 +220,15 @@ export class AacEncoder implements AudioEncoder {
 
   /**
    * Closes the encoder and releases resources.
+   * Handles AbortError from any pending async operations.
    */
   close(): void {
     if (this.isClosed) return;
     this.isClosed = true;
 
     try {
+      // Close may cause pending operations to reject with AbortError.
+      // The flush().catch() above handles that case.
       this.encoder.close();
     } catch {
       log.debug('Encoder already closed');

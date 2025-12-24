@@ -90,6 +90,23 @@ pub fn refresh_topology(state: tauri::State<'_, AppState>) {
     state.services.discovery_service.trigger_refresh();
 }
 
+/// Returns the current transport states for all speakers.
+///
+/// Returns a map of speaker IP to transport state (Playing, Stopped, etc.).
+#[tauri::command]
+pub fn get_transport_states(
+    state: tauri::State<'_, AppState>,
+) -> std::collections::HashMap<String, String> {
+    state
+        .services
+        .discovery_service
+        .sonos_state()
+        .transport_states
+        .iter()
+        .map(|entry| (entry.key().clone(), entry.value().to_string()))
+        .collect()
+}
+
 /// Clears all active streams and stops all playback.
 ///
 /// Returns the number of streams that were cleared.

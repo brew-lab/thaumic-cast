@@ -514,14 +514,27 @@ async function handleStartCast(
 
     if (response.success && response.streamId) {
       // 6. Tell Desktop App to start playback on Sonos
-      const desktopResponse = await fetch(`${app.url}/api/playback/start`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ip: speakerIp, streamId: response.streamId }),
-      });
+      let desktopResponse: Response;
+      try {
+        desktopResponse = await fetch(`${app.url}/api/playback/start`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ip: speakerIp, streamId: response.streamId }),
+        });
+      } catch (fetchErr) {
+        // Network error - clean up the capture
+        log.error('Failed to contact desktop app, cleaning up capture');
+        await chrome.runtime.sendMessage({ type: 'STOP_CAPTURE', payload: { tabId: tab.id } });
+        throw new Error(
+          `Failed to contact desktop app: ${fetchErr instanceof Error ? fetchErr.message : String(fetchErr)}`,
+        );
+      }
 
       if (!desktopResponse.ok) {
+        // Desktop returned an error - clean up the capture
         const errData = await desktopResponse.json().catch(() => ({ message: 'Unknown error' }));
+        log.error('Desktop app returned error, cleaning up capture');
+        await chrome.runtime.sendMessage({ type: 'STOP_CAPTURE', payload: { tabId: tab.id } });
         throw new Error(`Desktop app error: ${errData.message || desktopResponse.statusText}`);
       }
 
@@ -533,6 +546,7 @@ async function handleStartCast(
       registerSession(tab.id, response.streamId, speakerIp, speakerName, encoderConfig);
       safeSendResponse({ success: true });
     } else {
+      // Offscreen capture failed - no cleanup needed
       safeSendResponse(response);
     }
   } catch (err) {

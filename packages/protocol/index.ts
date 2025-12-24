@@ -623,3 +623,17 @@ export function getDisplaySubtitle(state: TabMediaState): string | undefined {
   if (!metadata?.artist) return undefined;
   return metadata.album ? `${metadata.artist} • ${metadata.album}` : metadata.artist;
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// WebSocket Control Commands (extension → desktop)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Control commands sent from extension to desktop app via WebSocket.
+ * Must match the Rust `WsIncoming` enum format (SCREAMING_SNAKE_CASE type tag).
+ */
+export type WsControlCommand =
+  | { type: 'SET_VOLUME'; payload: { ip: string; volume: number } }
+  | { type: 'SET_MUTE'; payload: { ip: string; mute: boolean } }
+  | { type: 'GET_VOLUME'; payload: { ip: string } }
+  | { type: 'GET_MUTE'; payload: { ip: string } };

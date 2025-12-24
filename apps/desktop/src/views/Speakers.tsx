@@ -1,6 +1,7 @@
 import { useEffect } from 'preact/hooks';
 import {
   groups,
+  transportStates,
   fetchGroups,
   refreshTopology,
   stopAll,
@@ -96,6 +97,7 @@ export function Speakers() {
               speaker={coordinator}
               isCoordinator={true}
               memberCount={group.members.length}
+              transportState={transportStates.value[group.coordinatorIp]}
             />
           ))}
         </div>
