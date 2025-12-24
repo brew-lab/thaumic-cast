@@ -66,11 +66,10 @@ pub async fn send_soap_request(
 ) -> SoapResult<String> {
     let url = build_sonos_url(ip, endpoint);
 
+    // Build SOAP envelope - must be a single line with no leading whitespace
+    // Some SOAP parsers (including Sonos) reject XML with whitespace before the root element
     let mut body = format!(
-        r#"<?xml version="1.0" encoding="utf-8"?>
-        <s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/" s:encodingStyle="http://schemas.xmlsoap.org/soap/encoding/">
-            <s:Body>
-                <u:{} xmlns:u="{}">"#,
+        r#"<?xml version="1.0" encoding="utf-8"?><s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/" s:encodingStyle="http://schemas.xmlsoap.org/soap/encoding/"><s:Body><u:{} xmlns:u="{}">"#,
         action, service
     );
 
@@ -80,12 +79,7 @@ pub async fn send_soap_request(
         body.push_str(&format!("<{k}>{escaped_v}</{k}>"));
     }
 
-    body.push_str(&format!(
-        r#"</u:{}>
-            </s:Body>
-        </s:Envelope>"#,
-        action
-    ));
+    body.push_str(&format!(r#"</u:{}></s:Body></s:Envelope>"#, action));
 
     let res = client
         .post(&url)
