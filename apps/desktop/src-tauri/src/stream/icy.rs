@@ -45,7 +45,7 @@ impl IcyFormatter {
         let meta_str = format!("StreamTitle='{}';", title);
         let meta_bytes = meta_str.as_bytes();
 
-        let num_blocks = (meta_bytes.len() + 15) / 16;
+        let num_blocks = meta_bytes.len().div_ceil(16);
         let padded_len = num_blocks * 16;
 
         let mut result = Vec::with_capacity(padded_len + 1);

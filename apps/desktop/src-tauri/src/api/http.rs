@@ -327,8 +327,8 @@ async fn stream_audio(
     // Create streams for prefill and live data
     let prefill_stream =
         futures::stream::iter(prefill_frames.into_iter().map(Ok::<Bytes, std::io::Error>));
-    let live_stream = BroadcastStream::new(rx)
-        .map(|res| res.map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e.to_string())));
+    let live_stream =
+        BroadcastStream::new(rx).map(|res| res.map_err(|e| std::io::Error::other(e.to_string())));
 
     // Check if client wants ICY metadata
     let wants_icy = headers.get("icy-metadata").and_then(|v| v.to_str().ok()) == Some("1");
