@@ -4,11 +4,13 @@
 //! and XML response parsing. For high-level Sonos commands, see `client.rs`.
 
 use std::collections::HashMap;
+use std::time::Duration;
 
 use reqwest::Client;
 use thiserror::Error;
 
 use super::utils::{build_sonos_url, extract_xml_text};
+use crate::config::SOAP_TIMEOUT_SECS;
 use crate::error::SoapResult;
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -81,11 +83,14 @@ pub async fn send_soap_request(
 
     body.push_str(&format!(r#"</u:{}></s:Body></s:Envelope>"#, action));
 
+    log::debug!("[SOAP] {} -> {} ({})", action, url, body.len());
+
     let res = client
         .post(&url)
         .header("Content-Type", "text/xml; charset=\"utf-8\"")
         .header("SOAPAction", format!("\"{}#{}\"", service, action))
         .body(body)
+        .timeout(Duration::from_secs(SOAP_TIMEOUT_SECS))
         .send()
         .await?;
 

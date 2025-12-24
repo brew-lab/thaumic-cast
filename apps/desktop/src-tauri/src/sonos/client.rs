@@ -262,6 +262,8 @@ pub async fn play_uri(
     let sonos_uri = normalize_sonos_uri(uri);
     let didl_metadata = format_didl_lite(uri, metadata);
 
+    log::info!("[Sonos] SetAVTransportURI: ip={}, uri={}", ip, sonos_uri);
+
     SoapRequestBuilder::new(client, ip)
         .service(SonosService::AVTransport)
         .action("SetAVTransportURI")
@@ -271,6 +273,8 @@ pub async fn play_uri(
         .send()
         .await?;
 
+    log::info!("[Sonos] SetAVTransportURI succeeded, sending Play command");
+
     SoapRequestBuilder::new(client, ip)
         .service(SonosService::AVTransport)
         .action("Play")
@@ -278,6 +282,8 @@ pub async fn play_uri(
         .arg("Speed", "1")
         .send()
         .await?;
+
+    log::info!("[Sonos] Play command succeeded");
 
     Ok(())
 }
