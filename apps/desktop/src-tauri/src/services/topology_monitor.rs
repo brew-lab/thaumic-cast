@@ -1,0 +1,386 @@
+//! Sonos topology monitoring service.
+//!
+//! Responsibilities:
+//! - Background topology discovery loop
+//! - IP change detection and re-subscription
+//! - GENA subscription lifecycle management
+//! - Manual refresh coordination
+
+use std::collections::HashSet;
+use std::sync::Arc;
+use std::time::Duration;
+
+use tokio::sync::Notify;
+use tokio_util::sync::CancellationToken;
+
+use crate::context::NetworkContext;
+use crate::error::{ThaumicError, ThaumicResult};
+use crate::sonos::discovery::Speaker;
+use crate::sonos::gena::GenaSubscriptionManager;
+use crate::sonos::SonosService;
+use crate::sonos::SonosTopologyClient;
+use crate::state::SonosState;
+use crate::types::ZoneGroup;
+
+/// Monitors Sonos network topology and manages GENA subscriptions.
+pub struct TopologyMonitor {
+    /// Sonos client for discovery and topology operations.
+    sonos: Arc<dyn SonosTopologyClient>,
+    gena_manager: Arc<GenaSubscriptionManager>,
+    sonos_state: Arc<SonosState>,
+    /// Interval between automatic topology refreshes (seconds).
+    topology_refresh_interval_secs: u64,
+    /// Network configuration (port, local IP).
+    network: NetworkContext,
+    refresh_notify: Arc<Notify>,
+    /// Token to signal background tasks to stop.
+    cancel_token: CancellationToken,
+}
+
+impl TopologyMonitor {
+    /// Creates a new TopologyMonitor.
+    ///
+    /// # Arguments
+    /// * `sonos` - Sonos client for discovery and topology operations
+    /// * `gena_manager` - Manager for GENA subscriptions
+    /// * `sonos_state` - Shared state for Sonos groups
+    /// * `network` - Network configuration (port, local IP)
+    /// * `refresh_notify` - Notifier for manual refresh requests
+    /// * `topology_refresh_interval_secs` - Interval between automatic refreshes
+    pub fn new(
+        sonos: Arc<dyn SonosTopologyClient>,
+        gena_manager: Arc<GenaSubscriptionManager>,
+        sonos_state: Arc<SonosState>,
+        network: NetworkContext,
+        refresh_notify: Arc<Notify>,
+        topology_refresh_interval_secs: u64,
+    ) -> Self {
+        Self {
+            sonos,
+            gena_manager,
+            sonos_state,
+            topology_refresh_interval_secs,
+            network,
+            refresh_notify,
+            cancel_token: CancellationToken::new(),
+        }
+    }
+
+    /// Triggers a manual topology refresh.
+    pub fn trigger_refresh(&self) {
+        self.refresh_notify.notify_one();
+    }
+
+    /// Starts the GENA renewal background task.
+    pub fn start_renewal_task(&self) {
+        self.gena_manager.clone().start_renewal_task();
+    }
+
+    /// Starts the background topology monitor.
+    ///
+    /// This spawns a task that:
+    /// - Periodically discovers speakers and updates zone groups
+    /// - Manages GENA subscriptions for all discovered speakers
+    /// - Handles IP changes by re-subscribing
+    /// - Responds to manual refresh requests
+    /// - Stops gracefully when the cancellation token is triggered
+    pub fn start_monitoring(self: Arc<Self>) {
+        let cancel_token = self.cancel_token.clone();
+        tauri::async_runtime::spawn(async move {
+            // Wait for the server to start and port to be assigned
+            loop {
+                tokio::select! {
+                    _ = cancel_token.cancelled() => {
+                        log::info!("[TopologyMonitor] Cancelled while waiting for server");
+                        return;
+                    }
+                    _ = self.network.port_notify.notified() => {
+                        if self.network.get_port() > 0 {
+                            break;
+                        }
+                    }
+                }
+            }
+
+            // Read initial IP from shared state
+            let mut current_ip = self.network.get_local_ip();
+            let mut callback_url = self.network.gena_callback_url();
+            log::info!("[TopologyMonitor] GENA callback URL: {}", callback_url);
+
+            let mut interval =
+                tokio::time::interval(Duration::from_secs(self.topology_refresh_interval_secs));
+
+            loop {
+                let is_manual_refresh = tokio::select! {
+                    _ = cancel_token.cancelled() => {
+                        log::info!("[TopologyMonitor] Shutting down monitoring loop");
+                        break;
+                    }
+                    _ = interval.tick() => false,
+                    _ = self.refresh_notify.notified() => {
+                        log::info!("[TopologyMonitor] Manual refresh triggered");
+                        true
+                    }
+                };
+
+                // Reset interval after manual refresh to push back automatic refresh
+                if is_manual_refresh {
+                    interval.reset();
+                }
+
+                // Check for IP changes (e.g., laptop moved networks)
+                if let Ok(new_ip_str) = self.network.detect_ip() {
+                    if new_ip_str != current_ip {
+                        log::warn!(
+                            "[TopologyMonitor] Local IP changed: {} -> {}. Re-subscribing...",
+                            current_ip,
+                            new_ip_str
+                        );
+                        // Update shared state so other services see the change
+                        self.network.set_local_ip(new_ip_str.clone());
+                        current_ip = new_ip_str;
+                        callback_url = self.network.gena_callback_url();
+                        self.gena_manager.unsubscribe_all().await;
+                    }
+                }
+
+                if let Err(e) = self.refresh_topology(&callback_url).await {
+                    match &e {
+                        ThaumicError::SpeakerNotFound(_) => {
+                            log::debug!("[TopologyMonitor] No speakers discovered");
+                        }
+                        _ => {
+                            log::error!("[TopologyMonitor] {}", e);
+                        }
+                    }
+                }
+            }
+        });
+    }
+
+    /// Performs a single topology refresh cycle.
+    ///
+    /// Discovers speakers, fetches zone groups, updates state, and syncs subscriptions.
+    async fn refresh_topology(&self, callback_url: &str) -> ThaumicResult<()> {
+        log::debug!("[TopologyMonitor] Refreshing Sonos topology...");
+
+        let speakers = self.sonos.discover_speakers().await?;
+
+        if speakers.is_empty() {
+            return Err(ThaumicError::SpeakerNotFound(
+                "no speakers discovered".to_string(),
+            ));
+        }
+
+        let current_speaker_ips: HashSet<String> = speakers.iter().map(|s| s.ip.clone()).collect();
+
+        // Fetch zone groups to determine coordinators
+        let groups: Vec<ZoneGroup> = self.sonos.get_zone_groups(&speakers[0].ip).await?;
+
+        // Update stored groups
+        {
+            let mut state = self.sonos_state.groups.write();
+            *state = groups.clone();
+            log::debug!(
+                "[TopologyMonitor] Updated state with {} groups",
+                state.len()
+            );
+        }
+
+        // Collect coordinator IPs
+        let coordinator_ips: HashSet<String> =
+            groups.iter().map(|g| g.coordinator_ip.clone()).collect();
+
+        // Clean up stale state entries for disappeared/regrouped speakers
+        self.sonos_state
+            .cleanup_stale_entries(&coordinator_ips, &current_speaker_ips);
+
+        // Sync subscriptions with current topology
+        self.ensure_topology_subscription(&speakers, &current_speaker_ips, callback_url)
+            .await;
+
+        self.sync_speaker_subscriptions(&speakers, callback_url)
+            .await;
+        self.sync_coordinator_subscriptions(&coordinator_ips, callback_url)
+            .await;
+
+        // Cleanup stale subscriptions
+        self.cleanup_disappeared_speakers(&current_speaker_ips)
+            .await;
+        self.cleanup_stale_coordinators(&coordinator_ips).await;
+
+        log::debug!(
+            "[TopologyMonitor] Subscriptions: {} AVTransport, {} GroupRenderingControl, {} ZoneGroupTopology",
+            self.gena_manager.get_subscribed_ips(SonosService::AVTransport).len(),
+            self.gena_manager.get_subscribed_ips(SonosService::GroupRenderingControl).len(),
+            self.gena_manager.get_subscribed_ips(SonosService::ZoneGroupTopology).len()
+        );
+
+        Ok(())
+    }
+
+    /// Cleans up all GENA subscriptions and stops background tasks (for graceful shutdown).
+    pub async fn shutdown(&self) {
+        log::info!("[TopologyMonitor] Initiating shutdown");
+        self.cancel_token.cancel();
+        self.gena_manager.shutdown().await;
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────────
+    // Subscription Management Helpers
+    // ─────────────────────────────────────────────────────────────────────────────
+
+    /// Ensures a ZoneGroupTopology subscription exists on a valid speaker.
+    async fn ensure_topology_subscription(
+        &self,
+        speakers: &[Speaker],
+        current_speaker_ips: &HashSet<String>,
+        callback_url: &str,
+    ) {
+        let topology_ips = self
+            .gena_manager
+            .get_subscribed_ips(SonosService::ZoneGroupTopology);
+        let has_valid_sub = topology_ips
+            .iter()
+            .any(|ip| current_speaker_ips.contains(ip));
+
+        if !has_valid_sub {
+            if let Some(speaker) = speakers.first() {
+                match self
+                    .gena_manager
+                    .subscribe(
+                        speaker.ip.clone(),
+                        SonosService::ZoneGroupTopology,
+                        callback_url.to_string(),
+                    )
+                    .await
+                {
+                    Ok(()) => {
+                        log::info!(
+                            "[TopologyMonitor] Subscribed to ZoneGroupTopology on {}",
+                            speaker.ip
+                        );
+                    }
+                    Err(e) => {
+                        log::error!(
+                            "[TopologyMonitor] Failed to subscribe to ZoneGroupTopology on {}: {}",
+                            speaker.ip,
+                            e
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    /// Ensures subscriptions exist for the given IPs and service.
+    ///
+    /// Subscribes to the specified service on any IPs that aren't already subscribed.
+    async fn ensure_subscriptions<'a, I>(&self, ips: I, service: SonosService, callback_url: &str)
+    where
+        I: Iterator<Item = &'a str>,
+    {
+        for ip in ips {
+            if !self.gena_manager.is_subscribed(ip, service) {
+                match self
+                    .gena_manager
+                    .subscribe(ip.to_string(), service, callback_url.to_string())
+                    .await
+                {
+                    Ok(()) => {
+                        log::info!("[TopologyMonitor] Subscribed to {:?} on {}", service, ip);
+                    }
+                    Err(e) => {
+                        log::error!(
+                            "[TopologyMonitor] Failed to subscribe to {:?} on {}: {}",
+                            service,
+                            ip,
+                            e
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    /// Subscribes to AVTransport on all speakers that aren't already subscribed.
+    async fn sync_speaker_subscriptions(&self, speakers: &[Speaker], callback_url: &str) {
+        // Log new speaker discoveries before subscribing
+        for speaker in speakers {
+            if !self
+                .gena_manager
+                .is_subscribed(&speaker.ip, SonosService::AVTransport)
+            {
+                log::info!(
+                    "[TopologyMonitor] New speaker discovered: {} ({})",
+                    speaker.name,
+                    speaker.ip
+                );
+            }
+        }
+
+        self.ensure_subscriptions(
+            speakers.iter().map(|s| s.ip.as_str()),
+            SonosService::AVTransport,
+            callback_url,
+        )
+        .await;
+    }
+
+    /// Subscribes to GroupRenderingControl on coordinators that aren't already subscribed.
+    async fn sync_coordinator_subscriptions(
+        &self,
+        coordinator_ips: &HashSet<String>,
+        callback_url: &str,
+    ) {
+        self.ensure_subscriptions(
+            coordinator_ips.iter().map(String::as_str),
+            SonosService::GroupRenderingControl,
+            callback_url,
+        )
+        .await;
+    }
+
+    /// Unsubscribes from speakers that are no longer discovered.
+    async fn cleanup_disappeared_speakers(&self, current_speaker_ips: &HashSet<String>) {
+        let subscribed_av_ips: HashSet<String> = self
+            .gena_manager
+            .get_subscribed_ips(SonosService::AVTransport)
+            .into_iter()
+            .collect();
+
+        let disappeared: Vec<String> = subscribed_av_ips
+            .difference(current_speaker_ips)
+            .cloned()
+            .collect();
+
+        for ip in disappeared {
+            log::info!("[TopologyMonitor] Speaker disappeared: {}", ip);
+            self.gena_manager.unsubscribe_by_ip(&ip).await;
+        }
+    }
+
+    /// Unsubscribes GroupRenderingControl from speakers that are no longer coordinators.
+    async fn cleanup_stale_coordinators(&self, coordinator_ips: &HashSet<String>) {
+        let subscribed_grc_ips: HashSet<String> = self
+            .gena_manager
+            .get_subscribed_ips(SonosService::GroupRenderingControl)
+            .into_iter()
+            .collect();
+
+        let stale: Vec<String> = subscribed_grc_ips
+            .difference(coordinator_ips)
+            .cloned()
+            .collect();
+
+        for ip in stale {
+            log::info!(
+                "[TopologyMonitor] Speaker {} is no longer a coordinator, unsubscribing GroupRenderingControl",
+                ip
+            );
+            self.gena_manager
+                .unsubscribe_service(&ip, SonosService::GroupRenderingControl)
+                .await;
+        }
+    }
+}

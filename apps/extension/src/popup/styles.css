@@ -1,0 +1,8 @@
+@import url('@thaumic-cast/ui/theme.css');
+
+body {
+  margin-block: 0;
+  margin-inline: 0;
+  padding-block: 0;
+  padding-inline: 0;
+}

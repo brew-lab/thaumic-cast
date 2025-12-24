@@ -3,20 +3,19 @@
   "version": "0.0.1",
   "private": true,
   "type": "module",
+  "main": "index.ts",
   "exports": {
-    ".": "./generated/typescript/index.ts"
+    ".": "./index.ts"
   },
-  "files": [
-    "generated/typescript",
-    "openapi.yaml"
-  ],
   "scripts": {
-    "generate": "bun run scripts/generate-ts.ts && bun run scripts/generate-rs.ts",
-    "generate:ts": "bun run scripts/generate-ts.ts",
-    "generate:rs": "bun run scripts/generate-rs.ts"
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "typecheck": "tsc --noEmit"
   },
   "devDependencies": {
-    "openapi-typescript": "^7.10.1",
-    "yaml": "^2.8.2"
+    "typescript": "^5.0.0"
+  },
+  "dependencies": {
+    "zod": "^4.2.1"
   }
 }

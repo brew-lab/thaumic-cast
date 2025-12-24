@@ -1,0 +1,18 @@
+.layout {
+  display: flex;
+  block-size: 100dvb;
+  inline-size: 100vi;
+  background-color: var(--color-bg);
+  color: var(--color-text);
+}
+
+.content {
+  flex: 1;
+  overflow: hidden;
+}
+
+.notFound {
+  padding-block: var(--space-xl);
+  padding-inline: var(--space-xl);
+  text-align: center;
+}

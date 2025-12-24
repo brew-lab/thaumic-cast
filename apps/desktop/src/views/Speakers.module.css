@@ -1,0 +1,64 @@
+.speakers {
+  padding-block: var(--space-xl);
+  padding-inline: var(--space-xl);
+  block-size: 100%;
+  overflow-y: auto;
+}
+
+.header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  margin-block-end: var(--space-lg);
+  flex-wrap: wrap;
+  gap: var(--space-md);
+}
+
+.headerLeft {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+}
+
+.title {
+  margin: 0;
+}
+
+.summary {
+  font-size: 0.9rem;
+  color: var(--color-text-muted);
+}
+
+.controls {
+  display: flex;
+  gap: var(--space-sm);
+}
+
+.controlButton {
+  inline-size: auto;
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(19rem, 1fr));
+  gap: var(--space-md);
+}
+
+.emptyState {
+  text-align: center;
+  padding-block: var(--space-xl);
+  padding-inline: var(--space-xl);
+  border: 2px dashed var(--color-border);
+  border-radius: var(--radius-lg);
+}
+
+.emptyTitle {
+  margin: 0;
+  margin-block-end: var(--space-sm);
+  color: var(--color-text);
+}
+
+.emptyDescription {
+  margin: 0;
+  color: var(--color-text-muted);
+}

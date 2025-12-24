@@ -1,8 +1,0 @@
-dist
-public
-node_modules
-bun.lockb
-*.mp3
-
-# Codegen output
-**/generated/**
