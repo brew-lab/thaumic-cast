@@ -5,6 +5,7 @@
   "audio_codec": "Audio Codec",
   "bitrate": "Bitrate",
   "bitrate_not_applicable": "Not applicable for lossless audio",
+  "lossless": "Lossless",
   "start_casting": "Start Casting",
   "stop_casting": "Stop Casting",
   "stop_cast": "Stop",

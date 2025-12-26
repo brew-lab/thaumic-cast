@@ -1,31 +1,41 @@
 import { z } from 'zod';
 
 /**
- * Supported audio codecs for streaming.
+ * Audio codecs supported by Sonos speakers.
+ * This list includes all codecs that:
+ * 1. Sonos speakers can play (per Sonos documentation)
+ * 2. WebCodecs API can potentially encode
  *
- * - `he-aac`: High-Efficiency AAC (mp4a.40.5) - best for low bitrates (64-96 kbps)
- * - `aac-lc`: AAC Low Complexity (mp4a.40.2) - balanced quality (128-192 kbps)
- * - `mp3`: MPEG Layer 3 - universal compatibility fallback
- * - `wav`: Raw PCM - zero latency, high bandwidth
+ * Runtime detection filters this list to codecs the browser actually supports.
+ *
+ * - `aac-lc`: AAC Low Complexity (mp4a.40.2) - balanced quality
+ * - `he-aac`: High-Efficiency AAC (mp4a.40.5) - best for low bitrates
+ * - `he-aac-v2`: High-Efficiency AAC v2 (mp4a.40.29) - best for very low bitrates, stereo
+ * - `flac`: Free Lossless Audio Codec - lossless compression
+ * - `vorbis`: Ogg Vorbis - open source lossy codec
  */
-export const AudioCodecSchema = z.enum(['he-aac', 'aac-lc', 'mp3', 'wav']);
+export const AudioCodecSchema = z.enum(['aac-lc', 'he-aac', 'he-aac-v2', 'flac', 'vorbis']);
 export type AudioCodec = z.infer<typeof AudioCodecSchema>;
 
 /**
  * Supported bitrates in kbps.
  * Not all bitrates are valid for all codecs - use `getValidBitrates()` to filter.
+ * FLAC uses 0 to indicate lossless (variable bitrate).
  */
 export const BitrateSchema = z.union([
+  z.literal(0), // Lossless (FLAC)
   z.literal(64),
   z.literal(96),
   z.literal(128),
+  z.literal(160),
   z.literal(192),
+  z.literal(256),
   z.literal(320),
 ]);
 export type Bitrate = z.infer<typeof BitrateSchema>;
 
 /** All valid bitrate values as a readonly array. */
-export const ALL_BITRATES = [64, 96, 128, 192, 320] as const;
+export const ALL_BITRATES = [0, 64, 96, 128, 160, 192, 256, 320] as const;
 
 /**
  * Complete encoder configuration passed from UI to offscreen.
@@ -50,36 +60,65 @@ export interface CodecMetadata {
 }
 
 /**
+ * Codecs that have encoder implementations in the extension.
+ * When adding a new encoder, add the codec here to enable it in the UI.
+ */
+export const IMPLEMENTED_CODECS: ReadonlySet<AudioCodec> = new Set([
+  'aac-lc',
+  'he-aac',
+  'he-aac-v2',
+  'flac',
+  'vorbis',
+]);
+
+/**
+ * Checks if we have an encoder implementation for the given codec.
+ * @param codec - The codec to check
+ * @returns True if we have an encoder for this codec
+ */
+export function hasEncoderImplementation(codec: AudioCodec): boolean {
+  return IMPLEMENTED_CODECS.has(codec);
+}
+
+/**
  * Metadata about each codec for UI display and validation.
+ * Codecs are listed in order of preference for the UI.
  */
 export const CODEC_METADATA: Record<AudioCodec, CodecMetadata> = {
-  'he-aac': {
-    label: 'HE-AAC',
-    description: 'High efficiency, best for low bandwidth',
-    validBitrates: [96] as const,
-    defaultBitrate: 96,
-    webCodecsId: 'mp4a.40.5',
-  },
   'aac-lc': {
     label: 'AAC-LC',
     description: 'Balanced quality and efficiency',
-    validBitrates: [128, 192] as const,
+    validBitrates: [128, 192, 256] as const,
     defaultBitrate: 192,
     webCodecsId: 'mp4a.40.2',
   },
-  mp3: {
-    label: 'MP3',
-    description: 'Universal compatibility',
-    validBitrates: [128, 192, 320] as const,
-    defaultBitrate: 192,
-    webCodecsId: null,
+  'he-aac': {
+    label: 'HE-AAC',
+    description: 'High efficiency, best for low bandwidth',
+    validBitrates: [64, 96, 128] as const,
+    defaultBitrate: 96,
+    webCodecsId: 'mp4a.40.5',
   },
-  wav: {
-    label: 'WAV (Lossless)',
-    description: 'Zero latency, highest bandwidth',
-    validBitrates: [] as const,
-    defaultBitrate: 192 as Bitrate,
-    webCodecsId: null,
+  'he-aac-v2': {
+    label: 'HE-AAC v2',
+    description: 'Best for very low bandwidth stereo',
+    validBitrates: [64, 96] as const,
+    defaultBitrate: 64,
+    webCodecsId: 'mp4a.40.29',
+  },
+  flac: {
+    label: 'FLAC',
+    description: 'Lossless audio, highest quality',
+    validBitrates: [0] as const,
+    defaultBitrate: 0,
+    webCodecsId: 'flac',
+  },
+  vorbis: {
+    label: 'Ogg Vorbis',
+    description: 'Open source, good quality',
+    validBitrates: [128, 160, 192, 256, 320] as const,
+    defaultBitrate: 192,
+    webCodecsId: 'vorbis',
   },
 } as const;
 
@@ -108,7 +147,6 @@ export function getDefaultBitrate(codec: AudioCodec): Bitrate {
  * @returns True if the bitrate is valid for the codec
  */
 export function isValidBitrateForCodec(codec: AudioCodec, bitrate: Bitrate): boolean {
-  if (codec === 'wav') return true;
   return CODEC_METADATA[codec].validBitrates.includes(bitrate);
 }
 
@@ -131,11 +169,119 @@ export function createEncoderConfig(codec: AudioCodec, bitrate?: Bitrate): Encod
 }
 
 /**
- * Legacy audio format schema for backward compatibility.
- * @deprecated Use AudioCodecSchema instead
+ * Result of checking codec support for a specific configuration.
  */
-export const AudioFormatSchema = z.enum(['wav', 'aac', 'mp3', 'flac']);
-export type AudioFormat = z.infer<typeof AudioFormatSchema>;
+export interface CodecSupportInfo {
+  codec: AudioCodec;
+  bitrate: Bitrate;
+  supported: boolean;
+}
+
+/**
+ * Result of detecting all supported codecs.
+ */
+export interface SupportedCodecsResult {
+  /** All supported codec/bitrate combinations */
+  supported: CodecSupportInfo[];
+  /** Codecs that have at least one supported bitrate */
+  availableCodecs: AudioCodec[];
+  /** The recommended default codec (first available) */
+  defaultCodec: AudioCodec | null;
+  /** The recommended default bitrate for the default codec */
+  defaultBitrate: Bitrate | null;
+}
+
+/**
+ * Checks if a specific codec/bitrate combination is supported by WebCodecs.
+ * @param codec - The audio codec to check
+ * @param bitrate - The bitrate in kbps
+ * @param sampleRate - Sample rate (default 48000)
+ * @param channels - Number of channels (default 2)
+ * @returns Promise resolving to true if supported
+ */
+export async function isCodecSupported(
+  codec: AudioCodec,
+  bitrate: Bitrate,
+  sampleRate = 48000,
+  channels = 2,
+): Promise<boolean> {
+  if (typeof AudioEncoder === 'undefined') {
+    return false;
+  }
+
+  const webCodecsId = CODEC_METADATA[codec]?.webCodecsId;
+  if (!webCodecsId) {
+    return false;
+  }
+
+  try {
+    const result = await AudioEncoder.isConfigSupported({
+      codec: webCodecsId,
+      sampleRate,
+      numberOfChannels: channels,
+      bitrate: bitrate * 1000,
+    });
+    return result.supported === true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Detects all supported codec/bitrate combinations.
+ * Only checks codecs that have encoder implementations, then verifies WebCodecs support.
+ * @returns Promise resolving to supported codecs information
+ */
+export async function detectSupportedCodecs(): Promise<SupportedCodecsResult> {
+  // Only check codecs we have encoder implementations for
+  const codecs = (Object.keys(CODEC_METADATA) as AudioCodec[]).filter(hasEncoderImplementation);
+  const supported: CodecSupportInfo[] = [];
+  const availableCodecs: AudioCodec[] = [];
+
+  for (const codec of codecs) {
+    const bitrates = CODEC_METADATA[codec].validBitrates;
+    let codecHasSupport = false;
+
+    for (const bitrate of bitrates) {
+      const isSupported = await isCodecSupported(codec, bitrate);
+      supported.push({ codec, bitrate, supported: isSupported });
+
+      if (isSupported) {
+        codecHasSupport = true;
+      }
+    }
+
+    if (codecHasSupport) {
+      availableCodecs.push(codec);
+    }
+  }
+
+  // Default to first available codec with its default bitrate
+  const defaultCodec = availableCodecs[0] ?? null;
+  const defaultBitrate = defaultCodec ? CODEC_METADATA[defaultCodec].defaultBitrate : null;
+
+  return {
+    supported,
+    availableCodecs,
+    defaultCodec,
+    defaultBitrate,
+  };
+}
+
+/**
+ * Gets supported bitrates for a codec based on runtime detection.
+ * @param codec - The audio codec
+ * @param supportInfo - Previously detected support info
+ * @returns Array of supported bitrates for the codec
+ */
+export function getSupportedBitrates(
+  codec: AudioCodec,
+  supportInfo: SupportedCodecsResult,
+): Bitrate[] {
+  return supportInfo.supported
+    .filter((s) => s.codec === codec && s.supported)
+    .map((s) => s.bitrate);
+}
 
 /**
  * High-level quality presets for the user interface.

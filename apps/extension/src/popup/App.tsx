@@ -25,7 +25,15 @@ export function App() {
   const { t } = useTranslation();
   const [selectedIp, setSelectedIp] = useState<string>('');
   const [error, setError] = useState<string | null>(null);
-  const { codec, bitrate, setCodec, setBitrate, loading: settingsLoading } = useAudioSettings();
+  const {
+    codec,
+    bitrate,
+    setCodec,
+    setBitrate,
+    loading: settingsLoading,
+    availableCodecs,
+    availableBitrates,
+  } = useAudioSettings();
 
   // Connection status with instant cached display
   const {
@@ -183,6 +191,7 @@ export function App() {
             value={codec}
             onChange={setCodec}
             disabled={isCasting || settingsLoading}
+            availableCodecs={availableCodecs}
           />
 
           <BitrateSelector
@@ -190,6 +199,7 @@ export function App() {
             value={bitrate}
             onChange={setBitrate}
             disabled={isCasting || settingsLoading}
+            availableBitrates={availableBitrates}
           />
 
           <Button

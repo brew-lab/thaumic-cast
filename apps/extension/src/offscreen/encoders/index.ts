@@ -1,5 +1,5 @@
-export type { AudioEncoder, CodecSupportResult } from './types';
-export { AacEncoder, isAacSupported } from './aac-encoder';
-export { Mp3Encoder } from './mp3-encoder';
-export { WavEncoder } from './wav-encoder';
+export type { AudioEncoder } from './types';
+export { AacEncoder } from './aac-encoder';
+export { FlacEncoder } from './flac-encoder';
+export { VorbisEncoder } from './vorbis-encoder';
 export { createEncoder, checkCodecSupport } from './factory';

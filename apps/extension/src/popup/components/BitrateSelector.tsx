@@ -7,6 +7,8 @@ interface BitrateSelectorProps {
   value: Bitrate;
   onChange: (bitrate: Bitrate) => void;
   disabled?: boolean;
+  /** Available bitrates from runtime detection (optional override) */
+  availableBitrates?: Bitrate[];
 }
 
 /**
@@ -16,17 +18,26 @@ interface BitrateSelectorProps {
  * @param props.value - Current bitrate value
  * @param props.onChange - Callback when bitrate changes
  * @param props.disabled - Whether the selector is disabled
+ * @param props.availableBitrates - Available bitrates from runtime detection
  * @returns The rendered BitrateSelector component
  */
-export function BitrateSelector({ codec, value, onChange, disabled }: BitrateSelectorProps) {
+export function BitrateSelector({
+  codec,
+  value,
+  onChange,
+  disabled,
+  availableBitrates,
+}: BitrateSelectorProps) {
   const { t } = useTranslation();
-  const validBitrates = getValidBitrates(codec);
 
-  if (codec === 'wav') {
+  // Use provided available bitrates or fall back to valid bitrates for codec
+  const bitrates = availableBitrates ?? getValidBitrates(codec);
+
+  if (bitrates.length === 0) {
     return (
       <div className={styles.field}>
         <label className={styles.label}>{t('bitrate')}</label>
-        <p className={styles.info}>{t('bitrate_not_applicable')}</p>
+        <p className={styles.info}>{t('no_bitrates_available')}</p>
       </div>
     );
   }
@@ -38,11 +49,11 @@ export function BitrateSelector({ codec, value, onChange, disabled }: BitrateSel
         value={value}
         onChange={(e) => onChange(Number(e.currentTarget.value) as Bitrate)}
         className={styles.select}
-        disabled={disabled}
+        disabled={disabled || bitrates.length <= 1}
       >
-        {validBitrates.map((bitrate) => (
+        {bitrates.map((bitrate) => (
           <option key={bitrate} value={bitrate}>
-            {bitrate} kbps
+            {bitrate === 0 ? t('lossless') : `${bitrate} kbps`}
           </option>
         ))}
       </select>
