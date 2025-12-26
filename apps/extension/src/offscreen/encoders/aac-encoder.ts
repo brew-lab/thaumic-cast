@@ -242,10 +242,14 @@ export class AacEncoder implements AudioEncoder {
  * @returns True if the configuration is supported
  */
 export async function isAacSupported(config: EncoderConfig): Promise<boolean> {
-  if (typeof AudioEncoder === 'undefined') return false;
+  if (typeof AudioEncoder === 'undefined') {
+    return false;
+  }
 
   const webCodecsId = CODEC_METADATA[config.codec]?.webCodecsId;
-  if (!webCodecsId) return false;
+  if (!webCodecsId) {
+    return false;
+  }
 
   try {
     const result = await AudioEncoder.isConfigSupported({

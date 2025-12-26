@@ -56,8 +56,8 @@ export const CODEC_METADATA: Record<AudioCodec, CodecMetadata> = {
   'he-aac': {
     label: 'HE-AAC',
     description: 'High efficiency, best for low bandwidth',
-    validBitrates: [64, 96] as const,
-    defaultBitrate: 64,
+    validBitrates: [96] as const,
+    defaultBitrate: 96,
     webCodecsId: 'mp4a.40.5',
   },
   'aac-lc': {
