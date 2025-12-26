@@ -511,18 +511,26 @@ class StreamSession {
   }
 
   /**
-   * Starts the high-performance reading loop using requestAnimationFrame.
+   * Starts the reading loop using setInterval.
+   * Uses setInterval instead of requestAnimationFrame because offscreen
+   * documents are not visible and rAF doesn't fire in hidden contexts.
    * Monitors the shared ring buffer for new samples and checks for overflows.
    */
   private startReading(): void {
     let totalSamplesRead = 0;
     let lastLogTime = Date.now();
-    let frameCount = 0;
+    let pollCount = 0;
 
     const poll = () => {
-      if (!this.streamId || this.isStopping) return;
+      if (!this.streamId || this.isStopping) {
+        if (this.readInterval !== null) {
+          clearInterval(this.readInterval);
+          this.readInterval = null;
+        }
+        return;
+      }
 
-      frameCount++;
+      pollCount++;
       const writeIdx = Atomics.load(this.control, 0);
       const readIdx = Atomics.load(this.control, 1);
 
@@ -566,16 +574,16 @@ class StreamSession {
       // Log stats every 5 seconds
       const now = Date.now();
       if (now - lastLogTime >= 5000) {
-        log.debug(
-          `Audio stats: ${totalSamplesRead} samples read, ${frameCount} frames, writeIdx=${writeIdx}, readIdx=${readIdx}`,
+        log.info(
+          `Audio stats: ${totalSamplesRead} samples read, ${pollCount} polls, writeIdx=${writeIdx}, readIdx=${readIdx}`,
         );
         lastLogTime = now;
       }
-
-      this.readInterval = requestAnimationFrame(poll);
     };
 
-    this.readInterval = requestAnimationFrame(poll);
+    // Poll at 10ms intervals (~100Hz) - fast enough to keep up with 48kHz audio
+    // while being much more efficient than requestAnimationFrame
+    this.readInterval = setInterval(poll, 10) as unknown as number;
   }
 
   /**
@@ -594,7 +602,7 @@ class StreamSession {
    */
   public stop(): void {
     this.isStopping = true;
-    if (this.readInterval !== null) cancelAnimationFrame(this.readInterval);
+    if (this.readInterval !== null) clearInterval(this.readInterval);
     if (this.heartbeatInterval !== null) clearInterval(this.heartbeatInterval);
     if (this.reconnectTimeout !== null) clearTimeout(this.reconnectTimeout);
 
