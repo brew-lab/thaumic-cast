@@ -2,7 +2,7 @@ import { useState, useEffect } from 'preact/hooks';
 import { useTranslation } from 'react-i18next';
 import { Button, Card } from '@thaumic-cast/ui';
 import { createEncoderConfig, getSpeakerStatus } from '@thaumic-cast/protocol';
-import { Cast } from 'lucide-preact';
+import { Cast, Loader2 } from 'lucide-preact';
 import styles from './App.module.css';
 import { ExtensionResponse, StartCastMessage, StopCastMessage } from '../lib/messages';
 import type { ZoneGroup } from '@thaumic-cast/protocol';
@@ -25,6 +25,8 @@ export function App() {
   const { t } = useTranslation();
   const [selectedIp, setSelectedIp] = useState<string>('');
   const [error, setError] = useState<string | null>(null);
+  const [isStarting, setIsStarting] = useState(false);
+  const [isStopping, setIsStopping] = useState(false);
   const {
     codec,
     bitrate,
@@ -92,8 +94,9 @@ export function App() {
    * Triggers the start of a cast session for the current tab.
    */
   const handleStart = async () => {
-    if (!selectedIp) return;
+    if (!selectedIp || isStarting) return;
     setError(null);
+    setIsStarting(true);
     try {
       const encoderConfig = createEncoderConfig(codec, bitrate);
       const msg: StartCastMessage = {
@@ -109,6 +112,8 @@ export function App() {
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       setError(message);
+    } finally {
+      setIsStarting(false);
     }
   };
 
@@ -116,6 +121,8 @@ export function App() {
    * Stops the active cast session for the current tab.
    */
   const handleStop = async () => {
+    if (isStopping) return;
+    setIsStopping(true);
     try {
       const msg: StopCastMessage = { type: 'STOP_CAST' };
       await chrome.runtime.sendMessage(msg);
@@ -123,6 +130,8 @@ export function App() {
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       setError(message);
+    } finally {
+      setIsStopping(false);
     }
   };
 
@@ -204,11 +213,22 @@ export function App() {
 
           <Button
             onClick={handleStart}
-            disabled={connectionChecking || sonosLoading || groups.length === 0 || !baseUrl}
+            disabled={
+              isStarting || connectionChecking || sonosLoading || groups.length === 0 || !baseUrl
+            }
             className={styles.castButton}
           >
-            <Cast size={16} />
-            {t('start_casting')}
+            {isStarting ? (
+              <>
+                <Loader2 size={16} className={styles.spinner} />
+                {t('starting')}
+              </>
+            ) : (
+              <>
+                <Cast size={16} />
+                {t('start_casting')}
+              </>
+            )}
           </Button>
 
           {/* Volume Controls (available before casting when connected) */}
@@ -273,8 +293,15 @@ export function App() {
             </div>
           )}
 
-          <Button variant="danger" onClick={handleStop}>
-            {t('stop_casting')}
+          <Button variant="danger" onClick={handleStop} disabled={isStopping}>
+            {isStopping ? (
+              <>
+                <Loader2 size={16} className={styles.spinner} />
+                {t('stopping')}
+              </>
+            ) : (
+              t('stop_casting')
+            )}
           </Button>
         </Card>
       )}
