@@ -2,6 +2,7 @@ use bytes::Bytes;
 use dashmap::DashMap;
 use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tokio::sync::broadcast;
 use uuid::Uuid;
@@ -36,6 +37,8 @@ pub struct StreamState {
     pub tx: broadcast::Sender<Bytes>,
     /// Recent frames buffer to handle network jitter
     pub buffer: Arc<parking_lot::RwLock<VecDeque<Bytes>>>,
+    /// Whether the stream has received its first frame (for STREAM_READY signaling)
+    has_frames: AtomicBool,
 }
 
 impl StreamState {
@@ -50,11 +53,15 @@ impl StreamState {
             buffer: Arc::new(parking_lot::RwLock::new(VecDeque::with_capacity(
                 STREAM_BUFFER_FRAMES,
             ))),
+            has_frames: AtomicBool::new(false),
         }
     }
 
     /// Pushes a new audio frame into the stream.
-    pub fn push_frame(&self, frame: Bytes) {
+    ///
+    /// Returns `true` if this was the first frame (stream just became ready),
+    /// `false` otherwise.
+    pub fn push_frame(&self, frame: Bytes) -> bool {
         // Add to recent buffer (ring buffer behavior)
         {
             let mut buffer = self.buffer.write();
@@ -64,15 +71,33 @@ impl StreamState {
             buffer.push_back(frame.clone());
         }
 
+        // Signal ready on first frame (compare_exchange ensures only first frame triggers)
+        let is_first_frame = self
+            .has_frames
+            .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+            .is_ok();
+
+        if is_first_frame {
+            log::debug!("[Stream] {} is now ready (first frame received)", self.id);
+        }
+
         // Broadcast to all active HTTP listeners
         if let Err(e) = self.tx.send(frame) {
             log::trace!("Failed to broadcast frame for stream {}: {}", self.id, e);
         }
+
+        is_first_frame
     }
 
     /// Updates the metadata for the stream.
     pub fn update_metadata(&self, metadata: StreamMetadata) {
         *self.metadata.write() = metadata;
+    }
+
+    /// Returns the number of frames currently in the buffer.
+    #[must_use]
+    pub fn buffer_len(&self) -> usize {
+        self.buffer.read().len()
     }
 
     /// Subscribes to the stream, returning buffered frames and a live receiver.

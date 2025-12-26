@@ -127,10 +127,14 @@ impl StreamCoordinator {
     }
 
     /// Pushes an audio frame to a stream.
-    pub fn push_frame(&self, stream_id: &str, data: Bytes) {
-        if let Some(stream) = self.stream_manager.get_stream(stream_id) {
-            stream.push_frame(data);
-        }
+    ///
+    /// Returns `Some(true)` if this was the first frame (stream just became ready),
+    /// `Some(false)` if the stream exists but this wasn't the first frame,
+    /// `None` if the stream was not found.
+    pub fn push_frame(&self, stream_id: &str, data: Bytes) -> Option<bool> {
+        self.stream_manager
+            .get_stream(stream_id)
+            .map(|stream| stream.push_frame(data))
     }
 
     /// Updates metadata for a stream.

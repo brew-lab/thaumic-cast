@@ -19,6 +19,7 @@ export type ExtensionMessageType =
   | 'GET_CONNECTION_STATUS'
   | 'START_CAPTURE'
   | 'STOP_CAPTURE'
+  | 'START_PLAYBACK'
   | 'METADATA_UPDATE'
   // Metadata messages (content → background → offscreen)
   | 'TAB_METADATA_UPDATE'
@@ -102,6 +103,28 @@ export interface StopCaptureMessage {
   payload: {
     tabId: number;
   };
+}
+
+/**
+ * Message payload for starting playback on a Sonos speaker.
+ * Sent from background to offscreen, which forwards via WebSocket.
+ */
+export interface StartPlaybackMessage {
+  type: 'START_PLAYBACK';
+  payload: {
+    tabId: number;
+    speakerIp: string;
+  };
+}
+
+/**
+ * Response to START_PLAYBACK message.
+ */
+export interface StartPlaybackResponse {
+  success: boolean;
+  speakerIp?: string;
+  streamUrl?: string;
+  error?: string;
 }
 
 /**
@@ -423,6 +446,7 @@ export type ExtensionMessage =
   | GetConnectionStatusMessage
   | StartCaptureMessage
   | StopCaptureMessage
+  | StartPlaybackMessage
   | ContentMetadataMessage
   // Tab metadata messages
   | TabMetadataUpdateMessage

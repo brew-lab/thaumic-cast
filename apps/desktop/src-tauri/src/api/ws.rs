@@ -64,6 +64,14 @@ enum WsIncoming {
     SetMute { payload: WsMuteRequest },
     GetVolume { payload: WsSpeakerRequest },
     GetMute { payload: WsSpeakerRequest },
+    StartPlayback { payload: StartPlaybackRequest },
+}
+
+/// Request payload for starting playback via WebSocket.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct StartPlaybackRequest {
+    speaker_ip: String,
 }
 
 /// Request payload for volume control via WebSocket.
@@ -124,6 +132,31 @@ enum WsOutgoing {
     InitialState { payload: serde_json::Value },
     VolumeState { payload: WsVolumePayload },
     MuteState { payload: WsMutePayload },
+    StreamReady { payload: StreamReadyPayload },
+    PlaybackStarted { payload: PlaybackStartedPayload },
+    PlaybackError { payload: PlaybackErrorPayload },
+}
+
+/// Payload for stream ready notification.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct StreamReadyPayload {
+    buffer_size: usize,
+}
+
+/// Payload for playback started notification.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PlaybackStartedPayload {
+    speaker_ip: String,
+    stream_url: String,
+}
+
+/// Payload for playback error notification.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PlaybackErrorPayload {
+    message: String,
 }
 
 /// Payload for volume state responses.
@@ -252,11 +285,15 @@ fn handle_metadata_update(state: &AppState, stream_id: &str, metadata: StreamMet
 }
 
 /// Handles binary audio data: pushes frame to stream buffer.
-fn handle_binary_data(state: &AppState, stream_id: &str, data: Vec<u8>) {
+///
+/// Returns `true` if this was the first frame (stream just became ready),
+/// `false` otherwise.
+fn handle_binary_data(state: &AppState, stream_id: &str, data: Vec<u8>) -> bool {
     state
         .services
         .stream_coordinator
-        .push_frame(stream_id, Bytes::from(data));
+        .push_frame(stream_id, Bytes::from(data))
+        .unwrap_or(false)
 }
 
 /// WebSocket upgrade handler.
@@ -381,12 +418,79 @@ async fn handle_ws(socket: WebSocket, state: AppState) {
                                 )
                                 .await;
                             }
+                            Ok(WsIncoming::StartPlayback { payload }) => {
+                                if let Some(ref guard) = stream_guard {
+                                    let stream_id = guard.id().to_string();
+                                    let speaker_ip = payload.speaker_ip.clone();
+
+                                    // Start playback (coordinator will record session & emit events)
+                                    match state
+                                        .services
+                                        .stream_coordinator
+                                        .start_playback(&speaker_ip, &stream_id)
+                                        .await
+                                    {
+                                        Ok(()) => {
+                                            // Get stream URL for response
+                                            let stream_url = state
+                                                .services
+                                                .network
+                                                .url_builder()
+                                                .stream_url(&stream_id);
+
+                                            let msg = WsOutgoing::PlaybackStarted {
+                                                payload: PlaybackStartedPayload {
+                                                    speaker_ip,
+                                                    stream_url,
+                                                },
+                                            };
+                                            if let Some(msg) = msg.to_message() {
+                                                let _ = sender.send(msg).await;
+                                            }
+                                        }
+                                        Err(e) => {
+                                            let msg = WsOutgoing::PlaybackError {
+                                                payload: PlaybackErrorPayload {
+                                                    message: e.to_string(),
+                                                },
+                                            };
+                                            if let Some(msg) = msg.to_message() {
+                                                let _ = sender.send(msg).await;
+                                            }
+                                        }
+                                    }
+                                } else {
+                                    // No active stream for this connection
+                                    let msg = WsOutgoing::PlaybackError {
+                                        payload: PlaybackErrorPayload {
+                                            message: "No active stream on this connection".into(),
+                                        },
+                                    };
+                                    if let Some(msg) = msg.to_message() {
+                                        let _ = sender.send(msg).await;
+                                    }
+                                }
+                            }
                             Err(_) => {} // Unknown message type, ignore
                         }
                     }
                     Some(Ok(Message::Binary(data))) => {
                         if let Some(ref guard) = stream_guard {
-                            handle_binary_data(&state, guard.id(), data);
+                            let is_first_frame = handle_binary_data(&state, guard.id(), data);
+
+                            // Send STREAM_READY on first frame
+                            if is_first_frame {
+                                if let Some(stream) = state.services.stream_coordinator.get_stream(guard.id()) {
+                                    let msg = WsOutgoing::StreamReady {
+                                        payload: StreamReadyPayload {
+                                            buffer_size: stream.buffer_len(),
+                                        },
+                                    };
+                                    if let Some(msg) = msg.to_message() {
+                                        let _ = sender.send(msg).await;
+                                    }
+                                }
+                            }
                         }
                     }
                     Some(Ok(Message::Close(_))) | Some(Err(_)) | None => break,

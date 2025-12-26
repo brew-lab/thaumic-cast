@@ -209,6 +209,11 @@ export const WsMessageTypeSchema = z.enum([
   'STOP_STREAM',
   'METADATA_UPDATE',
   'ERROR',
+  // Stream lifecycle messages
+  'STREAM_READY',
+  'START_PLAYBACK',
+  'PLAYBACK_STARTED',
+  'PLAYBACK_ERROR',
 ]);
 export type WsMessageType = z.infer<typeof WsMessageTypeSchema>;
 
@@ -254,6 +259,75 @@ export const WsErrorMessageSchema = z.object({
 });
 export type WsErrorMessage = z.infer<typeof WsErrorMessageSchema>;
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Stream Lifecycle Messages
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Sent by server when the stream has received its first audio frame
+ * and is ready for playback. Client should wait for this before
+ * requesting playback to avoid race conditions.
+ */
+export const WsStreamReadyPayloadSchema = z.object({
+  /** Number of frames currently buffered. */
+  bufferSize: z.number().int().nonnegative(),
+});
+export type WsStreamReadyPayload = z.infer<typeof WsStreamReadyPayloadSchema>;
+
+export const WsStreamReadyMessageSchema = z.object({
+  type: z.literal('STREAM_READY'),
+  payload: WsStreamReadyPayloadSchema,
+});
+export type WsStreamReadyMessage = z.infer<typeof WsStreamReadyMessageSchema>;
+
+/**
+ * Sent by client to request playback on a Sonos speaker.
+ * Must be sent after receiving STREAM_READY.
+ */
+export const WsStartPlaybackPayloadSchema = z.object({
+  /** IP address of the Sonos speaker/coordinator. */
+  speakerIp: z.string(),
+});
+export type WsStartPlaybackPayload = z.infer<typeof WsStartPlaybackPayloadSchema>;
+
+export const WsStartPlaybackMessageSchema = z.object({
+  type: z.literal('START_PLAYBACK'),
+  payload: WsStartPlaybackPayloadSchema,
+});
+export type WsStartPlaybackMessage = z.infer<typeof WsStartPlaybackMessageSchema>;
+
+/**
+ * Sent by server when playback has successfully started on the speaker.
+ */
+export const WsPlaybackStartedPayloadSchema = z.object({
+  /** IP address of the speaker that started playback. */
+  speakerIp: z.string(),
+  /** The stream URL being played. */
+  streamUrl: z.string(),
+});
+export type WsPlaybackStartedPayload = z.infer<typeof WsPlaybackStartedPayloadSchema>;
+
+export const WsPlaybackStartedMessageSchema = z.object({
+  type: z.literal('PLAYBACK_STARTED'),
+  payload: WsPlaybackStartedPayloadSchema,
+});
+export type WsPlaybackStartedMessage = z.infer<typeof WsPlaybackStartedMessageSchema>;
+
+/**
+ * Sent by server when playback failed to start.
+ */
+export const WsPlaybackErrorPayloadSchema = z.object({
+  /** Error message describing the failure. */
+  message: z.string(),
+});
+export type WsPlaybackErrorPayload = z.infer<typeof WsPlaybackErrorPayloadSchema>;
+
+export const WsPlaybackErrorMessageSchema = z.object({
+  type: z.literal('PLAYBACK_ERROR'),
+  payload: WsPlaybackErrorPayloadSchema,
+});
+export type WsPlaybackErrorMessage = z.infer<typeof WsPlaybackErrorMessageSchema>;
+
 /**
  * Discriminated union for all WebSocket messages with typed payloads.
  */
@@ -265,6 +339,11 @@ export const WsMessageSchema = z.discriminatedUnion('type', [
   WsStopStreamMessageSchema,
   WsMetadataUpdateMessageSchema,
   WsErrorMessageSchema,
+  // Stream lifecycle
+  WsStreamReadyMessageSchema,
+  WsStartPlaybackMessageSchema,
+  WsPlaybackStartedMessageSchema,
+  WsPlaybackErrorMessageSchema,
 ]);
 export type WsMessage = z.infer<typeof WsMessageSchema>;
 

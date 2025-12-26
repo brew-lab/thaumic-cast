@@ -4,6 +4,8 @@ import {
   ExtensionMessage,
   StartCaptureMessage,
   StopCaptureMessage,
+  StartPlaybackMessage,
+  StartPlaybackResponse,
   OffscreenMetadataMessage,
   WsConnectMessage,
   WsStatusResponse,
@@ -15,6 +17,7 @@ import {
   StreamMetadata,
   SonosStateSnapshot,
   WsControlCommand,
+  WsMessage,
 } from '@thaumic-cast/protocol';
 import { createEncoder, type AudioEncoder } from './encoders';
 
@@ -270,6 +273,21 @@ class StreamSession {
   /** Unique ID assigned by the server for this stream. */
   public streamId: string | null = null;
 
+  /** Whether the stream has received STREAM_READY from the server. */
+  private isReady = false;
+
+  /** Resolver for the stream ready promise. */
+  private streamReadyResolve: (() => void) | null = null;
+
+  /** Promise that resolves when STREAM_READY is received. */
+  private streamReadyPromise: Promise<void>;
+
+  /** Pending playback request resolver. */
+  private playbackResolver: {
+    resolve: (result: { speakerIp: string; streamUrl: string }) => void;
+    reject: (error: Error) => void;
+  } | null = null;
+
   /**
    * Creates a new StreamSession.
    * @param mediaStream - The captured media stream
@@ -286,6 +304,11 @@ class StreamSession {
     const sab = createAudioRingBuffer();
     this.sharedBuffer = new Int16Array(sab, HEADER_SIZE * 4);
     this.control = new Int32Array(sab, 0, HEADER_SIZE);
+
+    // Create a promise that resolves when STREAM_READY is received
+    this.streamReadyPromise = new Promise<void>((resolve) => {
+      this.streamReadyResolve = resolve;
+    });
   }
 
   /**
@@ -414,9 +437,7 @@ class StreamSession {
           return;
         }
         const data = parsed.data;
-        if (data.type === 'HEARTBEAT_ACK') {
-          log.debug('Heartbeat acknowledged');
-        }
+        this.handleWsMessage(data);
       } catch {
         // Not a JSON message or malformed
       }
@@ -618,6 +639,106 @@ class StreamSession {
       );
     }
   }
+
+  /**
+   * Handles incoming WebSocket messages from the server.
+   * @param message - The parsed WebSocket message
+   */
+  private handleWsMessage(message: WsMessage): void {
+    switch (message.type) {
+      case 'HEARTBEAT_ACK':
+        log.debug('Heartbeat acknowledged');
+        break;
+
+      case 'STREAM_READY':
+        log.info(`Stream ready with ${message.payload.bufferSize} frames buffered`);
+        this.isReady = true;
+        this.streamReadyResolve?.();
+        break;
+
+      case 'PLAYBACK_STARTED':
+        log.info(`Playback started on ${message.payload.speakerIp}`);
+        this.playbackResolver?.resolve({
+          speakerIp: message.payload.speakerIp,
+          streamUrl: message.payload.streamUrl,
+        });
+        this.playbackResolver = null;
+        break;
+
+      case 'PLAYBACK_ERROR':
+        log.error(`Playback failed: ${message.payload.message}`);
+        this.playbackResolver?.reject(new Error(message.payload.message));
+        this.playbackResolver = null;
+        break;
+
+      default:
+        // Ignore other message types (HANDSHAKE_ACK, ERROR handled elsewhere)
+        break;
+    }
+  }
+
+  /**
+   * Waits for the stream to be ready (first frame received by server).
+   * @param timeoutMs - Maximum time to wait in milliseconds
+   * @returns Promise that resolves when stream is ready
+   * @throws Error if timeout expires before stream is ready
+   */
+  public async waitForReady(timeoutMs = 10000): Promise<void> {
+    if (this.isReady) return;
+
+    const timeoutPromise = new Promise<never>((_, reject) => {
+      setTimeout(() => reject(new Error('Timeout waiting for stream to be ready')), timeoutMs);
+    });
+
+    await Promise.race([this.streamReadyPromise, timeoutPromise]);
+  }
+
+  /**
+   * Starts playback on a Sonos speaker via WebSocket.
+   * Must be called after the stream is ready (waitForReady resolved).
+   *
+   * @param speakerIp - IP address of the Sonos speaker
+   * @param timeoutMs
+   * @returns Promise resolving with playback details
+   * @throws Error if playback fails or times out
+   */
+  public async startPlayback(
+    speakerIp: string,
+    timeoutMs = 15000,
+  ): Promise<{ speakerIp: string; streamUrl: string }> {
+    if (!this.socket || this.socket.readyState !== WebSocket.OPEN) {
+      throw new Error('WebSocket not connected');
+    }
+
+    if (!this.isReady) {
+      throw new Error('Stream not ready - call waitForReady() first');
+    }
+
+    // Create promise for the response
+    const responsePromise = new Promise<{ speakerIp: string; streamUrl: string }>(
+      (resolve, reject) => {
+        this.playbackResolver = { resolve, reject };
+      },
+    );
+
+    // Send START_PLAYBACK command
+    this.socket.send(
+      JSON.stringify({
+        type: 'START_PLAYBACK',
+        payload: { speakerIp },
+      }),
+    );
+
+    // Wait with timeout
+    const timeoutPromise = new Promise<never>((_, reject) => {
+      setTimeout(() => {
+        this.playbackResolver = null;
+        reject(new Error('Timeout waiting for playback to start'));
+      }, timeoutMs);
+    });
+
+    return Promise.race([responsePromise, timeoutPromise]);
+  }
 }
 
 /** Maximum number of parallel capture sessions allowed in offscreen. */
@@ -757,6 +878,41 @@ chrome.runtime.onMessage.addListener((msg: ExtensionMessage, _sender, sendRespon
       activeSessions.delete(tabId);
     }
     sendResponse({ success: true });
+    return true;
+  }
+
+  if (msg.type === 'START_PLAYBACK') {
+    const { tabId, speakerIp } = (msg as StartPlaybackMessage).payload;
+    const session = activeSessions.get(tabId);
+
+    if (!session) {
+      const response: StartPlaybackResponse = {
+        success: false,
+        error: `No active session for tab ${tabId}`,
+      };
+      sendResponse(response);
+      return true;
+    }
+
+    // Wait for stream to be ready, then start playback
+    session
+      .waitForReady()
+      .then(() => session.startPlayback(speakerIp))
+      .then((result) => {
+        const response: StartPlaybackResponse = {
+          success: true,
+          speakerIp: result.speakerIp,
+          streamUrl: result.streamUrl,
+        };
+        sendResponse(response);
+      })
+      .catch((err) => {
+        const response: StartPlaybackResponse = {
+          success: false,
+          error: err instanceof Error ? err.message : String(err),
+        };
+        sendResponse(response);
+      });
     return true;
   }
 

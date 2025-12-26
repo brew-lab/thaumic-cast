@@ -15,6 +15,7 @@ import {
   SetMuteMessage,
   CurrentTabStateResponse,
   ActiveCastsResponse,
+  StartPlaybackResponse,
 } from '../lib/messages';
 import { getCachedState, updateCache, removeFromCache, restoreCache } from './metadata-cache';
 import {
@@ -513,29 +514,18 @@ async function handleStartCast(
     });
 
     if (response.success && response.streamId) {
-      // 6. Tell Desktop App to start playback on Sonos
-      let desktopResponse: Response;
-      try {
-        desktopResponse = await fetch(`${app.url}/api/playback/start`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ ip: speakerIp, streamId: response.streamId }),
-        });
-      } catch (fetchErr) {
-        // Network error - clean up the capture
-        log.error('Failed to contact desktop app, cleaning up capture');
-        await chrome.runtime.sendMessage({ type: 'STOP_CAPTURE', payload: { tabId: tab.id } });
-        throw new Error(
-          `Failed to contact desktop app: ${fetchErr instanceof Error ? fetchErr.message : String(fetchErr)}`,
-        );
-      }
+      // 6. Start playback via WebSocket (waits for STREAM_READY internally)
+      // This replaces the old HTTP call and 150ms delay - now properly synchronized
+      const playbackResponse: StartPlaybackResponse = await chrome.runtime.sendMessage({
+        type: 'START_PLAYBACK',
+        payload: { tabId: tab.id, speakerIp },
+      });
 
-      if (!desktopResponse.ok) {
-        // Desktop returned an error - clean up the capture
-        const errData = await desktopResponse.json().catch(() => ({ message: 'Unknown error' }));
-        log.error('Desktop app returned error, cleaning up capture');
+      if (!playbackResponse.success) {
+        // Playback failed - clean up the capture
+        log.error('Playback failed, cleaning up capture');
         await chrome.runtime.sendMessage({ type: 'STOP_CAPTURE', payload: { tabId: tab.id } });
-        throw new Error(`Desktop app error: ${errData.message || desktopResponse.statusText}`);
+        throw new Error(`Playback failed: ${playbackResponse.error || 'Unknown error'}`);
       }
 
       // Find speaker name from Sonos state
