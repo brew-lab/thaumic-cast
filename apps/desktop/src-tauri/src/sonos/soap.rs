@@ -82,8 +82,10 @@ pub async fn send_soap_request(
 
     body.push_str(&format!(r#"</u:{}></s:Body></s:Envelope>"#, action));
 
-    log::debug!("[SOAP] {} -> {} ({})", action, url, body.len());
+    log::info!("[SOAP] {} -> {} (body: {} bytes)", action, url, body.len());
+    log::debug!("[SOAP] Request body: {}", body);
 
+    let start = std::time::Instant::now();
     let res = client
         .post(&url)
         .header("Content-Type", "text/xml; charset=\"utf-8\"")
@@ -91,7 +93,17 @@ pub async fn send_soap_request(
         .body(body)
         .timeout(Duration::from_secs(SOAP_TIMEOUT_SECS))
         .send()
-        .await?;
+        .await;
+
+    let elapsed = start.elapsed();
+    log::info!(
+        "[SOAP] {} completed in {:?}: {:?}",
+        action,
+        elapsed,
+        res.as_ref().map(|r| r.status())
+    );
+
+    let res = res?;
 
     let status = res.status();
     let response_text = res.text().await?;

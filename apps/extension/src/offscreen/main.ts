@@ -361,8 +361,10 @@ class StreamSession {
         try {
           const raw = JSON.parse(msg.data);
 
-          // Skip broadcast events (they have a category field, not meant for stream protocol)
-          if ('category' in raw) {
+          // Skip messages not meant for stream protocol:
+          // - Broadcast events (have a 'category' field)
+          // - INITIAL_STATE (sent to all connections on connect, handled by control WS)
+          if ('category' in raw || raw.type === 'INITIAL_STATE') {
             return;
           }
 
@@ -399,8 +401,10 @@ class StreamSession {
       try {
         const raw = JSON.parse(msg.data);
 
-        // Skip broadcast events (they have a category field, not meant for stream protocol)
-        if ('category' in raw) {
+        // Skip messages not meant for stream protocol:
+        // - Broadcast events (have a 'category' field)
+        // - INITIAL_STATE (sent to all connections on connect, handled by control WS)
+        if ('category' in raw || raw.type === 'INITIAL_STATE') {
           return;
         }
 
