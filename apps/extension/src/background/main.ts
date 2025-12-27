@@ -398,7 +398,10 @@ async function handleTabMetadataUpdate(
   };
 
   // Update the cache
-  updateCache(tabId, tabInfo, metadata);
+  const state = updateCache(tabId, tabInfo, metadata);
+
+  // Notify popup of state change so CurrentTabCard updates
+  notifyPopup({ type: 'TAB_STATE_CHANGED', tabId, state });
 
   // If this tab is casting, notify popup and forward to offscreen
   if (hasSession(tabId)) {
