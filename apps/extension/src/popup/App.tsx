@@ -162,6 +162,13 @@ export function App() {
   const getGroupDisplayName = (group: ZoneGroup) => {
     const memberCount = group.members?.length ?? 0;
     const baseName = `${group.name}${memberCount > 1 ? ` (+${memberCount - 1})` : ''}`;
+    // DEBUG: Log transport state lookup
+    console.log('[DEBUG] getGroupDisplayName:', {
+      groupName: group.name,
+      coordinatorIp: group.coordinatorIp,
+      transportStates: sonosState.transportStates,
+      lookupResult: sonosState.transportStates[group.coordinatorIp],
+    });
     const status = getSpeakerStatus(group.coordinatorIp, sonosState);
     return status ? `${baseName} • ${status}` : baseName;
   };
