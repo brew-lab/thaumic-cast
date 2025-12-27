@@ -7,5 +7,5 @@
   "access": "public",
   "baseBranch": "main",
   "updateInternalDependencies": "patch",
-  "ignore": ["@thaumic-cast/protocol", "@thaumic-cast/ui", "@thaumic-cast/shared"]
+  "ignore": []
 }

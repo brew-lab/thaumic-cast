@@ -27,6 +27,7 @@
 .info {
   display: flex;
   flex-direction: column;
+  flex: 1;
 }
 
 .name {
@@ -43,8 +44,23 @@
   color: var(--color-text-muted);
 }
 
-.actions {
-  display: flex;
-  gap: var(--space-sm);
-  margin-block-start: var(--space-sm);
+.status {
+  font-size: 0.75rem;
+  padding-block: var(--space-xs);
+  padding-inline: var(--space-sm);
+  border-radius: var(--radius-sm);
+  background-color: var(--color-bg);
+  color: var(--color-text-muted);
+  font-weight: 500;
+  text-transform: capitalize;
+}
+
+.statusPlaying {
+  background-color: oklch(45% 0.15 145 / 20%);
+  color: oklch(70% 0.15 145);
+}
+
+.statusCasting {
+  background-color: oklch(50% 0.15 260 / 20%);
+  color: oklch(75% 0.15 260);
 }

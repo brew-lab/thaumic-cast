@@ -30,7 +30,7 @@
         payload: event.detail,
       })
       .catch(() => {
-        // Background might be inactive or context invalidated
+        // Background may not be ready
       });
   }) as EventListener);
 

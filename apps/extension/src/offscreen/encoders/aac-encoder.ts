@@ -65,7 +65,9 @@ export class AacEncoder implements AudioEncoder {
       throw new Error(`Codec ${config.codec} does not support WebCodecs`);
     }
 
-    this.profile = config.codec === 'he-aac' ? ADTS.PROFILE_HE_AAC : ADTS.PROFILE_AAC_LC;
+    // HE-AAC and HE-AAC v2 both use the same ADTS profile (SBR signaling).
+    // For HE-AAC v2, Parametric Stereo (PS) is detected in-band by the decoder.
+    this.profile = config.codec.startsWith('he-aac') ? ADTS.PROFILE_HE_AAC : ADTS.PROFILE_AAC_LC;
     this.sampleRateIndex = SAMPLE_RATE_INDEX[config.sampleRate] ?? 3;
 
     this.encoder = new AudioEncoder({
@@ -186,13 +188,19 @@ export class AacEncoder implements AudioEncoder {
 
   /**
    * Flushes any remaining encoded data.
+   * Note: WebCodecs flush() is async but we return sync for interface compatibility.
+   * Any pending flush will be aborted when close() is called.
    * @returns Remaining encoded data or null if empty
    */
   flush(): Uint8Array | null {
     if (this.isClosed) return null;
 
     try {
-      this.encoder.flush();
+      // flush() returns a Promise but we can't await here due to interface.
+      // Catch any rejection to prevent unhandled promise errors.
+      this.encoder.flush().catch(() => {
+        // Silently ignore - encoder may be closing
+      });
     } catch {
       // Encoder may already be in error state
     }
@@ -214,12 +222,15 @@ export class AacEncoder implements AudioEncoder {
 
   /**
    * Closes the encoder and releases resources.
+   * Handles AbortError from any pending async operations.
    */
   close(): void {
     if (this.isClosed) return;
     this.isClosed = true;
 
     try {
+      // Close may cause pending operations to reject with AbortError.
+      // The flush().catch() above handles that case.
       this.encoder.close();
     } catch {
       log.debug('Encoder already closed');
@@ -233,10 +244,14 @@ export class AacEncoder implements AudioEncoder {
  * @returns True if the configuration is supported
  */
 export async function isAacSupported(config: EncoderConfig): Promise<boolean> {
-  if (typeof AudioEncoder === 'undefined') return false;
+  if (typeof AudioEncoder === 'undefined') {
+    return false;
+  }
 
   const webCodecsId = CODEC_METADATA[config.codec]?.webCodecsId;
-  if (!webCodecsId) return false;
+  if (!webCodecsId) {
+    return false;
+  }
 
   try {
     const result = await AudioEncoder.isConfigSupported({

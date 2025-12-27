@@ -15,6 +15,7 @@ import {
   SetMuteMessage,
   CurrentTabStateResponse,
   ActiveCastsResponse,
+  StartPlaybackResponse,
 } from '../lib/messages';
 import { getCachedState, updateCache, removeFromCache, restoreCache } from './metadata-cache';
 import {
@@ -397,7 +398,10 @@ async function handleTabMetadataUpdate(
   };
 
   // Update the cache
-  updateCache(tabId, tabInfo, metadata);
+  const state = updateCache(tabId, tabInfo, metadata);
+
+  // Notify popup of state change so CurrentTabCard updates
+  notifyPopup({ type: 'TAB_STATE_CHANGED', tabId, state });
 
   // If this tab is casting, notify popup and forward to offscreen
   if (hasSession(tabId)) {
@@ -513,26 +517,39 @@ async function handleStartCast(
     });
 
     if (response.success && response.streamId) {
-      // 6. Tell Desktop App to start playback on Sonos
-      const desktopResponse = await fetch(`${app.url}/api/playback/start`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ip: speakerIp, streamId: response.streamId }),
+      // Get cached metadata to send with playback start (avoids "Browser Audio" default)
+      const cachedState = getCachedState(tab.id);
+      const initialMetadata = cachedState?.metadata ?? undefined;
+
+      // 6. Start playback via WebSocket (waits for STREAM_READY internally)
+      // Include initial metadata so Sonos displays correct info immediately
+      const playbackResponse: StartPlaybackResponse = await chrome.runtime.sendMessage({
+        type: 'START_PLAYBACK',
+        payload: { tabId: tab.id, speakerIp, metadata: initialMetadata },
       });
 
-      if (!desktopResponse.ok) {
-        const errData = await desktopResponse.json().catch(() => ({ message: 'Unknown error' }));
-        throw new Error(`Desktop app error: ${errData.message || desktopResponse.statusText}`);
+      if (!playbackResponse.success) {
+        // Playback failed - clean up the capture
+        log.error('Playback failed, cleaning up capture');
+        await chrome.runtime.sendMessage({ type: 'STOP_CAPTURE', payload: { tabId: tab.id } });
+        throw new Error(`Playback failed: ${playbackResponse.error || 'Unknown error'}`);
       }
 
       // Find speaker name from Sonos state
       const sonosState = getStoredSonosState();
       const speakerName = sonosState.groups.find((g) => g.coordinatorIp === speakerIp)?.name;
 
+      // Ensure cache has tab info for ActiveCast display (even without MediaSession metadata)
+      if (!getCachedState(tab.id)) {
+        updateCache(tab.id, { title: tab.title, favIconUrl: tab.favIconUrl }, null);
+      }
+
       // Register the session with the session manager
       registerSession(tab.id, response.streamId, speakerIp, speakerName, encoderConfig);
+
       safeSendResponse({ success: true });
     } else {
+      // Offscreen capture failed - no cleanup needed
       safeSendResponse(response);
     }
   } catch (err) {

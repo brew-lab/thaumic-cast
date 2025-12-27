@@ -127,10 +127,14 @@ impl StreamCoordinator {
     }
 
     /// Pushes an audio frame to a stream.
-    pub fn push_frame(&self, stream_id: &str, data: Bytes) {
-        if let Some(stream) = self.stream_manager.get_stream(stream_id) {
-            stream.push_frame(data);
-        }
+    ///
+    /// Returns `Some(true)` if this was the first frame (stream just became ready),
+    /// `Some(false)` if the stream exists but this wasn't the first frame,
+    /// `None` if the stream was not found.
+    pub fn push_frame(&self, stream_id: &str, data: Bytes) -> Option<bool> {
+        self.stream_manager
+            .get_stream(stream_id)
+            .map(|stream| stream.push_frame(data))
     }
 
     /// Updates metadata for a stream.
@@ -145,13 +149,25 @@ impl StreamCoordinator {
     /// This tells the speaker to fetch audio from our HTTP stream endpoint.
     /// The playback session is recorded for expected stream tracking.
     /// Broadcasts a `StreamEvent::PlaybackStarted` event.
-    pub async fn start_playback(&self, speaker_ip: &str, stream_id: &str) -> ThaumicResult<()> {
+    ///
+    /// # Arguments
+    /// * `speaker_ip` - IP address of the Sonos speaker
+    /// * `stream_id` - The stream ID to play
+    /// * `metadata` - Optional initial metadata to display on Sonos
+    pub async fn start_playback(
+        &self,
+        speaker_ip: &str,
+        stream_id: &str,
+        metadata: Option<&StreamMetadata>,
+    ) -> ThaumicResult<()> {
         let stream_url = self.network.url_builder().stream_url(stream_id);
 
         log::info!("Starting playback: {} -> {}", speaker_ip, stream_url);
 
-        // Tell Sonos to play our stream
-        self.sonos.play_uri(speaker_ip, &stream_url, None).await?;
+        // Tell Sonos to play our stream with initial metadata
+        self.sonos
+            .play_uri(speaker_ip, &stream_url, metadata)
+            .await?;
 
         // Record the playback session (includes expected stream URL)
         self.playback_sessions.insert(

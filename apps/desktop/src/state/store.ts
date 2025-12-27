@@ -9,14 +9,39 @@ export interface Speaker {
   ip: string;
 }
 
-export interface ZoneGroup {
-  coordinator: Speaker;
-  members: Speaker[];
+export interface ZoneGroupMember {
+  uuid: string;
+  ip: string;
+  zoneName: string;
+  model: string;
 }
+
+export interface ZoneGroup {
+  id: string;
+  name: string;
+  coordinatorUuid: string;
+  coordinatorIp: string;
+  members: ZoneGroupMember[];
+}
+
+/** Map of speaker IP to transport state (Playing, Stopped, etc.). */
+export type TransportStates = Record<string, string>;
+
+/** Active playback session linking a stream to a speaker. */
+export interface PlaybackSession {
+  streamId: string;
+  speakerIp: string;
+  streamUrl: string;
+}
+
+/** Set of speaker IPs that are currently casting our streams. */
+export type CastingSpeakers = Set<string>;
 
 // Global State
 export const speakers = signal<Speaker[]>([]);
 export const groups = signal<ZoneGroup[]>([]);
+export const transportStates = signal<TransportStates>({});
+export const castingSpeakers = signal<CastingSpeakers>(new Set());
 export const serverPort = signal<number>(0);
 export const isLoading = signal<boolean>(false);
 export const stats = signal<AppStats | null>(null);
@@ -42,14 +67,29 @@ export const fetchStats = async (): Promise<void> => {
 };
 
 /**
- * Fetches zone groups and stats from the backend.
- * Updates the groups signal and triggers a stats refresh.
+ * Fetches transport states from the backend.
+ * Updates the transportStates signal.
+ */
+export const fetchTransportStates = async (): Promise<void> => {
+  const states = await invoke<TransportStates>('get_transport_states');
+  transportStates.value = states;
+};
+
+/**
+ * Fetches zone groups, transport states, playback sessions, and stats from the backend.
+ * Updates the groups, transportStates, and castingSpeakers signals.
  */
 export const fetchGroups = async (): Promise<void> => {
   try {
     isLoading.value = true;
-    const fetchedGroups = await invoke<ZoneGroup[]>('get_groups');
+    const [fetchedGroups, states, sessions] = await Promise.all([
+      invoke<ZoneGroup[]>('get_groups'),
+      invoke<TransportStates>('get_transport_states'),
+      invoke<PlaybackSession[]>('get_playback_sessions'),
+    ]);
     groups.value = fetchedGroups;
+    transportStates.value = states;
+    castingSpeakers.value = new Set(sessions.map((s) => s.speakerIp));
     await fetchStats();
   } finally {
     isLoading.value = false;

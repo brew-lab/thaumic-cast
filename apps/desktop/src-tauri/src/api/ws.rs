@@ -64,6 +64,18 @@ enum WsIncoming {
     SetMute { payload: WsMuteRequest },
     GetVolume { payload: WsSpeakerRequest },
     GetMute { payload: WsSpeakerRequest },
+    StartPlayback { payload: StartPlaybackRequest },
+}
+
+/// Request payload for starting playback via WebSocket.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct StartPlaybackRequest {
+    speaker_ip: String,
+    /// Optional initial metadata to display on Sonos.
+    /// If not provided, Sonos will show default "Browser Audio".
+    #[serde(default)]
+    metadata: Option<StreamMetadata>,
 }
 
 /// Request payload for volume control via WebSocket.
@@ -89,12 +101,29 @@ struct WsSpeakerRequest {
     ip: String,
 }
 
+/// Encoder configuration from extension.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct EncoderConfig {
+    codec: String,
+    #[allow(dead_code)]
+    bitrate: Option<u32>,
+    #[allow(dead_code)]
+    sample_rate: Option<u32>,
+    #[allow(dead_code)]
+    channels: Option<u8>,
+}
+
 /// Handshake request payload from client.
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct HandshakeRequest {
+    /// Legacy codec field (deprecated).
     #[serde(default)]
     codec: Option<String>,
+    /// New encoder config from extension.
+    #[serde(default)]
+    encoder_config: Option<EncoderConfig>,
 }
 
 /// Outgoing WebSocket messages.
@@ -107,6 +136,31 @@ enum WsOutgoing {
     InitialState { payload: serde_json::Value },
     VolumeState { payload: WsVolumePayload },
     MuteState { payload: WsMutePayload },
+    StreamReady { payload: StreamReadyPayload },
+    PlaybackStarted { payload: PlaybackStartedPayload },
+    PlaybackError { payload: PlaybackErrorPayload },
+}
+
+/// Payload for stream ready notification.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct StreamReadyPayload {
+    buffer_size: usize,
+}
+
+/// Payload for playback started notification.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PlaybackStartedPayload {
+    speaker_ip: String,
+    stream_url: String,
+}
+
+/// Payload for playback error notification.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PlaybackErrorPayload {
+    message: String,
 }
 
 /// Payload for volume state responses.
@@ -200,12 +254,25 @@ enum HandshakeResult {
 
 /// Handles a HANDSHAKE message: creates a stream and returns ack or error.
 fn handle_handshake(state: &AppState, payload: HandshakeRequest) -> HandshakeResult {
-    let codec = match payload.codec.as_deref() {
-        Some("aac") => AudioCodec::Aac,
+    // Get codec from encoder_config (preferred) or legacy codec field
+    let codec_str = payload
+        .encoder_config
+        .as_ref()
+        .map(|c| c.codec.as_str())
+        .or(payload.codec.as_deref());
+
+    let codec = match codec_str {
+        Some("aac") | Some("aac-lc") | Some("he-aac") | Some("he-aac-v2") => AudioCodec::Aac,
         Some("mp3") => AudioCodec::Mp3,
         Some("flac") => AudioCodec::Flac,
-        _ => AudioCodec::Wav,
+        Some("wav") => AudioCodec::Wav,
+        _ => {
+            log::warn!("[WS] Unknown codec {:?}, defaulting to WAV", codec_str);
+            AudioCodec::Wav
+        }
     };
+
+    log::info!("[WS] Creating stream with codec: {:?}", codec);
 
     match state.services.stream_coordinator.create_stream(codec) {
         Ok(id) => HandshakeResult::Success(id),
@@ -222,11 +289,15 @@ fn handle_metadata_update(state: &AppState, stream_id: &str, metadata: StreamMet
 }
 
 /// Handles binary audio data: pushes frame to stream buffer.
-fn handle_binary_data(state: &AppState, stream_id: &str, data: Vec<u8>) {
+///
+/// Returns `true` if this was the first frame (stream just became ready),
+/// `false` otherwise.
+fn handle_binary_data(state: &AppState, stream_id: &str, data: Vec<u8>) -> bool {
     state
         .services
         .stream_coordinator
-        .push_frame(stream_id, Bytes::from(data));
+        .push_frame(stream_id, Bytes::from(data))
+        .unwrap_or(false)
 }
 
 /// WebSocket upgrade handler.
@@ -351,12 +422,83 @@ async fn handle_ws(socket: WebSocket, state: AppState) {
                                 )
                                 .await;
                             }
+                            Ok(WsIncoming::StartPlayback { payload }) => {
+                                if let Some(ref guard) = stream_guard {
+                                    let stream_id = guard.id().to_string();
+                                    let speaker_ip = payload.speaker_ip.clone();
+
+                                    // Start playback (coordinator will record session & emit events)
+                                    match state
+                                        .services
+                                        .stream_coordinator
+                                        .start_playback(
+                                            &speaker_ip,
+                                            &stream_id,
+                                            payload.metadata.as_ref(),
+                                        )
+                                        .await
+                                    {
+                                        Ok(()) => {
+                                            // Get stream URL for response
+                                            let stream_url = state
+                                                .services
+                                                .network
+                                                .url_builder()
+                                                .stream_url(&stream_id);
+
+                                            let msg = WsOutgoing::PlaybackStarted {
+                                                payload: PlaybackStartedPayload {
+                                                    speaker_ip,
+                                                    stream_url,
+                                                },
+                                            };
+                                            if let Some(msg) = msg.to_message() {
+                                                let _ = sender.send(msg).await;
+                                            }
+                                        }
+                                        Err(e) => {
+                                            let msg = WsOutgoing::PlaybackError {
+                                                payload: PlaybackErrorPayload {
+                                                    message: e.to_string(),
+                                                },
+                                            };
+                                            if let Some(msg) = msg.to_message() {
+                                                let _ = sender.send(msg).await;
+                                            }
+                                        }
+                                    }
+                                } else {
+                                    // No active stream for this connection
+                                    let msg = WsOutgoing::PlaybackError {
+                                        payload: PlaybackErrorPayload {
+                                            message: "No active stream on this connection".into(),
+                                        },
+                                    };
+                                    if let Some(msg) = msg.to_message() {
+                                        let _ = sender.send(msg).await;
+                                    }
+                                }
+                            }
                             Err(_) => {} // Unknown message type, ignore
                         }
                     }
                     Some(Ok(Message::Binary(data))) => {
                         if let Some(ref guard) = stream_guard {
-                            handle_binary_data(&state, guard.id(), data);
+                            let is_first_frame = handle_binary_data(&state, guard.id(), data);
+
+                            // Send STREAM_READY on first frame
+                            if is_first_frame {
+                                if let Some(stream) = state.services.stream_coordinator.get_stream(guard.id()) {
+                                    let msg = WsOutgoing::StreamReady {
+                                        payload: StreamReadyPayload {
+                                            buffer_size: stream.buffer_len(),
+                                        },
+                                    };
+                                    if let Some(msg) = msg.to_message() {
+                                        let _ = sender.send(msg).await;
+                                    }
+                                }
+                            }
                         }
                     }
                     Some(Ok(Message::Close(_))) | Some(Err(_)) | None => break,

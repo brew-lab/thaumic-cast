@@ -1,4 +1,4 @@
-import type { EncoderConfig, AudioCodec } from '@thaumic-cast/protocol';
+import type { EncoderConfig } from '@thaumic-cast/protocol';
 
 /**
  * Unified interface for all audio encoders.
@@ -29,13 +29,4 @@ export interface AudioEncoder {
    * The configuration this encoder was created with.
    */
   readonly config: EncoderConfig;
-}
-
-/**
- * Result of checking codec support.
- */
-export interface CodecSupportResult {
-  codec: AudioCodec;
-  supported: boolean;
-  fallback?: AudioCodec;
 }

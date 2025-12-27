@@ -79,7 +79,7 @@ pub async fn start_playback(
     state
         .services
         .stream_coordinator
-        .start_playback(&ip, &stream_id)
+        .start_playback(&ip, &stream_id, None)
         .await
         .map_err(Into::into)
 }
@@ -88,6 +88,33 @@ pub async fn start_playback(
 #[tauri::command]
 pub fn refresh_topology(state: tauri::State<'_, AppState>) {
     state.services.discovery_service.trigger_refresh();
+}
+
+/// Returns the current transport states for all speakers.
+///
+/// Returns a map of speaker IP to transport state (Playing, Stopped, etc.).
+#[tauri::command]
+pub fn get_transport_states(
+    state: tauri::State<'_, AppState>,
+) -> std::collections::HashMap<String, String> {
+    state
+        .services
+        .discovery_service
+        .sonos_state()
+        .transport_states
+        .iter()
+        .map(|entry| (entry.key().clone(), entry.value().to_string()))
+        .collect()
+}
+
+/// Returns all active playback sessions.
+///
+/// A playback session indicates a speaker that is currently casting one of our streams.
+#[tauri::command]
+pub fn get_playback_sessions(
+    state: tauri::State<'_, AppState>,
+) -> Vec<crate::services::stream_coordinator::PlaybackSession> {
+    state.services.stream_coordinator.get_all_sessions()
 }
 
 /// Clears all active streams and stops all playback.

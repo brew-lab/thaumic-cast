@@ -4,6 +4,8 @@ import {
   ExtensionMessage,
   StartCaptureMessage,
   StopCaptureMessage,
+  StartPlaybackMessage,
+  StartPlaybackResponse,
   OffscreenMetadataMessage,
   WsConnectMessage,
   WsStatusResponse,
@@ -14,6 +16,8 @@ import {
   WsMessageSchema,
   StreamMetadata,
   SonosStateSnapshot,
+  WsControlCommand,
+  WsMessage,
 } from '@thaumic-cast/protocol';
 import { createEncoder, type AudioEncoder } from './encoders';
 
@@ -192,10 +196,10 @@ function disconnectControlWebSocket(): void {
 
 /**
  * Sends a control command via WebSocket.
- * @param command - The command object to send
+ * @param command - The typed command to send (from @thaumic-cast/protocol)
  * @returns True if the command was sent successfully
  */
-function sendControlCommand(command: object): boolean {
+function sendControlCommand(command: WsControlCommand): boolean {
   if (!controlConnection?.ws || controlConnection.ws.readyState !== WebSocket.OPEN) {
     log.warn('Control WS not connected, cannot send command');
     return false;
@@ -263,10 +267,26 @@ class StreamSession {
   private maxReconnectAttempts = 5;
   private sourceNode: MediaStreamAudioSourceNode | null = null;
   private workletNode: AudioWorkletNode | null = null;
+  private silentGainNode: GainNode | null = null;
   private connectionState: ConnectionState = ConnectionState.IDLE;
 
   /** Unique ID assigned by the server for this stream. */
   public streamId: string | null = null;
+
+  /** Whether the stream has received STREAM_READY from the server. */
+  private isReady = false;
+
+  /** Resolver for the stream ready promise. */
+  private streamReadyResolve: (() => void) | null = null;
+
+  /** Promise that resolves when STREAM_READY is received. */
+  private streamReadyPromise: Promise<void>;
+
+  /** Pending playback request resolver. */
+  private playbackResolver: {
+    resolve: (result: { speakerIp: string; streamUrl: string }) => void;
+    reject: (error: Error) => void;
+  } | null = null;
 
   /**
    * Creates a new StreamSession.
@@ -284,6 +304,11 @@ class StreamSession {
     const sab = createAudioRingBuffer();
     this.sharedBuffer = new Int16Array(sab, HEADER_SIZE * 4);
     this.control = new Int32Array(sab, 0, HEADER_SIZE);
+
+    // Create a promise that resolves when STREAM_READY is received
+    this.streamReadyPromise = new Promise<void>((resolve) => {
+      this.streamReadyResolve = resolve;
+    });
   }
 
   /**
@@ -357,7 +382,16 @@ class StreamSession {
 
       const messageHandler = (msg: MessageEvent) => {
         try {
-          const parsed = WsMessageSchema.safeParse(JSON.parse(msg.data));
+          const raw = JSON.parse(msg.data);
+
+          // Skip messages not meant for stream protocol:
+          // - Broadcast events (have a 'category' field)
+          // - INITIAL_STATE (sent to all connections on connect, handled by control WS)
+          if ('category' in raw || raw.type === 'INITIAL_STATE') {
+            return;
+          }
+
+          const parsed = WsMessageSchema.safeParse(raw);
           if (!parsed.success) {
             log.warn('Received malformed handshake response', parsed.error);
             return;
@@ -388,15 +422,22 @@ class StreamSession {
     // Register persistent message handler
     socket.onmessage = (msg) => {
       try {
-        const parsed = WsMessageSchema.safeParse(JSON.parse(msg.data));
+        const raw = JSON.parse(msg.data);
+
+        // Skip messages not meant for stream protocol:
+        // - Broadcast events (have a 'category' field)
+        // - INITIAL_STATE (sent to all connections on connect, handled by control WS)
+        if ('category' in raw || raw.type === 'INITIAL_STATE') {
+          return;
+        }
+
+        const parsed = WsMessageSchema.safeParse(raw);
         if (!parsed.success) {
           log.warn('Received malformed WebSocket message', parsed.error);
           return;
         }
         const data = parsed.data;
-        if (data.type === 'HEARTBEAT_ACK') {
-          log.debug('Heartbeat acknowledged');
-        }
+        this.handleWsMessage(data);
       } catch {
         // Not a JSON message or malformed
       }
@@ -441,18 +482,55 @@ class StreamSession {
     this.workletNode.port.postMessage({ type: 'INIT_BUFFER', buffer: this.control.buffer });
     this.sourceNode.connect(this.workletNode);
 
+    // Connect to destination through a silent gain node to ensure audio processing.
+    // Without this connection, Chrome may not drive audio through the worklet.
+    this.silentGainNode = this.audioContext.createGain();
+    this.silentGainNode.gain.value = 0;
+    this.workletNode.connect(this.silentGainNode);
+    this.silentGainNode.connect(this.audioContext.destination);
+
+    // Ensure AudioContext is running (may be suspended by browser policy)
+    if (this.audioContext.state === 'suspended') {
+      log.info('AudioContext suspended, resuming...');
+      await this.audioContext.resume();
+    }
+    log.info(`AudioContext state: ${this.audioContext.state}`);
+
+    // Log media stream info for debugging
+    const audioTracks = this.mediaStream.getAudioTracks();
+    log.info(`MediaStream has ${audioTracks.length} audio track(s)`);
+    if (audioTracks.length > 0) {
+      const track = audioTracks[0];
+      log.info(
+        `Audio track: ${track.label}, enabled=${track.enabled}, muted=${track.muted}, readyState=${track.readyState}`,
+      );
+    }
+
     this.encoder = await createEncoder(this.encoderConfig);
     log.info(`Using encoder: ${this.encoder.config.codec} @ ${this.encoder.config.bitrate}kbps`);
   }
 
   /**
-   * Starts the high-performance reading loop using requestAnimationFrame.
+   * Starts the reading loop using setInterval.
+   * Uses setInterval instead of requestAnimationFrame because offscreen
+   * documents are not visible and rAF doesn't fire in hidden contexts.
    * Monitors the shared ring buffer for new samples and checks for overflows.
    */
   private startReading(): void {
-    const poll = () => {
-      if (!this.streamId || this.isStopping) return;
+    let totalSamplesRead = 0;
+    let lastLogTime = Date.now();
+    let pollCount = 0;
 
+    const poll = () => {
+      if (!this.streamId || this.isStopping) {
+        if (this.readInterval !== null) {
+          clearInterval(this.readInterval);
+          this.readInterval = null;
+        }
+        return;
+      }
+
+      pollCount++;
       const writeIdx = Atomics.load(this.control, 0);
       const readIdx = Atomics.load(this.control, 1);
 
@@ -471,6 +549,7 @@ class StreamSession {
         }
 
         if (samplesToRead > 0) {
+          totalSamplesRead += samplesToRead;
           const data = new Int16Array(samplesToRead);
 
           if (readIdx + samplesToRead <= RING_BUFFER_SIZE) {
@@ -492,10 +571,19 @@ class StreamSession {
         }
       }
 
-      this.readInterval = requestAnimationFrame(poll);
+      // Log stats every 5 seconds
+      const now = Date.now();
+      if (now - lastLogTime >= 5000) {
+        log.info(
+          `Audio stats: ${totalSamplesRead} samples read, ${pollCount} polls, writeIdx=${writeIdx}, readIdx=${readIdx}`,
+        );
+        lastLogTime = now;
+      }
     };
 
-    this.readInterval = requestAnimationFrame(poll);
+    // Poll at 10ms intervals (~100Hz) - fast enough to keep up with 48kHz audio
+    // while being much more efficient than requestAnimationFrame
+    this.readInterval = setInterval(poll, 10) as unknown as number;
   }
 
   /**
@@ -514,7 +602,7 @@ class StreamSession {
    */
   public stop(): void {
     this.isStopping = true;
-    if (this.readInterval !== null) cancelAnimationFrame(this.readInterval);
+    if (this.readInterval !== null) clearInterval(this.readInterval);
     if (this.heartbeatInterval !== null) clearInterval(this.heartbeatInterval);
     if (this.reconnectTimeout !== null) clearTimeout(this.reconnectTimeout);
 
@@ -539,6 +627,7 @@ class StreamSession {
 
     this.sourceNode?.disconnect();
     this.workletNode?.disconnect();
+    this.silentGainNode?.disconnect();
     this.audioContext.close().catch(() => {});
     this.mediaStream.getTracks().forEach((t) => t.stop());
   }
@@ -557,6 +646,108 @@ class StreamSession {
         }),
       );
     }
+  }
+
+  /**
+   * Handles incoming WebSocket messages from the server.
+   * @param message - The parsed WebSocket message
+   */
+  private handleWsMessage(message: WsMessage): void {
+    switch (message.type) {
+      case 'HEARTBEAT_ACK':
+        log.debug('Heartbeat acknowledged');
+        break;
+
+      case 'STREAM_READY':
+        log.info(`Stream ready with ${message.payload.bufferSize} frames buffered`);
+        this.isReady = true;
+        this.streamReadyResolve?.();
+        break;
+
+      case 'PLAYBACK_STARTED':
+        log.info(`Playback started on ${message.payload.speakerIp}`);
+        this.playbackResolver?.resolve({
+          speakerIp: message.payload.speakerIp,
+          streamUrl: message.payload.streamUrl,
+        });
+        this.playbackResolver = null;
+        break;
+
+      case 'PLAYBACK_ERROR':
+        log.error(`Playback failed: ${message.payload.message}`);
+        this.playbackResolver?.reject(new Error(message.payload.message));
+        this.playbackResolver = null;
+        break;
+
+      default:
+        // Ignore other message types (HANDSHAKE_ACK, ERROR handled elsewhere)
+        break;
+    }
+  }
+
+  /**
+   * Waits for the stream to be ready (first frame received by server).
+   * @param timeoutMs - Maximum time to wait in milliseconds
+   * @returns Promise that resolves when stream is ready
+   * @throws Error if timeout expires before stream is ready
+   */
+  public async waitForReady(timeoutMs = 10000): Promise<void> {
+    if (this.isReady) return;
+
+    const timeoutPromise = new Promise<never>((_, reject) => {
+      setTimeout(() => reject(new Error('Timeout waiting for stream to be ready')), timeoutMs);
+    });
+
+    await Promise.race([this.streamReadyPromise, timeoutPromise]);
+  }
+
+  /**
+   * Starts playback on a Sonos speaker via WebSocket.
+   * Must be called after the stream is ready (waitForReady resolved).
+   *
+   * @param speakerIp - IP address of the Sonos speaker
+   * @param metadata - Optional initial metadata to display on Sonos
+   * @param timeoutMs - Timeout in milliseconds
+   * @returns Promise resolving with playback details
+   * @throws Error if playback fails or times out
+   */
+  public async startPlayback(
+    speakerIp: string,
+    metadata?: StreamMetadata,
+    timeoutMs = 15000,
+  ): Promise<{ speakerIp: string; streamUrl: string }> {
+    if (!this.socket || this.socket.readyState !== WebSocket.OPEN) {
+      throw new Error('WebSocket not connected');
+    }
+
+    if (!this.isReady) {
+      throw new Error('Stream not ready - call waitForReady() first');
+    }
+
+    // Create promise for the response
+    const responsePromise = new Promise<{ speakerIp: string; streamUrl: string }>(
+      (resolve, reject) => {
+        this.playbackResolver = { resolve, reject };
+      },
+    );
+
+    // Send START_PLAYBACK command with optional metadata
+    this.socket.send(
+      JSON.stringify({
+        type: 'START_PLAYBACK',
+        payload: { speakerIp, metadata },
+      }),
+    );
+
+    // Wait with timeout
+    const timeoutPromise = new Promise<never>((_, reject) => {
+      setTimeout(() => {
+        this.playbackResolver = null;
+        reject(new Error('Timeout waiting for playback to start'));
+      }, timeoutMs);
+    });
+
+    return Promise.race([responsePromise, timeoutPromise]);
   }
 }
 
@@ -618,14 +809,19 @@ chrome.runtime.onMessage.addListener((msg: ExtensionMessage, _sender, sendRespon
 
   if (msg.type === 'SET_VOLUME') {
     const { speakerIp, volume } = msg as { speakerIp: string; volume: number };
-    const success = sendControlCommand({ action: 'setVolume', payload: { speakerIp, volume } });
+    // Desktop expects: { type: "SET_VOLUME", payload: { ip, volume } }
+    const success = sendControlCommand({ type: 'SET_VOLUME', payload: { ip: speakerIp, volume } });
     sendResponse({ success });
     return true;
   }
 
   if (msg.type === 'SET_MUTE') {
     const { speakerIp, muted } = msg as { speakerIp: string; muted: boolean };
-    const success = sendControlCommand({ action: 'setMute', payload: { speakerIp, muted } });
+    // Desktop expects: { type: "SET_MUTE", payload: { ip, mute } }
+    const success = sendControlCommand({
+      type: 'SET_MUTE',
+      payload: { ip: speakerIp, mute: muted },
+    });
     sendResponse({ success });
     return true;
   }
@@ -692,6 +888,41 @@ chrome.runtime.onMessage.addListener((msg: ExtensionMessage, _sender, sendRespon
       activeSessions.delete(tabId);
     }
     sendResponse({ success: true });
+    return true;
+  }
+
+  if (msg.type === 'START_PLAYBACK') {
+    const { tabId, speakerIp, metadata } = (msg as StartPlaybackMessage).payload;
+    const session = activeSessions.get(tabId);
+
+    if (!session) {
+      const response: StartPlaybackResponse = {
+        success: false,
+        error: `No active session for tab ${tabId}`,
+      };
+      sendResponse(response);
+      return true;
+    }
+
+    // Wait for stream to be ready, then start playback with initial metadata
+    session
+      .waitForReady()
+      .then(() => session.startPlayback(speakerIp, metadata))
+      .then((result) => {
+        const response: StartPlaybackResponse = {
+          success: true,
+          speakerIp: result.speakerIp,
+          streamUrl: result.streamUrl,
+        };
+        sendResponse(response);
+      })
+      .catch((err) => {
+        const response: StartPlaybackResponse = {
+          success: false,
+          error: err instanceof Error ? err.message : String(err),
+        };
+        sendResponse(response);
+      });
     return true;
   }
 

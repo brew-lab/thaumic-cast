@@ -202,7 +202,7 @@ async fn handle_start_playback(
     state
         .services
         .stream_coordinator
-        .start_playback(&payload.ip, &payload.stream_id)
+        .start_playback(&payload.ip, &payload.stream_id, None)
         .await?;
 
     Ok(api_ok())

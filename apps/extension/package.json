@@ -16,7 +16,6 @@
     "lucide-preact": "^0.562.0",
     "preact": "^10.0.0",
     "react-i18next": "^16.5.0",
-    "wasm-media-encoders": "^0.7.0",
     "zod": "^4.2.1"
   },
   "devDependencies": {

@@ -10,7 +10,7 @@ interface AutoStopNotification {
   /** The speaker IP that changed */
   speakerIp: string;
   /** The reason for auto-stop */
-  reason: 'source_changed' | 'playback_stopped';
+  reason: 'source_changed' | 'playback_stopped' | 'stream_ended';
   /** Human-readable message */
   message: string;
 }

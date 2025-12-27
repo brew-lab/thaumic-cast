@@ -4,11 +4,13 @@
 //! and XML response parsing. For high-level Sonos commands, see `client.rs`.
 
 use std::collections::HashMap;
+use std::time::Duration;
 
 use reqwest::Client;
 use thiserror::Error;
 
-use super::utils::{build_sonos_url, extract_xml_text};
+use super::utils::{build_sonos_url, escape_xml, extract_xml_text};
+use crate::config::SOAP_TIMEOUT_SECS;
 use crate::error::SoapResult;
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -66,34 +68,42 @@ pub async fn send_soap_request(
 ) -> SoapResult<String> {
     let url = build_sonos_url(ip, endpoint);
 
+    // Build SOAP envelope - must be a single line with no leading whitespace
+    // Some SOAP parsers (including Sonos) reject XML with whitespace before the root element
     let mut body = format!(
-        r#"<?xml version="1.0" encoding="utf-8"?>
-        <s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/" s:encodingStyle="http://schemas.xmlsoap.org/soap/encoding/">
-            <s:Body>
-                <u:{} xmlns:u="{}">"#,
+        r#"<?xml version="1.0" encoding="utf-8"?><s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/" s:encodingStyle="http://schemas.xmlsoap.org/soap/encoding/"><s:Body><u:{} xmlns:u="{}">"#,
         action, service
     );
 
     for (k, v) in args {
-        // Escape XML entities in values to prevent malformed XML
-        let escaped_v = html_escape::encode_text(v);
-        body.push_str(&format!("<{k}>{escaped_v}</{k}>"));
+        // Escape all XML special characters (& < > " ')
+        body.push_str(&format!("<{k}>{}</{k}>", escape_xml(v)));
     }
 
-    body.push_str(&format!(
-        r#"</u:{}>
-            </s:Body>
-        </s:Envelope>"#,
-        action
-    ));
+    body.push_str(&format!(r#"</u:{}></s:Body></s:Envelope>"#, action));
 
+    log::info!("[SOAP] {} -> {} (body: {} bytes)", action, url, body.len());
+    log::debug!("[SOAP] Request body: {}", body);
+
+    let start = std::time::Instant::now();
     let res = client
         .post(&url)
         .header("Content-Type", "text/xml; charset=\"utf-8\"")
         .header("SOAPAction", format!("\"{}#{}\"", service, action))
         .body(body)
+        .timeout(Duration::from_secs(SOAP_TIMEOUT_SECS))
         .send()
-        .await?;
+        .await;
+
+    let elapsed = start.elapsed();
+    log::info!(
+        "[SOAP] {} completed in {:?}: {:?}",
+        action,
+        elapsed,
+        res.as_ref().map(|r| r.status())
+    );
+
+    let res = res?;
 
     let status = res.status();
     let response_text = res.text().await?;

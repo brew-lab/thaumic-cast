@@ -31,11 +31,13 @@ export function Sidebar() {
         {links.map(({ href, icon: Icon, label }) => {
           const isActive = location === href;
           return (
-            <Link key={href} href={href}>
-              <a className={clsx(styles.navLink, isActive && styles.navLinkActive)}>
-                <Icon size={20} />
-                {label}
-              </a>
+            <Link
+              key={href}
+              href={href}
+              className={clsx(styles.navLink, isActive && styles.navLinkActive)}
+            >
+              <Icon size={20} />
+              {label}
             </Link>
           );
         })}

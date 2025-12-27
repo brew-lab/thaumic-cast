@@ -1,73 +1,69 @@
 import type { EncoderConfig } from '@thaumic-cast/protocol';
-import { createEncoderConfig } from '@thaumic-cast/protocol';
+import { isCodecSupported, hasEncoderImplementation } from '@thaumic-cast/protocol';
 import { createLogger } from '@thaumic-cast/shared';
-import type { AudioEncoder, CodecSupportResult } from './types';
-import { AacEncoder, isAacSupported } from './aac-encoder';
-import { Mp3Encoder } from './mp3-encoder';
-import { WavEncoder } from './wav-encoder';
+import type { AudioEncoder } from './types';
+import { AacEncoder } from './aac-encoder';
+import { FlacEncoder } from './flac-encoder';
+import { VorbisEncoder } from './vorbis-encoder';
 
 const log = createLogger('EncoderFactory');
 
 /**
- * Determines codec support and appropriate fallback.
+ * Checks if the given encoder configuration is supported.
+ * Must be supported by WebCodecs AND have an encoder implementation.
  * @param config - The encoder configuration to check
- * @returns Support result with optional fallback codec
+ * @returns Promise resolving to true if fully supported
  */
-export async function checkCodecSupport(config: EncoderConfig): Promise<CodecSupportResult> {
-  const { codec } = config;
-
-  if (codec === 'wav') {
-    return { codec, supported: true };
+export async function checkCodecSupport(config: EncoderConfig): Promise<boolean> {
+  // Must have encoder implementation
+  if (!hasEncoderImplementation(config.codec)) {
+    return false;
   }
-
-  if (codec === 'mp3') {
-    return { codec, supported: true };
-  }
-
-  const supported = await isAacSupported(config);
-  if (supported) {
-    return { codec, supported: true };
-  }
-
-  log.warn(`${codec} not supported, will fall back to MP3`);
-  return { codec, supported: false, fallback: 'mp3' };
+  // Must be supported by WebCodecs
+  return isCodecSupported(config.codec, config.bitrate, config.sampleRate, config.channels);
 }
 
 /**
- * Creates the appropriate encoder for the given configuration.
- * Automatically falls back to MP3 if AAC is not supported.
+ * Creates an encoder for the given configuration.
  * @param config - The encoder configuration
  * @returns An initialized audio encoder
+ * @throws Error if the codec is not supported or not implemented
  */
 export async function createEncoder(config: EncoderConfig): Promise<AudioEncoder> {
-  const support = await checkCodecSupport(config);
-
-  if (!support.supported && support.fallback) {
-    log.info(`Using fallback codec: ${support.fallback}`);
-    const fallbackConfig = createEncoderConfig(support.fallback, config.bitrate);
-    return createEncoderForCodec(fallbackConfig);
+  // Check if we have an encoder implementation
+  if (!hasEncoderImplementation(config.codec)) {
+    log.error(`Codec ${config.codec} is not yet implemented`);
+    throw new Error(`Codec ${config.codec} encoder is not yet implemented.`);
   }
 
-  return createEncoderForCodec(config);
-}
+  // Check WebCodecs support
+  const supported = await isCodecSupported(
+    config.codec,
+    config.bitrate,
+    config.sampleRate,
+    config.channels,
+  );
 
-/**
- * Creates an encoder for the specified codec without fallback logic.
- * @param config - The encoder configuration
- * @returns An initialized audio encoder
- */
-async function createEncoderForCodec(config: EncoderConfig): Promise<AudioEncoder> {
+  if (!supported) {
+    log.error(`Codec ${config.codec} @ ${config.bitrate}kbps is not supported by this browser`);
+    throw new Error(
+      `Codec ${config.codec} @ ${config.bitrate}kbps is not supported by your browser.`,
+    );
+  }
+
+  log.info(`Creating encoder: ${config.codec} @ ${config.bitrate}kbps`);
+
+  // Route to appropriate encoder based on codec
   switch (config.codec) {
-    case 'he-aac':
     case 'aac-lc':
+    case 'he-aac':
+    case 'he-aac-v2':
       return new AacEncoder(config);
-    case 'mp3':
-      return Mp3Encoder.create(config);
-    case 'wav':
-      return new WavEncoder(config);
-    default: {
-      const exhaustiveCheck: never = config.codec;
-      throw new Error(`Unknown codec: ${exhaustiveCheck}`);
-    }
+    case 'flac':
+      return new FlacEncoder(config);
+    case 'vorbis':
+      return new VorbisEncoder(config);
+    default:
+      throw new Error(`No encoder implementation for ${config.codec}`);
   }
 }
