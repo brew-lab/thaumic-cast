@@ -72,6 +72,10 @@ enum WsIncoming {
 #[serde(rename_all = "camelCase")]
 struct StartPlaybackRequest {
     speaker_ip: String,
+    /// Optional initial metadata to display on Sonos.
+    /// If not provided, Sonos will show default "Browser Audio".
+    #[serde(default)]
+    metadata: Option<StreamMetadata>,
 }
 
 /// Request payload for volume control via WebSocket.
@@ -427,7 +431,11 @@ async fn handle_ws(socket: WebSocket, state: AppState) {
                                     match state
                                         .services
                                         .stream_coordinator
-                                        .start_playback(&speaker_ip, &stream_id)
+                                        .start_playback(
+                                            &speaker_ip,
+                                            &stream_id,
+                                            payload.metadata.as_ref(),
+                                        )
                                         .await
                                     {
                                         Ok(()) => {

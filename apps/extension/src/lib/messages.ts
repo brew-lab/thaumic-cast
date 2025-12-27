@@ -114,6 +114,8 @@ export interface StartPlaybackMessage {
   payload: {
     tabId: number;
     speakerIp: string;
+    /** Optional initial metadata to display on Sonos. */
+    metadata?: StreamMetadata;
   };
 }
 

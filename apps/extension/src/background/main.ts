@@ -517,11 +517,15 @@ async function handleStartCast(
     });
 
     if (response.success && response.streamId) {
+      // Get cached metadata to send with playback start (avoids "Browser Audio" default)
+      const cachedState = getCachedState(tab.id);
+      const initialMetadata = cachedState?.metadata ?? undefined;
+
       // 6. Start playback via WebSocket (waits for STREAM_READY internally)
-      // This replaces the old HTTP call and 150ms delay - now properly synchronized
+      // Include initial metadata so Sonos displays correct info immediately
       const playbackResponse: StartPlaybackResponse = await chrome.runtime.sendMessage({
         type: 'START_PLAYBACK',
-        payload: { tabId: tab.id, speakerIp },
+        payload: { tabId: tab.id, speakerIp, metadata: initialMetadata },
       });
 
       if (!playbackResponse.success) {
@@ -537,6 +541,7 @@ async function handleStartCast(
 
       // Register the session with the session manager
       registerSession(tab.id, response.streamId, speakerIp, speakerName, encoderConfig);
+
       safeSendResponse({ success: true });
     } else {
       // Offscreen capture failed - no cleanup needed

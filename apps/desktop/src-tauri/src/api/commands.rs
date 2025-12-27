@@ -79,7 +79,7 @@ pub async fn start_playback(
     state
         .services
         .stream_coordinator
-        .start_playback(&ip, &stream_id)
+        .start_playback(&ip, &stream_id, None)
         .await
         .map_err(Into::into)
 }

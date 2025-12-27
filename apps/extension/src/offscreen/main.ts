@@ -706,12 +706,14 @@ class StreamSession {
    * Must be called after the stream is ready (waitForReady resolved).
    *
    * @param speakerIp - IP address of the Sonos speaker
-   * @param timeoutMs
+   * @param metadata - Optional initial metadata to display on Sonos
+   * @param timeoutMs - Timeout in milliseconds
    * @returns Promise resolving with playback details
    * @throws Error if playback fails or times out
    */
   public async startPlayback(
     speakerIp: string,
+    metadata?: StreamMetadata,
     timeoutMs = 15000,
   ): Promise<{ speakerIp: string; streamUrl: string }> {
     if (!this.socket || this.socket.readyState !== WebSocket.OPEN) {
@@ -729,11 +731,11 @@ class StreamSession {
       },
     );
 
-    // Send START_PLAYBACK command
+    // Send START_PLAYBACK command with optional metadata
     this.socket.send(
       JSON.stringify({
         type: 'START_PLAYBACK',
-        payload: { speakerIp },
+        payload: { speakerIp, metadata },
       }),
     );
 
@@ -890,7 +892,7 @@ chrome.runtime.onMessage.addListener((msg: ExtensionMessage, _sender, sendRespon
   }
 
   if (msg.type === 'START_PLAYBACK') {
-    const { tabId, speakerIp } = (msg as StartPlaybackMessage).payload;
+    const { tabId, speakerIp, metadata } = (msg as StartPlaybackMessage).payload;
     const session = activeSessions.get(tabId);
 
     if (!session) {
@@ -902,10 +904,10 @@ chrome.runtime.onMessage.addListener((msg: ExtensionMessage, _sender, sendRespon
       return true;
     }
 
-    // Wait for stream to be ready, then start playback
+    // Wait for stream to be ready, then start playback with initial metadata
     session
       .waitForReady()
-      .then(() => session.startPlayback(speakerIp))
+      .then(() => session.startPlayback(speakerIp, metadata))
       .then((result) => {
         const response: StartPlaybackResponse = {
           success: true,
