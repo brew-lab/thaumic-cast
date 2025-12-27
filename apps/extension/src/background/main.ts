@@ -539,6 +539,11 @@ async function handleStartCast(
       const sonosState = getStoredSonosState();
       const speakerName = sonosState.groups.find((g) => g.coordinatorIp === speakerIp)?.name;
 
+      // Ensure cache has tab info for ActiveCast display (even without MediaSession metadata)
+      if (!getCachedState(tab.id)) {
+        updateCache(tab.id, { title: tab.title, favIconUrl: tab.favIconUrl }, null);
+      }
+
       // Register the session with the session manager
       registerSession(tab.id, response.streamId, speakerIp, speakerName, encoderConfig);
 

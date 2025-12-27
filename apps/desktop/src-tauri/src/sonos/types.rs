@@ -14,8 +14,8 @@ use thiserror::Error;
 /// Playback transport state of a Sonos speaker.
 ///
 /// Represents the current playback state as reported by the AVTransport service.
+/// Serializes to match TypeScript TransportState enum: "Playing", "PAUSED_PLAYBACK", "Stopped", "Transitioning"
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum TransportState {
     Playing,
     #[serde(rename = "PAUSED_PLAYBACK")]
