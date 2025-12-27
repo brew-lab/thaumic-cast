@@ -12,6 +12,8 @@ interface DeviceCardProps {
   memberCount: number;
   /** Current transport state (Playing, Stopped, etc.) */
   transportState?: string;
+  /** Whether this speaker is casting one of our streams */
+  isCasting?: boolean;
 }
 
 /**
@@ -23,6 +25,7 @@ interface DeviceCardProps {
  * @param props.isCoordinator - Whether this speaker is a group coordinator
  * @param props.memberCount - Number of members in the group
  * @param props.transportState - Current transport state
+ * @param props.isCasting - Whether this speaker is casting one of our streams
  * @returns The rendered DeviceCard component
  */
 export function DeviceCard({
@@ -30,8 +33,15 @@ export function DeviceCard({
   isCoordinator,
   memberCount,
   transportState,
+  isCasting,
 }: DeviceCardProps) {
   const { t } = useTranslation();
+
+  // Determine the display state: "Streaming" if casting, otherwise transport state
+  const isPlaying = transportState === 'Playing';
+  const displayState = isCasting && isPlaying ? t('device.streaming') : transportState;
+  const statusClass =
+    isCasting && isPlaying ? styles.statusCasting : isPlaying ? styles.statusPlaying : '';
 
   return (
     <div className={styles.deviceCard}>
@@ -46,11 +56,11 @@ export function DeviceCard({
             {memberCount > 1 && ` • ${t('device.others', { count: memberCount - 1 })}`}
           </p>
         </div>
-        {transportState && (
-          <span
-            className={`${styles.status} ${transportState === 'Playing' ? styles.statusPlaying : ''}`}
-          >
-            {t(`transport.${transportState.toLowerCase()}`, transportState)}
+        {displayState && (
+          <span className={`${styles.status} ${statusClass}`}>
+            {isCasting && isPlaying
+              ? displayState
+              : t(`transport.${transportState?.toLowerCase()}`, { defaultValue: transportState })}
           </span>
         )}
       </div>

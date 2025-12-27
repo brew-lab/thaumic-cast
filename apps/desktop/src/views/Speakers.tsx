@@ -2,6 +2,7 @@ import { useEffect } from 'preact/hooks';
 import {
   groups,
   transportStates,
+  castingSpeakers,
   fetchGroups,
   refreshTopology,
   stopAll,
@@ -98,6 +99,7 @@ export function Speakers() {
               isCoordinator={true}
               memberCount={group.members.length}
               transportState={transportStates.value[group.coordinatorIp]}
+              isCasting={castingSpeakers.value.has(group.coordinatorIp)}
             />
           ))}
         </div>

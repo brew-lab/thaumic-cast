@@ -107,6 +107,16 @@ pub fn get_transport_states(
         .collect()
 }
 
+/// Returns all active playback sessions.
+///
+/// A playback session indicates a speaker that is currently casting one of our streams.
+#[tauri::command]
+pub fn get_playback_sessions(
+    state: tauri::State<'_, AppState>,
+) -> Vec<crate::services::stream_coordinator::PlaybackSession> {
+    state.services.stream_coordinator.get_all_sessions()
+}
+
 /// Clears all active streams and stops all playback.
 ///
 /// Returns the number of streams that were cleared.

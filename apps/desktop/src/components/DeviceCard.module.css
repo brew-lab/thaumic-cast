@@ -59,3 +59,8 @@
   background-color: oklch(45% 0.15 145 / 20%);
   color: oklch(70% 0.15 145);
 }
+
+.statusCasting {
+  background-color: oklch(50% 0.15 260 / 20%);
+  color: oklch(75% 0.15 260);
+}
