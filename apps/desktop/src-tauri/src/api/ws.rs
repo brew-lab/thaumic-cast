@@ -258,7 +258,7 @@ fn handle_handshake(state: &AppState, payload: HandshakeRequest) -> HandshakeRes
         .or(payload.codec.as_deref());
 
     let codec = match codec_str {
-        Some("aac") | Some("aac-lc") | Some("he-aac") => AudioCodec::Aac,
+        Some("aac") | Some("aac-lc") | Some("he-aac") | Some("he-aac-v2") => AudioCodec::Aac,
         Some("mp3") => AudioCodec::Mp3,
         Some("flac") => AudioCodec::Flac,
         Some("wav") => AudioCodec::Wav,

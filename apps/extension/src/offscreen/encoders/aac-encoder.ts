@@ -65,7 +65,9 @@ export class AacEncoder implements AudioEncoder {
       throw new Error(`Codec ${config.codec} does not support WebCodecs`);
     }
 
-    this.profile = config.codec === 'he-aac' ? ADTS.PROFILE_HE_AAC : ADTS.PROFILE_AAC_LC;
+    // HE-AAC and HE-AAC v2 both use the same ADTS profile (SBR signaling).
+    // For HE-AAC v2, Parametric Stereo (PS) is detected in-band by the decoder.
+    this.profile = config.codec.startsWith('he-aac') ? ADTS.PROFILE_HE_AAC : ADTS.PROFILE_AAC_LC;
     this.sampleRateIndex = SAMPLE_RATE_INDEX[config.sampleRate] ?? 3;
 
     this.encoder = new AudioEncoder({
