@@ -44,8 +44,16 @@ const SAMPLE_RATE_INDEX: Record<number, number> = {
 };
 
 /**
+ * Default capacity for pre-allocated buffers.
+ * Sized for 10ms of stereo audio at 48kHz (480 frames).
+ */
+const DEFAULT_BUFFER_CAPACITY = 480;
+
+/**
  * AAC encoder using WebCodecs AudioEncoder API.
  * Outputs ADTS-wrapped frames suitable for streaming.
+ *
+ * Uses pre-allocated buffers to minimize GC pressure during encoding.
  */
 export class AacEncoder implements AudioEncoder {
   private encoder: globalThis.AudioEncoder;
@@ -54,6 +62,13 @@ export class AacEncoder implements AudioEncoder {
   private isClosed = false;
   private readonly profile: number;
   private readonly sampleRateIndex: number;
+
+  /** Pre-allocated left channel buffer (Float32) */
+  private leftBuffer: Float32Array;
+  /** Pre-allocated right channel buffer (Float32) */
+  private rightBuffer: Float32Array;
+  /** Pre-allocated planar interleaved buffer (left + right) */
+  private planarBuffer: Float32Array;
 
   /**
    * Creates a new AAC encoder instance.
@@ -84,7 +99,54 @@ export class AacEncoder implements AudioEncoder {
     };
 
     this.encoder.configure(encoderConfig);
+
+    // Pre-allocate conversion buffers to minimize GC during encoding
+    this.leftBuffer = new Float32Array(DEFAULT_BUFFER_CAPACITY);
+    this.rightBuffer = new Float32Array(DEFAULT_BUFFER_CAPACITY);
+    this.planarBuffer = new Float32Array(DEFAULT_BUFFER_CAPACITY * 2);
+
     log.info(`Configured ${config.codec} @ ${config.bitrate}kbps`);
+  }
+
+  /**
+   * Ensures conversion buffers are large enough for the given frame count.
+   * @param frameCount - Number of audio frames to process
+   */
+  private ensureConversionBufferCapacity(frameCount: number): void {
+    if (this.leftBuffer.length < frameCount) {
+      this.leftBuffer = new Float32Array(frameCount);
+      this.rightBuffer = new Float32Array(frameCount);
+      this.planarBuffer = new Float32Array(frameCount * 2);
+    }
+  }
+
+  /**
+   * Consolidates output queue into a single buffer.
+   * @returns Consolidated output or null if queue is empty
+   */
+  private consolidateOutput(): Uint8Array | null {
+    if (this.outputQueue.length === 0) {
+      return null;
+    }
+
+    // Fast path: single item, no consolidation needed
+    if (this.outputQueue.length === 1) {
+      const result = this.outputQueue[0]!;
+      this.outputQueue = [];
+      return result;
+    }
+
+    const totalLength = this.outputQueue.reduce((acc, buf) => acc + buf.byteLength, 0);
+    const result = new Uint8Array(totalLength);
+
+    let offset = 0;
+    for (const buf of this.outputQueue) {
+      result.set(buf, offset);
+      offset += buf.byteLength;
+    }
+    this.outputQueue = [];
+
+    return result;
   }
 
   /**
@@ -139,6 +201,7 @@ export class AacEncoder implements AudioEncoder {
 
   /**
    * Encodes PCM samples to AAC.
+   * Uses pre-allocated buffers to minimize GC pressure.
    * @param samples - Interleaved stereo Int16 samples
    * @returns Encoded AAC data or null if unavailable
    */
@@ -146,17 +209,23 @@ export class AacEncoder implements AudioEncoder {
     if (this.isClosed) return null;
 
     const frameCount = samples.length / 2;
-    const left = new Float32Array(frameCount);
-    const right = new Float32Array(frameCount);
 
+    // Ensure buffers are large enough (rare reallocation for larger frames)
+    this.ensureConversionBufferCapacity(frameCount);
+
+    // Deinterleave and convert Int16 to Float32 using pre-allocated buffers
     for (let i = 0; i < frameCount; i++) {
-      left[i] = samples[i * 2]! / 0x7fff;
-      right[i] = samples[i * 2 + 1]! / 0x7fff;
+      this.leftBuffer[i] = samples[i * 2]! / 0x7fff;
+      this.rightBuffer[i] = samples[i * 2 + 1]! / 0x7fff;
     }
 
-    const planar = new Float32Array(left.length + right.length);
-    planar.set(left);
-    planar.set(right, left.length);
+    // Build planar buffer (left channel followed by right channel)
+    this.planarBuffer.set(this.leftBuffer.subarray(0, frameCount));
+    this.planarBuffer.set(this.rightBuffer.subarray(0, frameCount), frameCount);
+
+    // AudioData requires the buffer to match the exact frame count
+    // Use slice to create a view of the valid portion
+    const planarData = this.planarBuffer.subarray(0, frameCount * 2);
 
     const data = new AudioData({
       format: 'f32-planar',
@@ -164,26 +233,17 @@ export class AacEncoder implements AudioEncoder {
       numberOfFrames: frameCount,
       numberOfChannels: this.config.channels,
       timestamp: this.timestamp,
-      data: planar.buffer as ArrayBuffer,
+      data: (planarData.buffer as ArrayBuffer).slice(
+        planarData.byteOffset,
+        planarData.byteOffset + planarData.byteLength,
+      ),
     });
 
     this.encoder.encode(data);
     data.close();
     this.timestamp += (frameCount / this.config.sampleRate) * 1_000_000;
 
-    if (this.outputQueue.length === 0) {
-      return null;
-    }
-
-    const totalLength = this.outputQueue.reduce((acc, buf) => acc + buf.byteLength, 0);
-    const result = new Uint8Array(totalLength);
-    let offset = 0;
-    for (const buf of this.outputQueue) {
-      result.set(buf, offset);
-      offset += buf.byteLength;
-    }
-    this.outputQueue = [];
-    return result;
+    return this.consolidateOutput();
   }
 
   /**
@@ -205,19 +265,7 @@ export class AacEncoder implements AudioEncoder {
       // Encoder may already be in error state
     }
 
-    if (this.outputQueue.length === 0) {
-      return null;
-    }
-
-    const totalLength = this.outputQueue.reduce((acc, buf) => acc + buf.byteLength, 0);
-    const result = new Uint8Array(totalLength);
-    let offset = 0;
-    for (const buf of this.outputQueue) {
-      result.set(buf, offset);
-      offset += buf.byteLength;
-    }
-    this.outputQueue = [];
-    return result;
+    return this.consolidateOutput();
   }
 
   /**
