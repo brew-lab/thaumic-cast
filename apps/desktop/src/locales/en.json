@@ -1,6 +1,5 @@
 {
   "app.title": "Thaumic Cast",
-  "app.version": "v0.1.0-alpha",
 
   "nav.speakers": "Speakers",
   "nav.server": "Server",

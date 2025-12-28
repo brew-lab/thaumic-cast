@@ -1,6 +1,9 @@
 import { Link, useLocation } from 'wouter-preact';
 import { Speaker, Server, Settings, Radio } from 'lucide-preact';
 import { useTranslation } from 'react-i18next';
+import { useSignal } from '@preact/signals';
+import { getVersion } from '@tauri-apps/api/app';
+import { useEffect } from 'preact/hooks';
 import styles from './Sidebar.module.css';
 import { clsx } from 'clsx';
 
@@ -13,6 +16,13 @@ import { clsx } from 'clsx';
 export function Sidebar() {
   const [location] = useLocation();
   const { t } = useTranslation();
+  const version = useSignal('');
+
+  useEffect(() => {
+    getVersion().then((v) => {
+      version.value = `v${v}`;
+    });
+  }, []);
 
   const links = [
     { href: '/', icon: Speaker, label: t('nav.speakers') },
@@ -43,7 +53,7 @@ export function Sidebar() {
         })}
       </nav>
 
-      <div className={styles.version}>{t('app.version')}</div>
+      <div className={styles.version}>{version}</div>
     </aside>
   );
 }
