@@ -54,7 +54,7 @@ export class FlacEncoder implements AudioEncoder {
       sampleRate: config.sampleRate,
       numberOfChannels: config.channels,
       // FLAC is lossless - bitrate doesn't apply
-      latencyMode: 'realtime',
+      latencyMode: 'quality',
     };
 
     this.encoder.configure(encoderConfig);

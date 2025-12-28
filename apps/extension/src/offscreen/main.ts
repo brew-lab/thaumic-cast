@@ -299,7 +299,11 @@ class StreamSession {
     private encoderConfig: EncoderConfig,
     private baseUrl: string,
   ) {
-    this.audioContext = new AudioContext({ sampleRate: encoderConfig.sampleRate });
+    this.audioContext = new AudioContext({
+      sampleRate: encoderConfig.sampleRate,
+      // 'playback' allows larger buffers and fewer CPU wake-ups - ideal for streaming
+      latencyHint: 'playback',
+    });
 
     const sab = createAudioRingBuffer();
     this.sharedBuffer = new Int16Array(sab, HEADER_SIZE * 4);
@@ -479,7 +483,12 @@ class StreamSession {
     this.sourceNode = this.audioContext.createMediaStreamSource(this.mediaStream);
     this.workletNode = new AudioWorkletNode(this.audioContext, 'pcm-processor');
 
-    this.workletNode.port.postMessage({ type: 'INIT_BUFFER', buffer: this.control.buffer });
+    this.workletNode.port.postMessage({
+      type: 'INIT_BUFFER',
+      buffer: this.control.buffer,
+      bufferSize: RING_BUFFER_SIZE,
+      headerSize: HEADER_SIZE,
+    });
     this.sourceNode.connect(this.workletNode);
 
     // Connect to destination through a silent gain node to ensure audio processing.

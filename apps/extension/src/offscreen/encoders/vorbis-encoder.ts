@@ -97,7 +97,7 @@ export class VorbisEncoder implements AudioEncoder {
       sampleRate: config.sampleRate,
       numberOfChannels: config.channels,
       bitrate: config.bitrate * 1000,
-      latencyMode: 'realtime',
+      latencyMode: 'quality',
     };
 
     this.encoder.configure(encoderConfig);

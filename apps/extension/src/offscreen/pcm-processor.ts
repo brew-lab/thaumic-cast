@@ -3,9 +3,6 @@
  * Uses Atomics for thread-safe access to control indices.
  */
 
-const RING_BUFFER_SIZE = 48000 * 2;
-const HEADER_SIZE = 4;
-
 /**
  * Base class for audio worklet processors.
  */
@@ -39,6 +36,7 @@ declare function registerProcessor(name: string, processorCtor: typeof AudioWork
 class PCMProcessor extends AudioWorkletProcessor {
   private sharedBuffer: Int16Array | null = null;
   private control: Int32Array | null = null;
+  private bufferSize = 0;
 
   /**
    * Creates a new PCM processor instance.
@@ -47,9 +45,10 @@ class PCMProcessor extends AudioWorkletProcessor {
     super();
     this.port.onmessage = (event) => {
       if (event.data.type === 'INIT_BUFFER') {
-        const sab = event.data.buffer;
-        this.sharedBuffer = new Int16Array(sab, HEADER_SIZE * 4);
-        this.control = new Int32Array(sab, 0, HEADER_SIZE);
+        const { buffer: sab, bufferSize, headerSize } = event.data;
+        this.sharedBuffer = new Int16Array(sab, headerSize * 4);
+        this.control = new Int32Array(sab, 0, headerSize);
+        this.bufferSize = bufferSize;
       }
     };
   }
@@ -60,7 +59,7 @@ class PCMProcessor extends AudioWorkletProcessor {
    * @returns Always true to keep the processor alive
    */
   process(inputs: Float32Array[][]): boolean {
-    if (!this.sharedBuffer || !this.control) return true;
+    if (!this.sharedBuffer || !this.control || !this.bufferSize) return true;
 
     const input = inputs[0];
     if (!input || input.length === 0) return true;
@@ -79,7 +78,7 @@ class PCMProcessor extends AudioWorkletProcessor {
       const rSample = Math.max(-1, Math.min(1, right[i]!)) * 0x7fff;
 
       // Check for overflow before writing
-      const nextIdx = (writeIdx + 2) % RING_BUFFER_SIZE;
+      const nextIdx = (writeIdx + 2) % this.bufferSize;
       if (nextIdx === readIdx) {
         Atomics.store(this.control, 2, 1); // Set overflow flag
         break;

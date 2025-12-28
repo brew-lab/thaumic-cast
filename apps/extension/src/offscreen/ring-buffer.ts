@@ -7,7 +7,7 @@
  * [2] - Buffer Status (0: OK, 1: Overflow)
  * [3..N] - Interleaved PCM Int16 samples
  */
-export const RING_BUFFER_SIZE = 48000 * 2; // 1 second of stereo 48k audio
+export const RING_BUFFER_SIZE = 48000 * 2 * 2; // 2 seconds of stereo 48k audio
 export const HEADER_SIZE = 4; // Control integers at the start
 
 /**
