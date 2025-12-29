@@ -13,8 +13,16 @@ interface ChromeAudioEncoderConfig extends AudioEncoderConfig {
 }
 
 /**
+ * Default capacity for pre-allocated buffers.
+ * Sized for 10ms of stereo audio at 48kHz (480 frames * 2 channels).
+ */
+const DEFAULT_BUFFER_CAPACITY = 960;
+
+/**
  * FLAC encoder using WebCodecs AudioEncoder API.
  * Outputs FLAC stream with proper header for HTTP streaming.
+ *
+ * Uses pre-allocated buffers to minimize GC pressure during encoding.
  */
 export class FlacEncoder implements AudioEncoder {
   private encoder: globalThis.AudioEncoder;
@@ -22,6 +30,9 @@ export class FlacEncoder implements AudioEncoder {
   private timestamp = 0;
   private isClosed = false;
   private headerSent = false;
+
+  /** Pre-allocated planar conversion buffer */
+  private planarBuffer: Float32Array;
 
   /**
    * Creates a new FLAC encoder instance.
@@ -43,11 +54,54 @@ export class FlacEncoder implements AudioEncoder {
       sampleRate: config.sampleRate,
       numberOfChannels: config.channels,
       // FLAC is lossless - bitrate doesn't apply
-      latencyMode: 'realtime',
+      latencyMode: 'quality',
     };
 
     this.encoder.configure(encoderConfig);
+
+    // Pre-allocate conversion buffer to minimize GC during encoding
+    this.planarBuffer = new Float32Array(DEFAULT_BUFFER_CAPACITY);
+
     log.info(`Configured FLAC @ ${config.sampleRate}Hz, ${config.channels}ch`);
+  }
+
+  /**
+   * Ensures planar buffer is large enough for the given sample count.
+   * @param sampleCount - Total number of samples (frames * channels)
+   */
+  private ensureBufferCapacity(sampleCount: number): void {
+    if (this.planarBuffer.length < sampleCount) {
+      this.planarBuffer = new Float32Array(sampleCount);
+    }
+  }
+
+  /**
+   * Consolidates output queue into a single buffer.
+   * @returns Consolidated output or null if queue is empty
+   */
+  private consolidateOutput(): Uint8Array | null {
+    if (this.outputQueue.length === 0) {
+      return null;
+    }
+
+    // Fast path: single item, no consolidation needed
+    if (this.outputQueue.length === 1) {
+      const result = this.outputQueue[0]!;
+      this.outputQueue = [];
+      return result;
+    }
+
+    const totalLength = this.outputQueue.reduce((acc, buf) => acc + buf.byteLength, 0);
+    const result = new Uint8Array(totalLength);
+
+    let offset = 0;
+    for (const buf of this.outputQueue) {
+      result.set(buf, offset);
+      offset += buf.byteLength;
+    }
+    this.outputQueue = [];
+
+    return result;
   }
 
   /**
@@ -74,6 +128,7 @@ export class FlacEncoder implements AudioEncoder {
 
   /**
    * Encodes PCM samples to FLAC.
+   * Uses pre-allocated buffers to minimize GC pressure.
    * @param samples - Interleaved stereo Int16 samples
    * @returns Encoded FLAC data or null if unavailable
    */
@@ -81,14 +136,20 @@ export class FlacEncoder implements AudioEncoder {
     if (this.isClosed) return null;
 
     const frameCount = samples.length / this.config.channels;
-    const planar = new Float32Array(samples.length);
+    const sampleCount = samples.length;
 
-    // Convert interleaved Int16 to planar Float32
+    // Ensure buffer is large enough (rare reallocation for larger frames)
+    this.ensureBufferCapacity(sampleCount);
+
+    // Convert interleaved Int16 to planar Float32 using pre-allocated buffer
     for (let ch = 0; ch < this.config.channels; ch++) {
       for (let i = 0; i < frameCount; i++) {
-        planar[ch * frameCount + i] = samples[i * this.config.channels + ch]! / 0x7fff;
+        this.planarBuffer[ch * frameCount + i] = samples[i * this.config.channels + ch]! / 0x7fff;
       }
     }
+
+    // AudioData requires the buffer to match the exact sample count
+    const planarData = this.planarBuffer.subarray(0, sampleCount);
 
     const data = new AudioData({
       format: 'f32-planar',
@@ -96,26 +157,17 @@ export class FlacEncoder implements AudioEncoder {
       numberOfFrames: frameCount,
       numberOfChannels: this.config.channels,
       timestamp: this.timestamp,
-      data: planar.buffer as ArrayBuffer,
+      data: (planarData.buffer as ArrayBuffer).slice(
+        planarData.byteOffset,
+        planarData.byteOffset + planarData.byteLength,
+      ),
     });
 
     this.encoder.encode(data);
     data.close();
     this.timestamp += (frameCount / this.config.sampleRate) * 1_000_000;
 
-    if (this.outputQueue.length === 0) {
-      return null;
-    }
-
-    const totalLength = this.outputQueue.reduce((acc, buf) => acc + buf.byteLength, 0);
-    const result = new Uint8Array(totalLength);
-    let offset = 0;
-    for (const buf of this.outputQueue) {
-      result.set(buf, offset);
-      offset += buf.byteLength;
-    }
-    this.outputQueue = [];
-    return result;
+    return this.consolidateOutput();
   }
 
   /**
@@ -133,19 +185,7 @@ export class FlacEncoder implements AudioEncoder {
       // Encoder may already be in error state
     }
 
-    if (this.outputQueue.length === 0) {
-      return null;
-    }
-
-    const totalLength = this.outputQueue.reduce((acc, buf) => acc + buf.byteLength, 0);
-    const result = new Uint8Array(totalLength);
-    let offset = 0;
-    for (const buf of this.outputQueue) {
-      result.set(buf, offset);
-      offset += buf.byteLength;
-    }
-    this.outputQueue = [];
-    return result;
+    return this.consolidateOutput();
   }
 
   /**

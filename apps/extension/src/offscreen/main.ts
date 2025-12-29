@@ -262,6 +262,8 @@ class StreamSession {
   private reconnectTimeout: ReturnType<typeof setTimeout> | null = null;
   private sharedBuffer: Int16Array;
   private control: Int32Array;
+  /** Pre-allocated buffer for reading from ring buffer (avoids per-poll allocations). */
+  private readBuffer: Int16Array;
   private isStopping = false;
   private reconnectAttempts = 0;
   private maxReconnectAttempts = 5;
@@ -299,11 +301,16 @@ class StreamSession {
     private encoderConfig: EncoderConfig,
     private baseUrl: string,
   ) {
-    this.audioContext = new AudioContext({ sampleRate: encoderConfig.sampleRate });
+    this.audioContext = new AudioContext({
+      sampleRate: encoderConfig.sampleRate,
+      // 'playback' allows larger buffers and fewer CPU wake-ups - ideal for streaming
+      latencyHint: 'playback',
+    });
 
     const sab = createAudioRingBuffer();
     this.sharedBuffer = new Int16Array(sab, HEADER_SIZE * 4);
     this.control = new Int32Array(sab, 0, HEADER_SIZE);
+    this.readBuffer = new Int16Array(RING_BUFFER_SIZE);
 
     // Create a promise that resolves when STREAM_READY is received
     this.streamReadyPromise = new Promise<void>((resolve) => {
@@ -479,7 +486,12 @@ class StreamSession {
     this.sourceNode = this.audioContext.createMediaStreamSource(this.mediaStream);
     this.workletNode = new AudioWorkletNode(this.audioContext, 'pcm-processor');
 
-    this.workletNode.port.postMessage({ type: 'INIT_BUFFER', buffer: this.control.buffer });
+    this.workletNode.port.postMessage({
+      type: 'INIT_BUFFER',
+      buffer: this.control.buffer,
+      bufferSize: RING_BUFFER_SIZE,
+      headerSize: HEADER_SIZE,
+    });
     this.sourceNode.connect(this.workletNode);
 
     // Connect to destination through a silent gain node to ensure audio processing.
@@ -550,18 +562,22 @@ class StreamSession {
 
         if (samplesToRead > 0) {
           totalSamplesRead += samplesToRead;
-          const data = new Int16Array(samplesToRead);
 
+          // Copy to pre-allocated buffer (avoids per-poll allocations)
           if (readIdx + samplesToRead <= RING_BUFFER_SIZE) {
-            data.set(this.sharedBuffer.subarray(readIdx, readIdx + samplesToRead));
+            this.readBuffer.set(this.sharedBuffer.subarray(readIdx, readIdx + samplesToRead));
           } else {
             const firstPart = RING_BUFFER_SIZE - readIdx;
-            data.set(this.sharedBuffer.subarray(readIdx, RING_BUFFER_SIZE));
-            data.set(this.sharedBuffer.subarray(0, samplesToRead - firstPart), firstPart);
+            this.readBuffer.set(this.sharedBuffer.subarray(readIdx, RING_BUFFER_SIZE));
+            this.readBuffer.set(
+              this.sharedBuffer.subarray(0, samplesToRead - firstPart),
+              firstPart,
+            );
           }
 
           if (this.encoder && this.socket?.readyState === WebSocket.OPEN) {
-            const encoded = this.encoder.encode(data);
+            // Use subarray view to pass only the valid portion (zero allocation)
+            const encoded = this.encoder.encode(this.readBuffer.subarray(0, samplesToRead));
             if (encoded && this.socket.bufferedAmount < 1024 * 1024) {
               this.socket.send(encoded);
             }

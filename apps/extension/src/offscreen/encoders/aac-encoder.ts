@@ -46,6 +46,8 @@ const SAMPLE_RATE_INDEX: Record<number, number> = {
 /**
  * AAC encoder using WebCodecs AudioEncoder API.
  * Outputs ADTS-wrapped frames suitable for streaming.
+ *
+ * Uses buffer transfer to avoid copies when creating AudioData.
  */
 export class AacEncoder implements AudioEncoder {
   private encoder: globalThis.AudioEncoder;
@@ -80,11 +82,41 @@ export class AacEncoder implements AudioEncoder {
       sampleRate: config.sampleRate,
       numberOfChannels: config.channels,
       bitrate: config.bitrate * 1000,
-      latencyMode: 'realtime',
+      latencyMode: 'quality',
     };
 
     this.encoder.configure(encoderConfig);
+
     log.info(`Configured ${config.codec} @ ${config.bitrate}kbps`);
+  }
+
+  /**
+   * Consolidates output queue into a single buffer.
+   * @returns Consolidated output or null if queue is empty
+   */
+  private consolidateOutput(): Uint8Array | null {
+    if (this.outputQueue.length === 0) {
+      return null;
+    }
+
+    // Fast path: single item, no consolidation needed
+    if (this.outputQueue.length === 1) {
+      const result = this.outputQueue[0]!;
+      this.outputQueue = [];
+      return result;
+    }
+
+    const totalLength = this.outputQueue.reduce((acc, buf) => acc + buf.byteLength, 0);
+    const result = new Uint8Array(totalLength);
+
+    let offset = 0;
+    for (const buf of this.outputQueue) {
+      result.set(buf, offset);
+      offset += buf.byteLength;
+    }
+    this.outputQueue = [];
+
+    return result;
   }
 
   /**
@@ -139,6 +171,7 @@ export class AacEncoder implements AudioEncoder {
 
   /**
    * Encodes PCM samples to AAC.
+   * Allocates exact-sized buffer and transfers ownership to avoid copies.
    * @param samples - Interleaved stereo Int16 samples
    * @returns Encoded AAC data or null if unavailable
    */
@@ -146,17 +179,17 @@ export class AacEncoder implements AudioEncoder {
     if (this.isClosed) return null;
 
     const frameCount = samples.length / 2;
-    const left = new Float32Array(frameCount);
-    const right = new Float32Array(frameCount);
 
+    // Allocate exact-sized buffer for planar audio data
+    const buffer = new ArrayBuffer(frameCount * 2 * Float32Array.BYTES_PER_ELEMENT);
+    const planarData = new Float32Array(buffer);
+
+    // Deinterleave and convert Int16 to Float32 directly into final buffer
+    // Planar format: all left samples followed by all right samples
     for (let i = 0; i < frameCount; i++) {
-      left[i] = samples[i * 2]! / 0x7fff;
-      right[i] = samples[i * 2 + 1]! / 0x7fff;
+      planarData[i] = samples[i * 2]! / 0x7fff;
+      planarData[frameCount + i] = samples[i * 2 + 1]! / 0x7fff;
     }
-
-    const planar = new Float32Array(left.length + right.length);
-    planar.set(left);
-    planar.set(right, left.length);
 
     const data = new AudioData({
       format: 'f32-planar',
@@ -164,26 +197,15 @@ export class AacEncoder implements AudioEncoder {
       numberOfFrames: frameCount,
       numberOfChannels: this.config.channels,
       timestamp: this.timestamp,
-      data: planar.buffer as ArrayBuffer,
+      data: buffer,
+      transfer: [buffer],
     });
 
     this.encoder.encode(data);
     data.close();
     this.timestamp += (frameCount / this.config.sampleRate) * 1_000_000;
 
-    if (this.outputQueue.length === 0) {
-      return null;
-    }
-
-    const totalLength = this.outputQueue.reduce((acc, buf) => acc + buf.byteLength, 0);
-    const result = new Uint8Array(totalLength);
-    let offset = 0;
-    for (const buf of this.outputQueue) {
-      result.set(buf, offset);
-      offset += buf.byteLength;
-    }
-    this.outputQueue = [];
-    return result;
+    return this.consolidateOutput();
   }
 
   /**
@@ -205,19 +227,7 @@ export class AacEncoder implements AudioEncoder {
       // Encoder may already be in error state
     }
 
-    if (this.outputQueue.length === 0) {
-      return null;
-    }
-
-    const totalLength = this.outputQueue.reduce((acc, buf) => acc + buf.byteLength, 0);
-    const result = new Uint8Array(totalLength);
-    let offset = 0;
-    for (const buf of this.outputQueue) {
-      result.set(buf, offset);
-      offset += buf.byteLength;
-    }
-    this.outputQueue = [];
-    return result;
+    return this.consolidateOutput();
   }
 
   /**
