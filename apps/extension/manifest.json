@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Thaumic Cast",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "permissions": ["tabCapture", "offscreen", "storage", "tabs"],
   "host_permissions": ["http://localhost/*"],
   "background": {
