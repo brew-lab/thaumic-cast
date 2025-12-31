@@ -13,13 +13,10 @@ import {
 } from '../lib/messages';
 import {
   EncoderConfig,
-  WsMessageSchema,
   StreamMetadata,
   SonosStateSnapshot,
   WsControlCommand,
-  WsMessage,
 } from '@thaumic-cast/protocol';
-import { createEncoder, type AudioEncoder } from './encoders';
 
 const log = createLogger('Offscreen');
 
@@ -241,33 +238,23 @@ interface ChromeTabCaptureConstraints {
 }
 
 /**
- * Connection states for the WebSocket.
- */
-enum ConnectionState {
-  IDLE = 'IDLE',
-  CONNECTING = 'CONNECTING',
-  CONNECTED = 'CONNECTED',
-  DISCONNECTED = 'DISCONNECTED',
-}
-
-/**
- * Manages an active capture session from a browser tab using zero-copy shared memory.
+ * Manages an active capture session from a browser tab.
+ *
+ * The real-time audio path runs entirely in a Worker:
+ *   AudioWorklet → SharedArrayBuffer → Worker (drain + encode + WebSocket send)
+ *
+ * Main thread only handles:
+ *   - Audio pipeline setup (AudioContext, Worklet)
+ *   - Worker lifecycle management
+ *   - Receiving status updates from Worker
  */
 class StreamSession {
   private audioContext: AudioContext;
-  private socket: WebSocket | null = null;
-  private encoder: AudioEncoder | null = null;
-  private heartbeatInterval: ReturnType<typeof setInterval> | null = null;
   private consumerWorker: Worker | null = null;
-  private reconnectTimeout: ReturnType<typeof setTimeout> | null = null;
   private ringBuffer: SharedArrayBuffer;
-  private isStopping = false;
-  private reconnectAttempts = 0;
-  private maxReconnectAttempts = 5;
   private sourceNode: MediaStreamAudioSourceNode | null = null;
   private workletNode: AudioWorkletNode | null = null;
   private silentGainNode: GainNode | null = null;
-  private connectionState: ConnectionState = ConnectionState.IDLE;
 
   /** Unique ID assigned by the server for this stream. */
   public streamId: string | null = null;
@@ -280,6 +267,12 @@ class StreamSession {
 
   /** Promise that resolves when STREAM_READY is received. */
   private streamReadyPromise: Promise<void>;
+
+  /** Resolver for the connection promise. */
+  private connectionResolver: {
+    resolve: (streamId: string) => void;
+    reject: (error: Error) => void;
+  } | null = null;
 
   /** Pending playback request resolver. */
   private playbackResolver: {
@@ -300,173 +293,27 @@ class StreamSession {
   ) {
     this.audioContext = new AudioContext({
       sampleRate: encoderConfig.sampleRate,
-      // 'playback' allows larger buffers and fewer CPU wake-ups - ideal for streaming
       latencyHint: 'playback',
     });
 
     this.ringBuffer = createAudioRingBuffer();
 
-    // Create a promise that resolves when STREAM_READY is received
     this.streamReadyPromise = new Promise<void>((resolve) => {
       this.streamReadyResolve = resolve;
     });
   }
 
   /**
-   * Initializes the session, establishes WebSocket connection, and starts capture.
+   * Initializes the session: sets up audio pipeline and starts the Worker.
    */
   async init(): Promise<void> {
-    if (this.connectionState !== ConnectionState.IDLE) {
-      log.warn('Session already initializing or connected');
-      return;
-    }
-
     try {
-      await this.connect();
       await this.setupAudioPipeline();
-      this.startReading();
-      this.startHeartbeat();
+      await this.startWorker();
     } catch (err) {
       log.error('Failed to initialize session', err);
       this.stop();
       throw err;
-    }
-  }
-
-  /**
-   * Establishes or re-establishes the WebSocket connection.
-   */
-  private async connect(): Promise<void> {
-    if (this.isStopping) return;
-    if (this.connectionState === ConnectionState.CONNECTED) return;
-
-    this.connectionState = ConnectionState.CONNECTING;
-    const wsUrl = this.baseUrl.replace(/^http/, 'ws') + '/ws';
-    log.info(`Connecting to WebSocket: ${wsUrl}`);
-
-    const socket = new WebSocket(wsUrl);
-    this.socket = socket;
-    socket.binaryType = 'arraybuffer';
-
-    await new Promise<void>((resolve, reject) => {
-      const timeout = setTimeout(() => {
-        socket.close();
-        this.connectionState = ConnectionState.DISCONNECTED;
-        reject(new Error('WebSocket connection timeout'));
-      }, 5000);
-
-      socket.onopen = () => {
-        clearTimeout(timeout);
-        this.connectionState = ConnectionState.CONNECTED;
-        resolve();
-      };
-      socket.onerror = (e) => {
-        clearTimeout(timeout);
-        this.connectionState = ConnectionState.DISCONNECTED;
-        log.error('WebSocket connection error', e);
-        reject(e);
-      };
-    });
-
-    // Handshake
-    socket.send(
-      JSON.stringify({
-        type: 'HANDSHAKE',
-        payload: { encoderConfig: this.encoderConfig },
-      }),
-    );
-
-    this.streamId = await new Promise<string>((resolve, reject) => {
-      const handshakeTimeout = setTimeout(() => {
-        reject(new Error('Handshake timeout'));
-      }, 5000);
-
-      const messageHandler = (msg: MessageEvent) => {
-        try {
-          const raw = JSON.parse(msg.data);
-
-          // Skip messages not meant for stream protocol:
-          // - Broadcast events (have a 'category' field)
-          // - INITIAL_STATE (sent to all connections on connect, handled by control WS)
-          if ('category' in raw || raw.type === 'INITIAL_STATE') {
-            return;
-          }
-
-          const parsed = WsMessageSchema.safeParse(raw);
-          if (!parsed.success) {
-            log.warn('Received malformed handshake response', parsed.error);
-            return;
-          }
-          const data = parsed.data;
-          if (data.type === 'HANDSHAKE_ACK') {
-            clearTimeout(handshakeTimeout);
-            socket.removeEventListener('message', messageHandler);
-            // Discriminated union narrows payload type automatically
-            resolve(data.payload.streamId);
-          } else if (data.type === 'ERROR') {
-            clearTimeout(handshakeTimeout);
-            socket.removeEventListener('message', messageHandler);
-            // Discriminated union narrows payload type automatically
-            reject(new Error(data.payload.message || 'Server error during handshake'));
-          }
-        } catch (e) {
-          log.warn('Failed to parse handshake response', e);
-        }
-      };
-
-      socket.addEventListener('message', messageHandler);
-    });
-
-    this.reconnectAttempts = 0;
-    log.info(`Session ${this.streamId} initialized`);
-
-    // Register persistent message handler
-    socket.onmessage = (msg) => {
-      try {
-        const raw = JSON.parse(msg.data);
-
-        // Skip messages not meant for stream protocol:
-        // - Broadcast events (have a 'category' field)
-        // - INITIAL_STATE (sent to all connections on connect, handled by control WS)
-        if ('category' in raw || raw.type === 'INITIAL_STATE') {
-          return;
-        }
-
-        const parsed = WsMessageSchema.safeParse(raw);
-        if (!parsed.success) {
-          log.warn('Received malformed WebSocket message', parsed.error);
-          return;
-        }
-        const data = parsed.data;
-        this.handleWsMessage(data);
-      } catch {
-        // Not a JSON message or malformed
-      }
-    };
-
-    socket.onclose = (event) => {
-      this.connectionState = ConnectionState.DISCONNECTED;
-      if (!this.isStopping) {
-        log.warn(`WebSocket closed: ${event.code} ${event.reason}`);
-        this.handleDisconnect();
-      }
-    };
-  }
-
-  /**
-   * Handles unexpected WebSocket disconnections with retry logic.
-   */
-  private handleDisconnect(): void {
-    if (this.isStopping) return;
-
-    if (this.reconnectAttempts < this.maxReconnectAttempts) {
-      this.reconnectAttempts++;
-      const delay = Math.min(1000 * Math.pow(2, this.reconnectAttempts), 10000);
-      log.info(`Attempting reconnection ${this.reconnectAttempts} in ${delay}ms...`);
-      this.reconnectTimeout = setTimeout(() => this.connect(), delay);
-    } else {
-      log.error('Max reconnection attempts reached. Stopping session.');
-      this.stop();
     }
   }
 
@@ -489,21 +336,18 @@ class StreamSession {
     });
     this.sourceNode.connect(this.workletNode);
 
-    // Connect to destination through a silent gain node to ensure audio processing.
-    // Without this connection, Chrome may not drive audio through the worklet.
+    // Connect to destination through a silent gain node to ensure audio processing
     this.silentGainNode = this.audioContext.createGain();
     this.silentGainNode.gain.value = 0;
     this.workletNode.connect(this.silentGainNode);
     this.silentGainNode.connect(this.audioContext.destination);
 
-    // Ensure AudioContext is running (may be suspended by browser policy)
     if (this.audioContext.state === 'suspended') {
       log.info('AudioContext suspended, resuming...');
       await this.audioContext.resume();
     }
     log.info(`AudioContext state: ${this.audioContext.state}`);
 
-    // Log media stream info for debugging
     const audioTracks = this.mediaStream.getAudioTracks();
     log.info(`MediaStream has ${audioTracks.length} audio track(s)`);
     if (audioTracks.length > 0) {
@@ -512,125 +356,112 @@ class StreamSession {
         `Audio track: ${track.label}, enabled=${track.enabled}, muted=${track.muted}, readyState=${track.readyState}`,
       );
     }
-
-    this.encoder = await createEncoder(this.encoderConfig);
-    log.info(`Using encoder: ${this.encoder.config.codec} @ ${this.encoder.config.bitrate}kbps`);
   }
 
   /**
-   * Starts the consumer Worker that reads from the ring buffer.
-   * Uses Atomics.waitAsync() for efficient, low-latency synchronization
-   * with the AudioWorklet producer, replacing the previous setInterval polling.
+   * Starts the consumer Worker which handles encoding and WebSocket communication.
    */
-  private startReading(): void {
-    // Create the consumer worker
+  private async startWorker(): Promise<void> {
+    const wsUrl = this.baseUrl.replace(/^http/, 'ws') + '/ws';
+
     this.consumerWorker = new Worker(new URL('./audio-consumer.worker.ts', import.meta.url), {
       type: 'module',
     });
 
-    // Handle messages from the worker
+    // Create promise for connection
+    const connectionPromise = new Promise<string>((resolve, reject) => {
+      this.connectionResolver = { resolve, reject };
+    });
+
+    // Handle messages from the Worker
     this.consumerWorker.onmessage = (event) => {
       const msg = event.data;
 
-      if (msg.type === 'READY') {
-        log.info('Audio consumer worker ready');
-      }
+      switch (msg.type) {
+        case 'CONNECTED':
+          log.info(`Worker connected, streamId: ${msg.streamId}`);
+          this.streamId = msg.streamId;
+          this.connectionResolver?.resolve(msg.streamId);
+          this.connectionResolver = null;
+          break;
 
-      if (msg.type === 'SAMPLES') {
-        this.handleSamples(msg.samples);
-      }
+        case 'DISCONNECTED':
+          log.warn(`Worker disconnected: ${msg.reason}`);
+          break;
 
-      if (msg.type === 'STATS') {
-        const encodeQueue = this.encoder?.encodeQueueSize ?? 0;
-        const wsBuffer = this.socket?.bufferedAmount ?? 0;
+        case 'ERROR':
+          log.error(`Worker error: ${msg.message}`);
+          this.connectionResolver?.reject(new Error(msg.message));
+          this.connectionResolver = null;
+          this.playbackResolver?.reject(new Error(msg.message));
+          this.playbackResolver = null;
+          break;
 
-        // Overflow is checked and cleared by the Worker, reported in msg.overflows
-        if (msg.overflows > 0) {
-          log.warn(`Audio ring buffer overflow (${msg.overflows}x)! Encoder or network too slow.`);
-        }
+        case 'STREAM_READY':
+          log.info(`Stream ready with ${msg.bufferSize} frames buffered`);
+          this.isReady = true;
+          this.streamReadyResolve?.();
+          break;
 
-        log.info(
-          `[DIAG] wakeups=${msg.wakeups} avgSamples=${msg.avgSamplesPerWake.toFixed(0)} ` +
-            `encodeQueue=${encodeQueue} wsBuffer=${wsBuffer} ` +
-            `underflows=${msg.underflows} overflows=${msg.overflows}`,
-        );
+        case 'PLAYBACK_STARTED':
+          log.info(`Playback started on ${msg.speakerIp}`);
+          this.playbackResolver?.resolve({
+            speakerIp: msg.speakerIp,
+            streamUrl: msg.streamUrl,
+          });
+          this.playbackResolver = null;
+          break;
+
+        case 'PLAYBACK_ERROR':
+          log.error(`Playback error: ${msg.message}`);
+          this.playbackResolver?.reject(new Error(msg.message));
+          this.playbackResolver = null;
+          break;
+
+        case 'STATS':
+          if (msg.overflows > 0) {
+            log.warn(
+              `Audio ring buffer overflow (${msg.overflows}x)! Encoder or network too slow.`,
+            );
+          }
+          log.info(
+            `[DIAG] wakeups=${msg.wakeups} avgSamples=${msg.avgSamplesPerWake.toFixed(0)} ` +
+              `encodeQueue=${msg.encodeQueueSize} wsBuffer=${msg.wsBufferedAmount} ` +
+              `underflows=${msg.underflows} overflows=${msg.overflows}`,
+          );
+          break;
       }
     };
 
     this.consumerWorker.onerror = (error) => {
       log.error('Audio consumer worker error:', error);
+      this.connectionResolver?.reject(new Error('Worker error'));
+      this.connectionResolver = null;
     };
 
-    // Initialize the worker with the shared buffer
+    // Initialize the Worker with all config
     this.consumerWorker.postMessage({
       type: 'INIT',
       sab: this.ringBuffer,
       bufferSize: RING_BUFFER_SIZE,
       headerSize: HEADER_SIZE,
       sampleRate: this.encoderConfig.sampleRate,
+      encoderConfig: this.encoderConfig,
+      wsUrl,
     });
+
+    // Wait for connection
+    await connectionPromise;
   }
 
   /**
-   * Handles PCM samples received from the consumer Worker.
-   * Encodes and sends them over WebSocket.
-   * @param samples - The PCM samples to process
-   */
-  private handleSamples(samples: Int16Array): void {
-    if (this.isStopping) return;
-
-    if (this.encoder && this.socket?.readyState === WebSocket.OPEN) {
-      const encoded = this.encoder.encode(samples);
-      if (encoded && this.socket.bufferedAmount < 1024 * 1024) {
-        this.socket.send(encoded);
-      }
-    }
-  }
-
-  /**
-   * Starts the periodic heartbeat.
-   */
-  private startHeartbeat(): void {
-    this.heartbeatInterval = setInterval(() => {
-      if (this.socket?.readyState === WebSocket.OPEN) {
-        this.socket.send(JSON.stringify({ type: 'HEARTBEAT' }));
-      }
-    }, 5000);
-  }
-
-  /**
-   * Stops the session and releases all hardware resources.
+   * Stops the session and releases all resources.
    */
   public stop(): void {
-    this.isStopping = true;
-
-    // Stop the consumer worker (sends STOP to flush remaining samples, then terminates)
     if (this.consumerWorker) {
       this.consumerWorker.postMessage({ type: 'STOP' });
       this.consumerWorker.terminate();
       this.consumerWorker = null;
-    }
-
-    if (this.heartbeatInterval !== null) clearInterval(this.heartbeatInterval);
-    if (this.reconnectTimeout !== null) clearTimeout(this.reconnectTimeout);
-
-    // Flush and close encoder
-    if (this.encoder) {
-      const final = this.encoder.flush();
-      if (final && this.socket?.readyState === WebSocket.OPEN) {
-        this.socket.send(final);
-      }
-      this.encoder.close();
-      this.encoder = null;
-    }
-
-    if (this.socket) {
-      this.socket.onopen = null;
-      this.socket.onclose = null;
-      this.socket.onerror = null;
-      this.socket.onmessage = null;
-      this.socket.close();
-      this.socket = null;
     }
 
     this.sourceNode?.disconnect();
@@ -642,55 +473,13 @@ class StreamSession {
 
   /**
    * Updates metadata for the active stream.
-   *
-   * @param metadata - The track metadata to send to the server.
+   * @param metadata - The track metadata to send to the server
    */
   public updateMetadata(metadata: StreamMetadata): void {
-    if (this.socket?.readyState === WebSocket.OPEN) {
-      this.socket.send(
-        JSON.stringify({
-          type: 'METADATA_UPDATE',
-          payload: metadata,
-        }),
-      );
-    }
-  }
-
-  /**
-   * Handles incoming WebSocket messages from the server.
-   * @param message - The parsed WebSocket message
-   */
-  private handleWsMessage(message: WsMessage): void {
-    switch (message.type) {
-      case 'HEARTBEAT_ACK':
-        log.debug('Heartbeat acknowledged');
-        break;
-
-      case 'STREAM_READY':
-        log.info(`Stream ready with ${message.payload.bufferSize} frames buffered`);
-        this.isReady = true;
-        this.streamReadyResolve?.();
-        break;
-
-      case 'PLAYBACK_STARTED':
-        log.info(`Playback started on ${message.payload.speakerIp}`);
-        this.playbackResolver?.resolve({
-          speakerIp: message.payload.speakerIp,
-          streamUrl: message.payload.streamUrl,
-        });
-        this.playbackResolver = null;
-        break;
-
-      case 'PLAYBACK_ERROR':
-        log.error(`Playback failed: ${message.payload.message}`);
-        this.playbackResolver?.reject(new Error(message.payload.message));
-        this.playbackResolver = null;
-        break;
-
-      default:
-        // Ignore other message types (HANDSHAKE_ACK, ERROR handled elsewhere)
-        break;
-    }
+    this.consumerWorker?.postMessage({
+      type: 'METADATA_UPDATE',
+      metadata,
+    });
   }
 
   /**
@@ -710,7 +499,7 @@ class StreamSession {
   }
 
   /**
-   * Starts playback on a Sonos speaker via WebSocket.
+   * Starts playback on a Sonos speaker.
    * Must be called after the stream is ready (waitForReady resolved).
    *
    * @param speakerIp - IP address of the Sonos speaker
@@ -724,30 +513,26 @@ class StreamSession {
     metadata?: StreamMetadata,
     timeoutMs = 15000,
   ): Promise<{ speakerIp: string; streamUrl: string }> {
-    if (!this.socket || this.socket.readyState !== WebSocket.OPEN) {
-      throw new Error('WebSocket not connected');
+    if (!this.consumerWorker) {
+      throw new Error('Worker not running');
     }
 
     if (!this.isReady) {
       throw new Error('Stream not ready - call waitForReady() first');
     }
 
-    // Create promise for the response
     const responsePromise = new Promise<{ speakerIp: string; streamUrl: string }>(
       (resolve, reject) => {
         this.playbackResolver = { resolve, reject };
       },
     );
 
-    // Send START_PLAYBACK command with optional metadata
-    this.socket.send(
-      JSON.stringify({
-        type: 'START_PLAYBACK',
-        payload: { speakerIp, metadata },
-      }),
-    );
+    this.consumerWorker.postMessage({
+      type: 'START_PLAYBACK',
+      speakerIp,
+      metadata,
+    });
 
-    // Wait with timeout
     const timeoutPromise = new Promise<never>((_, reject) => {
       setTimeout(() => {
         this.playbackResolver = null;

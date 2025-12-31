@@ -1,26 +1,41 @@
 /**
  * Audio Consumer Worker
  *
- * Consumes PCM samples from a SharedArrayBuffer ring buffer using Atomics.waitAsync()
- * for efficient, low-latency synchronization with the AudioWorklet producer.
+ * Consumes PCM samples from a SharedArrayBuffer ring buffer, encodes them,
+ * and sends them over WebSocket. This keeps the entire real-time audio path
+ * off the main thread, eliminating jitter from main thread blocking.
  *
- * This replaces the main-thread setInterval polling approach to avoid jitter
- * and underflows caused by main thread blocking.
+ * Architecture:
+ *   AudioWorklet → SharedArrayBuffer → Worker (drain + encode + websocket send)
+ *                                         ↓
+ *                              Main thread only for:
+ *                              - Stats logging
+ *                              - Control messages
  */
 
-// Re-export ring buffer constants for use in this isolated worker context.
-// Workers can't import from main bundle, so we duplicate these values.
-// Must match ring-buffer.ts and pcm-processor.ts.
 import { CTRL_WRITE_IDX, CTRL_READ_IDX, CTRL_OVERFLOW, CTRL_DATA_SIGNAL } from './ring-buffer';
+import { createEncoder, type AudioEncoder } from './encoders';
+import type { EncoderConfig, StreamMetadata, WsMessage } from '@thaumic-cast/protocol';
+import { WsMessageSchema } from '@thaumic-cast/protocol';
 
 /** Frame duration in seconds (20ms). */
 const FRAME_DURATION_SEC = 0.02;
 
-/** Frame size in stereo samples, derived from sample rate on init. */
-let frameSizeSamples = 0;
-
 /** Interval for posting diagnostic stats to main thread (ms). */
 const STATS_INTERVAL_MS = 1000;
+
+/** Heartbeat interval for WebSocket (ms). */
+const HEARTBEAT_INTERVAL_MS = 5000;
+
+/** WebSocket connection timeout (ms). */
+const WS_CONNECT_TIMEOUT_MS = 5000;
+
+/** Handshake timeout (ms). */
+const HANDSHAKE_TIMEOUT_MS = 5000;
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Message Types
+// ─────────────────────────────────────────────────────────────────────────────
 
 /** Message types received from main thread. */
 interface InitMessage {
@@ -29,18 +44,61 @@ interface InitMessage {
   bufferSize: number;
   headerSize: number;
   sampleRate: number;
+  encoderConfig: EncoderConfig;
+  wsUrl: string;
 }
 
 interface StopMessage {
   type: 'STOP';
 }
 
-type WorkerMessage = InitMessage | StopMessage;
+interface StartPlaybackMessage {
+  type: 'START_PLAYBACK';
+  speakerIp: string;
+  metadata?: StreamMetadata;
+}
+
+interface MetadataUpdateMessage {
+  type: 'METADATA_UPDATE';
+  metadata: StreamMetadata;
+}
+
+type InboundMessage = InitMessage | StopMessage | StartPlaybackMessage | MetadataUpdateMessage;
 
 /** Message types sent to main thread. */
-interface SamplesMessage {
-  type: 'SAMPLES';
-  samples: Int16Array;
+interface ReadyMessage {
+  type: 'READY';
+}
+
+interface ConnectedMessage {
+  type: 'CONNECTED';
+  streamId: string;
+}
+
+interface DisconnectedMessage {
+  type: 'DISCONNECTED';
+  reason: string;
+}
+
+interface ErrorMessage {
+  type: 'ERROR';
+  message: string;
+}
+
+interface StreamReadyMessage {
+  type: 'STREAM_READY';
+  bufferSize: number;
+}
+
+interface PlaybackStartedMessage {
+  type: 'PLAYBACK_STARTED';
+  speakerIp: string;
+  streamUrl: string;
+}
+
+interface PlaybackErrorMessage {
+  type: 'PLAYBACK_ERROR';
+  message: string;
 }
 
 interface StatsMessage {
@@ -49,23 +107,40 @@ interface StatsMessage {
   overflows: number;
   wakeups: number;
   avgSamplesPerWake: number;
+  encodeQueueSize: number;
+  wsBufferedAmount: number;
 }
 
-interface ReadyMessage {
-  type: 'READY';
-}
+type OutboundMessage =
+  | ReadyMessage
+  | ConnectedMessage
+  | DisconnectedMessage
+  | ErrorMessage
+  | StreamReadyMessage
+  | PlaybackStartedMessage
+  | PlaybackErrorMessage
+  | StatsMessage;
 
-type OutboundMessage = SamplesMessage | StatsMessage | ReadyMessage;
+// ─────────────────────────────────────────────────────────────────────────────
+// Worker State
+// ─────────────────────────────────────────────────────────────────────────────
 
-// Worker state
+// Ring buffer state
 let control: Int32Array | null = null;
 let buffer: Int16Array | null = null;
 let bufferSize = 0;
 let running = false;
 
-// Frame accumulation buffer
+// Frame accumulation
+let frameSizeSamples = 0;
 let frameBuffer: Int16Array | null = null;
 let frameOffset = 0;
+
+// Encoder and WebSocket
+let encoder: AudioEncoder | null = null;
+let socket: WebSocket | null = null;
+let streamId: string | null = null;
+let heartbeatInterval: ReturnType<typeof setInterval> | null = null;
 
 // Diagnostic counters
 let underflowCount = 0;
@@ -75,26 +150,41 @@ let totalSamplesRead = 0;
 let lastStatsTime = 0;
 let lastSignalValue = 0;
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Utilities
+// ─────────────────────────────────────────────────────────────────────────────
+
 /**
  * Posts a message to the main thread.
- * Uses the structured clone algorithm with optional transferable objects.
- * @param message - The message to post
- * @param transfer - Optional transferable objects
+ * @param message
  */
-function postToMain(message: OutboundMessage, transfer?: Transferable[]): void {
-  if (transfer && transfer.length > 0) {
-    // Use options form for proper TypeScript typing in worker context
-    (
-      self as unknown as { postMessage(msg: unknown, opts?: { transfer?: Transferable[] }): void }
-    ).postMessage(message, { transfer });
-  } else {
-    self.postMessage(message);
-  }
+function postToMain(message: OutboundMessage): void {
+  self.postMessage(message);
 }
 
 /**
- * Reads available samples from the ring buffer.
- * @returns The number of samples read into the frame buffer, or 0 if none available
+ * Logs a message (forwarded to main thread for unified logging).
+ * @param level
+ * @param {...any} args
+ */
+function log(level: 'info' | 'warn' | 'error', ...args: unknown[]): void {
+  const prefix = '[AudioWorker]';
+  if (level === 'error') {
+    console.error(prefix, ...args);
+  } else if (level === 'warn') {
+    console.warn(prefix, ...args);
+  } else {
+    console.info(prefix, ...args);
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Ring Buffer Reading
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Reads available samples from the ring buffer into the frame buffer.
+ * @returns The number of samples read, or 0 if none available
  */
 function readFromRingBuffer(): number {
   if (!control || !buffer || !frameBuffer) return 0;
@@ -149,14 +239,17 @@ function readFromRingBuffer(): number {
 }
 
 /**
- * Sends accumulated frame to main thread if complete.
+ * Encodes and sends the accumulated frame if complete.
  */
 function flushFrameIfReady(): void {
   if (!frameBuffer || frameOffset < frameSizeSamples) return;
+  if (!encoder || !socket || socket.readyState !== WebSocket.OPEN) return;
 
-  // Create a copy to transfer (original buffer will be reused)
-  const frameCopy = new Int16Array(frameBuffer);
-  postToMain({ type: 'SAMPLES', samples: frameCopy }, [frameCopy.buffer]);
+  // Encode the frame
+  const encoded = encoder.encode(frameBuffer);
+  if (encoded && socket.bufferedAmount < 1024 * 1024) {
+    socket.send(encoded);
+  }
 
   // Reset frame buffer for next accumulation
   frameOffset = 0;
@@ -177,6 +270,8 @@ function maybePostStats(): void {
     overflows: overflowCount,
     wakeups: wakeupCount,
     avgSamplesPerWake,
+    encodeQueueSize: encoder?.encodeQueueSize ?? 0,
+    wsBufferedAmount: socket?.bufferedAmount ?? 0,
   });
 
   // Reset counters for next interval
@@ -186,6 +281,218 @@ function maybePostStats(): void {
   totalSamplesRead = 0;
   lastStatsTime = now;
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// WebSocket Management
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Connects to the WebSocket and performs handshake.
+ * @param wsUrl
+ * @param encoderConfig
+ */
+async function connectWebSocket(wsUrl: string, encoderConfig: EncoderConfig): Promise<string> {
+  return new Promise((resolve, reject) => {
+    log('info', `Connecting to WebSocket: ${wsUrl}`);
+
+    const ws = new WebSocket(wsUrl);
+    ws.binaryType = 'arraybuffer';
+    socket = ws;
+
+    const connectTimeout = setTimeout(() => {
+      ws.close();
+      reject(new Error('WebSocket connection timeout'));
+    }, WS_CONNECT_TIMEOUT_MS);
+
+    ws.onopen = () => {
+      clearTimeout(connectTimeout);
+      log('info', 'WebSocket connected, sending handshake...');
+
+      // Send handshake
+      ws.send(
+        JSON.stringify({
+          type: 'HANDSHAKE',
+          payload: { encoderConfig },
+        }),
+      );
+
+      // Wait for handshake response
+      const handshakeTimeout = setTimeout(() => {
+        ws.close();
+        reject(new Error('Handshake timeout'));
+      }, HANDSHAKE_TIMEOUT_MS);
+
+      const handshakeHandler = (event: MessageEvent) => {
+        if (typeof event.data !== 'string') return;
+
+        try {
+          const raw = JSON.parse(event.data);
+
+          // Skip broadcast events
+          if ('category' in raw || raw.type === 'INITIAL_STATE') return;
+
+          const parsed = WsMessageSchema.safeParse(raw);
+          if (!parsed.success) return;
+
+          const message = parsed.data;
+
+          if (message.type === 'HANDSHAKE_ACK') {
+            clearTimeout(handshakeTimeout);
+            ws.removeEventListener('message', handshakeHandler);
+            streamId = message.payload.streamId;
+            log('info', `Handshake complete, streamId: ${streamId}`);
+
+            // Start heartbeat
+            startHeartbeat();
+
+            // Set up persistent message handler
+            ws.onmessage = handleWsMessage;
+            ws.onclose = handleWsClose;
+            ws.onerror = handleWsError;
+
+            resolve(message.payload.streamId);
+          } else if (message.type === 'ERROR') {
+            clearTimeout(handshakeTimeout);
+            ws.removeEventListener('message', handshakeHandler);
+            reject(new Error(message.payload.message));
+          }
+        } catch {
+          // Ignore parse errors during handshake
+        }
+      };
+
+      ws.addEventListener('message', handshakeHandler);
+    };
+
+    ws.onerror = () => {
+      clearTimeout(connectTimeout);
+      reject(new Error('WebSocket connection error'));
+    };
+  });
+}
+
+/**
+ * Handles incoming WebSocket messages.
+ * @param event
+ */
+function handleWsMessage(event: MessageEvent): void {
+  if (typeof event.data !== 'string') return;
+
+  try {
+    const raw = JSON.parse(event.data);
+
+    // Skip broadcast events
+    if ('category' in raw || raw.type === 'INITIAL_STATE') return;
+
+    const parsed = WsMessageSchema.safeParse(raw);
+    if (!parsed.success) return;
+
+    const message: WsMessage = parsed.data;
+
+    switch (message.type) {
+      case 'HEARTBEAT_ACK':
+        // Heartbeat acknowledged, connection is alive
+        break;
+
+      case 'STREAM_READY':
+        log('info', `Stream ready with ${message.payload.bufferSize} frames buffered`);
+        postToMain({
+          type: 'STREAM_READY',
+          bufferSize: message.payload.bufferSize,
+        });
+        break;
+
+      case 'PLAYBACK_STARTED':
+        log('info', `Playback started on ${message.payload.speakerIp}`);
+        postToMain({
+          type: 'PLAYBACK_STARTED',
+          speakerIp: message.payload.speakerIp,
+          streamUrl: message.payload.streamUrl,
+        });
+        break;
+
+      case 'PLAYBACK_ERROR':
+        log('error', `Playback error: ${message.payload.message}`);
+        postToMain({
+          type: 'PLAYBACK_ERROR',
+          message: message.payload.message,
+        });
+        break;
+
+      case 'ERROR':
+        log('error', `Server error: ${message.payload.message}`);
+        postToMain({
+          type: 'ERROR',
+          message: message.payload.message,
+        });
+        break;
+
+      default:
+        // Ignore other message types
+        break;
+    }
+  } catch {
+    // Ignore parse errors
+  }
+}
+
+/**
+ * Handles WebSocket close.
+ * @param event
+ */
+function handleWsClose(event: CloseEvent): void {
+  log('warn', `WebSocket closed: ${event.code} ${event.reason}`);
+  stopHeartbeat();
+  postToMain({
+    type: 'DISCONNECTED',
+    reason: event.reason || `Code ${event.code}`,
+  });
+}
+
+/**
+ * Handles WebSocket errors.
+ */
+function handleWsError(): void {
+  log('error', 'WebSocket error');
+}
+
+/**
+ * Starts the heartbeat timer.
+ */
+function startHeartbeat(): void {
+  stopHeartbeat();
+  heartbeatInterval = setInterval(() => {
+    if (socket?.readyState === WebSocket.OPEN) {
+      socket.send(JSON.stringify({ type: 'HEARTBEAT' }));
+    }
+  }, HEARTBEAT_INTERVAL_MS);
+}
+
+/**
+ * Stops the heartbeat timer.
+ */
+function stopHeartbeat(): void {
+  if (heartbeatInterval) {
+    clearInterval(heartbeatInterval);
+    heartbeatInterval = null;
+  }
+}
+
+/**
+ * Sends a message over WebSocket.
+ * @param message
+ */
+function sendWsMessage(message: object): boolean {
+  if (!socket || socket.readyState !== WebSocket.OPEN) {
+    return false;
+  }
+  socket.send(JSON.stringify(message));
+  return true;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Main Consumption Loop
+// ─────────────────────────────────────────────────────────────────────────────
 
 /**
  * Main consumption loop using Atomics.waitAsync().
@@ -201,13 +508,11 @@ async function consumeLoop(): Promise<void> {
     const waitResult = Atomics.waitAsync(control, CTRL_DATA_SIGNAL, lastSignalValue);
 
     if (waitResult.async) {
-      // Wait for the promise to resolve
       const result = await waitResult.value;
 
       if (!running) break;
 
       if (result === 'ok') {
-        // Signal changed, read the new value
         lastSignalValue = Atomics.load(control, CTRL_DATA_SIGNAL);
         wakeupCount++;
 
@@ -226,16 +531,13 @@ async function consumeLoop(): Promise<void> {
           totalSamplesRead += samplesThisWake;
         }
 
-        // Post stats periodically
         maybePostStats();
       }
-      // 'timed-out' shouldn't happen with no timeout, 'not-equal' means value changed
     } else {
       // Synchronous result (value already changed)
       lastSignalValue = Atomics.load(control, CTRL_DATA_SIGNAL);
       wakeupCount++;
 
-      // Drain all available data (handles coalesced wakeups)
       let samplesThisWake = 0;
       while (true) {
         const samplesRead = readFromRingBuffer();
@@ -256,56 +558,122 @@ async function consumeLoop(): Promise<void> {
 }
 
 /**
- * Flushes any remaining samples in the frame buffer (partial frame).
+ * Flushes any remaining samples and encoder buffer.
  */
 function flushRemaining(): void {
-  if (!frameBuffer || frameOffset === 0) return;
+  // Flush partial frame
+  if (frameBuffer && frameOffset > 0 && encoder && socket?.readyState === WebSocket.OPEN) {
+    const partial = new Int16Array(frameBuffer.subarray(0, frameOffset));
+    const encoded = encoder.encode(partial);
+    if (encoded) {
+      socket.send(encoded);
+    }
+    frameOffset = 0;
+  }
 
-  // Send partial frame
-  const partial = new Int16Array(frameBuffer.subarray(0, frameOffset));
-  postToMain({ type: 'SAMPLES', samples: partial }, [partial.buffer]);
-  frameOffset = 0;
+  // Flush encoder buffer
+  if (encoder && socket?.readyState === WebSocket.OPEN) {
+    const final = encoder.flush();
+    if (final) {
+      socket.send(final);
+    }
+  }
 }
 
 /**
- * Message handler for worker.
- * @param event
+ * Cleans up all resources.
  */
-self.onmessage = (event: MessageEvent<WorkerMessage>) => {
+function cleanup(): void {
+  running = false;
+
+  flushRemaining();
+
+  stopHeartbeat();
+
+  if (encoder) {
+    encoder.close();
+    encoder = null;
+  }
+
+  if (socket) {
+    socket.onopen = null;
+    socket.onclose = null;
+    socket.onerror = null;
+    socket.onmessage = null;
+    socket.close();
+    socket = null;
+  }
+
+  streamId = null;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Message Handler
+// ─────────────────────────────────────────────────────────────────────────────
+
+self.onmessage = async (event: MessageEvent<InboundMessage>) => {
   const msg = event.data;
 
   if (msg.type === 'INIT') {
-    const { sab, bufferSize: size, headerSize, sampleRate } = msg;
+    const { sab, bufferSize: size, headerSize, sampleRate, encoderConfig, wsUrl } = msg;
 
-    control = new Int32Array(sab, 0, headerSize);
-    buffer = new Int16Array(sab, headerSize * 4);
-    bufferSize = size;
+    try {
+      // Initialize ring buffer views
+      control = new Int32Array(sab, 0, headerSize);
+      buffer = new Int16Array(sab, headerSize * 4);
+      bufferSize = size;
 
-    // Calculate frame size from sample rate (20ms * sampleRate * 2 channels)
-    frameSizeSamples = Math.round(sampleRate * FRAME_DURATION_SEC) * 2;
+      // Calculate frame size from sample rate
+      frameSizeSamples = Math.round(sampleRate * FRAME_DURATION_SEC) * 2;
+      frameBuffer = new Int16Array(frameSizeSamples);
+      frameOffset = 0;
 
-    // Initialize frame accumulation buffer
-    frameBuffer = new Int16Array(frameSizeSamples);
-    frameOffset = 0;
+      // Reset state
+      underflowCount = 0;
+      overflowCount = 0;
+      wakeupCount = 0;
+      totalSamplesRead = 0;
+      lastSignalValue = 0;
 
-    // Reset state
-    underflowCount = 0;
-    overflowCount = 0;
-    wakeupCount = 0;
-    totalSamplesRead = 0;
-    lastSignalValue = 0;
-    running = true;
+      // Create encoder
+      log('info', `Creating encoder: ${encoderConfig.codec} @ ${encoderConfig.bitrate}kbps`);
+      encoder = await createEncoder(encoderConfig);
 
-    postToMain({ type: 'READY' });
+      // Connect WebSocket
+      const id = await connectWebSocket(wsUrl, encoderConfig);
 
-    // Start the consumption loop
-    consumeLoop().catch((err) => {
-      console.error('[AudioConsumer] consumeLoop error:', err);
-    });
+      running = true;
+      postToMain({ type: 'CONNECTED', streamId: id });
+
+      // Start consumption loop
+      consumeLoop().catch((err) => {
+        log('error', 'consumeLoop error:', err);
+        postToMain({ type: 'ERROR', message: String(err) });
+      });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      log('error', 'Initialization failed:', message);
+      postToMain({ type: 'ERROR', message });
+      cleanup();
+    }
   }
 
   if (msg.type === 'STOP') {
-    running = false;
-    flushRemaining();
+    cleanup();
+  }
+
+  if (msg.type === 'START_PLAYBACK') {
+    const { speakerIp, metadata } = msg;
+    sendWsMessage({
+      type: 'START_PLAYBACK',
+      payload: { speakerIp, metadata },
+    });
+  }
+
+  if (msg.type === 'METADATA_UPDATE') {
+    sendWsMessage({
+      type: 'METADATA_UPDATE',
+      payload: msg.metadata,
+    });
   }
 };
