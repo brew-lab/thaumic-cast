@@ -16,11 +16,11 @@ const CTRL_OVERFLOW = 2;
 const CTRL_DATA_SIGNAL = 3;
 
 /**
- * Notification threshold in stereo samples (10ms @ 48kHz).
+ * Notification threshold duration in seconds (10ms).
  * Batches notifications to reduce Worker wakeups from ~375/sec to ~100/sec.
  * Worker consumes 20ms frames, so notifying at 10ms gives buffer for timing variance.
  */
-const NOTIFY_THRESHOLD = 960 * 2;
+const NOTIFY_DURATION_SEC = 0.01;
 
 /**
  * Base class for audio worklet processors.
@@ -58,6 +58,8 @@ class PCMProcessor extends AudioWorkletProcessor {
   private bufferSize = 0;
   /** Accumulated samples since last notification (for batching). */
   private accumulatedSamples = 0;
+  /** Notification threshold in stereo samples, derived from sample rate. */
+  private notifyThreshold = 0;
 
   /**
    * Creates a new PCM processor instance.
@@ -66,10 +68,12 @@ class PCMProcessor extends AudioWorkletProcessor {
     super();
     this.port.onmessage = (event) => {
       if (event.data.type === 'INIT_BUFFER') {
-        const { buffer: sab, bufferSize, headerSize } = event.data;
+        const { buffer: sab, bufferSize, headerSize, sampleRate } = event.data;
         this.sharedBuffer = new Int16Array(sab, headerSize * 4);
         this.control = new Int32Array(sab, 0, headerSize);
         this.bufferSize = bufferSize;
+        // Calculate notify threshold from sample rate (10ms * sampleRate * 2 channels)
+        this.notifyThreshold = Math.round(sampleRate * NOTIFY_DURATION_SEC) * 2;
       }
     };
   }
@@ -117,7 +121,7 @@ class PCMProcessor extends AudioWorkletProcessor {
 
       // Batch notifications to reduce Worker wakeups
       this.accumulatedSamples += samplesWritten;
-      if (this.accumulatedSamples >= NOTIFY_THRESHOLD) {
+      if (this.notifyThreshold > 0 && this.accumulatedSamples >= this.notifyThreshold) {
         Atomics.add(this.control, CTRL_DATA_SIGNAL, 1);
         Atomics.notify(this.control, CTRL_DATA_SIGNAL, 1);
         this.accumulatedSamples = 0;

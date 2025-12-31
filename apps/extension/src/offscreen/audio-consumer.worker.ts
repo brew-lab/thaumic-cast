@@ -13,8 +13,11 @@
 // Must match ring-buffer.ts and pcm-processor.ts.
 import { CTRL_WRITE_IDX, CTRL_READ_IDX, CTRL_OVERFLOW, CTRL_DATA_SIGNAL } from './ring-buffer';
 
-/** Frame size in stereo samples (20ms @ 48kHz = 960 frames * 2 channels). */
-const FRAME_SIZE_SAMPLES = 960 * 2;
+/** Frame duration in seconds (20ms). */
+const FRAME_DURATION_SEC = 0.02;
+
+/** Frame size in stereo samples, derived from sample rate on init. */
+let frameSizeSamples = 0;
 
 /** Interval for posting diagnostic stats to main thread (ms). */
 const STATS_INTERVAL_MS = 1000;
@@ -121,8 +124,8 @@ function readFromRingBuffer(): number {
   let samplesRead = 0;
   let currentReadIdx = readIdx;
 
-  while (available > 0 && frameOffset < FRAME_SIZE_SAMPLES) {
-    const samplesToRead = Math.min(available, FRAME_SIZE_SAMPLES - frameOffset);
+  while (available > 0 && frameOffset < frameSizeSamples) {
+    const samplesToRead = Math.min(available, frameSizeSamples - frameOffset);
 
     // Handle wrap-around
     if (currentReadIdx + samplesToRead <= bufferSize) {
@@ -149,7 +152,7 @@ function readFromRingBuffer(): number {
  * Sends accumulated frame to main thread if complete.
  */
 function flushFrameIfReady(): void {
-  if (!frameBuffer || frameOffset < FRAME_SIZE_SAMPLES) return;
+  if (!frameBuffer || frameOffset < frameSizeSamples) return;
 
   // Create a copy to transfer (original buffer will be reused)
   const frameCopy = new Int16Array(frameBuffer);
@@ -272,14 +275,17 @@ self.onmessage = (event: MessageEvent<WorkerMessage>) => {
   const msg = event.data;
 
   if (msg.type === 'INIT') {
-    const { sab, bufferSize: size, headerSize } = msg;
+    const { sab, bufferSize: size, headerSize, sampleRate } = msg;
 
     control = new Int32Array(sab, 0, headerSize);
     buffer = new Int16Array(sab, headerSize * 4);
     bufferSize = size;
 
+    // Calculate frame size from sample rate (20ms * sampleRate * 2 channels)
+    frameSizeSamples = Math.round(sampleRate * FRAME_DURATION_SEC) * 2;
+
     // Initialize frame accumulation buffer
-    frameBuffer = new Int16Array(FRAME_SIZE_SAMPLES);
+    frameBuffer = new Int16Array(frameSizeSamples);
     frameOffset = 0;
 
     // Reset state

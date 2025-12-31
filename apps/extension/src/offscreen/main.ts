@@ -485,6 +485,7 @@ class StreamSession {
       buffer: this.ringBuffer,
       bufferSize: RING_BUFFER_SIZE,
       headerSize: HEADER_SIZE,
+      sampleRate: this.encoderConfig.sampleRate,
     });
     this.sourceNode.connect(this.workletNode);
 
