@@ -1,5 +1,5 @@
 import { createLogger } from '@thaumic-cast/shared';
-import { createAudioRingBuffer, HEADER_SIZE, RING_BUFFER_SIZE } from './ring-buffer';
+import { createAudioRingBuffer, HEADER_SIZE, RING_BUFFER_SIZE, CTRL_OVERFLOW } from './ring-buffer';
 import {
   ExtensionMessage,
   StartCaptureMessage,
@@ -258,12 +258,10 @@ class StreamSession {
   private socket: WebSocket | null = null;
   private encoder: AudioEncoder | null = null;
   private heartbeatInterval: ReturnType<typeof setInterval> | null = null;
-  private readInterval: number | null = null;
+  private consumerWorker: Worker | null = null;
   private reconnectTimeout: ReturnType<typeof setTimeout> | null = null;
-  private sharedBuffer: Int16Array;
+  private ringBuffer: SharedArrayBuffer;
   private control: Int32Array;
-  /** Pre-allocated buffer for reading from ring buffer (avoids per-poll allocations). */
-  private readBuffer: Int16Array;
   private isStopping = false;
   private reconnectAttempts = 0;
   private maxReconnectAttempts = 5;
@@ -307,10 +305,8 @@ class StreamSession {
       latencyHint: 'playback',
     });
 
-    const sab = createAudioRingBuffer();
-    this.sharedBuffer = new Int16Array(sab, HEADER_SIZE * 4);
-    this.control = new Int32Array(sab, 0, HEADER_SIZE);
-    this.readBuffer = new Int16Array(RING_BUFFER_SIZE);
+    this.ringBuffer = createAudioRingBuffer();
+    this.control = new Int32Array(this.ringBuffer, 0, HEADER_SIZE);
 
     // Create a promise that resolves when STREAM_READY is received
     this.streamReadyPromise = new Promise<void>((resolve) => {
@@ -488,7 +484,7 @@ class StreamSession {
 
     this.workletNode.port.postMessage({
       type: 'INIT_BUFFER',
-      buffer: this.control.buffer,
+      buffer: this.ringBuffer,
       bufferSize: RING_BUFFER_SIZE,
       headerSize: HEADER_SIZE,
     });
@@ -523,103 +519,74 @@ class StreamSession {
   }
 
   /**
-   * Starts the reading loop using setInterval.
-   * Uses setInterval instead of requestAnimationFrame because offscreen
-   * documents are not visible and rAF doesn't fire in hidden contexts.
-   * Monitors the shared ring buffer for new samples and checks for overflows.
+   * Starts the consumer Worker that reads from the ring buffer.
+   * Uses Atomics.waitAsync() for efficient, low-latency synchronization
+   * with the AudioWorklet producer, replacing the previous setInterval polling.
    */
   private startReading(): void {
-    let lastLogTime = Date.now();
-    let pollCount = 0;
-    // Diagnostic counters for debugging audio glitches
-    let overflowCount = 0;
-    let underflowCount = 0;
-    let minRingFillMs = Infinity;
-    let maxRingFillMs = 0;
+    // Create the consumer worker
+    this.consumerWorker = new Worker(new URL('./audio-consumer.worker.ts', import.meta.url), {
+      type: 'module',
+    });
 
-    const poll = () => {
-      if (!this.streamId || this.isStopping) {
-        if (this.readInterval !== null) {
-          clearInterval(this.readInterval);
-          this.readInterval = null;
-        }
-        return;
+    // Handle messages from the worker
+    this.consumerWorker.onmessage = (event) => {
+      const msg = event.data;
+
+      if (msg.type === 'READY') {
+        log.info('Audio consumer worker ready');
       }
 
-      pollCount++;
-      const writeIdx = Atomics.load(this.control, 0);
-      const readIdx = Atomics.load(this.control, 1);
-
-      // Check for overflow flag (producer wrapped around and overwrote data)
-      if (Atomics.load(this.control, 2) === 1) {
-        overflowCount++;
-        log.warn('Audio ring buffer overflow! Network or Encoder is too slow.');
-        Atomics.store(this.control, 2, 0);
+      if (msg.type === 'SAMPLES') {
+        this.handleSamples(msg.samples);
       }
 
-      // Calculate ring buffer fill level
-      let samplesToRead = 0;
-      if (writeIdx >= readIdx) {
-        samplesToRead = writeIdx - readIdx;
-      } else {
-        samplesToRead = RING_BUFFER_SIZE - readIdx + writeIdx;
-      }
-
-      // Convert to milliseconds (stereo interleaved, so divide by 2 for frames)
-      const ringFillMs = samplesToRead / 2 / (this.encoderConfig.sampleRate / 1000);
-
-      // Track min/max for diagnostics
-      if (ringFillMs < minRingFillMs) minRingFillMs = ringFillMs;
-      if (ringFillMs > maxRingFillMs) maxRingFillMs = ringFillMs;
-
-      // Detect underflow (buffer empty when we expected data)
-      if (samplesToRead === 0) {
-        underflowCount++;
-      }
-
-      if (samplesToRead > 0) {
-        // Copy to pre-allocated buffer (avoids per-poll allocations)
-        if (readIdx + samplesToRead <= RING_BUFFER_SIZE) {
-          this.readBuffer.set(this.sharedBuffer.subarray(readIdx, readIdx + samplesToRead));
-        } else {
-          const firstPart = RING_BUFFER_SIZE - readIdx;
-          this.readBuffer.set(this.sharedBuffer.subarray(readIdx, RING_BUFFER_SIZE));
-          this.readBuffer.set(this.sharedBuffer.subarray(0, samplesToRead - firstPart), firstPart);
+      if (msg.type === 'STATS') {
+        // Check for overflow flag in main thread as well (for logging context)
+        if (Atomics.load(this.control, CTRL_OVERFLOW) === 1) {
+          log.warn('Audio ring buffer overflow! Network or Encoder is too slow.');
+          Atomics.store(this.control, CTRL_OVERFLOW, 0);
         }
 
-        if (this.encoder && this.socket?.readyState === WebSocket.OPEN) {
-          // Use subarray view to pass only the valid portion (zero allocation)
-          const encoded = this.encoder.encode(this.readBuffer.subarray(0, samplesToRead));
-          if (encoded && this.socket.bufferedAmount < 1024 * 1024) {
-            this.socket.send(encoded);
-          }
-        }
-
-        Atomics.store(this.control, 1, (readIdx + samplesToRead) % RING_BUFFER_SIZE);
-      }
-
-      // Log diagnostic stats every 1 second for debugging audio glitches
-      const now = Date.now();
-      if (now - lastLogTime >= 1000) {
         const encodeQueue = this.encoder?.encodeQueueSize ?? 0;
         const wsBuffer = this.socket?.bufferedAmount ?? 0;
 
         log.info(
-          `[DIAG] ringFill=${ringFillMs.toFixed(1)}ms (min=${minRingFillMs.toFixed(1)}/max=${maxRingFillMs.toFixed(1)}) ` +
+          `[DIAG] wakeups=${msg.wakeups} avgSamples=${msg.avgSamplesPerWake.toFixed(0)} ` +
             `encodeQueue=${encodeQueue} wsBuffer=${wsBuffer} ` +
-            `underflows=${underflowCount} overflows=${overflowCount} polls=${pollCount}`,
+            `underflows=${msg.underflows} overflows=${msg.overflows}`,
         );
-
-        // Reset min/max for next interval
-        minRingFillMs = Infinity;
-        maxRingFillMs = 0;
-        lastLogTime = now;
       }
     };
 
-    // Poll at 10ms intervals (~100Hz) - fast enough to keep up with 48kHz audio
-    // while being much more efficient than requestAnimationFrame
-    this.readInterval = setInterval(poll, 10) as unknown as number;
+    this.consumerWorker.onerror = (error) => {
+      log.error('Audio consumer worker error:', error);
+    };
+
+    // Initialize the worker with the shared buffer
+    this.consumerWorker.postMessage({
+      type: 'INIT',
+      sab: this.ringBuffer,
+      bufferSize: RING_BUFFER_SIZE,
+      headerSize: HEADER_SIZE,
+      sampleRate: this.encoderConfig.sampleRate,
+    });
+  }
+
+  /**
+   * Handles PCM samples received from the consumer Worker.
+   * Encodes and sends them over WebSocket.
+   * @param samples - The PCM samples to process
+   */
+  private handleSamples(samples: Int16Array): void {
+    if (this.isStopping) return;
+
+    if (this.encoder && this.socket?.readyState === WebSocket.OPEN) {
+      const encoded = this.encoder.encode(samples);
+      if (encoded && this.socket.bufferedAmount < 1024 * 1024) {
+        this.socket.send(encoded);
+      }
+    }
   }
 
   /**
@@ -638,7 +605,14 @@ class StreamSession {
    */
   public stop(): void {
     this.isStopping = true;
-    if (this.readInterval !== null) clearInterval(this.readInterval);
+
+    // Stop the consumer worker (sends STOP to flush remaining samples, then terminates)
+    if (this.consumerWorker) {
+      this.consumerWorker.postMessage({ type: 'STOP' });
+      this.consumerWorker.terminate();
+      this.consumerWorker = null;
+    }
+
     if (this.heartbeatInterval !== null) clearInterval(this.heartbeatInterval);
     if (this.reconnectTimeout !== null) clearTimeout(this.reconnectTimeout);
 

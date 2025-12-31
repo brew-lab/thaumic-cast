@@ -1,7 +1,19 @@
 /**
  * AudioWorkletProcessor for extracting raw PCM samples using zero-copy shared memory.
  * Uses Atomics for thread-safe access to control indices.
+ *
+ * Control indices (must match ring-buffer.ts):
+ * [0] - Write Index
+ * [1] - Read Index
+ * [2] - Overflow Flag
+ * [3] - Data Available Signal (for Atomics.wait/notify)
  */
+
+// Control indices - must match ring-buffer.ts exports
+const CTRL_WRITE_IDX = 0;
+const CTRL_READ_IDX = 1;
+const CTRL_OVERFLOW = 2;
+const CTRL_DATA_SIGNAL = 3;
 
 /**
  * Base class for audio worklet processors.
@@ -69,8 +81,9 @@ class PCMProcessor extends AudioWorkletProcessor {
 
     if (!left) return true;
 
-    let writeIdx = Atomics.load(this.control, 0);
-    const readIdx = Atomics.load(this.control, 1);
+    let writeIdx = Atomics.load(this.control, CTRL_WRITE_IDX);
+    const readIdx = Atomics.load(this.control, CTRL_READ_IDX);
+    let samplesWritten = 0;
 
     for (let i = 0; i < left.length; i++) {
       // Convert to Int16
@@ -80,18 +93,27 @@ class PCMProcessor extends AudioWorkletProcessor {
       // Check for overflow before writing
       const nextIdx = (writeIdx + 2) % this.bufferSize;
       if (nextIdx === readIdx) {
-        Atomics.store(this.control, 2, 1); // Set overflow flag
+        Atomics.store(this.control, CTRL_OVERFLOW, 1); // Set overflow flag
         break;
       }
 
       this.sharedBuffer[writeIdx] = lSample;
       this.sharedBuffer[writeIdx + 1] = rSample;
       writeIdx = nextIdx;
+      samplesWritten += 2;
     }
 
-    Atomics.store(this.control, 0, writeIdx); // Update write pointer
+    if (samplesWritten > 0) {
+      Atomics.store(this.control, CTRL_WRITE_IDX, writeIdx);
+      // Increment signal and wake up the consumer Worker
+      Atomics.add(this.control, CTRL_DATA_SIGNAL, 1);
+      Atomics.notify(this.control, CTRL_DATA_SIGNAL, 1);
+    }
     return true;
   }
 }
 
 registerProcessor('pcm-processor', PCMProcessor);
+
+// Empty export to make this a module (prevents TypeScript from treating as a script)
+export {};
