@@ -24,6 +24,9 @@ const FRAME_DURATION_SEC = 0.02;
 /** Number of frames for low watermark (40ms = 2 frames). Don't sleep if above this. */
 const LOW_WATER_FRAMES = 2;
 
+/** Target latency in frames (100ms = 5 frames). Used for overflow recovery. */
+const TARGET_LATENCY_FRAMES = 5;
+
 /** Interval for posting diagnostic stats to main thread (ms). */
 const STATS_INTERVAL_MS = 1000;
 
@@ -141,6 +144,7 @@ let frameOffset = 0;
 
 // Watermarks (computed from frame size)
 let lowWaterSamples = 0;
+let targetLatencySamples = 0;
 
 // Encoder and WebSocket
 let encoder: AudioEncoder | null = null;
@@ -211,21 +215,44 @@ function getAvailableSamples(): number {
 function readFromRingBuffer(): number {
   if (!control || !buffer || !frameBuffer) return 0;
 
-  const writeIdx = Atomics.load(control, CTRL_WRITE_IDX);
-  const readIdx = Atomics.load(control, CTRL_READ_IDX);
+  let writeIdx = Atomics.load(control, CTRL_WRITE_IDX);
+  let currentReadIdx = Atomics.load(control, CTRL_READ_IDX);
 
-  // Check for overflow flag
+  // Check for overflow flag - perform decisive skip to target latency
   if (Atomics.load(control, CTRL_OVERFLOW) === 1) {
-    overflowCount++;
     Atomics.store(control, CTRL_OVERFLOW, 0);
+    overflowCount++;
+
+    // Calculate available samples
+    let available: number;
+    if (writeIdx >= currentReadIdx) {
+      available = writeIdx - currentReadIdx;
+    } else {
+      available = bufferSize - currentReadIdx + writeIdx;
+    }
+
+    // Skip ahead to leave only targetLatencySamples in buffer
+    if (available > targetLatencySamples) {
+      const samplesToSkip = available - targetLatencySamples;
+      currentReadIdx = (currentReadIdx + samplesToSkip) % bufferSize;
+      Atomics.store(control, CTRL_READ_IDX, currentReadIdx);
+
+      // Discard partial frame to start fresh
+      frameOffset = 0;
+
+      log('warn', `Overflow: skipped ${samplesToSkip} samples to reach target latency`);
+    }
+
+    // Re-read write index after skip (producer may have advanced)
+    writeIdx = Atomics.load(control, CTRL_WRITE_IDX);
   }
 
   // Calculate available samples
   let available: number;
-  if (writeIdx >= readIdx) {
-    available = writeIdx - readIdx;
+  if (writeIdx >= currentReadIdx) {
+    available = writeIdx - currentReadIdx;
   } else {
-    available = bufferSize - readIdx + writeIdx;
+    available = bufferSize - currentReadIdx + writeIdx;
   }
 
   if (available === 0) {
@@ -234,7 +261,6 @@ function readFromRingBuffer(): number {
 
   // Read samples into frame accumulation buffer
   let samplesRead = 0;
-  let currentReadIdx = readIdx;
 
   while (available > 0 && frameOffset < frameSizeSamples) {
     const samplesToRead = Math.min(available, frameSizeSamples - frameOffset);
@@ -642,6 +668,7 @@ self.onmessage = async (event: MessageEvent<InboundMessage>) => {
 
       // Compute watermarks from frame size
       lowWaterSamples = frameSizeSamples * LOW_WATER_FRAMES;
+      targetLatencySamples = frameSizeSamples * TARGET_LATENCY_FRAMES;
 
       // Reset state
       underflowCount = 0;
