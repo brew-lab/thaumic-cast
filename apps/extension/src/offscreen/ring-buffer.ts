@@ -10,8 +10,15 @@
  * Data Layout (Int16Array starting at HEADER_SIZE * 4 bytes):
  * [0..N] - Interleaved PCM Int16 samples (L, R, L, R, ...)
  */
-export const RING_BUFFER_SIZE = 48000 * 2 * 2; // 2 seconds of stereo 48k audio
-export const HEADER_SIZE = 4; // Control integers at the start
+
+/** Power-of-two buffer size for bitmask optimization. ~2.7 seconds at 48kHz stereo. */
+export const RING_BUFFER_SIZE = 262144; // 2^18
+
+/** Bitmask for efficient index wrapping (replaces costly modulo). */
+export const RING_BUFFER_MASK = RING_BUFFER_SIZE - 1;
+
+/** Number of control integers at the start of the buffer. */
+export const HEADER_SIZE = 4;
 
 /** Control index for the write pointer. */
 export const CTRL_WRITE_IDX = 0;

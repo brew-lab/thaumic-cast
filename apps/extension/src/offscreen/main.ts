@@ -1,5 +1,10 @@
 import { createLogger } from '@thaumic-cast/shared';
-import { createAudioRingBuffer, HEADER_SIZE, RING_BUFFER_SIZE } from './ring-buffer';
+import {
+  createAudioRingBuffer,
+  HEADER_SIZE,
+  RING_BUFFER_SIZE,
+  RING_BUFFER_MASK,
+} from './ring-buffer';
 import {
   ExtensionMessage,
   StartCaptureMessage,
@@ -349,6 +354,7 @@ class StreamSession {
       type: 'INIT_BUFFER',
       buffer: this.ringBuffer,
       bufferSize: RING_BUFFER_SIZE,
+      bufferMask: RING_BUFFER_MASK,
       headerSize: HEADER_SIZE,
       sampleRate: this.encoderConfig.sampleRate,
     });
@@ -465,6 +471,7 @@ class StreamSession {
       type: 'INIT',
       sab: this.ringBuffer,
       bufferSize: RING_BUFFER_SIZE,
+      bufferMask: RING_BUFFER_MASK,
       headerSize: HEADER_SIZE,
       sampleRate: this.encoderConfig.sampleRate,
       encoderConfig: this.encoderConfig,

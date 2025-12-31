@@ -54,6 +54,7 @@ interface InitMessage {
   type: 'INIT';
   sab: SharedArrayBuffer;
   bufferSize: number;
+  bufferMask: number;
   headerSize: number;
   sampleRate: number;
   encoderConfig: EncoderConfig;
@@ -142,6 +143,7 @@ type OutboundMessage =
 let control: Int32Array | null = null;
 let buffer: Int16Array | null = null;
 let bufferSize = 0;
+let bufferMask = 0;
 let running = false;
 
 // Frame accumulation
@@ -242,7 +244,7 @@ function readFromRingBuffer(): number {
     // Skip ahead to leave only targetLatencySamples in buffer
     if (available > targetLatencySamples) {
       const samplesToSkip = available - targetLatencySamples;
-      currentReadIdx = (currentReadIdx + samplesToSkip) % bufferSize;
+      currentReadIdx = (currentReadIdx + samplesToSkip) & bufferMask;
       Atomics.store(control, CTRL_READ_IDX, currentReadIdx);
 
       // Discard partial frame to start fresh
@@ -284,7 +286,7 @@ function readFromRingBuffer(): number {
 
     frameOffset += samplesToRead;
     samplesRead += samplesToRead;
-    currentReadIdx = (currentReadIdx + samplesToRead) % bufferSize;
+    currentReadIdx = (currentReadIdx + samplesToRead) & bufferMask;
     available -= samplesToRead;
   }
 
@@ -684,13 +686,22 @@ self.onmessage = async (event: MessageEvent<InboundMessage>) => {
   const msg = event.data;
 
   if (msg.type === 'INIT') {
-    const { sab, bufferSize: size, headerSize, sampleRate, encoderConfig, wsUrl } = msg;
+    const {
+      sab,
+      bufferSize: size,
+      bufferMask: mask,
+      headerSize,
+      sampleRate,
+      encoderConfig,
+      wsUrl,
+    } = msg;
 
     try {
       // Initialize ring buffer views
       control = new Int32Array(sab, 0, headerSize);
       buffer = new Int16Array(sab, headerSize * 4);
       bufferSize = size;
+      bufferMask = mask;
 
       // Calculate frame size from sample rate
       frameSizeSamples = Math.round(sampleRate * FRAME_DURATION_SEC) * 2;
