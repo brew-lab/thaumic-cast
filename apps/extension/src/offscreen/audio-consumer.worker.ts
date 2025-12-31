@@ -27,6 +27,12 @@ const LOW_WATER_FRAMES = 2;
 /** Target latency in frames (100ms = 5 frames). Used for overflow recovery. */
 const TARGET_LATENCY_FRAMES = 5;
 
+/** Maximum pending encode operations before dropping frames. */
+const MAX_ENCODE_QUEUE = 3;
+
+/** WebSocket buffer high water mark (512KB). Drop frames if exceeded. */
+const WS_BUFFER_HIGH_WATER = 512000;
+
 /** Interval for posting diagnostic stats to main thread (ms). */
 const STATS_INTERVAL_MS = 1000;
 
@@ -111,6 +117,7 @@ interface StatsMessage {
   type: 'STATS';
   underflows: number;
   overflows: number;
+  droppedFrames: number;
   wakeups: number;
   avgSamplesPerWake: number;
   encodeQueueSize: number;
@@ -155,6 +162,7 @@ let heartbeatInterval: ReturnType<typeof setInterval> | null = null;
 // Diagnostic counters
 let underflowCount = 0;
 let overflowCount = 0;
+let droppedFrameCount = 0;
 let wakeupCount = 0;
 let totalSamplesRead = 0;
 let lastStatsTime = 0;
@@ -288,14 +296,32 @@ function readFromRingBuffer(): number {
 
 /**
  * Encodes and sends the accumulated frame if complete.
+ * Implements backpressure by dropping frames when encoder queue or
+ * WebSocket buffer is overloaded.
  */
 function flushFrameIfReady(): void {
   if (!frameBuffer || frameOffset < frameSizeSamples) return;
   if (!encoder || !socket || socket.readyState !== WebSocket.OPEN) return;
 
+  // Check backpressure before encoding
+  if (
+    encoder.encodeQueueSize >= MAX_ENCODE_QUEUE ||
+    socket.bufferedAmount >= WS_BUFFER_HIGH_WATER
+  ) {
+    droppedFrameCount++;
+
+    // Advance encoder timestamp to avoid time compression when we resume
+    // frameSizeSamples is stereo samples, divide by 2 for frame count
+    encoder.advanceTimestamp(frameSizeSamples / 2);
+
+    // Reset frame buffer - data already drained from ring buffer
+    frameOffset = 0;
+    return;
+  }
+
   // Encode the frame
   const encoded = encoder.encode(frameBuffer);
-  if (encoded && socket.bufferedAmount < 1024 * 1024) {
+  if (encoded) {
     socket.send(encoded);
   }
 
@@ -316,6 +342,7 @@ function maybePostStats(): void {
     type: 'STATS',
     underflows: underflowCount,
     overflows: overflowCount,
+    droppedFrames: droppedFrameCount,
     wakeups: wakeupCount,
     avgSamplesPerWake,
     encodeQueueSize: encoder?.encodeQueueSize ?? 0,
@@ -325,6 +352,7 @@ function maybePostStats(): void {
   // Reset counters for next interval
   underflowCount = 0;
   overflowCount = 0;
+  droppedFrameCount = 0;
   wakeupCount = 0;
   totalSamplesRead = 0;
   lastStatsTime = now;
@@ -567,6 +595,9 @@ async function consumeLoop(): Promise<void> {
     if (samplesThisWake > 0) {
       totalSamplesRead += samplesThisWake;
       wakeupCount++;
+    } else {
+      // Woke up but got no data - underflow condition
+      underflowCount++;
     }
 
     maybePostStats();
@@ -673,6 +704,7 @@ self.onmessage = async (event: MessageEvent<InboundMessage>) => {
       // Reset state
       underflowCount = 0;
       overflowCount = 0;
+      droppedFrameCount = 0;
       wakeupCount = 0;
       totalSamplesRead = 0;
       lastSignalValue = 0;

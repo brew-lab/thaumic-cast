@@ -378,6 +378,15 @@ export class VorbisEncoder implements AudioEncoder {
   }
 
   /**
+   * Advances the encoder's internal timestamp without encoding.
+   * Used when dropping frames due to backpressure to prevent time compression.
+   * @param frameCount - Number of audio frames to skip
+   */
+  advanceTimestamp(frameCount: number): void {
+    this.timestamp += (frameCount / this.config.sampleRate) * 1_000_000;
+  }
+
+  /**
    * Closes the encoder and releases resources.
    */
   close(): void {

@@ -442,10 +442,13 @@ class StreamSession {
               `Audio ring buffer overflow (${msg.overflows}x)! Encoder or network too slow.`,
             );
           }
+          if (msg.droppedFrames > 0) {
+            log.warn(`Dropped ${msg.droppedFrames} frame(s) due to backpressure`);
+          }
           log.info(
             `[DIAG] wakeups=${msg.wakeups} avgSamples=${msg.avgSamplesPerWake.toFixed(0)} ` +
               `encodeQueue=${msg.encodeQueueSize} wsBuffer=${msg.wsBufferedAmount} ` +
-              `underflows=${msg.underflows} overflows=${msg.overflows}`,
+              `underflows=${msg.underflows} overflows=${msg.overflows} dropped=${msg.droppedFrames}`,
           );
           break;
       }

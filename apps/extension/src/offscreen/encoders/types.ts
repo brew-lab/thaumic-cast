@@ -26,6 +26,13 @@ export interface AudioEncoder {
   close(): void;
 
   /**
+   * Advances the encoder's internal timestamp without encoding.
+   * Used when dropping frames due to backpressure to prevent time compression.
+   * @param frameCount - Number of audio frames to skip
+   */
+  advanceTimestamp(frameCount: number): void;
+
+  /**
    * The configuration this encoder was created with.
    */
   readonly config: EncoderConfig;
