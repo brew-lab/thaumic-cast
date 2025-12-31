@@ -296,6 +296,24 @@ class StreamSession {
       latencyHint: 'playback',
     });
 
+    // Check if browser honored our sample rate request
+    const actualSampleRate = this.audioContext.sampleRate;
+    if (actualSampleRate !== encoderConfig.sampleRate) {
+      // Validate the actual rate is supported
+      if (actualSampleRate !== 44100 && actualSampleRate !== 48000) {
+        log.error(
+          `Unsupported sample rate: ${actualSampleRate}Hz. ` +
+            'Only 44100Hz and 48000Hz are supported.',
+        );
+        throw new Error(`Unsupported sample rate: ${actualSampleRate}Hz`);
+      }
+      log.warn(
+        `Sample rate mismatch: requested ${encoderConfig.sampleRate}Hz, got ${actualSampleRate}Hz. ` +
+          'Updating config to use actual rate.',
+      );
+      this.encoderConfig = { ...encoderConfig, sampleRate: actualSampleRate };
+    }
+
     this.ringBuffer = createAudioRingBuffer();
 
     this.streamReadyPromise = new Promise<void>((resolve) => {
