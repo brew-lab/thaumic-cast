@@ -47,7 +47,7 @@ const SAMPLE_RATE_INDEX: Record<number, number> = {
  * AAC encoder using WebCodecs AudioEncoder API.
  * Outputs ADTS-wrapped frames suitable for streaming.
  *
- * Uses buffer transfer to avoid copies when creating AudioData.
+ * Uses pre-allocated buffers to minimize GC pressure during encoding.
  */
 export class AacEncoder implements AudioEncoder {
   private encoder: globalThis.AudioEncoder;
@@ -56,6 +56,9 @@ export class AacEncoder implements AudioEncoder {
   private isClosed = false;
   private readonly profile: number;
   private readonly sampleRateIndex: number;
+
+  /** Pre-allocated planar conversion buffer */
+  private planarBuffer: Float32Array | null = null;
 
   /**
    * Returns the number of pending encode requests.
@@ -179,7 +182,7 @@ export class AacEncoder implements AudioEncoder {
 
   /**
    * Encodes PCM samples to AAC.
-   * Allocates exact-sized buffer and transfers ownership to avoid copies.
+   * Uses pre-allocated buffer to minimize GC pressure.
    * @param samples - Interleaved stereo Int16 samples
    * @returns Encoded AAC data or null if unavailable
    */
@@ -187,17 +190,22 @@ export class AacEncoder implements AudioEncoder {
     if (this.isClosed) return null;
 
     const frameCount = samples.length / 2;
+    const requiredSize = frameCount * 2;
 
-    // Allocate exact-sized buffer for planar audio data
-    const buffer = new ArrayBuffer(frameCount * 2 * Float32Array.BYTES_PER_ELEMENT);
-    const planarData = new Float32Array(buffer);
+    // Reuse or grow buffer as needed
+    if (!this.planarBuffer || this.planarBuffer.length < requiredSize) {
+      this.planarBuffer = new Float32Array(requiredSize);
+    }
 
-    // Deinterleave and convert Int16 to Float32 directly into final buffer
+    // Deinterleave and convert Int16 to Float32 into pre-allocated buffer
     // Planar format: all left samples followed by all right samples
     for (let i = 0; i < frameCount; i++) {
-      planarData[i] = samples[i * 2]! / 0x7fff;
-      planarData[frameCount + i] = samples[i * 2 + 1]! / 0x7fff;
+      this.planarBuffer[i] = samples[i * 2]! / 0x7fff;
+      this.planarBuffer[frameCount + i] = samples[i * 2 + 1]! / 0x7fff;
     }
+
+    // AudioData requires exact buffer size matching frame count
+    const planarData = this.planarBuffer.subarray(0, requiredSize);
 
     const data = new AudioData({
       format: 'f32-planar',
@@ -205,8 +213,10 @@ export class AacEncoder implements AudioEncoder {
       numberOfFrames: frameCount,
       numberOfChannels: this.config.channels,
       timestamp: this.timestamp,
-      data: buffer,
-      transfer: [buffer],
+      data: (planarData.buffer as ArrayBuffer).slice(
+        planarData.byteOffset,
+        planarData.byteOffset + planarData.byteLength,
+      ),
     });
 
     this.encoder.encode(data);
