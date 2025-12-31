@@ -29,13 +29,33 @@ export const CTRL_OVERFLOW = 2;
 /** Control index for the data available signal (used with Atomics.wait/notify). */
 export const CTRL_DATA_SIGNAL = 3;
 
+/** Byte offset where Int16 audio data begins. */
+export const DATA_BYTE_OFFSET = HEADER_SIZE * Int32Array.BYTES_PER_ELEMENT;
+
 /**
  * Creates a SharedArrayBuffer for audio data.
  * @returns A new SharedArrayBuffer for the audio ring buffer
  */
 export function createAudioRingBuffer(): SharedArrayBuffer {
-  // Size = (Header + BufferSize) * 2 bytes (for Int16)
-  const size = (HEADER_SIZE + RING_BUFFER_SIZE) * 2;
+  // Static assertions for configuration validity
+  if ((RING_BUFFER_SIZE & (RING_BUFFER_SIZE - 1)) !== 0) {
+    throw new Error('RING_BUFFER_SIZE must be a power of two for bitmask wrapping');
+  }
+  if (RING_BUFFER_MASK !== RING_BUFFER_SIZE - 1) {
+    throw new Error('RING_BUFFER_MASK must be RING_BUFFER_SIZE - 1');
+  }
+
+  // Correct allocation: header uses Int32, data uses Int16
+  const size = DATA_BYTE_OFFSET + RING_BUFFER_SIZE * Int16Array.BYTES_PER_ELEMENT;
   const sab = new SharedArrayBuffer(size);
+
+  // Verify the Int16Array view will have exactly RING_BUFFER_SIZE elements
+  const dataView = new Int16Array(sab, DATA_BYTE_OFFSET);
+  if (dataView.length !== RING_BUFFER_SIZE) {
+    throw new Error(
+      `Ring buffer data view length mismatch: expected ${RING_BUFFER_SIZE}, got ${dataView.length}`,
+    );
+  }
+
   return sab;
 }
