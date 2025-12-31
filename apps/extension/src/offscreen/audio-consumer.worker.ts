@@ -21,6 +21,9 @@ import { WsMessageSchema } from '@thaumic-cast/protocol';
 /** Frame duration in seconds (20ms). */
 const FRAME_DURATION_SEC = 0.02;
 
+/** Number of frames for low watermark (40ms = 2 frames). Don't sleep if above this. */
+const LOW_WATER_FRAMES = 2;
+
 /** Interval for posting diagnostic stats to main thread (ms). */
 const STATS_INTERVAL_MS = 1000;
 
@@ -136,6 +139,9 @@ let frameSizeSamples = 0;
 let frameBuffer: Int16Array | null = null;
 let frameOffset = 0;
 
+// Watermarks (computed from frame size)
+let lowWaterSamples = 0;
+
 // Encoder and WebSocket
 let encoder: AudioEncoder | null = null;
 let socket: WebSocket | null = null;
@@ -181,6 +187,22 @@ function log(level: 'info' | 'warn' | 'error', ...args: unknown[]): void {
 // ─────────────────────────────────────────────────────────────────────────────
 // Ring Buffer Reading
 // ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Returns the number of samples available in the ring buffer.
+ * @returns Number of available samples
+ */
+function getAvailableSamples(): number {
+  if (!control) return 0;
+
+  const writeIdx = Atomics.load(control, CTRL_WRITE_IDX);
+  const readIdx = Atomics.load(control, CTRL_READ_IDX);
+
+  if (writeIdx >= readIdx) {
+    return writeIdx - readIdx;
+  }
+  return bufferSize - readIdx + writeIdx;
+}
 
 /**
  * Reads available samples from the ring buffer into the frame buffer.
@@ -495,7 +517,10 @@ function sendWsMessage(message: object): boolean {
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
- * Main consumption loop using Atomics.waitAsync().
+ * Main consumption loop using Atomics.waitAsync() with watermark-based flow control.
+ *
+ * Only sleeps when buffer drops below LOW_WATER threshold, avoiding unnecessary
+ * wait/wake cycles when data is plentiful.
  */
 async function consumeLoop(): Promise<void> {
   if (!control) return;
@@ -504,55 +529,42 @@ async function consumeLoop(): Promise<void> {
   lastSignalValue = Atomics.load(control, CTRL_DATA_SIGNAL);
 
   while (running) {
-    // Wait for the signal to change (producer increments it after writing)
+    // Drain all available data
+    let samplesThisWake = 0;
+    while (true) {
+      const samplesRead = readFromRingBuffer();
+      if (samplesRead === 0) break;
+      samplesThisWake += samplesRead;
+      flushFrameIfReady();
+    }
+
+    if (samplesThisWake > 0) {
+      totalSamplesRead += samplesThisWake;
+      wakeupCount++;
+    }
+
+    maybePostStats();
+
+    // Check if we should sleep or keep spinning
+    const available = getAvailableSamples();
+    if (available >= lowWaterSamples) {
+      // Buffer still has data above LOW_WATER, don't sleep
+      continue;
+    }
+
+    // Buffer is low, wait for more data
+    lastSignalValue = Atomics.load(control, CTRL_DATA_SIGNAL);
     const waitResult = Atomics.waitAsync(control, CTRL_DATA_SIGNAL, lastSignalValue);
 
     if (waitResult.async) {
       const result = await waitResult.value;
-
       if (!running) break;
-
       if (result === 'ok') {
         lastSignalValue = Atomics.load(control, CTRL_DATA_SIGNAL);
-        wakeupCount++;
-
-        // Drain all available data (handles coalesced wakeups)
-        let samplesThisWake = 0;
-        while (true) {
-          const samplesRead = readFromRingBuffer();
-          if (samplesRead === 0) break;
-          samplesThisWake += samplesRead;
-          flushFrameIfReady();
-        }
-
-        if (samplesThisWake === 0) {
-          underflowCount++;
-        } else {
-          totalSamplesRead += samplesThisWake;
-        }
-
-        maybePostStats();
       }
     } else {
       // Synchronous result (value already changed)
       lastSignalValue = Atomics.load(control, CTRL_DATA_SIGNAL);
-      wakeupCount++;
-
-      let samplesThisWake = 0;
-      while (true) {
-        const samplesRead = readFromRingBuffer();
-        if (samplesRead === 0) break;
-        samplesThisWake += samplesRead;
-        flushFrameIfReady();
-      }
-
-      if (samplesThisWake === 0) {
-        underflowCount++;
-      } else {
-        totalSamplesRead += samplesThisWake;
-      }
-
-      maybePostStats();
     }
   }
 }
@@ -627,6 +639,9 @@ self.onmessage = async (event: MessageEvent<InboundMessage>) => {
       frameSizeSamples = Math.round(sampleRate * FRAME_DURATION_SEC) * 2;
       frameBuffer = new Int16Array(frameSizeSamples);
       frameOffset = 0;
+
+      // Compute watermarks from frame size
+      lowWaterSamples = frameSizeSamples * LOW_WATER_FRAMES;
 
       // Reset state
       underflowCount = 0;
