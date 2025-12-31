@@ -1,5 +1,5 @@
 import { createLogger } from '@thaumic-cast/shared';
-import { createAudioRingBuffer, HEADER_SIZE, RING_BUFFER_SIZE, CTRL_OVERFLOW } from './ring-buffer';
+import { createAudioRingBuffer, HEADER_SIZE, RING_BUFFER_SIZE } from './ring-buffer';
 import {
   ExtensionMessage,
   StartCaptureMessage,
@@ -261,7 +261,6 @@ class StreamSession {
   private consumerWorker: Worker | null = null;
   private reconnectTimeout: ReturnType<typeof setTimeout> | null = null;
   private ringBuffer: SharedArrayBuffer;
-  private control: Int32Array;
   private isStopping = false;
   private reconnectAttempts = 0;
   private maxReconnectAttempts = 5;
@@ -306,7 +305,6 @@ class StreamSession {
     });
 
     this.ringBuffer = createAudioRingBuffer();
-    this.control = new Int32Array(this.ringBuffer, 0, HEADER_SIZE);
 
     // Create a promise that resolves when STREAM_READY is received
     this.streamReadyPromise = new Promise<void>((resolve) => {
@@ -542,14 +540,13 @@ class StreamSession {
       }
 
       if (msg.type === 'STATS') {
-        // Check for overflow flag in main thread as well (for logging context)
-        if (Atomics.load(this.control, CTRL_OVERFLOW) === 1) {
-          log.warn('Audio ring buffer overflow! Network or Encoder is too slow.');
-          Atomics.store(this.control, CTRL_OVERFLOW, 0);
-        }
-
         const encodeQueue = this.encoder?.encodeQueueSize ?? 0;
         const wsBuffer = this.socket?.bufferedAmount ?? 0;
+
+        // Overflow is checked and cleared by the Worker, reported in msg.overflows
+        if (msg.overflows > 0) {
+          log.warn(`Audio ring buffer overflow (${msg.overflows}x)! Encoder or network too slow.`);
+        }
 
         log.info(
           `[DIAG] wakeups=${msg.wakeups} avgSamples=${msg.avgSamplesPerWake.toFixed(0)} ` +
