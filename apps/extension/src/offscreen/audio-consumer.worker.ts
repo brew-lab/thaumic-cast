@@ -208,16 +208,20 @@ async function consumeLoop(): Promise<void> {
         lastSignalValue = Atomics.load(control, CTRL_DATA_SIGNAL);
         wakeupCount++;
 
-        // Read all available samples
-        const samplesRead = readFromRingBuffer();
-        if (samplesRead === 0) {
-          underflowCount++;
-        } else {
-          totalSamplesRead += samplesRead;
+        // Drain all available data (handles coalesced wakeups)
+        let samplesThisWake = 0;
+        while (true) {
+          const samplesRead = readFromRingBuffer();
+          if (samplesRead === 0) break;
+          samplesThisWake += samplesRead;
+          flushFrameIfReady();
         }
 
-        // Flush complete frames
-        flushFrameIfReady();
+        if (samplesThisWake === 0) {
+          underflowCount++;
+        } else {
+          totalSamplesRead += samplesThisWake;
+        }
 
         // Post stats periodically
         maybePostStats();
@@ -228,14 +232,21 @@ async function consumeLoop(): Promise<void> {
       lastSignalValue = Atomics.load(control, CTRL_DATA_SIGNAL);
       wakeupCount++;
 
-      const samplesRead = readFromRingBuffer();
-      if (samplesRead === 0) {
-        underflowCount++;
-      } else {
-        totalSamplesRead += samplesRead;
+      // Drain all available data (handles coalesced wakeups)
+      let samplesThisWake = 0;
+      while (true) {
+        const samplesRead = readFromRingBuffer();
+        if (samplesRead === 0) break;
+        samplesThisWake += samplesRead;
+        flushFrameIfReady();
       }
 
-      flushFrameIfReady();
+      if (samplesThisWake === 0) {
+        underflowCount++;
+      } else {
+        totalSamplesRead += samplesThisWake;
+      }
+
       maybePostStats();
     }
   }
