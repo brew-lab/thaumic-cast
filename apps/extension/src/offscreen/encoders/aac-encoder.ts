@@ -204,7 +204,7 @@ export class AacEncoder implements AudioEncoder {
       this.planarBuffer[frameCount + i] = samples[i * 2 + 1]! / 0x7fff;
     }
 
-    // AudioData requires exact buffer size matching frame count
+    // Pass subarray view directly - AudioData copies internally, no need for slice()
     const planarData = this.planarBuffer.subarray(0, requiredSize);
 
     const data = new AudioData({
@@ -213,10 +213,8 @@ export class AacEncoder implements AudioEncoder {
       numberOfFrames: frameCount,
       numberOfChannels: this.config.channels,
       timestamp: this.timestamp,
-      data: (planarData.buffer as ArrayBuffer).slice(
-        planarData.byteOffset,
-        planarData.byteOffset + planarData.byteLength,
-      ),
+      // Cast needed: TS strict typing doesn't recognize Float32Array<ArrayBufferLike> as BufferSource
+      data: planarData as unknown as BufferSource,
     });
 
     this.encoder.encode(data);

@@ -304,19 +304,22 @@ class StreamSession {
     // Check if browser honored our sample rate request
     const actualSampleRate = this.audioContext.sampleRate;
     if (actualSampleRate !== encoderConfig.sampleRate) {
-      // Validate the actual rate is supported
+      // Log and continue with actual rate - server handshake will validate
       if (actualSampleRate !== 44100 && actualSampleRate !== 48000) {
-        log.error(
-          `Unsupported sample rate: ${actualSampleRate}Hz. ` +
-            'Only 44100Hz and 48000Hz are supported.',
+        log.warn(
+          `Non-standard sample rate: ${actualSampleRate}Hz. ` +
+            'Server handshake will validate compatibility.',
         );
-        throw new Error(`Unsupported sample rate: ${actualSampleRate}Hz`);
+      } else {
+        log.warn(
+          `Sample rate mismatch: requested ${encoderConfig.sampleRate}Hz, got ${actualSampleRate}Hz.`,
+        );
       }
-      log.warn(
-        `Sample rate mismatch: requested ${encoderConfig.sampleRate}Hz, got ${actualSampleRate}Hz. ` +
-          'Updating config to use actual rate.',
-      );
-      this.encoderConfig = { ...encoderConfig, sampleRate: actualSampleRate };
+      // Update config to use actual rate (cast needed for non-standard rates)
+      this.encoderConfig = {
+        ...encoderConfig,
+        sampleRate: actualSampleRate as typeof encoderConfig.sampleRate,
+      };
     }
 
     this.ringBuffer = createAudioRingBuffer();

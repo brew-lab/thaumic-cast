@@ -313,8 +313,8 @@ function flushFrameIfReady(): void {
     droppedFrameCount++;
 
     // Advance encoder timestamp to avoid time compression when we resume
-    // frameSizeSamples is stereo samples, divide by 2 for frame count
-    encoder.advanceTimestamp(frameSizeSamples / 2);
+    // frameSizeSamples is interleaved samples, divide by channels for frame count
+    encoder.advanceTimestamp(frameSizeSamples / encoder.config.channels);
 
     // Reset frame buffer - data already drained from ring buffer
     frameOffset = 0;
