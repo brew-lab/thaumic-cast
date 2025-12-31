@@ -529,9 +529,13 @@ class StreamSession {
    * Monitors the shared ring buffer for new samples and checks for overflows.
    */
   private startReading(): void {
-    let totalSamplesRead = 0;
     let lastLogTime = Date.now();
     let pollCount = 0;
+    // Diagnostic counters for debugging audio glitches
+    let overflowCount = 0;
+    let underflowCount = 0;
+    let minRingFillMs = Infinity;
+    let maxRingFillMs = 0;
 
     const poll = () => {
       if (!this.streamId || this.isStopping) {
@@ -546,53 +550,69 @@ class StreamSession {
       const writeIdx = Atomics.load(this.control, 0);
       const readIdx = Atomics.load(this.control, 1);
 
-      // Check for overflow flag
+      // Check for overflow flag (producer wrapped around and overwrote data)
       if (Atomics.load(this.control, 2) === 1) {
+        overflowCount++;
         log.warn('Audio ring buffer overflow! Network or Encoder is too slow.');
         Atomics.store(this.control, 2, 0);
       }
 
-      if (readIdx !== writeIdx) {
-        let samplesToRead = 0;
-        if (writeIdx > readIdx) {
-          samplesToRead = writeIdx - readIdx;
-        } else {
-          samplesToRead = RING_BUFFER_SIZE - readIdx + writeIdx;
-        }
-
-        if (samplesToRead > 0) {
-          totalSamplesRead += samplesToRead;
-
-          // Copy to pre-allocated buffer (avoids per-poll allocations)
-          if (readIdx + samplesToRead <= RING_BUFFER_SIZE) {
-            this.readBuffer.set(this.sharedBuffer.subarray(readIdx, readIdx + samplesToRead));
-          } else {
-            const firstPart = RING_BUFFER_SIZE - readIdx;
-            this.readBuffer.set(this.sharedBuffer.subarray(readIdx, RING_BUFFER_SIZE));
-            this.readBuffer.set(
-              this.sharedBuffer.subarray(0, samplesToRead - firstPart),
-              firstPart,
-            );
-          }
-
-          if (this.encoder && this.socket?.readyState === WebSocket.OPEN) {
-            // Use subarray view to pass only the valid portion (zero allocation)
-            const encoded = this.encoder.encode(this.readBuffer.subarray(0, samplesToRead));
-            if (encoded && this.socket.bufferedAmount < 1024 * 1024) {
-              this.socket.send(encoded);
-            }
-          }
-
-          Atomics.store(this.control, 1, (readIdx + samplesToRead) % RING_BUFFER_SIZE);
-        }
+      // Calculate ring buffer fill level
+      let samplesToRead = 0;
+      if (writeIdx >= readIdx) {
+        samplesToRead = writeIdx - readIdx;
+      } else {
+        samplesToRead = RING_BUFFER_SIZE - readIdx + writeIdx;
       }
 
-      // Log stats every 5 seconds
+      // Convert to milliseconds (stereo interleaved, so divide by 2 for frames)
+      const ringFillMs = samplesToRead / 2 / (this.encoderConfig.sampleRate / 1000);
+
+      // Track min/max for diagnostics
+      if (ringFillMs < minRingFillMs) minRingFillMs = ringFillMs;
+      if (ringFillMs > maxRingFillMs) maxRingFillMs = ringFillMs;
+
+      // Detect underflow (buffer empty when we expected data)
+      if (samplesToRead === 0) {
+        underflowCount++;
+      }
+
+      if (samplesToRead > 0) {
+        // Copy to pre-allocated buffer (avoids per-poll allocations)
+        if (readIdx + samplesToRead <= RING_BUFFER_SIZE) {
+          this.readBuffer.set(this.sharedBuffer.subarray(readIdx, readIdx + samplesToRead));
+        } else {
+          const firstPart = RING_BUFFER_SIZE - readIdx;
+          this.readBuffer.set(this.sharedBuffer.subarray(readIdx, RING_BUFFER_SIZE));
+          this.readBuffer.set(this.sharedBuffer.subarray(0, samplesToRead - firstPart), firstPart);
+        }
+
+        if (this.encoder && this.socket?.readyState === WebSocket.OPEN) {
+          // Use subarray view to pass only the valid portion (zero allocation)
+          const encoded = this.encoder.encode(this.readBuffer.subarray(0, samplesToRead));
+          if (encoded && this.socket.bufferedAmount < 1024 * 1024) {
+            this.socket.send(encoded);
+          }
+        }
+
+        Atomics.store(this.control, 1, (readIdx + samplesToRead) % RING_BUFFER_SIZE);
+      }
+
+      // Log diagnostic stats every 1 second for debugging audio glitches
       const now = Date.now();
-      if (now - lastLogTime >= 5000) {
+      if (now - lastLogTime >= 1000) {
+        const encodeQueue = this.encoder?.encodeQueueSize ?? 0;
+        const wsBuffer = this.socket?.bufferedAmount ?? 0;
+
         log.info(
-          `Audio stats: ${totalSamplesRead} samples read, ${pollCount} polls, writeIdx=${writeIdx}, readIdx=${readIdx}`,
+          `[DIAG] ringFill=${ringFillMs.toFixed(1)}ms (min=${minRingFillMs.toFixed(1)}/max=${maxRingFillMs.toFixed(1)}) ` +
+            `encodeQueue=${encodeQueue} wsBuffer=${wsBuffer} ` +
+            `underflows=${underflowCount} overflows=${overflowCount} polls=${pollCount}`,
         );
+
+        // Reset min/max for next interval
+        minRingFillMs = Infinity;
+        maxRingFillMs = 0;
         lastLogTime = now;
       }
     };

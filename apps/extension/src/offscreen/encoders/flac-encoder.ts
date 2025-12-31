@@ -35,6 +35,14 @@ export class FlacEncoder implements AudioEncoder {
   private planarBuffer: Float32Array;
 
   /**
+   * Returns the number of pending encode requests.
+   * @returns The number of queued encode operations
+   */
+  get encodeQueueSize(): number {
+    return this.encoder.encodeQueueSize;
+  }
+
+  /**
    * Creates a new FLAC encoder instance.
    * @param config - The encoder configuration
    */

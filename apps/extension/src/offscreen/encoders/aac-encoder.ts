@@ -58,6 +58,14 @@ export class AacEncoder implements AudioEncoder {
   private readonly sampleRateIndex: number;
 
   /**
+   * Returns the number of pending encode requests.
+   * @returns The number of queued encode operations
+   */
+  get encodeQueueSize(): number {
+    return this.encoder.encodeQueueSize;
+  }
+
+  /**
    * Creates a new AAC encoder instance.
    * @param config - The encoder configuration
    */

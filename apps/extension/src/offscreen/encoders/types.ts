@@ -29,4 +29,10 @@ export interface AudioEncoder {
    * The configuration this encoder was created with.
    */
   readonly config: EncoderConfig;
+
+  /**
+   * Number of pending encode requests in the encoder queue.
+   * Used for backpressure detection - if this grows, encoder can't keep up.
+   */
+  readonly encodeQueueSize: number;
 }
