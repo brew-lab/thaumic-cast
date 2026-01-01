@@ -16,6 +16,7 @@ import {
   CurrentTabStateResponse,
   ActiveCastsResponse,
   StartPlaybackResponse,
+  SessionHealthMessage,
 } from '../lib/messages';
 import { getCachedState, updateCache, removeFromCache, restoreCache } from './metadata-cache';
 import {
@@ -41,6 +42,12 @@ import {
   restoreConnectionState,
 } from './connection-state';
 import { handleSonosEvent } from './sonos-event-handlers';
+import {
+  selectEncoderConfig,
+  recordStableSession,
+  recordBadSession,
+  describeConfig,
+} from '../lib/device-config';
 
 const log = createLogger('Background');
 
@@ -336,6 +343,27 @@ chrome.runtime.onMessage.addListener((msg: ExtensionMessage, _sender, sendRespon
           sendResponse({ success: true });
           break;
 
+        case 'SESSION_HEALTH': {
+          const { payload } = msg as SessionHealthMessage;
+          log.info(
+            `Session health for tab ${payload.tabId}: ` +
+              `hadDrops=${payload.hadDrops}, ` +
+              `producer=${payload.totalProducerDrops}, ` +
+              `catchUp=${payload.totalCatchUpDrops}, ` +
+              `consumer=${payload.totalConsumerDrops}`,
+          );
+
+          // Record session outcome for config learning
+          if (payload.hadDrops) {
+            await recordBadSession(payload.encoderConfig);
+          } else {
+            await recordStableSession(payload.encoderConfig);
+          }
+
+          sendResponse({ success: true });
+          break;
+        }
+
         // ─────────────────────────────────────────────────────────────────
         // WebSocket Control (from popup)
         // ─────────────────────────────────────────────────────────────────
@@ -469,9 +497,13 @@ async function handleStartCast(
   };
 
   try {
-    const { speakerIp, encoderConfig } = msg.payload;
+    const { speakerIp, encoderConfig: providedConfig } = msg.payload;
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
     if (!tab?.id) throw new Error('No active tab');
+
+    // Select encoder config: use provided config or auto-select based on device capabilities
+    const encoderConfig = providedConfig ?? (await selectEncoderConfig());
+    log.info(`Encoder config: ${describeConfig(encoderConfig)}`);
 
     // 1. Discover Desktop App and its limits
     const app = await discoverDesktopApp();

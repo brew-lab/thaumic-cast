@@ -287,6 +287,11 @@ class StreamSession {
     reject: (error: Error) => void;
   } | null = null;
 
+  // Cumulative session stats for health reporting
+  private totalProducerDrops = 0;
+  private totalCatchUpDrops = 0;
+  private totalConsumerDrops = 0;
+
   /**
    * Creates a new StreamSession.
    * @param mediaStream - The captured media stream
@@ -456,18 +461,27 @@ class StreamSession {
           break;
 
         case 'STATS':
-          if (msg.overflows > 0) {
+          // Accumulate drops for session health reporting
+          this.totalProducerDrops += msg.producerDroppedSamples ?? 0;
+          this.totalCatchUpDrops += msg.catchUpDroppedSamples ?? 0;
+          this.totalConsumerDrops += msg.consumerDroppedFrames ?? 0;
+
+          if (msg.producerDroppedSamples > 0) {
             log.warn(
-              `Audio ring buffer overflow (${msg.overflows}x)! Encoder or network too slow.`,
+              `Audio ring buffer overflow (${msg.producerDroppedSamples} samples)! Encoder or network too slow.`,
             );
           }
-          if (msg.droppedFrames > 0) {
-            log.warn(`Dropped ${msg.droppedFrames} frame(s) due to backpressure`);
+          if (msg.consumerDroppedFrames > 0) {
+            log.warn(`Dropped ${msg.consumerDroppedFrames} frame(s) due to backpressure`);
+          }
+          if (msg.catchUpDroppedSamples > 0) {
+            log.warn(`Catch-up dropped ${msg.catchUpDroppedSamples} samples to bound latency`);
           }
           log.info(
             `[DIAG] wakeups=${msg.wakeups} avgSamples=${msg.avgSamplesPerWake.toFixed(0)} ` +
               `encodeQueue=${msg.encodeQueueSize} wsBuffer=${msg.wsBufferedAmount} ` +
-              `underflows=${msg.underflows} overflows=${msg.overflows} dropped=${msg.droppedFrames}`,
+              `underflows=${msg.underflows} producerDrops=${msg.producerDroppedSamples} ` +
+              `catchUpDrops=${msg.catchUpDroppedSamples} consumerDrops=${msg.consumerDroppedFrames}`,
           );
           break;
       }
@@ -493,6 +507,29 @@ class StreamSession {
 
     // Wait for connection
     await connectionPromise;
+  }
+
+  /**
+   * Returns session health data for reporting.
+   * @returns Health data including drop stats and encoder config
+   */
+  public getHealthData(): {
+    encoderConfig: EncoderConfig;
+    hadDrops: boolean;
+    totalProducerDrops: number;
+    totalCatchUpDrops: number;
+    totalConsumerDrops: number;
+  } {
+    const hadDrops =
+      this.totalProducerDrops > 0 || this.totalCatchUpDrops > 0 || this.totalConsumerDrops > 0;
+
+    return {
+      encoderConfig: this.encoderConfig,
+      hadDrops,
+      totalProducerDrops: this.totalProducerDrops,
+      totalCatchUpDrops: this.totalCatchUpDrops,
+      totalConsumerDrops: this.totalConsumerDrops,
+    };
   }
 
   /**
@@ -718,6 +755,22 @@ chrome.runtime.onMessage.addListener((msg: ExtensionMessage, _sender, sendRespon
     const tabId = (msg as StopCaptureMessage).payload.tabId;
     const session = activeSessions.get(tabId);
     if (session) {
+      // Get health data before stopping
+      const healthData = session.getHealthData();
+
+      // Send session health to background for config learning
+      chrome.runtime
+        .sendMessage({
+          type: 'SESSION_HEALTH',
+          payload: {
+            tabId,
+            ...healthData,
+          },
+        })
+        .catch((err) => {
+          log.warn('Failed to send SESSION_HEALTH:', err);
+        });
+
       session.stop();
       activeSessions.delete(tabId);
     }

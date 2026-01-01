@@ -52,7 +52,9 @@ export type ExtensionMessageType =
   | 'SET_VOLUME'
   | 'SET_MUTE'
   // Offscreen lifecycle
-  | 'OFFSCREEN_READY';
+  | 'OFFSCREEN_READY'
+  // Session health (offscreen → background)
+  | 'SESSION_HEALTH';
 
 /**
  * Message payload for starting a cast.
@@ -61,7 +63,11 @@ export interface StartCastMessage {
   type: 'START_CAST';
   payload: {
     speakerIp: string;
-    encoderConfig: EncoderConfig;
+    /**
+     * Encoder configuration. If omitted, background will auto-select
+     * based on device capabilities and past session history.
+     */
+    encoderConfig?: EncoderConfig;
   };
 }
 
@@ -127,6 +133,26 @@ export interface StartPlaybackResponse {
   speakerIp?: string;
   streamUrl?: string;
   error?: string;
+}
+
+/**
+ * Session health report sent from offscreen to background when a session ends.
+ * Used to record whether the session was stable (for config learning).
+ */
+export interface SessionHealthMessage {
+  type: 'SESSION_HEALTH';
+  payload: {
+    tabId: number;
+    encoderConfig: EncoderConfig;
+    /** Whether any audio drops occurred during the session. */
+    hadDrops: boolean;
+    /** Total samples dropped by producer (buffer overflow). */
+    totalProducerDrops: number;
+    /** Total samples dropped by consumer catch-up. */
+    totalCatchUpDrops: number;
+    /** Total frames dropped due to backpressure. */
+    totalConsumerDrops: number;
+  };
 }
 
 /**
@@ -477,4 +503,6 @@ export type ExtensionMessage =
   | TransportStateUpdateMessage
   | WsConnectionLostMessage
   | SetVolumeMessage
-  | SetMuteMessage;
+  | SetMuteMessage
+  // Session health
+  | SessionHealthMessage;
