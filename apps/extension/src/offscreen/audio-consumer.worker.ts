@@ -133,8 +133,8 @@ interface PlaybackErrorMessage {
 interface StatsMessage {
   type: 'STATS';
   underflows: number;
-  overflows: number;
-  droppedFrames: number;
+  producerDroppedSamples: number; // Samples dropped by worklet (buffer full)
+  consumerDroppedFrames: number; // Frames dropped by worker (backpressure)
   wakeups: number;
   avgSamplesPerWake: number;
   encodeQueueSize: number;
@@ -175,12 +175,12 @@ let heartbeatInterval: ReturnType<typeof setInterval> | null = null;
 
 // Diagnostic counters
 let underflowCount = 0;
-let overflowCount = 0;
 let droppedFrameCount = 0;
 let wakeupCount = 0;
 let totalSamplesRead = 0;
 let lastStatsTime = 0;
-let lastDropCount = 0;
+/** Last reported value of CTRL_DROPPED_SAMPLES for computing delta. */
+let lastProducerDroppedSamples = 0;
 
 // Thermostat state (adaptive latency mode)
 /** Timestamps of recent frame drops for rolling window analysis. */
@@ -326,15 +326,6 @@ function readFromRingBuffer(): number {
   const writeIdx = Atomics.load(control, CTRL_WRITE_IDX);
   let currentReadIdx = Atomics.load(control, CTRL_READ_IDX);
 
-  // Track producer drops for diagnostics (no skip - let backpressure handle it)
-  const dropCount = Atomics.load(control, CTRL_DROPPED_SAMPLES);
-  if (dropCount > lastDropCount) {
-    const newDrops = dropCount - lastDropCount;
-    lastDropCount = dropCount;
-    overflowCount++;
-    log('warn', `Producer dropped ${newDrops} samples`);
-  }
-
   // Calculate available samples using unsigned subtraction
   let available = (writeIdx - currentReadIdx) >>> 0;
 
@@ -416,25 +407,31 @@ function flushFrameIfReady(): void {
  * Posts diagnostic stats to main thread.
  */
 function maybePostStats(): void {
+  if (!control) return;
+
   const now = performance.now();
   if (now - lastStatsTime < STATS_INTERVAL_MS) return;
+
+  // Compute producer dropped samples delta
+  const totalDropped = Atomics.load(control, CTRL_DROPPED_SAMPLES);
+  const producerDroppedSamples = (totalDropped - lastProducerDroppedSamples) >>> 0;
+  lastProducerDroppedSamples = totalDropped;
 
   const avgSamplesPerWake = wakeupCount > 0 ? totalSamplesRead / wakeupCount : 0;
 
   postToMain({
     type: 'STATS',
     underflows: underflowCount,
-    overflows: overflowCount,
-    droppedFrames: droppedFrameCount,
+    producerDroppedSamples,
+    consumerDroppedFrames: droppedFrameCount,
     wakeups: wakeupCount,
     avgSamplesPerWake,
     encodeQueueSize: encoder?.encodeQueueSize ?? 0,
     wsBufferedAmount: socket?.bufferedAmount ?? 0,
   });
 
-  // Reset counters for next interval
+  // Reset interval counters
   underflowCount = 0;
-  overflowCount = 0;
   droppedFrameCount = 0;
   wakeupCount = 0;
   totalSamplesRead = 0;
@@ -733,7 +730,7 @@ async function consumeLoop(): Promise<void> {
   if (!control) return;
 
   lastStatsTime = performance.now();
-  lastDropCount = Atomics.load(control, CTRL_DROPPED_SAMPLES);
+  lastProducerDroppedSamples = Atomics.load(control, CTRL_DROPPED_SAMPLES);
 
   while (running) {
     // SHORT-CIRCUIT: If backpressured, don't drain - let buffer fill
@@ -866,11 +863,10 @@ self.onmessage = async (event: MessageEvent<InboundMessage>) => {
 
       // Reset state
       underflowCount = 0;
-      overflowCount = 0;
       droppedFrameCount = 0;
       wakeupCount = 0;
       totalSamplesRead = 0;
-      lastDropCount = 0;
+      lastProducerDroppedSamples = 0;
       resetThermostat();
 
       // Create encoder
