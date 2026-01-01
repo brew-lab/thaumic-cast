@@ -41,6 +41,19 @@ export interface DeviceCapabilities {
   hardwareConcurrency: number | undefined;
 }
 
+/**
+ * Battery state information.
+ */
+export interface BatteryState {
+  /** Whether the device is currently charging. */
+  charging: boolean;
+  /** Battery level (0-1). */
+  level: number;
+}
+
+/** Low battery threshold - force low-end config below this level. */
+const LOW_BATTERY_THRESHOLD = 0.2;
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Constants
 // ─────────────────────────────────────────────────────────────────────────────
@@ -156,6 +169,53 @@ export function getConfigForTier(tier: DeviceTier): EncoderConfig {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Battery Detection
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Extended Navigator interface with Battery API.
+ */
+interface NavigatorWithBattery extends Navigator {
+  getBattery?: () => Promise<{
+    charging: boolean;
+    level: number;
+  }>;
+}
+
+/**
+ * Gets current battery state.
+ * @returns Battery state or null if API not available
+ */
+export async function getBatteryState(): Promise<BatteryState | null> {
+  try {
+    const nav = navigator as NavigatorWithBattery;
+    if (!nav.getBattery) {
+      return null;
+    }
+    const battery = await nav.getBattery();
+    return {
+      charging: battery.charging,
+      level: battery.level,
+    };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Checks if device is on battery power and should use low-power config.
+ * @returns True if on battery (not charging) or battery is low
+ */
+export async function shouldUseLowPowerConfig(): Promise<boolean> {
+  const battery = await getBatteryState();
+  if (!battery) {
+    return false; // Can't detect, assume plugged in
+  }
+  // Force low-power if not charging OR battery is critically low
+  return !battery.charging || battery.level < LOW_BATTERY_THRESHOLD;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Persistence
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -259,18 +319,27 @@ function isHigherQuality(a: EncoderConfig, b: EncoderConfig): boolean {
 }
 
 /**
- * Selects the appropriate encoder configuration based on device capabilities
- * and past session history.
+ * Selects the appropriate encoder configuration based on device capabilities,
+ * battery state, and past session history.
  *
  * Selection logic:
- * 1. If last session had drops and we have a stable config, use stable config
- * 2. If last session had drops and stable config equals device tier default, downgrade
- * 3. If we have a stable config that's not too old (< 7 days), use it
- * 4. Otherwise, use device tier default
+ * 1. If on battery power, force low-end config (ignore stable config history)
+ * 2. If last session had drops and we have a stable config, use stable config
+ * 3. If last session had drops and stable config equals device tier default, downgrade
+ * 4. If we have a stable config that's not too old (< 7 days), use it
+ * 5. Otherwise, use device tier default
  *
- * @returns The selected encoder configuration
+ * @returns The selected encoder configuration and whether low-power mode was used
  */
 export async function selectEncoderConfig(): Promise<EncoderConfig> {
+  // Check battery state first - if on battery, force low-end config
+  const onBattery = await shouldUseLowPowerConfig();
+  if (onBattery) {
+    // On battery: force low-end config to prevent source starvation
+    // Ignore lastStableConfig since it was likely recorded while plugged in
+    return { ...LOW_END_CONFIG };
+  }
+
   const caps = getDeviceCapabilities();
   const tier = classifyDeviceTier(caps);
   const tierDefault = getConfigForTier(tier);
@@ -315,10 +384,32 @@ export async function selectEncoderConfig(): Promise<EncoderConfig> {
 /**
  * Gets a human-readable description of the selected configuration.
  * @param config - The encoder configuration
+ * @param lowPowerMode - Whether low-power mode was used
  * @returns A description string
  */
-export function describeConfig(config: EncoderConfig): string {
+export function describeConfig(config: EncoderConfig, lowPowerMode?: boolean): string {
   const channelStr = config.channels === 1 ? 'mono' : 'stereo';
   const modeStr = config.latencyMode === 'realtime' ? 'realtime' : 'quality';
-  return `${config.codec} ${config.bitrate}kbps ${channelStr} (${modeStr} mode)`;
+  const powerStr = lowPowerMode ? ' [battery]' : '';
+  return `${config.codec} ${config.bitrate}kbps ${channelStr} (${modeStr} mode)${powerStr}`;
+}
+
+/**
+ * Result of encoder config selection.
+ */
+export interface EncoderConfigResult {
+  /** The selected encoder configuration. */
+  config: EncoderConfig;
+  /** Whether low-power (battery) mode was used. */
+  lowPowerMode: boolean;
+}
+
+/**
+ * Selects encoder config and returns additional context.
+ * @returns The config and whether low-power mode was used
+ */
+export async function selectEncoderConfigWithContext(): Promise<EncoderConfigResult> {
+  const lowPowerMode = await shouldUseLowPowerConfig();
+  const config = await selectEncoderConfig();
+  return { config, lowPowerMode };
 }

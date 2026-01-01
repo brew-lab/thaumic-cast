@@ -43,7 +43,7 @@ import {
 } from './connection-state';
 import { handleSonosEvent } from './sonos-event-handlers';
 import {
-  selectEncoderConfig,
+  selectEncoderConfigWithContext,
   recordStableSession,
   recordBadSession,
   describeConfig,
@@ -502,9 +502,17 @@ async function handleStartCast(
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
     if (!tab?.id) throw new Error('No active tab');
 
-    // Select encoder config: use provided config or auto-select based on device capabilities
-    const encoderConfig = providedConfig ?? (await selectEncoderConfig());
-    log.info(`Encoder config: ${describeConfig(encoderConfig)}`);
+    // Select encoder config: use provided config or auto-select based on device/battery
+    let encoderConfig: typeof providedConfig;
+    let lowPowerMode = false;
+    if (providedConfig) {
+      encoderConfig = providedConfig;
+    } else {
+      const result = await selectEncoderConfigWithContext();
+      encoderConfig = result.config;
+      lowPowerMode = result.lowPowerMode;
+    }
+    log.info(`Encoder config: ${describeConfig(encoderConfig, lowPowerMode)}`);
 
     // 1. Discover Desktop App and its limits
     const app = await discoverDesktopApp();

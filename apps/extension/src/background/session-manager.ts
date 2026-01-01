@@ -22,6 +22,35 @@ const log = createLogger('SessionManager');
 /** Session storage key for persistence */
 const STORAGE_KEY = 'activeSessions';
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Power Management
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Requests system keep-awake to prevent throttling during casting.
+ * Only requests if not already held.
+ */
+function requestKeepAwake(): void {
+  try {
+    chrome.power.requestKeepAwake('system');
+    log.info('Requested system keep-awake');
+  } catch (err) {
+    log.warn('Failed to request keep-awake:', err);
+  }
+}
+
+/**
+ * Releases keep-awake when no active sessions remain.
+ */
+function releaseKeepAwake(): void {
+  try {
+    chrome.power.releaseKeepAwake();
+    log.info('Released system keep-awake');
+  } catch (err) {
+    log.warn('Failed to release keep-awake:', err);
+  }
+}
+
 /**
  * Internal representation of an active cast session.
  */
@@ -58,6 +87,8 @@ export function registerSession(
   speakerName: string | undefined,
   encoderConfig: EncoderConfig,
 ): void {
+  const wasEmpty = sessions.size === 0;
+
   sessions.set(tabId, {
     streamId,
     tabId,
@@ -66,6 +97,12 @@ export function registerSession(
     encoderConfig,
     startedAt: Date.now(),
   });
+
+  // Request keep-awake on first session to prevent system throttling
+  if (wasEmpty) {
+    requestKeepAwake();
+  }
+
   persistSessions();
   notifySessionsChanged();
   log.info(`Registered session for tab ${tabId}, stream ${streamId}`);
@@ -77,6 +114,11 @@ export function registerSession(
  */
 export function removeSession(tabId: number): void {
   if (sessions.delete(tabId)) {
+    // Release keep-awake when no sessions remain
+    if (sessions.size === 0) {
+      releaseKeepAwake();
+    }
+
     persistSessions();
     notifySessionsChanged();
     log.info(`Removed session for tab ${tabId}`);
@@ -245,6 +287,8 @@ export async function restoreSessions(): Promise<void> {
       }
       if (sessions.size > 0) {
         log.info(`Restored ${sessions.size} sessions`);
+        // Re-request keep-awake for restored sessions
+        requestKeepAwake();
       }
     }
   } catch (err) {
