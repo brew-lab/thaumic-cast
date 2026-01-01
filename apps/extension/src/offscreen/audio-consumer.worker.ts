@@ -138,6 +138,7 @@ interface StatsMessage {
   underflows: number;
   producerDroppedSamples: number; // Samples dropped by worklet (buffer full)
   consumerDroppedFrames: number; // Frames dropped by worker (backpressure)
+  backpressureCycles: number; // Cycles where drain was skipped due to backpressure
   wakeups: number;
   avgSamplesPerWake: number;
   encodeQueueSize: number;
@@ -192,6 +193,12 @@ let dropTimestamps: number[] = [];
 let cleanWindowCount = 0;
 /** Timestamp of last mode switch to enforce cooldown. */
 let lastModeSwitchTime = 0;
+/** Timestamp of last drop record (for rate-limiting to frame cadence). */
+let lastDropRecordTime = 0;
+
+// Backpressure tracking
+/** Count of cycles where we skipped draining due to backpressure. */
+let backpressureCycles = 0;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Utilities
@@ -225,17 +232,28 @@ function log(level: 'info' | 'warn' | 'error', ...args: unknown[]): void {
 // Adaptive Latency Thermostat
 // ─────────────────────────────────────────────────────────────────────────────
 
+/** Minimum interval between drop records (frame cadence = 20ms). */
+const DROP_RECORD_INTERVAL_MS = FRAME_DURATION_SEC * 1000;
+
 /**
- * Records a frame drop and evaluates whether to switch latency modes.
- * Called each time a frame is dropped due to backpressure.
+ * Records audio loss and evaluates whether to switch latency modes.
+ * Rate-limited to frame cadence (max 1 record per 20ms) to prevent
+ * rapid-fire calls from overwhelming the thermostat.
  */
-function recordFrameDrop(): void {
+function recordAudioLoss(): void {
   if (!encoder) return;
 
   const now = performance.now();
+
+  // Rate-limit to frame cadence
+  if (now - lastDropRecordTime < DROP_RECORD_INTERVAL_MS) {
+    return;
+  }
+  lastDropRecordTime = now;
+
   dropTimestamps.push(now);
 
-  // Reset clean window counter since we just dropped a frame
+  // Reset clean window counter since we just had audio loss
   cleanWindowCount = 0;
 
   // Prune timestamps outside the window
@@ -312,6 +330,7 @@ function resetThermostat(): void {
   dropTimestamps = [];
   cleanWindowCount = 0;
   lastModeSwitchTime = 0;
+  lastDropRecordTime = 0;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -385,7 +404,7 @@ function flushFrameIfReady(): void {
     socket.bufferedAmount >= WS_BUFFER_HIGH_WATER
   ) {
     droppedFrameCount++;
-    recordFrameDrop(); // Notify thermostat of backpressure
+    recordAudioLoss(); // Notify thermostat of consumer drop
 
     // Advance encoder timestamp to avoid time compression when we resume
     // frameSizeSamples is interleaved samples, divide by channels for frame count
@@ -420,6 +439,11 @@ function maybePostStats(): void {
   const producerDroppedSamples = (totalDropped - lastProducerDroppedSamples) >>> 0;
   lastProducerDroppedSamples = totalDropped;
 
+  // Trigger thermostat on producer drops (audio loss at the source)
+  if (producerDroppedSamples > 0) {
+    recordAudioLoss();
+  }
+
   const avgSamplesPerWake = wakeupCount > 0 ? totalSamplesRead / wakeupCount : 0;
 
   postToMain({
@@ -427,6 +451,7 @@ function maybePostStats(): void {
     underflows: underflowCount,
     producerDroppedSamples,
     consumerDroppedFrames: droppedFrameCount,
+    backpressureCycles,
     wakeups: wakeupCount,
     avgSamplesPerWake,
     encodeQueueSize: encoder?.encodeQueueSize ?? 0,
@@ -436,6 +461,7 @@ function maybePostStats(): void {
   // Reset interval counters
   underflowCount = 0;
   droppedFrameCount = 0;
+  backpressureCycles = 0;
   wakeupCount = 0;
   totalSamplesRead = 0;
   lastStatsTime = now;
@@ -741,6 +767,7 @@ async function consumeLoop(): Promise<void> {
     // Note: We don't increment droppedFrameCount here - actual drops are
     // tracked in flushFrameIfReady() when we have a frame but can't encode it
     if (isBackpressured()) {
+      backpressureCycles++;
       await yieldMacrotask(YIELD_MS);
       continue;
     }
@@ -868,6 +895,7 @@ self.onmessage = async (event: MessageEvent<InboundMessage>) => {
       // Reset state
       underflowCount = 0;
       droppedFrameCount = 0;
+      backpressureCycles = 0;
       wakeupCount = 0;
       totalSamplesRead = 0;
       lastProducerDroppedSamples = 0;
