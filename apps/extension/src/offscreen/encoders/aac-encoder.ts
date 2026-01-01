@@ -1,6 +1,7 @@
 import type { EncoderConfig } from '@thaumic-cast/protocol';
 import { CODEC_METADATA } from '@thaumic-cast/protocol';
 import { BaseAudioEncoder, type ChromeAudioEncoderConfig } from './base-encoder';
+import type { LatencyMode } from './types';
 
 /**
  * ADTS frame header constants.
@@ -58,16 +59,19 @@ export class AacEncoder extends BaseAudioEncoder {
   }
 
   /**
-   *
-   * @param webCodecsId
+   * @param webCodecsId - WebCodecs codec identifier
+   * @param latencyMode - Latency mode for encoding
    */
-  protected getEncoderConfig(webCodecsId: string): ChromeAudioEncoderConfig {
+  protected getEncoderConfig(
+    webCodecsId: string,
+    latencyMode: LatencyMode,
+  ): ChromeAudioEncoderConfig {
     return {
       codec: webCodecsId,
       sampleRate: this.config.sampleRate,
       numberOfChannels: this.config.channels,
       bitrate: this.config.bitrate * 1000,
-      latencyMode: 'quality',
+      latencyMode,
     };
   }
 

@@ -1,5 +1,6 @@
 import type { EncoderConfig } from '@thaumic-cast/protocol';
 import { BaseAudioEncoder, type ChromeAudioEncoderConfig } from './base-encoder';
+import type { LatencyMode } from './types';
 
 /**
  * CRC32 lookup table for Ogg pages.
@@ -67,16 +68,19 @@ export class VorbisEncoder extends BaseAudioEncoder {
   }
 
   /**
-   *
-   * @param webCodecsId
+   * @param webCodecsId - WebCodecs codec identifier
+   * @param latencyMode - Latency mode for encoding
    */
-  protected getEncoderConfig(webCodecsId: string): ChromeAudioEncoderConfig {
+  protected getEncoderConfig(
+    webCodecsId: string,
+    latencyMode: LatencyMode,
+  ): ChromeAudioEncoderConfig {
     return {
       codec: webCodecsId,
       sampleRate: this.config.sampleRate,
       numberOfChannels: this.config.channels,
       bitrate: this.config.bitrate * 1000,
-      latencyMode: 'quality',
+      latencyMode,
     };
   }
 
@@ -85,6 +89,16 @@ export class VorbisEncoder extends BaseAudioEncoder {
    */
   protected logConfiguration(): void {
     this.log.info(`Configured Vorbis @ ${this.config.bitrate}kbps`);
+  }
+
+  /**
+   * Resets Ogg stream state after reconfiguration.
+   * New encoder instance needs to send headers and restart page sequencing.
+   */
+  protected onReconfigure(): void {
+    this.headersSent = false;
+    this.pageSequence = 0;
+    this.granulePosition = 0n;
   }
 
   /**

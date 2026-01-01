@@ -1,6 +1,24 @@
 import type { EncoderConfig } from '@thaumic-cast/protocol';
 
 /**
+ * Latency mode for encoder operation.
+ * - 'quality': Prioritize audio quality (default)
+ * - 'realtime': Prioritize encoding speed, may sacrifice quality
+ */
+export type LatencyMode = 'quality' | 'realtime';
+
+/**
+ * Options for reconfiguring an encoder at runtime.
+ */
+export interface ReconfigureOptions {
+  /**
+   * New latency mode for the encoder.
+   * 'realtime' tells the browser to encode faster at the cost of quality.
+   */
+  latencyMode?: LatencyMode;
+}
+
+/**
  * Unified interface for all audio encoders.
  * Implementations handle codec-specific encoding logic.
  */
@@ -42,4 +60,21 @@ export interface AudioEncoder {
    * Used for backpressure detection - if this grows, encoder can't keep up.
    */
   readonly encodeQueueSize: number;
+
+  /**
+   * Current latency mode of the encoder.
+   */
+  readonly latencyMode: LatencyMode;
+
+  /**
+   * Reconfigures the encoder with new settings at runtime.
+   * Flushes pending data, closes the current encoder, and creates a new one.
+   *
+   * Use this to switch between 'quality' and 'realtime' modes when CPU load changes.
+   * 'realtime' mode tells the browser to prioritize encoding speed over quality.
+   *
+   * @param options - New configuration options
+   * @returns Flushed data from the old encoder, or null if nothing was buffered
+   */
+  reconfigure(options: ReconfigureOptions): Uint8Array | null;
 }

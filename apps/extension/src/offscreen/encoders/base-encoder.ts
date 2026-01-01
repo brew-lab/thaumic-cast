@@ -1,13 +1,13 @@
 import type { EncoderConfig } from '@thaumic-cast/protocol';
 import { CODEC_METADATA } from '@thaumic-cast/protocol';
 import { createLogger, type Logger } from '@thaumic-cast/shared';
-import type { AudioEncoder } from './types';
+import type { AudioEncoder, LatencyMode, ReconfigureOptions } from './types';
 
 /**
  * Extended interface for AudioEncoderConfig to include non-standard Chrome properties.
  */
 export interface ChromeAudioEncoderConfig extends AudioEncoderConfig {
-  latencyMode?: 'realtime' | 'quality';
+  latencyMode?: LatencyMode;
 }
 
 /**
@@ -32,6 +32,10 @@ export abstract class BaseAudioEncoder implements AudioEncoder {
   protected timestamp = 0;
   protected isClosed = false;
   protected readonly log: Logger;
+  protected readonly webCodecsId: string;
+
+  /** Current latency mode */
+  private _latencyMode: LatencyMode = 'quality';
 
   /** Pre-allocated planar conversion buffer */
   protected planarBuffer: Float32Array;
@@ -41,6 +45,13 @@ export abstract class BaseAudioEncoder implements AudioEncoder {
    */
   get encodeQueueSize(): number {
     return this.encoder.encodeQueueSize;
+  }
+
+  /**
+   * Returns the current latency mode.
+   */
+  get latencyMode(): LatencyMode {
+    return this._latencyMode;
   }
 
   /**
@@ -54,18 +65,28 @@ export abstract class BaseAudioEncoder implements AudioEncoder {
     if (!webCodecsId) {
       throw new Error(`Codec ${config.codec} does not support WebCodecs`);
     }
+    this.webCodecsId = webCodecsId;
 
-    this.encoder = new AudioEncoder({
-      output: (chunk, metadata) => this.handleOutput(chunk, metadata),
-      error: (err) => this.log.error('Encoder error:', err.message),
-    });
-
-    this.encoder.configure(this.getEncoderConfig(webCodecsId));
+    this.encoder = this.createEncoder();
 
     // Pre-allocate conversion buffer to minimize GC during encoding
     this.planarBuffer = new Float32Array(DEFAULT_BUFFER_CAPACITY);
 
     this.logConfiguration();
+  }
+
+  /**
+   * Creates and configures a new WebCodecs AudioEncoder.
+   */
+  private createEncoder(): globalThis.AudioEncoder {
+    const encoder = new AudioEncoder({
+      output: (chunk, metadata) => this.handleOutput(chunk, metadata),
+      error: (err) => this.log.error('Encoder error:', err.message),
+    });
+
+    encoder.configure(this.getEncoderConfig(this.webCodecsId, this._latencyMode));
+
+    return encoder;
   }
 
   /**
@@ -76,8 +97,12 @@ export abstract class BaseAudioEncoder implements AudioEncoder {
   /**
    * Returns the WebCodecs encoder configuration.
    * @param webCodecsId - The WebCodecs codec identifier
+   * @param latencyMode - The latency mode to use
    */
-  protected abstract getEncoderConfig(webCodecsId: string): ChromeAudioEncoderConfig;
+  protected abstract getEncoderConfig(
+    webCodecsId: string,
+    latencyMode: LatencyMode,
+  ): ChromeAudioEncoderConfig;
 
   /**
    * Handles encoded output from WebCodecs.
@@ -93,6 +118,14 @@ export abstract class BaseAudioEncoder implements AudioEncoder {
    * Logs the encoder configuration after initialization.
    */
   protected abstract logConfiguration(): void;
+
+  /**
+   * Called after reconfiguration to allow subclasses to reset state.
+   * Override this to reset codec-specific state like header flags.
+   */
+  protected onReconfigure(): void {
+    // Default: no-op. Subclasses can override.
+  }
 
   /**
    * Ensures planar buffer is large enough for the given sample count.
@@ -226,6 +259,55 @@ export abstract class BaseAudioEncoder implements AudioEncoder {
    */
   advanceTimestamp(frameCount: number): void {
     this.timestamp += (frameCount / this.config.sampleRate) * 1_000_000;
+  }
+
+  /**
+   * Reconfigures the encoder with new settings at runtime.
+   * Flushes pending data, closes the current encoder, and creates a new one.
+   *
+   * @param options - New configuration options
+   * @returns Flushed data from the old encoder, or null if nothing was buffered
+   */
+  reconfigure(options: ReconfigureOptions): Uint8Array | null {
+    if (this.isClosed) return null;
+
+    // Check if there's actually anything to change
+    const newLatencyMode = options.latencyMode ?? this._latencyMode;
+    if (newLatencyMode === this._latencyMode) {
+      return null; // No change needed
+    }
+
+    this.log.info(`Reconfiguring encoder: latencyMode ${this._latencyMode} -> ${newLatencyMode}`);
+
+    // Flush and collect any pending output
+    let flushedData: Uint8Array | null = null;
+    try {
+      // Synchronously trigger flush (async completion handled by output callback)
+      this.encoder.flush().catch(() => {
+        // Ignore - we're closing anyway
+      });
+      flushedData = this.consolidateOutput();
+    } catch {
+      // Encoder may be in error state
+    }
+
+    // Close old encoder
+    try {
+      this.encoder.close();
+    } catch {
+      // Already closed
+    }
+
+    // Update latency mode
+    this._latencyMode = newLatencyMode;
+
+    // Create new encoder with updated config
+    this.encoder = this.createEncoder();
+
+    // Allow subclasses to reset their state
+    this.onReconfigure();
+
+    return flushedData;
   }
 
   /**

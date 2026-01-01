@@ -1,4 +1,5 @@
 import { BaseAudioEncoder, type ChromeAudioEncoderConfig } from './base-encoder';
+import type { LatencyMode } from './types';
 
 /**
  * FLAC encoder using WebCodecs AudioEncoder API.
@@ -15,16 +16,19 @@ export class FlacEncoder extends BaseAudioEncoder {
   }
 
   /**
-   *
-   * @param webCodecsId
+   * @param webCodecsId - WebCodecs codec identifier
+   * @param latencyMode - Latency mode for encoding
    */
-  protected getEncoderConfig(webCodecsId: string): ChromeAudioEncoderConfig {
+  protected getEncoderConfig(
+    webCodecsId: string,
+    latencyMode: LatencyMode,
+  ): ChromeAudioEncoderConfig {
     return {
       codec: webCodecsId,
       sampleRate: this.config.sampleRate,
       numberOfChannels: this.config.channels,
       // FLAC is lossless - bitrate doesn't apply
-      latencyMode: 'quality',
+      latencyMode,
     };
   }
 
@@ -33,6 +37,14 @@ export class FlacEncoder extends BaseAudioEncoder {
    */
   protected logConfiguration(): void {
     this.log.info(`Configured FLAC @ ${this.config.sampleRate}Hz, ${this.config.channels}ch`);
+  }
+
+  /**
+   * Resets header state after reconfiguration.
+   * New encoder instance needs to send headers again.
+   */
+  protected onReconfigure(): void {
+    this.headerSent = false;
   }
 
   /**
