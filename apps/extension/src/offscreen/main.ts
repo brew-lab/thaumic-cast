@@ -827,6 +827,31 @@ chrome.runtime.onMessage.addListener((msg: ExtensionMessage, _sender, sendRespon
     return true;
   }
 
+  if (msg.type === 'GET_BATTERY_STATE') {
+    // Battery API is available in offscreen document (full DOM context)
+    // Service workers may not have access to this API
+    (async () => {
+      try {
+        const nav = navigator as Navigator & {
+          getBattery?: () => Promise<{ charging: boolean; level: number }>;
+        };
+        if (!nav.getBattery) {
+          sendResponse({ available: false });
+          return;
+        }
+        const battery = await nav.getBattery();
+        sendResponse({
+          available: true,
+          charging: battery.charging,
+          level: battery.level,
+        });
+      } catch {
+        sendResponse({ available: false });
+      }
+    })();
+    return true;
+  }
+
   if (msg.type === 'SYNC_SONOS_STATE') {
     const { state } = msg as SyncSonosStateMessage;
     cachedSonosState = state;

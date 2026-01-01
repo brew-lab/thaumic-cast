@@ -511,6 +511,15 @@ async function handleStartCast(
       const result = await selectEncoderConfigWithContext();
       encoderConfig = result.config;
       lowPowerMode = result.lowPowerMode;
+
+      // Log battery API availability for debugging
+      if (!result.batteryApiAvailable) {
+        log.warn('Battery API unavailable in service worker - cannot detect power state');
+      } else if (result.batteryLevel !== undefined) {
+        log.info(
+          `Battery: ${(result.batteryLevel * 100).toFixed(0)}%, charging=${!lowPowerMode || result.batteryLevel >= 0.2}`,
+        );
+      }
     }
     log.info(`Encoder config: ${describeConfig(encoderConfig, lowPowerMode)}`);
 

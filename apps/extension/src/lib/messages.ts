@@ -42,6 +42,8 @@ export type ExtensionMessageType =
   | 'WS_DISCONNECTED'
   | 'WS_PERMANENTLY_DISCONNECTED'
   | 'SONOS_EVENT'
+  // Battery query (background → offscreen, since Battery API may not work in service worker)
+  | 'GET_BATTERY_STATE'
   // State update messages (background → popup)
   | 'WS_STATE_CHANGED'
   | 'VOLUME_UPDATE'
@@ -325,6 +327,27 @@ export interface SyncSonosStateMessage {
   state: SonosStateSnapshot;
 }
 
+/**
+ * Request battery state from offscreen document.
+ * Used as fallback when Battery API is unavailable in service worker.
+ */
+export interface GetBatteryStateMessage {
+  type: 'GET_BATTERY_STATE';
+}
+
+/**
+ * Response to GET_BATTERY_STATE from offscreen.
+ * Used as fallback when Battery API is unavailable in service worker.
+ */
+export interface BatteryStateResponse {
+  /** Whether battery state could be detected. */
+  available: boolean;
+  /** Whether currently charging (undefined if not available). */
+  charging?: boolean;
+  /** Battery level 0-1 (undefined if not available). */
+  level?: number;
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // WebSocket Status Messages (offscreen → background)
 // ─────────────────────────────────────────────────────────────────────────────
@@ -494,6 +517,7 @@ export type ExtensionMessage =
   | WsReconnectMessage
   | GetWsStatusMessage
   | SyncSonosStateMessage
+  | GetBatteryStateMessage
   | WsConnectedMessage
   | WsDisconnectedMessage
   | WsPermanentlyDisconnectedMessage

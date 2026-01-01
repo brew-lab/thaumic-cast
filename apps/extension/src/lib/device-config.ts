@@ -184,12 +184,14 @@ interface NavigatorWithBattery extends Navigator {
 
 /**
  * Gets current battery state.
+ * Returns null if API unavailable (common in service workers).
  * @returns Battery state or null if API not available
  */
 export async function getBatteryState(): Promise<BatteryState | null> {
   try {
     const nav = navigator as NavigatorWithBattery;
     if (!nav.getBattery) {
+      // Battery API not available (likely in service worker)
       return null;
     }
     const battery = await nav.getBattery();
@@ -198,21 +200,57 @@ export async function getBatteryState(): Promise<BatteryState | null> {
       level: battery.level,
     };
   } catch {
+    // API call failed
     return null;
   }
 }
 
 /**
- * Checks if device is on battery power and should use low-power config.
- * @returns True if on battery (not charging) or battery is low
+ * Queries battery state from the offscreen document.
+ * Used as fallback when Battery API is unavailable in service worker.
+ * @returns Battery state or null if offscreen is not available
  */
-export async function shouldUseLowPowerConfig(): Promise<boolean> {
-  const battery = await getBatteryState();
-  if (!battery) {
-    return false; // Can't detect, assume plugged in
+async function queryBatteryFromOffscreen(): Promise<BatteryState | null> {
+  try {
+    const response = await chrome.runtime.sendMessage({ type: 'GET_BATTERY_STATE' });
+    if (response?.available) {
+      return {
+        charging: response.charging,
+        level: response.level,
+      };
+    }
+  } catch {
+    // Offscreen document may not be ready
   }
+  return null;
+}
+
+/**
+ * Checks if device is on battery power and should use low-power config.
+ * Tries service worker Battery API first, falls back to querying offscreen document.
+ * @returns Object with result and whether API was available
+ */
+export async function checkBatteryState(): Promise<{
+  onBattery: boolean;
+  apiAvailable: boolean;
+  level?: number;
+}> {
+  // Try direct Battery API first (may work in service worker)
+  let battery = await getBatteryState();
+
+  // If not available, try querying offscreen document
+  if (!battery) {
+    battery = await queryBatteryFromOffscreen();
+  }
+
+  if (!battery) {
+    // Can't detect - both methods failed
+    return { onBattery: false, apiAvailable: false };
+  }
+
   // Force low-power if not charging OR battery is critically low
-  return !battery.charging || battery.level < LOW_BATTERY_THRESHOLD;
+  const onBattery = !battery.charging || battery.level < LOW_BATTERY_THRESHOLD;
+  return { onBattery, apiAvailable: true, level: battery.level };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -329,14 +367,13 @@ function isHigherQuality(a: EncoderConfig, b: EncoderConfig): boolean {
  * 4. If we have a stable config that's not too old (< 7 days), use it
  * 5. Otherwise, use device tier default
  *
- * @returns The selected encoder configuration and whether low-power mode was used
+ * @param onBattery - Whether device is on battery (pre-checked to avoid double API call)
+ * @returns The selected encoder configuration
  */
-export async function selectEncoderConfig(): Promise<EncoderConfig> {
-  // Check battery state first - if on battery, force low-end config
-  const onBattery = await shouldUseLowPowerConfig();
+export async function selectEncoderConfig(onBattery = false): Promise<EncoderConfig> {
+  // If on battery, force low-end config to prevent source starvation
+  // Ignore lastStableConfig since it was likely recorded while plugged in
   if (onBattery) {
-    // On battery: force low-end config to prevent source starvation
-    // Ignore lastStableConfig since it was likely recorded while plugged in
     return { ...LOW_END_CONFIG };
   }
 
@@ -402,14 +439,26 @@ export interface EncoderConfigResult {
   config: EncoderConfig;
   /** Whether low-power (battery) mode was used. */
   lowPowerMode: boolean;
+  /** Whether the Battery API was available (false in service workers). */
+  batteryApiAvailable: boolean;
+  /** Battery level if available. */
+  batteryLevel?: number;
 }
 
 /**
  * Selects encoder config and returns additional context.
- * @returns The config and whether low-power mode was used
+ * Checks battery state once and passes to selectEncoderConfig to avoid double API calls.
+ * @returns The config, power mode, and battery API availability info
  */
 export async function selectEncoderConfigWithContext(): Promise<EncoderConfigResult> {
-  const lowPowerMode = await shouldUseLowPowerConfig();
-  const config = await selectEncoderConfig();
-  return { config, lowPowerMode };
+  // Check battery state once
+  const batteryState = await checkBatteryState();
+  const config = await selectEncoderConfig(batteryState.onBattery);
+
+  return {
+    config,
+    lowPowerMode: batteryState.onBattery,
+    batteryApiAvailable: batteryState.apiAvailable,
+    batteryLevel: batteryState.level,
+  };
 }
