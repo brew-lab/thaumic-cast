@@ -259,6 +259,15 @@ export async function checkBatteryState(): Promise<{
     return { onBattery: false, apiAvailable: false, usedFallback };
   }
 
+  // Check for "no battery" default values: 100% + charging is what Chrome returns
+  // when Battery API is blocked by Permissions-Policy or device has no battery
+  if (battery.charging && battery.level === 1) {
+    log.debug(
+      'Battery API returned default values (100% charging) - likely no access or no battery',
+    );
+    return { onBattery: false, apiAvailable: false, usedFallback };
+  }
+
   // Force low-power if not charging OR battery is critically low
   const onBattery = !battery.charging || battery.level < LOW_BATTERY_THRESHOLD;
   return {
