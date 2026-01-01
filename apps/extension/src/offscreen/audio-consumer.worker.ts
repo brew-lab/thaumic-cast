@@ -33,6 +33,9 @@ const YIELD_MS = 1;
 /** Default frames per wake. 3 frames = ~60ms, balances latency vs CPU. */
 const DEFAULT_FRAMES_PER_WAKE = 3;
 
+/** Timeout for waiting on producer (ms). Triggers underflow if exceeded. */
+const WAIT_TIMEOUT_MS = 100;
+
 /** Interval for posting diagnostic stats to main thread (ms). */
 const STATS_INTERVAL_MS = 1000;
 
@@ -763,15 +766,16 @@ async function consumeLoop(): Promise<void> {
       continue;
     }
 
-    // Buffer empty - wait for producer to write
-    const waitResult = Atomics.waitAsync(control, CTRL_WRITE_IDX, write);
+    // Buffer empty - wait for producer to write (with timeout for underflow detection)
+    const waitResult = Atomics.waitAsync(control, CTRL_WRITE_IDX, write, WAIT_TIMEOUT_MS);
     if (waitResult.async) {
       const result = await waitResult.value;
       if (!running) break;
-      // 'not-equal' means value changed before we could wait - that's fine
       if (result === 'timed-out') {
+        // Producer didn't write within timeout - underflow condition
         underflowCount++;
       }
+      // 'ok' = notified, 'not-equal' = value changed before wait
     }
     // Producer notified us on empty→non-empty transition
   }
