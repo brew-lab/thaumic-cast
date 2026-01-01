@@ -502,6 +502,9 @@ async function handleStartCast(
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
     if (!tab?.id) throw new Error('No active tab');
 
+    // Ensure offscreen document exists early - needed for battery detection fallback
+    await ensureOffscreen();
+
     // Select encoder config: use provided config or auto-select based on device/battery
     let encoderConfig: typeof providedConfig;
     let lowPowerMode = false;
@@ -512,13 +515,16 @@ async function handleStartCast(
       encoderConfig = result.config;
       lowPowerMode = result.lowPowerMode;
 
-      // Log battery API availability for debugging
-      if (!result.batteryApiAvailable) {
-        log.warn('Battery API unavailable in service worker - cannot detect power state');
-      } else if (result.batteryLevel !== undefined) {
-        log.info(
-          `Battery: ${(result.batteryLevel * 100).toFixed(0)}%, charging=${!lowPowerMode || result.batteryLevel >= 0.2}`,
-        );
+      // Log battery detection result for debugging
+      if (!result.batteryInfoAvailable) {
+        log.warn('Battery detection unavailable (API and offscreen fallback both failed)');
+      } else {
+        const source = result.usedOffscreenFallback ? 'offscreen' : 'API';
+        const level =
+          result.batteryLevel !== undefined
+            ? `${(result.batteryLevel * 100).toFixed(0)}%`
+            : 'unknown';
+        log.info(`Battery: ${level}, charging=${result.charging ?? 'unknown'} (via ${source})`);
       }
     }
     log.info(`Encoder config: ${describeConfig(encoderConfig, lowPowerMode)}`);
@@ -547,8 +553,6 @@ async function handleStartCast(
         else reject(new Error('Tab capture denied'));
       });
     });
-
-    await ensureOffscreen();
 
     // 4. Connect control WebSocket if not already connected
     if (!wsConnected) {

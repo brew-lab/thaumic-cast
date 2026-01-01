@@ -233,24 +233,34 @@ async function queryBatteryFromOffscreen(): Promise<BatteryState | null> {
 export async function checkBatteryState(): Promise<{
   onBattery: boolean;
   apiAvailable: boolean;
+  usedFallback: boolean;
+  charging?: boolean;
   level?: number;
 }> {
   // Try direct Battery API first (may work in service worker)
   let battery = await getBatteryState();
+  let usedFallback = false;
 
   // If not available, try querying offscreen document
   if (!battery) {
     battery = await queryBatteryFromOffscreen();
+    usedFallback = true;
   }
 
   if (!battery) {
     // Can't detect - both methods failed
-    return { onBattery: false, apiAvailable: false };
+    return { onBattery: false, apiAvailable: false, usedFallback };
   }
 
   // Force low-power if not charging OR battery is critically low
   const onBattery = !battery.charging || battery.level < LOW_BATTERY_THRESHOLD;
-  return { onBattery, apiAvailable: true, level: battery.level };
+  return {
+    onBattery,
+    apiAvailable: true,
+    usedFallback,
+    charging: battery.charging,
+    level: battery.level,
+  };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -439,16 +449,20 @@ export interface EncoderConfigResult {
   config: EncoderConfig;
   /** Whether low-power (battery) mode was used. */
   lowPowerMode: boolean;
-  /** Whether the Battery API was available (false in service workers). */
-  batteryApiAvailable: boolean;
-  /** Battery level if available. */
+  /** Whether battery info was obtained (via API or offscreen fallback). */
+  batteryInfoAvailable: boolean;
+  /** Whether offscreen fallback was used for battery detection. */
+  usedOffscreenFallback: boolean;
+  /** Whether device is currently charging (undefined if not available). */
+  charging?: boolean;
+  /** Battery level 0-1 if available. */
   batteryLevel?: number;
 }
 
 /**
  * Selects encoder config and returns additional context.
  * Checks battery state once and passes to selectEncoderConfig to avoid double API calls.
- * @returns The config, power mode, and battery API availability info
+ * @returns The config, power mode, and battery info
  */
 export async function selectEncoderConfigWithContext(): Promise<EncoderConfigResult> {
   // Check battery state once
@@ -458,7 +472,9 @@ export async function selectEncoderConfigWithContext(): Promise<EncoderConfigRes
   return {
     config,
     lowPowerMode: batteryState.onBattery,
-    batteryApiAvailable: batteryState.apiAvailable,
+    batteryInfoAvailable: batteryState.apiAvailable,
+    usedOffscreenFallback: batteryState.usedFallback,
+    charging: batteryState.charging,
     batteryLevel: batteryState.level,
   };
 }
