@@ -15,6 +15,9 @@ const CTRL_WRITE_IDX = 0;
 const CTRL_READ_IDX = 1;
 const CTRL_DROPPED_SAMPLES = 2;
 
+/** Number of process() calls between heartbeat messages (~1 second at 128 samples/block). */
+const HEARTBEAT_INTERVAL_BLOCKS = 375; // ~375 blocks * 2.67ms ≈ 1 second
+
 /**
  * Base class for audio worklet processors.
  */
@@ -61,6 +64,8 @@ class PCMProcessor extends AudioWorkletProcessor {
   private channels = 2;
   /** Pre-allocated buffer for Float32→Int16 conversion (avoids per-frame allocation). */
   private conversionBuffer: Int16Array | null = null;
+  /** Counter for heartbeat interval. */
+  private blockCount = 0;
 
   /**
    * Creates a new PCM processor instance.
@@ -161,6 +166,13 @@ class PCMProcessor extends AudioWorkletProcessor {
     // Only notify on empty→non-empty transition
     if (wasEmpty) {
       Atomics.notify(this.control, CTRL_WRITE_IDX, 1);
+    }
+
+    // Send periodic heartbeat to main thread
+    this.blockCount++;
+    if (this.blockCount >= HEARTBEAT_INTERVAL_BLOCKS) {
+      this.blockCount = 0;
+      this.port.postMessage({ type: 'HEARTBEAT' });
     }
 
     return true;

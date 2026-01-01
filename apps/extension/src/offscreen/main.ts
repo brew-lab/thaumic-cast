@@ -244,6 +244,12 @@ interface ChromeTabCaptureConstraints {
   video: false;
 }
 
+/** Interval for checking worklet heartbeat (ms). */
+const WORKLET_HEARTBEAT_CHECK_INTERVAL = 2000;
+
+/** Maximum time without worklet heartbeat before logging warning (ms). */
+const WORKLET_HEARTBEAT_TIMEOUT = 3000;
+
 /**
  * Manages an active capture session from a browser tab.
  *
@@ -262,6 +268,15 @@ class StreamSession {
   private sourceNode: MediaStreamAudioSourceNode | null = null;
   private workletNode: AudioWorkletNode | null = null;
   private silentGainNode: GainNode | null = null;
+
+  /** Last time we received a heartbeat from the worklet. */
+  private lastWorkletHeartbeat = 0;
+
+  /** Timer for checking worklet heartbeat. */
+  private heartbeatCheckTimer: ReturnType<typeof setInterval> | null = null;
+
+  /** Whether we've logged a worklet stall warning (to avoid spam). */
+  private workletStallWarned = false;
 
   /** Unique ID assigned by the server for this stream. */
   public streamId: string | null = null;
@@ -376,6 +391,18 @@ class StreamSession {
       sampleRate: this.encoderConfig.sampleRate,
       channels: this.encoderConfig.channels,
     });
+
+    // Listen for heartbeat messages from the worklet
+    this.workletNode.port.onmessage = (event) => {
+      if (event.data.type === 'HEARTBEAT') {
+        this.lastWorkletHeartbeat = performance.now();
+        if (this.workletStallWarned) {
+          log.info('⚡ AudioWorklet resumed processing');
+          this.workletStallWarned = false;
+        }
+      }
+    };
+
     this.sourceNode.connect(this.workletNode);
 
     // Connect to destination through a silent gain node to ensure audio processing
@@ -384,19 +411,98 @@ class StreamSession {
     this.workletNode.connect(this.silentGainNode);
     this.silentGainNode.connect(this.audioContext.destination);
 
+    // Monitor AudioContext state changes (suspension, interruption, etc.)
+    this.audioContext.onstatechange = () => {
+      const state = this.audioContext.state;
+      log.warn(`🔊 AudioContext state changed: ${state}`);
+
+      if (state === 'suspended') {
+        log.warn('⚠️ AudioContext suspended - attempting auto-resume...');
+        this.audioContext
+          .resume()
+          .then(() => {
+            log.info(`✅ AudioContext resumed, new state: ${this.audioContext.state}`);
+          })
+          .catch((err) => {
+            log.error('❌ Failed to resume AudioContext:', err);
+          });
+      } else if (state === 'closed') {
+        log.error('❌ AudioContext closed unexpectedly');
+      }
+    };
+
     if (this.audioContext.state === 'suspended') {
       log.info('AudioContext suspended, resuming...');
       await this.audioContext.resume();
     }
     log.info(`AudioContext state: ${this.audioContext.state}`);
 
+    // Set up MediaStream track monitoring
     const audioTracks = this.mediaStream.getAudioTracks();
     log.info(`MediaStream has ${audioTracks.length} audio track(s)`);
-    if (audioTracks.length > 0) {
-      const track = audioTracks[0];
+
+    for (const track of audioTracks) {
       log.info(
         `Audio track: ${track.label}, enabled=${track.enabled}, muted=${track.muted}, readyState=${track.readyState}`,
       );
+
+      // Monitor track mute state changes
+      track.onmute = () => {
+        log.warn(`🔇 Audio track MUTED: ${track.label || 'unnamed'}`);
+      };
+
+      track.onunmute = () => {
+        log.info(`🔊 Audio track UNMUTED: ${track.label || 'unnamed'}`);
+      };
+
+      // Monitor track ending (tab closed, permission revoked, etc.)
+      track.onended = () => {
+        log.warn(
+          `⏹️ Audio track ENDED: ${track.label || 'unnamed'}, readyState=${track.readyState}`,
+        );
+      };
+    }
+
+    // Initialize heartbeat tracking and start checker
+    this.lastWorkletHeartbeat = performance.now();
+    this.startHeartbeatChecker();
+  }
+
+  /**
+   * Starts the periodic heartbeat checker for the AudioWorklet.
+   */
+  private startHeartbeatChecker(): void {
+    this.stopHeartbeatChecker();
+
+    this.heartbeatCheckTimer = setInterval(() => {
+      const now = performance.now();
+      const timeSinceHeartbeat = now - this.lastWorkletHeartbeat;
+
+      if (timeSinceHeartbeat > WORKLET_HEARTBEAT_TIMEOUT && !this.workletStallWarned) {
+        log.warn(
+          `⚠️ AudioWorklet stall detected: no heartbeat for ${(timeSinceHeartbeat / 1000).toFixed(1)}s. ` +
+            `AudioContext state: ${this.audioContext.state}`,
+        );
+        this.workletStallWarned = true;
+
+        // Try to resume if suspended
+        if (this.audioContext.state === 'suspended') {
+          log.info('Attempting to resume suspended AudioContext...');
+          this.audioContext.resume().catch((err) => {
+            log.error('Failed to resume AudioContext:', err);
+          });
+        }
+      }
+    }, WORKLET_HEARTBEAT_CHECK_INTERVAL);
+  }
+
+  /**
+   * Stops the heartbeat checker timer.
+   */
+  private stopHeartbeatChecker(): void {
+    if (this.heartbeatCheckTimer) {
+      clearInterval(this.heartbeatCheckTimer);
+      this.heartbeatCheckTimer = null;
     }
   }
 
@@ -536,10 +642,24 @@ class StreamSession {
    * Stops the session and releases all resources.
    */
   public stop(): void {
+    this.stopHeartbeatChecker();
+
     if (this.consumerWorker) {
       this.consumerWorker.postMessage({ type: 'STOP' });
       this.consumerWorker.terminate();
       this.consumerWorker = null;
+    }
+
+    // Remove event listeners before disconnecting
+    if (this.audioContext) {
+      this.audioContext.onstatechange = null;
+    }
+
+    // Remove track event listeners
+    for (const track of this.mediaStream.getAudioTracks()) {
+      track.onmute = null;
+      track.onunmute = null;
+      track.onended = null;
     }
 
     this.sourceNode?.disconnect();
