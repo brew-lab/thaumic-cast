@@ -7,6 +7,9 @@
  */
 
 import type { EncoderConfig, LatencyMode, AudioCodec, Bitrate } from '@thaumic-cast/protocol';
+import { createLogger } from '@thaumic-cast/shared';
+
+const log = createLogger('DeviceConfig');
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
@@ -191,16 +194,17 @@ export async function getBatteryState(): Promise<BatteryState | null> {
   try {
     const nav = navigator as NavigatorWithBattery;
     if (!nav.getBattery) {
-      // Battery API not available (likely in service worker)
+      log.debug('Direct Battery API not available (expected in service worker)');
       return null;
     }
     const battery = await nav.getBattery();
+    log.debug(`Direct Battery API: level=${battery.level}, charging=${battery.charging}`);
     return {
       charging: battery.charging,
       level: battery.level,
     };
-  } catch {
-    // API call failed
+  } catch (err) {
+    log.debug('Direct Battery API error:', err);
     return null;
   }
 }
@@ -212,15 +216,18 @@ export async function getBatteryState(): Promise<BatteryState | null> {
  */
 async function queryBatteryFromOffscreen(): Promise<BatteryState | null> {
   try {
+    log.debug('Querying battery state from offscreen...');
     const response = await chrome.runtime.sendMessage({ type: 'GET_BATTERY_STATE' });
+    log.debug('Offscreen battery response:', response);
     if (response?.available) {
       return {
         charging: response.charging,
         level: response.level,
       };
     }
-  } catch {
-    // Offscreen document may not be ready
+    log.debug('Offscreen returned available=false');
+  } catch (err) {
+    log.debug('Offscreen battery query failed:', err);
   }
   return null;
 }

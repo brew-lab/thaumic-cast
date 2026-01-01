@@ -836,16 +836,19 @@ chrome.runtime.onMessage.addListener((msg: ExtensionMessage, _sender, sendRespon
           getBattery?: () => Promise<{ charging: boolean; level: number }>;
         };
         if (!nav.getBattery) {
+          log.debug('Battery API not available in offscreen');
           sendResponse({ available: false });
           return;
         }
         const battery = await nav.getBattery();
+        log.debug(`Battery API response: level=${battery.level}, charging=${battery.charging}`);
         sendResponse({
           available: true,
           charging: battery.charging,
           level: battery.level,
         });
-      } catch {
+      } catch (err) {
+        log.warn('Battery API error:', err);
         sendResponse({ available: false });
       }
     })();

@@ -160,6 +160,12 @@ const initPromise = (async () => {
 /** Promise to track ongoing offscreen creation to avoid duplicates. */
 let offscreenCreationPromise: Promise<void> | null = null;
 
+/** Resolver for offscreen ready signal. */
+let offscreenReadyResolver: (() => void) | null = null;
+
+/** Promise that resolves when offscreen document signals it's ready. */
+let offscreenReadyPromise: Promise<void> | null = null;
+
 /**
  * Recovers WebSocket state from offscreen on service worker startup.
  */
@@ -193,20 +199,35 @@ async function recoverOffscreenState(): Promise<void> {
 }
 
 /**
- * Ensures the offscreen document is created exactly once.
+ * Ensures the offscreen document is created and ready.
  *
  * Manifest V3 requires an offscreen document to access DOM APIs like AudioContext.
+ * This function waits for the OFFSCREEN_READY message to ensure the document's
+ * message listener is set up before returning.
  *
- * @returns A promise that resolves when the offscreen document is confirmed to exist.
+ * @returns A promise that resolves when the offscreen document is ready.
  */
 async function ensureOffscreen(): Promise<void> {
-  if (offscreenCreationPromise) return offscreenCreationPromise;
+  // If already creating, wait for the existing promise
+  if (offscreenCreationPromise) {
+    await offscreenCreationPromise;
+    // Also wait for ready signal if we have one pending
+    if (offscreenReadyPromise) await offscreenReadyPromise;
+    return;
+  }
 
   const existing = await chrome.runtime.getContexts({
     contextTypes: [chrome.runtime.ContextType.OFFSCREEN_DOCUMENT],
   });
 
+  // Already exists and ready
   if (existing.length > 0) return;
+
+  // Create promise for ready signal BEFORE creating document
+  // This ensures we don't miss the signal if it comes quickly
+  offscreenReadyPromise = new Promise<void>((resolve) => {
+    offscreenReadyResolver = resolve;
+  });
 
   offscreenCreationPromise = chrome.offscreen
     .createDocument({
@@ -219,10 +240,25 @@ async function ensureOffscreen(): Promise<void> {
     })
     .catch((err) => {
       offscreenCreationPromise = null;
+      offscreenReadyPromise = null;
+      offscreenReadyResolver = null;
       throw err;
     });
 
-  return offscreenCreationPromise;
+  // Wait for document creation
+  await offscreenCreationPromise;
+
+  // Wait for ready signal (with timeout to avoid hanging forever)
+  const timeoutPromise = new Promise<void>((_, reject) =>
+    setTimeout(() => reject(new Error('Offscreen ready timeout')), 5000),
+  );
+
+  try {
+    await Promise.race([offscreenReadyPromise, timeoutPromise]);
+  } finally {
+    offscreenReadyPromise = null;
+    offscreenReadyResolver = null;
+  }
 }
 
 /**
@@ -340,6 +376,10 @@ chrome.runtime.onMessage.addListener((msg: ExtensionMessage, _sender, sendRespon
 
         case 'OFFSCREEN_READY':
           log.info('Offscreen document ready');
+          // Resolve the ready promise if we're waiting for it
+          if (offscreenReadyResolver) {
+            offscreenReadyResolver();
+          }
           sendResponse({ success: true });
           break;
 
@@ -502,10 +542,27 @@ async function handleStartCast(
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
     if (!tab?.id) throw new Error('No active tab');
 
-    // Ensure offscreen document exists early - needed for battery detection fallback
+    // 1. Discover Desktop App and its limits (do this early to fail fast)
+    const app = await discoverDesktopApp();
+    if (!app) {
+      clearConnectionState();
+      throw new Error('Desktop App not found. Please make sure it is running.');
+    }
+
+    // Cache the discovered URL for instant popup display
+    setDesktopApp(app.url, app.maxStreams);
+
+    // 2. Check session limits
+    if (getSessionCount() >= app.maxStreams) {
+      throw new Error(
+        `Maximum session limit reached (${app.maxStreams}). Please stop an existing cast first.`,
+      );
+    }
+
+    // 3. Create offscreen document (needed for audio capture and battery detection)
     await ensureOffscreen();
 
-    // Select encoder config: use provided config or auto-select based on device/battery
+    // 4. Select encoder config: use provided config or auto-select based on device/battery
     let encoderConfig: typeof providedConfig;
     let lowPowerMode = false;
     if (providedConfig) {
@@ -529,24 +586,7 @@ async function handleStartCast(
     }
     log.info(`Encoder config: ${describeConfig(encoderConfig, lowPowerMode)}`);
 
-    // 1. Discover Desktop App and its limits
-    const app = await discoverDesktopApp();
-    if (!app) {
-      clearConnectionState();
-      throw new Error('Desktop App not found. Please make sure it is running.');
-    }
-
-    // Cache the discovered URL for instant popup display
-    setDesktopApp(app.url, app.maxStreams);
-
-    // 2. Check session limits
-    if (getSessionCount() >= app.maxStreams) {
-      throw new Error(
-        `Maximum session limit reached (${app.maxStreams}). Please stop an existing cast first.`,
-      );
-    }
-
-    // 3. Capture Tab
+    // 5. Capture Tab
     const mediaStreamId = await new Promise<string>((resolve, reject) => {
       chrome.tabCapture.getMediaStreamId({ targetTabId: tab.id! }, (id) => {
         if (id) resolve(id);
@@ -554,12 +594,12 @@ async function handleStartCast(
       });
     });
 
-    // 4. Connect control WebSocket if not already connected
+    // 6. Connect control WebSocket if not already connected
     if (!wsConnected) {
       await connectWebSocket(app.url);
     }
 
-    // 5. Start Offscreen Session
+    // 7. Start Offscreen Session
     const response: ExtensionResponse = await chrome.runtime.sendMessage({
       type: 'START_CAPTURE',
       payload: {
@@ -575,7 +615,7 @@ async function handleStartCast(
       const cachedState = getCachedState(tab.id);
       const initialMetadata = cachedState?.metadata ?? undefined;
 
-      // 6. Start playback via WebSocket (waits for STREAM_READY internally)
+      // 8. Start playback via WebSocket (waits for STREAM_READY internally)
       // Include initial metadata so Sonos displays correct info immediately
       const playbackResponse: StartPlaybackResponse = await chrome.runtime.sendMessage({
         type: 'START_PLAYBACK',
