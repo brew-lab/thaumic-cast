@@ -152,6 +152,8 @@ export interface SessionHealthMessage {
     totalCatchUpDrops: number;
     /** Total frames dropped due to backpressure. */
     totalConsumerDrops: number;
+    /** Total underflows (source starvation events). */
+    totalUnderflows: number;
   };
 }
 

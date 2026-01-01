@@ -350,7 +350,8 @@ chrome.runtime.onMessage.addListener((msg: ExtensionMessage, _sender, sendRespon
               `hadDrops=${payload.hadDrops}, ` +
               `producer=${payload.totalProducerDrops}, ` +
               `catchUp=${payload.totalCatchUpDrops}, ` +
-              `consumer=${payload.totalConsumerDrops}`,
+              `consumer=${payload.totalConsumerDrops}, ` +
+              `underflows=${payload.totalUnderflows}`,
           );
 
           // Record session outcome for config learning

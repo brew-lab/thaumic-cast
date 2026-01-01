@@ -84,7 +84,11 @@ class PCMProcessor extends AudioWorkletProcessor {
     // Compute heartbeat interval based on actual sample rate
     // blocks per second = sampleRate / BLOCK_SIZE
     // heartbeat every HEARTBEAT_INTERVAL_SEC seconds
-    this.heartbeatIntervalBlocks = Math.round((sampleRate / BLOCK_SIZE) * HEARTBEAT_INTERVAL_SEC);
+    // Guard with Math.max(1, ...) to handle extreme/invalid sample rates
+    this.heartbeatIntervalBlocks = Math.max(
+      1,
+      Math.round((sampleRate / BLOCK_SIZE) * HEARTBEAT_INTERVAL_SEC),
+    );
 
     this.port.onmessage = (event) => {
       if (event.data.type === 'INIT_BUFFER') {
