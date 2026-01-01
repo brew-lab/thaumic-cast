@@ -13,7 +13,7 @@
  *                              - Control messages
  */
 
-import { CTRL_WRITE_IDX, CTRL_READ_IDX, CTRL_OVERFLOW, CTRL_DATA_SIGNAL } from './ring-buffer';
+import { CTRL_WRITE_IDX, CTRL_READ_IDX, CTRL_DROPPED_SAMPLES } from './ring-buffer';
 import { createEncoder, type AudioEncoder } from './encoders';
 import type { EncoderConfig, StreamMetadata, WsMessage } from '@thaumic-cast/protocol';
 import { WsMessageSchema } from '@thaumic-cast/protocol';
@@ -184,7 +184,8 @@ let droppedFrameCount = 0;
 let wakeupCount = 0;
 let totalSamplesRead = 0;
 let lastStatsTime = 0;
-let lastSignalValue = 0;
+let lastWriteIdx = 0;
+let lastDropCount = 0;
 
 // Thermostat state (adaptive latency mode)
 /** Timestamps of recent frame drops for rolling window analysis. */
@@ -321,6 +322,7 @@ function resetThermostat(): void {
 
 /**
  * Returns the number of samples available in the ring buffer.
+ * Uses unsigned subtraction to handle 32-bit wrap correctly.
  * @returns Number of available samples
  */
 function getAvailableSamples(): number {
@@ -329,14 +331,13 @@ function getAvailableSamples(): number {
   const writeIdx = Atomics.load(control, CTRL_WRITE_IDX);
   const readIdx = Atomics.load(control, CTRL_READ_IDX);
 
-  if (writeIdx >= readIdx) {
-    return writeIdx - readIdx;
-  }
-  return bufferSize - readIdx + writeIdx;
+  // Unsigned subtraction handles 32-bit wrap correctly for sessions >12 hours
+  return (writeIdx - readIdx) >>> 0;
 }
 
 /**
  * Reads available samples from the ring buffer into the frame buffer.
+ * Uses monotonic indices with unsigned math and bitmask for buffer offset.
  * @returns The number of samples read, or 0 if none available
  */
 function readFromRingBuffer(): number {
@@ -345,42 +346,36 @@ function readFromRingBuffer(): number {
   let writeIdx = Atomics.load(control, CTRL_WRITE_IDX);
   let currentReadIdx = Atomics.load(control, CTRL_READ_IDX);
 
-  // Check for overflow flag - perform decisive skip to target latency
-  if (Atomics.load(control, CTRL_OVERFLOW) === 1) {
-    Atomics.store(control, CTRL_OVERFLOW, 0);
+  // Check for producer drops - indicates the producer couldn't keep up
+  const dropCount = Atomics.load(control, CTRL_DROPPED_SAMPLES);
+  if (dropCount > lastDropCount) {
+    const newDrops = dropCount - lastDropCount;
+    lastDropCount = dropCount;
     overflowCount++;
 
-    // Calculate available samples
-    let available: number;
-    if (writeIdx >= currentReadIdx) {
-      available = writeIdx - currentReadIdx;
-    } else {
-      available = bufferSize - currentReadIdx + writeIdx;
-    }
-
-    // Skip ahead to leave only targetLatencySamples in buffer
+    // When producer drops occur, skip ahead to target latency to recover
+    const available = (writeIdx - currentReadIdx) >>> 0;
     if (available > targetLatencySamples) {
       const samplesToSkip = available - targetLatencySamples;
-      currentReadIdx = (currentReadIdx + samplesToSkip) & bufferMask;
+      // Monotonic index: just add, don't mask
+      currentReadIdx = (currentReadIdx + samplesToSkip) | 0;
       Atomics.store(control, CTRL_READ_IDX, currentReadIdx);
 
       // Discard partial frame to start fresh
       frameOffset = 0;
 
-      log('warn', `Overflow: skipped ${samplesToSkip} samples to reach target latency`);
+      log(
+        'warn',
+        `Producer dropped ${newDrops} samples, skipped ${samplesToSkip} to reach target latency`,
+      );
     }
 
     // Re-read write index after skip (producer may have advanced)
     writeIdx = Atomics.load(control, CTRL_WRITE_IDX);
   }
 
-  // Calculate available samples
-  let available: number;
-  if (writeIdx >= currentReadIdx) {
-    available = writeIdx - currentReadIdx;
-  } else {
-    available = bufferSize - currentReadIdx + writeIdx;
-  }
+  // Calculate available samples using unsigned subtraction
+  let available = (writeIdx - currentReadIdx) >>> 0;
 
   if (available === 0) {
     return 0;
@@ -392,22 +387,29 @@ function readFromRingBuffer(): number {
   while (available > 0 && frameOffset < frameSizeSamples) {
     const samplesToRead = Math.min(available, frameSizeSamples - frameOffset);
 
-    // Handle wrap-around
-    if (currentReadIdx + samplesToRead <= bufferSize) {
-      frameBuffer.set(buffer.subarray(currentReadIdx, currentReadIdx + samplesToRead), frameOffset);
+    // Buffer offset uses bitmask on monotonic index
+    const readOffset = currentReadIdx & bufferMask;
+    const endOffset = (currentReadIdx + samplesToRead) & bufferMask;
+
+    // Handle wrap-around at buffer boundary
+    if (readOffset < endOffset || samplesToRead === 0) {
+      // No wrap: simple contiguous copy
+      frameBuffer.set(buffer.subarray(readOffset, readOffset + samplesToRead), frameOffset);
     } else {
-      const firstPart = bufferSize - currentReadIdx;
-      frameBuffer.set(buffer.subarray(currentReadIdx, bufferSize), frameOffset);
+      // Wrap-around: copy in two parts
+      const firstPart = bufferSize - readOffset;
+      frameBuffer.set(buffer.subarray(readOffset, bufferSize), frameOffset);
       frameBuffer.set(buffer.subarray(0, samplesToRead - firstPart), frameOffset + firstPart);
     }
 
     frameOffset += samplesToRead;
     samplesRead += samplesToRead;
-    currentReadIdx = (currentReadIdx + samplesToRead) & bufferMask;
+    // Monotonic index: just add, don't mask
+    currentReadIdx = (currentReadIdx + samplesToRead) | 0;
     available -= samplesToRead;
   }
 
-  // Update read pointer
+  // Update read pointer (monotonic, not wrapped)
   Atomics.store(control, CTRL_READ_IDX, currentReadIdx);
 
   return samplesRead;
@@ -697,13 +699,15 @@ function sendWsMessage(message: object): boolean {
  * Main consumption loop using Atomics.waitAsync() with watermark-based flow control.
  *
  * Only sleeps when buffer drops below LOW_WATER threshold, avoiding unnecessary
- * wait/wake cycles when data is plentiful.
+ * wait/wake cycles when data is plentiful. Waits on the write index directly
+ * instead of a separate signal counter.
  */
 async function consumeLoop(): Promise<void> {
   if (!control) return;
 
   lastStatsTime = performance.now();
-  lastSignalValue = Atomics.load(control, CTRL_DATA_SIGNAL);
+  lastWriteIdx = Atomics.load(control, CTRL_WRITE_IDX);
+  lastDropCount = Atomics.load(control, CTRL_DROPPED_SAMPLES);
 
   while (running) {
     // Drain all available data
@@ -732,19 +736,19 @@ async function consumeLoop(): Promise<void> {
       continue;
     }
 
-    // Buffer is low, wait for more data
-    lastSignalValue = Atomics.load(control, CTRL_DATA_SIGNAL);
-    const waitResult = Atomics.waitAsync(control, CTRL_DATA_SIGNAL, lastSignalValue);
+    // Buffer is low, wait for write index to change
+    lastWriteIdx = Atomics.load(control, CTRL_WRITE_IDX);
+    const waitResult = Atomics.waitAsync(control, CTRL_WRITE_IDX, lastWriteIdx);
 
     if (waitResult.async) {
       const result = await waitResult.value;
       if (!running) break;
       if (result === 'ok') {
-        lastSignalValue = Atomics.load(control, CTRL_DATA_SIGNAL);
+        lastWriteIdx = Atomics.load(control, CTRL_WRITE_IDX);
       }
     } else {
       // Synchronous result (value already changed)
-      lastSignalValue = Atomics.load(control, CTRL_DATA_SIGNAL);
+      lastWriteIdx = Atomics.load(control, CTRL_WRITE_IDX);
     }
   }
 }
@@ -843,7 +847,8 @@ self.onmessage = async (event: MessageEvent<InboundMessage>) => {
       droppedFrameCount = 0;
       wakeupCount = 0;
       totalSamplesRead = 0;
-      lastSignalValue = 0;
+      lastWriteIdx = 0;
+      lastDropCount = 0;
       resetThermostat();
 
       // Create encoder

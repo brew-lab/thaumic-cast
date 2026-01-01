@@ -1,11 +1,22 @@
 /**
  * Shared memory structure for the zero-copy audio ring buffer.
  *
- * Control Layout (Int32Array):
- * [0] - Write Index (where the Worklet adds data)
- * [1] - Read Index (where the consumer Worker reads data)
- * [2] - Overflow Flag (0: OK, 1: Overflow occurred)
- * [3] - Data Available Signal (for Atomics.wait/notify synchronization)
+ * Control Layout (Int32Array - required for Atomics.waitAsync):
+ * [0] - Write Index (monotonic, ever-increasing, interpreted as unsigned)
+ * [1] - Read Index (monotonic, ever-increasing, interpreted as unsigned)
+ * [2] - Producer Dropped Samples (for diagnostics)
+ *
+ * IMPORTANT: Must use Int32Array (not Uint32Array) because
+ * Atomics.waitAsync only works with Int32Array/BigInt64Array.
+ * Use >>> 0 for unsigned interpretation of values.
+ *
+ * Availability Calculation:
+ *   availableRead = (writeIdx - readIdx) >>> 0
+ *   availableWrite = RING_BUFFER_SIZE - availableRead
+ *   bufferOffset = index & RING_BUFFER_MASK
+ *
+ * The unsigned subtraction (>>> 0) handles 32-bit wrap correctly
+ * for sessions >12 hours at 48kHz stereo.
  *
  * Data Layout (Int16Array starting at HEADER_SIZE * 4 bytes):
  * [0..N] - Interleaved PCM Int16 samples (L, R, L, R, ...)
@@ -18,16 +29,14 @@ export const RING_BUFFER_SIZE = 262144; // 2^18
 export const RING_BUFFER_MASK = RING_BUFFER_SIZE - 1;
 
 /** Number of control integers at the start of the buffer. */
-export const HEADER_SIZE = 4;
+export const HEADER_SIZE = 3;
 
 /** Control index for the write pointer. */
 export const CTRL_WRITE_IDX = 0;
 /** Control index for the read pointer. */
 export const CTRL_READ_IDX = 1;
-/** Control index for the overflow flag. */
-export const CTRL_OVERFLOW = 2;
-/** Control index for the data available signal (used with Atomics.wait/notify). */
-export const CTRL_DATA_SIGNAL = 3;
+/** Control index for the producer dropped samples count (diagnostics). */
+export const CTRL_DROPPED_SAMPLES = 2;
 
 /** Byte offset where Int16 audio data begins. */
 export const DATA_BYTE_OFFSET = HEADER_SIZE * Int32Array.BYTES_PER_ELEMENT;
