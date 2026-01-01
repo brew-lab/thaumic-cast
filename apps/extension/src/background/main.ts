@@ -1,5 +1,5 @@
 import { createLogger } from '@thaumic-cast/shared';
-import { SonosStateSnapshot, parseMediaMetadata } from '@thaumic-cast/protocol';
+import { SonosStateSnapshot, parseMediaMetadata, PowerState } from '@thaumic-cast/protocol';
 import { discoverDesktopApp } from '../lib/discovery';
 import {
   ExtensionMessage,
@@ -16,6 +16,7 @@ import {
   CurrentTabStateResponse,
   ActiveCastsResponse,
   StartPlaybackResponse,
+  SessionHealthMessage,
 } from '../lib/messages';
 import { getCachedState, updateCache, removeFromCache, restoreCache } from './metadata-cache';
 import {
@@ -41,6 +42,12 @@ import {
   restoreConnectionState,
 } from './connection-state';
 import { handleSonosEvent } from './sonos-event-handlers';
+import {
+  selectEncoderConfigWithContext,
+  recordStableSession,
+  recordBadSession,
+  describeConfig,
+} from '../lib/device-config';
 
 const log = createLogger('Background');
 
@@ -50,6 +57,9 @@ const log = createLogger('Background');
 
 /** Whether the control WebSocket is connected. */
 let wsConnected = false;
+
+/** Cached power state from desktop app (null if not connected or detection failed). */
+let cachedPowerState: PowerState | null = null;
 
 /**
  * Updates the cached Sonos state and syncs to offscreen for recovery.
@@ -90,14 +100,34 @@ async function connectWebSocket(serverUrl: string): Promise<void> {
 /**
  * Handles WebSocket connected event from offscreen.
  * @param state - The initial Sonos state from desktop
+ * @param powerState
  */
-function handleWsConnected(state: SonosStateSnapshot): void {
+function handleWsConnected(state: SonosStateSnapshot, powerState: PowerState | null): void {
   wsConnected = true;
+  cachedPowerState = powerState;
   setConnected(true);
   updateSonosState(state);
-  log.info('WebSocket connected, received initial state');
+
+  if (powerState) {
+    log.info(
+      `WebSocket connected, power: onAC=${powerState.onAcPower}, ` +
+        `level=${powerState.batteryLevel ?? 'N/A'}%, charging=${powerState.charging}`,
+    );
+  } else {
+    log.info('WebSocket connected (power state unavailable)');
+  }
+
   // Notify popup of state
   notifyPopup({ type: 'WS_STATE_CHANGED', state });
+}
+
+/**
+ * Returns the cached power state from desktop app.
+ * Used by device-config to determine if device is on battery.
+ * @returns The cached power state or null if not available
+ */
+export function getCachedPowerState(): PowerState | null {
+  return cachedPowerState;
 }
 
 /**
@@ -153,6 +183,12 @@ const initPromise = (async () => {
 /** Promise to track ongoing offscreen creation to avoid duplicates. */
 let offscreenCreationPromise: Promise<void> | null = null;
 
+/** Resolver for offscreen ready signal. */
+let offscreenReadyResolver: (() => void) | null = null;
+
+/** Promise that resolves when offscreen document signals it's ready. */
+let offscreenReadyPromise: Promise<void> | null = null;
+
 /**
  * Recovers WebSocket state from offscreen on service worker startup.
  */
@@ -186,20 +222,35 @@ async function recoverOffscreenState(): Promise<void> {
 }
 
 /**
- * Ensures the offscreen document is created exactly once.
+ * Ensures the offscreen document is created and ready.
  *
  * Manifest V3 requires an offscreen document to access DOM APIs like AudioContext.
+ * This function waits for the OFFSCREEN_READY message to ensure the document's
+ * message listener is set up before returning.
  *
- * @returns A promise that resolves when the offscreen document is confirmed to exist.
+ * @returns A promise that resolves when the offscreen document is ready.
  */
 async function ensureOffscreen(): Promise<void> {
-  if (offscreenCreationPromise) return offscreenCreationPromise;
+  // If already creating, wait for the existing promise
+  if (offscreenCreationPromise) {
+    await offscreenCreationPromise;
+    // Also wait for ready signal if we have one pending
+    if (offscreenReadyPromise) await offscreenReadyPromise;
+    return;
+  }
 
   const existing = await chrome.runtime.getContexts({
     contextTypes: [chrome.runtime.ContextType.OFFSCREEN_DOCUMENT],
   });
 
+  // Already exists and ready
   if (existing.length > 0) return;
+
+  // Create promise for ready signal BEFORE creating document
+  // This ensures we don't miss the signal if it comes quickly
+  offscreenReadyPromise = new Promise<void>((resolve) => {
+    offscreenReadyResolver = resolve;
+  });
 
   offscreenCreationPromise = chrome.offscreen
     .createDocument({
@@ -212,10 +263,25 @@ async function ensureOffscreen(): Promise<void> {
     })
     .catch((err) => {
       offscreenCreationPromise = null;
+      offscreenReadyPromise = null;
+      offscreenReadyResolver = null;
       throw err;
     });
 
-  return offscreenCreationPromise;
+  // Wait for document creation
+  await offscreenCreationPromise;
+
+  // Wait for ready signal (with timeout to avoid hanging forever)
+  const timeoutPromise = new Promise<void>((_, reject) =>
+    setTimeout(() => reject(new Error('Offscreen ready timeout')), 5000),
+  );
+
+  try {
+    await Promise.race([offscreenReadyPromise, timeoutPromise]);
+  } finally {
+    offscreenReadyPromise = null;
+    offscreenReadyResolver = null;
+  }
 }
 
 /**
@@ -304,8 +370,8 @@ chrome.runtime.onMessage.addListener((msg: ExtensionMessage, _sender, sendRespon
         // WebSocket Status Messages (from offscreen)
         // ─────────────────────────────────────────────────────────────────
         case 'WS_CONNECTED': {
-          const { state } = msg as WsConnectedMessage;
-          handleWsConnected(state);
+          const { state, powerState } = msg as WsConnectedMessage;
+          handleWsConnected(state, powerState);
           sendResponse({ success: true });
           break;
         }
@@ -333,8 +399,34 @@ chrome.runtime.onMessage.addListener((msg: ExtensionMessage, _sender, sendRespon
 
         case 'OFFSCREEN_READY':
           log.info('Offscreen document ready');
+          // Resolve the ready promise if we're waiting for it
+          if (offscreenReadyResolver) {
+            offscreenReadyResolver();
+          }
           sendResponse({ success: true });
           break;
+
+        case 'SESSION_HEALTH': {
+          const { payload } = msg as SessionHealthMessage;
+          log.info(
+            `Session health for tab ${payload.tabId}: ` +
+              `hadDrops=${payload.hadDrops}, ` +
+              `producer=${payload.totalProducerDrops}, ` +
+              `catchUp=${payload.totalCatchUpDrops}, ` +
+              `consumer=${payload.totalConsumerDrops}, ` +
+              `underflows=${payload.totalUnderflows}`,
+          );
+
+          // Record session outcome for config learning
+          if (payload.hadDrops) {
+            await recordBadSession(payload.encoderConfig);
+          } else {
+            await recordStableSession(payload.encoderConfig);
+          }
+
+          sendResponse({ success: true });
+          break;
+        }
 
         // ─────────────────────────────────────────────────────────────────
         // WebSocket Control (from popup)
@@ -469,11 +561,11 @@ async function handleStartCast(
   };
 
   try {
-    const { speakerIp, encoderConfig } = msg.payload;
+    const { speakerIp, encoderConfig: providedConfig } = msg.payload;
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
     if (!tab?.id) throw new Error('No active tab');
 
-    // 1. Discover Desktop App and its limits
+    // 1. Discover Desktop App and its limits (do this early to fail fast)
     const app = await discoverDesktopApp();
     if (!app) {
       clearConnectionState();
@@ -490,7 +582,33 @@ async function handleStartCast(
       );
     }
 
-    // 3. Capture Tab
+    // 3. Create offscreen document (needed for audio capture)
+    await ensureOffscreen();
+
+    // 4. Select encoder config: use provided config or auto-select based on device/power state
+    let encoderConfig: typeof providedConfig;
+    let lowPowerMode = false;
+    if (providedConfig) {
+      encoderConfig = providedConfig;
+    } else {
+      // Use power state from desktop app (null if not connected yet)
+      const result = await selectEncoderConfigWithContext(cachedPowerState);
+      encoderConfig = result.config;
+      lowPowerMode = result.lowPowerMode;
+
+      // Log power detection result for debugging
+      if (!result.powerInfoAvailable) {
+        log.warn('Power state unavailable from desktop app');
+      } else {
+        const level = result.batteryLevel !== undefined ? `${result.batteryLevel}%` : 'N/A';
+        log.info(
+          `Power: ${level}, charging=${result.charging ?? 'unknown'}, onBattery=${lowPowerMode}`,
+        );
+      }
+    }
+    log.info(`Encoder config: ${describeConfig(encoderConfig, lowPowerMode)}`);
+
+    // 5. Capture Tab
     const mediaStreamId = await new Promise<string>((resolve, reject) => {
       chrome.tabCapture.getMediaStreamId({ targetTabId: tab.id! }, (id) => {
         if (id) resolve(id);
@@ -498,14 +616,12 @@ async function handleStartCast(
       });
     });
 
-    await ensureOffscreen();
-
-    // 4. Connect control WebSocket if not already connected
+    // 6. Connect control WebSocket if not already connected
     if (!wsConnected) {
       await connectWebSocket(app.url);
     }
 
-    // 5. Start Offscreen Session
+    // 7. Start Offscreen Session
     const response: ExtensionResponse = await chrome.runtime.sendMessage({
       type: 'START_CAPTURE',
       payload: {
@@ -521,7 +637,7 @@ async function handleStartCast(
       const cachedState = getCachedState(tab.id);
       const initialMetadata = cachedState?.metadata ?? undefined;
 
-      // 6. Start playback via WebSocket (waits for STREAM_READY internally)
+      // 8. Start playback via WebSocket (waits for STREAM_READY internally)
       // Include initial metadata so Sonos displays correct info immediately
       const playbackResponse: StartPlaybackResponse = await chrome.runtime.sendMessage({
         type: 'START_PLAYBACK',

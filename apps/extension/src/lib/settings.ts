@@ -13,6 +13,7 @@ const log = createLogger('Settings');
  * User settings schema for audio configuration.
  */
 export const AudioSettingsSchema = z.object({
+  auto: z.boolean().default(true),
   codec: AudioCodecSchema,
   bitrate: BitrateSchema,
 });
@@ -21,6 +22,7 @@ export type AudioSettings = z.infer<typeof AudioSettingsSchema>;
 const STORAGE_KEY = 'audioSettings';
 
 const DEFAULT_SETTINGS: AudioSettings = {
+  auto: true,
   codec: 'aac-lc',
   bitrate: 192,
 };
@@ -45,7 +47,7 @@ export async function loadAudioSettings(): Promise<AudioSettings> {
 
     const { codec, bitrate } = parsed.data;
     if (!isValidBitrateForCodec(codec, bitrate)) {
-      return { codec, bitrate: getDefaultBitrate(codec) };
+      return { ...parsed.data, bitrate: getDefaultBitrate(codec) };
     }
 
     return parsed.data;

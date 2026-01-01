@@ -28,8 +28,10 @@ export function App() {
   const [isStarting, setIsStarting] = useState(false);
   const [isStopping, setIsStopping] = useState(false);
   const {
+    auto: autoConfig,
     codec,
     bitrate,
+    setAuto,
     setCodec,
     setBitrate,
     loading: settingsLoading,
@@ -98,7 +100,7 @@ export function App() {
     setError(null);
     setIsStarting(true);
     try {
-      const encoderConfig = createEncoderConfig(codec, bitrate);
+      const encoderConfig = autoConfig ? undefined : createEncoderConfig({ codec, bitrate });
       const msg: StartCastMessage = {
         type: 'START_CAST',
         payload: { speakerIp: selectedIp, encoderConfig },
@@ -203,10 +205,25 @@ export function App() {
             </select>
           </div>
 
+          <div className={styles.field}>
+            <label className={styles.label}>{t('audio_settings')}</label>
+            <label className={styles.toggleRow}>
+              <input
+                type="checkbox"
+                checked={autoConfig}
+                onChange={(e) => setAuto((e.target as HTMLInputElement).checked)}
+                disabled={isCasting || settingsLoading}
+                className={styles.toggleInput}
+              />
+              <span>{t('audio_settings_auto')}</span>
+            </label>
+            <p className={styles.hint}>{t('audio_settings_auto_hint')}</p>
+          </div>
+
           <CodecSelector
             value={codec}
             onChange={setCodec}
-            disabled={isCasting || settingsLoading}
+            disabled={isCasting || settingsLoading || autoConfig}
             availableCodecs={availableCodecs}
           />
 
@@ -214,7 +231,7 @@ export function App() {
             codec={codec}
             value={bitrate}
             onChange={setBitrate}
-            disabled={isCasting || settingsLoading}
+            disabled={isCasting || settingsLoading || autoConfig}
             availableBitrates={availableBitrates}
           />
 

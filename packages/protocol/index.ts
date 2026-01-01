@@ -38,13 +38,81 @@ export type Bitrate = z.infer<typeof BitrateSchema>;
 export const ALL_BITRATES = [0, 64, 96, 128, 160, 192, 256, 320] as const;
 
 /**
+ * Sample rates supported by Sonos speakers.
+ * Includes both 48kHz and 44.1kHz families.
+ */
+export const SUPPORTED_SAMPLE_RATES = [
+  48000, 44100, 32000, 24000, 22050, 16000, 11025, 8000,
+] as const;
+export type SupportedSampleRate = (typeof SUPPORTED_SAMPLE_RATES)[number];
+
+/**
+ * Zod schema for supported sample rates.
+ */
+export const SampleRateSchema = z.union([
+  z.literal(48000),
+  z.literal(44100),
+  z.literal(32000),
+  z.literal(24000),
+  z.literal(22050),
+  z.literal(16000),
+  z.literal(11025),
+  z.literal(8000),
+]);
+
+/**
+ * Checks if a sample rate is supported by Sonos.
+ * @param rate - The sample rate to check
+ * @returns True if the rate is supported
+ */
+export function isSupportedSampleRate(rate: number): rate is SupportedSampleRate {
+  return SUPPORTED_SAMPLE_RATES.includes(rate as SupportedSampleRate);
+}
+
+/**
+ * Gets the nearest supported sample rate for resampling.
+ * Prefers 48kHz family for rates >= 48kHz, otherwise finds closest match.
+ * @param rate - The actual sample rate from the audio device
+ * @returns The nearest supported sample rate
+ */
+export function getNearestSupportedSampleRate(rate: number): SupportedSampleRate {
+  if (isSupportedSampleRate(rate)) {
+    return rate;
+  }
+  // For high sample rates (96k, 192k, etc.), downsample to 48kHz
+  if (rate >= 48000) {
+    return 48000;
+  }
+  // Find the closest supported rate
+  let closest: SupportedSampleRate = SUPPORTED_SAMPLE_RATES[0];
+  let minDiff = Math.abs(rate - closest);
+  for (const supported of SUPPORTED_SAMPLE_RATES) {
+    const diff = Math.abs(rate - supported);
+    if (diff < minDiff) {
+      minDiff = diff;
+      closest = supported;
+    }
+  }
+  return closest;
+}
+
+/**
+ * Latency mode for encoder operation.
+ * - 'quality': Prioritize audio quality (default, best for music)
+ * - 'realtime': Prioritize encoding speed, may sacrifice quality (for low-end devices)
+ */
+export const LatencyModeSchema = z.enum(['quality', 'realtime']);
+export type LatencyMode = z.infer<typeof LatencyModeSchema>;
+
+/**
  * Complete encoder configuration passed from UI to offscreen.
  */
 export const EncoderConfigSchema = z.object({
   codec: AudioCodecSchema,
   bitrate: BitrateSchema,
-  sampleRate: z.union([z.literal(44100), z.literal(48000)]).default(48000),
+  sampleRate: SampleRateSchema.default(48000),
   channels: z.union([z.literal(1), z.literal(2)]).default(2),
+  latencyMode: LatencyModeSchema.default('quality'),
 });
 export type EncoderConfig = z.infer<typeof EncoderConfigSchema>;
 
@@ -151,20 +219,32 @@ export function isValidBitrateForCodec(codec: AudioCodec, bitrate: Bitrate): boo
 }
 
 /**
+ * Options for creating an encoder configuration.
+ */
+export interface CreateEncoderConfigOptions {
+  codec: AudioCodec;
+  bitrate?: Bitrate;
+  sampleRate?: SupportedSampleRate;
+  channels?: 1 | 2;
+  latencyMode?: LatencyMode;
+}
+
+/**
  * Creates a validated encoder config, applying defaults and constraints.
- * @param codec - The audio codec to use
- * @param bitrate - Optional bitrate (uses default if invalid)
+ * @param options - Configuration options
  * @returns A validated encoder configuration
  */
-export function createEncoderConfig(codec: AudioCodec, bitrate?: Bitrate): EncoderConfig {
+export function createEncoderConfig(options: CreateEncoderConfigOptions): EncoderConfig {
+  const { codec, bitrate, sampleRate = 48000, channels = 2, latencyMode = 'quality' } = options;
   const effectiveBitrate =
     bitrate && isValidBitrateForCodec(codec, bitrate) ? bitrate : getDefaultBitrate(codec);
 
   return {
     codec,
     bitrate: effectiveBitrate,
-    sampleRate: 48000,
-    channels: 2,
+    sampleRate,
+    channels,
+    latencyMode,
   };
 }
 
@@ -584,6 +664,39 @@ export function createEmptySonosState(): SonosStateSnapshot {
   };
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Power State (from desktop app)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Power/battery state from the desktop app.
+ * Desktop has native OS access to battery info, bypassing browser API restrictions.
+ */
+export const PowerStateSchema = z.object({
+  /** Whether device is currently on AC power (plugged in). */
+  onAcPower: z.boolean(),
+  /** Battery level 0-100 (null if no battery or unknown). */
+  batteryLevel: z.number().min(0).max(100).nullable(),
+  /** Whether battery is currently charging. */
+  charging: z.boolean(),
+});
+export type PowerState = z.infer<typeof PowerStateSchema>;
+
+/**
+ * Initial state message sent by desktop on WebSocket connect.
+ * Includes Sonos state and system power state.
+ */
+export const InitialStatePayloadSchema = z.object({
+  groups: z.array(ZoneGroupSchema),
+  transportStates: z.record(z.string(), TransportStateSchema),
+  groupVolumes: z.record(z.string(), z.number()),
+  groupMutes: z.record(z.string(), z.boolean()),
+  sessions: z.array(PlaybackSessionSchema).optional(),
+  /** System power state (null if detection failed). */
+  powerState: PowerStateSchema.nullable(),
+});
+export type InitialStatePayload = z.infer<typeof InitialStatePayloadSchema>;
+
 /**
  * Parses and validates a Sonos event from a raw payload.
  * @param data - The raw event data to parse
@@ -622,7 +735,7 @@ export function isSpeakerPlaying(speakerIp: string, state: SonosStateSnapshot): 
  */
 export const WsInitialStateMessageSchema = z.object({
   type: z.literal('INITIAL_STATE'),
-  payload: SonosStateSnapshotSchema,
+  payload: InitialStatePayloadSchema,
 });
 export type WsInitialStateMessage = z.infer<typeof WsInitialStateMessageSchema>;
 
