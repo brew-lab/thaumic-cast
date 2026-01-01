@@ -46,6 +46,22 @@ const WS_CONNECT_TIMEOUT_MS = 5000;
 const HANDSHAKE_TIMEOUT_MS = 5000;
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Adaptive Latency (Thermostat) Constants
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Window size for measuring dropped frames (ms). */
+const THERMOSTAT_WINDOW_MS = 10000;
+
+/** Threshold: downgrade to 'realtime' if this many frames dropped in window. */
+const DOWNGRADE_THRESHOLD = 5;
+
+/** Threshold: upgrade back to 'quality' after this many clean windows. */
+const UPGRADE_CLEAN_WINDOWS = 3;
+
+/** Minimum time between mode switches to avoid oscillation (ms). */
+const MODE_SWITCH_COOLDOWN_MS = 5000;
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Message Types
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -170,6 +186,14 @@ let totalSamplesRead = 0;
 let lastStatsTime = 0;
 let lastSignalValue = 0;
 
+// Thermostat state (adaptive latency mode)
+/** Timestamps of recent frame drops for rolling window analysis. */
+let dropTimestamps: number[] = [];
+/** Number of consecutive clean windows (no drops). */
+let cleanWindowCount = 0;
+/** Timestamp of last mode switch to enforce cooldown. */
+let lastModeSwitchTime = 0;
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Utilities
 // ─────────────────────────────────────────────────────────────────────────────
@@ -196,6 +220,99 @@ function log(level: 'info' | 'warn' | 'error', ...args: unknown[]): void {
   } else {
     console.info(prefix, ...args);
   }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Adaptive Latency Thermostat
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Records a frame drop and evaluates whether to switch latency modes.
+ * Called each time a frame is dropped due to backpressure.
+ */
+function recordFrameDrop(): void {
+  if (!encoder) return;
+
+  const now = performance.now();
+  dropTimestamps.push(now);
+
+  // Reset clean window counter since we just dropped a frame
+  cleanWindowCount = 0;
+
+  // Prune timestamps outside the window
+  const windowStart = now - THERMOSTAT_WINDOW_MS;
+  dropTimestamps = dropTimestamps.filter((t) => t >= windowStart);
+
+  // Check if we should downgrade to realtime mode
+  if (encoder.latencyMode === 'quality' && dropTimestamps.length >= DOWNGRADE_THRESHOLD) {
+    // Enforce cooldown to prevent oscillation
+    if (now - lastModeSwitchTime < MODE_SWITCH_COOLDOWN_MS) {
+      return;
+    }
+
+    log(
+      'warn',
+      `⚡ THERMOSTAT: Downgrading to realtime mode ` +
+        `(${dropTimestamps.length} drops in ${THERMOSTAT_WINDOW_MS / 1000}s window)`,
+    );
+
+    const flushed = encoder.reconfigure({ latencyMode: 'realtime' });
+    if (flushed && socket?.readyState === WebSocket.OPEN) {
+      socket.send(flushed);
+    }
+
+    lastModeSwitchTime = now;
+    dropTimestamps = []; // Reset after mode switch
+  }
+}
+
+/**
+ * Evaluates whether to upgrade back to quality mode.
+ * Called periodically (e.g., from stats reporting).
+ */
+function evaluateUpgrade(): void {
+  if (!encoder || encoder.latencyMode !== 'realtime') return;
+
+  const now = performance.now();
+
+  // Enforce cooldown
+  if (now - lastModeSwitchTime < MODE_SWITCH_COOLDOWN_MS) {
+    return;
+  }
+
+  // Prune old timestamps
+  const windowStart = now - THERMOSTAT_WINDOW_MS;
+  dropTimestamps = dropTimestamps.filter((t) => t >= windowStart);
+
+  // If no drops in this window, increment clean window counter
+  if (dropTimestamps.length === 0) {
+    cleanWindowCount++;
+
+    if (cleanWindowCount >= UPGRADE_CLEAN_WINDOWS) {
+      log(
+        'info',
+        `✨ THERMOSTAT: Upgrading to quality mode ` +
+          `(${cleanWindowCount} clean windows, CPU recovered)`,
+      );
+
+      const flushed = encoder.reconfigure({ latencyMode: 'quality' });
+      if (flushed && socket?.readyState === WebSocket.OPEN) {
+        socket.send(flushed);
+      }
+
+      lastModeSwitchTime = now;
+      cleanWindowCount = 0;
+    }
+  }
+}
+
+/**
+ * Resets thermostat state. Called on initialization.
+ */
+function resetThermostat(): void {
+  dropTimestamps = [];
+  cleanWindowCount = 0;
+  lastModeSwitchTime = 0;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -311,6 +428,7 @@ function flushFrameIfReady(): void {
     socket.bufferedAmount >= WS_BUFFER_HIGH_WATER
   ) {
     droppedFrameCount++;
+    recordFrameDrop(); // Notify thermostat of backpressure
 
     // Advance encoder timestamp to avoid time compression when we resume
     // frameSizeSamples is interleaved samples, divide by channels for frame count
@@ -358,6 +476,9 @@ function maybePostStats(): void {
   wakeupCount = 0;
   totalSamplesRead = 0;
   lastStatsTime = now;
+
+  // Check if we can upgrade back to quality mode
+  evaluateUpgrade();
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -723,6 +844,7 @@ self.onmessage = async (event: MessageEvent<InboundMessage>) => {
       wakeupCount = 0;
       totalSamplesRead = 0;
       lastSignalValue = 0;
+      resetThermostat();
 
       // Create encoder
       log('info', `Creating encoder: ${encoderConfig.codec} @ ${encoderConfig.bitrate}kbps`);
