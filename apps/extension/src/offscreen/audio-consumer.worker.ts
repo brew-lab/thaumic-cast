@@ -30,8 +30,8 @@ const WS_BUFFER_HIGH_WATER = 512000;
 /** Macrotask yield duration (ms). Gives encoder thread CPU time. */
 const YIELD_MS = 1;
 
-/** Maximum frames to drain per wake cycle (prevents encoder starvation). */
-const MAX_FRAMES_PER_WAKE = 10;
+/** Default frames per wake. 3 frames = ~60ms, balances latency vs CPU. */
+const DEFAULT_FRAMES_PER_WAKE = 3;
 
 /** Interval for posting diagnostic stats to main thread (ms). */
 const STATS_INTERVAL_MS = 1000;
@@ -668,6 +668,23 @@ function isBackpressured(): boolean {
 }
 
 /**
+ * Dynamically compute max frames based on backpressure.
+ * Process fewer frames when encoder/network is struggling.
+ * @returns Number of frames to process this wake cycle
+ */
+function getMaxFramesPerWake(): number {
+  const queueSize = encoder?.encodeQueueSize ?? 0;
+  const buffered = socket?.bufferedAmount ?? 0;
+
+  // If encoder queue building up, process less per wake
+  if (queueSize >= 2 || buffered >= WS_BUFFER_HIGH_WATER / 2) {
+    return 1; // Minimal work, let encoder catch up
+  }
+
+  return DEFAULT_FRAMES_PER_WAKE;
+}
+
+/**
  * Yields to the macrotask queue via setTimeout.
  * Unlike microtasks (Promise.resolve), this actually yields CPU time.
  * @param ms - Milliseconds to wait
@@ -682,20 +699,22 @@ function yieldMacrotask(ms: number): Promise<void> {
  * @returns Number of complete frames drained
  */
 function drainWithLimit(maxFrames: number): number {
-  let framesDrained = 0;
+  let framesProcessed = 0;
 
-  while (framesDrained < maxFrames) {
+  while (framesProcessed < maxFrames) {
     const samplesRead = readFromRingBuffer();
     if (samplesRead === 0) break;
 
-    // Check if we completed a frame
-    if (frameOffset >= frameSizeSamples) {
-      flushFrameIfReady();
-      framesDrained++;
+    totalSamplesRead += samplesRead;
+    flushFrameIfReady();
+
+    // frameOffset resets to 0 after flushing a complete frame
+    if (frameOffset === 0) {
+      framesProcessed++;
     }
   }
 
-  return framesDrained;
+  return framesProcessed;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -726,8 +745,8 @@ async function consumeLoop(): Promise<void> {
       continue;
     }
 
-    // Drain with bounded work per wake (prevents encoder starvation)
-    const framesThisWake = drainWithLimit(MAX_FRAMES_PER_WAKE);
+    // Drain with bounded work per wake (dynamic based on backpressure)
+    const framesThisWake = drainWithLimit(getMaxFramesPerWake());
 
     if (framesThisWake > 0) {
       wakeupCount++;
