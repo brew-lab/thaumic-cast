@@ -17,6 +17,7 @@ import {
 const CODEC_CACHE_KEY = 'codecSupportCache';
 
 interface UseAudioSettingsResult {
+  auto: boolean;
   codec: AudioCodec;
   bitrate: Bitrate;
   loading: boolean;
@@ -26,6 +27,7 @@ interface UseAudioSettingsResult {
   availableBitrates: Bitrate[];
   /** Whether codec detection is complete */
   detectionComplete: boolean;
+  setAuto: (auto: boolean) => void;
   setCodec: (codec: AudioCodec) => void;
   setBitrate: (bitrate: Bitrate) => void;
 }
@@ -103,6 +105,7 @@ export function useAudioSettings(): UseAudioSettingsResult {
             const codecSupported = support.availableCodecs.includes(prev.codec);
             if (!codecSupported && support.defaultCodec) {
               return {
+                ...prev,
                 codec: support.defaultCodec,
                 bitrate: support.defaultBitrate ?? getDefaultBitrate(support.defaultCodec),
               };
@@ -143,7 +146,7 @@ export function useAudioSettings(): UseAudioSettingsResult {
               : newBitrates[0]
             : getDefaultBitrate(codec);
 
-        return { codec, bitrate: newBitrate };
+        return { ...prev, codec, bitrate: newBitrate };
       });
     },
     [codecSupport],
@@ -153,13 +156,19 @@ export function useAudioSettings(): UseAudioSettingsResult {
     setSettings((prev: AudioSettings) => ({ ...prev, bitrate }));
   }, []);
 
+  const setAuto = useCallback((auto: boolean) => {
+    setSettings((prev: AudioSettings) => ({ ...prev, auto }));
+  }, []);
+
   return {
+    auto: settings.auto,
     codec: settings.codec,
     bitrate: settings.bitrate,
     loading: loading || !detectionComplete,
     availableCodecs,
     availableBitrates,
     detectionComplete,
+    setAuto,
     setCodec,
     setBitrate,
   };

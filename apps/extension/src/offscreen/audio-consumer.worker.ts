@@ -271,10 +271,13 @@ function performCatchUpIfNeeded(): number {
     return 0; // Buffer is within bounds
   }
 
+  const partialSamples = frameOffset;
+
   // Calculate new read position aligned to frame boundary
   const alignedTarget = alignDown(catchUpTargetSamples, frameSizeSamples);
   const newReadIdx = (writeIdx - alignedTarget) | 0;
   const droppedSamples = (newReadIdx - readIdx) >>> 0;
+  const totalDroppedSamples = droppedSamples + partialSamples;
 
   // Advance read index
   Atomics.store(control, CTRL_READ_IDX, newReadIdx);
@@ -283,19 +286,19 @@ function performCatchUpIfNeeded(): number {
   frameOffset = 0;
 
   // Advance encoder timestamp to prevent time compression
-  // droppedSamples is interleaved, so divide by channels for frame count
+  // totalDroppedSamples is interleaved, so divide by channels for frame count
   const channels = encoder.config.channels;
-  const droppedFrames = droppedSamples / channels;
+  const droppedFrames = totalDroppedSamples / channels;
   encoder.advanceTimestamp(droppedFrames);
 
   // Track for stats
-  catchUpDroppedSamples += droppedSamples;
+  catchUpDroppedSamples += totalDroppedSamples;
 
   // Log the event
-  const droppedMs = (droppedSamples / (encoder.config.sampleRate * channels)) * 1000;
+  const droppedMs = (totalDroppedSamples / (encoder.config.sampleRate * channels)) * 1000;
   log('warn', `⏩ CATCH-UP: Dropped ${droppedMs.toFixed(0)}ms of audio to bound latency`);
 
-  return droppedSamples;
+  return totalDroppedSamples;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
