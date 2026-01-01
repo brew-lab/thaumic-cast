@@ -8,7 +8,12 @@
  *
  * IMPORTANT: Must use Int32Array (not Uint32Array) because
  * Atomics.waitAsync only works with Int32Array/BigInt64Array.
- * Use >>> 0 for unsigned interpretation of values.
+ *
+ * Bit Operation Conventions:
+ *   | 0   - Truncates to signed 32-bit int. Use when storing to Int32Array
+ *           via Atomics.store() to ensure the value fits.
+ *   >>> 0 - Interprets as unsigned 32-bit int. Use for arithmetic/comparisons
+ *           to handle wrap-around correctly (e.g., availability calculation).
  *
  * Availability Calculation:
  *   availableRead = (writeIdx - readIdx) >>> 0

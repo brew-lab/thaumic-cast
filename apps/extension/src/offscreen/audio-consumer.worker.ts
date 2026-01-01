@@ -13,7 +13,12 @@
  *                              - Control messages
  */
 
-import { CTRL_WRITE_IDX, CTRL_READ_IDX, CTRL_DROPPED_SAMPLES } from './ring-buffer';
+import {
+  CTRL_WRITE_IDX,
+  CTRL_READ_IDX,
+  CTRL_DROPPED_SAMPLES,
+  DATA_BYTE_OFFSET,
+} from './ring-buffer';
 import { createEncoder, type AudioEncoder } from './encoders';
 import type { EncoderConfig, StreamMetadata, WsMessage } from '@thaumic-cast/protocol';
 import { WsMessageSchema } from '@thaumic-cast/protocol';
@@ -58,8 +63,12 @@ const THERMOSTAT_WINDOW_MS = 10000;
 /** Threshold: downgrade to 'realtime' if this many frames dropped in window. */
 const DOWNGRADE_THRESHOLD = 5;
 
-/** Threshold: upgrade back to 'quality' after this many clean windows. */
-const UPGRADE_CLEAN_WINDOWS = 3;
+/**
+ * Threshold: upgrade back to 'quality' after this many consecutive stats
+ * intervals (STATS_INTERVAL_MS) with no drops in the THERMOSTAT_WINDOW_MS.
+ * With defaults: 3 consecutive 1-second checks where the 10-second window is clean.
+ */
+const UPGRADE_CLEAN_INTERVALS = 3;
 
 /** Minimum time between mode switches to avoid oscillation (ms). */
 const MODE_SWITCH_COOLDOWN_MS = 5000;
@@ -305,7 +314,7 @@ function evaluateUpgrade(): void {
   if (dropTimestamps.length === 0) {
     cleanWindowCount++;
 
-    if (cleanWindowCount >= UPGRADE_CLEAN_WINDOWS) {
+    if (cleanWindowCount >= UPGRADE_CLEAN_INTERVALS) {
       log(
         'info',
         `✨ THERMOSTAT: Upgrading to quality mode ` +
@@ -365,7 +374,10 @@ function readFromRingBuffer(): number {
     const readOffset = currentReadIdx & bufferMask;
     const endOffset = (currentReadIdx + samplesToRead) & bufferMask;
 
-    // Handle wrap-around at buffer boundary
+    // Handle wrap-around at buffer boundary.
+    // When the read wraps around the buffer end, endOffset will be small
+    // (wrapped to start), making readOffset > endOffset. This triggers
+    // the two-part copy branch.
     if (readOffset < endOffset || samplesToRead === 0) {
       // No wrap: simple contiguous copy
       frameBuffer.set(buffer.subarray(readOffset, readOffset + samplesToRead), frameOffset);
@@ -883,7 +895,7 @@ self.onmessage = async (event: MessageEvent<InboundMessage>) => {
 
       // Initialize ring buffer views
       control = new Int32Array(sab, 0, headerSize);
-      buffer = new Int16Array(sab, headerSize * 4);
+      buffer = new Int16Array(sab, DATA_BYTE_OFFSET);
       bufferSize = size;
       bufferMask = mask;
 
