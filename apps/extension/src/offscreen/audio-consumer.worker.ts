@@ -21,17 +21,17 @@ import { WsMessageSchema } from '@thaumic-cast/protocol';
 /** Frame duration in seconds (20ms). */
 const FRAME_DURATION_SEC = 0.02;
 
-/** Number of frames for low watermark (40ms = 2 frames). Don't sleep if above this. */
-const LOW_WATER_FRAMES = 2;
-
-/** Target latency in frames (100ms = 5 frames). Used for overflow recovery. */
-const TARGET_LATENCY_FRAMES = 5;
-
 /** Maximum pending encode operations before dropping frames. */
 const MAX_ENCODE_QUEUE = 3;
 
 /** WebSocket buffer high water mark (512KB). Drop frames if exceeded. */
 const WS_BUFFER_HIGH_WATER = 512000;
+
+/** Macrotask yield duration (ms). Gives encoder thread CPU time. */
+const YIELD_MS = 1;
+
+/** Maximum frames to drain per wake cycle (prevents encoder starvation). */
+const MAX_FRAMES_PER_WAKE = 10;
 
 /** Interval for posting diagnostic stats to main thread (ms). */
 const STATS_INTERVAL_MS = 1000;
@@ -167,10 +167,6 @@ let frameSizeSamples = 0;
 let frameBuffer: Int16Array | null = null;
 let frameOffset = 0;
 
-// Watermarks (computed from frame size)
-let lowWaterSamples = 0;
-let targetLatencySamples = 0;
-
 // Encoder and WebSocket
 let encoder: AudioEncoder | null = null;
 let socket: WebSocket | null = null;
@@ -184,7 +180,6 @@ let droppedFrameCount = 0;
 let wakeupCount = 0;
 let totalSamplesRead = 0;
 let lastStatsTime = 0;
-let lastWriteIdx = 0;
 let lastDropCount = 0;
 
 // Thermostat state (adaptive latency mode)
@@ -321,21 +316,6 @@ function resetThermostat(): void {
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
- * Returns the number of samples available in the ring buffer.
- * Uses unsigned subtraction to handle 32-bit wrap correctly.
- * @returns Number of available samples
- */
-function getAvailableSamples(): number {
-  if (!control) return 0;
-
-  const writeIdx = Atomics.load(control, CTRL_WRITE_IDX);
-  const readIdx = Atomics.load(control, CTRL_READ_IDX);
-
-  // Unsigned subtraction handles 32-bit wrap correctly for sessions >12 hours
-  return (writeIdx - readIdx) >>> 0;
-}
-
-/**
  * Reads available samples from the ring buffer into the frame buffer.
  * Uses monotonic indices with unsigned math and bitmask for buffer offset.
  * @returns The number of samples read, or 0 if none available
@@ -343,35 +323,16 @@ function getAvailableSamples(): number {
 function readFromRingBuffer(): number {
   if (!control || !buffer || !frameBuffer) return 0;
 
-  let writeIdx = Atomics.load(control, CTRL_WRITE_IDX);
+  const writeIdx = Atomics.load(control, CTRL_WRITE_IDX);
   let currentReadIdx = Atomics.load(control, CTRL_READ_IDX);
 
-  // Check for producer drops - indicates the producer couldn't keep up
+  // Track producer drops for diagnostics (no skip - let backpressure handle it)
   const dropCount = Atomics.load(control, CTRL_DROPPED_SAMPLES);
   if (dropCount > lastDropCount) {
     const newDrops = dropCount - lastDropCount;
     lastDropCount = dropCount;
     overflowCount++;
-
-    // When producer drops occur, skip ahead to target latency to recover
-    const available = (writeIdx - currentReadIdx) >>> 0;
-    if (available > targetLatencySamples) {
-      const samplesToSkip = available - targetLatencySamples;
-      // Monotonic index: just add, don't mask
-      currentReadIdx = (currentReadIdx + samplesToSkip) | 0;
-      Atomics.store(control, CTRL_READ_IDX, currentReadIdx);
-
-      // Discard partial frame to start fresh
-      frameOffset = 0;
-
-      log(
-        'warn',
-        `Producer dropped ${newDrops} samples, skipped ${samplesToSkip} to reach target latency`,
-      );
-    }
-
-    // Re-read write index after skip (producer may have advanced)
-    writeIdx = Atomics.load(control, CTRL_WRITE_IDX);
+    log('warn', `Producer dropped ${newDrops} samples`);
   }
 
   // Calculate available samples using unsigned subtraction
@@ -692,64 +653,111 @@ function sendWsMessage(message: object): boolean {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Flow Control Helpers
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Checks if the pipeline is backpressured.
+ * @returns True if encoder queue or WebSocket buffer is overloaded
+ */
+function isBackpressured(): boolean {
+  return (
+    (encoder?.encodeQueueSize ?? 0) >= MAX_ENCODE_QUEUE ||
+    (socket?.bufferedAmount ?? 0) >= WS_BUFFER_HIGH_WATER
+  );
+}
+
+/**
+ * Yields to the macrotask queue via setTimeout.
+ * Unlike microtasks (Promise.resolve), this actually yields CPU time.
+ * @param ms - Milliseconds to wait
+ */
+function yieldMacrotask(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * Drains up to maxFrames complete frames from the ring buffer.
+ * @param maxFrames - Maximum number of frames to drain
+ * @returns Number of complete frames drained
+ */
+function drainWithLimit(maxFrames: number): number {
+  let framesDrained = 0;
+
+  while (framesDrained < maxFrames) {
+    const samplesRead = readFromRingBuffer();
+    if (samplesRead === 0) break;
+
+    // Check if we completed a frame
+    if (frameOffset >= frameSizeSamples) {
+      flushFrameIfReady();
+      framesDrained++;
+    }
+  }
+
+  return framesDrained;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Main Consumption Loop
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
- * Main consumption loop using Atomics.waitAsync() with watermark-based flow control.
+ * Main consumption loop with backpressure-aware flow control.
  *
- * Only sleeps when buffer drops below LOW_WATER threshold, avoiding unnecessary
- * wait/wake cycles when data is plentiful. Waits on the write index directly
- * instead of a separate signal counter.
+ * - If backpressured: skip reads entirely, letting the ring buffer fill
+ *   and triggering producer-side drops naturally
+ * - If data available: drain with bounded work, then yield via macrotask
+ * - If buffer empty: wait on write index via Atomics.waitAsync
  */
 async function consumeLoop(): Promise<void> {
   if (!control) return;
 
   lastStatsTime = performance.now();
-  lastWriteIdx = Atomics.load(control, CTRL_WRITE_IDX);
   lastDropCount = Atomics.load(control, CTRL_DROPPED_SAMPLES);
 
   while (running) {
-    // Drain all available data
-    let samplesThisWake = 0;
-    while (true) {
-      const samplesRead = readFromRingBuffer();
-      if (samplesRead === 0) break;
-      samplesThisWake += samplesRead;
-      flushFrameIfReady();
+    // SHORT-CIRCUIT: If backpressured, don't drain - let buffer fill
+    // This allows producer drops to kick in naturally
+    if (isBackpressured()) {
+      droppedFrameCount++;
+      recordFrameDrop(); // Notify thermostat of backpressure
+      await yieldMacrotask(YIELD_MS);
+      continue;
     }
 
-    if (samplesThisWake > 0) {
-      totalSamplesRead += samplesThisWake;
+    // Drain with bounded work per wake (prevents encoder starvation)
+    const framesThisWake = drainWithLimit(MAX_FRAMES_PER_WAKE);
+
+    if (framesThisWake > 0) {
       wakeupCount++;
-    } else {
-      // Woke up but got no data - underflow condition
-      underflowCount++;
     }
 
     maybePostStats();
 
-    // Check if we should sleep or keep spinning
-    const available = getAvailableSamples();
-    if (available >= lowWaterSamples) {
-      // Buffer still has data above LOW_WATER, don't sleep
+    // Check if buffer is empty
+    const write = Atomics.load(control, CTRL_WRITE_IDX);
+    const read = Atomics.load(control, CTRL_READ_IDX);
+    const available = (write - read) >>> 0;
+
+    if (available > 0) {
+      // Data available - yield via macrotask to prevent encoder starvation
+      // Microtasks don't yield CPU time; setTimeout(0) does
+      await yieldMacrotask(YIELD_MS);
       continue;
     }
 
-    // Buffer is low, wait for write index to change
-    lastWriteIdx = Atomics.load(control, CTRL_WRITE_IDX);
-    const waitResult = Atomics.waitAsync(control, CTRL_WRITE_IDX, lastWriteIdx);
-
+    // Buffer empty - wait for producer to write
+    const waitResult = Atomics.waitAsync(control, CTRL_WRITE_IDX, write);
     if (waitResult.async) {
       const result = await waitResult.value;
       if (!running) break;
-      if (result === 'ok') {
-        lastWriteIdx = Atomics.load(control, CTRL_WRITE_IDX);
+      // 'not-equal' means value changed before we could wait - that's fine
+      if (result === 'timed-out') {
+        underflowCount++;
       }
-    } else {
-      // Synchronous result (value already changed)
-      lastWriteIdx = Atomics.load(control, CTRL_WRITE_IDX);
     }
+    // Producer notified us on empty→non-empty transition
   }
 }
 
@@ -837,17 +845,12 @@ self.onmessage = async (event: MessageEvent<InboundMessage>) => {
       frameBuffer = new Int16Array(frameSizeSamples);
       frameOffset = 0;
 
-      // Compute watermarks from frame size
-      lowWaterSamples = frameSizeSamples * LOW_WATER_FRAMES;
-      targetLatencySamples = frameSizeSamples * TARGET_LATENCY_FRAMES;
-
       // Reset state
       underflowCount = 0;
       overflowCount = 0;
       droppedFrameCount = 0;
       wakeupCount = 0;
       totalSamplesRead = 0;
-      lastWriteIdx = 0;
       lastDropCount = 0;
       resetThermostat();
 
