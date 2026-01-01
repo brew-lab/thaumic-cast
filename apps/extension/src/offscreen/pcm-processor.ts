@@ -118,10 +118,23 @@ class PCMProcessor extends AudioWorkletProcessor {
 
     // Bulk convert Float32 to Int16 (no atomics in this loop)
     if (this.channels === 1) {
-      for (let i = 0; i < frameCount; i++) {
-        this.conversionBuffer[i] = Math.max(-1, Math.min(1, channel0[i]!)) * 0x7fff;
+      // Mono output: average both channels for proper downmix
+      // If input is already mono (channel1 === channel0), this still works correctly
+      const hasSecondChannel = input[1] !== undefined;
+      if (hasSecondChannel) {
+        // Proper stereo-to-mono downmix: average both channels
+        for (let i = 0; i < frameCount; i++) {
+          const avg = (channel0[i]! + channel1[i]!) * 0.5;
+          this.conversionBuffer[i] = Math.max(-1, Math.min(1, avg)) * 0x7fff;
+        }
+      } else {
+        // Input is already mono, just convert
+        for (let i = 0; i < frameCount; i++) {
+          this.conversionBuffer[i] = Math.max(-1, Math.min(1, channel0[i]!)) * 0x7fff;
+        }
       }
     } else {
+      // Stereo output
       for (let i = 0; i < frameCount; i++) {
         this.conversionBuffer[i * 2] = Math.max(-1, Math.min(1, channel0[i]!)) * 0x7fff;
         this.conversionBuffer[i * 2 + 1] = Math.max(-1, Math.min(1, channel1[i]!)) * 0x7fff;

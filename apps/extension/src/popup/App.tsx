@@ -98,7 +98,7 @@ export function App() {
     setError(null);
     setIsStarting(true);
     try {
-      const encoderConfig = createEncoderConfig(codec, bitrate);
+      const encoderConfig = createEncoderConfig({ codec, bitrate });
       const msg: StartCastMessage = {
         type: 'START_CAST',
         payload: { speakerIp: selectedIp, encoderConfig },

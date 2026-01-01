@@ -1,11 +1,7 @@
-import type { EncoderConfig } from '@thaumic-cast/protocol';
+import type { EncoderConfig, LatencyMode } from '@thaumic-cast/protocol';
 
-/**
- * Latency mode for encoder operation.
- * - 'quality': Prioritize audio quality (default)
- * - 'realtime': Prioritize encoding speed, may sacrifice quality
- */
-export type LatencyMode = 'quality' | 'realtime';
+// Re-export LatencyMode for convenience
+export type { LatencyMode } from '@thaumic-cast/protocol';
 
 /**
  * Options for reconfiguring an encoder at runtime.

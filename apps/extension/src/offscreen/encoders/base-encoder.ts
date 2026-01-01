@@ -1,7 +1,7 @@
-import type { EncoderConfig } from '@thaumic-cast/protocol';
+import type { EncoderConfig, LatencyMode } from '@thaumic-cast/protocol';
 import { CODEC_METADATA } from '@thaumic-cast/protocol';
 import { createLogger, type Logger } from '@thaumic-cast/shared';
-import type { AudioEncoder, LatencyMode, ReconfigureOptions } from './types';
+import type { AudioEncoder, ReconfigureOptions } from './types';
 
 /**
  * Extended interface for AudioEncoderConfig to include non-standard Chrome properties.
@@ -35,7 +35,7 @@ export abstract class BaseAudioEncoder implements AudioEncoder {
   protected readonly webCodecsId: string;
 
   /** Current latency mode */
-  private _latencyMode: LatencyMode = 'quality';
+  private _latencyMode: LatencyMode;
 
   /** Pre-allocated planar conversion buffer */
   protected planarBuffer: Float32Array;
@@ -66,6 +66,9 @@ export abstract class BaseAudioEncoder implements AudioEncoder {
       throw new Error(`Codec ${config.codec} does not support WebCodecs`);
     }
     this.webCodecsId = webCodecsId;
+
+    // Use latencyMode from config (defaults to 'quality' via schema)
+    this._latencyMode = config.latencyMode;
 
     this.encoder = this.createEncoder();
 

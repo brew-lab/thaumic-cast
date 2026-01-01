@@ -97,6 +97,14 @@ export function getNearestSupportedSampleRate(rate: number): SupportedSampleRate
 }
 
 /**
+ * Latency mode for encoder operation.
+ * - 'quality': Prioritize audio quality (default, best for music)
+ * - 'realtime': Prioritize encoding speed, may sacrifice quality (for low-end devices)
+ */
+export const LatencyModeSchema = z.enum(['quality', 'realtime']);
+export type LatencyMode = z.infer<typeof LatencyModeSchema>;
+
+/**
  * Complete encoder configuration passed from UI to offscreen.
  */
 export const EncoderConfigSchema = z.object({
@@ -104,6 +112,7 @@ export const EncoderConfigSchema = z.object({
   bitrate: BitrateSchema,
   sampleRate: SampleRateSchema.default(48000),
   channels: z.union([z.literal(1), z.literal(2)]).default(2),
+  latencyMode: LatencyModeSchema.default('quality'),
 });
 export type EncoderConfig = z.infer<typeof EncoderConfigSchema>;
 
@@ -210,20 +219,32 @@ export function isValidBitrateForCodec(codec: AudioCodec, bitrate: Bitrate): boo
 }
 
 /**
+ * Options for creating an encoder configuration.
+ */
+export interface CreateEncoderConfigOptions {
+  codec: AudioCodec;
+  bitrate?: Bitrate;
+  sampleRate?: SupportedSampleRate;
+  channels?: 1 | 2;
+  latencyMode?: LatencyMode;
+}
+
+/**
  * Creates a validated encoder config, applying defaults and constraints.
- * @param codec - The audio codec to use
- * @param bitrate - Optional bitrate (uses default if invalid)
+ * @param options - Configuration options
  * @returns A validated encoder configuration
  */
-export function createEncoderConfig(codec: AudioCodec, bitrate?: Bitrate): EncoderConfig {
+export function createEncoderConfig(options: CreateEncoderConfigOptions): EncoderConfig {
+  const { codec, bitrate, sampleRate = 48000, channels = 2, latencyMode = 'quality' } = options;
   const effectiveBitrate =
     bitrate && isValidBitrateForCodec(codec, bitrate) ? bitrate : getDefaultBitrate(codec);
 
   return {
     codec,
     bitrate: effectiveBitrate,
-    sampleRate: 48000,
-    channels: 2,
+    sampleRate,
+    channels,
+    latencyMode,
   };
 }
 

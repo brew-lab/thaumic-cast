@@ -54,24 +54,22 @@ const WS_CONNECT_TIMEOUT_MS = 5000;
 const HANDSHAKE_TIMEOUT_MS = 5000;
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Adaptive Latency (Thermostat) Constants
+// Bounded Latency (Catch-up) Constants
 // ─────────────────────────────────────────────────────────────────────────────
 
-/** Window size for measuring dropped frames (ms). */
-const THERMOSTAT_WINDOW_MS = 10000;
-
-/** Threshold: downgrade to 'realtime' if this many frames dropped in window. */
-const DOWNGRADE_THRESHOLD = 5;
+/**
+ * Target buffer depth after catch-up (ms).
+ * When catching up, we drop oldest audio to reach this target.
+ * 200ms provides a reasonable buffer for encoding variance.
+ */
+const CATCHUP_TARGET_MS = 200;
 
 /**
- * Threshold: upgrade back to 'quality' after this many consecutive stats
- * intervals (STATS_INTERVAL_MS) with no drops in the THERMOSTAT_WINDOW_MS.
- * With defaults: 3 consecutive 1-second checks where the 10-second window is clean.
+ * Maximum allowed buffer depth before triggering catch-up (ms).
+ * If the buffer exceeds this, we're too far behind and need to drop audio.
+ * 1000ms allows for significant CPU spikes while keeping latency bounded.
  */
-const UPGRADE_CLEAN_INTERVALS = 3;
-
-/** Minimum time between mode switches to avoid oscillation (ms). */
-const MODE_SWITCH_COOLDOWN_MS = 5000;
+const CATCHUP_MAX_MS = 1000;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Message Types
@@ -147,6 +145,7 @@ interface StatsMessage {
   underflows: number;
   producerDroppedSamples: number; // Samples dropped by worklet (buffer full)
   consumerDroppedFrames: number; // Frames dropped by worker (backpressure)
+  catchUpDroppedSamples: number; // Samples dropped by catch-up logic (bounded latency)
   backpressureCycles: number; // Cycles where drain was skipped due to backpressure
   wakeups: number;
   avgSamplesPerWake: number;
@@ -195,19 +194,17 @@ let lastStatsTime = 0;
 /** Last reported value of CTRL_DROPPED_SAMPLES for computing delta. */
 let lastProducerDroppedSamples = 0;
 
-// Thermostat state (adaptive latency mode)
-/** Timestamps of recent frame drops for rolling window analysis. */
-let dropTimestamps: number[] = [];
-/** Number of consecutive clean windows (no drops). */
-let cleanWindowCount = 0;
-/** Timestamp of last mode switch to enforce cooldown. */
-let lastModeSwitchTime = 0;
-/** Timestamp of last drop record (for rate-limiting to frame cadence). */
-let lastDropRecordTime = 0;
+// Bounded latency catch-up tracking
+/** Samples dropped by consumer catch-up logic this stats interval. */
+let catchUpDroppedSamples = 0;
 
 // Backpressure tracking
 /** Count of cycles where we skipped draining due to backpressure. */
 let backpressureCycles = 0;
+
+// Catch-up thresholds (computed from constants and sample rate)
+let catchUpTargetSamples = 0;
+let catchUpMaxSamples = 0;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Utilities
@@ -238,108 +235,67 @@ function log(level: 'info' | 'warn' | 'error', ...args: unknown[]): void {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Adaptive Latency Thermostat
+// Bounded Latency Catch-up
 // ─────────────────────────────────────────────────────────────────────────────
 
-/** Minimum interval between drop records (frame cadence = 20ms). */
-const DROP_RECORD_INTERVAL_MS = FRAME_DURATION_SEC * 1000;
-
 /**
- * Records audio loss and evaluates whether to switch latency modes.
- * Rate-limited to frame cadence (max 1 record per 20ms) to prevent
- * rapid-fire calls from overwhelming the thermostat.
+ * Aligns a sample count down to the nearest frame boundary.
+ * @param samples - Number of samples
+ * @param frameSize - Frame size in samples
+ * @returns Aligned sample count
  */
-function recordAudioLoss(): void {
-  if (!encoder) return;
-
-  const now = performance.now();
-
-  // Rate-limit to frame cadence
-  if (now - lastDropRecordTime < DROP_RECORD_INTERVAL_MS) {
-    return;
-  }
-  lastDropRecordTime = now;
-
-  dropTimestamps.push(now);
-
-  // Reset clean window counter since we just had audio loss
-  cleanWindowCount = 0;
-
-  // Prune timestamps outside the window
-  const windowStart = now - THERMOSTAT_WINDOW_MS;
-  dropTimestamps = dropTimestamps.filter((t) => t >= windowStart);
-
-  // Check if we should downgrade to realtime mode
-  if (encoder.latencyMode === 'quality' && dropTimestamps.length >= DOWNGRADE_THRESHOLD) {
-    // Enforce cooldown to prevent oscillation
-    if (now - lastModeSwitchTime < MODE_SWITCH_COOLDOWN_MS) {
-      return;
-    }
-
-    log(
-      'warn',
-      `⚡ THERMOSTAT: Downgrading to realtime mode ` +
-        `(${dropTimestamps.length} drops in ${THERMOSTAT_WINDOW_MS / 1000}s window)`,
-    );
-
-    const flushed = encoder.reconfigure({ latencyMode: 'realtime' });
-    if (flushed && socket?.readyState === WebSocket.OPEN) {
-      socket.send(flushed);
-    }
-
-    lastModeSwitchTime = now;
-    dropTimestamps = []; // Reset after mode switch
-  }
+function alignDown(samples: number, frameSize: number): number {
+  return Math.floor(samples / frameSize) * frameSize;
 }
 
 /**
- * Evaluates whether to upgrade back to quality mode.
- * Called periodically (e.g., from stats reporting).
+ * Performs catch-up if the ring buffer has accumulated too much data.
+ * This bounds latency by dropping oldest audio when we fall behind.
+ *
+ * When buffer exceeds CATCHUP_MAX_MS, we:
+ * 1. Advance readIdx to (writeIdx - targetSamples) aligned to frame boundaries
+ * 2. Reset frameOffset to discard any partial frame
+ * 3. Advance encoder timestamp to keep audio time monotonic
+ * 4. Log the dropped duration for diagnostics
+ *
+ * @returns The number of samples dropped, or 0 if no catch-up needed
  */
-function evaluateUpgrade(): void {
-  if (!encoder || encoder.latencyMode !== 'realtime') return;
+function performCatchUpIfNeeded(): number {
+  if (!control || !encoder) return 0;
 
-  const now = performance.now();
+  const writeIdx = Atomics.load(control, CTRL_WRITE_IDX);
+  const readIdx = Atomics.load(control, CTRL_READ_IDX);
+  const available = (writeIdx - readIdx) >>> 0;
 
-  // Enforce cooldown
-  if (now - lastModeSwitchTime < MODE_SWITCH_COOLDOWN_MS) {
-    return;
+  if (available <= catchUpMaxSamples) {
+    return 0; // Buffer is within bounds
   }
 
-  // Prune old timestamps
-  const windowStart = now - THERMOSTAT_WINDOW_MS;
-  dropTimestamps = dropTimestamps.filter((t) => t >= windowStart);
+  // Calculate new read position aligned to frame boundary
+  const alignedTarget = alignDown(catchUpTargetSamples, frameSizeSamples);
+  const newReadIdx = (writeIdx - alignedTarget) | 0;
+  const droppedSamples = (newReadIdx - readIdx) >>> 0;
 
-  // If no drops in this window, increment clean window counter
-  if (dropTimestamps.length === 0) {
-    cleanWindowCount++;
+  // Advance read index
+  Atomics.store(control, CTRL_READ_IDX, newReadIdx);
 
-    if (cleanWindowCount >= UPGRADE_CLEAN_INTERVALS) {
-      log(
-        'info',
-        `✨ THERMOSTAT: Upgrading to quality mode ` +
-          `(${cleanWindowCount} clean windows, CPU recovered)`,
-      );
+  // Reset partial frame - we're starting fresh
+  frameOffset = 0;
 
-      const flushed = encoder.reconfigure({ latencyMode: 'quality' });
-      if (flushed && socket?.readyState === WebSocket.OPEN) {
-        socket.send(flushed);
-      }
+  // Advance encoder timestamp to prevent time compression
+  // droppedSamples is interleaved, so divide by channels for frame count
+  const channels = encoder.config.channels;
+  const droppedFrames = droppedSamples / channels;
+  encoder.advanceTimestamp(droppedFrames);
 
-      lastModeSwitchTime = now;
-      cleanWindowCount = 0;
-    }
-  }
-}
+  // Track for stats
+  catchUpDroppedSamples += droppedSamples;
 
-/**
- * Resets thermostat state. Called on initialization.
- */
-function resetThermostat(): void {
-  dropTimestamps = [];
-  cleanWindowCount = 0;
-  lastModeSwitchTime = 0;
-  lastDropRecordTime = 0;
+  // Log the event
+  const droppedMs = (droppedSamples / (encoder.config.sampleRate * channels)) * 1000;
+  log('warn', `⏩ CATCH-UP: Dropped ${droppedMs.toFixed(0)}ms of audio to bound latency`);
+
+  return droppedSamples;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -416,7 +372,6 @@ function flushFrameIfReady(): void {
     socket.bufferedAmount >= WS_BUFFER_HIGH_WATER
   ) {
     droppedFrameCount++;
-    recordAudioLoss(); // Notify thermostat of consumer drop
 
     // Advance encoder timestamp to avoid time compression when we resume
     // frameSizeSamples is interleaved samples, divide by channels for frame count
@@ -451,11 +406,6 @@ function maybePostStats(): void {
   const producerDroppedSamples = (totalDropped - lastProducerDroppedSamples) >>> 0;
   lastProducerDroppedSamples = totalDropped;
 
-  // Trigger thermostat on producer drops (audio loss at the source)
-  if (producerDroppedSamples > 0) {
-    recordAudioLoss();
-  }
-
   const avgSamplesPerWake = wakeupCount > 0 ? totalSamplesRead / wakeupCount : 0;
 
   postToMain({
@@ -463,6 +413,7 @@ function maybePostStats(): void {
     underflows: underflowCount,
     producerDroppedSamples,
     consumerDroppedFrames: droppedFrameCount,
+    catchUpDroppedSamples,
     backpressureCycles,
     wakeups: wakeupCount,
     avgSamplesPerWake,
@@ -473,13 +424,11 @@ function maybePostStats(): void {
   // Reset interval counters
   underflowCount = 0;
   droppedFrameCount = 0;
+  catchUpDroppedSamples = 0;
   backpressureCycles = 0;
   wakeupCount = 0;
   totalSamplesRead = 0;
   lastStatsTime = now;
-
-  // Check if we can upgrade back to quality mode
-  evaluateUpgrade();
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -774,6 +723,10 @@ async function consumeLoop(): Promise<void> {
   lastProducerDroppedSamples = Atomics.load(control, CTRL_DROPPED_SAMPLES);
 
   while (running) {
+    // BOUNDED LATENCY: Check if buffer has grown too large and catch up
+    // This drops oldest audio to keep latency within bounds
+    performCatchUpIfNeeded();
+
     // SHORT-CIRCUIT: If backpressured, don't drain - let buffer fill
     // This allows producer drops to kick in naturally
     // Note: We don't increment droppedFrameCount here - actual drops are
@@ -907,11 +860,17 @@ self.onmessage = async (event: MessageEvent<InboundMessage>) => {
       // Reset state
       underflowCount = 0;
       droppedFrameCount = 0;
+      catchUpDroppedSamples = 0;
       backpressureCycles = 0;
       wakeupCount = 0;
       totalSamplesRead = 0;
       lastProducerDroppedSamples = 0;
-      resetThermostat();
+
+      // Compute catch-up thresholds based on sample rate and channels
+      // These define the bounded latency window
+      const samplesPerMs = (sampleRate * encoderConfig.channels) / 1000;
+      catchUpTargetSamples = Math.floor(CATCHUP_TARGET_MS * samplesPerMs);
+      catchUpMaxSamples = Math.floor(CATCHUP_MAX_MS * samplesPerMs);
 
       // Create encoder
       log('info', `Creating encoder: ${encoderConfig.codec} @ ${encoderConfig.bitrate}kbps`);

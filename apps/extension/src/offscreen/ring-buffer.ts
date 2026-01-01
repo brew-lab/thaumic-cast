@@ -27,8 +27,8 @@
  * [0..N] - Interleaved PCM Int16 samples (L, R, L, R, ...)
  */
 
-/** Power-of-two buffer size for bitmask optimization. ~2.7 seconds at 48kHz stereo. */
-export const RING_BUFFER_SIZE = 262144; // 2^18
+/** Power-of-two buffer size for bitmask optimization. ~5.4 seconds at 48kHz stereo. */
+export const RING_BUFFER_SIZE = 524288; // 2^19
 
 /** Bitmask for efficient index wrapping (replaces costly modulo). */
 export const RING_BUFFER_MASK = RING_BUFFER_SIZE - 1;
