@@ -137,38 +137,37 @@ export class FlacEncoder implements AudioEncoder {
   /**
    * Encodes PCM samples to FLAC.
    * Uses pre-allocated buffers to minimize GC pressure.
-   * @param samples - Interleaved stereo Int16 samples
+   * @param samples - Interleaved Int16 samples (mono or stereo)
    * @returns Encoded FLAC data or null if unavailable
    */
   encode(samples: Int16Array): Uint8Array | null {
     if (this.isClosed) return null;
 
-    const frameCount = samples.length / this.config.channels;
+    const channels = this.config.channels;
+    const frameCount = samples.length / channels;
     const sampleCount = samples.length;
 
     // Ensure buffer is large enough (rare reallocation for larger frames)
     this.ensureBufferCapacity(sampleCount);
 
     // Convert interleaved Int16 to planar Float32 using pre-allocated buffer
-    for (let ch = 0; ch < this.config.channels; ch++) {
+    for (let ch = 0; ch < channels; ch++) {
       for (let i = 0; i < frameCount; i++) {
-        this.planarBuffer[ch * frameCount + i] = samples[i * this.config.channels + ch]! / 0x7fff;
+        this.planarBuffer[ch * frameCount + i] = samples[i * channels + ch]! / 0x7fff;
       }
     }
 
-    // AudioData requires the buffer to match the exact sample count
+    // Pass subarray view directly - AudioData copies internally, no need for slice()
     const planarData = this.planarBuffer.subarray(0, sampleCount);
 
     const data = new AudioData({
       format: 'f32-planar',
       sampleRate: this.config.sampleRate,
       numberOfFrames: frameCount,
-      numberOfChannels: this.config.channels,
+      numberOfChannels: channels,
       timestamp: this.timestamp,
-      data: (planarData.buffer as ArrayBuffer).slice(
-        planarData.byteOffset,
-        planarData.byteOffset + planarData.byteLength,
-      ),
+      // Cast needed: TS strict typing doesn't recognize Float32Array<ArrayBufferLike> as BufferSource
+      data: planarData as unknown as BufferSource,
     });
 
     this.encoder.encode(data);

@@ -57,9 +57,11 @@ class PCMProcessor extends AudioWorkletProcessor {
   private control: Int32Array | null = null;
   /** Bitmask for efficient index wrapping (power-of-two optimization). */
   private bufferMask = 0;
+  /** Number of audio channels (1 for mono, 2 for stereo). */
+  private channels = 2;
   /** Accumulated samples since last notification (for batching). */
   private accumulatedSamples = 0;
-  /** Notification threshold in stereo samples, derived from sample rate. */
+  /** Notification threshold in samples, derived from sample rate and channels. */
   private notifyThreshold = 0;
 
   /**
@@ -69,18 +71,20 @@ class PCMProcessor extends AudioWorkletProcessor {
     super();
     this.port.onmessage = (event) => {
       if (event.data.type === 'INIT_BUFFER') {
-        const { buffer: sab, bufferMask, headerSize, sampleRate } = event.data;
+        const { buffer: sab, bufferMask, headerSize, sampleRate, channels } = event.data;
         this.sharedBuffer = new Int16Array(sab, headerSize * 4);
         this.control = new Int32Array(sab, 0, headerSize);
         this.bufferMask = bufferMask;
-        // Calculate notify threshold from sample rate (10ms * sampleRate * 2 channels)
-        this.notifyThreshold = Math.round(sampleRate * NOTIFY_DURATION_SEC) * 2;
+        this.channels = channels;
+        // Calculate notify threshold from sample rate (10ms * sampleRate * channels)
+        this.notifyThreshold = Math.round(sampleRate * NOTIFY_DURATION_SEC) * channels;
       }
     };
   }
 
   /**
    * Processes audio frames and writes to shared memory ring buffer.
+   * Supports both mono and stereo input.
    * @param inputs - Input audio data from the graph
    * @returns Always true to keep the processor alive
    */
@@ -90,31 +94,42 @@ class PCMProcessor extends AudioWorkletProcessor {
     const input = inputs[0];
     if (!input || input.length === 0) return true;
 
-    const left = input[0];
-    const right = input[1] || left;
-
-    if (!left) return true;
+    const channel0 = input[0];
+    if (!channel0) return true;
 
     let writeIdx = Atomics.load(this.control, CTRL_WRITE_IDX);
     const readIdx = Atomics.load(this.control, CTRL_READ_IDX);
     let samplesWritten = 0;
 
-    for (let i = 0; i < left.length; i++) {
-      // Convert to Int16
-      const lSample = Math.max(-1, Math.min(1, left[i]!)) * 0x7fff;
-      const rSample = Math.max(-1, Math.min(1, right[i]!)) * 0x7fff;
+    const frameCount = channel0.length;
+    const channels = this.channels;
 
-      // Check for overflow before writing (bitmask for efficient wrapping)
-      const nextIdx = (writeIdx + 2) & this.bufferMask;
-      if (nextIdx === readIdx) {
-        Atomics.store(this.control, CTRL_OVERFLOW, 1); // Set overflow flag
-        break;
+    if (channels === 1) {
+      // Mono: write single channel
+      for (let i = 0; i < frameCount; i++) {
+        const nextIdx = (writeIdx + 1) & this.bufferMask;
+        if (nextIdx === readIdx) {
+          Atomics.store(this.control, CTRL_OVERFLOW, 1);
+          break;
+        }
+        this.sharedBuffer[writeIdx] = Math.max(-1, Math.min(1, channel0[i]!)) * 0x7fff;
+        writeIdx = nextIdx;
+        samplesWritten += 1;
       }
-
-      this.sharedBuffer[writeIdx] = lSample;
-      this.sharedBuffer[writeIdx + 1] = rSample;
-      writeIdx = nextIdx;
-      samplesWritten += 2;
+    } else {
+      // Stereo: write interleaved L/R samples
+      const channel1 = input[1] || channel0; // Fall back to mono duplication
+      for (let i = 0; i < frameCount; i++) {
+        const nextIdx = (writeIdx + 2) & this.bufferMask;
+        if (nextIdx === readIdx) {
+          Atomics.store(this.control, CTRL_OVERFLOW, 1);
+          break;
+        }
+        this.sharedBuffer[writeIdx] = Math.max(-1, Math.min(1, channel0[i]!)) * 0x7fff;
+        this.sharedBuffer[writeIdx + 1] = Math.max(-1, Math.min(1, channel1[i]!)) * 0x7fff;
+        writeIdx = nextIdx;
+        samplesWritten += 2;
+      }
     }
 
     if (samplesWritten > 0) {

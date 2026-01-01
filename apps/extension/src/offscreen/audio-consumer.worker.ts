@@ -697,14 +697,18 @@ self.onmessage = async (event: MessageEvent<InboundMessage>) => {
     } = msg;
 
     try {
+      if ((size & (size - 1)) !== 0 || mask !== size - 1) {
+        throw new Error('Invalid ring buffer configuration (size must be power of two)');
+      }
+
       // Initialize ring buffer views
       control = new Int32Array(sab, 0, headerSize);
       buffer = new Int16Array(sab, headerSize * 4);
       bufferSize = size;
       bufferMask = mask;
 
-      // Calculate frame size from sample rate
-      frameSizeSamples = Math.round(sampleRate * FRAME_DURATION_SEC) * 2;
+      // Calculate frame size from sample rate and channels
+      frameSizeSamples = Math.round(sampleRate * FRAME_DURATION_SEC) * encoderConfig.channels;
       frameBuffer = new Int16Array(frameSizeSamples);
       frameOffset = 0;
 

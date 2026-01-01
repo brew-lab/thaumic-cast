@@ -183,14 +183,15 @@ export class AacEncoder implements AudioEncoder {
   /**
    * Encodes PCM samples to AAC.
    * Uses pre-allocated buffer to minimize GC pressure.
-   * @param samples - Interleaved stereo Int16 samples
+   * @param samples - Interleaved Int16 samples (mono or stereo)
    * @returns Encoded AAC data or null if unavailable
    */
   encode(samples: Int16Array): Uint8Array | null {
     if (this.isClosed) return null;
 
-    const frameCount = samples.length / 2;
-    const requiredSize = frameCount * 2;
+    const channels = this.config.channels;
+    const frameCount = samples.length / channels;
+    const requiredSize = frameCount * channels;
 
     // Reuse or grow buffer as needed
     if (!this.planarBuffer || this.planarBuffer.length < requiredSize) {
@@ -198,10 +199,11 @@ export class AacEncoder implements AudioEncoder {
     }
 
     // Deinterleave and convert Int16 to Float32 into pre-allocated buffer
-    // Planar format: all left samples followed by all right samples
-    for (let i = 0; i < frameCount; i++) {
-      this.planarBuffer[i] = samples[i * 2]! / 0x7fff;
-      this.planarBuffer[frameCount + i] = samples[i * 2 + 1]! / 0x7fff;
+    // Planar format: all samples for channel 0, then channel 1, etc.
+    for (let ch = 0; ch < channels; ch++) {
+      for (let i = 0; i < frameCount; i++) {
+        this.planarBuffer[ch * frameCount + i] = samples[i * channels + ch]! / 0x7fff;
+      }
     }
 
     // Pass subarray view directly - AudioData copies internally, no need for slice()

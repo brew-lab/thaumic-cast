@@ -360,6 +360,7 @@ class StreamSession {
       bufferMask: RING_BUFFER_MASK,
       headerSize: HEADER_SIZE,
       sampleRate: this.encoderConfig.sampleRate,
+      channels: this.encoderConfig.channels,
     });
     this.sourceNode.connect(this.workletNode);
 
