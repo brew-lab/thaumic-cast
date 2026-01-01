@@ -250,6 +250,9 @@ const WORKLET_HEARTBEAT_CHECK_INTERVAL = 2000;
 /** Maximum time without worklet heartbeat before logging warning (ms). */
 const WORKLET_HEARTBEAT_TIMEOUT = 3000;
 
+/** Interval between repeated stall warnings during prolonged stalls (ms). */
+const STALL_LOG_BACKOFF_INTERVAL = 5000;
+
 /**
  * Manages an active capture session from a browser tab.
  *
@@ -275,8 +278,11 @@ class StreamSession {
   /** Timer for checking worklet heartbeat. */
   private heartbeatCheckTimer: ReturnType<typeof setInterval> | null = null;
 
-  /** Whether we've logged a worklet stall warning (to avoid spam). */
-  private workletStallWarned = false;
+  /** Time when the current stall started (0 if not stalled). */
+  private stallStartTime = 0;
+
+  /** Time of last stall warning log (for backoff). */
+  private lastStallLogTime = 0;
 
   /** Unique ID assigned by the server for this stream. */
   public streamId: string | null = null;
@@ -306,6 +312,7 @@ class StreamSession {
   private totalProducerDrops = 0;
   private totalCatchUpDrops = 0;
   private totalConsumerDrops = 0;
+  private totalUnderflows = 0;
 
   /**
    * Creates a new StreamSession.
@@ -395,10 +402,15 @@ class StreamSession {
     // Listen for heartbeat messages from the worklet
     this.workletNode.port.onmessage = (event) => {
       if (event.data.type === 'HEARTBEAT') {
-        this.lastWorkletHeartbeat = performance.now();
-        if (this.workletStallWarned) {
-          log.info('⚡ AudioWorklet resumed processing');
-          this.workletStallWarned = false;
+        const now = performance.now();
+        this.lastWorkletHeartbeat = now;
+
+        // Log recovery if we were stalled
+        if (this.stallStartTime > 0) {
+          const stallDuration = (now - this.stallStartTime) / 1000;
+          log.info(`⚡ AudioWorklet resumed after ${stallDuration.toFixed(1)}s stall`);
+          this.stallStartTime = 0;
+          this.lastStallLogTime = 0;
         }
       }
     };
@@ -478,19 +490,30 @@ class StreamSession {
       const now = performance.now();
       const timeSinceHeartbeat = now - this.lastWorkletHeartbeat;
 
-      if (timeSinceHeartbeat > WORKLET_HEARTBEAT_TIMEOUT && !this.workletStallWarned) {
-        log.warn(
-          `⚠️ AudioWorklet stall detected: no heartbeat for ${(timeSinceHeartbeat / 1000).toFixed(1)}s. ` +
-            `AudioContext state: ${this.audioContext.state}`,
-        );
-        this.workletStallWarned = true;
+      if (timeSinceHeartbeat > WORKLET_HEARTBEAT_TIMEOUT) {
+        // Start tracking stall if not already
+        if (this.stallStartTime === 0) {
+          this.stallStartTime = now - timeSinceHeartbeat;
+        }
 
-        // Try to resume if suspended
-        if (this.audioContext.state === 'suspended') {
-          log.info('Attempting to resume suspended AudioContext...');
-          this.audioContext.resume().catch((err) => {
-            log.error('Failed to resume AudioContext:', err);
-          });
+        const stallDuration = (now - this.stallStartTime) / 1000;
+        const timeSinceLastLog = now - this.lastStallLogTime;
+
+        // Log on first detection, then periodically with backoff
+        if (this.lastStallLogTime === 0 || timeSinceLastLog >= STALL_LOG_BACKOFF_INTERVAL) {
+          log.warn(
+            `⚠️ AudioWorklet stall: no heartbeat for ${stallDuration.toFixed(1)}s. ` +
+              `AudioContext state: ${this.audioContext.state}`,
+          );
+          this.lastStallLogTime = now;
+
+          // Try to resume if suspended
+          if (this.audioContext.state === 'suspended') {
+            log.info('Attempting to resume suspended AudioContext...');
+            this.audioContext.resume().catch((err) => {
+              log.error('Failed to resume AudioContext:', err);
+            });
+          }
         }
       }
     }, WORKLET_HEARTBEAT_CHECK_INTERVAL);
@@ -571,6 +594,7 @@ class StreamSession {
           this.totalProducerDrops += msg.producerDroppedSamples ?? 0;
           this.totalCatchUpDrops += msg.catchUpDroppedSamples ?? 0;
           this.totalConsumerDrops += msg.consumerDroppedFrames ?? 0;
+          this.totalUnderflows += msg.underflows ?? 0;
 
           if (msg.producerDroppedSamples > 0) {
             log.warn(
@@ -582,6 +606,12 @@ class StreamSession {
           }
           if (msg.catchUpDroppedSamples > 0) {
             log.warn(`Catch-up dropped ${msg.catchUpDroppedSamples} samples to bound latency`);
+          }
+          // Underflows indicate source starvation (worklet not producing data)
+          if (msg.underflows > 0) {
+            log.warn(
+              `⚠️ ${msg.underflows} underflow(s) detected - audio source may be stalled or throttled`,
+            );
           }
           log.info(
             `[DIAG] wakeups=${msg.wakeups} avgSamples=${msg.avgSamplesPerWake.toFixed(0)} ` +
@@ -625,9 +655,14 @@ class StreamSession {
     totalProducerDrops: number;
     totalCatchUpDrops: number;
     totalConsumerDrops: number;
+    totalUnderflows: number;
   } {
+    // Include underflows in hadDrops - they indicate audio source issues
     const hadDrops =
-      this.totalProducerDrops > 0 || this.totalCatchUpDrops > 0 || this.totalConsumerDrops > 0;
+      this.totalProducerDrops > 0 ||
+      this.totalCatchUpDrops > 0 ||
+      this.totalConsumerDrops > 0 ||
+      this.totalUnderflows > 0;
 
     return {
       encoderConfig: this.encoderConfig,
@@ -635,6 +670,7 @@ class StreamSession {
       totalProducerDrops: this.totalProducerDrops,
       totalCatchUpDrops: this.totalCatchUpDrops,
       totalConsumerDrops: this.totalConsumerDrops,
+      totalUnderflows: this.totalUnderflows,
     };
   }
 

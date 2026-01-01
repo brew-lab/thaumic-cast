@@ -15,8 +15,11 @@ const CTRL_WRITE_IDX = 0;
 const CTRL_READ_IDX = 1;
 const CTRL_DROPPED_SAMPLES = 2;
 
-/** Number of process() calls between heartbeat messages (~1 second at 128 samples/block). */
-const HEARTBEAT_INTERVAL_BLOCKS = 375; // ~375 blocks * 2.67ms ≈ 1 second
+/** Target heartbeat interval in seconds. */
+const HEARTBEAT_INTERVAL_SEC = 1.0;
+
+/** Samples per block (Web Audio render quantum). */
+const BLOCK_SIZE = 128;
 
 /**
  * Base class for audio worklet processors.
@@ -45,6 +48,9 @@ declare class AudioWorkletProcessor {
  */
 declare function registerProcessor(name: string, processorCtor: typeof AudioWorkletProcessor): void;
 
+/** Global sample rate in AudioWorklet scope. */
+declare const sampleRate: number;
+
 /**
  * AudioWorkletProcessor for converting Float32 audio to Int16 PCM in shared memory.
  *
@@ -66,12 +72,20 @@ class PCMProcessor extends AudioWorkletProcessor {
   private conversionBuffer: Int16Array | null = null;
   /** Counter for heartbeat interval. */
   private blockCount = 0;
+  /** Number of blocks between heartbeats (computed from sampleRate). */
+  private readonly heartbeatIntervalBlocks: number;
 
   /**
    * Creates a new PCM processor instance.
    */
   constructor() {
     super();
+
+    // Compute heartbeat interval based on actual sample rate
+    // blocks per second = sampleRate / BLOCK_SIZE
+    // heartbeat every HEARTBEAT_INTERVAL_SEC seconds
+    this.heartbeatIntervalBlocks = Math.round((sampleRate / BLOCK_SIZE) * HEARTBEAT_INTERVAL_SEC);
+
     this.port.onmessage = (event) => {
       if (event.data.type === 'INIT_BUFFER') {
         const { buffer: sab, bufferMask, headerSize, channels } = event.data;
@@ -170,7 +184,7 @@ class PCMProcessor extends AudioWorkletProcessor {
 
     // Send periodic heartbeat to main thread
     this.blockCount++;
-    if (this.blockCount >= HEARTBEAT_INTERVAL_BLOCKS) {
+    if (this.blockCount >= this.heartbeatIntervalBlocks) {
       this.blockCount = 0;
       this.port.postMessage({ type: 'HEARTBEAT' });
     }
