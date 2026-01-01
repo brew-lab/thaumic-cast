@@ -38,12 +38,71 @@ export type Bitrate = z.infer<typeof BitrateSchema>;
 export const ALL_BITRATES = [0, 64, 96, 128, 160, 192, 256, 320] as const;
 
 /**
+ * Sample rates supported by Sonos speakers.
+ * Includes both 48kHz and 44.1kHz families.
+ */
+export const SUPPORTED_SAMPLE_RATES = [
+  48000, 44100, 32000, 24000, 22050, 16000, 11025, 8000,
+] as const;
+export type SupportedSampleRate = (typeof SUPPORTED_SAMPLE_RATES)[number];
+
+/**
+ * Zod schema for supported sample rates.
+ */
+export const SampleRateSchema = z.union([
+  z.literal(48000),
+  z.literal(44100),
+  z.literal(32000),
+  z.literal(24000),
+  z.literal(22050),
+  z.literal(16000),
+  z.literal(11025),
+  z.literal(8000),
+]);
+
+/**
+ * Checks if a sample rate is supported by Sonos.
+ * @param rate - The sample rate to check
+ * @returns True if the rate is supported
+ */
+export function isSupportedSampleRate(rate: number): rate is SupportedSampleRate {
+  return SUPPORTED_SAMPLE_RATES.includes(rate as SupportedSampleRate);
+}
+
+/**
+ * Gets the nearest supported sample rate for resampling.
+ * Prefers 48kHz family for rates >= 48kHz, otherwise finds closest match.
+ * @param rate - The actual sample rate from the audio device
+ * @returns The nearest supported sample rate
+ */
+export function getNearestSupportedSampleRate(rate: number): SupportedSampleRate {
+  if (isSupportedSampleRate(rate)) {
+    return rate;
+  }
+  // For high sample rates (96k, 192k, etc.), downsample to 48kHz
+  if (rate >= 48000) {
+    return 48000;
+  }
+  // Find the closest supported rate
+  let closest: SupportedSampleRate = SUPPORTED_SAMPLE_RATES[0];
+  let minDiff = Math.abs(rate - closest);
+  for (const supported of SUPPORTED_SAMPLE_RATES) {
+    const diff = Math.abs(rate - supported);
+    if (diff < minDiff) {
+      minDiff = diff;
+      closest = supported;
+    }
+  }
+  return closest;
+}
+
+/**
  * Complete encoder configuration passed from UI to offscreen.
  */
 export const EncoderConfigSchema = z.object({
   codec: AudioCodecSchema,
   bitrate: BitrateSchema,
-  sampleRate: z.union([z.literal(44100), z.literal(48000)]).default(48000),
+  sampleRate: SampleRateSchema.default(48000),
   channels: z.union([z.literal(1), z.literal(2)]).default(2),
 });
 export type EncoderConfig = z.infer<typeof EncoderConfigSchema>;

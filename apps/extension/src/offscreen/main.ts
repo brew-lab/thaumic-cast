@@ -21,6 +21,8 @@ import {
   StreamMetadata,
   SonosStateSnapshot,
   WsControlCommand,
+  isSupportedSampleRate,
+  getNearestSupportedSampleRate,
 } from '@thaumic-cast/protocol';
 
 const log = createLogger('Offscreen');
@@ -304,22 +306,29 @@ class StreamSession {
     // Check if browser honored our sample rate request
     const actualSampleRate = this.audioContext.sampleRate;
     if (actualSampleRate !== encoderConfig.sampleRate) {
-      // Log and continue with actual rate - server handshake will validate
-      if (actualSampleRate !== 44100 && actualSampleRate !== 48000) {
-        log.warn(
-          `Non-standard sample rate: ${actualSampleRate}Hz. ` +
-            'Server handshake will validate compatibility.',
-        );
-      } else {
+      if (isSupportedSampleRate(actualSampleRate)) {
+        // Browser gave us a different but supported rate
         log.warn(
           `Sample rate mismatch: requested ${encoderConfig.sampleRate}Hz, got ${actualSampleRate}Hz.`,
         );
+        this.encoderConfig = {
+          ...encoderConfig,
+          sampleRate: actualSampleRate,
+        };
+      } else {
+        // Non-supported rate (e.g., 96kHz from pro audio interface)
+        // TODO: Implement resampling to nearest supported rate
+        const targetRate = getNearestSupportedSampleRate(actualSampleRate);
+        log.warn(
+          `Non-standard sample rate: ${actualSampleRate}Hz. ` +
+            `Would need resampling to ${targetRate}Hz (not yet implemented).`,
+        );
+        // For now, proceed with the target rate and hope AudioContext resamples
+        this.encoderConfig = {
+          ...encoderConfig,
+          sampleRate: targetRate,
+        };
       }
-      // Update config to use actual rate (cast needed for non-standard rates)
-      this.encoderConfig = {
-        ...encoderConfig,
-        sampleRate: actualSampleRate as typeof encoderConfig.sampleRate,
-      };
     }
 
     this.ringBuffer = createAudioRingBuffer();
