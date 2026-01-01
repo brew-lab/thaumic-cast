@@ -1,5 +1,16 @@
 # @thaumic-cast/desktop
 
+## 0.3.0
+
+### Minor Changes
+
+- [#7](https://github.com/brew-lab/thaumic-cast/pull/7) [`b354fbf`](https://github.com/brew-lab/thaumic-cast/commit/b354fbfcf4b7611042611fafa6f91d747034c321) Thanks [@skezo](https://github.com/skezo)! - Add native power state detection and battery-aware audio config
+  - Desktop app now detects system power state using native OS APIs (starship-battery)
+  - Power state is sent to extension via WebSocket, bypassing browser Battery API limitations
+  - Extension automatically selects lower-quality audio config when on battery to prevent audio dropouts
+  - Added audio pipeline monitoring to detect silent failures and source starvation
+  - Session health tracking reports audio drops for config learning
+
 ## 0.1.1
 
 ### Patch Changes
