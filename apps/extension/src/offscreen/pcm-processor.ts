@@ -47,6 +47,7 @@ declare function registerProcessor(name: string, processorCtor: typeof AudioWork
  *
  * Uses monotonic indices that wrap at 32-bit boundary with unsigned interpretation.
  * Checks available space once per block and drops entire blocks when full.
+ * Uses bulk TypedArray.set() for efficient writes with wrap handling.
  * Only notifies consumer on empty→non-empty transition.
  */
 class PCMProcessor extends AudioWorkletProcessor {
@@ -58,6 +59,8 @@ class PCMProcessor extends AudioWorkletProcessor {
   private capacity = 0;
   /** Number of audio channels (1 for mono, 2 for stereo). */
   private channels = 2;
+  /** Pre-allocated buffer for Float32→Int16 conversion (avoids per-frame allocation). */
+  private conversionBuffer: Int16Array | null = null;
 
   /**
    * Creates a new PCM processor instance.
@@ -78,7 +81,7 @@ class PCMProcessor extends AudioWorkletProcessor {
 
   /**
    * Processes audio frames and writes to shared memory ring buffer.
-   * Checks available space once per block and drops entire blocks when full.
+   * Uses bulk conversion and TypedArray.set() for efficient writes.
    * @param inputs - Input audio data from the graph
    * @returns Always true to keep the processor alive
    */
@@ -108,29 +111,39 @@ class PCMProcessor extends AudioWorkletProcessor {
     // Check if buffer was empty (for notification)
     const wasEmpty = write === read;
 
-    // Write samples to ring buffer
-    let writeIdx = write;
+    // Ensure conversion buffer exists with adequate size
+    if (!this.conversionBuffer || this.conversionBuffer.length < samplesToWrite) {
+      this.conversionBuffer = new Int16Array(samplesToWrite);
+    }
 
+    // Bulk convert Float32 to Int16 (no atomics in this loop)
     if (this.channels === 1) {
-      // Mono: write single channel
       for (let i = 0; i < frameCount; i++) {
-        const offset = writeIdx & this.bufferMask;
-        this.sharedBuffer[offset] = Math.max(-1, Math.min(1, channel0[i]!)) * 0x7fff;
-        writeIdx = (writeIdx + 1) | 0;
+        this.conversionBuffer[i] = Math.max(-1, Math.min(1, channel0[i]!)) * 0x7fff;
       }
     } else {
-      // Stereo: write interleaved L/R samples
       for (let i = 0; i < frameCount; i++) {
-        const offsetL = writeIdx & this.bufferMask;
-        const offsetR = (writeIdx + 1) & this.bufferMask;
-        this.sharedBuffer[offsetL] = Math.max(-1, Math.min(1, channel0[i]!)) * 0x7fff;
-        this.sharedBuffer[offsetR] = Math.max(-1, Math.min(1, channel1[i]!)) * 0x7fff;
-        writeIdx = (writeIdx + 2) | 0;
+        this.conversionBuffer[i * 2] = Math.max(-1, Math.min(1, channel0[i]!)) * 0x7fff;
+        this.conversionBuffer[i * 2 + 1] = Math.max(-1, Math.min(1, channel1[i]!)) * 0x7fff;
       }
     }
 
+    // Write to ring buffer with wrap handling
+    const startOffset = write & this.bufferMask;
+    const endOffset = startOffset + samplesToWrite;
+
+    if (endOffset <= this.capacity) {
+      // No wrap - single set
+      this.sharedBuffer.set(this.conversionBuffer.subarray(0, samplesToWrite), startOffset);
+    } else {
+      // Wrap - two sets
+      const firstPart = this.capacity - startOffset;
+      this.sharedBuffer.set(this.conversionBuffer.subarray(0, firstPart), startOffset);
+      this.sharedBuffer.set(this.conversionBuffer.subarray(firstPart, samplesToWrite), 0);
+    }
+
     // Single atomic commit
-    Atomics.store(this.control, CTRL_WRITE_IDX, writeIdx);
+    Atomics.store(this.control, CTRL_WRITE_IDX, (write + samplesToWrite) | 0);
 
     // Only notify on empty→non-empty transition
     if (wasEmpty) {
