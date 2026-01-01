@@ -735,9 +735,9 @@ async function consumeLoop(): Promise<void> {
   while (running) {
     // SHORT-CIRCUIT: If backpressured, don't drain - let buffer fill
     // This allows producer drops to kick in naturally
+    // Note: We don't increment droppedFrameCount here - actual drops are
+    // tracked in flushFrameIfReady() when we have a frame but can't encode it
     if (isBackpressured()) {
-      droppedFrameCount++;
-      recordFrameDrop(); // Notify thermostat of backpressure
       await yieldMacrotask(YIELD_MS);
       continue;
     }
