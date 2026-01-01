@@ -2,7 +2,7 @@
  * Syncs version numbers from package.json to native config files.
  *
  * This script ensures that version numbers stay consistent across:
- * - Desktop: package.json -> tauri.conf.json
+ * - Desktop: package.json -> tauri.conf.json, Cargo.toml
  * - Extension: package.json -> manifest.json
  *
  * @module sync-versions
@@ -10,6 +10,9 @@
 
 import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+
+/** Regex to match version in Cargo.toml [package] section. */
+const CARGO_VERSION_REGEX = /^(version\s*=\s*")([^"]+)(")/m;
 
 const ROOT = join(import.meta.dirname, '..');
 
@@ -52,22 +55,40 @@ function writeJson(filePath: string, data: unknown): void {
 }
 
 /**
- * Syncs the desktop app version from package.json to tauri.conf.json.
+ * Syncs the desktop app version from package.json to tauri.conf.json and Cargo.toml.
  * Logs the version change or indicates no change was needed.
  */
 function syncDesktopVersion(): void {
   const pkgPath = join(ROOT, 'apps/desktop/package.json');
   const tauriPath = join(ROOT, 'apps/desktop/src-tauri/tauri.conf.json');
+  const cargoPath = join(ROOT, 'apps/desktop/src-tauri/Cargo.toml');
 
   const pkg = readJson<PackageJson>(pkgPath);
   const tauri = readJson<TauriConfig>(tauriPath);
 
+  // Sync tauri.conf.json
   if (tauri.version !== pkg.version) {
-    console.log(`desktop: ${tauri.version} -> ${pkg.version}`);
+    console.log(`desktop (tauri.conf.json): ${tauri.version} -> ${pkg.version}`);
     tauri.version = pkg.version;
     writeJson(tauriPath, tauri);
   } else {
-    console.log(`desktop: ${pkg.version} (no change)`);
+    console.log(`desktop (tauri.conf.json): ${pkg.version} (no change)`);
+  }
+
+  // Sync Cargo.toml
+  const cargoContent = readFileSync(cargoPath, 'utf-8');
+  const cargoMatch = cargoContent.match(CARGO_VERSION_REGEX);
+  if (cargoMatch) {
+    const currentVersion = cargoMatch[2];
+    if (currentVersion !== pkg.version) {
+      console.log(`desktop (Cargo.toml): ${currentVersion} -> ${pkg.version}`);
+      const updatedCargo = cargoContent.replace(CARGO_VERSION_REGEX, `$1${pkg.version}$3`);
+      writeFileSync(cargoPath, updatedCargo);
+    } else {
+      console.log(`desktop (Cargo.toml): ${pkg.version} (no change)`);
+    }
+  } else {
+    console.warn('desktop (Cargo.toml): version not found');
   }
 }
 
