@@ -6,7 +6,13 @@
  * history to learn from past sessions.
  */
 
-import type { EncoderConfig, LatencyMode, AudioCodec, Bitrate } from '@thaumic-cast/protocol';
+import type {
+  EncoderConfig,
+  LatencyMode,
+  AudioCodec,
+  Bitrate,
+  PowerState,
+} from '@thaumic-cast/protocol';
 import { createLogger } from '@thaumic-cast/shared';
 
 const log = createLogger('DeviceConfig');
@@ -44,18 +50,8 @@ export interface DeviceCapabilities {
   hardwareConcurrency: number | undefined;
 }
 
-/**
- * Battery state information.
- */
-export interface BatteryState {
-  /** Whether the device is currently charging. */
-  charging: boolean;
-  /** Battery level (0-1). */
-  level: number;
-}
-
-/** Low battery threshold - force low-end config below this level. */
-const LOW_BATTERY_THRESHOLD = 0.2;
+/** Low battery threshold (as percentage 0-100) - force low-end config below this level. */
+const LOW_BATTERY_THRESHOLD = 20;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Constants
@@ -172,110 +168,41 @@ export function getConfigForTier(tier: DeviceTier): EncoderConfig {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Battery Detection
+// Power State Detection (via Desktop App)
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
- * Extended Navigator interface with Battery API.
- */
-interface NavigatorWithBattery extends Navigator {
-  getBattery?: () => Promise<{
-    charging: boolean;
-    level: number;
-  }>;
-}
-
-/**
- * Gets current battery state.
- * Returns null if API unavailable (common in service workers).
- * @returns Battery state or null if API not available
- */
-export async function getBatteryState(): Promise<BatteryState | null> {
-  try {
-    const nav = navigator as NavigatorWithBattery;
-    if (!nav.getBattery) {
-      log.debug('Direct Battery API not available (expected in service worker)');
-      return null;
-    }
-    const battery = await nav.getBattery();
-    log.debug(`Direct Battery API: level=${battery.level}, charging=${battery.charging}`);
-    return {
-      charging: battery.charging,
-      level: battery.level,
-    };
-  } catch (err) {
-    log.debug('Direct Battery API error:', err);
-    return null;
-  }
-}
-
-/**
- * Queries battery state from the offscreen document.
- * Used as fallback when Battery API is unavailable in service worker.
- * @returns Battery state or null if offscreen is not available
- */
-async function queryBatteryFromOffscreen(): Promise<BatteryState | null> {
-  try {
-    log.debug('Querying battery state from offscreen...');
-    const response = await chrome.runtime.sendMessage({ type: 'GET_BATTERY_STATE' });
-    log.debug('Offscreen battery response:', response);
-    if (response?.available) {
-      return {
-        charging: response.charging,
-        level: response.level,
-      };
-    }
-    log.debug('Offscreen returned available=false');
-  } catch (err) {
-    log.debug('Offscreen battery query failed:', err);
-  }
-  return null;
-}
-
-/**
  * Checks if device is on battery power and should use low-power config.
- * Tries service worker Battery API first, falls back to querying offscreen document.
- * @returns Object with result and whether API was available
+ * Uses power state from desktop app (via WebSocket), which has native OS access.
+ * This bypasses browser Battery API restrictions (Permissions-Policy, Brave, etc.).
+ * @param desktopPowerState - Power state from desktop app (null if not connected)
+ * @returns Object with result and whether power info was available
  */
-export async function checkBatteryState(): Promise<{
+export function checkPowerState(desktopPowerState: PowerState | null): {
   onBattery: boolean;
-  apiAvailable: boolean;
-  usedFallback: boolean;
+  powerInfoAvailable: boolean;
   charging?: boolean;
   level?: number;
-}> {
-  // Try direct Battery API first (may work in service worker)
-  let battery = await getBatteryState();
-  let usedFallback = false;
-
-  // If not available, try querying offscreen document
-  if (!battery) {
-    battery = await queryBatteryFromOffscreen();
-    usedFallback = true;
+} {
+  if (!desktopPowerState) {
+    // Desktop not connected or power detection failed
+    log.debug('No power state from desktop app');
+    return { onBattery: false, powerInfoAvailable: false };
   }
 
-  if (!battery) {
-    // Can't detect - both methods failed
-    return { onBattery: false, apiAvailable: false, usedFallback };
-  }
+  // On AC power = not on battery
+  const onBattery = !desktopPowerState.onAcPower;
 
-  // Check for "no battery" default values: 100% + charging is what Chrome returns
-  // when Battery API is blocked by Permissions-Policy or device has no battery
-  if (battery.charging && battery.level === 1) {
-    log.debug(
-      'Battery API returned default values (100% charging) - likely no access or no battery',
-    );
-    return { onBattery: false, apiAvailable: false, usedFallback };
-  }
+  // Also force low-power if battery is critically low
+  const criticallyLow =
+    desktopPowerState.batteryLevel !== null &&
+    desktopPowerState.batteryLevel < LOW_BATTERY_THRESHOLD;
 
-  // Force low-power if not charging OR battery is critically low
-  const onBattery = !battery.charging || battery.level < LOW_BATTERY_THRESHOLD;
   return {
-    onBattery,
-    apiAvailable: true,
-    usedFallback,
-    charging: battery.charging,
-    level: battery.level,
+    onBattery: onBattery || criticallyLow,
+    powerInfoAvailable: true,
+    charging: desktopPowerState.charging,
+    level: desktopPowerState.batteryLevel ?? undefined,
   };
 }
 
@@ -465,32 +392,32 @@ export interface EncoderConfigResult {
   config: EncoderConfig;
   /** Whether low-power (battery) mode was used. */
   lowPowerMode: boolean;
-  /** Whether battery info was obtained (via API or offscreen fallback). */
-  batteryInfoAvailable: boolean;
-  /** Whether offscreen fallback was used for battery detection. */
-  usedOffscreenFallback: boolean;
+  /** Whether power info was available from desktop app. */
+  powerInfoAvailable: boolean;
   /** Whether device is currently charging (undefined if not available). */
   charging?: boolean;
-  /** Battery level 0-1 if available. */
+  /** Battery level 0-100 if available. */
   batteryLevel?: number;
 }
 
 /**
  * Selects encoder config and returns additional context.
- * Checks battery state once and passes to selectEncoderConfig to avoid double API calls.
- * @returns The config, power mode, and battery info
+ * Uses power state from desktop app to determine if on battery.
+ * @param desktopPowerState - Power state from desktop app (null if not connected)
+ * @returns The config, power mode, and power info
  */
-export async function selectEncoderConfigWithContext(): Promise<EncoderConfigResult> {
-  // Check battery state once
-  const batteryState = await checkBatteryState();
-  const config = await selectEncoderConfig(batteryState.onBattery);
+export async function selectEncoderConfigWithContext(
+  desktopPowerState: PowerState | null,
+): Promise<EncoderConfigResult> {
+  // Check power state from desktop
+  const powerState = checkPowerState(desktopPowerState);
+  const config = await selectEncoderConfig(powerState.onBattery);
 
   return {
     config,
-    lowPowerMode: batteryState.onBattery,
-    batteryInfoAvailable: batteryState.apiAvailable,
-    usedOffscreenFallback: batteryState.usedFallback,
-    charging: batteryState.charging,
-    batteryLevel: batteryState.level,
+    lowPowerMode: powerState.onBattery,
+    powerInfoAvailable: powerState.powerInfoAvailable,
+    charging: powerState.charging,
+    batteryLevel: powerState.level,
   };
 }

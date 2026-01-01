@@ -664,6 +664,39 @@ export function createEmptySonosState(): SonosStateSnapshot {
   };
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Power State (from desktop app)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Power/battery state from the desktop app.
+ * Desktop has native OS access to battery info, bypassing browser API restrictions.
+ */
+export const PowerStateSchema = z.object({
+  /** Whether device is currently on AC power (plugged in). */
+  onAcPower: z.boolean(),
+  /** Battery level 0-100 (null if no battery or unknown). */
+  batteryLevel: z.number().min(0).max(100).nullable(),
+  /** Whether battery is currently charging. */
+  charging: z.boolean(),
+});
+export type PowerState = z.infer<typeof PowerStateSchema>;
+
+/**
+ * Initial state message sent by desktop on WebSocket connect.
+ * Includes Sonos state and system power state.
+ */
+export const InitialStatePayloadSchema = z.object({
+  groups: z.array(ZoneGroupSchema),
+  transportStates: z.record(z.string(), TransportStateSchema),
+  groupVolumes: z.record(z.string(), z.number()),
+  groupMutes: z.record(z.string(), z.boolean()),
+  sessions: z.array(PlaybackSessionSchema).optional(),
+  /** System power state (null if detection failed). */
+  powerState: PowerStateSchema.nullable(),
+});
+export type InitialStatePayload = z.infer<typeof InitialStatePayloadSchema>;
+
 /**
  * Parses and validates a Sonos event from a raw payload.
  * @param data - The raw event data to parse
@@ -702,7 +735,7 @@ export function isSpeakerPlaying(speakerIp: string, state: SonosStateSnapshot): 
  */
 export const WsInitialStateMessageSchema = z.object({
   type: z.literal('INITIAL_STATE'),
-  payload: SonosStateSnapshotSchema,
+  payload: InitialStatePayloadSchema,
 });
 export type WsInitialStateMessage = z.infer<typeof WsInitialStateMessageSchema>;
 

@@ -1,5 +1,5 @@
 import { createLogger } from '@thaumic-cast/shared';
-import { SonosStateSnapshot, parseMediaMetadata } from '@thaumic-cast/protocol';
+import { SonosStateSnapshot, parseMediaMetadata, PowerState } from '@thaumic-cast/protocol';
 import { discoverDesktopApp } from '../lib/discovery';
 import {
   ExtensionMessage,
@@ -58,6 +58,9 @@ const log = createLogger('Background');
 /** Whether the control WebSocket is connected. */
 let wsConnected = false;
 
+/** Cached power state from desktop app (null if not connected or detection failed). */
+let cachedPowerState: PowerState | null = null;
+
 /**
  * Updates the cached Sonos state and syncs to offscreen for recovery.
  * @param state - The new Sonos state snapshot
@@ -97,14 +100,34 @@ async function connectWebSocket(serverUrl: string): Promise<void> {
 /**
  * Handles WebSocket connected event from offscreen.
  * @param state - The initial Sonos state from desktop
+ * @param powerState
  */
-function handleWsConnected(state: SonosStateSnapshot): void {
+function handleWsConnected(state: SonosStateSnapshot, powerState: PowerState | null): void {
   wsConnected = true;
+  cachedPowerState = powerState;
   setConnected(true);
   updateSonosState(state);
-  log.info('WebSocket connected, received initial state');
+
+  if (powerState) {
+    log.info(
+      `WebSocket connected, power: onAC=${powerState.onAcPower}, ` +
+        `level=${powerState.batteryLevel ?? 'N/A'}%, charging=${powerState.charging}`,
+    );
+  } else {
+    log.info('WebSocket connected (power state unavailable)');
+  }
+
   // Notify popup of state
   notifyPopup({ type: 'WS_STATE_CHANGED', state });
+}
+
+/**
+ * Returns the cached power state from desktop app.
+ * Used by device-config to determine if device is on battery.
+ * @returns The cached power state or null if not available
+ */
+export function getCachedPowerState(): PowerState | null {
+  return cachedPowerState;
 }
 
 /**
@@ -347,8 +370,8 @@ chrome.runtime.onMessage.addListener((msg: ExtensionMessage, _sender, sendRespon
         // WebSocket Status Messages (from offscreen)
         // ─────────────────────────────────────────────────────────────────
         case 'WS_CONNECTED': {
-          const { state } = msg as WsConnectedMessage;
-          handleWsConnected(state);
+          const { state, powerState } = msg as WsConnectedMessage;
+          handleWsConnected(state, powerState);
           sendResponse({ success: true });
           break;
         }
@@ -559,29 +582,28 @@ async function handleStartCast(
       );
     }
 
-    // 3. Create offscreen document (needed for audio capture and battery detection)
+    // 3. Create offscreen document (needed for audio capture)
     await ensureOffscreen();
 
-    // 4. Select encoder config: use provided config or auto-select based on device/battery
+    // 4. Select encoder config: use provided config or auto-select based on device/power state
     let encoderConfig: typeof providedConfig;
     let lowPowerMode = false;
     if (providedConfig) {
       encoderConfig = providedConfig;
     } else {
-      const result = await selectEncoderConfigWithContext();
+      // Use power state from desktop app (null if not connected yet)
+      const result = await selectEncoderConfigWithContext(cachedPowerState);
       encoderConfig = result.config;
       lowPowerMode = result.lowPowerMode;
 
-      // Log battery detection result for debugging
-      if (!result.batteryInfoAvailable) {
-        log.warn('Battery detection unavailable (API and offscreen fallback both failed)');
+      // Log power detection result for debugging
+      if (!result.powerInfoAvailable) {
+        log.warn('Power state unavailable from desktop app');
       } else {
-        const source = result.usedOffscreenFallback ? 'offscreen' : 'API';
-        const level =
-          result.batteryLevel !== undefined
-            ? `${(result.batteryLevel * 100).toFixed(0)}%`
-            : 'unknown';
-        log.info(`Battery: ${level}, charging=${result.charging ?? 'unknown'} (via ${source})`);
+        const level = result.batteryLevel !== undefined ? `${result.batteryLevel}%` : 'N/A';
+        log.info(
+          `Power: ${level}, charging=${result.charging ?? 'unknown'}, onBattery=${lowPowerMode}`,
+        );
       }
     }
     log.info(`Encoder config: ${describeConfig(encoderConfig, lowPowerMode)}`);

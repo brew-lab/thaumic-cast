@@ -89,11 +89,13 @@ function connectControlWebSocket(url: string): void {
 
       // INITIAL_STATE on connect
       if (message.type === 'INITIAL_STATE') {
-        cachedSonosState = message.payload as SonosStateSnapshot;
+        const { powerState, ...sonosState } = message.payload;
+        cachedSonosState = sonosState as SonosStateSnapshot;
         chrome.runtime
           .sendMessage({
             type: 'WS_CONNECTED',
             state: cachedSonosState,
+            powerState: powerState ?? null,
           })
           .catch(() => {
             // Background may be suspended
@@ -824,34 +826,6 @@ chrome.runtime.onMessage.addListener((msg: ExtensionMessage, _sender, sendRespon
 
   if (msg.type === 'GET_WS_STATUS') {
     sendResponse(getWsStatus());
-    return true;
-  }
-
-  if (msg.type === 'GET_BATTERY_STATE') {
-    // Battery API is available in offscreen document (full DOM context)
-    // Service workers may not have access to this API
-    (async () => {
-      try {
-        const nav = navigator as Navigator & {
-          getBattery?: () => Promise<{ charging: boolean; level: number }>;
-        };
-        if (!nav.getBattery) {
-          log.debug('Battery API not available in offscreen');
-          sendResponse({ available: false });
-          return;
-        }
-        const battery = await nav.getBattery();
-        log.debug(`Battery API response: level=${battery.level}, charging=${battery.charging}`);
-        sendResponse({
-          available: true,
-          charging: battery.charging,
-          level: battery.level,
-        });
-      } catch (err) {
-        log.warn('Battery API error:', err);
-        sendResponse({ available: false });
-      }
-    })();
     return true;
   }
 
