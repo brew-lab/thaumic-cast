@@ -1,7 +1,7 @@
 .section {
-  margin-block-start: 1rem;
-  padding-block-start: 1rem;
-  border-block-start: 1px solid var(--color-border);
+  margin-block-end: 1rem;
+  padding-block-end: 1rem;
+  border-block-end: 1px solid var(--color-border);
 }
 
 .heading {

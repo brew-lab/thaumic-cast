@@ -1,13 +1,17 @@
 .card {
-  display: flex;
-  align-items: center;
-  gap: 0.75rem;
   padding-block: 0.75rem;
   padding-inline: 0.75rem;
-  background: var(--color-bg);
+  background: var(--color-surface);
   border-radius: 8px;
   border: 1px solid var(--color-border);
   margin-block-end: 1rem;
+}
+
+.mediaRow {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin-block-end: 0.75rem;
 }
 
 .artwork {
@@ -58,4 +62,128 @@
   text-overflow: ellipsis;
   margin: 0;
   margin-block-start: 0.25rem;
+}
+
+.castingStatus {
+  font-size: 0.75rem;
+  color: var(--color-casting);
+  margin: 0;
+  margin-block-start: 0.25rem;
+  font-weight: 500;
+}
+
+.controls {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.label {
+  font-size: 0.75rem;
+  color: var(--color-text-muted);
+}
+
+.select {
+  width: 100%;
+  padding-block: 0.5rem;
+  padding-inline: 0.5rem;
+  border-radius: 4px;
+  background: var(--color-bg);
+  color: var(--color-text);
+  border: 1px solid var(--color-border);
+}
+
+.select:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+/* Volume Controls */
+.volumeControl {
+  padding-block: 0.5rem;
+  padding-inline: 0.5rem;
+  background: var(--color-bg);
+  border-radius: 4px;
+  border: 1px solid var(--color-border);
+}
+
+.volumeHeader {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-block-end: 0.5rem;
+}
+
+.muteButton {
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  font-size: 1rem;
+  padding: 0.125rem;
+  border-radius: 4px;
+  transition: background 0.2s;
+}
+
+.muteButton:hover {
+  background: var(--color-border);
+}
+
+.muteButton.muted {
+  opacity: 0.6;
+}
+
+.volumeSlider {
+  width: 100%;
+  height: 6px;
+  appearance: none;
+  background: var(--color-border);
+  border-radius: 3px;
+  outline: none;
+  cursor: pointer;
+}
+
+.volumeSlider::-webkit-slider-thumb {
+  appearance: none;
+  width: 14px;
+  height: 14px;
+  background: var(--color-primary);
+  border-radius: 50%;
+  cursor: pointer;
+}
+
+.volumeSlider:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.volumeSlider:disabled::-webkit-slider-thumb {
+  cursor: not-allowed;
+}
+
+.volumeValue {
+  display: block;
+  text-align: end;
+  font-size: 0.7rem;
+  color: var(--color-text-muted);
+  margin-block-start: 0.25rem;
+}
+
+.spinner {
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  from {
+    transform: rotate(0deg);
+  }
+
+  to {
+    transform: rotate(360deg);
+  }
 }

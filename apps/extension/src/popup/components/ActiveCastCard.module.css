@@ -1,7 +1,7 @@
 .card {
   display: flex;
-  align-items: center;
-  gap: 0.75rem;
+  flex-direction: column;
+  gap: 0.5rem;
   padding-block: 0.5rem;
   padding-inline: 0.5rem;
   background: var(--color-bg);
@@ -9,11 +9,17 @@
   border: 1px solid var(--color-border);
 }
 
+.header {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
 .artwork {
   position: relative;
   flex-shrink: 0;
-  width: 40px;
-  height: 40px;
+  width: 36px;
+  height: 36px;
   border-radius: 4px;
   overflow: hidden;
   background: var(--color-border);
@@ -26,9 +32,9 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 2px;
+  padding: 1px;
   background: oklch(0% 0 0 / 60%);
-  border-radius: 3px;
+  border-radius: 2px;
   color: white;
 }
 
@@ -54,7 +60,7 @@
 }
 
 .title {
-  font-size: 0.8rem;
+  font-size: 0.75rem;
   font-weight: 500;
   color: var(--color-text);
   white-space: nowrap;
@@ -64,7 +70,7 @@
 }
 
 .subtitle {
-  font-size: 0.7rem;
+  font-size: 0.65rem;
   color: var(--color-text-muted);
   white-space: nowrap;
   overflow: hidden;
@@ -77,13 +83,13 @@
   display: flex;
   align-items: center;
   gap: 0.25rem;
-  font-size: 0.65rem;
-  color: var(--color-primary);
+  font-size: 0.6rem;
+  color: var(--color-casting);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
   margin: 0;
-  margin-block-start: 0.25rem;
+  margin-block-start: 0.125rem;
 }
 
 .speakerIcon {
@@ -95,8 +101,8 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 28px;
-  height: 28px;
+  width: 24px;
+  height: 24px;
   background: transparent;
   border: 1px solid var(--color-border);
   border-radius: 4px;
@@ -117,4 +123,70 @@
 .stopButton:focus-visible {
   outline: 2px solid var(--color-primary);
   outline-offset: 2px;
+}
+
+/* Volume Controls */
+.volumeControl {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding-block: 0.25rem;
+  padding-inline: 0.25rem;
+  background: var(--color-surface);
+  border-radius: 4px;
+}
+
+.muteButton {
+  flex-shrink: 0;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  font-size: 0.875rem;
+  padding: 0;
+  border-radius: 2px;
+  transition: opacity 0.2s;
+}
+
+.muteButton:hover {
+  opacity: 0.8;
+}
+
+.muteButton.muted {
+  opacity: 0.5;
+}
+
+.volumeSlider {
+  flex: 1;
+  height: 4px;
+  appearance: none;
+  background: var(--color-border);
+  border-radius: 2px;
+  outline: none;
+  cursor: pointer;
+}
+
+.volumeSlider::-webkit-slider-thumb {
+  appearance: none;
+  width: 12px;
+  height: 12px;
+  background: var(--color-primary);
+  border-radius: 50%;
+  cursor: pointer;
+}
+
+.volumeSlider:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.volumeSlider:disabled::-webkit-slider-thumb {
+  cursor: not-allowed;
+}
+
+.volumeValue {
+  flex-shrink: 0;
+  font-size: 0.65rem;
+  color: var(--color-text-muted);
+  min-width: 2rem;
+  text-align: end;
 }
