@@ -3,6 +3,8 @@
   --dominant-l: 0.5;
   --dominant-c: 0;
   --dominant-h: 0;
+  --card-radius: 6px;
+  --card-border-width: 1px;
 
   position: relative;
   display: flex;
@@ -11,8 +13,8 @@
   padding-block: 0.5rem;
   padding-inline: 0.5rem;
   background: var(--color-bg);
-  border-radius: 6px;
-  border: 1px solid var(--color-border);
+  border-radius: var(--card-radius);
+  border: var(--card-border-width) solid var(--color-border);
   overflow: hidden;
 }
 
@@ -20,7 +22,9 @@
 .card.hasArtwork::before {
   content: '';
   position: absolute;
-  inset: 0;
+  inset-block: var(--card-border-width);
+  inset-inline: var(--card-border-width);
+  border-radius: calc(var(--card-radius) - var(--card-border-width));
 
   /* Backdrop darkness: lighter images need darker overlay */
   --backdrop-opacity: calc(0.5 + var(--dominant-l) * 0.4);
