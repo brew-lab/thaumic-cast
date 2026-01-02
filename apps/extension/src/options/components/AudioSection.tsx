@@ -1,6 +1,7 @@
 import type { JSX } from 'preact';
 import { useCallback, useMemo } from 'preact/hooks';
 import { useTranslation } from 'react-i18next';
+import { Card } from '@thaumic-cast/ui';
 import type {
   AudioCodec,
   Bitrate,
@@ -145,9 +146,7 @@ export function AudioSection({
   const isCustomMode = settings.audioMode === 'custom';
 
   return (
-    <section className={styles.card}>
-      <h2 className={styles.cardTitle}>{t('audio_section_title')}</h2>
-
+    <Card title={t('audio_section_title')}>
       <div className={styles.cardContent}>
         {/* Loading state */}
         {codecLoading && <div className={styles.hint}>{t('audio_detecting_codecs')}</div>}
@@ -310,6 +309,6 @@ export function AudioSection({
           </>
         )}
       </div>
-    </section>
+    </Card>
   );
 }

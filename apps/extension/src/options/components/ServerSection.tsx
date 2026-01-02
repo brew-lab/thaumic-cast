@@ -1,6 +1,7 @@
 import type { JSX } from 'preact';
 import { useState, useCallback } from 'preact/hooks';
 import { useTranslation } from 'react-i18next';
+import { Card, Button } from '@thaumic-cast/ui';
 import type { ExtensionSettings } from '../../lib/settings';
 import styles from '../Options.module.css';
 
@@ -97,9 +98,7 @@ export function ServerSection({ settings, onUpdate }: ServerSectionProps): JSX.E
   }, [urlInput, onUpdate, testConnection]);
 
   return (
-    <section className={styles.card}>
-      <h2 className={styles.cardTitle}>{t('server_section_title')}</h2>
-
+    <Card title={t('server_section_title')}>
       <div className={styles.cardContent}>
         {/* Auto-discover option */}
         <label className={styles.radioOption}>
@@ -143,14 +142,13 @@ export function ServerSection({ settings, onUpdate }: ServerSectionProps): JSX.E
                 value={urlInput}
                 onInput={handleUrlChange}
               />
-              <button
-                type="button"
-                className={`${styles.btn} ${styles.btnSecondary}`}
+              <Button
+                variant="secondary"
                 onClick={handleSaveUrl}
                 disabled={testing || !urlInput.trim()}
               >
                 {testing ? t('server_testing') : t('server_test_connection')}
-              </button>
+              </Button>
             </div>
 
             {/* Test result */}
@@ -174,6 +172,6 @@ export function ServerSection({ settings, onUpdate }: ServerSectionProps): JSX.E
           </div>
         )}
       </div>
-    </section>
+    </Card>
   );
 }

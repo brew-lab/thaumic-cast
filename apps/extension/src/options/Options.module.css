@@ -16,21 +16,6 @@
   font-size: 0.875rem;
 }
 
-/* Card styles for sections */
-.card {
-  background: var(--color-surface);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-lg);
-  padding-block: var(--space-lg);
-  padding-inline: var(--space-lg);
-}
-
-.cardTitle {
-  font-size: 1rem;
-  font-weight: 600;
-  margin-block: 0 var(--space-md);
-}
-
 .cardContent {
   display: flex;
   flex-direction: column;
@@ -137,44 +122,6 @@
 .radioDesc {
   font-size: 0.75rem;
   color: var(--color-text-muted);
-}
-
-/* Button */
-.btn {
-  padding-block: var(--space-sm);
-  padding-inline: var(--space-md);
-  border-radius: var(--radius-sm);
-  border: none;
-  cursor: pointer;
-  font-weight: 500;
-  font-size: 0.875rem;
-  transition:
-    background-color 0.15s ease,
-    opacity 0.15s ease;
-}
-
-.btn:disabled {
-  opacity: 0.6;
-  cursor: not-allowed;
-}
-
-.btnPrimary {
-  background-color: var(--color-primary);
-  color: white;
-}
-
-.btnPrimary:not(:disabled):hover {
-  background-color: var(--color-primary-hover);
-}
-
-.btnSecondary {
-  background-color: var(--color-surface);
-  color: var(--color-text);
-  border: 1px solid var(--color-border);
-}
-
-.btnSecondary:not(:disabled):hover {
-  background-color: var(--color-surface-hover);
 }
 
 /* Status indicator */

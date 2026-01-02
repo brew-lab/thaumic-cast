@@ -1,6 +1,7 @@
 import type { JSX } from 'preact';
 import { useCallback } from 'preact/hooks';
 import { useTranslation } from 'react-i18next';
+import { Card } from '@thaumic-cast/ui';
 import type { ExtensionSettings, SupportedLocale } from '../../lib/settings';
 import styles from '../Options.module.css';
 
@@ -28,9 +29,7 @@ export function LanguageSection({ settings, onUpdate }: LanguageSectionProps): J
   );
 
   return (
-    <section className={styles.card}>
-      <h2 className={styles.cardTitle}>{t('language_section_title')}</h2>
-
+    <Card title={t('language_section_title')}>
       <div className={styles.cardContent}>
         <div className={styles.field}>
           <label className={styles.label}>{t('language_label')}</label>
@@ -46,6 +45,6 @@ export function LanguageSection({ settings, onUpdate }: LanguageSectionProps): J
           <span className={styles.hint}>{t('language_coming_soon')}</span>
         </div>
       </div>
-    </section>
+    </Card>
   );
 }
