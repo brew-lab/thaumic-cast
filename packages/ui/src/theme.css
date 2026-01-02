@@ -105,3 +105,63 @@ body {
   font-weight: 600;
   margin-block: 0 var(--space-md);
 }
+
+/* Volume Control Styles */
+.volumeControl {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  padding-block: var(--space-xs);
+  padding-inline: var(--space-xs);
+  background: var(--color-surface);
+  border-radius: var(--radius-sm);
+}
+
+.volumeControlMuteBtn {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  padding: 0;
+  border-radius: 2px;
+  color: var(--color-text-muted);
+  transition: opacity 0.2s;
+}
+
+.volumeControlMuteBtn:hover {
+  opacity: 0.8;
+}
+
+.volumeControlMuteBtn.muted {
+  opacity: 0.5;
+}
+
+.volumeControlSlider {
+  flex: 1;
+  height: 4px;
+  appearance: none;
+  background: var(--color-border);
+  border-radius: 2px;
+  outline: none;
+  cursor: pointer;
+}
+
+.volumeControlSlider::-webkit-slider-thumb {
+  appearance: none;
+  width: 12px;
+  height: 12px;
+  background: var(--color-primary);
+  border-radius: 50%;
+  cursor: pointer;
+}
+
+.volumeControlValue {
+  flex-shrink: 0;
+  font-size: 0.65rem;
+  color: var(--color-text-muted);
+  min-width: 1.5rem;
+  text-align: end;
+}

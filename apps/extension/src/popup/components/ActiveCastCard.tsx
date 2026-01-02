@@ -3,7 +3,8 @@ import { useCallback } from 'preact/hooks';
 import { useTranslation } from 'react-i18next';
 import type { ActiveCast, TransportState } from '@thaumic-cast/protocol';
 import { getDisplayTitle, getDisplayImage, getDisplaySubtitle } from '@thaumic-cast/protocol';
-import { Music, Volume2, VolumeX, X } from 'lucide-preact';
+import { Music, Volume2, X } from 'lucide-preact';
+import { VolumeControl } from '@thaumic-cast/ui';
 import { TransportIcon } from './TransportIcon';
 import styles from './ActiveCastCard.module.css';
 
@@ -98,29 +99,14 @@ export function ActiveCastCard({
         </button>
       </div>
 
-      {/* Volume Controls */}
-      <div className={styles.volumeControl}>
-        <button
-          type="button"
-          className={`${styles.muteButton} ${muted ? styles.muted : ''}`}
-          onClick={onMuteToggle}
-          title={muted ? t('unmute') : t('mute')}
-        >
-          {muted ? <VolumeX size={14} /> : <Volume2 size={14} />}
-        </button>
-        <input
-          type="range"
-          min="0"
-          max="100"
-          value={volume}
-          onChange={(e) => {
-            if (muted) onMuteToggle();
-            onVolumeChange(parseInt((e.target as HTMLInputElement).value, 10));
-          }}
-          className={styles.volumeSlider}
-        />
-        <span className={styles.volumeValue}>{volume}</span>
-      </div>
+      <VolumeControl
+        volume={volume}
+        muted={muted}
+        onVolumeChange={onVolumeChange}
+        onMuteToggle={onMuteToggle}
+        muteLabel={t('mute')}
+        unmuteLabel={t('unmute')}
+      />
     </div>
   );
 }

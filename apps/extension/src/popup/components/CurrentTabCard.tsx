@@ -2,8 +2,8 @@ import type { JSX } from 'preact';
 import { useTranslation } from 'react-i18next';
 import type { TabMediaState, ZoneGroup } from '@thaumic-cast/protocol';
 import { getDisplayTitle, getDisplayImage, getDisplaySubtitle } from '@thaumic-cast/protocol';
-import { Button } from '@thaumic-cast/ui';
-import { Cast, Loader2, Music, Volume2, VolumeX } from 'lucide-preact';
+import { Button, VolumeControl } from '@thaumic-cast/ui';
+import { Cast, Loader2, Music } from 'lucide-preact';
 import styles from './CurrentTabCard.module.css';
 
 interface CurrentTabCardProps {
@@ -119,31 +119,14 @@ export function CurrentTabCard({
 
         {/* Volume Controls */}
         {showVolumeControls && selectedIp && (
-          <div className={styles.volumeControl}>
-            <div className={styles.volumeHeader}>
-              <label className={styles.label}>{t('volume')}</label>
-              <button
-                type="button"
-                className={`${styles.muteButton} ${muted ? styles.muted : ''}`}
-                onClick={onMuteToggle}
-                title={muted ? t('unmute') : t('mute')}
-              >
-                {muted ? <VolumeX size={16} /> : <Volume2 size={16} />}
-              </button>
-            </div>
-            <input
-              type="range"
-              min="0"
-              max="100"
-              value={volume}
-              onChange={(e) => {
-                if (muted) onMuteToggle();
-                onVolumeChange(parseInt((e.target as HTMLInputElement).value, 10));
-              }}
-              className={styles.volumeSlider}
-            />
-            <span className={styles.volumeValue}>{volume}</span>
-          </div>
+          <VolumeControl
+            volume={volume}
+            muted={muted}
+            onVolumeChange={onVolumeChange}
+            onMuteToggle={onMuteToggle}
+            muteLabel={t('mute')}
+            unmuteLabel={t('unmute')}
+          />
         )}
 
         {/* Cast Button */}
