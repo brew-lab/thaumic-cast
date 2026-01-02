@@ -18,7 +18,13 @@ import {
   StartPlaybackResponse,
   SessionHealthMessage,
 } from '../lib/messages';
-import { getCachedState, updateCache, removeFromCache, restoreCache } from './metadata-cache';
+import {
+  getCachedState,
+  updateCache,
+  updateTabInfo,
+  removeFromCache,
+  restoreCache,
+} from './metadata-cache';
 import {
   registerSession,
   removeSession,
@@ -316,6 +322,11 @@ chrome.runtime.onMessage.addListener((msg: ExtensionMessage, _sender, sendRespon
           sendResponse({ success: true });
           break;
 
+        case 'TAB_OG_IMAGE':
+          handleTabOgImage(msg.payload as { ogImage: string }, _sender);
+          sendResponse({ success: true });
+          break;
+
         // Legacy METADATA_UPDATE from old content scripts - redirect to new handler
         case 'METADATA_UPDATE':
           if ('payload' in msg && typeof (msg as { payload: unknown }).payload === 'object') {
@@ -488,9 +499,13 @@ async function handleTabMetadataUpdate(
 
   // Parse and validate the metadata
   const metadata = parseMediaMetadata(msg.payload);
+
+  // Preserve existing ogImage if present
+  const existing = getCachedState(tabId);
   const tabInfo = {
     title: sender.tab?.title,
     favIconUrl: sender.tab?.favIconUrl,
+    ogImage: existing?.tabOgImage,
   };
 
   // Update the cache
@@ -504,6 +519,41 @@ async function handleTabMetadataUpdate(
     onMetadataUpdate(tabId);
     forwardMetadataToOffscreen(tabId, msg.payload);
   }
+}
+
+/**
+ * Handles og:image updates from content scripts.
+ * Updates the cache with the Open Graph image.
+ * Creates a cache entry if one doesn't exist.
+ *
+ * @param payload - The og:image payload
+ * @param payload.ogImage
+ * @param sender - The message sender information
+ */
+function handleTabOgImage(
+  payload: { ogImage: string },
+  sender: chrome.runtime.MessageSender,
+): void {
+  const tabId = sender.tab?.id;
+  if (!tabId) return;
+
+  // Try to update existing cache entry
+  let state = updateTabInfo(tabId, { ogImage: payload.ogImage });
+
+  // If no cache entry exists, create one with og:image
+  if (!state) {
+    state = updateCache(
+      tabId,
+      {
+        title: sender.tab?.title,
+        favIconUrl: sender.tab?.favIconUrl,
+        ogImage: payload.ogImage,
+      },
+      null,
+    );
+  }
+
+  notifyPopup({ type: 'TAB_STATE_CHANGED', tabId, state });
 }
 
 /**

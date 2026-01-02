@@ -208,6 +208,7 @@ function toActiveCast(session: ActiveCastSession): ActiveCast {
     tabId: session.tabId,
     tabTitle: 'Unknown Tab',
     tabFavicon: undefined,
+    tabOgImage: undefined,
     metadata: null,
     updatedAt: Date.now(),
   };

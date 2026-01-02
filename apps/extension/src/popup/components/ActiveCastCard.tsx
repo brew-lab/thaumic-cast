@@ -71,8 +71,8 @@ export function ActiveCastCard({
       <div className={styles.row}>
         {favicon && <img src={favicon} alt="" className={styles.favicon} loading="lazy" />}
         <p className={styles.speaker}>
-          {transportState && <TransportIcon state={transportState} size={10} />}
           {cast.speakerName || cast.speakerIp}
+          {transportState && <TransportIcon state={transportState} size={10} />}
         </p>
       </div>
 

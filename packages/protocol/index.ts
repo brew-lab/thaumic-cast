@@ -875,6 +875,8 @@ export const TabMediaStateSchema = z.object({
   tabTitle: z.string(),
   /** Tab favicon URL */
   tabFavicon: z.string().optional(),
+  /** Tab Open Graph image URL (og:image meta tag) */
+  tabOgImage: z.string().optional(),
   /** Media metadata if available */
   metadata: MediaMetadataSchema.nullable(),
   /** Timestamp when this state was last updated */
@@ -888,17 +890,19 @@ export type TabMediaState = z.infer<typeof TabMediaStateSchema>;
  * @param tab.id
  * @param tab.title
  * @param tab.favIconUrl
+ * @param tab.ogImage - Open Graph image URL
  * @param metadata - Optional media metadata
  * @returns A new TabMediaState object
  */
 export function createTabMediaState(
-  tab: { id: number; title?: string; favIconUrl?: string },
+  tab: { id: number; title?: string; favIconUrl?: string; ogImage?: string },
   metadata: MediaMetadata | null = null,
 ): TabMediaState {
   return {
     tabId: tab.id,
     tabTitle: tab.title || 'Unknown Tab',
     tabFavicon: tab.favIconUrl,
+    tabOgImage: tab.ogImage,
     metadata,
     updatedAt: Date.now(),
   };
@@ -942,12 +946,12 @@ export function getDisplayTitle(state: TabMediaState): string {
 
 /**
  * Gets the display image from media state.
- * Prefers artwork, falls back to favicon.
+ * Prefers artwork, falls back to og:image, then favicon.
  * @param state - The tab media state
  * @returns The image URL to display, or undefined if none available
  */
 export function getDisplayImage(state: TabMediaState): string | undefined {
-  return state.metadata?.artwork || state.tabFavicon;
+  return state.metadata?.artwork || state.tabOgImage || state.tabFavicon;
 }
 
 /**

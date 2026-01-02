@@ -48,12 +48,14 @@
   display: flex;
   align-items: center;
   gap: 0.25rem;
+  max-inline-size: 50%;
+  margin-inline-start: auto;
   font-size: 0.65rem;
   color: var(--color-text-muted);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  margin: 0;
+  text-box: cap alphabetic;
 }
 
 .info {

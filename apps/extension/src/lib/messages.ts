@@ -24,6 +24,7 @@ export type ExtensionMessageType =
   | 'METADATA_UPDATE'
   // Metadata messages (content → background → offscreen)
   | 'TAB_METADATA_UPDATE'
+  | 'TAB_OG_IMAGE'
   | 'REQUEST_METADATA'
   // Popup queries (popup → background)
   | 'GET_CURRENT_TAB_STATE'
@@ -197,6 +198,16 @@ export interface TabMetadataUpdateMessage {
  */
 export interface RequestMetadataMessage {
   type: 'REQUEST_METADATA';
+}
+
+/**
+ * Open Graph image update from content script.
+ */
+export interface TabOgImageMessage {
+  type: 'TAB_OG_IMAGE';
+  payload: {
+    ogImage: string;
+  };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -483,6 +494,7 @@ export type ExtensionMessage =
   | ContentMetadataMessage
   // Tab metadata messages
   | TabMetadataUpdateMessage
+  | TabOgImageMessage
   | RequestMetadataMessage
   // Popup query messages
   | GetCurrentTabStateMessage

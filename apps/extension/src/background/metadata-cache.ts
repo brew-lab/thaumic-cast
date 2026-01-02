@@ -60,19 +60,20 @@ export function hasCachedState(tabId: number): boolean {
 /**
  * Updates cache for a tab with new metadata.
  * @param tabId - The Chrome tab ID
- * @param tabInfo - Tab information (title, favicon)
+ * @param tabInfo - Tab information (title, favicon, ogImage)
  * @param tabInfo.title
  * @param tabInfo.favIconUrl
+ * @param tabInfo.ogImage
  * @param metadata - Media metadata or null
  * @returns The new TabMediaState
  */
 export function updateCache(
   tabId: number,
-  tabInfo: { title?: string; favIconUrl?: string },
+  tabInfo: { title?: string; favIconUrl?: string; ogImage?: string },
   metadata: MediaMetadata | null,
 ): TabMediaState {
   const state = createTabMediaState(
-    { id: tabId, title: tabInfo.title, favIconUrl: tabInfo.favIconUrl },
+    { id: tabId, title: tabInfo.title, favIconUrl: tabInfo.favIconUrl, ogImage: tabInfo.ogImage },
     metadata,
   );
   cache.set(tabId, state);
@@ -81,17 +82,18 @@ export function updateCache(
 }
 
 /**
- * Updates only the tab info (title, favicon) for a cached tab.
+ * Updates only the tab info (title, favicon, ogImage) for a cached tab.
  * Preserves existing metadata if present.
  * @param tabId - The Chrome tab ID
  * @param tabInfo - Updated tab information
  * @param tabInfo.title
  * @param tabInfo.favIconUrl
+ * @param tabInfo.ogImage
  * @returns The updated TabMediaState or undefined if not cached
  */
 export function updateTabInfo(
   tabId: number,
-  tabInfo: { title?: string; favIconUrl?: string },
+  tabInfo: { title?: string; favIconUrl?: string; ogImage?: string },
 ): TabMediaState | undefined {
   const existing = cache.get(tabId);
   if (!existing) return undefined;
@@ -100,6 +102,7 @@ export function updateTabInfo(
     ...existing,
     tabTitle: tabInfo.title || existing.tabTitle,
     tabFavicon: tabInfo.favIconUrl ?? existing.tabFavicon,
+    tabOgImage: tabInfo.ogImage ?? existing.tabOgImage,
     updatedAt: Date.now(),
   };
   cache.set(tabId, updated);
