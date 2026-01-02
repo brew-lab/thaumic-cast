@@ -1,5 +1,18 @@
 # @thaumic-cast/extension
 
+## 0.4.0
+
+### Minor Changes
+
+- [#11](https://github.com/brew-lab/thaumic-cast/pull/11) [`5b6d1f2`](https://github.com/brew-lab/thaumic-cast/commit/5b6d1f2022a200c08357f7eb40c294d5aa58a9e6) Thanks [@skezo](https://github.com/skezo)! - Add settings page with audio presets and server configuration
+  - Add options page with server, audio, language, and about sections
+  - Create preset resolution system that integrates runtime codec detection
+  - Support auto/low/mid/high/custom audio modes with fallback chains
+  - Add server auto-discover with manual URL override option
+  - Move audio configuration from popup to dedicated settings page
+  - Use shared UI components (Card, Button) from @thaumic-cast/ui
+  - Replace console.\* with shared logger throughout extension
+
 ## 0.3.1
 
 ### Patch Changes
