@@ -49,6 +49,9 @@
   /* Contrast color for text on accent background - dark if accent is light, light if accent is dark */
   --accent-contrast: oklch(calc((1 - var(--dominant-l)) * 100%) 0 0);
 
+  /* Use dominant color as base background (smoother transition before artwork loads) */
+  background: var(--accent);
+
   /* Text: white for contrast against dark backdrop */
   --color-text: oklch(95% 0 0);
   --color-text-muted: oklch(80% 0 0);

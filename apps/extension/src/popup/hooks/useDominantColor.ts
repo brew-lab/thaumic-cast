@@ -61,103 +61,202 @@ export interface DominantColorResult {
   lightness: number;
 }
 
+/** In-memory cache for extracted colors */
+const colorCache = new Map<string, DominantColorResult | null>();
+
+/** Storage key for persistent cache */
+const STORAGE_KEY = 'dominantColorCache';
+
+/** Max entries to persist (LRU-style limit) */
+const MAX_CACHE_ENTRIES = 50;
+
+/** Reusable canvas for color extraction */
+let sharedCanvas: HTMLCanvasElement | null = null;
+let sharedCtx: CanvasRenderingContext2D | null = null;
+
+const CANVAS_SIZE = 10;
+
+/** Whether we've loaded from storage */
+let cacheLoaded = false;
+
+/**
+ * Loads cached colors from session storage into memory.
+ * Called once on first use.
+ */
+async function loadCacheFromStorage(): Promise<void> {
+  if (cacheLoaded) return;
+  cacheLoaded = true;
+
+  try {
+    const result = await chrome.storage.session.get(STORAGE_KEY);
+    const stored = result[STORAGE_KEY];
+    if (Array.isArray(stored)) {
+      for (const [url, data] of stored) {
+        colorCache.set(url, data);
+      }
+    }
+  } catch {
+    // Storage not available or error - continue with empty cache
+  }
+}
+
+/**
+ * Persists current cache to session storage.
+ */
+async function saveCacheToStorage(): Promise<void> {
+  try {
+    // Limit entries to prevent storage bloat
+    const entries = Array.from(colorCache.entries()).slice(-MAX_CACHE_ENTRIES);
+    await chrome.storage.session.set({ [STORAGE_KEY]: entries });
+  } catch {
+    // Storage not available - ignore
+  }
+}
+
+// Load cache immediately on module init
+loadCacheFromStorage();
+
+/**
+ * Gets or creates the shared canvas for color extraction.
+ */
+function getSharedCanvas(): CanvasRenderingContext2D | null {
+  if (!sharedCanvas) {
+    sharedCanvas = document.createElement('canvas');
+    sharedCanvas.width = CANVAS_SIZE;
+    sharedCanvas.height = CANVAS_SIZE;
+    sharedCtx = sharedCanvas.getContext('2d', { willReadFrequently: true });
+  }
+  return sharedCtx;
+}
+
+/** Timeout for image loading (ms) */
+const LOAD_TIMEOUT = 5000;
+
 /**
  * Extracts the dominant color from an image using canvas sampling.
- * Uses a small sample size for performance.
+ * Uses createImageBitmap for efficient resizing of large images.
+ * Results are cached to avoid re-processing the same image.
  *
  * @param imageUrl - URL of the image to analyze
  * @returns The dominant color or null if extraction fails
  */
 async function extractDominantColor(imageUrl: string): Promise<DominantColorResult | null> {
-  return new Promise((resolve) => {
-    const img = new Image();
-    img.crossOrigin = 'anonymous';
+  // Check cache first
+  if (colorCache.has(imageUrl)) {
+    return colorCache.get(imageUrl) ?? null;
+  }
 
-    img.onload = () => {
-      try {
-        // Use a small canvas for performance
-        const size = 10;
-        const canvas = document.createElement('canvas');
-        canvas.width = size;
-        canvas.height = size;
+  try {
+    // Fetch with timeout to avoid hanging on slow images
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), LOAD_TIMEOUT);
 
-        const ctx = canvas.getContext('2d');
-        if (!ctx) {
-          resolve(null);
-          return;
-        }
+    const response = await fetch(imageUrl, {
+      signal: controller.signal,
+      mode: 'cors',
+    });
+    clearTimeout(timeoutId);
 
-        // Draw scaled image
-        ctx.drawImage(img, 0, 0, size, size);
+    if (!response.ok) {
+      colorCache.set(imageUrl, null);
+      return null;
+    }
 
-        // Get pixel data
-        const imageData = ctx.getImageData(0, 0, size, size);
-        const pixels = imageData.data;
+    const blob = await response.blob();
 
-        // Accumulate color values (simple average approach)
-        let r = 0,
-          g = 0,
-          b = 0,
-          count = 0;
+    // Use createImageBitmap with resize - scales during decode (memory efficient)
+    const bitmap = await createImageBitmap(blob, {
+      resizeWidth: CANVAS_SIZE,
+      resizeHeight: CANVAS_SIZE,
+      resizeQuality: 'low',
+    });
 
-        for (let i = 0; i < pixels.length; i += 4) {
-          const pr = pixels[i];
-          const pg = pixels[i + 1];
-          const pb = pixels[i + 2];
-          const pa = pixels[i + 3];
+    const ctx = getSharedCanvas();
+    if (!ctx) {
+      bitmap.close();
+      colorCache.set(imageUrl, null);
+      return null;
+    }
 
-          // Skip transparent pixels
-          if (pa < 128) continue;
+    // Draw the already-resized bitmap
+    ctx.clearRect(0, 0, CANVAS_SIZE, CANVAS_SIZE);
+    ctx.drawImage(bitmap, 0, 0);
+    bitmap.close();
 
-          // Skip very dark or very light pixels (often background)
-          const brightness = (pr + pg + pb) / 3;
-          if (brightness < 20 || brightness > 235) continue;
+    // Get pixel data
+    const imageData = ctx.getImageData(0, 0, CANVAS_SIZE, CANVAS_SIZE);
+    const pixels = imageData.data;
 
-          r += pr;
-          g += pg;
-          b += pb;
-          count++;
-        }
+    // Accumulate color values (simple average approach)
+    let r = 0,
+      g = 0,
+      b = 0,
+      count = 0;
 
-        if (count === 0) {
-          resolve(null);
-          return;
-        }
+    for (let i = 0; i < pixels.length; i += 4) {
+      const pr = pixels[i];
+      const pg = pixels[i + 1];
+      const pb = pixels[i + 2];
+      const pa = pixels[i + 3];
 
-        const rgb: RGB = [Math.round(r / count), Math.round(g / count), Math.round(b / count)];
-        const oklch = rgbToOklch(rgb[0], rgb[1], rgb[2]);
+      // Skip transparent pixels
+      if (pa < 128) continue;
 
-        resolve({
-          rgb,
-          oklch,
-          css: `oklch(${(oklch[0] * 100).toFixed(1)}% ${oklch[1].toFixed(3)} ${oklch[2].toFixed(1)})`,
-          lightness: oklch[0],
-        });
-      } catch {
-        resolve(null);
-      }
+      // Skip very dark or very light pixels (often background)
+      const brightness = (pr + pg + pb) / 3;
+      if (brightness < 20 || brightness > 235) continue;
+
+      r += pr;
+      g += pg;
+      b += pb;
+      count++;
+    }
+
+    if (count === 0) {
+      colorCache.set(imageUrl, null);
+      return null;
+    }
+
+    const rgb: RGB = [Math.round(r / count), Math.round(g / count), Math.round(b / count)];
+    const oklch = rgbToOklch(rgb[0], rgb[1], rgb[2]);
+
+    const result: DominantColorResult = {
+      rgb,
+      oklch,
+      css: `oklch(${(oklch[0] * 100).toFixed(1)}% ${oklch[1].toFixed(3)} ${oklch[2].toFixed(1)})`,
+      lightness: oklch[0],
     };
 
-    img.onerror = () => resolve(null);
-
-    // Start loading
-    img.src = imageUrl;
-  });
+    colorCache.set(imageUrl, result);
+    saveCacheToStorage();
+    return result;
+  } catch {
+    colorCache.set(imageUrl, null);
+    return null;
+  }
 }
 
 /**
  * Hook to extract the dominant color from an image.
- * Handles loading state and caches results.
+ * Results are cached so subsequent calls with the same URL return instantly.
  *
  * @param imageUrl - URL of the image to analyze, or undefined
  * @returns The dominant color result or null if not available
  */
 export function useDominantColor(imageUrl: string | undefined): DominantColorResult | null {
-  const [color, setColor] = useState<DominantColorResult | null>(null);
+  // Check cache synchronously to avoid flicker
+  const cachedResult = imageUrl ? colorCache.get(imageUrl) : undefined;
+  const [color, setColor] = useState<DominantColorResult | null>(cachedResult ?? null);
 
   useEffect(() => {
     if (!imageUrl) {
       setColor(null);
+      return;
+    }
+
+    // If already cached, use it immediately
+    if (colorCache.has(imageUrl)) {
+      setColor(colorCache.get(imageUrl) ?? null);
       return;
     }
 
