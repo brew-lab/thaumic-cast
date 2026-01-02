@@ -4,7 +4,7 @@ import { useTranslation } from 'react-i18next';
 import type { ActiveCast, TransportState } from '@thaumic-cast/protocol';
 import { getDisplayTitle, getDisplayImage, getDisplaySubtitle } from '@thaumic-cast/protocol';
 import { Music, Volume2, X } from 'lucide-preact';
-import { VolumeControl } from '@thaumic-cast/ui';
+import { IconButton, VolumeControl } from '@thaumic-cast/ui';
 import { TransportIcon } from './TransportIcon';
 import styles from './ActiveCastCard.module.css';
 
@@ -88,15 +88,14 @@ export function ActiveCastCard({
           </p>
         </div>
 
-        <button
-          type="button"
-          className={styles.stopButton}
+        <IconButton
+          variant="danger"
           onClick={onStop}
           aria-label={t('stop_cast')}
           title={t('stop_cast')}
         >
           <X size={14} />
-        </button>
+        </IconButton>
       </div>
 
       <VolumeControl

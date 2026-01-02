@@ -1,6 +1,7 @@
 import type { JSX } from 'preact';
 import { useState, useEffect, useRef, useCallback } from 'preact/hooks';
 import { Volume2, VolumeX } from 'lucide-preact';
+import { IconButton } from './IconButton';
 
 /** Debounce delay for volume slider in milliseconds */
 const VOLUME_DEBOUNCE_MS = 100;
@@ -109,15 +110,15 @@ export function VolumeControl({
 
   return (
     <div className={`volumeControl ${className || ''}`}>
-      <button
-        type="button"
+      <IconButton
+        size="sm"
         className={`volumeControlMuteBtn ${muted ? 'muted' : ''}`}
         onClick={handleMuteToggle}
         title={muted ? unmuteLabel : muteLabel}
         aria-label={muted ? unmuteLabel : muteLabel}
       >
         {muted ? <VolumeX size={14} /> : <Volume2 size={14} />}
-      </button>
+      </IconButton>
       <input
         type="range"
         min="0"

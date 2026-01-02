@@ -3,6 +3,7 @@ import { useState, useEffect, useCallback } from 'preact/hooks';
 import { useTranslation } from 'react-i18next';
 import { getSpeakerStatus } from '@thaumic-cast/protocol';
 import { Settings, X } from 'lucide-preact';
+import { IconButton } from '@thaumic-cast/ui';
 import styles from './App.module.css';
 import { ExtensionResponse, StartCastMessage } from '../lib/messages';
 import type { ZoneGroup } from '@thaumic-cast/protocol';
@@ -153,28 +154,22 @@ export function App(): JSX.Element {
     <div className={styles.container}>
       <div className={styles.header}>
         <h1 className={styles.title}>{t('app_name')}</h1>
-        <button
-          type="button"
-          className={styles.settingsButton}
-          onClick={openSettings}
-          title={t('settings')}
-          aria-label={t('settings')}
-        >
+        <IconButton onClick={openSettings} title={t('settings')} aria-label={t('settings')}>
           <Settings size={18} />
-        </button>
+        </IconButton>
       </div>
 
       {error && (
         <div className={styles.error}>
           <span className={styles.errorMessage}>{error}</span>
-          <button
-            type="button"
+          <IconButton
+            size="sm"
             className={styles.errorDismiss}
             onClick={() => setError(null)}
             aria-label={t('dismiss')}
           >
             <X size={14} />
-          </button>
+          </IconButton>
         </div>
       )}
 
