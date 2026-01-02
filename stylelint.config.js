@@ -37,6 +37,8 @@ export default {
     // Allow modern CSS features
     'function-no-unknown': [true, { ignoreFunctions: ['theme', 'light-dark'] }],
     'at-rule-no-unknown': [true, { ignoreAtRules: ['tailwind', 'apply', 'layer'] }],
+    // Allow CSS Modules pseudo-classes
+    'selector-pseudo-class-no-unknown': [true, { ignorePseudoClasses: ['global', 'local'] }],
     // Consistent naming
     'selector-class-pattern': [
       '^[a-z][a-zA-Z0-9]*$',

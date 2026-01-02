@@ -1,5 +1,8 @@
 .card {
   --artwork: none;
+  --dominant-l: 0.5;
+  --dominant-c: 0;
+  --dominant-h: 0;
 
   position: relative;
   display: flex;
@@ -13,13 +16,21 @@
   overflow: hidden;
 }
 
-/* Background artwork layer with vignette */
+/* Background artwork layer with adaptive darkness vignette */
 .card.hasArtwork::before {
   content: '';
   position: absolute;
   inset: 0;
+
+  /* Backdrop darkness: lighter images need darker overlay */
+  --backdrop-opacity: calc(0.5 + var(--dominant-l) * 0.4);
+
   background:
-    radial-gradient(ellipse at center, oklch(0% 0 0 / 50%) 0%, oklch(0% 0 0 / 90%) 100%),
+    radial-gradient(
+      ellipse at center,
+      oklch(0% 0 0 / calc(var(--backdrop-opacity) - 0.2)) 0%,
+      oklch(0% 0 0 / var(--backdrop-opacity)) 100%
+    ),
     var(--artwork) center / cover no-repeat;
   z-index: 0;
 }
@@ -28,6 +39,48 @@
 .card.hasArtwork > * {
   position: relative;
   z-index: 2;
+}
+
+/* Color scheme derived from dominant color */
+.card.hasArtwork {
+  /* Accent: use the dominant color directly */
+  --accent: oklch(calc(var(--dominant-l) * 100%) var(--dominant-c) var(--dominant-h));
+
+  /* Contrast color for text on accent background - dark if accent is light, light if accent is dark */
+  --accent-contrast: oklch(calc((1 - var(--dominant-l)) * 100%) 0 0);
+
+  /* Text: white for contrast against dark backdrop */
+  --color-text: oklch(95% 0 0);
+  --color-text-muted: oklch(80% 0 0);
+
+  /* Use accent for interactive elements */
+  --color-primary: var(--accent);
+  --color-error: var(--accent);
+
+  accent-color: var(--accent);
+}
+
+/* Icon buttons use solid accent background with proper contrast */
+.card.hasArtwork :global(.iconBtn) {
+  color: var(--accent-contrast);
+  background: var(--accent);
+  border-color: transparent;
+}
+
+.card.hasArtwork :global(.iconBtn:not(:disabled):hover) {
+  color: var(--accent-contrast);
+  background: oklch(from var(--accent) calc(l * 1.15) c h);
+}
+
+/* Volume control container uses muted accent background */
+.card.hasArtwork :global(.volumeControl) {
+  background: oklch(from var(--accent) l c h / 30%);
+}
+
+/* Focus outlines for accessibility */
+.card.hasArtwork :global(input[type='range']:focus-visible) {
+  outline: 2px solid var(--color-focus);
+  outline-offset: 2px;
 }
 
 .row {
@@ -61,7 +114,7 @@
 .info {
   flex: 1;
   min-width: 0;
-  overflow: hidden;
+  overflow: visible;
 }
 
 .title {
@@ -87,7 +140,7 @@
 }
 
 .title:focus-visible {
-  outline: 2px solid var(--color-primary);
+  outline: 2px solid var(--color-focus);
   outline-offset: 2px;
   border-radius: 2px;
 }

@@ -6,6 +6,7 @@ import { getDisplayTitle, getDisplayImage, getDisplaySubtitle } from '@thaumic-c
 import { X } from 'lucide-preact';
 import { IconButton, VolumeControl } from '@thaumic-cast/ui';
 import { TransportIcon } from './TransportIcon';
+import { useDominantColor } from '../hooks/useDominantColor';
 import styles from './ActiveCastCard.module.css';
 
 interface ActiveCastCardProps {
@@ -53,6 +54,9 @@ export function ActiveCastCard({
   const subtitle = getDisplaySubtitle(cast.mediaState);
   const favicon = cast.mediaState.tabFavicon;
 
+  // Extract dominant color from artwork for backdrop tinting
+  const dominantColor = useDominantColor(image);
+
   /**
    * Navigates to the tab associated with this cast session.
    */
@@ -60,13 +64,22 @@ export function ActiveCastCard({
     chrome.tabs.update(cast.tabId, { active: true });
   }, [cast.tabId]);
 
-  // Build style object with artwork CSS custom property
-  const cardStyle = image ? { '--artwork': `url(${image})` } : undefined;
+  // Build style object with artwork and color CSS custom properties
+  const cardStyle: Record<string, string> = {};
+  if (image) {
+    cardStyle['--artwork'] = `url(${image})`;
+  }
+  if (dominantColor) {
+    const [l, c, h] = dominantColor.oklch;
+    cardStyle['--dominant-l'] = l.toFixed(3);
+    cardStyle['--dominant-c'] = c.toFixed(3);
+    cardStyle['--dominant-h'] = h.toFixed(1);
+  }
 
   return (
     <div
       className={`${styles.card} ${image ? styles.hasArtwork : ''}`}
-      style={cardStyle as JSX.CSSProperties}
+      style={Object.keys(cardStyle).length > 0 ? (cardStyle as JSX.CSSProperties) : undefined}
     >
       <div className={styles.row}>
         {favicon && <img src={favicon} alt="" className={styles.favicon} loading="lazy" />}
