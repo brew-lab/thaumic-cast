@@ -140,7 +140,7 @@ export function CurrentTabCard({
               className={styles.volumeSlider}
               disabled={muted}
             />
-            <span className={styles.volumeValue}>{volume}%</span>
+            <span className={styles.volumeValue}>{volume}</span>
           </div>
         )}
 
