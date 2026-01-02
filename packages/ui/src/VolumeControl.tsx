@@ -1,5 +1,9 @@
 import type { JSX } from 'preact';
+import { useState, useEffect, useRef, useCallback } from 'preact/hooks';
 import { Volume2, VolumeX } from 'lucide-preact';
+
+/** Debounce delay in milliseconds */
+const DEBOUNCE_MS = 100;
 
 interface VolumeControlProps {
   /** Current volume level (0-100) */
@@ -39,14 +43,47 @@ export function VolumeControl({
   unmuteLabel = 'Unmute',
   className,
 }: VolumeControlProps): JSX.Element {
+  // Local state for immediate visual feedback while dragging
+  const [localVolume, setLocalVolume] = useState(volume);
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Sync local state when prop changes (e.g., from external update)
+  useEffect(() => {
+    setLocalVolume(volume);
+  }, [volume]);
+
+  // Cleanup debounce timer on unmount
+  useEffect(() => {
+    return () => {
+      if (debounceRef.current) {
+        clearTimeout(debounceRef.current);
+      }
+    };
+  }, []);
+
   /**
-   * Handles slider change, unmuting if currently muted.
-   * @param e
+   * Handles slider change with debounced callback.
    */
-  const handleSliderChange = (e: Event) => {
-    if (muted) onMuteToggle();
-    onVolumeChange(parseInt((e.target as HTMLInputElement).value, 10));
-  };
+  const handleSliderChange = useCallback(
+    (e: Event) => {
+      const newVolume = parseInt((e.target as HTMLInputElement).value, 10);
+
+      // Update local state immediately for smooth UI
+      setLocalVolume(newVolume);
+
+      // Unmute immediately if muted
+      if (muted) onMuteToggle();
+
+      // Debounce the actual volume change callback
+      if (debounceRef.current) {
+        clearTimeout(debounceRef.current);
+      }
+      debounceRef.current = setTimeout(() => {
+        onVolumeChange(newVolume);
+      }, DEBOUNCE_MS);
+    },
+    [muted, onMuteToggle, onVolumeChange],
+  );
 
   return (
     <div className={`volumeControl ${className || ''}`}>
@@ -63,11 +100,11 @@ export function VolumeControl({
         type="range"
         min="0"
         max="100"
-        value={volume}
+        value={localVolume}
         onChange={handleSliderChange}
         className="volumeControlSlider"
       />
-      <span className="volumeControlValue">{volume}</span>
+      <span className="volumeControlValue">{localVolume}</span>
     </div>
   );
 }
