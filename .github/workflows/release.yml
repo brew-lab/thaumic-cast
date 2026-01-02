@@ -33,11 +33,15 @@ jobs:
       - name: Get version
         id: get_version
         run: |
-          if [ "${{ github.event_name }}" = "push" ]; then
+          # Check if version was passed as input (workflow_dispatch or workflow_call)
+          if [ -n "${{ inputs.version }}" ]; then
+            echo "version=${{ inputs.version }}" >> $GITHUB_OUTPUT
+          elif [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            # Extract version from tag push
             echo "version=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
           else
-            # workflow_dispatch and workflow_call both use inputs.version
-            echo "version=${{ inputs.version }}" >> $GITHUB_OUTPUT
+            echo "::error::No version provided and GITHUB_REF is not a tag"
+            exit 1
           fi
 
       - name: Create Release
