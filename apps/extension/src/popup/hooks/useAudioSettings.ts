@@ -7,12 +7,15 @@ import {
   getSupportedBitrates,
   detectSupportedCodecs,
 } from '@thaumic-cast/protocol';
+import { createLogger } from '@thaumic-cast/shared';
 import {
   loadAudioSettings,
   saveAudioSettings,
   getDefaultSettings,
   type AudioSettings,
 } from '../../lib/settings';
+
+const log = createLogger('AudioSettings');
 
 const CODEC_CACHE_KEY = 'codecSupportCache';
 
@@ -127,7 +130,7 @@ export function useAudioSettings(): UseAudioSettingsResult {
   // Save settings when they change
   useEffect(() => {
     if (!loading && detectionComplete) {
-      saveAudioSettings(settings).catch(console.error);
+      saveAudioSettings(settings).catch((err) => log.error('Failed to save settings', err));
     }
   }, [settings, loading, detectionComplete]);
 
