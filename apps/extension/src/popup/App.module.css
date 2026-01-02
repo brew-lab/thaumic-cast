@@ -37,6 +37,12 @@
 }
 
 .error {
+  position: sticky;
+  inset-block-start: 0;
+  z-index: 10;
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
   padding-block: 0.5rem;
   padding-inline: 0.5rem;
   background: var(--color-error);
@@ -44,6 +50,28 @@
   border-radius: 4px;
   margin-block-end: 1rem;
   font-size: 0.85rem;
+}
+
+.errorMessage {
+  flex: 1;
+}
+
+.errorDismiss {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: none;
+  color: white;
+  cursor: pointer;
+  padding: 0;
+  opacity: 0.8;
+  transition: opacity 0.15s;
+}
+
+.errorDismiss:hover {
+  opacity: 1;
 }
 
 .field {
