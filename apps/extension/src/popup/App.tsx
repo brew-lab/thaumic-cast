@@ -175,13 +175,13 @@ export function App(): JSX.Element {
         onVolumeChange={handleVolumeChange}
         onMuteToggle={handleMuteToggle}
         onStopCast={stopCast}
+        showDivider={!!currentTabState && !isCasting}
       />
 
-      {/* Current Tab Media Info with Cast Controls */}
-      {currentTabState && (
+      {/* Current Tab Media Info with Cast Controls - hidden when already casting */}
+      {currentTabState && !isCasting && (
         <CurrentTabCard
           state={currentTabState}
-          isCasting={isCasting}
           groups={groups}
           selectedIp={selectedIp}
           onSelectSpeaker={setSelectedIp}

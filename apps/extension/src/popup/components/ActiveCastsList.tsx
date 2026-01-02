@@ -19,6 +19,8 @@ interface ActiveCastsListProps {
   onMuteToggle: (speakerIp: string) => void;
   /** Callback when a cast stop is requested */
   onStopCast: (tabId: number) => void;
+  /** Whether to show bottom divider (when CurrentTabCard is visible below) */
+  showDivider?: boolean;
 }
 
 /**
@@ -31,6 +33,7 @@ interface ActiveCastsListProps {
  * @param props.onVolumeChange
  * @param props.onMuteToggle
  * @param props.onStopCast
+ * @param props.showDivider
  * @returns The rendered ActiveCastsList component or null if empty
  */
 export function ActiveCastsList({
@@ -41,13 +44,16 @@ export function ActiveCastsList({
   onVolumeChange,
   onMuteToggle,
   onStopCast,
+  showDivider = false,
 }: ActiveCastsListProps): JSX.Element | null {
   const { t } = useTranslation();
 
   if (casts.length === 0) return null;
 
+  const sectionClass = showDivider ? `${styles.section} ${styles.withDivider}` : styles.section;
+
   return (
-    <section className={styles.section}>
+    <section className={sectionClass}>
       <h2 className={styles.heading}>{t('active_casts')}</h2>
       <ul className={styles.list}>
         {casts.map((cast) => (

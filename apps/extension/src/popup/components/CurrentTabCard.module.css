@@ -64,14 +64,6 @@
   margin-block-start: 0.25rem;
 }
 
-.castingStatus {
-  font-size: 0.75rem;
-  color: var(--color-casting);
-  margin: 0;
-  margin-block-start: 0.25rem;
-  font-weight: 500;
-}
-
 .controls {
   display: flex;
   flex-direction: column;

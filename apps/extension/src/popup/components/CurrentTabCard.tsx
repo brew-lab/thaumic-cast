@@ -9,8 +9,6 @@ import styles from './CurrentTabCard.module.css';
 interface CurrentTabCardProps {
   /** The tab's media state */
   state: TabMediaState;
-  /** Whether this tab is already casting */
-  isCasting: boolean;
   /** Available speaker groups */
   groups: ZoneGroup[];
   /** Currently selected speaker IP */
@@ -43,7 +41,6 @@ interface CurrentTabCardProps {
  * Displays the current tab's media information with cast controls.
  * @param props - Component props
  * @param props.state
- * @param props.isCasting
  * @param props.groups
  * @param props.selectedIp
  * @param props.onSelectSpeaker
@@ -61,7 +58,6 @@ interface CurrentTabCardProps {
  */
 export function CurrentTabCard({
   state,
-  isCasting,
   groups,
   selectedIp,
   onSelectSpeaker,
@@ -80,36 +76,6 @@ export function CurrentTabCard({
   const title = getDisplayTitle(state);
   const image = getDisplayImage(state);
   const subtitle = getDisplaySubtitle(state);
-
-  // Don't show controls if already casting (will show in ActiveCastCard)
-  if (isCasting) {
-    return (
-      <div className={styles.card}>
-        <div className={styles.artwork}>
-          {image ? (
-            <img src={image} alt="" className={styles.image} loading="lazy" />
-          ) : (
-            <div className={styles.placeholder} aria-hidden="true">
-              <svg
-                xmlns="http://www.w3.org/2000/svg"
-                width="24"
-                height="24"
-                viewBox="0 0 24 24"
-                fill="currentColor"
-              >
-                <path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z" />
-              </svg>
-            </div>
-          )}
-        </div>
-        <div className={styles.info}>
-          <p className={styles.title}>{title}</p>
-          {subtitle && <p className={styles.subtitle}>{subtitle}</p>}
-          <p className={styles.castingStatus}>{t('casting_active')}</p>
-        </div>
-      </div>
-    );
-  }
 
   return (
     <div className={styles.card}>
