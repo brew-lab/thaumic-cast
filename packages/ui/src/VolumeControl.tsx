@@ -2,8 +2,11 @@ import type { JSX } from 'preact';
 import { useState, useEffect, useRef, useCallback } from 'preact/hooks';
 import { Volume2, VolumeX } from 'lucide-preact';
 
-/** Debounce delay in milliseconds */
-const DEBOUNCE_MS = 100;
+/** Debounce delay for volume slider in milliseconds */
+const VOLUME_DEBOUNCE_MS = 100;
+
+/** Debounce delay for mute toggle in milliseconds */
+const MUTE_DEBOUNCE_MS = 200;
 
 interface VolumeControlProps {
   /** Current volume level (0-100) */
@@ -45,21 +48,40 @@ export function VolumeControl({
 }: VolumeControlProps): JSX.Element {
   // Local state for immediate visual feedback while dragging
   const [localVolume, setLocalVolume] = useState(volume);
-  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const volumeDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const muteDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const isMuteDebouncing = useRef(false);
 
   // Sync local state when prop changes (e.g., from external update)
   useEffect(() => {
     setLocalVolume(volume);
   }, [volume]);
 
-  // Cleanup debounce timer on unmount
+  // Cleanup debounce timers on unmount
   useEffect(() => {
     return () => {
-      if (debounceRef.current) {
-        clearTimeout(debounceRef.current);
+      if (volumeDebounceRef.current) {
+        clearTimeout(volumeDebounceRef.current);
+      }
+      if (muteDebounceRef.current) {
+        clearTimeout(muteDebounceRef.current);
       }
     };
   }, []);
+
+  /**
+   * Handles mute toggle with debounce to prevent rage clicking.
+   */
+  const handleMuteToggle = useCallback(() => {
+    if (isMuteDebouncing.current) return;
+
+    isMuteDebouncing.current = true;
+    onMuteToggle();
+
+    muteDebounceRef.current = setTimeout(() => {
+      isMuteDebouncing.current = false;
+    }, MUTE_DEBOUNCE_MS);
+  }, [onMuteToggle]);
 
   /**
    * Handles slider change with debounced callback.
@@ -71,16 +93,16 @@ export function VolumeControl({
       // Update local state immediately for smooth UI
       setLocalVolume(newVolume);
 
-      // Unmute immediately if muted
+      // Unmute immediately if muted (bypass debounce for this)
       if (muted) onMuteToggle();
 
       // Debounce the actual volume change callback
-      if (debounceRef.current) {
-        clearTimeout(debounceRef.current);
+      if (volumeDebounceRef.current) {
+        clearTimeout(volumeDebounceRef.current);
       }
-      debounceRef.current = setTimeout(() => {
+      volumeDebounceRef.current = setTimeout(() => {
         onVolumeChange(newVolume);
-      }, DEBOUNCE_MS);
+      }, VOLUME_DEBOUNCE_MS);
     },
     [muted, onMuteToggle, onVolumeChange],
   );
@@ -90,7 +112,7 @@ export function VolumeControl({
       <button
         type="button"
         className={`volumeControlMuteBtn ${muted ? 'muted' : ''}`}
-        onClick={onMuteToggle}
+        onClick={handleMuteToggle}
         title={muted ? unmuteLabel : muteLabel}
         aria-label={muted ? unmuteLabel : muteLabel}
       >
