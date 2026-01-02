@@ -105,11 +105,29 @@
   outline-offset: 2px;
 }
 
-.row {
+.header {
   display: flex;
   align-items: center;
-  justify-content: space-between;
   gap: 0.5rem;
+}
+
+.mainRow {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+/* Skip buttons (prev/next) - ghost style with text color */
+.skipBtn {
+  flex-shrink: 0;
+  background: transparent !important;
+  border: none !important;
+  color: var(--color-text-muted) !important;
+}
+
+.skipBtn:hover {
+  color: var(--color-text) !important;
+  background: transparent !important;
 }
 
 .favicon {
@@ -123,8 +141,8 @@
   display: flex;
   align-items: center;
   gap: 0.25rem;
-  max-inline-size: 50%;
-  margin-inline-start: auto;
+  flex: 1;
+  min-width: 0;
   font-size: 0.65rem;
   color: var(--color-text-muted);
   white-space: nowrap;
@@ -180,29 +198,4 @@
   text-overflow: ellipsis;
   margin: 0;
   margin-block-start: 0.125rem;
-}
-
-/* Playback Controls */
-.playbackControls {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 0.5rem;
-}
-
-.playbackControls :global(.iconBtn) {
-  padding: 0.5rem;
-}
-
-/* Disabled state - higher specificity for artwork cards */
-.playbackControls :global(.iconBtn:disabled),
-.card.hasArtwork .playbackControls :global(.iconBtn:disabled) {
-  opacity: 0.3;
-  cursor: not-allowed;
-  pointer-events: none;
-}
-
-/* Ensure disabled buttons have muted background in artwork cards */
-.card.hasArtwork .playbackControls :global(.iconBtn:disabled) {
-  background: oklch(from var(--accent) l c h / 40%);
 }

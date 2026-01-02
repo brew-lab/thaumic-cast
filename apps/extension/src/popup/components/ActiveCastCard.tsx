@@ -67,7 +67,6 @@ export function ActiveCastCard({
   const canNext = supportedActions.includes('nexttrack');
   const canPlay = supportedActions.includes('play');
   const canPause = supportedActions.includes('pause');
-  const showPlayback = canPrev || canNext || canPlay || canPause;
 
   // Get playback state from MediaSession (via background cache)
   const playbackState = cast.mediaState.playbackState ?? 'none';
@@ -151,15 +150,35 @@ export function ActiveCastCard({
       className={`${styles.card} ${image ? styles.hasArtwork : ''}`}
       style={Object.keys(cardStyle).length > 0 ? (cardStyle as JSX.CSSProperties) : undefined}
     >
-      <div className={styles.row}>
+      <div className={styles.header}>
         {favicon && <img src={favicon} alt="" className={styles.favicon} loading="lazy" />}
         <p className={styles.speaker}>
           {cast.speakerName || cast.speakerIp}
           {transportState && <TransportIcon state={transportState} size={10} />}
         </p>
+        <IconButton
+          className={styles.skipBtn}
+          size="sm"
+          onClick={onStop}
+          aria-label={t('stop_cast')}
+          title={t('stop_cast')}
+        >
+          <X size={12} />
+        </IconButton>
       </div>
 
-      <div className={styles.row}>
+      <div className={styles.mainRow}>
+        {canPrev && onControl && (
+          <IconButton
+            className={styles.skipBtn}
+            onClick={() => handleControl('previoustrack')}
+            aria-label={t('previous_track')}
+            title={t('previous_track')}
+          >
+            <SkipBack size={14} />
+          </IconButton>
+        )}
+
         <div className={styles.info}>
           <button type="button" className={styles.title} onClick={goToTab} title={t('go_to_tab')}>
             {title}
@@ -167,49 +186,27 @@ export function ActiveCastCard({
           {subtitle && <p className={styles.subtitle}>{subtitle}</p>}
         </div>
 
-        <IconButton
-          variant="danger"
-          onClick={onStop}
-          aria-label={t('stop_cast')}
-          title={t('stop_cast')}
-        >
-          <X size={14} />
-        </IconButton>
+        {(canPlay || canPause) && onControl && (
+          <IconButton
+            onClick={handlePlayPause}
+            aria-label={displayIsPlaying ? t('pause') : t('play')}
+            title={displayIsPlaying ? t('pause') : t('play')}
+          >
+            {displayIsPlaying ? <Pause size={14} /> : <Play size={14} />}
+          </IconButton>
+        )}
+
+        {canNext && onControl && (
+          <IconButton
+            className={styles.skipBtn}
+            onClick={() => handleControl('nexttrack')}
+            aria-label={t('next_track')}
+            title={t('next_track')}
+          >
+            <SkipForward size={14} />
+          </IconButton>
+        )}
       </div>
-
-      {showPlayback && onControl && (
-        <div className={styles.playbackControls}>
-          {canPrev && (
-            <IconButton
-              onClick={() => handleControl('previoustrack')}
-              aria-label={t('previous_track')}
-              title={t('previous_track')}
-            >
-              <SkipBack size={16} />
-            </IconButton>
-          )}
-
-          {(canPlay || canPause) && (
-            <IconButton
-              onClick={handlePlayPause}
-              aria-label={displayIsPlaying ? t('pause') : t('play')}
-              title={displayIsPlaying ? t('pause') : t('play')}
-            >
-              {displayIsPlaying ? <Pause size={18} /> : <Play size={18} />}
-            </IconButton>
-          )}
-
-          {canNext && (
-            <IconButton
-              onClick={() => handleControl('nexttrack')}
-              aria-label={t('next_track')}
-              title={t('next_track')}
-            >
-              <SkipForward size={16} />
-            </IconButton>
-          )}
-        </div>
-      )}
 
       <VolumeControl
         volume={volume}
