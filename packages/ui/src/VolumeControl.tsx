@@ -126,6 +126,7 @@ export function VolumeControl({
         value={localVolume}
         onChange={handleSliderChange}
         className="volumeControlSlider"
+        style={{ '--volume': `${localVolume}%` } as JSX.CSSProperties}
       />
       <span className="volumeControlValue">{localVolume}</span>
     </div>

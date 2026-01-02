@@ -80,9 +80,18 @@
   background: oklch(calc((var(--safe-l) + 0.08) * 100%) var(--dominant-c) var(--dominant-h));
 }
 
-/* Volume control container uses muted accent background */
+/* Volume control container - transparent on artwork cards */
 .card.hasArtwork :global(.volumeControl) {
-  background: oklch(from var(--accent) l c h / 30%);
+  background: transparent;
+}
+
+/* Slider track uses accent colors */
+.card.hasArtwork :global(.volumeControlSlider) {
+  background: linear-gradient(
+    to right,
+    var(--accent) var(--volume),
+    oklch(from var(--accent) l c h / 40%) var(--volume)
+  );
 }
 
 /* Focus outlines for accessibility */

@@ -123,10 +123,16 @@ body {
 }
 
 .volumeControlSlider {
+  --volume: 0%;
+
   flex: 1;
   height: 4px;
   appearance: none;
-  background: var(--color-border);
+  background: linear-gradient(
+    to right,
+    var(--color-primary) var(--volume),
+    var(--color-border) var(--volume)
+  );
   border-radius: 2px;
   outline: none;
   cursor: pointer;
