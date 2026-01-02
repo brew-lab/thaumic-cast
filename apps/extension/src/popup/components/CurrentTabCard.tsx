@@ -3,7 +3,7 @@ import { useTranslation } from 'react-i18next';
 import type { TabMediaState, ZoneGroup } from '@thaumic-cast/protocol';
 import { getDisplayTitle, getDisplayImage, getDisplaySubtitle } from '@thaumic-cast/protocol';
 import { Button } from '@thaumic-cast/ui';
-import { Cast, Loader2 } from 'lucide-preact';
+import { Cast, Loader2, Music, Volume2, VolumeX } from 'lucide-preact';
 import styles from './CurrentTabCard.module.css';
 
 interface CurrentTabCardProps {
@@ -85,15 +85,7 @@ export function CurrentTabCard({
             <img src={image} alt="" className={styles.image} loading="lazy" />
           ) : (
             <div className={styles.placeholder} aria-hidden="true">
-              <svg
-                xmlns="http://www.w3.org/2000/svg"
-                width="24"
-                height="24"
-                viewBox="0 0 24 24"
-                fill="currentColor"
-              >
-                <path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z" />
-              </svg>
+              <Music size={24} />
             </div>
           )}
         </div>
@@ -136,7 +128,7 @@ export function CurrentTabCard({
                 onClick={onMuteToggle}
                 title={muted ? t('unmute') : t('mute')}
               >
-                {muted ? '🔇' : '🔊'}
+                {muted ? <VolumeX size={16} /> : <Volume2 size={16} />}
               </button>
             </div>
             <input
