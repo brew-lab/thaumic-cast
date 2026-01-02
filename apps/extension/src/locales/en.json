@@ -7,7 +7,7 @@
   "starting": "Starting...",
   "stop_casting": "Stop Casting",
   "stopping": "Stopping...",
-  "stop_cast": "Stop",
+  "stop_cast": "End Cast",
   "go_to_tab": "Go to tab",
   "casting_active": "Casting Active",
   "streaming_msg": "Currently streaming this tab to Sonos.",
