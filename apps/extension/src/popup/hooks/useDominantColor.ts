@@ -59,6 +59,22 @@ export interface DominantColorResult {
   css: string;
   /** Lightness value (0-1) for contrast decisions */
   lightness: number;
+  /** Safe accent lightness for button backgrounds (L >= MIN_ACCENT_L) */
+  safeL: number;
+}
+
+/** Minimum lightness for 4.5:1 contrast with dark icons (L=0.20) */
+const MIN_ACCENT_L = 0.8;
+
+/**
+ * Calculates a safe lightness value that ensures WCAG AA contrast
+ * with dark icons on button backgrounds.
+ *
+ * @param L - Original lightness value (0-1)
+ * @returns Safe lightness (at least MIN_ACCENT_L)
+ */
+function calculateSafeL(L: number): number {
+  return Math.max(L, MIN_ACCENT_L);
 }
 
 /** In-memory cache for extracted colors */
@@ -225,6 +241,7 @@ async function extractDominantColor(imageUrl: string): Promise<DominantColorResu
       oklch,
       css: `oklch(${(oklch[0] * 100).toFixed(1)}% ${oklch[1].toFixed(3)} ${oklch[2].toFixed(1)})`,
       lightness: oklch[0],
+      safeL: calculateSafeL(oklch[0]),
     };
 
     colorCache.set(imageUrl, result);

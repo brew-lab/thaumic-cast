@@ -3,6 +3,7 @@
   --dominant-l: 0.5;
   --dominant-c: 0;
   --dominant-h: 0;
+  --safe-l: 0.8;
   --card-radius: 6px;
   --card-border-width: 1px;
 
@@ -26,8 +27,8 @@
   inset-inline: var(--card-border-width);
   border-radius: calc(var(--card-radius) - var(--card-border-width));
 
-  /* Backdrop darkness: lighter images need darker overlay */
-  --backdrop-opacity: calc(0.5 + var(--dominant-l) * 0.4);
+  /* Backdrop darkness: ensure text contrast, lighter images need darker overlay */
+  --backdrop-opacity: calc(0.55 + var(--dominant-l) * 0.4);
 
   background:
     radial-gradient(
@@ -47,16 +48,16 @@
 
 /* Color scheme derived from dominant color */
 .card.hasArtwork {
-  /* Accent: use the dominant color directly */
-  --accent: oklch(calc(var(--dominant-l) * 100%) var(--dominant-c) var(--dominant-h));
+  /* Safe accent for button backgrounds (lightened if needed for contrast) */
+  --accent: oklch(calc(var(--safe-l) * 100%) var(--dominant-c) var(--dominant-h));
 
-  /* Contrast color for text on accent background - dark if accent is light, light if accent is dark */
-  --accent-contrast: oklch(calc((1 - var(--dominant-l)) * 100%) 0 0);
+  /* Fixed dark icon color for buttons (WCAG AA contrast with --accent) */
+  --accent-contrast: oklch(20% 0 0);
 
-  /* Use dominant color as base background (smoother transition before artwork loads) */
-  background: var(--accent);
+  /* Use original dominant color for card background (smoother visual transition) */
+  background: oklch(calc(var(--dominant-l) * 100%) var(--dominant-c) var(--dominant-h));
 
-  /* Text: white for contrast against dark backdrop */
+  /* Text: light for contrast against dark backdrop overlay */
   --color-text: oklch(95% 0 0);
   --color-text-muted: oklch(80% 0 0);
 
@@ -76,7 +77,7 @@
 
 .card.hasArtwork :global(.iconBtn:not(:disabled):hover) {
   color: var(--accent-contrast);
-  background: oklch(from var(--accent) calc(l * 1.15) c h);
+  background: oklch(calc((var(--safe-l) + 0.08) * 100%) var(--dominant-c) var(--dominant-h));
 }
 
 /* Volume control container uses muted accent background */
@@ -150,6 +151,11 @@
   outline: 2px solid var(--color-focus);
   outline-offset: 2px;
   border-radius: 2px;
+}
+
+/* Title hover stays white on artwork cards - rely on underline for feedback */
+.card.hasArtwork .title:hover {
+  color: var(--color-text);
 }
 
 .subtitle {

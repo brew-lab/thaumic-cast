@@ -74,6 +74,7 @@ export function ActiveCastCard({
     cardStyle['--dominant-l'] = l.toFixed(3);
     cardStyle['--dominant-c'] = c.toFixed(3);
     cardStyle['--dominant-h'] = h.toFixed(1);
+    cardStyle['--safe-l'] = dominantColor.safeL.toFixed(3);
   }
 
   return (
