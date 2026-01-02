@@ -96,6 +96,10 @@
   cursor: not-allowed;
 }
 
+.volumeWrapper {
+  /* Container for visibility toggle to prevent layout shift */
+}
+
 .spinner {
   animation: spin 1s linear infinite;
 }

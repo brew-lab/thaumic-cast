@@ -118,8 +118,11 @@ export function CurrentTabCard({
           </select>
         </div>
 
-        {/* Volume Controls */}
-        {showVolumeControls && selectedIp && (
+        {/* Volume Controls - always rendered to prevent layout shift */}
+        <div
+          className={styles.volumeWrapper}
+          style={{ visibility: showVolumeControls && selectedIp ? 'visible' : 'hidden' }}
+        >
           <VolumeControl
             volume={volume}
             muted={muted}
@@ -128,7 +131,7 @@ export function CurrentTabCard({
             muteLabel={t('mute')}
             unmuteLabel={t('unmute')}
           />
-        )}
+        </div>
 
         {/* Cast Button */}
         <Button onClick={onStartCast} disabled={disabled || groups.length === 0}>
