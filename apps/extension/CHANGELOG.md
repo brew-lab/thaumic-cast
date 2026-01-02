@@ -1,5 +1,16 @@
 # @thaumic-cast/extension
 
+## 0.3.1
+
+### Patch Changes
+
+- [#9](https://github.com/brew-lab/thaumic-cast/pull/9) [`9751058`](https://github.com/brew-lab/thaumic-cast/commit/9751058c2b06c0e40d48e3b0aecd5cfe410be3e5) Thanks [@skezo](https://github.com/skezo)! - Fix automated release workflow
+  - Change changesets config from `linked` to `fixed` to ensure both packages always version together
+  - Add version mismatch detection in release-pr workflow
+  - Fix missing Linux build dependencies in release workflow
+  - Add `tauriScript` config for bun in tauri-action
+  - Use `workflow_call` to trigger release builds automatically (no PAT required)
+
 ## 0.3.0
 
 ### Minor Changes
