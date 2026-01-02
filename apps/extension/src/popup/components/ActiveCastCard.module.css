@@ -13,9 +13,9 @@
   gap: 0.5rem;
   padding-block: 0.5rem;
   padding-inline: 0.5rem;
-  background: var(--color-bg);
+  background: var(--card-bg);
   border-radius: var(--card-radius);
-  border: var(--card-border-width) solid var(--color-border);
+  border: var(--card-border-width) solid var(--card-border);
   overflow: hidden;
 }
 
@@ -92,6 +92,11 @@
     var(--accent) var(--volume),
     oklch(from var(--accent) l c h / 40%) var(--volume)
   );
+}
+
+/* Slider thumb uses accent color */
+.card.hasArtwork :global(.volumeControlSlider::-webkit-slider-thumb) {
+  background: var(--accent);
 }
 
 /* Focus outlines for accessibility */

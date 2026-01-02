@@ -1,12 +1,12 @@
 .deviceCard {
-  background-color: var(--color-surface);
+  background-color: var(--card-bg);
   border-radius: var(--radius-md);
   padding-block: var(--space-md);
   padding-inline: var(--space-md);
   display: flex;
   flex-direction: column;
   gap: var(--space-sm);
-  border: 1px solid var(--color-border);
+  border: 1px solid var(--card-border);
 }
 
 .header {
@@ -56,11 +56,11 @@
 }
 
 .statusPlaying {
-  background-color: oklch(45% 0.15 145 / 20%);
-  color: oklch(70% 0.15 145);
+  background-color: var(--device-status-playing-bg);
+  color: var(--device-status-playing-text);
 }
 
 .statusCasting {
-  background-color: oklch(50% 0.15 260 / 20%);
-  color: oklch(75% 0.15 260);
+  background-color: var(--device-status-casting-bg);
+  color: var(--device-status-casting-text);
 }

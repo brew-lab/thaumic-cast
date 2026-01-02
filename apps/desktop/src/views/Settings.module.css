@@ -85,14 +85,14 @@
   padding-block: var(--space-sm);
   padding-inline: var(--space-md);
   border-radius: var(--radius-sm);
-  border: 1px solid var(--color-border);
-  background-color: var(--color-bg);
-  color: var(--color-text);
+  border: 1px solid var(--input-border);
+  background-color: var(--input-bg);
+  color: var(--input-text);
   font-size: 1rem;
   cursor: pointer;
 }
 
 .select:focus {
-  outline: 2px solid var(--color-primary);
+  outline: 2px solid var(--input-border-focus);
   outline-offset: 2px;
 }

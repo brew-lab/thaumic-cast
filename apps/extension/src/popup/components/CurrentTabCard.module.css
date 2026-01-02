@@ -1,9 +1,9 @@
 .card {
   padding-block: 0.75rem;
   padding-inline: 0.75rem;
-  background: var(--color-surface);
+  background: var(--card-bg);
   border-radius: 8px;
-  border: 1px solid var(--color-border);
+  border: 1px solid var(--card-border);
   margin-block-end: 1rem;
 }
 
@@ -20,7 +20,7 @@
   height: 48px;
   border-radius: 6px;
   overflow: hidden;
-  background: var(--color-border);
+  background: var(--color-surface-inset);
 }
 
 .image {
@@ -86,13 +86,13 @@
   padding-block: 0.5rem;
   padding-inline: 0.5rem;
   border-radius: 4px;
-  background: var(--color-bg);
-  color: var(--color-text);
-  border: 1px solid var(--color-border);
+  background: var(--input-bg);
+  color: var(--input-text);
+  border: 1px solid var(--input-border);
 }
 
 .select:disabled {
-  opacity: 0.6;
+  opacity: var(--input-disabled-opacity);
   cursor: not-allowed;
 }
 
