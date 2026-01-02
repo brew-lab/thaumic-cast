@@ -9,6 +9,8 @@ interface IconButtonProps extends Omit<h.JSX.HTMLAttributes<HTMLButtonElement>, 
   variant?: IconButtonVariant;
   /** Button size */
   size?: IconButtonSize;
+  /** Whether the button is disabled */
+  disabled?: boolean;
   /** Icon element to render */
   children: JSX.Element;
 }
@@ -18,6 +20,7 @@ interface IconButtonProps extends Omit<h.JSX.HTMLAttributes<HTMLButtonElement>, 
  * @param props - Component props
  * @param props.variant - Visual variant ('ghost', 'outline', 'danger')
  * @param props.size - Button size ('sm', 'md', 'lg')
+ * @param props.disabled - Whether the button is disabled
  * @param props.children - Icon element to render
  * @param props.className - Additional CSS class
  * @returns The rendered IconButton component

@@ -1,5 +1,13 @@
 import { createLogger } from '@thaumic-cast/shared';
-import { SonosStateSnapshot, parseMediaMetadata, PowerState } from '@thaumic-cast/protocol';
+import {
+  SonosStateSnapshot,
+  parseMediaMetadata,
+  PowerState,
+  MediaAction,
+  MediaActionSchema,
+  PlaybackState,
+  PlaybackStateSchema,
+} from '@thaumic-cast/protocol';
 import { discoverDesktopApp } from '../lib/discovery';
 import {
   ExtensionMessage,
@@ -17,6 +25,7 @@ import {
   ActiveCastsResponse,
   StartPlaybackResponse,
   SessionHealthMessage,
+  ControlMediaMessage,
 } from '../lib/messages';
 import {
   getCachedState,
@@ -381,6 +390,13 @@ chrome.runtime.onMessage.addListener((msg: ExtensionMessage, _sender, sendRespon
           break;
         }
 
+        case 'CONTROL_MEDIA': {
+          const { tabId, action } = (msg as ControlMediaMessage).payload;
+          await chrome.tabs.sendMessage(tabId, { type: 'CONTROL_MEDIA', action });
+          sendResponse({ success: true });
+          break;
+        }
+
         // ─────────────────────────────────────────────────────────────────
         // WebSocket Status Messages (from offscreen)
         // ─────────────────────────────────────────────────────────────────
@@ -484,6 +500,34 @@ chrome.runtime.onMessage.addListener((msg: ExtensionMessage, _sender, sendRespon
 });
 
 /**
+ * Extracts and validates supported actions from raw payload.
+ * @param payload - Raw metadata payload from content script
+ * @returns Array of validated media actions
+ */
+function extractSupportedActions(payload: unknown): MediaAction[] {
+  if (!payload || typeof payload !== 'object') return [];
+  const raw = (payload as { supportedActions?: unknown }).supportedActions;
+  if (!Array.isArray(raw)) return [];
+
+  return raw.filter((action): action is MediaAction => {
+    const result = MediaActionSchema.safeParse(action);
+    return result.success;
+  });
+}
+
+/**
+ * Extracts and validates playback state from raw payload.
+ * @param payload - Raw metadata payload from content script
+ * @returns Validated playback state or 'none' if invalid
+ */
+function extractPlaybackState(payload: unknown): PlaybackState {
+  if (!payload || typeof payload !== 'object') return 'none';
+  const raw = (payload as { playbackState?: unknown }).playbackState;
+  const result = PlaybackStateSchema.safeParse(raw);
+  return result.success ? result.data : 'none';
+}
+
+/**
  * Handles metadata updates from content scripts.
  * Updates the cache and forwards to offscreen if casting.
  *
@@ -500,6 +544,10 @@ async function handleTabMetadataUpdate(
   // Parse and validate the metadata
   const metadata = parseMediaMetadata(msg.payload);
 
+  // Extract supported actions and playback state from payload
+  const supportedActions = extractSupportedActions(msg.payload);
+  const playbackState = extractPlaybackState(msg.payload);
+
   // Preserve existing ogImage if present
   const existing = getCachedState(tabId);
   const tabInfo = {
@@ -508,8 +556,8 @@ async function handleTabMetadataUpdate(
     ogImage: existing?.tabOgImage,
   };
 
-  // Update the cache
-  const state = updateCache(tabId, tabInfo, metadata);
+  // Update the cache with metadata, supported actions, and playback state
+  const state = updateCache(tabId, tabInfo, metadata, supportedActions, playbackState);
 
   // Notify popup of state change so CurrentTabCard updates
   notifyPopup({ type: 'TAB_STATE_CHANGED', tabId, state });
@@ -590,6 +638,8 @@ async function handleGetCurrentTabState(): Promise<CurrentTabStateResponse> {
     tabTitle: tab.title || 'Unknown Tab',
     tabFavicon: tab.favIconUrl,
     metadata: null,
+    supportedActions: [],
+    playbackState: 'none' as const,
     updatedAt: Date.now(),
   };
 

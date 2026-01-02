@@ -210,6 +210,8 @@ function toActiveCast(session: ActiveCastSession): ActiveCast {
     tabFavicon: undefined,
     tabOgImage: undefined,
     metadata: null,
+    supportedActions: [],
+    playbackState: 'none',
     updatedAt: Date.now(),
   };
 

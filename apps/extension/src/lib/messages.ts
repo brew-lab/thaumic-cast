@@ -7,6 +7,7 @@ import {
   ActiveCast,
   TransportState,
   PowerState,
+  MediaAction,
 } from '@thaumic-cast/protocol';
 
 /**
@@ -56,7 +57,9 @@ export type ExtensionMessageType =
   // Offscreen lifecycle
   | 'OFFSCREEN_READY'
   // Session health (offscreen → background)
-  | 'SESSION_HEALTH';
+  | 'SESSION_HEALTH'
+  // Media playback control (popup → background → content)
+  | 'CONTROL_MEDIA';
 
 /**
  * Message payload for starting a cast.
@@ -475,6 +478,18 @@ export interface SetMuteMessage {
   muted: boolean;
 }
 
+/**
+ * Control media playback on a specific tab.
+ * Sent from popup to background, which forwards to content script.
+ */
+export interface ControlMediaMessage {
+  type: 'CONTROL_MEDIA';
+  payload: {
+    tabId: number;
+    action: MediaAction;
+  };
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Updated Union Type
 // ─────────────────────────────────────────────────────────────────────────────
@@ -521,5 +536,7 @@ export type ExtensionMessage =
   | WsConnectionLostMessage
   | SetVolumeMessage
   | SetMuteMessage
+  // Media playback control
+  | ControlMediaMessage
   // Session health
   | SessionHealthMessage;

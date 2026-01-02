@@ -1,7 +1,7 @@
 import type { JSX } from 'preact';
 import { useState, useEffect, useCallback } from 'preact/hooks';
 import { useTranslation } from 'react-i18next';
-import { getSpeakerStatus } from '@thaumic-cast/protocol';
+import { getSpeakerStatus, MediaAction } from '@thaumic-cast/protocol';
 import { Settings, X } from 'lucide-preact';
 import { IconButton } from '@thaumic-cast/ui';
 import styles from './App.module.css';
@@ -126,6 +126,18 @@ export function App(): JSX.Element {
   );
 
   /**
+   * Handles playback control for a tab.
+   * @param tabId - The tab ID to control
+   * @param action - The media action to perform
+   */
+  const handleControl = useCallback((tabId: number, action: MediaAction) => {
+    chrome.runtime.sendMessage({
+      type: 'CONTROL_MEDIA',
+      payload: { tabId, action },
+    });
+  }, []);
+
+  /**
    * Resolves the CSS class for the status indicator based on current app state.
    * @returns The appropriate CSS class name
    */
@@ -182,6 +194,7 @@ export function App(): JSX.Element {
         onVolumeChange={handleVolumeChange}
         onMuteToggle={handleMuteToggle}
         onStopCast={stopCast}
+        onControl={handleControl}
         showDivider={!!currentTabState && !isCasting}
       />
 

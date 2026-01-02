@@ -837,6 +837,20 @@ export type BroadcastEvent = SonosBroadcastEvent | StreamBroadcastEvent;
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
+ * Supported media control actions from the MediaSession API.
+ * These map directly to MediaSessionAction values.
+ */
+export const MediaActionSchema = z.enum(['play', 'pause', 'nexttrack', 'previoustrack']);
+export type MediaAction = z.infer<typeof MediaActionSchema>;
+
+/**
+ * Playback state from MediaSession API.
+ * Maps directly to MediaSessionPlaybackState values.
+ */
+export const PlaybackStateSchema = z.enum(['none', 'paused', 'playing']);
+export type PlaybackState = z.infer<typeof PlaybackStateSchema>;
+
+/**
  * Media metadata captured from the Web MediaSession API.
  * This is the canonical shape used for displaying track info.
  * Title is required; other fields are optional.
@@ -879,6 +893,10 @@ export const TabMediaStateSchema = z.object({
   tabOgImage: z.string().optional(),
   /** Media metadata if available */
   metadata: MediaMetadataSchema.nullable(),
+  /** Supported media actions (play, pause, next, previous) */
+  supportedActions: z.array(MediaActionSchema).default([]),
+  /** Current playback state from MediaSession */
+  playbackState: PlaybackStateSchema.default('none'),
   /** Timestamp when this state was last updated */
   updatedAt: z.number(),
 });
@@ -892,11 +910,15 @@ export type TabMediaState = z.infer<typeof TabMediaStateSchema>;
  * @param tab.favIconUrl
  * @param tab.ogImage - Open Graph image URL
  * @param metadata - Optional media metadata
+ * @param supportedActions - Optional array of supported media actions
+ * @param playbackState - Optional playback state from MediaSession
  * @returns A new TabMediaState object
  */
 export function createTabMediaState(
   tab: { id: number; title?: string; favIconUrl?: string; ogImage?: string },
   metadata: MediaMetadata | null = null,
+  supportedActions: MediaAction[] = [],
+  playbackState: PlaybackState = 'none',
 ): TabMediaState {
   return {
     tabId: tab.id,
@@ -904,6 +926,8 @@ export function createTabMediaState(
     tabFavicon: tab.favIconUrl,
     tabOgImage: tab.ogImage,
     metadata,
+    supportedActions,
+    playbackState,
     updatedAt: Date.now(),
   };
 }

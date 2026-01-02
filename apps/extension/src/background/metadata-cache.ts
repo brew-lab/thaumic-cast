@@ -13,7 +13,12 @@
  * - Session management (session-manager.ts handles this)
  */
 
-import type { TabMediaState, MediaMetadata } from '@thaumic-cast/protocol';
+import type {
+  TabMediaState,
+  MediaMetadata,
+  MediaAction,
+  PlaybackState,
+} from '@thaumic-cast/protocol';
 import { createTabMediaState } from '@thaumic-cast/protocol';
 import { createLogger } from '@thaumic-cast/shared';
 
@@ -65,16 +70,22 @@ export function hasCachedState(tabId: number): boolean {
  * @param tabInfo.favIconUrl
  * @param tabInfo.ogImage
  * @param metadata - Media metadata or null
+ * @param supportedActions - Supported media control actions
+ * @param playbackState - Current playback state from MediaSession
  * @returns The new TabMediaState
  */
 export function updateCache(
   tabId: number,
   tabInfo: { title?: string; favIconUrl?: string; ogImage?: string },
   metadata: MediaMetadata | null,
+  supportedActions: MediaAction[] = [],
+  playbackState: PlaybackState = 'none',
 ): TabMediaState {
   const state = createTabMediaState(
     { id: tabId, title: tabInfo.title, favIconUrl: tabInfo.favIconUrl, ogImage: tabInfo.ogImage },
     metadata,
+    supportedActions,
+    playbackState,
   );
   cache.set(tabId, state);
   schedulePersist();

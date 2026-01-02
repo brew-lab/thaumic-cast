@@ -1,14 +1,16 @@
 /**
  * Media Reader (MAIN world)
  *
- * Content script that reads MediaSession metadata from the page.
+ * Content script that reads MediaSession metadata and action handlers from the page.
  * Runs in MAIN world to access navigator.mediaSession directly.
  *
  * Responsibilities:
  * - Intercept MediaSession.metadata changes
+ * - Intercept MediaSession.setActionHandler to track supported actions
  * - Extract and normalize metadata
  * - Select best artwork (largest available)
  * - Emit structured events to bridge
+ * - Invoke action handlers on control commands
  *
  * Non-responsibilities:
  * - Message passing (bridge handles this)
@@ -23,15 +25,30 @@
   /** Event name for metadata requests (bridge -> reader) */
   const REQUEST_EVENT = '__thaumic_request_metadata__';
 
+  /** Event name for control commands (bridge -> reader) */
+  const CONTROL_EVENT = '__thaumic_control__';
+
   /** Debounce interval in milliseconds */
   const DEBOUNCE_MS = 150;
 
-  interface RawMetadata {
+  /** Actions we track for playback controls */
+  const TRACKED_ACTIONS = ['play', 'pause', 'nexttrack', 'previoustrack'] as const;
+  type TrackedAction = (typeof TRACKED_ACTIONS)[number];
+
+  interface RawMediaState {
     title?: string;
     artist?: string;
     album?: string;
     artwork?: string;
+    supportedActions: TrackedAction[];
+    playbackState: MediaSessionPlaybackState;
   }
+
+  /** Registered action handlers from the page */
+  const actionHandlers = new Map<string, MediaSessionActionHandler>();
+
+  /** Set of currently supported actions */
+  const supportedActions = new Set<TrackedAction>();
 
   /**
    * Selects the largest artwork URL from the MediaImage array.
@@ -51,46 +68,61 @@
   }
 
   /**
-   * Extracts normalized metadata from MediaSession.
-   * @returns Normalized metadata or null if unavailable
+   * Extracts normalized media state from MediaSession.
+   * @returns Normalized media state including metadata and supported actions
    */
-  function extractMetadata(): RawMetadata | null {
+  function extractMediaState(): RawMediaState {
     const session = navigator.mediaSession;
-    if (!session?.metadata?.title) return null;
-
-    const { title, artist, album, artwork } = session.metadata;
+    const metadata = session?.metadata;
 
     return {
-      title,
-      artist: artist || undefined,
-      album: album || undefined,
-      artwork: selectBestArtwork(artwork),
+      title: metadata?.title || undefined,
+      artist: metadata?.artist || undefined,
+      album: metadata?.album || undefined,
+      artwork: selectBestArtwork(metadata?.artwork),
+      supportedActions: Array.from(supportedActions),
+      playbackState: session?.playbackState ?? 'none',
     };
   }
 
   /**
-   * Emits metadata to the bridge script via custom event.
+   * Emits media state to the bridge script via custom event.
    */
-  function emitMetadata(): void {
-    const metadata = extractMetadata();
-    window.dispatchEvent(new CustomEvent(METADATA_EVENT, { detail: metadata }));
+  function emitMediaState(): void {
+    const state = extractMediaState();
+    // Only emit if we have metadata title OR supported actions
+    const hasContent = state.title || state.supportedActions.length > 0;
+    window.dispatchEvent(
+      new CustomEvent(METADATA_EVENT, {
+        detail: hasContent ? state : null,
+      }),
+    );
   }
 
   // Debounce timer for rapid updates
   let debounceTimer: ReturnType<typeof setTimeout> | null = null;
 
   /**
-   * Schedules a debounced metadata emit.
+   * Schedules a debounced media state emit.
    */
   function scheduleEmit(): void {
     if (debounceTimer) clearTimeout(debounceTimer);
-    debounceTimer = setTimeout(emitMetadata, DEBOUNCE_MS);
+    debounceTimer = setTimeout(emitMediaState, DEBOUNCE_MS);
+  }
+
+  /**
+   * Checks if an action is one we track for playback controls.
+   * @param action - The action to check
+   * @returns True if this is a tracked action
+   */
+  function isTrackedAction(action: string): action is TrackedAction {
+    return TRACKED_ACTIONS.includes(action as TrackedAction);
   }
 
   /**
    * Intercepts MediaSession.metadata setter to capture changes.
    */
-  function interceptMediaSession(): void {
+  function interceptMetadata(): void {
     const session = navigator.mediaSession;
     if (!session) return;
 
@@ -107,14 +139,86 @@
     });
   }
 
-  // Initialize MediaSession interception
-  interceptMediaSession();
+  /**
+   * Intercepts MediaSession.playbackState setter to capture changes.
+   */
+  function interceptPlaybackState(): void {
+    const session = navigator.mediaSession;
+    if (!session) return;
+
+    let currentPlaybackState = session.playbackState;
+
+    Object.defineProperty(session, 'playbackState', {
+      get: () => currentPlaybackState,
+      set: (value: MediaSessionPlaybackState) => {
+        currentPlaybackState = value;
+        scheduleEmit();
+      },
+      configurable: true,
+      enumerable: true,
+    });
+  }
+
+  /**
+   * Intercepts MediaSession.setActionHandler to track supported actions.
+   */
+  function interceptActionHandler(): void {
+    const session = navigator.mediaSession;
+    if (!session) return;
+
+    const originalSetActionHandler = session.setActionHandler.bind(session);
+
+    session.setActionHandler = (
+      action: MediaSessionAction,
+      handler: MediaSessionActionHandler | null,
+    ) => {
+      // Track handlers for actions we care about
+      if (isTrackedAction(action)) {
+        if (handler) {
+          actionHandlers.set(action, handler);
+          supportedActions.add(action);
+        } else {
+          actionHandlers.delete(action);
+          supportedActions.delete(action);
+        }
+        scheduleEmit();
+      }
+
+      // Always call original to maintain normal behavior
+      return originalSetActionHandler(action, handler);
+    };
+  }
+
+  /**
+   * Handles control commands from the bridge.
+   * @param event - Custom event with action details
+   */
+  function handleControlCommand(event: Event): void {
+    const { action } = (event as CustomEvent<{ action: string }>).detail;
+    const handler = actionHandlers.get(action);
+
+    if (handler) {
+      try {
+        handler({ action: action as MediaSessionAction });
+      } catch (error) {
+        console.error('[Thaumic] Failed to invoke action handler:', action, error);
+      }
+    }
+  }
+
+  // Initialize interceptions
+  interceptMetadata();
+  interceptPlaybackState();
+  interceptActionHandler();
 
   // Handle explicit requests from bridge (for on-demand refresh)
-  window.addEventListener(REQUEST_EVENT, emitMetadata);
+  window.addEventListener(REQUEST_EVENT, emitMediaState);
+
+  // Handle control commands from bridge
+  window.addEventListener(CONTROL_EVENT, handleControlCommand);
 
   // Emit initial state if metadata already set
   if (navigator.mediaSession?.metadata) {
-    emitMetadata();
+    emitMediaState();
   }
 })();

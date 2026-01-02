@@ -26,6 +26,10 @@
   "volume": "Volume",
   "mute": "Mute",
   "unmute": "Unmute",
+  "play": "Play",
+  "pause": "Pause",
+  "previous_track": "Previous track",
+  "next_track": "Next track",
 
   "settings": "Settings",
   "settings_title": "Settings",

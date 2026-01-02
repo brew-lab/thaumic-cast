@@ -181,3 +181,28 @@
   margin: 0;
   margin-block-start: 0.125rem;
 }
+
+/* Playback Controls */
+.playbackControls {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+}
+
+.playbackControls :global(.iconBtn) {
+  padding: 0.5rem;
+}
+
+/* Disabled state - higher specificity for artwork cards */
+.playbackControls :global(.iconBtn:disabled),
+.card.hasArtwork .playbackControls :global(.iconBtn:disabled) {
+  opacity: 0.3;
+  cursor: not-allowed;
+  pointer-events: none;
+}
+
+/* Ensure disabled buttons have muted background in artwork cards */
+.card.hasArtwork .playbackControls :global(.iconBtn:disabled) {
+  background: oklch(from var(--accent) l c h / 40%);
+}
