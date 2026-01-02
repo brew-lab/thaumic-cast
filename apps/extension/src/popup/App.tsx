@@ -1,10 +1,10 @@
-import { useState, useEffect } from 'preact/hooks';
+import type { JSX } from 'preact';
+import { useState, useEffect, useCallback } from 'preact/hooks';
 import { useTranslation } from 'react-i18next';
-import { Button, Card } from '@thaumic-cast/ui';
 import { getSpeakerStatus } from '@thaumic-cast/protocol';
-import { Cast, Loader2, Settings } from 'lucide-preact';
+import { Settings } from 'lucide-preact';
 import styles from './App.module.css';
-import { ExtensionResponse, StartCastMessage, StopCastMessage } from '../lib/messages';
+import { ExtensionResponse, StartCastMessage } from '../lib/messages';
 import type { ZoneGroup } from '@thaumic-cast/protocol';
 import { CurrentTabCard } from './components/CurrentTabCard';
 import { ActiveCastsList } from './components/ActiveCastsList';
@@ -18,12 +18,11 @@ import { useConnectionStatus } from './hooks/useConnectionStatus';
  * Main Extension Popup UI.
  * @returns The rendered popup application
  */
-export function App() {
+export function App(): JSX.Element {
   const { t } = useTranslation();
   const [selectedIp, setSelectedIp] = useState<string>('');
   const [error, setError] = useState<string | null>(null);
   const [isStarting, setIsStarting] = useState(false);
-  const [isStopping, setIsStopping] = useState(false);
 
   // Connection status with instant cached display
   const {
@@ -81,15 +80,15 @@ export function App() {
   /**
    * Opens the extension settings page.
    */
-  const openSettings = () => {
+  const openSettings = useCallback(() => {
     chrome.runtime.openOptionsPage();
-  };
+  }, []);
 
   /**
    * Triggers the start of a cast session for the current tab.
    * Uses global audio settings from extension settings (auto-selected by background).
    */
-  const handleStart = async () => {
+  const handleStart = useCallback(async () => {
     if (!selectedIp || isStarting) return;
     setError(null);
     setIsStarting(true);
@@ -111,56 +110,44 @@ export function App() {
     } finally {
       setIsStarting(false);
     }
-  };
+  }, [selectedIp, isStarting]);
 
   /**
-   * Stops the active cast session for the current tab.
-   */
-  const handleStop = async () => {
-    if (isStopping) return;
-    setIsStopping(true);
-    try {
-      const msg: StopCastMessage = { type: 'STOP_CAST' };
-      await chrome.runtime.sendMessage(msg);
-      // isCasting is derived from activeCasts - will auto-update via ACTIVE_CASTS_CHANGED
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      setError(message);
-    } finally {
-      setIsStopping(false);
-    }
-  };
-
-  /**
-   * Handles mute toggle.
+   * Handles mute toggle for a speaker.
    * @param speakerIp - The speaker IP to toggle mute for
    */
-  const handleMuteToggle = async (speakerIp: string) => {
-    const currentMuted = isMuted(speakerIp);
-    await setMuted(speakerIp, !currentMuted);
-  };
+  const handleMuteToggle = useCallback(
+    async (speakerIp: string) => {
+      const currentMuted = isMuted(speakerIp);
+      await setMuted(speakerIp, !currentMuted);
+    },
+    [isMuted, setMuted],
+  );
 
   /**
    * Resolves the CSS class for the status indicator based on current app state.
    * @returns The appropriate CSS class name
    */
-  const getStatusClass = () => {
+  const getStatusClass = useCallback(() => {
     if (connectionChecking) return styles.statusChecking;
     if (connectionError || !wsConnected) return styles.statusDisconnected;
     return styles.statusConnected;
-  };
+  }, [connectionChecking, connectionError, wsConnected]);
 
   /**
    * Gets display name for a group with transport status.
    * @param group - The zone group
    * @returns Display name with optional status
    */
-  const getGroupDisplayName = (group: ZoneGroup) => {
-    const memberCount = group.members?.length ?? 0;
-    const baseName = `${group.name}${memberCount > 1 ? ` (+${memberCount - 1})` : ''}`;
-    const status = getSpeakerStatus(group.coordinatorIp, sonosState);
-    return status ? `${baseName} • ${status}` : baseName;
-  };
+  const getGroupDisplayName = useCallback(
+    (group: ZoneGroup) => {
+      const memberCount = group.members?.length ?? 0;
+      const baseName = `${group.name}${memberCount > 1 ? ` (+${memberCount - 1})` : ''}`;
+      const status = getSpeakerStatus(group.coordinatorIp, sonosState);
+      return status ? `${baseName} • ${status}` : baseName;
+    },
+    [sonosState],
+  );
 
   return (
     <div className={styles.container}>
@@ -179,131 +166,37 @@ export function App() {
 
       {error && <div className={styles.error}>{error}</div>}
 
-      {/* Current Tab Media Info */}
-      {currentTabState && <CurrentTabCard state={currentTabState} />}
-
-      {!isCasting ? (
-        <Card title={t('cast_settings')}>
-          <div className={styles.field}>
-            <label className={styles.label}>{t('target_speaker')}</label>
-            <select
-              value={selectedIp}
-              onChange={(e) => setSelectedIp((e.target as HTMLSelectElement).value)}
-              className={styles.select}
-            >
-              {sonosLoading || connectionChecking ? <option>{t('loading_speakers')}</option> : null}
-              {groups.map((g) => (
-                <option key={g.id} value={g.coordinatorIp}>
-                  {getGroupDisplayName(g)}
-                </option>
-              ))}
-              {!sonosLoading && !connectionChecking && groups.length === 0 && (
-                <option value="">{t('no_speakers_found')}</option>
-              )}
-            </select>
-          </div>
-
-          <Button
-            onClick={handleStart}
-            disabled={
-              isStarting || connectionChecking || sonosLoading || groups.length === 0 || !baseUrl
-            }
-            className={styles.castButton}
-          >
-            {isStarting ? (
-              <>
-                <Loader2 size={16} className={styles.spinner} />
-                {t('starting')}
-              </>
-            ) : (
-              <>
-                <Cast size={16} />
-                {t('start_casting')}
-              </>
-            )}
-          </Button>
-
-          {/* Volume Controls (available before casting when connected) */}
-          {wsConnected && selectedIp && (
-            <div className={styles.volumeControl}>
-              <div className={styles.volumeHeader}>
-                <label className={styles.label}>{t('volume')}</label>
-                <button
-                  type="button"
-                  className={`${styles.muteButton} ${isMuted(selectedIp) ? styles.muted : ''}`}
-                  onClick={() => handleMuteToggle(selectedIp)}
-                  title={isMuted(selectedIp) ? t('unmute') : t('mute')}
-                >
-                  {isMuted(selectedIp) ? '🔇' : '🔊'}
-                </button>
-              </div>
-              <input
-                type="range"
-                min="0"
-                max="100"
-                value={getVolume(selectedIp)}
-                onChange={(e) =>
-                  handleVolumeChange(selectedIp, parseInt((e.target as HTMLInputElement).value, 10))
-                }
-                className={styles.volumeSlider}
-                disabled={isMuted(selectedIp)}
-              />
-              <span className={styles.volumeValue}>{getVolume(selectedIp)}%</span>
-            </div>
-          )}
-        </Card>
-      ) : (
-        <Card title={t('casting_active')}>
-          <p className={styles.statusMsg}>{t('streaming_msg')}</p>
-
-          {/* Volume Controls */}
-          {selectedIp && (
-            <div className={styles.volumeControl}>
-              <div className={styles.volumeHeader}>
-                <label className={styles.label}>{t('volume')}</label>
-                <button
-                  type="button"
-                  className={`${styles.muteButton} ${isMuted(selectedIp) ? styles.muted : ''}`}
-                  onClick={() => handleMuteToggle(selectedIp)}
-                  title={isMuted(selectedIp) ? t('unmute') : t('mute')}
-                >
-                  {isMuted(selectedIp) ? '🔇' : '🔊'}
-                </button>
-              </div>
-              <input
-                type="range"
-                min="0"
-                max="100"
-                value={getVolume(selectedIp)}
-                onChange={(e) =>
-                  handleVolumeChange(selectedIp, parseInt((e.target as HTMLInputElement).value, 10))
-                }
-                className={styles.volumeSlider}
-                disabled={isMuted(selectedIp)}
-              />
-              <span className={styles.volumeValue}>{getVolume(selectedIp)}%</span>
-            </div>
-          )}
-
-          <Button variant="danger" onClick={handleStop} disabled={isStopping}>
-            {isStopping ? (
-              <>
-                <Loader2 size={16} className={styles.spinner} />
-                {t('stopping')}
-              </>
-            ) : (
-              t('stop_casting')
-            )}
-          </Button>
-        </Card>
-      )}
-
-      {/* Active Casts List */}
+      {/* Active Casts List with Volume Controls */}
       <ActiveCastsList
         casts={activeCasts}
         getTransportState={getTransportState}
+        getVolume={getVolume}
+        isMuted={isMuted}
+        onVolumeChange={handleVolumeChange}
+        onMuteToggle={handleMuteToggle}
         onStopCast={stopCast}
       />
+
+      {/* Current Tab Media Info with Cast Controls */}
+      {currentTabState && (
+        <CurrentTabCard
+          state={currentTabState}
+          isCasting={isCasting}
+          groups={groups}
+          selectedIp={selectedIp}
+          onSelectSpeaker={setSelectedIp}
+          onStartCast={handleStart}
+          isStarting={isStarting}
+          disabled={connectionChecking || sonosLoading || !baseUrl}
+          speakersLoading={sonosLoading || connectionChecking}
+          volume={getVolume(selectedIp)}
+          muted={isMuted(selectedIp)}
+          onVolumeChange={(vol) => handleVolumeChange(selectedIp, vol)}
+          onMuteToggle={() => handleMuteToggle(selectedIp)}
+          showVolumeControls={wsConnected && !!selectedIp}
+          getGroupDisplayName={getGroupDisplayName}
+        />
+      )}
 
       <p className={styles.footer}>
         {t('desktop_app_status')}:{' '}
