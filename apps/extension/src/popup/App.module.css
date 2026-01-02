@@ -38,7 +38,7 @@
 
 .error {
   position: sticky;
-  inset-block-start: 0;
+  inset-block-start: 0.5rem;
   z-index: 10;
   display: flex;
   align-items: flex-start;
