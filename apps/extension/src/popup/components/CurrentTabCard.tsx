@@ -74,7 +74,8 @@ export function CurrentTabCard({
 }: CurrentTabCardProps): JSX.Element {
   const { t } = useTranslation();
   const title = getDisplayTitle(state);
-  const image = state.tabFavicon;
+  // Use metadata artwork if available, otherwise favicon (skip og:image)
+  const image = state.metadata?.artwork || state.tabFavicon;
   const subtitle = getDisplaySubtitle(state);
 
   return (
