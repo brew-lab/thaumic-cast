@@ -113,9 +113,11 @@ export function ActiveCastCard({
           min="0"
           max="100"
           value={volume}
-          onChange={(e) => onVolumeChange(parseInt((e.target as HTMLInputElement).value, 10))}
+          onChange={(e) => {
+            if (muted) onMuteToggle();
+            onVolumeChange(parseInt((e.target as HTMLInputElement).value, 10));
+          }}
           className={styles.volumeSlider}
-          disabled={muted}
         />
         <span className={styles.volumeValue}>{volume}</span>
       </div>

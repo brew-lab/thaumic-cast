@@ -152,15 +152,6 @@
   cursor: pointer;
 }
 
-.volumeSlider:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-
-.volumeSlider:disabled::-webkit-slider-thumb {
-  cursor: not-allowed;
-}
-
 .volumeValue {
   display: block;
   text-align: end;

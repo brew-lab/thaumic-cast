@@ -194,15 +194,6 @@
   cursor: pointer;
 }
 
-.volumeSlider:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-
-.volumeSlider:disabled::-webkit-slider-thumb {
-  cursor: not-allowed;
-}
-
 .volumeValue {
   flex-shrink: 0;
   font-size: 0.65rem;
