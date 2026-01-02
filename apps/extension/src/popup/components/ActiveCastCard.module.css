@@ -67,6 +67,23 @@
   overflow: hidden;
   text-overflow: ellipsis;
   margin: 0;
+  padding: 0;
+  background: transparent;
+  border: none;
+  text-align: start;
+  cursor: pointer;
+  transition: color 0.15s;
+}
+
+.title:hover {
+  color: var(--color-primary);
+  text-decoration: underline;
+}
+
+.title:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+  border-radius: 2px;
 }
 
 .subtitle {

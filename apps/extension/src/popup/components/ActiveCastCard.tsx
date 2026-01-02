@@ -1,4 +1,5 @@
 import type { JSX } from 'preact';
+import { useCallback } from 'preact/hooks';
 import { useTranslation } from 'react-i18next';
 import type { ActiveCast, TransportState } from '@thaumic-cast/protocol';
 import { getDisplayTitle, getDisplayImage, getDisplaySubtitle } from '@thaumic-cast/protocol';
@@ -49,6 +50,13 @@ export function ActiveCastCard({
   const image = getDisplayImage(cast.mediaState);
   const subtitle = getDisplaySubtitle(cast.mediaState);
 
+  /**
+   * Navigates to the tab associated with this cast session.
+   */
+  const goToTab = useCallback(() => {
+    chrome.tabs.update(cast.tabId, { active: true });
+  }, [cast.tabId]);
+
   return (
     <div className={styles.card}>
       <div className={styles.header}>
@@ -76,7 +84,9 @@ export function ActiveCastCard({
         </div>
 
         <div className={styles.info}>
-          <p className={styles.title}>{title}</p>
+          <button type="button" className={styles.title} onClick={goToTab} title={t('go_to_tab')}>
+            {title}
+          </button>
           {subtitle && <p className={styles.subtitle}>{subtitle}</p>}
           <p className={styles.speaker}>
             <svg
