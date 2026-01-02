@@ -63,6 +63,7 @@
 }
 
 .title {
+  max-inline-size: 100%;
   font-size: 0.875rem;
   font-weight: 500;
   color: var(--color-text);
