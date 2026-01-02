@@ -31,6 +31,8 @@ export function Options(): JSX.Element {
     <div className={styles.container}>
       <h1 className={styles.title}>{t('settings_title')}</h1>
 
+      <LanguageSection settings={settings} onUpdate={updateSettings} />
+
       <ServerSection settings={settings} onUpdate={updateSettings} />
 
       <AudioSection
@@ -39,8 +41,6 @@ export function Options(): JSX.Element {
         codecSupport={codecSupport}
         codecLoading={codecLoading}
       />
-
-      <LanguageSection settings={settings} onUpdate={updateSettings} />
 
       <AboutSection />
     </div>
