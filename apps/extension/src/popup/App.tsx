@@ -1,16 +1,13 @@
 import { useState, useEffect } from 'preact/hooks';
 import { useTranslation } from 'react-i18next';
 import { Button, Card } from '@thaumic-cast/ui';
-import { createEncoderConfig, getSpeakerStatus } from '@thaumic-cast/protocol';
-import { Cast, Loader2 } from 'lucide-preact';
+import { getSpeakerStatus } from '@thaumic-cast/protocol';
+import { Cast, Loader2, Settings } from 'lucide-preact';
 import styles from './App.module.css';
 import { ExtensionResponse, StartCastMessage, StopCastMessage } from '../lib/messages';
 import type { ZoneGroup } from '@thaumic-cast/protocol';
-import { CodecSelector } from './components/CodecSelector';
-import { BitrateSelector } from './components/BitrateSelector';
 import { CurrentTabCard } from './components/CurrentTabCard';
 import { ActiveCastsList } from './components/ActiveCastsList';
-import { useAudioSettings } from './hooks/useAudioSettings';
 import { useCurrentTabState } from './hooks/useCurrentTabState';
 import { useActiveCasts } from './hooks/useActiveCasts';
 import { useSonosState } from './hooks/useSonosState';
@@ -27,17 +24,6 @@ export function App() {
   const [error, setError] = useState<string | null>(null);
   const [isStarting, setIsStarting] = useState(false);
   const [isStopping, setIsStopping] = useState(false);
-  const {
-    auto: autoConfig,
-    codec,
-    bitrate,
-    setAuto,
-    setCodec,
-    setBitrate,
-    loading: settingsLoading,
-    availableCodecs,
-    availableBitrates,
-  } = useAudioSettings();
 
   // Connection status with instant cached display
   const {
@@ -93,17 +79,25 @@ export function App() {
   }, [groups, selectedIp]);
 
   /**
+   * Opens the extension settings page.
+   */
+  const openSettings = () => {
+    chrome.runtime.openOptionsPage();
+  };
+
+  /**
    * Triggers the start of a cast session for the current tab.
+   * Uses global audio settings from extension settings (auto-selected by background).
    */
   const handleStart = async () => {
     if (!selectedIp || isStarting) return;
     setError(null);
     setIsStarting(true);
     try {
-      const encoderConfig = autoConfig ? undefined : createEncoderConfig({ codec, bitrate });
+      // Don't pass encoderConfig - background will use extension settings
       const msg: StartCastMessage = {
         type: 'START_CAST',
-        payload: { speakerIp: selectedIp, encoderConfig },
+        payload: { speakerIp: selectedIp },
       };
       const response: ExtensionResponse = await chrome.runtime.sendMessage(msg);
 
@@ -164,20 +158,24 @@ export function App() {
   const getGroupDisplayName = (group: ZoneGroup) => {
     const memberCount = group.members?.length ?? 0;
     const baseName = `${group.name}${memberCount > 1 ? ` (+${memberCount - 1})` : ''}`;
-    // DEBUG: Log transport state lookup
-    console.log('[DEBUG] getGroupDisplayName:', {
-      groupName: group.name,
-      coordinatorIp: group.coordinatorIp,
-      transportStates: sonosState.transportStates,
-      lookupResult: sonosState.transportStates[group.coordinatorIp],
-    });
     const status = getSpeakerStatus(group.coordinatorIp, sonosState);
     return status ? `${baseName} • ${status}` : baseName;
   };
 
   return (
     <div className={styles.container}>
-      <h1 className={styles.title}>{t('app_name')}</h1>
+      <div className={styles.header}>
+        <h1 className={styles.title}>{t('app_name')}</h1>
+        <button
+          type="button"
+          className={styles.settingsButton}
+          onClick={openSettings}
+          title={t('settings')}
+          aria-label={t('settings')}
+        >
+          <Settings size={18} />
+        </button>
+      </div>
 
       {error && <div className={styles.error}>{error}</div>}
 
@@ -204,36 +202,6 @@ export function App() {
               )}
             </select>
           </div>
-
-          <div className={styles.field}>
-            <label className={styles.label}>{t('audio_settings')}</label>
-            <label className={styles.toggleRow}>
-              <input
-                type="checkbox"
-                checked={autoConfig}
-                onChange={(e) => setAuto((e.target as HTMLInputElement).checked)}
-                disabled={isCasting || settingsLoading}
-                className={styles.toggleInput}
-              />
-              <span>{t('audio_settings_auto')}</span>
-            </label>
-            <p className={styles.hint}>{t('audio_settings_auto_hint')}</p>
-          </div>
-
-          <CodecSelector
-            value={codec}
-            onChange={setCodec}
-            disabled={isCasting || settingsLoading || autoConfig}
-            availableCodecs={availableCodecs}
-          />
-
-          <BitrateSelector
-            codec={codec}
-            value={bitrate}
-            onChange={setBitrate}
-            disabled={isCasting || settingsLoading || autoConfig}
-            availableBitrates={availableBitrates}
-          />
 
           <Button
             onClick={handleStart}

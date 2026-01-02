@@ -4,9 +4,36 @@
   padding-inline: 1rem;
 }
 
+.header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-block-end: 1rem;
+}
+
 .title {
   font-size: 1.25rem;
-  margin-block-end: 1rem;
+  margin: 0;
+}
+
+.settingsButton {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: none;
+  padding: 0.375rem;
+  border-radius: 4px;
+  cursor: pointer;
+  color: var(--color-text-muted);
+  transition:
+    background 0.2s,
+    color 0.2s;
+}
+
+.settingsButton:hover {
+  background: var(--color-border);
+  color: var(--color-text);
 }
 
 .error {

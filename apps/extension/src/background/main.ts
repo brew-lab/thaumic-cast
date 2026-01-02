@@ -47,7 +47,11 @@ import {
   recordStableSession,
   recordBadSession,
   describeConfig,
+  checkPowerState,
 } from '../lib/device-config';
+import { loadExtensionSettings } from '../lib/settings';
+import { resolveAudioMode, describeEncoderConfig } from '../lib/presets';
+import type { SupportedCodecsResult, EncoderConfig } from '@thaumic-cast/protocol';
 
 const log = createLogger('Background');
 
@@ -561,7 +565,7 @@ async function handleStartCast(
   };
 
   try {
-    const { speakerIp, encoderConfig: providedConfig } = msg.payload;
+    const { speakerIp } = msg.payload;
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
     if (!tab?.id) throw new Error('No active tab');
 
@@ -585,13 +589,51 @@ async function handleStartCast(
     // 3. Create offscreen document (needed for audio capture)
     await ensureOffscreen();
 
-    // 4. Select encoder config: use provided config or auto-select based on device/power state
-    let encoderConfig: typeof providedConfig;
+    // 4. Select encoder config based on extension settings
+    let encoderConfig: EncoderConfig;
     let lowPowerMode = false;
-    if (providedConfig) {
-      encoderConfig = providedConfig;
+
+    // Load extension settings and cached codec support
+    const settings = await loadExtensionSettings();
+    const codecCache = await chrome.storage.session.get('codecSupportCache');
+    const codecSupport: SupportedCodecsResult | null = codecCache['codecSupportCache'] ?? null;
+
+    if (codecSupport && codecSupport.availableCodecs.length > 0) {
+      // Use new preset resolution with codec detection
+      try {
+        encoderConfig = resolveAudioMode(
+          settings.audioMode,
+          codecSupport,
+          cachedPowerState,
+          settings.customAudioSettings,
+        );
+
+        // Log power state for debugging
+        const powerState = checkPowerState(cachedPowerState);
+        if (powerState.powerInfoAvailable) {
+          const level = powerState.level !== undefined ? `${powerState.level}%` : 'N/A';
+          lowPowerMode = powerState.onBattery;
+          log.info(
+            `Power: ${level}, charging=${powerState.charging ?? 'unknown'}, onBattery=${lowPowerMode}`,
+          );
+        } else {
+          log.warn('Power state unavailable from desktop app');
+        }
+
+        log.info(
+          `Encoder config (${settings.audioMode} mode): ${describeEncoderConfig(encoderConfig)}`,
+        );
+      } catch (err) {
+        // Preset resolution failed, fall back to device-config
+        log.warn('Preset resolution failed, falling back to device config:', err);
+        const result = await selectEncoderConfigWithContext(cachedPowerState);
+        encoderConfig = result.config;
+        lowPowerMode = result.lowPowerMode;
+        log.info(`Encoder config (fallback): ${describeConfig(encoderConfig, lowPowerMode)}`);
+      }
     } else {
-      // Use power state from desktop app (null if not connected yet)
+      // Codec support not cached yet, fall back to device-config
+      log.info('Codec support not cached, using device config fallback');
       const result = await selectEncoderConfigWithContext(cachedPowerState);
       encoderConfig = result.config;
       lowPowerMode = result.lowPowerMode;
@@ -605,8 +647,8 @@ async function handleStartCast(
           `Power: ${level}, charging=${result.charging ?? 'unknown'}, onBattery=${lowPowerMode}`,
         );
       }
+      log.info(`Encoder config (fallback): ${describeConfig(encoderConfig, lowPowerMode)}`);
     }
-    log.info(`Encoder config: ${describeConfig(encoderConfig, lowPowerMode)}`);
 
     // 5. Capture Tab
     const mediaStreamId = await new Promise<string>((resolve, reject) => {

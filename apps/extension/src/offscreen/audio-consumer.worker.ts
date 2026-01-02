@@ -22,6 +22,9 @@ import {
 import { createEncoder, type AudioEncoder } from './encoders';
 import type { EncoderConfig, StreamMetadata, WsMessage } from '@thaumic-cast/protocol';
 import { WsMessageSchema } from '@thaumic-cast/protocol';
+import { createLogger } from '@thaumic-cast/shared';
+
+const log = createLogger('AudioWorker');
 
 /** Frame duration in seconds (20ms). */
 const FRAME_DURATION_SEC = 0.02;
@@ -218,22 +221,6 @@ function postToMain(message: OutboundMessage): void {
   self.postMessage(message);
 }
 
-/**
- * Logs a message (forwarded to main thread for unified logging).
- * @param level
- * @param {...any} args
- */
-function log(level: 'info' | 'warn' | 'error', ...args: unknown[]): void {
-  const prefix = '[AudioWorker]';
-  if (level === 'error') {
-    console.error(prefix, ...args);
-  } else if (level === 'warn') {
-    console.warn(prefix, ...args);
-  } else {
-    console.info(prefix, ...args);
-  }
-}
-
 // ─────────────────────────────────────────────────────────────────────────────
 // Bounded Latency Catch-up
 // ─────────────────────────────────────────────────────────────────────────────
@@ -296,7 +283,7 @@ function performCatchUpIfNeeded(): number {
 
   // Log the event
   const droppedMs = (totalDroppedSamples / (encoder.config.sampleRate * channels)) * 1000;
-  log('warn', `⏩ CATCH-UP: Dropped ${droppedMs.toFixed(0)}ms of audio to bound latency`);
+  log.warn(`⏩ CATCH-UP: Dropped ${droppedMs.toFixed(0)}ms of audio to bound latency`);
 
   return totalDroppedSamples;
 }
@@ -445,7 +432,7 @@ function maybePostStats(): void {
  */
 async function connectWebSocket(wsUrl: string, encoderConfig: EncoderConfig): Promise<string> {
   return new Promise((resolve, reject) => {
-    log('info', `Connecting to WebSocket: ${wsUrl}`);
+    log.info(`Connecting to WebSocket: ${wsUrl}`);
 
     const ws = new WebSocket(wsUrl);
     ws.binaryType = 'arraybuffer';
@@ -458,7 +445,7 @@ async function connectWebSocket(wsUrl: string, encoderConfig: EncoderConfig): Pr
 
     ws.onopen = () => {
       clearTimeout(connectTimeout);
-      log('info', 'WebSocket connected, sending handshake...');
+      log.info('WebSocket connected, sending handshake...');
 
       // Send handshake
       ws.send(
@@ -492,7 +479,7 @@ async function connectWebSocket(wsUrl: string, encoderConfig: EncoderConfig): Pr
             clearTimeout(handshakeTimeout);
             ws.removeEventListener('message', handshakeHandler);
             streamId = message.payload.streamId;
-            log('info', `Handshake complete, streamId: ${streamId}`);
+            log.info(`Handshake complete, streamId: ${streamId}`);
 
             // Start heartbeat
             startHeartbeat();
@@ -547,7 +534,7 @@ function handleWsMessage(event: MessageEvent): void {
         break;
 
       case 'STREAM_READY':
-        log('info', `Stream ready with ${message.payload.bufferSize} frames buffered`);
+        log.info(`Stream ready with ${message.payload.bufferSize} frames buffered`);
         postToMain({
           type: 'STREAM_READY',
           bufferSize: message.payload.bufferSize,
@@ -555,7 +542,7 @@ function handleWsMessage(event: MessageEvent): void {
         break;
 
       case 'PLAYBACK_STARTED':
-        log('info', `Playback started on ${message.payload.speakerIp}`);
+        log.info(`Playback started on ${message.payload.speakerIp}`);
         postToMain({
           type: 'PLAYBACK_STARTED',
           speakerIp: message.payload.speakerIp,
@@ -564,7 +551,7 @@ function handleWsMessage(event: MessageEvent): void {
         break;
 
       case 'PLAYBACK_ERROR':
-        log('error', `Playback error: ${message.payload.message}`);
+        log.error(`Playback error: ${message.payload.message}`);
         postToMain({
           type: 'PLAYBACK_ERROR',
           message: message.payload.message,
@@ -572,7 +559,7 @@ function handleWsMessage(event: MessageEvent): void {
         break;
 
       case 'ERROR':
-        log('error', `Server error: ${message.payload.message}`);
+        log.error(`Server error: ${message.payload.message}`);
         postToMain({
           type: 'ERROR',
           message: message.payload.message,
@@ -593,7 +580,7 @@ function handleWsMessage(event: MessageEvent): void {
  * @param event
  */
 function handleWsClose(event: CloseEvent): void {
-  log('warn', `WebSocket closed: ${event.code} ${event.reason}`);
+  log.warn(`WebSocket closed: ${event.code} ${event.reason}`);
   stopHeartbeat();
   postToMain({
     type: 'DISCONNECTED',
@@ -605,7 +592,7 @@ function handleWsClose(event: CloseEvent): void {
  * Handles WebSocket errors.
  */
 function handleWsError(): void {
-  log('error', 'WebSocket error');
+  log.error('WebSocket error');
 }
 
 /**
@@ -876,7 +863,7 @@ self.onmessage = async (event: MessageEvent<InboundMessage>) => {
       catchUpMaxSamples = Math.floor(CATCHUP_MAX_MS * samplesPerMs);
 
       // Create encoder
-      log('info', `Creating encoder: ${encoderConfig.codec} @ ${encoderConfig.bitrate}kbps`);
+      log.info(`Creating encoder: ${encoderConfig.codec} @ ${encoderConfig.bitrate}kbps`);
       encoder = await createEncoder(encoderConfig);
 
       // Connect WebSocket
@@ -887,12 +874,12 @@ self.onmessage = async (event: MessageEvent<InboundMessage>) => {
 
       // Start consumption loop
       consumeLoop().catch((err) => {
-        log('error', 'consumeLoop error:', err);
+        log.error('consumeLoop error:', err);
         postToMain({ type: 'ERROR', message: String(err) });
       });
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      log('error', 'Initialization failed:', message);
+      log.error('Initialization failed:', message);
       postToMain({ type: 'ERROR', message });
       cleanup();
     }

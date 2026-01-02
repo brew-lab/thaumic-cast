@@ -1,0 +1,202 @@
+.container {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-lg);
+}
+
+.title {
+  font-size: 1.5rem;
+  font-weight: 600;
+  margin-block: 0;
+  margin-block-end: var(--space-md);
+}
+
+.loading {
+  color: var(--color-text-muted);
+  font-size: 0.875rem;
+}
+
+.cardContent {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+}
+
+/* Form elements */
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+}
+
+.label {
+  font-size: 0.875rem;
+  color: var(--color-text-muted);
+}
+
+.hint {
+  font-size: 0.75rem;
+  color: var(--color-text-muted);
+  margin-block-start: var(--space-xs);
+}
+
+.input {
+  padding-block: var(--space-sm);
+  padding-inline: var(--space-sm);
+  background: var(--color-bg);
+  color: var(--color-text);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  font-size: 1rem;
+}
+
+.input:focus {
+  outline: 2px solid var(--color-focus);
+  outline-offset: 2px;
+}
+
+.input:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.select {
+  padding-block: var(--space-sm);
+  padding-inline: var(--space-sm);
+  background: var(--color-bg);
+  color: var(--color-text);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  font-size: 1rem;
+  cursor: pointer;
+}
+
+.select:focus {
+  outline: 2px solid var(--color-focus);
+  outline-offset: 2px;
+}
+
+.select:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+/* Radio group */
+.radioGroup {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+.radioOption {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-sm);
+  padding-block: var(--space-sm);
+  padding-inline: var(--space-sm);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: background-color 0.15s ease;
+}
+
+.radioOption:hover {
+  background: var(--color-surface-hover);
+}
+
+.radioInput {
+  margin: 0;
+  margin-block-start: 0.125rem;
+}
+
+.radioContent {
+  display: flex;
+  flex-direction: column;
+  gap: 0.125rem;
+}
+
+.radioLabel {
+  font-size: 0.875rem;
+  font-weight: 500;
+}
+
+.radioDesc {
+  font-size: 0.75rem;
+  color: var(--color-text-muted);
+}
+
+/* Status indicator */
+.status {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+  font-size: 0.875rem;
+}
+
+.statusDot {
+  inline-size: 0.5rem;
+  block-size: 0.5rem;
+  border-radius: 50%;
+}
+
+.statusDotConnected {
+  background-color: var(--color-success);
+}
+
+.statusDotDisconnected {
+  background-color: var(--color-error);
+}
+
+.statusDotChecking {
+  background-color: var(--color-warning);
+  animation: pulse 1.5s infinite;
+}
+
+@keyframes pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+
+  50% {
+    opacity: 0.5;
+  }
+}
+
+/* Inline row */
+.inlineRow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+}
+
+/* Resolved settings display */
+.resolvedSettings {
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  padding-block: var(--space-sm);
+  padding-inline: var(--space-md);
+}
+
+.resolvedRow {
+  display: flex;
+  justify-content: space-between;
+  padding-block: var(--space-xs);
+}
+
+.resolvedLabel {
+  color: var(--color-text-muted);
+  font-size: 0.875rem;
+}
+
+.resolvedValue {
+  font-size: 0.875rem;
+  font-weight: 500;
+}
+
+/* Divider */
+.divider {
+  block-size: 1px;
+  background: var(--color-border);
+  margin-block: var(--space-sm);
+}
