@@ -1,7 +1,7 @@
 import type { JSX } from 'preact';
 import { useTranslation } from 'react-i18next';
 import type { TabMediaState, ZoneGroup } from '@thaumic-cast/protocol';
-import { getDisplayTitle, getDisplayImage, getDisplaySubtitle } from '@thaumic-cast/protocol';
+import { getDisplayTitle, getDisplaySubtitle } from '@thaumic-cast/protocol';
 import { Button, VolumeControl } from '@thaumic-cast/ui';
 import { Cast, Loader2, Music } from 'lucide-preact';
 import styles from './CurrentTabCard.module.css';
@@ -74,7 +74,7 @@ export function CurrentTabCard({
 }: CurrentTabCardProps): JSX.Element {
   const { t } = useTranslation();
   const title = getDisplayTitle(state);
-  const image = getDisplayImage(state);
+  const image = state.tabFavicon;
   const subtitle = getDisplaySubtitle(state);
 
   return (
