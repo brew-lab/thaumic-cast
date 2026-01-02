@@ -1,4 +1,7 @@
 .card {
+  --artwork: none;
+
+  position: relative;
   display: flex;
   flex-direction: column;
   gap: 0.5rem;
@@ -7,50 +10,50 @@
   background: var(--color-bg);
   border-radius: 6px;
   border: 1px solid var(--color-border);
+  overflow: hidden;
 }
 
-.header {
+/* Background artwork layer with vignette */
+.card.hasArtwork::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(ellipse at center, oklch(0% 0 0 / 50%) 0%, oklch(0% 0 0 / 90%) 100%),
+    var(--artwork) center / cover no-repeat;
+  z-index: 0;
+}
+
+/* Ensure content is above background layers */
+.card.hasArtwork > * {
+  position: relative;
+  z-index: 2;
+}
+
+.row {
   display: flex;
   align-items: center;
+  justify-content: space-between;
   gap: 0.5rem;
 }
 
-.artwork {
-  position: relative;
+.favicon {
   flex-shrink: 0;
-  width: 36px;
-  height: 36px;
-  border-radius: 4px;
-  overflow: hidden;
-  background: var(--color-border);
-}
-
-.transportOverlay {
-  position: absolute;
-  inset-block-end: 2px;
-  inset-inline-end: 2px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 1px;
-  background: oklch(0% 0 0 / 60%);
+  width: 16px;
+  height: 16px;
   border-radius: 2px;
-  color: white;
 }
 
-.image {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-}
-
-.placeholder {
-  width: 100%;
-  height: 100%;
+.speaker {
   display: flex;
   align-items: center;
-  justify-content: center;
+  gap: 0.25rem;
+  font-size: 0.65rem;
   color: var(--color-text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  margin: 0;
 }
 
 .info {
@@ -60,7 +63,7 @@
 }
 
 .title {
-  font-size: 0.75rem;
+  font-size: 0.875rem;
   font-weight: 500;
   color: var(--color-text);
   white-space: nowrap;
@@ -87,28 +90,11 @@
 }
 
 .subtitle {
-  font-size: 0.65rem;
+  font-size: 0.75rem;
   color: var(--color-text-muted);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
   margin: 0;
   margin-block-start: 0.125rem;
-}
-
-.speaker {
-  display: flex;
-  align-items: center;
-  gap: 0.25rem;
-  font-size: 0.6rem;
-  color: var(--color-casting);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  margin: 0;
-  margin-block-start: 0.125rem;
-}
-
-.speakerIcon {
-  flex-shrink: 0;
 }
