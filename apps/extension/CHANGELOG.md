@@ -1,5 +1,15 @@
 # @thaumic-cast/extension
 
+## 0.4.1
+
+### Patch Changes
+
+- [#13](https://github.com/brew-lab/thaumic-cast/pull/13) [`4d7d238`](https://github.com/brew-lab/thaumic-cast/commit/4d7d238e381441988da6254205a23283746ad353) Thanks [@skezo](https://github.com/skezo)! - Refactor popup UI to integrate controls into media cards
+  - Move speaker selection, volume controls, and cast button into CurrentTabCard
+  - Add volume controls and stop button to ActiveCastCard
+  - Remove separate "Cast settings" card for cleaner UI
+  - Reorder layout: Active Casts now appear above Current Tab
+
 ## 0.4.0
 
 ### Minor Changes
