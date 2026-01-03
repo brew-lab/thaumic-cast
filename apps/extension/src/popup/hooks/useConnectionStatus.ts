@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'preact/hooks';
+import { useTranslation } from 'react-i18next';
 import { discoverDesktopApp } from '../../lib/discovery';
 import type { ConnectionState } from '../../background/connection-state';
 
@@ -27,6 +28,7 @@ export interface ConnectionStatus {
  * @returns Current connection status
  */
 export function useConnectionStatus(): ConnectionStatus {
+  const { t } = useTranslation();
   const [status, setStatus] = useState<ConnectionStatus>({
     connected: false,
     checking: true,
@@ -85,7 +87,7 @@ export function useConnectionStatus(): ConnectionStatus {
             setStatus({
               connected: false,
               checking: false,
-              error: 'Desktop app not found',
+              error: t('error_desktop_not_found'),
               desktopAppUrl: null,
               maxStreams: null,
             });
@@ -142,7 +144,7 @@ export function useConnectionStatus(): ConnectionStatus {
             ...s,
             connected: false,
             checking: false,
-            error: reason === 'max_retries_exceeded' ? 'Connection lost' : null,
+            error: reason === 'max_retries_exceeded' ? t('error_connection_lost') : null,
           }));
           break;
         }

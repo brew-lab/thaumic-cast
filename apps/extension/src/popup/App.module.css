@@ -11,6 +11,12 @@
   margin-block-end: 1rem;
 }
 
+.titleGroup {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
 .title {
   font-size: 1.25rem;
   margin: 0;

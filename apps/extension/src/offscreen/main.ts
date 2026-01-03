@@ -24,6 +24,7 @@ import {
   isSupportedSampleRate,
   getNearestSupportedSampleRate,
 } from '@thaumic-cast/protocol';
+import i18n from '../lib/i18n';
 
 const log = createLogger('Offscreen');
 
@@ -871,7 +872,7 @@ chrome.runtime.onMessage.addListener((msg: ExtensionMessage, _sender, sendRespon
 
     // Enforce global offscreen limit
     if (activeSessions.size >= MAX_OFFSCREEN_SESSIONS) {
-      sendResponse({ success: false, error: 'Maximum offscreen session limit reached' });
+      sendResponse({ success: false, error: i18n.t('error_max_sessions') });
       return true;
     }
 

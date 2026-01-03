@@ -14,6 +14,7 @@
  */
 
 import { createLogger } from '@thaumic-cast/shared';
+import i18n from '../lib/i18n';
 
 const log = createLogger('ConnectionState');
 
@@ -108,7 +109,7 @@ export function clearConnectionState(): void {
     desktopAppUrl: null,
     maxStreams: null,
     lastDiscoveredAt: null,
-    lastError: 'Desktop app not found',
+    lastError: i18n.t('error_desktop_not_found'),
   };
   schedulePersist();
 }

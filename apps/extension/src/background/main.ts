@@ -65,6 +65,7 @@ import {
 import { loadExtensionSettings } from '../lib/settings';
 import { resolveAudioMode, describeEncoderConfig } from '../lib/presets';
 import type { SupportedCodecsResult, EncoderConfig } from '@thaumic-cast/protocol';
+import i18n from '../lib/i18n';
 
 const log = createLogger('Background');
 
@@ -130,7 +131,7 @@ function handleWsConnected(state: SonosStateSnapshot): void {
  */
 function handleWsDisconnected(): void {
   wsConnected = false;
-  setConnectionError('Connection lost after max retries');
+  setConnectionError(i18n.t('error_connection_lost'));
   log.warn('WebSocket permanently disconnected');
   notifyPopup({ type: 'WS_CONNECTION_LOST', reason: 'max_retries_exceeded' });
 }
@@ -643,13 +644,13 @@ async function handleStartCast(
   try {
     const { speakerIp } = msg.payload;
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-    if (!tab?.id) throw new Error('No active tab');
+    if (!tab?.id) throw new Error(i18n.t('error_no_active_tab'));
 
     // 1. Discover Desktop App and its limits (do this early to fail fast)
     const app = await discoverDesktopApp();
     if (!app) {
       clearConnectionState();
-      throw new Error('Desktop App not found. Please make sure it is running.');
+      throw new Error(i18n.t('error_desktop_not_found'));
     }
 
     // Cache the discovered URL for instant popup display
@@ -657,9 +658,7 @@ async function handleStartCast(
 
     // 2. Check session limits
     if (getSessionCount() >= app.maxStreams) {
-      throw new Error(
-        `Maximum session limit reached (${app.maxStreams}). Please stop an existing cast first.`,
-      );
+      throw new Error(i18n.t('error_max_sessions'));
     }
 
     // 3. Create offscreen document (needed for audio capture)
@@ -701,7 +700,7 @@ async function handleStartCast(
     const mediaStreamId = await new Promise<string>((resolve, reject) => {
       chrome.tabCapture.getMediaStreamId({ targetTabId: tab.id! }, (id) => {
         if (id) resolve(id);
-        else reject(new Error('Tab capture denied'));
+        else reject(new Error(i18n.t('error_capture_denied')));
       });
     });
 
@@ -737,7 +736,7 @@ async function handleStartCast(
         // Playback failed - clean up the capture
         log.error('Playback failed, cleaning up capture');
         await chrome.runtime.sendMessage({ type: 'STOP_CAPTURE', payload: { tabId: tab.id } });
-        throw new Error(`Playback failed: ${playbackResponse.error || 'Unknown error'}`);
+        throw new Error(i18n.t('error_playback_failed'));
       }
 
       // Find speaker name from Sonos state

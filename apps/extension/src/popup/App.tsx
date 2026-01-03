@@ -6,7 +6,7 @@ import {
   SPEAKER_AVAILABILITY_LABELS,
   MediaAction,
 } from '@thaumic-cast/protocol';
-import { Settings, X } from 'lucide-preact';
+import { Radio, Settings, X } from 'lucide-preact';
 import { IconButton } from '@thaumic-cast/ui';
 import styles from './App.module.css';
 import { ExtensionResponse, StartCastMessage } from '../lib/messages';
@@ -109,7 +109,7 @@ export function App(): JSX.Element {
       const response: ExtensionResponse = await chrome.runtime.sendMessage(msg);
 
       if (!response.success) {
-        setError(response.error || 'Failed to start');
+        setError(response.error || t('error_cast_failed'));
       }
       // isCasting is derived from activeCasts - will auto-update via ACTIVE_CASTS_CHANGED
     } catch (err) {
@@ -182,7 +182,10 @@ export function App(): JSX.Element {
   return (
     <div className={styles.container}>
       <div className={styles.header}>
-        <h1 className={styles.title}>{t('app_name')}</h1>
+        <div className={styles.titleGroup}>
+          <Radio size={20} color="var(--color-primary)" />
+          <h1 className={styles.title}>{t('app_name')}</h1>
+        </div>
         <IconButton onClick={openSettings} title={t('settings')} aria-label={t('settings')}>
           <Settings size={18} />
         </IconButton>

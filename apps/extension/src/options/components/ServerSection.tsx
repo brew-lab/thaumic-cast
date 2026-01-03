@@ -33,38 +33,41 @@ export function ServerSection({ settings, onUpdate }: ServerSectionProps): JSX.E
   /**
    * Tests connection to the specified server URL.
    */
-  const testConnection = useCallback(async (url: string) => {
-    setTesting(true);
-    setTestResult(null);
+  const testConnection = useCallback(
+    async (url: string) => {
+      setTesting(true);
+      setTestResult(null);
 
-    const start = performance.now();
-    try {
-      const res = await fetch(`${url}/health`, {
-        signal: AbortSignal.timeout(3000),
-      });
+      const start = performance.now();
+      try {
+        const res = await fetch(`${url}/health`, {
+          signal: AbortSignal.timeout(3000),
+        });
 
-      if (!res.ok) {
-        throw new Error('Server returned error');
+        if (!res.ok) {
+          throw new Error(t('error_server_error'));
+        }
+
+        const data = await res.json();
+        if (data.service !== 'thaumic-cast-desktop') {
+          throw new Error(t('error_wrong_server'));
+        }
+
+        setTestResult({
+          success: true,
+          latency: Math.round(performance.now() - start),
+        });
+      } catch (err) {
+        setTestResult({
+          success: false,
+          error: err instanceof Error ? err.message : t('server_test_failed'),
+        });
+      } finally {
+        setTesting(false);
       }
-
-      const data = await res.json();
-      if (data.service !== 'thaumic-cast-desktop') {
-        throw new Error('Not a Thaumic Cast server');
-      }
-
-      setTestResult({
-        success: true,
-        latency: Math.round(performance.now() - start),
-      });
-    } catch (err) {
-      setTestResult({
-        success: false,
-        error: err instanceof Error ? err.message : 'Connection failed',
-      });
-    } finally {
-      setTesting(false);
-    }
-  }, []);
+    },
+    [t],
+  );
 
   /**
    * Handles auto-discover toggle.
