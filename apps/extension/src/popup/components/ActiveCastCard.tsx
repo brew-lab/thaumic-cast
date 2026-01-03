@@ -1,4 +1,5 @@
 import type { JSX } from 'preact';
+import { flushSync } from 'preact/compat';
 import { useCallback, useState, useRef, useEffect } from 'preact/hooks';
 import { useTranslation } from 'react-i18next';
 import type { ActiveCast, TransportState, MediaAction } from '@thaumic-cast/protocol';
@@ -62,6 +63,22 @@ export function ActiveCastCard({
   const favicon = cast.mediaState.tabFavicon;
   const supportedActions = cast.mediaState.supportedActions ?? [];
 
+  // Stage image updates to enable view transitions on track changes
+  const [stagedImage, setStagedImage] = useState(image);
+
+  useEffect(() => {
+    if (image !== stagedImage) {
+      // Trigger view transition when image changes (skip initial render)
+      if (stagedImage !== undefined && document.startViewTransition) {
+        document.startViewTransition(() => {
+          flushSync(() => setStagedImage(image));
+        });
+      } else {
+        setStagedImage(image);
+      }
+    }
+  }, [image, stagedImage]);
+
   // Determine which playback controls to show
   const canPrev = supportedActions.includes('previoustrack');
   const canNext = supportedActions.includes('nexttrack');
@@ -87,7 +104,7 @@ export function ActiveCastCard({
   const lastControlTime = useRef<Record<string, number>>({});
 
   // Extract dominant color from artwork for backdrop tinting
-  const dominantColor = useDominantColor(image);
+  const dominantColor = useDominantColor(stagedImage);
 
   /**
    * Navigates to the tab associated with this cast session.
@@ -134,8 +151,8 @@ export function ActiveCastCard({
 
   // Build style object with artwork and color CSS custom properties
   const cardStyle: Record<string, string> = {};
-  if (image) {
-    cardStyle['--artwork'] = `url(${image})`;
+  if (stagedImage) {
+    cardStyle['--artwork'] = `url(${stagedImage})`;
   }
   if (dominantColor) {
     const [l, c, h] = dominantColor.oklch;
@@ -147,7 +164,7 @@ export function ActiveCastCard({
 
   return (
     <div
-      className={`${styles.card} ${image ? styles.hasArtwork : ''}`}
+      className={`${styles.card} ${stagedImage ? styles.hasArtwork : ''}`}
       style={Object.keys(cardStyle).length > 0 ? (cardStyle as JSX.CSSProperties) : undefined}
     >
       <div className={styles.header}>

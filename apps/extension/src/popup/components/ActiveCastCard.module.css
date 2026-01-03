@@ -17,6 +17,9 @@
   border-radius: var(--card-radius);
   border: var(--card-border-width) solid var(--card-border);
   overflow: hidden;
+
+  /* View Transition API: name the card for track change transitions */
+  view-transition-name: active-cast-card;
 }
 
 /* Background artwork layer with adaptive darkness vignette */
@@ -199,4 +202,11 @@
   text-overflow: ellipsis;
   margin: 0;
   margin-block-start: 0.125rem;
+}
+
+/* Transition animation for track changes (background + colors) */
+::view-transition-old(active-cast-card),
+::view-transition-new(active-cast-card) {
+  animation-duration: 300ms;
+  animation-timing-function: ease-out;
 }
