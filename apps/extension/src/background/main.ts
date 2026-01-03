@@ -8,7 +8,7 @@ import {
   PlaybackState,
   PlaybackStateSchema,
 } from '@thaumic-cast/protocol';
-import { discoverDesktopApp } from '../lib/discovery';
+import { discoverDesktopApp, clearDiscoveryCache } from '../lib/discovery';
 import {
   ExtensionMessage,
   StartCastMessage,
@@ -938,5 +938,45 @@ initPromise.then(async () => {
     connectWebSocket(connState.desktopAppUrl).catch(() => {
       // Will retry when popup opens
     });
+  }
+});
+
+/**
+ * Listen for server settings changes and reconnect when they change.
+ * This handles the case where user changes server URL or auto-discover mode
+ * after the extension has already connected.
+ */
+chrome.storage.sync.onChanged.addListener(async (changes) => {
+  if (!changes['extensionSettings']) return;
+
+  const oldSettings = changes['extensionSettings'].oldValue;
+  const newSettings = changes['extensionSettings'].newValue;
+
+  // Check if server-related settings changed
+  const serverUrlChanged = oldSettings?.serverUrl !== newSettings?.serverUrl;
+  const autoDiscoverChanged = oldSettings?.useAutoDiscover !== newSettings?.useAutoDiscover;
+
+  if (serverUrlChanged || autoDiscoverChanged) {
+    log.info('Server settings changed, reconnecting...');
+
+    // Clear caches to force fresh discovery
+    clearDiscoveryCache();
+    clearConnectionState();
+
+    // Disconnect existing WebSocket
+    if (wsConnected) {
+      await sendToOffscreen({ type: 'WS_DISCONNECT' }).catch(() => {});
+      wsConnected = false;
+    }
+
+    // Trigger fresh discovery and connection
+    const app = await discoverDesktopApp(true);
+    if (app) {
+      setDesktopApp(app.url, app.maxStreams);
+      await connectWebSocket(app.url);
+    }
+
+    // Notify popup of connection state change
+    notifyPopup({ type: 'WS_CONNECTION_LOST', reason: 'settings_changed' });
   }
 });
