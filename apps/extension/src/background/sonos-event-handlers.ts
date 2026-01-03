@@ -16,7 +16,13 @@
 
 import { createLogger } from '@thaumic-cast/shared';
 import type { BroadcastEvent, SonosStateSnapshot, TransportState } from '@thaumic-cast/protocol';
-import { updateGroups, updateVolume, updateMute, updateTransportState } from './sonos-state';
+import {
+  updateGroups,
+  updateVolume,
+  updateMute,
+  updateTransportState,
+  getSonosState,
+} from './sonos-state';
 import { getSessionBySpeakerIp, getSessionByStreamId, removeSession } from './session-manager';
 
 const log = createLogger('SonosEvents');
@@ -88,6 +94,9 @@ function handleTransportState(speakerIp: string, state: TransportState): void {
     transportDebounceTimers.delete(speakerIp);
     updateTransportState(speakerIp, state);
 
+    // Sync updated state to offscreen for service worker recovery
+    syncStateToOffscreen();
+
     notifyPopup({
       type: 'TRANSPORT_STATE_UPDATE',
       speakerIp,
@@ -98,6 +107,16 @@ function handleTransportState(speakerIp: string, state: TransportState): void {
   }, TRANSPORT_DEBOUNCE_MS);
 
   transportDebounceTimers.set(speakerIp, timer);
+}
+
+/**
+ * Syncs current Sonos state to offscreen document for service worker recovery.
+ */
+function syncStateToOffscreen(): void {
+  const state = getSonosState();
+  chrome.runtime.sendMessage({ type: 'SYNC_SONOS_STATE', state }).catch(() => {
+    // Offscreen may not be available
+  });
 }
 
 /**
