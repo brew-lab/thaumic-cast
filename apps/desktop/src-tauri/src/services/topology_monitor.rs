@@ -233,7 +233,19 @@ impl TopologyMonitor {
         log::debug!("[TopologyMonitor] Refreshing Sonos topology...");
 
         // Phase 1: SSDP Discovery
-        let speakers = self.sonos.discover_speakers().await?;
+        let speakers = match self.sonos.discover_speakers().await {
+            Ok(speakers) => speakers,
+            Err(e) => {
+                // Discovery failed - mark as degraded if we previously had speakers
+                if self.speakers_discovered.load(Ordering::Relaxed) {
+                    self.set_network_health(
+                        NetworkHealth::Degraded,
+                        Some("Unable to scan for speakers. Check network connection.".to_string()),
+                    );
+                }
+                return Err(e.into());
+            }
+        };
 
         if speakers.is_empty() {
             // No speakers discovered - could be network issue or just no speakers
@@ -241,7 +253,7 @@ impl TopologyMonitor {
             if self.speakers_discovered.load(Ordering::Relaxed) {
                 self.set_network_health(
                     NetworkHealth::Degraded,
-                    Some("Speakers previously discovered are no longer visible".to_string()),
+                    Some("Speakers previously discovered are no longer visible.".to_string()),
                 );
             }
             return Err(ThaumicError::SpeakerNotFound(

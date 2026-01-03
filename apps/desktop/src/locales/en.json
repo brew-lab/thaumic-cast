@@ -17,6 +17,11 @@
   "device.others": "+{{count}} others",
   "device.streaming": "Streaming",
 
+  "transport.playing": "Playing",
+  "transport.paused_playback": "Paused",
+  "transport.stopped": "Idle",
+  "transport.transitioning": "Loading",
+
   "server.running": "Operational",
   "server.address": "Address",
   "server.copy_address": "Copy address",

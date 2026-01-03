@@ -110,6 +110,11 @@ export const fetchGroups = async (): Promise<void> => {
     groups.value = fetchedGroups;
     transportStates.value = states;
     castingSpeakers.value = new Set(sessions.map((s) => s.speakerIp));
+
+    // Debug: log if health changed
+    if (networkHealth.value.health !== health.health) {
+      console.log('[Store] Network health changed:', health);
+    }
     networkHealth.value = health;
     await fetchStats();
   } finally {
