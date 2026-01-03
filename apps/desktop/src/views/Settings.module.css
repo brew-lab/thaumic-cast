@@ -2,8 +2,6 @@
   padding-block: var(--space-xl);
   padding-inline: var(--space-xl);
   max-inline-size: 38rem;
-  block-size: 100%;
-  overflow-y: auto;
 }
 
 .title {
