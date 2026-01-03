@@ -16,6 +16,7 @@
   background: var(--card-bg);
   border-radius: var(--card-radius);
   border: var(--card-border-width) solid var(--card-border);
+  box-shadow: var(--card-shadow);
   overflow: hidden;
 
   /* View Transition API: name the card for track change transitions */

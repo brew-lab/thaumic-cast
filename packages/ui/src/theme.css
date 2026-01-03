@@ -188,6 +188,7 @@
   /* Card */
   --card-bg: var(--color-surface);
   --card-border: var(--color-border);
+  --card-shadow: var(--shadow-5);
   --card-text: var(--color-text);
   --card-text-muted: var(--color-text-muted);
 
@@ -234,6 +235,37 @@
   --radius-sm: 0.25rem;
   --radius-md: 0.5rem;
   --radius-lg: 0.75rem;
+
+  /*
+   * Shadows - Open Props inspired layered shadows
+   * Customize via --shadow-color and --shadow-strength
+   */
+  --shadow-color: var(--hue-primary);
+  --shadow-strength: 2%;
+  --shadow-1: 0 1px 2px -1px oklch(20% 0.02 var(--shadow-color) / calc(var(--shadow-strength) + 9%));
+  --shadow-2:
+    0 3px 5px -2px oklch(20% 0.02 var(--shadow-color) / calc(var(--shadow-strength) + 3%)),
+    0 7px 14px -5px oklch(20% 0.02 var(--shadow-color) / calc(var(--shadow-strength) + 5%));
+  --shadow-3:
+    0 -1px 3px 0 oklch(20% 0.02 var(--shadow-color) / calc(var(--shadow-strength) + 2%)),
+    0 1px 2px -5px oklch(20% 0.02 var(--shadow-color) / calc(var(--shadow-strength) + 2%)),
+    0 2px 5px -5px oklch(20% 0.02 var(--shadow-color) / calc(var(--shadow-strength) + 4%)),
+    0 4px 12px -5px oklch(20% 0.02 var(--shadow-color) / calc(var(--shadow-strength) + 5%)),
+    0 12px 15px -5px oklch(20% 0.02 var(--shadow-color) / calc(var(--shadow-strength) + 7%));
+  --shadow-4:
+    0 -2px 5px 0 oklch(20% 0.02 var(--shadow-color) / calc(var(--shadow-strength) + 2%)),
+    0 1px 1px -2px oklch(20% 0.02 var(--shadow-color) / calc(var(--shadow-strength) + 3%)),
+    0 2px 2px -2px oklch(20% 0.02 var(--shadow-color) / calc(var(--shadow-strength) + 3%)),
+    0 5px 5px -2px oklch(20% 0.02 var(--shadow-color) / calc(var(--shadow-strength) + 4%)),
+    0 9px 9px -2px oklch(20% 0.02 var(--shadow-color) / calc(var(--shadow-strength) + 5%)),
+    0 16px 16px -2px oklch(20% 0.02 var(--shadow-color) / calc(var(--shadow-strength) + 6%));
+  --shadow-5:
+    0 -1px 2px 0 oklch(20% 0.02 var(--shadow-color) / calc(var(--shadow-strength) + 2%)),
+    0 2px 1px -2px oklch(20% 0.02 var(--shadow-color) / calc(var(--shadow-strength) + 3%)),
+    0 5px 5px -2px oklch(20% 0.02 var(--shadow-color) / calc(var(--shadow-strength) + 3%)),
+    0 10px 10px -2px oklch(20% 0.02 var(--shadow-color) / calc(var(--shadow-strength) + 4%)),
+    0 20px 20px -2px oklch(20% 0.02 var(--shadow-color) / calc(var(--shadow-strength) + 5%)),
+    0 40px 40px -2px oklch(20% 0.02 var(--shadow-color) / calc(var(--shadow-strength) + 7%));
 
   /*
    * ═══════════════════════════════════════════════════════════════════════════
@@ -343,6 +375,7 @@ body {
   border-radius: var(--radius-lg);
   padding-block: var(--space-lg);
   padding-inline: var(--space-lg);
+  box-shadow: var(--card-shadow);
 }
 
 .cardTitle {
