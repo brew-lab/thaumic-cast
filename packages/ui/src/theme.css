@@ -34,15 +34,15 @@
 
   /*
    * Brand color hues - customize these to change the entire color scheme
-   * Chroma values control saturation intensity
+   * Arcane neon palette for thaumic/magical aesthetic
    */
   --hue-primary: 285;
-  --hue-error: 25;
-  --hue-success: 145;
-  --hue-warning: 85;
-  --hue-casting: 55;
-  --chroma-vibrant: 0.22;
-  --chroma-muted: 0.14;
+  --hue-error: 350;
+  --hue-success: 175;
+  --hue-warning: 55;
+  --hue-casting: 190;
+  --chroma-vibrant: 0.28;
+  --chroma-muted: 0.18;
 
   /*
    * ═══════════════════════════════════════════════════════════════════════════
