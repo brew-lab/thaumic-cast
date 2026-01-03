@@ -384,10 +384,7 @@ impl TopologyMonitor {
             );
             self.set_network_health(
                 NetworkHealth::Degraded,
-                Some(
-                    "Speakers found but not responding. Check VPN or firewall settings."
-                        .to_string(),
-                ),
+                Some("speakers_not_responding".to_string()),
             );
         } else if has_groups && !transport_states_empty {
             // Everything is working - set health to Ok

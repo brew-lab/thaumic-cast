@@ -56,6 +56,7 @@
   "error.go_home": "Return Home",
 
   "network.degraded_warning": "Speakers were discovered but seem reluctant to communicate. VPN or firewall may be the culprit.",
+  "network.speakers_not_responding": "The speakers have been located but appear to be giving us the silent treatment. A VPN or overzealous firewall is the likely culprit.",
 
   "onboarding.skip": "Skip the formalities",
   "onboarding.next": "Onwards",

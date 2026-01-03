@@ -89,7 +89,9 @@ export function Speakers() {
 
       {networkHealth.value.health === 'degraded' && (
         <Alert variant="warning" className={styles.networkAlert}>
-          {networkHealth.value.reason || t('network.degraded_warning')}
+          {t(`network.${networkHealth.value.reason}`, {
+            defaultValue: t('network.degraded_warning'),
+          })}
         </Alert>
       )}
 
