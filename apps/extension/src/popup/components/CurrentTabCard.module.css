@@ -20,7 +20,7 @@
   height: 48px;
   border-radius: 6px;
   overflow: hidden;
-  background: var(--color-surface-inset);
+  background: var(--inset-bg);
 }
 
 .image {
@@ -89,6 +89,12 @@
   background: var(--input-bg);
   color: var(--input-text);
   border: 1px solid var(--input-border);
+  accent-color: var(--color-primary);
+}
+
+.select:focus-visible {
+  outline: 2px solid var(--color-focus);
+  outline-offset: 2px;
 }
 
 .select:disabled {

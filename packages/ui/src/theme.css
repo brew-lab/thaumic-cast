@@ -11,10 +11,10 @@
   /*
    * Gray scale - Open Props inspired 16-step progression
    * Customizable via --gray-hue and --gray-chroma
-   * Default: cool blue tint (hue 250) like GitHub
+   * Mystical violet tint for thaumic/magical aesthetic
    */
-  --gray-hue: 250;
-  --gray-chroma: 0.015;
+  --gray-hue: 280;
+  --gray-chroma: 0.02;
   --gray-0: oklch(99% var(--gray-chroma) var(--gray-hue));
   --gray-1: oklch(95% var(--gray-chroma) var(--gray-hue));
   --gray-2: oklch(88% var(--gray-chroma) var(--gray-hue));
@@ -36,13 +36,13 @@
    * Brand color hues - customize these to change the entire color scheme
    * Chroma values control saturation intensity
    */
-  --hue-primary: 250;
+  --hue-primary: 285;
   --hue-error: 25;
   --hue-success: 145;
   --hue-warning: 85;
   --hue-casting: 55;
-  --chroma-vibrant: 0.18;
-  --chroma-muted: 0.12;
+  --chroma-vibrant: 0.22;
+  --chroma-muted: 0.14;
 
   /*
    * ═══════════════════════════════════════════════════════════════════════════
@@ -50,11 +50,14 @@
    * ═══════════════════════════════════════════════════════════════════════════
    */
 
-  /* Backgrounds - dark mode uses gray-14/15, light mode uses gray-0/1 */
-  --color-bg: light-dark(var(--gray-0), var(--gray-15));
+  /* Backgrounds - dark mode uses gray-14/15, light mode uses gray-1/0 */
+  --color-bg: light-dark(var(--gray-1), var(--gray-15));
   --color-surface: light-dark(var(--gray-0), var(--gray-14));
   --color-surface-inset: light-dark(var(--gray-1), var(--gray-15));
-  --color-surface-hover: light-dark(var(--gray-2), var(--gray-13));
+  --color-surface-hover: light-dark(
+    oklch(88% 0.04 var(--hue-primary)),
+    oklch(25% 0.04 var(--hue-primary))
+  );
   --color-overlay: light-dark(oklch(99% 0 0 / 50%), oklch(10% 0 0 / 50%));
 
   /* Borders */
@@ -188,6 +191,9 @@
   --card-text: var(--color-text);
   --card-text-muted: var(--color-text-muted);
 
+  /* Inset panels (recessed surfaces like placeholders, read-only displays) */
+  --inset-bg: var(--color-surface-inset);
+
   /* Volume/Slider */
   --slider-track: var(--color-border);
   --slider-fill: var(--color-primary);
@@ -265,6 +271,11 @@ body {
   cursor: not-allowed;
 }
 
+.btn:focus-visible {
+  outline: 2px solid var(--color-focus);
+  outline-offset: 2px;
+}
+
 .btnPrimary {
   background-color: var(--button-primary-bg);
   color: var(--button-primary-text);
@@ -300,7 +311,6 @@ body {
   border-radius: var(--radius-lg);
   padding-block: var(--space-lg);
   padding-inline: var(--space-lg);
-  margin-block-end: var(--space-lg);
 }
 
 .cardTitle {
@@ -338,6 +348,11 @@ body {
   border-radius: 2px;
   outline: none;
   cursor: pointer;
+}
+
+.volumeControlSlider:focus-visible {
+  outline: 2px solid var(--color-focus);
+  outline-offset: 2px;
 }
 
 .volumeControlSlider::-webkit-slider-thumb {
