@@ -263,25 +263,27 @@ export function AudioSection({
                     </select>
                   </div>
 
-                  {/* Sample Rate */}
-                  <div className={styles.field}>
-                    <label className={styles.label}>{t('audio_sample_rate')}</label>
-                    <select
-                      className={styles.select}
-                      value={settings.customAudioSettings.sampleRate}
-                      onChange={(e) =>
-                        handleSampleRateChange(
-                          Number((e.target as HTMLSelectElement).value) as SupportedSampleRate,
-                        )
-                      }
-                    >
-                      {availableSampleRates.map((rate) => (
-                        <option key={rate} value={rate}>
-                          {rate / 1000} kHz
-                        </option>
-                      ))}
-                    </select>
-                  </div>
+                  {/* Sample Rate - only show if codec supports multiple rates */}
+                  {availableSampleRates.length > 0 && (
+                    <div className={styles.field}>
+                      <label className={styles.label}>{t('audio_sample_rate')}</label>
+                      <select
+                        className={styles.select}
+                        value={settings.customAudioSettings.sampleRate}
+                        onChange={(e) =>
+                          handleSampleRateChange(
+                            Number((e.target as HTMLSelectElement).value) as SupportedSampleRate,
+                          )
+                        }
+                      >
+                        {availableSampleRates.map((rate) => (
+                          <option key={rate} value={rate}>
+                            {rate / 1000} kHz
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
                 </div>
               ) : (
                 /* Non-custom mode: read-only display */
