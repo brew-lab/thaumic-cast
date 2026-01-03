@@ -313,6 +313,11 @@ body {
   margin: 0;
 }
 
+::selection {
+  background: var(--color-primary);
+  color: var(--color-on-primary);
+}
+
 /* Button Styles */
 .btn {
   padding-block: var(--space-sm);
