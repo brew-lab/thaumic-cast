@@ -1,11 +1,14 @@
 :root {
+  /* Default to dark mode; override with data-theme attribute for user preference */
+  color-scheme: dark;
+
   /*
    * ═══════════════════════════════════════════════════════════════════════════
    * TIER 1: PRIMITIVE TOKENS - Raw OKLCH color values
    * ═══════════════════════════════════════════════════════════════════════════
    */
 
-  /* Gray scale */
+  /* Gray scale - full range for light/dark modes */
   --primitive-gray-5: oklch(5% 0 0);
   --primitive-gray-10: oklch(10% 0 0);
   --primitive-gray-15: oklch(15% 0.01 250);
@@ -13,10 +16,16 @@
   --primitive-gray-20: oklch(20% 0.015 250);
   --primitive-gray-25: oklch(25% 0.02 250);
   --primitive-gray-30: oklch(30% 0.02 250);
+  --primitive-gray-40: oklch(40% 0.01 250);
   --primitive-gray-50: oklch(50% 0 0);
+  --primitive-gray-60: oklch(60% 0 0);
   --primitive-gray-70: oklch(70% 0 0);
-  --primitive-gray-80: oklch(80% 0 0);
+  --primitive-gray-80: oklch(80% 0.01 250);
+  --primitive-gray-85: oklch(85% 0.01 250);
+  --primitive-gray-90: oklch(90% 0.01 250);
+  --primitive-gray-93: oklch(93% 0.01 250);
   --primitive-gray-95: oklch(95% 0 0);
+  --primitive-gray-98: oklch(98% 0 0);
   --primitive-gray-100: oklch(100% 0 0);
 
   /* Brand colors (hue 250 = blue) */
@@ -44,55 +53,55 @@
 
   /*
    * ═══════════════════════════════════════════════════════════════════════════
-   * TIER 2: SEMANTIC TOKENS - Purpose-based colors
+   * TIER 2: SEMANTIC TOKENS - Purpose-based colors (light-dark pairs)
    * ═══════════════════════════════════════════════════════════════════════════
    */
 
   /* Backgrounds */
-  --color-bg: var(--primitive-gray-15);
-  --color-surface: var(--primitive-gray-20);
-  --color-surface-inset: var(--primitive-gray-17);
-  --color-surface-hover: var(--primitive-gray-25);
-  --color-overlay: oklch(0% 0 0 / 50%);
+  --color-bg: light-dark(var(--primitive-gray-98), var(--primitive-gray-15));
+  --color-surface: light-dark(var(--primitive-gray-100), var(--primitive-gray-20));
+  --color-surface-inset: light-dark(var(--primitive-gray-93), var(--primitive-gray-17));
+  --color-surface-hover: light-dark(var(--primitive-gray-90), var(--primitive-gray-25));
+  --color-overlay: light-dark(oklch(100% 0 0 / 50%), oklch(0% 0 0 / 50%));
 
   /* Borders */
-  --color-border: var(--primitive-gray-30);
-  --color-border-subtle: var(--primitive-gray-25);
+  --color-border: light-dark(var(--primitive-gray-80), var(--primitive-gray-30));
+  --color-border-subtle: light-dark(var(--primitive-gray-85), var(--primitive-gray-25));
 
   /* Text */
-  --color-text: var(--primitive-gray-95);
-  --color-text-muted: var(--primitive-gray-70);
-  --color-text-disabled: var(--primitive-gray-50);
+  --color-text: light-dark(var(--primitive-gray-15), var(--primitive-gray-95));
+  --color-text-muted: light-dark(var(--primitive-gray-40), var(--primitive-gray-70));
+  --color-text-disabled: light-dark(var(--primitive-gray-60), var(--primitive-gray-50));
 
   /* Primary (interactive) */
-  --color-primary: var(--primitive-blue-65);
-  --color-primary-hover: var(--primitive-blue-60);
-  --color-primary-active: var(--primitive-blue-50);
+  --color-primary: light-dark(var(--primitive-blue-50), var(--primitive-blue-65));
+  --color-primary-hover: light-dark(var(--primitive-blue-60), var(--primitive-blue-60));
+  --color-primary-active: light-dark(var(--primitive-blue-70), var(--primitive-blue-50));
   --color-on-primary: var(--primitive-gray-95);
 
   /* Error/Danger */
-  --color-error: var(--primitive-red-60);
-  --color-error-hover: var(--primitive-red-55);
-  --color-error-active: var(--primitive-red-50);
+  --color-error: light-dark(var(--primitive-red-50), var(--primitive-red-60));
+  --color-error-hover: light-dark(var(--primitive-red-55), var(--primitive-red-55));
+  --color-error-active: light-dark(var(--primitive-red-60), var(--primitive-red-50));
   --color-on-error: var(--primitive-gray-95);
 
   /* Success */
-  --color-success: var(--primitive-green-65);
-  --color-success-hover: var(--primitive-green-60);
+  --color-success: light-dark(var(--primitive-green-60), var(--primitive-green-65));
+  --color-success-hover: light-dark(var(--primitive-green-65), var(--primitive-green-60));
   --color-on-success: var(--primitive-gray-95);
 
   /* Warning */
-  --color-warning: var(--primitive-yellow-70);
-  --color-warning-hover: var(--primitive-yellow-65);
+  --color-warning: light-dark(var(--primitive-yellow-65), var(--primitive-yellow-70));
+  --color-warning-hover: light-dark(var(--primitive-yellow-70), var(--primitive-yellow-65));
   --color-on-warning: var(--primitive-gray-20);
 
   /* Casting/Active state */
-  --color-casting: var(--primitive-orange-65);
-  --color-casting-hover: var(--primitive-orange-60);
+  --color-casting: light-dark(var(--primitive-orange-60), var(--primitive-orange-65));
+  --color-casting-hover: light-dark(var(--primitive-orange-65), var(--primitive-orange-60));
   --color-on-casting: var(--primitive-gray-95);
 
   /* Focus */
-  --color-focus: var(--primitive-blue-70);
+  --color-focus: light-dark(var(--primitive-blue-50), var(--primitive-blue-70));
 
   /*
    * ═══════════════════════════════════════════════════════════════════════════
@@ -159,10 +168,10 @@
   --status-casting: var(--color-casting);
 
   /* Device card status badges */
-  --device-status-playing-bg: oklch(45% 0.15 145 / 20%);
-  --device-status-playing-text: oklch(70% 0.15 145);
-  --device-status-casting-bg: oklch(50% 0.15 260 / 20%);
-  --device-status-casting-text: oklch(75% 0.15 260);
+  --device-status-playing-bg: light-dark(oklch(65% 0.15 145 / 15%), oklch(45% 0.15 145 / 20%));
+  --device-status-playing-text: light-dark(oklch(40% 0.15 145), oklch(70% 0.15 145));
+  --device-status-casting-bg: light-dark(oklch(60% 0.15 260 / 15%), oklch(50% 0.15 260 / 20%));
+  --device-status-casting-text: light-dark(oklch(45% 0.15 260), oklch(75% 0.15 260));
 
   /* Spacing */
   --space-xs: 0.25rem;
