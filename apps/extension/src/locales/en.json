@@ -33,7 +33,7 @@
   "auto_stop_playback_stopped": "Playback has decided to take a break",
 
   "loading_speakers": "Seeking speakers...",
-  "no_speakers_found": "No speakers answered. Is the Desktop App running?",
+  "no_speakers_found": "The network was searched. The speakers were not forthcoming.",
   "no_speakers_placeholder": "No speakers",
 
   "volume": "Volume",
