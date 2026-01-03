@@ -187,7 +187,10 @@
 
   /* Card */
   --card-bg: var(--color-surface);
-  --card-border: var(--color-border);
+  --card-border: light-dark(
+    oklch(70% 0.02 var(--hue-primary) / 10%),
+    oklch(40% 0.02 var(--hue-primary) / 10%)
+  );
   --card-shadow: var(--shadow-5);
   --card-text: var(--color-text);
   --card-text-muted: var(--color-text-muted);
