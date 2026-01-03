@@ -130,7 +130,7 @@
 
 .skipBtn:hover {
   color: var(--color-text) !important;
-  background: transparent !important;
+  background: var(--color-surface-hover) !important;
 }
 
 .favicon {

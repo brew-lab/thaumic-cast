@@ -55,8 +55,8 @@
   --color-surface: light-dark(var(--gray-0), var(--gray-14));
   --color-surface-inset: light-dark(var(--gray-1), var(--gray-15));
   --color-surface-hover: light-dark(
-    oklch(88% 0.04 var(--hue-primary)),
-    oklch(25% 0.04 var(--hue-primary))
+    oklch(50% 0.04 var(--hue-primary) / 10%),
+    oklch(70% 0.04 var(--hue-primary) / 12%)
   );
   --color-overlay: light-dark(oklch(99% 0 0 / 50%), oklch(10% 0 0 / 50%));
 
