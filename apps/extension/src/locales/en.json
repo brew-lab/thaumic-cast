@@ -78,6 +78,13 @@
   "audio_detecting_codecs": "Detecting supported codecs...",
   "audio_no_codecs_detected": "No supported audio codecs found",
 
+  "appearance_section_title": "Appearance",
+  "appearance_theme": "Theme",
+  "appearance_theme_auto": "Auto",
+  "appearance_theme_auto_desc": "Follow system preference",
+  "appearance_theme_light": "Light",
+  "appearance_theme_dark": "Dark",
+
   "language_section_title": "Language",
   "language_label": "Language",
   "language_en": "English",

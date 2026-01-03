@@ -54,6 +54,15 @@ export const SupportedLocaleSchema = z.enum(['en']);
 export type SupportedLocale = z.infer<typeof SupportedLocaleSchema>;
 
 /**
+ * Theme mode for the extension UI.
+ * - auto: Follow system preference (prefers-color-scheme)
+ * - light: Force light mode
+ * - dark: Force dark mode
+ */
+export const ThemeModeSchema = z.enum(['auto', 'light', 'dark']);
+export type ThemeMode = z.infer<typeof ThemeModeSchema>;
+
+/**
  * Custom audio settings when mode is 'custom'.
  */
 export const CustomAudioSettingsSchema = z.object({
@@ -71,6 +80,9 @@ export const ExtensionSettingsSchema = z.object({
   // Server configuration
   serverUrl: z.string().nullable().default(null),
   useAutoDiscover: z.boolean().default(true),
+
+  // Appearance
+  theme: ThemeModeSchema.default('auto'),
 
   // Language
   language: SupportedLocaleSchema.default('en'),
@@ -93,6 +105,7 @@ const EXTENSION_SETTINGS_KEY = 'extensionSettings';
 const DEFAULT_EXTENSION_SETTINGS: ExtensionSettings = {
   serverUrl: null,
   useAutoDiscover: true,
+  theme: 'auto',
   language: 'en',
   audioMode: 'auto',
   customAudioSettings: {

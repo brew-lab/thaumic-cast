@@ -2,6 +2,7 @@ import type { JSX } from 'preact';
 import { useTranslation } from 'react-i18next';
 import { ServerSection } from './components/ServerSection';
 import { AudioSection } from './components/AudioSection';
+import { AppearanceSection } from './components/AppearanceSection';
 import { LanguageSection } from './components/LanguageSection';
 import { AboutSection } from './components/AboutSection';
 import { useExtensionSettings } from './hooks/useExtensionSettings';
@@ -30,6 +31,8 @@ export function Options(): JSX.Element {
   return (
     <div className={styles.container}>
       <h1 className={styles.title}>{t('settings_title')}</h1>
+
+      <AppearanceSection settings={settings} onUpdate={updateSettings} />
 
       <LanguageSection settings={settings} onUpdate={updateSettings} />
 
