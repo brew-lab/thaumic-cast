@@ -731,6 +731,44 @@ export function isSpeakerPlaying(speakerIp: string, state: SonosStateSnapshot): 
 }
 
 /**
+ * Speaker availability status for UI display.
+ * Indicates whether a speaker is available, in use by another source, or casting from Thaumic Cast.
+ */
+export type SpeakerAvailability = 'available' | 'in_use' | 'casting';
+
+/**
+ * User-friendly labels for speaker availability status.
+ */
+export const SPEAKER_AVAILABILITY_LABELS: Record<SpeakerAvailability, string> = {
+  available: 'Available',
+  in_use: 'In Use',
+  casting: 'Casting',
+} as const;
+
+/**
+ * Determines speaker availability considering both transport state and active casts.
+ * @param speakerIp - The speaker IP address
+ * @param state - The current Sonos state snapshot
+ * @param castingSpeakerIps - Array of speaker IPs with active Thaumic Cast sessions
+ * @returns The speaker's availability status
+ */
+export function getSpeakerAvailability(
+  speakerIp: string,
+  state: SonosStateSnapshot,
+  castingSpeakerIps: string[],
+): SpeakerAvailability {
+  // Check if this speaker has an active Thaumic Cast session
+  if (castingSpeakerIps.includes(speakerIp)) return 'casting';
+
+  // Check if playing from another source
+  const transport = state.transportStates[speakerIp];
+  if (transport === 'Playing') return 'in_use';
+
+  // Otherwise available (stopped, paused, or unknown state)
+  return 'available';
+}
+
+/**
  * Initial state message sent by desktop on WebSocket connect.
  */
 export const WsInitialStateMessageSchema = z.object({

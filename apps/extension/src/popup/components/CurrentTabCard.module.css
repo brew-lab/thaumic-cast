@@ -113,3 +113,14 @@
     transform: rotate(360deg);
   }
 }
+
+.castHint {
+  margin-block: var(--space-xs) 0;
+  font-size: var(--font-size-sm);
+  color: var(--color-text-muted);
+  text-align: center;
+}
+
+.castHint:empty {
+  display: none;
+}

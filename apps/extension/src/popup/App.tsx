@@ -1,7 +1,11 @@
 import type { JSX } from 'preact';
-import { useState, useEffect, useCallback } from 'preact/hooks';
+import { useState, useEffect, useCallback, useMemo } from 'preact/hooks';
 import { useTranslation } from 'react-i18next';
-import { getSpeakerStatus, MediaAction } from '@thaumic-cast/protocol';
+import {
+  getSpeakerAvailability,
+  SPEAKER_AVAILABILITY_LABELS,
+  MediaAction,
+} from '@thaumic-cast/protocol';
 import { Settings, X } from 'lucide-preact';
 import { IconButton } from '@thaumic-cast/ui';
 import styles from './App.module.css';
@@ -41,6 +45,9 @@ export function App(): JSX.Element {
   const isCasting = currentTabState
     ? activeCasts.some((cast) => cast.tabId === currentTabState.tabId)
     : false;
+
+  // Derive casting speaker IPs for availability status
+  const castingSpeakerIps = useMemo(() => activeCasts.map((cast) => cast.speakerIp), [activeCasts]);
 
   // Sonos state hook - handles real-time updates
   const {
@@ -148,18 +155,30 @@ export function App(): JSX.Element {
   }, [connectionChecking, connectionError, wsConnected]);
 
   /**
-   * Gets display name for a group with transport status.
+   * Gets display name for a group with availability status.
    * @param group - The zone group
-   * @returns Display name with optional status
+   * @returns Display name with availability status
    */
   const getGroupDisplayName = useCallback(
     (group: ZoneGroup) => {
       const memberCount = group.members?.length ?? 0;
       const baseName = `${group.name}${memberCount > 1 ? ` (+${memberCount - 1})` : ''}`;
-      const status = getSpeakerStatus(group.coordinatorIp, sonosState);
-      return status ? `${baseName} • ${status}` : baseName;
+      const availability = getSpeakerAvailability(
+        group.coordinatorIp,
+        sonosState,
+        castingSpeakerIps,
+      );
+      const label = SPEAKER_AVAILABILITY_LABELS[availability];
+      return `${baseName} • ${label}`;
     },
-    [sonosState],
+    [sonosState, castingSpeakerIps],
+  );
+
+  // Get selected speaker's availability for hint text
+  const selectedAvailability = useMemo(
+    () =>
+      selectedIp ? getSpeakerAvailability(selectedIp, sonosState, castingSpeakerIps) : 'available',
+    [selectedIp, sonosState, castingSpeakerIps],
   );
 
   return (
@@ -215,6 +234,7 @@ export function App(): JSX.Element {
           onMuteToggle={() => handleMuteToggle(selectedIp)}
           showVolumeControls={wsConnected && !!selectedIp}
           getGroupDisplayName={getGroupDisplayName}
+          selectedAvailability={selectedAvailability}
         />
       )}
 

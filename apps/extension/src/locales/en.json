@@ -31,6 +31,9 @@
   "previous_track": "Previous track",
   "next_track": "Next track",
 
+  "hint_replace_source": "Will replace current source",
+  "hint_replace_cast": "Will replace active cast",
+
   "settings": "Settings",
   "settings_title": "Settings",
 

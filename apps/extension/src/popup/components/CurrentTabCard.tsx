@@ -1,6 +1,6 @@
 import type { JSX } from 'preact';
 import { useTranslation } from 'react-i18next';
-import type { TabMediaState, ZoneGroup } from '@thaumic-cast/protocol';
+import type { TabMediaState, ZoneGroup, SpeakerAvailability } from '@thaumic-cast/protocol';
 import { getDisplayTitle, getDisplaySubtitle } from '@thaumic-cast/protocol';
 import { Button, VolumeControl } from '@thaumic-cast/ui';
 import { Cast, Loader2, Music } from 'lucide-preact';
@@ -35,6 +35,8 @@ interface CurrentTabCardProps {
   showVolumeControls: boolean;
   /** Function to get display name for a group */
   getGroupDisplayName: (group: ZoneGroup) => string;
+  /** Availability status of the selected speaker */
+  selectedAvailability: SpeakerAvailability;
 }
 
 /**
@@ -54,6 +56,7 @@ interface CurrentTabCardProps {
  * @param props.onMuteToggle
  * @param props.showVolumeControls
  * @param props.getGroupDisplayName
+ * @param props.selectedAvailability
  * @returns The rendered CurrentTabCard component
  */
 export function CurrentTabCard({
@@ -71,6 +74,7 @@ export function CurrentTabCard({
   onMuteToggle,
   showVolumeControls,
   getGroupDisplayName,
+  selectedAvailability,
 }: CurrentTabCardProps): JSX.Element {
   const { t } = useTranslation();
   const title = getDisplayTitle(state);
@@ -134,7 +138,11 @@ export function CurrentTabCard({
         </div>
 
         {/* Cast Button */}
-        <Button onClick={onStartCast} disabled={disabled || groups.length === 0}>
+        <Button
+          onClick={onStartCast}
+          disabled={disabled || groups.length === 0}
+          aria-describedby="cast-hint"
+        >
           {isStarting ? (
             <>
               <Loader2 size={16} className={styles.spinner} />
@@ -147,6 +155,12 @@ export function CurrentTabCard({
             </>
           )}
         </Button>
+
+        {/* Hint text - reserved space prevents layout shift */}
+        <p id="cast-hint" className={styles.castHint} aria-live="polite">
+          {selectedAvailability === 'in_use' && t('hint_replace_source')}
+          {selectedAvailability === 'casting' && t('hint_replace_cast')}
+        </p>
       </div>
     </div>
   );
