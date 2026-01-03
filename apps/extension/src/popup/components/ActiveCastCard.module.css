@@ -191,6 +191,7 @@
 }
 
 .subtitle {
+  max-inline-size: 100%;
   font-size: 0.75rem;
   color: var(--color-text-muted);
   white-space: nowrap;
