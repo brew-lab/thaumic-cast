@@ -305,6 +305,17 @@
   }
 }
 
+html {
+  scroll-behavior: smooth;
+  caret-color: var(--color-primary);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+}
+
 body {
   font-family:
     system-ui,
@@ -314,11 +325,27 @@ body {
   color: var(--color-text);
   accent-color: var(--color-primary);
   margin: 0;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 
 ::selection {
   background: var(--color-primary);
   color: var(--color-on-primary);
+}
+
+:where(
+  a[href],
+  area,
+  button,
+  input,
+  label[for],
+  select,
+  summary,
+  textarea,
+  [tabindex]:not([tabindex*='-'])
+) {
+  -webkit-tap-highlight-color: transparent;
 }
 
 /* Button Styles */
