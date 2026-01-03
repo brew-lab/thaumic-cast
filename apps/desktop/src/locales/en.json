@@ -6,7 +6,6 @@
   "nav.settings": "Settings",
 
   "speakers.summary": "{{speakers}} speakers, {{streams}} streaming",
-  "speakers.summary_zero": "No speakers in evidence",
   "speakers.none": "No Sonos speakers have made themselves known",
   "speakers.scan_hint": "Ensure you're on the same network as your speakers, then give it a go.",
   "speakers.scan": "Scan",
@@ -15,15 +14,10 @@
   "speakers.stopping": "Dispelling...",
 
   "device.coordinator": "Coordinator",
-  "device.member": "Member",
   "device.others": "+{{count}} others",
-  "device.cast": "Cast",
-  "device.casting": "Summoning...",
-  "device.stop": "Dispel",
   "device.streaming": "Streaming",
 
   "server.running": "Operational",
-  "server.stopped": "At Rest",
   "server.address": "Address",
   "server.copy_address": "Copy address",
   "server.clients": "Clients connected",
@@ -54,6 +48,5 @@
   "settings.theme_dark": "Dark",
 
   "error.page_not_found": "This Page Has Wandered Off",
-  "error.go_home": "Return Home",
-  "error.unknown": "Something has gone awry"
+  "error.go_home": "Return Home"
 }

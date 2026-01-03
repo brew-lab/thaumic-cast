@@ -192,7 +192,7 @@ export function App(): JSX.Element {
       </div>
 
       {error && (
-        <div className={styles.error}>
+        <div className={styles.error} role="alert">
           <span className={styles.errorMessage}>{error}</span>
           <IconButton
             size="sm"

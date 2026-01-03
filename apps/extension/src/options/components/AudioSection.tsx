@@ -202,8 +202,14 @@ export function AudioSection({
         {!codecLoading && codecSupport.availableCodecs.length > 0 && (
           <>
             <div className={styles.field}>
-              <label className={styles.label}>{t('audio_mode')}</label>
-              <div className={styles.radioGroup}>
+              <span id="audio-mode-label" className={styles.label}>
+                {t('audio_mode')}
+              </span>
+              <div
+                className={styles.radioGroup}
+                role="radiogroup"
+                aria-labelledby="audio-mode-label"
+              >
                 {modeOptions.map((option) => (
                   <label key={option.value} className={styles.radioOption}>
                     <input
@@ -235,8 +241,11 @@ export function AudioSection({
                 <div className={styles.cardContent}>
                   {/* Codec */}
                   <div className={styles.field}>
-                    <label className={styles.label}>{t('audio_codec')}</label>
+                    <label htmlFor="audio-codec" className={styles.label}>
+                      {t('audio_codec')}
+                    </label>
                     <select
+                      id="audio-codec"
                       className={styles.select}
                       value={settings.customAudioSettings.codec}
                       onChange={(e) =>
@@ -253,11 +262,14 @@ export function AudioSection({
 
                   {/* Bitrate */}
                   <div className={styles.field}>
-                    <label className={styles.label}>{t('audio_bitrate')}</label>
+                    <label htmlFor="audio-bitrate" className={styles.label}>
+                      {t('audio_bitrate')}
+                    </label>
                     {settings.customAudioSettings.codec === 'flac' ? (
                       <span className={styles.hint}>{t('bitrate_not_applicable')}</span>
                     ) : (
                       <select
+                        id="audio-bitrate"
                         className={styles.select}
                         value={settings.customAudioSettings.bitrate}
                         onChange={(e) =>
@@ -277,8 +289,11 @@ export function AudioSection({
 
                   {/* Channels */}
                   <div className={styles.field}>
-                    <label className={styles.label}>{t('audio_channels')}</label>
+                    <label htmlFor="audio-channels" className={styles.label}>
+                      {t('audio_channels')}
+                    </label>
                     <select
+                      id="audio-channels"
                       className={styles.select}
                       value={settings.customAudioSettings.channels}
                       onChange={(e) =>
@@ -293,8 +308,11 @@ export function AudioSection({
                   {/* Sample Rate - only show if codec supports multiple rates */}
                   {availableSampleRates.length > 0 && (
                     <div className={styles.field}>
-                      <label className={styles.label}>{t('audio_sample_rate')}</label>
+                      <label htmlFor="audio-sample-rate" className={styles.label}>
+                        {t('audio_sample_rate')}
+                      </label>
                       <select
+                        id="audio-sample-rate"
                         className={styles.select}
                         value={settings.customAudioSettings.sampleRate}
                         onChange={(e) =>

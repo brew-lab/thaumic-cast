@@ -197,7 +197,13 @@ export function ActiveCastCard({
         )}
 
         <div className={styles.info}>
-          <button type="button" className={styles.title} onClick={goToTab} title={t('go_to_tab')}>
+          <button
+            type="button"
+            className={styles.title}
+            onClick={goToTab}
+            title={t('go_to_tab')}
+            aria-label={`${t('go_to_tab')}: ${title}`}
+          >
             {title}
           </button>
           {subtitle && <p className={styles.subtitle}>{subtitle}</p>}
@@ -232,6 +238,7 @@ export function ActiveCastCard({
         onMuteToggle={onMuteToggle}
         muteLabel={t('mute')}
         unmuteLabel={t('unmute')}
+        volumeLabel={t('volume')}
       />
     </div>
   );

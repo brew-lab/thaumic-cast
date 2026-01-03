@@ -1,17 +1,12 @@
 {
   "app_name": "Thaumic Cast",
 
-  "cast_settings": "Cast Settings",
   "target_speaker": "Cast to",
   "start_casting": "Cast",
   "starting": "Summoning...",
-  "stop_casting": "Dispel",
-  "stopping": "Dispelling...",
   "stop_cast": "Dispel",
   "go_to_tab": "Return to source",
   "dismiss": "Dismiss",
-  "casting_active": "Ritual Active",
-  "streaming_msg": "Audio is being conveyed to Sonos.",
   "active_casts": "Active Rituals",
 
   "desktop_app_status": "Desktop App",
@@ -62,16 +57,12 @@
   "server_url_placeholder": "http://localhost:49400",
   "server_test_connection": "Test",
   "server_testing": "Reaching out...",
-  "server_status_connected": "Present",
-  "server_status_disconnected": "Absent",
   "server_status_latency": "{{latency}}ms",
   "server_test_success": "Contact established",
   "server_test_failed": "No response",
 
   "audio_section_title": "Audio Quality",
   "audio_mode": "Quality",
-  "audio_mode_auto": "Auto",
-  "audio_mode_auto_desc": "Let the device decide",
   "audio_mode_low": "Economical",
   "audio_mode_low_desc": "For when every bit counts",
   "audio_mode_mid": "Sensible",
@@ -83,8 +74,6 @@
 
   "audio_resolved_settings": "What You're Getting",
   "audio_settings": "Audio Settings",
-  "audio_settings_auto": "Auto (recommended)",
-  "audio_settings_auto_hint": "Let the device decide",
   "audio_codec": "Codec",
   "audio_bitrate": "Bitrate",
   "audio_channels": "Channels",
@@ -112,5 +101,7 @@
 
   "about_section_title": "About",
   "about_version": "Version {{version}}",
-  "about_extension_name": "Thaumic Cast Extension"
+  "about_extension_name": "Thaumic Cast Extension",
+
+  "loading_settings": "Loading settings..."
 }

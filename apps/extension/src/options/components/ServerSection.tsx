@@ -111,7 +111,7 @@ export function ServerSection({ settings, onUpdate }: ServerSectionProps): JSX.E
 
   return (
     <Card title={t('server_section_title')}>
-      <div className={styles.cardContent}>
+      <div className={styles.cardContent} role="radiogroup" aria-label={t('server_section_title')}>
         {/* Auto-discover option */}
         <label className={styles.radioOption}>
           <input
@@ -144,20 +144,25 @@ export function ServerSection({ settings, onUpdate }: ServerSectionProps): JSX.E
         {/* URL input (shown when custom mode) */}
         {!settings.useAutoDiscover && (
           <div className={styles.field}>
-            <label className={styles.label}>{t('server_url_label')}</label>
+            <label htmlFor="server-url" className={styles.label}>
+              {t('server_url_label')}
+            </label>
             <div className={styles.inlineRow}>
               <input
-                type="text"
+                id="server-url"
+                type="url"
                 className={styles.input}
                 style={{ flex: 1 }}
                 placeholder={t('server_url_placeholder')}
                 value={urlInput}
                 onInput={handleUrlChange}
+                autoComplete="url"
               />
               <Button
                 variant="secondary"
                 onClick={handleSaveUrl}
                 disabled={testing || !urlInput.trim()}
+                aria-busy={testing}
               >
                 {testing ? t('server_testing') : t('server_test_connection')}
               </Button>

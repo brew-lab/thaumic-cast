@@ -103,8 +103,11 @@ export function CurrentTabCard({
       <div className={styles.controls}>
         {/* Speaker Selection */}
         <div className={styles.field}>
-          <label className={styles.label}>{t('target_speaker')}</label>
+          <label htmlFor="speaker-select" className={styles.label}>
+            {t('target_speaker')}
+          </label>
           <select
+            id="speaker-select"
             value={selectedIp}
             onChange={(e) => onSelectSpeaker((e.target as HTMLSelectElement).value)}
             className={styles.select}
@@ -126,6 +129,7 @@ export function CurrentTabCard({
         <div
           className={styles.volumeWrapper}
           style={{ visibility: showVolumeControls && selectedIp ? 'visible' : 'hidden' }}
+          inert={!showVolumeControls || !selectedIp ? true : undefined}
         >
           <VolumeControl
             volume={volume}
@@ -134,6 +138,7 @@ export function CurrentTabCard({
             onMuteToggle={onMuteToggle}
             muteLabel={t('mute')}
             unmuteLabel={t('unmute')}
+            volumeLabel={t('volume')}
           />
         </div>
 
@@ -142,15 +147,16 @@ export function CurrentTabCard({
           onClick={onStartCast}
           disabled={disabled || groups.length === 0}
           aria-describedby="cast-hint"
+          aria-busy={isStarting}
         >
           {isStarting ? (
             <>
-              <Loader2 size={16} className={styles.spinner} />
+              <Loader2 size={16} className={styles.spinner} aria-hidden="true" />
               {t('starting')}
             </>
           ) : (
             <>
-              <Cast size={16} />
+              <Cast size={16} aria-hidden="true" />
               {t('start_casting')}
             </>
           )}

@@ -22,6 +22,8 @@ interface VolumeControlProps {
   muteLabel?: string;
   /** Label for mute button when muted */
   unmuteLabel?: string;
+  /** Accessible label for the volume slider */
+  volumeLabel?: string;
   /** Additional CSS class */
   className?: string;
 }
@@ -35,6 +37,7 @@ interface VolumeControlProps {
  * @param props.onMuteToggle - Mute toggle handler
  * @param props.muteLabel - Label for mute action
  * @param props.unmuteLabel - Label for unmute action
+ * @param props.volumeLabel - Accessible label for the volume slider
  * @param props.className - Additional CSS class
  * @returns The rendered VolumeControl component
  */
@@ -45,6 +48,7 @@ export function VolumeControl({
   onMuteToggle,
   muteLabel = 'Mute',
   unmuteLabel = 'Unmute',
+  volumeLabel = 'Volume',
   className,
 }: VolumeControlProps): JSX.Element {
   // Local state for immediate visual feedback while dragging
@@ -127,8 +131,12 @@ export function VolumeControl({
         onChange={handleSliderChange}
         className="volumeControlSlider"
         style={{ '--volume': `${localVolume}%` } as JSX.CSSProperties}
+        aria-label={volumeLabel}
+        aria-valuetext={`${localVolume}%`}
       />
-      <span className="volumeControlValue">{localVolume}</span>
+      <span className="volumeControlValue" aria-hidden="true">
+        {localVolume}
+      </span>
     </div>
   );
 }

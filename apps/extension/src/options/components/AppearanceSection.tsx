@@ -33,8 +33,11 @@ export function AppearanceSection({ settings, onUpdate }: AppearanceSectionProps
     <Card title={t('appearance_section_title')}>
       <div className={styles.cardContent}>
         <div className={styles.field}>
-          <label className={styles.label}>{t('appearance_theme')}</label>
+          <label htmlFor="theme-select" className={styles.label}>
+            {t('appearance_theme')}
+          </label>
           <select
+            id="theme-select"
             className={styles.select}
             value={settings.theme}
             onChange={(e) => handleThemeChange((e.target as HTMLSelectElement).value as ThemeMode)}

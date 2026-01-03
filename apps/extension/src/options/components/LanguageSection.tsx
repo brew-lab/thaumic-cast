@@ -34,8 +34,11 @@ export function LanguageSection({ settings, onUpdate }: LanguageSectionProps): J
     <Card title={t('language_section_title')}>
       <div className={styles.cardContent}>
         <div className={styles.field}>
-          <label className={styles.label}>{t('language_label')}</label>
+          <label htmlFor="language-select" className={styles.label}>
+            {t('language_label')}
+          </label>
           <select
+            id="language-select"
             className={styles.select}
             value={settings.language}
             onChange={(e) =>
