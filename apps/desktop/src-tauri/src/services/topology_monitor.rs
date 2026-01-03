@@ -20,7 +20,7 @@ use crate::context::NetworkContext;
 use crate::error::{ThaumicError, ThaumicResult};
 use crate::events::{EventEmitter, NetworkEvent, NetworkHealth};
 use crate::sonos::discovery::Speaker;
-use crate::sonos::gena::GenaSubscriptionManager;
+use crate::sonos::gena::{GenaSubscriptionManager, SonosEvent};
 use crate::sonos::SonosService;
 use crate::sonos::SonosTopologyClient;
 use crate::state::SonosState;
@@ -321,7 +321,7 @@ impl TopologyMonitor {
             }
         };
 
-        // Update stored groups
+        // Update stored groups and notify clients
         {
             let mut state = self.sonos_state.groups.write();
             *state = groups.clone();
@@ -330,6 +330,16 @@ impl TopologyMonitor {
                 state.len()
             );
         }
+
+        // Broadcast zone groups update to WebSocket clients
+        let timestamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as u64;
+        self.emitter.emit_sonos(SonosEvent::ZoneGroupsUpdated {
+            groups: groups.clone(),
+            timestamp,
+        });
 
         // Collect coordinator IPs
         let coordinator_ips: HashSet<String> =
