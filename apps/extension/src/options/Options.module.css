@@ -96,7 +96,7 @@
   padding-inline: var(--space-sm);
   border-radius: var(--radius-sm);
   cursor: pointer;
-  transition: background-color 0.15s ease;
+  transition: var(--transition-bg);
 }
 
 .radioOption:hover {

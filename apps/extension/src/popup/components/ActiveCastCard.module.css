@@ -176,7 +176,7 @@
   border: none;
   text-align: start;
   cursor: pointer;
-  transition: color 0.15s;
+  transition: var(--transition-color);
 }
 
 .title:hover {

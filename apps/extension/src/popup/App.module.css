@@ -139,7 +139,7 @@
   font-size: 1.25rem;
   padding: 0.25rem;
   border-radius: 4px;
-  transition: background 0.2s;
+  transition: var(--transition-bg);
 }
 
 .muteButton:hover {

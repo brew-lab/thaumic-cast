@@ -234,6 +234,40 @@
   --radius-sm: 0.25rem;
   --radius-md: 0.5rem;
   --radius-lg: 0.75rem;
+
+  /*
+   * ═══════════════════════════════════════════════════════════════════════════
+   * MOTION TOKENS - Easing curves and durations (Open Props inspired)
+   * ═══════════════════════════════════════════════════════════════════════════
+   */
+
+  /* Easing curves */
+  --ease-out-1: cubic-bezier(0, 0, 0.75, 1);
+  --ease-out-2: cubic-bezier(0, 0, 0.5, 1);
+  --ease-out-3: cubic-bezier(0, 0, 0.3, 1);
+  --ease-in-out-1: cubic-bezier(0.5, 0, 0.5, 1);
+  --ease-in-out-2: cubic-bezier(0.45, 0, 0.55, 1);
+
+  /* Durations */
+  --duration-fast: 100ms;
+  --duration-normal: 150ms;
+  --duration-slow: 250ms;
+
+  /* Semantic transitions (disabled by default, enabled via media query) */
+  --transition-bg: none;
+  --transition-color: none;
+  --transition-opacity: none;
+  --transition-transform: none;
+}
+
+/* Enable transitions only when user has no motion preference */
+@media (prefers-reduced-motion: no-preference) {
+  :root {
+    --transition-bg: background-color var(--duration-normal) var(--ease-out-2);
+    --transition-color: color var(--duration-normal) var(--ease-out-2);
+    --transition-opacity: opacity var(--duration-normal) var(--ease-out-1);
+    --transition-transform: transform var(--duration-normal) var(--ease-out-3);
+  }
 }
 
 body {
@@ -260,9 +294,7 @@ body {
   align-items: center;
   justify-content: center;
   gap: var(--space-sm);
-  transition:
-    background-color 0.15s ease,
-    opacity 0.15s ease;
+  transition: var(--transition-bg), var(--transition-opacity);
   font-size: 0.9rem;
 }
 
@@ -381,11 +413,7 @@ body {
   border: none;
   border-radius: var(--radius-sm);
   cursor: pointer;
-  transition:
-    background-color 0.15s,
-    color 0.15s,
-    border-color 0.15s,
-    opacity 0.15s;
+  transition: var(--transition-bg), var(--transition-color), var(--transition-opacity);
 }
 
 .iconBtn:disabled {
