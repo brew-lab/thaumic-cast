@@ -18,12 +18,39 @@ import { useActiveCasts } from './hooks/useActiveCasts';
 import { useSonosState } from './hooks/useSonosState';
 import { useAutoStopNotification } from './hooks/useAutoStopNotification';
 import { useConnectionStatus } from './hooks/useConnectionStatus';
+import { useOnboarding } from './hooks/useOnboarding';
+import { Onboarding } from './components/Onboarding';
 
 /**
  * Main Extension Popup UI.
  * @returns The rendered popup application
  */
 export function App(): JSX.Element {
+  const {
+    isLoading: onboardingLoading,
+    isComplete: onboardingComplete,
+    completeOnboarding,
+    skipOnboarding,
+  } = useOnboarding();
+
+  // Show nothing while loading onboarding state
+  if (onboardingLoading) {
+    return <div className={styles.container} />;
+  }
+
+  // Show onboarding for first-time users
+  if (!onboardingComplete) {
+    return <Onboarding onComplete={completeOnboarding} onSkip={skipOnboarding} />;
+  }
+
+  return <MainPopup />;
+}
+
+/**
+ * Main popup content after onboarding is complete.
+ * @returns The rendered main popup
+ */
+function MainPopup(): JSX.Element {
   const { t } = useTranslation();
   const [selectedIp, setSelectedIp] = useState<string>('');
   const [error, setError] = useState<string | null>(null);

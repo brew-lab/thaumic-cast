@@ -192,6 +192,8 @@
     oklch(40% 0.02 var(--hue-primary) / 10%)
   );
   --card-shadow: var(--shadow-5);
+  --card-radius: var(--radius-md);
+  --card-padding: 0.75rem;
   --card-text: var(--color-text);
   --card-text-muted: var(--color-text-muted);
 
@@ -208,6 +210,24 @@
   --status-disconnected: var(--color-error);
   --status-checking: var(--color-warning);
   --status-casting: var(--color-casting);
+
+  /* Alert component */
+  --alert-warning-bg: light-dark(
+    oklch(75% var(--chroma-muted) var(--hue-warning) / 15%),
+    oklch(55% var(--chroma-muted) var(--hue-warning) / 15%)
+  );
+  --alert-warning-border: light-dark(
+    oklch(65% var(--chroma-muted) var(--hue-warning) / 40%),
+    oklch(65% var(--chroma-muted) var(--hue-warning) / 30%)
+  );
+  --alert-warning-text: light-dark(
+    oklch(35% var(--chroma-muted) var(--hue-warning)),
+    oklch(85% var(--chroma-muted) var(--hue-warning))
+  );
+  --alert-warning-icon: light-dark(
+    oklch(50% var(--chroma-muted) var(--hue-warning)),
+    oklch(75% var(--chroma-muted) var(--hue-warning))
+  );
 
   /* Device card status badges */
   --device-status-playing-bg: light-dark(
@@ -405,11 +425,11 @@ body {
 
 /* Card Styles */
 .card {
-  background-color: var(--card-bg);
+  background: var(--card-bg);
   border: 1px solid var(--card-border);
-  border-radius: var(--radius-lg);
-  padding-block: var(--space-lg);
-  padding-inline: var(--space-lg);
+  border-radius: var(--card-radius);
+  padding-block: var(--card-padding);
+  padding-inline: var(--card-padding);
   box-shadow: var(--card-shadow);
 }
 
@@ -545,4 +565,156 @@ body {
   background: var(--icon-button-danger-hover-bg);
   border-color: var(--icon-button-danger-hover-bg);
   color: var(--icon-button-danger-hover-text);
+}
+
+/* Wizard Styles */
+.wizard {
+  display: flex;
+  flex-direction: column;
+  block-size: 100%;
+  padding: var(--space-lg);
+}
+
+.wizardContent {
+  flex: 1;
+  overflow-y: auto;
+}
+
+.wizardFooter {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding-block-start: var(--space-lg);
+  border-block-start: 1px solid var(--color-border);
+  margin-block-start: var(--space-lg);
+}
+
+.wizardFooterStart {
+  display: flex;
+  align-items: center;
+}
+
+.wizardFooterEnd {
+  display: flex;
+  gap: var(--space-sm);
+}
+
+.wizardFooterEnd .btn {
+  inline-size: auto;
+  min-inline-size: 6rem;
+}
+
+.wizardSkipBtn {
+  background: none;
+  border: none;
+  color: var(--color-text-muted);
+  cursor: pointer;
+  font-size: 0.875rem;
+  padding: var(--space-sm);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  transition: var(--transition-color);
+}
+
+.wizardSkipBtn:hover {
+  color: var(--color-text);
+}
+
+.wizardSkipBtn:focus-visible {
+  outline: 2px solid var(--color-focus);
+  outline-offset: 2px;
+}
+
+/* Wizard Step Styles */
+.wizardStep {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-lg);
+}
+
+.wizardStepHeader {
+  text-align: center;
+}
+
+.wizardStepIcon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  inline-size: 4rem;
+  block-size: 4rem;
+  border-radius: 50%;
+  background: var(--color-surface-hover);
+  color: var(--color-primary);
+  margin-block-end: var(--space-md);
+}
+
+.wizardStepTitle {
+  font-size: 1.5rem;
+  font-weight: 600;
+  margin: 0;
+  color: var(--color-text);
+}
+
+.wizardStepSubtitle {
+  font-size: 0.9rem;
+  color: var(--color-text-muted);
+  margin-block: var(--space-sm) 0;
+}
+
+.wizardStepContent {
+  text-align: start;
+}
+
+/* Step Indicator Styles */
+.stepIndicator {
+  display: flex;
+  justify-content: center;
+  gap: var(--space-sm);
+  margin-block-end: var(--space-lg);
+}
+
+.stepDot {
+  inline-size: 0.5rem;
+  block-size: 0.5rem;
+  border-radius: 50%;
+  background-color: var(--color-border);
+  transition: var(--transition-bg);
+}
+
+.stepDotActive {
+  background-color: var(--color-primary);
+  transform: scale(1.25);
+}
+
+.stepDotCompleted {
+  background-color: var(--color-success);
+}
+
+/* Alert Styles */
+.alert {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-sm);
+  padding-block: var(--space-sm);
+  padding-inline: var(--space-md);
+  border-radius: var(--radius-md);
+  font-size: 0.875rem;
+  line-height: 1.4;
+}
+
+.alertWarning {
+  background-color: var(--alert-warning-bg);
+  border: 1px solid var(--alert-warning-border);
+  color: var(--alert-warning-text);
+}
+
+.alertIcon {
+  flex-shrink: 0;
+  color: var(--alert-warning-icon);
+  margin-block-start: 0.125rem;
+}
+
+.alertContent {
+  flex: 1;
+  min-inline-size: 0;
 }

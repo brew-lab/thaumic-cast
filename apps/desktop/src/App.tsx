@@ -3,6 +3,8 @@ import { Sidebar } from './components/Sidebar';
 import { Speakers } from './views/Speakers';
 import { Server } from './views/Server';
 import { Settings } from './views/Settings';
+import { Onboarding } from './views/Onboarding';
+import { useOnboarding } from './hooks/useOnboarding';
 import './App.css';
 import styles from './App.module.css';
 import { useTranslation } from 'react-i18next';
@@ -10,11 +12,24 @@ import { useTranslation } from 'react-i18next';
 /**
  * Root application component.
  *
- * Renders the sidebar navigation and routes to the appropriate view.
+ * Renders onboarding for first-time users, otherwise the main app with
+ * sidebar navigation and routes.
  * @returns The rendered App component
  */
 export function App() {
   const { t } = useTranslation();
+  const { isLoading, isComplete } = useOnboarding();
+
+  // Show nothing while loading onboarding state
+  if (isLoading) {
+    return null;
+  }
+
+  // Show onboarding for first-time users
+  if (!isComplete) {
+    return <Onboarding />;
+  }
+
   return (
     <div className={styles.layout}>
       <Sidebar />

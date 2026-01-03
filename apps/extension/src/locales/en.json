@@ -103,5 +103,44 @@
   "about_version": "Version {{version}}",
   "about_extension_name": "Thaumic Cast Extension",
 
-  "loading_settings": "Loading settings..."
+  "loading_settings": "Loading settings...",
+
+  "onboarding.skip": "Skip the formalities",
+  "onboarding.next": "Onwards",
+  "onboarding.back": "Retreat",
+  "onboarding.finish": "Let's begin",
+  "onboarding.step_welcome": "Welcome",
+  "onboarding.step_desktop": "Desktop",
+  "onboarding.step_speakers": "Speakers",
+  "onboarding.step_ready": "Ready",
+
+  "onboarding.welcome.title": "Welcome, Caster",
+  "onboarding.welcome.subtitle": "A brief orientation before we proceed",
+  "onboarding.welcome.body": "Thaumic Cast channels audio from your browser to your Sonos speakers. Think of it as a magical conduit, except the magic is networking and the wand is a browser extension.",
+  "onboarding.welcome.footnote": "No actual magic involved. Probably.",
+
+  "onboarding.desktop.title": "The Desktop App",
+  "onboarding.desktop.subtitle": "Your local anchor to the speaker realm",
+  "onboarding.desktop.checking": "Seeking the Desktop App...",
+  "onboarding.desktop.found": "Excellent. The Desktop App is present and accounted for.",
+  "onboarding.desktop.not_found_title": "The Desktop App Has Not Been Summoned",
+  "onboarding.desktop.not_found_body": "The Desktop App serves as the bridge between your browser and your speakers. Without it, we're shouting into the void.",
+  "onboarding.desktop.download_prompt": "You'll need to install it first:",
+  "onboarding.desktop.download_button": "Download Desktop App",
+  "onboarding.desktop.retry_button": "I've installed it, try again",
+
+  "onboarding.speakers.title": "Your Speakers Await",
+  "onboarding.speakers.subtitle": "Let's see who's listening",
+  "onboarding.speakers.loading": "Seeking speakers...",
+  "onboarding.speakers.found": "Discovered {{count}} speaker(s). They seem receptive.",
+  "onboarding.speakers.none_found": "No speakers have made themselves known",
+  "onboarding.speakers.hint": "Ensure your speakers are powered on and the Desktop App is running.",
+
+  "onboarding.ready.title": "All Systems Nominal",
+  "onboarding.ready.subtitle": "You're ready to cast",
+  "onboarding.ready.performance_title": "A word on expectations",
+  "onboarding.ready.performance_body": "Audio travels through your local network. Latency is typically 100–300ms — noticeable for games, imperceptible for music and video.",
+  "onboarding.ready.tip_1": "Wired connections are more reliable than WiFi",
+  "onboarding.ready.tip_2": "Close proximity to your router helps",
+  "onboarding.ready.tip_3": "5GHz WiFi generally outperforms 2.4GHz for this purpose"
 }

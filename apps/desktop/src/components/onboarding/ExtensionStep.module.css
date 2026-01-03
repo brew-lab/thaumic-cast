@@ -1,0 +1,46 @@
+.storeButton {
+  margin-block-end: var(--space-lg);
+}
+
+.connectedBox,
+.waitingBox {
+  display: flex;
+  align-items: center;
+  gap: var(--space-md);
+  padding: var(--space-md);
+  border-radius: var(--radius-md);
+  margin-block-end: var(--space-lg);
+}
+
+.connectedBox {
+  background: light-dark(oklch(45% 0.18 175 / 10%), oklch(65% 0.18 175 / 10%));
+  border: 1px solid var(--color-success);
+}
+
+.waitingBox {
+  background: var(--color-surface-inset);
+  border: 1px solid var(--color-border);
+}
+
+.statusDot {
+  inline-size: 0.75rem;
+  block-size: 0.75rem;
+  border-radius: 50%;
+  flex-shrink: 0;
+  background: var(--color-border);
+}
+
+.statusDot[data-connected='true'] {
+  background: var(--color-success);
+}
+
+.statusText {
+  margin: 0;
+}
+
+.skipHint {
+  font-size: 0.85rem;
+  color: var(--color-text-muted);
+  font-style: italic;
+  margin: 0;
+}

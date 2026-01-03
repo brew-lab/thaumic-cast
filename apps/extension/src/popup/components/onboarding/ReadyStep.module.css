@@ -1,0 +1,33 @@
+.perfTitle {
+  font-size: 1rem;
+  font-weight: 600;
+  margin: 0 0 var(--space-sm);
+}
+
+.perfBody {
+  margin: 0 0 var(--space-lg);
+  line-height: 1.6;
+  color: var(--color-text-muted);
+}
+
+.tipList {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+.tipList li {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  font-size: 0.9rem;
+  color: var(--color-text-muted);
+}
+
+.tipList li svg {
+  flex-shrink: 0;
+  color: var(--color-primary);
+}

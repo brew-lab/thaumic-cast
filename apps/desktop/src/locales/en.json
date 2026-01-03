@@ -48,5 +48,53 @@
   "settings.theme_dark": "Dark",
 
   "error.page_not_found": "This Page Has Wandered Off",
-  "error.go_home": "Return Home"
+  "error.go_home": "Return Home",
+
+  "network.degraded_warning": "Speakers were discovered but seem reluctant to communicate. VPN or firewall may be the culprit.",
+
+  "onboarding.skip": "Skip the formalities",
+  "onboarding.next": "Onwards",
+  "onboarding.back": "Retreat",
+  "onboarding.finish": "Let's begin",
+  "onboarding.step_welcome": "Welcome",
+  "onboarding.step_firewall": "Permissions",
+  "onboarding.step_speakers": "Speakers",
+  "onboarding.step_extension": "Extension",
+  "onboarding.step_ready": "Ready",
+
+  "onboarding.welcome.title": "Welcome to Thaumic Cast",
+  "onboarding.welcome.subtitle": "The server side of the equation",
+  "onboarding.welcome.body": "This application acts as the bridge between your browser and your Sonos speakers. It lurks quietly in your system tray, ready to channel audio when called upon.",
+  "onboarding.welcome.footnote": "Think of it as a very dedicated postal service for sound.",
+
+  "onboarding.firewall.title": "A Brief Interruption",
+  "onboarding.firewall.subtitle": "Windows would like a word",
+  "onboarding.firewall.warning_text": "In a moment, Windows will likely ask for permission to allow network access. This is normal and entirely necessary.",
+  "onboarding.firewall.reason_1": "Your browser extension needs to send audio data to this app",
+  "onboarding.firewall.reason_2": "This app needs to communicate with your Sonos speakers",
+  "onboarding.firewall.reason_3": "All traffic stays on your local network — nothing leaves your home",
+  "onboarding.firewall.reassurance": "Click 'Allow' when Windows asks. We promise not to do anything nefarious with your trust.",
+
+  "onboarding.speakers.title": "Discovering Speakers",
+  "onboarding.speakers.subtitle": "Let's find your Sonos devices",
+  "onboarding.speakers.found": "Found {{count}} speaker(s). They seem receptive.",
+  "onboarding.speakers.none_found": "No speakers detected",
+  "onboarding.speakers.none_found_hint": "Speakers can be shy. Check that they're powered on and connected to the same network as this computer.",
+  "onboarding.speakers.scan_button": "Try Again",
+
+  "onboarding.extension.title": "The Browser Extension",
+  "onboarding.extension.subtitle": "The other half of the equation",
+  "onboarding.extension.body": "You'll need the Thaumic Cast browser extension to capture audio from your tabs. It's the bit that does the actual capturing.",
+  "onboarding.extension.chrome_link": "Install for Chrome",
+  "onboarding.extension.checking": "Waiting for extension connection...",
+  "onboarding.extension.connected": "Extension connected! Someone's home.",
+  "onboarding.extension.skip_hint": "You can always install it later from the Chrome Web Store.",
+
+  "onboarding.ready.title": "Configuration Complete",
+  "onboarding.ready.subtitle": "You're ready to cast audio",
+  "onboarding.ready.performance_title": "Setting Expectations",
+  "onboarding.ready.performance_body": "Audio latency is typically 100–300ms over local network. This is ideal for music and video, though gamers may find it... educational.",
+  "onboarding.ready.tip_1": "Wired connections are more reliable than WiFi",
+  "onboarding.ready.tip_2": "Close proximity to your router helps",
+  "onboarding.ready.tip_3": "5GHz WiFi generally outperforms 2.4GHz for this purpose"
 }
