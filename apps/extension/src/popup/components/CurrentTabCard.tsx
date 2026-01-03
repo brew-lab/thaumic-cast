@@ -120,7 +120,7 @@ export function CurrentTabCard({
               </option>
             ))}
             {!speakersLoading && groups.length === 0 && (
-              <option value="">{t('no_speakers_found')}</option>
+              <option value="">{t('no_speakers_placeholder')}</option>
             )}
           </select>
         </div>

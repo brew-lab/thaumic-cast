@@ -34,6 +34,7 @@
 
   "loading_speakers": "Seeking speakers...",
   "no_speakers_found": "No speakers answered. Is the Desktop App running?",
+  "no_speakers_placeholder": "No speakers",
 
   "volume": "Volume",
   "mute": "Mute",

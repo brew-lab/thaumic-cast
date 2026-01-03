@@ -105,6 +105,13 @@ function MainPopup(): JSX.Element {
     }
   }, [connectionChecking, connectionError]);
 
+  // Show error when no speakers found after loading completes
+  useEffect(() => {
+    if (!sonosLoading && !connectionChecking && wsConnected && groups.length === 0) {
+      setError(t('no_speakers_found'));
+    }
+  }, [sonosLoading, connectionChecking, wsConnected, groups.length, t]);
+
   // Update selected IP when groups change and none is selected
   useEffect(() => {
     if (groups.length > 0 && !selectedIp) {
