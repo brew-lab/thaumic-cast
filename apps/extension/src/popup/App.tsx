@@ -161,15 +161,13 @@ export function App(): JSX.Element {
    */
   const getGroupDisplayName = useCallback(
     (group: ZoneGroup) => {
-      const memberCount = group.members?.length ?? 0;
-      const baseName = `${group.name}${memberCount > 1 ? ` (+${memberCount - 1})` : ''}`;
       const availability = getSpeakerAvailability(
         group.coordinatorIp,
         sonosState,
         castingSpeakerIps,
       );
       const label = SPEAKER_AVAILABILITY_LABELS[availability];
-      return `${baseName} • ${label}`;
+      return `${group.name} • ${label}`;
     },
     [sonosState, castingSpeakerIps],
   );
