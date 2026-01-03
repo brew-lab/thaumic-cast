@@ -150,6 +150,9 @@ impl StreamCoordinator {
     /// The playback session is recorded for expected stream tracking.
     /// Broadcasts a `StreamEvent::PlaybackStarted` event.
     ///
+    /// If the speaker already has an active stream, the old stream is removed
+    /// first (broadcasting `StreamEvent::Ended` for cleanup).
+    ///
     /// # Arguments
     /// * `speaker_ip` - IP address of the Sonos speaker
     /// * `stream_id` - The stream ID to play
@@ -160,6 +163,22 @@ impl StreamCoordinator {
         stream_id: &str,
         metadata: Option<&StreamMetadata>,
     ) -> ThaumicResult<()> {
+        // If this speaker already has an active stream, clean it up first
+        if let Some(existing) = self.playback_sessions.get(speaker_ip) {
+            let old_stream_id = existing.stream_id.clone();
+            drop(existing); // Release the lock before removing
+
+            log::info!(
+                "Speaker {} already has stream {}, replacing with {}",
+                speaker_ip,
+                old_stream_id,
+                stream_id
+            );
+
+            // Remove the old stream (emits StreamEvent::Ended for extension cleanup)
+            self.remove_stream(&old_stream_id);
+        }
+
         let stream_url = self.network.url_builder().stream_url(stream_id);
 
         log::info!("Starting playback: {} -> {}", speaker_ip, stream_url);
