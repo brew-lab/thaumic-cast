@@ -4,5 +4,9 @@ import { render } from 'preact';
 import './lib/i18n';
 
 import { App } from './App';
+import { initTheme } from './lib/theme';
+
+// Apply saved theme before render to prevent flash
+initTheme();
 
 render(<App />, document.getElementById('app')!);

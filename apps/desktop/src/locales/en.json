@@ -46,6 +46,12 @@
   "settings.autostart_description": "Automatically start Thaumic Cast when you log in",
   "settings.language": "Language",
   "settings.display_language": "Display language",
+  "settings.appearance": "Appearance",
+  "settings.theme": "Theme",
+  "settings.theme_auto": "Auto",
+  "settings.theme_auto_desc": "Follow system preference",
+  "settings.theme_light": "Light",
+  "settings.theme_dark": "Dark",
 
   "error.page_not_found": "Page Not Found",
   "error.go_home": "Go Home",
