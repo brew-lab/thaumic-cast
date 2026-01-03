@@ -20,7 +20,7 @@ use crate::context::NetworkContext;
 use crate::error::{ThaumicError, ThaumicResult};
 use crate::events::{EventEmitter, NetworkEvent, NetworkHealth};
 use crate::sonos::discovery::Speaker;
-use crate::sonos::gena::{GenaSubscriptionManager, SonosEvent};
+use crate::sonos::gena::GenaSubscriptionManager;
 use crate::sonos::SonosService;
 use crate::sonos::SonosTopologyClient;
 use crate::state::SonosState;
@@ -284,12 +284,11 @@ impl TopologyMonitor {
         }
 
         // Discovery succeeded - mark that we've seen speakers
-        self.speakers_discovered.store(true, Ordering::Relaxed);
+        let was_first_discovery = !self.speakers_discovered.swap(true, Ordering::Relaxed);
 
         let current_speaker_ips: HashSet<String> = speakers.iter().map(|s| s.ip.clone()).collect();
 
         // Phase 2: Fetch zone groups (HTTP/SOAP call to speaker)
-        // This is where VPN/routing issues typically manifest
         log::info!(
             "[TopologyMonitor] Fetching zone groups from {} (SOAP call)...",
             speakers[0].ip
@@ -300,8 +299,6 @@ impl TopologyMonitor {
                     "[TopologyMonitor] SOAP succeeded: {} groups found",
                     groups.len()
                 );
-                // Communication successful - network is healthy
-                self.set_network_health(NetworkHealth::Ok, None);
                 groups
             }
             Err(e) => {
@@ -321,7 +318,7 @@ impl TopologyMonitor {
             }
         };
 
-        // Update stored groups and notify clients
+        // Update stored groups
         {
             let mut state = self.sonos_state.groups.write();
             *state = groups.clone();
@@ -330,16 +327,6 @@ impl TopologyMonitor {
                 state.len()
             );
         }
-
-        // Broadcast zone groups update to WebSocket clients
-        let timestamp = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_millis() as u64;
-        self.emitter.emit_sonos(SonosEvent::ZoneGroupsUpdated {
-            groups: groups.clone(),
-            timestamp,
-        });
 
         // Collect coordinator IPs
         let coordinator_ips: HashSet<String> =
@@ -363,12 +350,50 @@ impl TopologyMonitor {
             .await;
         self.cleanup_stale_coordinators(&coordinator_ips).await;
 
+        let av_sub_count = self
+            .gena_manager
+            .get_subscribed_ips(SonosService::AVTransport)
+            .len();
+        let grc_sub_count = self
+            .gena_manager
+            .get_subscribed_ips(SonosService::GroupRenderingControl)
+            .len();
+        let zgt_sub_count = self
+            .gena_manager
+            .get_subscribed_ips(SonosService::ZoneGroupTopology)
+            .len();
+
         log::debug!(
             "[TopologyMonitor] Subscriptions: {} AVTransport, {} GroupRenderingControl, {} ZoneGroupTopology",
-            self.gena_manager.get_subscribed_ips(SonosService::AVTransport).len(),
-            self.gena_manager.get_subscribed_ips(SonosService::GroupRenderingControl).len(),
-            self.gena_manager.get_subscribed_ips(SonosService::ZoneGroupTopology).len()
+            av_sub_count,
+            grc_sub_count,
+            zgt_sub_count
         );
+
+        // Check communication health: if we have groups and subscriptions but no transport states,
+        // speakers likely can't reach our callback URL (VPN, firewall, etc.)
+        let has_subscriptions = av_sub_count > 0 || grc_sub_count > 0;
+        let transport_states_empty = self.sonos_state.transport_states.is_empty();
+        let has_groups = !groups.is_empty();
+
+        if !was_first_discovery && has_groups && has_subscriptions && transport_states_empty {
+            log::warn!(
+                "[TopologyMonitor] Communication issue: have {} groups and {} subscriptions but no transport states",
+                groups.len(),
+                av_sub_count + grc_sub_count
+            );
+            self.set_network_health(
+                NetworkHealth::Degraded,
+                Some(
+                    "Speakers found but not responding. Check VPN or firewall settings."
+                        .to_string(),
+                ),
+            );
+        } else if has_groups && !transport_states_empty {
+            // Everything is working - set health to Ok
+            self.set_network_health(NetworkHealth::Ok, None);
+        }
+        // On first discovery, don't set health yet - give time for events to arrive
 
         Ok(())
     }
