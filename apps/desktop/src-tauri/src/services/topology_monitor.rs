@@ -5,16 +5,20 @@
 //! - IP change detection and re-subscription
 //! - GENA subscription lifecycle management
 //! - Manual refresh coordination
+//! - Network health monitoring
 
 use std::collections::HashSet;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
+use parking_lot::RwLock;
 use tokio::sync::Notify;
 use tokio_util::sync::CancellationToken;
 
 use crate::context::NetworkContext;
 use crate::error::{ThaumicError, ThaumicResult};
+use crate::events::{EventEmitter, NetworkEvent, NetworkHealth};
 use crate::sonos::discovery::Speaker;
 use crate::sonos::gena::GenaSubscriptionManager;
 use crate::sonos::SonosService;
@@ -22,12 +26,36 @@ use crate::sonos::SonosTopologyClient;
 use crate::state::SonosState;
 use crate::types::ZoneGroup;
 
+/// Current network health state with reason.
+#[derive(Debug, Clone)]
+pub struct NetworkHealthState {
+    /// Current health status.
+    pub health: NetworkHealth,
+    /// Reason for the current health status (if degraded).
+    pub reason: Option<String>,
+}
+
+impl Default for NetworkHealthState {
+    fn default() -> Self {
+        Self {
+            health: NetworkHealth::Ok,
+            reason: None,
+        }
+    }
+}
+
 /// Monitors Sonos network topology and manages GENA subscriptions.
 pub struct TopologyMonitor {
     /// Sonos client for discovery and topology operations.
     sonos: Arc<dyn SonosTopologyClient>,
     gena_manager: Arc<GenaSubscriptionManager>,
     sonos_state: Arc<SonosState>,
+    /// Event emitter for broadcasting network health changes.
+    emitter: Arc<dyn EventEmitter>,
+    /// Current network health state.
+    network_health: RwLock<NetworkHealthState>,
+    /// Tracks if speakers were discovered (for detecting "discovered but unreachable").
+    speakers_discovered: AtomicBool,
     /// Interval between automatic topology refreshes (seconds).
     topology_refresh_interval_secs: u64,
     /// Network configuration (port, local IP).
@@ -44,6 +72,7 @@ impl TopologyMonitor {
     /// * `sonos` - Sonos client for discovery and topology operations
     /// * `gena_manager` - Manager for GENA subscriptions
     /// * `sonos_state` - Shared state for Sonos groups
+    /// * `emitter` - Event emitter for broadcasting network health changes
     /// * `network` - Network configuration (port, local IP)
     /// * `refresh_notify` - Notifier for manual refresh requests
     /// * `topology_refresh_interval_secs` - Interval between automatic refreshes
@@ -51,6 +80,7 @@ impl TopologyMonitor {
         sonos: Arc<dyn SonosTopologyClient>,
         gena_manager: Arc<GenaSubscriptionManager>,
         sonos_state: Arc<SonosState>,
+        emitter: Arc<dyn EventEmitter>,
         network: NetworkContext,
         refresh_notify: Arc<Notify>,
         topology_refresh_interval_secs: u64,
@@ -59,10 +89,47 @@ impl TopologyMonitor {
             sonos,
             gena_manager,
             sonos_state,
+            emitter,
+            network_health: RwLock::new(NetworkHealthState::default()),
+            speakers_discovered: AtomicBool::new(false),
             topology_refresh_interval_secs,
             network,
             refresh_notify,
             cancel_token: CancellationToken::new(),
+        }
+    }
+
+    /// Returns the current network health state.
+    pub fn get_network_health(&self) -> NetworkHealthState {
+        self.network_health.read().clone()
+    }
+
+    /// Updates network health and emits an event if it changed.
+    fn set_network_health(&self, health: NetworkHealth, reason: Option<String>) {
+        let mut state = self.network_health.write();
+        if state.health != health {
+            log::info!(
+                "[TopologyMonitor] Network health changed: {:?} -> {:?}{}",
+                state.health,
+                health,
+                reason
+                    .as_ref()
+                    .map(|r| format!(" ({})", r))
+                    .unwrap_or_default()
+            );
+            state.health = health;
+            state.reason = reason.clone();
+
+            let timestamp = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_millis() as u64;
+
+            self.emitter.emit_network(NetworkEvent::HealthChanged {
+                health,
+                reason,
+                timestamp,
+            });
         }
     }
 
@@ -161,21 +228,52 @@ impl TopologyMonitor {
     /// Performs a single topology refresh cycle.
     ///
     /// Discovers speakers, fetches zone groups, updates state, and syncs subscriptions.
+    /// Tracks network health based on discovery and communication success.
     async fn refresh_topology(&self, callback_url: &str) -> ThaumicResult<()> {
         log::debug!("[TopologyMonitor] Refreshing Sonos topology...");
 
+        // Phase 1: SSDP Discovery
         let speakers = self.sonos.discover_speakers().await?;
 
         if speakers.is_empty() {
+            // No speakers discovered - could be network issue or just no speakers
+            // Only mark as degraded if we previously had speakers
+            if self.speakers_discovered.load(Ordering::Relaxed) {
+                self.set_network_health(
+                    NetworkHealth::Degraded,
+                    Some("Speakers previously discovered are no longer visible".to_string()),
+                );
+            }
             return Err(ThaumicError::SpeakerNotFound(
                 "no speakers discovered".to_string(),
             ));
         }
 
+        // Discovery succeeded - mark that we've seen speakers
+        self.speakers_discovered.store(true, Ordering::Relaxed);
+
         let current_speaker_ips: HashSet<String> = speakers.iter().map(|s| s.ip.clone()).collect();
 
-        // Fetch zone groups to determine coordinators
-        let groups: Vec<ZoneGroup> = self.sonos.get_zone_groups(&speakers[0].ip).await?;
+        // Phase 2: Fetch zone groups (HTTP/SOAP call to speaker)
+        // This is where VPN/routing issues typically manifest
+        let groups: Vec<ZoneGroup> = match self.sonos.get_zone_groups(&speakers[0].ip).await {
+            Ok(groups) => {
+                // Communication successful - network is healthy
+                self.set_network_health(NetworkHealth::Ok, None);
+                groups
+            }
+            Err(e) => {
+                // Discovery worked but communication failed - this is the VPN/firewall scenario
+                self.set_network_health(
+                    NetworkHealth::Degraded,
+                    Some(
+                        "Speakers found but unreachable. Check VPN or firewall settings."
+                            .to_string(),
+                    ),
+                );
+                return Err(e.into());
+            }
+        };
 
         // Update stored groups
         {

@@ -37,6 +37,15 @@ export interface PlaybackSession {
 /** Set of speaker IPs that are currently casting our streams. */
 export type CastingSpeakers = Set<string>;
 
+/** Network health status. */
+export type NetworkHealthStatus = 'ok' | 'degraded';
+
+/** Network health response from the backend. */
+export interface NetworkHealth {
+  health: NetworkHealthStatus;
+  reason: string | null;
+}
+
 // Global State
 export const speakers = signal<Speaker[]>([]);
 export const groups = signal<ZoneGroup[]>([]);
@@ -45,6 +54,7 @@ export const castingSpeakers = signal<CastingSpeakers>(new Set());
 export const serverPort = signal<number>(0);
 export const isLoading = signal<boolean>(false);
 export const stats = signal<AppStats | null>(null);
+export const networkHealth = signal<NetworkHealth>({ health: 'ok', reason: null });
 
 export interface AppStats {
   connectionCount: number;
@@ -76,20 +86,31 @@ export const fetchTransportStates = async (): Promise<void> => {
 };
 
 /**
- * Fetches zone groups, transport states, playback sessions, and stats from the backend.
- * Updates the groups, transportStates, and castingSpeakers signals.
+ * Fetches the current network health status.
+ * Updates the networkHealth signal.
+ */
+export const fetchNetworkHealth = async (): Promise<void> => {
+  const health = await invoke<NetworkHealth>('get_network_health');
+  networkHealth.value = health;
+};
+
+/**
+ * Fetches zone groups, transport states, playback sessions, stats, and network health.
+ * Updates the groups, transportStates, castingSpeakers, and networkHealth signals.
  */
 export const fetchGroups = async (): Promise<void> => {
   try {
     isLoading.value = true;
-    const [fetchedGroups, states, sessions] = await Promise.all([
+    const [fetchedGroups, states, sessions, health] = await Promise.all([
       invoke<ZoneGroup[]>('get_groups'),
       invoke<TransportStates>('get_transport_states'),
       invoke<PlaybackSession[]>('get_playback_sessions'),
+      invoke<NetworkHealth>('get_network_health'),
     ]);
     groups.value = fetchedGroups;
     transportStates.value = states;
     castingSpeakers.value = new Set(sessions.map((s) => s.speakerIp));
+    networkHealth.value = health;
     await fetchStats();
   } finally {
     isLoading.value = false;

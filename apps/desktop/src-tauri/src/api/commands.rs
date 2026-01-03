@@ -4,6 +4,7 @@
 
 use crate::api::AppState;
 use crate::error::CommandError;
+use crate::events::NetworkHealth;
 use crate::sonos::discovery::Speaker;
 use crate::types::ZoneGroup;
 use serde::Serialize;
@@ -177,4 +178,32 @@ pub fn set_autostart_enabled(app: tauri::AppHandle, enabled: bool) -> Result<(),
         code: "autostart_error",
         message: e.to_string(),
     })
+}
+
+/// Network health status response.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NetworkHealthResponse {
+    /// Current health status.
+    pub health: NetworkHealth,
+    /// Reason for the current status (if degraded).
+    pub reason: Option<String>,
+}
+
+/// Returns the current network health status.
+///
+/// This indicates whether speakers are reachable after discovery.
+/// A "degraded" status typically indicates VPN or firewall issues.
+#[tauri::command]
+pub fn get_network_health(state: tauri::State<'_, AppState>) -> NetworkHealthResponse {
+    let health_state = state
+        .services
+        .discovery_service
+        .topology_monitor()
+        .get_network_health();
+
+    NetworkHealthResponse {
+        health: health_state.health,
+        reason: health_state.reason,
+    }
 }

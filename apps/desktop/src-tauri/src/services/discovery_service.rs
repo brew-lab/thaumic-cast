@@ -58,6 +58,7 @@ impl DiscoveryService {
             sonos,
             Arc::clone(&gena_manager),
             Arc::clone(&sonos_state),
+            Arc::clone(&emitter),
             network,
             Arc::clone(&refresh_notify),
             topology_refresh_interval_secs,
@@ -88,6 +89,11 @@ impl DiscoveryService {
     /// Returns a reference to the Sonos state.
     pub fn sonos_state(&self) -> &Arc<SonosState> {
         &self.sonos_state
+    }
+
+    /// Returns a reference to the topology monitor.
+    pub fn topology_monitor(&self) -> &Arc<TopologyMonitor> {
+        &self.topology_monitor
     }
 
     /// Triggers a manual topology refresh.

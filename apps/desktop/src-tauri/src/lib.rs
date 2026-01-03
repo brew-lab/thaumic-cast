@@ -22,8 +22,8 @@ use tauri_plugin_log::{Target, TargetKind};
 
 use crate::api::commands::{
     clear_all_connections, clear_all_streams, get_autostart_enabled, get_groups,
-    get_playback_sessions, get_server_port, get_speakers, get_stats, get_transport_states,
-    refresh_topology, restart_server, set_autostart_enabled, start_playback,
+    get_network_health, get_playback_sessions, get_server_port, get_speakers, get_stats,
+    get_transport_states, refresh_topology, restart_server, set_autostart_enabled, start_playback,
 };
 use crate::api::{start_server, AppState};
 
@@ -55,6 +55,7 @@ pub fn run() {
             get_stats,
             get_transport_states,
             get_playback_sessions,
+            get_network_health,
             start_playback,
             get_server_port,
             refresh_topology,

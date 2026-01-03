@@ -27,6 +27,9 @@ pub enum BroadcastEvent {
 
     /// Events related to audio streaming.
     Stream(StreamEvent),
+
+    /// Events related to network health and connectivity.
+    Network(NetworkEvent),
 }
 
 /// Events related to audio stream state changes.
@@ -82,5 +85,43 @@ impl From<SonosEvent> for BroadcastEvent {
 impl From<StreamEvent> for BroadcastEvent {
     fn from(event: StreamEvent) -> Self {
         BroadcastEvent::Stream(event)
+    }
+}
+
+/// Network health status.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum NetworkHealth {
+    /// All systems operational.
+    Ok,
+    /// Speakers discovered but communication is failing.
+    Degraded,
+}
+
+impl Default for NetworkHealth {
+    fn default() -> Self {
+        Self::Ok
+    }
+}
+
+/// Events related to network health and speaker reachability.
+#[derive(Debug, Clone, Serialize)]
+#[serde(tag = "type", rename_all = "camelCase")]
+pub enum NetworkEvent {
+    /// Network health status changed.
+    HealthChanged {
+        /// Current health status.
+        health: NetworkHealth,
+        /// Human-readable reason for the status (if degraded).
+        #[serde(skip_serializing_if = "Option::is_none")]
+        reason: Option<String>,
+        /// Unix timestamp in milliseconds.
+        timestamp: u64,
+    },
+}
+
+impl From<NetworkEvent> for BroadcastEvent {
+    fn from(event: NetworkEvent) -> Self {
+        BroadcastEvent::Network(event)
     }
 }
