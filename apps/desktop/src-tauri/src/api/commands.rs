@@ -202,6 +202,12 @@ pub fn get_network_health(state: tauri::State<'_, AppState>) -> NetworkHealthRes
         .topology_monitor()
         .get_network_health();
 
+    log::debug!(
+        "[Command] get_network_health -> {:?} (reason: {:?})",
+        health_state.health,
+        health_state.reason
+    );
+
     NetworkHealthResponse {
         health: health_state.health,
         reason: health_state.reason,

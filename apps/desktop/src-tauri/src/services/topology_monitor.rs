@@ -107,10 +107,12 @@ impl TopologyMonitor {
     /// Updates network health and emits an event if it changed.
     fn set_network_health(&self, health: NetworkHealth, reason: Option<String>) {
         let mut state = self.network_health.write();
-        if state.health != health {
+        let old_health = state.health;
+
+        if old_health != health {
             log::info!(
                 "[TopologyMonitor] Network health changed: {:?} -> {:?}{}",
-                state.health,
+                old_health,
                 health,
                 reason
                     .as_ref()
@@ -130,6 +132,8 @@ impl TopologyMonitor {
                 reason,
                 timestamp,
             });
+        } else {
+            log::debug!("[TopologyMonitor] Health unchanged: {:?}", health);
         }
     }
 
@@ -230,12 +234,26 @@ impl TopologyMonitor {
     /// Discovers speakers, fetches zone groups, updates state, and syncs subscriptions.
     /// Tracks network health based on discovery and communication success.
     async fn refresh_topology(&self, callback_url: &str) -> ThaumicResult<()> {
-        log::debug!("[TopologyMonitor] Refreshing Sonos topology...");
+        log::info!(
+            "[TopologyMonitor] Refreshing topology (speakers_discovered={})",
+            self.speakers_discovered.load(Ordering::Relaxed)
+        );
 
         // Phase 1: SSDP Discovery
         let speakers = match self.sonos.discover_speakers().await {
-            Ok(speakers) => speakers,
+            Ok(speakers) => {
+                log::info!(
+                    "[TopologyMonitor] Discovery found {} speakers",
+                    speakers.len()
+                );
+                speakers
+            }
             Err(e) => {
+                log::warn!(
+                    "[TopologyMonitor] Discovery failed: {} (speakers_discovered={})",
+                    e,
+                    self.speakers_discovered.load(Ordering::Relaxed)
+                );
                 // Discovery failed - mark as degraded if we previously had speakers
                 if self.speakers_discovered.load(Ordering::Relaxed) {
                     self.set_network_health(
@@ -248,6 +266,10 @@ impl TopologyMonitor {
         };
 
         if speakers.is_empty() {
+            log::warn!(
+                "[TopologyMonitor] Discovery returned empty (speakers_discovered={})",
+                self.speakers_discovered.load(Ordering::Relaxed)
+            );
             // No speakers discovered - could be network issue or just no speakers
             // Only mark as degraded if we previously had speakers
             if self.speakers_discovered.load(Ordering::Relaxed) {
@@ -268,13 +290,25 @@ impl TopologyMonitor {
 
         // Phase 2: Fetch zone groups (HTTP/SOAP call to speaker)
         // This is where VPN/routing issues typically manifest
+        log::info!(
+            "[TopologyMonitor] Fetching zone groups from {} (SOAP call)...",
+            speakers[0].ip
+        );
         let groups: Vec<ZoneGroup> = match self.sonos.get_zone_groups(&speakers[0].ip).await {
             Ok(groups) => {
+                log::info!(
+                    "[TopologyMonitor] SOAP succeeded: {} groups found",
+                    groups.len()
+                );
                 // Communication successful - network is healthy
                 self.set_network_health(NetworkHealth::Ok, None);
                 groups
             }
             Err(e) => {
+                log::error!(
+                    "[TopologyMonitor] SOAP failed: {} - setting health to Degraded",
+                    e
+                );
                 // Discovery worked but communication failed - this is the VPN/firewall scenario
                 self.set_network_health(
                     NetworkHealth::Degraded,
