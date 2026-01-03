@@ -28,6 +28,14 @@
   "error_playback_failed": "Playback failed",
   "error_server_error": "Server returned an error",
   "error_wrong_server": "Not a Thaumic Cast server",
+  "error_network_failed": "Could not reach server",
+  "error_load_settings": "Couldn't load settings",
+  "error_save_settings": "Couldn't save settings",
+  "error_codec_detection": "Couldn't detect audio capabilities",
+
+  "auto_stop_source_changed": "Sonos switched to another source",
+  "auto_stop_stream_ended": "Stream ended",
+  "auto_stop_playback_stopped": "Playback stopped",
 
   "loading_speakers": "Loading speakers...",
   "no_speakers_found": "No Sonos speakers found. Check that your desktop app is running.",

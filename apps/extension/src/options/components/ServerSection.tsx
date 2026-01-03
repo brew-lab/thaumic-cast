@@ -58,9 +58,18 @@ export function ServerSection({ settings, onUpdate }: ServerSectionProps): JSX.E
           latency: Math.round(performance.now() - start),
         });
       } catch (err) {
+        // Map common network errors to user-friendly messages
+        let errorMessage = t('server_test_failed');
+        if (err instanceof Error) {
+          if (err.message === 'Failed to fetch' || err.name === 'TypeError') {
+            errorMessage = t('error_network_failed');
+          } else {
+            errorMessage = err.message;
+          }
+        }
         setTestResult({
           success: false,
-          error: err instanceof Error ? err.message : t('server_test_failed'),
+          error: errorMessage,
         });
       } finally {
         setTesting(false);

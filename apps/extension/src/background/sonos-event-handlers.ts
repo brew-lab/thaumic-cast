@@ -24,6 +24,7 @@ import {
   getSonosState,
 } from './sonos-state';
 import { getSessionBySpeakerIp, getSessionByStreamId, removeSession } from './session-manager';
+import i18n from '../lib/i18n';
 
 const log = createLogger('SonosEvents');
 
@@ -143,7 +144,7 @@ async function handleSourceChanged(speakerIp: string, currentUri: string): Promi
       tabId: session.tabId,
       speakerIp,
       reason: 'source_changed',
-      message: 'Sonos switched to another source',
+      message: i18n.t('auto_stop_source_changed'),
     });
   }
 }
@@ -239,7 +240,7 @@ async function handleStreamEnded(streamId: string): Promise<void> {
       tabId: session.tabId,
       speakerIp: session.speakerIp,
       reason: 'stream_ended',
-      message: 'Stream ended by server',
+      message: i18n.t('auto_stop_stream_ended'),
     });
   }
 }
@@ -264,7 +265,7 @@ async function handlePlaybackStopped(speakerIp: string): Promise<void> {
       tabId: session.tabId,
       speakerIp,
       reason: 'playback_stopped',
-      message: 'Playback stopped on speaker',
+      message: i18n.t('auto_stop_playback_stopped'),
     });
   }
 }
