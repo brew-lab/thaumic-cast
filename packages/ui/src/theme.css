@@ -376,13 +376,17 @@ body {
   border: none;
   cursor: pointer;
   font-weight: 500;
-  inline-size: 100%;
+  inline-size: fit-content;
   display: flex;
   align-items: center;
   justify-content: center;
   gap: var(--space-sm);
   transition: var(--transition-bg), var(--transition-opacity);
   font-size: 0.9rem;
+}
+
+.btnFullWidth {
+  inline-size: 100%;
 }
 
 .btn:disabled {

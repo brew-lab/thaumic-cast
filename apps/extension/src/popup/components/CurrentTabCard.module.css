@@ -1,8 +1,8 @@
 .card {
-  padding-block: 0.75rem;
-  padding-inline: 0.75rem;
+  padding-block: var(--card-padding);
+  padding-inline: var(--card-padding);
   background: var(--card-bg);
-  border-radius: 8px;
+  border-radius: var(--card-radius);
   border: 1px solid var(--card-border);
   box-shadow: var(--card-shadow);
   margin-block-end: 1rem;

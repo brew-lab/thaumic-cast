@@ -1,12 +1,13 @@
 .deviceCard {
-  background-color: var(--card-bg);
-  border-radius: var(--radius-md);
-  padding-block: var(--space-md);
-  padding-inline: var(--space-md);
+  background: var(--card-bg);
+  border-radius: var(--card-radius);
+  padding-block: var(--card-padding);
+  padding-inline: var(--card-padding);
   display: flex;
   flex-direction: column;
   gap: var(--space-sm);
   border: 1px solid var(--card-border);
+  box-shadow: var(--card-shadow);
 }
 
 .header {

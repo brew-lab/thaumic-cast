@@ -148,6 +148,7 @@ export function CurrentTabCard({
           disabled={disabled || groups.length === 0}
           aria-describedby="cast-hint"
           aria-busy={isStarting}
+          fullWidth
         >
           {isStarting ? (
             <>
