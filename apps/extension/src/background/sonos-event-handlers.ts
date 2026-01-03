@@ -21,8 +21,8 @@ import { getSessionBySpeakerIp, getSessionByStreamId, removeSession } from './se
 
 const log = createLogger('SonosEvents');
 
-/** Debounce timer for transport state changes */
-let transportDebounceTimer: ReturnType<typeof setTimeout> | null = null;
+/** Per-speaker debounce timers for transport state changes */
+const transportDebounceTimers = new Map<string, ReturnType<typeof setTimeout>>();
 const TRANSPORT_DEBOUNCE_MS = 500;
 
 /**
@@ -72,17 +72,20 @@ export async function handleSonosEvent(event: BroadcastEvent): Promise<void> {
 
 /**
  * Handles transport state change events.
- * Debounces rapid changes during transitions.
+ * Debounces rapid changes per-speaker during transitions.
  * @param speakerIp - The speaker IP address
  * @param state - The new transport state
  */
 function handleTransportState(speakerIp: string, state: TransportState): void {
-  // Debounce to prevent rapid state flapping during transitions
-  if (transportDebounceTimer) {
-    clearTimeout(transportDebounceTimer);
+  // Clear existing timer for this specific speaker
+  const existingTimer = transportDebounceTimers.get(speakerIp);
+  if (existingTimer) {
+    clearTimeout(existingTimer);
   }
 
-  transportDebounceTimer = setTimeout(() => {
+  // Set new timer for this speaker (debounce per-speaker, not globally)
+  const timer = setTimeout(() => {
+    transportDebounceTimers.delete(speakerIp);
     updateTransportState(speakerIp, state);
 
     notifyPopup({
@@ -93,6 +96,8 @@ function handleTransportState(speakerIp: string, state: TransportState): void {
 
     log.info(`Transport state: ${speakerIp} → ${state}`);
   }, TRANSPORT_DEBOUNCE_MS);
+
+  transportDebounceTimers.set(speakerIp, timer);
 }
 
 /**
