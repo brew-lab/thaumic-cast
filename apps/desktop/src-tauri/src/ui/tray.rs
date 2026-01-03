@@ -3,6 +3,7 @@
 //! Provides the system tray icon with context menu for quick access to
 //! common actions: showing the status window and quitting the application.
 
+use rust_i18n::t;
 use tauri::{
     menu::{MenuBuilder, MenuItemBuilder},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
@@ -33,10 +34,10 @@ impl MenuItem {
         }
     }
 
-    const fn label(self) -> &'static str {
+    fn label(self) -> String {
         match self {
-            Self::ShowStatus => "Show Status",
-            Self::Quit => "Quit",
+            Self::ShowStatus => t!("tray.show_status").to_string(),
+            Self::Quit => t!("tray.quit").to_string(),
         }
     }
 }
@@ -73,7 +74,7 @@ pub fn setup_tray(app: &tauri::App) -> Result<(), TrayError> {
     TrayIconBuilder::new()
         .icon(icon.clone())
         .menu(&menu)
-        .tooltip("Thaumic Cast")
+        .tooltip(t!("tray.tooltip"))
         .on_menu_event(on_menu_event)
         .on_tray_icon_event(on_tray_click)
         .build(app)

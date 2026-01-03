@@ -16,6 +16,8 @@ mod utils;
 
 use std::sync::Arc;
 
+rust_i18n::i18n!("locales", fallback = "en");
+
 use tauri::{Manager, RunEvent};
 use tauri_plugin_log::{Target, TargetKind};
 
@@ -64,6 +66,14 @@ pub fn run() {
             set_autostart_enabled
         ])
         .setup(|app| {
+            // Detect and set system locale for i18n
+            if let Some(locale) = sys_locale::get_locale() {
+                // Try exact match first, then base language (e.g., "en" from "en-US")
+                let base_locale = locale.split('-').next().unwrap_or("en");
+                rust_i18n::set_locale(base_locale);
+                log::debug!("Locale set to: {} (detected: {})", base_locale, locale);
+            }
+
             let state = Arc::new(AppState::new());
 
             // Store app handle for restart functionality
