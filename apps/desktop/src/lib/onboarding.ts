@@ -63,8 +63,12 @@ export function getOnboardingState(): DesktopOnboarding {
   }
 }
 
+/** Event name dispatched when onboarding state changes */
+export const ONBOARDING_STATE_CHANGE_EVENT = 'thaumic-onboarding-state-change';
+
 /**
  * Saves onboarding state to localStorage.
+ * Dispatches a custom event to notify all listeners of the change.
  * @param state - Partial state to merge with existing
  */
 export function saveOnboardingState(state: Partial<DesktopOnboarding>): void {
@@ -78,6 +82,7 @@ export function saveOnboardingState(state: Partial<DesktopOnboarding>): void {
     },
   };
   localStorage.setItem(STORAGE_KEY, JSON.stringify(merged));
+  window.dispatchEvent(new Event(ONBOARDING_STATE_CHANGE_EVENT));
 }
 
 /**

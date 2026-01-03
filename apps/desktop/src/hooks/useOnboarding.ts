@@ -4,6 +4,7 @@ import {
   completeOnboarding as markComplete,
   skipOnboarding as markSkipped,
   completeStep as markStepComplete,
+  ONBOARDING_STATE_CHANGE_EVENT,
   type DesktopOnboarding,
   type OnboardingSteps,
 } from '../lib/onboarding';
@@ -36,6 +37,15 @@ export function useOnboarding(): UseOnboardingResult {
   useEffect(() => {
     setState(getOnboardingState());
     setIsLoading(false);
+
+    // Listen for state changes from other hook instances
+    const handleStateChange = () => {
+      setState(getOnboardingState());
+    };
+    window.addEventListener(ONBOARDING_STATE_CHANGE_EVENT, handleStateChange);
+    return () => {
+      window.removeEventListener(ONBOARDING_STATE_CHANGE_EVENT, handleStateChange);
+    };
   }, []);
 
   const completeStep = useCallback((step: keyof OnboardingSteps) => {
