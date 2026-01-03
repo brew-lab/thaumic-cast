@@ -3,6 +3,7 @@ import { useCallback } from 'preact/hooks';
 import { useTranslation } from 'react-i18next';
 import { Card } from '@thaumic-cast/ui';
 import type { ExtensionSettings, SupportedLocale } from '../../lib/settings';
+import { changeLanguage } from '../../lib/i18n';
 import styles from '../Options.module.css';
 
 interface LanguageSectionProps {
@@ -23,6 +24,7 @@ export function LanguageSection({ settings, onUpdate }: LanguageSectionProps): J
 
   const handleLanguageChange = useCallback(
     async (language: SupportedLocale) => {
+      await changeLanguage(language);
       await onUpdate({ language });
     },
     [onUpdate],

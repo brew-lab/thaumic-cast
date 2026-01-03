@@ -1,6 +1,8 @@
 {
   "manifest_version": 3,
-  "name": "Thaumic Cast",
+  "name": "__MSG_extensionName__",
+  "description": "__MSG_extensionDescription__",
+  "default_locale": "en",
   "version": "0.4.1",
   "permissions": ["tabCapture", "offscreen", "storage", "tabs", "power"],
   "host_permissions": ["http://localhost/*"],

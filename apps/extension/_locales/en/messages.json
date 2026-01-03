@@ -1,0 +1,10 @@
+{
+  "extensionName": {
+    "message": "Thaumic Cast",
+    "description": "The name of the extension displayed in the browser"
+  },
+  "extensionDescription": {
+    "message": "Stream audio from browser tabs to Sonos speakers",
+    "description": "The description of the extension displayed in the browser and store"
+  }
+}

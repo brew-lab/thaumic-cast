@@ -1,10 +1,11 @@
 import { render } from 'preact';
 import { App } from './App';
 import { initTheme } from '../lib/theme';
-import '../lib/i18n';
+import { initLanguage } from '../lib/i18n';
 import './styles.css';
 
-// Apply saved theme before render to prevent flash
+// Apply saved theme and language before render to prevent flash
 initTheme();
+initLanguage();
 
 render(<App />, document.getElementById('app')!);

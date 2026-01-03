@@ -49,9 +49,11 @@ export type AudioMode = z.infer<typeof AudioModeSchema>;
 
 /**
  * Supported languages for the extension UI.
+ * Uses the locales defined in i18n.ts.
  */
-export const SupportedLocaleSchema = z.enum(['en']);
-export type SupportedLocale = z.infer<typeof SupportedLocaleSchema>;
+export { type SupportedLocale, SUPPORTED_LOCALES } from './i18n';
+import { SUPPORTED_LOCALES } from './i18n';
+const SupportedLocaleSchema = z.enum(SUPPORTED_LOCALES as [string, ...string[]]);
 
 /**
  * Theme mode for the extension UI.
