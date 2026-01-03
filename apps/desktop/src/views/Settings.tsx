@@ -2,6 +2,7 @@ import { useEffect, useState } from 'preact/hooks';
 import { getAutostartEnabled, setAutostartEnabled } from '../state/store';
 import { useTranslation } from 'react-i18next';
 import { Power, Globe, Palette } from 'lucide-preact';
+import { Card } from '@thaumic-cast/ui';
 import i18n, { resources, SupportedLocale } from '../lib/i18n';
 import { type ThemeMode, getTheme, saveTheme, applyTheme } from '../lib/theme';
 import styles from './Settings.module.css';
@@ -61,7 +62,7 @@ export function Settings() {
       <h2 className={styles.title}>{t('nav.settings')}</h2>
 
       {/* Startup Section */}
-      <div className={styles.section}>
+      <Card noPadding className={styles.section}>
         <div className={styles.sectionHeader}>
           <Power size={18} />
           <h3 className={styles.sectionTitle}>{t('settings.startup')}</h3>
@@ -84,10 +85,10 @@ export function Settings() {
             />
           </label>
         </div>
-      </div>
+      </Card>
 
       {/* Language Section */}
-      <div className={styles.section}>
+      <Card noPadding className={styles.section}>
         <div className={styles.sectionHeader}>
           <Globe size={18} />
           <h3 className={styles.sectionTitle}>{t('settings.language')}</h3>
@@ -109,10 +110,10 @@ export function Settings() {
             </select>
           </div>
         </div>
-      </div>
+      </Card>
 
       {/* Appearance Section */}
-      <div className={styles.section}>
+      <Card noPadding className={styles.section}>
         <div className={styles.sectionHeader}>
           <Palette size={18} />
           <h3 className={styles.sectionTitle}>{t('settings.appearance')}</h3>
@@ -135,7 +136,7 @@ export function Settings() {
             )}
           </div>
         </div>
-      </div>
+      </Card>
     </div>
   );
 }

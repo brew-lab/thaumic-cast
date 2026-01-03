@@ -12,11 +12,7 @@
 }
 
 .section {
-  background-color: var(--color-surface);
-  border-radius: var(--radius-md);
-  border: 1px solid var(--color-border);
   margin-block-end: var(--space-lg);
-  overflow: hidden;
 }
 
 .sectionHeader {
