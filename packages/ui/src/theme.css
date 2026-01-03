@@ -8,48 +8,41 @@
    * ═══════════════════════════════════════════════════════════════════════════
    */
 
-  /* Gray scale - full range for light/dark modes */
-  --primitive-gray-5: oklch(5% 0 0);
-  --primitive-gray-10: oklch(10% 0 0);
-  --primitive-gray-15: oklch(15% 0.01 250);
-  --primitive-gray-17: oklch(17% 0.015 250);
-  --primitive-gray-20: oklch(20% 0.015 250);
-  --primitive-gray-25: oklch(25% 0.02 250);
-  --primitive-gray-30: oklch(30% 0.02 250);
-  --primitive-gray-40: oklch(40% 0.01 250);
-  --primitive-gray-50: oklch(50% 0 0);
-  --primitive-gray-60: oklch(60% 0 0);
-  --primitive-gray-70: oklch(70% 0 0);
-  --primitive-gray-80: oklch(80% 0.01 250);
-  --primitive-gray-85: oklch(85% 0.01 250);
-  --primitive-gray-90: oklch(90% 0.01 250);
-  --primitive-gray-93: oklch(93% 0.01 250);
-  --primitive-gray-95: oklch(95% 0 0);
-  --primitive-gray-98: oklch(98% 0 0);
-  --primitive-gray-100: oklch(100% 0 0);
+  /*
+   * Gray scale - Open Props inspired 16-step progression
+   * Customizable via --gray-hue and --gray-chroma
+   * Default: cool blue tint (hue 250) like GitHub
+   */
+  --gray-hue: 250;
+  --gray-chroma: 0.015;
+  --gray-0: oklch(99% var(--gray-chroma) var(--gray-hue));
+  --gray-1: oklch(95% var(--gray-chroma) var(--gray-hue));
+  --gray-2: oklch(88% var(--gray-chroma) var(--gray-hue));
+  --gray-3: oklch(80% var(--gray-chroma) var(--gray-hue));
+  --gray-4: oklch(74% var(--gray-chroma) var(--gray-hue));
+  --gray-5: oklch(68% var(--gray-chroma) var(--gray-hue));
+  --gray-6: oklch(63% var(--gray-chroma) var(--gray-hue));
+  --gray-7: oklch(58% var(--gray-chroma) var(--gray-hue));
+  --gray-8: oklch(53% var(--gray-chroma) var(--gray-hue));
+  --gray-9: oklch(49% var(--gray-chroma) var(--gray-hue));
+  --gray-10: oklch(43% var(--gray-chroma) var(--gray-hue));
+  --gray-11: oklch(37% var(--gray-chroma) var(--gray-hue));
+  --gray-12: oklch(31% var(--gray-chroma) var(--gray-hue));
+  --gray-13: oklch(25% var(--gray-chroma) var(--gray-hue));
+  --gray-14: oklch(18% var(--gray-chroma) var(--gray-hue));
+  --gray-15: oklch(10% var(--gray-chroma) var(--gray-hue));
 
-  /* Brand colors (hue 250 = blue) */
-  --primitive-blue-50: oklch(50% 0.2 250);
-  --primitive-blue-60: oklch(60% 0.2 250);
-  --primitive-blue-65: oklch(65% 0.2 250);
-  --primitive-blue-70: oklch(70% 0.2 250);
-
-  /* Error/Danger colors (hue 25 = red) */
-  --primitive-red-50: oklch(50% 0.2 25);
-  --primitive-red-55: oklch(55% 0.2 25);
-  --primitive-red-60: oklch(60% 0.2 25);
-
-  /* Success colors (hue 145 = green) */
-  --primitive-green-60: oklch(60% 0.15 145);
-  --primitive-green-65: oklch(65% 0.15 145);
-
-  /* Warning colors (hue 75 = yellow) */
-  --primitive-yellow-65: oklch(65% 0.15 75);
-  --primitive-yellow-70: oklch(70% 0.15 75);
-
-  /* Casting/Active colors (hue 30 = orange) */
-  --primitive-orange-60: oklch(60% 0.15 30);
-  --primitive-orange-65: oklch(65% 0.15 30);
+  /*
+   * Brand color hues - customize these to change the entire color scheme
+   * Chroma values control saturation intensity
+   */
+  --hue-primary: 250;
+  --hue-error: 25;
+  --hue-success: 145;
+  --hue-warning: 85;
+  --hue-casting: 55;
+  --chroma-vibrant: 0.18;
+  --chroma-muted: 0.12;
 
   /*
    * ═══════════════════════════════════════════════════════════════════════════
@@ -57,51 +50,90 @@
    * ═══════════════════════════════════════════════════════════════════════════
    */
 
-  /* Backgrounds */
-  --color-bg: light-dark(var(--primitive-gray-98), var(--primitive-gray-15));
-  --color-surface: light-dark(var(--primitive-gray-100), var(--primitive-gray-20));
-  --color-surface-inset: light-dark(var(--primitive-gray-93), var(--primitive-gray-17));
-  --color-surface-hover: light-dark(var(--primitive-gray-90), var(--primitive-gray-25));
-  --color-overlay: light-dark(oklch(100% 0 0 / 50%), oklch(0% 0 0 / 50%));
+  /* Backgrounds - dark mode uses gray-14/15, light mode uses gray-0/1 */
+  --color-bg: light-dark(var(--gray-0), var(--gray-15));
+  --color-surface: light-dark(var(--gray-0), var(--gray-14));
+  --color-surface-inset: light-dark(var(--gray-1), var(--gray-15));
+  --color-surface-hover: light-dark(var(--gray-2), var(--gray-13));
+  --color-overlay: light-dark(oklch(99% 0 0 / 50%), oklch(10% 0 0 / 50%));
 
   /* Borders */
-  --color-border: light-dark(var(--primitive-gray-80), var(--primitive-gray-30));
-  --color-border-subtle: light-dark(var(--primitive-gray-85), var(--primitive-gray-25));
+  --color-border: light-dark(var(--gray-3), var(--gray-12));
+  --color-border-subtle: light-dark(var(--gray-2), var(--gray-13));
 
   /* Text */
-  --color-text: light-dark(var(--primitive-gray-15), var(--primitive-gray-95));
-  --color-text-muted: light-dark(var(--primitive-gray-40), var(--primitive-gray-70));
-  --color-text-disabled: light-dark(var(--primitive-gray-60), var(--primitive-gray-50));
+  --color-text: light-dark(var(--gray-14), var(--gray-1));
+  --color-text-muted: light-dark(var(--gray-10), var(--gray-5));
+  --color-text-disabled: light-dark(var(--gray-7), var(--gray-9));
 
-  /* Primary (interactive) */
-  --color-primary: light-dark(var(--primitive-blue-50), var(--primitive-blue-65));
-  --color-primary-hover: light-dark(var(--primitive-blue-60), var(--primitive-blue-60));
-  --color-primary-active: light-dark(var(--primitive-blue-70), var(--primitive-blue-50));
-  --color-on-primary: var(--primitive-gray-95);
+  /* Primary (interactive) - blue */
+  --color-primary: light-dark(
+    oklch(50% var(--chroma-vibrant) var(--hue-primary)),
+    oklch(65% var(--chroma-vibrant) var(--hue-primary))
+  );
+  --color-primary-hover: light-dark(
+    oklch(45% var(--chroma-vibrant) var(--hue-primary)),
+    oklch(60% var(--chroma-vibrant) var(--hue-primary))
+  );
+  --color-primary-active: light-dark(
+    oklch(40% var(--chroma-vibrant) var(--hue-primary)),
+    oklch(55% var(--chroma-vibrant) var(--hue-primary))
+  );
+  --color-on-primary: var(--gray-1);
 
-  /* Error/Danger */
-  --color-error: light-dark(var(--primitive-red-50), var(--primitive-red-60));
-  --color-error-hover: light-dark(var(--primitive-red-55), var(--primitive-red-55));
-  --color-error-active: light-dark(var(--primitive-red-60), var(--primitive-red-50));
-  --color-on-error: var(--primitive-gray-95);
+  /* Error/Danger - red */
+  --color-error: light-dark(
+    oklch(55% var(--chroma-vibrant) var(--hue-error)),
+    oklch(65% var(--chroma-vibrant) var(--hue-error))
+  );
+  --color-error-hover: light-dark(
+    oklch(50% var(--chroma-vibrant) var(--hue-error)),
+    oklch(60% var(--chroma-vibrant) var(--hue-error))
+  );
+  --color-error-active: light-dark(
+    oklch(45% var(--chroma-vibrant) var(--hue-error)),
+    oklch(55% var(--chroma-vibrant) var(--hue-error))
+  );
+  --color-on-error: var(--gray-1);
 
-  /* Success */
-  --color-success: light-dark(var(--primitive-green-60), var(--primitive-green-65));
-  --color-success-hover: light-dark(var(--primitive-green-65), var(--primitive-green-60));
-  --color-on-success: var(--primitive-gray-95);
+  /* Success - green */
+  --color-success: light-dark(
+    oklch(45% var(--chroma-muted) var(--hue-success)),
+    oklch(65% var(--chroma-muted) var(--hue-success))
+  );
+  --color-success-hover: light-dark(
+    oklch(40% var(--chroma-muted) var(--hue-success)),
+    oklch(60% var(--chroma-muted) var(--hue-success))
+  );
+  --color-on-success: var(--gray-1);
 
-  /* Warning */
-  --color-warning: light-dark(var(--primitive-yellow-65), var(--primitive-yellow-70));
-  --color-warning-hover: light-dark(var(--primitive-yellow-70), var(--primitive-yellow-65));
-  --color-on-warning: var(--primitive-gray-20);
+  /* Warning - yellow/gold */
+  --color-warning: light-dark(
+    oklch(55% var(--chroma-muted) var(--hue-warning)),
+    oklch(75% var(--chroma-muted) var(--hue-warning))
+  );
+  --color-warning-hover: light-dark(
+    oklch(50% var(--chroma-muted) var(--hue-warning)),
+    oklch(70% var(--chroma-muted) var(--hue-warning))
+  );
+  --color-on-warning: var(--gray-14);
 
-  /* Casting/Active state */
-  --color-casting: light-dark(var(--primitive-orange-60), var(--primitive-orange-65));
-  --color-casting-hover: light-dark(var(--primitive-orange-65), var(--primitive-orange-60));
-  --color-on-casting: var(--primitive-gray-95);
+  /* Casting/Active state - orange/amber */
+  --color-casting: light-dark(
+    oklch(55% var(--chroma-muted) var(--hue-casting)),
+    oklch(70% var(--chroma-muted) var(--hue-casting))
+  );
+  --color-casting-hover: light-dark(
+    oklch(50% var(--chroma-muted) var(--hue-casting)),
+    oklch(65% var(--chroma-muted) var(--hue-casting))
+  );
+  --color-on-casting: var(--gray-14);
 
-  /* Focus */
-  --color-focus: light-dark(var(--primitive-blue-50), var(--primitive-blue-70));
+  /* Focus ring */
+  --color-focus: light-dark(
+    oklch(50% var(--chroma-vibrant) var(--hue-primary)),
+    oklch(70% var(--chroma-vibrant) var(--hue-primary))
+  );
 
   /*
    * ═══════════════════════════════════════════════════════════════════════════
@@ -168,10 +200,22 @@
   --status-casting: var(--color-casting);
 
   /* Device card status badges */
-  --device-status-playing-bg: light-dark(oklch(65% 0.15 145 / 15%), oklch(45% 0.15 145 / 20%));
-  --device-status-playing-text: light-dark(oklch(40% 0.15 145), oklch(70% 0.15 145));
-  --device-status-casting-bg: light-dark(oklch(60% 0.15 260 / 15%), oklch(50% 0.15 260 / 20%));
-  --device-status-casting-text: light-dark(oklch(45% 0.15 260), oklch(75% 0.15 260));
+  --device-status-playing-bg: light-dark(
+    oklch(65% var(--chroma-muted) var(--hue-success) / 15%),
+    oklch(45% var(--chroma-muted) var(--hue-success) / 20%)
+  );
+  --device-status-playing-text: light-dark(
+    oklch(40% var(--chroma-muted) var(--hue-success)),
+    oklch(70% var(--chroma-muted) var(--hue-success))
+  );
+  --device-status-casting-bg: light-dark(
+    oklch(60% var(--chroma-muted) var(--hue-primary) / 15%),
+    oklch(50% var(--chroma-muted) var(--hue-primary) / 20%)
+  );
+  --device-status-casting-text: light-dark(
+    oklch(45% var(--chroma-muted) var(--hue-primary)),
+    oklch(75% var(--chroma-muted) var(--hue-primary))
+  );
 
   /* Spacing */
   --space-xs: 0.25rem;
