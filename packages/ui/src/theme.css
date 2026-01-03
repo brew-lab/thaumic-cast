@@ -97,7 +97,7 @@
     oklch(45% var(--chroma-vibrant) var(--hue-error)),
     oklch(55% var(--chroma-vibrant) var(--hue-error))
   );
-  --color-on-error: var(--gray-1);
+  --color-on-error: oklch(100% 0 0);
 
   /* Success - green */
   --color-success: light-dark(
