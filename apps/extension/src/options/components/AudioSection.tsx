@@ -11,7 +11,7 @@ import type {
 import {
   CODEC_METADATA,
   getSupportedBitrates,
-  SUPPORTED_SAMPLE_RATES,
+  getSupportedSampleRates,
 } from '@thaumic-cast/protocol';
 import type { ExtensionSettings, AudioMode } from '../../lib/settings';
 import { getResolvedConfigForDisplay } from '../../lib/presets';
@@ -81,11 +81,18 @@ export function AudioSection({
       const bitrates = getSupportedBitrates(codec, codecSupport);
       const defaultBitrate = bitrates[0] ?? CODEC_METADATA[codec].defaultBitrate;
 
+      const sampleRates = getSupportedSampleRates(codec, codecSupport);
+      const currentSampleRate = settings.customAudioSettings.sampleRate;
+      const sampleRate = sampleRates.includes(currentSampleRate)
+        ? currentSampleRate
+        : (sampleRates[0] ?? 48000);
+
       await onUpdate({
         customAudioSettings: {
           ...settings.customAudioSettings,
           codec,
           bitrate: defaultBitrate,
+          sampleRate,
         },
       });
     },
@@ -141,6 +148,12 @@ export function AudioSection({
   const availableBitrates = useMemo(() => {
     if (codecLoading) return [];
     return getSupportedBitrates(settings.customAudioSettings.codec, codecSupport);
+  }, [settings.customAudioSettings.codec, codecSupport, codecLoading]);
+
+  // Get available sample rates for current codec
+  const availableSampleRates = useMemo(() => {
+    if (codecLoading) return [];
+    return getSupportedSampleRates(settings.customAudioSettings.codec, codecSupport);
   }, [settings.customAudioSettings.codec, codecSupport, codecLoading]);
 
   const isCustomMode = settings.audioMode === 'custom';
@@ -262,7 +275,7 @@ export function AudioSection({
                         )
                       }
                     >
-                      {SUPPORTED_SAMPLE_RATES.map((rate) => (
+                      {availableSampleRates.map((rate) => (
                         <option key={rate} value={rate}>
                           {rate / 1000} kHz
                         </option>

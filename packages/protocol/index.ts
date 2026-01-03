@@ -258,11 +258,22 @@ export interface CodecSupportInfo {
 }
 
 /**
+ * Sample rate support information for a codec.
+ */
+export interface SampleRateSupportInfo {
+  codec: AudioCodec;
+  sampleRate: SupportedSampleRate;
+  supported: boolean;
+}
+
+/**
  * Result of detecting all supported codecs.
  */
 export interface SupportedCodecsResult {
   /** All supported codec/bitrate combinations */
   supported: CodecSupportInfo[];
+  /** Sample rate support per codec */
+  sampleRateSupport: SampleRateSupportInfo[];
   /** Codecs that have at least one supported bitrate */
   availableCodecs: AudioCodec[];
   /** The recommended default codec (first available) */
@@ -308,7 +319,7 @@ export async function isCodecSupported(
 }
 
 /**
- * Detects all supported codec/bitrate combinations.
+ * Detects all supported codec/bitrate/sampleRate combinations.
  * Only checks codecs that have encoder implementations, then verifies WebCodecs support.
  * @returns Promise resolving to supported codecs information
  */
@@ -316,12 +327,14 @@ export async function detectSupportedCodecs(): Promise<SupportedCodecsResult> {
   // Only check codecs we have encoder implementations for
   const codecs = (Object.keys(CODEC_METADATA) as AudioCodec[]).filter(hasEncoderImplementation);
   const supported: CodecSupportInfo[] = [];
+  const sampleRateSupport: SampleRateSupportInfo[] = [];
   const availableCodecs: AudioCodec[] = [];
 
   for (const codec of codecs) {
     const bitrates = CODEC_METADATA[codec].validBitrates;
     let codecHasSupport = false;
 
+    // Test bitrate support (using default 48kHz)
     for (const bitrate of bitrates) {
       const isSupported = await isCodecSupported(codec, bitrate);
       supported.push({ codec, bitrate, supported: isSupported });
@@ -331,8 +344,15 @@ export async function detectSupportedCodecs(): Promise<SupportedCodecsResult> {
       }
     }
 
+    // Test sample rate support (using default bitrate for the codec)
     if (codecHasSupport) {
       availableCodecs.push(codec);
+      const defaultBitrateForCodec = CODEC_METADATA[codec].defaultBitrate;
+
+      for (const sampleRate of SUPPORTED_SAMPLE_RATES) {
+        const isSupported = await isCodecSupported(codec, defaultBitrateForCodec, sampleRate);
+        sampleRateSupport.push({ codec, sampleRate, supported: isSupported });
+      }
     }
   }
 
@@ -342,6 +362,7 @@ export async function detectSupportedCodecs(): Promise<SupportedCodecsResult> {
 
   return {
     supported,
+    sampleRateSupport,
     availableCodecs,
     defaultCodec,
     defaultBitrate,
@@ -361,6 +382,21 @@ export function getSupportedBitrates(
   return supportInfo.supported
     .filter((s) => s.codec === codec && s.supported)
     .map((s) => s.bitrate);
+}
+
+/**
+ * Gets supported sample rates for a codec based on runtime detection.
+ * @param codec - The audio codec
+ * @param supportInfo - Previously detected support info
+ * @returns Array of supported sample rates for the codec
+ */
+export function getSupportedSampleRates(
+  codec: AudioCodec,
+  supportInfo: SupportedCodecsResult,
+): SupportedSampleRate[] {
+  return supportInfo.sampleRateSupport
+    .filter((s) => s.codec === codec && s.supported)
+    .map((s) => s.sampleRate);
 }
 
 /**

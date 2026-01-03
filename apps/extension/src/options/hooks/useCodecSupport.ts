@@ -9,6 +9,7 @@ const CODEC_CACHE_KEY = 'codecSupportCache';
  */
 const EMPTY_SUPPORT: SupportedCodecsResult = {
   supported: [],
+  sampleRateSupport: [],
   availableCodecs: [],
   defaultCodec: null,
   defaultBitrate: null,
