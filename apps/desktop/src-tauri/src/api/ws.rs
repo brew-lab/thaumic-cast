@@ -228,8 +228,7 @@ async fn send_command_response<F, T, E, R>(
 
 /// Builds the initial state message for WebSocket clients.
 ///
-/// Includes Sonos state (groups, transport, volume, mute), active playback sessions,
-/// and system power state.
+/// Includes Sonos state (groups, transport, volume, mute) and active playback sessions.
 fn build_initial_state(state: &AppState) -> Option<Message> {
     let mut payload = state.services.sonos_state.to_json();
 
@@ -239,13 +238,6 @@ fn build_initial_state(state: &AppState) -> Option<Message> {
         map.insert(
             "sessions".to_string(),
             serde_json::to_value(&sessions).unwrap_or(serde_json::Value::Array(vec![])),
-        );
-
-        // Add power state
-        let power_state = crate::power::get_power_state();
-        map.insert(
-            "powerState".to_string(),
-            serde_json::to_value(&power_state).unwrap_or(serde_json::Value::Null),
         );
     }
 

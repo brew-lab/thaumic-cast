@@ -2,7 +2,6 @@ import { createLogger } from '@thaumic-cast/shared';
 import {
   SonosStateSnapshot,
   parseMediaMetadata,
-  PowerState,
   MediaAction,
   MediaActionSchema,
   PlaybackState,
@@ -58,11 +57,10 @@ import {
 } from './connection-state';
 import { handleSonosEvent } from './sonos-event-handlers';
 import {
-  selectEncoderConfigWithContext,
+  selectEncoderConfig,
   recordStableSession,
   recordBadSession,
   describeConfig,
-  checkPowerState,
 } from '../lib/device-config';
 import { loadExtensionSettings } from '../lib/settings';
 import { resolveAudioMode, describeEncoderConfig } from '../lib/presets';
@@ -76,9 +74,6 @@ const log = createLogger('Background');
 
 /** Whether the control WebSocket is connected. */
 let wsConnected = false;
-
-/** Cached power state from desktop app (null if not connected or detection failed). */
-let cachedPowerState: PowerState | null = null;
 
 /**
  * Updates the cached Sonos state and syncs to offscreen for recovery.
@@ -119,34 +114,15 @@ async function connectWebSocket(serverUrl: string): Promise<void> {
 /**
  * Handles WebSocket connected event from offscreen.
  * @param state - The initial Sonos state from desktop
- * @param powerState
  */
-function handleWsConnected(state: SonosStateSnapshot, powerState: PowerState | null): void {
+function handleWsConnected(state: SonosStateSnapshot): void {
   wsConnected = true;
-  cachedPowerState = powerState;
   setConnected(true);
   updateSonosState(state);
-
-  if (powerState) {
-    log.info(
-      `WebSocket connected, power: onAC=${powerState.onAcPower}, ` +
-        `level=${powerState.batteryLevel ?? 'N/A'}%, charging=${powerState.charging}`,
-    );
-  } else {
-    log.info('WebSocket connected (power state unavailable)');
-  }
+  log.info('WebSocket connected');
 
   // Notify popup of state
   notifyPopup({ type: 'WS_STATE_CHANGED', state });
-}
-
-/**
- * Returns the cached power state from desktop app.
- * Used by device-config to determine if device is on battery.
- * @returns The cached power state or null if not available
- */
-export function getCachedPowerState(): PowerState | null {
-  return cachedPowerState;
 }
 
 /**
@@ -401,8 +377,8 @@ chrome.runtime.onMessage.addListener((msg: ExtensionMessage, _sender, sendRespon
         // WebSocket Status Messages (from offscreen)
         // ─────────────────────────────────────────────────────────────────
         case 'WS_CONNECTED': {
-          const { state, powerState } = msg as WsConnectedMessage;
-          handleWsConnected(state, powerState);
+          const { state } = msg as WsConnectedMessage;
+          handleWsConnected(state);
           sendResponse({ success: true });
           break;
         }
@@ -691,7 +667,6 @@ async function handleStartCast(
 
     // 4. Select encoder config based on extension settings
     let encoderConfig: EncoderConfig;
-    let lowPowerMode = false;
 
     // Load extension settings and cached codec support
     const settings = await loadExtensionSettings();
@@ -699,55 +674,27 @@ async function handleStartCast(
     const codecSupport: SupportedCodecsResult | null = codecCache['codecSupportCache'] ?? null;
 
     if (codecSupport && codecSupport.availableCodecs.length > 0) {
-      // Use new preset resolution with codec detection
+      // Use preset resolution with codec detection
       try {
         encoderConfig = resolveAudioMode(
           settings.audioMode,
           codecSupport,
-          cachedPowerState,
           settings.customAudioSettings,
         );
-
-        // Log power state for debugging
-        const powerState = checkPowerState(cachedPowerState);
-        if (powerState.powerInfoAvailable) {
-          const level = powerState.level !== undefined ? `${powerState.level}%` : 'N/A';
-          lowPowerMode = powerState.onBattery;
-          log.info(
-            `Power: ${level}, charging=${powerState.charging ?? 'unknown'}, onBattery=${lowPowerMode}`,
-          );
-        } else {
-          log.warn('Power state unavailable from desktop app');
-        }
-
         log.info(
           `Encoder config (${settings.audioMode} mode): ${describeEncoderConfig(encoderConfig)}`,
         );
       } catch (err) {
         // Preset resolution failed, fall back to device-config
         log.warn('Preset resolution failed, falling back to device config:', err);
-        const result = await selectEncoderConfigWithContext(cachedPowerState);
-        encoderConfig = result.config;
-        lowPowerMode = result.lowPowerMode;
-        log.info(`Encoder config (fallback): ${describeConfig(encoderConfig, lowPowerMode)}`);
+        encoderConfig = await selectEncoderConfig();
+        log.info(`Encoder config (fallback): ${describeConfig(encoderConfig)}`);
       }
     } else {
       // Codec support not cached yet, fall back to device-config
       log.info('Codec support not cached, using device config fallback');
-      const result = await selectEncoderConfigWithContext(cachedPowerState);
-      encoderConfig = result.config;
-      lowPowerMode = result.lowPowerMode;
-
-      // Log power detection result for debugging
-      if (!result.powerInfoAvailable) {
-        log.warn('Power state unavailable from desktop app');
-      } else {
-        const level = result.batteryLevel !== undefined ? `${result.batteryLevel}%` : 'N/A';
-        log.info(
-          `Power: ${level}, charging=${result.charging ?? 'unknown'}, onBattery=${lowPowerMode}`,
-        );
-      }
-      log.info(`Encoder config (fallback): ${describeConfig(encoderConfig, lowPowerMode)}`);
+      encoderConfig = await selectEncoderConfig();
+      log.info(`Encoder config (fallback): ${describeConfig(encoderConfig)}`);
     }
 
     // 5. Capture Tab

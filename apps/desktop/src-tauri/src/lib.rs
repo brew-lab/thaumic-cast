@@ -4,7 +4,6 @@ mod config;
 mod context;
 mod error;
 mod events;
-mod power;
 mod protocol_constants;
 mod services;
 mod sonos;

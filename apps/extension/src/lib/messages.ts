@@ -6,7 +6,6 @@ import {
   TabMediaState,
   ActiveCast,
   TransportState,
-  PowerState,
   MediaAction,
 } from '@thaumic-cast/protocol';
 
@@ -350,8 +349,6 @@ export interface SyncSonosStateMessage {
 export interface WsConnectedMessage {
   type: 'WS_CONNECTED';
   state: SonosStateSnapshot;
-  /** System power state from desktop app (null if detection failed). */
-  powerState: PowerState | null;
 }
 
 /**

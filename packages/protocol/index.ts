@@ -125,6 +125,13 @@ export interface CodecMetadata {
   validBitrates: readonly Bitrate[];
   defaultBitrate: Bitrate;
   webCodecsId: string | null;
+  /**
+   * Efficiency multiplier for quality scoring.
+   * Higher values mean the codec achieves better quality at the same bitrate.
+   * AAC-LC is the baseline at 1.0.
+   * Example: HE-AAC at 64kbps ≈ AAC-LC at 96kbps (efficiency = 1.5)
+   */
+  efficiency: number;
 }
 
 /**
@@ -159,6 +166,7 @@ export const CODEC_METADATA: Record<AudioCodec, CodecMetadata> = {
     validBitrates: [128, 192, 256] as const,
     defaultBitrate: 192,
     webCodecsId: 'mp4a.40.2',
+    efficiency: 1.0, // Baseline
   },
   'he-aac': {
     label: 'HE-AAC',
@@ -166,6 +174,7 @@ export const CODEC_METADATA: Record<AudioCodec, CodecMetadata> = {
     validBitrates: [64, 96, 128] as const,
     defaultBitrate: 96,
     webCodecsId: 'mp4a.40.5',
+    efficiency: 1.5, // ~50% more efficient than AAC-LC
   },
   'he-aac-v2': {
     label: 'HE-AAC v2',
@@ -173,6 +182,7 @@ export const CODEC_METADATA: Record<AudioCodec, CodecMetadata> = {
     validBitrates: [64, 96] as const,
     defaultBitrate: 64,
     webCodecsId: 'mp4a.40.29',
+    efficiency: 2.0, // ~100% more efficient (uses Parametric Stereo)
   },
   flac: {
     label: 'FLAC',
@@ -180,6 +190,7 @@ export const CODEC_METADATA: Record<AudioCodec, CodecMetadata> = {
     validBitrates: [0] as const,
     defaultBitrate: 0,
     webCodecsId: 'flac',
+    efficiency: 10.0, // Lossless - highest possible quality
   },
   vorbis: {
     label: 'Ogg Vorbis',
@@ -187,6 +198,7 @@ export const CODEC_METADATA: Record<AudioCodec, CodecMetadata> = {
     validBitrates: [128, 160, 192, 256, 320] as const,
     defaultBitrate: 192,
     webCodecsId: 'vorbis',
+    efficiency: 1.1, // Slightly better than AAC-LC
   },
 } as const;
 
@@ -397,6 +409,160 @@ export function getSupportedSampleRates(
   return supportInfo.sampleRateSupport
     .filter((s) => s.codec === codec && s.supported)
     .map((s) => s.sampleRate);
+}
+
+/**
+ * A scored codec/bitrate option for dynamic preset generation.
+ */
+export interface ScoredCodecOption {
+  codec: AudioCodec;
+  bitrate: Bitrate;
+  /** Quality score: higher = better perceived quality */
+  score: number;
+  /** Human-readable label for UI display */
+  label: string;
+}
+
+/**
+ * Dynamic presets generated based on device capabilities.
+ */
+export interface DynamicPresets {
+  /** Highest quality option available */
+  high: ScoredCodecOption | null;
+  /** Middle-tier quality option */
+  mid: ScoredCodecOption | null;
+  /** Lowest bandwidth/power option */
+  low: ScoredCodecOption | null;
+  /** All scored options sorted by quality (highest first) */
+  allOptions: ScoredCodecOption[];
+}
+
+/**
+ * Calculates a quality score for a codec/bitrate combination.
+ * Score = bitrate * efficiency (with special handling for lossless).
+ * @param codec - The audio codec
+ * @param bitrate - The bitrate in kbps
+ * @returns Quality score (higher = better)
+ */
+export function calculateQualityScore(codec: AudioCodec, bitrate: Bitrate): number {
+  const meta = CODEC_METADATA[codec];
+  // FLAC is lossless, give it a very high score
+  if (bitrate === 0) {
+    return 1000;
+  }
+  return bitrate * meta.efficiency;
+}
+
+/**
+ * Creates a human-readable label for a codec/bitrate combination.
+ * @param codec - The audio codec
+ * @param bitrate - The bitrate in kbps
+ * @returns Label like "AAC-LC 192kbps" or "FLAC Lossless"
+ */
+export function getCodecBitrateLabel(codec: AudioCodec, bitrate: Bitrate): string {
+  const meta = CODEC_METADATA[codec];
+  if (bitrate === 0) {
+    return `${meta.label} Lossless`;
+  }
+  return `${meta.label} ${bitrate}kbps`;
+}
+
+/**
+ * Generates dynamic quality presets based on device capabilities.
+ * Analyzes all supported codec/bitrate combinations and creates
+ * meaningful high/mid/low tiers.
+ *
+ * Tier selection logic:
+ * - HIGH: Best quality → highest bitrate (FLAC preferred if available)
+ * - LOW: Lowest bandwidth → lowest bitrate with efficient codec
+ * - BALANCED: Middle ground → moderate bitrate with good efficiency
+ *
+ * @param supportInfo - Runtime codec support detection results
+ * @returns Dynamic presets with scored options
+ */
+export function generateDynamicPresets(supportInfo: SupportedCodecsResult): DynamicPresets {
+  // Collect all supported codec+bitrate combinations with scores
+  const allOptions: ScoredCodecOption[] = [];
+
+  for (const info of supportInfo.supported) {
+    if (!info.supported) continue;
+
+    const score = calculateQualityScore(info.codec, info.bitrate);
+    allOptions.push({
+      codec: info.codec,
+      bitrate: info.bitrate,
+      score,
+      label: getCodecBitrateLabel(info.codec, info.bitrate),
+    });
+  }
+
+  // If no options, return empty presets
+  if (allOptions.length === 0) {
+    return { high: null, mid: null, low: null, allOptions: [] };
+  }
+
+  // Sort by score descending for the allOptions list (used for display)
+  allOptions.sort((a, b) => b.score - a.score);
+
+  // === HIGH TIER: Best quality (highest bitrate, prefer FLAC) ===
+  // Sort by: FLAC first, then by bitrate descending
+  const highSorted = [...allOptions].sort((a, b) => {
+    // FLAC (lossless) always wins
+    if (a.codec === 'flac' && b.codec !== 'flac') return -1;
+    if (b.codec === 'flac' && a.codec !== 'flac') return 1;
+    // Otherwise, highest bitrate wins
+    return b.bitrate - a.bitrate;
+  });
+  const high = highSorted[0] ?? null;
+
+  // === LOW TIER: Lowest bandwidth (lowest bitrate, prefer efficient codecs) ===
+  // Sort by: bitrate ascending, then by efficiency descending (for ties)
+  const lowSorted = [...allOptions].sort((a, b) => {
+    // Lowest bitrate first
+    if (a.bitrate !== b.bitrate) return a.bitrate - b.bitrate;
+    // For same bitrate, prefer more efficient codec
+    const effA = CODEC_METADATA[a.codec].efficiency;
+    const effB = CODEC_METADATA[b.codec].efficiency;
+    return effB - effA;
+  });
+  // Pick the lowest bitrate option, but not the same as high
+  let low: ScoredCodecOption | null = null;
+  for (const opt of lowSorted) {
+    if (opt.codec !== high?.codec || opt.bitrate !== high?.bitrate) {
+      low = opt;
+      break;
+    }
+  }
+
+  // === BALANCED TIER: Middle ground ===
+  // Find an option that's different from both high and low
+  // Prefer efficient codecs (HE-AAC family) at moderate bitrates
+  let mid: ScoredCodecOption | null = null;
+
+  // First, try to find an option with a different codec than high and low
+  for (const opt of allOptions) {
+    const isHigh = opt.codec === high?.codec && opt.bitrate === high?.bitrate;
+    const isLow = opt.codec === low?.codec && opt.bitrate === low?.bitrate;
+    if (!isHigh && !isLow) {
+      mid = opt;
+      break;
+    }
+  }
+
+  // If no distinct option found and we have at least 2 options, use a fallback
+  if (!mid && allOptions.length >= 2) {
+    // Use the second-best by score that isn't low
+    for (const opt of allOptions) {
+      const isHigh = opt.codec === high?.codec && opt.bitrate === high?.bitrate;
+      const isLow = opt.codec === low?.codec && opt.bitrate === low?.bitrate;
+      if (!isHigh && !isLow) {
+        mid = opt;
+        break;
+      }
+    }
+  }
+
+  return { high, mid, low, allOptions };
 }
 
 /**
@@ -700,27 +866,9 @@ export function createEmptySonosState(): SonosStateSnapshot {
   };
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Power State (from desktop app)
-// ─────────────────────────────────────────────────────────────────────────────
-
-/**
- * Power/battery state from the desktop app.
- * Desktop has native OS access to battery info, bypassing browser API restrictions.
- */
-export const PowerStateSchema = z.object({
-  /** Whether device is currently on AC power (plugged in). */
-  onAcPower: z.boolean(),
-  /** Battery level 0-100 (null if no battery or unknown). */
-  batteryLevel: z.number().min(0).max(100).nullable(),
-  /** Whether battery is currently charging. */
-  charging: z.boolean(),
-});
-export type PowerState = z.infer<typeof PowerStateSchema>;
-
 /**
  * Initial state message sent by desktop on WebSocket connect.
- * Includes Sonos state and system power state.
+ * Includes Sonos state.
  */
 export const InitialStatePayloadSchema = z.object({
   groups: z.array(ZoneGroupSchema),
@@ -728,8 +876,6 @@ export const InitialStatePayloadSchema = z.object({
   groupVolumes: z.record(z.string(), z.number()),
   groupMutes: z.record(z.string(), z.boolean()),
   sessions: z.array(PlaybackSessionSchema).optional(),
-  /** System power state (null if detection failed). */
-  powerState: PowerStateSchema.nullable(),
 });
 export type InitialStatePayload = z.infer<typeof InitialStatePayloadSchema>;
 

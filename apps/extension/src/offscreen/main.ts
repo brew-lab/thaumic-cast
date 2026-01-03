@@ -89,13 +89,11 @@ function connectControlWebSocket(url: string): void {
 
       // INITIAL_STATE on connect
       if (message.type === 'INITIAL_STATE') {
-        const { powerState, ...sonosState } = message.payload;
-        cachedSonosState = sonosState as SonosStateSnapshot;
+        cachedSonosState = message.payload as SonosStateSnapshot;
         chrome.runtime
           .sendMessage({
             type: 'WS_CONNECTED',
             state: cachedSonosState,
-            powerState: powerState ?? null,
           })
           .catch(() => {
             // Background may be suspended

@@ -14,7 +14,7 @@ import {
   getSupportedSampleRates,
 } from '@thaumic-cast/protocol';
 import type { ExtensionSettings, AudioMode } from '../../lib/settings';
-import { getResolvedConfigForDisplay } from '../../lib/presets';
+import { getResolvedConfigForDisplay, getDynamicPresets } from '../../lib/presets';
 import styles from '../Options.module.css';
 
 interface AudioSectionProps {
@@ -54,14 +54,41 @@ export function AudioSection({
     );
   }, [settings.audioMode, settings.customAudioSettings, codecSupport, codecLoading]);
 
-  // Mode options
-  const modeOptions: { value: AudioMode; label: string; desc: string }[] = [
-    { value: 'auto', label: t('audio_mode_auto'), desc: t('audio_mode_auto_desc') },
-    { value: 'low', label: t('audio_mode_low'), desc: t('audio_mode_low_desc') },
-    { value: 'mid', label: t('audio_mode_mid'), desc: t('audio_mode_mid_desc') },
-    { value: 'high', label: t('audio_mode_high'), desc: t('audio_mode_high_desc') },
-    { value: 'custom', label: t('audio_mode_custom'), desc: t('audio_mode_custom_desc') },
-  ];
+  // Get dynamic presets for showing resolved codec/bitrate per tier
+  const dynamicPresets = useMemo(() => {
+    if (codecLoading || codecSupport.availableCodecs.length === 0) {
+      return null;
+    }
+    return getDynamicPresets(codecSupport);
+  }, [codecSupport, codecLoading]);
+
+  // Mode options with dynamic labels showing what each tier resolves to
+  const modeOptions: { value: AudioMode; label: string; desc: string }[] = useMemo(() => {
+    const presetLabel = (tier: 'high' | 'mid' | 'low'): string => {
+      const option = dynamicPresets?.[tier];
+      if (!option) return '';
+      return ` (${option.label})`;
+    };
+
+    return [
+      {
+        value: 'high',
+        label: t('audio_mode_high') + presetLabel('high'),
+        desc: t('audio_mode_high_desc'),
+      },
+      {
+        value: 'mid',
+        label: t('audio_mode_mid') + presetLabel('mid'),
+        desc: t('audio_mode_mid_desc'),
+      },
+      {
+        value: 'low',
+        label: t('audio_mode_low') + presetLabel('low'),
+        desc: t('audio_mode_low_desc'),
+      },
+      { value: 'custom', label: t('audio_mode_custom'), desc: t('audio_mode_custom_desc') },
+    ];
+  }, [t, dynamicPresets]);
 
   /**
    * Handles mode change.

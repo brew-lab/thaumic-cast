@@ -38,13 +38,12 @@ const DEFAULT_SETTINGS: AudioSettings = {
 
 /**
  * Audio quality mode presets.
- * - auto: Device tier + power state detection
- * - low: Optimized for low bandwidth/battery
+ * - low: Optimized for low bandwidth (mono, lower sample rate)
  * - mid: Balanced quality
- * - high: Maximum quality (lossless when available)
+ * - high: Maximum quality (highest bitrate available)
  * - custom: User-defined settings
  */
-export const AudioModeSchema = z.enum(['auto', 'low', 'mid', 'high', 'custom']);
+export const AudioModeSchema = z.enum(['low', 'mid', 'high', 'custom']);
 export type AudioMode = z.infer<typeof AudioModeSchema>;
 
 /**
@@ -90,7 +89,7 @@ export const ExtensionSettingsSchema = z.object({
   language: SupportedLocaleSchema.default('en'),
 
   // Audio mode
-  audioMode: AudioModeSchema.default('auto'),
+  audioMode: AudioModeSchema.default('mid'),
 
   // Custom audio settings (used when audioMode is 'custom')
   customAudioSettings: CustomAudioSettingsSchema.default({
@@ -109,7 +108,7 @@ const DEFAULT_EXTENSION_SETTINGS: ExtensionSettings = {
   useAutoDiscover: true,
   theme: 'auto',
   language: 'en',
-  audioMode: 'auto',
+  audioMode: 'mid',
   customAudioSettings: {
     codec: 'aac-lc',
     bitrate: 192,
