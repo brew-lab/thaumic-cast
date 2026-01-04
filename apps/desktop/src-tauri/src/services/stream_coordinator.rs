@@ -122,7 +122,10 @@ impl StreamCoordinator {
     }
 
     /// Gets all playback sessions for a specific stream.
+    ///
+    /// Reserved for future use (debugging, partial speaker removal).
     #[must_use]
+    #[allow(dead_code)]
     pub fn get_sessions_for_stream(&self, stream_id: &str) -> Vec<PlaybackSession> {
         self.playback_sessions
             .iter()
@@ -342,9 +345,12 @@ impl StreamCoordinator {
     /// Removes the session and broadcasts a `StreamEvent::PlaybackStopped` event.
     /// Used for partial speaker removal in multi-group scenarios.
     ///
+    /// Reserved for future use (partial speaker removal from extension).
+    ///
     /// # Arguments
     /// * `stream_id` - The stream ID
     /// * `speaker_ip` - IP address of the speaker to stop
+    #[allow(dead_code)]
     pub async fn stop_playback_speaker(
         &self,
         stream_id: &str,
@@ -372,6 +378,9 @@ impl StreamCoordinator {
     ///
     /// Finds the session by speaker IP and removes it.
     /// Broadcasts a `StreamEvent::PlaybackStopped` event.
+    ///
+    /// Reserved for future use (partial speaker removal from extension).
+    #[allow(dead_code)]
     pub async fn stop_playback(&self, speaker_ip: &str) -> ThaumicResult<()> {
         // Find the session key for this speaker
         let key = self

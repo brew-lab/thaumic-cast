@@ -168,9 +168,6 @@ enum WsOutgoing {
     StreamReady {
         payload: StreamReadyPayload,
     },
-    PlaybackStarted {
-        payload: PlaybackStartedPayload,
-    },
     PlaybackError {
         payload: PlaybackErrorPayload,
     },
@@ -185,14 +182,6 @@ enum WsOutgoing {
 #[serde(rename_all = "camelCase")]
 struct StreamReadyPayload {
     buffer_size: usize,
-}
-
-/// Payload for playback started notification.
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-struct PlaybackStartedPayload {
-    speaker_ip: String,
-    stream_url: String,
 }
 
 /// Payload for playback error notification.

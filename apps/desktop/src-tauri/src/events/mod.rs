@@ -71,6 +71,9 @@ pub enum StreamEvent {
         timestamp: u64,
     },
     /// Playback stopped on a speaker.
+    ///
+    /// Reserved for future use (partial speaker removal).
+    #[allow(dead_code)]
     PlaybackStopped {
         /// The speaker IP address that stopped playback.
         #[serde(rename = "speakerIp")]
