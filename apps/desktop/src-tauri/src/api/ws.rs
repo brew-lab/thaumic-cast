@@ -594,5 +594,15 @@ async fn handle_ws(socket: WebSocket, state: AppState) {
         }
     }
 
-    // StreamGuard and ConnectionGuard Drop impls handle cleanup automatically
+    // Graceful cleanup: stop speakers before stream removal.
+    // StreamGuard::drop() will be a no-op since remove_stream is idempotent.
+    if let Some(ref guard) = stream_guard {
+        state
+            .services
+            .stream_coordinator
+            .remove_stream_async(guard.id())
+            .await;
+    }
+
+    // StreamGuard and ConnectionGuard Drop impls handle any remaining cleanup
 }

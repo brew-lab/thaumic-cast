@@ -167,16 +167,6 @@ impl StreamManager {
         self.streams.remove(id);
     }
 
-    /// Removes all active streams.
-    ///
-    /// Returns the number of streams that were cleared.
-    pub fn clear_all(&self) -> usize {
-        let count = self.streams.len();
-        self.streams.clear();
-        log::info!("[StreamManager] Cleared {} stream(s)", count);
-        count
-    }
-
     /// Returns the number of active streams.
     #[must_use]
     pub fn stream_count(&self) -> usize {

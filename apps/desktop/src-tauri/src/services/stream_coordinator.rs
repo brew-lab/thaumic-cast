@@ -152,6 +152,9 @@ impl StreamCoordinator {
     /// Removes a stream and cleans up all associated playback sessions.
     ///
     /// Broadcasts a `StreamEvent::Ended` event.
+    ///
+    /// Note: This is the sync version used by `StreamGuard::drop()`. For graceful
+    /// cleanup that stops speakers first, use `remove_stream_async()`.
     pub fn remove_stream(&self, stream_id: &str) {
         // Find and remove ALL playback sessions for this stream (multi-group support)
         let keys_to_remove: Vec<PlaybackSessionKey> = self
@@ -172,6 +175,35 @@ impl StreamCoordinator {
             stream_id: stream_id.to_string(),
             timestamp: now_millis(),
         });
+    }
+
+    /// Removes a stream with graceful speaker cleanup.
+    ///
+    /// This is the preferred method for stream removal. It:
+    /// 1. Sends STOP to all speakers playing this stream
+    /// 2. Removes playback session records
+    /// 3. Removes the stream from the manager
+    /// 4. Broadcasts `StreamEvent::Ended`
+    ///
+    /// Speaker stop failures are logged but don't prevent cleanup.
+    pub async fn remove_stream_async(&self, stream_id: &str) {
+        // Find all speaker IPs for this stream
+        let speaker_ips: Vec<String> = self
+            .playback_sessions
+            .iter()
+            .filter(|r| r.key().stream_id == stream_id)
+            .map(|r| r.key().speaker_ip.clone())
+            .collect();
+
+        // Stop each speaker (best-effort, don't fail the whole operation)
+        for ip in &speaker_ips {
+            if let Err(e) = self.sonos.stop(ip).await {
+                log::warn!("[StreamCoordinator] Failed to stop {}: {}", ip, e);
+            }
+        }
+
+        // Delegate to sync method for session/stream cleanup + event emission
+        self.remove_stream(stream_id);
     }
 
     /// Gets a stream by ID.
@@ -414,53 +446,20 @@ impl StreamCoordinator {
 
     /// Stops all playback and clears all streams.
     ///
-    /// This performs a complete cleanup:
-    /// 1. Sends STOP command to all speakers with active playback
-    /// 2. Removes all playback session records (including expected stream tracking)
-    /// 3. Clears all audio streams
-    /// 4. Broadcasts `StreamEvent::Ended` for each cleared stream
+    /// This performs a complete cleanup by calling `remove_stream_async()` for
+    /// each active stream, which stops speakers and broadcasts ended events.
     ///
     /// Returns the number of streams that were cleared.
     pub async fn clear_all(&self) -> usize {
-        // Collect unique speaker IPs first to avoid holding lock during async calls
-        let speaker_ips: Vec<String> = self
-            .playback_sessions
-            .iter()
-            .map(|r| r.key().speaker_ip.clone())
-            .collect::<std::collections::HashSet<_>>()
-            .into_iter()
-            .collect();
-
-        // Collect stream IDs before clearing (for event broadcasting)
         let stream_ids = self.stream_manager.list_stream_ids();
+        let count = stream_ids.len();
 
-        // Stop playback on each speaker (best effort - don't fail if one errors)
-        for ip in &speaker_ips {
-            if let Err(e) = self.sonos.stop(ip).await {
-                log::warn!(
-                    "[StreamCoordinator] Failed to stop playback on {}: {}",
-                    ip,
-                    e
-                );
-            }
-        }
-
-        // Clear all sessions and streams
-        self.playback_sessions.clear();
-        let count = self.stream_manager.clear_all();
-
-        // Broadcast ended events for all cleared streams
-        let timestamp = now_millis();
         for stream_id in stream_ids {
-            self.emit_event(StreamEvent::Ended {
-                stream_id,
-                timestamp,
-            });
+            self.remove_stream_async(&stream_id).await;
         }
 
         log::info!(
-            "[StreamCoordinator] Cleared all: {} speaker(s) stopped, {} stream(s) removed",
-            speaker_ips.len(),
+            "[StreamCoordinator] Cleared all: {} stream(s) removed",
             count
         );
 
