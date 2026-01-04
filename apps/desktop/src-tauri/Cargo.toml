@@ -1,6 +1,6 @@
 [package]
 name = "thaumic-cast-desktop"
-version = "0.4.1"
+version = "0.5.0"
 description = "Thaumic Cast Desktop"
 authors = ["Thaumic Cast"]
 edition = "2021"
