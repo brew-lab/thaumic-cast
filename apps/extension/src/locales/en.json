@@ -126,8 +126,7 @@
   "onboarding.desktop.subtitle": "Your local anchor to the speaker realm",
   "onboarding.desktop.checking": "Seeking the Desktop App...",
   "onboarding.desktop.found": "Excellent. The Desktop App is present and accounted for.",
-  "onboarding.desktop.not_found_title": "The Desktop App Has Not Been Summoned",
-  "onboarding.desktop.not_found_body": "The Desktop App serves as the bridge between your browser and your speakers. Without it, we're shouting into the void.",
+  "onboarding.desktop.not_found": "The Desktop App has not been summoned. It serves as the bridge to your speakers.",
   "onboarding.desktop.download_prompt": "You'll need to install it first:",
   "onboarding.desktop.download_button": "Download Desktop App",
   "onboarding.desktop.retry_button": "I've installed it, try again",
@@ -136,14 +135,11 @@
   "onboarding.speakers.subtitle": "Let's see who's listening",
   "onboarding.speakers.loading": "Seeking speakers...",
   "onboarding.speakers.found": "Discovered {{count}} speaker(s). They seem receptive.",
-  "onboarding.speakers.none_found": "No speakers have made themselves known",
-  "onboarding.speakers.hint": "Ensure your speakers are powered on and the Desktop App is running.",
+  "onboarding.speakers.none_found": "No speakers have made themselves known. Ensure they're powered on.",
 
-  "onboarding.ready.title": "All Systems Nominal",
-  "onboarding.ready.subtitle": "You're ready to cast",
-  "onboarding.ready.performance_title": "A word on expectations",
-  "onboarding.ready.performance_body": "Audio travels through your local network. Latency is typically 100–300ms — noticeable for games, imperceptible for music and video.",
-  "onboarding.ready.tip_1": "Wired connections are more reliable than WiFi",
-  "onboarding.ready.tip_2": "Close proximity to your router helps",
-  "onboarding.ready.tip_3": "5GHz WiFi generally outperforms 2.4GHz for this purpose"
+  "onboarding.ready.title": "The Ritual is Complete",
+  "onboarding.ready.subtitle": "Your speakers await instruction",
+  "onboarding.ready.intro": "You can stream audio from up to {{maxStreams}} tabs at once. The universe has limits.",
+  "onboarding.ready.performance_body": "Best for music. Latency is 100–300ms — fine for tunes, less so for conducting orchestras.",
+  "onboarding.ready.battery_warning": "Laptops on battery may experience hiccups. Browsers like to save power."
 }

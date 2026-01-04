@@ -1,10 +1,14 @@
-import { WizardStep } from '@thaumic-cast/ui';
-import { Zap, Wifi } from 'lucide-preact';
+import { WizardStep, Alert } from '@thaumic-cast/ui';
+import { Zap } from 'lucide-preact';
 import { useTranslation } from 'react-i18next';
 import styles from './ReadyStep.module.css';
 
+/** Maximum concurrent streams allowed (matches backend constant) */
+const MAX_STREAMS = 10;
+
 /**
- * Final onboarding step with performance tips.
+ * Final onboarding step confirming setup is complete.
+ * Shows intro with stream limits, performance note, and battery warning.
  *
  * @returns The rendered ReadyStep component
  */
@@ -17,23 +21,11 @@ export function ReadyStep(): preact.JSX.Element {
       subtitle={t('onboarding.ready.subtitle')}
       icon={Zap}
     >
-      <h3 className={styles.perfTitle}>{t('onboarding.ready.performance_title')}</h3>
-      <p className={styles.perfBody}>{t('onboarding.ready.performance_body')}</p>
+      <p className={styles.introText}>{t('onboarding.ready.intro', { maxStreams: MAX_STREAMS })}</p>
 
-      <ul className={styles.tipList}>
-        <li>
-          <Wifi size={14} />
-          {t('onboarding.ready.tip_1')}
-        </li>
-        <li>
-          <Wifi size={14} />
-          {t('onboarding.ready.tip_2')}
-        </li>
-        <li>
-          <Wifi size={14} />
-          {t('onboarding.ready.tip_3')}
-        </li>
-      </ul>
+      <p className={styles.performanceText}>{t('onboarding.ready.performance_body')}</p>
+
+      <Alert variant="warning">{t('onboarding.ready.battery_warning')}</Alert>
     </WizardStep>
   );
 }

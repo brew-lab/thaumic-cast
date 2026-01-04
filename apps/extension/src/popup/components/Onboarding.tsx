@@ -104,6 +104,7 @@ export function Onboarding({ onComplete, onSkip }: OnboardingProps): preact.JSX.
         nextDisabled={isNextDisabled}
         isFinal={isLastStep}
         stepLabels={stepLabels}
+        compact
       >
         {renderStep()}
       </Wizard>

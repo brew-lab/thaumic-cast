@@ -1,5 +1,5 @@
 .container {
-  width: 320px;
+  inline-size: 352px;
   padding-block: 1rem;
   padding-inline: 1rem;
 }

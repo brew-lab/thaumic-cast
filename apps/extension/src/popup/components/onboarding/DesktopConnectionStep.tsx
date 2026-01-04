@@ -1,7 +1,6 @@
 import { useEffect, useState, useCallback } from 'preact/hooks';
-import { WizardStep } from '@thaumic-cast/ui';
-import { Button } from '@thaumic-cast/ui';
-import { Monitor, Check, Download, RefreshCw } from 'lucide-preact';
+import { WizardStep, Alert, Button } from '@thaumic-cast/ui';
+import { Monitor, Download, RefreshCw } from 'lucide-preact';
 import { useTranslation } from 'react-i18next';
 import { useConnectionStatus } from '../../hooks/useConnectionStatus';
 import { discoverDesktopApp } from '../../../lib/discovery';
@@ -61,21 +60,12 @@ export function DesktopConnectionStep({
       icon={Monitor}
     >
       {isChecking ? (
-        <div className={styles.checkingBox}>
-          <RefreshCw size={20} className={styles.spinner} />
-          <p className={styles.checkingText}>{t('onboarding.desktop.checking')}</p>
-        </div>
+        <Alert variant="info">{t('onboarding.desktop.checking')}</Alert>
       ) : connected ? (
-        <div className={styles.successBox}>
-          <Check size={20} className={styles.successIcon} />
-          <p className={styles.successText}>{t('onboarding.desktop.found')}</p>
-        </div>
+        <Alert variant="success">{t('onboarding.desktop.found')}</Alert>
       ) : (
         <>
-          <div className={styles.notFoundBox}>
-            <p className={styles.notFoundTitle}>{t('onboarding.desktop.not_found_title')}</p>
-            <p className={styles.notFoundBody}>{t('onboarding.desktop.not_found_body')}</p>
-          </div>
+          <Alert variant="warning">{t('onboarding.desktop.not_found')}</Alert>
 
           <p className={styles.downloadPrompt}>{t('onboarding.desktop.download_prompt')}</p>
 

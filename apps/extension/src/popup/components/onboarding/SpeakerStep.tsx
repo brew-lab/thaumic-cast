@@ -1,6 +1,6 @@
 import { useEffect } from 'preact/hooks';
-import { WizardStep } from '@thaumic-cast/ui';
-import { Speaker, Check } from 'lucide-preact';
+import { WizardStep, Alert } from '@thaumic-cast/ui';
+import { Speaker } from 'lucide-preact';
 import { useTranslation } from 'react-i18next';
 import { useSonosState } from '../../hooks/useSonosState';
 import styles from './SpeakerStep.module.css';
@@ -34,17 +34,10 @@ export function SpeakerStep({ onSpeakersFound }: SpeakerStepProps): preact.JSX.E
       icon={Speaker}
     >
       {loading ? (
-        <div className={styles.loadingBox}>
-          <p className={styles.loadingText}>{t('onboarding.speakers.loading')}</p>
-        </div>
+        <Alert variant="info">{t('onboarding.speakers.loading')}</Alert>
       ) : speakerCount > 0 ? (
         <>
-          <div className={styles.successBox}>
-            <Check size={20} className={styles.successIcon} />
-            <p className={styles.successText}>
-              {t('onboarding.speakers.found', { count: speakerCount })}
-            </p>
-          </div>
+          <Alert variant="success">{t('onboarding.speakers.found', { count: speakerCount })}</Alert>
 
           <div className={styles.speakerList}>
             {groups.map((group) => (
@@ -59,10 +52,7 @@ export function SpeakerStep({ onSpeakersFound }: SpeakerStepProps): preact.JSX.E
           </div>
         </>
       ) : (
-        <div className={styles.emptyState}>
-          <p className={styles.emptyTitle}>{t('onboarding.speakers.none_found')}</p>
-          <p className={styles.emptyHint}>{t('onboarding.speakers.hint')}</p>
-        </div>
+        <Alert variant="warning">{t('onboarding.speakers.none_found')}</Alert>
       )}
     </WizardStep>
   );

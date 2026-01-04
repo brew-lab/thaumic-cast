@@ -1,6 +1,7 @@
 import { WizardStep } from '@thaumic-cast/ui';
-import { Sparkles } from 'lucide-preact';
+import { Radio } from 'lucide-preact';
 import { useTranslation } from 'react-i18next';
+import styles from './WelcomeStep.module.css';
 
 /**
  * Welcome step introducing the extension concept.
@@ -15,20 +16,10 @@ export function WelcomeStep(): preact.JSX.Element {
     <WizardStep
       title={t('onboarding.welcome.title')}
       subtitle={t('onboarding.welcome.subtitle')}
-      icon={Sparkles}
+      icon={Radio}
     >
-      <p style={{ lineHeight: '1.6', marginBlockEnd: 'var(--space-md)' }}>
-        {t('onboarding.welcome.body')}
-      </p>
-      <p
-        style={{
-          fontSize: '0.85rem',
-          color: 'var(--color-text-muted)',
-          fontStyle: 'italic',
-        }}
-      >
-        {t('onboarding.welcome.footnote')}
-      </p>
+      <p className={styles.body}>{t('onboarding.welcome.body')}</p>
+      <p className={styles.footnote}>{t('onboarding.welcome.footnote')}</p>
     </WizardStep>
   );
 }

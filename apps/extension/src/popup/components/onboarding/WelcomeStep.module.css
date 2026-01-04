@@ -1,10 +1,11 @@
-.introText {
+.body {
   margin: 0;
   line-height: 1.6;
 }
 
-.performanceText {
+.footnote {
   margin: 0;
-  line-height: 1.6;
+  font-size: 0.85rem;
   color: var(--color-text-muted);
+  font-style: italic;
 }
