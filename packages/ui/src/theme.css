@@ -114,11 +114,11 @@
   /* Warning - yellow/gold */
   --color-warning: light-dark(
     oklch(55% var(--chroma-muted) var(--hue-warning)),
-    oklch(75% var(--chroma-muted) var(--hue-warning))
+    oklch(85% var(--chroma-muted) var(--hue-warning))
   );
   --color-warning-hover: light-dark(
     oklch(50% var(--chroma-muted) var(--hue-warning)),
-    oklch(70% var(--chroma-muted) var(--hue-warning))
+    oklch(80% var(--chroma-muted) var(--hue-warning))
   );
   --color-on-warning: var(--gray-14);
 
