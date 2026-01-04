@@ -99,6 +99,7 @@ pub fn bootstrap_services(config: &Config) -> BootstrappedServices {
     // Wire up stream coordinator with its dependencies
     let stream_coordinator = Arc::new(StreamCoordinator::new(
         Arc::clone(&sonos_impl) as Arc<dyn SonosPlayback>,
+        Arc::clone(&sonos_state),
         network.clone(),
         Arc::clone(&event_bridge) as Arc<dyn EventEmitter>,
     ));

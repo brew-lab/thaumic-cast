@@ -353,6 +353,39 @@ pub async fn stop(client: &Client, ip: &str) -> SoapResult<()> {
     }
 }
 
+/// Switches a Sonos speaker's source to its queue.
+///
+/// This sets the AVTransport URI to the speaker's internal queue, effectively
+/// clearing any external stream source. Used after stopping playback to ensure
+/// the Sonos app doesn't show a stale stream.
+///
+/// # Arguments
+/// * `client` - The HTTP client to use for the request
+/// * `ip` - IP address of the Sonos speaker (coordinator for grouped speakers)
+/// * `coordinator_uuid` - The speaker's RINCON_xxx UUID for building the queue URI
+pub async fn switch_to_queue(client: &Client, ip: &str, coordinator_uuid: &str) -> SoapResult<()> {
+    let queue_uri = format!("x-rincon-queue:{}#0", coordinator_uuid);
+
+    log::info!(
+        "[Sonos] Switching {} to queue (uuid: {})",
+        ip,
+        coordinator_uuid
+    );
+
+    SoapRequestBuilder::new(client, ip)
+        .service(SonosService::AVTransport)
+        .action("SetAVTransportURI")
+        .instance_id()
+        .arg("CurrentURI", &queue_uri)
+        .arg("CurrentURIMetaData", "")
+        .send()
+        .await?;
+
+    log::debug!("[Sonos] Switched to queue successfully");
+
+    Ok(())
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Volume Control
 // ─────────────────────────────────────────────────────────────────────────────
@@ -482,6 +515,10 @@ impl SonosPlayback for SonosClientImpl {
 
     async fn stop(&self, ip: &str) -> SoapResult<()> {
         stop(&self.client, ip).await
+    }
+
+    async fn switch_to_queue(&self, ip: &str, coordinator_uuid: &str) -> SoapResult<()> {
+        switch_to_queue(&self.client, ip, coordinator_uuid).await
     }
 }
 

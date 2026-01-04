@@ -35,6 +35,16 @@ pub trait SonosPlayback: Send + Sync {
     /// # Arguments
     /// * `ip` - IP address of the Sonos speaker (coordinator for grouped speakers)
     async fn stop(&self, ip: &str) -> SoapResult<()>;
+
+    /// Switches a speaker's source to its queue.
+    ///
+    /// Used after stopping a stream to clean up the transport URI so the user
+    /// doesn't see a stale stream source in the Sonos app.
+    ///
+    /// # Arguments
+    /// * `ip` - IP address of the Sonos speaker (coordinator for grouped speakers)
+    /// * `coordinator_uuid` - The speaker's RINCON_xxx UUID for building the queue URI
+    async fn switch_to_queue(&self, ip: &str, coordinator_uuid: &str) -> SoapResult<()>;
 }
 
 /// Trait for Sonos topology operations.

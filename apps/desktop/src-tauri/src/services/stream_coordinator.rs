@@ -17,6 +17,7 @@ use crate::error::ThaumicResult;
 use crate::events::{EventEmitter, StreamEvent};
 use crate::sonos::utils::normalize_sonos_uri;
 use crate::sonos::SonosPlayback;
+use crate::state::SonosState;
 use crate::stream::{AudioCodec, StreamManager, StreamMetadata, StreamState};
 use crate::utils::now_millis;
 
@@ -70,6 +71,8 @@ pub struct PlaybackResult {
 pub struct StreamCoordinator {
     /// Sonos client for playback control.
     sonos: Arc<dyn SonosPlayback>,
+    /// Sonos state for UUID lookups.
+    sonos_state: Arc<SonosState>,
     stream_manager: Arc<StreamManager>,
     /// Network configuration (port, local IP).
     network: NetworkContext,
@@ -85,15 +88,18 @@ impl StreamCoordinator {
     ///
     /// # Arguments
     /// * `sonos` - Sonos client for playback control
+    /// * `sonos_state` - Sonos state for UUID lookups
     /// * `network` - Network configuration (port, local IP)
     /// * `emitter` - Event emitter for broadcasting stream events
     pub fn new(
         sonos: Arc<dyn SonosPlayback>,
+        sonos_state: Arc<SonosState>,
         network: NetworkContext,
         emitter: Arc<dyn EventEmitter>,
     ) -> Self {
         Self {
             sonos,
+            sonos_state,
             stream_manager: Arc::new(StreamManager::new()),
             network,
             playback_sessions: DashMap::new(),
@@ -181,11 +187,12 @@ impl StreamCoordinator {
     ///
     /// This is the preferred method for stream removal. It:
     /// 1. Sends STOP to all speakers playing this stream
-    /// 2. Removes playback session records
-    /// 3. Removes the stream from the manager
-    /// 4. Broadcasts `StreamEvent::Ended`
+    /// 2. Switches each speaker's source to its queue (clears stale stream)
+    /// 3. Removes playback session records
+    /// 4. Removes the stream from the manager
+    /// 5. Broadcasts `StreamEvent::Ended`
     ///
-    /// Speaker stop failures are logged but don't prevent cleanup.
+    /// Speaker stop/switch failures are logged but don't prevent cleanup.
     pub async fn remove_stream_async(&self, stream_id: &str) {
         // Find all speaker IPs for this stream
         let speaker_ips: Vec<String> = self
@@ -195,10 +202,22 @@ impl StreamCoordinator {
             .map(|r| r.key().speaker_ip.clone())
             .collect();
 
-        // Stop each speaker (best-effort, don't fail the whole operation)
+        // Stop each speaker and switch to queue (best-effort)
         for ip in &speaker_ips {
+            // Stop playback
             if let Err(e) = self.sonos.stop(ip).await {
                 log::warn!("[StreamCoordinator] Failed to stop {}: {}", ip, e);
+            }
+
+            // Switch to queue to clear the stale stream source
+            if let Some(uuid) = self.sonos_state.get_coordinator_uuid_by_ip(ip) {
+                if let Err(e) = self.sonos.switch_to_queue(ip, &uuid).await {
+                    log::warn!(
+                        "[StreamCoordinator] Failed to switch {} to queue: {}",
+                        ip,
+                        e
+                    );
+                }
             }
         }
 
