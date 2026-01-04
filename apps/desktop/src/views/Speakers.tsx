@@ -81,7 +81,7 @@ export function Speakers() {
             label={t('speakers.stop_all')}
             loadingLabel={t('speakers.stopping')}
             icon={Square}
-            variant="danger"
+            variant="primary"
             className={styles.controlButton}
           />
         </div>

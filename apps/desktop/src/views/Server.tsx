@@ -110,7 +110,7 @@ export function Server() {
               label={t('server.disconnect')}
               loadingLabel={t('server.disconnecting')}
               icon={Unplug}
-              variant="danger"
+              variant="primary"
               className={styles.actionButton}
             />
           </div>
@@ -127,7 +127,7 @@ export function Server() {
               label={t('server.stop')}
               loadingLabel={t('server.stopping')}
               icon={Square}
-              variant="danger"
+              variant="primary"
               className={styles.actionButton}
             />
           </div>
