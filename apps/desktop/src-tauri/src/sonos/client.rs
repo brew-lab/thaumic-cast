@@ -224,17 +224,15 @@ fn format_didl_lite(stream_url: &str, metadata: Option<&StreamMetadata>, icon_ur
     //   Line 1: ICY StreamTitle (dynamic, updates with each track)
     //   Line 2: DIDL-Lite dc:title (static, set once at playback start)
     //
-    // So we set dc:title to the source name, not the song title.
-    let title = metadata
-        .and_then(|m| m.source.as_deref())
-        .unwrap_or("Thaumic Cast");
-    let artist = "Thaumic Cast";
-
-    // Album shows "{source} • Thaumic Cast" for branding
-    let album = match metadata.and_then(|m| m.source.as_deref()) {
+    // So we set dc:title to "{source} • Thaumic Cast", not the song title.
+    let title = match metadata.and_then(|m| m.source.as_deref()) {
         Some(source) => format!("{} • Thaumic Cast", source),
         None => "Thaumic Cast".to_string(),
     };
+    let artist = "Thaumic Cast";
+
+    // Album also shows "{source} • Thaumic Cast" for consistency
+    let album = title.clone();
 
     // [DIAG] Log what we're sending to Sonos
     log::info!(
@@ -249,7 +247,7 @@ fn format_didl_lite(stream_url: &str, metadata: Option<&StreamMetadata>, icon_ur
         r#"<DIDL-Lite xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:upnp="urn:schemas-upnp-org:metadata-1-0/upnp/" xmlns="urn:schemas-upnp-org:metadata-1-0/DIDL-Lite/">"#,
     );
     didl.push_str(r#"<item id="0" parentID="-1" restricted="true">"#);
-    didl.push_str(&format!("<dc:title>{}</dc:title>", escape_xml(title)));
+    didl.push_str(&format!("<dc:title>{}</dc:title>", escape_xml(&title)));
     didl.push_str(&format!("<dc:creator>{}</dc:creator>", escape_xml(artist)));
 
     // Always set album for consistent branding
