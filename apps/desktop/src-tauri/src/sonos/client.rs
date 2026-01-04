@@ -200,9 +200,12 @@ pub async fn get_zone_groups(client: &Client, ip: &str) -> SoapResult<Vec<ZoneGr
 /// and ICY metadata only supports StreamTitle, we use static values for
 /// album and artwork to prevent stale data:
 ///
-/// - **Title/Artist**: From MediaSession (updates via ICY StreamTitle)
-/// - **Album**: Formatted as "{source} • Thaumic Cast" for branding
-/// - **Artwork**: Static app icon (ICY doesn't support artwork updates)
+/// - **Title**: Source name (e.g., "YouTube Music") - static, branded
+/// - **Artist**: "Thaumic Cast" - static branding
+/// - **Album**: "{source} • Thaumic Cast" for additional branding
+/// - **Artwork**: Static app icon
+///
+/// The actual track info ("Artist - Title") comes from ICY StreamTitle which updates.
 fn format_didl_lite(stream_url: &str, metadata: Option<&StreamMetadata>, icon_url: &str) -> String {
     // [DIAG] Log incoming metadata for debugging
     log::info!(
@@ -213,15 +216,21 @@ fn format_didl_lite(stream_url: &str, metadata: Option<&StreamMetadata>, icon_ur
         ))
     );
 
+    // IMPORTANT: DIDL-Lite is sent once and never updates. ICY StreamTitle handles
+    // dynamic track info ("Artist - Title"). To avoid duplication on Sonos display,
+    // we use STATIC branded values here:
+    //
+    // Sonos displays:
+    //   Line 1: ICY StreamTitle (dynamic, updates with each track)
+    //   Line 2: DIDL-Lite dc:title (static, set once at playback start)
+    //
+    // So we set dc:title to the source name, not the song title.
     let title = metadata
-        .and_then(|m| m.title.as_deref())
-        .unwrap_or("Browser Audio");
-    let artist = metadata
-        .and_then(|m| m.artist.as_deref())
+        .and_then(|m| m.source.as_deref())
         .unwrap_or("Thaumic Cast");
+    let artist = "Thaumic Cast";
 
-    // Format album as "{source} • Thaumic Cast" or just "Thaumic Cast"
-    // We intentionally ignore metadata.album as it gets stuck after first stream
+    // Album shows "{source} • Thaumic Cast" for branding
     let album = match metadata.and_then(|m| m.source.as_deref()) {
         Some(source) => format!("{} • Thaumic Cast", source),
         None => "Thaumic Cast".to_string(),
