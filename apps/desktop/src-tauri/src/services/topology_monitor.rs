@@ -18,7 +18,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::context::NetworkContext;
 use crate::error::{ThaumicError, ThaumicResult};
-use crate::events::{EventEmitter, NetworkEvent, NetworkHealth};
+use crate::events::{EventEmitter, NetworkEvent, NetworkHealth, TopologyEvent};
 use crate::sonos::discovery::Speaker;
 use crate::sonos::gena::GenaSubscriptionManager;
 use crate::sonos::SonosService;
@@ -318,7 +318,7 @@ impl TopologyMonitor {
             }
         };
 
-        // Update stored groups
+        // Update stored groups and broadcast to clients
         {
             let mut state = self.sonos_state.groups.write();
             *state = groups.clone();
@@ -327,6 +327,16 @@ impl TopologyMonitor {
                 state.len()
             );
         }
+
+        // Broadcast groups update to WebSocket clients
+        let timestamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as u64;
+        self.emitter.emit_topology(TopologyEvent::GroupsDiscovered {
+            groups: groups.clone(),
+            timestamp,
+        });
 
         // Collect coordinator IPs
         let coordinator_ips: HashSet<String> =

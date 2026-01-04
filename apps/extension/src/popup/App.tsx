@@ -93,11 +93,6 @@ function MainPopup(): JSX.Element {
   // Auto-stop notification hook
   const { notification: autoStopNotification } = useAutoStopNotification();
 
-  // Debug logging for network health display condition
-  useEffect(() => {
-    console.log('[NH] Render:', { wsConnected, networkHealth, groups: groups.length });
-  }, [wsConnected, networkHealth, groups.length]);
-
   // Show auto-stop notification as error
   useEffect(() => {
     if (autoStopNotification) {
@@ -105,10 +100,12 @@ function MainPopup(): JSX.Element {
     }
   }, [autoStopNotification]);
 
-  // Update selected IP when groups change and none is selected
+  // Update selected IP when groups change
   useEffect(() => {
     if (groups.length > 0 && !selectedIp) {
       setSelectedIp(groups[0]!.coordinatorIp);
+    } else if (groups.length === 0 && selectedIp) {
+      setSelectedIp('');
     }
   }, [groups, selectedIp]);
 

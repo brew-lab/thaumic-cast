@@ -46,6 +46,7 @@ export type ExtensionMessageType =
   | 'WS_PERMANENTLY_DISCONNECTED'
   | 'SONOS_EVENT'
   | 'NETWORK_EVENT'
+  | 'TOPOLOGY_EVENT'
   // State update messages (background → popup)
   | 'WS_STATE_CHANGED'
   | 'VOLUME_UPDATE'
@@ -482,6 +483,18 @@ export interface NetworkHealthChangedMessage {
   reason: string | null;
 }
 
+/**
+ * Topology event from desktop app (offscreen → background).
+ */
+export interface TopologyEventMessage {
+  type: 'TOPOLOGY_EVENT';
+  payload: {
+    type: 'groupsDiscovered';
+    groups: SonosStateSnapshot['groups'];
+    timestamp: number;
+  };
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Control Commands (popup → background → offscreen → desktop)
 // ─────────────────────────────────────────────────────────────────────────────
@@ -556,6 +569,7 @@ export type ExtensionMessage =
   | WsPermanentlyDisconnectedMessage
   | SonosEventMessage
   | NetworkEventMessage
+  | TopologyEventMessage
   | OffscreenReadyMessage
   | WsStateChangedMessage
   | VolumeUpdateMessage

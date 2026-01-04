@@ -14,6 +14,7 @@ pub use emitter::EventEmitter;
 use serde::Serialize;
 
 use crate::sonos::gena::SonosEvent;
+use crate::types::ZoneGroup;
 
 /// Events broadcast to WebSocket clients.
 ///
@@ -30,6 +31,9 @@ pub enum BroadcastEvent {
 
     /// Events related to network health and connectivity.
     Network(NetworkEvent),
+
+    /// Events from topology discovery.
+    Topology(TopologyEvent),
 }
 
 /// Events related to audio stream state changes.
@@ -123,5 +127,27 @@ pub enum NetworkEvent {
 impl From<NetworkEvent> for BroadcastEvent {
     fn from(event: NetworkEvent) -> Self {
         BroadcastEvent::Network(event)
+    }
+}
+
+/// Events from topology discovery operations.
+///
+/// These events represent results from active discovery (SSDP + SOAP),
+/// as opposed to push notifications from speakers (GENA).
+#[derive(Debug, Clone, Serialize)]
+#[serde(tag = "type", rename_all = "camelCase")]
+pub enum TopologyEvent {
+    /// Zone groups discovered or updated via SOAP query.
+    GroupsDiscovered {
+        /// The discovered zone groups.
+        groups: Vec<ZoneGroup>,
+        /// Unix timestamp in milliseconds.
+        timestamp: u64,
+    },
+}
+
+impl From<TopologyEvent> for BroadcastEvent {
+    fn from(event: TopologyEvent) -> Self {
+        BroadcastEvent::Topology(event)
     }
 }

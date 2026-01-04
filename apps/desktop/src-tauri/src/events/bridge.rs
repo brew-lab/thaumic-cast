@@ -7,7 +7,7 @@
 use tokio::sync::broadcast;
 
 use super::emitter::EventEmitter;
-use super::{BroadcastEvent, NetworkEvent, StreamEvent};
+use super::{BroadcastEvent, NetworkEvent, StreamEvent, TopologyEvent};
 use crate::sonos::gena::SonosEvent;
 
 /// Bridges domain events to the WebSocket broadcast channel.
@@ -46,6 +46,12 @@ impl EventEmitter for BroadcastEventBridge {
 
     fn emit_network(&self, event: NetworkEvent) {
         if let Err(e) = self.tx.send(BroadcastEvent::Network(event)) {
+            log::trace!("[EventBridge] No broadcast receivers: {}", e);
+        }
+    }
+
+    fn emit_topology(&self, event: TopologyEvent) {
+        if let Err(e) = self.tx.send(BroadcastEvent::Topology(event)) {
             log::trace!("[EventBridge] No broadcast receivers: {}", e);
         }
     }

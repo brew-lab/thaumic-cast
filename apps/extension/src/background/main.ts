@@ -18,6 +18,7 @@ import {
   WsConnectedMessage,
   SonosEventMessage,
   NetworkEventMessage,
+  TopologyEventMessage,
   WsStatusResponse,
   SetVolumeMessage,
   SetMuteMessage,
@@ -47,6 +48,7 @@ import {
   getSonosState as getStoredSonosState,
   setSonosState,
   restoreSonosState,
+  updateGroups,
 } from './sonos-state';
 import {
   getConnectionState,
@@ -422,18 +424,29 @@ chrome.runtime.onMessage.addListener((msg: ExtensionMessage, _sender, sendRespon
 
         case 'NETWORK_EVENT': {
           const { payload } = msg as NetworkEventMessage;
-          log.info('[NH] Background received NETWORK_EVENT:', payload.type);
           if (payload.type === 'healthChanged') {
             const health = payload.health;
             const reason = payload.reason ?? null;
-            log.info(`[NH] Health changed: ${health}${reason ? ` (${reason})` : ''}`);
             setNetworkHealth(health, reason);
             notifyPopup({
               type: 'NETWORK_HEALTH_CHANGED',
               health,
               reason,
             });
-            log.info('[NH] Background sent NETWORK_HEALTH_CHANGED');
+          }
+          sendResponse({ success: true });
+          break;
+        }
+
+        case 'TOPOLOGY_EVENT': {
+          const { payload } = msg as TopologyEventMessage;
+          if (payload.type === 'groupsDiscovered') {
+            const newState = updateGroups(payload.groups);
+            notifyPopup({
+              type: 'WS_STATE_CHANGED',
+              state: newState,
+            });
+            log.info(`Groups discovered: ${payload.groups.length} groups`);
           }
           sendResponse({ success: true });
           break;

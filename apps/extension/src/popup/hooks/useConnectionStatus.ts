@@ -165,7 +165,6 @@ export function useConnectionStatus(): ConnectionStatus {
         case 'NETWORK_HEALTH_CHANGED': {
           const health = message.health as NetworkHealthStatus;
           const reason = message.reason as string | null;
-          console.log('[NH] Popup received:', health, reason);
           setStatus((s) => ({
             ...s,
             networkHealth: health,

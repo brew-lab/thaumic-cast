@@ -102,14 +102,25 @@ function connectControlWebSocket(url: string): void {
       }
       // Network broadcast events (separate category)
       else if (message.category === 'network') {
-        log.info('[NH] Offscreen received:', message.type, message.health);
         chrome.runtime
           .sendMessage({
             type: 'NETWORK_EVENT',
             payload: message,
           })
-          .then(() => log.info('[NH] Offscreen forwarded to background'))
-          .catch((err) => log.warn('[NH] Offscreen forward failed:', err));
+          .catch(() => {
+            // Background may be suspended
+          });
+      }
+      // Topology broadcast events (discovery results)
+      else if (message.category === 'topology') {
+        chrome.runtime
+          .sendMessage({
+            type: 'TOPOLOGY_EVENT',
+            payload: message,
+          })
+          .catch(() => {
+            // Background may be suspended
+          });
       }
       // Broadcast events (sonos/stream)
       else if (message.category) {
