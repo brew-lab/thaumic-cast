@@ -20,12 +20,14 @@ pub trait SonosPlayback: Send + Sync {
     /// # Arguments
     /// * `ip` - IP address of the Sonos speaker (coordinator for grouped speakers)
     /// * `uri` - The audio stream URL to play
-    /// * `metadata` - Optional stream metadata for display (title, artist, album, artwork)
+    /// * `metadata` - Optional stream metadata for display (title, artist, source)
+    /// * `icon_url` - URL to the static app icon for album art display
     async fn play_uri(
         &self,
         ip: &str,
         uri: &str,
         metadata: Option<&StreamMetadata>,
+        icon_url: &str,
     ) -> SoapResult<()>;
 
     /// Stops playback on a Sonos speaker.
@@ -33,6 +35,16 @@ pub trait SonosPlayback: Send + Sync {
     /// # Arguments
     /// * `ip` - IP address of the Sonos speaker (coordinator for grouped speakers)
     async fn stop(&self, ip: &str) -> SoapResult<()>;
+
+    /// Switches a speaker's source to its queue.
+    ///
+    /// Used after stopping a stream to clean up the transport URI so the user
+    /// doesn't see a stale stream source in the Sonos app.
+    ///
+    /// # Arguments
+    /// * `ip` - IP address of the Sonos speaker (coordinator for grouped speakers)
+    /// * `coordinator_uuid` - The speaker's RINCON_xxx UUID for building the queue URI
+    async fn switch_to_queue(&self, ip: &str, coordinator_uuid: &str) -> SoapResult<()>;
 }
 
 /// Trait for Sonos topology operations.

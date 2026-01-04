@@ -16,13 +16,26 @@
 
 import { createLogger } from '@thaumic-cast/shared';
 import type { BroadcastEvent, SonosStateSnapshot, TransportState } from '@thaumic-cast/protocol';
-import { updateGroups, updateVolume, updateMute, updateTransportState } from './sonos-state';
-import { getSessionBySpeakerIp, getSessionByStreamId, removeSession } from './session-manager';
+import {
+  updateGroups,
+  updateVolume,
+  updateMute,
+  updateTransportState,
+  getSonosState,
+} from './sonos-state';
+import {
+  getSessionBySpeakerIp,
+  getSessionByStreamId,
+  removeSession,
+  removeSpeakerFromSession,
+  hasSession,
+} from './session-manager';
+import i18n from '../lib/i18n';
 
 const log = createLogger('SonosEvents');
 
-/** Debounce timer for transport state changes */
-let transportDebounceTimer: ReturnType<typeof setTimeout> | null = null;
+/** Per-speaker debounce timers for transport state changes */
+const transportDebounceTimers = new Map<string, ReturnType<typeof setTimeout>>();
 const TRANSPORT_DEBOUNCE_MS = 500;
 
 /**
@@ -72,18 +85,24 @@ export async function handleSonosEvent(event: BroadcastEvent): Promise<void> {
 
 /**
  * Handles transport state change events.
- * Debounces rapid changes during transitions.
+ * Debounces rapid changes per-speaker during transitions.
  * @param speakerIp - The speaker IP address
  * @param state - The new transport state
  */
 function handleTransportState(speakerIp: string, state: TransportState): void {
-  // Debounce to prevent rapid state flapping during transitions
-  if (transportDebounceTimer) {
-    clearTimeout(transportDebounceTimer);
+  // Clear existing timer for this specific speaker
+  const existingTimer = transportDebounceTimers.get(speakerIp);
+  if (existingTimer) {
+    clearTimeout(existingTimer);
   }
 
-  transportDebounceTimer = setTimeout(() => {
+  // Set new timer for this speaker (debounce per-speaker, not globally)
+  const timer = setTimeout(() => {
+    transportDebounceTimers.delete(speakerIp);
     updateTransportState(speakerIp, state);
+
+    // Sync updated state to offscreen for service worker recovery
+    syncStateToOffscreen();
 
     notifyPopup({
       type: 'TRANSPORT_STATE_UPDATE',
@@ -93,11 +112,24 @@ function handleTransportState(speakerIp: string, state: TransportState): void {
 
     log.info(`Transport state: ${speakerIp} → ${state}`);
   }, TRANSPORT_DEBOUNCE_MS);
+
+  transportDebounceTimers.set(speakerIp, timer);
+}
+
+/**
+ * Syncs current Sonos state to offscreen document for service worker recovery.
+ */
+function syncStateToOffscreen(): void {
+  const state = getSonosState();
+  chrome.runtime.sendMessage({ type: 'SYNC_SONOS_STATE', state }).catch(() => {
+    // Offscreen may not be available
+  });
 }
 
 /**
  * Handles source changed events.
- * Auto-stops cast when user switches to another source (Spotify, AirPlay, etc.).
+ * Auto-removes speaker from cast when user switches to another source (Spotify, AirPlay, etc.).
+ * If no speakers remain, stops the entire cast.
  * @param speakerIp - The speaker IP address
  * @param currentUri - The current playback URI
  */
@@ -108,19 +140,39 @@ async function handleSourceChanged(speakerIp: string, currentUri: string): Promi
   const session = getSessionBySpeakerIp(speakerIp);
 
   if (session) {
-    log.info(`Auto-stopping cast for tab ${session.tabId} due to source change`);
+    const tabId = session.tabId;
 
-    // Stop the capture in offscreen
-    await stopCastForTab(session.tabId);
+    // Remove just this speaker from the session
+    removeSpeakerFromSession(tabId, speakerIp);
 
-    // Notify popup with reason for auto-stop
-    notifyPopup({
-      type: 'CAST_AUTO_STOPPED',
-      tabId: session.tabId,
-      speakerIp,
-      reason: 'source_changed',
-      message: 'Sonos switched to another source',
-    });
+    // Check if session still has other speakers
+    if (hasSession(tabId)) {
+      log.info(`Removed speaker ${speakerIp} from cast for tab ${tabId} due to source change`);
+
+      // Notify popup that one speaker was removed
+      notifyPopup({
+        type: 'SPEAKER_REMOVED',
+        tabId,
+        speakerIp,
+        reason: 'source_changed',
+      });
+    } else {
+      log.info(`Auto-stopping cast for tab ${tabId} due to source change (last speaker)`);
+
+      // Last speaker removed - stop the capture
+      await chrome.runtime.sendMessage({ type: 'STOP_CAPTURE', payload: { tabId } }).catch(() => {
+        // Offscreen might not be available
+      });
+
+      // Notify popup that cast ended
+      notifyPopup({
+        type: 'CAST_AUTO_STOPPED',
+        tabId,
+        speakerIp,
+        reason: 'source_changed',
+        message: i18n.t('auto_stop_source_changed'),
+      });
+    }
   }
 }
 
@@ -209,38 +261,59 @@ async function handleStreamEnded(streamId: string): Promise<void> {
     // Stop the capture in offscreen
     await stopCastForTab(session.tabId);
 
-    // Notify popup that the cast was stopped
+    // Notify popup that the cast was stopped (use first speaker for backward compat)
     notifyPopup({
       type: 'CAST_AUTO_STOPPED',
       tabId: session.tabId,
-      speakerIp: session.speakerIp,
+      speakerIp: session.speakerIps[0],
       reason: 'stream_ended',
-      message: 'Stream ended by server',
+      message: i18n.t('auto_stop_stream_ended'),
     });
   }
 }
 
 /**
  * Handles playback stopped events.
- * Cleans up the session when playback stops on a speaker.
+ * Removes speaker from session when playback stops on it.
+ * If no speakers remain, stops the entire cast.
  * @param speakerIp - The speaker IP where playback stopped
  */
 async function handlePlaybackStopped(speakerIp: string): Promise<void> {
   const session = getSessionBySpeakerIp(speakerIp);
 
   if (session) {
-    log.info(`Playback stopped on ${speakerIp}, cleaning up session for tab ${session.tabId}`);
+    const tabId = session.tabId;
 
-    // Stop the capture in offscreen
-    await stopCastForTab(session.tabId);
+    // Remove just this speaker from the session
+    removeSpeakerFromSession(tabId, speakerIp);
 
-    // Notify popup that the cast was stopped
-    notifyPopup({
-      type: 'CAST_AUTO_STOPPED',
-      tabId: session.tabId,
-      speakerIp,
-      reason: 'playback_stopped',
-      message: 'Playback stopped on speaker',
-    });
+    // Check if session still has other speakers
+    if (hasSession(tabId)) {
+      log.info(`Removed speaker ${speakerIp} from cast for tab ${tabId} due to playback stopped`);
+
+      // Notify popup that one speaker was removed
+      notifyPopup({
+        type: 'SPEAKER_REMOVED',
+        tabId,
+        speakerIp,
+        reason: 'playback_stopped',
+      });
+    } else {
+      log.info(`Playback stopped on ${speakerIp}, stopping cast for tab ${tabId} (last speaker)`);
+
+      // Last speaker removed - stop the capture
+      await chrome.runtime.sendMessage({ type: 'STOP_CAPTURE', payload: { tabId } }).catch(() => {
+        // Offscreen might not be available
+      });
+
+      // Notify popup that cast ended
+      notifyPopup({
+        type: 'CAST_AUTO_STOPPED',
+        tabId,
+        speakerIp,
+        reason: 'playback_stopped',
+        message: i18n.t('auto_stop_playback_stopped'),
+      });
+    }
   }
 }

@@ -6,7 +6,8 @@ import {
   TabMediaState,
   ActiveCast,
   TransportState,
-  PowerState,
+  MediaAction,
+  PlaybackResult,
 } from '@thaumic-cast/protocol';
 
 /**
@@ -24,6 +25,7 @@ export type ExtensionMessageType =
   | 'METADATA_UPDATE'
   // Metadata messages (content → background → offscreen)
   | 'TAB_METADATA_UPDATE'
+  | 'TAB_OG_IMAGE'
   | 'REQUEST_METADATA'
   // Popup queries (popup → background)
   | 'GET_CURRENT_TAB_STATE'
@@ -32,6 +34,8 @@ export type ExtensionMessageType =
   | 'TAB_STATE_CHANGED'
   | 'ACTIVE_CASTS_CHANGED'
   | 'CAST_AUTO_STOPPED'
+  | 'SPEAKER_REMOVED'
+  | 'NETWORK_HEALTH_CHANGED'
   // WebSocket control messages (background ↔ offscreen)
   | 'WS_CONNECT'
   | 'WS_DISCONNECT'
@@ -43,6 +47,8 @@ export type ExtensionMessageType =
   | 'WS_DISCONNECTED'
   | 'WS_PERMANENTLY_DISCONNECTED'
   | 'SONOS_EVENT'
+  | 'NETWORK_EVENT'
+  | 'TOPOLOGY_EVENT'
   // State update messages (background → popup)
   | 'WS_STATE_CHANGED'
   | 'VOLUME_UPDATE'
@@ -55,15 +61,19 @@ export type ExtensionMessageType =
   // Offscreen lifecycle
   | 'OFFSCREEN_READY'
   // Session health (offscreen → background)
-  | 'SESSION_HEALTH';
+  | 'SESSION_HEALTH'
+  // Media playback control (popup → background → content)
+  | 'CONTROL_MEDIA';
 
 /**
  * Message payload for starting a cast.
+ * Supports multi-group casting via speakerIps array.
  */
 export interface StartCastMessage {
   type: 'START_CAST';
   payload: {
-    speakerIp: string;
+    /** Target speaker IP addresses (multi-group support). */
+    speakerIps: string[];
     /**
      * Encoder configuration. If omitted, background will auto-select
      * based on device capabilities and past session history.
@@ -113,14 +123,16 @@ export interface StopCaptureMessage {
 }
 
 /**
- * Message payload for starting playback on a Sonos speaker.
+ * Message payload for starting playback on Sonos speakers.
  * Sent from background to offscreen, which forwards via WebSocket.
+ * Supports multi-group casting via speakerIps array.
  */
 export interface StartPlaybackMessage {
   type: 'START_PLAYBACK';
   payload: {
     tabId: number;
-    speakerIp: string;
+    /** Target speaker IP addresses (multi-group support). */
+    speakerIps: string[];
     /** Optional initial metadata to display on Sonos. */
     metadata?: StreamMetadata;
   };
@@ -128,11 +140,14 @@ export interface StartPlaybackMessage {
 
 /**
  * Response to START_PLAYBACK message.
+ * Contains per-speaker results for multi-group casting.
  */
 export interface StartPlaybackResponse {
+  /** Overall success (at least one speaker started). */
   success: boolean;
-  speakerIp?: string;
-  streamUrl?: string;
+  /** Per-speaker playback results. */
+  results: PlaybackResult[];
+  /** Overall error (if all speakers failed). */
   error?: string;
 }
 
@@ -197,6 +212,16 @@ export interface TabMetadataUpdateMessage {
  */
 export interface RequestMetadataMessage {
   type: 'REQUEST_METADATA';
+}
+
+/**
+ * Open Graph image update from content script.
+ */
+export interface TabOgImageMessage {
+  type: 'TAB_OG_IMAGE';
+  payload: {
+    ogImage: string;
+  };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -336,8 +361,6 @@ export interface SyncSonosStateMessage {
 export interface WsConnectedMessage {
   type: 'WS_CONNECTED';
   state: SonosStateSnapshot;
-  /** System power state from desktop app (null if detection failed). */
-  powerState: PowerState | null;
 }
 
 /**
@@ -435,11 +458,61 @@ export interface CastAutoStoppedMessage {
 }
 
 /**
+ * A speaker was removed from an active cast (multi-group partial removal).
+ * The cast continues with remaining speakers.
+ */
+export interface SpeakerRemovedMessage {
+  type: 'SPEAKER_REMOVED';
+  tabId: number;
+  speakerIp: string;
+  reason: 'source_changed' | 'playback_stopped';
+}
+
+/**
  * WebSocket connection lost notification.
  */
 export interface WsConnectionLostMessage {
   type: 'WS_CONNECTION_LOST';
   reason: string;
+}
+
+/**
+ * Network health status from desktop app.
+ */
+export type NetworkHealthStatus = 'ok' | 'degraded';
+
+/**
+ * Network event from desktop app (offscreen → background).
+ */
+export interface NetworkEventMessage {
+  type: 'NETWORK_EVENT';
+  payload: {
+    type: 'healthChanged';
+    health: NetworkHealthStatus;
+    reason?: string;
+    timestamp: number;
+  };
+}
+
+/**
+ * Network health changed notification (background → popup).
+ */
+export interface NetworkHealthChangedMessage {
+  type: 'NETWORK_HEALTH_CHANGED';
+  health: NetworkHealthStatus;
+  reason: string | null;
+}
+
+/**
+ * Topology event from desktop app (offscreen → background).
+ */
+export interface TopologyEventMessage {
+  type: 'TOPOLOGY_EVENT';
+  payload: {
+    type: 'groupsDiscovered';
+    groups: SonosStateSnapshot['groups'];
+    timestamp: number;
+  };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -464,6 +537,18 @@ export interface SetMuteMessage {
   muted: boolean;
 }
 
+/**
+ * Control media playback on a specific tab.
+ * Sent from popup to background, which forwards to content script.
+ */
+export interface ControlMediaMessage {
+  type: 'CONTROL_MEDIA';
+  payload: {
+    tabId: number;
+    action: MediaAction;
+  };
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Updated Union Type
 // ─────────────────────────────────────────────────────────────────────────────
@@ -483,6 +568,7 @@ export type ExtensionMessage =
   | ContentMetadataMessage
   // Tab metadata messages
   | TabMetadataUpdateMessage
+  | TabOgImageMessage
   | RequestMetadataMessage
   // Popup query messages
   | GetCurrentTabStateMessage
@@ -491,6 +577,8 @@ export type ExtensionMessage =
   | TabStateChangedMessage
   | ActiveCastsChangedMessage
   | CastAutoStoppedMessage
+  | SpeakerRemovedMessage
+  | NetworkHealthChangedMessage
   // WebSocket messages
   | WsConnectMessage
   | WsDisconnectMessage
@@ -501,6 +589,8 @@ export type ExtensionMessage =
   | WsDisconnectedMessage
   | WsPermanentlyDisconnectedMessage
   | SonosEventMessage
+  | NetworkEventMessage
+  | TopologyEventMessage
   | OffscreenReadyMessage
   | WsStateChangedMessage
   | VolumeUpdateMessage
@@ -509,5 +599,7 @@ export type ExtensionMessage =
   | WsConnectionLostMessage
   | SetVolumeMessage
   | SetMuteMessage
+  // Media playback control
+  | ControlMediaMessage
   // Session health
   | SessionHealthMessage;

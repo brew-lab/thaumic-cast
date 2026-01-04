@@ -12,9 +12,11 @@
     "typecheck": "tsc --noEmit"
   },
   "peerDependencies": {
+    "lucide-preact": "^0.562.0",
     "preact": "^10.0.0"
   },
   "devDependencies": {
+    "lucide-preact": "^0.562.0",
     "typescript": "^5.0.0"
   }
 }

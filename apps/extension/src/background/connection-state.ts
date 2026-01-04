@@ -14,11 +14,15 @@
  */
 
 import { createLogger } from '@thaumic-cast/shared';
+import i18n from '../lib/i18n';
 
 const log = createLogger('ConnectionState');
 
 /** Storage key for session persistence */
 const STORAGE_KEY = 'connectionState';
+
+/** Network health status from desktop app */
+export type NetworkHealthStatus = 'ok' | 'degraded';
 
 /**
  * Connection state snapshot.
@@ -34,6 +38,10 @@ export interface ConnectionState {
   lastDiscoveredAt: number | null;
   /** Last connection error (null if none) */
   lastError: string | null;
+  /** Network health status from desktop (speakers responding, etc.) */
+  networkHealth: NetworkHealthStatus;
+  /** Reason for degraded network health (null if healthy) */
+  networkHealthReason: string | null;
 }
 
 /** Current connection state */
@@ -43,6 +51,8 @@ let state: ConnectionState = {
   maxStreams: null,
   lastDiscoveredAt: null,
   lastError: null,
+  networkHealth: 'ok',
+  networkHealthReason: null,
 };
 
 /** Debounce timer for persistence */
@@ -100,6 +110,20 @@ export function setConnectionError(error: string): void {
 }
 
 /**
+ * Updates network health status from the desktop app.
+ * @param health - The network health status ('ok' or 'degraded')
+ * @param reason - The reason for degraded health (null if healthy)
+ */
+export function setNetworkHealth(health: NetworkHealthStatus, reason: string | null): void {
+  state = {
+    ...state,
+    networkHealth: health,
+    networkHealthReason: reason,
+  };
+  schedulePersist();
+}
+
+/**
  * Clears connection state when desktop app is not found.
  */
 export function clearConnectionState(): void {
@@ -108,7 +132,9 @@ export function clearConnectionState(): void {
     desktopAppUrl: null,
     maxStreams: null,
     lastDiscoveredAt: null,
-    lastError: 'Desktop app not found',
+    lastError: i18n.t('error_desktop_not_found'),
+    networkHealth: 'ok',
+    networkHealthReason: null,
   };
   schedulePersist();
 }
@@ -142,7 +168,17 @@ export async function restoreConnectionState(): Promise<void> {
   try {
     const result = await chrome.storage.session.get(STORAGE_KEY);
     if (result[STORAGE_KEY]) {
-      state = result[STORAGE_KEY];
+      const stored = result[STORAGE_KEY];
+      // Merge with defaults to handle new fields added in updates
+      state = {
+        connected: stored.connected ?? false,
+        desktopAppUrl: stored.desktopAppUrl ?? null,
+        maxStreams: stored.maxStreams ?? null,
+        lastDiscoveredAt: stored.lastDiscoveredAt ?? null,
+        lastError: stored.lastError ?? null,
+        networkHealth: stored.networkHealth ?? 'ok',
+        networkHealthReason: stored.networkHealthReason ?? null,
+      };
       log.info(
         'Restored connection state:',
         state.connected ? 'connected' : 'disconnected',

@@ -1,8 +1,13 @@
 import type { JSX } from 'preact';
-import { useState, useEffect, useCallback } from 'preact/hooks';
+import { useState, useEffect, useCallback, useMemo } from 'preact/hooks';
 import { useTranslation } from 'react-i18next';
-import { getSpeakerStatus } from '@thaumic-cast/protocol';
-import { Settings } from 'lucide-preact';
+import {
+  getSpeakerAvailability,
+  SPEAKER_AVAILABILITY_LABELS,
+  MediaAction,
+} from '@thaumic-cast/protocol';
+import { Radio, Settings } from 'lucide-preact';
+import { Alert, IconButton } from '@thaumic-cast/ui';
 import styles from './App.module.css';
 import { ExtensionResponse, StartCastMessage } from '../lib/messages';
 import type { ZoneGroup } from '@thaumic-cast/protocol';
@@ -13,14 +18,41 @@ import { useActiveCasts } from './hooks/useActiveCasts';
 import { useSonosState } from './hooks/useSonosState';
 import { useAutoStopNotification } from './hooks/useAutoStopNotification';
 import { useConnectionStatus } from './hooks/useConnectionStatus';
+import { useOnboarding } from './hooks/useOnboarding';
+import { Onboarding } from './components/Onboarding';
 
 /**
  * Main Extension Popup UI.
  * @returns The rendered popup application
  */
 export function App(): JSX.Element {
+  const {
+    isLoading: onboardingLoading,
+    isComplete: onboardingComplete,
+    completeOnboarding,
+    skipOnboarding,
+  } = useOnboarding();
+
+  // Show nothing while loading onboarding state
+  if (onboardingLoading) {
+    return <div className={styles.container} />;
+  }
+
+  // Show onboarding for first-time users
+  if (!onboardingComplete) {
+    return <Onboarding onComplete={completeOnboarding} onSkip={skipOnboarding} />;
+  }
+
+  return <MainPopup />;
+}
+
+/**
+ * Main popup content after onboarding is complete.
+ * @returns The rendered main popup
+ */
+function MainPopup(): JSX.Element {
   const { t } = useTranslation();
-  const [selectedIp, setSelectedIp] = useState<string>('');
+  const [selectedIps, setSelectedIps] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [isStarting, setIsStarting] = useState(false);
 
@@ -30,6 +62,8 @@ export function App(): JSX.Element {
     checking: connectionChecking,
     error: connectionError,
     desktopAppUrl: baseUrl,
+    networkHealth,
+    networkHealthReason,
   } = useConnectionStatus();
 
   // Media metadata hooks
@@ -40,6 +74,12 @@ export function App(): JSX.Element {
   const isCasting = currentTabState
     ? activeCasts.some((cast) => cast.tabId === currentTabState.tabId)
     : false;
+
+  // Derive casting speaker IPs for availability status (flatten all speaker arrays)
+  const castingSpeakerIps = useMemo(
+    () => activeCasts.flatMap((cast) => cast.speakerIps),
+    [activeCasts],
+  );
 
   // Sonos state hook - handles real-time updates
   const {
@@ -63,19 +103,15 @@ export function App(): JSX.Element {
     }
   }, [autoStopNotification]);
 
-  // Show connection errors (only when not checking)
+  // Update selected IPs when groups change
   useEffect(() => {
-    if (!connectionChecking && connectionError) {
-      setError(connectionError);
+    if (groups.length > 0 && selectedIps.length === 0) {
+      // Default to first group selected
+      setSelectedIps([groups[0]!.coordinatorIp]);
+    } else if (groups.length === 0 && selectedIps.length > 0) {
+      setSelectedIps([]);
     }
-  }, [connectionChecking, connectionError]);
-
-  // Update selected IP when groups change and none is selected
-  useEffect(() => {
-    if (groups.length > 0 && !selectedIp) {
-      setSelectedIp(groups[0]!.coordinatorIp);
-    }
-  }, [groups, selectedIp]);
+  }, [groups, selectedIps.length]);
 
   /**
    * Opens the extension settings page.
@@ -89,19 +125,18 @@ export function App(): JSX.Element {
    * Uses global audio settings from extension settings (auto-selected by background).
    */
   const handleStart = useCallback(async () => {
-    if (!selectedIp || isStarting) return;
+    if (selectedIps.length === 0 || isStarting) return;
     setError(null);
     setIsStarting(true);
     try {
-      // Don't pass encoderConfig - background will use extension settings
       const msg: StartCastMessage = {
         type: 'START_CAST',
-        payload: { speakerIp: selectedIp },
+        payload: { speakerIps: selectedIps },
       };
       const response: ExtensionResponse = await chrome.runtime.sendMessage(msg);
 
       if (!response.success) {
-        setError(response.error || 'Failed to start');
+        setError(response.error || t('error_cast_failed'));
       }
       // isCasting is derived from activeCasts - will auto-update via ACTIVE_CASTS_CHANGED
     } catch (err) {
@@ -110,7 +145,7 @@ export function App(): JSX.Element {
     } finally {
       setIsStarting(false);
     }
-  }, [selectedIp, isStarting]);
+  }, [selectedIps, isStarting]);
 
   /**
    * Handles mute toggle for a speaker.
@@ -125,6 +160,18 @@ export function App(): JSX.Element {
   );
 
   /**
+   * Handles playback control for a tab.
+   * @param tabId - The tab ID to control
+   * @param action - The media action to perform
+   */
+  const handleControl = useCallback((tabId: number, action: MediaAction) => {
+    chrome.runtime.sendMessage({
+      type: 'CONTROL_MEDIA',
+      payload: { tabId, action },
+    });
+  }, []);
+
+  /**
    * Resolves the CSS class for the status indicator based on current app state.
    * @returns The appropriate CSS class name
    */
@@ -135,36 +182,70 @@ export function App(): JSX.Element {
   }, [connectionChecking, connectionError, wsConnected]);
 
   /**
-   * Gets display name for a group with transport status.
+   * Gets display name for a group with availability status.
    * @param group - The zone group
-   * @returns Display name with optional status
+   * @returns Display name with availability status
    */
   const getGroupDisplayName = useCallback(
     (group: ZoneGroup) => {
-      const memberCount = group.members?.length ?? 0;
-      const baseName = `${group.name}${memberCount > 1 ? ` (+${memberCount - 1})` : ''}`;
-      const status = getSpeakerStatus(group.coordinatorIp, sonosState);
-      return status ? `${baseName} • ${status}` : baseName;
+      const availability = getSpeakerAvailability(
+        group.coordinatorIp,
+        sonosState,
+        castingSpeakerIps,
+      );
+      const label = SPEAKER_AVAILABILITY_LABELS[availability];
+      return `${group.name} • ${label}`;
     },
-    [sonosState],
+    [sonosState, castingSpeakerIps],
+  );
+
+  // Get primary selected speaker's availability for hint text
+  const primarySelectedIp = selectedIps[0];
+  const selectedAvailability = useMemo(
+    () =>
+      primarySelectedIp
+        ? getSpeakerAvailability(primarySelectedIp, sonosState, castingSpeakerIps)
+        : 'available',
+    [primarySelectedIp, sonosState, castingSpeakerIps],
   );
 
   return (
     <div className={styles.container}>
       <div className={styles.header}>
-        <h1 className={styles.title}>{t('app_name')}</h1>
-        <button
-          type="button"
-          className={styles.settingsButton}
-          onClick={openSettings}
-          title={t('settings')}
-          aria-label={t('settings')}
-        >
+        <div className={styles.titleGroup}>
+          <Radio size={20} color="var(--color-primary)" />
+          <h1 className={styles.title}>{t('app_name')}</h1>
+        </div>
+        <IconButton onClick={openSettings} title={t('settings')} aria-label={t('settings')}>
           <Settings size={18} />
-        </button>
+        </IconButton>
       </div>
 
-      {error && <div className={styles.error}>{error}</div>}
+      {error && (
+        <Alert variant="error" className={styles.alert} onDismiss={() => setError(null)}>
+          {error}
+        </Alert>
+      )}
+
+      {!connectionChecking && !wsConnected && (
+        <Alert variant="error" className={styles.alert}>
+          {connectionError || t('error_desktop_not_found')}
+        </Alert>
+      )}
+
+      {!connectionChecking && wsConnected && !sonosLoading && groups.length === 0 && (
+        <Alert variant="warning" className={styles.alert}>
+          {t('no_speakers_found')}
+        </Alert>
+      )}
+
+      {wsConnected && networkHealth === 'degraded' && groups.length > 0 && (
+        <Alert variant="warning" className={styles.alert}>
+          {t(`network.${networkHealthReason}`, {
+            defaultValue: t('network.speakers_not_responding'),
+          })}
+        </Alert>
+      )}
 
       {/* Active Casts List with Volume Controls */}
       <ActiveCastsList
@@ -175,26 +256,28 @@ export function App(): JSX.Element {
         onVolumeChange={handleVolumeChange}
         onMuteToggle={handleMuteToggle}
         onStopCast={stopCast}
+        onControl={handleControl}
+        showDivider={!!currentTabState && !isCasting}
       />
 
-      {/* Current Tab Media Info with Cast Controls */}
-      {currentTabState && (
+      {/* Current Tab Media Info with Cast Controls - hidden when already casting */}
+      {currentTabState && !isCasting && (
         <CurrentTabCard
           state={currentTabState}
-          isCasting={isCasting}
           groups={groups}
-          selectedIp={selectedIp}
-          onSelectSpeaker={setSelectedIp}
+          selectedIps={selectedIps}
+          onSelectSpeakers={setSelectedIps}
           onStartCast={handleStart}
           isStarting={isStarting}
           disabled={connectionChecking || sonosLoading || !baseUrl}
           speakersLoading={sonosLoading || connectionChecking}
-          volume={getVolume(selectedIp)}
-          muted={isMuted(selectedIp)}
-          onVolumeChange={(vol) => handleVolumeChange(selectedIp, vol)}
-          onMuteToggle={() => handleMuteToggle(selectedIp)}
-          showVolumeControls={wsConnected && !!selectedIp}
+          volume={primarySelectedIp ? getVolume(primarySelectedIp) : 50}
+          muted={primarySelectedIp ? isMuted(primarySelectedIp) : false}
+          onVolumeChange={(vol) => primarySelectedIp && handleVolumeChange(primarySelectedIp, vol)}
+          onMuteToggle={() => primarySelectedIp && handleMuteToggle(primarySelectedIp)}
+          showVolumeControls={wsConnected && selectedIps.length > 0}
           getGroupDisplayName={getGroupDisplayName}
+          selectedAvailability={selectedAvailability}
         />
       )}
 

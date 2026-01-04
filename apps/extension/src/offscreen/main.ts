@@ -24,6 +24,7 @@ import {
   isSupportedSampleRate,
   getNearestSupportedSampleRate,
 } from '@thaumic-cast/protocol';
+import i18n from '../lib/i18n';
 
 const log = createLogger('Offscreen');
 
@@ -89,13 +90,33 @@ function connectControlWebSocket(url: string): void {
 
       // INITIAL_STATE on connect
       if (message.type === 'INITIAL_STATE') {
-        const { powerState, ...sonosState } = message.payload;
-        cachedSonosState = sonosState as SonosStateSnapshot;
+        cachedSonosState = message.payload as SonosStateSnapshot;
         chrome.runtime
           .sendMessage({
             type: 'WS_CONNECTED',
             state: cachedSonosState,
-            powerState: powerState ?? null,
+          })
+          .catch(() => {
+            // Background may be suspended
+          });
+      }
+      // Network broadcast events (separate category)
+      else if (message.category === 'network') {
+        chrome.runtime
+          .sendMessage({
+            type: 'NETWORK_EVENT',
+            payload: message,
+          })
+          .catch(() => {
+            // Background may be suspended
+          });
+      }
+      // Topology broadcast events (discovery results)
+      else if (message.category === 'topology') {
+        chrome.runtime
+          .sendMessage({
+            type: 'TOPOLOGY_EVENT',
+            payload: message,
           })
           .catch(() => {
             // Background may be suspended
@@ -304,9 +325,16 @@ class StreamSession {
     reject: (error: Error) => void;
   } | null = null;
 
-  /** Pending playback request resolver. */
-  private playbackResolver: {
-    resolve: (result: { speakerIp: string; streamUrl: string }) => void;
+  /** Pending playback request resolver for multi-group results. */
+  private playbackResultsResolver: {
+    resolve: (
+      results: Array<{
+        speakerIp: string;
+        success: boolean;
+        streamUrl?: string;
+        error?: string;
+      }>,
+    ) => void;
     reject: (error: Error) => void;
   } | null = null;
 
@@ -566,8 +594,8 @@ class StreamSession {
           log.error(`Worker error: ${msg.message}`);
           this.connectionResolver?.reject(new Error(msg.message));
           this.connectionResolver = null;
-          this.playbackResolver?.reject(new Error(msg.message));
-          this.playbackResolver = null;
+          this.playbackResultsResolver?.reject(new Error(msg.message));
+          this.playbackResultsResolver = null;
           break;
 
         case 'STREAM_READY':
@@ -577,18 +605,31 @@ class StreamSession {
           break;
 
         case 'PLAYBACK_STARTED':
+          // Legacy single-speaker response - convert to array format
           log.info(`Playback started on ${msg.speakerIp}`);
-          this.playbackResolver?.resolve({
-            speakerIp: msg.speakerIp,
-            streamUrl: msg.streamUrl,
-          });
-          this.playbackResolver = null;
+          this.playbackResultsResolver?.resolve([
+            {
+              speakerIp: msg.speakerIp,
+              success: true,
+              streamUrl: msg.streamUrl,
+            },
+          ]);
+          this.playbackResultsResolver = null;
+          break;
+
+        case 'PLAYBACK_RESULTS':
+          // Multi-speaker results
+          log.info(
+            `Playback results: ${msg.results.filter((r: { success: boolean }) => r.success).length}/${msg.results.length} speakers started`,
+          );
+          this.playbackResultsResolver?.resolve(msg.results);
+          this.playbackResultsResolver = null;
           break;
 
         case 'PLAYBACK_ERROR':
           log.error(`Playback error: ${msg.message}`);
-          this.playbackResolver?.reject(new Error(msg.message));
-          this.playbackResolver = null;
+          this.playbackResultsResolver?.reject(new Error(msg.message));
+          this.playbackResultsResolver = null;
           break;
 
         case 'STATS':
@@ -735,20 +776,27 @@ class StreamSession {
   }
 
   /**
-   * Starts playback on a Sonos speaker.
+   * Starts playback on multiple Sonos speakers.
    * Must be called after the stream is ready (waitForReady resolved).
    *
-   * @param speakerIp - IP address of the Sonos speaker
+   * @param speakerIps - IP addresses of the Sonos speakers
    * @param metadata - Optional initial metadata to display on Sonos
    * @param timeoutMs - Timeout in milliseconds
-   * @returns Promise resolving with playback details
-   * @throws Error if playback fails or times out
+   * @returns Promise resolving with per-speaker playback results
+   * @throws Error if all playback attempts fail or timeout
    */
   public async startPlayback(
-    speakerIp: string,
+    speakerIps: string[],
     metadata?: StreamMetadata,
     timeoutMs = 15000,
-  ): Promise<{ speakerIp: string; streamUrl: string }> {
+  ): Promise<
+    Array<{
+      speakerIp: string;
+      success: boolean;
+      streamUrl?: string;
+      error?: string;
+    }>
+  > {
     if (!this.consumerWorker) {
       throw new Error('Worker not running');
     }
@@ -757,21 +805,26 @@ class StreamSession {
       throw new Error('Stream not ready - call waitForReady() first');
     }
 
-    const responsePromise = new Promise<{ speakerIp: string; streamUrl: string }>(
-      (resolve, reject) => {
-        this.playbackResolver = { resolve, reject };
-      },
-    );
+    const responsePromise = new Promise<
+      Array<{
+        speakerIp: string;
+        success: boolean;
+        streamUrl?: string;
+        error?: string;
+      }>
+    >((resolve, reject) => {
+      this.playbackResultsResolver = { resolve, reject };
+    });
 
     this.consumerWorker.postMessage({
       type: 'START_PLAYBACK',
-      speakerIp,
+      speakerIps,
       metadata,
     });
 
     const timeoutPromise = new Promise<never>((_, reject) => {
       setTimeout(() => {
-        this.playbackResolver = null;
+        this.playbackResultsResolver = null;
         reject(new Error('Timeout waiting for playback to start'));
       }, timeoutMs);
     });
@@ -873,7 +926,7 @@ chrome.runtime.onMessage.addListener((msg: ExtensionMessage, _sender, sendRespon
 
     // Enforce global offscreen limit
     if (activeSessions.size >= MAX_OFFSCREEN_SESSIONS) {
-      sendResponse({ success: false, error: 'Maximum offscreen session limit reached' });
+      sendResponse({ success: false, error: i18n.t('error_max_sessions') });
       return true;
     }
 
@@ -937,12 +990,13 @@ chrome.runtime.onMessage.addListener((msg: ExtensionMessage, _sender, sendRespon
   }
 
   if (msg.type === 'START_PLAYBACK') {
-    const { tabId, speakerIp, metadata } = (msg as StartPlaybackMessage).payload;
+    const { tabId, speakerIps, metadata } = (msg as StartPlaybackMessage).payload;
     const session = activeSessions.get(tabId);
 
     if (!session) {
       const response: StartPlaybackResponse = {
         success: false,
+        results: [],
         error: `No active session for tab ${tabId}`,
       };
       sendResponse(response);
@@ -952,18 +1006,20 @@ chrome.runtime.onMessage.addListener((msg: ExtensionMessage, _sender, sendRespon
     // Wait for stream to be ready, then start playback with initial metadata
     session
       .waitForReady()
-      .then(() => session.startPlayback(speakerIp, metadata))
-      .then((result) => {
+      .then(() => session.startPlayback(speakerIps, metadata))
+      .then((results) => {
+        // Consider success if at least one speaker started
+        const anySuccess = results.some((r) => r.success);
         const response: StartPlaybackResponse = {
-          success: true,
-          speakerIp: result.speakerIp,
-          streamUrl: result.streamUrl,
+          success: anySuccess,
+          results,
         };
         sendResponse(response);
       })
       .catch((err) => {
         const response: StartPlaybackResponse = {
           success: false,
+          results: [],
           error: err instanceof Error ? err.message : String(err),
         };
         sendResponse(response);

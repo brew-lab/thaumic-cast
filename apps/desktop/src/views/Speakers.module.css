@@ -1,8 +1,6 @@
 .speakers {
   padding-block: var(--space-xl);
   padding-inline: var(--space-xl);
-  block-size: 100%;
-  overflow-y: auto;
 }
 
 .header {
@@ -61,4 +59,8 @@
 .emptyDescription {
   margin: 0;
   color: var(--color-text-muted);
+}
+
+.networkAlert {
+  margin-block-end: var(--space-md);
 }

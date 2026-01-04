@@ -19,13 +19,20 @@ pub enum AudioCodec {
     Flac,
 }
 
-/// Metadata for the current track
+/// Metadata for the current track.
+///
+/// Note: `album` and `artwork` from MediaSession are not used in DIDL-Lite
+/// formatting because they get stuck (ICY metadata doesn't support updates
+/// for these fields). Instead, we use static branding based on `source`.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct StreamMetadata {
     pub title: Option<String>,
     pub artist: Option<String>,
     pub album: Option<String>,
     pub artwork: Option<String>,
+    /// Source name derived from tab URL (e.g., "YouTube", "Spotify").
+    /// Used to format album as "{source} • Thaumic Cast" in DIDL-Lite.
+    pub source: Option<String>,
 }
 
 /// State for a single active audio stream
@@ -158,16 +165,6 @@ impl StreamManager {
     /// Removes a stream from the manager.
     pub fn remove_stream(&self, id: &str) {
         self.streams.remove(id);
-    }
-
-    /// Removes all active streams.
-    ///
-    /// Returns the number of streams that were cleared.
-    pub fn clear_all(&self) -> usize {
-        let count = self.streams.len();
-        self.streams.clear();
-        log::info!("[StreamManager] Cleared {} stream(s)", count);
-        count
     }
 
     /// Returns the number of active streams.

@@ -1,6 +1,15 @@
 import { createLogger } from '@thaumic-cast/shared';
-import { SonosStateSnapshot, parseMediaMetadata, PowerState } from '@thaumic-cast/protocol';
-import { discoverDesktopApp } from '../lib/discovery';
+import {
+  SonosStateSnapshot,
+  parseMediaMetadata,
+  MediaAction,
+  MediaActionSchema,
+  PlaybackState,
+  PlaybackStateSchema,
+  StreamMetadata,
+} from '@thaumic-cast/protocol';
+import { discoverDesktopApp, clearDiscoveryCache } from '../lib/discovery';
+import { getSourceFromUrl } from '../lib/url-utils';
 import {
   ExtensionMessage,
   StartCastMessage,
@@ -10,6 +19,8 @@ import {
   ExtensionResponse,
   WsConnectedMessage,
   SonosEventMessage,
+  NetworkEventMessage,
+  TopologyEventMessage,
   WsStatusResponse,
   SetVolumeMessage,
   SetMuteMessage,
@@ -17,8 +28,15 @@ import {
   ActiveCastsResponse,
   StartPlaybackResponse,
   SessionHealthMessage,
+  ControlMediaMessage,
 } from '../lib/messages';
-import { getCachedState, updateCache, removeFromCache, restoreCache } from './metadata-cache';
+import {
+  getCachedState,
+  updateCache,
+  updateTabInfo,
+  removeFromCache,
+  restoreCache,
+} from './metadata-cache';
 import {
   registerSession,
   removeSession,
@@ -32,6 +50,7 @@ import {
   getSonosState as getStoredSonosState,
   setSonosState,
   restoreSonosState,
+  updateGroups,
 } from './sonos-state';
 import {
   getConnectionState,
@@ -40,18 +59,19 @@ import {
   setConnectionError,
   clearConnectionState,
   restoreConnectionState,
+  setNetworkHealth,
 } from './connection-state';
 import { handleSonosEvent } from './sonos-event-handlers';
 import {
-  selectEncoderConfigWithContext,
+  selectEncoderConfig,
   recordStableSession,
   recordBadSession,
   describeConfig,
-  checkPowerState,
 } from '../lib/device-config';
 import { loadExtensionSettings } from '../lib/settings';
 import { resolveAudioMode, describeEncoderConfig } from '../lib/presets';
 import type { SupportedCodecsResult, EncoderConfig } from '@thaumic-cast/protocol';
+import i18n from '../lib/i18n';
 
 const log = createLogger('Background');
 
@@ -61,9 +81,6 @@ const log = createLogger('Background');
 
 /** Whether the control WebSocket is connected. */
 let wsConnected = false;
-
-/** Cached power state from desktop app (null if not connected or detection failed). */
-let cachedPowerState: PowerState | null = null;
 
 /**
  * Updates the cached Sonos state and syncs to offscreen for recovery.
@@ -103,22 +120,25 @@ async function connectWebSocket(serverUrl: string): Promise<void> {
 
 /**
  * Handles WebSocket connected event from offscreen.
- * @param state - The initial Sonos state from desktop
- * @param powerState
+ * @param state - The initial Sonos state from desktop (may include network health)
  */
-function handleWsConnected(state: SonosStateSnapshot, powerState: PowerState | null): void {
+function handleWsConnected(state: SonosStateSnapshot): void {
   wsConnected = true;
-  cachedPowerState = powerState;
   setConnected(true);
   updateSonosState(state);
+  log.info('WebSocket connected');
 
-  if (powerState) {
+  // Extract network health from initial state if present
+  const stateWithHealth = state as SonosStateSnapshot & {
+    networkHealth?: 'ok' | 'degraded';
+    networkHealthReason?: string;
+  };
+  if (stateWithHealth.networkHealth) {
     log.info(
-      `WebSocket connected, power: onAC=${powerState.onAcPower}, ` +
-        `level=${powerState.batteryLevel ?? 'N/A'}%, charging=${powerState.charging}`,
+      `Initial network health: ${stateWithHealth.networkHealth}` +
+        (stateWithHealth.networkHealthReason ? ` (${stateWithHealth.networkHealthReason})` : ''),
     );
-  } else {
-    log.info('WebSocket connected (power state unavailable)');
+    setNetworkHealth(stateWithHealth.networkHealth, stateWithHealth.networkHealthReason ?? null);
   }
 
   // Notify popup of state
@@ -126,20 +146,11 @@ function handleWsConnected(state: SonosStateSnapshot, powerState: PowerState | n
 }
 
 /**
- * Returns the cached power state from desktop app.
- * Used by device-config to determine if device is on battery.
- * @returns The cached power state or null if not available
- */
-export function getCachedPowerState(): PowerState | null {
-  return cachedPowerState;
-}
-
-/**
  * Handles WebSocket permanently disconnected event.
  */
 function handleWsDisconnected(): void {
   wsConnected = false;
-  setConnectionError('Connection lost after max retries');
+  setConnectionError(i18n.t('error_connection_lost'));
   log.warn('WebSocket permanently disconnected');
   notifyPopup({ type: 'WS_CONNECTION_LOST', reason: 'max_retries_exceeded' });
 }
@@ -316,6 +327,11 @@ chrome.runtime.onMessage.addListener((msg: ExtensionMessage, _sender, sendRespon
           sendResponse({ success: true });
           break;
 
+        case 'TAB_OG_IMAGE':
+          handleTabOgImage(msg.payload as { ogImage: string }, _sender);
+          sendResponse({ success: true });
+          break;
+
         // Legacy METADATA_UPDATE from old content scripts - redirect to new handler
         case 'METADATA_UPDATE':
           if ('payload' in msg && typeof (msg as { payload: unknown }).payload === 'object') {
@@ -370,12 +386,19 @@ chrome.runtime.onMessage.addListener((msg: ExtensionMessage, _sender, sendRespon
           break;
         }
 
+        case 'CONTROL_MEDIA': {
+          const { tabId, action } = (msg as ControlMediaMessage).payload;
+          await chrome.tabs.sendMessage(tabId, { type: 'CONTROL_MEDIA', action });
+          sendResponse({ success: true });
+          break;
+        }
+
         // ─────────────────────────────────────────────────────────────────
         // WebSocket Status Messages (from offscreen)
         // ─────────────────────────────────────────────────────────────────
         case 'WS_CONNECTED': {
-          const { state, powerState } = msg as WsConnectedMessage;
-          handleWsConnected(state, powerState);
+          const { state } = msg as WsConnectedMessage;
+          handleWsConnected(state);
           sendResponse({ success: true });
           break;
         }
@@ -397,6 +420,36 @@ chrome.runtime.onMessage.addListener((msg: ExtensionMessage, _sender, sendRespon
         case 'SONOS_EVENT': {
           const { payload } = msg as SonosEventMessage;
           await handleSonosEvent(payload);
+          sendResponse({ success: true });
+          break;
+        }
+
+        case 'NETWORK_EVENT': {
+          const { payload } = msg as NetworkEventMessage;
+          if (payload.type === 'healthChanged') {
+            const health = payload.health;
+            const reason = payload.reason ?? null;
+            setNetworkHealth(health, reason);
+            notifyPopup({
+              type: 'NETWORK_HEALTH_CHANGED',
+              health,
+              reason,
+            });
+          }
+          sendResponse({ success: true });
+          break;
+        }
+
+        case 'TOPOLOGY_EVENT': {
+          const { payload } = msg as TopologyEventMessage;
+          if (payload.type === 'groupsDiscovered') {
+            const newState = updateGroups(payload.groups);
+            notifyPopup({
+              type: 'WS_STATE_CHANGED',
+              state: newState,
+            });
+            log.info(`Groups discovered: ${payload.groups.length} groups`);
+          }
           sendResponse({ success: true });
           break;
         }
@@ -473,6 +526,34 @@ chrome.runtime.onMessage.addListener((msg: ExtensionMessage, _sender, sendRespon
 });
 
 /**
+ * Extracts and validates supported actions from raw payload.
+ * @param payload - Raw metadata payload from content script
+ * @returns Array of validated media actions
+ */
+function extractSupportedActions(payload: unknown): MediaAction[] {
+  if (!payload || typeof payload !== 'object') return [];
+  const raw = (payload as { supportedActions?: unknown }).supportedActions;
+  if (!Array.isArray(raw)) return [];
+
+  return raw.filter((action): action is MediaAction => {
+    const result = MediaActionSchema.safeParse(action);
+    return result.success;
+  });
+}
+
+/**
+ * Extracts and validates playback state from raw payload.
+ * @param payload - Raw metadata payload from content script
+ * @returns Validated playback state or 'none' if invalid
+ */
+function extractPlaybackState(payload: unknown): PlaybackState {
+  if (!payload || typeof payload !== 'object') return 'none';
+  const raw = (payload as { playbackState?: unknown }).playbackState;
+  const result = PlaybackStateSchema.safeParse(raw);
+  return result.success ? result.data : 'none';
+}
+
+/**
  * Handles metadata updates from content scripts.
  * Updates the cache and forwards to offscreen if casting.
  *
@@ -488,13 +569,25 @@ async function handleTabMetadataUpdate(
 
   // Parse and validate the metadata
   const metadata = parseMediaMetadata(msg.payload);
+
+  // Extract supported actions and playback state from payload
+  const supportedActions = extractSupportedActions(msg.payload);
+  const playbackState = extractPlaybackState(msg.payload);
+
+  // Derive source from tab URL (single point of derivation per SoC)
+  const source = getSourceFromUrl(sender.tab?.url);
+
+  // Preserve existing ogImage if present
+  const existing = getCachedState(tabId);
   const tabInfo = {
     title: sender.tab?.title,
     favIconUrl: sender.tab?.favIconUrl,
+    ogImage: existing?.tabOgImage,
+    source,
   };
 
-  // Update the cache
-  const state = updateCache(tabId, tabInfo, metadata);
+  // Update the cache with metadata, supported actions, and playback state
+  const state = updateCache(tabId, tabInfo, metadata, supportedActions, playbackState);
 
   // Notify popup of state change so CurrentTabCard updates
   notifyPopup({ type: 'TAB_STATE_CHANGED', tabId, state });
@@ -502,8 +595,44 @@ async function handleTabMetadataUpdate(
   // If this tab is casting, notify popup and forward to offscreen
   if (hasSession(tabId)) {
     onMetadataUpdate(tabId);
-    forwardMetadataToOffscreen(tabId, msg.payload);
+    // Enrich metadata with source for Sonos display
+    forwardMetadataToOffscreen(tabId, { ...msg.payload, source });
   }
+}
+
+/**
+ * Handles og:image updates from content scripts.
+ * Updates the cache with the Open Graph image.
+ * Creates a cache entry if one doesn't exist.
+ *
+ * @param payload - The og:image payload
+ * @param payload.ogImage
+ * @param sender - The message sender information
+ */
+function handleTabOgImage(
+  payload: { ogImage: string },
+  sender: chrome.runtime.MessageSender,
+): void {
+  const tabId = sender.tab?.id;
+  if (!tabId) return;
+
+  // Try to update existing cache entry
+  let state = updateTabInfo(tabId, { ogImage: payload.ogImage });
+
+  // If no cache entry exists, create one with og:image
+  if (!state) {
+    state = updateCache(
+      tabId,
+      {
+        title: sender.tab?.title,
+        favIconUrl: sender.tab?.favIconUrl,
+        ogImage: payload.ogImage,
+      },
+      null,
+    );
+  }
+
+  notifyPopup({ type: 'TAB_STATE_CHANGED', tabId, state });
 }
 
 /**
@@ -540,6 +669,8 @@ async function handleGetCurrentTabState(): Promise<CurrentTabStateResponse> {
     tabTitle: tab.title || 'Unknown Tab',
     tabFavicon: tab.favIconUrl,
     metadata: null,
+    supportedActions: [],
+    playbackState: 'none' as const,
     updatedAt: Date.now(),
   };
 
@@ -565,15 +696,17 @@ async function handleStartCast(
   };
 
   try {
-    const { speakerIp } = msg.payload;
+    const { speakerIps } = msg.payload;
+    if (!speakerIps.length) throw new Error(i18n.t('error_no_speakers_selected'));
+
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-    if (!tab?.id) throw new Error('No active tab');
+    if (!tab?.id) throw new Error(i18n.t('error_no_active_tab'));
 
     // 1. Discover Desktop App and its limits (do this early to fail fast)
     const app = await discoverDesktopApp();
     if (!app) {
       clearConnectionState();
-      throw new Error('Desktop App not found. Please make sure it is running.');
+      throw new Error(i18n.t('error_desktop_not_found'));
     }
 
     // Cache the discovered URL for instant popup display
@@ -581,9 +714,7 @@ async function handleStartCast(
 
     // 2. Check session limits
     if (getSessionCount() >= app.maxStreams) {
-      throw new Error(
-        `Maximum session limit reached (${app.maxStreams}). Please stop an existing cast first.`,
-      );
+      throw new Error(i18n.t('error_max_sessions'));
     }
 
     // 3. Create offscreen document (needed for audio capture)
@@ -591,7 +722,6 @@ async function handleStartCast(
 
     // 4. Select encoder config based on extension settings
     let encoderConfig: EncoderConfig;
-    let lowPowerMode = false;
 
     // Load extension settings and cached codec support
     const settings = await loadExtensionSettings();
@@ -599,62 +729,34 @@ async function handleStartCast(
     const codecSupport: SupportedCodecsResult | null = codecCache['codecSupportCache'] ?? null;
 
     if (codecSupport && codecSupport.availableCodecs.length > 0) {
-      // Use new preset resolution with codec detection
+      // Use preset resolution with codec detection
       try {
         encoderConfig = resolveAudioMode(
           settings.audioMode,
           codecSupport,
-          cachedPowerState,
           settings.customAudioSettings,
         );
-
-        // Log power state for debugging
-        const powerState = checkPowerState(cachedPowerState);
-        if (powerState.powerInfoAvailable) {
-          const level = powerState.level !== undefined ? `${powerState.level}%` : 'N/A';
-          lowPowerMode = powerState.onBattery;
-          log.info(
-            `Power: ${level}, charging=${powerState.charging ?? 'unknown'}, onBattery=${lowPowerMode}`,
-          );
-        } else {
-          log.warn('Power state unavailable from desktop app');
-        }
-
         log.info(
           `Encoder config (${settings.audioMode} mode): ${describeEncoderConfig(encoderConfig)}`,
         );
       } catch (err) {
         // Preset resolution failed, fall back to device-config
         log.warn('Preset resolution failed, falling back to device config:', err);
-        const result = await selectEncoderConfigWithContext(cachedPowerState);
-        encoderConfig = result.config;
-        lowPowerMode = result.lowPowerMode;
-        log.info(`Encoder config (fallback): ${describeConfig(encoderConfig, lowPowerMode)}`);
+        encoderConfig = await selectEncoderConfig();
+        log.info(`Encoder config (fallback): ${describeConfig(encoderConfig)}`);
       }
     } else {
       // Codec support not cached yet, fall back to device-config
       log.info('Codec support not cached, using device config fallback');
-      const result = await selectEncoderConfigWithContext(cachedPowerState);
-      encoderConfig = result.config;
-      lowPowerMode = result.lowPowerMode;
-
-      // Log power detection result for debugging
-      if (!result.powerInfoAvailable) {
-        log.warn('Power state unavailable from desktop app');
-      } else {
-        const level = result.batteryLevel !== undefined ? `${result.batteryLevel}%` : 'N/A';
-        log.info(
-          `Power: ${level}, charging=${result.charging ?? 'unknown'}, onBattery=${lowPowerMode}`,
-        );
-      }
-      log.info(`Encoder config (fallback): ${describeConfig(encoderConfig, lowPowerMode)}`);
+      encoderConfig = await selectEncoderConfig();
+      log.info(`Encoder config (fallback): ${describeConfig(encoderConfig)}`);
     }
 
     // 5. Capture Tab
     const mediaStreamId = await new Promise<string>((resolve, reject) => {
       chrome.tabCapture.getMediaStreamId({ targetTabId: tab.id! }, (id) => {
         if (id) resolve(id);
-        else reject(new Error('Tab capture denied'));
+        else reject(new Error(i18n.t('error_capture_denied')));
       });
     });
 
@@ -675,35 +777,62 @@ async function handleStartCast(
     });
 
     if (response.success && response.streamId) {
-      // Get cached metadata to send with playback start (avoids "Browser Audio" default)
+      // Get cached state to build initial metadata for Sonos display
       const cachedState = getCachedState(tab.id);
-      const initialMetadata = cachedState?.metadata ?? undefined;
+
+      // Construct StreamMetadata with source for proper Sonos album display
+      const initialMetadata: StreamMetadata | undefined = cachedState?.metadata
+        ? {
+            ...cachedState.metadata,
+            source: cachedState.source,
+          }
+        : cachedState?.source
+          ? { source: cachedState.source }
+          : undefined;
 
       // 8. Start playback via WebSocket (waits for STREAM_READY internally)
       // Include initial metadata so Sonos displays correct info immediately
       const playbackResponse: StartPlaybackResponse = await chrome.runtime.sendMessage({
         type: 'START_PLAYBACK',
-        payload: { tabId: tab.id, speakerIp, metadata: initialMetadata },
+        payload: { tabId: tab.id, speakerIps, metadata: initialMetadata },
       });
 
-      if (!playbackResponse.success) {
-        // Playback failed - clean up the capture
-        log.error('Playback failed, cleaning up capture');
+      // Filter successful results for session registration
+      const successfulResults = playbackResponse.results.filter((r) => r.success);
+
+      if (successfulResults.length === 0) {
+        // All speakers failed - clean up the capture
+        log.error('All playback attempts failed, cleaning up capture');
         await chrome.runtime.sendMessage({ type: 'STOP_CAPTURE', payload: { tabId: tab.id } });
-        throw new Error(`Playback failed: ${playbackResponse.error || 'Unknown error'}`);
+        throw new Error(i18n.t('error_playback_failed'));
       }
 
-      // Find speaker name from Sonos state
+      // Log partial failures
+      const failedResults = playbackResponse.results.filter((r) => !r.success);
+      if (failedResults.length > 0) {
+        for (const failed of failedResults) {
+          log.warn(`Playback failed on ${failed.speakerIp}: ${failed.error}`);
+        }
+      }
+
+      // Build arrays of successful speakers
       const sonosState = getStoredSonosState();
-      const speakerName = sonosState.groups.find((g) => g.coordinatorIp === speakerIp)?.name;
+      const successfulIps = successfulResults.map((r) => r.speakerIp);
+      const successfulNames = successfulResults.map((r) => {
+        const group = sonosState.groups.find((g) => g.coordinatorIp === r.speakerIp);
+        return group?.name ?? r.speakerIp;
+      });
+
+      // Derive source from tab URL for cache
+      const source = getSourceFromUrl(tab.url);
 
       // Ensure cache has tab info for ActiveCast display (even without MediaSession metadata)
       if (!getCachedState(tab.id)) {
-        updateCache(tab.id, { title: tab.title, favIconUrl: tab.favIconUrl }, null);
+        updateCache(tab.id, { title: tab.title, favIconUrl: tab.favIconUrl, source }, null);
       }
 
-      // Register the session with the session manager
-      registerSession(tab.id, response.streamId, speakerIp, speakerName, encoderConfig);
+      // Register the session with successful speakers only
+      registerSession(tab.id, response.streamId, successfulIps, successfulNames, encoderConfig);
 
       safeSendResponse({ success: true });
     } else {
@@ -838,5 +967,45 @@ initPromise.then(async () => {
     connectWebSocket(connState.desktopAppUrl).catch(() => {
       // Will retry when popup opens
     });
+  }
+});
+
+/**
+ * Listen for server settings changes and reconnect when they change.
+ * This handles the case where user changes server URL or auto-discover mode
+ * after the extension has already connected.
+ */
+chrome.storage.sync.onChanged.addListener(async (changes) => {
+  if (!changes['extensionSettings']) return;
+
+  const oldSettings = changes['extensionSettings'].oldValue;
+  const newSettings = changes['extensionSettings'].newValue;
+
+  // Check if server-related settings changed
+  const serverUrlChanged = oldSettings?.serverUrl !== newSettings?.serverUrl;
+  const autoDiscoverChanged = oldSettings?.useAutoDiscover !== newSettings?.useAutoDiscover;
+
+  if (serverUrlChanged || autoDiscoverChanged) {
+    log.info('Server settings changed, reconnecting...');
+
+    // Clear caches to force fresh discovery
+    clearDiscoveryCache();
+    clearConnectionState();
+
+    // Disconnect existing WebSocket
+    if (wsConnected) {
+      await sendToOffscreen({ type: 'WS_DISCONNECT' }).catch(() => {});
+      wsConnected = false;
+    }
+
+    // Trigger fresh discovery and connection
+    const app = await discoverDesktopApp(true);
+    if (app) {
+      setDesktopApp(app.url, app.maxStreams);
+      await connectWebSocket(app.url);
+    }
+
+    // Notify popup of connection state change
+    notifyPopup({ type: 'WS_CONNECTION_LOST', reason: 'settings_changed' });
   }
 });

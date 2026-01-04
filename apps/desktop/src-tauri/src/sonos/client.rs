@@ -193,33 +193,71 @@ pub async fn get_zone_groups(client: &Client, ip: &str) -> SoapResult<Vec<ZoneGr
 ///
 /// This creates the metadata structure that Sonos uses to display
 /// track information (title, artist, album art) on the speaker's UI.
-fn format_didl_lite(stream_url: &str, metadata: Option<&StreamMetadata>) -> String {
-    let title = metadata
-        .and_then(|m| m.title.as_deref())
-        .unwrap_or("Browser Audio");
-    let artist = metadata
-        .and_then(|m| m.artist.as_deref())
-        .unwrap_or("Thaumic Cast");
-    let album = metadata.and_then(|m| m.album.as_deref());
-    let artwork = metadata.and_then(|m| m.artwork.as_deref());
+///
+/// # Metadata Strategy
+///
+/// Since DIDL-Lite is only sent once at playback start (via SetAVTransportURI)
+/// and ICY metadata only supports StreamTitle, we use static values for
+/// album and artwork to prevent stale data:
+///
+/// - **Title**: Source name (e.g., "YouTube Music") - static, branded
+/// - **Artist**: "Thaumic Cast" - static branding
+/// - **Album**: "{source} • Thaumic Cast" for additional branding
+/// - **Artwork**: Static app icon
+///
+/// The actual track info ("Artist - Title") comes from ICY StreamTitle which updates.
+fn format_didl_lite(stream_url: &str, metadata: Option<&StreamMetadata>, icon_url: &str) -> String {
+    // [DIAG] Log incoming metadata for debugging
+    log::info!(
+        "[DIDL] Incoming metadata: {:?}",
+        metadata.map(|m| format!(
+            "title={:?}, artist={:?}, album={:?}, source={:?}",
+            m.title, m.artist, m.album, m.source
+        ))
+    );
+
+    // IMPORTANT: DIDL-Lite is sent once and never updates. ICY StreamTitle handles
+    // dynamic track info ("Artist - Title"). To avoid duplication on Sonos display,
+    // we use STATIC branded values here:
+    //
+    // Sonos displays:
+    //   Line 1: ICY StreamTitle (dynamic, updates with each track)
+    //   Line 2: DIDL-Lite dc:title (static, set once at playback start)
+    //
+    // So we set dc:title to "{source} • Thaumic Cast", not the song title.
+    let title = match metadata.and_then(|m| m.source.as_deref()) {
+        Some(source) => format!("{} • Thaumic Cast", source),
+        None => "Thaumic Cast".to_string(),
+    };
+    let artist = "Thaumic Cast";
+
+    // Album also shows "{source} • Thaumic Cast" for consistency
+    let album = title.clone();
+
+    // [DIAG] Log what we're sending to Sonos
+    log::info!(
+        "[DIDL] Sending to Sonos: title={:?}, artist={:?}, album={:?}, icon={:?}",
+        title,
+        artist,
+        album,
+        icon_url
+    );
 
     let mut didl = String::from(
         r#"<DIDL-Lite xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:upnp="urn:schemas-upnp-org:metadata-1-0/upnp/" xmlns="urn:schemas-upnp-org:metadata-1-0/DIDL-Lite/">"#,
     );
     didl.push_str(r#"<item id="0" parentID="-1" restricted="true">"#);
-    didl.push_str(&format!("<dc:title>{}</dc:title>", escape_xml(title)));
+    didl.push_str(&format!("<dc:title>{}</dc:title>", escape_xml(&title)));
     didl.push_str(&format!("<dc:creator>{}</dc:creator>", escape_xml(artist)));
 
-    if let Some(album) = album {
-        didl.push_str(&format!("<upnp:album>{}</upnp:album>", escape_xml(album)));
-    }
+    // Always set album for consistent branding
+    didl.push_str(&format!("<upnp:album>{}</upnp:album>", escape_xml(&album)));
 
-    if let Some(artwork) = artwork {
-        didl.push_str(&format!(
-            "<upnp:albumArtURI>{}</upnp:albumArtURI>",
-            escape_xml(artwork)
-        ));
-    }
+    // Always use static icon URL (ICY metadata doesn't support artwork updates)
+    didl.push_str(&format!(
+        "<upnp:albumArtURI>{}</upnp:albumArtURI>",
+        escape_xml(icon_url)
+    ));
 
     didl.push_str("<upnp:class>object.item.audioItem.audioBroadcast</upnp:class>");
     // Use audio/* to allow Sonos to auto-detect format (supports MP3, AAC-LC, HE-AAC)
@@ -245,16 +283,18 @@ fn format_didl_lite(stream_url: &str, metadata: Option<&StreamMetadata>) -> Stri
 /// * `client` - The HTTP client to use for the request
 /// * `ip` - IP address of the Sonos speaker (coordinator for grouped speakers)
 /// * `uri` - The audio stream URL to play
-/// * `metadata` - Optional stream metadata for display (title, artist, album, artwork)
+/// * `metadata` - Optional stream metadata for display (title, artist, source)
+/// * `icon_url` - URL to the static app icon for album art display
 pub async fn play_uri(
     client: &Client,
     ip: &str,
     uri: &str,
     metadata: Option<&StreamMetadata>,
+    icon_url: &str,
 ) -> SoapResult<()> {
     // Convert http:// to x-rincon-mp3radio:// for Sonos compatibility
     let sonos_uri = normalize_sonos_uri(uri);
-    let didl_metadata = format_didl_lite(uri, metadata);
+    let didl_metadata = format_didl_lite(uri, metadata, icon_url);
 
     log::info!("[Sonos] SetAVTransportURI: ip={}, uri={}", ip, sonos_uri);
 
@@ -311,6 +351,39 @@ pub async fn stop(client: &Client, ip: &str) -> SoapResult<()> {
         }
         Err(e) => Err(e),
     }
+}
+
+/// Switches a Sonos speaker's source to its queue.
+///
+/// This sets the AVTransport URI to the speaker's internal queue, effectively
+/// clearing any external stream source. Used after stopping playback to ensure
+/// the Sonos app doesn't show a stale stream.
+///
+/// # Arguments
+/// * `client` - The HTTP client to use for the request
+/// * `ip` - IP address of the Sonos speaker (coordinator for grouped speakers)
+/// * `coordinator_uuid` - The speaker's RINCON_xxx UUID for building the queue URI
+pub async fn switch_to_queue(client: &Client, ip: &str, coordinator_uuid: &str) -> SoapResult<()> {
+    let queue_uri = format!("x-rincon-queue:{}#0", coordinator_uuid);
+
+    log::info!(
+        "[Sonos] Switching {} to queue (uuid: {})",
+        ip,
+        coordinator_uuid
+    );
+
+    SoapRequestBuilder::new(client, ip)
+        .service(SonosService::AVTransport)
+        .action("SetAVTransportURI")
+        .instance_id()
+        .arg("CurrentURI", &queue_uri)
+        .arg("CurrentURIMetaData", "")
+        .send()
+        .await?;
+
+    log::debug!("[Sonos] Switched to queue successfully");
+
+    Ok(())
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -435,12 +508,17 @@ impl SonosPlayback for SonosClientImpl {
         ip: &str,
         uri: &str,
         metadata: Option<&StreamMetadata>,
+        icon_url: &str,
     ) -> SoapResult<()> {
-        play_uri(&self.client, ip, uri, metadata).await
+        play_uri(&self.client, ip, uri, metadata, icon_url).await
     }
 
     async fn stop(&self, ip: &str) -> SoapResult<()> {
         stop(&self.client, ip).await
+    }
+
+    async fn switch_to_queue(&self, ip: &str, coordinator_uuid: &str) -> SoapResult<()> {
+        switch_to_queue(&self.client, ip, coordinator_uuid).await
     }
 }
 

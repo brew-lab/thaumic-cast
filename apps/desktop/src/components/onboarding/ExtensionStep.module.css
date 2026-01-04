@@ -1,0 +1,15 @@
+.body {
+  margin: 0;
+  line-height: 1.6;
+}
+
+.storeButton {
+  /* Button styling handled by component */
+}
+
+.skipHint {
+  margin: 0;
+  font-size: 0.85rem;
+  color: var(--color-text-muted);
+  font-style: italic;
+}

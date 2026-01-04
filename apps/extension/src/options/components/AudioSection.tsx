@@ -11,10 +11,10 @@ import type {
 import {
   CODEC_METADATA,
   getSupportedBitrates,
-  SUPPORTED_SAMPLE_RATES,
+  getSupportedSampleRates,
 } from '@thaumic-cast/protocol';
 import type { ExtensionSettings, AudioMode } from '../../lib/settings';
-import { getResolvedConfigForDisplay } from '../../lib/presets';
+import { getResolvedConfigForDisplay, getDynamicPresets } from '../../lib/presets';
 import styles from '../Options.module.css';
 
 interface AudioSectionProps {
@@ -54,14 +54,41 @@ export function AudioSection({
     );
   }, [settings.audioMode, settings.customAudioSettings, codecSupport, codecLoading]);
 
-  // Mode options
-  const modeOptions: { value: AudioMode; label: string; desc: string }[] = [
-    { value: 'auto', label: t('audio_mode_auto'), desc: t('audio_mode_auto_desc') },
-    { value: 'low', label: t('audio_mode_low'), desc: t('audio_mode_low_desc') },
-    { value: 'mid', label: t('audio_mode_mid'), desc: t('audio_mode_mid_desc') },
-    { value: 'high', label: t('audio_mode_high'), desc: t('audio_mode_high_desc') },
-    { value: 'custom', label: t('audio_mode_custom'), desc: t('audio_mode_custom_desc') },
-  ];
+  // Get dynamic presets for showing resolved codec/bitrate per tier
+  const dynamicPresets = useMemo(() => {
+    if (codecLoading || codecSupport.availableCodecs.length === 0) {
+      return null;
+    }
+    return getDynamicPresets(codecSupport);
+  }, [codecSupport, codecLoading]);
+
+  // Mode options with dynamic labels showing what each tier resolves to
+  const modeOptions: { value: AudioMode; label: string; desc: string }[] = useMemo(() => {
+    const presetLabel = (tier: 'high' | 'mid' | 'low'): string => {
+      const option = dynamicPresets?.[tier];
+      if (!option) return '';
+      return ` (${option.label})`;
+    };
+
+    return [
+      {
+        value: 'high',
+        label: t('audio_mode_high') + presetLabel('high'),
+        desc: t('audio_mode_high_desc'),
+      },
+      {
+        value: 'mid',
+        label: t('audio_mode_mid') + presetLabel('mid'),
+        desc: t('audio_mode_mid_desc'),
+      },
+      {
+        value: 'low',
+        label: t('audio_mode_low') + presetLabel('low'),
+        desc: t('audio_mode_low_desc'),
+      },
+      { value: 'custom', label: t('audio_mode_custom'), desc: t('audio_mode_custom_desc') },
+    ];
+  }, [t, dynamicPresets]);
 
   /**
    * Handles mode change.
@@ -81,11 +108,18 @@ export function AudioSection({
       const bitrates = getSupportedBitrates(codec, codecSupport);
       const defaultBitrate = bitrates[0] ?? CODEC_METADATA[codec].defaultBitrate;
 
+      const sampleRates = getSupportedSampleRates(codec, codecSupport);
+      const currentSampleRate = settings.customAudioSettings.sampleRate;
+      const sampleRate = sampleRates.includes(currentSampleRate)
+        ? currentSampleRate
+        : (sampleRates[0] ?? 48000);
+
       await onUpdate({
         customAudioSettings: {
           ...settings.customAudioSettings,
           codec,
           bitrate: defaultBitrate,
+          sampleRate,
         },
       });
     },
@@ -143,6 +177,12 @@ export function AudioSection({
     return getSupportedBitrates(settings.customAudioSettings.codec, codecSupport);
   }, [settings.customAudioSettings.codec, codecSupport, codecLoading]);
 
+  // Get available sample rates for current codec
+  const availableSampleRates = useMemo(() => {
+    if (codecLoading) return [];
+    return getSupportedSampleRates(settings.customAudioSettings.codec, codecSupport);
+  }, [settings.customAudioSettings.codec, codecSupport, codecLoading]);
+
   const isCustomMode = settings.audioMode === 'custom';
 
   return (
@@ -162,8 +202,14 @@ export function AudioSection({
         {!codecLoading && codecSupport.availableCodecs.length > 0 && (
           <>
             <div className={styles.field}>
-              <label className={styles.label}>{t('audio_mode')}</label>
-              <div className={styles.radioGroup}>
+              <span id="audio-mode-label" className={styles.label}>
+                {t('audio_mode')}
+              </span>
+              <div
+                className={styles.radioGroup}
+                role="radiogroup"
+                aria-labelledby="audio-mode-label"
+              >
                 {modeOptions.map((option) => (
                   <label key={option.value} className={styles.radioOption}>
                     <input
@@ -195,8 +241,11 @@ export function AudioSection({
                 <div className={styles.cardContent}>
                   {/* Codec */}
                   <div className={styles.field}>
-                    <label className={styles.label}>{t('audio_codec')}</label>
+                    <label htmlFor="audio-codec" className={styles.label}>
+                      {t('audio_codec')}
+                    </label>
                     <select
+                      id="audio-codec"
                       className={styles.select}
                       value={settings.customAudioSettings.codec}
                       onChange={(e) =>
@@ -213,11 +262,14 @@ export function AudioSection({
 
                   {/* Bitrate */}
                   <div className={styles.field}>
-                    <label className={styles.label}>{t('audio_bitrate')}</label>
+                    <label htmlFor="audio-bitrate" className={styles.label}>
+                      {t('audio_bitrate')}
+                    </label>
                     {settings.customAudioSettings.codec === 'flac' ? (
                       <span className={styles.hint}>{t('bitrate_not_applicable')}</span>
                     ) : (
                       <select
+                        id="audio-bitrate"
                         className={styles.select}
                         value={settings.customAudioSettings.bitrate}
                         onChange={(e) =>
@@ -237,8 +289,11 @@ export function AudioSection({
 
                   {/* Channels */}
                   <div className={styles.field}>
-                    <label className={styles.label}>{t('audio_channels')}</label>
+                    <label htmlFor="audio-channels" className={styles.label}>
+                      {t('audio_channels')}
+                    </label>
                     <select
+                      id="audio-channels"
                       className={styles.select}
                       value={settings.customAudioSettings.channels}
                       onChange={(e) =>
@@ -250,25 +305,30 @@ export function AudioSection({
                     </select>
                   </div>
 
-                  {/* Sample Rate */}
-                  <div className={styles.field}>
-                    <label className={styles.label}>{t('audio_sample_rate')}</label>
-                    <select
-                      className={styles.select}
-                      value={settings.customAudioSettings.sampleRate}
-                      onChange={(e) =>
-                        handleSampleRateChange(
-                          Number((e.target as HTMLSelectElement).value) as SupportedSampleRate,
-                        )
-                      }
-                    >
-                      {SUPPORTED_SAMPLE_RATES.map((rate) => (
-                        <option key={rate} value={rate}>
-                          {rate / 1000} kHz
-                        </option>
-                      ))}
-                    </select>
-                  </div>
+                  {/* Sample Rate - only show if codec supports multiple rates */}
+                  {availableSampleRates.length > 0 && (
+                    <div className={styles.field}>
+                      <label htmlFor="audio-sample-rate" className={styles.label}>
+                        {t('audio_sample_rate')}
+                      </label>
+                      <select
+                        id="audio-sample-rate"
+                        className={styles.select}
+                        value={settings.customAudioSettings.sampleRate}
+                        onChange={(e) =>
+                          handleSampleRateChange(
+                            Number((e.target as HTMLSelectElement).value) as SupportedSampleRate,
+                          )
+                        }
+                      >
+                        {availableSampleRates.map((rate) => (
+                          <option key={rate} value={rate}>
+                            {rate / 1000} kHz
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
                 </div>
               ) : (
                 /* Non-custom mode: read-only display */

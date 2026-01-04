@@ -4,6 +4,7 @@
 
 use crate::api::AppState;
 use crate::error::CommandError;
+use crate::events::NetworkHealth;
 use crate::sonos::discovery::Speaker;
 use crate::types::ZoneGroup;
 use serde::Serialize;
@@ -67,6 +68,16 @@ pub async fn get_stats(state: tauri::State<'_, AppState>) -> Result<AppStats, Co
 #[tauri::command]
 pub async fn get_server_port(state: tauri::State<'_, AppState>) -> Result<u16, CommandError> {
     Ok(state.services.network.get_port())
+}
+
+/// Starts network services (HTTP server, discovery, GENA subscriptions).
+///
+/// This is idempotent - calling multiple times has no effect after the first call.
+/// Should be called after the user acknowledges the firewall warning during onboarding,
+/// or immediately on app startup if onboarding was already completed.
+#[tauri::command]
+pub fn start_network_services(state: tauri::State<'_, AppState>) {
+    state.start_services();
 }
 
 /// Starts playback on a speaker.
@@ -177,4 +188,59 @@ pub fn set_autostart_enabled(app: tauri::AppHandle, enabled: bool) -> Result<(),
         code: "autostart_error",
         message: e.to_string(),
     })
+}
+
+/// Network health status response.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NetworkHealthResponse {
+    /// Current health status.
+    pub health: NetworkHealth,
+    /// Reason for the current status (if degraded).
+    pub reason: Option<String>,
+}
+
+/// Returns the current network health status.
+///
+/// This indicates whether speakers are reachable after discovery.
+/// A "degraded" status typically indicates VPN or firewall issues.
+#[tauri::command]
+pub fn get_network_health(state: tauri::State<'_, AppState>) -> NetworkHealthResponse {
+    let health_state = state
+        .services
+        .discovery_service
+        .topology_monitor()
+        .get_network_health();
+
+    log::debug!(
+        "[Command] get_network_health -> {:?} (reason: {:?})",
+        health_state.health,
+        health_state.reason
+    );
+
+    NetworkHealthResponse {
+        health: health_state.health,
+        reason: health_state.reason,
+    }
+}
+
+/// Returns the current platform (windows, macos, linux).
+#[tauri::command]
+pub fn get_platform() -> &'static str {
+    #[cfg(target_os = "windows")]
+    {
+        "windows"
+    }
+    #[cfg(target_os = "macos")]
+    {
+        "macos"
+    }
+    #[cfg(target_os = "linux")]
+    {
+        "linux"
+    }
+    #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
+    {
+        "unknown"
+    }
 }

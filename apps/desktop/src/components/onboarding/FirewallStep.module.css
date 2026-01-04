@@ -1,0 +1,19 @@
+.reasonList {
+  margin: 0;
+  padding-inline-start: var(--space-lg);
+  line-height: 1.8;
+  color: var(--color-text-muted);
+}
+
+.reasonList li {
+  margin-block-end: var(--space-sm);
+}
+
+.reassurance {
+  margin-block: var(--space-lg) 0;
+  padding: var(--space-md);
+  background: var(--color-surface-hover);
+  border-radius: var(--radius-md);
+  font-style: italic;
+  color: var(--color-text-muted);
+}

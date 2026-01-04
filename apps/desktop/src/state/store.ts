@@ -37,6 +37,15 @@ export interface PlaybackSession {
 /** Set of speaker IPs that are currently casting our streams. */
 export type CastingSpeakers = Set<string>;
 
+/** Network health status. */
+export type NetworkHealthStatus = 'ok' | 'degraded';
+
+/** Network health response from the backend. */
+export interface NetworkHealth {
+  health: NetworkHealthStatus;
+  reason: string | null;
+}
+
 // Global State
 export const speakers = signal<Speaker[]>([]);
 export const groups = signal<ZoneGroup[]>([]);
@@ -45,6 +54,7 @@ export const castingSpeakers = signal<CastingSpeakers>(new Set());
 export const serverPort = signal<number>(0);
 export const isLoading = signal<boolean>(false);
 export const stats = signal<AppStats | null>(null);
+export const networkHealth = signal<NetworkHealth>({ health: 'ok', reason: null });
 
 export interface AppStats {
   connectionCount: number;
@@ -76,20 +86,36 @@ export const fetchTransportStates = async (): Promise<void> => {
 };
 
 /**
- * Fetches zone groups, transport states, playback sessions, and stats from the backend.
- * Updates the groups, transportStates, and castingSpeakers signals.
+ * Fetches the current network health status.
+ * Updates the networkHealth signal.
+ */
+export const fetchNetworkHealth = async (): Promise<void> => {
+  const health = await invoke<NetworkHealth>('get_network_health');
+  networkHealth.value = health;
+};
+
+/**
+ * Fetches zone groups, transport states, playback sessions, stats, and network health.
+ * Updates the groups, transportStates, castingSpeakers, and networkHealth signals.
  */
 export const fetchGroups = async (): Promise<void> => {
   try {
     isLoading.value = true;
-    const [fetchedGroups, states, sessions] = await Promise.all([
+    const [fetchedGroups, states, sessions, health] = await Promise.all([
       invoke<ZoneGroup[]>('get_groups'),
       invoke<TransportStates>('get_transport_states'),
       invoke<PlaybackSession[]>('get_playback_sessions'),
+      invoke<NetworkHealth>('get_network_health'),
     ]);
     groups.value = fetchedGroups;
     transportStates.value = states;
     castingSpeakers.value = new Set(sessions.map((s) => s.speakerIp));
+
+    // Debug: log if health changed
+    if (networkHealth.value.health !== health.health) {
+      console.log('[Store] Network health changed:', health);
+    }
+    networkHealth.value = health;
     await fetchStats();
   } finally {
     isLoading.value = false;
@@ -144,6 +170,17 @@ export const restartServer = async (): Promise<void> => {
 };
 
 /**
+ * Starts network services (HTTP server, discovery, GENA subscriptions).
+ *
+ * This is idempotent - calling multiple times has no effect after the first call.
+ * Should be called after the user acknowledges the firewall warning during onboarding,
+ * or immediately on app startup if onboarding was already completed.
+ */
+export const startNetworkServices = async (): Promise<void> => {
+  await invoke('start_network_services');
+};
+
+/**
  * Gets whether autostart is enabled.
  * @returns True if autostart is enabled
  */
@@ -157,4 +194,15 @@ export const getAutostartEnabled = async (): Promise<boolean> => {
  */
 export const setAutostartEnabled = async (enabled: boolean): Promise<void> => {
   await invoke('set_autostart_enabled', { enabled });
+};
+
+/** Supported platform types */
+export type Platform = 'windows' | 'macos' | 'linux' | 'unknown';
+
+/**
+ * Gets the current platform (windows, macos, linux).
+ * @returns The platform identifier
+ */
+export const getPlatform = async (): Promise<Platform> => {
+  return invoke<Platform>('get_platform');
 };

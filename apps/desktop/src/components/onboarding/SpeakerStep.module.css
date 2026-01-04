@@ -1,0 +1,45 @@
+.emptyState {
+  text-align: center;
+  padding: var(--space-lg);
+  background: var(--color-surface-inset);
+  border-radius: var(--radius-md);
+  margin-block-end: var(--space-md);
+}
+
+.emptyTitle {
+  margin: 0 0 var(--space-sm);
+  font-weight: 500;
+}
+
+.emptyHint {
+  margin: 0;
+  color: var(--color-text-muted);
+  font-size: 0.9rem;
+}
+
+.speakerList {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  margin-block-end: var(--space-lg);
+}
+
+.speakerItem {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  padding: var(--space-sm) var(--space-md);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+}
+
+.memberCount {
+  margin-inline-start: auto;
+  font-size: 0.85rem;
+  color: var(--color-text-muted);
+}
+
+.scanButton {
+  margin-block-start: var(--space-md);
+}

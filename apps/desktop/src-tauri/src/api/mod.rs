@@ -2,6 +2,7 @@
 //!
 //! This module contains thin handlers that delegate to services.
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use parking_lot::RwLock;
@@ -40,12 +41,16 @@ pub struct AppState {
     pub services: BootstrappedServices,
     /// Application configuration.
     pub config: Arc<RwLock<Config>>,
+    /// Whether network services have been started.
+    services_started: Arc<AtomicBool>,
 }
 
 impl AppState {
     /// Creates a new AppState with initialized services.
     ///
     /// Delegates to `bootstrap_services()` for dependency wiring.
+    /// Note: Services are not started automatically. Call `start_services()`
+    /// after the user acknowledges the firewall warning or skips onboarding.
     pub fn new() -> Self {
         let config = Config::default();
         let services = bootstrap_services(&config);
@@ -53,6 +58,7 @@ impl AppState {
         Self {
             services,
             config: Arc::new(RwLock::new(config)),
+            services_started: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -61,10 +67,45 @@ impl AppState {
         self.services.lifecycle.set_app_handle(handle);
     }
 
-    /// Starts all background services.
-    pub fn start_background_tasks(self: &Arc<Self>) {
+    /// Starts all background services (GENA renewal, topology monitor).
+    ///
+    /// This is called internally by `start_services()`. Prefer using `start_services()`
+    /// which also starts the HTTP server and is idempotent.
+    fn start_background_tasks(&self) {
         self.services.discovery_service.start_renewal_task();
         Arc::clone(&self.services.discovery_service).start_topology_monitor();
+    }
+
+    /// Starts network services (HTTP server and background tasks).
+    ///
+    /// This is idempotent - calling multiple times has no effect after the first call.
+    /// Should be called after the user acknowledges the firewall warning or skips onboarding,
+    /// or immediately on startup if onboarding was already completed.
+    ///
+    /// This method spawns the HTTP server in a background task and returns immediately.
+    pub fn start_services(&self) {
+        // Only start once - use compare_exchange for thread safety
+        if self
+            .services_started
+            .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+            .is_err()
+        {
+            log::debug!("Network services already started, skipping");
+            return;
+        }
+
+        log::info!("Starting network services...");
+
+        // Start background tasks (GENA renewal, topology monitor)
+        self.start_background_tasks();
+
+        // Spawn HTTP server in background task
+        let state_clone = self.clone();
+        tauri::async_runtime::spawn(async move {
+            if let Err(e) = start_server(state_clone).await {
+                log::error!("Server error: {}", e);
+            }
+        });
     }
 
     /// Graceful shutdown - cleans up all streams and subscriptions.

@@ -3,6 +3,7 @@ import {
   groups,
   transportStates,
   castingSpeakers,
+  networkHealth,
   fetchGroups,
   refreshTopology,
   stopAll,
@@ -12,6 +13,7 @@ import {
 } from '../state/store';
 import { DeviceCard } from '../components/DeviceCard';
 import { ActionButton } from '../components/ActionButton';
+import { Alert } from '@thaumic-cast/ui';
 import { RefreshCw, Square } from 'lucide-preact';
 import { useTranslation } from 'react-i18next';
 import styles from './Speakers.module.css';
@@ -79,11 +81,19 @@ export function Speakers() {
             label={t('speakers.stop_all')}
             loadingLabel={t('speakers.stopping')}
             icon={Square}
-            variant="danger"
+            variant="primary"
             className={styles.controlButton}
           />
         </div>
       </div>
+
+      {networkHealth.value.health === 'degraded' && (
+        <Alert variant="warning" className={styles.networkAlert}>
+          {t(`network.${networkHealth.value.reason}`, {
+            defaultValue: t('network.degraded_warning'),
+          })}
+        </Alert>
+      )}
 
       {groupsWithCoordinators.length === 0 ? (
         <div className={styles.emptyState}>

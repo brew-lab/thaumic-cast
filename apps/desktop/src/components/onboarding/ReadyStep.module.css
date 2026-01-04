@@ -1,0 +1,83 @@
+.summaryBox {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  padding: var(--space-md);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+}
+
+.summaryItem {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+}
+
+.checkIcon {
+  color: var(--color-success);
+  flex-shrink: 0;
+}
+
+.pendingIcon {
+  color: var(--color-warning);
+  flex-shrink: 0;
+}
+
+.introText {
+  margin: 0;
+  line-height: 1.6;
+}
+
+.sectionTitle {
+  font-size: 1rem;
+  font-weight: 600;
+  margin: 0;
+}
+
+.sectionBody {
+  margin: 0;
+  line-height: 1.6;
+  color: var(--color-text-muted);
+}
+
+.autostartToggle {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-md);
+  padding: var(--space-md);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  transition: var(--transition-bg);
+}
+
+.autostartToggle:hover {
+  background: var(--color-surface-hover);
+}
+
+.autostartToggle input[type='checkbox'] {
+  margin: 0;
+  margin-block-start: 0.25rem;
+  accent-color: var(--color-primary);
+  inline-size: 1.25rem;
+  block-size: 1.25rem;
+  flex-shrink: 0;
+}
+
+.autostartContent {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+}
+
+.autostartLabel {
+  font-weight: 500;
+}
+
+.autostartDescription {
+  font-size: 0.85rem;
+  color: var(--color-text-muted);
+  line-height: 1.5;
+}

@@ -68,14 +68,33 @@ enum WsIncoming {
 }
 
 /// Request payload for starting playback via WebSocket.
+/// Supports both single speaker (legacy) and multi-speaker (new).
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct StartPlaybackRequest {
-    speaker_ip: String,
+    /// Multiple speaker IPs (multi-group support).
+    #[serde(default)]
+    speaker_ips: Option<Vec<String>>,
+    /// Legacy single speaker IP (backward compatibility).
+    #[serde(default)]
+    speaker_ip: Option<String>,
     /// Optional initial metadata to display on Sonos.
     /// If not provided, Sonos will show default "Browser Audio".
     #[serde(default)]
     metadata: Option<StreamMetadata>,
+}
+
+impl StartPlaybackRequest {
+    /// Gets the speaker IPs, preferring the array field over the legacy single field.
+    fn get_speaker_ips(&self) -> Vec<String> {
+        if let Some(ips) = &self.speaker_ips {
+            ips.clone()
+        } else if let Some(ip) = &self.speaker_ip {
+            vec![ip.clone()]
+        } else {
+            vec![]
+        }
+    }
 }
 
 /// Request payload for volume control via WebSocket.
@@ -130,15 +149,32 @@ struct HandshakeRequest {
 #[derive(Serialize)]
 #[serde(tag = "type", rename_all = "SCREAMING_SNAKE_CASE")]
 enum WsOutgoing {
-    HandshakeAck { payload: HandshakePayload },
+    HandshakeAck {
+        payload: HandshakePayload,
+    },
     HeartbeatAck,
-    Error { message: String },
-    InitialState { payload: serde_json::Value },
-    VolumeState { payload: WsVolumePayload },
-    MuteState { payload: WsMutePayload },
-    StreamReady { payload: StreamReadyPayload },
-    PlaybackStarted { payload: PlaybackStartedPayload },
-    PlaybackError { payload: PlaybackErrorPayload },
+    Error {
+        message: String,
+    },
+    InitialState {
+        payload: serde_json::Value,
+    },
+    VolumeState {
+        payload: WsVolumePayload,
+    },
+    MuteState {
+        payload: WsMutePayload,
+    },
+    StreamReady {
+        payload: StreamReadyPayload,
+    },
+    PlaybackError {
+        payload: PlaybackErrorPayload,
+    },
+    /// Multi-group playback results (per-speaker success/failure).
+    PlaybackResults {
+        payload: PlaybackResultsPayload,
+    },
 }
 
 /// Payload for stream ready notification.
@@ -148,19 +184,19 @@ struct StreamReadyPayload {
     buffer_size: usize,
 }
 
-/// Payload for playback started notification.
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-struct PlaybackStartedPayload {
-    speaker_ip: String,
-    stream_url: String,
-}
-
 /// Payload for playback error notification.
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct PlaybackErrorPayload {
     message: String,
+}
+
+/// Payload for multi-group playback results.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PlaybackResultsPayload {
+    /// Per-speaker results (success/failure for each).
+    results: Vec<crate::services::stream_coordinator::PlaybackResult>,
 }
 
 /// Payload for volume state responses.
@@ -229,7 +265,7 @@ async fn send_command_response<F, T, E, R>(
 /// Builds the initial state message for WebSocket clients.
 ///
 /// Includes Sonos state (groups, transport, volume, mute), active playback sessions,
-/// and system power state.
+/// and current network health status.
 fn build_initial_state(state: &AppState) -> Option<Message> {
     let mut payload = state.services.sonos_state.to_json();
 
@@ -241,12 +277,22 @@ fn build_initial_state(state: &AppState) -> Option<Message> {
             serde_json::to_value(&sessions).unwrap_or(serde_json::Value::Array(vec![])),
         );
 
-        // Add power state
-        let power_state = crate::power::get_power_state();
+        // Add network health to the initial state
+        let health_state = state
+            .services
+            .discovery_service
+            .topology_monitor()
+            .get_network_health();
         map.insert(
-            "powerState".to_string(),
-            serde_json::to_value(&power_state).unwrap_or(serde_json::Value::Null),
+            "networkHealth".to_string(),
+            serde_json::to_value(health_state.health).unwrap_or(serde_json::Value::Null),
         );
+        if let Some(reason) = &health_state.reason {
+            map.insert(
+                "networkHealthReason".to_string(),
+                serde_json::Value::String(reason.clone()),
+            );
+        }
     }
 
     WsOutgoing::InitialState { payload }.to_message()
@@ -290,6 +336,14 @@ fn handle_handshake(state: &AppState, payload: HandshakeRequest) -> HandshakeRes
 
 /// Handles a METADATA_UPDATE message: updates stream metadata.
 fn handle_metadata_update(state: &AppState, stream_id: &str, metadata: StreamMetadata) {
+    // [DIAG] Log metadata updates from extension
+    log::info!(
+        "[WS] METADATA_UPDATE for stream {}: title={:?}, artist={:?}, source={:?}",
+        stream_id,
+        metadata.title,
+        metadata.artist,
+        metadata.source
+    );
     state
         .services
         .stream_coordinator
@@ -431,49 +485,58 @@ async fn handle_ws(socket: WebSocket, state: AppState) {
                                 .await;
                             }
                             Ok(WsIncoming::StartPlayback { payload }) => {
+                                // [DIAG] Log START_PLAYBACK request with initial metadata
+                                log::info!(
+                                    "[WS] START_PLAYBACK: metadata={:?}",
+                                    payload.metadata.as_ref().map(|m| format!(
+                                        "title={:?}, artist={:?}, source={:?}",
+                                        m.title, m.artist, m.source
+                                    ))
+                                );
+
                                 if let Some(ref guard) = stream_guard {
                                     let stream_id = guard.id().to_string();
-                                    let speaker_ip = payload.speaker_ip.clone();
+                                    let speaker_ips = payload.get_speaker_ips();
 
-                                    // Start playback (coordinator will record session & emit events)
-                                    match state
+                                    if speaker_ips.is_empty() {
+                                        let msg = WsOutgoing::PlaybackError {
+                                            payload: PlaybackErrorPayload {
+                                                message: "No speaker IPs provided".into(),
+                                            },
+                                        };
+                                        if let Some(msg) = msg.to_message() {
+                                            let _ = sender.send(msg).await;
+                                        }
+                                        continue;
+                                    }
+
+                                    // Update stream's stored metadata BEFORE starting playback
+                                    // This ensures ICY metadata is available immediately,
+                                    // not just when METADATA_UPDATE arrives later
+                                    if let Some(ref metadata) = payload.metadata {
+                                        state
+                                            .services
+                                            .stream_coordinator
+                                            .update_metadata(&stream_id, metadata.clone());
+                                    }
+
+                                    // Start playback on all speakers (multi-group support)
+                                    let results = state
                                         .services
                                         .stream_coordinator
-                                        .start_playback(
-                                            &speaker_ip,
+                                        .start_playback_multi(
+                                            &speaker_ips,
                                             &stream_id,
                                             payload.metadata.as_ref(),
                                         )
-                                        .await
-                                    {
-                                        Ok(()) => {
-                                            // Get stream URL for response
-                                            let stream_url = state
-                                                .services
-                                                .network
-                                                .url_builder()
-                                                .stream_url(&stream_id);
+                                        .await;
 
-                                            let msg = WsOutgoing::PlaybackStarted {
-                                                payload: PlaybackStartedPayload {
-                                                    speaker_ip,
-                                                    stream_url,
-                                                },
-                                            };
-                                            if let Some(msg) = msg.to_message() {
-                                                let _ = sender.send(msg).await;
-                                            }
-                                        }
-                                        Err(e) => {
-                                            let msg = WsOutgoing::PlaybackError {
-                                                payload: PlaybackErrorPayload {
-                                                    message: e.to_string(),
-                                                },
-                                            };
-                                            if let Some(msg) = msg.to_message() {
-                                                let _ = sender.send(msg).await;
-                                            }
-                                        }
+                                    // Send PLAYBACK_RESULTS with per-speaker outcomes
+                                    let msg = WsOutgoing::PlaybackResults {
+                                        payload: PlaybackResultsPayload { results },
+                                    };
+                                    if let Some(msg) = msg.to_message() {
+                                        let _ = sender.send(msg).await;
                                     }
                                 } else {
                                     // No active stream for this connection
@@ -531,5 +594,15 @@ async fn handle_ws(socket: WebSocket, state: AppState) {
         }
     }
 
-    // StreamGuard and ConnectionGuard Drop impls handle cleanup automatically
+    // Graceful cleanup: stop speakers before stream removal.
+    // StreamGuard::drop() will be a no-op since remove_stream is idempotent.
+    if let Some(ref guard) = stream_guard {
+        state
+            .services
+            .stream_coordinator
+            .remove_stream_async(guard.id())
+            .await;
+    }
+
+    // StreamGuard and ConnectionGuard Drop impls handle any remaining cleanup
 }

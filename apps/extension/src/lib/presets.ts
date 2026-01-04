@@ -1,144 +1,31 @@
 /**
  * Audio Quality Presets Module
  *
- * Integrates runtime codec detection with device-tier presets to ensure
- * we only select codec/bitrate combinations that are actually supported
- * by the browser's WebCodecs API.
+ * Uses dynamic preset generation based on runtime codec detection to ensure
+ * meaningful quality tiers (high/mid/low) that differ based on actual device
+ * capabilities rather than hardcoded codec preferences.
  */
 
 import type {
-  AudioCodec,
-  Bitrate,
   EncoderConfig,
   LatencyMode,
-  PowerState,
   SupportedCodecsResult,
-  SupportedSampleRate,
+  DynamicPresets,
+  ScoredCodecOption,
 } from '@thaumic-cast/protocol';
-import { getSupportedBitrates, CODEC_METADATA } from '@thaumic-cast/protocol';
-import { createLogger } from '@thaumic-cast/shared';
 import {
-  classifyDeviceTier,
-  getDeviceCapabilities,
-  checkPowerState,
-  type DeviceTier,
-} from './device-config';
+  CODEC_METADATA,
+  generateDynamicPresets,
+  getSupportedSampleRates,
+} from '@thaumic-cast/protocol';
+import { createLogger } from '@thaumic-cast/shared';
 import type { AudioMode, CustomAudioSettings } from './settings';
 
 const log = createLogger('Presets');
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Preset Definitions (with fallback chains)
-// ─────────────────────────────────────────────────────────────────────────────
-
-/**
- * Codec/bitrate preference for a quality preset.
- * Listed in order of preference - first supported option is selected.
- */
-interface PresetOption {
-  codec: AudioCodec;
-  bitrate: Bitrate;
-}
-
-/**
- * Full preset definition including audio and latency settings.
- */
-interface PresetDefinition {
-  /** Codec/bitrate options in order of preference */
-  options: PresetOption[];
-  /** Default number of channels */
-  channels: 1 | 2;
-  /** Default sample rate */
-  sampleRate: SupportedSampleRate;
-  /** Latency mode for encoding */
-  latencyMode: LatencyMode;
-}
-
-/**
- * Mode preset definitions.
- * Each mode has a priority list of codec/bitrate combinations.
- * The first supported option will be selected.
- */
-const MODE_PRESETS: Record<Exclude<AudioMode, 'auto' | 'custom'>, PresetDefinition> = {
-  high: {
-    options: [
-      { codec: 'flac', bitrate: 0 }, // Lossless preferred
-      { codec: 'aac-lc', bitrate: 256 },
-      { codec: 'vorbis', bitrate: 320 },
-      { codec: 'aac-lc', bitrate: 192 }, // Fallback if 256 not supported
-    ],
-    channels: 2,
-    sampleRate: 48000,
-    latencyMode: 'quality',
-  },
-  mid: {
-    options: [
-      { codec: 'aac-lc', bitrate: 192 },
-      { codec: 'vorbis', bitrate: 192 },
-      { codec: 'he-aac', bitrate: 128 },
-      { codec: 'aac-lc', bitrate: 128 },
-    ],
-    channels: 2,
-    sampleRate: 48000,
-    latencyMode: 'quality',
-  },
-  low: {
-    options: [
-      { codec: 'he-aac-v2', bitrate: 64 },
-      { codec: 'he-aac', bitrate: 64 },
-      { codec: 'aac-lc', bitrate: 128 },
-      { codec: 'vorbis', bitrate: 128 },
-    ],
-    channels: 2,
-    sampleRate: 44100,
-    latencyMode: 'realtime',
-  },
-};
-
-/**
- * Device tier to mode mapping for auto mode.
- */
-const TIER_TO_MODE: Record<DeviceTier, Exclude<AudioMode, 'auto' | 'custom'>> = {
-  'high-end': 'high',
-  balanced: 'mid',
-  'low-end': 'low',
-};
-
-// ─────────────────────────────────────────────────────────────────────────────
 // Resolution Functions
 // ─────────────────────────────────────────────────────────────────────────────
-
-/**
- * Checks if a codec/bitrate combination is supported.
- * @param option - The preset option to check
- * @param codecSupport - Runtime codec support info
- * @returns True if supported
- */
-function isOptionSupported(option: PresetOption, codecSupport: SupportedCodecsResult): boolean {
-  if (!codecSupport.availableCodecs.includes(option.codec)) {
-    return false;
-  }
-  const supportedBitrates = getSupportedBitrates(option.codec, codecSupport);
-  return supportedBitrates.includes(option.bitrate);
-}
-
-/**
- * Finds the first supported option from a preset's option list.
- * @param preset - The preset definition
- * @param codecSupport - Runtime codec support info
- * @returns The first supported option, or null if none supported
- */
-function findSupportedOption(
-  preset: PresetDefinition,
-  codecSupport: SupportedCodecsResult,
-): PresetOption | null {
-  for (const option of preset.options) {
-    if (isOptionSupported(option, codecSupport)) {
-      return option;
-    }
-  }
-  return null;
-}
 
 /**
  * Gets the ultimate fallback configuration using any available codec.
@@ -160,35 +47,91 @@ function getFallbackConfig(codecSupport: SupportedCodecsResult): EncoderConfig |
 }
 
 /**
- * Builds an encoder config from a preset option.
- * @param option - The codec/bitrate option
- * @param preset - The preset definition for other settings
+ * Picks the best sample rate for a codec based on tier preference.
+ * - High/Balanced: prefer 48kHz (best quality)
+ * - Low: prefer 44.1kHz (lower bandwidth)
+ *
+ * @param codec - The audio codec
+ * @param codecSupport - Runtime codec support info
+ * @param preferLower - Whether to prefer lower sample rate (for Low tier)
+ * @returns The best available sample rate
+ */
+function pickSampleRate(
+  codec: ScoredCodecOption['codec'],
+  codecSupport: SupportedCodecsResult,
+  preferLower: boolean = false,
+): 48000 | 44100 {
+  const supported = getSupportedSampleRates(codec, codecSupport);
+
+  if (supported.length === 0) {
+    // No sample rate info available, default to 48kHz
+    return 48000;
+  }
+
+  if (preferLower) {
+    // Low tier: prefer 44.1kHz if available
+    if (supported.includes(44100)) return 44100;
+    if (supported.includes(48000)) return 48000;
+  } else {
+    // High/Balanced: prefer 48kHz
+    if (supported.includes(48000)) return 48000;
+    if (supported.includes(44100)) return 44100;
+  }
+
+  // Fallback to first available
+  return supported[0] as 48000 | 44100;
+}
+
+/**
+ * Builds an encoder config from a scored codec option.
+ * @param option - The scored codec option from dynamic presets
+ * @param codecSupport - Runtime codec support info
+ * @param tier - The quality tier (affects sample rate and channel selection)
+ * @param latencyMode - The latency mode to use
  * @returns A complete encoder config
  */
-function buildConfig(option: PresetOption, preset: PresetDefinition): EncoderConfig {
+function buildConfigFromOption(
+  option: ScoredCodecOption,
+  codecSupport: SupportedCodecsResult,
+  tier: 'high' | 'mid' | 'low',
+  latencyMode: LatencyMode = 'quality',
+): EncoderConfig {
+  const sampleRate = pickSampleRate(option.codec, codecSupport, tier === 'low');
+  // Low tier uses mono for bandwidth savings
+  const channels: 1 | 2 = tier === 'low' ? 1 : 2;
+
   return {
     codec: option.codec,
     bitrate: option.bitrate,
-    sampleRate: preset.sampleRate,
-    channels: preset.channels,
-    latencyMode: preset.latencyMode,
+    sampleRate,
+    channels,
+    latencyMode,
   };
+}
+
+/**
+ * Gets the preset option for a given mode from dynamic presets.
+ * @param mode - The audio mode (high/mid/low)
+ * @param dynamicPresets - The generated dynamic presets
+ * @returns The scored option for that tier, or null
+ */
+function getPresetForMode(
+  mode: Exclude<AudioMode, 'custom'>,
+  dynamicPresets: DynamicPresets,
+): ScoredCodecOption | null {
+  return dynamicPresets[mode];
 }
 
 /**
  * Resolves an audio mode to an encoder configuration.
  *
- * For named presets (low/mid/high), selects the first supported codec/bitrate
- * combination from the preset's preference list.
- *
- * For 'auto' mode, determines device tier and power state to select
- * the appropriate preset automatically.
+ * For named presets (low/mid/high), uses dynamically generated presets based
+ * on actual device codec support to ensure meaningful quality differentiation.
  *
  * For 'custom' mode, uses the provided custom settings directly.
  *
  * @param mode - The audio quality mode
  * @param codecSupport - Runtime codec support info from detectSupportedCodecs()
- * @param powerState - Power state from desktop app (for auto mode)
  * @param customSettings - Custom settings (required if mode is 'custom')
  * @returns The resolved encoder configuration
  * @throws Error if no supported codecs are found
@@ -196,15 +139,14 @@ function buildConfig(option: PresetOption, preset: PresetDefinition): EncoderCon
 export function resolveAudioMode(
   mode: AudioMode,
   codecSupport: SupportedCodecsResult,
-  powerState: PowerState | null = null,
   customSettings?: CustomAudioSettings,
 ): EncoderConfig {
   // Custom mode: use user-provided settings
   if (mode === 'custom' && customSettings) {
     // Validate that custom settings are still supported
-    const isSupported = isOptionSupported(
-      { codec: customSettings.codec, bitrate: customSettings.bitrate },
-      codecSupport,
+    const dynamicPresets = generateDynamicPresets(codecSupport);
+    const isSupported = dynamicPresets.allOptions.some(
+      (opt) => opt.codec === customSettings.codec && opt.bitrate === customSettings.bitrate,
     );
 
     if (isSupported) {
@@ -222,36 +164,25 @@ export function resolveAudioMode(
     mode = 'mid';
   }
 
-  // Auto mode: determine mode based on device tier and power state
-  if (mode === 'auto') {
-    const power = checkPowerState(powerState);
+  // Generate dynamic presets based on device capabilities
+  const dynamicPresets = generateDynamicPresets(codecSupport);
 
-    // Force low preset on battery to conserve power
-    if (power.onBattery) {
-      log.info('On battery power, using low preset');
-      mode = 'low';
-    } else {
-      // Use device tier to select preset
-      const caps = getDeviceCapabilities();
-      const tier = classifyDeviceTier(caps);
-      mode = TIER_TO_MODE[tier];
-      log.info(`Device tier: ${tier}, using ${mode} preset`);
-    }
-  }
-
-  // Resolve named preset (mode is now 'low' | 'mid' | 'high' after handling auto/custom)
-  const presetMode = mode as Exclude<AudioMode, 'auto' | 'custom'>;
-  const preset = MODE_PRESETS[presetMode];
-  const option = findSupportedOption(preset, codecSupport);
+  // Resolve named preset
+  const presetMode = mode as Exclude<AudioMode, 'custom'>;
+  const option = getPresetForMode(presetMode, dynamicPresets);
 
   if (option) {
-    const config = buildConfig(option, preset);
-    log.info(`Resolved ${mode} preset: ${option.codec} @ ${option.bitrate}kbps`);
+    // Use realtime latency for low preset
+    const latencyMode: LatencyMode = presetMode === 'low' ? 'realtime' : 'quality';
+    const config = buildConfigFromOption(option, codecSupport, presetMode, latencyMode);
+    log.info(
+      `Resolved ${mode} preset: ${option.codec} @ ${option.bitrate}kbps @ ${config.sampleRate}Hz (score: ${option.score})`,
+    );
     return config;
   }
 
-  // No preset option supported - try fallback
-  log.warn(`No options supported for ${mode} preset, using fallback`);
+  // No preset option available - try fallback
+  log.warn(`No options available for ${mode} preset, using fallback`);
   const fallback = getFallbackConfig(codecSupport);
 
   if (fallback) {
@@ -263,7 +194,6 @@ export function resolveAudioMode(
 
 /**
  * Gets the display configuration for a mode (for UI preview).
- * Shows what settings the mode would resolve to WITHOUT applying power state.
  *
  * @param mode - The audio quality mode
  * @param codecSupport - Runtime codec support info
@@ -275,10 +205,11 @@ export function getResolvedConfigForDisplay(
   codecSupport: SupportedCodecsResult,
   customSettings?: CustomAudioSettings,
 ): EncoderConfig | null {
+  const dynamicPresets = generateDynamicPresets(codecSupport);
+
   if (mode === 'custom' && customSettings) {
-    const isSupported = isOptionSupported(
-      { codec: customSettings.codec, bitrate: customSettings.bitrate },
-      codecSupport,
+    const isSupported = dynamicPresets.allOptions.some(
+      (opt) => opt.codec === customSettings.codec && opt.bitrate === customSettings.bitrate,
     );
 
     if (isSupported) {
@@ -293,17 +224,26 @@ export function getResolvedConfigForDisplay(
     return null;
   }
 
-  // For auto mode, show the balanced preset as representative
-  const resolvedPresetMode: Exclude<AudioMode, 'auto' | 'custom'> =
-    mode === 'auto' ? 'mid' : (mode as Exclude<AudioMode, 'auto' | 'custom'>);
-  const preset = MODE_PRESETS[resolvedPresetMode];
-  const option = findSupportedOption(preset, codecSupport);
+  const presetMode = mode as Exclude<AudioMode, 'custom'>;
+  const option = getPresetForMode(presetMode, dynamicPresets);
 
   if (option) {
-    return buildConfig(option, preset);
+    const latencyMode: LatencyMode = presetMode === 'low' ? 'realtime' : 'quality';
+    return buildConfigFromOption(option, codecSupport, presetMode, latencyMode);
   }
 
   return getFallbackConfig(codecSupport);
+}
+
+/**
+ * Gets dynamic presets for the current device capabilities.
+ * Used by UI to show what each quality tier resolves to.
+ *
+ * @param codecSupport - Runtime codec support info
+ * @returns Dynamic presets with scored options for each tier
+ */
+export function getDynamicPresets(codecSupport: SupportedCodecsResult): DynamicPresets {
+  return generateDynamicPresets(codecSupport);
 }
 
 /**
@@ -328,7 +268,6 @@ export function describeEncoderConfig(config: EncoderConfig): string {
  */
 export function getModeLabel(mode: AudioMode, config: EncoderConfig): string {
   const modeLabels: Record<AudioMode, string> = {
-    auto: 'Auto',
     low: 'Low',
     mid: 'Balanced',
     high: 'High',

@@ -145,6 +145,18 @@ impl SonosState {
         self.group_mutes
             .retain(|ip, _| valid_coordinator_ips.contains(ip));
     }
+
+    /// Looks up a coordinator's UUID by their IP address.
+    ///
+    /// Returns the RINCON_xxx UUID if found, None if no matching coordinator.
+    #[must_use]
+    pub fn get_coordinator_uuid_by_ip(&self, ip: &str) -> Option<String> {
+        self.groups
+            .read()
+            .iter()
+            .find(|g| g.coordinator_ip == ip)
+            .map(|g| g.coordinator_uuid.clone())
+    }
 }
 
 /// Converts a DashMap to a JSON object map.

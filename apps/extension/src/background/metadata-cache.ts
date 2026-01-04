@@ -13,7 +13,12 @@
  * - Session management (session-manager.ts handles this)
  */
 
-import type { TabMediaState, MediaMetadata } from '@thaumic-cast/protocol';
+import type {
+  TabMediaState,
+  MediaMetadata,
+  MediaAction,
+  PlaybackState,
+} from '@thaumic-cast/protocol';
 import { createTabMediaState } from '@thaumic-cast/protocol';
 import { createLogger } from '@thaumic-cast/shared';
 
@@ -60,20 +65,34 @@ export function hasCachedState(tabId: number): boolean {
 /**
  * Updates cache for a tab with new metadata.
  * @param tabId - The Chrome tab ID
- * @param tabInfo - Tab information (title, favicon)
+ * @param tabInfo - Tab information (title, favicon, ogImage, source)
  * @param tabInfo.title
  * @param tabInfo.favIconUrl
+ * @param tabInfo.ogImage
+ * @param tabInfo.source - Source name derived from tab URL
  * @param metadata - Media metadata or null
+ * @param supportedActions - Supported media control actions
+ * @param playbackState - Current playback state from MediaSession
  * @returns The new TabMediaState
  */
 export function updateCache(
   tabId: number,
-  tabInfo: { title?: string; favIconUrl?: string },
+  tabInfo: { title?: string; favIconUrl?: string; ogImage?: string; source?: string },
   metadata: MediaMetadata | null,
+  supportedActions: MediaAction[] = [],
+  playbackState: PlaybackState = 'none',
 ): TabMediaState {
   const state = createTabMediaState(
-    { id: tabId, title: tabInfo.title, favIconUrl: tabInfo.favIconUrl },
+    {
+      id: tabId,
+      title: tabInfo.title,
+      favIconUrl: tabInfo.favIconUrl,
+      ogImage: tabInfo.ogImage,
+      source: tabInfo.source,
+    },
     metadata,
+    supportedActions,
+    playbackState,
   );
   cache.set(tabId, state);
   schedulePersist();
@@ -81,17 +100,19 @@ export function updateCache(
 }
 
 /**
- * Updates only the tab info (title, favicon) for a cached tab.
+ * Updates only the tab info (title, favicon, ogImage, source) for a cached tab.
  * Preserves existing metadata if present.
  * @param tabId - The Chrome tab ID
  * @param tabInfo - Updated tab information
  * @param tabInfo.title
  * @param tabInfo.favIconUrl
+ * @param tabInfo.ogImage
+ * @param tabInfo.source - Source name derived from tab URL
  * @returns The updated TabMediaState or undefined if not cached
  */
 export function updateTabInfo(
   tabId: number,
-  tabInfo: { title?: string; favIconUrl?: string },
+  tabInfo: { title?: string; favIconUrl?: string; ogImage?: string; source?: string },
 ): TabMediaState | undefined {
   const existing = cache.get(tabId);
   if (!existing) return undefined;
@@ -100,6 +121,8 @@ export function updateTabInfo(
     ...existing,
     tabTitle: tabInfo.title || existing.tabTitle,
     tabFavicon: tabInfo.favIconUrl ?? existing.tabFavicon,
+    tabOgImage: tabInfo.ogImage ?? existing.tabOgImage,
+    source: tabInfo.source ?? existing.source,
     updatedAt: Date.now(),
   };
   cache.set(tabId, updated);

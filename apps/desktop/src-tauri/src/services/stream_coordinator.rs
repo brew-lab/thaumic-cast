@@ -2,8 +2,8 @@
 //!
 //! Responsibilities:
 //! - Create/remove audio streams (wraps StreamManager)
-//! - Start/stop playback on Sonos speakers
-//! - Track which stream is playing on which speaker
+//! - Start/stop playback on Sonos speakers (supports multi-group)
+//! - Track which streams are playing on which speakers
 //! - Track expected stream URLs for source change detection
 //! - Broadcast stream lifecycle events to WebSocket clients
 
@@ -17,8 +17,26 @@ use crate::error::ThaumicResult;
 use crate::events::{EventEmitter, StreamEvent};
 use crate::sonos::utils::normalize_sonos_uri;
 use crate::sonos::SonosPlayback;
+use crate::state::SonosState;
 use crate::stream::{AudioCodec, StreamManager, StreamMetadata, StreamState};
 use crate::utils::now_millis;
+
+/// Composite key for playback sessions: (stream_id, speaker_ip).
+/// Allows multiple speakers to receive the same stream (multi-group casting).
+#[derive(Debug, Clone, Hash, Eq, PartialEq)]
+struct PlaybackSessionKey {
+    stream_id: String,
+    speaker_ip: String,
+}
+
+impl PlaybackSessionKey {
+    fn new(stream_id: &str, speaker_ip: &str) -> Self {
+        Self {
+            stream_id: stream_id.to_string(),
+            speaker_ip: speaker_ip.to_string(),
+        }
+    }
+}
 
 /// Tracks an active playback session linking a stream to a speaker.
 #[derive(Debug, Clone, serde::Serialize)]
@@ -32,15 +50,35 @@ pub struct PlaybackSession {
     pub stream_url: String,
 }
 
+/// Result of starting playback on a single speaker.
+/// Used for reporting per-speaker success/failure in multi-group casting.
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PlaybackResult {
+    /// IP address of the speaker.
+    pub speaker_ip: String,
+    /// Whether playback started successfully.
+    pub success: bool,
+    /// Stream URL the speaker is fetching (on success).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stream_url: Option<String>,
+    /// Error message (on failure).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
 /// Service responsible for stream lifecycle and playback orchestration.
 pub struct StreamCoordinator {
     /// Sonos client for playback control.
     sonos: Arc<dyn SonosPlayback>,
+    /// Sonos state for UUID lookups.
+    sonos_state: Arc<SonosState>,
     stream_manager: Arc<StreamManager>,
     /// Network configuration (port, local IP).
     network: NetworkContext,
-    /// Active playback sessions: speaker_ip -> PlaybackSession
-    playback_sessions: DashMap<String, PlaybackSession>,
+    /// Active playback sessions: (stream_id, speaker_ip) -> PlaybackSession
+    /// Supports multi-group: one stream can have multiple speaker sessions.
+    playback_sessions: DashMap<PlaybackSessionKey, PlaybackSession>,
     /// Event emitter for stream lifecycle events.
     emitter: Arc<dyn EventEmitter>,
 }
@@ -50,15 +88,18 @@ impl StreamCoordinator {
     ///
     /// # Arguments
     /// * `sonos` - Sonos client for playback control
+    /// * `sonos_state` - Sonos state for UUID lookups
     /// * `network` - Network configuration (port, local IP)
     /// * `emitter` - Event emitter for broadcasting stream events
     pub fn new(
         sonos: Arc<dyn SonosPlayback>,
+        sonos_state: Arc<SonosState>,
         network: NetworkContext,
         emitter: Arc<dyn EventEmitter>,
     ) -> Self {
         Self {
             sonos,
+            sonos_state,
             stream_manager: Arc::new(StreamManager::new()),
             network,
             playback_sessions: DashMap::new(),
@@ -75,11 +116,28 @@ impl StreamCoordinator {
     ///
     /// Returns the stream URL in `x-rincon-mp3radio://` format if the speaker has
     /// an active playback session, or None otherwise.
+    ///
+    /// Note: A speaker can only play one stream at a time, so we find the first
+    /// session matching the speaker IP.
     #[must_use]
     pub fn get_expected_stream(&self, speaker_ip: &str) -> Option<String> {
         self.playback_sessions
-            .get(speaker_ip)
-            .map(|session| normalize_sonos_uri(&session.stream_url))
+            .iter()
+            .find(|r| r.key().speaker_ip == speaker_ip)
+            .map(|r| normalize_sonos_uri(&r.value().stream_url))
+    }
+
+    /// Gets all playback sessions for a specific stream.
+    ///
+    /// Reserved for future use (debugging, partial speaker removal).
+    #[must_use]
+    #[allow(dead_code)]
+    pub fn get_sessions_for_stream(&self, stream_id: &str) -> Vec<PlaybackSession> {
+        self.playback_sessions
+            .iter()
+            .filter(|r| r.key().stream_id == stream_id)
+            .map(|r| r.value().clone())
+            .collect()
     }
 
     /// Creates a new audio stream with the specified codec.
@@ -97,19 +155,23 @@ impl StreamCoordinator {
         Ok(stream_id)
     }
 
-    /// Removes a stream and cleans up any associated playback session.
+    /// Removes a stream and cleans up all associated playback sessions.
     ///
     /// Broadcasts a `StreamEvent::Ended` event.
+    ///
+    /// Note: This is the sync version used by `StreamGuard::drop()`. For graceful
+    /// cleanup that stops speakers first, use `remove_stream_async()`.
     pub fn remove_stream(&self, stream_id: &str) {
-        // Find and remove any playback session for this stream
-        let speaker_ip = self
+        // Find and remove ALL playback sessions for this stream (multi-group support)
+        let keys_to_remove: Vec<PlaybackSessionKey> = self
             .playback_sessions
             .iter()
-            .find(|r| r.value().stream_id == stream_id)
-            .map(|r| r.key().clone());
+            .filter(|r| r.key().stream_id == stream_id)
+            .map(|r| r.key().clone())
+            .collect();
 
-        if let Some(ip) = speaker_ip {
-            self.playback_sessions.remove(&ip);
+        for key in keys_to_remove {
+            self.playback_sessions.remove(&key);
         }
 
         self.stream_manager.remove_stream(stream_id);
@@ -119,6 +181,48 @@ impl StreamCoordinator {
             stream_id: stream_id.to_string(),
             timestamp: now_millis(),
         });
+    }
+
+    /// Removes a stream with graceful speaker cleanup.
+    ///
+    /// This is the preferred method for stream removal. It:
+    /// 1. Sends STOP to all speakers playing this stream
+    /// 2. Switches each speaker's source to its queue (clears stale stream)
+    /// 3. Removes playback session records
+    /// 4. Removes the stream from the manager
+    /// 5. Broadcasts `StreamEvent::Ended`
+    ///
+    /// Speaker stop/switch failures are logged but don't prevent cleanup.
+    pub async fn remove_stream_async(&self, stream_id: &str) {
+        // Find all speaker IPs for this stream
+        let speaker_ips: Vec<String> = self
+            .playback_sessions
+            .iter()
+            .filter(|r| r.key().stream_id == stream_id)
+            .map(|r| r.key().speaker_ip.clone())
+            .collect();
+
+        // Stop each speaker and switch to queue (best-effort)
+        for ip in &speaker_ips {
+            // Stop playback
+            if let Err(e) = self.sonos.stop(ip).await {
+                log::warn!("[StreamCoordinator] Failed to stop {}: {}", ip, e);
+            }
+
+            // Switch to queue to clear the stale stream source
+            if let Some(uuid) = self.sonos_state.get_coordinator_uuid_by_ip(ip) {
+                if let Err(e) = self.sonos.switch_to_queue(ip, &uuid).await {
+                    log::warn!(
+                        "[StreamCoordinator] Failed to switch {} to queue: {}",
+                        ip,
+                        e
+                    );
+                }
+            }
+        }
+
+        // Delegate to sync method for session/stream cleanup + event emission
+        self.remove_stream(stream_id);
     }
 
     /// Gets a stream by ID.
@@ -144,11 +248,116 @@ impl StreamCoordinator {
         }
     }
 
-    /// Starts playback of a stream on a Sonos speaker.
+    /// Starts playback of a stream on multiple Sonos speakers (multi-group support).
     ///
-    /// This tells the speaker to fetch audio from our HTTP stream endpoint.
-    /// The playback session is recorded for expected stream tracking.
-    /// Broadcasts a `StreamEvent::PlaybackStarted` event.
+    /// Returns results for each speaker (best-effort: continues on individual failures).
+    /// Each successful speaker gets a `StreamEvent::PlaybackStarted` event.
+    ///
+    /// # Arguments
+    /// * `speaker_ips` - IP addresses of the Sonos speakers (coordinators)
+    /// * `stream_id` - The stream ID to play
+    /// * `metadata` - Optional initial metadata to display on Sonos
+    pub async fn start_playback_multi(
+        &self,
+        speaker_ips: &[String],
+        stream_id: &str,
+        metadata: Option<&StreamMetadata>,
+    ) -> Vec<PlaybackResult> {
+        let url_builder = self.network.url_builder();
+        let stream_url = url_builder.stream_url(stream_id);
+        let icon_url = url_builder.icon_url();
+
+        let mut results = Vec::with_capacity(speaker_ips.len());
+
+        for speaker_ip in speaker_ips {
+            let result = self
+                .start_single_playback(speaker_ip, stream_id, &stream_url, &icon_url, metadata)
+                .await;
+            results.push(result);
+        }
+
+        results
+    }
+
+    /// Starts playback on a single speaker.
+    async fn start_single_playback(
+        &self,
+        speaker_ip: &str,
+        stream_id: &str,
+        stream_url: &str,
+        icon_url: &str,
+        metadata: Option<&StreamMetadata>,
+    ) -> PlaybackResult {
+        let key = PlaybackSessionKey::new(stream_id, speaker_ip);
+
+        // Check if this exact (stream, speaker) pair already exists (no-op)
+        if self.playback_sessions.contains_key(&key) {
+            log::debug!(
+                "Speaker {} already playing stream {}, skipping",
+                speaker_ip,
+                stream_id
+            );
+            return PlaybackResult {
+                speaker_ip: speaker_ip.to_string(),
+                success: true,
+                stream_url: Some(stream_url.to_string()),
+                error: None,
+            };
+        }
+
+        // Note: If the speaker is playing a DIFFERENT stream, Sonos will switch sources.
+        // We don't need to stop the old stream - the old session cleanup happens
+        // when that stream's WebSocket connection closes.
+
+        log::info!("Starting playback: {} -> {}", speaker_ip, stream_url);
+
+        match self
+            .sonos
+            .play_uri(speaker_ip, stream_url, metadata, icon_url)
+            .await
+        {
+            Ok(()) => {
+                // Record the playback session
+                self.playback_sessions.insert(
+                    key,
+                    PlaybackSession {
+                        stream_id: stream_id.to_string(),
+                        speaker_ip: speaker_ip.to_string(),
+                        stream_url: stream_url.to_string(),
+                    },
+                );
+
+                // Broadcast playback started event
+                self.emit_event(StreamEvent::PlaybackStarted {
+                    stream_id: stream_id.to_string(),
+                    speaker_ip: speaker_ip.to_string(),
+                    stream_url: stream_url.to_string(),
+                    timestamp: now_millis(),
+                });
+
+                PlaybackResult {
+                    speaker_ip: speaker_ip.to_string(),
+                    success: true,
+                    stream_url: Some(stream_url.to_string()),
+                    error: None,
+                }
+            }
+            Err(e) => {
+                log::warn!("Failed to start playback on {}: {}", speaker_ip, e);
+                PlaybackResult {
+                    speaker_ip: speaker_ip.to_string(),
+                    success: false,
+                    stream_url: None,
+                    error: Some(e.to_string()),
+                }
+            }
+        }
+    }
+
+    /// Starts playback of a stream on a single Sonos speaker.
+    ///
+    /// This is a convenience wrapper around `start_playback_multi` for single-speaker use.
+    /// Maintains backward compatibility with existing code.
     ///
     /// # Arguments
     /// * `speaker_ip` - IP address of the Sonos speaker
@@ -160,43 +369,82 @@ impl StreamCoordinator {
         stream_id: &str,
         metadata: Option<&StreamMetadata>,
     ) -> ThaumicResult<()> {
-        let stream_url = self.network.url_builder().stream_url(stream_id);
+        let results = self
+            .start_playback_multi(&[speaker_ip.to_string()], stream_id, metadata)
+            .await;
 
-        log::info!("Starting playback: {} -> {}", speaker_ip, stream_url);
+        if let Some(result) = results.first() {
+            if result.success {
+                Ok(())
+            } else {
+                Err(crate::error::ThaumicError::Soap(
+                    result
+                        .error
+                        .clone()
+                        .unwrap_or_else(|| "Unknown error".to_string()),
+                ))
+            }
+        } else {
+            Err(crate::error::ThaumicError::Soap(
+                "No playback result".to_string(),
+            ))
+        }
+    }
 
-        // Tell Sonos to play our stream with initial metadata
-        self.sonos
-            .play_uri(speaker_ip, &stream_url, metadata)
-            .await?;
+    /// Stops playback on a specific speaker for a specific stream.
+    ///
+    /// Removes the session and broadcasts a `StreamEvent::PlaybackStopped` event.
+    /// Used for partial speaker removal in multi-group scenarios.
+    ///
+    /// Reserved for future use (partial speaker removal from extension).
+    ///
+    /// # Arguments
+    /// * `stream_id` - The stream ID
+    /// * `speaker_ip` - IP address of the speaker to stop
+    #[allow(dead_code)]
+    pub async fn stop_playback_speaker(
+        &self,
+        stream_id: &str,
+        speaker_ip: &str,
+    ) -> ThaumicResult<()> {
+        let key = PlaybackSessionKey::new(stream_id, speaker_ip);
 
-        // Record the playback session (includes expected stream URL)
-        self.playback_sessions.insert(
-            speaker_ip.to_string(),
-            PlaybackSession {
-                stream_id: stream_id.to_string(),
+        if self.playback_sessions.remove(&key).is_some() {
+            // Best-effort stop - ignore errors (speaker might already be stopped)
+            if let Err(e) = self.sonos.stop(speaker_ip).await {
+                log::warn!("Failed to stop playback on {}: {}", speaker_ip, e);
+            }
+
+            // Broadcast playback stopped event
+            self.emit_event(StreamEvent::PlaybackStopped {
                 speaker_ip: speaker_ip.to_string(),
-                stream_url: stream_url.clone(),
-            },
-        );
-
-        // Broadcast playback started event
-        self.emit_event(StreamEvent::PlaybackStarted {
-            stream_id: stream_id.to_string(),
-            speaker_ip: speaker_ip.to_string(),
-            stream_url,
-            timestamp: now_millis(),
-        });
+                timestamp: now_millis(),
+            });
+        }
 
         Ok(())
     }
 
-    /// Stops playback on a speaker and clears the session.
+    /// Stops playback on a speaker (by speaker IP only, for backward compatibility).
     ///
+    /// Finds the session by speaker IP and removes it.
     /// Broadcasts a `StreamEvent::PlaybackStopped` event.
+    ///
+    /// Reserved for future use (partial speaker removal from extension).
+    #[allow(dead_code)]
     pub async fn stop_playback(&self, speaker_ip: &str) -> ThaumicResult<()> {
-        self.sonos.stop(speaker_ip).await?;
+        // Find the session key for this speaker
+        let key = self
+            .playback_sessions
+            .iter()
+            .find(|r| r.key().speaker_ip == speaker_ip)
+            .map(|r| r.key().clone());
 
-        self.playback_sessions.remove(speaker_ip);
+        if let Some(key) = key {
+            self.playback_sessions.remove(&key);
+        }
+
+        self.sonos.stop(speaker_ip).await?;
 
         // Broadcast playback stopped event
         self.emit_event(StreamEvent::PlaybackStopped {
@@ -209,56 +457,28 @@ impl StreamCoordinator {
 
     /// Gets all active playback sessions.
     pub fn get_all_sessions(&self) -> Vec<PlaybackSession> {
-        self.playback_sessions.iter().map(|r| r.clone()).collect()
+        self.playback_sessions
+            .iter()
+            .map(|r| r.value().clone())
+            .collect()
     }
 
     /// Stops all playback and clears all streams.
     ///
-    /// This performs a complete cleanup:
-    /// 1. Sends STOP command to all speakers with active playback
-    /// 2. Removes all playback session records (including expected stream tracking)
-    /// 3. Clears all audio streams
-    /// 4. Broadcasts `StreamEvent::Ended` for each cleared stream
+    /// This performs a complete cleanup by calling `remove_stream_async()` for
+    /// each active stream, which stops speakers and broadcasts ended events.
     ///
     /// Returns the number of streams that were cleared.
     pub async fn clear_all(&self) -> usize {
-        // Collect speaker IPs first to avoid holding lock during async calls
-        let speaker_ips: Vec<String> = self
-            .playback_sessions
-            .iter()
-            .map(|r| r.key().clone())
-            .collect();
-
-        // Collect stream IDs before clearing (for event broadcasting)
         let stream_ids = self.stream_manager.list_stream_ids();
+        let count = stream_ids.len();
 
-        // Stop playback on each speaker (best effort - don't fail if one errors)
-        for ip in &speaker_ips {
-            if let Err(e) = self.stop_playback(ip).await {
-                log::warn!(
-                    "[StreamCoordinator] Failed to stop playback on {}: {}",
-                    ip,
-                    e
-                );
-            }
-        }
-
-        // Clear all remaining sessions and streams
-        self.playback_sessions.clear();
-        let count = self.stream_manager.clear_all();
-
-        // Broadcast ended events for all cleared streams
-        let timestamp = now_millis();
         for stream_id in stream_ids {
-            self.emit_event(StreamEvent::Ended {
-                stream_id,
-                timestamp,
-            });
+            self.remove_stream_async(&stream_id).await;
         }
 
         log::info!(
-            "[StreamCoordinator] Cleared all: {} speaker(s) stopped, {} stream(s) removed",
-            speaker_ips.len(),
+            "[StreamCoordinator] Cleared all: {} stream(s) removed",
             count
         );
 

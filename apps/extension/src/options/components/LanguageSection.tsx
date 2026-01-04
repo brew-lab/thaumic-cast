@@ -3,6 +3,7 @@ import { useCallback } from 'preact/hooks';
 import { useTranslation } from 'react-i18next';
 import { Card } from '@thaumic-cast/ui';
 import type { ExtensionSettings, SupportedLocale } from '../../lib/settings';
+import { changeLanguage } from '../../lib/i18n';
 import styles from '../Options.module.css';
 
 interface LanguageSectionProps {
@@ -23,6 +24,7 @@ export function LanguageSection({ settings, onUpdate }: LanguageSectionProps): J
 
   const handleLanguageChange = useCallback(
     async (language: SupportedLocale) => {
+      await changeLanguage(language);
       await onUpdate({ language });
     },
     [onUpdate],
@@ -32,8 +34,11 @@ export function LanguageSection({ settings, onUpdate }: LanguageSectionProps): J
     <Card title={t('language_section_title')}>
       <div className={styles.cardContent}>
         <div className={styles.field}>
-          <label className={styles.label}>{t('language_label')}</label>
+          <label htmlFor="language-select" className={styles.label}>
+            {t('language_label')}
+          </label>
           <select
+            id="language-select"
             className={styles.select}
             value={settings.language}
             onChange={(e) =>

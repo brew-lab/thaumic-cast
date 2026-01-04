@@ -40,4 +40,5 @@ tokio-stream = { version = "0.1", features = ["sync"] }
 quick-xml = { version = "0.38.4", features = ["serialize"] }
 html-escape = "0.2.13"
 socket2 = { version = "0.5", features = ["all"] }
-starship-battery = "0.10"
+rust-i18n = "3"
+sys-locale = "0.3"

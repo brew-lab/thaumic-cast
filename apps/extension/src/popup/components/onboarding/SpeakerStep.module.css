@@ -1,0 +1,21 @@
+.speakerList {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+.speakerItem {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  padding: var(--space-sm) var(--space-md);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+}
+
+.memberCount {
+  margin-inline-start: auto;
+  font-size: 0.85rem;
+  color: var(--color-text-muted);
+}

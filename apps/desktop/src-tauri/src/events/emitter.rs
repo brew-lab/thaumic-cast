@@ -3,7 +3,7 @@
 //! Services depend on the [`EventEmitter`] trait rather than concrete broadcast
 //! channels, enabling testing and alternative transport implementations.
 
-use super::StreamEvent;
+use super::{NetworkEvent, StreamEvent, TopologyEvent};
 use crate::sonos::gena::SonosEvent;
 
 /// Trait for emitting domain events without knowledge of transport.
@@ -28,6 +28,12 @@ pub trait EventEmitter: Send + Sync {
     /// Emits a stream lifecycle event.
     fn emit_stream(&self, event: StreamEvent);
 
-    /// Emits a Sonos device event.
+    /// Emits a Sonos device event (from GENA notifications).
     fn emit_sonos(&self, event: SonosEvent);
+
+    /// Emits a network health event.
+    fn emit_network(&self, event: NetworkEvent);
+
+    /// Emits a topology discovery event.
+    fn emit_topology(&self, event: TopologyEvent);
 }

@@ -1,22 +1,20 @@
 import type { JSX } from 'preact';
 import { useTranslation } from 'react-i18next';
-import type { TabMediaState, ZoneGroup } from '@thaumic-cast/protocol';
-import { getDisplayTitle, getDisplayImage, getDisplaySubtitle } from '@thaumic-cast/protocol';
-import { Button } from '@thaumic-cast/ui';
-import { Cast, Loader2 } from 'lucide-preact';
+import type { TabMediaState, ZoneGroup, SpeakerAvailability } from '@thaumic-cast/protocol';
+import { getDisplayTitle, getDisplaySubtitle } from '@thaumic-cast/protocol';
+import { Button, SpeakerMultiSelect, VolumeControl } from '@thaumic-cast/ui';
+import { Cast, Loader2, Music } from 'lucide-preact';
 import styles from './CurrentTabCard.module.css';
 
 interface CurrentTabCardProps {
   /** The tab's media state */
   state: TabMediaState;
-  /** Whether this tab is already casting */
-  isCasting: boolean;
   /** Available speaker groups */
   groups: ZoneGroup[];
-  /** Currently selected speaker IP */
-  selectedIp: string;
+  /** Currently selected speaker IPs */
+  selectedIps: string[];
   /** Callback when speaker selection changes */
-  onSelectSpeaker: (ip: string) => void;
+  onSelectSpeakers: (ips: string[]) => void;
   /** Callback to start casting */
   onStartCast: () => void;
   /** Whether cast is starting */
@@ -25,9 +23,9 @@ interface CurrentTabCardProps {
   disabled: boolean;
   /** Whether speakers are loading */
   speakersLoading: boolean;
-  /** Current volume (0-100) */
+  /** Current volume (0-100) - for primary selected speaker */
   volume: number;
-  /** Whether speaker is muted */
+  /** Whether primary selected speaker is muted */
   muted: boolean;
   /** Callback when volume changes */
   onVolumeChange: (volume: number) => void;
@@ -37,16 +35,17 @@ interface CurrentTabCardProps {
   showVolumeControls: boolean;
   /** Function to get display name for a group */
   getGroupDisplayName: (group: ZoneGroup) => string;
+  /** Availability status of the primary selected speaker */
+  selectedAvailability: SpeakerAvailability;
 }
 
 /**
  * Displays the current tab's media information with cast controls.
  * @param props - Component props
  * @param props.state
- * @param props.isCasting
  * @param props.groups
- * @param props.selectedIp
- * @param props.onSelectSpeaker
+ * @param props.selectedIps
+ * @param props.onSelectSpeakers
  * @param props.onStartCast
  * @param props.isStarting
  * @param props.disabled
@@ -57,14 +56,14 @@ interface CurrentTabCardProps {
  * @param props.onMuteToggle
  * @param props.showVolumeControls
  * @param props.getGroupDisplayName
+ * @param props.selectedAvailability
  * @returns The rendered CurrentTabCard component
  */
 export function CurrentTabCard({
   state,
-  isCasting,
   groups,
-  selectedIp,
-  onSelectSpeaker,
+  selectedIps,
+  onSelectSpeakers,
   onStartCast,
   isStarting,
   disabled,
@@ -75,41 +74,13 @@ export function CurrentTabCard({
   onMuteToggle,
   showVolumeControls,
   getGroupDisplayName,
+  selectedAvailability,
 }: CurrentTabCardProps): JSX.Element {
   const { t } = useTranslation();
   const title = getDisplayTitle(state);
-  const image = getDisplayImage(state);
+  // Use metadata artwork if available, otherwise favicon (skip og:image)
+  const image = state.metadata?.artwork || state.tabFavicon;
   const subtitle = getDisplaySubtitle(state);
-
-  // Don't show controls if already casting (will show in ActiveCastCard)
-  if (isCasting) {
-    return (
-      <div className={styles.card}>
-        <div className={styles.artwork}>
-          {image ? (
-            <img src={image} alt="" className={styles.image} loading="lazy" />
-          ) : (
-            <div className={styles.placeholder} aria-hidden="true">
-              <svg
-                xmlns="http://www.w3.org/2000/svg"
-                width="24"
-                height="24"
-                viewBox="0 0 24 24"
-                fill="currentColor"
-              >
-                <path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z" />
-              </svg>
-            </div>
-          )}
-        </div>
-        <div className={styles.info}>
-          <p className={styles.title}>{title}</p>
-          {subtitle && <p className={styles.subtitle}>{subtitle}</p>}
-          <p className={styles.castingStatus}>{t('casting_active')}</p>
-        </div>
-      </div>
-    );
-  }
 
   return (
     <div className={styles.card}>
@@ -119,15 +90,7 @@ export function CurrentTabCard({
             <img src={image} alt="" className={styles.image} loading="lazy" />
           ) : (
             <div className={styles.placeholder} aria-hidden="true">
-              <svg
-                xmlns="http://www.w3.org/2000/svg"
-                width="24"
-                height="24"
-                viewBox="0 0 24 24"
-                fill="currentColor"
-              >
-                <path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z" />
-              </svg>
+              <Music size={24} />
             </div>
           )}
         </div>
@@ -139,67 +102,68 @@ export function CurrentTabCard({
 
       <div className={styles.controls}>
         {/* Speaker Selection */}
-        <div className={styles.field}>
-          <label className={styles.label}>{t('target_speaker')}</label>
-          <select
-            value={selectedIp}
-            onChange={(e) => onSelectSpeaker((e.target as HTMLSelectElement).value)}
-            className={styles.select}
+        {speakersLoading ? (
+          <p className={styles.label}>{t('loading_speakers')}</p>
+        ) : groups.length === 0 ? (
+          <p className={styles.label}>{t('no_speakers_placeholder')}</p>
+        ) : (
+          <SpeakerMultiSelect
+            groups={groups}
+            selectedIps={selectedIps}
+            onSelectionChange={onSelectSpeakers}
             disabled={disabled}
-          >
-            {speakersLoading ? <option>{t('loading_speakers')}</option> : null}
-            {groups.map((g) => (
-              <option key={g.id} value={g.coordinatorIp}>
-                {getGroupDisplayName(g)}
-              </option>
-            ))}
-            {!speakersLoading && groups.length === 0 && (
-              <option value="">{t('no_speakers_found')}</option>
-            )}
-          </select>
-        </div>
-
-        {/* Volume Controls */}
-        {showVolumeControls && selectedIp && (
-          <div className={styles.volumeControl}>
-            <div className={styles.volumeHeader}>
-              <label className={styles.label}>{t('volume')}</label>
-              <button
-                type="button"
-                className={`${styles.muteButton} ${muted ? styles.muted : ''}`}
-                onClick={onMuteToggle}
-                title={muted ? t('unmute') : t('mute')}
-              >
-                {muted ? '🔇' : '🔊'}
-              </button>
-            </div>
-            <input
-              type="range"
-              min="0"
-              max="100"
-              value={volume}
-              onChange={(e) => onVolumeChange(parseInt((e.target as HTMLInputElement).value, 10))}
-              className={styles.volumeSlider}
-              disabled={muted}
-            />
-            <span className={styles.volumeValue}>{volume}%</span>
-          </div>
+            getGroupDisplayName={getGroupDisplayName}
+            label={t('target_speaker')}
+          />
         )}
 
+        {/* Volume Controls - always rendered to prevent layout shift */}
+        <div
+          className={styles.volumeWrapper}
+          style={{
+            visibility: showVolumeControls && selectedIps.length > 0 ? 'visible' : 'hidden',
+          }}
+          inert={!showVolumeControls || selectedIps.length === 0 ? true : undefined}
+        >
+          <VolumeControl
+            volume={volume}
+            muted={muted}
+            onVolumeChange={onVolumeChange}
+            onMuteToggle={onMuteToggle}
+            muteLabel={t('mute')}
+            unmuteLabel={t('unmute')}
+            volumeLabel={t('volume')}
+          />
+        </div>
+
         {/* Cast Button */}
-        <Button onClick={onStartCast} disabled={disabled || groups.length === 0}>
+        <Button
+          onClick={onStartCast}
+          disabled={disabled || selectedIps.length === 0}
+          aria-describedby="cast-hint"
+          aria-busy={isStarting}
+          fullWidth
+        >
           {isStarting ? (
             <>
-              <Loader2 size={16} className={styles.spinner} />
+              <Loader2 size={16} className={styles.spinner} aria-hidden="true" />
               {t('starting')}
             </>
           ) : (
             <>
-              <Cast size={16} />
-              {t('start_casting')}
+              <Cast size={16} aria-hidden="true" />
+              {selectedIps.length > 1
+                ? t('cast_to_n_speakers', { count: selectedIps.length })
+                : t('start_casting')}
             </>
           )}
         </Button>
+
+        {/* Hint text - reserved space prevents layout shift */}
+        <p id="cast-hint" className={styles.castHint} aria-live="polite">
+          {selectedAvailability === 'in_use' && t('hint_replace_source')}
+          {selectedAvailability === 'casting' && t('hint_replace_cast')}
+        </p>
       </div>
     </div>
   );

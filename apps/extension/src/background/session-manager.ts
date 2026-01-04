@@ -53,16 +53,17 @@ function releaseKeepAwake(): void {
 
 /**
  * Internal representation of an active cast session.
+ * Supports multi-group casting (one stream to multiple speaker groups).
  */
 interface ActiveCastSession {
   /** Unique stream ID from server */
   streamId: string;
   /** Tab ID being captured */
   tabId: number;
-  /** Target speaker IP address */
-  speakerIp: string;
-  /** Speaker/group display name */
-  speakerName?: string;
+  /** Target speaker IP addresses (multi-group support) */
+  speakerIps: string[];
+  /** Speaker/group display names (parallel array with speakerIps) */
+  speakerNames: string[];
   /** Encoder configuration used */
   encoderConfig: EncoderConfig;
   /** Timestamp when cast started */
@@ -76,15 +77,15 @@ const sessions = new Map<number, ActiveCastSession>();
  * Registers a new cast session.
  * @param tabId - The Chrome tab ID being captured
  * @param streamId - Unique stream ID from server
- * @param speakerIp - Target speaker IP address
- * @param speakerName - Optional speaker display name
+ * @param speakerIps - Target speaker IP addresses (multi-group support)
+ * @param speakerNames - Speaker display names (parallel array)
  * @param encoderConfig - Encoder configuration used
  */
 export function registerSession(
   tabId: number,
   streamId: string,
-  speakerIp: string,
-  speakerName: string | undefined,
+  speakerIps: string[],
+  speakerNames: string[],
   encoderConfig: EncoderConfig,
 ): void {
   const wasEmpty = sessions.size === 0;
@@ -92,8 +93,8 @@ export function registerSession(
   sessions.set(tabId, {
     streamId,
     tabId,
-    speakerIp,
-    speakerName,
+    speakerIps,
+    speakerNames,
     encoderConfig,
     startedAt: Date.now(),
   });
@@ -105,7 +106,9 @@ export function registerSession(
 
   persistSessions();
   notifySessionsChanged();
-  log.info(`Registered session for tab ${tabId}, stream ${streamId}`);
+  log.info(
+    `Registered session for tab ${tabId}, stream ${streamId}, ${speakerIps.length} speaker(s)`,
+  );
 }
 
 /**
@@ -146,16 +149,51 @@ export function getSession(tabId: number): ActiveCastSession | undefined {
 /**
  * Finds a session by speaker IP address.
  * Used when Sonos reports a source change to find the affected cast.
+ * Searches within the speakerIps array for multi-group support.
  * @param speakerIp - The speaker IP address
  * @returns The session or undefined if not found
  */
 export function getSessionBySpeakerIp(speakerIp: string): ActiveCastSession | undefined {
   for (const session of sessions.values()) {
-    if (session.speakerIp === speakerIp) {
+    if (session.speakerIps.includes(speakerIp)) {
       return session;
     }
   }
   return undefined;
+}
+
+/**
+ * Removes a specific speaker from a session.
+ * Used for partial speaker removal when one speaker changes source externally.
+ * If no speakers remain, the entire session is removed.
+ * @param tabId - The tab ID of the session
+ * @param speakerIp - The speaker IP address to remove
+ * @returns True if the speaker was removed, false if not found
+ */
+export function removeSpeakerFromSession(tabId: number, speakerIp: string): boolean {
+  const session = sessions.get(tabId);
+  if (!session) return false;
+
+  const index = session.speakerIps.indexOf(speakerIp);
+  if (index === -1) return false;
+
+  // Remove the speaker and its name
+  session.speakerIps.splice(index, 1);
+  session.speakerNames.splice(index, 1);
+
+  // If no speakers left, remove the entire session
+  if (session.speakerIps.length === 0) {
+    removeSession(tabId);
+    log.info(`Removed last speaker from session, session ended for tab ${tabId}`);
+    return true;
+  }
+
+  persistSessions();
+  notifySessionsChanged();
+  log.info(
+    `Removed speaker ${speakerIp} from session for tab ${tabId}, ${session.speakerIps.length} speaker(s) remaining`,
+  );
+  return true;
 }
 
 /**
@@ -208,7 +246,10 @@ function toActiveCast(session: ActiveCastSession): ActiveCast {
     tabId: session.tabId,
     tabTitle: 'Unknown Tab',
     tabFavicon: undefined,
+    tabOgImage: undefined,
     metadata: null,
+    supportedActions: [],
+    playbackState: 'none',
     updatedAt: Date.now(),
   };
 
@@ -216,8 +257,8 @@ function toActiveCast(session: ActiveCastSession): ActiveCast {
     streamId: session.streamId,
     tabId: session.tabId,
     mediaState,
-    speakerIp: session.speakerIp,
-    speakerName: session.speakerName,
+    speakerIps: session.speakerIps,
+    speakerNames: session.speakerNames,
     encoderConfig: session.encoderConfig,
     startedAt: session.startedAt,
   };
@@ -275,6 +316,7 @@ async function persistSessions(): Promise<void> {
 /**
  * Restores sessions from session storage.
  * Call on service worker startup.
+ * Includes migration from old single-speaker format to multi-speaker arrays.
  */
 export async function restoreSessions(): Promise<void> {
   try {
@@ -283,6 +325,16 @@ export async function restoreSessions(): Promise<void> {
     if (Array.isArray(data)) {
       sessions.clear();
       for (const [tabId, session] of data) {
+        // Migrate old single-speaker format to multi-speaker arrays
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const legacySession = session as any;
+        if (legacySession.speakerIp && !legacySession.speakerIps) {
+          session.speakerIps = [legacySession.speakerIp];
+          session.speakerNames = [legacySession.speakerName || legacySession.speakerIp];
+          delete legacySession.speakerIp;
+          delete legacySession.speakerName;
+          log.info(`Migrated session for tab ${tabId} from single to multi-speaker format`);
+        }
         sessions.set(tabId, session);
       }
       if (sessions.size > 0) {

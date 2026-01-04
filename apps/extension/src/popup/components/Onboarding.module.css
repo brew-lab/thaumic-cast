@@ -1,0 +1,7 @@
+.onboarding {
+  display: flex;
+  flex-direction: column;
+  inline-size: 352px;
+  block-size: 420px;
+  background: var(--color-bg);
+}

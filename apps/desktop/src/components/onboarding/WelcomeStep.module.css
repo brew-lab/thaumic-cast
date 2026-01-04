@@ -1,0 +1,11 @@
+.body {
+  margin: 0;
+  line-height: 1.6;
+}
+
+.footnote {
+  margin: 0;
+  font-size: 0.85rem;
+  color: var(--color-text-muted);
+  font-style: italic;
+}

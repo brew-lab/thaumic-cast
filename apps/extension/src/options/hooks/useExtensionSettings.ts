@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'preact/hooks';
+import { useTranslation } from 'react-i18next';
 import {
   loadExtensionSettings,
   saveExtensionSettings,
@@ -16,6 +17,7 @@ export function useExtensionSettings(): {
   loading: boolean;
   error: string | null;
 } {
+  const { t } = useTranslation();
   const [settings, setSettings] = useState<ExtensionSettings>(getDefaultExtensionSettings());
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -34,7 +36,7 @@ export function useExtensionSettings(): {
         }
       } catch (err) {
         if (mounted) {
-          setError(err instanceof Error ? err.message : 'Failed to load settings');
+          setError(err instanceof Error ? err.message : t('error_load_settings'));
           setLoading(false);
         }
       }
@@ -59,16 +61,19 @@ export function useExtensionSettings(): {
     return () => chrome.storage.sync.onChanged.removeListener(handler);
   }, []);
 
-  const updateSettings = useCallback(async (partial: Partial<ExtensionSettings>) => {
-    try {
-      setError(null);
-      await saveExtensionSettings(partial);
-      setSettings((prev) => ({ ...prev, ...partial }));
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to save settings');
-      throw err;
-    }
-  }, []);
+  const updateSettings = useCallback(
+    async (partial: Partial<ExtensionSettings>) => {
+      try {
+        setError(null);
+        await saveExtensionSettings(partial);
+        setSettings((prev) => ({ ...prev, ...partial }));
+      } catch (err) {
+        setError(err instanceof Error ? err.message : t('error_save_settings'));
+        throw err;
+      }
+    },
+    [t],
+  );
 
   return { settings, updateSettings, loading, error };
 }

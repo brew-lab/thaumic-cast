@@ -1,12 +1,112 @@
 .card {
+  --artwork: none;
+  --dominant-l: 0.5;
+  --dominant-c: 0;
+  --dominant-h: 0;
+  --safe-l: 0.8;
+  --card-radius: 6px;
+  --card-border-width: 1px;
+
+  position: relative;
   display: flex;
   flex-direction: column;
   gap: 0.5rem;
   padding-block: 0.5rem;
   padding-inline: 0.5rem;
-  background: var(--color-bg);
-  border-radius: 6px;
-  border: 1px solid var(--color-border);
+  background: var(--card-bg);
+  border-radius: var(--card-radius);
+  border: var(--card-border-width) solid var(--card-border);
+  box-shadow: var(--card-shadow);
+  overflow: hidden;
+
+  /* View Transition API: name the card for track change transitions */
+  view-transition-name: active-cast-card;
+}
+
+/* Background artwork layer with adaptive darkness vignette */
+.card.hasArtwork::before {
+  content: '';
+  position: absolute;
+  inset-block: var(--card-border-width);
+  inset-inline: var(--card-border-width);
+  border-radius: calc(var(--card-radius) - var(--card-border-width));
+
+  /* Backdrop darkness: ensure text contrast, lighter images need darker overlay */
+  --backdrop-opacity: calc(0.55 + var(--dominant-l) * 0.4);
+
+  background:
+    radial-gradient(
+      ellipse at center,
+      oklch(0% 0 0 / calc(var(--backdrop-opacity) - 0.2)) 0%,
+      oklch(0% 0 0 / var(--backdrop-opacity)) 100%
+    ),
+    var(--artwork) center / cover no-repeat;
+  z-index: 0;
+}
+
+/* Ensure content is above background layers */
+.card.hasArtwork > * {
+  position: relative;
+  z-index: 2;
+}
+
+/* Color scheme derived from dominant color */
+.card.hasArtwork {
+  /* Safe accent for button backgrounds (lightened if needed for contrast) */
+  --accent: oklch(calc(var(--safe-l) * 100%) var(--dominant-c) var(--dominant-h));
+
+  /* Fixed dark icon color for buttons (WCAG AA contrast with --accent) */
+  --accent-contrast: oklch(20% 0 0);
+
+  /* Use original dominant color for card background (smoother visual transition) */
+  background: oklch(calc(var(--dominant-l) * 100%) var(--dominant-c) var(--dominant-h));
+
+  /* Text: light for contrast against dark backdrop overlay */
+  --color-text: oklch(95% 0 0);
+  --color-text-muted: oklch(80% 0 0);
+
+  /* Use accent for interactive elements */
+  --color-primary: var(--accent);
+  --color-error: var(--accent);
+
+  accent-color: var(--accent);
+}
+
+/* Icon buttons use solid accent background with proper contrast */
+.card.hasArtwork :global(.iconBtn) {
+  color: var(--accent-contrast);
+  background: var(--accent);
+  border-color: transparent;
+}
+
+.card.hasArtwork :global(.iconBtn:not(:disabled):hover) {
+  color: var(--accent-contrast);
+  background: oklch(calc((var(--safe-l) + 0.08) * 100%) var(--dominant-c) var(--dominant-h));
+}
+
+/* Volume control container - transparent on artwork cards */
+.card.hasArtwork :global(.volumeControl) {
+  background: transparent;
+}
+
+/* Slider track uses accent colors */
+.card.hasArtwork :global(.volumeControlSlider) {
+  background: linear-gradient(
+    to right,
+    var(--accent) var(--volume),
+    oklch(from var(--accent) l c h / 40%) var(--volume)
+  );
+}
+
+/* Slider thumb uses accent color */
+.card.hasArtwork :global(.volumeControlSlider::-webkit-slider-thumb) {
+  background: var(--accent);
+}
+
+/* Focus outlines for accessibility */
+.card.hasArtwork :global(input[type='range']:focus-visible) {
+  outline: 2px solid var(--color-focus);
+  outline-offset: 2px;
 }
 
 .header {
@@ -15,178 +115,99 @@
   gap: 0.5rem;
 }
 
-.artwork {
-  position: relative;
+.headerSpacer {
+  flex: 1;
+}
+
+.mainRow {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+/* Skip buttons (prev/next) - ghost style with text color */
+.skipBtn {
   flex-shrink: 0;
-  width: 36px;
-  height: 36px;
-  border-radius: 4px;
-  overflow: hidden;
-  background: var(--color-border);
+  background: transparent !important;
+  border: none !important;
+  color: var(--color-text-muted) !important;
 }
 
-.transportOverlay {
-  position: absolute;
-  inset-block-end: 2px;
-  inset-inline-end: 2px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 1px;
-  background: oklch(0% 0 0 / 60%);
+.skipBtn:hover {
+  color: var(--color-text) !important;
+  background: var(--color-surface-hover) !important;
+}
+
+.favicon {
+  flex-shrink: 0;
+  width: 16px;
+  height: 16px;
   border-radius: 2px;
-  color: white;
-}
-
-.image {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-}
-
-.placeholder {
-  width: 100%;
-  height: 100%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: var(--color-text-muted);
 }
 
 .info {
   flex: 1;
   min-width: 0;
-  overflow: hidden;
+  overflow: visible;
 }
 
 .title {
-  font-size: 0.75rem;
+  max-inline-size: 100%;
+  font-size: 0.875rem;
   font-weight: 500;
+  line-height: 1;
   color: var(--color-text);
   white-space: nowrap;
-  overflow: hidden;
+  overflow-x: clip;
   text-overflow: ellipsis;
+  text-box: cap alphabetic;
   margin: 0;
+  padding: 0;
+  background: transparent;
+  border: none;
+  text-align: start;
+  cursor: pointer;
+  transition: var(--transition-color);
+}
+
+.title:hover {
+  color: var(--color-primary);
+  text-decoration: underline;
+}
+
+.title:focus-visible {
+  outline: 2px solid var(--color-focus);
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+
+/* Title hover stays white on artwork cards - rely on underline for feedback */
+.card.hasArtwork .title:hover {
+  color: var(--color-text);
 }
 
 .subtitle {
-  font-size: 0.65rem;
+  max-inline-size: 100%;
+  font-size: 0.75rem;
+  line-height: 1;
   color: var(--color-text-muted);
   white-space: nowrap;
-  overflow: hidden;
+  overflow-x: clip;
   text-overflow: ellipsis;
+  text-box: cap alphabetic;
   margin: 0;
-  margin-block-start: 0.125rem;
+  margin-block-start: 0.25rem;
 }
 
-.speaker {
+.speakerRows {
   display: flex;
-  align-items: center;
+  flex-direction: column;
   gap: 0.25rem;
-  font-size: 0.6rem;
-  color: var(--color-casting);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  margin: 0;
-  margin-block-start: 0.125rem;
 }
 
-.speakerIcon {
-  flex-shrink: 0;
-}
-
-.stopButton {
-  flex-shrink: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 24px;
-  height: 24px;
-  background: transparent;
-  border: 1px solid var(--color-border);
-  border-radius: 4px;
-  color: var(--color-text-muted);
-  cursor: pointer;
-  transition:
-    background 0.15s,
-    color 0.15s,
-    border-color 0.15s;
-}
-
-.stopButton:hover {
-  background: var(--color-error);
-  border-color: var(--color-error);
-  color: white;
-}
-
-.stopButton:focus-visible {
-  outline: 2px solid var(--color-primary);
-  outline-offset: 2px;
-}
-
-/* Volume Controls */
-.volumeControl {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  padding-block: 0.25rem;
-  padding-inline: 0.25rem;
-  background: var(--color-surface);
-  border-radius: 4px;
-}
-
-.muteButton {
-  flex-shrink: 0;
-  background: transparent;
-  border: none;
-  cursor: pointer;
-  font-size: 0.875rem;
-  padding: 0;
-  border-radius: 2px;
-  transition: opacity 0.2s;
-}
-
-.muteButton:hover {
-  opacity: 0.8;
-}
-
-.muteButton.muted {
-  opacity: 0.5;
-}
-
-.volumeSlider {
-  flex: 1;
-  height: 4px;
-  appearance: none;
-  background: var(--color-border);
-  border-radius: 2px;
-  outline: none;
-  cursor: pointer;
-}
-
-.volumeSlider::-webkit-slider-thumb {
-  appearance: none;
-  width: 12px;
-  height: 12px;
-  background: var(--color-primary);
-  border-radius: 50%;
-  cursor: pointer;
-}
-
-.volumeSlider:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-
-.volumeSlider:disabled::-webkit-slider-thumb {
-  cursor: not-allowed;
-}
-
-.volumeValue {
-  flex-shrink: 0;
-  font-size: 0.65rem;
-  color: var(--color-text-muted);
-  min-width: 2rem;
-  text-align: end;
+/* Transition animation for track changes (background + colors) */
+::view-transition-old(active-cast-card),
+::view-transition-new(active-cast-card) {
+  animation-duration: 300ms;
+  animation-timing-function: ease-out;
 }

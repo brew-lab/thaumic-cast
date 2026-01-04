@@ -38,20 +38,30 @@ const DEFAULT_SETTINGS: AudioSettings = {
 
 /**
  * Audio quality mode presets.
- * - auto: Device tier + power state detection
- * - low: Optimized for low bandwidth/battery
+ * - low: Optimized for low bandwidth (mono, lower sample rate)
  * - mid: Balanced quality
- * - high: Maximum quality (lossless when available)
+ * - high: Maximum quality (highest bitrate available)
  * - custom: User-defined settings
  */
-export const AudioModeSchema = z.enum(['auto', 'low', 'mid', 'high', 'custom']);
+export const AudioModeSchema = z.enum(['low', 'mid', 'high', 'custom']);
 export type AudioMode = z.infer<typeof AudioModeSchema>;
 
 /**
  * Supported languages for the extension UI.
+ * Uses the locales defined in i18n.ts.
  */
-export const SupportedLocaleSchema = z.enum(['en']);
-export type SupportedLocale = z.infer<typeof SupportedLocaleSchema>;
+export { type SupportedLocale, SUPPORTED_LOCALES } from './i18n';
+import { SUPPORTED_LOCALES } from './i18n';
+const SupportedLocaleSchema = z.enum(SUPPORTED_LOCALES as [string, ...string[]]);
+
+/**
+ * Theme mode for the extension UI.
+ * - auto: Follow system preference (prefers-color-scheme)
+ * - light: Force light mode
+ * - dark: Force dark mode
+ */
+export const ThemeModeSchema = z.enum(['auto', 'light', 'dark']);
+export type ThemeMode = z.infer<typeof ThemeModeSchema>;
 
 /**
  * Custom audio settings when mode is 'custom'.
@@ -72,11 +82,14 @@ export const ExtensionSettingsSchema = z.object({
   serverUrl: z.string().nullable().default(null),
   useAutoDiscover: z.boolean().default(true),
 
+  // Appearance
+  theme: ThemeModeSchema.default('auto'),
+
   // Language
   language: SupportedLocaleSchema.default('en'),
 
   // Audio mode
-  audioMode: AudioModeSchema.default('auto'),
+  audioMode: AudioModeSchema.default('mid'),
 
   // Custom audio settings (used when audioMode is 'custom')
   customAudioSettings: CustomAudioSettingsSchema.default({
@@ -93,8 +106,9 @@ const EXTENSION_SETTINGS_KEY = 'extensionSettings';
 const DEFAULT_EXTENSION_SETTINGS: ExtensionSettings = {
   serverUrl: null,
   useAutoDiscover: true,
+  theme: 'auto',
   language: 'en',
-  audioMode: 'auto',
+  audioMode: 'mid',
   customAudioSettings: {
     codec: 'aac-lc',
     bitrate: 192,
@@ -218,4 +232,125 @@ export async function saveExtensionSettings(settings: Partial<ExtensionSettings>
  */
 export function getDefaultExtensionSettings(): ExtensionSettings {
   return { ...DEFAULT_EXTENSION_SETTINGS };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Onboarding State
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Onboarding steps completion tracking.
+ */
+export const OnboardingStepsSchema = z.object({
+  welcome: z.boolean().default(false),
+  desktopConnection: z.boolean().default(false),
+  speakerDiscovery: z.boolean().default(false),
+  ready: z.boolean().default(false),
+});
+export type OnboardingSteps = z.infer<typeof OnboardingStepsSchema>;
+
+/**
+ * Extension onboarding state schema.
+ */
+export const ExtensionOnboardingSchema = z.object({
+  /** Whether onboarding has been completed (or skipped) */
+  completed: z.boolean().default(false),
+  /** When onboarding was completed (ISO string) */
+  completedAt: z.string().nullable().default(null),
+  /** Whether user explicitly skipped onboarding */
+  skipped: z.boolean().default(false),
+  /** Individual step completion tracking for resumption */
+  stepsCompleted: OnboardingStepsSchema.default({
+    welcome: false,
+    desktopConnection: false,
+    speakerDiscovery: false,
+    ready: false,
+  }),
+  /** The app version when onboarding was completed */
+  completedVersion: z.string().nullable().default(null),
+});
+export type ExtensionOnboarding = z.infer<typeof ExtensionOnboardingSchema>;
+
+const ONBOARDING_STORAGE_KEY = 'extensionOnboarding';
+
+const DEFAULT_ONBOARDING: ExtensionOnboarding = {
+  completed: false,
+  completedAt: null,
+  skipped: false,
+  stepsCompleted: {
+    welcome: false,
+    desktopConnection: false,
+    speakerDiscovery: false,
+    ready: false,
+  },
+  completedVersion: null,
+};
+
+/**
+ * Loads onboarding state from chrome.storage.sync.
+ * Falls back to defaults if not set or invalid.
+ * @returns The onboarding state
+ */
+export async function loadOnboardingState(): Promise<ExtensionOnboarding> {
+  try {
+    const result = await chrome.storage.sync.get(ONBOARDING_STORAGE_KEY);
+    const data = result[ONBOARDING_STORAGE_KEY];
+
+    if (!data) return { ...DEFAULT_ONBOARDING };
+
+    const parsed = ExtensionOnboardingSchema.safeParse(data);
+    if (!parsed.success) {
+      log.warn('Invalid stored onboarding state, using defaults');
+      return { ...DEFAULT_ONBOARDING };
+    }
+
+    return parsed.data;
+  } catch (err) {
+    log.error('Failed to load onboarding state:', err);
+    return { ...DEFAULT_ONBOARDING };
+  }
+}
+
+/**
+ * Saves onboarding state to chrome.storage.sync.
+ * @param state - Partial state to merge with existing
+ */
+export async function saveOnboardingState(state: Partial<ExtensionOnboarding>): Promise<void> {
+  try {
+    const current = await loadOnboardingState();
+    const merged = {
+      ...current,
+      ...state,
+      stepsCompleted: {
+        ...current.stepsCompleted,
+        ...state.stepsCompleted,
+      },
+    };
+    await chrome.storage.sync.set({ [ONBOARDING_STORAGE_KEY]: merged });
+  } catch (err) {
+    log.error('Failed to save onboarding state:', err);
+  }
+}
+
+/**
+ * Marks onboarding as completed.
+ * @param version - Optional app version at completion
+ */
+export async function completeOnboarding(version?: string): Promise<void> {
+  await saveOnboardingState({
+    completed: true,
+    completedAt: new Date().toISOString(),
+    completedVersion: version ?? null,
+  });
+}
+
+/**
+ * Marks onboarding as skipped.
+ */
+export async function skipOnboarding(): Promise<void> {
+  await saveOnboardingState({
+    completed: true,
+    skipped: true,
+    completedAt: new Date().toISOString(),
+  });
 }

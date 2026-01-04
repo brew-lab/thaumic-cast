@@ -1,8 +1,10 @@
 import { useEffect, useState } from 'preact/hooks';
 import { getAutostartEnabled, setAutostartEnabled } from '../state/store';
 import { useTranslation } from 'react-i18next';
-import { Power, Globe } from 'lucide-preact';
+import { Power, Globe, Palette } from 'lucide-preact';
+import { Card } from '@thaumic-cast/ui';
 import i18n, { resources, SupportedLocale } from '../lib/i18n';
+import { type ThemeMode, getTheme, saveTheme, applyTheme } from '../lib/theme';
 import styles from './Settings.module.css';
 
 /** Language display names */
@@ -16,6 +18,7 @@ const LANGUAGE_NAMES: Record<SupportedLocale, string> = {
  * Allows users to configure app preferences:
  * - Autostart on login
  * - Language selection
+ * - Theme (auto/light/dark)
  * @returns The rendered Settings page
  */
 export function Settings() {
@@ -24,6 +27,7 @@ export function Settings() {
   const [currentLanguage, setCurrentLanguage] = useState<SupportedLocale>(
     i18n.language as SupportedLocale,
   );
+  const [currentTheme, setCurrentTheme] = useState<ThemeMode>(getTheme);
 
   useEffect(() => {
     getAutostartEnabled()
@@ -45,6 +49,12 @@ export function Settings() {
     setCurrentLanguage(locale);
   };
 
+  const handleThemeChange = (theme: ThemeMode) => {
+    applyTheme(theme);
+    saveTheme(theme);
+    setCurrentTheme(theme);
+  };
+
   const availableLanguages = Object.keys(resources) as SupportedLocale[];
 
   return (
@@ -52,7 +62,7 @@ export function Settings() {
       <h2 className={styles.title}>{t('nav.settings')}</h2>
 
       {/* Startup Section */}
-      <div className={styles.section}>
+      <Card noPadding className={styles.section}>
         <div className={styles.sectionHeader}>
           <Power size={18} />
           <h3 className={styles.sectionTitle}>{t('settings.startup')}</h3>
@@ -75,10 +85,10 @@ export function Settings() {
             />
           </label>
         </div>
-      </div>
+      </Card>
 
       {/* Language Section */}
-      <div className={styles.section}>
+      <Card noPadding className={styles.section}>
         <div className={styles.sectionHeader}>
           <Globe size={18} />
           <h3 className={styles.sectionTitle}>{t('settings.language')}</h3>
@@ -100,7 +110,33 @@ export function Settings() {
             </select>
           </div>
         </div>
-      </div>
+      </Card>
+
+      {/* Appearance Section */}
+      <Card noPadding className={styles.section}>
+        <div className={styles.sectionHeader}>
+          <Palette size={18} />
+          <h3 className={styles.sectionTitle}>{t('settings.appearance')}</h3>
+        </div>
+
+        <div className={styles.sectionContent}>
+          <div className={styles.field}>
+            <label className={styles.fieldLabel}>{t('settings.theme')}</label>
+            <select
+              value={currentTheme}
+              onChange={(e) => handleThemeChange(e.currentTarget.value as ThemeMode)}
+              className={styles.select}
+            >
+              <option value="auto">{t('settings.theme_auto')}</option>
+              <option value="light">{t('settings.theme_light')}</option>
+              <option value="dark">{t('settings.theme_dark')}</option>
+            </select>
+            {currentTheme === 'auto' && (
+              <span className={styles.hint}>{t('settings.theme_auto_desc')}</span>
+            )}
+          </div>
+        </div>
+      </Card>
     </div>
   );
 }

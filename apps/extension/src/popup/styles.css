@@ -1,5 +1,23 @@
 @import url('@thaumic-cast/ui/theme.css');
 
+/*
+ * Theme mode switching via data-theme attribute on <html>
+ * - auto: follows system preference (prefers-color-scheme)
+ * - light: forced light mode
+ * - dark: forced dark mode (default in theme.css)
+ */
+:root[data-theme='auto'] {
+  color-scheme: light dark;
+}
+
+:root[data-theme='light'] {
+  color-scheme: light;
+}
+
+:root[data-theme='dark'] {
+  color-scheme: dark;
+}
+
 body {
   margin-block: 0;
   margin-inline: 0;

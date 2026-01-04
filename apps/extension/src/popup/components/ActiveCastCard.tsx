@@ -1,137 +1,256 @@
 import type { JSX } from 'preact';
+import { flushSync } from 'preact/compat';
+import { useCallback, useState, useRef, useEffect } from 'preact/hooks';
 import { useTranslation } from 'react-i18next';
-import type { ActiveCast, TransportState } from '@thaumic-cast/protocol';
+import type { ActiveCast, TransportState, MediaAction } from '@thaumic-cast/protocol';
 import { getDisplayTitle, getDisplayImage, getDisplaySubtitle } from '@thaumic-cast/protocol';
+import { X, Play, Pause, SkipBack, SkipForward } from 'lucide-preact';
+import { IconButton, SpeakerVolumeRow } from '@thaumic-cast/ui';
 import { TransportIcon } from './TransportIcon';
+import { useDominantColor } from '../hooks/useDominantColor';
 import styles from './ActiveCastCard.module.css';
+
+/** Debounce interval for playback control buttons (ms) */
+const CONTROL_DEBOUNCE_MS = 300;
 
 interface ActiveCastCardProps {
   /** The active cast session */
   cast: ActiveCast;
-  /** Transport state for the target speaker */
-  transportState?: TransportState;
-  /** Current volume (0-100) */
-  volume: number;
-  /** Whether speaker is muted */
-  muted: boolean;
-  /** Callback when volume changes */
-  onVolumeChange: (volume: number) => void;
-  /** Callback when mute is toggled */
-  onMuteToggle: () => void;
+  /** Function to get transport state for a speaker IP */
+  getTransportState?: (speakerIp: string) => TransportState | undefined;
+  /** Function to get volume for a speaker IP */
+  getVolume: (speakerIp: string) => number;
+  /** Function to check if a speaker is muted */
+  isMuted: (speakerIp: string) => boolean;
+  /** Callback when volume changes for a speaker */
+  onVolumeChange: (speakerIp: string, volume: number) => void;
+  /** Callback when mute is toggled for a speaker */
+  onMuteToggle: (speakerIp: string) => void;
   /** Callback when stop button is clicked */
   onStop: () => void;
+  /** Callback when playback control is triggered */
+  onControl?: (action: MediaAction) => void;
 }
 
 /**
  * Displays an active cast session with volume controls and stop button.
  * @param props - Component props
  * @param props.cast
- * @param props.transportState
- * @param props.volume
- * @param props.muted
+ * @param props.getTransportState
+ * @param props.getVolume
+ * @param props.isMuted
  * @param props.onVolumeChange
  * @param props.onMuteToggle
  * @param props.onStop
+ * @param props.onControl
  * @returns The rendered ActiveCastCard component
  */
 export function ActiveCastCard({
   cast,
-  transportState,
-  volume,
-  muted,
+  getTransportState,
+  getVolume,
+  isMuted,
   onVolumeChange,
   onMuteToggle,
   onStop,
+  onControl,
 }: ActiveCastCardProps): JSX.Element {
   const { t } = useTranslation();
 
   const title = getDisplayTitle(cast.mediaState);
   const image = getDisplayImage(cast.mediaState);
   const subtitle = getDisplaySubtitle(cast.mediaState);
+  const favicon = cast.mediaState.tabFavicon;
+  const supportedActions = cast.mediaState.supportedActions ?? [];
+
+  // Stage image updates to enable view transitions on track changes
+  const [stagedImage, setStagedImage] = useState(image);
+
+  useEffect(() => {
+    if (image !== stagedImage) {
+      // Trigger view transition when image changes (skip initial render)
+      if (stagedImage !== undefined && document.startViewTransition) {
+        document.startViewTransition(() => {
+          flushSync(() => setStagedImage(image));
+        });
+      } else {
+        setStagedImage(image);
+      }
+    }
+  }, [image, stagedImage]);
+
+  // Determine which playback controls to show
+  const canPrev = supportedActions.includes('previoustrack');
+  const canNext = supportedActions.includes('nexttrack');
+  const canPlay = supportedActions.includes('play');
+  const canPause = supportedActions.includes('pause');
+
+  // Get playback state from MediaSession (via background cache)
+  const playbackState = cast.mediaState.playbackState ?? 'none';
+  const isPlaying = playbackState === 'playing';
+
+  // Local state for optimistic UI updates (immediate feedback before site confirms)
+  const [optimisticPlaying, setOptimisticPlaying] = useState<boolean | null>(null);
+
+  // Reset optimistic state when real playback state updates
+  useEffect(() => {
+    setOptimisticPlaying(null);
+  }, [playbackState]);
+
+  // Use optimistic state if set, otherwise use real state
+  const displayIsPlaying = optimisticPlaying ?? isPlaying;
+
+  // Debounce ref to prevent rapid clicking
+  const lastControlTime = useRef<Record<string, number>>({});
+
+  // Extract dominant color from artwork for backdrop tinting
+  const dominantColor = useDominantColor(stagedImage);
+
+  /**
+   * Navigates to the tab associated with this cast session.
+   */
+  const goToTab = useCallback(() => {
+    chrome.tabs.update(cast.tabId, { active: true });
+  }, [cast.tabId]);
+
+  /**
+   * Handles playback control with debounce to prevent rapid clicks.
+   * @param action - The media action to perform
+   */
+  const handleControl = useCallback(
+    (action: MediaAction) => {
+      if (!onControl) return;
+
+      const now = Date.now();
+      const lastTime = lastControlTime.current[action] ?? 0;
+
+      // Skip if clicked too recently
+      if (now - lastTime < CONTROL_DEBOUNCE_MS) return;
+      lastControlTime.current[action] = now;
+
+      // Optimistic update for immediate UI feedback
+      if (action === 'play') {
+        setOptimisticPlaying(true);
+      } else if (action === 'pause') {
+        setOptimisticPlaying(false);
+      }
+      // For prev/next, we'll get the real state from playbackState update
+
+      onControl(action);
+    },
+    [onControl],
+  );
+
+  /**
+   * Handles play/pause toggle with optimistic state update.
+   */
+  const handlePlayPause = useCallback(() => {
+    const action = displayIsPlaying ? 'pause' : 'play';
+    handleControl(action);
+  }, [displayIsPlaying, handleControl]);
+
+  // Build style object with artwork and color CSS custom properties
+  const cardStyle: Record<string, string> = {};
+  if (stagedImage) {
+    cardStyle['--artwork'] = `url(${stagedImage})`;
+  }
+  if (dominantColor) {
+    const [l, c, h] = dominantColor.oklch;
+    cardStyle['--dominant-l'] = l.toFixed(3);
+    cardStyle['--dominant-c'] = c.toFixed(3);
+    cardStyle['--dominant-h'] = h.toFixed(1);
+    cardStyle['--safe-l'] = dominantColor.safeL.toFixed(3);
+  }
 
   return (
-    <div className={styles.card}>
+    <div
+      className={`${styles.card} ${stagedImage ? styles.hasArtwork : ''}`}
+      style={Object.keys(cardStyle).length > 0 ? (cardStyle as JSX.CSSProperties) : undefined}
+    >
       <div className={styles.header}>
-        <div className={styles.artwork}>
-          {image ? (
-            <img src={image} alt="" className={styles.image} loading="lazy" />
-          ) : (
-            <div className={styles.placeholder} aria-hidden="true">
-              <svg
-                xmlns="http://www.w3.org/2000/svg"
-                width="20"
-                height="20"
-                viewBox="0 0 24 24"
-                fill="currentColor"
-              >
-                <path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z" />
-              </svg>
-            </div>
-          )}
-          {transportState && (
-            <div className={styles.transportOverlay}>
-              <TransportIcon state={transportState} size={14} />
-            </div>
-          )}
-        </div>
-
-        <div className={styles.info}>
-          <p className={styles.title}>{title}</p>
-          {subtitle && <p className={styles.subtitle}>{subtitle}</p>}
-          <p className={styles.speaker}>
-            <svg
-              xmlns="http://www.w3.org/2000/svg"
-              width="10"
-              height="10"
-              viewBox="0 0 24 24"
-              fill="currentColor"
-              className={styles.speakerIcon}
-            >
-              <path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z" />
-            </svg>
-            {cast.speakerName || cast.speakerIp}
-          </p>
-        </div>
-
-        <button
-          type="button"
-          className={styles.stopButton}
+        {favicon && <img src={favicon} alt="" className={styles.favicon} loading="lazy" />}
+        <span className={styles.headerSpacer} />
+        <IconButton
+          className={styles.skipBtn}
+          size="sm"
           onClick={onStop}
           aria-label={t('stop_cast')}
           title={t('stop_cast')}
         >
-          <svg
-            xmlns="http://www.w3.org/2000/svg"
-            width="14"
-            height="14"
-            viewBox="0 0 24 24"
-            fill="currentColor"
-          >
-            <path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z" />
-          </svg>
-        </button>
+          <X size={12} />
+        </IconButton>
       </div>
 
-      {/* Volume Controls */}
-      <div className={styles.volumeControl}>
-        <button
-          type="button"
-          className={`${styles.muteButton} ${muted ? styles.muted : ''}`}
-          onClick={onMuteToggle}
-          title={muted ? t('unmute') : t('mute')}
-        >
-          {muted ? '🔇' : '🔊'}
-        </button>
-        <input
-          type="range"
-          min="0"
-          max="100"
-          value={volume}
-          onChange={(e) => onVolumeChange(parseInt((e.target as HTMLInputElement).value, 10))}
-          className={styles.volumeSlider}
-          disabled={muted}
-        />
-        <span className={styles.volumeValue}>{volume}%</span>
+      <div className={styles.mainRow}>
+        {canPrev && onControl && (
+          <IconButton
+            className={styles.skipBtn}
+            onClick={() => handleControl('previoustrack')}
+            aria-label={t('previous_track')}
+            title={t('previous_track')}
+          >
+            <SkipBack size={14} />
+          </IconButton>
+        )}
+
+        <div className={styles.info}>
+          <button
+            type="button"
+            className={styles.title}
+            onClick={goToTab}
+            title={t('go_to_tab')}
+            aria-label={`${t('go_to_tab')}: ${title}`}
+          >
+            {title}
+          </button>
+          {subtitle && <p className={styles.subtitle}>{subtitle}</p>}
+        </div>
+
+        {(canPlay || canPause) && onControl && (
+          <IconButton
+            onClick={handlePlayPause}
+            aria-label={displayIsPlaying ? t('pause') : t('play')}
+            title={displayIsPlaying ? t('pause') : t('play')}
+          >
+            {displayIsPlaying ? <Pause size={14} /> : <Play size={14} />}
+          </IconButton>
+        )}
+
+        {canNext && onControl && (
+          <IconButton
+            className={styles.skipBtn}
+            onClick={() => handleControl('nexttrack')}
+            aria-label={t('next_track')}
+            title={t('next_track')}
+          >
+            <SkipForward size={14} />
+          </IconButton>
+        )}
+      </div>
+
+      {/* Per-speaker volume controls */}
+      <div className={styles.speakerRows}>
+        {cast.speakerIps.map((ip, idx) => {
+          const name = cast.speakerNames[idx] ?? ip;
+          const transportState = getTransportState?.(ip);
+          return (
+            <SpeakerVolumeRow
+              key={ip}
+              speakerName={name}
+              speakerIp={ip}
+              volume={getVolume(ip)}
+              muted={isMuted(ip)}
+              onVolumeChange={(vol) => onVolumeChange(ip, vol)}
+              onMuteToggle={() => onMuteToggle(ip)}
+              muteLabel={t('mute')}
+              unmuteLabel={t('unmute')}
+              volumeLabel={t('volume')}
+              statusIndicator={
+                transportState ? <TransportIcon state={transportState} size={10} /> : undefined
+              }
+            />
+          );
+        })}
       </div>
     </div>
   );

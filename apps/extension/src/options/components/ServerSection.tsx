@@ -33,38 +33,50 @@ export function ServerSection({ settings, onUpdate }: ServerSectionProps): JSX.E
   /**
    * Tests connection to the specified server URL.
    */
-  const testConnection = useCallback(async (url: string) => {
-    setTesting(true);
-    setTestResult(null);
+  const testConnection = useCallback(
+    async (url: string) => {
+      setTesting(true);
+      setTestResult(null);
 
-    const start = performance.now();
-    try {
-      const res = await fetch(`${url}/health`, {
-        signal: AbortSignal.timeout(3000),
-      });
+      const start = performance.now();
+      try {
+        const res = await fetch(`${url}/health`, {
+          signal: AbortSignal.timeout(3000),
+        });
 
-      if (!res.ok) {
-        throw new Error('Server returned error');
+        if (!res.ok) {
+          throw new Error(t('error_server_error'));
+        }
+
+        const data = await res.json();
+        if (data.service !== 'thaumic-cast-desktop') {
+          throw new Error(t('error_wrong_server'));
+        }
+
+        setTestResult({
+          success: true,
+          latency: Math.round(performance.now() - start),
+        });
+      } catch (err) {
+        // Map common network errors to user-friendly messages
+        let errorMessage = t('server_test_failed');
+        if (err instanceof Error) {
+          if (err.message === 'Failed to fetch' || err.name === 'TypeError') {
+            errorMessage = t('error_network_failed');
+          } else {
+            errorMessage = err.message;
+          }
+        }
+        setTestResult({
+          success: false,
+          error: errorMessage,
+        });
+      } finally {
+        setTesting(false);
       }
-
-      const data = await res.json();
-      if (data.service !== 'thaumic-cast-desktop') {
-        throw new Error('Not a Thaumic Cast server');
-      }
-
-      setTestResult({
-        success: true,
-        latency: Math.round(performance.now() - start),
-      });
-    } catch (err) {
-      setTestResult({
-        success: false,
-        error: err instanceof Error ? err.message : 'Connection failed',
-      });
-    } finally {
-      setTesting(false);
-    }
-  }, []);
+    },
+    [t],
+  );
 
   /**
    * Handles auto-discover toggle.
@@ -99,7 +111,7 @@ export function ServerSection({ settings, onUpdate }: ServerSectionProps): JSX.E
 
   return (
     <Card title={t('server_section_title')}>
-      <div className={styles.cardContent}>
+      <div className={styles.cardContent} role="radiogroup" aria-label={t('server_section_title')}>
         {/* Auto-discover option */}
         <label className={styles.radioOption}>
           <input
@@ -132,20 +144,25 @@ export function ServerSection({ settings, onUpdate }: ServerSectionProps): JSX.E
         {/* URL input (shown when custom mode) */}
         {!settings.useAutoDiscover && (
           <div className={styles.field}>
-            <label className={styles.label}>{t('server_url_label')}</label>
+            <label htmlFor="server-url" className={styles.label}>
+              {t('server_url_label')}
+            </label>
             <div className={styles.inlineRow}>
               <input
-                type="text"
+                id="server-url"
+                type="url"
                 className={styles.input}
                 style={{ flex: 1 }}
                 placeholder={t('server_url_placeholder')}
                 value={urlInput}
                 onInput={handleUrlChange}
+                autoComplete="url"
               />
               <Button
                 variant="secondary"
                 onClick={handleSaveUrl}
                 disabled={testing || !urlInput.trim()}
+                aria-busy={testing}
               >
                 {testing ? t('server_testing') : t('server_test_connection')}
               </Button>

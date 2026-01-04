@@ -4,7 +4,6 @@ mod config;
 mod context;
 mod error;
 mod events;
-mod power;
 mod protocol_constants;
 mod services;
 mod sonos;
@@ -16,15 +15,18 @@ mod utils;
 
 use std::sync::Arc;
 
+rust_i18n::i18n!("locales", fallback = "en");
+
 use tauri::{Manager, RunEvent};
 use tauri_plugin_log::{Target, TargetKind};
 
 use crate::api::commands::{
     clear_all_connections, clear_all_streams, get_autostart_enabled, get_groups,
-    get_playback_sessions, get_server_port, get_speakers, get_stats, get_transport_states,
-    refresh_topology, restart_server, set_autostart_enabled, start_playback,
+    get_network_health, get_platform, get_playback_sessions, get_server_port, get_speakers,
+    get_stats, get_transport_states, refresh_topology, restart_server, set_autostart_enabled,
+    start_network_services, start_playback,
 };
-use crate::api::{start_server, AppState};
+use crate::api::AppState;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -54,8 +56,11 @@ pub fn run() {
             get_stats,
             get_transport_states,
             get_playback_sessions,
+            get_network_health,
+            get_platform,
             start_playback,
             get_server_port,
+            start_network_services,
             refresh_topology,
             restart_server,
             clear_all_streams,
@@ -64,13 +69,24 @@ pub fn run() {
             set_autostart_enabled
         ])
         .setup(|app| {
+            // Detect and set system locale for i18n
+            if let Some(locale) = sys_locale::get_locale() {
+                // Try exact match first, then base language (e.g., "en" from "en-US")
+                let base_locale = locale.split('-').next().unwrap_or("en");
+                rust_i18n::set_locale(base_locale);
+                log::debug!("Locale set to: {} (detected: {})", base_locale, locale);
+            }
+
             let state = Arc::new(AppState::new());
 
             // Store app handle for restart functionality
             state.set_app_handle(app.handle().clone());
 
-            // Start background tasks
-            state.start_background_tasks();
+            // NOTE: Network services (HTTP server, discovery, GENA) are NOT started here.
+            // They are started by the frontend calling `start_network_services` after:
+            // - User acknowledges the firewall warning during onboarding, OR
+            // - Onboarding was already completed (called immediately on app load)
+            // This ensures the Windows Firewall prompt appears AFTER the warning is shown.
 
             app.manage((*state).clone());
 
@@ -86,22 +102,6 @@ pub fn run() {
                     log::info!("Autostart enabled by default");
                 }
             }
-
-            // NOTE: Spawning async tasks in Tauri
-            // ─────────────────────────────────────────────────────────────────
-            // - From SYNC functions: Use `tauri::async_runtime::spawn`
-            //   (uses a stored runtime handle, works from any context)
-            // - From ASYNC functions: Use `tokio::spawn`
-            //   (requires already being on the Tokio runtime)
-            //
-            // Using `tokio::spawn` from a sync context will panic with:
-            // "there is no reactor running, must be called from the context of a Tokio 1.x runtime"
-            let state_clone = app.state::<AppState>().inner().clone();
-            tauri::async_runtime::spawn(async move {
-                if let Err(e) = start_server(state_clone).await {
-                    log::error!("Server error: {}", e);
-                }
-            });
 
             Ok(())
         })

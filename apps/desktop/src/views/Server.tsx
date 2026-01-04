@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'preact/hooks';
 import { stats, fetchStats, clearAllConnections, restartServer, stopAll } from '../state/store';
-import { Button } from '@thaumic-cast/ui';
+import { Button, Card } from '@thaumic-cast/ui';
 import { ActionButton } from '../components/ActionButton';
 import { useTranslation } from 'react-i18next';
 import { Copy, Check, RefreshCcw, Unplug, Square, Circle } from 'lucide-preact';
@@ -39,7 +39,7 @@ export function Server() {
       <h2 className={styles.title}>{t('nav.server')}</h2>
 
       {/* Status Section */}
-      <div className={styles.section}>
+      <Card noPadding className={styles.section}>
         <div className={styles.statusHeader}>
           <div className={styles.statusIndicator}>
             <Circle size={10} fill="var(--color-success)" color="var(--color-success)" />
@@ -75,10 +75,10 @@ export function Server() {
             <span className={styles.statusValue}>{stats.value?.streamCount ?? 0}</span>
           </div>
         </div>
-      </div>
+      </Card>
 
       {/* Actions Section */}
-      <div className={styles.section}>
+      <Card noPadding className={styles.section}>
         <h3 className={styles.sectionTitle}>{t('server.actions')}</h3>
 
         <div className={styles.actionList}>
@@ -110,7 +110,7 @@ export function Server() {
               label={t('server.disconnect')}
               loadingLabel={t('server.disconnecting')}
               icon={Unplug}
-              variant="danger"
+              variant="primary"
               className={styles.actionButton}
             />
           </div>
@@ -127,12 +127,12 @@ export function Server() {
               label={t('server.stop')}
               loadingLabel={t('server.stopping')}
               icon={Square}
-              variant="danger"
+              variant="primary"
               className={styles.actionButton}
             />
           </div>
         </div>
-      </div>
+      </Card>
     </div>
   );
 }
