@@ -1,12 +1,16 @@
-import { WizardStep } from '@thaumic-cast/ui';
-import { Zap, Check, Wifi, Timer } from 'lucide-preact';
+import { useEffect, useState } from 'preact/hooks';
+import { WizardStep, Alert } from '@thaumic-cast/ui';
+import { Zap, Check, Timer } from 'lucide-preact';
 import { useTranslation } from 'react-i18next';
-import { groups, stats } from '../../state/store';
+import { groups, stats, getAutostartEnabled, setAutostartEnabled } from '../../state/store';
 import styles from './ReadyStep.module.css';
+
+/** Maximum concurrent streams allowed (matches backend constant) */
+const MAX_STREAMS = 10;
 
 /**
  * Final onboarding step confirming setup is complete.
- * Shows summary and performance expectations.
+ * Shows summary, performance expectations, and autostart toggle.
  *
  * @returns The rendered ReadyStep component
  */
@@ -15,6 +19,18 @@ export function ReadyStep(): preact.JSX.Element {
   const speakerCount = groups.value.length;
   const connectionCount = stats.value?.connectionCount ?? 0;
   const extensionStatus = connectionCount > 0 ? 'Connected' : 'Pending';
+  const [autostartEnabled, setAutostartState] = useState(true);
+
+  useEffect(() => {
+    getAutostartEnabled().then(setAutostartState);
+  }, []);
+
+  const handleAutostartChange = async (e: Event) => {
+    const target = e.target as HTMLInputElement;
+    const enabled = target.checked;
+    setAutostartState(enabled);
+    await setAutostartEnabled(enabled);
+  };
 
   return (
     <WizardStep
@@ -41,23 +57,22 @@ export function ReadyStep(): preact.JSX.Element {
         </div>
       </div>
 
-      <h3 className={styles.perfTitle}>{t('onboarding.ready.performance_title')}</h3>
-      <p className={styles.perfBody}>{t('onboarding.ready.performance_body')}</p>
+      <p className={styles.introText}>{t('onboarding.ready.intro', { maxStreams: MAX_STREAMS })}</p>
 
-      <ul className={styles.tipList}>
-        <li>
-          <Wifi size={14} />
-          {t('onboarding.ready.tip_1')}
-        </li>
-        <li>
-          <Wifi size={14} />
-          {t('onboarding.ready.tip_2')}
-        </li>
-        <li>
-          <Wifi size={14} />
-          {t('onboarding.ready.tip_3')}
-        </li>
-      </ul>
+      <h3 className={styles.sectionTitle}>{t('onboarding.ready.performance_title')}</h3>
+      <p className={styles.sectionBody}>{t('onboarding.ready.performance_body')}</p>
+
+      <Alert variant="warning">{t('onboarding.ready.battery_warning')}</Alert>
+
+      <label className={styles.autostartToggle}>
+        <input type="checkbox" checked={autostartEnabled} onChange={handleAutostartChange} />
+        <div className={styles.autostartContent}>
+          <span className={styles.autostartLabel}>{t('onboarding.ready.autostart_label')}</span>
+          <span className={styles.autostartDescription}>
+            {t('onboarding.ready.autostart_description')}
+          </span>
+        </div>
+      </label>
     </WizardStep>
   );
 }

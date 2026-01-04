@@ -6,7 +6,6 @@
   background: var(--color-surface);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-md);
-  margin-block-end: var(--space-lg);
 }
 
 .summaryItem {
@@ -25,36 +24,60 @@
   flex-shrink: 0;
 }
 
-.perfTitle {
-  font-size: 1rem;
-  font-weight: 600;
-  margin: 0 0 var(--space-sm);
+.introText {
+  margin: 0;
+  line-height: 1.6;
 }
 
-.perfBody {
-  margin: 0 0 var(--space-lg);
+.sectionTitle {
+  font-size: 1rem;
+  font-weight: 600;
+  margin: 0;
+}
+
+.sectionBody {
+  margin: 0;
   line-height: 1.6;
   color: var(--color-text-muted);
 }
 
-.tipList {
+.autostartToggle {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-md);
+  padding: var(--space-md);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  transition: var(--transition-bg);
+}
+
+.autostartToggle:hover {
+  background: var(--color-surface-hover);
+}
+
+.autostartToggle input[type='checkbox'] {
   margin: 0;
-  padding: 0;
-  list-style: none;
+  margin-block-start: 0.25rem;
+  accent-color: var(--color-primary);
+  inline-size: 1.25rem;
+  block-size: 1.25rem;
+  flex-shrink: 0;
+}
+
+.autostartContent {
   display: flex;
   flex-direction: column;
-  gap: var(--space-sm);
+  gap: var(--space-xs);
 }
 
-.tipList li {
-  display: flex;
-  align-items: center;
-  gap: var(--space-sm);
-  font-size: 0.9rem;
+.autostartLabel {
+  font-weight: 500;
+}
+
+.autostartDescription {
+  font-size: 0.85rem;
   color: var(--color-text-muted);
-}
-
-.tipList li svg {
-  flex-shrink: 0;
-  color: var(--color-primary);
+  line-height: 1.5;
 }

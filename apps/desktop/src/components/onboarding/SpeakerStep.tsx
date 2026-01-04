@@ -24,12 +24,28 @@ export function SpeakerStep({ onSpeakersFound }: SpeakerStepProps): preact.JSX.E
   const speakerCount = groups.value.length;
 
   useEffect(() => {
+    let healthCheckTimer: ReturnType<typeof setTimeout> | null = null;
+
     // Wait briefly for network services to start discovering
     const timer = setTimeout(async () => {
       await fetchGroups();
       setIsSearching(false);
+
+      // Trigger a second topology refresh after a delay to catch network health issues
+      // The first discovery doesn't evaluate health (gives GENA time to connect),
+      // so this second pass will properly detect "discovered but unreachable" scenarios
+      healthCheckTimer = setTimeout(async () => {
+        await refreshTopology();
+        await fetchGroups();
+      }, 3000);
     }, 1500);
-    return () => clearTimeout(timer);
+
+    return () => {
+      clearTimeout(timer);
+      if (healthCheckTimer) {
+        clearTimeout(healthCheckTimer);
+      }
+    };
   }, []);
 
   useEffect(() => {

@@ -195,3 +195,14 @@ export const getAutostartEnabled = async (): Promise<boolean> => {
 export const setAutostartEnabled = async (enabled: boolean): Promise<void> => {
   await invoke('set_autostart_enabled', { enabled });
 };
+
+/** Supported platform types */
+export type Platform = 'windows' | 'macos' | 'linux' | 'unknown';
+
+/**
+ * Gets the current platform (windows, macos, linux).
+ * @returns The platform identifier
+ */
+export const getPlatform = async (): Promise<Platform> => {
+  return invoke<Platform>('get_platform');
+};

@@ -223,3 +223,24 @@ pub fn get_network_health(state: tauri::State<'_, AppState>) -> NetworkHealthRes
         reason: health_state.reason,
     }
 }
+
+/// Returns the current platform (windows, macos, linux).
+#[tauri::command]
+pub fn get_platform() -> &'static str {
+    #[cfg(target_os = "windows")]
+    {
+        "windows"
+    }
+    #[cfg(target_os = "macos")]
+    {
+        "macos"
+    }
+    #[cfg(target_os = "linux")]
+    {
+        "linux"
+    }
+    #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
+    {
+        "unknown"
+    }
+}

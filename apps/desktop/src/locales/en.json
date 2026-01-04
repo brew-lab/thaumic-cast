@@ -74,12 +74,18 @@
   "onboarding.welcome.footnote": "Think of it as a very dedicated postal service for sound.",
 
   "onboarding.firewall.title": "A Brief Interruption",
-  "onboarding.firewall.subtitle": "Windows would like a word",
-  "onboarding.firewall.warning_text": "In a moment, Windows will likely ask for permission to allow network access. This is normal and entirely necessary.",
+  "onboarding.firewall.subtitle_windows": "Windows would like a word",
+  "onboarding.firewall.subtitle_macos": "macOS has some questions",
+  "onboarding.firewall.subtitle_linux": "A word about network access",
+  "onboarding.firewall.warning_text_windows": "In a moment, Windows will likely ask for permission to allow network access. This is normal and entirely necessary.",
+  "onboarding.firewall.warning_text_macos": "macOS may ask you to allow incoming network connections. This is normal and entirely necessary.",
+  "onboarding.firewall.warning_text_linux": "Depending on your firewall configuration, you may need to allow incoming connections on ports 49400-49410.",
   "onboarding.firewall.reason_1": "Your browser extension needs to send audio data to this app",
   "onboarding.firewall.reason_2": "This app needs to communicate with your Sonos speakers",
   "onboarding.firewall.reason_3": "All traffic stays on your local network — nothing leaves your home",
-  "onboarding.firewall.reassurance": "Click 'Allow' when Windows asks. We promise not to do anything nefarious with your trust.",
+  "onboarding.firewall.reassurance_windows": "Click 'Allow' when Windows asks. We promise not to do anything nefarious with your trust.",
+  "onboarding.firewall.reassurance_macos": "Click 'Allow' when macOS asks. We promise not to do anything nefarious with your trust.",
+  "onboarding.firewall.reassurance_linux": "If you're using a firewall like ufw or firewalld, you may need to open ports 49400-49410 for TCP.",
 
   "onboarding.speakers.title": "Discovering Speakers",
   "onboarding.speakers.subtitle": "Let's find your Sonos devices",
@@ -97,11 +103,12 @@
   "onboarding.extension.connected": "Extension connected! Someone's home.",
   "onboarding.extension.skip_hint": "You can always install it later from the Chrome Web Store.",
 
-  "onboarding.ready.title": "Configuration Complete",
-  "onboarding.ready.subtitle": "You're ready to cast audio",
-  "onboarding.ready.performance_title": "Setting Expectations",
-  "onboarding.ready.performance_body": "Audio latency is typically 100–300ms over local network. This is ideal for music and video, though gamers may find it... educational.",
-  "onboarding.ready.tip_1": "Wired connections are more reliable than WiFi",
-  "onboarding.ready.tip_2": "Close proximity to your router helps",
-  "onboarding.ready.tip_3": "5GHz WiFi generally outperforms 2.4GHz for this purpose"
+  "onboarding.ready.title": "The Ritual is Complete",
+  "onboarding.ready.subtitle": "Your speakers await instruction",
+  "onboarding.ready.intro": "You can now stream audio from up to {{maxStreams}} browser tabs simultaneously. The universe has limits, and apparently this is one of them.",
+  "onboarding.ready.performance_title": "A Note on Expectations",
+  "onboarding.ready.performance_body": "This works best for music. Latency is typically 100–300ms, which is imperceptible when listening to songs but quite noticeable if you're trying to conduct an orchestra.",
+  "onboarding.ready.battery_warning": "Laptops running on battery power may experience occasional hiccups, as your computer decides that saving energy is more important than your listening pleasure. Browsers can be particularly zealous about this.",
+  "onboarding.ready.autostart_label": "Launch at login",
+  "onboarding.ready.autostart_description": "Have Thaumic Cast ready and waiting when you arrive, like a particularly attentive butler for your audio needs."
 }
