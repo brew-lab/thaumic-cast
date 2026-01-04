@@ -3,6 +3,9 @@ import { useTranslation } from 'react-i18next';
 import { discoverDesktopApp } from '../../lib/discovery';
 import type { ConnectionState } from '../../background/connection-state';
 
+/** Network health status from desktop app */
+export type NetworkHealthStatus = 'ok' | 'degraded';
+
 /**
  * Connection status for the popup.
  */
@@ -17,6 +20,10 @@ export interface ConnectionStatus {
   desktopAppUrl: string | null;
   /** Maximum concurrent streams allowed */
   maxStreams: number | null;
+  /** Network health status from desktop (speakers responding, etc.) */
+  networkHealth: NetworkHealthStatus;
+  /** Reason for degraded network health (null if healthy) */
+  networkHealthReason: string | null;
 }
 
 /**
@@ -35,6 +42,8 @@ export function useConnectionStatus(): ConnectionStatus {
     error: null,
     desktopAppUrl: null,
     maxStreams: null,
+    networkHealth: 'ok',
+    networkHealthReason: null,
   });
 
   useEffect(() => {
@@ -61,6 +70,8 @@ export function useConnectionStatus(): ConnectionStatus {
             error: cached.lastError,
             desktopAppUrl: cached.desktopAppUrl,
             maxStreams: cached.maxStreams,
+            networkHealth: cached.networkHealth ?? 'ok',
+            networkHealthReason: cached.networkHealthReason ?? null,
           });
 
           // Always attempt connection to verify/establish connection.
@@ -90,6 +101,8 @@ export function useConnectionStatus(): ConnectionStatus {
               error: t('error_desktop_not_found'),
               desktopAppUrl: null,
               maxStreams: null,
+              networkHealth: 'ok',
+              networkHealthReason: null,
             });
             return;
           }
@@ -145,6 +158,17 @@ export function useConnectionStatus(): ConnectionStatus {
             connected: false,
             checking: false,
             error: reason === 'max_retries_exceeded' ? t('error_connection_lost') : null,
+          }));
+          break;
+        }
+
+        case 'NETWORK_HEALTH_CHANGED': {
+          const health = message.health as NetworkHealthStatus;
+          const reason = message.reason as string | null;
+          setStatus((s) => ({
+            ...s,
+            networkHealth: health,
+            networkHealthReason: reason,
           }));
           break;
         }

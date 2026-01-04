@@ -22,36 +22,14 @@
   margin: 0;
 }
 
+.alert {
+  margin-block-end: 1rem;
+}
+
 .error {
   position: sticky;
   inset-block-start: 0.5rem;
   z-index: 10;
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  padding-block: 0.5rem;
-  padding-inline: 0.5rem;
-  background: var(--color-error);
-  color: var(--color-on-error);
-  border-radius: 4px;
-  margin-block-end: 1rem;
-  font-size: 0.85rem;
-}
-
-.errorMessage {
-  flex: 1;
-  text-box: cap alphabetic;
-}
-
-.errorDismiss {
-  color: var(--color-on-error);
-  opacity: 0.8;
-}
-
-.errorDismiss:hover {
-  background: transparent;
-  color: var(--color-on-error);
-  opacity: 1;
 }
 
 .field {

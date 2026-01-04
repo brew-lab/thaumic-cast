@@ -33,6 +33,7 @@ export type ExtensionMessageType =
   | 'TAB_STATE_CHANGED'
   | 'ACTIVE_CASTS_CHANGED'
   | 'CAST_AUTO_STOPPED'
+  | 'NETWORK_HEALTH_CHANGED'
   // WebSocket control messages (background ↔ offscreen)
   | 'WS_CONNECT'
   | 'WS_DISCONNECT'
@@ -44,6 +45,7 @@ export type ExtensionMessageType =
   | 'WS_DISCONNECTED'
   | 'WS_PERMANENTLY_DISCONNECTED'
   | 'SONOS_EVENT'
+  | 'NETWORK_EVENT'
   // State update messages (background → popup)
   | 'WS_STATE_CHANGED'
   | 'VOLUME_UPDATE'
@@ -453,6 +455,33 @@ export interface WsConnectionLostMessage {
   reason: string;
 }
 
+/**
+ * Network health status from desktop app.
+ */
+export type NetworkHealthStatus = 'ok' | 'degraded';
+
+/**
+ * Network event from desktop app (offscreen → background).
+ */
+export interface NetworkEventMessage {
+  type: 'NETWORK_EVENT';
+  payload: {
+    type: 'healthChanged';
+    health: NetworkHealthStatus;
+    reason?: string;
+    timestamp: number;
+  };
+}
+
+/**
+ * Network health changed notification (background → popup).
+ */
+export interface NetworkHealthChangedMessage {
+  type: 'NETWORK_HEALTH_CHANGED';
+  health: NetworkHealthStatus;
+  reason: string | null;
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Control Commands (popup → background → offscreen → desktop)
 // ─────────────────────────────────────────────────────────────────────────────
@@ -515,6 +544,7 @@ export type ExtensionMessage =
   | TabStateChangedMessage
   | ActiveCastsChangedMessage
   | CastAutoStoppedMessage
+  | NetworkHealthChangedMessage
   // WebSocket messages
   | WsConnectMessage
   | WsDisconnectMessage
@@ -525,6 +555,7 @@ export type ExtensionMessage =
   | WsDisconnectedMessage
   | WsPermanentlyDisconnectedMessage
   | SonosEventMessage
+  | NetworkEventMessage
   | OffscreenReadyMessage
   | WsStateChangedMessage
   | VolumeUpdateMessage

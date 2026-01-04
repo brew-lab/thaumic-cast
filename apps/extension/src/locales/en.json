@@ -36,6 +36,8 @@
   "no_speakers_found": "The network was searched. The speakers were not forthcoming.",
   "no_speakers_placeholder": "No speakers",
 
+  "network.speakers_not_responding": "The speakers have been located but appear to be giving us the silent treatment. A VPN or firewall is the likely culprit.",
+
   "volume": "Volume",
   "mute": "Mute",
   "unmute": "Unmute",

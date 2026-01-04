@@ -6,8 +6,8 @@ import {
   SPEAKER_AVAILABILITY_LABELS,
   MediaAction,
 } from '@thaumic-cast/protocol';
-import { Radio, Settings, X } from 'lucide-preact';
-import { IconButton } from '@thaumic-cast/ui';
+import { Radio, Settings } from 'lucide-preact';
+import { Alert, IconButton } from '@thaumic-cast/ui';
 import styles from './App.module.css';
 import { ExtensionResponse, StartCastMessage } from '../lib/messages';
 import type { ZoneGroup } from '@thaumic-cast/protocol';
@@ -62,6 +62,8 @@ function MainPopup(): JSX.Element {
     checking: connectionChecking,
     error: connectionError,
     desktopAppUrl: baseUrl,
+    networkHealth,
+    networkHealthReason,
   } = useConnectionStatus();
 
   // Media metadata hooks
@@ -226,17 +228,21 @@ function MainPopup(): JSX.Element {
       </div>
 
       {error && (
-        <div className={styles.error} role="alert">
-          <span className={styles.errorMessage}>{error}</span>
-          <IconButton
-            size="sm"
-            className={styles.errorDismiss}
-            onClick={() => setError(null)}
-            aria-label={t('dismiss')}
-          >
-            <X size={14} />
-          </IconButton>
-        </div>
+        <Alert
+          variant="error"
+          className={`${styles.alert} ${styles.error}`}
+          onDismiss={() => setError(null)}
+        >
+          {error}
+        </Alert>
+      )}
+
+      {wsConnected && networkHealth === 'degraded' && groups.length > 0 && (
+        <Alert variant="warning" className={styles.alert}>
+          {t(`network.${networkHealthReason}`, {
+            defaultValue: t('network.speakers_not_responding'),
+          })}
+        </Alert>
       )}
 
       {/* Active Casts List with Volume Controls */}

@@ -17,6 +17,7 @@ import {
   ExtensionResponse,
   WsConnectedMessage,
   SonosEventMessage,
+  NetworkEventMessage,
   WsStatusResponse,
   SetVolumeMessage,
   SetMuteMessage,
@@ -54,6 +55,7 @@ import {
   setConnectionError,
   clearConnectionState,
   restoreConnectionState,
+  setNetworkHealth,
 } from './connection-state';
 import { handleSonosEvent } from './sonos-event-handlers';
 import {
@@ -401,6 +403,23 @@ chrome.runtime.onMessage.addListener((msg: ExtensionMessage, _sender, sendRespon
         case 'SONOS_EVENT': {
           const { payload } = msg as SonosEventMessage;
           await handleSonosEvent(payload);
+          sendResponse({ success: true });
+          break;
+        }
+
+        case 'NETWORK_EVENT': {
+          const { payload } = msg as NetworkEventMessage;
+          if (payload.type === 'healthChanged') {
+            const health = payload.health;
+            const reason = payload.reason ?? null;
+            log.info(`Network health changed: ${health}${reason ? ` (${reason})` : ''}`);
+            setNetworkHealth(health, reason);
+            notifyPopup({
+              type: 'NETWORK_HEALTH_CHANGED',
+              health,
+              reason,
+            });
+          }
           sendResponse({ success: true });
           break;
         }

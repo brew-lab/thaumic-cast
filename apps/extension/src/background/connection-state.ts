@@ -21,6 +21,9 @@ const log = createLogger('ConnectionState');
 /** Storage key for session persistence */
 const STORAGE_KEY = 'connectionState';
 
+/** Network health status from desktop app */
+export type NetworkHealthStatus = 'ok' | 'degraded';
+
 /**
  * Connection state snapshot.
  */
@@ -35,6 +38,10 @@ export interface ConnectionState {
   lastDiscoveredAt: number | null;
   /** Last connection error (null if none) */
   lastError: string | null;
+  /** Network health status from desktop (speakers responding, etc.) */
+  networkHealth: NetworkHealthStatus;
+  /** Reason for degraded network health (null if healthy) */
+  networkHealthReason: string | null;
 }
 
 /** Current connection state */
@@ -44,6 +51,8 @@ let state: ConnectionState = {
   maxStreams: null,
   lastDiscoveredAt: null,
   lastError: null,
+  networkHealth: 'ok',
+  networkHealthReason: null,
 };
 
 /** Debounce timer for persistence */
@@ -101,6 +110,20 @@ export function setConnectionError(error: string): void {
 }
 
 /**
+ * Updates network health status from the desktop app.
+ * @param health - The network health status ('ok' or 'degraded')
+ * @param reason - The reason for degraded health (null if healthy)
+ */
+export function setNetworkHealth(health: NetworkHealthStatus, reason: string | null): void {
+  state = {
+    ...state,
+    networkHealth: health,
+    networkHealthReason: reason,
+  };
+  schedulePersist();
+}
+
+/**
  * Clears connection state when desktop app is not found.
  */
 export function clearConnectionState(): void {
@@ -110,6 +133,8 @@ export function clearConnectionState(): void {
     maxStreams: null,
     lastDiscoveredAt: null,
     lastError: i18n.t('error_desktop_not_found'),
+    networkHealth: 'ok',
+    networkHealthReason: null,
   };
   schedulePersist();
 }

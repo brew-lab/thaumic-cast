@@ -100,6 +100,17 @@ function connectControlWebSocket(url: string): void {
             // Background may be suspended
           });
       }
+      // Network broadcast events (separate category)
+      else if (message.category === 'network') {
+        chrome.runtime
+          .sendMessage({
+            type: 'NETWORK_EVENT',
+            payload: message,
+          })
+          .catch(() => {
+            // Background may be suspended
+          });
+      }
       // Broadcast events (sonos/stream)
       else if (message.category) {
         chrome.runtime
