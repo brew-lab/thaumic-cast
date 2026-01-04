@@ -96,19 +96,14 @@ impl From<StreamEvent> for BroadcastEvent {
 }
 
 /// Network health status.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub enum NetworkHealth {
     /// All systems operational.
+    #[default]
     Ok,
     /// Speakers discovered but communication is failing.
     Degraded,
-}
-
-impl Default for NetworkHealth {
-    fn default() -> Self {
-        Self::Ok
-    }
 }
 
 /// Events related to network health and speaker reachability.

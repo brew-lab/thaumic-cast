@@ -285,7 +285,7 @@ fn build_initial_state(state: &AppState) -> Option<Message> {
             .get_network_health();
         map.insert(
             "networkHealth".to_string(),
-            serde_json::to_value(&health_state.health).unwrap_or(serde_json::Value::Null),
+            serde_json::to_value(health_state.health).unwrap_or(serde_json::Value::Null),
         );
         if let Some(reason) = &health_state.reason {
             map.insert(
