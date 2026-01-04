@@ -510,6 +510,16 @@ async fn handle_ws(socket: WebSocket, state: AppState) {
                                         continue;
                                     }
 
+                                    // Update stream's stored metadata BEFORE starting playback
+                                    // This ensures ICY metadata is available immediately,
+                                    // not just when METADATA_UPDATE arrives later
+                                    if let Some(ref metadata) = payload.metadata {
+                                        state
+                                            .services
+                                            .stream_coordinator
+                                            .update_metadata(&stream_id, metadata.clone());
+                                    }
+
                                     // Start playback on all speakers (multi-group support)
                                     let results = state
                                         .services
