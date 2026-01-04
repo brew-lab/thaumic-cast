@@ -179,13 +179,15 @@ impl StreamCoordinator {
             self.remove_stream(&old_stream_id);
         }
 
-        let stream_url = self.network.url_builder().stream_url(stream_id);
+        let url_builder = self.network.url_builder();
+        let stream_url = url_builder.stream_url(stream_id);
+        let icon_url = url_builder.icon_url();
 
         log::info!("Starting playback: {} -> {}", speaker_ip, stream_url);
 
-        // Tell Sonos to play our stream with initial metadata
+        // Tell Sonos to play our stream with initial metadata and static icon
         self.sonos
-            .play_uri(speaker_ip, &stream_url, metadata)
+            .play_uri(speaker_ip, &stream_url, metadata, &icon_url)
             .await?;
 
         // Record the playback session (includes expected stream URL)

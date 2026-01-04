@@ -20,12 +20,14 @@ pub trait SonosPlayback: Send + Sync {
     /// # Arguments
     /// * `ip` - IP address of the Sonos speaker (coordinator for grouped speakers)
     /// * `uri` - The audio stream URL to play
-    /// * `metadata` - Optional stream metadata for display (title, artist, album, artwork)
+    /// * `metadata` - Optional stream metadata for display (title, artist, source)
+    /// * `icon_url` - URL to the static app icon for album art display
     async fn play_uri(
         &self,
         ip: &str,
         uri: &str,
         metadata: Option<&StreamMetadata>,
+        icon_url: &str,
     ) -> SoapResult<()>;
 
     /// Stops playback on a Sonos speaker.

@@ -122,4 +122,11 @@ impl UrlBuilder {
     pub fn gena_callback_url(&self) -> String {
         format!("{}/api/sonos/notify", self.base_url())
     }
+
+    /// Builds the URL for the static app icon (for Sonos album art).
+    ///
+    /// Returns URL in format: `http://{ip}:{port}/icon.png`
+    pub fn icon_url(&self) -> String {
+        format!("{}/icon.png", self.base_url())
+    }
 }

@@ -6,8 +6,10 @@ import {
   MediaActionSchema,
   PlaybackState,
   PlaybackStateSchema,
+  StreamMetadata,
 } from '@thaumic-cast/protocol';
 import { discoverDesktopApp, clearDiscoveryCache } from '../lib/discovery';
+import { getSourceFromUrl } from '../lib/url-utils';
 import {
   ExtensionMessage,
   StartCastMessage,
@@ -572,12 +574,16 @@ async function handleTabMetadataUpdate(
   const supportedActions = extractSupportedActions(msg.payload);
   const playbackState = extractPlaybackState(msg.payload);
 
+  // Derive source from tab URL (single point of derivation per SoC)
+  const source = getSourceFromUrl(sender.tab?.url);
+
   // Preserve existing ogImage if present
   const existing = getCachedState(tabId);
   const tabInfo = {
     title: sender.tab?.title,
     favIconUrl: sender.tab?.favIconUrl,
     ogImage: existing?.tabOgImage,
+    source,
   };
 
   // Update the cache with metadata, supported actions, and playback state
@@ -589,7 +595,8 @@ async function handleTabMetadataUpdate(
   // If this tab is casting, notify popup and forward to offscreen
   if (hasSession(tabId)) {
     onMetadataUpdate(tabId);
-    forwardMetadataToOffscreen(tabId, msg.payload);
+    // Enrich metadata with source for Sonos display
+    forwardMetadataToOffscreen(tabId, { ...msg.payload, source });
   }
 }
 
@@ -768,9 +775,18 @@ async function handleStartCast(
     });
 
     if (response.success && response.streamId) {
-      // Get cached metadata to send with playback start (avoids "Browser Audio" default)
+      // Get cached state to build initial metadata for Sonos display
       const cachedState = getCachedState(tab.id);
-      const initialMetadata = cachedState?.metadata ?? undefined;
+
+      // Construct StreamMetadata with source for proper Sonos album display
+      const initialMetadata: StreamMetadata | undefined = cachedState?.metadata
+        ? {
+            ...cachedState.metadata,
+            source: cachedState.source,
+          }
+        : cachedState?.source
+          ? { source: cachedState.source }
+          : undefined;
 
       // 8. Start playback via WebSocket (waits for STREAM_READY internally)
       // Include initial metadata so Sonos displays correct info immediately
@@ -790,9 +806,12 @@ async function handleStartCast(
       const sonosState = getStoredSonosState();
       const speakerName = sonosState.groups.find((g) => g.coordinatorIp === speakerIp)?.name;
 
+      // Derive source from tab URL for cache
+      const source = getSourceFromUrl(tab.url);
+
       // Ensure cache has tab info for ActiveCast display (even without MediaSession metadata)
       if (!getCachedState(tab.id)) {
-        updateCache(tab.id, { title: tab.title, favIconUrl: tab.favIconUrl }, null);
+        updateCache(tab.id, { title: tab.title, favIconUrl: tab.favIconUrl, source }, null);
       }
 
       // Register the session with the session manager

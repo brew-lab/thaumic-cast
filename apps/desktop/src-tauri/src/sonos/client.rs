@@ -193,15 +193,30 @@ pub async fn get_zone_groups(client: &Client, ip: &str) -> SoapResult<Vec<ZoneGr
 ///
 /// This creates the metadata structure that Sonos uses to display
 /// track information (title, artist, album art) on the speaker's UI.
-fn format_didl_lite(stream_url: &str, metadata: Option<&StreamMetadata>) -> String {
+///
+/// # Metadata Strategy
+///
+/// Since DIDL-Lite is only sent once at playback start (via SetAVTransportURI)
+/// and ICY metadata only supports StreamTitle, we use static values for
+/// album and artwork to prevent stale data:
+///
+/// - **Title/Artist**: From MediaSession (updates via ICY StreamTitle)
+/// - **Album**: Formatted as "{source} • Thaumic Cast" for branding
+/// - **Artwork**: Static app icon (ICY doesn't support artwork updates)
+fn format_didl_lite(stream_url: &str, metadata: Option<&StreamMetadata>, icon_url: &str) -> String {
     let title = metadata
         .and_then(|m| m.title.as_deref())
         .unwrap_or("Browser Audio");
     let artist = metadata
         .and_then(|m| m.artist.as_deref())
         .unwrap_or("Thaumic Cast");
-    let album = metadata.and_then(|m| m.album.as_deref());
-    let artwork = metadata.and_then(|m| m.artwork.as_deref());
+
+    // Format album as "{source} • Thaumic Cast" or just "Thaumic Cast"
+    // We intentionally ignore metadata.album as it gets stuck after first stream
+    let album = match metadata.and_then(|m| m.source.as_deref()) {
+        Some(source) => format!("{} • Thaumic Cast", source),
+        None => "Thaumic Cast".to_string(),
+    };
 
     let mut didl = String::from(
         r#"<DIDL-Lite xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:upnp="urn:schemas-upnp-org:metadata-1-0/upnp/" xmlns="urn:schemas-upnp-org:metadata-1-0/DIDL-Lite/">"#,
@@ -210,16 +225,14 @@ fn format_didl_lite(stream_url: &str, metadata: Option<&StreamMetadata>) -> Stri
     didl.push_str(&format!("<dc:title>{}</dc:title>", escape_xml(title)));
     didl.push_str(&format!("<dc:creator>{}</dc:creator>", escape_xml(artist)));
 
-    if let Some(album) = album {
-        didl.push_str(&format!("<upnp:album>{}</upnp:album>", escape_xml(album)));
-    }
+    // Always set album for consistent branding
+    didl.push_str(&format!("<upnp:album>{}</upnp:album>", escape_xml(&album)));
 
-    if let Some(artwork) = artwork {
-        didl.push_str(&format!(
-            "<upnp:albumArtURI>{}</upnp:albumArtURI>",
-            escape_xml(artwork)
-        ));
-    }
+    // Always use static icon URL (ICY metadata doesn't support artwork updates)
+    didl.push_str(&format!(
+        "<upnp:albumArtURI>{}</upnp:albumArtURI>",
+        escape_xml(icon_url)
+    ));
 
     didl.push_str("<upnp:class>object.item.audioItem.audioBroadcast</upnp:class>");
     // Use audio/* to allow Sonos to auto-detect format (supports MP3, AAC-LC, HE-AAC)
@@ -245,16 +258,18 @@ fn format_didl_lite(stream_url: &str, metadata: Option<&StreamMetadata>) -> Stri
 /// * `client` - The HTTP client to use for the request
 /// * `ip` - IP address of the Sonos speaker (coordinator for grouped speakers)
 /// * `uri` - The audio stream URL to play
-/// * `metadata` - Optional stream metadata for display (title, artist, album, artwork)
+/// * `metadata` - Optional stream metadata for display (title, artist, source)
+/// * `icon_url` - URL to the static app icon for album art display
 pub async fn play_uri(
     client: &Client,
     ip: &str,
     uri: &str,
     metadata: Option<&StreamMetadata>,
+    icon_url: &str,
 ) -> SoapResult<()> {
     // Convert http:// to x-rincon-mp3radio:// for Sonos compatibility
     let sonos_uri = normalize_sonos_uri(uri);
-    let didl_metadata = format_didl_lite(uri, metadata);
+    let didl_metadata = format_didl_lite(uri, metadata, icon_url);
 
     log::info!("[Sonos] SetAVTransportURI: ip={}, uri={}", ip, sonos_uri);
 
@@ -435,8 +450,9 @@ impl SonosPlayback for SonosClientImpl {
         ip: &str,
         uri: &str,
         metadata: Option<&StreamMetadata>,
+        icon_url: &str,
     ) -> SoapResult<()> {
-        play_uri(&self.client, ip, uri, metadata).await
+        play_uri(&self.client, ip, uri, metadata, icon_url).await
     }
 
     async fn stop(&self, ip: &str) -> SoapResult<()> {

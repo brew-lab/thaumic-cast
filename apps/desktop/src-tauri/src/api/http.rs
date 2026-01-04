@@ -112,6 +112,7 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/speakers/:ip/mute", get(get_mute).post(set_mute))
         .route("/api/sonos/notify", any(handle_gena_notify))
         .route("/stream/:id/live", get(stream_audio))
+        .route("/icon.png", get(serve_icon))
         .route("/ws", get(ws_handler))
         .with_state(state)
 }
@@ -132,6 +133,15 @@ async fn health_check() -> impl IntoResponse {
             "maxStreams": MAX_CONCURRENT_STREAMS
         }
     }))
+}
+
+/// Serves the static app icon for Sonos album art display.
+///
+/// Returns a 128x128 PNG image embedded at compile time.
+/// This provides consistent branding since ICY metadata doesn't support artwork.
+async fn serve_icon() -> impl IntoResponse {
+    static ICON: &[u8] = include_bytes!("../../icons/128x128.png");
+    ([(header::CONTENT_TYPE, "image/png")], ICON)
 }
 
 /// Readiness probe: "Can the service handle requests?"

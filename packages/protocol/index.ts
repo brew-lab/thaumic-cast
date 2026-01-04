@@ -579,6 +579,8 @@ export const StreamMetadataSchema = z.object({
   artist: z.string().optional(),
   album: z.string().optional(),
   artwork: z.string().optional(),
+  /** Source name derived from tab URL (e.g., "YouTube", "Spotify") */
+  source: z.string().optional(),
 });
 export type StreamMetadata = z.infer<typeof StreamMetadataSchema>;
 
@@ -1111,6 +1113,8 @@ export const TabMediaStateSchema = z.object({
   tabFavicon: z.string().optional(),
   /** Tab Open Graph image URL (og:image meta tag) */
   tabOgImage: z.string().optional(),
+  /** Source name derived from tab URL (e.g., "YouTube", "Spotify") */
+  source: z.string().optional(),
   /** Media metadata if available */
   metadata: MediaMetadataSchema.nullable(),
   /** Supported media actions (play, pause, next, previous) */
@@ -1129,13 +1133,14 @@ export type TabMediaState = z.infer<typeof TabMediaStateSchema>;
  * @param tab.title
  * @param tab.favIconUrl
  * @param tab.ogImage - Open Graph image URL
+ * @param tab.source - Source name derived from tab URL
  * @param metadata - Optional media metadata
  * @param supportedActions - Optional array of supported media actions
  * @param playbackState - Optional playback state from MediaSession
  * @returns A new TabMediaState object
  */
 export function createTabMediaState(
-  tab: { id: number; title?: string; favIconUrl?: string; ogImage?: string },
+  tab: { id: number; title?: string; favIconUrl?: string; ogImage?: string; source?: string },
   metadata: MediaMetadata | null = null,
   supportedActions: MediaAction[] = [],
   playbackState: PlaybackState = 'none',
@@ -1145,6 +1150,7 @@ export function createTabMediaState(
     tabTitle: tab.title || 'Unknown Tab',
     tabFavicon: tab.favIconUrl,
     tabOgImage: tab.ogImage,
+    source: tab.source,
     metadata,
     supportedActions,
     playbackState,
