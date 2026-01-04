@@ -82,27 +82,6 @@
   color: var(--color-text-muted);
 }
 
-.select {
-  width: 100%;
-  padding-block: 0.5rem;
-  padding-inline: 0.5rem;
-  border-radius: 4px;
-  background: var(--input-bg);
-  color: var(--input-text);
-  border: 1px solid var(--input-border);
-  accent-color: var(--color-primary);
-}
-
-.select:focus-visible {
-  outline: 2px solid var(--color-focus);
-  outline-offset: 2px;
-}
-
-.select:disabled {
-  opacity: var(--input-disabled-opacity);
-  cursor: not-allowed;
-}
-
 .volumeWrapper {
   /* Container for visibility toggle to prevent layout shift */
 }

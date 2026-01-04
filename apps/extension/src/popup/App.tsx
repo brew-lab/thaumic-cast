@@ -52,7 +52,7 @@ export function App(): JSX.Element {
  */
 function MainPopup(): JSX.Element {
   const { t } = useTranslation();
-  const [selectedIp, setSelectedIp] = useState<string>('');
+  const [selectedIps, setSelectedIps] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [isStarting, setIsStarting] = useState(false);
 
@@ -75,8 +75,11 @@ function MainPopup(): JSX.Element {
     ? activeCasts.some((cast) => cast.tabId === currentTabState.tabId)
     : false;
 
-  // Derive casting speaker IPs for availability status
-  const castingSpeakerIps = useMemo(() => activeCasts.map((cast) => cast.speakerIp), [activeCasts]);
+  // Derive casting speaker IPs for availability status (flatten all speaker arrays)
+  const castingSpeakerIps = useMemo(
+    () => activeCasts.flatMap((cast) => cast.speakerIps),
+    [activeCasts],
+  );
 
   // Sonos state hook - handles real-time updates
   const {
@@ -100,14 +103,15 @@ function MainPopup(): JSX.Element {
     }
   }, [autoStopNotification]);
 
-  // Update selected IP when groups change
+  // Update selected IPs when groups change
   useEffect(() => {
-    if (groups.length > 0 && !selectedIp) {
-      setSelectedIp(groups[0]!.coordinatorIp);
-    } else if (groups.length === 0 && selectedIp) {
-      setSelectedIp('');
+    if (groups.length > 0 && selectedIps.length === 0) {
+      // Default to first group selected
+      setSelectedIps([groups[0]!.coordinatorIp]);
+    } else if (groups.length === 0 && selectedIps.length > 0) {
+      setSelectedIps([]);
     }
-  }, [groups, selectedIp]);
+  }, [groups, selectedIps.length]);
 
   /**
    * Opens the extension settings page.
@@ -121,14 +125,13 @@ function MainPopup(): JSX.Element {
    * Uses global audio settings from extension settings (auto-selected by background).
    */
   const handleStart = useCallback(async () => {
-    if (!selectedIp || isStarting) return;
+    if (selectedIps.length === 0 || isStarting) return;
     setError(null);
     setIsStarting(true);
     try {
-      // Don't pass encoderConfig - background will use extension settings
       const msg: StartCastMessage = {
         type: 'START_CAST',
-        payload: { speakerIp: selectedIp },
+        payload: { speakerIps: selectedIps },
       };
       const response: ExtensionResponse = await chrome.runtime.sendMessage(msg);
 
@@ -142,7 +145,7 @@ function MainPopup(): JSX.Element {
     } finally {
       setIsStarting(false);
     }
-  }, [selectedIp, isStarting]);
+  }, [selectedIps, isStarting]);
 
   /**
    * Handles mute toggle for a speaker.
@@ -196,11 +199,14 @@ function MainPopup(): JSX.Element {
     [sonosState, castingSpeakerIps],
   );
 
-  // Get selected speaker's availability for hint text
+  // Get primary selected speaker's availability for hint text
+  const primarySelectedIp = selectedIps[0];
   const selectedAvailability = useMemo(
     () =>
-      selectedIp ? getSpeakerAvailability(selectedIp, sonosState, castingSpeakerIps) : 'available',
-    [selectedIp, sonosState, castingSpeakerIps],
+      primarySelectedIp
+        ? getSpeakerAvailability(primarySelectedIp, sonosState, castingSpeakerIps)
+        : 'available',
+    [primarySelectedIp, sonosState, castingSpeakerIps],
   );
 
   return (
@@ -259,17 +265,17 @@ function MainPopup(): JSX.Element {
         <CurrentTabCard
           state={currentTabState}
           groups={groups}
-          selectedIp={selectedIp}
-          onSelectSpeaker={setSelectedIp}
+          selectedIps={selectedIps}
+          onSelectSpeakers={setSelectedIps}
           onStartCast={handleStart}
           isStarting={isStarting}
           disabled={connectionChecking || sonosLoading || !baseUrl}
           speakersLoading={sonosLoading || connectionChecking}
-          volume={getVolume(selectedIp)}
-          muted={isMuted(selectedIp)}
-          onVolumeChange={(vol) => handleVolumeChange(selectedIp, vol)}
-          onMuteToggle={() => handleMuteToggle(selectedIp)}
-          showVolumeControls={wsConnected && !!selectedIp}
+          volume={primarySelectedIp ? getVolume(primarySelectedIp) : 50}
+          muted={primarySelectedIp ? isMuted(primarySelectedIp) : false}
+          onVolumeChange={(vol) => primarySelectedIp && handleVolumeChange(primarySelectedIp, vol)}
+          onMuteToggle={() => primarySelectedIp && handleMuteToggle(primarySelectedIp)}
+          showVolumeControls={wsConnected && selectedIps.length > 0}
           getGroupDisplayName={getGroupDisplayName}
           selectedAvailability={selectedAvailability}
         />

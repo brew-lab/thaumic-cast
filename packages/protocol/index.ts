@@ -759,6 +759,28 @@ export const WsPlaybackErrorMessageSchema = z.object({
 export type WsPlaybackErrorMessage = z.infer<typeof WsPlaybackErrorMessageSchema>;
 
 /**
+ * Payload for multi-group playback results message.
+ * Contains per-speaker success/failure information.
+ */
+export const WsPlaybackResultsPayloadSchema = z.object({
+  results: z.array(
+    z.object({
+      speakerIp: z.string(),
+      success: z.boolean(),
+      streamUrl: z.string().optional(),
+      error: z.string().optional(),
+    }),
+  ),
+});
+export type WsPlaybackResultsPayload = z.infer<typeof WsPlaybackResultsPayloadSchema>;
+
+export const WsPlaybackResultsMessageSchema = z.object({
+  type: z.literal('PLAYBACK_RESULTS'),
+  payload: WsPlaybackResultsPayloadSchema,
+});
+export type WsPlaybackResultsMessage = z.infer<typeof WsPlaybackResultsMessageSchema>;
+
+/**
  * Discriminated union for all WebSocket messages with typed payloads.
  */
 export const WsMessageSchema = z.discriminatedUnion('type', [
@@ -773,6 +795,7 @@ export const WsMessageSchema = z.discriminatedUnion('type', [
   WsStreamReadyMessageSchema,
   WsStartPlaybackMessageSchema,
   WsPlaybackStartedMessageSchema,
+  WsPlaybackResultsMessageSchema,
   WsPlaybackErrorMessageSchema,
 ]);
 export type WsMessage = z.infer<typeof WsMessageSchema>;
@@ -1158,9 +1181,30 @@ export function createTabMediaState(
   };
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Multi-Group Playback Types
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Result of starting playback on a single speaker.
+ * Used for reporting per-speaker success/failure in multi-group casting.
+ */
+export const PlaybackResultSchema = z.object({
+  /** IP address of the speaker */
+  speakerIp: z.string(),
+  /** Whether playback started successfully */
+  success: z.boolean(),
+  /** Stream URL the speaker is fetching (on success) */
+  streamUrl: z.string().optional(),
+  /** Error message (on failure) */
+  error: z.string().optional(),
+});
+export type PlaybackResult = z.infer<typeof PlaybackResultSchema>;
+
 /**
  * An active cast session with its current state.
  * Used for displaying in the popup's active casts list.
+ * Supports multi-group casting (one stream to multiple speaker groups).
  */
 export const ActiveCastSchema = z.object({
   /** Unique stream ID from server */
@@ -1169,10 +1213,10 @@ export const ActiveCastSchema = z.object({
   tabId: z.number().int().positive(),
   /** Current media state (includes metadata) */
   mediaState: TabMediaStateSchema,
-  /** Target speaker IP address */
-  speakerIp: z.string(),
-  /** Speaker/group display name */
-  speakerName: z.string().optional(),
+  /** Target speaker IP addresses (multi-group support) */
+  speakerIps: z.array(z.string()),
+  /** Speaker/group display names (parallel array with speakerIps) */
+  speakerNames: z.array(z.string()),
   /** Encoder configuration used for this cast */
   encoderConfig: EncoderConfigSchema,
   /** Timestamp when cast started */

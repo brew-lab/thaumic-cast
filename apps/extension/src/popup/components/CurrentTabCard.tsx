@@ -2,7 +2,7 @@ import type { JSX } from 'preact';
 import { useTranslation } from 'react-i18next';
 import type { TabMediaState, ZoneGroup, SpeakerAvailability } from '@thaumic-cast/protocol';
 import { getDisplayTitle, getDisplaySubtitle } from '@thaumic-cast/protocol';
-import { Button, VolumeControl } from '@thaumic-cast/ui';
+import { Button, SpeakerMultiSelect, VolumeControl } from '@thaumic-cast/ui';
 import { Cast, Loader2, Music } from 'lucide-preact';
 import styles from './CurrentTabCard.module.css';
 
@@ -11,10 +11,10 @@ interface CurrentTabCardProps {
   state: TabMediaState;
   /** Available speaker groups */
   groups: ZoneGroup[];
-  /** Currently selected speaker IP */
-  selectedIp: string;
+  /** Currently selected speaker IPs */
+  selectedIps: string[];
   /** Callback when speaker selection changes */
-  onSelectSpeaker: (ip: string) => void;
+  onSelectSpeakers: (ips: string[]) => void;
   /** Callback to start casting */
   onStartCast: () => void;
   /** Whether cast is starting */
@@ -23,9 +23,9 @@ interface CurrentTabCardProps {
   disabled: boolean;
   /** Whether speakers are loading */
   speakersLoading: boolean;
-  /** Current volume (0-100) */
+  /** Current volume (0-100) - for primary selected speaker */
   volume: number;
-  /** Whether speaker is muted */
+  /** Whether primary selected speaker is muted */
   muted: boolean;
   /** Callback when volume changes */
   onVolumeChange: (volume: number) => void;
@@ -35,7 +35,7 @@ interface CurrentTabCardProps {
   showVolumeControls: boolean;
   /** Function to get display name for a group */
   getGroupDisplayName: (group: ZoneGroup) => string;
-  /** Availability status of the selected speaker */
+  /** Availability status of the primary selected speaker */
   selectedAvailability: SpeakerAvailability;
 }
 
@@ -44,8 +44,8 @@ interface CurrentTabCardProps {
  * @param props - Component props
  * @param props.state
  * @param props.groups
- * @param props.selectedIp
- * @param props.onSelectSpeaker
+ * @param props.selectedIps
+ * @param props.onSelectSpeakers
  * @param props.onStartCast
  * @param props.isStarting
  * @param props.disabled
@@ -62,8 +62,8 @@ interface CurrentTabCardProps {
 export function CurrentTabCard({
   state,
   groups,
-  selectedIp,
-  onSelectSpeaker,
+  selectedIps,
+  onSelectSpeakers,
   onStartCast,
   isStarting,
   disabled,
@@ -102,34 +102,28 @@ export function CurrentTabCard({
 
       <div className={styles.controls}>
         {/* Speaker Selection */}
-        <div className={styles.field}>
-          <label htmlFor="speaker-select" className={styles.label}>
-            {t('target_speaker')}
-          </label>
-          <select
-            id="speaker-select"
-            value={selectedIp}
-            onChange={(e) => onSelectSpeaker((e.target as HTMLSelectElement).value)}
-            className={styles.select}
+        {speakersLoading ? (
+          <p className={styles.label}>{t('loading_speakers')}</p>
+        ) : groups.length === 0 ? (
+          <p className={styles.label}>{t('no_speakers_placeholder')}</p>
+        ) : (
+          <SpeakerMultiSelect
+            groups={groups}
+            selectedIps={selectedIps}
+            onSelectionChange={onSelectSpeakers}
             disabled={disabled}
-          >
-            {speakersLoading ? <option>{t('loading_speakers')}</option> : null}
-            {groups.map((g) => (
-              <option key={g.id} value={g.coordinatorIp}>
-                {getGroupDisplayName(g)}
-              </option>
-            ))}
-            {!speakersLoading && groups.length === 0 && (
-              <option value="">{t('no_speakers_placeholder')}</option>
-            )}
-          </select>
-        </div>
+            getGroupDisplayName={getGroupDisplayName}
+            label={t('target_speaker')}
+          />
+        )}
 
         {/* Volume Controls - always rendered to prevent layout shift */}
         <div
           className={styles.volumeWrapper}
-          style={{ visibility: showVolumeControls && selectedIp ? 'visible' : 'hidden' }}
-          inert={!showVolumeControls || !selectedIp ? true : undefined}
+          style={{
+            visibility: showVolumeControls && selectedIps.length > 0 ? 'visible' : 'hidden',
+          }}
+          inert={!showVolumeControls || selectedIps.length === 0 ? true : undefined}
         >
           <VolumeControl
             volume={volume}
@@ -145,7 +139,7 @@ export function CurrentTabCard({
         {/* Cast Button */}
         <Button
           onClick={onStartCast}
-          disabled={disabled || groups.length === 0}
+          disabled={disabled || selectedIps.length === 0}
           aria-describedby="cast-hint"
           aria-busy={isStarting}
           fullWidth
@@ -158,7 +152,9 @@ export function CurrentTabCard({
           ) : (
             <>
               <Cast size={16} aria-hidden="true" />
-              {t('start_casting')}
+              {selectedIps.length > 1
+                ? t('cast_to_n_speakers', { count: selectedIps.length })
+                : t('start_casting')}
             </>
           )}
         </Button>

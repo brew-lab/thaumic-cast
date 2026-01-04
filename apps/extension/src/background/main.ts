@@ -696,7 +696,9 @@ async function handleStartCast(
   };
 
   try {
-    const { speakerIp } = msg.payload;
+    const { speakerIps } = msg.payload;
+    if (!speakerIps.length) throw new Error(i18n.t('error_no_speakers_selected'));
+
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
     if (!tab?.id) throw new Error(i18n.t('error_no_active_tab'));
 
@@ -792,19 +794,34 @@ async function handleStartCast(
       // Include initial metadata so Sonos displays correct info immediately
       const playbackResponse: StartPlaybackResponse = await chrome.runtime.sendMessage({
         type: 'START_PLAYBACK',
-        payload: { tabId: tab.id, speakerIp, metadata: initialMetadata },
+        payload: { tabId: tab.id, speakerIps, metadata: initialMetadata },
       });
 
-      if (!playbackResponse.success) {
-        // Playback failed - clean up the capture
-        log.error('Playback failed, cleaning up capture');
+      // Filter successful results for session registration
+      const successfulResults = playbackResponse.results.filter((r) => r.success);
+
+      if (successfulResults.length === 0) {
+        // All speakers failed - clean up the capture
+        log.error('All playback attempts failed, cleaning up capture');
         await chrome.runtime.sendMessage({ type: 'STOP_CAPTURE', payload: { tabId: tab.id } });
         throw new Error(i18n.t('error_playback_failed'));
       }
 
-      // Find speaker name from Sonos state
+      // Log partial failures
+      const failedResults = playbackResponse.results.filter((r) => !r.success);
+      if (failedResults.length > 0) {
+        for (const failed of failedResults) {
+          log.warn(`Playback failed on ${failed.speakerIp}: ${failed.error}`);
+        }
+      }
+
+      // Build arrays of successful speakers
       const sonosState = getStoredSonosState();
-      const speakerName = sonosState.groups.find((g) => g.coordinatorIp === speakerIp)?.name;
+      const successfulIps = successfulResults.map((r) => r.speakerIp);
+      const successfulNames = successfulResults.map((r) => {
+        const group = sonosState.groups.find((g) => g.coordinatorIp === r.speakerIp);
+        return group?.name ?? r.speakerIp;
+      });
 
       // Derive source from tab URL for cache
       const source = getSourceFromUrl(tab.url);
@@ -814,8 +831,8 @@ async function handleStartCast(
         updateCache(tab.id, { title: tab.title, favIconUrl: tab.favIconUrl, source }, null);
       }
 
-      // Register the session with the session manager
-      registerSession(tab.id, response.streamId, speakerIp, speakerName, encoderConfig);
+      // Register the session with successful speakers only
+      registerSession(tab.id, response.streamId, successfulIps, successfulNames, encoderConfig);
 
       safeSendResponse({ success: true });
     } else {

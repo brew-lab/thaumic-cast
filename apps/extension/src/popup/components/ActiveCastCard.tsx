@@ -5,7 +5,7 @@ import { useTranslation } from 'react-i18next';
 import type { ActiveCast, TransportState, MediaAction } from '@thaumic-cast/protocol';
 import { getDisplayTitle, getDisplayImage, getDisplaySubtitle } from '@thaumic-cast/protocol';
 import { X, Play, Pause, SkipBack, SkipForward } from 'lucide-preact';
-import { IconButton, VolumeControl } from '@thaumic-cast/ui';
+import { IconButton, SpeakerVolumeRow } from '@thaumic-cast/ui';
 import { TransportIcon } from './TransportIcon';
 import { useDominantColor } from '../hooks/useDominantColor';
 import styles from './ActiveCastCard.module.css';
@@ -16,16 +16,16 @@ const CONTROL_DEBOUNCE_MS = 300;
 interface ActiveCastCardProps {
   /** The active cast session */
   cast: ActiveCast;
-  /** Transport state for the target speaker */
-  transportState?: TransportState;
-  /** Current volume (0-100) */
-  volume: number;
-  /** Whether speaker is muted */
-  muted: boolean;
-  /** Callback when volume changes */
-  onVolumeChange: (volume: number) => void;
-  /** Callback when mute is toggled */
-  onMuteToggle: () => void;
+  /** Function to get transport state for a speaker IP */
+  getTransportState?: (speakerIp: string) => TransportState | undefined;
+  /** Function to get volume for a speaker IP */
+  getVolume: (speakerIp: string) => number;
+  /** Function to check if a speaker is muted */
+  isMuted: (speakerIp: string) => boolean;
+  /** Callback when volume changes for a speaker */
+  onVolumeChange: (speakerIp: string, volume: number) => void;
+  /** Callback when mute is toggled for a speaker */
+  onMuteToggle: (speakerIp: string) => void;
   /** Callback when stop button is clicked */
   onStop: () => void;
   /** Callback when playback control is triggered */
@@ -36,9 +36,9 @@ interface ActiveCastCardProps {
  * Displays an active cast session with volume controls and stop button.
  * @param props - Component props
  * @param props.cast
- * @param props.transportState
- * @param props.volume
- * @param props.muted
+ * @param props.getTransportState
+ * @param props.getVolume
+ * @param props.isMuted
  * @param props.onVolumeChange
  * @param props.onMuteToggle
  * @param props.onStop
@@ -47,9 +47,9 @@ interface ActiveCastCardProps {
  */
 export function ActiveCastCard({
   cast,
-  transportState,
-  volume,
-  muted,
+  getTransportState,
+  getVolume,
+  isMuted,
   onVolumeChange,
   onMuteToggle,
   onStop,
@@ -169,10 +169,7 @@ export function ActiveCastCard({
     >
       <div className={styles.header}>
         {favicon && <img src={favicon} alt="" className={styles.favicon} loading="lazy" />}
-        <p className={styles.speaker}>
-          {cast.speakerName || cast.speakerIp}
-          {transportState && <TransportIcon state={transportState} size={10} />}
-        </p>
+        <span className={styles.headerSpacer} />
         <IconButton
           className={styles.skipBtn}
           size="sm"
@@ -231,15 +228,30 @@ export function ActiveCastCard({
         )}
       </div>
 
-      <VolumeControl
-        volume={volume}
-        muted={muted}
-        onVolumeChange={onVolumeChange}
-        onMuteToggle={onMuteToggle}
-        muteLabel={t('mute')}
-        unmuteLabel={t('unmute')}
-        volumeLabel={t('volume')}
-      />
+      {/* Per-speaker volume controls */}
+      <div className={styles.speakerRows}>
+        {cast.speakerIps.map((ip, idx) => {
+          const name = cast.speakerNames[idx] ?? ip;
+          const transportState = getTransportState?.(ip);
+          return (
+            <SpeakerVolumeRow
+              key={ip}
+              speakerName={name}
+              speakerIp={ip}
+              volume={getVolume(ip)}
+              muted={isMuted(ip)}
+              onVolumeChange={(vol) => onVolumeChange(ip, vol)}
+              onMuteToggle={() => onMuteToggle(ip)}
+              muteLabel={t('mute')}
+              unmuteLabel={t('unmute')}
+              volumeLabel={t('volume')}
+              statusIndicator={
+                transportState ? <TransportIcon state={transportState} size={10} /> : undefined
+              }
+            />
+          );
+        })}
+      </div>
     </div>
   );
 }

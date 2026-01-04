@@ -115,6 +115,10 @@
   gap: 0.5rem;
 }
 
+.headerSpacer {
+  flex: 1;
+}
+
 .mainRow {
   display: flex;
   align-items: center;
@@ -139,20 +143,6 @@
   width: 16px;
   height: 16px;
   border-radius: 2px;
-}
-
-.speaker {
-  display: flex;
-  align-items: center;
-  gap: 0.25rem;
-  flex: 1;
-  min-width: 0;
-  font-size: 0.65rem;
-  color: var(--color-text-muted);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  text-box: cap alphabetic;
 }
 
 .info {
@@ -207,6 +197,12 @@
   text-box: cap alphabetic;
   margin: 0;
   margin-block-start: 0.25rem;
+}
+
+.speakerRows {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
 }
 
 /* Transition animation for track changes (background + colors) */

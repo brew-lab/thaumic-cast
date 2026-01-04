@@ -96,7 +96,7 @@ interface StopMessage {
 
 interface StartPlaybackMessage {
   type: 'START_PLAYBACK';
-  speakerIp: string;
+  speakerIps: string[];
   metadata?: StreamMetadata;
 }
 
@@ -138,6 +138,16 @@ interface PlaybackStartedMessage {
   streamUrl: string;
 }
 
+interface PlaybackResultsMessage {
+  type: 'PLAYBACK_RESULTS';
+  results: Array<{
+    speakerIp: string;
+    success: boolean;
+    streamUrl?: string;
+    error?: string;
+  }>;
+}
+
 interface PlaybackErrorMessage {
   type: 'PLAYBACK_ERROR';
   message: string;
@@ -163,6 +173,7 @@ type OutboundMessage =
   | ErrorMessage
   | StreamReadyMessage
   | PlaybackStartedMessage
+  | PlaybackResultsMessage
   | PlaybackErrorMessage
   | StatsMessage;
 
@@ -550,6 +561,17 @@ function handleWsMessage(event: MessageEvent): void {
         });
         break;
 
+      case 'PLAYBACK_RESULTS': {
+        const results = message.payload.results;
+        const successful = results.filter((r) => r.success).length;
+        log.info(`Playback results: ${successful}/${results.length} speakers started`);
+        postToMain({
+          type: 'PLAYBACK_RESULTS',
+          results,
+        });
+        break;
+      }
+
       case 'PLAYBACK_ERROR':
         log.error(`Playback error: ${message.payload.message}`);
         postToMain({
@@ -890,10 +912,10 @@ self.onmessage = async (event: MessageEvent<InboundMessage>) => {
   }
 
   if (msg.type === 'START_PLAYBACK') {
-    const { speakerIp, metadata } = msg;
+    const { speakerIps, metadata } = msg;
     sendWsMessage({
       type: 'START_PLAYBACK',
-      payload: { speakerIp, metadata },
+      payload: { speakerIps, metadata },
     });
   }
 

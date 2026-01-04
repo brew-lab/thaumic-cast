@@ -3,6 +3,8 @@ export * from './Alert';
 export * from './Button';
 export * from './Card';
 export * from './IconButton';
+export * from './SpeakerMultiSelect';
+export * from './SpeakerVolumeRow';
 export * from './VolumeControl';
 export * from './Wizard';
 export * from './WizardStep';

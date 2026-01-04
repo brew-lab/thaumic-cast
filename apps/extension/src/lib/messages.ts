@@ -7,6 +7,7 @@ import {
   ActiveCast,
   TransportState,
   MediaAction,
+  PlaybackResult,
 } from '@thaumic-cast/protocol';
 
 /**
@@ -33,6 +34,7 @@ export type ExtensionMessageType =
   | 'TAB_STATE_CHANGED'
   | 'ACTIVE_CASTS_CHANGED'
   | 'CAST_AUTO_STOPPED'
+  | 'SPEAKER_REMOVED'
   | 'NETWORK_HEALTH_CHANGED'
   // WebSocket control messages (background ↔ offscreen)
   | 'WS_CONNECT'
@@ -65,11 +67,13 @@ export type ExtensionMessageType =
 
 /**
  * Message payload for starting a cast.
+ * Supports multi-group casting via speakerIps array.
  */
 export interface StartCastMessage {
   type: 'START_CAST';
   payload: {
-    speakerIp: string;
+    /** Target speaker IP addresses (multi-group support). */
+    speakerIps: string[];
     /**
      * Encoder configuration. If omitted, background will auto-select
      * based on device capabilities and past session history.
@@ -119,14 +123,16 @@ export interface StopCaptureMessage {
 }
 
 /**
- * Message payload for starting playback on a Sonos speaker.
+ * Message payload for starting playback on Sonos speakers.
  * Sent from background to offscreen, which forwards via WebSocket.
+ * Supports multi-group casting via speakerIps array.
  */
 export interface StartPlaybackMessage {
   type: 'START_PLAYBACK';
   payload: {
     tabId: number;
-    speakerIp: string;
+    /** Target speaker IP addresses (multi-group support). */
+    speakerIps: string[];
     /** Optional initial metadata to display on Sonos. */
     metadata?: StreamMetadata;
   };
@@ -134,11 +140,14 @@ export interface StartPlaybackMessage {
 
 /**
  * Response to START_PLAYBACK message.
+ * Contains per-speaker results for multi-group casting.
  */
 export interface StartPlaybackResponse {
+  /** Overall success (at least one speaker started). */
   success: boolean;
-  speakerIp?: string;
-  streamUrl?: string;
+  /** Per-speaker playback results. */
+  results: PlaybackResult[];
+  /** Overall error (if all speakers failed). */
   error?: string;
 }
 
@@ -449,6 +458,17 @@ export interface CastAutoStoppedMessage {
 }
 
 /**
+ * A speaker was removed from an active cast (multi-group partial removal).
+ * The cast continues with remaining speakers.
+ */
+export interface SpeakerRemovedMessage {
+  type: 'SPEAKER_REMOVED';
+  tabId: number;
+  speakerIp: string;
+  reason: 'source_changed' | 'playback_stopped';
+}
+
+/**
  * WebSocket connection lost notification.
  */
 export interface WsConnectionLostMessage {
@@ -557,6 +577,7 @@ export type ExtensionMessage =
   | TabStateChangedMessage
   | ActiveCastsChangedMessage
   | CastAutoStoppedMessage
+  | SpeakerRemovedMessage
   | NetworkHealthChangedMessage
   // WebSocket messages
   | WsConnectMessage

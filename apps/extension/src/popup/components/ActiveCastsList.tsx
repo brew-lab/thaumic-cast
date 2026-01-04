@@ -64,11 +64,11 @@ export function ActiveCastsList({
           <li key={cast.tabId} className={styles.item}>
             <ActiveCastCard
               cast={cast}
-              transportState={getTransportState?.(cast.speakerIp)}
-              volume={getVolume(cast.speakerIp)}
-              muted={isMuted(cast.speakerIp)}
-              onVolumeChange={(vol) => onVolumeChange(cast.speakerIp, vol)}
-              onMuteToggle={() => onMuteToggle(cast.speakerIp)}
+              getTransportState={getTransportState}
+              getVolume={getVolume}
+              isMuted={isMuted}
+              onVolumeChange={onVolumeChange}
+              onMuteToggle={onMuteToggle}
               onStop={() => onStopCast(cast.tabId)}
               onControl={onControl ? (action) => onControl(cast.tabId, action) : undefined}
             />

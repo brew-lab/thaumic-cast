@@ -3,6 +3,7 @@
 
   "target_speaker": "Cast to",
   "start_casting": "Cast",
+  "cast_to_n_speakers": "Cast to {{count}} speakers",
   "starting": "Summoning...",
   "stop_cast": "Dispel",
   "go_to_tab": "Return to source",

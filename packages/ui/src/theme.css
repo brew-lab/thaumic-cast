@@ -841,3 +841,102 @@ body {
 .alertInfo .alertIcon {
   color: var(--alert-info-icon);
 }
+
+/* Speaker Multi-Select Styles */
+.speakerMultiSelect {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.speakerMultiSelectLabel {
+  font-size: 0.75rem;
+  color: var(--color-text-muted);
+}
+
+.speakerMultiSelectList {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-block-size: 8rem;
+  overflow-y: auto;
+  border-radius: var(--radius-sm);
+  background: var(--input-bg);
+  border: 1px solid var(--input-border);
+}
+
+.speakerMultiSelectItem {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  padding-block: 0.375rem;
+  padding-inline: var(--space-sm);
+  cursor: pointer;
+  transition: var(--transition-bg);
+  user-select: none;
+}
+
+.speakerMultiSelectItem:focus-visible {
+  outline: 2px solid var(--color-focus);
+  outline-offset: -2px;
+  border-radius: 2px;
+}
+
+.speakerMultiSelectItem:hover:not(.speakerMultiSelectItemDisabled) {
+  background: var(--color-surface-hover);
+}
+
+.speakerMultiSelectItemSelected {
+  background: oklch(from var(--color-primary) l c h / 10%);
+}
+
+.speakerMultiSelectItemSelected:hover:not(.speakerMultiSelectItemDisabled) {
+  background: oklch(from var(--color-primary) l c h / 15%);
+}
+
+.speakerMultiSelectItemDisabled {
+  opacity: var(--input-disabled-opacity);
+  cursor: not-allowed;
+}
+
+.speakerMultiSelectCheckbox {
+  flex-shrink: 0;
+  width: 1rem;
+  height: 1rem;
+  accent-color: var(--color-primary);
+  pointer-events: none;
+}
+
+.speakerMultiSelectName {
+  flex: 1;
+  min-width: 0;
+  font-size: 0.8125rem;
+  color: var(--color-text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Speaker Volume Row Styles */
+.speakerVolumeRow {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+}
+
+.speakerVolumeRowHeader {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+}
+
+.speakerVolumeRowName {
+  font-size: 0.65rem;
+  color: var(--color-text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
