@@ -727,3 +727,30 @@ body {
   flex: 1;
   min-inline-size: 0;
 }
+
+.alertError {
+  background-color: var(--color-error);
+  border: 1px solid var(--color-error);
+  color: var(--color-on-error);
+}
+
+.alertError .alertIcon {
+  color: var(--color-on-error);
+  opacity: 0.9;
+}
+
+.alertDismiss {
+  flex-shrink: 0;
+  margin-inline-start: var(--space-xs);
+}
+
+.alertError .alertDismiss {
+  color: var(--color-on-error);
+  opacity: 0.8;
+}
+
+.alertError .alertDismiss:hover {
+  background: transparent;
+  color: var(--color-on-error);
+  opacity: 1;
+}
