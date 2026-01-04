@@ -100,20 +100,6 @@ function MainPopup(): JSX.Element {
     }
   }, [autoStopNotification]);
 
-  // Show connection errors (only when not checking)
-  useEffect(() => {
-    if (!connectionChecking && connectionError) {
-      setError(connectionError);
-    }
-  }, [connectionChecking, connectionError]);
-
-  // Show error when no speakers found after loading completes
-  useEffect(() => {
-    if (!sonosLoading && !connectionChecking && wsConnected && groups.length === 0) {
-      setError(t('no_speakers_found'));
-    }
-  }, [sonosLoading, connectionChecking, wsConnected, groups.length, t]);
-
   // Update selected IP when groups change and none is selected
   useEffect(() => {
     if (groups.length > 0 && !selectedIp) {
@@ -228,12 +214,20 @@ function MainPopup(): JSX.Element {
       </div>
 
       {error && (
-        <Alert
-          variant="error"
-          className={`${styles.alert} ${styles.error}`}
-          onDismiss={() => setError(null)}
-        >
+        <Alert variant="error" className={styles.alert} onDismiss={() => setError(null)}>
           {error}
+        </Alert>
+      )}
+
+      {!connectionChecking && !wsConnected && (
+        <Alert variant="error" className={styles.alert}>
+          {connectionError || t('error_desktop_not_found')}
+        </Alert>
+      )}
+
+      {!connectionChecking && wsConnected && !sonosLoading && groups.length === 0 && (
+        <Alert variant="warning" className={styles.alert}>
+          {t('no_speakers_found')}
         </Alert>
       )}
 
