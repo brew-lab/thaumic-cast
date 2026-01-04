@@ -1,5 +1,5 @@
-import { WizardStep } from '@thaumic-cast/ui';
-import { Shield, AlertTriangle } from 'lucide-preact';
+import { WizardStep, Alert } from '@thaumic-cast/ui';
+import { Shield } from 'lucide-preact';
 import { useTranslation } from 'react-i18next';
 import styles from './FirewallStep.module.css';
 
@@ -18,10 +18,7 @@ export function FirewallStep(): preact.JSX.Element {
       subtitle={t('onboarding.firewall.subtitle')}
       icon={Shield}
     >
-      <div className={styles.warningBox}>
-        <AlertTriangle size={20} className={styles.warningIcon} />
-        <p className={styles.warningText}>{t('onboarding.firewall.warning_text')}</p>
-      </div>
+      <Alert variant="warning">{t('onboarding.firewall.warning_text')}</Alert>
 
       <ul className={styles.reasonList}>
         <li>{t('onboarding.firewall.reason_1')}</li>

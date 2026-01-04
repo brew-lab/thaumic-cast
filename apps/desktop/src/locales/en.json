@@ -87,6 +87,7 @@
   "onboarding.speakers.none_found": "No speakers detected",
   "onboarding.speakers.none_found_hint": "Speakers can be shy. Check that they're powered on and connected to the same network as this computer.",
   "onboarding.speakers.scan_button": "Try Again",
+  "onboarding.speakers.searching": "Searching for speakers on your network...",
 
   "onboarding.extension.title": "The Browser Extension",
   "onboarding.extension.subtitle": "The other half of the equation",

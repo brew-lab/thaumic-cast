@@ -1,5 +1,4 @@
-import { WizardStep } from '@thaumic-cast/ui';
-import { Button } from '@thaumic-cast/ui';
+import { WizardStep, Alert, Button } from '@thaumic-cast/ui';
 import { Puzzle, ExternalLink } from 'lucide-preact';
 import { useTranslation } from 'react-i18next';
 import { stats } from '../../state/store';
@@ -28,21 +27,16 @@ export function ExtensionStep(): preact.JSX.Element {
       subtitle={t('onboarding.extension.subtitle')}
       icon={Puzzle}
     >
-      <p style={{ lineHeight: '1.6', marginBlockEnd: 'var(--space-lg)' }}>
-        {t('onboarding.extension.body')}
-      </p>
+      <Alert variant={isConnected ? 'success' : 'info'}>
+        {isConnected ? t('onboarding.extension.connected') : t('onboarding.extension.checking')}
+      </Alert>
+
+      <p style={{ lineHeight: '1.6' }}>{t('onboarding.extension.body')}</p>
 
       <Button variant="primary" onClick={handleOpenStore} className={styles.storeButton}>
         <ExternalLink size={16} />
         {t('onboarding.extension.chrome_link')}
       </Button>
-
-      <div className={isConnected ? styles.connectedBox : styles.waitingBox}>
-        <div className={styles.statusDot} data-connected={isConnected} />
-        <p className={styles.statusText}>
-          {isConnected ? t('onboarding.extension.connected') : t('onboarding.extension.checking')}
-        </p>
-      </div>
 
       <p className={styles.skipHint}>{t('onboarding.extension.skip_hint')}</p>
     </WizardStep>

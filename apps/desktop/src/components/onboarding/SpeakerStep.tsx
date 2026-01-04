@@ -1,9 +1,8 @@
-import { useEffect } from 'preact/hooks';
-import { WizardStep } from '@thaumic-cast/ui';
-import { Button } from '@thaumic-cast/ui';
-import { Speaker, RefreshCw, Check } from 'lucide-preact';
+import { useEffect, useState } from 'preact/hooks';
+import { WizardStep, Alert, Button } from '@thaumic-cast/ui';
+import { Speaker, RefreshCw } from 'lucide-preact';
 import { useTranslation } from 'react-i18next';
-import { groups, fetchGroups, refreshTopology } from '../../state/store';
+import { groups, fetchGroups, refreshTopology, networkHealth } from '../../state/store';
 import styles from './SpeakerStep.module.css';
 
 interface SpeakerStepProps {
@@ -21,10 +20,16 @@ interface SpeakerStepProps {
  */
 export function SpeakerStep({ onSpeakersFound }: SpeakerStepProps): preact.JSX.Element {
   const { t } = useTranslation();
+  const [isSearching, setIsSearching] = useState(true);
   const speakerCount = groups.value.length;
 
   useEffect(() => {
-    fetchGroups();
+    // Wait briefly for network services to start discovering
+    const timer = setTimeout(async () => {
+      await fetchGroups();
+      setIsSearching(false);
+    }, 1500);
+    return () => clearTimeout(timer);
   }, []);
 
   useEffect(() => {
@@ -32,7 +37,13 @@ export function SpeakerStep({ onSpeakersFound }: SpeakerStepProps): preact.JSX.E
   }, [speakerCount, onSpeakersFound]);
 
   const handleScan = async () => {
+    setIsSearching(true);
     await refreshTopology();
+    // Give discovery time to complete
+    setTimeout(async () => {
+      await fetchGroups();
+      setIsSearching(false);
+    }, 1500);
   };
 
   return (
@@ -41,13 +52,18 @@ export function SpeakerStep({ onSpeakersFound }: SpeakerStepProps): preact.JSX.E
       subtitle={t('onboarding.speakers.subtitle')}
       icon={Speaker}
     >
-      {speakerCount > 0 ? (
-        <div className={styles.successBox}>
-          <Check size={20} className={styles.successIcon} />
-          <p className={styles.successText}>
-            {t('onboarding.speakers.found', { count: speakerCount })}
-          </p>
-        </div>
+      {networkHealth.value.health === 'degraded' && (
+        <Alert variant="warning">
+          {t(`network.${networkHealth.value.reason}`, {
+            defaultValue: t('network.speakers_unreachable'),
+          })}
+        </Alert>
+      )}
+
+      {isSearching ? (
+        <Alert variant="info">{t('onboarding.speakers.searching')}</Alert>
+      ) : speakerCount > 0 ? (
+        <Alert variant="success">{t('onboarding.speakers.found', { count: speakerCount })}</Alert>
       ) : (
         <div className={styles.emptyState}>
           <p className={styles.emptyTitle}>{t('onboarding.speakers.none_found')}</p>

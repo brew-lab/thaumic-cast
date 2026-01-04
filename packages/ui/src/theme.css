@@ -618,6 +618,9 @@ body {
 .wizardContent {
   flex: 1;
   overflow-y: auto;
+  padding-inline: var(--space-lg);
+  display: flex;
+  justify-content: center;
 }
 
 .wizardFooter {
@@ -670,6 +673,8 @@ body {
   display: flex;
   flex-direction: column;
   gap: var(--space-lg);
+  max-inline-size: 60ch;
+  inline-size: 100%;
 }
 
 .wizardStepHeader {
