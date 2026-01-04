@@ -168,7 +168,17 @@ export async function restoreConnectionState(): Promise<void> {
   try {
     const result = await chrome.storage.session.get(STORAGE_KEY);
     if (result[STORAGE_KEY]) {
-      state = result[STORAGE_KEY];
+      const stored = result[STORAGE_KEY];
+      // Merge with defaults to handle new fields added in updates
+      state = {
+        connected: stored.connected ?? false,
+        desktopAppUrl: stored.desktopAppUrl ?? null,
+        maxStreams: stored.maxStreams ?? null,
+        lastDiscoveredAt: stored.lastDiscoveredAt ?? null,
+        lastError: stored.lastError ?? null,
+        networkHealth: stored.networkHealth ?? 'ok',
+        networkHealthReason: stored.networkHealthReason ?? null,
+      };
       log.info(
         'Restored connection state:',
         state.connected ? 'connected' : 'disconnected',

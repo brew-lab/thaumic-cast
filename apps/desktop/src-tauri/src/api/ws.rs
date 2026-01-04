@@ -228,7 +228,8 @@ async fn send_command_response<F, T, E, R>(
 
 /// Builds the initial state message for WebSocket clients.
 ///
-/// Includes Sonos state (groups, transport, volume, mute) and active playback sessions.
+/// Includes Sonos state (groups, transport, volume, mute), active playback sessions,
+/// and current network health status.
 fn build_initial_state(state: &AppState) -> Option<Message> {
     let mut payload = state.services.sonos_state.to_json();
 
@@ -239,6 +240,23 @@ fn build_initial_state(state: &AppState) -> Option<Message> {
             "sessions".to_string(),
             serde_json::to_value(&sessions).unwrap_or(serde_json::Value::Array(vec![])),
         );
+
+        // Add network health to the initial state
+        let health_state = state
+            .services
+            .discovery_service
+            .topology_monitor()
+            .get_network_health();
+        map.insert(
+            "networkHealth".to_string(),
+            serde_json::to_value(&health_state.health).unwrap_or(serde_json::Value::Null),
+        );
+        if let Some(reason) = &health_state.reason {
+            map.insert(
+                "networkHealthReason".to_string(),
+                serde_json::Value::String(reason.clone()),
+            );
+        }
     }
 
     WsOutgoing::InitialState { payload }.to_message()

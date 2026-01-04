@@ -116,13 +116,26 @@ async function connectWebSocket(serverUrl: string): Promise<void> {
 
 /**
  * Handles WebSocket connected event from offscreen.
- * @param state - The initial Sonos state from desktop
+ * @param state - The initial Sonos state from desktop (may include network health)
  */
 function handleWsConnected(state: SonosStateSnapshot): void {
   wsConnected = true;
   setConnected(true);
   updateSonosState(state);
   log.info('WebSocket connected');
+
+  // Extract network health from initial state if present
+  const stateWithHealth = state as SonosStateSnapshot & {
+    networkHealth?: 'ok' | 'degraded';
+    networkHealthReason?: string;
+  };
+  if (stateWithHealth.networkHealth) {
+    log.info(
+      `Initial network health: ${stateWithHealth.networkHealth}` +
+        (stateWithHealth.networkHealthReason ? ` (${stateWithHealth.networkHealthReason})` : ''),
+    );
+    setNetworkHealth(stateWithHealth.networkHealth, stateWithHealth.networkHealthReason ?? null);
+  }
 
   // Notify popup of state
   notifyPopup({ type: 'WS_STATE_CHANGED', state });
