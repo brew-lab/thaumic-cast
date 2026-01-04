@@ -32,8 +32,19 @@ impl IcyFormatter {
             (Some(a), Some(t)) => format!("{} - {}", a, t),
             (None, Some(t)) => t.clone(),
             (Some(a), None) => a.clone(),
-            (None, None) => return vec![0], // No metadata: single zero byte per ICY spec
+            (None, None) => {
+                log::debug!("[ICY] No title/artist in metadata, sending empty");
+                return vec![0]; // No metadata: single zero byte per ICY spec
+            }
         };
+
+        // [DIAG] Log what ICY StreamTitle we're sending
+        log::info!(
+            "[ICY] StreamTitle='{}' (from artist={:?}, title={:?})",
+            title,
+            metadata.artist,
+            metadata.title
+        );
 
         // Empty string also gets the zero-byte treatment
         if title.is_empty() {
@@ -141,6 +152,7 @@ mod tests {
             artist: None,
             album: None,
             artwork: None,
+            source: None,
         };
         let result = IcyFormatter::format_metadata(&metadata);
         assert_eq!(result[0], 2); // Two 16-byte blocks for "StreamTitle='Test Song';"
@@ -154,6 +166,7 @@ mod tests {
             artist: Some("Artist".to_string()),
             album: None,
             artwork: None,
+            source: None,
         };
         let result = IcyFormatter::format_metadata(&metadata);
         let content = String::from_utf8_lossy(&result[1..]);
@@ -167,6 +180,7 @@ mod tests {
             artist: None,
             album: None,
             artwork: None,
+            source: None,
         };
         let result = IcyFormatter::format_metadata(&metadata);
         let content = String::from_utf8_lossy(&result[1..]);

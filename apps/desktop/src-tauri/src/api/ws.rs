@@ -347,6 +347,14 @@ fn handle_handshake(state: &AppState, payload: HandshakeRequest) -> HandshakeRes
 
 /// Handles a METADATA_UPDATE message: updates stream metadata.
 fn handle_metadata_update(state: &AppState, stream_id: &str, metadata: StreamMetadata) {
+    // [DIAG] Log metadata updates from extension
+    log::info!(
+        "[WS] METADATA_UPDATE for stream {}: title={:?}, artist={:?}, source={:?}",
+        stream_id,
+        metadata.title,
+        metadata.artist,
+        metadata.source
+    );
     state
         .services
         .stream_coordinator
@@ -488,6 +496,15 @@ async fn handle_ws(socket: WebSocket, state: AppState) {
                                 .await;
                             }
                             Ok(WsIncoming::StartPlayback { payload }) => {
+                                // [DIAG] Log START_PLAYBACK request with initial metadata
+                                log::info!(
+                                    "[WS] START_PLAYBACK: metadata={:?}",
+                                    payload.metadata.as_ref().map(|m| format!(
+                                        "title={:?}, artist={:?}, source={:?}",
+                                        m.title, m.artist, m.source
+                                    ))
+                                );
+
                                 if let Some(ref guard) = stream_guard {
                                     let stream_id = guard.id().to_string();
                                     let speaker_ips = payload.get_speaker_ips();

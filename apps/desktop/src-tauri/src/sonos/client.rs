@@ -204,6 +204,15 @@ pub async fn get_zone_groups(client: &Client, ip: &str) -> SoapResult<Vec<ZoneGr
 /// - **Album**: Formatted as "{source} • Thaumic Cast" for branding
 /// - **Artwork**: Static app icon (ICY doesn't support artwork updates)
 fn format_didl_lite(stream_url: &str, metadata: Option<&StreamMetadata>, icon_url: &str) -> String {
+    // [DIAG] Log incoming metadata for debugging
+    log::info!(
+        "[DIDL] Incoming metadata: {:?}",
+        metadata.map(|m| format!(
+            "title={:?}, artist={:?}, album={:?}, source={:?}",
+            m.title, m.artist, m.album, m.source
+        ))
+    );
+
     let title = metadata
         .and_then(|m| m.title.as_deref())
         .unwrap_or("Browser Audio");
@@ -217,6 +226,15 @@ fn format_didl_lite(stream_url: &str, metadata: Option<&StreamMetadata>, icon_ur
         Some(source) => format!("{} • Thaumic Cast", source),
         None => "Thaumic Cast".to_string(),
     };
+
+    // [DIAG] Log what we're sending to Sonos
+    log::info!(
+        "[DIDL] Sending to Sonos: title={:?}, artist={:?}, album={:?}, icon={:?}",
+        title,
+        artist,
+        album,
+        icon_url
+    );
 
     let mut didl = String::from(
         r#"<DIDL-Lite xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:upnp="urn:schemas-upnp-org:metadata-1-0/upnp/" xmlns="urn:schemas-upnp-org:metadata-1-0/DIDL-Lite/">"#,
