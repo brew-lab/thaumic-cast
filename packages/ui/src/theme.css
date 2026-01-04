@@ -40,6 +40,7 @@
   --hue-error: 350;
   --hue-success: 175;
   --hue-warning: 55;
+  --hue-info: 230;
   --hue-casting: 190;
   --chroma-vibrant: 0.28;
   --chroma-muted: 0.18;
@@ -132,6 +133,12 @@
   );
   --color-on-casting: var(--gray-14);
 
+  /* Info - blue */
+  --color-info: light-dark(
+    oklch(50% var(--chroma-muted) var(--hue-info)),
+    oklch(70% var(--chroma-muted) var(--hue-info))
+  );
+
   /* Focus ring */
   --color-focus: light-dark(
     oklch(50% var(--chroma-vibrant) var(--hue-primary)),
@@ -220,14 +227,38 @@
     oklch(65% var(--chroma-muted) var(--hue-warning) / 40%),
     oklch(65% var(--chroma-muted) var(--hue-warning) / 30%)
   );
-  --alert-warning-text: light-dark(
-    oklch(35% var(--chroma-muted) var(--hue-warning)),
-    oklch(85% var(--chroma-muted) var(--hue-warning))
+  --alert-warning-text: var(--color-warning);
+  --alert-warning-icon: var(--color-warning);
+  --alert-error-bg: light-dark(
+    oklch(75% var(--chroma-muted) var(--hue-error) / 15%),
+    oklch(55% var(--chroma-muted) var(--hue-error) / 15%)
   );
-  --alert-warning-icon: light-dark(
-    oklch(50% var(--chroma-muted) var(--hue-warning)),
-    oklch(75% var(--chroma-muted) var(--hue-warning))
+  --alert-error-border: light-dark(
+    oklch(65% var(--chroma-muted) var(--hue-error) / 40%),
+    oklch(65% var(--chroma-muted) var(--hue-error) / 30%)
   );
+  --alert-error-text: var(--color-error);
+  --alert-error-icon: var(--color-error);
+  --alert-success-bg: light-dark(
+    oklch(75% var(--chroma-muted) var(--hue-success) / 15%),
+    oklch(55% var(--chroma-muted) var(--hue-success) / 15%)
+  );
+  --alert-success-border: light-dark(
+    oklch(65% var(--chroma-muted) var(--hue-success) / 40%),
+    oklch(65% var(--chroma-muted) var(--hue-success) / 30%)
+  );
+  --alert-success-text: var(--color-success);
+  --alert-success-icon: var(--color-success);
+  --alert-info-bg: light-dark(
+    oklch(75% var(--chroma-muted) var(--hue-info) / 15%),
+    oklch(55% var(--chroma-muted) var(--hue-info) / 15%)
+  );
+  --alert-info-border: light-dark(
+    oklch(65% var(--chroma-muted) var(--hue-info) / 40%),
+    oklch(65% var(--chroma-muted) var(--hue-info) / 30%)
+  );
+  --alert-info-text: var(--color-info);
+  --alert-info-icon: var(--color-info);
 
   /* Device card status badges */
   --device-status-playing-bg: light-dark(
@@ -711,15 +742,8 @@ body {
   line-height: 1.4;
 }
 
-.alertWarning {
-  background-color: var(--alert-warning-bg);
-  border: 1px solid var(--alert-warning-border);
-  color: var(--alert-warning-text);
-}
-
 .alertIcon {
   flex-shrink: 0;
-  color: var(--alert-warning-icon);
   margin-block-start: 0.125rem;
 }
 
@@ -728,29 +752,47 @@ body {
   min-inline-size: 0;
 }
 
-.alertError {
-  background-color: var(--color-error);
-  border: 1px solid var(--color-error);
-  color: var(--color-on-error);
-}
-
-.alertError .alertIcon {
-  color: var(--color-on-error);
-  opacity: 0.9;
-}
-
 .alertDismiss {
   flex-shrink: 0;
   margin-inline-start: var(--space-xs);
 }
 
-.alertError .alertDismiss {
-  color: var(--color-on-error);
-  opacity: 0.8;
+.alertWarning {
+  background-color: var(--alert-warning-bg);
+  border: 1px solid var(--alert-warning-border);
+  color: var(--alert-warning-text);
 }
 
-.alertError .alertDismiss:hover {
-  background: transparent;
-  color: var(--color-on-error);
-  opacity: 1;
+.alertWarning .alertIcon {
+  color: var(--alert-warning-icon);
+}
+
+.alertError {
+  background-color: var(--alert-error-bg);
+  border: 1px solid var(--alert-error-border);
+  color: var(--alert-error-text);
+}
+
+.alertError .alertIcon {
+  color: var(--alert-error-icon);
+}
+
+.alertSuccess {
+  background-color: var(--alert-success-bg);
+  border: 1px solid var(--alert-success-border);
+  color: var(--alert-success-text);
+}
+
+.alertSuccess .alertIcon {
+  color: var(--alert-success-icon);
+}
+
+.alertInfo {
+  background-color: var(--alert-info-bg);
+  border: 1px solid var(--alert-info-border);
+  color: var(--alert-info-text);
+}
+
+.alertInfo .alertIcon {
+  color: var(--alert-info-icon);
 }
