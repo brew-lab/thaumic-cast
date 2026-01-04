@@ -1,10 +1,12 @@
 import { Route, Switch } from 'wouter-preact';
+import { useEffect } from 'preact/hooks';
 import { Sidebar } from './components/Sidebar';
 import { Speakers } from './views/Speakers';
 import { Server } from './views/Server';
 import { Settings } from './views/Settings';
 import { Onboarding } from './views/Onboarding';
 import { useOnboarding } from './hooks/useOnboarding';
+import { startNetworkServices } from './state/store';
 import './App.css';
 import styles from './App.module.css';
 import { useTranslation } from 'react-i18next';
@@ -19,6 +21,13 @@ import { useTranslation } from 'react-i18next';
 export function App() {
   const { t } = useTranslation();
   const { isLoading, isComplete } = useOnboarding();
+
+  // Start network services when onboarding is already complete (returning users)
+  useEffect(() => {
+    if (isComplete) {
+      startNetworkServices();
+    }
+  }, [isComplete]);
 
   // Show nothing while loading onboarding state
   if (isLoading) {

@@ -70,6 +70,16 @@ pub async fn get_server_port(state: tauri::State<'_, AppState>) -> Result<u16, C
     Ok(state.services.network.get_port())
 }
 
+/// Starts network services (HTTP server, discovery, GENA subscriptions).
+///
+/// This is idempotent - calling multiple times has no effect after the first call.
+/// Should be called after the user acknowledges the firewall warning during onboarding,
+/// or immediately on app startup if onboarding was already completed.
+#[tauri::command]
+pub fn start_network_services(state: tauri::State<'_, AppState>) {
+    state.start_services();
+}
+
 /// Starts playback on a speaker.
 #[tauri::command]
 pub async fn start_playback(

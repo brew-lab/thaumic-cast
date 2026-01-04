@@ -2,6 +2,7 @@ import { useState, useCallback } from 'preact/hooks';
 import { Wizard } from '@thaumic-cast/ui';
 import { useTranslation } from 'react-i18next';
 import { useOnboarding } from '../hooks/useOnboarding';
+import { startNetworkServices } from '../state/store';
 import { WelcomeStep } from '../components/onboarding/WelcomeStep';
 import { FirewallStep } from '../components/onboarding/FirewallStep';
 import { SpeakerStep } from '../components/onboarding/SpeakerStep';
@@ -26,19 +27,27 @@ export function Onboarding(): preact.JSX.Element {
   const totalSteps = STEP_KEYS.length;
   const isLastStep = currentStep === totalSteps - 1;
 
-  const handleNext = useCallback(() => {
+  const handleNext = useCallback(async () => {
+    // Start network services when leaving the firewall step (step 1)
+    // This triggers the Windows Firewall prompt AFTER the user has seen the warning
+    if (currentStep === 1) {
+      await startNetworkServices();
+    }
+
     if (isLastStep) {
       completeOnboarding();
     } else {
       setCurrentStep((prev) => Math.min(prev + 1, totalSteps - 1));
     }
-  }, [isLastStep, completeOnboarding, totalSteps]);
+  }, [currentStep, isLastStep, completeOnboarding, totalSteps]);
 
   const handleBack = useCallback(() => {
     setCurrentStep((prev) => Math.max(prev - 1, 0));
   }, []);
 
-  const handleSkip = useCallback(() => {
+  const handleSkip = useCallback(async () => {
+    // Start network services before skipping (may trigger firewall prompt)
+    await startNetworkServices();
     skipOnboarding();
   }, [skipOnboarding]);
 

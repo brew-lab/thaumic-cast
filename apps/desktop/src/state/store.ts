@@ -170,6 +170,17 @@ export const restartServer = async (): Promise<void> => {
 };
 
 /**
+ * Starts network services (HTTP server, discovery, GENA subscriptions).
+ *
+ * This is idempotent - calling multiple times has no effect after the first call.
+ * Should be called after the user acknowledges the firewall warning during onboarding,
+ * or immediately on app startup if onboarding was already completed.
+ */
+export const startNetworkServices = async (): Promise<void> => {
+  await invoke('start_network_services');
+};
+
+/**
  * Gets whether autostart is enabled.
  * @returns True if autostart is enabled
  */
