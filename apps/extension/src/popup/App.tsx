@@ -93,6 +93,11 @@ function MainPopup(): JSX.Element {
   // Auto-stop notification hook
   const { notification: autoStopNotification } = useAutoStopNotification();
 
+  // Debug logging for network health display condition
+  useEffect(() => {
+    console.log('[NH] Render:', { wsConnected, networkHealth, groups: groups.length });
+  }, [wsConnected, networkHealth, groups.length]);
+
   // Show auto-stop notification as error
   useEffect(() => {
     if (autoStopNotification) {

@@ -422,16 +422,18 @@ chrome.runtime.onMessage.addListener((msg: ExtensionMessage, _sender, sendRespon
 
         case 'NETWORK_EVENT': {
           const { payload } = msg as NetworkEventMessage;
+          log.info('[NH] Background received NETWORK_EVENT:', payload.type);
           if (payload.type === 'healthChanged') {
             const health = payload.health;
             const reason = payload.reason ?? null;
-            log.info(`Network health changed: ${health}${reason ? ` (${reason})` : ''}`);
+            log.info(`[NH] Health changed: ${health}${reason ? ` (${reason})` : ''}`);
             setNetworkHealth(health, reason);
             notifyPopup({
               type: 'NETWORK_HEALTH_CHANGED',
               health,
               reason,
             });
+            log.info('[NH] Background sent NETWORK_HEALTH_CHANGED');
           }
           sendResponse({ success: true });
           break;

@@ -102,14 +102,14 @@ function connectControlWebSocket(url: string): void {
       }
       // Network broadcast events (separate category)
       else if (message.category === 'network') {
+        log.info('[NH] Offscreen received:', message.type, message.health);
         chrome.runtime
           .sendMessage({
             type: 'NETWORK_EVENT',
             payload: message,
           })
-          .catch(() => {
-            // Background may be suspended
-          });
+          .then(() => log.info('[NH] Offscreen forwarded to background'))
+          .catch((err) => log.warn('[NH] Offscreen forward failed:', err));
       }
       // Broadcast events (sonos/stream)
       else if (message.category) {
