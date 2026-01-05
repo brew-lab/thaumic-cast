@@ -21,10 +21,10 @@ export type AudioCodec = z.infer<typeof AudioCodecSchema>;
 /**
  * Supported bitrates in kbps.
  * Not all bitrates are valid for all codecs - use `getValidBitrates()` to filter.
- * FLAC uses 0 to indicate lossless (variable bitrate).
+ * WAV uses 0 to indicate lossless (uncompressed).
  */
 export const BitrateSchema = z.union([
-  z.literal(0), // Lossless (FLAC)
+  z.literal(0), // Lossless (WAV)
   z.literal(64),
   z.literal(96),
   z.literal(128),
@@ -163,12 +163,12 @@ export function hasEncoderImplementation(codec: AudioCodec): boolean {
  */
 export const CODEC_METADATA: Record<AudioCodec, CodecMetadata> = {
   pcm: {
-    label: 'Lossless (FLAC)',
-    description: 'Uncompressed audio, encoded to FLAC by desktop app',
+    label: 'Lossless (WAV)',
+    description: 'Uncompressed audio streamed as WAV',
     validBitrates: [] as const,
     defaultBitrate: 0, // 0 indicates lossless/variable bitrate
     webCodecsId: null, // No WebCodecs - raw PCM passthrough
-    efficiency: 10.0, // Same as FLAC - lossless
+    efficiency: 10.0, // Lossless - uncompressed
   },
   'aac-lc': {
     label: 'AAC-LC',
