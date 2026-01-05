@@ -42,5 +42,4 @@ html-escape = "0.2.13"
 socket2 = { version = "0.5", features = ["all"] }
 rust-i18n = "3"
 sys-locale = "0.3"
-flacenc = "0.4"
 bytemuck = { version = "1", features = ["derive"] }
