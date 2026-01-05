@@ -367,6 +367,10 @@ export async function detectSupportedCodecs(): Promise<SupportedCodecsResult> {
       // Lossless codec with no bitrate options (e.g., PCM)
       // Check if codec itself is supported using default bitrate
       codecHasSupport = await isCodecSupported(codec, defaultBitrateForCodec);
+      if (codecHasSupport) {
+        // Add to supported array so it appears in dynamic presets
+        supported.push({ codec, bitrate: defaultBitrateForCodec, supported: true });
+      }
     } else {
       // Test bitrate support (using default 48kHz)
       for (const bitrate of bitrates) {
