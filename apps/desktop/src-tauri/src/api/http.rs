@@ -21,11 +21,9 @@ use tokio_stream::wrappers::BroadcastStream;
 use crate::api::response::{api_error, api_ok, api_success};
 use crate::api::ws::ws_handler;
 use crate::api::AppState;
-use crate::config::{
-    DEFAULT_CHANNELS, DEFAULT_SAMPLE_RATE, MAX_CONCURRENT_STREAMS, MAX_GENA_BODY_SIZE,
-};
+use crate::config::{MAX_CONCURRENT_STREAMS, MAX_GENA_BODY_SIZE};
 use crate::error::{ThaumicError, ThaumicResult};
-use crate::stream::{create_wav_header, AudioCodec, IcyMetadataInjector, ICY_METAINT};
+use crate::stream::{AudioCodec, IcyMetadataInjector, ICY_METAINT};
 
 /// Boxed stream type for audio data with ICY metadata support.
 type AudioStream = Pin<Box<dyn Stream<Item = Result<Bytes, std::io::Error>> + Send>>;
@@ -343,14 +341,13 @@ async fn stream_audio(
     // Check if client wants ICY metadata
     let wants_icy = headers.get("icy-metadata").and_then(|v| v.to_str().ok()) == Some("1");
 
-    let (content_type, prefix_bytes) = match stream_state.codec {
-        AudioCodec::Wav => (
-            "audio/wav",
-            Some(create_wav_header(DEFAULT_SAMPLE_RATE, DEFAULT_CHANNELS)),
-        ),
-        AudioCodec::Aac => ("audio/aac", None),
-        AudioCodec::Mp3 => ("audio/mpeg", None),
-        AudioCodec::Flac => ("audio/flac", None),
+    // Content-Type based on output codec
+    // Note: WAV header is already included by WavTranscoder, so no prefix needed here
+    let content_type = match stream_state.codec {
+        AudioCodec::Wav => "audio/wav",
+        AudioCodec::Aac => "audio/aac",
+        AudioCodec::Mp3 => "audio/mpeg",
+        AudioCodec::Flac => "audio/flac",
     };
 
     let mut builder = Response::builder()
@@ -374,8 +371,6 @@ async fn stream_audio(
             let metadata = stream_ref.metadata.read();
             Ok::<Bytes, std::io::Error>(injector.inject(chunk.as_ref(), &metadata))
         }))
-    } else if let Some(prefix) = prefix_bytes {
-        Box::pin(futures::stream::once(async move { Ok(prefix) }).chain(combined_stream))
     } else {
         Box::pin(combined_stream)
     };
