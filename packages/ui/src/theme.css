@@ -627,6 +627,8 @@ body {
 .wizardContent {
   flex: 1;
   overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-primary) transparent;
   padding-inline: var(--space-lg);
   display: flex;
   justify-content: center;
@@ -873,6 +875,8 @@ body {
   padding: 0;
   max-block-size: 8rem;
   overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-primary) transparent;
   border-radius: var(--radius-sm);
   background: var(--input-bg);
   border: 1px solid var(--input-border);
