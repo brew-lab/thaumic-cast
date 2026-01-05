@@ -163,8 +163,8 @@ export function hasEncoderImplementation(codec: AudioCodec): boolean {
  */
 export const CODEC_METADATA: Record<AudioCodec, CodecMetadata> = {
   pcm: {
-    label: 'Lossless (WAV)',
-    description: 'Uncompressed audio streamed as WAV',
+    label: 'WAV',
+    description: 'Uncompressed lossless audio',
     validBitrates: [] as const,
     defaultBitrate: 0, // 0 indicates lossless/variable bitrate
     webCodecsId: null, // No WebCodecs - raw PCM passthrough
