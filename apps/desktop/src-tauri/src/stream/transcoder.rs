@@ -1,16 +1,11 @@
-//! Audio transcoding for PCM to FLAC conversion.
+//! Audio transcoding for PCM to various formats.
 //!
 //! This module provides the `Transcoder` trait and implementations for
 //! converting audio data between formats. The primary use case is receiving
-//! raw PCM audio from the browser extension and encoding it to FLAC for
-//! lossless streaming to Sonos speakers.
+//! raw PCM audio from the browser extension and wrapping it in a streamable
+//! container format for Sonos speakers.
 
-use bytes::Bytes;
-use flacenc::bitsink::ByteSink;
-use flacenc::component::BitRepr;
-use flacenc::config;
-use flacenc::error::{Verified, Verify};
-use flacenc::source::MemSource;
+use bytes::{BufMut, Bytes, BytesMut};
 use parking_lot::Mutex;
 
 /// Trait for audio format transcoding.
@@ -48,116 +43,98 @@ impl Transcoder for Passthrough {
     }
 }
 
-/// FLAC encoder for PCM to FLAC transcoding.
+/// WAV transcoder for PCM to WAV streaming.
 ///
-/// Receives interleaved 16-bit PCM samples from the browser and encodes
-/// them to FLAC frames for lossless streaming to Sonos speakers.
-pub struct FlacTranscoder {
-    /// FLAC encoder configuration (verified).
-    config: Verified<config::Encoder>,
+/// Wraps raw PCM audio in a WAV container for streaming to Sonos speakers.
+/// The WAV header uses unknown length (0xFFFFFFFF) for streaming compatibility.
+pub struct WavTranscoder {
     /// Sample rate in Hz.
     sample_rate: u32,
     /// Number of audio channels.
     channels: u16,
     /// Bits per sample (always 16 for our use case).
     bits_per_sample: u16,
-    /// Block size for FLAC encoding.
-    block_size: usize,
-    /// Whether the stream header has been sent.
+    /// Whether the WAV header has been sent.
     header_sent: Mutex<bool>,
 }
 
-impl FlacTranscoder {
-    /// Creates a new FLAC transcoder.
+impl WavTranscoder {
+    /// Creates a new WAV transcoder.
     ///
     /// # Arguments
     /// * `sample_rate` - Sample rate in Hz (e.g., 48000)
     /// * `channels` - Number of audio channels (1 or 2)
     ///
     /// # Returns
-    /// A new `FlacTranscoder` instance configured for the given parameters.
-    ///
-    /// # Panics
-    /// Panics if the encoder config fails verification (should never happen with defaults).
+    /// A new `WavTranscoder` instance configured for the given parameters.
     pub fn new(sample_rate: u32, channels: u16) -> Self {
-        // Use default encoder config (compression level ~5, good balance)
-        // and verify it for use with encode_with_fixed_block_size
-        let config = config::Encoder::default()
-            .into_verified()
-            .expect("Default FLAC encoder config should always be valid");
-
         Self {
-            config,
             sample_rate,
             channels,
             bits_per_sample: 16,
-            // 4096 samples per channel = ~85ms at 48kHz
-            // Good balance between compression and latency
-            block_size: 4096,
             header_sent: Mutex::new(false),
         }
     }
 
-    /// Encodes PCM samples to FLAC.
-    ///
-    /// # Arguments
-    /// * `pcm` - Interleaved 16-bit PCM samples
-    ///
-    /// # Returns
-    /// FLAC-encoded bytes. First call includes stream header.
-    fn encode_pcm(&self, pcm: &[i16]) -> Bytes {
-        // Convert i16 to i32 (flacenc expects i32 samples)
-        let samples_i32: Vec<i32> = pcm.iter().map(|&s| i32::from(s)).collect();
+    /// Creates a WAV header for streaming (unknown length).
+    fn create_header(&self) -> Bytes {
+        let byte_rate =
+            self.sample_rate * u32::from(self.channels) * u32::from(self.bits_per_sample) / 8;
+        let block_align = self.channels * self.bits_per_sample / 8;
 
-        // Create source from samples
-        let source = MemSource::from_samples(
-            &samples_i32,
-            self.channels as usize,
-            self.bits_per_sample as usize,
-            self.sample_rate as usize,
-        );
+        let mut buf = BytesMut::with_capacity(44);
 
-        // Encode to FLAC
-        let stream = flacenc::encode_with_fixed_block_size(&self.config, source, self.block_size)
-            .expect("FLAC encoding failed");
+        // RIFF header
+        buf.put_slice(b"RIFF");
+        buf.put_u32_le(0xFFFF_FFFF); // Unknown file size for streaming
 
-        // Serialize to bytes
-        let mut sink = ByteSink::new();
+        // WAVE format
+        buf.put_slice(b"WAVE");
 
-        let mut header_sent = self.header_sent.lock();
-        if !*header_sent {
-            // First encode: write full stream (header + frames)
-            stream.write(&mut sink).expect("FLAC write failed");
-            *header_sent = true;
-            log::debug!(
-                "[FlacTranscoder] Wrote stream header + {} frames",
-                stream.frame_count()
-            );
-        } else {
-            // Subsequent: write only the frame data
-            for i in 0..stream.frame_count() {
-                stream
-                    .frame(i)
-                    .expect("Frame access failed")
-                    .write(&mut sink)
-                    .expect("FLAC frame write failed");
-            }
-        }
+        // fmt subchunk
+        buf.put_slice(b"fmt ");
+        buf.put_u32_le(16); // Subchunk1Size (16 for PCM)
+        buf.put_u16_le(1); // AudioFormat (1 = PCM)
+        buf.put_u16_le(self.channels);
+        buf.put_u32_le(self.sample_rate);
+        buf.put_u32_le(byte_rate);
+        buf.put_u16_le(block_align);
+        buf.put_u16_le(self.bits_per_sample);
 
-        Bytes::from(sink.into_inner())
+        // data subchunk
+        buf.put_slice(b"data");
+        buf.put_u32_le(0xFFFF_FFFF); // Unknown data size for streaming
+
+        buf.freeze()
     }
 }
 
-impl Transcoder for FlacTranscoder {
+impl Transcoder for WavTranscoder {
     fn transcode(&self, input: &[u8]) -> Bytes {
-        // Input is raw bytes from WebSocket, interpret as i16 PCM
-        // Safety: We control the sender (extension) which sends properly aligned i16 data
-        let pcm: &[i16] = bytemuck::cast_slice(input);
-        self.encode_pcm(pcm)
+        let mut header_sent = self.header_sent.lock();
+
+        if !*header_sent {
+            // First frame: prepend WAV header
+            *header_sent = true;
+            let header = self.create_header();
+            log::debug!(
+                "[WavTranscoder] Sending WAV header ({}Hz, {}ch)",
+                self.sample_rate,
+                self.channels
+            );
+
+            let mut buf = BytesMut::with_capacity(header.len() + input.len());
+            buf.put(header);
+            buf.put_slice(input);
+            buf.freeze()
+        } else {
+            // Subsequent frames: pass through raw PCM
+            Bytes::copy_from_slice(input)
+        }
     }
 
     fn description(&self) -> &'static str {
-        "PCM → FLAC"
+        "PCM → WAV"
     }
 }
 
@@ -174,40 +151,40 @@ mod tests {
     }
 
     #[test]
-    fn test_flac_transcoder_creates() {
-        let transcoder = FlacTranscoder::new(48000, 2);
+    fn test_wav_transcoder_creates() {
+        let transcoder = WavTranscoder::new(48000, 2);
         assert_eq!(transcoder.sample_rate, 48000);
         assert_eq!(transcoder.channels, 2);
-        assert_eq!(transcoder.description(), "PCM → FLAC");
+        assert_eq!(transcoder.description(), "PCM → WAV");
     }
 
     #[test]
-    fn test_flac_transcoder_encodes_silence() {
-        let transcoder = FlacTranscoder::new(48000, 2);
+    fn test_wav_transcoder_header() {
+        let transcoder = WavTranscoder::new(48000, 2);
 
-        // Create 20ms of silence (960 stereo samples = 1920 i16 values)
-        let silence: Vec<i16> = vec![0i16; 1920];
-        let input_bytes: &[u8] = bytemuck::cast_slice(&silence);
+        // Create some PCM data
+        let pcm_data = vec![0u8; 100];
+        let output = transcoder.transcode(&pcm_data);
 
-        let output = transcoder.transcode(input_bytes);
-
-        // FLAC output should start with "fLaC" magic bytes
-        assert!(output.len() > 4);
-        assert_eq!(&output[0..4], b"fLaC");
+        // WAV output should start with "RIFF"
+        assert!(output.len() >= 44 + 100);
+        assert_eq!(&output[0..4], b"RIFF");
+        assert_eq!(&output[8..12], b"WAVE");
     }
 
     #[test]
-    fn test_flac_transcoder_header_sent_once() {
-        let transcoder = FlacTranscoder::new(48000, 2);
-        let silence: Vec<i16> = vec![0i16; 1920];
-        let input_bytes: &[u8] = bytemuck::cast_slice(&silence);
+    fn test_wav_transcoder_header_sent_once() {
+        let transcoder = WavTranscoder::new(48000, 2);
+        let pcm_data = vec![0u8; 100];
 
         // First call includes header
-        let first = transcoder.transcode(input_bytes);
-        assert!(first.starts_with(b"fLaC"));
+        let first = transcoder.transcode(&pcm_data);
+        assert!(first.starts_with(b"RIFF"));
+        assert_eq!(first.len(), 44 + 100);
 
         // Second call should NOT include header
-        let second = transcoder.transcode(input_bytes);
-        assert!(!second.starts_with(b"fLaC"));
+        let second = transcoder.transcode(&pcm_data);
+        assert!(!second.starts_with(b"RIFF"));
+        assert_eq!(second.len(), 100);
     }
 }

@@ -13,7 +13,7 @@ use std::time::{Duration, Instant};
 use crate::api::AppState;
 use crate::config::{WS_HEARTBEAT_CHECK_INTERVAL_SECS, WS_HEARTBEAT_TIMEOUT_SECS};
 use crate::services::StreamCoordinator;
-use crate::stream::{AudioCodec, FlacTranscoder, Passthrough, StreamMetadata, Transcoder};
+use crate::stream::{AudioCodec, Passthrough, StreamMetadata, Transcoder, WavTranscoder};
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Stream Guard (RAII cleanup)
@@ -308,13 +308,13 @@ enum HandshakeResult {
 
 /// Resolves input codec string to output codec and transcoder.
 ///
-/// For PCM input, returns FLAC output with FLAC transcoder.
+/// For PCM input, returns WAV output with WAV transcoder (adds header, passes through PCM).
 /// For pre-encoded formats, returns passthrough transcoder.
 fn resolve_codec(
     codec_str: Option<&str>,
     encoder_config: &Option<EncoderConfig>,
 ) -> (AudioCodec, Arc<dyn Transcoder>) {
-    // Get sample rate and channels from encoder config for FLAC transcoding
+    // Get sample rate and channels from encoder config for WAV transcoding
     let sample_rate = encoder_config
         .as_ref()
         .and_then(|c| c.sample_rate)
@@ -325,16 +325,16 @@ fn resolve_codec(
         .unwrap_or(2);
 
     match codec_str {
-        // PCM input: encode to FLAC server-side for lossless quality
+        // PCM input: wrap in WAV container for streaming
         Some("pcm") => {
             log::info!(
-                "[WS] PCM input → FLAC output ({}Hz, {}ch)",
+                "[WS] PCM input → WAV output ({}Hz, {}ch)",
                 sample_rate,
                 channels
             );
             (
-                AudioCodec::Flac,
-                Arc::new(FlacTranscoder::new(sample_rate, channels as u16)),
+                AudioCodec::Wav,
+                Arc::new(WavTranscoder::new(sample_rate, channels as u16)),
             )
         }
         // Pre-encoded formats: passthrough
