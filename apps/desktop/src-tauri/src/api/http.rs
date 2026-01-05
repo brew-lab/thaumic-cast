@@ -112,6 +112,8 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/speakers/:ip/mute", get(get_mute).post(set_mute))
         .route("/api/sonos/notify", any(handle_gena_notify))
         .route("/stream/:id/live", get(stream_audio))
+        .route("/stream/:id/live.wav", get(stream_audio))
+        .route("/stream/:id/live.flac", get(stream_audio))
         .route("/icon.png", get(serve_icon))
         .route("/ws", get(ws_handler))
         .with_state(state)

@@ -234,6 +234,36 @@ pub fn normalize_sonos_uri(uri: &str) -> String {
     }
 }
 
+/// Builds a Sonos-compatible stream URI with proper scheme and file extension.
+///
+/// Different codecs require different URI schemes:
+/// - WAV/FLAC: Use `http://` with `.wav`/`.flac` extension (Sonos uses URL suffix for format detection)
+/// - MP3/AAC: Use `x-rincon-mp3radio://` scheme (optimized for internet radio)
+///
+/// # Arguments
+/// * `base_uri` - The base stream URL (http://...)
+/// * `codec` - The audio codec being streamed
+///
+/// # Returns
+/// A properly formatted URI for Sonos playback
+pub fn build_sonos_stream_uri(base_uri: &str, codec: &str) -> String {
+    match codec {
+        "wav" => {
+            // WAV: Keep http://, add .wav extension
+            // Sonos identifies format by URL suffix, not Content-Type
+            format!("{}.wav", base_uri)
+        }
+        "flac" => {
+            // FLAC: Keep http://, add .flac extension
+            format!("{}.flac", base_uri)
+        }
+        _ => {
+            // MP3/AAC: Use x-rincon-mp3radio:// scheme
+            normalize_sonos_uri(base_uri)
+        }
+    }
+}
+
 /// Builds a Sonos speaker URL for the given IP and endpoint.
 ///
 /// # Arguments

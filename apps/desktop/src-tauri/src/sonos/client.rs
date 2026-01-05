@@ -14,8 +14,8 @@ use crate::sonos::soap::{SoapError, SoapRequestBuilder};
 use crate::sonos::traits::{SonosPlayback, SonosTopology, SonosVolumeControl};
 use crate::sonos::types::{ZoneGroup, ZoneGroupMember};
 use crate::sonos::utils::{
-    escape_xml, extract_ip_from_location, extract_model_from_icon, extract_xml_text,
-    get_channel_role, get_xml_attr, normalize_sonos_uri,
+    build_sonos_stream_uri, escape_xml, extract_ip_from_location, extract_model_from_icon,
+    extract_xml_text, get_channel_role, get_xml_attr,
 };
 use crate::stream::StreamMetadata;
 
@@ -283,17 +283,19 @@ fn format_didl_lite(stream_url: &str, metadata: Option<&StreamMetadata>, icon_ur
 /// * `client` - The HTTP client to use for the request
 /// * `ip` - IP address of the Sonos speaker (coordinator for grouped speakers)
 /// * `uri` - The audio stream URL to play
+/// * `codec` - The audio codec (e.g., "wav", "aac", "mp3") for proper URI formatting
 /// * `metadata` - Optional stream metadata for display (title, artist, source)
 /// * `icon_url` - URL to the static app icon for album art display
 pub async fn play_uri(
     client: &Client,
     ip: &str,
     uri: &str,
+    codec: &str,
     metadata: Option<&StreamMetadata>,
     icon_url: &str,
 ) -> SoapResult<()> {
-    // Convert http:// to x-rincon-mp3radio:// for Sonos compatibility
-    let sonos_uri = normalize_sonos_uri(uri);
+    // Build Sonos-compatible URI with proper scheme and extension for codec
+    let sonos_uri = build_sonos_stream_uri(uri, codec);
     let didl_metadata = format_didl_lite(uri, metadata, icon_url);
 
     log::info!("[Sonos] SetAVTransportURI: ip={}, uri={}", ip, sonos_uri);
@@ -507,10 +509,11 @@ impl SonosPlayback for SonosClientImpl {
         &self,
         ip: &str,
         uri: &str,
+        codec: &str,
         metadata: Option<&StreamMetadata>,
         icon_url: &str,
     ) -> SoapResult<()> {
-        play_uri(&self.client, ip, uri, metadata, icon_url).await
+        play_uri(&self.client, ip, uri, codec, metadata, icon_url).await
     }
 
     async fn stop(&self, ip: &str) -> SoapResult<()> {

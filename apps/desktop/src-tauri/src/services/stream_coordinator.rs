@@ -15,7 +15,7 @@ use dashmap::DashMap;
 use crate::context::NetworkContext;
 use crate::error::ThaumicResult;
 use crate::events::{EventEmitter, StreamEvent};
-use crate::sonos::utils::normalize_sonos_uri;
+use crate::sonos::utils::build_sonos_stream_uri;
 use crate::sonos::SonosPlayback;
 use crate::state::SonosState;
 use crate::stream::{AudioCodec, StreamManager, StreamMetadata, StreamState, Transcoder};
@@ -48,6 +48,8 @@ pub struct PlaybackSession {
     pub speaker_ip: String,
     /// The full URL the speaker is fetching audio from.
     pub stream_url: String,
+    /// The codec being used (for Sonos URI formatting).
+    pub codec: String,
 }
 
 /// Result of starting playback on a single speaker.
@@ -114,8 +116,9 @@ impl StreamCoordinator {
 
     /// Gets the expected stream URL for a speaker (normalized for Sonos comparison).
     ///
-    /// Returns the stream URL in `x-rincon-mp3radio://` format if the speaker has
-    /// an active playback session, or None otherwise.
+    /// Returns the stream URL in the format Sonos will report:
+    /// - WAV/FLAC: `http://.../.wav` or `http://.../.flac`
+    /// - MP3/AAC: `x-rincon-mp3radio://...`
     ///
     /// Note: A speaker can only play one stream at a time, so we find the first
     /// session matching the speaker IP.
@@ -124,7 +127,7 @@ impl StreamCoordinator {
         self.playback_sessions
             .iter()
             .find(|r| r.key().speaker_ip == speaker_ip)
-            .map(|r| normalize_sonos_uri(&r.value().stream_url))
+            .map(|r| build_sonos_stream_uri(&r.value().stream_url, &r.value().codec))
     }
 
     /// Gets all playback sessions for a specific stream.
@@ -271,6 +274,17 @@ impl StreamCoordinator {
         stream_id: &str,
         metadata: Option<&StreamMetadata>,
     ) -> Vec<PlaybackResult> {
+        // Get codec from stream state for proper Sonos URI formatting
+        let codec = self
+            .get_stream(stream_id)
+            .map(|s| match s.codec {
+                AudioCodec::Wav => "wav",
+                AudioCodec::Flac => "flac",
+                AudioCodec::Aac => "aac",
+                AudioCodec::Mp3 => "mp3",
+            })
+            .unwrap_or("aac");
+
         let url_builder = self.network.url_builder();
         let stream_url = url_builder.stream_url(stream_id);
         let icon_url = url_builder.icon_url();
@@ -279,7 +293,14 @@ impl StreamCoordinator {
 
         for speaker_ip in speaker_ips {
             let result = self
-                .start_single_playback(speaker_ip, stream_id, &stream_url, &icon_url, metadata)
+                .start_single_playback(
+                    speaker_ip,
+                    stream_id,
+                    &stream_url,
+                    codec,
+                    &icon_url,
+                    metadata,
+                )
                 .await;
             results.push(result);
         }
@@ -293,6 +314,7 @@ impl StreamCoordinator {
         speaker_ip: &str,
         stream_id: &str,
         stream_url: &str,
+        codec: &str,
         icon_url: &str,
         metadata: Option<&StreamMetadata>,
     ) -> PlaybackResult {
@@ -321,7 +343,7 @@ impl StreamCoordinator {
 
         match self
             .sonos
-            .play_uri(speaker_ip, stream_url, metadata, icon_url)
+            .play_uri(speaker_ip, stream_url, codec, metadata, icon_url)
             .await
         {
             Ok(()) => {
@@ -332,6 +354,7 @@ impl StreamCoordinator {
                         stream_id: stream_id.to_string(),
                         speaker_ip: speaker_ip.to_string(),
                         stream_url: stream_url.to_string(),
+                        codec: codec.to_string(),
                     },
                 );
 
