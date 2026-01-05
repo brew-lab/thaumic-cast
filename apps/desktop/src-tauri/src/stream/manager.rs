@@ -50,7 +50,8 @@ pub struct StreamState {
     /// Whether the stream has received its first frame (for STREAM_READY signaling)
     has_frames: AtomicBool,
     /// Transcoder for converting input format to output format.
-    /// For PCM input, this encodes to FLAC. For pre-encoded formats, this is a passthrough.
+    /// For PCM input, this passes through raw data (WAV header added by HTTP handler).
+    /// For pre-encoded formats (AAC, FLAC), this is also a passthrough.
     transcoder: Arc<dyn Transcoder>,
 }
 

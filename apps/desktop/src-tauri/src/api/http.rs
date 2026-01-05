@@ -343,7 +343,6 @@ async fn stream_audio(
         BroadcastStream::new(rx).map(|res| res.map_err(|e| std::io::Error::other(e.to_string())));
 
     // Content-Type based on output codec
-    // Note: WAV header is already included by WavTranscoder, so no prefix needed here
     let content_type = match stream_state.codec {
         AudioCodec::Wav => "audio/wav",
         AudioCodec::Aac => "audio/aac",

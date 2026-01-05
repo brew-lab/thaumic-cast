@@ -13,7 +13,7 @@ use std::time::{Duration, Instant};
 use crate::api::AppState;
 use crate::config::{WS_HEARTBEAT_CHECK_INTERVAL_SECS, WS_HEARTBEAT_TIMEOUT_SECS};
 use crate::services::StreamCoordinator;
-use crate::stream::{AudioCodec, Passthrough, StreamMetadata, Transcoder, WavTranscoder};
+use crate::stream::{AudioCodec, Passthrough, StreamMetadata, Transcoder};
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Stream Guard (RAII cleanup)
@@ -308,34 +308,14 @@ enum HandshakeResult {
 
 /// Resolves input codec string to output codec and transcoder.
 ///
-/// For PCM input, returns WAV output with WAV transcoder (adds header, passes through PCM).
+/// For PCM input, returns WAV output with passthrough (WAV header added by HTTP handler).
 /// For pre-encoded formats, returns passthrough transcoder.
-fn resolve_codec(
-    codec_str: Option<&str>,
-    encoder_config: &Option<EncoderConfig>,
-) -> (AudioCodec, Arc<dyn Transcoder>) {
-    // Get sample rate and channels from encoder config for WAV transcoding
-    let sample_rate = encoder_config
-        .as_ref()
-        .and_then(|c| c.sample_rate)
-        .unwrap_or(48000);
-    let channels = encoder_config
-        .as_ref()
-        .and_then(|c| c.channels)
-        .unwrap_or(2);
-
+fn resolve_codec(codec_str: Option<&str>) -> (AudioCodec, Arc<dyn Transcoder>) {
     match codec_str {
-        // PCM input: wrap in WAV container for streaming
+        // PCM input: output as WAV (header added per-connection by HTTP handler)
         Some("pcm") => {
-            log::info!(
-                "[WS] PCM input → WAV output ({}Hz, {}ch)",
-                sample_rate,
-                channels
-            );
-            (
-                AudioCodec::Wav,
-                Arc::new(WavTranscoder::new(sample_rate, channels as u16)),
-            )
+            log::info!("[WS] PCM input → WAV output");
+            (AudioCodec::Wav, Arc::new(Passthrough))
         }
         // Pre-encoded formats: passthrough
         Some("aac") | Some("aac-lc") | Some("he-aac") | Some("he-aac-v2") => {
@@ -360,7 +340,7 @@ fn handle_handshake(state: &AppState, payload: HandshakeRequest) -> HandshakeRes
         .map(|c| c.codec.as_str())
         .or(payload.codec.as_deref());
 
-    let (output_codec, transcoder) = resolve_codec(codec_str, &payload.encoder_config);
+    let (output_codec, transcoder) = resolve_codec(codec_str);
 
     log::info!(
         "[WS] Creating stream: input={:?}, output={:?}",
