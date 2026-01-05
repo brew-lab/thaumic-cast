@@ -338,9 +338,6 @@ async fn stream_audio(
     let live_stream =
         BroadcastStream::new(rx).map(|res| res.map_err(|e| std::io::Error::other(e.to_string())));
 
-    // Check if client wants ICY metadata
-    let wants_icy = headers.get("icy-metadata").and_then(|v| v.to_str().ok()) == Some("1");
-
     // Content-Type based on output codec
     // Note: WAV header is already included by WavTranscoder, so no prefix needed here
     let content_type = match stream_state.codec {
@@ -349,6 +346,11 @@ async fn stream_audio(
         AudioCodec::Mp3 => "audio/mpeg",
         AudioCodec::Flac => "audio/flac",
     };
+
+    // ICY metadata only supported for MP3/AAC streams (not WAV/FLAC)
+    let supports_icy = matches!(stream_state.codec, AudioCodec::Mp3 | AudioCodec::Aac);
+    let wants_icy =
+        supports_icy && headers.get("icy-metadata").and_then(|v| v.to_str().ok()) == Some("1");
 
     let mut builder = Response::builder()
         .header(header::CONTENT_TYPE, content_type)
