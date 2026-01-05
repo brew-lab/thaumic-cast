@@ -530,27 +530,31 @@ export function generateDynamicPresets(supportInfo: SupportedCodecsResult): Dyna
   // Sort by score descending for the allOptions list (used for display)
   allOptions.sort((a, b) => b.score - a.score);
 
-  // === HIGH TIER: Best quality (highest bitrate, prefer FLAC) ===
-  // Sort by: FLAC first, then by bitrate descending
+  // === HIGH TIER: Best quality (highest bitrate, prefer lossless) ===
+  // Sort by: lossless first (pcm/flac), then by bitrate descending
+  const isLossless = (codec: AudioCodec) => codec === 'pcm' || codec === 'flac';
   const highSorted = [...allOptions].sort((a, b) => {
-    // FLAC (lossless) always wins
-    if (a.codec === 'flac' && b.codec !== 'flac') return -1;
-    if (b.codec === 'flac' && a.codec !== 'flac') return 1;
+    // Lossless codecs (pcm, flac) always win
+    if (isLossless(a.codec) && !isLossless(b.codec)) return -1;
+    if (isLossless(b.codec) && !isLossless(a.codec)) return 1;
     // Otherwise, highest bitrate wins
     return b.bitrate - a.bitrate;
   });
   const high = highSorted[0] ?? null;
 
   // === LOW TIER: Lowest bandwidth (lowest bitrate, prefer efficient codecs) ===
+  // Filter out lossless options (bitrate 0) - they use MORE bandwidth, not less
   // Sort by: bitrate ascending, then by efficiency descending (for ties)
-  const lowSorted = [...allOptions].sort((a, b) => {
-    // Lowest bitrate first
-    if (a.bitrate !== b.bitrate) return a.bitrate - b.bitrate;
-    // For same bitrate, prefer more efficient codec
-    const effA = CODEC_METADATA[a.codec].efficiency;
-    const effB = CODEC_METADATA[b.codec].efficiency;
-    return effB - effA;
-  });
+  const lowSorted = [...allOptions]
+    .filter((opt) => opt.bitrate > 0)
+    .sort((a, b) => {
+      // Lowest bitrate first
+      if (a.bitrate !== b.bitrate) return a.bitrate - b.bitrate;
+      // For same bitrate, prefer more efficient codec
+      const effA = CODEC_METADATA[a.codec].efficiency;
+      const effB = CODEC_METADATA[b.codec].efficiency;
+      return effB - effA;
+    });
   // Pick the lowest bitrate option, but not the same as high
   let low: ScoredCodecOption | null = null;
   for (const opt of lowSorted) {
