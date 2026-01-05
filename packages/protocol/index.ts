@@ -8,13 +8,14 @@ import { z } from 'zod';
  *
  * Runtime detection filters this list to codecs the browser actually supports.
  *
+ * - `pcm`: Raw PCM passthrough - encoded to FLAC server-side for lossless quality
  * - `aac-lc`: AAC Low Complexity (mp4a.40.2) - balanced quality
  * - `he-aac`: High-Efficiency AAC (mp4a.40.5) - best for low bitrates
  * - `he-aac-v2`: High-Efficiency AAC v2 (mp4a.40.29) - best for very low bitrates, stereo
- * - `flac`: Free Lossless Audio Codec - lossless compression
+ * - `flac`: Free Lossless Audio Codec - lossless compression (requires browser support)
  * - `vorbis`: Ogg Vorbis - open source lossy codec
  */
-export const AudioCodecSchema = z.enum(['aac-lc', 'he-aac', 'he-aac-v2', 'flac', 'vorbis']);
+export const AudioCodecSchema = z.enum(['pcm', 'aac-lc', 'he-aac', 'he-aac-v2', 'flac', 'vorbis']);
 export type AudioCodec = z.infer<typeof AudioCodecSchema>;
 
 /**
@@ -139,6 +140,7 @@ export interface CodecMetadata {
  * When adding a new encoder, add the codec here to enable it in the UI.
  */
 export const IMPLEMENTED_CODECS: ReadonlySet<AudioCodec> = new Set([
+  'pcm',
   'aac-lc',
   'he-aac',
   'he-aac-v2',
@@ -160,6 +162,14 @@ export function hasEncoderImplementation(codec: AudioCodec): boolean {
  * Codecs are listed in order of preference for the UI.
  */
 export const CODEC_METADATA: Record<AudioCodec, CodecMetadata> = {
+  pcm: {
+    label: 'Lossless (FLAC)',
+    description: 'Uncompressed audio, encoded to FLAC by desktop app',
+    validBitrates: [] as const,
+    defaultBitrate: 0, // 0 indicates lossless/variable bitrate
+    webCodecsId: null, // No WebCodecs - raw PCM passthrough
+    efficiency: 10.0, // Same as FLAC - lossless
+  },
   'aac-lc': {
     label: 'AAC-LC',
     description: 'Balanced quality and efficiency',
@@ -295,7 +305,11 @@ export interface SupportedCodecsResult {
 }
 
 /**
- * Checks if a specific codec/bitrate combination is supported by WebCodecs.
+ * Checks if a specific codec/bitrate combination is supported.
+ *
+ * For PCM: Always returns true (no WebCodecs dependency - raw passthrough).
+ * For others: Checks WebCodecs AudioEncoder.isConfigSupported().
+ *
  * @param codec - The audio codec to check
  * @param bitrate - The bitrate in kbps
  * @param sampleRate - Sample rate (default 48000)
@@ -308,12 +322,14 @@ export async function isCodecSupported(
   sampleRate = 48000,
   channels = 2,
 ): Promise<boolean> {
-  if (typeof AudioEncoder === 'undefined') {
-    return false;
+  const webCodecsId = CODEC_METADATA[codec]?.webCodecsId;
+
+  // PCM is always supported - no WebCodecs dependency
+  if (webCodecsId === null) {
+    return true;
   }
 
-  const webCodecsId = CODEC_METADATA[codec]?.webCodecsId;
-  if (!webCodecsId) {
+  if (typeof AudioEncoder === 'undefined') {
     return false;
   }
 
@@ -344,22 +360,28 @@ export async function detectSupportedCodecs(): Promise<SupportedCodecsResult> {
 
   for (const codec of codecs) {
     const bitrates = CODEC_METADATA[codec].validBitrates;
+    const defaultBitrateForCodec = CODEC_METADATA[codec].defaultBitrate;
     let codecHasSupport = false;
 
-    // Test bitrate support (using default 48kHz)
-    for (const bitrate of bitrates) {
-      const isSupported = await isCodecSupported(codec, bitrate);
-      supported.push({ codec, bitrate, supported: isSupported });
+    if (bitrates.length === 0) {
+      // Lossless codec with no bitrate options (e.g., PCM)
+      // Check if codec itself is supported using default bitrate
+      codecHasSupport = await isCodecSupported(codec, defaultBitrateForCodec);
+    } else {
+      // Test bitrate support (using default 48kHz)
+      for (const bitrate of bitrates) {
+        const isSupported = await isCodecSupported(codec, bitrate);
+        supported.push({ codec, bitrate, supported: isSupported });
 
-      if (isSupported) {
-        codecHasSupport = true;
+        if (isSupported) {
+          codecHasSupport = true;
+        }
       }
     }
 
     // Test sample rate support (using default bitrate for the codec)
     if (codecHasSupport) {
       availableCodecs.push(codec);
-      const defaultBitrateForCodec = CODEC_METADATA[codec].defaultBitrate;
 
       for (const sampleRate of SUPPORTED_SAMPLE_RATES) {
         const isSupported = await isCodecSupported(codec, defaultBitrateForCodec, sampleRate);

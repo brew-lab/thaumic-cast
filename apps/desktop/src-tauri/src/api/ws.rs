@@ -13,7 +13,7 @@ use std::time::{Duration, Instant};
 use crate::api::AppState;
 use crate::config::{WS_HEARTBEAT_CHECK_INTERVAL_SECS, WS_HEARTBEAT_TIMEOUT_SECS};
 use crate::services::StreamCoordinator;
-use crate::stream::{AudioCodec, StreamMetadata};
+use crate::stream::{AudioCodec, FlacTranscoder, Passthrough, StreamMetadata, Transcoder};
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Stream Guard (RAII cleanup)
@@ -306,6 +306,51 @@ enum HandshakeResult {
     Error(String),
 }
 
+/// Resolves input codec string to output codec and transcoder.
+///
+/// For PCM input, returns FLAC output with FLAC transcoder.
+/// For pre-encoded formats, returns passthrough transcoder.
+fn resolve_codec(
+    codec_str: Option<&str>,
+    encoder_config: &Option<EncoderConfig>,
+) -> (AudioCodec, Arc<dyn Transcoder>) {
+    // Get sample rate and channels from encoder config for FLAC transcoding
+    let sample_rate = encoder_config
+        .as_ref()
+        .and_then(|c| c.sample_rate)
+        .unwrap_or(48000);
+    let channels = encoder_config
+        .as_ref()
+        .and_then(|c| c.channels)
+        .unwrap_or(2);
+
+    match codec_str {
+        // PCM input: encode to FLAC server-side for lossless quality
+        Some("pcm") => {
+            log::info!(
+                "[WS] PCM input → FLAC output ({}Hz, {}ch)",
+                sample_rate,
+                channels
+            );
+            (
+                AudioCodec::Flac,
+                Arc::new(FlacTranscoder::new(sample_rate, channels as u16)),
+            )
+        }
+        // Pre-encoded formats: passthrough
+        Some("aac") | Some("aac-lc") | Some("he-aac") | Some("he-aac-v2") => {
+            (AudioCodec::Aac, Arc::new(Passthrough))
+        }
+        Some("mp3") => (AudioCodec::Mp3, Arc::new(Passthrough)),
+        Some("flac") => (AudioCodec::Flac, Arc::new(Passthrough)),
+        Some("wav") => (AudioCodec::Wav, Arc::new(Passthrough)),
+        _ => {
+            log::warn!("[WS] Unknown codec {:?}, defaulting to WAV", codec_str);
+            (AudioCodec::Wav, Arc::new(Passthrough))
+        }
+    }
+}
+
 /// Handles a HANDSHAKE message: creates a stream and returns ack or error.
 fn handle_handshake(state: &AppState, payload: HandshakeRequest) -> HandshakeResult {
     // Get codec from encoder_config (preferred) or legacy codec field
@@ -315,20 +360,19 @@ fn handle_handshake(state: &AppState, payload: HandshakeRequest) -> HandshakeRes
         .map(|c| c.codec.as_str())
         .or(payload.codec.as_deref());
 
-    let codec = match codec_str {
-        Some("aac") | Some("aac-lc") | Some("he-aac") | Some("he-aac-v2") => AudioCodec::Aac,
-        Some("mp3") => AudioCodec::Mp3,
-        Some("flac") => AudioCodec::Flac,
-        Some("wav") => AudioCodec::Wav,
-        _ => {
-            log::warn!("[WS] Unknown codec {:?}, defaulting to WAV", codec_str);
-            AudioCodec::Wav
-        }
-    };
+    let (output_codec, transcoder) = resolve_codec(codec_str, &payload.encoder_config);
 
-    log::info!("[WS] Creating stream with codec: {:?}", codec);
+    log::info!(
+        "[WS] Creating stream: input={:?}, output={:?}",
+        codec_str,
+        output_codec
+    );
 
-    match state.services.stream_coordinator.create_stream(codec) {
+    match state
+        .services
+        .stream_coordinator
+        .create_stream(output_codec, transcoder)
+    {
         Ok(id) => HandshakeResult::Success(id),
         Err(e) => HandshakeResult::Error(e),
     }

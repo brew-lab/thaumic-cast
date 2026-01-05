@@ -18,7 +18,7 @@ use crate::events::{EventEmitter, StreamEvent};
 use crate::sonos::utils::normalize_sonos_uri;
 use crate::sonos::SonosPlayback;
 use crate::state::SonosState;
-use crate::stream::{AudioCodec, StreamManager, StreamMetadata, StreamState};
+use crate::stream::{AudioCodec, StreamManager, StreamMetadata, StreamState, Transcoder};
 use crate::utils::now_millis;
 
 /// Composite key for playback sessions: (stream_id, speaker_ip).
@@ -140,11 +140,19 @@ impl StreamCoordinator {
             .collect()
     }
 
-    /// Creates a new audio stream with the specified codec.
+    /// Creates a new audio stream with the specified output codec and transcoder.
+    ///
+    /// # Arguments
+    /// * `codec` - Output codec for HTTP Content-Type (what Sonos receives)
+    /// * `transcoder` - Transcoder for converting input to output format
     ///
     /// Returns the stream ID on success. Broadcasts a `StreamEvent::Created` event.
-    pub fn create_stream(&self, codec: AudioCodec) -> Result<String, String> {
-        let stream_id = self.stream_manager.create_stream(codec)?;
+    pub fn create_stream(
+        &self,
+        codec: AudioCodec,
+        transcoder: Arc<dyn Transcoder>,
+    ) -> Result<String, String> {
+        let stream_id = self.stream_manager.create_stream(codec, transcoder)?;
 
         // Broadcast stream created event
         self.emit_event(StreamEvent::Created {

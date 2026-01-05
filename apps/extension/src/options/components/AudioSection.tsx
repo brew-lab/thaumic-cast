@@ -260,14 +260,12 @@ export function AudioSection({
                     </select>
                   </div>
 
-                  {/* Bitrate */}
-                  <div className={styles.field}>
-                    <label htmlFor="audio-bitrate" className={styles.label}>
-                      {t('audio_bitrate')}
-                    </label>
-                    {settings.customAudioSettings.codec === 'flac' ? (
-                      <span className={styles.hint}>{t('bitrate_not_applicable')}</span>
-                    ) : (
+                  {/* Bitrate - only show if codec has bitrate options */}
+                  {availableBitrates.length > 0 && (
+                    <div className={styles.field}>
+                      <label htmlFor="audio-bitrate" className={styles.label}>
+                        {t('audio_bitrate')}
+                      </label>
                       <select
                         id="audio-bitrate"
                         className={styles.select}
@@ -284,8 +282,8 @@ export function AudioSection({
                           </option>
                         ))}
                       </select>
-                    )}
-                  </div>
+                    </div>
+                  )}
 
                   {/* Channels */}
                   <div className={styles.field}>
