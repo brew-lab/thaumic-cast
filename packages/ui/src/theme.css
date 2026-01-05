@@ -385,6 +385,14 @@ body {
   color: var(--color-on-primary);
 }
 
+:where(h1, h2, h3, h4, h5, h6) {
+  text-wrap: balance;
+}
+
+:where(p) {
+  text-wrap: pretty;
+}
+
 :where(
   a[href],
   area,
@@ -705,6 +713,7 @@ body {
   font-size: 0.9rem;
   color: var(--color-text-muted);
   margin-block: var(--space-sm) 0;
+  text-wrap: pretty;
 }
 
 .wizardStepContent {
@@ -795,6 +804,7 @@ body {
 .alertContent {
   flex: 1;
   min-inline-size: 0;
+  text-wrap: pretty;
 }
 
 .alertDismiss {

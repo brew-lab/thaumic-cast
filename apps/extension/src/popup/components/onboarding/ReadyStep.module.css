@@ -1,10 +1,12 @@
 .introText {
   margin: 0;
   line-height: 1.6;
+  text-wrap: pretty;
 }
 
 .performanceText {
   margin: 0;
   line-height: 1.6;
   color: var(--color-text-muted);
+  text-wrap: pretty;
 }
