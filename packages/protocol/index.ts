@@ -8,7 +8,7 @@ import { z } from 'zod';
  *
  * Runtime detection filters this list to codecs the browser actually supports.
  *
- * - `pcm`: Raw PCM passthrough - encoded to FLAC server-side for lossless quality
+ * - `pcm`: Raw PCM passthrough - wrapped in WAV container server-side for lossless streaming
  * - `aac-lc`: AAC Low Complexity (mp4a.40.2) - balanced quality
  * - `he-aac`: High-Efficiency AAC (mp4a.40.5) - best for low bitrates
  * - `he-aac-v2`: High-Efficiency AAC v2 (mp4a.40.29) - best for very low bitrates, stereo
