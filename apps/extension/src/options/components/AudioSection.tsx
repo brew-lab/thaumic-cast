@@ -171,10 +171,12 @@ export function AudioSection({
     [settings.customAudioSettings, onUpdate],
   );
 
-  // Get available bitrates for current codec
+  // Get available bitrates for current codec (excluding 0 = lossless)
   const availableBitrates = useMemo(() => {
     if (codecLoading) return [];
-    return getSupportedBitrates(settings.customAudioSettings.codec, codecSupport);
+    return getSupportedBitrates(settings.customAudioSettings.codec, codecSupport).filter(
+      (b) => b !== 0,
+    );
   }, [settings.customAudioSettings.codec, codecSupport, codecLoading]);
 
   // Get available sample rates for current codec
