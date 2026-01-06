@@ -53,10 +53,9 @@ struct LatencySession {
     stream_id: String,
     /// Speaker IP address.
     speaker_ip: String,
-    /// Baseline Sonos RelTime (ms) captured on first sample.
-    /// Used to calculate relative position since our stream started.
-    baseline_sonos_ms: Option<u64>,
-    /// Baseline stream position (ms) captured on first sample.
+    /// When we first detected our stream playing (wall-clock baseline).
+    playback_started_at: Option<Instant>,
+    /// Stream position (ms) when playback was first detected.
     baseline_stream_ms: Option<u64>,
     /// Last observed RelTime seconds value.
     last_rel_time_seconds: Option<u32>,
@@ -78,7 +77,7 @@ impl LatencySession {
         Self {
             stream_id,
             speaker_ip,
-            baseline_sonos_ms: None,
+            playback_started_at: None,
             baseline_stream_ms: None,
             last_rel_time_seconds: None,
             samples: VecDeque::with_capacity(50),
@@ -91,52 +90,43 @@ impl LatencySession {
 
     /// Resets baseline positions (call when track changes).
     fn reset_baselines(&mut self) {
-        self.baseline_sonos_ms = None;
+        self.playback_started_at = None;
         self.baseline_stream_ms = None;
         self.measurements.clear();
         self.ema_latency = 0.0;
     }
 
-    /// Captures baseline positions on first valid sample.
-    /// Returns None if baselines aren't ready yet, otherwise (relative_stream_ms, relative_sonos_ms).
-    fn get_relative_positions(
-        &mut self,
-        stream_pos_ms: u64,
-        sonos_pos_ms: u64,
-    ) -> Option<(u64, u64)> {
-        // For a fresh HTTP stream, Sonos rel_time should be close to 0 initially.
-        // If Sonos reports a large position but we've sent little audio, it's not ready yet.
-        // Wait until the positions are somewhat aligned before capturing baselines.
-        if self.baseline_sonos_ms.is_none() {
-            // Sanity check: Sonos shouldn't be more than 10 seconds ahead of what we've sent
-            // (allowing for some buffering). If it is, Sonos isn't playing our fresh stream yet.
-            let max_allowed_diff = 10_000; // 10 seconds
-            if sonos_pos_ms > stream_pos_ms + max_allowed_diff {
-                log::debug!(
-                    "[LatencyMonitor] Waiting for Sonos to sync (sonos={}ms >> stream={}ms)",
-                    sonos_pos_ms,
-                    stream_pos_ms
-                );
-                return None;
-            }
-
-            self.baseline_sonos_ms = Some(sonos_pos_ms);
+    /// Captures baseline on first sample and calculates latency.
+    /// Uses wall-clock time instead of unreliable Sonos RelTime.
+    ///
+    /// Returns the latency in ms (positive = stream ahead, negative = Sonos ahead).
+    fn calculate_latency(&mut self, stream_pos_ms: u64) -> i64 {
+        // Capture baseline on first call
+        if self.playback_started_at.is_none() {
+            self.playback_started_at = Some(Instant::now());
             self.baseline_stream_ms = Some(stream_pos_ms);
             log::info!(
-                "[LatencyMonitor] Captured baselines: stream={}ms, sonos={}ms",
-                stream_pos_ms,
-                sonos_pos_ms
+                "[LatencyMonitor] Playback detected, baseline stream_pos={}ms",
+                stream_pos_ms
             );
         }
 
         let baseline_stream = self.baseline_stream_ms.unwrap_or(0);
-        let baseline_sonos = self.baseline_sonos_ms.unwrap_or(0);
+        let elapsed_since_playback = self
+            .playback_started_at
+            .map(|t| t.elapsed().as_millis() as u64)
+            .unwrap_or(0);
 
-        // Calculate positions relative to when monitoring started
-        let rel_stream = stream_pos_ms.saturating_sub(baseline_stream);
-        let rel_sonos = sonos_pos_ms.saturating_sub(baseline_sonos);
+        // How much audio we've sent since baseline
+        let stream_sent = stream_pos_ms.saturating_sub(baseline_stream);
 
-        Some((rel_stream, rel_sonos))
+        // In real-time streaming, elapsed wall-clock time ≈ audio sent
+        // Latency = (audio sent) - (time elapsed) = how far ahead the buffer is
+        // Positive latency means we've sent more audio than time has passed (buffer building up)
+        // This represents the delay before that audio will be heard
+        let latency_ms = stream_sent as i64 - elapsed_since_playback as i64;
+
+        latency_ms
     }
 
     /// Adds a new position sample and returns true if a second-boundary transition was detected.
@@ -449,26 +439,14 @@ impl LatencyMonitor {
                         // Add sample and check for transition
                         let _transition = session.add_sample(sample.clone());
 
-                        // Calculate Sonos position with RTT compensation
-                        let adjusted_sonos_pos_ms = position.rel_time_ms + (sample.rtt_ms / 2) as u64;
-
-                        // Get positions relative to monitoring start (handles non-zero baselines)
-                        let (rel_stream, rel_sonos) = match session
-                            .get_relative_positions(stream_pos_ms, adjusted_sonos_pos_ms)
-                        {
-                            Some(positions) => positions,
-                            None => continue, // Not ready yet, skip this sample
-                        };
-
-                        // Latency = how far ahead the stream is compared to Sonos playback
-                        let latency_ms = rel_stream as i64 - rel_sonos as i64;
+                        // Calculate latency using wall-clock time (Sonos RelTime is unreliable)
+                        // We measure how far ahead our stream buffer is compared to real-time
+                        let latency_ms = session.calculate_latency(stream_pos_ms);
 
                         log::debug!(
-                            "[LatencyMonitor] raw: stream={}ms, sonos={}ms, rel_stream={}ms, rel_sonos={}ms, latency={}ms, rtt={}ms",
+                            "[LatencyMonitor] stream_pos={}ms, sonos_reltime={}ms, calculated_latency={}ms, rtt={}ms",
                             stream_pos_ms,
                             position.rel_time_ms,
-                            rel_stream,
-                            rel_sonos,
                             latency_ms,
                             sample.rtt_ms
                         );
