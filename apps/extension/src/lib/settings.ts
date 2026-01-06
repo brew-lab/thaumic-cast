@@ -68,8 +68,8 @@ export const ExtensionSettingsSchema = z.object({
   // Language
   language: SupportedLocaleSchema.default('en'),
 
-  // Audio mode
-  audioMode: AudioModeSchema.default('mid'),
+  // Audio mode (default to high for lossless - lower CPU, just needs bandwidth)
+  audioMode: AudioModeSchema.default('high'),
 
   // Custom audio settings (used when audioMode is 'custom')
   customAudioSettings: CustomAudioSettingsSchema.default({
@@ -89,7 +89,7 @@ const DEFAULT_EXTENSION_SETTINGS: ExtensionSettings = {
   useAutoDiscover: true,
   theme: 'auto',
   language: 'en',
-  audioMode: 'mid',
+  audioMode: 'high',
   customAudioSettings: {
     codec: 'aac-lc',
     bitrate: 192,
