@@ -120,6 +120,20 @@ impl LatencySession {
         // How much audio we've sent since baseline
         let stream_sent = stream_pos_ms.saturating_sub(baseline_stream);
 
+        // Debug: Check if stream is progressing at real-time rate
+        // stream_sent should roughly equal elapsed_since_playback for real-time streaming
+        let stream_rate = if elapsed_since_playback > 0 {
+            (stream_sent as f64 / elapsed_since_playback as f64) * 100.0
+        } else {
+            0.0
+        };
+        log::debug!(
+            "[LatencyMonitor] stream_sent={}ms, wall_elapsed={}ms, rate={:.1}% of realtime",
+            stream_sent,
+            elapsed_since_playback,
+            stream_rate
+        );
+
         // In real-time streaming, elapsed wall-clock time ≈ audio sent
         // Latency = (audio sent) - (time elapsed) = how far ahead the buffer is
         // Positive latency means we've sent more audio than time has passed (buffer building up)
