@@ -102,10 +102,11 @@ impl LatencySession {
         sonos_reltime_ms: u64,
         rtt_ms: u32,
     ) -> Option<i64> {
-        // Detect track restart: RelTime went backwards by more than 1 second
+        // Detect track restart: RelTime went backwards
         // This happens when metadata updates cause Sonos to restart the track
+        // Use small threshold (100ms) since Sonos has 1-second precision
         if let Some(last_reltime) = self.last_sonos_reltime_ms {
-            if sonos_reltime_ms + 1000 < last_reltime {
+            if sonos_reltime_ms < last_reltime.saturating_sub(100) {
                 log::info!(
                     "[LatencyMonitor] Track restart detected: reltime {} -> {} (delta={}ms)",
                     last_reltime,
