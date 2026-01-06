@@ -555,6 +555,17 @@ async fn handle_ws(socket: WebSocket, state: AppState) {
                                         )
                                         .await;
 
+                                    // Start latency monitoring for each successful speaker
+                                    for result in &results {
+                                        if result.success {
+                                            state
+                                                .services
+                                                .latency_monitor
+                                                .start_monitoring(&stream_id, &result.speaker_ip)
+                                                .await;
+                                        }
+                                    }
+
                                     // Send PLAYBACK_RESULTS with per-speaker outcomes
                                     let msg = WsOutgoing::PlaybackResults {
                                         payload: PlaybackResultsPayload { results },
@@ -621,6 +632,9 @@ async fn handle_ws(socket: WebSocket, state: AppState) {
     // Graceful cleanup: stop speakers before stream removal.
     // StreamGuard::drop() will be a no-op since remove_stream is idempotent.
     if let Some(ref guard) = stream_guard {
+        // Stop latency monitoring for this stream
+        state.services.latency_monitor.stop_stream(guard.id()).await;
+
         state
             .services
             .stream_coordinator

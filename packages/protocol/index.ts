@@ -1082,12 +1082,34 @@ export const StreamEventSchema = z.discriminatedUnion('type', [
 export type StreamEvent = z.infer<typeof StreamEventSchema>;
 
 /**
+ * Latency event types broadcast by desktop app.
+ * Used for measuring audio playback delay from source to Sonos speaker.
+ */
+export const LatencyEventSchema = z.discriminatedUnion('type', [
+  z.object({
+    type: z.literal('updated'),
+    /** ID of the stream being measured */
+    streamId: z.string(),
+    /** IP address of the speaker being monitored */
+    speakerIp: z.string(),
+    /** Measured latency in milliseconds */
+    latencyMs: z.number().int().nonnegative(),
+    /** Confidence score from 0.0 to 1.0 (higher = more reliable) */
+    confidence: z.number().min(0).max(1),
+    /** Unix timestamp in milliseconds */
+    timestamp: z.number(),
+  }),
+]);
+export type LatencyEvent = z.infer<typeof LatencyEventSchema>;
+
+/**
  * Broadcast event wrapper from desktop app.
  * Uses passthrough to allow the nested event fields.
  */
 export const BroadcastEventSchema = z.union([
   z.object({ category: z.literal('sonos') }).passthrough(),
   z.object({ category: z.literal('stream') }).passthrough(),
+  z.object({ category: z.literal('latency') }).passthrough(),
 ]);
 
 /**
@@ -1105,7 +1127,17 @@ export interface StreamBroadcastEvent {
   [key: string]: unknown;
 }
 
-export type BroadcastEvent = SonosBroadcastEvent | StreamBroadcastEvent;
+export interface LatencyBroadcastEvent {
+  category: 'latency';
+  type: LatencyEvent['type'];
+  streamId: string;
+  speakerIp: string;
+  latencyMs: number;
+  confidence: number;
+  timestamp: number;
+}
+
+export type BroadcastEvent = SonosBroadcastEvent | StreamBroadcastEvent | LatencyBroadcastEvent;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Media Metadata Types (for tab-level metadata display)

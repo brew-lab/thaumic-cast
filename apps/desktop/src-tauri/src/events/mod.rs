@@ -34,6 +34,9 @@ pub enum BroadcastEvent {
 
     /// Events from topology discovery.
     Topology(TopologyEvent),
+
+    /// Events related to latency measurement.
+    Latency(LatencyEvent),
 }
 
 /// Events related to audio stream state changes.
@@ -147,5 +150,36 @@ pub enum TopologyEvent {
 impl From<TopologyEvent> for BroadcastEvent {
     fn from(event: TopologyEvent) -> Self {
         BroadcastEvent::Topology(event)
+    }
+}
+
+/// Events related to audio latency measurement.
+///
+/// These events report measured latency between audio source and Sonos playback,
+/// enabling video synchronization and delay compensation.
+#[derive(Debug, Clone, Serialize)]
+#[serde(tag = "type", rename_all = "camelCase")]
+pub enum LatencyEvent {
+    /// Latency measurement updated for a speaker.
+    Updated {
+        /// The stream ID being measured.
+        #[serde(rename = "streamId")]
+        stream_id: String,
+        /// The speaker IP address where latency was measured.
+        #[serde(rename = "speakerIp")]
+        speaker_ip: String,
+        /// Measured latency in milliseconds.
+        #[serde(rename = "latencyMs")]
+        latency_ms: u64,
+        /// Confidence score for the measurement (0.0 - 1.0).
+        confidence: f32,
+        /// Unix timestamp in milliseconds.
+        timestamp: u64,
+    },
+}
+
+impl From<LatencyEvent> for BroadcastEvent {
+    fn from(event: LatencyEvent) -> Self {
+        BroadcastEvent::Latency(event)
     }
 }

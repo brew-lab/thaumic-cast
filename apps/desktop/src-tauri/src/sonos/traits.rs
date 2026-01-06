@@ -7,7 +7,7 @@ use async_trait::async_trait;
 
 use crate::error::{DiscoveryResult, SoapResult};
 use crate::sonos::discovery::Speaker;
-use crate::sonos::types::ZoneGroup;
+use crate::sonos::types::{PositionInfo, ZoneGroup};
 use crate::stream::StreamMetadata;
 
 /// Trait for Sonos playback control operations.
@@ -47,6 +47,19 @@ pub trait SonosPlayback: Send + Sync {
     /// * `ip` - IP address of the Sonos speaker (coordinator for grouped speakers)
     /// * `coordinator_uuid` - The speaker's RINCON_xxx UUID for building the queue URI
     async fn switch_to_queue(&self, ip: &str, coordinator_uuid: &str) -> SoapResult<()>;
+
+    /// Gets the current playback position from a Sonos speaker.
+    ///
+    /// Used by `LatencyMonitor` to measure the delay between stream source
+    /// and speaker playback. Returns position info including RelTime which
+    /// indicates current playback position within the track.
+    ///
+    /// # Arguments
+    /// * `ip` - IP address of the Sonos speaker (coordinator for grouped speakers)
+    ///
+    /// # Returns
+    /// Position information including track number, duration, URI, and elapsed time.
+    async fn get_position_info(&self, ip: &str) -> SoapResult<PositionInfo>;
 }
 
 /// Trait for Sonos topology operations.

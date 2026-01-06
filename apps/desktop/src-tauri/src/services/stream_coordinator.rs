@@ -521,4 +521,13 @@ impl StreamCoordinator {
     pub fn stream_count(&self) -> usize {
         self.stream_manager.stream_count()
     }
+
+    /// Returns a reference to the stream manager.
+    ///
+    /// Used by services that need access to stream timing information
+    /// (e.g., LatencyMonitor).
+    #[must_use]
+    pub fn stream_manager(&self) -> Arc<StreamManager> {
+        Arc::clone(&self.stream_manager)
+    }
 }
