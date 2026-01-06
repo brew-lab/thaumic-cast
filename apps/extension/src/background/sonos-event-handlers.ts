@@ -15,7 +15,12 @@
  */
 
 import { createLogger } from '@thaumic-cast/shared';
-import type { BroadcastEvent, SonosStateSnapshot, TransportState } from '@thaumic-cast/protocol';
+import type {
+  BroadcastEvent,
+  SonosStateSnapshot,
+  TransportState,
+  LatencyBroadcastEvent,
+} from '@thaumic-cast/protocol';
 import {
   updateGroups,
   updateVolume,
@@ -80,6 +85,8 @@ export async function handleSonosEvent(event: BroadcastEvent): Promise<void> {
         await handlePlaybackStopped(eventData.speakerIp as string);
         break;
     }
+  } else if (event.category === 'latency') {
+    await handleLatencyEvent(event as LatencyBroadcastEvent);
   }
 }
 
@@ -315,5 +322,57 @@ async function handlePlaybackStopped(speakerIp: string): Promise<void> {
         message: i18n.t('auto_stop_playback_stopped'),
       });
     }
+  }
+}
+
+/**
+ * Handles latency measurement events.
+ * Routes to:
+ * 1. Content script of the casting tab (for video sync)
+ * 2. Popup (for latency display)
+ * @param event - The latency event (updated or stale)
+ */
+async function handleLatencyEvent(event: LatencyBroadcastEvent): Promise<void> {
+  const { streamId, speakerIp, type } = event;
+
+  // Find session to get tab ID
+  const session = getSessionByStreamId(streamId);
+
+  if (!session) {
+    log.debug(`Latency event for unknown stream ${streamId}`);
+    return;
+  }
+
+  const tabId = session.tabId;
+
+  // Forward to content script for video sync
+  try {
+    await chrome.tabs.sendMessage(tabId, {
+      type: 'LATENCY_EVENT',
+      payload: event,
+    });
+  } catch {
+    // Content script may not be injected yet
+    log.debug(`Failed to send latency event to tab ${tabId}`);
+  }
+
+  // Notify popup for UI display
+  if (type === 'updated') {
+    notifyPopup({
+      type: 'LATENCY_UPDATE',
+      streamId,
+      speakerIp,
+      epochId: event.epochId,
+      latencyMs: event.latencyMs,
+      jitterMs: event.jitterMs,
+      confidence: event.confidence,
+    });
+  } else if (type === 'stale') {
+    notifyPopup({
+      type: 'LATENCY_STALE',
+      streamId,
+      speakerIp,
+      epochId: event.epochId,
+    });
   }
 }
