@@ -235,11 +235,11 @@ impl LatencySession {
             .saturating_add(self.sonos_offset_ms)
             .saturating_add((rtt_ms / 2) as u64);
 
-        // Absolute latency = (time since first frame) - (continuous Sonos position)
+        // Absolute latency = (time since audio epoch) - (continuous Sonos position)
         // Positive = audio in pipeline waiting to be played (normal)
         let latency_ms = (stream_elapsed_ms as i64) - (continuous_sonos_ms as i64);
 
-        log::debug!(
+        log::trace!(
             "[LatencyMonitor] stream={}ms, sonos={}ms (continuous={}ms, offset={}ms), latency={}ms",
             stream_elapsed_ms,
             sonos_reltime_ms,
