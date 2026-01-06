@@ -93,16 +93,6 @@ pub fn run() {
             // Initialize system tray
             ui::setup_tray(app)?;
 
-            // Enable autostart by default on first run
-            {
-                use tauri_plugin_autostart::ManagerExt;
-                let autostart = app.autolaunch();
-                if !autostart.is_enabled().unwrap_or(false) {
-                    let _ = autostart.enable();
-                    log::info!("Autostart enabled by default");
-                }
-            }
-
             Ok(())
         })
         .on_window_event(|window, event| {
