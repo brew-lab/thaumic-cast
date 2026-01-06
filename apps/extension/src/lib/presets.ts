@@ -155,7 +155,7 @@ export function resolveAudioMode(
         bitrate: customSettings.bitrate,
         channels: customSettings.channels,
         sampleRate: customSettings.sampleRate,
-        latencyMode: 'quality',
+        latencyMode: customSettings.latencyMode,
       };
     }
 
@@ -218,7 +218,7 @@ export function getResolvedConfigForDisplay(
         bitrate: customSettings.bitrate,
         channels: customSettings.channels,
         sampleRate: customSettings.sampleRate,
-        latencyMode: 'quality',
+        latencyMode: customSettings.latencyMode,
       };
     }
     return null;

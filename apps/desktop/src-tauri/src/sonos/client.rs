@@ -12,10 +12,10 @@ use crate::error::SoapResult;
 use crate::sonos::services::SonosService;
 use crate::sonos::soap::{SoapError, SoapRequestBuilder};
 use crate::sonos::traits::{SonosPlayback, SonosTopology, SonosVolumeControl};
-use crate::sonos::types::{ZoneGroup, ZoneGroupMember};
+use crate::sonos::types::{PositionInfo, ZoneGroup, ZoneGroupMember};
 use crate::sonos::utils::{
-    escape_xml, extract_ip_from_location, extract_model_from_icon, extract_xml_text,
-    get_channel_role, get_xml_attr, normalize_sonos_uri,
+    build_sonos_stream_uri, escape_xml, extract_ip_from_location, extract_model_from_icon,
+    extract_xml_text, get_channel_role, get_xml_attr,
 };
 use crate::stream::StreamMetadata;
 
@@ -283,17 +283,19 @@ fn format_didl_lite(stream_url: &str, metadata: Option<&StreamMetadata>, icon_ur
 /// * `client` - The HTTP client to use for the request
 /// * `ip` - IP address of the Sonos speaker (coordinator for grouped speakers)
 /// * `uri` - The audio stream URL to play
+/// * `codec` - The audio codec (e.g., "wav", "aac", "mp3") for proper URI formatting
 /// * `metadata` - Optional stream metadata for display (title, artist, source)
 /// * `icon_url` - URL to the static app icon for album art display
 pub async fn play_uri(
     client: &Client,
     ip: &str,
     uri: &str,
+    codec: &str,
     metadata: Option<&StreamMetadata>,
     icon_url: &str,
 ) -> SoapResult<()> {
-    // Convert http:// to x-rincon-mp3radio:// for Sonos compatibility
-    let sonos_uri = normalize_sonos_uri(uri);
+    // Build Sonos-compatible URI with proper scheme and extension for codec
+    let sonos_uri = build_sonos_stream_uri(uri, codec);
     let didl_metadata = format_didl_lite(uri, metadata, icon_url);
 
     log::info!("[Sonos] SetAVTransportURI: ip={}, uri={}", ip, sonos_uri);
@@ -477,6 +479,55 @@ pub async fn set_group_mute(client: &Client, coordinator_ip: &str, mute: bool) -
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Position Info (for Latency Monitoring)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Gets the current playback position from a Sonos speaker.
+///
+/// This queries the AVTransport service for position information, which is
+/// used by the latency monitor to calculate the delay between audio source
+/// and speaker playback.
+///
+/// # Arguments
+/// * `client` - The HTTP client to use for the request
+/// * `ip` - IP address of the Sonos speaker (coordinator for grouped speakers)
+///
+/// # Returns
+/// Position information including track number, duration, URI, and elapsed time.
+///
+/// # Note
+/// The `RelTime` field is in "H:MM:SS" format with second precision. For streams,
+/// this represents elapsed playback time since the stream started.
+pub async fn get_position_info(client: &Client, ip: &str) -> SoapResult<PositionInfo> {
+    let response = SoapRequestBuilder::new(client, ip)
+        .service(SonosService::AVTransport)
+        .action("GetPositionInfo")
+        .instance_id()
+        .send()
+        .await?;
+
+    // Extract fields from response
+    let track = extract_xml_text(&response, "Track")
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(0);
+
+    let track_duration = extract_xml_text(&response, "TrackDuration").unwrap_or_default();
+    let track_uri = extract_xml_text(&response, "TrackURI").unwrap_or_default();
+    let rel_time = extract_xml_text(&response, "RelTime").unwrap_or_else(|| "0:00:00".to_string());
+
+    // Parse RelTime to milliseconds
+    let rel_time_ms = PositionInfo::parse_time_to_ms(&rel_time);
+
+    Ok(PositionInfo {
+        track,
+        track_duration,
+        track_uri,
+        rel_time,
+        rel_time_ms,
+    })
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Trait Implementation
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -507,10 +558,11 @@ impl SonosPlayback for SonosClientImpl {
         &self,
         ip: &str,
         uri: &str,
+        codec: &str,
         metadata: Option<&StreamMetadata>,
         icon_url: &str,
     ) -> SoapResult<()> {
-        play_uri(&self.client, ip, uri, metadata, icon_url).await
+        play_uri(&self.client, ip, uri, codec, metadata, icon_url).await
     }
 
     async fn stop(&self, ip: &str) -> SoapResult<()> {
@@ -519,6 +571,10 @@ impl SonosPlayback for SonosClientImpl {
 
     async fn switch_to_queue(&self, ip: &str, coordinator_uuid: &str) -> SoapResult<()> {
         switch_to_queue(&self.client, ip, coordinator_uuid).await
+    }
+
+    async fn get_position_info(&self, ip: &str) -> SoapResult<PositionInfo> {
+        get_position_info(&self.client, ip).await
     }
 }
 

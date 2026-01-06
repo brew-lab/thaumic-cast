@@ -75,6 +75,45 @@ import i18n from '../lib/i18n';
 
 const log = createLogger('Background');
 
+/** Storage key for caching codec detection results in session storage. */
+const CODEC_CACHE_KEY = 'codecSupportCache';
+
+/**
+ * Detects supported audio codecs via offscreen document and caches the result.
+ * AudioEncoder is only available in window contexts, not service workers,
+ * so we must delegate detection to the offscreen document.
+ * @returns The codec support result, or null if detection failed
+ */
+async function detectAndCacheCodecSupport(): Promise<SupportedCodecsResult | null> {
+  try {
+    // Check if already cached
+    const cached = await chrome.storage.session.get(CODEC_CACHE_KEY);
+    if (cached[CODEC_CACHE_KEY]) {
+      log.debug('Codec support already cached');
+      return cached[CODEC_CACHE_KEY] as SupportedCodecsResult;
+    }
+
+    // Request detection from offscreen document (AudioEncoder available there)
+    log.info('Requesting codec detection from offscreen...');
+    const response = await chrome.runtime.sendMessage({ type: 'DETECT_CODECS' });
+
+    if (response?.success && response.result) {
+      const result = response.result as SupportedCodecsResult;
+      await chrome.storage.session.set({ [CODEC_CACHE_KEY]: result });
+      log.info(
+        `Codec detection complete: ${result.availableCodecs.length} codecs available (default: ${result.defaultCodec})`,
+      );
+      return result;
+    }
+
+    log.warn('Codec detection failed:', response?.error);
+    return null;
+  } catch (err) {
+    log.warn('Codec detection failed:', err);
+    return null;
+  }
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Sonos State Management
 // ─────────────────────────────────────────────────────────────────────────────
@@ -725,8 +764,14 @@ async function handleStartCast(
 
     // Load extension settings and cached codec support
     const settings = await loadExtensionSettings();
-    const codecCache = await chrome.storage.session.get('codecSupportCache');
-    const codecSupport: SupportedCodecsResult | null = codecCache['codecSupportCache'] ?? null;
+    const codecCache = await chrome.storage.session.get(CODEC_CACHE_KEY);
+    let codecSupport: SupportedCodecsResult | null = codecCache[CODEC_CACHE_KEY] ?? null;
+
+    // If codec support not cached, try to detect now (should rarely happen after startup fix)
+    if (!codecSupport || codecSupport.availableCodecs.length === 0) {
+      log.info('Codec support not cached, detecting now...');
+      codecSupport = await detectAndCacheCodecSupport();
+    }
 
     if (codecSupport && codecSupport.availableCodecs.length > 0) {
       // Use preset resolution with codec detection
@@ -746,8 +791,8 @@ async function handleStartCast(
         log.info(`Encoder config (fallback): ${describeConfig(encoderConfig)}`);
       }
     } else {
-      // Codec support not cached yet, fall back to device-config
-      log.info('Codec support not cached, using device config fallback');
+      // Codec detection failed entirely, fall back to device-config
+      log.warn('Codec detection failed, using device config fallback');
       encoderConfig = await selectEncoderConfig();
       log.info(`Encoder config (fallback): ${describeConfig(encoderConfig)}`);
     }

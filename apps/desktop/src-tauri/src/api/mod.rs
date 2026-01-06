@@ -67,13 +67,14 @@ impl AppState {
         self.services.lifecycle.set_app_handle(handle);
     }
 
-    /// Starts all background services (GENA renewal, topology monitor).
+    /// Starts all background services (GENA renewal, topology monitor, latency monitor).
     ///
     /// This is called internally by `start_services()`. Prefer using `start_services()`
     /// which also starts the HTTP server and is idempotent.
     fn start_background_tasks(&self) {
         self.services.discovery_service.start_renewal_task();
         Arc::clone(&self.services.discovery_service).start_topology_monitor();
+        self.services.latency_monitor.start();
     }
 
     /// Starts network services (HTTP server and background tasks).

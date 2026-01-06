@@ -4,6 +4,7 @@ import { createLogger } from '@thaumic-cast/shared';
 import type { AudioEncoder } from './types';
 import { AacEncoder } from './aac-encoder';
 import { FlacEncoder } from './flac-encoder';
+import { PcmEncoder } from './pcm-encoder';
 import { VorbisEncoder } from './vorbis-encoder';
 
 const log = createLogger('EncoderFactory');
@@ -55,6 +56,8 @@ export async function createEncoder(config: EncoderConfig): Promise<AudioEncoder
 
   // Route to appropriate encoder based on codec
   switch (config.codec) {
+    case 'pcm':
+      return new PcmEncoder(config);
     case 'aac-lc':
     case 'he-aac':
     case 'he-aac-v2':

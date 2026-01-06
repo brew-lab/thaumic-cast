@@ -23,6 +23,7 @@ import {
   WsControlCommand,
   isSupportedSampleRate,
   getNearestSupportedSampleRate,
+  detectSupportedCodecs,
 } from '@thaumic-cast/protocol';
 import i18n from '../lib/i18n';
 
@@ -906,6 +907,25 @@ chrome.runtime.onMessage.addListener((msg: ExtensionMessage, _sender, sendRespon
     });
     sendResponse({ success });
     return true;
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // Codec Detection (AudioEncoder only available in window contexts)
+  // ─────────────────────────────────────────────────────────────────────────
+
+  if (msg.type === 'DETECT_CODECS') {
+    detectSupportedCodecs()
+      .then((result) => {
+        log.info(
+          `Codec detection complete: ${result.availableCodecs.length} codecs (default: ${result.defaultCodec})`,
+        );
+        sendResponse({ success: true, result });
+      })
+      .catch((err) => {
+        log.error('Codec detection failed:', err);
+        sendResponse({ success: false, error: String(err) });
+      });
+    return true; // Will respond asynchronously
   }
 
   // ─────────────────────────────────────────────────────────────────────────

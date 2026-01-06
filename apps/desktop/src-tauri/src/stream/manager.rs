@@ -4,10 +4,12 @@ use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::time::Instant;
 use tokio::sync::broadcast;
 use uuid::Uuid;
 
 use crate::config::{MAX_CONCURRENT_STREAMS, STREAM_BUFFER_FRAMES, STREAM_CHANNEL_CAPACITY};
+use crate::stream::transcoder::{Passthrough, Transcoder};
 
 /// Supported audio codecs for the stream
 #[derive(Debug, Clone, Copy, Serialize, PartialEq)]
@@ -35,9 +37,57 @@ pub struct StreamMetadata {
     pub source: Option<String>,
 }
 
+/// Timing information for latency measurement.
+///
+/// Tracks when the first audio frame arrives, enabling wall-clock based
+/// latency calculation by comparing stream elapsed time against Sonos position.
+pub struct StreamTiming {
+    /// When the first audio frame was received (for stream start time).
+    first_frame_at: parking_lot::RwLock<Option<Instant>>,
+}
+
+impl StreamTiming {
+    /// Creates a new StreamTiming instance.
+    pub fn new() -> Self {
+        Self {
+            first_frame_at: parking_lot::RwLock::new(None),
+        }
+    }
+
+    /// Records when the first frame was received.
+    ///
+    /// Returns `true` if this was the first call (timing just started),
+    /// `false` if timing was already started.
+    pub fn record_first_frame(&self) -> bool {
+        let mut first_frame = self.first_frame_at.write();
+        if first_frame.is_none() {
+            *first_frame = Some(Instant::now());
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Returns the time since the first frame was received.
+    ///
+    /// Returns `None` if no frames have been received yet.
+    #[must_use]
+    pub fn elapsed_since_start(&self) -> Option<std::time::Duration> {
+        self.first_frame_at.read().map(|start| start.elapsed())
+    }
+}
+
+impl Default for StreamTiming {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// State for a single active audio stream
 pub struct StreamState {
     pub id: String,
+    /// Output codec for HTTP Content-Type header.
+    /// This is what Sonos receives, which may differ from input format.
     pub codec: AudioCodec,
     pub metadata: Arc<parking_lot::RwLock<StreamMetadata>>,
     /// Broadcast channel for distributing audio frames to HTTP clients
@@ -46,12 +96,29 @@ pub struct StreamState {
     pub buffer: Arc<parking_lot::RwLock<VecDeque<Bytes>>>,
     /// Whether the stream has received its first frame (for STREAM_READY signaling)
     has_frames: AtomicBool,
+    /// Transcoder for converting input format to output format.
+    /// For PCM input, this passes through raw data (WAV header added by HTTP handler).
+    /// For pre-encoded formats (AAC, FLAC), this is also a passthrough.
+    transcoder: Arc<dyn Transcoder>,
+    /// Timing information for latency measurement.
+    pub timing: StreamTiming,
 }
 
 impl StreamState {
-    /// Creates a new StreamState instance.
-    pub fn new(id: String, codec: AudioCodec) -> Self {
+    /// Creates a new StreamState instance with a custom transcoder.
+    ///
+    /// # Arguments
+    /// * `id` - Unique stream identifier
+    /// * `codec` - Output codec for HTTP Content-Type (what Sonos receives)
+    /// * `transcoder` - Transcoder for converting input to output format
+    pub fn new(id: String, codec: AudioCodec, transcoder: Arc<dyn Transcoder>) -> Self {
         let (tx, _) = broadcast::channel(STREAM_CHANNEL_CAPACITY);
+        log::debug!(
+            "[Stream] Creating {} with codec {:?}, transcoder: {}",
+            id,
+            codec,
+            transcoder.description()
+        );
         Self {
             id,
             codec,
@@ -61,21 +128,41 @@ impl StreamState {
                 STREAM_BUFFER_FRAMES,
             ))),
             has_frames: AtomicBool::new(false),
+            transcoder,
+            timing: StreamTiming::new(),
         }
+    }
+
+    /// Creates a new StreamState with passthrough (no transcoding).
+    ///
+    /// Use this for pre-encoded formats where the browser has already
+    /// performed encoding (AAC, FLAC, Vorbis).
+    ///
+    /// Currently unused - `ws.rs` creates transcoders explicitly via `resolve_codec()`.
+    /// Kept for testing and potential future use where passthrough is the common case.
+    #[allow(dead_code)]
+    pub fn new_passthrough(id: String, codec: AudioCodec) -> Self {
+        Self::new(id, codec, Arc::new(Passthrough))
     }
 
     /// Pushes a new audio frame into the stream.
     ///
+    /// The frame is first passed through the transcoder (if any), then
+    /// added to the buffer and broadcast to HTTP clients.
+    ///
     /// Returns `true` if this was the first frame (stream just became ready),
     /// `false` otherwise.
     pub fn push_frame(&self, frame: Bytes) -> bool {
+        // Transcode the frame (PCM → FLAC, or passthrough for pre-encoded)
+        let output_frame = self.transcoder.transcode(&frame);
+
         // Add to recent buffer (ring buffer behavior)
         {
             let mut buffer = self.buffer.write();
             if buffer.len() >= STREAM_BUFFER_FRAMES {
                 buffer.pop_front();
             }
-            buffer.push_back(frame.clone());
+            buffer.push_back(output_frame.clone());
         }
 
         // Signal ready on first frame (compare_exchange ensures only first frame triggers)
@@ -85,11 +172,12 @@ impl StreamState {
             .is_ok();
 
         if is_first_frame {
+            self.timing.record_first_frame();
             log::debug!("[Stream] {} is now ready (first frame received)", self.id);
         }
 
         // Broadcast to all active HTTP listeners
-        if let Err(e) = self.tx.send(frame) {
+        if let Err(e) = self.tx.send(output_frame) {
             log::trace!("Failed to broadcast frame for stream {}: {}", self.id, e);
         }
 
@@ -145,16 +233,37 @@ impl StreamManager {
         }
     }
 
-    /// Creates a new stream and returns its ID.
-    pub fn create_stream(&self, codec: AudioCodec) -> Result<String, String> {
+    /// Creates a new stream with a custom transcoder and returns its ID.
+    ///
+    /// # Arguments
+    /// * `codec` - Output codec for HTTP Content-Type (what Sonos receives)
+    /// * `transcoder` - Transcoder for converting input to output format
+    pub fn create_stream(
+        &self,
+        codec: AudioCodec,
+        transcoder: Arc<dyn Transcoder>,
+    ) -> Result<String, String> {
         if self.streams.len() >= MAX_CONCURRENT_STREAMS {
             return Err("Maximum number of concurrent streams reached".to_string());
         }
 
         let id = Uuid::new_v4().to_string();
-        let state = Arc::new(StreamState::new(id.clone(), codec));
+        let state = Arc::new(StreamState::new(id.clone(), codec, transcoder));
         self.streams.insert(id.clone(), state);
         Ok(id)
+    }
+
+    /// Creates a new stream with passthrough (no transcoding) and returns its ID.
+    ///
+    /// Use this for pre-encoded formats where the browser has already
+    /// performed encoding (AAC, FLAC, Vorbis).
+    ///
+    /// Currently unused - `StreamCoordinator::create_stream()` receives the transcoder
+    /// from `ws.rs` which creates it via `resolve_codec()`.
+    /// Kept for testing and potential future use where passthrough is the common case.
+    #[allow(dead_code)]
+    pub fn create_stream_passthrough(&self, codec: AudioCodec) -> Result<String, String> {
+        self.create_stream(codec, Arc::new(Passthrough))
     }
 
     /// Retrieves an active stream by its ID.

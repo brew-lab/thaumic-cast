@@ -5,6 +5,7 @@ import { Card } from '@thaumic-cast/ui';
 import type {
   AudioCodec,
   Bitrate,
+  LatencyMode,
   SupportedCodecsResult,
   SupportedSampleRate,
 } from '@thaumic-cast/protocol';
@@ -171,10 +172,27 @@ export function AudioSection({
     [settings.customAudioSettings, onUpdate],
   );
 
-  // Get available bitrates for current codec
+  /**
+   * Handles custom latency mode change.
+   */
+  const handleLatencyModeChange = useCallback(
+    async (latencyMode: LatencyMode) => {
+      await onUpdate({
+        customAudioSettings: {
+          ...settings.customAudioSettings,
+          latencyMode,
+        },
+      });
+    },
+    [settings.customAudioSettings, onUpdate],
+  );
+
+  // Get available bitrates for current codec (excluding 0 = lossless)
   const availableBitrates = useMemo(() => {
     if (codecLoading) return [];
-    return getSupportedBitrates(settings.customAudioSettings.codec, codecSupport);
+    return getSupportedBitrates(settings.customAudioSettings.codec, codecSupport).filter(
+      (b) => b !== 0,
+    );
   }, [settings.customAudioSettings.codec, codecSupport, codecLoading]);
 
   // Get available sample rates for current codec
@@ -260,14 +278,12 @@ export function AudioSection({
                     </select>
                   </div>
 
-                  {/* Bitrate */}
-                  <div className={styles.field}>
-                    <label htmlFor="audio-bitrate" className={styles.label}>
-                      {t('audio_bitrate')}
-                    </label>
-                    {settings.customAudioSettings.codec === 'flac' ? (
-                      <span className={styles.hint}>{t('bitrate_not_applicable')}</span>
-                    ) : (
+                  {/* Bitrate - only show if codec has bitrate options */}
+                  {availableBitrates.length > 0 && (
+                    <div className={styles.field}>
+                      <label htmlFor="audio-bitrate" className={styles.label}>
+                        {t('audio_bitrate')}
+                      </label>
                       <select
                         id="audio-bitrate"
                         className={styles.select}
@@ -284,8 +300,8 @@ export function AudioSection({
                           </option>
                         ))}
                       </select>
-                    )}
-                  </div>
+                    </div>
+                  )}
 
                   {/* Channels */}
                   <div className={styles.field}>
@@ -329,6 +345,28 @@ export function AudioSection({
                       </select>
                     </div>
                   )}
+
+                  {/* Latency Mode - only show for codecs that use WebCodecs encoding */}
+                  {CODEC_METADATA[settings.customAudioSettings.codec].webCodecsId !== null && (
+                    <div className={styles.field}>
+                      <label htmlFor="audio-latency-mode" className={styles.label}>
+                        {t('audio_latency_mode')}
+                      </label>
+                      <select
+                        id="audio-latency-mode"
+                        className={styles.select}
+                        value={settings.customAudioSettings.latencyMode}
+                        onChange={(e) =>
+                          handleLatencyModeChange(
+                            (e.target as HTMLSelectElement).value as LatencyMode,
+                          )
+                        }
+                      >
+                        <option value="quality">{t('audio_latency_quality')}</option>
+                        <option value="realtime">{t('audio_latency_realtime')}</option>
+                      </select>
+                    </div>
+                  )}
                 </div>
               ) : (
                 /* Non-custom mode: read-only display */
@@ -362,6 +400,16 @@ export function AudioSection({
                         {resolvedConfig.sampleRate / 1000} kHz
                       </span>
                     </div>
+                    {CODEC_METADATA[resolvedConfig.codec].webCodecsId !== null && (
+                      <div className={styles.resolvedRow}>
+                        <span className={styles.resolvedLabel}>{t('audio_latency_mode')}</span>
+                        <span className={styles.resolvedValue}>
+                          {resolvedConfig.latencyMode === 'quality'
+                            ? t('audio_latency_quality')
+                            : t('audio_latency_realtime')}
+                        </span>
+                      </div>
+                    )}
                   </div>
                 )
               )}

@@ -100,3 +100,52 @@ pub struct ZoneGroup {
     /// Note: Zone Bridges (BOOST devices) are filtered out as they cannot play audio.
     pub members: Vec<ZoneGroupMember>,
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Playback Position
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Playback position information from a Sonos speaker.
+///
+/// Returned by the AVTransport GetPositionInfo action. Used for latency
+/// measurement by comparing stream position against reported playback position.
+#[derive(Debug, Clone, Serialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct PositionInfo {
+    /// Current track number in the queue (1-based, 0 if no track).
+    pub track: u32,
+    /// Duration of the current track in "HH:MM:SS" format.
+    pub track_duration: String,
+    /// URI of the currently playing track.
+    pub track_uri: String,
+    /// Relative playback position in "HH:MM:SS" format.
+    ///
+    /// This is the elapsed time within the current track.
+    pub rel_time: String,
+    /// Relative playback position in milliseconds.
+    ///
+    /// Parsed from `rel_time` for easier calculations.
+    pub rel_time_ms: u64,
+}
+
+impl PositionInfo {
+    /// Parses a time string in "H:MM:SS" or "HH:MM:SS" format to milliseconds.
+    ///
+    /// # Arguments
+    /// * `time_str` - Time string in format "H:MM:SS" or "HH:MM:SS"
+    ///
+    /// # Returns
+    /// Time in milliseconds, or 0 if parsing fails.
+    pub fn parse_time_to_ms(time_str: &str) -> u64 {
+        let parts: Vec<&str> = time_str.split(':').collect();
+        if parts.len() != 3 {
+            return 0;
+        }
+
+        let hours: u64 = parts[0].parse().unwrap_or(0);
+        let minutes: u64 = parts[1].parse().unwrap_or(0);
+        let seconds: u64 = parts[2].parse().unwrap_or(0);
+
+        (hours * 3600 + minutes * 60 + seconds) * 1000
+    }
+}

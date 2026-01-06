@@ -385,6 +385,14 @@ body {
   color: var(--color-on-primary);
 }
 
+:where(h1, h2, h3, h4, h5, h6) {
+  text-wrap: balance;
+}
+
+:where(p) {
+  text-wrap: pretty;
+}
+
 :where(
   a[href],
   area,
@@ -619,6 +627,8 @@ body {
 .wizardContent {
   flex: 1;
   overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-primary) transparent;
   padding-inline: var(--space-lg);
   display: flex;
   justify-content: center;
@@ -705,6 +715,7 @@ body {
   font-size: 0.9rem;
   color: var(--color-text-muted);
   margin-block: var(--space-sm) 0;
+  text-wrap: pretty;
 }
 
 .wizardStepContent {
@@ -795,6 +806,7 @@ body {
 .alertContent {
   flex: 1;
   min-inline-size: 0;
+  text-wrap: pretty;
 }
 
 .alertDismiss {
@@ -863,6 +875,8 @@ body {
   padding: 0;
   max-block-size: 8rem;
   overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-primary) transparent;
   border-radius: var(--radius-sm);
   background: var(--input-bg);
   border: 1px solid var(--input-border);

@@ -27,6 +27,7 @@
 .introText {
   margin: 0;
   line-height: 1.6;
+  text-wrap: pretty;
 }
 
 .sectionTitle {
@@ -80,4 +81,5 @@
   font-size: 0.85rem;
   color: var(--color-text-muted);
   line-height: 1.5;
+  text-wrap: pretty;
 }

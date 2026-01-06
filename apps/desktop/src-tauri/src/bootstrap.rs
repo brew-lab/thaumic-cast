@@ -17,10 +17,11 @@ use crate::api::ws_connection::WsConnectionManager;
 use crate::config::{EVENT_CHANNEL_CAPACITY, SOAP_TIMEOUT_SECS};
 use crate::context::NetworkContext;
 use crate::events::{BroadcastEvent, BroadcastEventBridge, EventEmitter};
-use crate::services::{AppLifecycle, DiscoveryService, StreamCoordinator};
+use crate::services::{AppLifecycle, DiscoveryService, LatencyMonitor, StreamCoordinator};
 use crate::sonos::{SonosClient, SonosClientImpl, SonosPlayback, SonosTopologyClient};
 use crate::state::{Config, SonosState};
 use crate::utils::{IpDetector, LocalIpDetector};
+use tokio_util::sync::CancellationToken;
 
 /// Container for all bootstrapped services.
 ///
@@ -44,6 +45,8 @@ pub struct BootstrappedServices {
     pub network: NetworkContext,
     /// Manages WebSocket connections.
     pub ws_manager: Arc<WsConnectionManager>,
+    /// Latency monitoring service.
+    pub latency_monitor: Arc<LatencyMonitor>,
 }
 
 /// Creates the shared HTTP client for all Sonos communication.
@@ -63,11 +66,12 @@ fn create_http_client() -> Client {
 /// wired together. The wiring order matters - services are created in
 /// dependency order:
 ///
-/// 1. Shared infrastructure (HTTP client, broadcast channel)
+/// 1. Shared infrastructure (HTTP client, broadcast channel, cancellation token)
 /// 2. Shared state (port, local_ip, sonos_state)
 /// 3. Sonos client (depends on HTTP client)
 /// 4. Stream coordinator (depends on sonos, port, local_ip)
-/// 5. Discovery service (depends on sonos, stream_coordinator, sonos_state, broadcast, HTTP client)
+/// 5. Latency monitor (depends on sonos, stream_manager, event_bridge)
+/// 6. Discovery service (depends on sonos, stream_coordinator, sonos_state, broadcast, HTTP client)
 ///
 /// # Arguments
 /// * `config` - Application configuration
@@ -84,6 +88,9 @@ pub fn bootstrap_services(config: &Config) -> BootstrappedServices {
 
     // Create the event bridge that maps domain events to broadcast transport
     let event_bridge = Arc::new(BroadcastEventBridge::new(broadcast_tx.clone()));
+
+    // Create cancellation token for graceful shutdown
+    let cancel_token = CancellationToken::new();
 
     // Create IP detector (shared across services)
     let ip_detector = LocalIpDetector::arc();
@@ -102,6 +109,14 @@ pub fn bootstrap_services(config: &Config) -> BootstrappedServices {
         Arc::clone(&sonos_state),
         network.clone(),
         Arc::clone(&event_bridge) as Arc<dyn EventEmitter>,
+    ));
+
+    // Wire up latency monitor with its dependencies
+    let latency_monitor = Arc::new(LatencyMonitor::new(
+        Arc::clone(&sonos_impl) as Arc<dyn SonosPlayback>,
+        stream_coordinator.stream_manager(),
+        Arc::clone(&event_bridge) as Arc<dyn EventEmitter>,
+        cancel_token.clone(),
     ));
 
     // Wire up discovery service with its dependencies
@@ -134,6 +149,7 @@ pub fn bootstrap_services(config: &Config) -> BootstrappedServices {
         broadcast_tx,
         network,
         ws_manager,
+        latency_monitor,
     }
 }
 

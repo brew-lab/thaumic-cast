@@ -13,7 +13,7 @@ use std::time::{Duration, Instant};
 use crate::api::AppState;
 use crate::config::{WS_HEARTBEAT_CHECK_INTERVAL_SECS, WS_HEARTBEAT_TIMEOUT_SECS};
 use crate::services::StreamCoordinator;
-use crate::stream::{AudioCodec, StreamMetadata};
+use crate::stream::{AudioCodec, Passthrough, StreamMetadata, Transcoder};
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Stream Guard (RAII cleanup)
@@ -306,6 +306,31 @@ enum HandshakeResult {
     Error(String),
 }
 
+/// Resolves input codec string to output codec and transcoder.
+///
+/// For PCM input, returns WAV output with passthrough (WAV header added by HTTP handler).
+/// For pre-encoded formats, returns passthrough transcoder.
+fn resolve_codec(codec_str: Option<&str>) -> (AudioCodec, Arc<dyn Transcoder>) {
+    match codec_str {
+        // PCM input: output as WAV (header added per-connection by HTTP handler)
+        Some("pcm") => {
+            log::info!("[WS] PCM input → WAV output");
+            (AudioCodec::Wav, Arc::new(Passthrough))
+        }
+        // Pre-encoded formats: passthrough
+        Some("aac") | Some("aac-lc") | Some("he-aac") | Some("he-aac-v2") => {
+            (AudioCodec::Aac, Arc::new(Passthrough))
+        }
+        Some("mp3") => (AudioCodec::Mp3, Arc::new(Passthrough)),
+        Some("flac") => (AudioCodec::Flac, Arc::new(Passthrough)),
+        Some("wav") => (AudioCodec::Wav, Arc::new(Passthrough)),
+        _ => {
+            log::warn!("[WS] Unknown codec {:?}, defaulting to WAV", codec_str);
+            (AudioCodec::Wav, Arc::new(Passthrough))
+        }
+    }
+}
+
 /// Handles a HANDSHAKE message: creates a stream and returns ack or error.
 fn handle_handshake(state: &AppState, payload: HandshakeRequest) -> HandshakeResult {
     // Get codec from encoder_config (preferred) or legacy codec field
@@ -315,20 +340,33 @@ fn handle_handshake(state: &AppState, payload: HandshakeRequest) -> HandshakeRes
         .map(|c| c.codec.as_str())
         .or(payload.codec.as_deref());
 
-    let codec = match codec_str {
-        Some("aac") | Some("aac-lc") | Some("he-aac") | Some("he-aac-v2") => AudioCodec::Aac,
-        Some("mp3") => AudioCodec::Mp3,
-        Some("flac") => AudioCodec::Flac,
-        Some("wav") => AudioCodec::Wav,
-        _ => {
-            log::warn!("[WS] Unknown codec {:?}, defaulting to WAV", codec_str);
-            AudioCodec::Wav
-        }
-    };
+    let (output_codec, transcoder) = resolve_codec(codec_str);
 
-    log::info!("[WS] Creating stream with codec: {:?}", codec);
+    // Extract audio format from encoder config (for latency timing)
+    let sample_rate = payload
+        .encoder_config
+        .as_ref()
+        .and_then(|c| c.sample_rate)
+        .unwrap_or(48000);
+    let channels = payload
+        .encoder_config
+        .as_ref()
+        .and_then(|c| c.channels)
+        .unwrap_or(2) as u32;
 
-    match state.services.stream_coordinator.create_stream(codec) {
+    log::info!(
+        "[WS] Creating stream: input={:?}, output={:?}, sample_rate={}, channels={}",
+        codec_str,
+        output_codec,
+        sample_rate,
+        channels
+    );
+
+    match state
+        .services
+        .stream_coordinator
+        .create_stream(output_codec, transcoder)
+    {
         Ok(id) => HandshakeResult::Success(id),
         Err(e) => HandshakeResult::Error(e),
     }
@@ -531,6 +569,17 @@ async fn handle_ws(socket: WebSocket, state: AppState) {
                                         )
                                         .await;
 
+                                    // Start latency monitoring for each successful speaker
+                                    for result in &results {
+                                        if result.success {
+                                            state
+                                                .services
+                                                .latency_monitor
+                                                .start_monitoring(&stream_id, &result.speaker_ip)
+                                                .await;
+                                        }
+                                    }
+
                                     // Send PLAYBACK_RESULTS with per-speaker outcomes
                                     let msg = WsOutgoing::PlaybackResults {
                                         payload: PlaybackResultsPayload { results },
@@ -597,6 +646,9 @@ async fn handle_ws(socket: WebSocket, state: AppState) {
     // Graceful cleanup: stop speakers before stream removal.
     // StreamGuard::drop() will be a no-op since remove_stream is idempotent.
     if let Some(ref guard) = stream_guard {
+        // Stop latency monitoring for this stream
+        state.services.latency_monitor.stop_stream(guard.id()).await;
+
         state
             .services
             .stream_coordinator

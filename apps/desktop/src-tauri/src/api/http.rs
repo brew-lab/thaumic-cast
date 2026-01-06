@@ -112,6 +112,8 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/speakers/:ip/mute", get(get_mute).post(set_mute))
         .route("/api/sonos/notify", any(handle_gena_notify))
         .route("/stream/:id/live", get(stream_audio))
+        .route("/stream/:id/live.wav", get(stream_audio))
+        .route("/stream/:id/live.flac", get(stream_audio))
         .route("/icon.png", get(serve_icon))
         .route("/ws", get(ws_handler))
         .with_state(state)
@@ -340,18 +342,18 @@ async fn stream_audio(
     let live_stream =
         BroadcastStream::new(rx).map(|res| res.map_err(|e| std::io::Error::other(e.to_string())));
 
-    // Check if client wants ICY metadata
-    let wants_icy = headers.get("icy-metadata").and_then(|v| v.to_str().ok()) == Some("1");
-
-    let (content_type, prefix_bytes) = match stream_state.codec {
-        AudioCodec::Wav => (
-            "audio/wav",
-            Some(create_wav_header(DEFAULT_SAMPLE_RATE, DEFAULT_CHANNELS)),
-        ),
-        AudioCodec::Aac => ("audio/aac", None),
-        AudioCodec::Mp3 => ("audio/mpeg", None),
-        AudioCodec::Flac => ("audio/flac", None),
+    // Content-Type based on output codec
+    let content_type = match stream_state.codec {
+        AudioCodec::Wav => "audio/wav",
+        AudioCodec::Aac => "audio/aac",
+        AudioCodec::Mp3 => "audio/mpeg",
+        AudioCodec::Flac => "audio/flac",
     };
+
+    // ICY metadata only supported for MP3/AAC streams (not WAV/FLAC)
+    let supports_icy = matches!(stream_state.codec, AudioCodec::Mp3 | AudioCodec::Aac);
+    let wants_icy =
+        supports_icy && headers.get("icy-metadata").and_then(|v| v.to_str().ok()) == Some("1");
 
     let mut builder = Response::builder()
         .header(header::CONTENT_TYPE, content_type)
@@ -374,8 +376,10 @@ async fn stream_audio(
             let metadata = stream_ref.metadata.read();
             Ok::<Bytes, std::io::Error>(injector.inject(chunk.as_ref(), &metadata))
         }))
-    } else if let Some(prefix) = prefix_bytes {
-        Box::pin(futures::stream::once(async move { Ok(prefix) }).chain(combined_stream))
+    } else if stream_state.codec == AudioCodec::Wav {
+        // WAV streams need header prepended per-connection (Sonos may reconnect)
+        let wav_header = create_wav_header(DEFAULT_SAMPLE_RATE, DEFAULT_CHANNELS);
+        Box::pin(futures::stream::once(async move { Ok(wav_header) }).chain(combined_stream))
     } else {
         Box::pin(combined_stream)
     };

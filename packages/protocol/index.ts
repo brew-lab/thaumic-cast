@@ -8,22 +8,23 @@ import { z } from 'zod';
  *
  * Runtime detection filters this list to codecs the browser actually supports.
  *
+ * - `pcm`: Raw PCM passthrough - wrapped in WAV container server-side for lossless streaming
  * - `aac-lc`: AAC Low Complexity (mp4a.40.2) - balanced quality
  * - `he-aac`: High-Efficiency AAC (mp4a.40.5) - best for low bitrates
  * - `he-aac-v2`: High-Efficiency AAC v2 (mp4a.40.29) - best for very low bitrates, stereo
- * - `flac`: Free Lossless Audio Codec - lossless compression
+ * - `flac`: Free Lossless Audio Codec - lossless compression (requires browser support)
  * - `vorbis`: Ogg Vorbis - open source lossy codec
  */
-export const AudioCodecSchema = z.enum(['aac-lc', 'he-aac', 'he-aac-v2', 'flac', 'vorbis']);
+export const AudioCodecSchema = z.enum(['pcm', 'aac-lc', 'he-aac', 'he-aac-v2', 'flac', 'vorbis']);
 export type AudioCodec = z.infer<typeof AudioCodecSchema>;
 
 /**
  * Supported bitrates in kbps.
  * Not all bitrates are valid for all codecs - use `getValidBitrates()` to filter.
- * FLAC uses 0 to indicate lossless (variable bitrate).
+ * WAV uses 0 to indicate lossless (uncompressed).
  */
 export const BitrateSchema = z.union([
-  z.literal(0), // Lossless (FLAC)
+  z.literal(0), // Lossless (WAV)
   z.literal(64),
   z.literal(96),
   z.literal(128),
@@ -139,6 +140,7 @@ export interface CodecMetadata {
  * When adding a new encoder, add the codec here to enable it in the UI.
  */
 export const IMPLEMENTED_CODECS: ReadonlySet<AudioCodec> = new Set([
+  'pcm',
   'aac-lc',
   'he-aac',
   'he-aac-v2',
@@ -160,6 +162,14 @@ export function hasEncoderImplementation(codec: AudioCodec): boolean {
  * Codecs are listed in order of preference for the UI.
  */
 export const CODEC_METADATA: Record<AudioCodec, CodecMetadata> = {
+  pcm: {
+    label: 'WAV',
+    description: 'Uncompressed lossless audio',
+    validBitrates: [] as const,
+    defaultBitrate: 0, // 0 indicates lossless/variable bitrate
+    webCodecsId: null, // No WebCodecs - raw PCM passthrough
+    efficiency: 10.0, // Lossless - uncompressed
+  },
   'aac-lc': {
     label: 'AAC-LC',
     description: 'Balanced quality and efficiency',
@@ -295,7 +305,11 @@ export interface SupportedCodecsResult {
 }
 
 /**
- * Checks if a specific codec/bitrate combination is supported by WebCodecs.
+ * Checks if a specific codec/bitrate combination is supported.
+ *
+ * For PCM: Always returns true (no WebCodecs dependency - raw passthrough).
+ * For others: Checks WebCodecs AudioEncoder.isConfigSupported().
+ *
  * @param codec - The audio codec to check
  * @param bitrate - The bitrate in kbps
  * @param sampleRate - Sample rate (default 48000)
@@ -308,12 +322,14 @@ export async function isCodecSupported(
   sampleRate = 48000,
   channels = 2,
 ): Promise<boolean> {
-  if (typeof AudioEncoder === 'undefined') {
-    return false;
+  const webCodecsId = CODEC_METADATA[codec]?.webCodecsId;
+
+  // PCM is always supported - no WebCodecs dependency
+  if (webCodecsId === null) {
+    return true;
   }
 
-  const webCodecsId = CODEC_METADATA[codec]?.webCodecsId;
-  if (!webCodecsId) {
+  if (typeof AudioEncoder === 'undefined') {
     return false;
   }
 
@@ -344,22 +360,32 @@ export async function detectSupportedCodecs(): Promise<SupportedCodecsResult> {
 
   for (const codec of codecs) {
     const bitrates = CODEC_METADATA[codec].validBitrates;
+    const defaultBitrateForCodec = CODEC_METADATA[codec].defaultBitrate;
     let codecHasSupport = false;
 
-    // Test bitrate support (using default 48kHz)
-    for (const bitrate of bitrates) {
-      const isSupported = await isCodecSupported(codec, bitrate);
-      supported.push({ codec, bitrate, supported: isSupported });
+    if (bitrates.length === 0) {
+      // Lossless codec with no bitrate options (e.g., PCM)
+      // Check if codec itself is supported using default bitrate
+      codecHasSupport = await isCodecSupported(codec, defaultBitrateForCodec);
+      if (codecHasSupport) {
+        // Add to supported array so it appears in dynamic presets
+        supported.push({ codec, bitrate: defaultBitrateForCodec, supported: true });
+      }
+    } else {
+      // Test bitrate support (using default 48kHz)
+      for (const bitrate of bitrates) {
+        const isSupported = await isCodecSupported(codec, bitrate);
+        supported.push({ codec, bitrate, supported: isSupported });
 
-      if (isSupported) {
-        codecHasSupport = true;
+        if (isSupported) {
+          codecHasSupport = true;
+        }
       }
     }
 
     // Test sample rate support (using default bitrate for the codec)
     if (codecHasSupport) {
       availableCodecs.push(codec);
-      const defaultBitrateForCodec = CODEC_METADATA[codec].defaultBitrate;
 
       for (const sampleRate of SUPPORTED_SAMPLE_RATES) {
         const isSupported = await isCodecSupported(codec, defaultBitrateForCodec, sampleRate);
@@ -504,27 +530,31 @@ export function generateDynamicPresets(supportInfo: SupportedCodecsResult): Dyna
   // Sort by score descending for the allOptions list (used for display)
   allOptions.sort((a, b) => b.score - a.score);
 
-  // === HIGH TIER: Best quality (highest bitrate, prefer FLAC) ===
-  // Sort by: FLAC first, then by bitrate descending
+  // === HIGH TIER: Best quality (highest bitrate, prefer lossless) ===
+  // Sort by: lossless first (pcm/flac), then by bitrate descending
+  const isLossless = (codec: AudioCodec) => codec === 'pcm' || codec === 'flac';
   const highSorted = [...allOptions].sort((a, b) => {
-    // FLAC (lossless) always wins
-    if (a.codec === 'flac' && b.codec !== 'flac') return -1;
-    if (b.codec === 'flac' && a.codec !== 'flac') return 1;
+    // Lossless codecs (pcm, flac) always win
+    if (isLossless(a.codec) && !isLossless(b.codec)) return -1;
+    if (isLossless(b.codec) && !isLossless(a.codec)) return 1;
     // Otherwise, highest bitrate wins
     return b.bitrate - a.bitrate;
   });
   const high = highSorted[0] ?? null;
 
   // === LOW TIER: Lowest bandwidth (lowest bitrate, prefer efficient codecs) ===
+  // Filter out lossless options (bitrate 0) - they use MORE bandwidth, not less
   // Sort by: bitrate ascending, then by efficiency descending (for ties)
-  const lowSorted = [...allOptions].sort((a, b) => {
-    // Lowest bitrate first
-    if (a.bitrate !== b.bitrate) return a.bitrate - b.bitrate;
-    // For same bitrate, prefer more efficient codec
-    const effA = CODEC_METADATA[a.codec].efficiency;
-    const effB = CODEC_METADATA[b.codec].efficiency;
-    return effB - effA;
-  });
+  const lowSorted = [...allOptions]
+    .filter((opt) => opt.bitrate > 0)
+    .sort((a, b) => {
+      // Lowest bitrate first
+      if (a.bitrate !== b.bitrate) return a.bitrate - b.bitrate;
+      // For same bitrate, prefer more efficient codec
+      const effA = CODEC_METADATA[a.codec].efficiency;
+      const effB = CODEC_METADATA[b.codec].efficiency;
+      return effB - effA;
+    });
   // Pick the lowest bitrate option, but not the same as high
   let low: ScoredCodecOption | null = null;
   for (const opt of lowSorted) {
@@ -1052,12 +1082,34 @@ export const StreamEventSchema = z.discriminatedUnion('type', [
 export type StreamEvent = z.infer<typeof StreamEventSchema>;
 
 /**
+ * Latency event types broadcast by desktop app.
+ * Used for measuring audio playback delay from source to Sonos speaker.
+ */
+export const LatencyEventSchema = z.discriminatedUnion('type', [
+  z.object({
+    type: z.literal('updated'),
+    /** ID of the stream being measured */
+    streamId: z.string(),
+    /** IP address of the speaker being monitored */
+    speakerIp: z.string(),
+    /** Measured latency in milliseconds */
+    latencyMs: z.number().int().nonnegative(),
+    /** Confidence score from 0.0 to 1.0 (higher = more reliable) */
+    confidence: z.number().min(0).max(1),
+    /** Unix timestamp in milliseconds */
+    timestamp: z.number(),
+  }),
+]);
+export type LatencyEvent = z.infer<typeof LatencyEventSchema>;
+
+/**
  * Broadcast event wrapper from desktop app.
  * Uses passthrough to allow the nested event fields.
  */
 export const BroadcastEventSchema = z.union([
   z.object({ category: z.literal('sonos') }).passthrough(),
   z.object({ category: z.literal('stream') }).passthrough(),
+  z.object({ category: z.literal('latency') }).passthrough(),
 ]);
 
 /**
@@ -1075,7 +1127,17 @@ export interface StreamBroadcastEvent {
   [key: string]: unknown;
 }
 
-export type BroadcastEvent = SonosBroadcastEvent | StreamBroadcastEvent;
+export interface LatencyBroadcastEvent {
+  category: 'latency';
+  type: LatencyEvent['type'];
+  streamId: string;
+  speakerIp: string;
+  latencyMs: number;
+  confidence: number;
+  timestamp: number;
+}
+
+export type BroadcastEvent = SonosBroadcastEvent | StreamBroadcastEvent | LatencyBroadcastEvent;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Media Metadata Types (for tab-level metadata display)
