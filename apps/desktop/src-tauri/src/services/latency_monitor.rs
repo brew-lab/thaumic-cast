@@ -183,10 +183,20 @@ enum MonitorCommand {
 pub struct LatencyMonitor {
     /// Command sender for the background task.
     command_tx: mpsc::Sender<MonitorCommand>,
+    /// Command receiver (taken when start() is called).
+    command_rx: parking_lot::Mutex<Option<mpsc::Receiver<MonitorCommand>>>,
+    /// Dependencies for the background task.
+    sonos: Arc<dyn SonosPlayback>,
+    stream_manager: Arc<StreamManager>,
+    emitter: Arc<dyn EventEmitter>,
+    cancel: CancellationToken,
 }
 
 impl LatencyMonitor {
-    /// Creates a new LatencyMonitor and spawns its background task.
+    /// Creates a new LatencyMonitor.
+    ///
+    /// Note: Call `start()` to spawn the background monitoring task.
+    /// This must be done from within an async context (Tokio runtime).
     ///
     /// # Arguments
     /// * `sonos` - Sonos client for position queries
@@ -201,16 +211,32 @@ impl LatencyMonitor {
     ) -> Self {
         let (command_tx, command_rx) = mpsc::channel(32);
 
-        // Spawn the background monitoring task
-        tokio::spawn(Self::run_monitor(
+        Self {
+            command_tx,
+            command_rx: parking_lot::Mutex::new(Some(command_rx)),
             sonos,
             stream_manager,
             emitter,
-            command_rx,
             cancel,
-        ));
+        }
+    }
 
-        Self { command_tx }
+    /// Starts the background monitoring task.
+    ///
+    /// Must be called from within a Tokio runtime context.
+    /// Can only be called once; subsequent calls are no-ops.
+    pub fn start(&self) {
+        let command_rx = self.command_rx.lock().take();
+        if let Some(rx) = command_rx {
+            tokio::spawn(Self::run_monitor(
+                Arc::clone(&self.sonos),
+                Arc::clone(&self.stream_manager),
+                Arc::clone(&self.emitter),
+                rx,
+                self.cancel.clone(),
+            ));
+            log::info!("[LatencyMonitor] Background task started");
+        }
     }
 
     /// Starts monitoring latency for a stream/speaker pair.
