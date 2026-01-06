@@ -54,13 +54,16 @@ pub struct StreamTiming {
     bytes_per_sample: AtomicU32,
 }
 
+/// Default sample rate (48kHz - standard for browser audio and Sonos).
+const DEFAULT_SAMPLE_RATE: u32 = 48000;
+
 impl StreamTiming {
-    /// Creates a new StreamTiming instance.
+    /// Creates a new StreamTiming instance with default 48kHz sample rate.
     pub fn new() -> Self {
         Self {
             first_frame_at: parking_lot::RwLock::new(None),
             samples_sent: AtomicU64::new(0),
-            sample_rate: AtomicU32::new(0),
+            sample_rate: AtomicU32::new(DEFAULT_SAMPLE_RATE),
             channels: AtomicU32::new(2),
             bytes_per_sample: AtomicU32::new(2),
         }

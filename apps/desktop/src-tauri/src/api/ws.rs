@@ -342,10 +342,24 @@ fn handle_handshake(state: &AppState, payload: HandshakeRequest) -> HandshakeRes
 
     let (output_codec, transcoder) = resolve_codec(codec_str);
 
+    // Extract audio format from encoder config (for latency timing)
+    let sample_rate = payload
+        .encoder_config
+        .as_ref()
+        .and_then(|c| c.sample_rate)
+        .unwrap_or(48000);
+    let channels = payload
+        .encoder_config
+        .as_ref()
+        .and_then(|c| c.channels)
+        .unwrap_or(2) as u32;
+
     log::info!(
-        "[WS] Creating stream: input={:?}, output={:?}",
+        "[WS] Creating stream: input={:?}, output={:?}, sample_rate={}, channels={}",
         codec_str,
-        output_codec
+        output_codec,
+        sample_rate,
+        channels
     );
 
     match state
@@ -353,7 +367,13 @@ fn handle_handshake(state: &AppState, payload: HandshakeRequest) -> HandshakeRes
         .stream_coordinator
         .create_stream(output_codec, transcoder)
     {
-        Ok(id) => HandshakeResult::Success(id),
+        Ok(id) => {
+            // Set audio format on the stream for accurate timing calculations
+            if let Some(stream) = state.services.stream_coordinator.get_stream(&id) {
+                stream.timing.set_format(sample_rate, channels, 2); // 2 bytes per sample (16-bit)
+            }
+            HandshakeResult::Success(id)
+        }
         Err(e) => HandshakeResult::Error(e),
     }
 }
