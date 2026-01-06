@@ -1398,6 +1398,8 @@ export type VideoSyncState =
   | {
       kind: 'Locked';
       epochId: number;
+      /** Rolling sample window for windowed median (slew target) */
+      samples: SampleWindow;
       /** Locked latency value in ms (used for video delay) */
       lockedLatencyMs: number;
       /** User-adjustable trim in ms (positive = more delay) */
