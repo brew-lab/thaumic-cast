@@ -53,6 +53,11 @@ struct LatencySession {
     stream_id: String,
     /// Speaker IP address.
     speaker_ip: String,
+    /// Baseline Sonos RelTime (ms) captured on first sample.
+    /// Used to calculate relative position since our stream started.
+    baseline_sonos_ms: Option<u64>,
+    /// Baseline stream position (ms) captured on first sample.
+    baseline_stream_ms: Option<u64>,
     /// Last observed RelTime seconds value.
     last_rel_time_seconds: Option<u32>,
     /// Recent position samples for transition detection.
@@ -73,6 +78,8 @@ impl LatencySession {
         Self {
             stream_id,
             speaker_ip,
+            baseline_sonos_ms: None,
+            baseline_stream_ms: None,
             last_rel_time_seconds: None,
             samples: VecDeque::with_capacity(50),
             measurements: VecDeque::with_capacity(50),
@@ -80,6 +87,30 @@ impl LatencySession {
             started_at: Instant::now(),
             last_emit: None,
         }
+    }
+
+    /// Captures baseline positions on first sample.
+    /// Returns (relative_stream_ms, relative_sonos_ms) for latency calculation.
+    fn get_relative_positions(&mut self, stream_pos_ms: u64, sonos_pos_ms: u64) -> (u64, u64) {
+        // Capture baselines on first call
+        if self.baseline_sonos_ms.is_none() {
+            self.baseline_sonos_ms = Some(sonos_pos_ms);
+            self.baseline_stream_ms = Some(stream_pos_ms);
+            log::debug!(
+                "[LatencyMonitor] Captured baselines: stream={}ms, sonos={}ms",
+                stream_pos_ms,
+                sonos_pos_ms
+            );
+        }
+
+        let baseline_stream = self.baseline_stream_ms.unwrap_or(0);
+        let baseline_sonos = self.baseline_sonos_ms.unwrap_or(0);
+
+        // Calculate positions relative to when monitoring started
+        let rel_stream = stream_pos_ms.saturating_sub(baseline_stream);
+        let rel_sonos = sonos_pos_ms.saturating_sub(baseline_sonos);
+
+        (rel_stream, rel_sonos)
     }
 
     /// Adds a new position sample and returns true if a second-boundary transition was detected.
@@ -373,17 +404,24 @@ impl LatencyMonitor {
                         // Add sample and check for transition
                         let _transition = session.add_sample(sample.clone());
 
-                        // Calculate latency with RTT compensation
+                        // Calculate Sonos position with RTT compensation
                         let adjusted_sonos_pos_ms = position.rel_time_ms + (sample.rtt_ms / 2) as u64;
-                        let latency_ms = stream_pos_ms as i64 - adjusted_sonos_pos_ms as i64;
+
+                        // Get positions relative to monitoring start (handles non-zero baselines)
+                        let (rel_stream, rel_sonos) =
+                            session.get_relative_positions(stream_pos_ms, adjusted_sonos_pos_ms);
+
+                        // Latency = how far ahead the stream is compared to Sonos playback
+                        let latency_ms = rel_stream as i64 - rel_sonos as i64;
 
                         log::debug!(
-                            "[LatencyMonitor] raw: stream_pos={}ms, sonos_pos={}ms (rel_time={}), rtt={}ms, raw_latency={}ms",
+                            "[LatencyMonitor] raw: stream={}ms, sonos={}ms, rel_stream={}ms, rel_sonos={}ms, latency={}ms, rtt={}ms",
                             stream_pos_ms,
-                            adjusted_sonos_pos_ms,
                             position.rel_time_ms,
-                            sample.rtt_ms,
-                            latency_ms
+                            rel_stream,
+                            rel_sonos,
+                            latency_ms,
+                            sample.rtt_ms
                         );
 
                         session.record_latency(latency_ms);
