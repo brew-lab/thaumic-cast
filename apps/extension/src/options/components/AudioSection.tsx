@@ -5,6 +5,7 @@ import { Card } from '@thaumic-cast/ui';
 import type {
   AudioCodec,
   Bitrate,
+  LatencyMode,
   SupportedCodecsResult,
   SupportedSampleRate,
 } from '@thaumic-cast/protocol';
@@ -171,6 +172,21 @@ export function AudioSection({
     [settings.customAudioSettings, onUpdate],
   );
 
+  /**
+   * Handles custom latency mode change.
+   */
+  const handleLatencyModeChange = useCallback(
+    async (latencyMode: LatencyMode) => {
+      await onUpdate({
+        customAudioSettings: {
+          ...settings.customAudioSettings,
+          latencyMode,
+        },
+      });
+    },
+    [settings.customAudioSettings, onUpdate],
+  );
+
   // Get available bitrates for current codec (excluding 0 = lossless)
   const availableBitrates = useMemo(() => {
     if (codecLoading) return [];
@@ -329,6 +345,26 @@ export function AudioSection({
                       </select>
                     </div>
                   )}
+
+                  {/* Latency Mode */}
+                  <div className={styles.field}>
+                    <label htmlFor="audio-latency-mode" className={styles.label}>
+                      {t('audio_latency_mode')}
+                    </label>
+                    <select
+                      id="audio-latency-mode"
+                      className={styles.select}
+                      value={settings.customAudioSettings.latencyMode}
+                      onChange={(e) =>
+                        handleLatencyModeChange(
+                          (e.target as HTMLSelectElement).value as LatencyMode,
+                        )
+                      }
+                    >
+                      <option value="quality">{t('audio_latency_quality')}</option>
+                      <option value="realtime">{t('audio_latency_realtime')}</option>
+                    </select>
+                  </div>
                 </div>
               ) : (
                 /* Non-custom mode: read-only display */
@@ -360,6 +396,14 @@ export function AudioSection({
                       <span className={styles.resolvedLabel}>{t('audio_sample_rate')}</span>
                       <span className={styles.resolvedValue}>
                         {resolvedConfig.sampleRate / 1000} kHz
+                      </span>
+                    </div>
+                    <div className={styles.resolvedRow}>
+                      <span className={styles.resolvedLabel}>{t('audio_latency_mode')}</span>
+                      <span className={styles.resolvedValue}>
+                        {resolvedConfig.latencyMode === 'quality'
+                          ? t('audio_latency_quality')
+                          : t('audio_latency_realtime')}
                       </span>
                     </div>
                   </div>

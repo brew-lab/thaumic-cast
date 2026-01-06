@@ -3,6 +3,7 @@ import {
   AudioCodecSchema,
   BitrateSchema,
   SampleRateSchema,
+  LatencyModeSchema,
   isValidBitrateForCodec,
   getDefaultBitrate,
 } from '@thaumic-cast/protocol';
@@ -49,6 +50,7 @@ export const CustomAudioSettingsSchema = z.object({
   bitrate: BitrateSchema,
   channels: z.union([z.literal(1), z.literal(2)]).default(2),
   sampleRate: SampleRateSchema.default(48000),
+  latencyMode: LatencyModeSchema.default('quality'),
 });
 export type CustomAudioSettings = z.infer<typeof CustomAudioSettingsSchema>;
 
@@ -75,6 +77,7 @@ export const ExtensionSettingsSchema = z.object({
     bitrate: 192,
     channels: 2,
     sampleRate: 48000,
+    latencyMode: 'quality',
   }),
 });
 export type ExtensionSettings = z.infer<typeof ExtensionSettingsSchema>;
@@ -92,6 +95,7 @@ const DEFAULT_EXTENSION_SETTINGS: ExtensionSettings = {
     bitrate: 192,
     channels: 2,
     sampleRate: 48000,
+    latencyMode: 'quality',
   },
 };
 
