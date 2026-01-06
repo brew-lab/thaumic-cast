@@ -346,25 +346,27 @@ export function AudioSection({
                     </div>
                   )}
 
-                  {/* Latency Mode */}
-                  <div className={styles.field}>
-                    <label htmlFor="audio-latency-mode" className={styles.label}>
-                      {t('audio_latency_mode')}
-                    </label>
-                    <select
-                      id="audio-latency-mode"
-                      className={styles.select}
-                      value={settings.customAudioSettings.latencyMode}
-                      onChange={(e) =>
-                        handleLatencyModeChange(
-                          (e.target as HTMLSelectElement).value as LatencyMode,
-                        )
-                      }
-                    >
-                      <option value="quality">{t('audio_latency_quality')}</option>
-                      <option value="realtime">{t('audio_latency_realtime')}</option>
-                    </select>
-                  </div>
+                  {/* Latency Mode - only show for codecs that use WebCodecs encoding */}
+                  {CODEC_METADATA[settings.customAudioSettings.codec].webCodecsId !== null && (
+                    <div className={styles.field}>
+                      <label htmlFor="audio-latency-mode" className={styles.label}>
+                        {t('audio_latency_mode')}
+                      </label>
+                      <select
+                        id="audio-latency-mode"
+                        className={styles.select}
+                        value={settings.customAudioSettings.latencyMode}
+                        onChange={(e) =>
+                          handleLatencyModeChange(
+                            (e.target as HTMLSelectElement).value as LatencyMode,
+                          )
+                        }
+                      >
+                        <option value="quality">{t('audio_latency_quality')}</option>
+                        <option value="realtime">{t('audio_latency_realtime')}</option>
+                      </select>
+                    </div>
+                  )}
                 </div>
               ) : (
                 /* Non-custom mode: read-only display */
@@ -398,14 +400,16 @@ export function AudioSection({
                         {resolvedConfig.sampleRate / 1000} kHz
                       </span>
                     </div>
-                    <div className={styles.resolvedRow}>
-                      <span className={styles.resolvedLabel}>{t('audio_latency_mode')}</span>
-                      <span className={styles.resolvedValue}>
-                        {resolvedConfig.latencyMode === 'quality'
-                          ? t('audio_latency_quality')
-                          : t('audio_latency_realtime')}
-                      </span>
-                    </div>
+                    {CODEC_METADATA[resolvedConfig.codec].webCodecsId !== null && (
+                      <div className={styles.resolvedRow}>
+                        <span className={styles.resolvedLabel}>{t('audio_latency_mode')}</span>
+                        <span className={styles.resolvedValue}>
+                          {resolvedConfig.latencyMode === 'quality'
+                            ? t('audio_latency_quality')
+                            : t('audio_latency_realtime')}
+                        </span>
+                      </div>
+                    )}
                   </div>
                 )
               )}
