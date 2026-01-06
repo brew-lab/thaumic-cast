@@ -6,17 +6,23 @@
 //!
 //! # Measurement Strategy
 //!
+//! Uses epoch-based timing where each Sonos HTTP connection defines a playback epoch.
 //! Measures absolute latency: `stream_elapsed - sonos_reltime`
-//! - `stream_elapsed` = wall-clock time since first audio frame received
+//! - `stream_elapsed` = wall-clock time since audio epoch (T0 for this connection)
 //! - `sonos_reltime` = Sonos playback position in the track
 //! - Result = total pipeline delay (typically 0.5-2s for PCM, 15-25s for AAC)
 //!
-//! Additional features:
-//! 1. Moderate-frequency polling (every 500ms) - sufficient for 1-second Sonos precision
-//! 2. RTT compensation for network delay
-//! 3. Exponential moving average for stability
-//! 4. Incremental variance calculation for confidence scoring
-//! 5. Track restart detection to reset statistics
+//! The audio epoch (T0) is anchored to the oldest prefill frame served when Sonos
+//! first polls data, capturing buffer-before-GET time for accurate measurement.
+//!
+//! # Features
+//!
+//! - Per-speaker epochs (prevents stray requests from clobbering timing)
+//! - Stale detection (emits `Stale` event after 30s without valid position)
+//! - RTT compensation for network delay
+//! - Exponential moving average for stability
+//! - Incremental variance (jitter) calculation for confidence scoring
+//! - Track restart detection to maintain continuity
 
 use std::net::IpAddr;
 use std::sync::Arc;
@@ -185,11 +191,12 @@ impl LatencySession {
     /// Calculates absolute end-to-end latency for video sync.
     ///
     /// Latency = stream_elapsed - (sonos_reltime + offset)
-    /// - `stream_elapsed` = time since first audio frame received
+    /// - `stream_elapsed` = time since audio epoch (T0 for this Sonos connection)
     /// - `sonos_reltime` = Sonos playback position (adjusted for RTT and offset)
     ///
     /// When Sonos restarts its track position (due to metadata updates), we
-    /// accumulate the "lost" position into an offset to maintain continuity.
+    /// recalculate the offset to maintain the current latency estimate, avoiding
+    /// accumulation of errors from Sonos's 1-second precision.
     ///
     /// This measures the total pipeline delay: the time between audio being
     /// captured at the source and being played by Sonos.
