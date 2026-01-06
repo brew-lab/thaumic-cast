@@ -228,7 +228,7 @@ impl LatencyMonitor {
     pub fn start(&self) {
         let command_rx = self.command_rx.lock().take();
         if let Some(rx) = command_rx {
-            tokio::spawn(Self::run_monitor(
+            tauri::async_runtime::spawn(Self::run_monitor(
                 Arc::clone(&self.sonos),
                 Arc::clone(&self.stream_manager),
                 Arc::clone(&self.emitter),
