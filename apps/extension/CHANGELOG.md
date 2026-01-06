@@ -1,5 +1,31 @@
 # @thaumic-cast/extension
 
+## 0.6.0
+
+### Minor Changes
+
+- [#17](https://github.com/brew-lab/thaumic-cast/pull/17) [`cf0b867`](https://github.com/brew-lab/thaumic-cast/commit/cf0b867942b54fd1f099d1bc031ebe1cc5f2b860) Thanks [@skezo](https://github.com/skezo)! - Add server-side WAV encoding for lossless audio streaming
+  - Add "Lossless (WAV)" codec option that sends raw PCM from browser to desktop app
+  - Desktop app wraps PCM in WAV container for true lossless quality
+  - Works universally since PCM passthrough has no browser codec dependencies
+  - Hide bitrate selector in UI for lossless codecs (no bitrate options)
+
+### Patch Changes
+
+- [#17](https://github.com/brew-lab/thaumic-cast/pull/17) [`18e2e0e`](https://github.com/brew-lab/thaumic-cast/commit/18e2e0e0431c0022f9d382f49ed1228897ea3b41) Thanks [@skezo](https://github.com/skezo)! - Improve audio settings and codec detection
+  - Remove legacy AudioSettings code (dead code cleanup)
+  - Fix codec detection to run via offscreen document (AudioEncoder not available in service workers)
+  - Add latencyMode option to custom audio settings (quality/realtime)
+  - Hide latencyMode UI for codecs that don't use WebCodecs (PCM)
+  - Default to high quality (lossless) audio mode for lower CPU usage
+
+- [#17](https://github.com/brew-lab/thaumic-cast/pull/17) [`ca0081e`](https://github.com/brew-lab/thaumic-cast/commit/ca0081ef4ceaaad2d3cced16a29be293bcc01e8b) Thanks [@skezo](https://github.com/skezo)! - Improve UI polish with themed scrollbars and better typography
+  - Add thin themed scrollbars using `scrollbar-width: thin` and `scrollbar-color` with the primary color for a consistent, subtle appearance
+  - Apply `text-wrap: balance` to headings and `text-wrap: pretty` to paragraphs for improved text layout
+
+- Updated dependencies [[`06ffe4f`](https://github.com/brew-lab/thaumic-cast/commit/06ffe4f80c6837314941d1e47115143f3bd44d2d)]:
+  - @thaumic-cast/protocol@0.1.0
+
 ## 0.5.0
 
 ### Minor Changes
