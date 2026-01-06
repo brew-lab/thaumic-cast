@@ -70,10 +70,45 @@ import {
 } from '../lib/device-config';
 import { loadExtensionSettings } from '../lib/settings';
 import { resolveAudioMode, describeEncoderConfig } from '../lib/presets';
-import type { SupportedCodecsResult, EncoderConfig } from '@thaumic-cast/protocol';
+import {
+  detectSupportedCodecs,
+  type SupportedCodecsResult,
+  type EncoderConfig,
+} from '@thaumic-cast/protocol';
 import i18n from '../lib/i18n';
 
 const log = createLogger('Background');
+
+/** Storage key for caching codec detection results in session storage. */
+const CODEC_CACHE_KEY = 'codecSupportCache';
+
+/**
+ * Detects supported audio codecs and caches the result in session storage.
+ * Called on service worker startup to ensure codec info is available for first cast.
+ * @returns The codec support result, or null if detection failed
+ */
+async function detectAndCacheCodecSupport(): Promise<SupportedCodecsResult | null> {
+  try {
+    // Check if already cached
+    const cached = await chrome.storage.session.get(CODEC_CACHE_KEY);
+    if (cached[CODEC_CACHE_KEY]) {
+      log.debug('Codec support already cached');
+      return cached[CODEC_CACHE_KEY] as SupportedCodecsResult;
+    }
+
+    // Run detection and cache
+    log.info('Detecting supported audio codecs...');
+    const result = await detectSupportedCodecs();
+    await chrome.storage.session.set({ [CODEC_CACHE_KEY]: result });
+    log.info(
+      `Codec detection complete: ${result.availableCodecs.length} codecs available (default: ${result.defaultCodec})`,
+    );
+    return result;
+  } catch (err) {
+    log.warn('Codec detection failed:', err);
+    return null;
+  }
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Sonos State Management
@@ -725,8 +760,14 @@ async function handleStartCast(
 
     // Load extension settings and cached codec support
     const settings = await loadExtensionSettings();
-    const codecCache = await chrome.storage.session.get('codecSupportCache');
-    const codecSupport: SupportedCodecsResult | null = codecCache['codecSupportCache'] ?? null;
+    const codecCache = await chrome.storage.session.get(CODEC_CACHE_KEY);
+    let codecSupport: SupportedCodecsResult | null = codecCache[CODEC_CACHE_KEY] ?? null;
+
+    // If codec support not cached, try to detect now (should rarely happen after startup fix)
+    if (!codecSupport || codecSupport.availableCodecs.length === 0) {
+      log.info('Codec support not cached, detecting now...');
+      codecSupport = await detectAndCacheCodecSupport();
+    }
 
     if (codecSupport && codecSupport.availableCodecs.length > 0) {
       // Use preset resolution with codec detection
@@ -746,8 +787,8 @@ async function handleStartCast(
         log.info(`Encoder config (fallback): ${describeConfig(encoderConfig)}`);
       }
     } else {
-      // Codec support not cached yet, fall back to device-config
-      log.info('Codec support not cached, using device config fallback');
+      // Codec detection failed entirely, fall back to device-config
+      log.warn('Codec detection failed, using device config fallback');
       encoderConfig = await selectEncoderConfig();
       log.info(`Encoder config (fallback): ${describeConfig(encoderConfig)}`);
     }
@@ -950,6 +991,12 @@ chrome.runtime.onStartup?.addListener(async () => {
  * we maintain connection when woken.
  */
 initPromise.then(async () => {
+  // Detect and cache codec support on startup (non-blocking)
+  // This ensures codec info is available for the first cast
+  detectAndCacheCodecSupport().catch(() => {
+    // Non-fatal - will retry on first cast if needed
+  });
+
   const connState = getConnectionState();
   if (connState.desktopAppUrl && !wsConnected) {
     // Check if offscreen already has an active connection
