@@ -10,7 +10,7 @@ use tokio::sync::broadcast;
 use uuid::Uuid;
 
 use crate::config::{MAX_CONCURRENT_STREAMS, STREAM_BUFFER_FRAMES, STREAM_CHANNEL_CAPACITY};
-use crate::stream::transcoder::{Passthrough, Transcoder};
+use crate::stream::transcoder::Transcoder;
 
 /// Supported audio codecs for the stream
 #[derive(Debug, Clone, Copy, Serialize, PartialEq)]
@@ -102,20 +102,9 @@ impl StreamTiming {
         self.first_frame_at.set(Instant::now()).is_ok()
     }
 
-    /// Returns when first frame was received (for fallback/debugging).
+    /// Returns when first frame was received (used as fallback for epoch T0).
     pub fn first_frame_at(&self) -> Option<Instant> {
         self.first_frame_at.get().copied()
-    }
-
-    /// Returns the time since the first frame was received.
-    ///
-    /// Returns `None` if no frames have been received yet.
-    /// This is kept for backwards compatibility but `current_epoch_for()`
-    /// should be preferred for latency calculation.
-    #[must_use]
-    #[allow(dead_code)] // Kept for backwards compatibility and debugging
-    pub fn elapsed_since_start(&self) -> Option<std::time::Duration> {
-        self.first_frame_at.get().map(|start| start.elapsed())
     }
 
     /// Maximum number of epochs to keep (prevents unbounded HashMap growth).
@@ -184,12 +173,6 @@ impl StreamTiming {
     pub fn current_epoch_for(&self, ip: IpAddr) -> Option<PlaybackEpoch> {
         self.current_epoch_by_ip.lock().get(&ip).copied()
     }
-
-    /// Returns the current epoch ID (0 if no epochs have been created).
-    #[allow(dead_code)] // Useful for debugging
-    pub fn epoch_id(&self) -> u64 {
-        self.epoch_counter.load(Ordering::Relaxed)
-    }
 }
 
 impl Default for StreamTiming {
@@ -247,18 +230,6 @@ impl StreamState {
             transcoder,
             timing: StreamTiming::new(),
         }
-    }
-
-    /// Creates a new StreamState with passthrough (no transcoding).
-    ///
-    /// Use this for pre-encoded formats where the browser has already
-    /// performed encoding (AAC, FLAC, Vorbis).
-    ///
-    /// Currently unused - `ws.rs` creates transcoders explicitly via `resolve_codec()`.
-    /// Kept for testing and potential future use where passthrough is the common case.
-    #[allow(dead_code)]
-    pub fn new_passthrough(id: String, codec: AudioCodec) -> Self {
-        Self::new(id, codec, Arc::new(Passthrough))
     }
 
     /// Pushes a new audio frame into the stream.
@@ -378,19 +349,6 @@ impl StreamManager {
         let state = Arc::new(StreamState::new(id.clone(), codec, transcoder));
         self.streams.insert(id.clone(), state);
         Ok(id)
-    }
-
-    /// Creates a new stream with passthrough (no transcoding) and returns its ID.
-    ///
-    /// Use this for pre-encoded formats where the browser has already
-    /// performed encoding (AAC, FLAC, Vorbis).
-    ///
-    /// Currently unused - `StreamCoordinator::create_stream()` receives the transcoder
-    /// from `ws.rs` which creates it via `resolve_codec()`.
-    /// Kept for testing and potential future use where passthrough is the common case.
-    #[allow(dead_code)]
-    pub fn create_stream_passthrough(&self, codec: AudioCodec) -> Result<String, String> {
-        self.create_stream(codec, Arc::new(Passthrough))
     }
 
     /// Retrieves an active stream by its ID.
