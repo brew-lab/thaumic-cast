@@ -47,8 +47,6 @@ pub struct BootstrappedServices {
     pub ws_manager: Arc<WsConnectionManager>,
     /// Latency monitoring service.
     pub latency_monitor: Arc<LatencyMonitor>,
-    /// Cancellation token for graceful shutdown.
-    pub cancel_token: CancellationToken,
 }
 
 /// Creates the shared HTTP client for all Sonos communication.
@@ -152,7 +150,6 @@ pub fn bootstrap_services(config: &Config) -> BootstrappedServices {
         network,
         ws_manager,
         latency_monitor,
-        cancel_token,
     }
 }
 

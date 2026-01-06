@@ -2,7 +2,7 @@ use bytes::Bytes;
 use dashmap::DashMap;
 use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
-use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Instant;
 use tokio::sync::broadcast;
@@ -39,53 +39,19 @@ pub struct StreamMetadata {
 
 /// Timing information for latency measurement.
 ///
-/// Tracks when audio frames arrive and how much audio has been sent,
-/// enabling precise calculation of stream position for latency monitoring.
+/// Tracks when the first audio frame arrives, enabling wall-clock based
+/// latency calculation by comparing stream elapsed time against Sonos position.
 pub struct StreamTiming {
     /// When the first audio frame was received (for stream start time).
     first_frame_at: parking_lot::RwLock<Option<Instant>>,
-    /// Total audio samples sent to Sonos (for calculating stream position).
-    samples_sent: AtomicU64,
-    /// Audio sample rate in Hz (e.g., 48000).
-    sample_rate: AtomicU32,
-    /// Number of audio channels (e.g., 2 for stereo).
-    channels: AtomicU32,
-    /// Bytes per sample (e.g., 2 for 16-bit audio).
-    bytes_per_sample: AtomicU32,
 }
 
-/// Default sample rate (48kHz - standard for browser audio and Sonos).
-const DEFAULT_SAMPLE_RATE: u32 = 48000;
-
 impl StreamTiming {
-    /// Creates a new StreamTiming instance with default 48kHz sample rate.
+    /// Creates a new StreamTiming instance.
     pub fn new() -> Self {
         Self {
             first_frame_at: parking_lot::RwLock::new(None),
-            samples_sent: AtomicU64::new(0),
-            sample_rate: AtomicU32::new(DEFAULT_SAMPLE_RATE),
-            channels: AtomicU32::new(2),
-            bytes_per_sample: AtomicU32::new(2),
         }
-    }
-
-    /// Sets the audio format parameters for sample counting.
-    ///
-    /// # Arguments
-    /// * `sample_rate` - Sample rate in Hz (e.g., 48000)
-    /// * `channels` - Number of audio channels (e.g., 2 for stereo)
-    /// * `bytes_per_sample` - Bytes per sample (e.g., 2 for 16-bit)
-    pub fn set_format(&self, sample_rate: u32, channels: u32, bytes_per_sample: u32) {
-        self.sample_rate.store(sample_rate, Ordering::SeqCst);
-        self.channels.store(channels, Ordering::SeqCst);
-        self.bytes_per_sample
-            .store(bytes_per_sample, Ordering::SeqCst);
-        log::debug!(
-            "[StreamTiming] Format set: {}Hz, {} channels, {} bytes/sample",
-            sample_rate,
-            channels,
-            bytes_per_sample
-        );
     }
 
     /// Records when the first frame was received.
@@ -102,53 +68,12 @@ impl StreamTiming {
         }
     }
 
-    /// Records that audio samples have been sent.
-    ///
-    /// # Arguments
-    /// * `frame_bytes` - Size of the audio frame in bytes
-    pub fn record_samples(&self, frame_bytes: usize) {
-        let channels = self.channels.load(Ordering::Relaxed);
-        let bytes_per_sample = self.bytes_per_sample.load(Ordering::Relaxed);
-
-        if channels > 0 && bytes_per_sample > 0 {
-            let bytes_per_frame = channels * bytes_per_sample;
-            let samples = frame_bytes as u64 / bytes_per_frame as u64;
-            self.samples_sent.fetch_add(samples, Ordering::Relaxed);
-        }
-    }
-
-    /// Returns the current stream position in milliseconds.
-    ///
-    /// Calculated from the total samples sent and the sample rate.
-    /// Returns 0 if sample rate is not set.
-    #[must_use]
-    pub fn position_ms(&self) -> u64 {
-        let samples = self.samples_sent.load(Ordering::Relaxed);
-        let rate = self.sample_rate.load(Ordering::Relaxed);
-        if rate == 0 {
-            return 0;
-        }
-        samples * 1000 / rate as u64
-    }
-
     /// Returns the time since the first frame was received.
     ///
     /// Returns `None` if no frames have been received yet.
     #[must_use]
     pub fn elapsed_since_start(&self) -> Option<std::time::Duration> {
         self.first_frame_at.read().map(|start| start.elapsed())
-    }
-
-    /// Returns the sample rate in Hz.
-    #[must_use]
-    pub fn sample_rate(&self) -> u32 {
-        self.sample_rate.load(Ordering::Relaxed)
-    }
-
-    /// Returns the total samples sent.
-    #[must_use]
-    pub fn samples_sent(&self) -> u64 {
-        self.samples_sent.load(Ordering::Relaxed)
     }
 }
 
@@ -228,10 +153,6 @@ impl StreamState {
     /// Returns `true` if this was the first frame (stream just became ready),
     /// `false` otherwise.
     pub fn push_frame(&self, frame: Bytes) -> bool {
-        // Record timing for the raw input frame (before transcoding)
-        // This tracks the audio samples received from the source
-        self.timing.record_samples(frame.len());
-
         // Transcode the frame (PCM → FLAC, or passthrough for pre-encoded)
         let output_frame = self.transcoder.transcode(&frame);
 

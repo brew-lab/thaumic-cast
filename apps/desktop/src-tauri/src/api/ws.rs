@@ -367,13 +367,7 @@ fn handle_handshake(state: &AppState, payload: HandshakeRequest) -> HandshakeRes
         .stream_coordinator
         .create_stream(output_codec, transcoder)
     {
-        Ok(id) => {
-            // Set audio format on the stream for accurate timing calculations
-            if let Some(stream) = state.services.stream_coordinator.get_stream(&id) {
-                stream.timing.set_format(sample_rate, channels, 2); // 2 bytes per sample (16-bit)
-            }
-            HandshakeResult::Success(id)
-        }
+        Ok(id) => HandshakeResult::Success(id),
         Err(e) => HandshakeResult::Error(e),
     }
 }

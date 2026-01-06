@@ -41,10 +41,6 @@ type SessionKey = (String, String);
 struct PositionSample {
     /// RelTime in seconds (from Sonos).
     rel_time_seconds: u32,
-    /// Round-trip time for the SOAP call in milliseconds.
-    rtt_ms: u32,
-    /// When this sample was captured (adjusted for RTT/2).
-    captured_at: Instant,
 }
 
 /// Tracks latency measurement state for a single speaker.
@@ -215,11 +211,6 @@ enum MonitorCommand {
         stream_id: String,
         speaker_ip: String,
     },
-    /// Stop monitoring a stream/speaker pair.
-    Stop {
-        stream_id: String,
-        speaker_ip: String,
-    },
     /// Stop all monitoring for a stream.
     StopStream { stream_id: String },
 }
@@ -301,19 +292,6 @@ impl LatencyMonitor {
             .await;
     }
 
-    /// Stops monitoring latency for a stream/speaker pair.
-    ///
-    /// Call this when playback stops on a speaker.
-    pub async fn stop_monitoring(&self, stream_id: &str, speaker_ip: &str) {
-        let _ = self
-            .command_tx
-            .send(MonitorCommand::Stop {
-                stream_id: stream_id.to_string(),
-                speaker_ip: speaker_ip.to_string(),
-            })
-            .await;
-    }
-
     /// Stops all monitoring for a stream (all speakers).
     ///
     /// Call this when a stream is removed.
@@ -356,15 +334,6 @@ impl LatencyMonitor {
                                     stream_id, speaker_ip
                                 );
                                 sessions.insert(key, LatencySession::new());
-                            }
-                        }
-                        MonitorCommand::Stop { stream_id, speaker_ip } => {
-                            let key = (stream_id.clone(), speaker_ip.clone());
-                            if sessions.remove(&key).is_some() {
-                                log::info!(
-                                    "[LatencyMonitor] Stopped monitoring: stream={}, speaker={}",
-                                    stream_id, speaker_ip
-                                );
                             }
                         }
                         MonitorCommand::StopStream { stream_id } => {
@@ -433,8 +402,6 @@ impl LatencyMonitor {
                         // Create position sample for transition detection
                         let sample = PositionSample {
                             rel_time_seconds: (position.rel_time_ms / 1000) as u32,
-                            rtt_ms,
-                            captured_at: start + rtt / 2, // Best estimate of when Sonos sampled
                         };
 
                         // Add sample and check for transition
