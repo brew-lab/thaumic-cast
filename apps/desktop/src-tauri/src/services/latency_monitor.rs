@@ -89,6 +89,14 @@ impl LatencySession {
         }
     }
 
+    /// Resets baseline positions (call when track changes).
+    fn reset_baselines(&mut self) {
+        self.baseline_sonos_ms = None;
+        self.baseline_stream_ms = None;
+        self.measurements.clear();
+        self.ema_latency = 0.0;
+    }
+
     /// Captures baseline positions on first sample.
     /// Returns (relative_stream_ms, relative_sonos_ms) for latency calculation.
     fn get_relative_positions(&mut self, stream_pos_ms: u64, sonos_pos_ms: u64) -> (u64, u64) {
@@ -393,6 +401,18 @@ impl LatencyMonitor {
                             }
                         };
                         let rtt = start.elapsed();
+
+                        // Verify Sonos is playing OUR stream (not previous content)
+                        if !position.track_uri.contains(&stream_id) {
+                            log::trace!(
+                                "[LatencyMonitor] Waiting for stream {} to start (current URI: {})",
+                                stream_id,
+                                position.track_uri
+                            );
+                            // Reset baselines if Sonos switches away from our stream
+                            session.reset_baselines();
+                            continue;
+                        }
 
                         // Create position sample
                         let sample = PositionSample {
