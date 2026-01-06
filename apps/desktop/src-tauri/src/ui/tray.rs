@@ -129,6 +129,15 @@ fn is_visible(window: &WebviewWindow) -> bool {
 }
 
 fn focus_window(window: &WebviewWindow) {
+    // On macOS, show the dock icon when window is shown
+    #[cfg(target_os = "macos")]
+    {
+        use tauri::ActivationPolicy;
+        let _ = window
+            .app_handle()
+            .set_activation_policy(ActivationPolicy::Regular);
+    }
+
     let _ = window.show();
     let _ = window.unminimize();
     let _ = window.set_focus();

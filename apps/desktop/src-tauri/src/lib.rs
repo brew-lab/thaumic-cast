@@ -100,6 +100,15 @@ pub fn run() {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                 api.prevent_close();
                 let _ = window.hide();
+
+                // On macOS, hide the dock icon when window is hidden
+                #[cfg(target_os = "macos")]
+                {
+                    use tauri::ActivationPolicy;
+                    let _ = window
+                        .app_handle()
+                        .set_activation_policy(ActivationPolicy::Accessory);
+                }
             }
         })
         .build(tauri::generate_context!())
