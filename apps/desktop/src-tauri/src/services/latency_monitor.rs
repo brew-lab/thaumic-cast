@@ -403,9 +403,10 @@ impl LatencyMonitor {
                         let rtt = start.elapsed();
 
                         // Verify Sonos is playing OUR stream (not previous content)
+                        // Our stream URLs look like: http://192.168.x.x:port/stream/{stream_id}/audio.flac
                         if !position.track_uri.contains(&stream_id) {
-                            log::trace!(
-                                "[LatencyMonitor] Waiting for stream {} to start (current URI: {})",
+                            log::debug!(
+                                "[LatencyMonitor] Waiting for stream {} (current URI: {})",
                                 stream_id,
                                 position.track_uri
                             );
@@ -413,6 +414,12 @@ impl LatencyMonitor {
                             session.reset_baselines();
                             continue;
                         }
+
+                        log::trace!(
+                            "[LatencyMonitor] URI matched: {} contains {}",
+                            position.track_uri,
+                            stream_id
+                        );
 
                         // Create position sample
                         let sample = PositionSample {
