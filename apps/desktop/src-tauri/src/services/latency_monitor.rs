@@ -5,13 +5,12 @@
 //!
 //! # Measurement Strategy
 //!
-//! Since UPnP `RelTime` only has second precision, we use statistical enhancement:
-//! 1. High-frequency polling (every 100ms)
-//! 2. Second-boundary transition detection for sub-second accuracy
-//! 3. RTT compensation for network delay
-//! 4. Exponential moving average for stability
+//! Uses wall-clock timing comparison:
+//! 1. Moderate-frequency polling (every 500ms) - sufficient for 1-second Sonos precision
+//! 2. RTT compensation for network delay
+//! 3. Exponential moving average for stability
+//! 4. Incremental variance calculation for confidence scoring
 
-use std::collections::VecDeque;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -24,8 +23,9 @@ use crate::sonos::traits::SonosPlayback;
 use crate::stream::StreamManager;
 use crate::utils::now_millis;
 
-/// Default polling interval for position queries.
-const DEFAULT_POLL_INTERVAL_MS: u64 = 100;
+/// Polling interval for position queries.
+/// 500ms is sufficient since Sonos RelTime only has 1-second precision.
+const POLL_INTERVAL_MS: u64 = 500;
 
 /// Minimum samples needed before emitting latency updates.
 const MIN_SAMPLES_FOR_CONFIDENCE: usize = 5;
@@ -36,26 +36,19 @@ const EMA_ALPHA: f64 = 0.3;
 /// Key for identifying a monitoring session (stream_id, speaker_ip).
 type SessionKey = (String, String);
 
-/// A single position measurement from the Sonos speaker.
-#[derive(Debug, Clone)]
-struct PositionSample {
-    /// RelTime in seconds (from Sonos).
-    rel_time_seconds: u32,
-}
-
 /// Tracks latency measurement state for a single speaker.
 struct LatencySession {
     /// Sonos RelTime (ms) when playback was first detected.
     /// Used to calculate delta (how much Sonos has played since our stream started).
     baseline_sonos_ms: Option<u64>,
-    /// Last observed RelTime seconds value.
-    last_rel_time_seconds: Option<u32>,
-    /// Recent position samples for transition detection.
-    samples: VecDeque<PositionSample>,
-    /// Recent latency measurements for EMA calculation.
-    measurements: VecDeque<i64>,
     /// Exponential moving average of latency.
     ema_latency: f64,
+    /// Number of samples collected (for confidence calculation).
+    sample_count: usize,
+    /// Running mean for incremental variance (Welford's algorithm).
+    running_mean: f64,
+    /// Running M2 for incremental variance (sum of squared differences).
+    running_m2: f64,
     /// When we last emitted an update.
     last_emit: Option<Instant>,
 }
@@ -65,10 +58,10 @@ impl LatencySession {
     fn new() -> Self {
         Self {
             baseline_sonos_ms: None,
-            last_rel_time_seconds: None,
-            samples: VecDeque::with_capacity(50),
-            measurements: VecDeque::with_capacity(50),
             ema_latency: 0.0,
+            sample_count: 0,
+            running_mean: 0.0,
+            running_m2: 0.0,
             last_emit: None,
         }
     }
@@ -76,8 +69,10 @@ impl LatencySession {
     /// Resets baseline positions (call when track changes).
     fn reset_baselines(&mut self) {
         self.baseline_sonos_ms = None;
-        self.measurements.clear();
         self.ema_latency = 0.0;
+        self.sample_count = 0;
+        self.running_mean = 0.0;
+        self.running_m2 = 0.0;
     }
 
     /// Calculates latency using stream timing and Sonos position.
@@ -128,39 +123,26 @@ impl LatencySession {
         (stream_elapsed_ms as i64) - (sonos_played_ms as i64)
     }
 
-    /// Adds a new position sample and returns true if a second-boundary transition was detected.
-    fn add_sample(&mut self, sample: PositionSample) -> bool {
-        let transition_detected = self
-            .last_rel_time_seconds
-            .map(|last| sample.rel_time_seconds > last)
-            .unwrap_or(false);
-
-        self.last_rel_time_seconds = Some(sample.rel_time_seconds);
-        self.samples.push_back(sample);
-
-        // Keep last 50 samples
-        while self.samples.len() > 50 {
-            self.samples.pop_front();
-        }
-
-        transition_detected
-    }
-
-    /// Records a new latency measurement and updates the EMA.
+    /// Records a new latency measurement and updates statistics.
+    ///
+    /// Uses Welford's online algorithm for incremental variance calculation,
+    /// avoiding heap allocation on each update.
     fn record_latency(&mut self, latency_ms: i64) {
-        self.measurements.push_back(latency_ms);
-
-        // Keep last 50 measurements
-        while self.measurements.len() > 50 {
-            self.measurements.pop_front();
-        }
+        let value = latency_ms as f64;
 
         // Update EMA
-        if self.ema_latency == 0.0 {
-            self.ema_latency = latency_ms as f64;
+        if self.sample_count == 0 {
+            self.ema_latency = value;
         } else {
-            self.ema_latency = EMA_ALPHA * latency_ms as f64 + (1.0 - EMA_ALPHA) * self.ema_latency;
+            self.ema_latency = EMA_ALPHA * value + (1.0 - EMA_ALPHA) * self.ema_latency;
         }
+
+        // Welford's online algorithm for incremental mean and variance
+        self.sample_count += 1;
+        let delta = value - self.running_mean;
+        self.running_mean += delta / self.sample_count as f64;
+        let delta2 = value - self.running_mean;
+        self.running_m2 += delta * delta2;
     }
 
     /// Returns the current latency estimate in milliseconds.
@@ -169,15 +151,15 @@ impl LatencySession {
     }
 
     /// Returns the confidence score (0.0 - 1.0) based on measurement stability.
+    ///
+    /// Uses incrementally computed standard deviation - no heap allocation.
     fn confidence(&self) -> f32 {
-        if self.measurements.len() < MIN_SAMPLES_FOR_CONFIDENCE {
+        if self.sample_count < MIN_SAMPLES_FOR_CONFIDENCE {
             return 0.3; // Low confidence until we have enough samples
         }
 
-        // Calculate standard deviation
-        let values: Vec<f64> = self.measurements.iter().map(|&x| x as f64).collect();
-        let mean = values.iter().sum::<f64>() / values.len() as f64;
-        let variance = values.iter().map(|x| (x - mean).powi(2)).sum::<f64>() / values.len() as f64;
+        // Calculate standard deviation from running variance
+        let variance = self.running_m2 / self.sample_count as f64;
         let std_dev = variance.sqrt();
 
         // Higher confidence if measurements are consistent
@@ -193,8 +175,8 @@ impl LatencySession {
     /// Returns true if enough time has passed to emit an update (rate limiting).
     fn should_emit(&self) -> bool {
         match self.last_emit {
-            Some(last) => last.elapsed() >= Duration::from_millis(500),
-            None => self.measurements.len() >= MIN_SAMPLES_FOR_CONFIDENCE,
+            Some(last) => last.elapsed() >= Duration::from_millis(1000),
+            None => self.sample_count >= MIN_SAMPLES_FOR_CONFIDENCE,
         }
     }
 
@@ -313,7 +295,7 @@ impl LatencyMonitor {
         cancel: CancellationToken,
     ) {
         let sessions: DashMap<SessionKey, LatencySession> = DashMap::new();
-        let poll_interval = Duration::from_millis(DEFAULT_POLL_INTERVAL_MS);
+        let poll_interval = Duration::from_millis(POLL_INTERVAL_MS);
 
         log::info!("[LatencyMonitor] Background task started");
 
@@ -398,14 +380,6 @@ impl LatencyMonitor {
                             position.track_uri,
                             stream_id
                         );
-
-                        // Create position sample for transition detection
-                        let sample = PositionSample {
-                            rel_time_seconds: (position.rel_time_ms / 1000) as u32,
-                        };
-
-                        // Add sample and check for transition
-                        let _transition = session.add_sample(sample);
 
                         // Calculate latency:
                         // - stream_elapsed_ms = time since first frame (real-time ≈ audio sent)
