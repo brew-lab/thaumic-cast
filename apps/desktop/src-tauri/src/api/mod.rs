@@ -168,6 +168,12 @@ pub async fn start_server(state: AppState) -> Result<(), ServerError> {
 
     log::info!("Server listening on http://0.0.0.0:{}", port);
     let app = http::create_router(state);
-    axum::serve(listener, app).await?;
+
+    // Use into_make_service_with_connect_info to enable ConnectInfo<SocketAddr> extraction
+    axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+    )
+    .await?;
     Ok(())
 }

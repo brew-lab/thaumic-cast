@@ -18,6 +18,7 @@
 //! 4. Incremental variance calculation for confidence scoring
 //! 5. Track restart detection to reset statistics
 
+use std::net::IpAddr;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -27,7 +28,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::events::{EventEmitter, LatencyEvent};
 use crate::sonos::traits::SonosPlayback;
-use crate::stream::StreamManager;
+use crate::stream::{PlaybackEpoch, StreamManager, StreamTiming};
 use crate::utils::now_millis;
 
 /// Polling interval for position queries.
@@ -40,8 +41,23 @@ const MIN_SAMPLES_FOR_CONFIDENCE: usize = 5;
 /// EMA smoothing factor (higher = more responsive to changes).
 const EMA_ALPHA: f64 = 0.3;
 
+/// Maximum time since last valid position before considering epoch stale.
+/// If we haven't received valid position info in this window, something is wrong.
+/// Should be >= 10 * POLL_INTERVAL_MS to avoid false positives during network blips.
+const STALE_EPOCH_TIMEOUT_SECS: u64 = 30;
+
 /// Key for identifying a monitoring session (stream_id, speaker_ip).
 type SessionKey = (String, String);
+
+/// Result of epoch synchronization check.
+enum EpochStatus {
+    /// Valid epoch available for measurement.
+    Valid(PlaybackEpoch),
+    /// No epoch yet (Sonos hasn't started consuming from this IP).
+    NoEpoch,
+    /// Epoch exists but is stale (no valid position data recently).
+    Stale,
+}
 
 /// Tracks latency measurement state for a single speaker.
 struct LatencySession {
@@ -61,6 +77,14 @@ struct LatencySession {
     running_m2: f64,
     /// When we last emitted an update.
     last_emit: Option<Instant>,
+    /// Last epoch ID we measured against.
+    /// If this changes, Sonos reconnected and we need to reset.
+    last_epoch_id: u64,
+    /// When we last saw valid position info (for stale detection).
+    last_valid_position: Option<Instant>,
+    /// Whether we've already emitted a Stale event for the current stale state.
+    /// Prevents spamming stale events; cleared when valid data resumes.
+    stale_emitted: bool,
 }
 
 impl LatencySession {
@@ -74,10 +98,13 @@ impl LatencySession {
             running_mean: 0.0,
             running_m2: 0.0,
             last_emit: None,
+            last_epoch_id: 0,
+            last_valid_position: None,
+            stale_emitted: false,
         }
     }
 
-    /// Resets all state when switching to a different stream.
+    /// Resets all state when switching to a different stream or epoch.
     /// This clears everything including the position offset.
     fn reset_all(&mut self) {
         self.last_sonos_reltime_ms = None;
@@ -86,6 +113,73 @@ impl LatencySession {
         self.sample_count = 0;
         self.running_mean = 0.0;
         self.running_m2 = 0.0;
+        self.last_valid_position = None;
+        self.stale_emitted = false;
+    }
+
+    /// Syncs with current epoch for a speaker IP.
+    ///
+    /// Returns the epoch status: Valid with epoch, NoEpoch if none exists,
+    /// or Stale if we haven't received valid position data recently.
+    /// Resets session if epoch changed, but seeds EMA with previous value
+    /// to avoid "jump to 0 then climb back" behavior.
+    fn sync_epoch(&mut self, timing: &StreamTiming, speaker_ip: IpAddr) -> EpochStatus {
+        let epoch = match timing.current_epoch_for(speaker_ip) {
+            Some(e) => e,
+            None => return EpochStatus::NoEpoch,
+        };
+
+        if epoch.id != self.last_epoch_id {
+            if self.last_epoch_id > 0 {
+                log::info!(
+                    "[LatencyMonitor] Epoch changed {} -> {}, resetting (seeding with {}ms)",
+                    self.last_epoch_id,
+                    epoch.id,
+                    self.ema_latency as u64
+                );
+                // Preserve last EMA as seed for new epoch
+                let seed_latency = self.ema_latency;
+                self.reset_all();
+                self.ema_latency = seed_latency;
+            }
+            self.last_epoch_id = epoch.id;
+        }
+
+        // Check for stale epoch (no valid position data in a while)
+        if let Some(last_valid) = self.last_valid_position {
+            if last_valid.elapsed().as_secs() > STALE_EPOCH_TIMEOUT_SECS {
+                log::debug!(
+                    "[LatencyMonitor] Epoch {} appears stale (no valid position for {}s)",
+                    epoch.id,
+                    last_valid.elapsed().as_secs()
+                );
+                return EpochStatus::Stale;
+            }
+        }
+
+        EpochStatus::Valid(epoch)
+    }
+
+    /// Records that we received valid position info (for stale detection).
+    /// Also clears stale_emitted flag so we can emit again if it goes stale later.
+    fn record_valid_position(&mut self) {
+        self.last_valid_position = Some(Instant::now());
+        self.stale_emitted = false;
+    }
+
+    /// Marks that we've emitted a stale event (to prevent spam).
+    fn mark_stale_emitted(&mut self) {
+        self.stale_emitted = true;
+    }
+
+    /// Returns true if we should emit a stale event (not already emitted).
+    fn should_emit_stale(&self) -> bool {
+        !self.stale_emitted
+    }
+
+    /// Returns the last epoch ID we measured against.
+    fn last_epoch_id(&self) -> u64 {
+        self.last_epoch_id
     }
 
     /// Calculates absolute end-to-end latency for video sync.
@@ -175,6 +269,17 @@ impl LatencySession {
     /// Returns the current latency estimate in milliseconds.
     fn latency_ms(&self) -> u64 {
         self.ema_latency.max(0.0) as u64
+    }
+
+    /// Returns the current jitter (standard deviation) in milliseconds.
+    ///
+    /// Uses incrementally computed standard deviation from Welford's algorithm.
+    fn jitter_ms(&self) -> u64 {
+        if self.sample_count < 2 {
+            return 0;
+        }
+        let variance = self.running_m2 / self.sample_count as f64;
+        variance.sqrt().max(0.0) as u64
     }
 
     /// Returns the confidence score (0.0 - 1.0) based on measurement stability.
@@ -368,11 +473,44 @@ impl LatencyMonitor {
                             None => continue,
                         };
 
-                        // Get time elapsed since stream started (first frame received)
-                        let stream_elapsed_ms = match stream.timing.elapsed_since_start() {
-                            Some(d) => d.as_millis() as u64,
-                            None => continue, // Stream hasn't received any frames yet
+                        // Parse speaker IP and sync with current epoch for this speaker
+                        let speaker_ip_addr: IpAddr = match speaker_ip.parse() {
+                            Ok(ip) => ip,
+                            Err(_) => {
+                                log::warn!("[LatencyMonitor] Invalid speaker IP: {}", speaker_ip);
+                                continue;
+                            }
                         };
+
+                        // Sync epoch - skip if no epoch yet, emit stale if stale
+                        let epoch = match session.sync_epoch(&stream.timing, speaker_ip_addr) {
+                            EpochStatus::Valid(e) => e,
+                            EpochStatus::NoEpoch => continue, // Sonos hasn't started consuming yet
+                            EpochStatus::Stale => {
+                                // Emit stale event once per stale transition
+                                if session.should_emit_stale() {
+                                    let epoch_id = session.last_epoch_id();
+                                    let event = LatencyEvent::Stale {
+                                        stream_id: stream_id.clone(),
+                                        speaker_ip: speaker_ip.clone(),
+                                        epoch_id,
+                                        timestamp: now_millis(),
+                                    };
+                                    emitter.emit_latency(event);
+                                    session.mark_stale_emitted();
+                                    log::warn!(
+                                        "[LatencyMonitor] Emitting stale: stream={}, speaker={}, epoch={}",
+                                        stream_id,
+                                        speaker_ip,
+                                        epoch_id
+                                    );
+                                }
+                                continue;
+                            }
+                        };
+
+                        // Get time elapsed since audio epoch (T0 for this Sonos connection)
+                        let stream_elapsed_ms = epoch.audio_epoch.elapsed().as_millis() as u64;
 
                         // Query Sonos position with RTT measurement
                         let start = Instant::now();
@@ -415,6 +553,9 @@ impl LatencyMonitor {
                             rtt_ms,
                         );
 
+                        // Record that we received valid position info (for stale detection)
+                        session.record_valid_position();
+
                         session.record_latency(latency_ms);
 
                         // Emit update if appropriate
@@ -422,7 +563,9 @@ impl LatencyMonitor {
                             let event = LatencyEvent::Updated {
                                 stream_id: stream_id.clone(),
                                 speaker_ip: speaker_ip.clone(),
+                                epoch_id: epoch.id,
                                 latency_ms: session.latency_ms(),
+                                jitter_ms: session.jitter_ms(),
                                 confidence: session.confidence(),
                                 timestamp: now_millis(),
                             };
@@ -430,10 +573,11 @@ impl LatencyMonitor {
                             session.mark_emitted();
 
                             log::debug!(
-                                "[LatencyMonitor] stream={}, speaker={}: latency={}ms, confidence={:.2}",
+                                "[LatencyMonitor] stream={}, speaker={}: latency={}ms, jitter={}ms, confidence={:.2}",
                                 stream_id,
                                 speaker_ip,
                                 session.latency_ms(),
+                                session.jitter_ms(),
                                 session.confidence()
                             );
                         }

@@ -4,6 +4,8 @@ pub mod transcoder;
 pub mod wav;
 
 pub use icy::{IcyMetadataInjector, ICY_METAINT};
-pub use manager::{AudioCodec, StreamManager, StreamMetadata, StreamState};
+pub use manager::{
+    AudioCodec, PlaybackEpoch, StreamManager, StreamMetadata, StreamState, StreamTiming,
+};
 pub use transcoder::{Passthrough, Transcoder};
 pub use wav::create_wav_header;
