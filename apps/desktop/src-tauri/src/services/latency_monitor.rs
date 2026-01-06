@@ -235,7 +235,6 @@ impl LatencyMonitor {
                 rx,
                 self.cancel.clone(),
             ));
-            log::info!("[LatencyMonitor] Background task started");
         }
     }
 
