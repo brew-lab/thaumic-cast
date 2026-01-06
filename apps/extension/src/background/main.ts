@@ -70,11 +70,7 @@ import {
 } from '../lib/device-config';
 import { loadExtensionSettings } from '../lib/settings';
 import { resolveAudioMode, describeEncoderConfig } from '../lib/presets';
-import {
-  detectSupportedCodecs,
-  type SupportedCodecsResult,
-  type EncoderConfig,
-} from '@thaumic-cast/protocol';
+import type { SupportedCodecsResult, EncoderConfig } from '@thaumic-cast/protocol';
 import i18n from '../lib/i18n';
 
 const log = createLogger('Background');
@@ -83,8 +79,9 @@ const log = createLogger('Background');
 const CODEC_CACHE_KEY = 'codecSupportCache';
 
 /**
- * Detects supported audio codecs and caches the result in session storage.
- * Called on service worker startup to ensure codec info is available for first cast.
+ * Detects supported audio codecs via offscreen document and caches the result.
+ * AudioEncoder is only available in window contexts, not service workers,
+ * so we must delegate detection to the offscreen document.
  * @returns The codec support result, or null if detection failed
  */
 async function detectAndCacheCodecSupport(): Promise<SupportedCodecsResult | null> {
@@ -96,14 +93,21 @@ async function detectAndCacheCodecSupport(): Promise<SupportedCodecsResult | nul
       return cached[CODEC_CACHE_KEY] as SupportedCodecsResult;
     }
 
-    // Run detection and cache
-    log.info('Detecting supported audio codecs...');
-    const result = await detectSupportedCodecs();
-    await chrome.storage.session.set({ [CODEC_CACHE_KEY]: result });
-    log.info(
-      `Codec detection complete: ${result.availableCodecs.length} codecs available (default: ${result.defaultCodec})`,
-    );
-    return result;
+    // Request detection from offscreen document (AudioEncoder available there)
+    log.info('Requesting codec detection from offscreen...');
+    const response = await chrome.runtime.sendMessage({ type: 'DETECT_CODECS' });
+
+    if (response?.success && response.result) {
+      const result = response.result as SupportedCodecsResult;
+      await chrome.storage.session.set({ [CODEC_CACHE_KEY]: result });
+      log.info(
+        `Codec detection complete: ${result.availableCodecs.length} codecs available (default: ${result.defaultCodec})`,
+      );
+      return result;
+    }
+
+    log.warn('Codec detection failed:', response?.error);
+    return null;
   } catch (err) {
     log.warn('Codec detection failed:', err);
     return null;
@@ -991,12 +995,6 @@ chrome.runtime.onStartup?.addListener(async () => {
  * we maintain connection when woken.
  */
 initPromise.then(async () => {
-  // Detect and cache codec support on startup (non-blocking)
-  // This ensures codec info is available for the first cast
-  detectAndCacheCodecSupport().catch(() => {
-    // Non-fatal - will retry on first cast if needed
-  });
-
   const connState = getConnectionState();
   if (connState.desktopAppUrl && !wsConnected) {
     // Check if offscreen already has an active connection

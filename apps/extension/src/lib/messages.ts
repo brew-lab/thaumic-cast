@@ -63,7 +63,9 @@ export type ExtensionMessageType =
   // Session health (offscreen → background)
   | 'SESSION_HEALTH'
   // Media playback control (popup → background → content)
-  | 'CONTROL_MEDIA';
+  | 'CONTROL_MEDIA'
+  // Codec detection (background → offscreen)
+  | 'DETECT_CODECS';
 
 /**
  * Message payload for starting a cast.
@@ -550,6 +552,18 @@ export interface ControlMediaMessage {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Codec Detection Messages (background → offscreen)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Message to request codec detection from offscreen document.
+ * AudioEncoder is only available in window contexts, not service workers.
+ */
+export interface DetectCodecsMessage {
+  type: 'DETECT_CODECS';
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Updated Union Type
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -602,4 +616,6 @@ export type ExtensionMessage =
   // Media playback control
   | ControlMediaMessage
   // Session health
-  | SessionHealthMessage;
+  | SessionHealthMessage
+  // Codec detection
+  | DetectCodecsMessage;
