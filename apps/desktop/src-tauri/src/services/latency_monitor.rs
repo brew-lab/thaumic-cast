@@ -45,6 +45,9 @@ struct LatencySession {
     /// Used to calculate delta (how much audio we've sent since baseline).
     /// This is essential for handling metadata updates that cause Sonos to restart the track.
     baseline_stream_ms: Option<u64>,
+    /// Last observed Sonos RelTime (ms) for detecting track restarts.
+    /// When RelTime goes backwards significantly, we know the track restarted.
+    last_sonos_reltime_ms: Option<u64>,
     /// Exponential moving average of latency.
     ema_latency: f64,
     /// Number of samples collected (for confidence calculation).
@@ -63,6 +66,7 @@ impl LatencySession {
         Self {
             baseline_sonos_ms: None,
             baseline_stream_ms: None,
+            last_sonos_reltime_ms: None,
             ema_latency: 0.0,
             sample_count: 0,
             running_mean: 0.0,
@@ -71,10 +75,11 @@ impl LatencySession {
         }
     }
 
-    /// Resets baseline positions (call when track changes).
+    /// Resets baseline positions (call when track changes or restarts).
     fn reset_baselines(&mut self) {
         self.baseline_sonos_ms = None;
         self.baseline_stream_ms = None;
+        self.last_sonos_reltime_ms = None;
         self.ema_latency = 0.0;
         self.sample_count = 0;
         self.running_mean = 0.0;
@@ -84,20 +89,36 @@ impl LatencySession {
     /// Calculates latency using stream timing and Sonos position.
     ///
     /// The approach:
+    /// - Detect track restarts by checking if RelTime went backwards
     /// - Capture both stream and Sonos baselines together when playback first detected
-    /// - Calculate deltas from those baselines (handles metadata-triggered track restarts)
+    /// - Calculate deltas from those baselines
     /// - Latency = stream_delta - sonos_delta = buffer depth in pipeline
     ///
-    /// This handles the case where metadata updates cause Sonos to restart the track
-    /// (RelTime resets to 0) by also resetting the stream baseline.
-    ///
     /// Returns the latency in ms (positive = latency, negative = Sonos ahead somehow).
+    /// Returns None if baselines were just reset (caller should skip this sample).
     fn calculate_latency(
         &mut self,
         stream_elapsed_ms: u64,
         sonos_reltime_ms: u64,
         rtt_ms: u32,
-    ) -> i64 {
+    ) -> Option<i64> {
+        // Detect track restart: RelTime went backwards by more than 1 second
+        // This happens when metadata updates cause Sonos to restart the track
+        if let Some(last_reltime) = self.last_sonos_reltime_ms {
+            if sonos_reltime_ms + 1000 < last_reltime {
+                log::info!(
+                    "[LatencyMonitor] Track restart detected: reltime {} -> {} (delta={}ms)",
+                    last_reltime,
+                    sonos_reltime_ms,
+                    last_reltime as i64 - sonos_reltime_ms as i64
+                );
+                self.reset_baselines();
+                // Don't return a measurement this cycle - let next poll capture fresh baseline
+                return None;
+            }
+        }
+        self.last_sonos_reltime_ms = Some(sonos_reltime_ms);
+
         // Capture both baselines together on first call (when Sonos starts playing our stream)
         if self.baseline_sonos_ms.is_none() {
             self.baseline_sonos_ms = Some(sonos_reltime_ms);
@@ -128,7 +149,7 @@ impl LatencySession {
         // Latency = (audio sent since baseline) - (audio played since baseline)
         // Positive = buffer building up in pipeline (normal, typically 2-3 seconds)
         // Negative = Sonos somehow ahead of us (shouldn't happen)
-        (stream_delta_ms as i64) - (sonos_delta_ms as i64)
+        Some((stream_delta_ms as i64) - (sonos_delta_ms as i64))
     }
 
     /// Records a new latency measurement and updates statistics.
@@ -389,12 +410,15 @@ impl LatencyMonitor {
                             stream_id
                         );
 
-                        // Calculate latency:
-                        // - stream_elapsed_ms = time since first frame (real-time ≈ audio sent)
-                        // - sonos_reltime delta = audio played since baseline
-                        // - latency = sent - played = total buffer depth
-                        let latency_ms =
-                            session.calculate_latency(stream_elapsed_ms, position.rel_time_ms, rtt_ms);
+                        // Calculate latency (returns None if track restart detected)
+                        let latency_ms = match session.calculate_latency(
+                            stream_elapsed_ms,
+                            position.rel_time_ms,
+                            rtt_ms,
+                        ) {
+                            Some(ms) => ms,
+                            None => continue, // Skip this cycle - baselines were just reset
+                        };
 
                         log::debug!(
                             "[LatencyMonitor] stream_elapsed={}ms, sonos_reltime={}ms, latency={}ms, rtt={}ms",
