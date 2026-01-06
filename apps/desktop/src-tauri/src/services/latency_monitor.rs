@@ -41,6 +41,10 @@ struct LatencySession {
     /// Sonos RelTime (ms) when playback was first detected.
     /// Used to calculate delta (how much Sonos has played since our stream started).
     baseline_sonos_ms: Option<u64>,
+    /// Stream elapsed (ms) when baseline was captured.
+    /// Used to calculate delta (how much audio we've sent since baseline).
+    /// This is essential for handling metadata updates that cause Sonos to restart the track.
+    baseline_stream_ms: Option<u64>,
     /// Exponential moving average of latency.
     ema_latency: f64,
     /// Number of samples collected (for confidence calculation).
@@ -58,6 +62,7 @@ impl LatencySession {
     fn new() -> Self {
         Self {
             baseline_sonos_ms: None,
+            baseline_stream_ms: None,
             ema_latency: 0.0,
             sample_count: 0,
             running_mean: 0.0,
@@ -69,6 +74,7 @@ impl LatencySession {
     /// Resets baseline positions (call when track changes).
     fn reset_baselines(&mut self) {
         self.baseline_sonos_ms = None;
+        self.baseline_stream_ms = None;
         self.ema_latency = 0.0;
         self.sample_count = 0;
         self.running_mean = 0.0;
@@ -78,11 +84,12 @@ impl LatencySession {
     /// Calculates latency using stream timing and Sonos position.
     ///
     /// The approach:
-    /// - `stream_elapsed_ms` = time since first audio frame was received (from StreamTiming)
-    /// - Sonos RelTime delta = audio played since we captured baseline
-    /// - Latency = stream_elapsed - sonos_played = total buffer depth in pipeline
+    /// - Capture both stream and Sonos baselines together when playback first detected
+    /// - Calculate deltas from those baselines (handles metadata-triggered track restarts)
+    /// - Latency = stream_delta - sonos_delta = buffer depth in pipeline
     ///
-    /// This captures the full end-to-end latency including initial Sonos buffering.
+    /// This handles the case where metadata updates cause Sonos to restart the track
+    /// (RelTime resets to 0) by also resetting the stream baseline.
     ///
     /// Returns the latency in ms (positive = latency, negative = Sonos ahead somehow).
     fn calculate_latency(
@@ -91,36 +98,37 @@ impl LatencySession {
         sonos_reltime_ms: u64,
         rtt_ms: u32,
     ) -> i64 {
-        // Capture Sonos baseline on first call (when Sonos starts playing our stream)
+        // Capture both baselines together on first call (when Sonos starts playing our stream)
         if self.baseline_sonos_ms.is_none() {
             self.baseline_sonos_ms = Some(sonos_reltime_ms);
+            self.baseline_stream_ms = Some(stream_elapsed_ms);
             log::info!(
-                "[LatencyMonitor] Playback detected at stream_elapsed={}ms, baseline sonos_reltime={}ms",
+                "[LatencyMonitor] Baseline captured: stream={}ms, sonos={}ms",
                 stream_elapsed_ms,
                 sonos_reltime_ms
             );
         }
 
-        // Sonos playback progress since baseline
-        // Adjust for RTT/2 to estimate when Sonos actually sampled its position
-        let sonos_played_ms = sonos_reltime_ms
+        // Calculate deltas from baselines
+        let stream_delta_ms =
+            stream_elapsed_ms.saturating_sub(self.baseline_stream_ms.unwrap_or(0));
+        let sonos_delta_ms = sonos_reltime_ms
             .saturating_sub(self.baseline_sonos_ms.unwrap_or(0))
-            .saturating_add((rtt_ms / 2) as u64);
+            .saturating_add((rtt_ms / 2) as u64); // RTT/2 adjustment
 
         log::debug!(
-            "[LatencyMonitor] stream_elapsed={}ms, sonos_played={}ms (reltime={}, baseline={}, rtt={}ms)",
+            "[LatencyMonitor] stream_delta={}ms, sonos_delta={}ms (stream={}, sonos={}, rtt={}ms)",
+            stream_delta_ms,
+            sonos_delta_ms,
             stream_elapsed_ms,
-            sonos_played_ms,
             sonos_reltime_ms,
-            self.baseline_sonos_ms.unwrap_or(0),
             rtt_ms
         );
 
-        // Latency = (audio sent) - (audio played)
-        // Since we're streaming in real-time, stream_elapsed ≈ audio sent
+        // Latency = (audio sent since baseline) - (audio played since baseline)
         // Positive = buffer building up in pipeline (normal, typically 2-3 seconds)
         // Negative = Sonos somehow ahead of us (shouldn't happen)
-        (stream_elapsed_ms as i64) - (sonos_played_ms as i64)
+        (stream_delta_ms as i64) - (sonos_delta_ms as i64)
     }
 
     /// Records a new latency measurement and updates statistics.
