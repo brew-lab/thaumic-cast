@@ -97,14 +97,32 @@ impl LatencySession {
         self.ema_latency = 0.0;
     }
 
-    /// Captures baseline positions on first sample.
-    /// Returns (relative_stream_ms, relative_sonos_ms) for latency calculation.
-    fn get_relative_positions(&mut self, stream_pos_ms: u64, sonos_pos_ms: u64) -> (u64, u64) {
-        // Capture baselines on first call
+    /// Captures baseline positions on first valid sample.
+    /// Returns None if baselines aren't ready yet, otherwise (relative_stream_ms, relative_sonos_ms).
+    fn get_relative_positions(
+        &mut self,
+        stream_pos_ms: u64,
+        sonos_pos_ms: u64,
+    ) -> Option<(u64, u64)> {
+        // For a fresh HTTP stream, Sonos rel_time should be close to 0 initially.
+        // If Sonos reports a large position but we've sent little audio, it's not ready yet.
+        // Wait until the positions are somewhat aligned before capturing baselines.
         if self.baseline_sonos_ms.is_none() {
+            // Sanity check: Sonos shouldn't be more than 10 seconds ahead of what we've sent
+            // (allowing for some buffering). If it is, Sonos isn't playing our fresh stream yet.
+            let max_allowed_diff = 10_000; // 10 seconds
+            if sonos_pos_ms > stream_pos_ms + max_allowed_diff {
+                log::debug!(
+                    "[LatencyMonitor] Waiting for Sonos to sync (sonos={}ms >> stream={}ms)",
+                    sonos_pos_ms,
+                    stream_pos_ms
+                );
+                return None;
+            }
+
             self.baseline_sonos_ms = Some(sonos_pos_ms);
             self.baseline_stream_ms = Some(stream_pos_ms);
-            log::debug!(
+            log::info!(
                 "[LatencyMonitor] Captured baselines: stream={}ms, sonos={}ms",
                 stream_pos_ms,
                 sonos_pos_ms
@@ -118,7 +136,7 @@ impl LatencySession {
         let rel_stream = stream_pos_ms.saturating_sub(baseline_stream);
         let rel_sonos = sonos_pos_ms.saturating_sub(baseline_sonos);
 
-        (rel_stream, rel_sonos)
+        Some((rel_stream, rel_sonos))
     }
 
     /// Adds a new position sample and returns true if a second-boundary transition was detected.
@@ -435,8 +453,12 @@ impl LatencyMonitor {
                         let adjusted_sonos_pos_ms = position.rel_time_ms + (sample.rtt_ms / 2) as u64;
 
                         // Get positions relative to monitoring start (handles non-zero baselines)
-                        let (rel_stream, rel_sonos) =
-                            session.get_relative_positions(stream_pos_ms, adjusted_sonos_pos_ms);
+                        let (rel_stream, rel_sonos) = match session
+                            .get_relative_positions(stream_pos_ms, adjusted_sonos_pos_ms)
+                        {
+                            Some(positions) => positions,
+                            None => continue, // Not ready yet, skip this sample
+                        };
 
                         // Latency = how far ahead the stream is compared to Sonos playback
                         let latency_ms = rel_stream as i64 - rel_sonos as i64;
