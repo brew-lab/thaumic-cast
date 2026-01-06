@@ -1,5 +1,14 @@
 # @thaumic-cast/desktop
 
+## 0.6.1
+
+### Patch Changes
+
+- [#19](https://github.com/brew-lab/thaumic-cast/pull/19) [`aae78f0`](https://github.com/brew-lab/thaumic-cast/commit/aae78f008ec7a019c8f312db9c288e34462e1a99) Thanks [@skezo](https://github.com/skezo)! - fix(desktop): resolve macOS "damaged app" error with ad-hoc signing
+  - Add explicit ad-hoc signing identity for macOS builds
+  - Set minimum macOS version to 12.0 (Monterey)
+  - Add bundle metadata (category, copyright, publisher, description)
+
 ## 0.6.0
 
 ### Minor Changes
