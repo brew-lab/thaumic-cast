@@ -377,6 +377,15 @@ impl LatencyMonitor {
                         let adjusted_sonos_pos_ms = position.rel_time_ms + (sample.rtt_ms / 2) as u64;
                         let latency_ms = stream_pos_ms as i64 - adjusted_sonos_pos_ms as i64;
 
+                        log::debug!(
+                            "[LatencyMonitor] raw: stream_pos={}ms, sonos_pos={}ms (rel_time={}), rtt={}ms, raw_latency={}ms",
+                            stream_pos_ms,
+                            adjusted_sonos_pos_ms,
+                            position.rel_time_ms,
+                            sample.rtt_ms,
+                            latency_ms
+                        );
+
                         session.record_latency(latency_ms);
 
                         // Emit update if appropriate
