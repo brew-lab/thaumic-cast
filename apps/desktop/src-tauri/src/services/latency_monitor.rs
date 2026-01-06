@@ -106,16 +106,23 @@ impl LatencySession {
         rtt_ms: u32,
     ) -> i64 {
         // Detect track restart: RelTime went backwards
-        // When this happens, accumulate the lost position into the offset
+        // When this happens, recalculate offset to maintain current latency estimate
+        // This avoids accumulating errors from Sonos's 1-second precision
         if let Some(last_reltime) = self.last_sonos_reltime_ms {
             if sonos_reltime_ms < last_reltime.saturating_sub(100) {
-                // Calculate how much position was "lost" and add to offset
-                let lost_ms = last_reltime.saturating_sub(sonos_reltime_ms);
-                self.sonos_offset_ms += lost_ms;
+                // Calculate offset to maintain current EMA latency
+                // latency = stream - (sonos + offset) => offset = stream - sonos - latency
+                let target_latency = self.ema_latency.max(0.0) as u64;
+                let rtt_adj = (rtt_ms / 2) as u64;
+                self.sonos_offset_ms = stream_elapsed_ms
+                    .saturating_sub(sonos_reltime_ms)
+                    .saturating_sub(rtt_adj)
+                    .saturating_sub(target_latency);
                 log::info!(
-                    "[LatencyMonitor] Track restart: reltime {} -> {} (offset now {}ms)",
+                    "[LatencyMonitor] Track restart: reltime {} -> {}, maintaining ~{}ms latency (offset={}ms)",
                     last_reltime,
                     sonos_reltime_ms,
+                    target_latency,
                     self.sonos_offset_ms
                 );
             }
