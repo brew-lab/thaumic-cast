@@ -48,6 +48,9 @@ struct LatencySession {
     /// Last observed Sonos RelTime (ms) for detecting track restarts.
     /// When RelTime goes backwards, we know the track restarted.
     last_sonos_reltime_ms: Option<u64>,
+    /// Cumulative offset to add to Sonos RelTime when track restarts.
+    /// This maintains continuity across metadata-triggered restarts.
+    sonos_offset_ms: u64,
     /// Exponential moving average of latency.
     ema_latency: f64,
     /// Number of samples collected (for confidence calculation).
@@ -65,6 +68,7 @@ impl LatencySession {
     fn new() -> Self {
         Self {
             last_sonos_reltime_ms: None,
+            sonos_offset_ms: 0,
             ema_latency: 0.0,
             sample_count: 0,
             running_mean: 0.0,
@@ -73,10 +77,11 @@ impl LatencySession {
         }
     }
 
-    /// Resets statistics when track changes or restarts.
-    /// This clears the EMA and variance calculations to start fresh.
-    fn reset_statistics(&mut self) {
+    /// Resets all state when switching to a different stream.
+    /// This clears everything including the position offset.
+    fn reset_all(&mut self) {
         self.last_sonos_reltime_ms = None;
+        self.sonos_offset_ms = 0;
         self.ema_latency = 0.0;
         self.sample_count = 0;
         self.running_mean = 0.0;
@@ -85,54 +90,57 @@ impl LatencySession {
 
     /// Calculates absolute end-to-end latency for video sync.
     ///
-    /// Latency = stream_elapsed - sonos_reltime
+    /// Latency = stream_elapsed - (sonos_reltime + offset)
     /// - `stream_elapsed` = time since first audio frame received
-    /// - `sonos_reltime` = Sonos playback position (adjusted for RTT)
+    /// - `sonos_reltime` = Sonos playback position (adjusted for RTT and offset)
+    ///
+    /// When Sonos restarts its track position (due to metadata updates), we
+    /// accumulate the "lost" position into an offset to maintain continuity.
     ///
     /// This measures the total pipeline delay: the time between audio being
     /// captured at the source and being played by Sonos.
-    ///
-    /// Returns the latency in ms. Returns None if track restart detected
-    /// (caller should skip this sample while statistics reset).
     fn calculate_latency(
         &mut self,
         stream_elapsed_ms: u64,
         sonos_reltime_ms: u64,
         rtt_ms: u32,
-    ) -> Option<i64> {
+    ) -> i64 {
         // Detect track restart: RelTime went backwards
-        // This happens when metadata updates cause Sonos to restart the track
+        // When this happens, accumulate the lost position into the offset
         if let Some(last_reltime) = self.last_sonos_reltime_ms {
             if sonos_reltime_ms < last_reltime.saturating_sub(100) {
+                // Calculate how much position was "lost" and add to offset
+                let lost_ms = last_reltime.saturating_sub(sonos_reltime_ms);
+                self.sonos_offset_ms += lost_ms;
                 log::info!(
-                    "[LatencyMonitor] Track restart detected: reltime {} -> {} (reset statistics)",
+                    "[LatencyMonitor] Track restart: reltime {} -> {} (offset now {}ms)",
                     last_reltime,
-                    sonos_reltime_ms
+                    sonos_reltime_ms,
+                    self.sonos_offset_ms
                 );
-                self.reset_statistics();
-                return None;
             }
         }
         self.last_sonos_reltime_ms = Some(sonos_reltime_ms);
 
-        // Adjust Sonos position for RTT (Sonos sampled position RTT/2 ago)
-        let adjusted_sonos_ms = sonos_reltime_ms.saturating_add((rtt_ms / 2) as u64);
+        // Apply offset and RTT adjustment to get continuous Sonos position
+        let continuous_sonos_ms = sonos_reltime_ms
+            .saturating_add(self.sonos_offset_ms)
+            .saturating_add((rtt_ms / 2) as u64);
 
-        // Absolute latency = (time since first frame) - (Sonos playback position)
+        // Absolute latency = (time since first frame) - (continuous Sonos position)
         // Positive = audio in pipeline waiting to be played (normal)
-        // Values typically: 0.5-2s for PCM, 15-25s for AAC
-        let latency_ms = (stream_elapsed_ms as i64) - (adjusted_sonos_ms as i64);
+        let latency_ms = (stream_elapsed_ms as i64) - (continuous_sonos_ms as i64);
 
         log::debug!(
-            "[LatencyMonitor] stream={}ms, sonos={}ms (adjusted={}ms), latency={}ms, rtt={}ms",
+            "[LatencyMonitor] stream={}ms, sonos={}ms (continuous={}ms, offset={}ms), latency={}ms",
             stream_elapsed_ms,
             sonos_reltime_ms,
-            adjusted_sonos_ms,
-            latency_ms,
-            rtt_ms
+            continuous_sonos_ms,
+            self.sonos_offset_ms,
+            latency_ms
         );
 
-        Some(latency_ms)
+        latency_ms
     }
 
     /// Records a new latency measurement and updates statistics.
@@ -382,8 +390,8 @@ impl LatencyMonitor {
                                 stream_id,
                                 position.track_uri
                             );
-                            // Reset statistics if Sonos switches away from our stream
-                            session.reset_statistics();
+                            // Reset all state if Sonos switches away from our stream
+                            session.reset_all();
                             continue;
                         }
 
@@ -393,15 +401,12 @@ impl LatencyMonitor {
                             stream_id
                         );
 
-                        // Calculate absolute latency (returns None if track restart detected)
-                        let latency_ms = match session.calculate_latency(
+                        // Calculate absolute latency (handles track restarts via offset)
+                        let latency_ms = session.calculate_latency(
                             stream_elapsed_ms,
                             position.rel_time_ms,
                             rtt_ms,
-                        ) {
-                            Some(ms) => ms,
-                            None => continue, // Skip this cycle - statistics were just reset
-                        };
+                        );
 
                         session.record_latency(latency_ms);
 
