@@ -330,6 +330,22 @@ async fn stream_audio(
         .get_stream(&id)
         .ok_or_else(|| ThaumicError::StreamNotFound(id.clone()))?;
 
+    // For WAV streams, reject Range requests (we're a live stream, not seekable).
+    // When Sonos pauses and resumes a WAV "track", it sends a Range header expecting
+    // to resume from the paused byte position. Since we're streaming live audio,
+    // we return 416 to force Sonos to reconnect fresh.
+    if stream_state.codec == AudioCodec::Wav && headers.contains_key(header::RANGE) {
+        log::debug!(
+            "[Stream] Rejecting Range request for WAV stream {} (live stream not seekable)",
+            id
+        );
+        return Ok(Response::builder()
+            .status(StatusCode::RANGE_NOT_SATISFIABLE)
+            .header("Accept-Ranges", "none")
+            .body(Body::empty())
+            .unwrap());
+    }
+
     let connected_at = Instant::now();
     let remote_ip = remote_addr.ip();
 
@@ -410,6 +426,11 @@ async fn stream_audio(
         .header(header::CONTENT_TYPE, content_type)
         .header(header::CACHE_CONTROL, "no-cache")
         .header(header::CONNECTION, "keep-alive");
+
+    // Tell Sonos that WAV streams don't support seeking (live stream)
+    if stream_state.codec == AudioCodec::Wav {
+        builder = builder.header("Accept-Ranges", "none");
+    }
 
     if wants_icy {
         builder = builder.header("icy-metaint", ICY_METAINT.to_string());
