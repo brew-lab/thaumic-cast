@@ -3,7 +3,6 @@
 //! This module handles the raw SOAP envelope building, HTTP transport,
 //! and XML response parsing. For high-level Sonos commands, see `client.rs`.
 
-use std::collections::HashMap;
 use std::time::Duration;
 
 use reqwest::Client;
@@ -53,7 +52,7 @@ pub enum SoapError {
 /// * `endpoint` - The control URL path (e.g., "/MediaRenderer/AVTransport/Control")
 /// * `service` - The UPnP service URN (e.g., "urn:schemas-upnp-org:service:AVTransport:1")
 /// * `action` - The SOAP action name (e.g., "Play", "Stop", "GetVolume")
-/// * `args` - Key-value pairs for action arguments
+/// * `args` - Key-value pairs for action arguments (order is preserved)
 ///
 /// # Returns
 /// The response body on success, or a `SoapError` if the request fails
@@ -64,7 +63,7 @@ pub async fn send_soap_request(
     endpoint: &str,
     service: &str,
     action: &str,
-    args: HashMap<&str, &str>,
+    args: &[(&str, &str)],
 ) -> SoapResult<String> {
     let url = build_sonos_url(ip, endpoint);
 
@@ -215,10 +214,8 @@ impl<'a> SoapRequestBuilder<'a> {
             .action
             .ok_or_else(|| SoapError::Fault("SoapRequestBuilder: action not set".into()))?;
 
-        let mut args_map = HashMap::new();
-        for (k, v) in &self.args {
-            args_map.insert(*k, v.as_str());
-        }
+        // Convert to slice of (&str, &str) - preserves insertion order
+        let args: Vec<(&str, &str)> = self.args.iter().map(|(k, v)| (*k, v.as_str())).collect();
 
         send_soap_request(
             self.client,
@@ -226,7 +223,7 @@ impl<'a> SoapRequestBuilder<'a> {
             service.control_path(),
             service.urn(),
             action,
-            args_map,
+            &args,
         )
         .await
     }
