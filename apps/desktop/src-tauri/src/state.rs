@@ -34,6 +34,18 @@ pub struct Config {
     /// Delay between M-SEARCH packet retries (milliseconds).
     pub ssdp_retry_delay_ms: u64,
 
+    /// Enable SSDP multicast discovery (239.255.255.250:1900).
+    pub discovery_ssdp_multicast: bool,
+
+    /// Enable SSDP broadcast discovery (directed per-interface + 255.255.255.255).
+    pub discovery_ssdp_broadcast: bool,
+
+    /// Enable mDNS/Bonjour discovery (_sonos._tcp.local.).
+    pub discovery_mdns: bool,
+
+    /// mDNS browse timeout (milliseconds).
+    pub mdns_browse_timeout_ms: u64,
+
     // ─────────────────────────────────────────────────────────────────────────
     // Streaming
     // ─────────────────────────────────────────────────────────────────────────
@@ -73,6 +85,10 @@ impl Default for Config {
             topology_refresh_interval: 30,
             ssdp_send_count: 3,
             ssdp_retry_delay_ms: 800,
+            discovery_ssdp_multicast: true,
+            discovery_ssdp_broadcast: true,
+            discovery_mdns: true,
+            mdns_browse_timeout_ms: 2000,
 
             // Streaming
             max_concurrent_streams: 10,

@@ -43,3 +43,4 @@ socket2 = { version = "0.5", features = ["all"] }
 rust-i18n = "3"
 sys-locale = "0.3"
 bytemuck = { version = "1", features = ["derive"] }
+mdns-sd = "0.17"
