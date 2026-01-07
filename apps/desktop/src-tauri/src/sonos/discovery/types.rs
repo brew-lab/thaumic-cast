@@ -95,6 +95,28 @@ pub struct Speaker {
     pub name: String,
     /// Canonical UUID (normalized RINCON_xxx).
     pub uuid: String,
+    /// Model name (e.g., "Sonos Arc", "Sonos Boost").
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub model_name: Option<String>,
+}
+
+/// Known Sonos infrastructure device models that don't participate in zone groups.
+/// These are network bridges/extenders, not playable speakers.
+const INFRASTRUCTURE_MODELS: &[&str] = &["boost", "bridge"];
+
+impl Speaker {
+    /// Returns true if this is a non-playable infrastructure device (Boost, Bridge).
+    pub fn is_infrastructure_device(&self) -> bool {
+        self.model_name
+            .as_ref()
+            .map(|m| {
+                let model_lower = m.to_lowercase();
+                INFRASTRUCTURE_MODELS
+                    .iter()
+                    .any(|&infra| model_lower.contains(infra))
+            })
+            .unwrap_or(false)
+    }
 }
 
 /// Intermediate struct for speaker data before metadata resolution.

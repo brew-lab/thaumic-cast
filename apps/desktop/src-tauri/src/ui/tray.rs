@@ -2,12 +2,14 @@
 //!
 //! Provides the system tray icon with context menu for quick access to
 //! common actions: viewing status, toggling autostart, and controlling streams.
+//!
+//! The tray menu status line updates dynamically when streams are created or ended.
 
 use std::future::Future;
 
 use rust_i18n::t;
 use tauri::{
-    menu::{CheckMenuItemBuilder, MenuBuilder, MenuItemBuilder, PredefinedMenuItem},
+    menu::{CheckMenuItemBuilder, MenuBuilder, MenuItem, MenuItemBuilder, PredefinedMenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
     AppHandle, Manager, WebviewWindow,
 };
@@ -15,6 +17,37 @@ use tauri_plugin_autostart::ManagerExt;
 use thiserror::Error;
 
 use crate::api::AppState;
+use crate::events::{BroadcastEvent, StreamEvent};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Tray State
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Holds references to tray menu items that need dynamic updates.
+#[derive(Clone)]
+pub struct TrayState {
+    /// The status menu item showing streaming state.
+    status_item: MenuItem<tauri::Wry>,
+}
+
+impl TrayState {
+    /// Updates the status text based on current stream count.
+    fn update_status(&self, stream_count: usize) {
+        let text = format_status_text(stream_count);
+        if let Err(e) = self.status_item.set_text(&text) {
+            log::warn!("Failed to update tray status: {}", e);
+        }
+    }
+}
+
+/// Formats the status text for a given stream count.
+fn format_status_text(stream_count: usize) -> String {
+    match stream_count {
+        0 => t!("tray.status_idle").to_string(),
+        1 => t!("tray.status_streaming_one").to_string(),
+        n => t!("tray.status_streaming_many", count = n).to_string(),
+    }
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Menu Item Identifiers
@@ -22,7 +55,7 @@ use crate::api::AppState;
 
 /// System tray menu item identifiers.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum MenuItem {
+enum MenuItemId {
     /// App name header (disabled).
     AppName,
     /// Dynamic status line (disabled).
@@ -39,7 +72,7 @@ enum MenuItem {
     Quit,
 }
 
-impl MenuItem {
+impl MenuItemId {
     const fn id(self) -> &'static str {
         match self {
             Self::AppName => "app_name",
@@ -98,14 +131,10 @@ impl<T, E: std::fmt::Display> MenuResultExt<T> for Result<T, E> {
 /// Gets the current status text based on app state.
 fn get_status_text(app: &tauri::App) -> String {
     let Some(state) = app.try_state::<AppState>() else {
-        return t!("tray.status_idle").to_string();
+        return format_status_text(0);
     };
 
-    match state.services.stream_coordinator.stream_count() {
-        0 => t!("tray.status_idle").to_string(),
-        1 => t!("tray.status_streaming_one").to_string(),
-        n => t!("tray.status_streaming_many", count = n).to_string(),
-    }
+    format_status_text(state.services.stream_coordinator.stream_count())
 }
 
 /// Checks if autostart is currently enabled.
@@ -135,6 +164,8 @@ where
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// Initializes the system tray with menu and event handlers.
+///
+/// Also starts a background task to update the status line when streams change.
 pub fn setup_tray(app: &tauri::App) -> Result<(), TrayError> {
     let icon = app.default_window_icon().ok_or(TrayError::MissingIcon)?;
 
@@ -143,37 +174,39 @@ pub fn setup_tray(app: &tauri::App) -> Result<(), TrayError> {
     let app_name_label = format!("{} v{}", t!("tray.app_name"), version);
 
     // Build menu items
-    let app_name = MenuItemBuilder::with_id(MenuItem::AppName.id(), &app_name_label)
+    let app_name = MenuItemBuilder::with_id(MenuItemId::AppName.id(), &app_name_label)
         .enabled(false)
         .build(app)
         .tray_err()?;
 
-    let status = MenuItemBuilder::with_id(MenuItem::Status.id(), get_status_text(app))
+    let status = MenuItemBuilder::with_id(MenuItemId::Status.id(), get_status_text(app))
         .enabled(false)
         .build(app)
         .tray_err()?;
 
-    let dashboard = MenuItemBuilder::with_id(MenuItem::Dashboard.id(), t!("tray.dashboard"))
+    let dashboard = MenuItemBuilder::with_id(MenuItemId::Dashboard.id(), t!("tray.dashboard"))
         .build(app)
         .tray_err()?;
 
-    let launch_at_startup =
-        CheckMenuItemBuilder::with_id(MenuItem::LaunchAtStartup.id(), t!("tray.launch_at_startup"))
-            .checked(is_autostart_enabled(app))
-            .build(app)
-            .tray_err()?;
+    let launch_at_startup = CheckMenuItemBuilder::with_id(
+        MenuItemId::LaunchAtStartup.id(),
+        t!("tray.launch_at_startup"),
+    )
+    .checked(is_autostart_enabled(app))
+    .build(app)
+    .tray_err()?;
 
     let stop_all_streams =
-        MenuItemBuilder::with_id(MenuItem::StopAllStreams.id(), t!("tray.stop_all_streams"))
+        MenuItemBuilder::with_id(MenuItemId::StopAllStreams.id(), t!("tray.stop_all_streams"))
             .build(app)
             .tray_err()?;
 
     let restart_server =
-        MenuItemBuilder::with_id(MenuItem::RestartServer.id(), t!("tray.restart_server"))
+        MenuItemBuilder::with_id(MenuItemId::RestartServer.id(), t!("tray.restart_server"))
             .build(app)
             .tray_err()?;
 
-    let quit = MenuItemBuilder::with_id(MenuItem::Quit.id(), t!("tray.quit"))
+    let quit = MenuItemBuilder::with_id(MenuItemId::Quit.id(), t!("tray.quit"))
         .build(app)
         .tray_err()?;
 
@@ -203,8 +236,58 @@ pub fn setup_tray(app: &tauri::App) -> Result<(), TrayError> {
         .build(app)
         .tray_err()?;
 
+    // Store tray state for dynamic updates
+    let tray_state = TrayState {
+        status_item: status,
+    };
+    app.manage(tray_state);
+
+    // Start the event listener for dynamic status updates
+    start_status_listener(app.handle().clone());
+
     log::debug!("System tray initialized");
     Ok(())
+}
+
+/// Starts a background task that listens for stream events and updates the tray status.
+fn start_status_listener(app: AppHandle) {
+    let Some(app_state) = app.try_state::<AppState>() else {
+        log::warn!("AppState not available for tray status listener");
+        return;
+    };
+
+    let mut rx = app_state.services.broadcast_tx.subscribe();
+    let app_state = app_state.inner().clone();
+
+    tauri::async_runtime::spawn(async move {
+        loop {
+            match rx.recv().await {
+                Ok(BroadcastEvent::Stream(event)) => {
+                    // Update tray on stream created/ended events
+                    if matches!(
+                        event,
+                        StreamEvent::Created { .. } | StreamEvent::Ended { .. }
+                    ) {
+                        let stream_count = app_state.services.stream_coordinator.stream_count();
+
+                        if let Some(tray_state) = app.try_state::<TrayState>() {
+                            tray_state.update_status(stream_count);
+                        }
+                    }
+                }
+                Ok(_) => {
+                    // Ignore other event types
+                }
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+                    log::debug!("Tray status listener lagged {} events", n);
+                }
+                Err(tokio::sync::broadcast::error::RecvError::Closed) => {
+                    log::debug!("Broadcast channel closed, stopping tray status listener");
+                    break;
+                }
+            }
+        }
+    });
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -213,23 +296,23 @@ pub fn setup_tray(app: &tauri::App) -> Result<(), TrayError> {
 
 /// Handles context menu item selection.
 fn on_menu_event(app: &AppHandle, event: tauri::menu::MenuEvent) {
-    match MenuItem::from_id(event.id.as_ref()) {
-        Some(MenuItem::AppName | MenuItem::Status) => {
+    match MenuItemId::from_id(event.id.as_ref()) {
+        Some(MenuItemId::AppName | MenuItemId::Status) => {
             // Disabled items, no action
         }
-        Some(MenuItem::Dashboard) => {
+        Some(MenuItemId::Dashboard) => {
             show_main_window(app);
         }
-        Some(MenuItem::LaunchAtStartup) => {
+        Some(MenuItemId::LaunchAtStartup) => {
             toggle_autostart(app);
         }
-        Some(MenuItem::StopAllStreams) => {
+        Some(MenuItemId::StopAllStreams) => {
             stop_all_streams(app);
         }
-        Some(MenuItem::RestartServer) => {
+        Some(MenuItemId::RestartServer) => {
             restart_server(app);
         }
-        Some(MenuItem::Quit) => {
+        Some(MenuItemId::Quit) => {
             log::info!("Quit requested via tray");
             app.exit(0);
         }

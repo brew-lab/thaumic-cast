@@ -311,8 +311,10 @@ impl DiscoveryCoordinator {
                             .map(|i| normalize_uuid(&i.uuid))
                             .unwrap_or_else(|| speaker.uuid.clone()),
                         name: info
-                            .map(|i| i.friendly_name)
+                            .as_ref()
+                            .map(|i| i.friendly_name.clone())
                             .unwrap_or_else(|| format!("Sonos ({})", speaker.ip)),
+                        model_name: info.and_then(|i| i.model_name),
                     }
                 }
             })
