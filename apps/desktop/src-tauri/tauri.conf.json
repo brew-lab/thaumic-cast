@@ -1,6 +1,6 @@
 {
   "productName": "Thaumic Cast",
-  "version": "0.6.1",
+  "version": "0.7.0",
   "identifier": "com.thaumic-cast.desktop",
   "build": {
     "beforeDevCommand": "bun run dev",
