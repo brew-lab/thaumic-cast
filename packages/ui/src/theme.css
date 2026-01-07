@@ -441,6 +441,7 @@ body {
 .btnPrimary {
   background-color: var(--button-primary-bg);
   color: var(--button-primary-text);
+  border: 1px solid transparent;
 }
 
 .btnPrimary:not(:disabled):hover {
@@ -460,6 +461,7 @@ body {
 .btnDanger {
   background-color: var(--button-danger-bg);
   color: var(--button-danger-text);
+  border: 1px solid transparent;
 }
 
 .btnDanger:not(:disabled):hover {
