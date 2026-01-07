@@ -70,7 +70,9 @@
 
   "onboarding.welcome.title": "Welcome to Thaumic Cast",
   "onboarding.welcome.subtitle": "The server side of the equation",
-  "onboarding.welcome.body": "This application acts as the bridge between your browser and your Sonos speakers. It lurks quietly in your system tray, ready to channel audio when called upon.",
+  "onboarding.welcome.body_windows": "This application acts as the bridge between your browser and your Sonos speakers. It lurks quietly in your system tray, ready to channel audio when called upon.",
+  "onboarding.welcome.body_macos": "This application acts as the bridge between your browser and your Sonos speakers. It lurks quietly in your menu bar, ready to channel audio when called upon.",
+  "onboarding.welcome.body_linux": "This application acts as the bridge between your browser and your Sonos speakers. It lurks quietly in your system tray, ready to channel audio when called upon.",
   "onboarding.welcome.footnote": "Think of it as a very dedicated postal service for sound.",
 
   "onboarding.firewall.title": "A Brief Interruption",
