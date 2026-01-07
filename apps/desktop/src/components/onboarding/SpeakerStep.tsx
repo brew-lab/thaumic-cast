@@ -1,10 +1,14 @@
 import { useEffect, useState } from 'preact/hooks';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { WizardStep, Alert, Button } from '@thaumic-cast/ui';
+import { createLogger } from '@thaumic-cast/shared';
 import { Speaker, RefreshCw } from 'lucide-preact';
 import { useTranslation } from 'react-i18next';
 import { groups, fetchGroups, refreshTopology, networkHealth } from '../../state/store';
+
 import styles from './SpeakerStep.module.css';
+
+const log = createLogger('SpeakerStep');
 
 interface SpeakerStepProps {
   /** Whether speakers have been found (controls next button) */
@@ -43,7 +47,7 @@ export function SpeakerStep({ onSpeakersFound }: SpeakerStepProps): preact.JSX.E
 
     // Listen for discovery-complete event from the backend
     listen<DiscoveryCompletePayload>('discovery-complete', async (event) => {
-      console.log('[SpeakerStep] Discovery complete event:', event.payload);
+      log.debug('Discovery complete event:', event.payload);
       await fetchGroups();
       setIsSearching(false);
 
@@ -61,7 +65,7 @@ export function SpeakerStep({ onSpeakersFound }: SpeakerStepProps): preact.JSX.E
 
     // Listen for network health changes from the backend
     listen<NetworkHealthPayload>('network-health-changed', (event) => {
-      console.log('[SpeakerStep] Network health changed:', event.payload);
+      log.debug('Network health changed:', event.payload);
       networkHealth.value = {
         health: event.payload.health,
         reason: event.payload.reason,
@@ -73,7 +77,7 @@ export function SpeakerStep({ onSpeakersFound }: SpeakerStepProps): preact.JSX.E
     // Fallback timeout in case event doesn't fire (shouldn't happen, but safety net)
     timeoutTimer = setTimeout(async () => {
       if (isSearching) {
-        console.log('[SpeakerStep] Fallback timeout reached, fetching groups');
+        log.debug('Fallback timeout reached, fetching groups');
         await fetchGroups();
         setIsSearching(false);
       }

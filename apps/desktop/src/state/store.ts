@@ -1,5 +1,8 @@
 import { signal } from '@preact/signals';
 import { invoke } from '@tauri-apps/api/core';
+import { createLogger } from '@thaumic-cast/shared';
+
+const log = createLogger('Store');
 
 // Types mirroring Rust backend
 export interface Speaker {
@@ -136,7 +139,7 @@ export const fetchGroups = async (): Promise<void> => {
 
     // Debug: log if health changed
     if (networkHealth.value.health !== health.health) {
-      console.log('[Store] Network health changed:', health);
+      log.debug('Network health changed:', health);
     }
     networkHealth.value = health;
     await fetchStats();
