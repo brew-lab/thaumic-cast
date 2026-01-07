@@ -433,6 +433,40 @@ chrome.runtime.onMessage.addListener((msg: ExtensionMessage, _sender, sendRespon
         }
 
         // ─────────────────────────────────────────────────────────────────
+        // Video Sync Messages (popup → background → content)
+        // ─────────────────────────────────────────────────────────────────
+        case 'SET_VIDEO_SYNC_ENABLED':
+        case 'SET_VIDEO_SYNC_TRIM':
+        case 'TRIGGER_RESYNC': {
+          const { tabId } = (msg as { payload: { tabId: number } }).payload;
+          try {
+            const response = await chrome.tabs.sendMessage(tabId, msg);
+            sendResponse(response);
+          } catch {
+            sendResponse({ success: false, error: 'Content script not available' });
+          }
+          break;
+        }
+
+        case 'GET_VIDEO_SYNC_STATE': {
+          const { tabId } = (msg as { payload: { tabId: number } }).payload;
+          try {
+            const response = await chrome.tabs.sendMessage(tabId, { type: 'GET_VIDEO_SYNC_STATE' });
+            sendResponse(response);
+          } catch {
+            sendResponse({ state: 'off', enabled: false, trimMs: 0 });
+          }
+          break;
+        }
+
+        // Forward video sync state broadcasts from content script to popup
+        case 'VIDEO_SYNC_STATE_CHANGED': {
+          notifyPopup(msg);
+          sendResponse({ success: true });
+          break;
+        }
+
+        // ─────────────────────────────────────────────────────────────────
         // WebSocket Status Messages (from offscreen)
         // ─────────────────────────────────────────────────────────────────
         case 'WS_CONNECTED': {
@@ -911,6 +945,16 @@ async function handleStopCast(
     }
 
     if (tabId && hasSession(tabId)) {
+      // Disable video sync before stopping capture
+      chrome.tabs
+        .sendMessage(tabId, {
+          type: 'SET_VIDEO_SYNC_ENABLED',
+          payload: { tabId, enabled: false },
+        })
+        .catch(() => {
+          // Content script may not be available
+        });
+
       await chrome.runtime.sendMessage({ type: 'STOP_CAPTURE', payload: { tabId } });
       removeSession(tabId);
     }

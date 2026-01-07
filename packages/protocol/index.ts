@@ -1461,3 +1461,22 @@ export type WsControlCommand =
   | { type: 'SET_MUTE'; payload: { ip: string; mute: boolean } }
   | { type: 'GET_VOLUME'; payload: { ip: string } }
   | { type: 'GET_MUTE'; payload: { ip: string } };
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Video Sync Status (for popup display)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Video sync status for popup display.
+ * Represents the current state of per-cast video sync.
+ */
+export interface VideoSyncStatus {
+  /** Whether video sync is enabled for this cast */
+  enabled: boolean;
+  /** User trim adjustment in milliseconds */
+  trimMs: number;
+  /** Current sync state */
+  state: 'off' | 'acquiring' | 'locked' | 'stale';
+  /** Locked latency in ms (only when state is 'locked') */
+  lockedLatencyMs?: number;
+}

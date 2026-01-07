@@ -956,3 +956,79 @@ body {
   overflow: hidden;
   text-overflow: ellipsis;
 }
+
+/* Toggle Switch Styles */
+.toggleSwitch {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  inline-size: 2.5rem;
+  block-size: 1.25rem;
+  padding: 0;
+  background: var(--color-border);
+  border: none;
+  border-radius: 0.75rem;
+  cursor: pointer;
+  transition: var(--transition-bg);
+}
+
+.toggleSwitch:focus-visible {
+  outline: 2px solid var(--color-focus);
+  outline-offset: 2px;
+}
+
+.toggleSwitchOn {
+  background: var(--color-primary);
+}
+
+.toggleSwitchDisabled {
+  opacity: var(--input-disabled-opacity);
+  cursor: not-allowed;
+}
+
+.toggleSwitchThumb {
+  position: absolute;
+  inset-inline-start: 0.125rem;
+  inline-size: 1rem;
+  block-size: 1rem;
+  background: var(--color-on-primary);
+  border-radius: 50%;
+  transition: transform var(--duration-fast) var(--ease-out-2);
+}
+
+.toggleSwitchOn .toggleSwitchThumb {
+  transform: translateX(1.25rem);
+}
+
+/* Status Chip Styles */
+.statusChip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+  padding-block: 0.125rem;
+  padding-inline: var(--space-sm);
+  font-size: 0.6875rem;
+  font-weight: 500;
+  border-radius: var(--radius-sm);
+  white-space: nowrap;
+}
+
+.statusChipWaiting {
+  background: var(--color-surface-hover);
+  color: var(--color-text-muted);
+}
+
+.statusChipAcquiring {
+  background: var(--alert-warning-bg);
+  color: var(--color-warning);
+}
+
+.statusChipSynced {
+  background: var(--alert-success-bg);
+  color: var(--color-success);
+}
+
+.statusChipLost {
+  background: var(--alert-error-bg);
+  color: var(--color-error);
+}

@@ -4,6 +4,7 @@ import { ServerSection } from './components/ServerSection';
 import { AudioSection } from './components/AudioSection';
 import { AppearanceSection } from './components/AppearanceSection';
 import { LanguageSection } from './components/LanguageSection';
+import { VideoSyncSection } from './components/VideoSyncSection';
 import { AboutSection } from './components/AboutSection';
 import { useExtensionSettings } from './hooks/useExtensionSettings';
 import { useCodecSupport } from './hooks/useCodecSupport';
@@ -46,6 +47,8 @@ export function Options(): JSX.Element {
         codecSupport={codecSupport}
         codecLoading={codecLoading}
       />
+
+      <VideoSyncSection settings={settings} onUpdate={updateSettings} />
 
       <AboutSection />
     </div>

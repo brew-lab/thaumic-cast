@@ -15,6 +15,7 @@
 
 import type {
   VideoSyncState,
+  VideoSyncStatus,
   LatencySample,
   SampleWindow,
   LatencyBroadcastEvent,
@@ -25,6 +26,19 @@ import { VIDEO_SYNC_CONSTANTS as C } from '@thaumic-cast/protocol';
 import { createLogger } from '@thaumic-cast/shared';
 
 const log = createLogger('VideoSync');
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Per-Cast State (ephemeral, not persisted)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Whether video sync is enabled for this cast (per-cast toggle) */
+let videoSyncEnabled = false;
+
+/** User trim adjustment in milliseconds (per-cast) */
+let currentTrimMs = 0;
+
+/** Flag to prevent re-acquire during our own coarse alignment pause/resume */
+let isPerformingCoarseAlignment = false;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // State Management
@@ -104,7 +118,60 @@ function setState(streamId: string, speakerIp: string, state: VideoSyncState): v
 
   if (prevState?.kind !== state.kind) {
     log.info(`State transition: ${prevState?.kind ?? 'none'} → ${state.kind}`);
+    broadcastSyncState();
   }
+}
+
+/**
+ * Resets all sync states to initial.
+ */
+function resetAllStates(): void {
+  syncStates.clear();
+  lastSyncErrorMs = 0;
+}
+
+/**
+ * Gets the current sync status for popup display.
+ * @returns The current video sync status
+ */
+function getCurrentSyncStatus(): VideoSyncStatus {
+  if (!videoSyncEnabled) {
+    return { enabled: false, trimMs: 0, state: 'off' };
+  }
+
+  // Find first non-NoData state
+  for (const state of syncStates.values()) {
+    if (state.kind === 'Locked') {
+      return {
+        enabled: true,
+        trimMs: currentTrimMs,
+        state: 'locked',
+        lockedLatencyMs: state.lockedLatencyMs,
+      };
+    }
+    if (state.kind === 'Acquiring') {
+      return { enabled: true, trimMs: currentTrimMs, state: 'acquiring' };
+    }
+    if (state.kind === 'Stale') {
+      return { enabled: true, trimMs: currentTrimMs, state: 'stale' };
+    }
+  }
+  return { enabled: true, trimMs: currentTrimMs, state: 'off' };
+}
+
+/**
+ * Broadcasts the current sync state to the popup.
+ */
+function broadcastSyncState(): void {
+  const status = getCurrentSyncStatus();
+  chrome.runtime
+    .sendMessage({
+      type: 'VIDEO_SYNC_STATE_CHANGED',
+      ...status,
+    })
+    .catch(() => {
+      // Popup may not be open
+    });
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -396,6 +463,9 @@ async function performCoarseAlignment(
 ): Promise<{ lockNowMs: number; lockVideoTime: number }> {
   log.info(`Coarse alignment: pausing video for ${delayMs.toFixed(0)}ms`);
 
+  // Set flag to prevent play event from triggering re-acquire
+  isPerformingCoarseAlignment = true;
+
   // Record anchors at PAUSE START so the wait time is "counted" in elapsedSec
   const lockNowMs = performance.now();
   const lockVideoTime = video.currentTime;
@@ -412,6 +482,11 @@ async function performCoarseAlignment(
   video.play().catch((err) => {
     log.warn('Play rejected (user interaction may be required):', err.message);
   });
+
+  // Clear flag after a short delay to allow the play event to fire first
+  setTimeout(() => {
+    isPerformingCoarseAlignment = false;
+  }, 100);
 
   return { lockNowMs, lockVideoTime };
 }
@@ -588,6 +663,12 @@ function handleVideoPause(): void {
  * Re-acquires sync since we don't know how long we were paused.
  */
 function handleVideoPlay(): void {
+  // Skip if this is our own coarse alignment resume
+  if (isPerformingCoarseAlignment) {
+    log.debug('Ignoring play event during coarse alignment');
+    return;
+  }
+
   // Only re-acquire if we were in Locked state
   let wasLocked = false;
   for (const state of syncStates.values()) {
@@ -791,6 +872,9 @@ function runSyncIteration(): void {
  * @param event
  */
 async function handleLatencyUpdated(event: LatencyUpdatedBroadcastEvent): Promise<void> {
+  // Guard: only process if video sync is enabled
+  if (!videoSyncEnabled) return;
+
   const { streamId, speakerIp, epochId, latencyMs, jitterMs, confidence } = event;
   const state = getState(streamId, speakerIp);
   const now = performance.now();
@@ -881,7 +965,10 @@ async function handleLatencyUpdated(event: LatencyUpdatedBroadcastEvent): Promis
           startSyncLoop();
           log.info('Sync loop started');
         } else {
-          log.warn('Stability gate passed but no video element found');
+          log.warn('Stability gate passed but no video element found, will retry');
+          // Reset samples to prevent spamming - we'll try again after collecting fresh data
+          const freshSamples = createSampleWindow();
+          setState(streamId, speakerIp, { kind: 'Acquiring', epochId, samples: freshSamples });
         }
       }
       break;
@@ -980,13 +1067,62 @@ function handleLatencyEvent(event: LatencyBroadcastEvent): void {
 function init(): void {
   log.info('Video sync content script initialized');
 
-  // Listen for latency events from background
+  // Listen for messages from background
   chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+    // Latency events from desktop via background
     if (message.type === 'LATENCY_EVENT' && message.payload) {
       handleLatencyEvent(message.payload as LatencyBroadcastEvent);
       sendResponse({ success: true });
       return true;
     }
+
+    // Video sync control messages from popup via background
+    if (message.type === 'SET_VIDEO_SYNC_ENABLED') {
+      const wasEnabled = videoSyncEnabled;
+      const newEnabled = message.payload?.enabled ?? false;
+      log.info(`SET_VIDEO_SYNC_ENABLED: ${wasEnabled} → ${newEnabled}`);
+      videoSyncEnabled = newEnabled;
+
+      if (!videoSyncEnabled && wasEnabled) {
+        // Disable: stop everything, restore playbackRate
+        stopSyncLoop();
+        detachVideoEventListeners();
+        resetAllStates();
+        if (targetVideo) targetVideo.playbackRate = 1.0;
+        log.info('Video sync disabled');
+      } else if (videoSyncEnabled && !wasEnabled) {
+        log.info('Video sync enabled, waiting for latency events');
+      }
+      broadcastSyncState();
+      sendResponse({ success: true });
+      return true;
+    }
+
+    if (message.type === 'SET_VIDEO_SYNC_TRIM') {
+      const newTrim = message.payload?.trimMs ?? 0;
+      log.info(`SET_VIDEO_SYNC_TRIM: ${currentTrimMs} → ${newTrim}`);
+      currentTrimMs = newTrim;
+      broadcastSyncState();
+      sendResponse({ success: true });
+      return true;
+    }
+
+    if (message.type === 'TRIGGER_RESYNC') {
+      log.info('TRIGGER_RESYNC received');
+      if (videoSyncEnabled) {
+        triggerReAcquire('manual resync');
+      }
+      sendResponse({ success: true });
+      return true;
+    }
+
+    if (message.type === 'GET_VIDEO_SYNC_STATE') {
+      const status = getCurrentSyncStatus();
+      log.debug(`GET_VIDEO_SYNC_STATE: returning ${JSON.stringify(status)}`);
+      sendResponse(status);
+      return true;
+    }
+
     return false;
   });
 

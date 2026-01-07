@@ -145,5 +145,18 @@
   "onboarding.ready.subtitle": "Your speakers await instruction",
   "onboarding.ready.intro": "You can stream audio from up to {{maxStreams}} tabs at once. The universe has limits.",
   "onboarding.ready.performance_body": "Best for music. Latency is 100–300ms — fine for tunes, less so for conducting orchestras.",
-  "onboarding.ready.battery_warning": "Laptops on battery may experience hiccups. Browsers like to save power."
+  "onboarding.ready.battery_warning": "Laptops on battery may experience hiccups. Browsers like to save power.",
+
+  "advanced_section_title": "Advanced",
+  "video_sync_enable": "Video sync controls",
+  "video_sync_description": "For when the lips move but the words arrive fashionably late",
+  "video_sync": "Video Sync",
+  "video_sync_toggle": "Sync video to audio",
+  "video_sync_status_waiting": "Waiting",
+  "video_sync_status_acquiring": "Thinking...",
+  "video_sync_status_synced": "Synced",
+  "video_sync_status_lost": "Lost",
+  "video_sync_trim": "Fine-tune",
+  "video_sync_resync": "Try again",
+  "video_sync_delay_ms": "{{delay}}ms"
 }

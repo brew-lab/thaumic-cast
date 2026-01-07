@@ -245,6 +245,16 @@ function notifyPopup(message: object): void {
  * @param tabId - The tab ID to stop
  */
 async function stopCastForTab(tabId: number): Promise<void> {
+  // Disable video sync before stopping capture
+  chrome.tabs
+    .sendMessage(tabId, {
+      type: 'SET_VIDEO_SYNC_ENABLED',
+      payload: { tabId, enabled: false },
+    })
+    .catch(() => {
+      // Content script may not be available
+    });
+
   // Send stop message to offscreen
   await chrome.runtime.sendMessage({ type: 'STOP_CAPTURE', payload: { tabId } }).catch(() => {
     // Offscreen might not be available
