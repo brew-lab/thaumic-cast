@@ -336,7 +336,7 @@ impl TopologyMonitor {
             );
         }
 
-        // Broadcast groups update to WebSocket clients
+        // Broadcast groups update to WebSocket clients and Tauri frontend
         let timestamp = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()

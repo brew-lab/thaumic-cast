@@ -41,6 +41,8 @@ pub struct BootstrappedServices {
     pub sonos_state: Arc<SonosState>,
     /// Broadcast channel sender for real-time events.
     pub broadcast_tx: broadcast::Sender<BroadcastEvent>,
+    /// Event bridge for emitting events to WebSocket and Tauri frontend.
+    pub event_bridge: Arc<BroadcastEventBridge>,
     /// Network configuration (port, local IP).
     pub network: NetworkContext,
     /// Manages WebSocket connections.
@@ -147,6 +149,7 @@ pub fn bootstrap_services(config: &Config) -> BootstrappedServices {
         lifecycle,
         sonos_state,
         broadcast_tx,
+        event_bridge,
         network,
         ws_manager,
         latency_monitor,

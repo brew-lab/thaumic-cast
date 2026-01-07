@@ -63,8 +63,13 @@ impl AppState {
     }
 
     /// Sets the Tauri app handle (called during app setup).
+    ///
+    /// This propagates the handle to services that need it for:
+    /// - Application restart functionality (AppLifecycle)
+    /// - Emitting frontend events (BroadcastEventBridge)
     pub fn set_app_handle(&self, handle: AppHandle) {
-        self.services.lifecycle.set_app_handle(handle);
+        self.services.lifecycle.set_app_handle(handle.clone());
+        self.services.event_bridge.set_app_handle(handle);
     }
 
     /// Starts all background services (GENA renewal, topology monitor, latency monitor).
