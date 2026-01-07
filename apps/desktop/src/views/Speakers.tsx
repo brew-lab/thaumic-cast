@@ -9,6 +9,8 @@ import {
   refreshTopology,
   stopAll,
   stats,
+  updateTransportState,
+  updateNetworkHealth,
   type ZoneGroup,
   type Speaker,
 } from '../state/store';
@@ -23,6 +25,12 @@ import styles from './Speakers.module.css';
 interface NetworkHealthPayload {
   health: 'ok' | 'degraded';
   reason: string | null;
+}
+
+/** Payload from the transport-state-changed Tauri event. */
+interface TransportStatePayload {
+  speakerIp: string;
+  state: string;
 }
 
 /**
@@ -66,10 +74,7 @@ export function Speakers() {
 
     // Listen for network health changes
     listen<NetworkHealthPayload>('network-health-changed', (event) => {
-      networkHealth.value = {
-        health: event.payload.health,
-        reason: event.payload.reason,
-      };
+      updateNetworkHealth(event.payload.health, event.payload.reason);
     }).then((fn) => unlisteners.push(fn));
 
     // Listen for stream/playback events (casting status changes)
@@ -77,6 +82,11 @@ export function Speakers() {
     listen('stream-ended', () => fetchGroups()).then((fn) => unlisteners.push(fn));
     listen('playback-started', () => fetchGroups()).then((fn) => unlisteners.push(fn));
     listen('playback-stopped', () => fetchGroups()).then((fn) => unlisteners.push(fn));
+
+    // Listen for transport state changes (real-time status updates)
+    listen<TransportStatePayload>('transport-state-changed', (event) => {
+      updateTransportState(event.payload.speakerIp, event.payload.state);
+    }).then((fn) => unlisteners.push(fn));
 
     // Fallback polling at longer interval (30s) for any missed events
     const interval = setInterval(fetchGroups, 30000);

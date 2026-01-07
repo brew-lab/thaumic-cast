@@ -130,6 +130,27 @@ impl EventEmitter for BroadcastEventBridge {
     }
 
     fn emit_sonos(&self, event: SonosEvent) {
+        // Emit transport state changes to Tauri frontend for UI reactivity
+        if let SonosEvent::TransportState {
+            speaker_ip, state, ..
+        } = &event
+        {
+            #[derive(serde::Serialize, Clone)]
+            #[serde(rename_all = "camelCase")]
+            struct TransportStatePayload {
+                speaker_ip: String,
+                state: String,
+            }
+            self.emit_to_tauri(
+                "transport-state-changed",
+                TransportStatePayload {
+                    speaker_ip: speaker_ip.clone(),
+                    state: state.to_string(),
+                },
+            );
+        }
+
+        // Emit to WebSocket broadcast channel
         if let Err(e) = self.tx.send(BroadcastEvent::Sonos(event)) {
             log::trace!("[EventBridge] No broadcast receivers: {}", e);
         }

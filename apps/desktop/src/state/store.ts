@@ -95,6 +95,29 @@ export const fetchNetworkHealth = async (): Promise<void> => {
 };
 
 /**
+ * Updates a single speaker's transport state.
+ * Used for real-time updates from Tauri events.
+ * @param speakerIp - The speaker IP address
+ * @param state - The new transport state
+ */
+export const updateTransportState = (speakerIp: string, state: string): void => {
+  transportStates.value = {
+    ...transportStates.value,
+    [speakerIp]: state,
+  };
+};
+
+/**
+ * Updates the network health status.
+ * Used for real-time updates from Tauri events.
+ * @param health - The health status
+ * @param reason - Optional reason for degraded health
+ */
+export const updateNetworkHealth = (health: NetworkHealthStatus, reason: string | null): void => {
+  networkHealth.value = { health, reason };
+};
+
+/**
  * Fetches zone groups, transport states, playback sessions, stats, and network health.
  * Updates the groups, transportStates, castingSpeakers, and networkHealth signals.
  */
