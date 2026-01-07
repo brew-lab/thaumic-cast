@@ -61,6 +61,69 @@ impl BroadcastEventBridge {
 
 impl EventEmitter for BroadcastEventBridge {
     fn emit_stream(&self, event: StreamEvent) {
+        // Emit to Tauri frontend for UI reactivity
+        match &event {
+            StreamEvent::Created { stream_id, .. } => {
+                #[derive(serde::Serialize, Clone)]
+                #[serde(rename_all = "camelCase")]
+                struct StreamCreatedPayload {
+                    stream_id: String,
+                }
+                self.emit_to_tauri(
+                    "stream-created",
+                    StreamCreatedPayload {
+                        stream_id: stream_id.clone(),
+                    },
+                );
+            }
+            StreamEvent::Ended { stream_id, .. } => {
+                #[derive(serde::Serialize, Clone)]
+                #[serde(rename_all = "camelCase")]
+                struct StreamEndedPayload {
+                    stream_id: String,
+                }
+                self.emit_to_tauri(
+                    "stream-ended",
+                    StreamEndedPayload {
+                        stream_id: stream_id.clone(),
+                    },
+                );
+            }
+            StreamEvent::PlaybackStarted {
+                stream_id,
+                speaker_ip,
+                ..
+            } => {
+                #[derive(serde::Serialize, Clone)]
+                #[serde(rename_all = "camelCase")]
+                struct PlaybackStartedPayload {
+                    stream_id: String,
+                    speaker_ip: String,
+                }
+                self.emit_to_tauri(
+                    "playback-started",
+                    PlaybackStartedPayload {
+                        stream_id: stream_id.clone(),
+                        speaker_ip: speaker_ip.clone(),
+                    },
+                );
+            }
+            StreamEvent::PlaybackStopped { speaker_ip, .. } => {
+                #[derive(serde::Serialize, Clone)]
+                #[serde(rename_all = "camelCase")]
+                struct PlaybackStoppedPayload {
+                    speaker_ip: String,
+                }
+                self.emit_to_tauri(
+                    "playback-stopped",
+                    PlaybackStoppedPayload {
+                        speaker_ip: speaker_ip.clone(),
+                    },
+                );
+            }
+        }
+
+        // Emit to WebSocket broadcast channel
         if let Err(e) = self.tx.send(BroadcastEvent::Stream(event)) {
             log::trace!("[EventBridge] No broadcast receivers: {}", e);
         }
@@ -73,6 +136,26 @@ impl EventEmitter for BroadcastEventBridge {
     }
 
     fn emit_network(&self, event: NetworkEvent) {
+        // Emit to Tauri frontend for UI reactivity
+        match &event {
+            NetworkEvent::HealthChanged { health, reason, .. } => {
+                #[derive(serde::Serialize, Clone)]
+                #[serde(rename_all = "camelCase")]
+                struct NetworkHealthPayload {
+                    health: String,
+                    reason: Option<String>,
+                }
+                self.emit_to_tauri(
+                    "network-health-changed",
+                    NetworkHealthPayload {
+                        health: format!("{:?}", health).to_lowercase(),
+                        reason: reason.clone(),
+                    },
+                );
+            }
+        }
+
+        // Emit to WebSocket broadcast channel
         if let Err(e) = self.tx.send(BroadcastEvent::Network(event)) {
             log::trace!("[EventBridge] No broadcast receivers: {}", e);
         }

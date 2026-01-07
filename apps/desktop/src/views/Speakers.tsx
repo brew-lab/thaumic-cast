@@ -1,4 +1,5 @@
 import { useEffect } from 'preact/hooks';
+import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import {
   groups,
   transportStates,
@@ -17,6 +18,12 @@ import { Alert } from '@thaumic-cast/ui';
 import { RefreshCw, Square } from 'lucide-preact';
 import { useTranslation } from 'react-i18next';
 import styles from './Speakers.module.css';
+
+/** Payload from the network-health-changed Tauri event. */
+interface NetworkHealthPayload {
+  health: 'ok' | 'degraded';
+  reason: string | null;
+}
 
 /**
  * Extracts the coordinator as a Speaker from a ZoneGroup.
@@ -47,9 +54,37 @@ export function Speakers() {
   const { t } = useTranslation();
 
   useEffect(() => {
+    const unlisteners: UnlistenFn[] = [];
+
+    // Initial fetch
     fetchGroups();
-    const interval = setInterval(fetchGroups, 5000);
-    return () => clearInterval(interval);
+
+    // Listen for discovery-complete event (topology changes)
+    listen('discovery-complete', () => {
+      fetchGroups();
+    }).then((fn) => unlisteners.push(fn));
+
+    // Listen for network health changes
+    listen<NetworkHealthPayload>('network-health-changed', (event) => {
+      networkHealth.value = {
+        health: event.payload.health,
+        reason: event.payload.reason,
+      };
+    }).then((fn) => unlisteners.push(fn));
+
+    // Listen for stream/playback events (casting status changes)
+    listen('stream-created', () => fetchGroups()).then((fn) => unlisteners.push(fn));
+    listen('stream-ended', () => fetchGroups()).then((fn) => unlisteners.push(fn));
+    listen('playback-started', () => fetchGroups()).then((fn) => unlisteners.push(fn));
+    listen('playback-stopped', () => fetchGroups()).then((fn) => unlisteners.push(fn));
+
+    // Fallback polling at longer interval (30s) for any missed events
+    const interval = setInterval(fetchGroups, 30000);
+
+    return () => {
+      unlisteners.forEach((unlisten) => unlisten());
+      clearInterval(interval);
+    };
   }, []);
 
   const groupsWithCoordinators = groups.value

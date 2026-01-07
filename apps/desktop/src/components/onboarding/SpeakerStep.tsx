@@ -16,6 +16,12 @@ interface DiscoveryCompletePayload {
   groupCount: number;
 }
 
+/** Payload from the network-health-changed Tauri event. */
+interface NetworkHealthPayload {
+  health: 'ok' | 'degraded';
+  reason: string | null;
+}
+
 /**
  * Speaker discovery step.
  * Shows found Sonos speakers and provides rescan option.
@@ -30,7 +36,8 @@ export function SpeakerStep({ onSpeakersFound }: SpeakerStepProps): preact.JSX.E
   const speakerCount = groups.value.length;
 
   useEffect(() => {
-    let unlisten: UnlistenFn | null = null;
+    let unlistenDiscovery: UnlistenFn | null = null;
+    let unlistenHealth: UnlistenFn | null = null;
     let healthCheckTimer: ReturnType<typeof setTimeout> | null = null;
     let timeoutTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -49,7 +56,18 @@ export function SpeakerStep({ onSpeakersFound }: SpeakerStepProps): preact.JSX.E
         await fetchGroups();
       }, 3000);
     }).then((fn) => {
-      unlisten = fn;
+      unlistenDiscovery = fn;
+    });
+
+    // Listen for network health changes from the backend
+    listen<NetworkHealthPayload>('network-health-changed', (event) => {
+      console.log('[SpeakerStep] Network health changed:', event.payload);
+      networkHealth.value = {
+        health: event.payload.health,
+        reason: event.payload.reason,
+      };
+    }).then((fn) => {
+      unlistenHealth = fn;
     });
 
     // Fallback timeout in case event doesn't fire (shouldn't happen, but safety net)
@@ -62,7 +80,8 @@ export function SpeakerStep({ onSpeakersFound }: SpeakerStepProps): preact.JSX.E
     }, 10000);
 
     return () => {
-      if (unlisten) unlisten();
+      if (unlistenDiscovery) unlistenDiscovery();
+      if (unlistenHealth) unlistenHealth();
       if (timeoutTimer) clearTimeout(timeoutTimer);
       if (healthCheckTimer) clearTimeout(healthCheckTimer);
     };
