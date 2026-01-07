@@ -1,5 +1,32 @@
 # @thaumic-cast/extension
 
+## 0.7.0
+
+### Patch Changes
+
+- [#21](https://github.com/brew-lab/thaumic-cast/pull/21) [`396fc4a`](https://github.com/brew-lab/thaumic-cast/commit/396fc4ac72ab8123bf8205db2fc0d68af9354472) Thanks [@skezo](https://github.com/skezo)! - Improve video sync with SE-based stability and event handling
+  - Use standard error (SE) for stability gate instead of raw stdev - converges properly under RelTime quantization
+  - Add p10 estimator with adaptive floor for lock latency selection
+  - Add video event listeners for re-acquire on seeked, waiting, stalled, pause, play
+  - Use persisted stall check (400ms) to avoid transient re-acquires from adaptive streaming hiccups
+  - Add sync jump detection logging for debugging
+  - Use requestVideoFrameCallback (RVFC) for frame-accurate sync when available
+  - Add playbackRate fighting detection with automatic pause mode fallback
+  - Record coarse alignment anchors at pause start (not after wait) to fix double-delay bug
+
+- [#21](https://github.com/brew-lab/thaumic-cast/pull/21) [`afbe950`](https://github.com/brew-lab/thaumic-cast/commit/afbe95005caa9dea84483d1fea0fe0c93e65e714) Thanks [@skezo](https://github.com/skezo)! - Add video sync opt-in feature with per-cast toggle
+  - Add global video sync setting in Options (under Advanced section)
+  - Add per-cast video sync toggle in ActiveCastCard popup UI
+  - Add StatusChip and ToggleSwitch UI components with WCAG AA compliant colors
+  - Status chip backgrounds use dominant artwork color for visual cohesion
+  - Fix re-acquire loop caused by coarse alignment triggering play event
+  - Disable video sync automatically when cast stops
+  - Prevent log spam when video sync enabled on page without video element
+
+- Updated dependencies [[`afbe950`](https://github.com/brew-lab/thaumic-cast/commit/afbe95005caa9dea84483d1fea0fe0c93e65e714)]:
+  - @thaumic-cast/ui@0.0.2
+  - @thaumic-cast/protocol@0.1.1
+
 ## 0.6.1
 
 ## 0.6.0

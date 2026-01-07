@@ -1,5 +1,47 @@
 # @thaumic-cast/desktop
 
+## 0.7.0
+
+### Minor Changes
+
+- [#21](https://github.com/brew-lab/thaumic-cast/pull/21) [`ea2ed2f`](https://github.com/brew-lab/thaumic-cast/commit/ea2ed2f2102cdddd26216c963e4c0470a49c5605) Thanks [@skezo](https://github.com/skezo)! - Add multi-method Sonos speaker discovery for improved reliability
+  - SSDP multicast (standard 239.255.255.250:1900)
+  - SSDP broadcast (directed per-interface + 255.255.255.255 fallback)
+  - mDNS/Bonjour (\_sonos.\_tcp.local.)
+
+  All methods run in parallel and results are merged with comprehensive UUID normalization. This helps discover speakers on networks where multicast is blocked but mDNS works (common on macOS with firewall enabled).
+
+### Patch Changes
+
+- [#21](https://github.com/brew-lab/thaumic-cast/pull/21) [`01f2d22`](https://github.com/brew-lab/thaumic-cast/commit/01f2d22d14ef1a71f3b3a5c63eba10c1d67b7e4b) Thanks [@skezo](https://github.com/skezo)! - Add epoch-based latency measurement for video sync
+  - Per-speaker playback epochs anchored to oldest prefill frame served
+  - Emit `epochId` and `jitterMs` in latency events for extension state machine
+  - Add `LatencyEvent::Stale` when no valid position data for 30s
+  - TTL cleanup for epoch HashMap (max 20 entries per stream)
+
+- [#21](https://github.com/brew-lab/thaumic-cast/pull/21) [`ec40759`](https://github.com/brew-lab/thaumic-cast/commit/ec407595bbf3424b3a2595f3124a49efcc05bbc1) Thanks [@skezo](https://github.com/skezo)! - Fix speaker discovery UI showing "No speakers found" prematurely during onboarding by using event-driven updates instead of timer-based polling
+
+- [#21](https://github.com/brew-lab/thaumic-cast/pull/21) [`0d2d1d8`](https://github.com/brew-lab/thaumic-cast/commit/0d2d1d8a313f187bbe833ffbce710c67966aed8e) Thanks [@skezo](https://github.com/skezo)! - Add event-driven UI updates for network health and stream status, replacing polling with real-time Tauri events for more responsive speaker discovery and playback status
+
+- [#21](https://github.com/brew-lab/thaumic-cast/pull/21) [`66883af`](https://github.com/brew-lab/thaumic-cast/commit/66883afd06379cec28fe6115aad8aa246a11f73c) Thanks [@skezo](https://github.com/skezo)! - Fix "launch at login" setting not persisting after app restart
+
+- [#21](https://github.com/brew-lab/thaumic-cast/pull/21) [`e9d78dc`](https://github.com/brew-lab/thaumic-cast/commit/e9d78dc06f2f9c247ca904702fb29edb41039cdb) Thanks [@skezo](https://github.com/skezo)! - Fix macOS dock icon persisting after window is closed
+
+- [#21](https://github.com/brew-lab/thaumic-cast/pull/21) [`bf687a6`](https://github.com/brew-lab/thaumic-cast/commit/bf687a6ad1f2b8110555f077f14b15fb0f33376b) Thanks [@skezo](https://github.com/skezo)! - Fix WAV/PCM stream stop timeout by closing HTTP connections before sending SOAP commands to Sonos
+
+- [#21](https://github.com/brew-lab/thaumic-cast/pull/21) [`098bc11`](https://github.com/brew-lab/thaumic-cast/commit/098bc112946bc3a769e12ac76b2fab049a635e02) Thanks [@skezo](https://github.com/skezo)! - Redesign system tray menu with quick actions and status
+  - Display app name with version and streaming status
+  - Add Dashboard action to open the main window
+  - Add Launch at Startup toggle for autostart control
+  - Add Stop All Streams and Restart Server quick actions
+  - Full i18n support with localized menu items
+
+- [#21](https://github.com/brew-lab/thaumic-cast/pull/21) [`bf865cb`](https://github.com/brew-lab/thaumic-cast/commit/bf865cb344755388f2a2b7054728c9e6a5d1714b) Thanks [@skezo](https://github.com/skezo)! - Use platform-specific terminology in onboarding welcome step (menu bar on macOS, system tray on Windows/Linux)
+
+- Updated dependencies [[`afbe950`](https://github.com/brew-lab/thaumic-cast/commit/afbe95005caa9dea84483d1fea0fe0c93e65e714)]:
+  - @thaumic-cast/ui@0.0.2
+  - @thaumic-cast/protocol@0.1.1
+
 ## 0.6.1
 
 ### Patch Changes
