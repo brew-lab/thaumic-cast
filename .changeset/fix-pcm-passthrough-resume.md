@@ -2,4 +2,4 @@
 '@thaumic-cast/desktop': patch
 ---
 
-Fix WAV/PCM passthrough pause/resume requiring double play press from Sonos app by rejecting Range requests with 416 and signaling Accept-Ranges: none
+Fix WAV/PCM passthrough pause/resume by ignoring Range requests and returning fresh audio stream (200 OK) instead of failing
