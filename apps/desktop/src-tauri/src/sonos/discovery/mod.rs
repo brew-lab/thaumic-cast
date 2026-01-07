@@ -131,26 +131,44 @@ impl DiscoveryCoordinator {
     pub async fn discover_speakers(&self) -> Result<Vec<Speaker>, DiscoveryError> {
         let mut method_errors: Vec<(DiscoveryMethod, DiscoveryErrorKind)> = Vec::new();
 
+        log::info!(
+            "[Discovery] Starting parallel discovery (multicast={}, broadcast={}, mdns={})",
+            self.config.ssdp_multicast_enabled,
+            self.config.ssdp_broadcast_enabled,
+            self.config.mdns_enabled
+        );
+
         // Launch enabled discovery methods in parallel
         let (multicast_result, broadcast_result, mdns_result) = tokio::join!(
             async {
                 if self.config.ssdp_multicast_enabled {
-                    Some(ssdp::discover_multicast(&self.config.ssdp).await)
+                    log::debug!("[Discovery] SSDP multicast starting...");
+                    let result = ssdp::discover_multicast(&self.config.ssdp).await;
+                    log::debug!("[Discovery] SSDP multicast finished");
+                    Some(result)
                 } else {
                     None
                 }
             },
             async {
                 if self.config.ssdp_broadcast_enabled {
-                    Some(ssdp::discover_broadcast(&self.config.ssdp).await)
+                    log::debug!("[Discovery] SSDP broadcast starting...");
+                    let result = ssdp::discover_broadcast(&self.config.ssdp).await;
+                    log::debug!("[Discovery] SSDP broadcast finished");
+                    Some(result)
                 } else {
                     None
                 }
             },
             async {
                 if self.config.mdns_enabled {
+                    log::debug!("[Discovery] mDNS starting...");
                     match self.get_mdns_daemon() {
-                        Ok(daemon) => Some(mdns::discover_mdns(daemon, &self.config.mdns).await),
+                        Ok(daemon) => {
+                            let result = mdns::discover_mdns(daemon, &self.config.mdns).await;
+                            log::debug!("[Discovery] mDNS finished");
+                            Some(result)
+                        }
                         Err(e) => Some(Err(e)),
                     }
                 } else {
@@ -158,6 +176,8 @@ impl DiscoveryCoordinator {
                 }
             }
         );
+
+        log::info!("[Discovery] All methods completed, processing results");
 
         // Collect results and track errors
         let mut all_discovered: Vec<DiscoveredSpeaker> = Vec::new();
@@ -227,7 +247,15 @@ impl DiscoveryCoordinator {
         log::info!("[Discovery] {} unique speaker(s) after merge", merged.len());
 
         // Fetch device descriptions
+        log::info!(
+            "[Discovery] Fetching device descriptions for {} speaker(s)...",
+            merged.len()
+        );
         let speakers = self.fetch_device_descriptions(merged).await;
+        log::info!(
+            "[Discovery] Device description fetch complete, returning {} speaker(s)",
+            speakers.len()
+        );
 
         Ok(speakers)
     }

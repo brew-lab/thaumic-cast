@@ -368,6 +368,13 @@ async fn discover_ssdp(
                 let mut buf = [0u8; 2048];
                 let start = std::time::Instant::now();
 
+                log::trace!(
+                    "[{}] Recv loop starting on {} ({})",
+                    method,
+                    iface_name,
+                    iface_ip
+                );
+
                 while start.elapsed() < discovery_timeout {
                     let remaining = discovery_timeout.saturating_sub(start.elapsed());
                     match timeout(remaining, socket.recv_from(&mut buf)).await {
@@ -398,15 +405,30 @@ async fn discover_ssdp(
                         Err(_) => break, // Timeout
                     }
                 }
+
+                log::trace!(
+                    "[{}] Recv loop finished on {} ({}) after {}ms",
+                    method,
+                    iface_name,
+                    iface_ip,
+                    start.elapsed().as_millis()
+                );
             }
         })
         .collect();
 
     // Run sends and receives concurrently
+    log::trace!(
+        "[{}] Waiting for {} send futures and {} recv futures",
+        method,
+        send_futures.len(),
+        recv_futures.len()
+    );
     let (_, _) = tokio::join!(
         futures::future::join_all(send_futures),
         futures::future::join_all(recv_futures)
     );
+    log::trace!("[{}] All send and recv futures completed", method);
 
     // Extract discovered speakers
     let mut discovered = std::mem::take(&mut *discovered.lock().await);
