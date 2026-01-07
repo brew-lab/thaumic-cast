@@ -6,7 +6,7 @@ tray:
   # Status line (dynamic)
   status_idle: No active rituals
   status_streaming_one: 1 active ritual
-  status_streaming_many: "%{count} active rituals"
+  status_streaming_many: '%{count} active rituals'
   status_no_speakers: No speakers found
 
   # Menu items
