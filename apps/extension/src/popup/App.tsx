@@ -11,6 +11,7 @@ import { Alert, IconButton } from '@thaumic-cast/ui';
 import styles from './App.module.css';
 import { ExtensionResponse, StartCastMessage } from '../lib/messages';
 import type { ZoneGroup } from '@thaumic-cast/protocol';
+import { loadExtensionSettings } from '../lib/settings';
 import { CurrentTabCard } from './components/CurrentTabCard';
 import { ActiveCastsList } from './components/ActiveCastsList';
 import { useCurrentTabState } from './hooks/useCurrentTabState';
@@ -55,6 +56,24 @@ function MainPopup(): JSX.Element {
   const [selectedIps, setSelectedIps] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [isStarting, setIsStarting] = useState(false);
+  const [videoSyncEnabled, setVideoSyncEnabled] = useState(false);
+
+  // Load video sync setting from extension settings
+  useEffect(() => {
+    loadExtensionSettings()
+      .then((settings) => setVideoSyncEnabled(settings.videoSyncEnabled))
+      .catch(() => {});
+
+    // Listen for settings changes
+    const handler = (changes: { [key: string]: chrome.storage.StorageChange }) => {
+      const newSettings = changes['extensionSettings']?.newValue;
+      if (newSettings?.videoSyncEnabled !== undefined) {
+        setVideoSyncEnabled(newSettings.videoSyncEnabled);
+      }
+    };
+    chrome.storage.sync.onChanged.addListener(handler);
+    return () => chrome.storage.sync.onChanged.removeListener(handler);
+  }, []);
 
   // Connection status with instant cached display
   const {
@@ -258,6 +277,7 @@ function MainPopup(): JSX.Element {
         onStopCast={stopCast}
         onControl={handleControl}
         showDivider={!!currentTabState && !isCasting}
+        videoSyncEnabled={videoSyncEnabled}
       />
 
       {/* Current Tab Media Info with Cast Controls - hidden when already casting */}

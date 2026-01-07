@@ -37,6 +37,12 @@
       "js": ["src/content/media-bridge.ts"],
       "run_at": "document_start",
       "world": "ISOLATED"
+    },
+    {
+      "matches": ["http://*/*", "https://*/*"],
+      "js": ["src/content/video-sync.ts"],
+      "run_at": "document_idle",
+      "world": "ISOLATED"
     }
   ],
   "content_security_policy": {

@@ -4,10 +4,11 @@ import { useCallback, useState, useRef, useEffect } from 'preact/hooks';
 import { useTranslation } from 'react-i18next';
 import type { ActiveCast, TransportState, MediaAction } from '@thaumic-cast/protocol';
 import { getDisplayTitle, getDisplayImage, getDisplaySubtitle } from '@thaumic-cast/protocol';
-import { X, Play, Pause, SkipBack, SkipForward } from 'lucide-preact';
-import { IconButton, SpeakerVolumeRow } from '@thaumic-cast/ui';
+import { X, Play, Pause, SkipBack, SkipForward, RefreshCw } from 'lucide-preact';
+import { IconButton, SpeakerVolumeRow, ToggleSwitch, StatusChip } from '@thaumic-cast/ui';
 import { TransportIcon } from './TransportIcon';
 import { useDominantColor } from '../hooks/useDominantColor';
+import { useVideoSyncState } from '../hooks/useVideoSyncState';
 import styles from './ActiveCastCard.module.css';
 
 /** Debounce interval for playback control buttons (ms) */
@@ -30,6 +31,8 @@ interface ActiveCastCardProps {
   onStop: () => void;
   /** Callback when playback control is triggered */
   onControl?: (action: MediaAction) => void;
+  /** Whether video sync controls should be shown (from global settings) */
+  videoSyncEnabled?: boolean;
 }
 
 /**
@@ -43,6 +46,7 @@ interface ActiveCastCardProps {
  * @param props.onMuteToggle
  * @param props.onStop
  * @param props.onControl
+ * @param props.videoSyncEnabled
  * @returns The rendered ActiveCastCard component
  */
 export function ActiveCastCard({
@@ -54,6 +58,7 @@ export function ActiveCastCard({
   onMuteToggle,
   onStop,
   onControl,
+  videoSyncEnabled: showVideoSync = false,
 }: ActiveCastCardProps): JSX.Element {
   const { t } = useTranslation();
 
@@ -105,6 +110,9 @@ export function ActiveCastCard({
 
   // Extract dominant color from artwork for backdrop tinting
   const dominantColor = useDominantColor(stagedImage);
+
+  // Video sync state and controls
+  const videoSync = useVideoSyncState(showVideoSync ? cast.tabId : undefined);
 
   /**
    * Navigates to the tab associated with this cast session.
@@ -252,6 +260,76 @@ export function ActiveCastCard({
           );
         })}
       </div>
+
+      {/* Video sync controls (conditional on global setting) */}
+      {showVideoSync && (
+        <div className={styles.videoSyncSection}>
+          <div className={styles.videoSyncHeader}>
+            <span className={styles.videoSyncLabel}>{t('video_sync')}</span>
+            <ToggleSwitch
+              checked={videoSync.enabled}
+              onChange={videoSync.setEnabled}
+              aria-label={t('video_sync_toggle')}
+            />
+            {videoSync.enabled && (
+              <StatusChip
+                variant={
+                  videoSync.state === 'locked'
+                    ? 'synced'
+                    : videoSync.state === 'acquiring'
+                      ? 'acquiring'
+                      : videoSync.state === 'stale'
+                        ? 'lost'
+                        : 'waiting'
+                }
+              >
+                {videoSync.state === 'locked'
+                  ? t('video_sync_status_synced')
+                  : videoSync.state === 'acquiring'
+                    ? t('video_sync_status_acquiring')
+                    : videoSync.state === 'stale'
+                      ? t('video_sync_status_lost')
+                      : t('video_sync_status_waiting')}
+              </StatusChip>
+            )}
+          </div>
+
+          {videoSync.enabled && (
+            <div className={styles.videoSyncControls}>
+              <div className={styles.videoSyncTrim}>
+                <label htmlFor="trim-slider" className={styles.videoSyncTrimLabel}>
+                  {t('video_sync_trim')}
+                </label>
+                <input
+                  id="trim-slider"
+                  type="range"
+                  min={-500}
+                  max={500}
+                  step={10}
+                  value={videoSync.trimMs}
+                  onChange={(e) => videoSync.setTrim(Number((e.target as HTMLInputElement).value))}
+                  className={styles.videoSyncTrimSlider}
+                  aria-valuetext={t('video_sync_delay_ms', { delay: videoSync.trimMs })}
+                />
+                <span className={styles.videoSyncTrimValue}>
+                  {videoSync.trimMs > 0 ? '+' : ''}
+                  {videoSync.trimMs}ms
+                </span>
+              </div>
+              {videoSync.state === 'stale' && (
+                <IconButton
+                  onClick={videoSync.resync}
+                  aria-label={t('video_sync_resync')}
+                  title={t('video_sync_resync')}
+                  size="sm"
+                >
+                  <RefreshCw size={12} />
+                </IconButton>
+              )}
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }

@@ -79,6 +79,9 @@ export const ExtensionSettingsSchema = z.object({
     sampleRate: 48000,
     latencyMode: 'quality',
   }),
+
+  // Video sync: controls visibility of video sync controls in popup (default: false)
+  videoSyncEnabled: z.boolean().default(false),
 });
 export type ExtensionSettings = z.infer<typeof ExtensionSettingsSchema>;
 
@@ -97,6 +100,7 @@ const DEFAULT_EXTENSION_SETTINGS: ExtensionSettings = {
     sampleRate: 48000,
     latencyMode: 'quality',
   },
+  videoSyncEnabled: false,
 };
 
 /**

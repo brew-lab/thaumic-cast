@@ -168,17 +168,25 @@ impl StreamCoordinator {
 
     /// Removes a stream and cleans up all associated playback sessions.
     ///
+    /// Returns the speaker IPs that were playing this stream (for caller to send
+    /// SOAP commands if needed).
+    ///
     /// Broadcasts a `StreamEvent::Ended` event.
     ///
     /// Note: This is the sync version used by `StreamGuard::drop()`. For graceful
     /// cleanup that stops speakers first, use `remove_stream_async()`.
-    pub fn remove_stream(&self, stream_id: &str) {
+    pub fn remove_stream(&self, stream_id: &str) -> Vec<String> {
         // Find and remove ALL playback sessions for this stream (multi-group support)
         let keys_to_remove: Vec<PlaybackSessionKey> = self
             .playback_sessions
             .iter()
             .filter(|r| r.key().stream_id == stream_id)
             .map(|r| r.key().clone())
+            .collect();
+
+        let speaker_ips: Vec<String> = keys_to_remove
+            .iter()
+            .map(|k| k.speaker_ip.clone())
             .collect();
 
         for key in keys_to_remove {
@@ -192,35 +200,33 @@ impl StreamCoordinator {
             stream_id: stream_id.to_string(),
             timestamp: now_millis(),
         });
+
+        speaker_ips
     }
 
     /// Removes a stream with graceful speaker cleanup.
     ///
     /// This is the preferred method for stream removal. It:
-    /// 1. Sends STOP to all speakers playing this stream
+    /// 1. Removes the stream (closes HTTP connections, broadcasts `StreamEvent::Ended`)
     /// 2. Switches each speaker's source to its queue (clears stale stream)
-    /// 3. Removes playback session records
-    /// 4. Removes the stream from the manager
-    /// 5. Broadcasts `StreamEvent::Ended`
+    /// 3. Sends STOP to each speaker as cleanup
+    ///
+    /// The stream is removed BEFORE sending SOAP commands because Sonos may block
+    /// on HTTP reads, causing Stop commands to timeout. Removing the stream first
+    /// closes HTTP connections, freeing Sonos to respond to SOAP commands.
     ///
     /// Speaker stop/switch failures are logged but don't prevent cleanup.
     pub async fn remove_stream_async(&self, stream_id: &str) {
-        // Find all speaker IPs for this stream
-        let speaker_ips: Vec<String> = self
-            .playback_sessions
-            .iter()
-            .filter(|r| r.key().stream_id == stream_id)
-            .map(|r| r.key().speaker_ip.clone())
-            .collect();
+        // Remove the stream FIRST to close HTTP connections and get speaker IPs.
+        // This is critical because Sonos may block on HTTP reads, causing SOAP
+        // commands to timeout. Removing the stream closes the broadcast channel,
+        // which ends the HTTP response streams and frees Sonos to respond.
+        let speaker_ips = self.remove_stream(stream_id);
 
-        // Stop each speaker and switch to queue (best-effort)
+        // Now stop each speaker and switch to queue (best-effort)
+        // The HTTP connection is closed, so Sonos should respond quickly.
         for ip in &speaker_ips {
-            // Stop playback
-            if let Err(e) = self.sonos.stop(ip).await {
-                log::warn!("[StreamCoordinator] Failed to stop {}: {}", ip, e);
-            }
-
-            // Switch to queue to clear the stale stream source
+            // Switch to queue first - this is the reliable way to stop our stream
             if let Some(uuid) = self.sonos_state.get_coordinator_uuid_by_ip(ip) {
                 if let Err(e) = self.sonos.switch_to_queue(ip, &uuid).await {
                     log::warn!(
@@ -230,10 +236,12 @@ impl StreamCoordinator {
                     );
                 }
             }
-        }
 
-        // Delegate to sync method for session/stream cleanup + event emission
-        self.remove_stream(stream_id);
+            // Then send Stop as cleanup (in case Sonos is in a weird state)
+            if let Err(e) = self.sonos.stop(ip).await {
+                log::warn!("[StreamCoordinator] Failed to stop {}: {}", ip, e);
+            }
+        }
     }
 
     /// Gets a stream by ID.

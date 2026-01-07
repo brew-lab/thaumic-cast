@@ -93,16 +93,6 @@ pub fn run() {
             // Initialize system tray
             ui::setup_tray(app)?;
 
-            // Enable autostart by default on first run
-            {
-                use tauri_plugin_autostart::ManagerExt;
-                let autostart = app.autolaunch();
-                if !autostart.is_enabled().unwrap_or(false) {
-                    let _ = autostart.enable();
-                    log::info!("Autostart enabled by default");
-                }
-            }
-
             Ok(())
         })
         .on_window_event(|window, event| {
@@ -110,6 +100,15 @@ pub fn run() {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                 api.prevent_close();
                 let _ = window.hide();
+
+                // On macOS, hide the dock icon when window is hidden
+                #[cfg(target_os = "macos")]
+                {
+                    use tauri::ActivationPolicy;
+                    let _ = window
+                        .app_handle()
+                        .set_activation_policy(ActivationPolicy::Accessory);
+                }
             }
         })
         .build(tauri::generate_context!())

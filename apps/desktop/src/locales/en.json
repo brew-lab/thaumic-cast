@@ -57,6 +57,7 @@
 
   "network.degraded_warning": "Speakers were discovered but seem reluctant to communicate. VPN or firewall may be the culprit.",
   "network.speakers_not_responding": "The speakers have been located but appear to be giving us the silent treatment. A VPN or overzealous firewall is the likely culprit.",
+  "network.speakers_unreachable": "Your speakers have made themselves scarce. Firewalls and VPNs are the usual suspects.",
 
   "onboarding.skip": "Skip the formalities",
   "onboarding.next": "Onwards",
@@ -70,7 +71,9 @@
 
   "onboarding.welcome.title": "Welcome to Thaumic Cast",
   "onboarding.welcome.subtitle": "The server side of the equation",
-  "onboarding.welcome.body": "This application acts as the bridge between your browser and your Sonos speakers. It lurks quietly in your system tray, ready to channel audio when called upon.",
+  "onboarding.welcome.body_windows": "This application acts as the bridge between your browser and your Sonos speakers. It lurks quietly in your system tray, ready to channel audio when called upon.",
+  "onboarding.welcome.body_macos": "This application acts as the bridge between your browser and your Sonos speakers. It lurks quietly in your menu bar, ready to channel audio when called upon.",
+  "onboarding.welcome.body_linux": "This application acts as the bridge between your browser and your Sonos speakers. It lurks quietly in your system tray, ready to channel audio when called upon.",
   "onboarding.welcome.footnote": "Think of it as a very dedicated postal service for sound.",
 
   "onboarding.firewall.title": "A Brief Interruption",

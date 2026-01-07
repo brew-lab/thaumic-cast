@@ -7,11 +7,13 @@ use async_trait::async_trait;
 use quick_xml::events::Event;
 use quick_xml::reader::Reader;
 use reqwest::Client;
+use std::sync::{Arc, OnceLock};
 
-use crate::error::SoapResult;
+use crate::error::{DiscoveryResult, SoapResult};
+use crate::sonos::discovery::{DiscoveryConfig, DiscoveryCoordinator, Speaker};
 use crate::sonos::services::SonosService;
 use crate::sonos::soap::{SoapError, SoapRequestBuilder};
-use crate::sonos::traits::{SonosPlayback, SonosTopology, SonosVolumeControl};
+use crate::sonos::traits::{SonosDiscovery, SonosPlayback, SonosTopology, SonosVolumeControl};
 use crate::sonos::types::{PositionInfo, ZoneGroup, ZoneGroupMember};
 use crate::sonos::utils::{
     build_sonos_stream_uri, escape_xml, extract_ip_from_location, extract_model_from_icon,
@@ -535,10 +537,32 @@ pub async fn get_position_info(client: &Client, ip: &str) -> SoapResult<Position
 ///
 /// This struct wraps the free functions in this module to provide
 /// a testable, injectable interface for Sonos operations.
-#[derive(Debug, Clone)]
 pub struct SonosClientImpl {
     /// HTTP client for Sonos communication.
     client: Client,
+    /// Discovery coordinator (lazily initialized).
+    discovery_coordinator: OnceLock<Arc<DiscoveryCoordinator>>,
+    /// Discovery configuration.
+    discovery_config: DiscoveryConfig,
+}
+
+impl std::fmt::Debug for SonosClientImpl {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SonosClientImpl")
+            .field("client", &"Client")
+            .field("discovery_config", &self.discovery_config)
+            .finish()
+    }
+}
+
+impl Clone for SonosClientImpl {
+    fn clone(&self) -> Self {
+        Self {
+            client: self.client.clone(),
+            discovery_coordinator: OnceLock::new(),
+            discovery_config: self.discovery_config.clone(),
+        }
+    }
 }
 
 impl SonosClientImpl {
@@ -548,7 +572,32 @@ impl SonosClientImpl {
     /// * `client` - The HTTP client to use for all Sonos communication
     #[must_use]
     pub fn new(client: Client) -> Self {
-        Self { client }
+        Self {
+            client,
+            discovery_coordinator: OnceLock::new(),
+            discovery_config: DiscoveryConfig::default(),
+        }
+    }
+
+    /// Creates a new SonosClientImpl with custom discovery configuration.
+    ///
+    /// # Arguments
+    /// * `client` - The HTTP client to use for all Sonos communication
+    /// * `discovery_config` - Configuration for discovery methods
+    #[must_use]
+    #[allow(dead_code)]
+    pub fn with_discovery_config(client: Client, discovery_config: DiscoveryConfig) -> Self {
+        Self {
+            client,
+            discovery_coordinator: OnceLock::new(),
+            discovery_config,
+        }
+    }
+
+    /// Gets or creates the discovery coordinator.
+    fn get_discovery_coordinator(&self) -> &Arc<DiscoveryCoordinator> {
+        self.discovery_coordinator
+            .get_or_init(|| Arc::new(DiscoveryCoordinator::new(self.discovery_config.clone())))
     }
 }
 
@@ -601,5 +650,12 @@ impl SonosVolumeControl for SonosClientImpl {
 
     async fn set_group_mute(&self, coordinator_ip: &str, mute: bool) -> SoapResult<()> {
         set_group_mute(&self.client, coordinator_ip, mute).await
+    }
+}
+
+#[async_trait]
+impl SonosDiscovery for SonosClientImpl {
+    async fn discover_speakers(&self) -> DiscoveryResult<Vec<Speaker>> {
+        self.get_discovery_coordinator().discover_speakers().await
     }
 }

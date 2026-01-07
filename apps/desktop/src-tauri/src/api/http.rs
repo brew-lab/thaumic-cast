@@ -4,18 +4,20 @@
 
 use axum::{
     body::Body,
-    extract::{Path, State},
+    extract::{connect_info::ConnectInfo, Path, State},
     http::{header, HeaderMap, Request, StatusCode},
     response::{IntoResponse, Response},
     routing::{any, get, post},
     Json, Router,
 };
 use bytes::Bytes;
-use futures::{stream::StreamExt, Stream};
+use futures::stream::StreamExt;
 use serde::Deserialize;
 use serde_json::json;
+use std::net::SocketAddr;
 use std::pin::Pin;
 use std::sync::Arc;
+use std::time::Instant;
 use tokio_stream::wrappers::BroadcastStream;
 
 use crate::api::response::{api_error, api_ok, api_success};
@@ -28,7 +30,7 @@ use crate::error::{ThaumicError, ThaumicResult};
 use crate::stream::{create_wav_header, AudioCodec, IcyMetadataInjector, ICY_METAINT};
 
 /// Boxed stream type for audio data with ICY metadata support.
-type AudioStream = Pin<Box<dyn Stream<Item = Result<Bytes, std::io::Error>> + Send>>;
+type AudioStream = Pin<Box<dyn futures::Stream<Item = Result<Bytes, std::io::Error>> + Send>>;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // GENA Helpers
@@ -319,6 +321,7 @@ async fn handle_gena_notify(
 async fn stream_audio(
     Path(id): Path<String>,
     State(state): State<AppState>,
+    ConnectInfo(remote_addr): ConnectInfo<SocketAddr>,
     headers: HeaderMap,
 ) -> ThaumicResult<Response> {
     let stream_state = state
@@ -327,11 +330,15 @@ async fn stream_audio(
         .get_stream(&id)
         .ok_or_else(|| ThaumicError::StreamNotFound(id.clone()))?;
 
-    // Subscribe to get prefill frames and live receiver
-    let (prefill_frames, rx) = stream_state.subscribe();
+    let connected_at = Instant::now();
+    let remote_ip = remote_addr.ip();
+
+    // Subscribe to get epoch candidate, prefill frames, and live receiver
+    let (epoch_candidate, prefill_frames, rx) = stream_state.subscribe();
 
     log::debug!(
-        "[Stream] Client connected to stream {}, sending {} prefill frames",
+        "[Stream] Client {} connected to stream {}, sending {} prefill frames",
+        remote_ip,
         id,
         prefill_frames.len()
     );
@@ -341,6 +348,50 @@ async fn stream_audio(
         futures::stream::iter(prefill_frames.into_iter().map(Ok::<Bytes, std::io::Error>));
     let live_stream =
         BroadcastStream::new(rx).map(|res| res.map_err(|e| std::io::Error::other(e.to_string())));
+
+    // Chain prefill frames before live stream
+    let combined_stream = prefill_stream.chain(live_stream);
+
+    // === Epoch Hook ===
+    // This embeds epoch lifecycle management in the HTTP layer. While this might seem
+    // like a separation of concerns violation, it's intentional because:
+    //
+    // 1. Requires ConnectInfo<SocketAddr> - only available via Axum extractors
+    // 2. Must detect actual audio consumption - the stream poll is the only reliable signal
+    // 3. HTTP connection lifecycle defines epoch boundary - Sonos reconnects = new epoch
+    //
+    // The epoch establishes T0 for latency measurement: the timestamp of the oldest
+    // audio frame being served when Sonos first polls data from this connection.
+    let hook_state = Some((
+        Arc::clone(&stream_state),
+        epoch_candidate,
+        connected_at,
+        remote_ip,
+    ));
+
+    let tracked_stream = combined_stream.scan(hook_state, |state, item| {
+        if let Some((stream_state, epoch_candidate, connected_at, remote_ip)) = state.take() {
+            // Only fire on a real, non-empty audio chunk
+            if let Ok(ref chunk) = item {
+                if !chunk.is_empty() {
+                    let first_audio_polled_at = Instant::now();
+                    stream_state.timing.start_new_epoch(
+                        epoch_candidate,
+                        connected_at,
+                        first_audio_polled_at,
+                        remote_ip,
+                    );
+                } else {
+                    // Empty chunk - don't burn the hook, try again
+                    *state = Some((stream_state, epoch_candidate, connected_at, remote_ip));
+                }
+            } else {
+                // Error on first item - don't burn the hook, try again
+                *state = Some((stream_state, epoch_candidate, connected_at, remote_ip));
+            }
+        }
+        futures::future::ready(Some(item))
+    });
 
     // Content-Type based on output codec
     let content_type = match stream_state.codec {
@@ -364,14 +415,12 @@ async fn stream_audio(
         builder = builder.header("icy-metaint", ICY_METAINT.to_string());
     }
 
-    // Chain prefill frames before live stream
-    let combined_stream = prefill_stream.chain(live_stream);
-
+    // Apply ICY injection or WAV header to the tracked stream (after epoch hook)
     let final_stream: AudioStream = if wants_icy {
         let stream_ref = Arc::clone(&stream_state);
         let mut injector = IcyMetadataInjector::new();
 
-        Box::pin(combined_stream.map(move |res| {
+        Box::pin(tracked_stream.map(move |res| {
             let chunk = res?;
             let metadata = stream_ref.metadata.read();
             Ok::<Bytes, std::io::Error>(injector.inject(chunk.as_ref(), &metadata))
@@ -379,9 +428,9 @@ async fn stream_audio(
     } else if stream_state.codec == AudioCodec::Wav {
         // WAV streams need header prepended per-connection (Sonos may reconnect)
         let wav_header = create_wav_header(DEFAULT_SAMPLE_RATE, DEFAULT_CHANNELS);
-        Box::pin(futures::stream::once(async move { Ok(wav_header) }).chain(combined_stream))
+        Box::pin(futures::stream::once(async move { Ok(wav_header) }).chain(tracked_stream))
     } else {
-        Box::pin(combined_stream)
+        Box::pin(tracked_stream)
     };
 
     builder

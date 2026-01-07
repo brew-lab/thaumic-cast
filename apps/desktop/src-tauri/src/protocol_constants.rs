@@ -4,19 +4,6 @@
 //! and changing them would break protocol compliance.
 
 // ─────────────────────────────────────────────────────────────────────────────
-// SSDP / UPnP (RFC 2326, UPnP Device Architecture)
-// ─────────────────────────────────────────────────────────────────────────────
-
-/// MX value for SSDP M-SEARCH (max response delay in seconds).
-///
-/// Per UPnP Device Architecture 1.0, this controls how long devices
-/// wait before responding to avoid network congestion.
-pub const SSDP_MX_VALUE: u64 = 1;
-
-/// Buffer time after last SSDP response before ending discovery (milliseconds).
-pub const SSDP_BUFFER_MS: u64 = 500;
-
-// ─────────────────────────────────────────────────────────────────────────────
 // GENA (UPnP General Event Notification Architecture)
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -63,9 +50,6 @@ pub const ICY_METAINT: usize = 8192;
 ///
 /// 10 seconds is reasonable for LAN operations.
 pub const SOAP_TIMEOUT_SECS: u64 = 10;
-
-/// Timeout for fetching speaker description XML (seconds).
-pub const HTTP_FETCH_TIMEOUT_SECS: u64 = 1;
 
 /// Maximum size of GENA notification body (bytes).
 pub const MAX_GENA_BODY_SIZE: usize = 64 * 1024;

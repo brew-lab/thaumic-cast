@@ -7,6 +7,8 @@ import { resolve } from 'path';
 export default defineConfig({
   plugins: [preact(), crx({ manifest })],
   build: {
+    minify: 'esbuild',
+    sourcemap: false,
     rollupOptions: {
       input: {
         offscreen: resolve(__dirname, 'src/offscreen/offscreen.html'),

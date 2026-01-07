@@ -289,11 +289,19 @@ impl TopologyMonitor {
         let current_speaker_ips: HashSet<String> = speakers.iter().map(|s| s.ip.clone()).collect();
 
         // Phase 2: Fetch zone groups (HTTP/SOAP call to speaker)
+        // Prefer playable speakers - network infrastructure devices (Boost, Bridge)
+        // don't participate in zone groups and return empty topology data
+        let query_speaker = speakers
+            .iter()
+            .find(|s| !s.is_infrastructure_device())
+            .unwrap_or(&speakers[0]);
+
         log::info!(
-            "[TopologyMonitor] Fetching zone groups from {} (SOAP call)...",
-            speakers[0].ip
+            "[TopologyMonitor] Fetching zone groups from {} ({}) (SOAP call)...",
+            query_speaker.ip,
+            query_speaker.name
         );
-        let groups: Vec<ZoneGroup> = match self.sonos.get_zone_groups(&speakers[0].ip).await {
+        let groups: Vec<ZoneGroup> = match self.sonos.get_zone_groups(&query_speaker.ip).await {
             Ok(groups) => {
                 log::info!(
                     "[TopologyMonitor] SOAP succeeded: {} groups found",
@@ -328,7 +336,7 @@ impl TopologyMonitor {
             );
         }
 
-        // Broadcast groups update to WebSocket clients
+        // Broadcast groups update to WebSocket clients and Tauri frontend
         let timestamp = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()

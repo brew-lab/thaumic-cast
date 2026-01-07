@@ -9,7 +9,7 @@
 //! - `services` - UPnP service definitions (URNs, paths)
 //! - `traits` - Trait abstractions for testability
 //! - `client` - High-level Sonos commands (play, stop, volume, mute, zone groups)
-//! - `discovery` - SSDP speaker discovery
+//! - `discovery` - Multi-method speaker discovery (SSDP multicast/broadcast + mDNS)
 //! - `gena` - UPnP GENA event subscription lifecycle (coordinator)
 //! - `gena_client` - GENA HTTP operations
 //! - `gena_store` - GENA subscription state management

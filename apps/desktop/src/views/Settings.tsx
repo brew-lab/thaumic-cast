@@ -3,9 +3,12 @@ import { getAutostartEnabled, setAutostartEnabled } from '../state/store';
 import { useTranslation } from 'react-i18next';
 import { Power, Globe, Palette } from 'lucide-preact';
 import { Card } from '@thaumic-cast/ui';
+import { createLogger } from '@thaumic-cast/shared';
 import i18n, { resources, SupportedLocale } from '../lib/i18n';
 import { type ThemeMode, getTheme, saveTheme, applyTheme } from '../lib/theme';
 import styles from './Settings.module.css';
+
+const log = createLogger('Settings');
 
 /** Language display names */
 const LANGUAGE_NAMES: Record<SupportedLocale, string> = {
@@ -40,7 +43,7 @@ export function Settings() {
       await setAutostartEnabled(enabled);
       setAutostart(enabled);
     } catch (error) {
-      console.error('Failed to set autostart:', error);
+      log.error('Failed to set autostart:', error);
     }
   };
 

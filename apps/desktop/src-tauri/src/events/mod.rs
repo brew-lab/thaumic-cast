@@ -168,11 +168,37 @@ pub enum LatencyEvent {
         /// The speaker IP address where latency was measured.
         #[serde(rename = "speakerIp")]
         speaker_ip: String,
-        /// Measured latency in milliseconds.
+        /// The playback epoch ID (increments on Sonos reconnect).
+        /// Extension can detect epoch changes to trigger re-lock.
+        #[serde(rename = "epochId")]
+        epoch_id: u64,
+        /// Measured latency in milliseconds (smoothed EMA).
         #[serde(rename = "latencyMs")]
         latency_ms: u64,
+        /// Measurement jitter in milliseconds (standard deviation).
+        /// Useful for extension to determine when estimates are stable.
+        #[serde(rename = "jitterMs")]
+        jitter_ms: u64,
         /// Confidence score for the measurement (0.0 - 1.0).
         confidence: f32,
+        /// Unix timestamp in milliseconds.
+        timestamp: u64,
+    },
+    /// Latency measurement has gone stale (no valid position data).
+    ///
+    /// Emitted when we stop receiving valid position info from Sonos for this
+    /// stream (e.g., speaker switched tracks, network issues, playback stopped).
+    /// The extension should freeze its correction loop and optionally show UI.
+    Stale {
+        /// The stream ID that went stale.
+        #[serde(rename = "streamId")]
+        stream_id: String,
+        /// The speaker IP address that went stale.
+        #[serde(rename = "speakerIp")]
+        speaker_ip: String,
+        /// The epoch ID that went stale (helps detect reconnects).
+        #[serde(rename = "epochId")]
+        epoch_id: u64,
         /// Unix timestamp in milliseconds.
         timestamp: u64,
     },

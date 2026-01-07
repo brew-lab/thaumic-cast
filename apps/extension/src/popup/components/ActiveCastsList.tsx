@@ -23,6 +23,8 @@ interface ActiveCastsListProps {
   onControl?: (tabId: number, action: MediaAction) => void;
   /** Whether to show bottom divider (when CurrentTabCard is visible below) */
   showDivider?: boolean;
+  /** Whether video sync controls should be shown (from global settings) */
+  videoSyncEnabled?: boolean;
 }
 
 /**
@@ -37,6 +39,7 @@ interface ActiveCastsListProps {
  * @param props.onStopCast
  * @param props.onControl
  * @param props.showDivider
+ * @param props.videoSyncEnabled
  * @returns The rendered ActiveCastsList component or null if empty
  */
 export function ActiveCastsList({
@@ -49,6 +52,7 @@ export function ActiveCastsList({
   onStopCast,
   onControl,
   showDivider = false,
+  videoSyncEnabled = false,
 }: ActiveCastsListProps): JSX.Element | null {
   const { t } = useTranslation();
 
@@ -71,6 +75,7 @@ export function ActiveCastsList({
               onMuteToggle={onMuteToggle}
               onStop={() => onStopCast(cast.tabId)}
               onControl={onControl ? (action) => onControl(cast.tabId, action) : undefined}
+              videoSyncEnabled={videoSyncEnabled}
             />
           </li>
         ))}

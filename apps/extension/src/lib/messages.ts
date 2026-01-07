@@ -65,7 +65,14 @@ export type ExtensionMessageType =
   // Media playback control (popup → background → content)
   | 'CONTROL_MEDIA'
   // Codec detection (background → offscreen)
-  | 'DETECT_CODECS';
+  | 'DETECT_CODECS'
+  // Video sync control (popup → background → content)
+  | 'SET_VIDEO_SYNC_ENABLED'
+  | 'SET_VIDEO_SYNC_TRIM'
+  | 'TRIGGER_RESYNC'
+  | 'GET_VIDEO_SYNC_STATE'
+  // Video sync state broadcast (content → popup)
+  | 'VIDEO_SYNC_STATE_CHANGED';
 
 /**
  * Message payload for starting a cast.
@@ -564,6 +571,63 @@ export interface DetectCodecsMessage {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Video Sync Messages (popup → background → content)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Enable/disable video sync for a specific tab.
+ */
+export interface SetVideoSyncEnabledMessage {
+  type: 'SET_VIDEO_SYNC_ENABLED';
+  payload: {
+    tabId: number;
+    enabled: boolean;
+  };
+}
+
+/**
+ * Set the trim adjustment for video sync.
+ */
+export interface SetVideoSyncTrimMessage {
+  type: 'SET_VIDEO_SYNC_TRIM';
+  payload: {
+    tabId: number;
+    trimMs: number;
+  };
+}
+
+/**
+ * Trigger a manual resync for video sync.
+ */
+export interface TriggerResyncMessage {
+  type: 'TRIGGER_RESYNC';
+  payload: {
+    tabId: number;
+  };
+}
+
+/**
+ * Query the current video sync state.
+ */
+export interface GetVideoSyncStateMessage {
+  type: 'GET_VIDEO_SYNC_STATE';
+  payload: {
+    tabId: number;
+  };
+}
+
+/**
+ * Broadcast when video sync state changes (content → popup).
+ */
+export interface VideoSyncStateChangedMessage {
+  type: 'VIDEO_SYNC_STATE_CHANGED';
+  enabled: boolean;
+  trimMs: number;
+  state: 'off' | 'acquiring' | 'locked' | 'stale';
+  lockedLatencyMs?: number;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Updated Union Type
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -618,4 +682,10 @@ export type ExtensionMessage =
   // Session health
   | SessionHealthMessage
   // Codec detection
-  | DetectCodecsMessage;
+  | DetectCodecsMessage
+  // Video sync
+  | SetVideoSyncEnabledMessage
+  | SetVideoSyncTrimMessage
+  | TriggerResyncMessage
+  | GetVideoSyncStateMessage
+  | VideoSyncStateChangedMessage;

@@ -1,4 +1,17 @@
 tray:
-  show_status: Show Status
-  quit: Quit
+  # App info
   tooltip: Thaumic Cast
+  app_name: Thaumic Cast
+
+  # Status line (dynamic)
+  status_idle: No active rituals
+  status_streaming_one: 1 active ritual
+  status_streaming_many: '%{count} active rituals'
+  status_no_speakers: No speakers found
+
+  # Menu items
+  dashboard: Dashboard
+  launch_at_startup: Launch at Startup
+  stop_all_streams: Stop All Streams
+  restart_server: Restart Server
+  quit: Quit

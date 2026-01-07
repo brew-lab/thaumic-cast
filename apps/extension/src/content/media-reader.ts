@@ -19,6 +19,16 @@
  */
 
 (function mediaReaderMain() {
+  /**
+   * Minimal logger for MAIN world context.
+   * Errors always log (same as shared Logger behavior).
+   */
+  const log = {
+    error: (message: string, ...args: unknown[]) => {
+      console.error(`[MediaReader] ${message}`, ...args);
+    },
+  };
+
   /** Event name for metadata updates (reader -> bridge) */
   const METADATA_EVENT = '__thaumic_metadata__';
 
@@ -201,7 +211,7 @@
       try {
         handler({ action: action as MediaSessionAction });
       } catch (error) {
-        console.error('[Thaumic] Failed to invoke action handler:', action, error);
+        log.error('Failed to invoke action handler:', action, error);
       }
     }
   }
