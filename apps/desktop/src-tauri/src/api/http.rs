@@ -143,9 +143,14 @@ async fn health_check() -> impl IntoResponse {
 ///
 /// Returns a 512x512 PNG image embedded at compile time.
 /// Sonos requires at least 480x480 for reliable album art display.
-async fn serve_icon() -> impl IntoResponse {
-    static ICON: &[u8] = include_bytes!("../../icons/icon.png");
-    ([(header::CONTENT_TYPE, "image/png")], ICON)
+async fn serve_icon() -> Response {
+    static ICON: &'static [u8] = include_bytes!("../../icons/icon.png");
+    Response::builder()
+        .header(header::CONTENT_TYPE, "image/png")
+        .header(header::CONTENT_LENGTH, ICON.len())
+        .header(header::CACHE_CONTROL, "public, max-age=86400")
+        .body(Body::from(ICON))
+        .unwrap()
 }
 
 /// Readiness probe: "Can the service handle requests?"
