@@ -24,8 +24,9 @@ export interface ButtonActionState {
  *
  * @param action - Async function to execute on button click
  * @param options - Configuration options
- * @param options.successDuration
- * @param options.errorDuration
+ * @param options.successDuration - How long to show success state (ms). Default: 2000
+ * @param options.errorDuration - How long to show error state (ms). Default: 3000
+ * @param options.minLoadingDuration - Minimum time to show loading state (ms). Default: 600
  * @returns State object and execute function
  *
  * @example
@@ -47,9 +48,11 @@ export function useButtonAction(
     successDuration?: number;
     /** How long to show error state (ms). Default: 3000 */
     errorDuration?: number;
+    /** Minimum time to show loading state (ms). Default: 600 */
+    minLoadingDuration?: number;
   } = {},
 ): ButtonActionState & { execute: () => Promise<void> } {
-  const { successDuration = 2000, errorDuration = 3000 } = options;
+  const { successDuration = 2000, errorDuration = 3000, minLoadingDuration = 600 } = options;
 
   const [status, setStatus] = useState<ButtonActionStatus>('idle');
   const [error, setError] = useState<string | undefined>();
@@ -60,11 +63,23 @@ export function useButtonAction(
     setStatus('loading');
     setError(undefined);
 
+    const startTime = Date.now();
+
+    const ensureMinDuration = async (): Promise<void> => {
+      const elapsed = Date.now() - startTime;
+      const remaining = minLoadingDuration - elapsed;
+      if (remaining > 0) {
+        await new Promise((resolve) => setTimeout(resolve, remaining));
+      }
+    };
+
     try {
       await action();
+      await ensureMinDuration();
       setStatus('success');
       setTimeout(() => setStatus('idle'), successDuration);
     } catch (e) {
+      await ensureMinDuration();
       const message = e instanceof Error ? e.message : 'An error occurred';
       setError(message);
       setStatus('error');
@@ -73,7 +88,7 @@ export function useButtonAction(
         setError(undefined);
       }, errorDuration);
     }
-  }, [action, status, successDuration, errorDuration]);
+  }, [action, status, successDuration, errorDuration, minLoadingDuration]);
 
   return {
     status,

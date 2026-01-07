@@ -23,6 +23,8 @@ interface ActionButtonProps {
   successDuration?: number;
   /** Error state duration in ms */
   errorDuration?: number;
+  /** Minimum loading state duration in ms (default: 600) */
+  minLoadingDuration?: number;
 }
 
 /**
@@ -40,6 +42,7 @@ interface ActionButtonProps {
  * @param props.className - Additional CSS class
  * @param props.successDuration - Success state duration in ms
  * @param props.errorDuration - Error state duration in ms
+ * @param props.minLoadingDuration - Minimum loading state duration in ms
  * @returns The rendered ActionButton component
  *
  * @example
@@ -63,10 +66,12 @@ export function ActionButton({
   className,
   successDuration,
   errorDuration,
+  minLoadingDuration,
 }: ActionButtonProps) {
   const { status, error, isDisabled, execute } = useButtonAction(action, {
     successDuration,
     errorDuration,
+    minLoadingDuration,
   });
 
   const getIcon = () => {
