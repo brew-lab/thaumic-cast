@@ -26,6 +26,18 @@ use crate::sonos::SonosTopologyClient;
 use crate::state::SonosState;
 use crate::types::ZoneGroup;
 
+/// Known Sonos infrastructure device types that don't participate in zone groups.
+/// These are network bridges/extenders, not playable speakers.
+const INFRASTRUCTURE_DEVICE_NAMES: &[&str] = &["boost", "bridge"];
+
+/// Checks if a speaker name indicates a non-playable infrastructure device.
+fn is_infrastructure_device(name: &str) -> bool {
+    let name_lower = name.to_lowercase();
+    INFRASTRUCTURE_DEVICE_NAMES
+        .iter()
+        .any(|&device| name_lower.contains(device))
+}
+
 /// Current network health state with reason.
 #[derive(Debug, Clone)]
 pub struct NetworkHealthState {
@@ -289,11 +301,19 @@ impl TopologyMonitor {
         let current_speaker_ips: HashSet<String> = speakers.iter().map(|s| s.ip.clone()).collect();
 
         // Phase 2: Fetch zone groups (HTTP/SOAP call to speaker)
+        // Prefer playable speakers - network infrastructure devices (Boost, Bridge)
+        // don't participate in zone groups and return empty topology data
+        let query_speaker = speakers
+            .iter()
+            .find(|s| !is_infrastructure_device(&s.name))
+            .unwrap_or(&speakers[0]);
+
         log::info!(
-            "[TopologyMonitor] Fetching zone groups from {} (SOAP call)...",
-            speakers[0].ip
+            "[TopologyMonitor] Fetching zone groups from {} ({}) (SOAP call)...",
+            query_speaker.ip,
+            query_speaker.name
         );
-        let groups: Vec<ZoneGroup> = match self.sonos.get_zone_groups(&speakers[0].ip).await {
+        let groups: Vec<ZoneGroup> = match self.sonos.get_zone_groups(&query_speaker.ip).await {
             Ok(groups) => {
                 log::info!(
                     "[TopologyMonitor] SOAP succeeded: {} groups found",
