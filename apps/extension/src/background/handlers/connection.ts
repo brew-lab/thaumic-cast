@@ -28,6 +28,7 @@ import {
   setConnectionError,
   clearConnectionState,
   setNetworkHealth,
+  setDesktopApp,
 } from '../connection-state';
 import { setSonosState, getSonosState as getStoredSonosState, updateGroups } from '../sonos-state';
 import { ensureOffscreen, sendToOffscreen } from '../offscreen-manager';
@@ -52,6 +53,24 @@ export async function connectWebSocket(serverUrl: string): Promise<void> {
   const wsUrl = serverUrl.replace(/^http/, 'ws') + '/ws';
   log.info(`Connecting WebSocket to: ${wsUrl}`);
   await sendToOffscreen({ type: 'WS_CONNECT', url: wsUrl });
+}
+
+/**
+ * Handles WS_CONNECT request from popup.
+ * Caches the desktop app URL and initiates WebSocket connection.
+ * @param url - The desktop app URL (HTTP or WS format)
+ * @param maxStreams - Optional max streams limit to cache
+ */
+export async function handleWsConnectRequest(url: string, maxStreams?: number): Promise<void> {
+  // Convert HTTP URL to WebSocket URL if needed, normalize to base URL
+  const baseUrl = url.replace(/\/ws$/, '').replace(/^ws/, 'http');
+
+  // Cache the URL for instant popup display
+  if (maxStreams !== undefined) {
+    setDesktopApp(baseUrl, maxStreams);
+  }
+
+  await connectWebSocket(baseUrl);
 }
 
 /**

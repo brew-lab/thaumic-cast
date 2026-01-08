@@ -35,7 +35,6 @@ import { restoreSessions, getActiveCasts, hasSession } from './session-manager';
 import { restoreSonosState } from './sonos-state';
 import {
   getConnectionState,
-  setDesktopApp,
   clearConnectionState,
   restoreConnectionState,
 } from './connection-state';
@@ -48,6 +47,7 @@ import {
   connectWebSocket,
   discoverAndCache,
   ensureConnection,
+  handleWsConnectRequest,
   handleWsConnected,
   handleWsTemporarilyDisconnected,
   handleWsPermanentlyDisconnected,
@@ -282,13 +282,7 @@ chrome.runtime.onMessage.addListener((msg: ExtensionMessage, sender, sendRespons
             url: string;
             maxStreams?: number;
           };
-          // Convert HTTP URL to WebSocket URL if needed
-          const baseUrl = url.replace(/\/ws$/, '').replace(/^ws/, 'http');
-          // Cache the URL for instant popup display
-          if (maxStreams !== undefined) {
-            setDesktopApp(baseUrl, maxStreams);
-          }
-          await connectWebSocket(baseUrl);
+          await handleWsConnectRequest(url, maxStreams);
           sendResponse({ success: true });
           break;
         }
