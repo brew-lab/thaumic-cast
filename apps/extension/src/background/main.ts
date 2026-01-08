@@ -33,14 +33,13 @@ import { recordStableSession, recordBadSession } from '../lib/device-config';
 // State management modules
 import { restoreCache, removeFromCache } from './metadata-cache';
 import { restoreSessions, getActiveCasts, hasSession } from './session-manager';
-import { restoreSonosState, updateGroups } from './sonos-state';
+import { restoreSonosState } from './sonos-state';
 import {
   getConnectionState,
   setConnected,
   setDesktopApp,
   clearConnectionState,
   restoreConnectionState,
-  setNetworkHealth,
 } from './connection-state';
 import { handleSonosEvent, stopCastForTab } from './sonos-event-handlers';
 import { notifyPopup } from './notify';
@@ -53,6 +52,8 @@ import {
   ensureConnection,
   handleWsConnected,
   handleWsDisconnected,
+  handleNetworkEvent,
+  handleTopologyEvent,
   getSonosState,
 } from './handlers/connection';
 import {
@@ -237,30 +238,14 @@ chrome.runtime.onMessage.addListener((msg: ExtensionMessage, sender, sendRespons
 
         case 'NETWORK_EVENT': {
           const { payload } = msg as NetworkEventMessage;
-          if (payload.type === 'healthChanged') {
-            const health = payload.health;
-            const reason = payload.reason ?? null;
-            setNetworkHealth(health, reason);
-            notifyPopup({
-              type: 'NETWORK_HEALTH_CHANGED',
-              health,
-              reason,
-            });
-          }
+          handleNetworkEvent(payload);
           sendResponse({ success: true });
           break;
         }
 
         case 'TOPOLOGY_EVENT': {
           const { payload } = msg as TopologyEventMessage;
-          if (payload.type === 'groupsDiscovered') {
-            const newState = updateGroups(payload.groups);
-            notifyPopup({
-              type: 'WS_STATE_CHANGED',
-              state: newState,
-            });
-            log.info(`Groups discovered: ${payload.groups.length} groups`);
-          }
+          handleTopologyEvent(payload);
           sendResponse({ success: true });
           break;
         }

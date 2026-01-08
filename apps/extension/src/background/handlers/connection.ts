@@ -16,7 +16,11 @@
 
 import { createLogger } from '@thaumic-cast/shared';
 import type { SonosStateSnapshot } from '@thaumic-cast/protocol';
-import type { EnsureConnectionResponse } from '../../lib/messages';
+import type {
+  EnsureConnectionResponse,
+  NetworkEventMessage,
+  TopologyEventMessage,
+} from '../../lib/messages';
 import { discoverDesktopApp } from '../discovery';
 import {
   getConnectionState,
@@ -25,7 +29,7 @@ import {
   clearConnectionState,
   setNetworkHealth,
 } from '../connection-state';
-import { setSonosState, getSonosState as getStoredSonosState } from '../sonos-state';
+import { setSonosState, getSonosState as getStoredSonosState, updateGroups } from '../sonos-state';
 import { ensureOffscreen, sendToOffscreen } from '../offscreen-manager';
 import { notifyPopup } from '../notify';
 
@@ -191,4 +195,35 @@ export function getSonosState(): { state: SonosStateSnapshot | null } {
   // Return null if state is empty (no groups)
   const hasState = state.groups.length > 0;
   return { state: hasState ? state : null };
+}
+
+/**
+ * Handles NETWORK_EVENT from offscreen (network health changes).
+ * @param payload - The network event payload
+ */
+export function handleNetworkEvent(payload: NetworkEventMessage['payload']): void {
+  if (payload.type === 'healthChanged') {
+    const reason = payload.reason ?? null;
+    setNetworkHealth(payload.health, reason);
+    notifyPopup({
+      type: 'NETWORK_HEALTH_CHANGED',
+      health: payload.health,
+      reason,
+    });
+  }
+}
+
+/**
+ * Handles TOPOLOGY_EVENT from offscreen (group discovery results).
+ * @param payload - The topology event payload
+ */
+export function handleTopologyEvent(payload: TopologyEventMessage['payload']): void {
+  if (payload.type === 'groupsDiscovered') {
+    const newState = updateGroups(payload.groups);
+    notifyPopup({
+      type: 'WS_STATE_CHANGED',
+      state: newState,
+    });
+    log.info(`Groups discovered: ${payload.groups.length} groups`);
+  }
 }
