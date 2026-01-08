@@ -218,6 +218,7 @@ export function ActiveCastCard({
 
           {(canPlay || canPause) && onControl && (
             <IconButton
+              variant="solid"
               onClick={handlePlayPause}
               aria-label={displayIsPlaying ? t('pause') : t('play')}
               title={displayIsPlaying ? t('pause') : t('play')}
@@ -284,6 +285,15 @@ export function ActiveCastCard({
                           ? 'lost'
                           : 'waiting'
                   }
+                  className={
+                    videoSync.state === 'locked'
+                      ? styles.synced
+                      : videoSync.state === 'acquiring'
+                        ? styles.acquiring
+                        : videoSync.state === 'stale'
+                          ? styles.lost
+                          : undefined
+                  }
                 >
                   {videoSync.state === 'locked'
                     ? t('video_sync_status_synced')
@@ -293,7 +303,7 @@ export function ActiveCastCard({
                         ? t('video_sync_status_lost')
                         : t('video_sync_status_waiting')}
                 </StatusChip>
-              )}
+              )}{' '}
             </div>
 
             {videoSync.enabled && (

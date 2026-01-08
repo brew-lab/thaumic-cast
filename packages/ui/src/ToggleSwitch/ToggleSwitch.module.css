@@ -1,0 +1,62 @@
+.toggleSwitch {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  inline-size: 2.5rem;
+  block-size: 1.25rem;
+  padding: 0;
+  border: none;
+  border-radius: 0.75rem;
+  cursor: pointer;
+  transition: var(--transition-bg);
+
+  --toggle-on-bg: var(--color-primary);
+
+  /* Use same color as slider thumb / solid button background for consistency */
+  --toggle-thumb-bg: var(--slider-thumb, var(--color-primary));
+
+  /*
+   * Track: derive from thumb color to ensure WCAG 2.1 AA contrast (3:1).
+   * Shifts lightness ~45 points (toward white in light mode, black in dark mode)
+   * and reduces chroma for neutral appearance.
+   */
+  --toggle-bg: light-dark(
+    oklch(from var(--toggle-thumb-bg) clamp(0.85, calc(l + 0.45), 0.95) calc(c * 0.15) h),
+    oklch(from var(--toggle-thumb-bg) clamp(0.15, calc(l - 0.45), 0.25) calc(c * 0.15) h)
+  );
+
+  background: var(--toggle-bg);
+}
+
+.toggleSwitch:focus-visible {
+  outline: 2px solid var(--color-focus);
+  outline-offset: 2px;
+}
+
+.on {
+  background: var(--toggle-on-bg);
+}
+
+.disabled {
+  opacity: var(--input-disabled-opacity);
+  cursor: not-allowed;
+}
+
+.thumb {
+  position: absolute;
+  inset-inline-start: 0.125rem;
+  inline-size: 1rem;
+  block-size: 1rem;
+  background: var(--toggle-thumb-bg);
+  border-radius: 50%;
+  transition:
+    transform var(--duration-fast) var(--ease-out-2),
+    background-color var(--duration-fast) var(--ease-out-2);
+}
+
+.on .thumb {
+  transform: translateX(1.25rem);
+
+  /* Thumb swaps to track color when on - maintains contrast with accent background */
+  background: var(--toggle-bg);
+}

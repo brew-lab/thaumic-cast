@@ -1,5 +1,6 @@
 import type { JSX } from 'preact';
 import { VolumeControl } from '../VolumeControl';
+import styles from './SpeakerVolumeRow.module.css';
 
 interface SpeakerVolumeRowProps {
   /** Display name for the speaker/group */
@@ -56,9 +57,9 @@ export function SpeakerVolumeRow({
   className,
 }: SpeakerVolumeRowProps): JSX.Element {
   return (
-    <div className={`speakerVolumeRow ${className || ''}`} data-speaker-ip={speakerIp}>
-      <div className="speakerVolumeRowHeader">
-        <span className="speakerVolumeRowName">{speakerName}</span>
+    <div className={[styles.row, className].filter(Boolean).join(' ')} data-speaker-ip={speakerIp}>
+      <div className={styles.header}>
+        <span className={styles.name}>{speakerName}</span>
         {statusIndicator}
       </div>
       <VolumeControl

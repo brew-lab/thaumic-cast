@@ -1,7 +1,8 @@
-import type { JSX } from 'preact';
+import type { JSX, CSSProperties } from 'preact';
 import { useState, useEffect, useRef, useCallback } from 'preact/hooks';
 import { Volume2, VolumeX } from 'lucide-preact';
 import { IconButton } from '../IconButton';
+import styles from './VolumeControl.module.css';
 
 /** Debounce delay for volume slider in milliseconds */
 const VOLUME_DEBOUNCE_MS = 100;
@@ -113,10 +114,10 @@ export function VolumeControl({
   );
 
   return (
-    <div className={`volumeControl ${className || ''}`}>
+    <div className={[styles.volumeControl, className].filter(Boolean).join(' ')}>
       <IconButton
         size="sm"
-        className={`volumeControlMuteBtn ${muted ? 'muted' : ''}`}
+        className={[styles.muteBtn, muted ? styles.muted : ''].filter(Boolean).join(' ')}
         onClick={handleMuteToggle}
         title={muted ? unmuteLabel : muteLabel}
         aria-label={muted ? unmuteLabel : muteLabel}
@@ -129,12 +130,12 @@ export function VolumeControl({
         max="100"
         value={localVolume}
         onChange={handleSliderChange}
-        className="volumeControlSlider"
-        style={{ '--volume': `${localVolume}%` } as JSX.CSSProperties}
+        className={styles.slider}
+        style={{ '--volume': `${localVolume}%` } as CSSProperties}
         aria-label={volumeLabel}
         aria-valuetext={`${localVolume}%`}
       />
-      <span className="volumeControlValue" aria-hidden="true">
+      <span className={styles.value} aria-hidden="true">
         {localVolume}
       </span>
     </div>

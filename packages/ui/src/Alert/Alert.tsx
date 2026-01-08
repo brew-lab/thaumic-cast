@@ -2,6 +2,7 @@ import type { ComponentChildren, FunctionComponent } from 'preact';
 import type { LucideProps } from 'lucide-preact';
 import { AlertTriangle, CircleAlert, CircleCheck, Info, X } from 'lucide-preact';
 import { IconButton } from '../IconButton';
+import styles from './Alert.module.css';
 
 type AlertVariant = 'warning' | 'error' | 'success' | 'info';
 
@@ -17,10 +18,10 @@ interface AlertProps {
 }
 
 const VARIANT_CLASSES: Record<AlertVariant, string> = {
-  warning: 'alertWarning',
-  error: 'alertError',
-  success: 'alertSuccess',
-  info: 'alertInfo',
+  warning: styles.warning,
+  error: styles.error,
+  success: styles.success,
+  info: styles.info,
 };
 
 const VARIANT_ICONS: Record<AlertVariant, FunctionComponent<LucideProps>> = {
@@ -44,11 +45,11 @@ export function Alert({ children, variant = 'warning', className, onDismiss }: A
   const Icon = VARIANT_ICONS[variant];
 
   return (
-    <div className={`alert ${variantClass} ${className || ''}`} role="alert">
-      <Icon size={16} className="alertIcon" aria-hidden="true" />
-      <div className="alertContent">{children}</div>
+    <div className={[styles.alert, variantClass, className].filter(Boolean).join(' ')} role="alert">
+      <Icon size={16} className={styles.icon} aria-hidden="true" />
+      <div className={styles.content}>{children}</div>
       {onDismiss && (
-        <IconButton size="sm" className="alertDismiss" onClick={onDismiss} aria-label="Dismiss">
+        <IconButton size="sm" className={styles.dismiss} onClick={onDismiss} aria-label="Dismiss">
           <X size={14} />
         </IconButton>
       )}

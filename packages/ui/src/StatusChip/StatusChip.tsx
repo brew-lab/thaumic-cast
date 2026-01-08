@@ -1,32 +1,30 @@
-import type { JSX, ComponentChildren } from 'preact';
-
-type StatusVariant = 'waiting' | 'acquiring' | 'synced' | 'lost';
+import type { ComponentChildren } from 'preact';
+import styles from './StatusChip.module.css';
 
 interface StatusChipProps {
-  /** The status variant */
-  variant: StatusVariant;
-  /** Child content (typically text) */
   children: ComponentChildren;
-  /** Additional CSS class */
+  variant: 'waiting' | 'acquiring' | 'synced' | 'lost';
   className?: string;
 }
 
+const VARIANT_CLASSES = {
+  waiting: styles.waiting,
+  acquiring: styles.acquiring,
+  synced: styles.synced,
+  lost: styles.lost,
+};
+
 /**
- * Status chip component for displaying sync status.
- * Uses semantic colors for different states.
+ * Shared Status Chip Component
  * @param props - Component props
- * @param props.variant - The status variant
- * @param props.children - Child content
- * @param props.className - Additional CSS class
+ * @param props.children
+ * @param props.variant
+ * @param props.className
  * @returns The rendered StatusChip component
  */
-export function StatusChip({ variant, children, className }: StatusChipProps): JSX.Element {
-  const variantClass = `statusChip${variant.charAt(0).toUpperCase() + variant.slice(1)}`;
-  const combinedClass = `statusChip ${variantClass} ${className || ''}`.trim();
-
-  return (
-    <span className={combinedClass} role="status">
-      {children}
-    </span>
-  );
+export function StatusChip({ children, variant, className }: StatusChipProps) {
+  const combinedClass = [styles.chip, VARIANT_CLASSES[variant], className]
+    .filter(Boolean)
+    .join(' ');
+  return <span className={combinedClass}>{children}</span>;
 }

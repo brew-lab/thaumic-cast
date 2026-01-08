@@ -1,134 +1,89 @@
-import type { JSX } from 'preact';
-import { useCallback } from 'preact/hooks';
+import type { ZoneGroup } from '@thaumic-cast/protocol';
+import styles from './SpeakerMultiSelect.module.css';
 
-/** Minimal shape required for speaker groups */
-interface SpeakerGroupBase {
-  /** Unique identifier for the group */
-  id: string;
-  /** Display name for the group */
-  name: string;
-  /** Coordinator IP address */
-  coordinatorIp: string;
-}
-
-interface SpeakerMultiSelectProps<T extends SpeakerGroupBase> {
-  /** Available speaker groups */
-  groups: T[];
-  /** Currently selected speaker IPs (coordinator IPs) */
+interface SpeakerMultiSelectProps {
+  /** Array of available speaker groups */
+  groups: ZoneGroup[];
+  /** Array of currently selected speaker/coordinator IPs */
   selectedIps: string[];
   /** Callback when selection changes */
   onSelectionChange: (ips: string[]) => void;
   /** Whether the control is disabled */
   disabled?: boolean;
-  /** Function to get display name for a group (defaults to group.name) */
-  getGroupDisplayName?: (group: T) => string;
-  /** Label for the field */
+  /** Label for the control */
   label?: string;
-  /** Additional CSS class */
-  className?: string;
+  /** Function to get display name for a group */
+  getGroupDisplayName: (group: ZoneGroup) => string;
 }
 
 /**
- * Multi-select checkbox list for choosing speaker groups.
+ * Multiple speaker selection component.
+ * Allows users to select one or more speaker groups from a list.
+ *
  * @param props - Component props
- * @param props.groups - Available speaker groups
- * @param props.selectedIps - Currently selected IPs
- * @param props.onSelectionChange - Selection change callback
- * @param props.disabled - Whether control is disabled
- * @param props.getGroupDisplayName - Function to get display name
- * @param props.label - Field label
- * @param props.className - Additional CSS class
+ * @param props.groups
+ * @param props.selectedIps
+ * @param props.onSelectionChange
+ * @param props.disabled
+ * @param props.label
+ * @param props.getGroupDisplayName
  * @returns The rendered SpeakerMultiSelect component
  */
-export function SpeakerMultiSelect<T extends SpeakerGroupBase>({
+export function SpeakerMultiSelect({
   groups,
   selectedIps,
   onSelectionChange,
   disabled = false,
-  getGroupDisplayName,
   label,
-  className,
-}: SpeakerMultiSelectProps<T>): JSX.Element {
-  const getDisplayName = getGroupDisplayName ?? ((g: T) => g.name);
+  getGroupDisplayName,
+}: SpeakerMultiSelectProps) {
+  const toggleSpeaker = (ip: string, isDisabled: boolean) => {
+    if (isDisabled) return;
 
-  /**
-   * Toggles a speaker group's selection state.
-   * @param ip - The coordinator IP to toggle
-   */
-  const handleToggle = useCallback(
-    (ip: string) => {
-      if (disabled) return;
+    if (selectedIps.includes(ip)) {
+      onSelectionChange(selectedIps.filter((selectedIp) => selectedIp !== ip));
+    } else {
+      onSelectionChange([...selectedIps, ip]);
+    }
+  };
 
-      const isSelected = selectedIps.includes(ip);
-      if (isSelected) {
-        // Remove from selection (but don't allow empty selection)
-        if (selectedIps.length > 1) {
-          onSelectionChange(selectedIps.filter((s) => s !== ip));
-        }
-      } else {
-        // Add to selection
-        onSelectionChange([...selectedIps, ip]);
-      }
-    },
-    [selectedIps, onSelectionChange, disabled],
-  );
-
-  /**
-   * Handles keyboard navigation for accessibility.
-   * @param e - Keyboard event
-   * @param ip - The coordinator IP of the current item
-   */
-  const handleKeyDown = useCallback(
-    (e: KeyboardEvent, ip: string) => {
-      if (e.key === ' ' || e.key === 'Enter') {
-        e.preventDefault();
-        handleToggle(ip);
-      }
-    },
-    [handleToggle],
-  );
+  const handleKeyDown = (e: KeyboardEvent, ip: string, isDisabled: boolean) => {
+    if (e.key === ' ' || e.key === 'Enter') {
+      e.preventDefault();
+      toggleSpeaker(ip, isDisabled);
+    }
+  };
 
   return (
-    <div className={`speakerMultiSelect ${className || ''}`}>
-      {label && <span className="speakerMultiSelectLabel">{label}</span>}
-      <ul
-        className="speakerMultiSelectList"
-        role="listbox"
-        aria-multiselectable="true"
-        aria-label={label}
-      >
+    <div className={styles.container}>
+      {label && <span className={styles.label}>{label}</span>}
+      <ul className={styles.list} role="listbox" aria-multiselectable="true" aria-label={label}>
         {groups.map((group) => {
           const isSelected = selectedIps.includes(group.coordinatorIp);
-          const isDisabledItem = disabled || (isSelected && selectedIps.length === 1);
-          const itemClass = [
-            'speakerMultiSelectItem',
-            isSelected && 'speakerMultiSelectItemSelected',
-            isDisabledItem && 'speakerMultiSelectItemDisabled',
-          ]
-            .filter(Boolean)
-            .join(' ');
-
+          // Disabled if globally disabled OR if it's the last selected item (can't have zero)
+          const isDisabled = disabled || (isSelected && selectedIps.length === 1);
           return (
             <li
-              key={group.id}
-              className={itemClass}
+              key={group.coordinatorIp}
               role="option"
               aria-selected={isSelected}
-              aria-disabled={isDisabledItem}
-              tabIndex={disabled ? -1 : 0}
-              onClick={() => handleToggle(group.coordinatorIp)}
-              onKeyDown={(e) => handleKeyDown(e, group.coordinatorIp)}
+              aria-disabled={isDisabled}
+              tabIndex={isDisabled ? -1 : 0}
+              className={[styles.item, isSelected && styles.selected, isDisabled && styles.disabled]
+                .filter(Boolean)
+                .join(' ')}
+              onClick={() => toggleSpeaker(group.coordinatorIp, isDisabled)}
+              onKeyDown={(e) => handleKeyDown(e, group.coordinatorIp, isDisabled)}
             >
               <input
                 type="checkbox"
                 checked={isSelected}
-                disabled={isDisabledItem}
-                className="speakerMultiSelectCheckbox"
+                disabled={isDisabled}
                 tabIndex={-1}
+                className={styles.checkbox}
                 aria-hidden="true"
-                onChange={() => {}} // Controlled by parent click
               />
-              <span className="speakerMultiSelectName">{getDisplayName(group)}</span>
+              <span className={styles.name}>{getGroupDisplayName(group)}</span>
             </li>
           );
         })}

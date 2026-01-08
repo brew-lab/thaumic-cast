@@ -1,3 +1,5 @@
+import styles from './Wizard.module.css';
+
 interface StepIndicatorProps {
   /** Current step (0-based) */
   current: number;
@@ -5,6 +7,8 @@ interface StepIndicatorProps {
   total: number;
   /** Optional step labels for accessibility */
   labels?: string[];
+  /** Additional CSS class */
+  className?: string;
 }
 
 /**
@@ -15,26 +19,38 @@ interface StepIndicatorProps {
  * @param props.current
  * @param props.total
  * @param props.labels
+ * @param props.className
  * @returns The rendered StepIndicator component
  */
-export function StepIndicator({ current, total, labels }: StepIndicatorProps): preact.JSX.Element {
+export function StepIndicator({
+  current,
+  total,
+  labels,
+  className,
+}: StepIndicatorProps): preact.JSX.Element {
   return (
     <div
-      className="stepIndicator"
+      className={[styles.indicator, className].filter(Boolean).join(' ')}
       role="progressbar"
       aria-valuenow={current + 1}
       aria-valuemin={1}
       aria-valuemax={total}
-      aria-label={`Step ${current + 1} of ${total}${labels?.[current] ? `: ${labels[current]}` : ''}`}
+      aria-label={`Step ${current + 1} of ${total}${
+        labels?.[current] ? `: ${labels[current]}` : ''
+      }`}
     >
       {Array.from({ length: total }, (_, i) => {
         const isCompleted = i < current;
         const isActive = i === current;
         const label = labels?.[i];
 
-        let className = 'stepDot';
-        if (isCompleted) className += ' stepDotCompleted';
-        if (isActive) className += ' stepDotActive';
+        const className = [
+          styles.dot,
+          isCompleted && styles.dotCompleted,
+          isActive && styles.dotActive,
+        ]
+          .filter(Boolean)
+          .join(' ');
 
         return <div key={i} className={className} aria-hidden="true" title={label} />;
       })}

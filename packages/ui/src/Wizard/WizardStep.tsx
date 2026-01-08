@@ -1,4 +1,5 @@
 import type { ComponentChildren, ComponentType } from 'preact';
+import styles from './Wizard.module.css';
 
 interface WizardStepProps {
   /** Step title */
@@ -30,23 +31,23 @@ export function WizardStep({
   children,
 }: WizardStepProps): preact.JSX.Element {
   return (
-    <div className="wizardStep">
-      <div className="wizardStepHeader">
+    <div className={styles.step}>
+      <div className={styles.stepHeader}>
         {Icon && (
-          <div className="wizardStepIcon">
+          <div className={styles.stepIcon}>
             <Icon size={32} />
           </div>
         )}
-        <h2 className="wizardStepTitle" id="wizard-title">
+        <h2 className={styles.stepTitle} id="wizard-title">
           {title}
         </h2>
         {subtitle && (
-          <p className="wizardStepSubtitle" id="wizard-description">
+          <p className={styles.stepSubtitle} id="wizard-description">
             {subtitle}
           </p>
         )}
       </div>
-      <div className="wizardStepContent">{children}</div>
+      <div className={styles.stepContent}>{children}</div>
     </div>
   );
 }

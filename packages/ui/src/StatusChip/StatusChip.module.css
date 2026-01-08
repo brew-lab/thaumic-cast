@@ -1,0 +1,33 @@
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+  padding-block: 0.125rem;
+  padding-inline: var(--space-sm);
+  font-size: 0.6875rem;
+  font-weight: 500;
+  border-radius: var(--radius-sm);
+  white-space: nowrap;
+  background: var(--status-chip-bg);
+  color: var(--status-chip-text);
+}
+
+.waiting {
+  --status-chip-bg: var(--color-surface-hover);
+  --status-chip-text: var(--color-text-muted);
+}
+
+.acquiring {
+  --status-chip-bg: var(--alert-warning-bg);
+  --status-chip-text: var(--color-warning);
+}
+
+.synced {
+  --status-chip-bg: var(--alert-success-bg);
+  --status-chip-text: var(--color-success);
+}
+
+.lost {
+  --status-chip-bg: var(--alert-error-bg);
+  --status-chip-text: var(--color-error);
+}

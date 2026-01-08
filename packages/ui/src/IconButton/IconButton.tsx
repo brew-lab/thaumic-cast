@@ -1,46 +1,44 @@
-import type { h, JSX } from 'preact';
-import { forwardRef } from 'preact/compat';
+import { h } from 'preact';
+import styles from './IconButton.module.css';
 
-export type IconButtonVariant = 'ghost' | 'outline' | 'danger';
-export type IconButtonSize = 'sm' | 'md' | 'lg';
-
-interface IconButtonProps extends Omit<h.JSX.HTMLAttributes<HTMLButtonElement>, 'size'> {
-  /** Visual style variant */
-  variant?: IconButtonVariant;
+interface IconButtonProps extends h.JSX.HTMLAttributes<HTMLButtonElement> {
   /** Button size */
-  size?: IconButtonSize;
+  size?: 'sm' | 'md' | 'lg';
+  /** Visual variant */
+  variant?: 'ghost' | 'solid' | 'outline' | 'danger';
   /** Whether the button is disabled */
   disabled?: boolean;
-  /** Icon element to render */
-  children: JSX.Element;
 }
 
 /**
- * Icon-only button component with consistent styling.
- * @param props - Component props
- * @param props.variant - Visual variant ('ghost', 'outline', 'danger')
- * @param props.size - Button size ('sm', 'md', 'lg')
- * @param props.disabled - Whether the button is disabled
- * @param props.children - Icon element to render
+ * Shared Icon Button Component
+ *
+ * @param props - Standard HTML button props + size/variant
+ * @param props.size - Button size (default: md)
+ * @param props.variant - Visual variant (default: ghost)
  * @param props.className - Additional CSS class
+ * @param props.disabled - Whether the button is disabled
  * @returns The rendered IconButton component
  */
-export const IconButton = forwardRef<HTMLButtonElement, IconButtonProps>(function IconButton(
-  { variant = 'ghost', size = 'md', className, children, ...props },
-  ref,
-) {
-  const sizeClass = size === 'sm' ? 'iconBtnSm' : size === 'lg' ? 'iconBtnLg' : 'iconBtnMd';
+export function IconButton({
+  size = 'md',
+  variant = 'ghost',
+  className,
+  disabled,
+  ...props
+}: IconButtonProps) {
+  const sizeClass = size === 'sm' ? styles.sm : size === 'lg' ? styles.lg : styles.md;
   const variantClass =
-    variant === 'outline'
-      ? 'iconBtnOutline'
-      : variant === 'danger'
-        ? 'iconBtnDanger'
-        : 'iconBtnGhost';
-  const combinedClass = `iconBtn ${sizeClass} ${variantClass} ${className || ''}`.trim();
+    variant === 'solid'
+      ? styles.solid
+      : variant === 'outline'
+        ? styles.outline
+        : variant === 'danger'
+          ? styles.danger
+          : styles.ghost;
+  const combinedClass = [styles.iconBtn, sizeClass, variantClass, className]
+    .filter(Boolean)
+    .join(' ');
 
-  return (
-    <button ref={ref} type="button" className={combinedClass} {...props}>
-      {children}
-    </button>
-  );
-});
+  return <button {...props} disabled={disabled} className={combinedClass} />;
+}
