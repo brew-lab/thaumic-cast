@@ -15,13 +15,12 @@
  */
 
 import { createLogger } from '@thaumic-cast/shared';
-import type { EncoderConfig, StreamMetadata } from '@thaumic-cast/protocol';
+import type { StreamMetadata } from '@thaumic-cast/protocol';
 import type { StartCastMessage, StopCastMessage, ExtensionResponse } from '../../lib/messages';
 import { getSourceFromUrl } from '../../lib/url-utils';
 import { getActiveTab, getActiveTabId } from '../../lib/tab-utils';
 import { loadExtensionSettings } from '../../lib/settings';
 import { getCachedCodecSupport } from '../../lib/codec-cache';
-import { selectEncoderConfig, describeConfig } from '../../lib/device-config';
 import { resolveAudioMode, describeEncoderConfig } from '../../lib/presets';
 import { getCachedState, updateCache } from '../metadata-cache';
 import { registerSession, hasSession, getSessionCount } from '../session-manager';
@@ -76,41 +75,30 @@ export async function handleStartCast(
     await ensureOffscreen();
 
     // 4. Select encoder config based on extension settings
-    let encoderConfig: EncoderConfig;
-
-    // Load extension settings and cached codec support
     const settings = await loadExtensionSettings();
     let codecSupport = await getCachedCodecSupport();
 
-    // If codec support not cached, try to detect now (should rarely happen after startup fix)
+    // Ensure codec support is cached (should rarely need re-detection after startup)
     if (!codecSupport || codecSupport.availableCodecs.length === 0) {
       log.info('Codec support not cached, detecting now...');
       codecSupport = await detectAndCacheCodecSupport();
     }
 
-    if (codecSupport && codecSupport.availableCodecs.length > 0) {
-      // Use preset resolution with codec detection
-      try {
-        encoderConfig = resolveAudioMode(
-          settings.audioMode,
-          codecSupport,
-          settings.customAudioSettings,
-        );
-        log.info(
-          `Encoder config (${settings.audioMode} mode): ${describeEncoderConfig(encoderConfig)}`,
-        );
-      } catch (err) {
-        // Preset resolution failed, fall back to device-config
-        log.warn('Preset resolution failed, falling back to device config:', err);
-        encoderConfig = await selectEncoderConfig();
-        log.info(`Encoder config (fallback): ${describeConfig(encoderConfig)}`);
-      }
-    } else {
-      // Codec detection failed entirely, fall back to device-config
-      log.warn('Codec detection failed, using device config fallback');
-      encoderConfig = await selectEncoderConfig();
-      log.info(`Encoder config (fallback): ${describeConfig(encoderConfig)}`);
+    // Codec detection should always succeed (PCM is always supported)
+    if (!codecSupport) {
+      throw new Error('error_codec_detection_failed');
     }
+
+    // Resolve encoder config from audio mode settings
+    // PCM is always supported, so this will always succeed
+    const encoderConfig = resolveAudioMode(
+      settings.audioMode,
+      codecSupport,
+      settings.customAudioSettings,
+    );
+    log.info(
+      `Encoder config (${settings.audioMode} mode): ${describeEncoderConfig(encoderConfig)}`,
+    );
 
     // 5. Capture Tab
     const mediaStreamId = await new Promise<string>((resolve, reject) => {

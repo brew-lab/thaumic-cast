@@ -9,7 +9,6 @@
 
 import { createLogger } from '@thaumic-cast/shared';
 import type { BroadcastEvent } from '@thaumic-cast/protocol';
-import { recordStableSession, recordBadSession } from '../../lib/device-config';
 import { registerRoute } from '../router';
 import {
   handleWsConnected,
@@ -74,7 +73,7 @@ export function registerOffscreenRoutes(): void {
     return { success: true };
   });
 
-  registerRoute('SESSION_HEALTH', async (msg) => {
+  registerRoute('SESSION_HEALTH', (msg) => {
     const validated = SessionHealthMessageSchema.parse(msg);
     const { payload } = validated;
 
@@ -86,13 +85,6 @@ export function registerOffscreenRoutes(): void {
         `consumer=${payload.totalConsumerDrops}, ` +
         `underflows=${payload.totalUnderflows}`,
     );
-
-    // Record session outcome for config learning
-    if (payload.hadDrops) {
-      await recordBadSession(payload.encoderConfig);
-    } else {
-      await recordStableSession(payload.encoderConfig);
-    }
 
     return { success: true };
   });
