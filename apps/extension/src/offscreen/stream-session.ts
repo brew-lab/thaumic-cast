@@ -23,6 +23,7 @@ import {
 } from './ring-buffer';
 import type { EncoderConfig, StreamMetadata } from '@thaumic-cast/protocol';
 import { isSupportedSampleRate, getNearestSupportedSampleRate } from '@thaumic-cast/protocol';
+import { noop } from '../lib/noop';
 
 const log = createLogger('Offscreen');
 
@@ -479,7 +480,7 @@ export class StreamSession {
     this.sourceNode?.disconnect();
     this.workletNode?.disconnect();
     this.silentGainNode?.disconnect();
-    this.audioContext.close().catch(() => {});
+    this.audioContext.close().catch(noop);
     this.mediaStream.getTracks().forEach((t) => t.stop());
   }
 

@@ -21,6 +21,7 @@ import { createLogger } from '@thaumic-cast/shared';
 import type { SonosStateSnapshot, WsControlCommand } from '@thaumic-cast/protocol';
 import type { WsStatusResponse } from '../lib/messages';
 import { stopAllSessions } from './stream-session';
+import { noop } from '../lib/noop';
 
 const log = createLogger('Offscreen');
 
@@ -91,9 +92,7 @@ export function connectControlWebSocket(url: string): void {
             type: 'WS_CONNECTED',
             state: cachedSonosState,
           })
-          .catch(() => {
-            // Background may be suspended
-          });
+          .catch(noop);
       }
       // Network broadcast events (separate category)
       else if (message.category === 'network') {
@@ -102,9 +101,7 @@ export function connectControlWebSocket(url: string): void {
             type: 'NETWORK_EVENT',
             payload: message,
           })
-          .catch(() => {
-            // Background may be suspended
-          });
+          .catch(noop);
       }
       // Topology broadcast events (discovery results)
       else if (message.category === 'topology') {
@@ -113,9 +110,7 @@ export function connectControlWebSocket(url: string): void {
             type: 'TOPOLOGY_EVENT',
             payload: message,
           })
-          .catch(() => {
-            // Background may be suspended
-          });
+          .catch(noop);
       }
       // Broadcast events (sonos/stream)
       else if (message.category) {
@@ -124,9 +119,7 @@ export function connectControlWebSocket(url: string): void {
             type: 'SONOS_EVENT',
             payload: message,
           })
-          .catch(() => {
-            // Background may be suspended
-          });
+          .catch(noop);
       }
     } catch (err) {
       log.warn('Failed to parse control WS message:', err);
@@ -138,7 +131,7 @@ export function connectControlWebSocket(url: string): void {
     // Stop heartbeat
     stopControlHeartbeat();
     // Notify background immediately so UI updates
-    chrome.runtime.sendMessage({ type: 'WS_DISCONNECTED' }).catch(() => {});
+    chrome.runtime.sendMessage({ type: 'WS_DISCONNECTED' }).catch(noop);
     attemptControlReconnect();
   };
 
@@ -159,7 +152,7 @@ function attemptControlReconnect(): void {
     log.error('Control WS max reconnect attempts exceeded');
     // Stop all active sessions - desktop is unreachable
     stopAllSessions();
-    chrome.runtime.sendMessage({ type: 'WS_PERMANENTLY_DISCONNECTED' }).catch(() => {});
+    chrome.runtime.sendMessage({ type: 'WS_PERMANENTLY_DISCONNECTED' }).catch(noop);
     controlConnection = null;
     return;
   }

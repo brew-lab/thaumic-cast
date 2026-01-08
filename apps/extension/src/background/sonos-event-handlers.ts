@@ -37,6 +37,7 @@ import {
 } from './session-manager';
 import { notifyPopup } from './notification-service';
 import { offscreenBroker } from './offscreen-broker';
+import { noop } from '../lib/noop';
 
 const log = createLogger('SonosEvents');
 
@@ -297,12 +298,10 @@ export async function stopCastForTab(tabId: number): Promise<void> {
       type: 'SET_VIDEO_SYNC_ENABLED',
       payload: { tabId, enabled: false },
     })
-    .catch(() => {
-      // Content script may not be available
-    });
+    .catch(noop);
 
   // Send stop message to offscreen
-  await offscreenBroker.stopCapture(tabId).catch(() => {});
+  await offscreenBroker.stopCapture(tabId).catch(noop);
 
   // Remove session from manager
   removeSession(tabId);

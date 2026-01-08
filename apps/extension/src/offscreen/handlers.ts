@@ -34,6 +34,7 @@ import {
   setCachedSonosState,
 } from './control-connection';
 import { StreamSession, activeSessions, MAX_OFFSCREEN_SESSIONS } from './stream-session';
+import { noop } from '../lib/noop';
 
 const log = createLogger('Offscreen');
 
@@ -184,7 +185,7 @@ export function setupMessageHandlers(): void {
           const onDisconnected = () => {
             activeSessions.delete(tabId);
             // Notify background that session was lost
-            chrome.runtime.sendMessage({ type: 'SESSION_DISCONNECTED', tabId }).catch(() => {});
+            chrome.runtime.sendMessage({ type: 'SESSION_DISCONNECTED', tabId }).catch(noop);
           };
 
           const session = new StreamSession(stream, encoderConfig, baseUrl, onDisconnected);

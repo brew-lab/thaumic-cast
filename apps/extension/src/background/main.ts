@@ -40,6 +40,7 @@ import { offscreenBroker } from './offscreen-broker';
 
 // Connection handlers needed for lifecycle events
 import { connectWebSocket, discoverAndCache } from './handlers/connection';
+import { noop } from '../lib/noop';
 
 const log = createLogger('Background');
 
@@ -113,9 +114,7 @@ chrome.tabs.onRemoved.addListener(async (tabId) => {
  */
 chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
   if (changeInfo.audible === true) {
-    chrome.tabs.sendMessage(tabId, { type: 'REQUEST_METADATA' }).catch(() => {
-      // Content script may not be ready
-    });
+    chrome.tabs.sendMessage(tabId, { type: 'REQUEST_METADATA' }).catch(noop);
   }
 });
 
@@ -170,7 +169,7 @@ chrome.storage.sync.onChanged.addListener(async (changes) => {
 
     // Disconnect existing WebSocket before clearing state
     if (getConnectionState().connected) {
-      await offscreenBroker.disconnectWebSocket().catch(() => {});
+      await offscreenBroker.disconnectWebSocket().catch(noop);
     }
 
     // Clear connection state to force fresh discovery

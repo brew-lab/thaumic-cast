@@ -20,6 +20,7 @@ import type { WsStatusResponse } from '../lib/messages';
 import { setConnected, getConnectionState } from './connection-state';
 import { setSonosState } from './sonos-state';
 import { notifyPopup } from './notification-service';
+import { noop } from '../lib/noop';
 
 const log = createLogger('Background');
 
@@ -154,7 +155,7 @@ export async function recoverOffscreenState(): Promise<void> {
         // If not connected but has URL, trigger reconnection
         if (!status.connected && status.url) {
           log.info('Triggering WebSocket reconnection...');
-          sendToOffscreen({ type: 'WS_RECONNECT' }).catch(() => {});
+          sendToOffscreen({ type: 'WS_RECONNECT' }).catch(noop);
         }
       }
     } else {
@@ -192,8 +193,6 @@ export async function checkAndReconnect(
 
     // No offscreen and not connected - attempt background reconnection
     log.info('Attempting background reconnection...');
-    connectWebSocket(connState.desktopAppUrl).catch(() => {
-      // Will retry when popup opens
-    });
+    connectWebSocket(connState.desktopAppUrl).catch(noop);
   }
 }

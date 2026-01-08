@@ -24,6 +24,7 @@ import type {
 } from '@thaumic-cast/protocol';
 import { VIDEO_SYNC_CONSTANTS as C } from '@thaumic-cast/protocol';
 import { createLogger } from '@thaumic-cast/shared';
+import { noop } from '../lib/noop';
 
 const log = createLogger('VideoSync');
 
@@ -169,9 +170,7 @@ function broadcastSyncState(): void {
       type: 'VIDEO_SYNC_STATE_CHANGED',
       ...status,
     })
-    .catch(() => {
-      // Popup may not be open
-    });
+    .catch(noop);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -837,7 +836,7 @@ function runSyncIteration(): void {
       log.info(`Hard correction: micro-pause for ${pauseMs.toFixed(0)}ms`);
       video.pause();
       setTimeout(() => {
-        video.play().catch(() => {});
+        video.play().catch(noop);
       }, pauseMs);
     }
     expectedPlaybackRate = 1.0;
@@ -856,7 +855,7 @@ function runSyncIteration(): void {
         const pauseMs = Math.min(C.MAX_MICRO_PAUSE_MS, (error - C.ERROR_DEADBAND_SEC) * 1000);
         video.pause();
         setTimeout(() => {
-          video.play().catch(() => {});
+          video.play().catch(noop);
         }, pauseMs);
       }
     }

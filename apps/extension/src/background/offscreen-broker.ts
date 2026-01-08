@@ -19,6 +19,7 @@ import type {
 } from '@thaumic-cast/protocol';
 import type { ExtensionResponse, StartPlaybackResponse, WsStatusResponse } from '../lib/messages';
 import { sendToOffscreen } from './offscreen-manager';
+import { noop } from '../lib/noop';
 
 /**
  * Response from codec detection request.
@@ -153,7 +154,7 @@ class OffscreenBroker {
    * @param state - The Sonos state snapshot to sync
    */
   syncSonosState(state: SonosStateSnapshot): void {
-    sendToOffscreen({ type: 'SYNC_SONOS_STATE', state }).catch(() => {});
+    sendToOffscreen({ type: 'SYNC_SONOS_STATE', state }).catch(noop);
   }
 
   // ─────────────────────────────────────────────────────────────────────────────
@@ -170,7 +171,7 @@ class OffscreenBroker {
     sendToOffscreen({
       type: 'OFFSCREEN_METADATA_UPDATE',
       payload: { tabId, metadata },
-    }).catch(() => {});
+    }).catch(noop);
   }
 
   // ─────────────────────────────────────────────────────────────────────────────
