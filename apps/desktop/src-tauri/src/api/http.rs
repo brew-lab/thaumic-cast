@@ -141,10 +141,17 @@ async fn health_check() -> impl IntoResponse {
 
 /// Serves the static app icon for Sonos album art display.
 ///
-/// Returns a 128x128 PNG image embedded at compile time.
+/// Returns a 512x512 PNG image embedded at compile time.
 /// This provides consistent branding since ICY metadata doesn't support artwork.
-async fn serve_icon() -> impl IntoResponse {
-    static ICON: &[u8] = include_bytes!("../../icons/128x128.png");
+async fn serve_icon(ConnectInfo(remote_addr): ConnectInfo<SocketAddr>) -> impl IntoResponse {
+    static ICON: &[u8] = include_bytes!("../../icons/icon.png");
+
+    log::info!(
+        "[Icon] Album art requested by {} ({} bytes)",
+        remote_addr.ip(),
+        ICON.len()
+    );
+
     ([(header::CONTENT_TYPE, "image/png")], ICON)
 }
 

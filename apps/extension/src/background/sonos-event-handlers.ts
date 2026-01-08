@@ -90,9 +90,22 @@ export async function handleSonosEvent(event: BroadcastEvent): Promise<void> {
   }
 }
 
+/** Tracks the last media control action sent to each tab to avoid duplicates. */
+const lastTabMediaAction = new Map<number, 'pause' | 'play'>();
+
+/**
+ * Clears the tracked media action state for a tab.
+ * Should be called when a session ends.
+ * @param tabId - The tab ID
+ */
+export function clearTabMediaActionState(tabId: number): void {
+  lastTabMediaAction.delete(tabId);
+}
+
 /**
  * Handles transport state change events.
  * Debounces rapid changes per-speaker during transitions.
+ * When casting, also controls the tab's media playback.
  * @param speakerIp - The speaker IP address
  * @param state - The new transport state
  */
@@ -104,7 +117,7 @@ function handleTransportState(speakerIp: string, state: TransportState): void {
   }
 
   // Set new timer for this speaker (debounce per-speaker, not globally)
-  const timer = setTimeout(() => {
+  const timer = setTimeout(async () => {
     transportDebounceTimers.delete(speakerIp);
     updateTransportState(speakerIp, state);
 
@@ -118,9 +131,86 @@ function handleTransportState(speakerIp: string, state: TransportState): void {
     });
 
     log.info(`Transport state: ${speakerIp} → ${state}`);
+
+    // Control tab media when Sonos transport state changes
+    await handleTransportMediaControl(speakerIp, state);
   }, TRANSPORT_DEBOUNCE_MS);
 
   transportDebounceTimers.set(speakerIp, timer);
+}
+
+/**
+ * Determines if all speakers in a session are in the Playing state.
+ * @param session - The session to check
+ * @param session.speakerIps - Array of speaker IP addresses in the session
+ * @returns True if all speakers are playing
+ */
+function areAllSessionSpeakersPlaying(session: { speakerIps: string[] }): boolean {
+  const sonosState = getSonosState();
+  return session.speakerIps.every((ip) => sonosState.transportStates[ip] === 'Playing');
+}
+
+/**
+ * Controls the tab's media playback based on Sonos transport state.
+ * - Pause: Sent when ANY speaker in the session pauses
+ * - Play: Sent only when ALL speakers in the session are playing
+ * @param speakerIp - The speaker IP address that changed
+ * @param state - The new transport state
+ */
+async function handleTransportMediaControl(
+  speakerIp: string,
+  state: TransportState,
+): Promise<void> {
+  // Only act on Playing or PAUSED_PLAYBACK states
+  if (state !== 'Playing' && state !== 'PAUSED_PLAYBACK') {
+    return;
+  }
+
+  // Find if we have an active cast to this speaker
+  const session = getSessionBySpeakerIp(speakerIp);
+  if (!session) {
+    return;
+  }
+
+  const tabId = session.tabId;
+  const lastAction = lastTabMediaAction.get(tabId);
+
+  if (state === 'PAUSED_PLAYBACK') {
+    // Pause immediately when any speaker pauses
+    if (lastAction === 'pause') {
+      return; // Already paused
+    }
+    await sendMediaControlToTab(tabId, 'pause', speakerIp);
+  } else {
+    // Only play when ALL speakers in the session are playing
+    if (lastAction === 'play') {
+      return; // Already playing
+    }
+    if (areAllSessionSpeakersPlaying(session)) {
+      await sendMediaControlToTab(tabId, 'play', speakerIp);
+    }
+  }
+}
+
+/**
+ * Sends a media control command to a tab's content script.
+ * @param tabId - The tab ID to send to
+ * @param action - The action to perform ('pause' or 'play')
+ * @param speakerIp - The speaker IP (for logging)
+ */
+async function sendMediaControlToTab(
+  tabId: number,
+  action: 'pause' | 'play',
+  speakerIp: string,
+): Promise<void> {
+  try {
+    await chrome.tabs.sendMessage(tabId, { type: 'CONTROL_MEDIA', action });
+    lastTabMediaAction.set(tabId, action);
+    log.info(`Sent ${action} command to tab ${tabId} (triggered by ${speakerIp})`);
+  } catch {
+    // Content script may not be available (tab closed, navigated, etc.)
+    log.debug(`Failed to send ${action} to tab ${tabId} - content script unavailable`);
+  }
 }
 
 /**
@@ -165,6 +255,9 @@ async function handleSourceChanged(speakerIp: string, currentUri: string): Promi
       });
     } else {
       log.info(`Auto-stopping cast for tab ${tabId} due to source change (last speaker)`);
+
+      // Clear tracked media action state for this tab
+      clearTabMediaActionState(tabId);
 
       // Last speaker removed - stop the capture
       await chrome.runtime.sendMessage({ type: 'STOP_CAPTURE', payload: { tabId } }).catch(() => {
@@ -245,6 +338,9 @@ function notifyPopup(message: object): void {
  * @param tabId - The tab ID to stop
  */
 async function stopCastForTab(tabId: number): Promise<void> {
+  // Clear tracked media action state for this tab
+  clearTabMediaActionState(tabId);
+
   // Disable video sync before stopping capture
   chrome.tabs
     .sendMessage(tabId, {
@@ -317,6 +413,9 @@ async function handlePlaybackStopped(speakerIp: string): Promise<void> {
       });
     } else {
       log.info(`Playback stopped on ${speakerIp}, stopping cast for tab ${tabId} (last speaker)`);
+
+      // Clear tracked media action state for this tab
+      clearTabMediaActionState(tabId);
 
       // Last speaker removed - stop the capture
       await chrome.runtime.sendMessage({ type: 'STOP_CAPTURE', payload: { tabId } }).catch(() => {
