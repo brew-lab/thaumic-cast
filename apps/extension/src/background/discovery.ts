@@ -46,16 +46,6 @@ const CACHE_TTL = 5 * 60 * 1000;
 const DEFAULT_MAX_STREAMS = 5;
 
 /**
- * Clears the discovery cache, forcing a fresh discovery on next call.
- * Note: This is now a no-op since cache is managed by connection-state.
- * Use clearConnectionState() from connection-state.ts instead.
- * @deprecated Use clearConnectionState() instead
- */
-export function clearDiscoveryCache(): void {
-  log.debug('Discovery cache cleared (cache now managed by connection-state)');
-}
-
-/**
  * Probes a specific URL to check if it's a valid Thaumic Cast Desktop App.
  * @param url - The URL to probe
  * @returns Discovered app info or null if not valid

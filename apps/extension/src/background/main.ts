@@ -27,7 +27,6 @@ import type {
   SessionHealthMessage,
   ActiveCastsResponse,
 } from '../lib/messages';
-import { clearDiscoveryCache } from './discovery';
 import { recordStableSession, recordBadSession } from '../lib/device-config';
 
 // State management modules
@@ -402,8 +401,7 @@ chrome.storage.sync.onChanged.addListener(async (changes) => {
       await sendToOffscreen({ type: 'WS_DISCONNECT' }).catch(() => {});
     }
 
-    // Clear caches to force fresh discovery
-    clearDiscoveryCache();
+    // Clear connection state to force fresh discovery
     clearConnectionState();
 
     // Trigger fresh discovery and connection
