@@ -1,5 +1,6 @@
 import { createLogger } from '@thaumic-cast/shared';
 import { loadExtensionSettings } from './settings';
+import { getConnectionState, setDesktopApp } from '../background/connection-state';
 
 const log = createLogger('Discovery');
 
@@ -9,60 +10,32 @@ const log = createLogger('Discovery');
 const PORT_RANGE = { start: 49400, end: 49410 };
 
 /**
-
  * Discovered Desktop App information including system limits.
-
  */
-
 export interface DiscoveredApp {
   /** The base URL of the app (e.g. http://localhost:49400). */
-
   url: string;
-
   /** Maximum concurrent streams allowed by the server. */
-
   maxStreams: number;
 }
 
 /**
-
- * Cache for the discovered app info to avoid rescanning on every request.
-
- */
-
-let cachedApp: DiscoveredApp | null = null;
-
-/**
-
- * Timestamp of when the cache was last updated.
-
- */
-
-let lastDiscoveredAt = 0;
-
-/**
-
  * TTL for the discovery cache (5 minutes).
-
  */
-
 const CACHE_TTL = 5 * 60 * 1000;
 
 /**
-
  * Default fallback stream limit if not provided by server.
-
  */
-
 const DEFAULT_MAX_STREAMS = 5;
 
 /**
  * Clears the discovery cache, forcing a fresh discovery on next call.
+ * Note: This is now a no-op since cache is managed by connection-state.
+ * Use clearConnectionState() from connection-state.ts instead.
  */
 export function clearDiscoveryCache(): void {
-  cachedApp = null;
-  lastDiscoveredAt = 0;
-  log.debug('Discovery cache cleared');
+  log.debug('Discovery cache cleared (cache now managed by connection-state)');
 }
 
 /**
@@ -100,7 +73,7 @@ async function probeUrl(url: string): Promise<DiscoveredApp | null> {
  * - If useAutoDiscover is false and serverUrl is set, uses that URL directly
  * - Otherwise, scans localhost ports 49400-49410 in parallel
  *
- * Implements caching to avoid unnecessary network scans.
+ * Uses connection-state as the single source of truth for caching.
  *
  * @param force - If true, bypasses the cache and performs a full scan.
  * @returns Discovered app info or null if not found.
@@ -116,8 +89,7 @@ export async function discoverDesktopApp(force = false): Promise<DiscoveredApp |
     const app = await probeUrl(settings.serverUrl);
 
     if (app) {
-      cachedApp = app;
-      lastDiscoveredAt = now;
+      setDesktopApp(app.url, app.maxStreams);
       return app;
     }
 
@@ -125,17 +97,26 @@ export async function discoverDesktopApp(force = false): Promise<DiscoveredApp |
     return null;
   }
 
-  // Auto-discover mode: check cache first
-  if (!force && cachedApp && now - lastDiscoveredAt < CACHE_TTL) {
-    // Verify cached URL is still alive
-    try {
-      const response = await fetch(`${cachedApp.url}/health`, {
-        signal: AbortSignal.timeout(200),
-      });
+  // Auto-discover mode: check cache first (using connection-state as source of truth)
+  const connState = getConnectionState();
+  if (!force && connState.desktopAppUrl && connState.lastDiscoveredAt) {
+    const cacheAge = now - connState.lastDiscoveredAt;
+    if (cacheAge < CACHE_TTL) {
+      // Verify cached URL is still alive
+      try {
+        const response = await fetch(`${connState.desktopAppUrl}/health`, {
+          signal: AbortSignal.timeout(200),
+        });
 
-      if (response.ok) return cachedApp;
-    } catch {
-      log.debug('Cached Desktop App URL no longer responding, rescanning...');
+        if (response.ok) {
+          return {
+            url: connState.desktopAppUrl,
+            maxStreams: connState.maxStreams ?? DEFAULT_MAX_STREAMS,
+          };
+        }
+      } catch {
+        log.debug('Cached Desktop App URL no longer responding, rescanning...');
+      }
     }
   }
 
@@ -151,12 +132,10 @@ export async function discoverDesktopApp(force = false): Promise<DiscoveredApp |
 
   if (foundApp) {
     log.info(`Desktop App discovered at: ${foundApp.url} (Limit: ${foundApp.maxStreams})`);
-    cachedApp = foundApp;
-    lastDiscoveredAt = now;
+    setDesktopApp(foundApp.url, foundApp.maxStreams);
     return foundApp;
   }
 
   log.warn('Desktop App not found in port range.');
-  cachedApp = null;
   return null;
 }

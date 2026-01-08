@@ -160,15 +160,15 @@ interface DiscoverResult {
 }
 
 /**
- * Discovers the desktop app and caches the result.
- * Centralizes the discover + cache pattern to avoid duplication.
+ * Discovers the desktop app and returns the result.
+ * Discovery now updates connection-state internally via setDesktopApp().
  * @param force - Whether to force fresh discovery (ignore cache)
  * @returns The discovered app info, or null if not found
  */
 async function discoverAndCache(force = false): Promise<DiscoverResult | null> {
   const app = await discoverDesktopApp(force);
   if (!app) return null;
-  setDesktopApp(app.url, app.maxStreams);
+  // Note: setDesktopApp is now called inside discoverDesktopApp
   return { url: app.url, maxStreams: app.maxStreams };
 }
 
