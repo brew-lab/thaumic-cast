@@ -16,6 +16,7 @@
 import type { ActiveCast, EncoderConfig, TabMediaState } from '@thaumic-cast/protocol';
 import { getCachedState } from './metadata-cache';
 import { createLogger } from '@thaumic-cast/shared';
+import { notifyPopup } from './notify';
 
 const log = createLogger('SessionManager');
 
@@ -278,14 +279,10 @@ export function getActiveCasts(): ActiveCast[] {
  * Called after session registration or removal.
  */
 function notifySessionsChanged(): void {
-  chrome.runtime
-    .sendMessage({
-      type: 'ACTIVE_CASTS_CHANGED',
-      casts: getActiveCasts(),
-    })
-    .catch(() => {
-      // Popup may not be open
-    });
+  notifyPopup({
+    type: 'ACTIVE_CASTS_CHANGED',
+    casts: getActiveCasts(),
+  });
 }
 
 /**

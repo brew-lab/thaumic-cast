@@ -35,6 +35,7 @@ import {
   removeSpeakerFromSession,
   hasSession,
 } from './session-manager';
+import { notifyPopup } from './notify';
 
 const log = createLogger('SonosEvents');
 
@@ -312,17 +313,6 @@ function handleZoneGroupsUpdated(groups: SonosStateSnapshot['groups']): void {
   });
 
   log.info(`Zone groups updated: ${groups.length} groups`);
-}
-
-/**
- * Sends a message to the popup.
- * Silently ignores errors if popup is not open.
- * @param message - The message to send
- */
-function notifyPopup(message: object): void {
-  chrome.runtime.sendMessage(message).catch(() => {
-    // Popup may not be open - this is expected
-  });
 }
 
 /**
