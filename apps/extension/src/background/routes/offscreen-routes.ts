@@ -9,7 +9,7 @@
 
 import { createLogger } from '@thaumic-cast/shared';
 import type { BroadcastEvent } from '@thaumic-cast/protocol';
-import { registerRoute } from '../router';
+import { registerRoute, registerValidatedRoute } from '../router';
 import {
   handleWsConnected,
   handleWsTemporarilyDisconnected,
@@ -34,9 +34,8 @@ const log = createLogger('OffscreenRoutes');
  * Registers all offscreen communication routes.
  */
 export function registerOffscreenRoutes(): void {
-  registerRoute('WS_CONNECTED', (msg) => {
-    const validated = WsConnectedMessageSchema.parse(msg);
-    handleWsConnected(validated.state);
+  registerValidatedRoute('WS_CONNECTED', WsConnectedMessageSchema, (msg) => {
+    handleWsConnected(msg.state);
     return { success: true };
   });
 
@@ -50,22 +49,21 @@ export function registerOffscreenRoutes(): void {
     return { success: true };
   });
 
+  // Uses registerRoute because BroadcastEventSchema uses passthrough(),
+  // which produces a type incompatible with registerValidatedRoute's constraints
   registerRoute('SONOS_EVENT', async (msg) => {
     const validated = SonosEventMessageSchema.parse(msg);
-    // Cast needed because BroadcastEventSchema uses passthrough()
     await handleSonosEvent(validated.payload as BroadcastEvent);
     return { success: true };
   });
 
-  registerRoute('NETWORK_EVENT', (msg) => {
-    const validated = NetworkEventMessageSchema.parse(msg);
-    handleNetworkEvent(validated.payload);
+  registerValidatedRoute('NETWORK_EVENT', NetworkEventMessageSchema, (msg) => {
+    handleNetworkEvent(msg.payload);
     return { success: true };
   });
 
-  registerRoute('TOPOLOGY_EVENT', (msg) => {
-    const validated = TopologyEventMessageSchema.parse(msg);
-    handleTopologyEvent(validated.payload);
+  registerValidatedRoute('TOPOLOGY_EVENT', TopologyEventMessageSchema, (msg) => {
+    handleTopologyEvent(msg.payload);
     return { success: true };
   });
 
@@ -74,8 +72,7 @@ export function registerOffscreenRoutes(): void {
     return { success: true };
   });
 
-  registerRoute('SESSION_DISCONNECTED', (msg) => {
-    const validated = SessionDisconnectedMessageSchema.parse(msg);
+  registerValidatedRoute('SESSION_DISCONNECTED', SessionDisconnectedMessageSchema, (validated) => {
     const { tabId } = validated;
 
     if (hasSession(tabId)) {

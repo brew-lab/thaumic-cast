@@ -5,7 +5,7 @@
  * - GET_SONOS_STATE, SET_VOLUME, SET_MUTE, CONTROL_MEDIA
  */
 
-import { registerRoute } from '../router';
+import { registerRoute, registerValidatedRoute } from '../router';
 import { getSonosState } from '../handlers/connection';
 import { handleSetVolume, handleSetMute, handleControlMedia } from '../handlers/media-control';
 import {
@@ -22,19 +22,12 @@ export function registerSonosRoutes(): void {
     return getSonosState();
   });
 
-  registerRoute('SET_VOLUME', async (msg) => {
-    const validated = SetVolumeMessageSchema.parse(msg);
-    return handleSetVolume(validated);
-  });
+  registerValidatedRoute('SET_VOLUME', SetVolumeMessageSchema, handleSetVolume);
 
-  registerRoute('SET_MUTE', async (msg) => {
-    const validated = SetMuteMessageSchema.parse(msg);
-    return handleSetMute(validated);
-  });
+  registerValidatedRoute('SET_MUTE', SetMuteMessageSchema, handleSetMute);
 
-  registerRoute('CONTROL_MEDIA', async (msg) => {
-    const validated = ControlMediaMessageSchema.parse(msg);
-    await handleControlMedia(validated);
+  registerValidatedRoute('CONTROL_MEDIA', ControlMediaMessageSchema, async (msg) => {
+    await handleControlMedia(msg);
     return { success: true };
   });
 }

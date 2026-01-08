@@ -5,7 +5,7 @@
  * - TAB_METADATA_UPDATE, TAB_OG_IMAGE, GET_CURRENT_TAB_STATE
  */
 
-import { registerRoute } from '../router';
+import { registerRoute, registerValidatedRoute } from '../router';
 import {
   handleTabMetadataUpdate,
   handleTabOgImage,
@@ -17,15 +17,17 @@ import { TabMetadataUpdateMessageSchema, TabOgImageMessageSchema } from '../../l
  * Registers all metadata routes.
  */
 export function registerMetadataRoutes(): void {
-  registerRoute('TAB_METADATA_UPDATE', async (msg, sender) => {
-    const validated = TabMetadataUpdateMessageSchema.parse(msg);
-    await handleTabMetadataUpdate(validated, sender);
-    return { success: true };
-  });
+  registerValidatedRoute(
+    'TAB_METADATA_UPDATE',
+    TabMetadataUpdateMessageSchema,
+    async (msg, sender) => {
+      await handleTabMetadataUpdate(msg, sender);
+      return { success: true };
+    },
+  );
 
-  registerRoute('TAB_OG_IMAGE', (msg, sender) => {
-    const validated = TabOgImageMessageSchema.parse(msg);
-    handleTabOgImage(validated.payload, sender);
+  registerValidatedRoute('TAB_OG_IMAGE', TabOgImageMessageSchema, (msg, sender) => {
+    handleTabOgImage(msg.payload, sender);
     return { success: true };
   });
 

@@ -5,7 +5,7 @@
  * - GET_CONNECTION_STATUS, ENSURE_CONNECTION, WS_CONNECT, WS_DISCONNECT, WS_RECONNECT
  */
 
-import { registerRoute } from '../router';
+import { registerRoute, registerValidatedRoute } from '../router';
 import { getConnectionState } from '../connection-state';
 import { ensureConnection, handleWsConnectRequest } from '../handlers/connection';
 import { offscreenBroker } from '../offscreen-broker';
@@ -23,9 +23,8 @@ export function registerConnectionRoutes(): void {
     return ensureConnection();
   });
 
-  registerRoute('WS_CONNECT', async (msg) => {
-    const validated = WsConnectMessageSchema.parse(msg);
-    await handleWsConnectRequest(validated.url, validated.maxStreams);
+  registerValidatedRoute('WS_CONNECT', WsConnectMessageSchema, async (msg) => {
+    await handleWsConnectRequest(msg.url, msg.maxStreams);
     return { success: true };
   });
 
@@ -34,9 +33,8 @@ export function registerConnectionRoutes(): void {
     return { success: true };
   });
 
-  registerRoute('WS_RECONNECT', async (msg) => {
-    const validated = WsReconnectMessageSchema.parse(msg);
-    await offscreenBroker.reconnectWebSocket(validated.url);
+  registerValidatedRoute('WS_RECONNECT', WsReconnectMessageSchema, async (msg) => {
+    await offscreenBroker.reconnectWebSocket(msg.url);
     return { success: true };
   });
 }

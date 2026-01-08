@@ -11,6 +11,7 @@
  * - Type-safe: Leverages directional message types
  */
 
+import type { z } from 'zod';
 import type { BackgroundInboundMessage } from '../lib/messages';
 
 /**
@@ -40,6 +41,24 @@ export function registerRoute<T extends BackgroundInboundMessage>(
     throw new Error(`Route already registered for type: ${type}`);
   }
   routes.set(type, handler as RouteHandler);
+}
+
+/**
+ * Registers a route with Zod schema validation.
+ * The handler receives the validated message type inferred from the schema.
+ * @param type - The message type string
+ * @param schema - Zod schema for validation
+ * @param handler - Handler receiving validated message and sender
+ */
+export function registerValidatedRoute<S extends z.ZodType<BackgroundInboundMessage>>(
+  type: z.infer<S>['type'],
+  schema: S,
+  handler: (msg: z.infer<S>, sender: chrome.runtime.MessageSender) => Promise<unknown> | unknown,
+): void {
+  registerRoute(type, (msg, sender) => {
+    const validated = schema.parse(msg);
+    return handler(validated, sender);
+  });
 }
 
 /**

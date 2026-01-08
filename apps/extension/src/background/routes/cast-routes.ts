@@ -6,7 +6,7 @@
  */
 
 import type { ActiveCastsResponse } from '../../lib/messages';
-import { registerRoute } from '../router';
+import { registerRoute, registerValidatedRoute } from '../router';
 import { handleStartCast, handleStopCast, handleGetStatus } from '../handlers/cast';
 import { getActiveCasts } from '../session-manager';
 import { StartCastMessageSchema, StopCastMessageSchema } from '../../lib/message-schemas';
@@ -15,13 +15,11 @@ import { StartCastMessageSchema, StopCastMessageSchema } from '../../lib/message
  * Registers all cast session routes.
  */
 export function registerCastRoutes(): void {
-  registerRoute('START_CAST', (msg) => {
-    const validated = StartCastMessageSchema.parse(msg);
+  registerValidatedRoute('START_CAST', StartCastMessageSchema, (validated) => {
     return new Promise((resolve) => handleStartCast(validated, resolve));
   });
 
-  registerRoute('STOP_CAST', (msg) => {
-    const validated = StopCastMessageSchema.parse(msg);
+  registerValidatedRoute('STOP_CAST', StopCastMessageSchema, (validated) => {
     return new Promise((resolve) => handleStopCast(validated, resolve));
   });
 

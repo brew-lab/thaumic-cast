@@ -6,7 +6,7 @@
  * - GET_VIDEO_SYNC_STATE, VIDEO_SYNC_STATE_CHANGED
  */
 
-import { registerRoute } from '../router';
+import { registerValidatedRoute } from '../router';
 import {
   handleVideoSyncMessage,
   handleGetVideoSyncState,
@@ -24,29 +24,24 @@ import {
  * Registers all video sync routes.
  */
 export function registerVideoSyncRoutes(): void {
-  registerRoute('SET_VIDEO_SYNC_ENABLED', async (msg) => {
-    const validated = SetVideoSyncEnabledMessageSchema.parse(msg);
-    return handleVideoSyncMessage(validated, validated.payload.tabId);
-  });
+  registerValidatedRoute('SET_VIDEO_SYNC_ENABLED', SetVideoSyncEnabledMessageSchema, (msg) =>
+    handleVideoSyncMessage(msg, msg.payload.tabId),
+  );
 
-  registerRoute('SET_VIDEO_SYNC_TRIM', async (msg) => {
-    const validated = SetVideoSyncTrimMessageSchema.parse(msg);
-    return handleVideoSyncMessage(validated, validated.payload.tabId);
-  });
+  registerValidatedRoute('SET_VIDEO_SYNC_TRIM', SetVideoSyncTrimMessageSchema, (msg) =>
+    handleVideoSyncMessage(msg, msg.payload.tabId),
+  );
 
-  registerRoute('TRIGGER_RESYNC', async (msg) => {
-    const validated = TriggerResyncMessageSchema.parse(msg);
-    return handleVideoSyncMessage(validated, validated.payload.tabId);
-  });
+  registerValidatedRoute('TRIGGER_RESYNC', TriggerResyncMessageSchema, (msg) =>
+    handleVideoSyncMessage(msg, msg.payload.tabId),
+  );
 
-  registerRoute('GET_VIDEO_SYNC_STATE', async (msg) => {
-    const validated = GetVideoSyncStateMessageSchema.parse(msg);
-    return handleGetVideoSyncState(validated.payload.tabId);
-  });
+  registerValidatedRoute('GET_VIDEO_SYNC_STATE', GetVideoSyncStateMessageSchema, (msg) =>
+    handleGetVideoSyncState(msg.payload.tabId),
+  );
 
-  registerRoute('VIDEO_SYNC_STATE_CHANGED', (msg) => {
-    const validated = VideoSyncStateChangedMessageSchema.parse(msg);
-    handleVideoSyncStateChanged(validated);
+  registerValidatedRoute('VIDEO_SYNC_STATE_CHANGED', VideoSyncStateChangedMessageSchema, (msg) => {
+    handleVideoSyncStateChanged(msg);
     return { success: true };
   });
 }
