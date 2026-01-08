@@ -1,5 +1,15 @@
 # @thaumic-cast/ui
 
+## 0.0.3
+
+### Patch Changes
+
+- [#26](https://github.com/brew-lab/thaumic-cast/pull/26) [`7af7ee1`](https://github.com/brew-lab/thaumic-cast/commit/7af7ee150acabc9812cf74bd8d1c9edd1e8edded) Thanks [@skezo](https://github.com/skezo)! - Extract component styles to CSS modules for better encapsulation
+  - Move component-specific styles from theme.css to dedicated CSS module files
+  - Add IconButton `solid` variant for filled background buttons
+  - Fix ToggleSwitch contrast to meet WCAG 2.1 AA using relative color syntax
+  - Fix SpeakerMultiSelect to prevent deselecting the last remaining item
+
 ## 0.0.2
 
 ### Patch Changes

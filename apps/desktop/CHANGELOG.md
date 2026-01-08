@@ -1,5 +1,12 @@
 # @thaumic-cast/desktop
 
+## 0.8.1
+
+### Patch Changes
+
+- Updated dependencies [[`7af7ee1`](https://github.com/brew-lab/thaumic-cast/commit/7af7ee150acabc9812cf74bd8d1c9edd1e8edded)]:
+  - @thaumic-cast/ui@0.0.3
+
 ## 0.8.0
 
 ## 0.7.0
