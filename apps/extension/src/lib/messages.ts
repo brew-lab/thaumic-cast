@@ -10,70 +10,97 @@ import {
   PlaybackResult,
 } from '@thaumic-cast/protocol';
 
-/**
- * Internal message types for extension communication.
- */
-export type ExtensionMessageType =
+// ─────────────────────────────────────────────────────────────────────────────
+// Message Type Constants (organized by direction)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Message types: Popup → Background */
+export type PopupToBackgroundType =
   | 'START_CAST'
   | 'STOP_CAST'
   | 'GET_CAST_STATUS'
   | 'GET_SONOS_STATE'
   | 'GET_CONNECTION_STATUS'
-  | 'START_CAPTURE'
-  | 'STOP_CAPTURE'
-  | 'START_PLAYBACK'
-  // Metadata messages (content → background → offscreen)
-  | 'TAB_METADATA_UPDATE'
-  | 'OFFSCREEN_METADATA_UPDATE'
-  | 'TAB_OG_IMAGE'
-  | 'REQUEST_METADATA'
-  // Popup queries (popup → background)
   | 'GET_CURRENT_TAB_STATE'
   | 'GET_ACTIVE_CASTS'
   | 'ENSURE_CONNECTION'
-  // Popup notifications (background → popup)
+  | 'SET_VOLUME'
+  | 'SET_MUTE'
+  | 'CONTROL_MEDIA'
+  | 'SET_VIDEO_SYNC_ENABLED'
+  | 'SET_VIDEO_SYNC_TRIM'
+  | 'TRIGGER_RESYNC'
+  | 'GET_VIDEO_SYNC_STATE'
+  | 'WS_CONNECT'
+  | 'WS_DISCONNECT'
+  | 'WS_RECONNECT';
+
+/** Message types: Background → Popup */
+export type BackgroundToPopupType =
   | 'TAB_STATE_CHANGED'
   | 'ACTIVE_CASTS_CHANGED'
   | 'CAST_AUTO_STOPPED'
   | 'SPEAKER_REMOVED'
-  | 'NETWORK_HEALTH_CHANGED'
-  // WebSocket control messages (background ↔ offscreen)
+  | 'WS_STATE_CHANGED'
+  | 'VOLUME_UPDATE'
+  | 'MUTE_UPDATE'
+  | 'TRANSPORT_STATE_UPDATE'
+  | 'WS_CONNECTION_LOST'
+  | 'NETWORK_HEALTH_CHANGED';
+
+/** Message types: Content → Background */
+export type ContentToBackgroundType = 'TAB_METADATA_UPDATE' | 'TAB_OG_IMAGE';
+
+/** Message types: Background → Content */
+export type BackgroundToContentType =
+  | 'REQUEST_METADATA'
+  | 'CONTROL_MEDIA'
+  | 'SET_VIDEO_SYNC_ENABLED'
+  | 'SET_VIDEO_SYNC_TRIM'
+  | 'TRIGGER_RESYNC'
+  | 'GET_VIDEO_SYNC_STATE';
+
+/** Message types: Background → Offscreen */
+export type BackgroundToOffscreenType =
+  | 'START_CAPTURE'
+  | 'STOP_CAPTURE'
+  | 'START_PLAYBACK'
+  | 'OFFSCREEN_METADATA_UPDATE'
   | 'WS_CONNECT'
   | 'WS_DISCONNECT'
   | 'WS_RECONNECT'
   | 'GET_WS_STATUS'
   | 'SYNC_SONOS_STATE'
-  // WebSocket status messages (offscreen → background)
+  | 'DETECT_CODECS'
+  | 'SET_VOLUME'
+  | 'SET_MUTE';
+
+/** Message types: Offscreen → Background */
+export type OffscreenToBackgroundType =
   | 'WS_CONNECTED'
   | 'WS_DISCONNECTED'
   | 'WS_PERMANENTLY_DISCONNECTED'
   | 'SONOS_EVENT'
   | 'NETWORK_EVENT'
   | 'TOPOLOGY_EVENT'
-  // State update messages (background → popup)
-  | 'WS_STATE_CHANGED'
-  | 'VOLUME_UPDATE'
-  | 'MUTE_UPDATE'
-  | 'TRANSPORT_STATE_UPDATE'
-  | 'WS_CONNECTION_LOST'
-  // Control commands (popup → background → offscreen)
-  | 'SET_VOLUME'
-  | 'SET_MUTE'
-  // Offscreen lifecycle
   | 'OFFSCREEN_READY'
-  // Session health (offscreen → background)
-  | 'SESSION_HEALTH'
-  // Media playback control (popup → background → content)
-  | 'CONTROL_MEDIA'
-  // Codec detection (background → offscreen)
-  | 'DETECT_CODECS'
-  // Video sync control (popup → background → content)
-  | 'SET_VIDEO_SYNC_ENABLED'
-  | 'SET_VIDEO_SYNC_TRIM'
-  | 'TRIGGER_RESYNC'
-  | 'GET_VIDEO_SYNC_STATE'
-  // Video sync state broadcast (content → popup)
-  | 'VIDEO_SYNC_STATE_CHANGED';
+  | 'SESSION_HEALTH';
+
+/** Message types: Content broadcast */
+export type ContentBroadcastType = 'VIDEO_SYNC_STATE_CHANGED';
+
+/**
+ * Union of all internal extension message types.
+ * @deprecated Prefer using directional type unions for better type safety.
+ */
+export type ExtensionMessageType =
+  | PopupToBackgroundType
+  | BackgroundToPopupType
+  | ContentToBackgroundType
+  | BackgroundToContentType
+  | BackgroundToOffscreenType
+  | OffscreenToBackgroundType
+  | ContentBroadcastType;
 
 /**
  * Message payload for starting a cast.
@@ -642,42 +669,90 @@ export interface VideoSyncStateChangedMessage {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Updated Union Type
+// Directional Message Union Types
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
- * Union of all internal extension messages.
+ * Messages sent from popup to background.
+ * Used for cast control, state queries, and settings changes.
  */
-export type ExtensionMessage =
+export type PopupToBackgroundMessage =
   | StartCastMessage
   | StopCastMessage
   | GetCastStatusMessage
   | GetSonosStateMessage
   | GetConnectionStatusMessage
-  | StartCaptureMessage
-  | StopCaptureMessage
-  | StartPlaybackMessage
-  // Tab metadata messages
-  | TabMetadataUpdateMessage
-  | OffscreenMetadataMessage
-  | TabOgImageMessage
-  | RequestMetadataMessage
-  // Popup query messages
   | GetCurrentTabStateMessage
   | GetActiveCastsMessage
   | EnsureConnectionMessage
-  // Popup notification messages
+  | SetVolumeMessage
+  | SetMuteMessage
+  | ControlMediaMessage
+  | SetVideoSyncEnabledMessage
+  | SetVideoSyncTrimMessage
+  | TriggerResyncMessage
+  | GetVideoSyncStateMessage
+  | WsConnectMessage
+  | WsDisconnectMessage
+  | WsReconnectMessage;
+
+/**
+ * Messages sent from background to popup.
+ * Used for state updates and notifications.
+ */
+export type BackgroundToPopupMessage =
   | TabStateChangedMessage
   | ActiveCastsChangedMessage
   | CastAutoStoppedMessage
   | SpeakerRemovedMessage
-  | NetworkHealthChangedMessage
-  // WebSocket messages
+  | WsStateChangedMessage
+  | VolumeUpdateMessage
+  | MuteUpdateMessage
+  | TransportStateUpdateMessage
+  | WsConnectionLostMessage
+  | NetworkHealthChangedMessage;
+
+/**
+ * Messages sent from content script to background.
+ * Used for metadata updates from web pages.
+ */
+export type ContentToBackgroundMessage = TabMetadataUpdateMessage | TabOgImageMessage;
+
+/**
+ * Messages sent from background to content script.
+ * Used for media control and video sync commands.
+ */
+export type BackgroundToContentMessage =
+  | RequestMetadataMessage
+  | ControlMediaMessage
+  | SetVideoSyncEnabledMessage
+  | SetVideoSyncTrimMessage
+  | TriggerResyncMessage
+  | GetVideoSyncStateMessage;
+
+/**
+ * Messages sent from background to offscreen document.
+ * Used for capture control, WebSocket management, and codec detection.
+ */
+export type BackgroundToOffscreenMessage =
+  | StartCaptureMessage
+  | StopCaptureMessage
+  | StartPlaybackMessage
+  | OffscreenMetadataMessage
   | WsConnectMessage
   | WsDisconnectMessage
   | WsReconnectMessage
   | GetWsStatusMessage
   | SyncSonosStateMessage
+  | DetectCodecsMessage
+  | SetVolumeMessage
+  | SetMuteMessage;
+
+/**
+ * Messages sent from offscreen document to background.
+ * Used for WebSocket events, session status, and lifecycle signals.
+ */
+export type OffscreenToBackgroundMessage =
   | WsConnectedMessage
   | WsDisconnectedMessage
   | WsPermanentlyDisconnectedMessage
@@ -685,22 +760,26 @@ export type ExtensionMessage =
   | NetworkEventMessage
   | TopologyEventMessage
   | OffscreenReadyMessage
-  | WsStateChangedMessage
-  | VolumeUpdateMessage
-  | MuteUpdateMessage
-  | TransportStateUpdateMessage
-  | WsConnectionLostMessage
-  | SetVolumeMessage
-  | SetMuteMessage
-  // Media playback control
-  | ControlMediaMessage
-  // Session health
-  | SessionHealthMessage
-  // Codec detection
-  | DetectCodecsMessage
-  // Video sync
-  | SetVideoSyncEnabledMessage
-  | SetVideoSyncTrimMessage
-  | TriggerResyncMessage
-  | GetVideoSyncStateMessage
-  | VideoSyncStateChangedMessage;
+  | SessionHealthMessage;
+
+/**
+ * Messages broadcast from content script (video sync state).
+ */
+export type ContentBroadcastMessage = VideoSyncStateChangedMessage;
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Legacy Union Type (for backward compatibility)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Union of all internal extension messages.
+ * @deprecated Prefer using directional union types for better type safety.
+ */
+export type ExtensionMessage =
+  | PopupToBackgroundMessage
+  | BackgroundToPopupMessage
+  | ContentToBackgroundMessage
+  | BackgroundToContentMessage
+  | BackgroundToOffscreenMessage
+  | OffscreenToBackgroundMessage
+  | ContentBroadcastMessage;
