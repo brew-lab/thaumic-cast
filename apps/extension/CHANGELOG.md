@@ -1,5 +1,11 @@
 # @thaumic-cast/extension
 
+## 0.8.0
+
+### Minor Changes
+
+- [#24](https://github.com/brew-lab/thaumic-cast/pull/24) [`2a2941e`](https://github.com/brew-lab/thaumic-cast/commit/2a2941e97ddd5861b5e13ad35eee09f5dd65a95f) Thanks [@skezo](https://github.com/skezo)! - Sync tab media playback with Sonos transport state - pauses tab when any speaker pauses, resumes when all speakers are playing
+
 ## 0.7.0
 
 ### Patch Changes
