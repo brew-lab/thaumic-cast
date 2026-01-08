@@ -9,6 +9,7 @@ import type {
   TransportStateUpdateMessage,
 } from '../../lib/messages';
 import { SpeakerGroupCollection } from '../../domain/speaker';
+import { noop } from '../../lib/noop';
 import { useChromeMessage } from './useChromeMessage';
 
 /**
@@ -52,9 +53,7 @@ export function useSonosState(): SonosStateResult {
           setState(response.state);
         }
       })
-      .catch(() => {
-        // Background might not be ready
-      })
+      .catch(noop)
       .finally(() => setLoading(false));
   }, []);
 

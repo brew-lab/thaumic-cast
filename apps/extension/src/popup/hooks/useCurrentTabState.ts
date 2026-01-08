@@ -2,6 +2,7 @@ import { useState, useEffect } from 'preact/hooks';
 import type { TabMediaState } from '@thaumic-cast/protocol';
 import type { CurrentTabStateResponse } from '../../lib/messages';
 import { getActiveTab } from '../../lib/tab-utils';
+import { noop } from '../../lib/noop';
 import { useChromeMessage } from './useChromeMessage';
 
 /**
@@ -34,9 +35,7 @@ export function useCurrentTabState(): CurrentTabResult {
         setState(response.state);
         setIsCasting(response.isCasting);
       })
-      .catch(() => {
-        // Background might not be ready
-      })
+      .catch(noop)
       .finally(() => setLoading(false));
   }, []);
 

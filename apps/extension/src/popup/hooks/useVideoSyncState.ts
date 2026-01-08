@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'preact/hooks';
 import type { VideoSyncStatus } from '@thaumic-cast/protocol';
 import type { VideoSyncStateChangedMessage } from '../../lib/messages';
+import { noop } from '../../lib/noop';
 import { useChromeMessage } from './useChromeMessage';
 
 /** Debounce interval for trim slider (ms) */
@@ -41,9 +42,7 @@ export function useVideoSyncState(tabId: number | undefined): VideoSyncStateResu
       .then((response: VideoSyncStatus | undefined) => {
         if (response) setState(response);
       })
-      .catch(() => {
-        // Content script may not be ready
-      });
+      .catch(noop);
   }, [tabId]);
 
   useChromeMessage(
@@ -89,7 +88,7 @@ export function useVideoSyncState(tabId: number | undefined): VideoSyncStateResu
       trimDebounceRef.current = setTimeout(() => {
         chrome.runtime
           .sendMessage({ type: 'SET_VIDEO_SYNC_TRIM', payload: { tabId, trimMs } })
-          .catch(() => {});
+          .catch(noop);
       }, TRIM_DEBOUNCE_MS);
     },
     [tabId],
@@ -97,7 +96,7 @@ export function useVideoSyncState(tabId: number | undefined): VideoSyncStateResu
 
   const resync = useCallback(() => {
     if (!tabId) return;
-    chrome.runtime.sendMessage({ type: 'TRIGGER_RESYNC', payload: { tabId } }).catch(() => {});
+    chrome.runtime.sendMessage({ type: 'TRIGGER_RESYNC', payload: { tabId } }).catch(noop);
   }, [tabId]);
 
   return {

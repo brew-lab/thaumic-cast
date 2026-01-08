@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'preact/hooks';
 import type { ActiveCast } from '@thaumic-cast/protocol';
 import type { ActiveCastsResponse } from '../../lib/messages';
+import { noop } from '../../lib/noop';
 import { useChromeMessage } from './useChromeMessage';
 
 /**
@@ -31,9 +32,7 @@ export function useActiveCasts(): ActiveCastsResult {
       .then((response: ActiveCastsResponse) => {
         setCasts(response.casts);
       })
-      .catch(() => {
-        // Background might not be ready
-      })
+      .catch(noop)
       .finally(() => setLoading(false));
   }, []);
 

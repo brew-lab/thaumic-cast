@@ -12,6 +12,7 @@ import styles from './App.module.css';
 import { ExtensionResponse, StartCastMessage } from '../lib/messages';
 import type { ZoneGroup } from '@thaumic-cast/protocol';
 import { loadExtensionSettings } from '../lib/settings';
+import { noop } from '../lib/noop';
 import { CurrentTabCard } from './components/CurrentTabCard';
 import { ActiveCastsList } from './components/ActiveCastsList';
 import { useCurrentTabState } from './hooks/useCurrentTabState';
@@ -61,7 +62,7 @@ function MainPopup(): JSX.Element {
   useEffect(() => {
     loadExtensionSettings()
       .then((settings) => setVideoSyncEnabled(settings.videoSyncEnabled))
-      .catch(() => {});
+      .catch(noop);
 
     // Listen for settings changes
     const handler = (changes: { [key: string]: chrome.storage.StorageChange }) => {
