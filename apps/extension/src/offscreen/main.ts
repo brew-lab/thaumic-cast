@@ -1046,7 +1046,7 @@ chrome.runtime.onMessage.addListener((msg: ExtensionMessage, _sender, sendRespon
     return true;
   }
 
-  if (msg.type === 'METADATA_UPDATE') {
+  if (msg.type === 'OFFSCREEN_METADATA_UPDATE') {
     const { tabId, metadata } = (msg as OffscreenMetadataMessage).payload;
     const session = activeSessions.get(tabId);
     if (session) {

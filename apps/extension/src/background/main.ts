@@ -470,20 +470,6 @@ chrome.runtime.onMessage.addListener((msg: ExtensionMessage, _sender, sendRespon
           sendResponse({ success: true });
           break;
 
-        // Legacy METADATA_UPDATE from old content scripts - redirect to new handler
-        case 'METADATA_UPDATE':
-          if ('payload' in msg && typeof (msg as { payload: unknown }).payload === 'object') {
-            await handleTabMetadataUpdate(
-              {
-                type: 'TAB_METADATA_UPDATE',
-                payload: (msg as { payload: unknown }).payload,
-              } as TabMetadataUpdateMessage,
-              _sender,
-            );
-          }
-          sendResponse({ success: true });
-          break;
-
         case 'GET_CURRENT_TAB_STATE': {
           const response = await handleGetCurrentTabState();
           sendResponse(response);
@@ -819,7 +805,7 @@ function handleTabOgImage(
  */
 function forwardMetadataToOffscreen(tabId: number, metadata: unknown): void {
   const offscreenMsg: OffscreenMetadataMessage = {
-    type: 'METADATA_UPDATE',
+    type: 'OFFSCREEN_METADATA_UPDATE',
     payload: {
       tabId,
       metadata: metadata as OffscreenMetadataMessage['payload']['metadata'],

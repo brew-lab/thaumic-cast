@@ -22,9 +22,9 @@ export type ExtensionMessageType =
   | 'START_CAPTURE'
   | 'STOP_CAPTURE'
   | 'START_PLAYBACK'
-  | 'METADATA_UPDATE'
   // Metadata messages (content → background → offscreen)
   | 'TAB_METADATA_UPDATE'
+  | 'OFFSCREEN_METADATA_UPDATE'
   | 'TAB_OG_IMAGE'
   | 'REQUEST_METADATA'
   // Popup queries (popup → background)
@@ -184,20 +184,11 @@ export interface SessionHealthMessage {
 }
 
 /**
- * Message payload for metadata updates from content script to background.
- * Contains only the track metadata.
- */
-export interface ContentMetadataMessage {
-  type: 'METADATA_UPDATE';
-  payload: StreamMetadata;
-}
-
-/**
  * Message payload for metadata updates from background to offscreen.
  * Uses nested structure with tabId and metadata separated.
  */
 export interface OffscreenMetadataMessage {
-  type: 'METADATA_UPDATE';
+  type: 'OFFSCREEN_METADATA_UPDATE';
   payload: {
     tabId: number;
     metadata: StreamMetadata;
@@ -666,9 +657,9 @@ export type ExtensionMessage =
   | StartCaptureMessage
   | StopCaptureMessage
   | StartPlaybackMessage
-  | ContentMetadataMessage
   // Tab metadata messages
   | TabMetadataUpdateMessage
+  | OffscreenMetadataMessage
   | TabOgImageMessage
   | RequestMetadataMessage
   // Popup query messages
