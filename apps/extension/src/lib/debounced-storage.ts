@@ -106,14 +106,3 @@ export class DebouncedStorage<T> {
     }
   }
 }
-
-/**
- * Creates a DebouncedStorage instance with the given options.
- * @param options - Configuration options
- * @returns A new DebouncedStorage instance
- */
-export function createDebouncedStorage<T>(
-  options: DebouncedStorageOptions<T>,
-): DebouncedStorage<T> {
-  return new DebouncedStorage(options);
-}
