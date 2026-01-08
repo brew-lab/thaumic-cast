@@ -22,9 +22,14 @@ import type {
   StartPlaybackMessage,
   StartPlaybackResponse,
   OffscreenMetadataMessage,
-  WsConnectMessage,
-  SyncSonosStateMessage,
 } from '../lib/messages';
+import {
+  WsConnectMessageSchema,
+  WsReconnectMessageSchema,
+  SyncSonosStateMessageSchema,
+  SetVolumeMessageSchema,
+  SetMuteMessageSchema,
+} from '../lib/message-schemas';
 import {
   connectControlWebSocket,
   disconnectControlWebSocket,
@@ -62,8 +67,8 @@ export function setupMessageHandlers(): void {
     // ─────────────────────────────────────────────────────────────────────────
 
     if (msg.type === 'WS_CONNECT') {
-      const { url } = msg as WsConnectMessage;
-      connectControlWebSocket(url);
+      const validated = WsConnectMessageSchema.parse(msg);
+      connectControlWebSocket(validated.url);
       sendResponse({ success: true });
       return true;
     }
@@ -75,11 +80,11 @@ export function setupMessageHandlers(): void {
     }
 
     if (msg.type === 'WS_RECONNECT') {
-      const { url } = msg as { url?: string };
+      const validated = WsReconnectMessageSchema.parse(msg);
       const controlConnection = getControlConnection();
-      if (url) {
+      if (validated.url) {
         disconnectControlWebSocket();
-        connectControlWebSocket(url);
+        connectControlWebSocket(validated.url);
       } else if (controlConnection) {
         controlConnection.reconnectAttempts = 0;
         if (controlConnection.reconnectTimer) {
@@ -98,29 +103,29 @@ export function setupMessageHandlers(): void {
     }
 
     if (msg.type === 'SYNC_SONOS_STATE') {
-      const { state } = msg as SyncSonosStateMessage;
-      setCachedSonosState(state);
+      const validated = SyncSonosStateMessageSchema.parse(msg);
+      setCachedSonosState(validated.state);
       sendResponse({ success: true });
       return true;
     }
 
     if (msg.type === 'SET_VOLUME') {
-      const { speakerIp, volume } = msg as { speakerIp: string; volume: number };
+      const validated = SetVolumeMessageSchema.parse(msg);
       // Desktop expects: { type: "SET_VOLUME", payload: { ip, volume } }
       const success = sendControlCommand({
         type: 'SET_VOLUME',
-        payload: { ip: speakerIp, volume },
+        payload: { ip: validated.speakerIp, volume: validated.volume },
       });
       sendResponse({ success });
       return true;
     }
 
     if (msg.type === 'SET_MUTE') {
-      const { speakerIp, muted } = msg as { speakerIp: string; muted: boolean };
+      const validated = SetMuteMessageSchema.parse(msg);
       // Desktop expects: { type: "SET_MUTE", payload: { ip, mute } }
       const success = sendControlCommand({
         type: 'SET_MUTE',
-        payload: { ip: speakerIp, mute: muted },
+        payload: { ip: validated.speakerIp, mute: validated.muted },
       });
       sendResponse({ success });
       return true;

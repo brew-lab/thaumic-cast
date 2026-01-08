@@ -181,6 +181,11 @@ export const WsReconnectMessageSchema = z.object({
   url: z.string().url().optional(),
 });
 
+export const SyncSonosStateMessageSchema = z.object({
+  type: z.literal('SYNC_SONOS_STATE'),
+  state: SonosStateSnapshotSchema,
+});
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Offscreen Schemas
 // ─────────────────────────────────────────────────────────────────────────────
