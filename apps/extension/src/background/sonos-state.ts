@@ -17,6 +17,7 @@ import type { SonosStateSnapshot, ZoneGroup, TransportState } from '@thaumic-cas
 import { createEmptySonosState } from '@thaumic-cast/protocol';
 import { createLogger } from '@thaumic-cast/shared';
 import { persistenceManager } from './persistence-manager';
+import { SpeakerGroupCollection } from '../domain/speaker';
 
 const log = createLogger('SonosState');
 
@@ -45,6 +46,15 @@ const storage = persistenceManager.register<SonosStateSnapshot>(
  */
 export function getSonosState(): SonosStateSnapshot {
   return state;
+}
+
+/**
+ * Gets the speaker groups as a domain model collection.
+ * Provides type-safe operations for speaker/group lookups.
+ * @returns A SpeakerGroupCollection for the current groups
+ */
+export function getSpeakerGroups(): SpeakerGroupCollection {
+  return SpeakerGroupCollection.fromZoneGroups(state.groups);
 }
 
 /**

@@ -25,7 +25,7 @@ import { selectEncoderConfig, describeConfig } from '../../lib/device-config';
 import { resolveAudioMode, describeEncoderConfig } from '../../lib/presets';
 import { getCachedState, updateCache } from '../metadata-cache';
 import { registerSession, hasSession, getSessionCount } from '../session-manager';
-import { getSonosState as getStoredSonosState } from '../sonos-state';
+import { getSpeakerGroups } from '../sonos-state';
 import { getConnectionState, clearConnectionState } from '../connection-state';
 import { stopCastForTab } from '../sonos-event-handlers';
 import { ensureOffscreen } from '../offscreen-manager';
@@ -175,13 +175,10 @@ export async function handleStartCast(
         }
       }
 
-      // Build arrays of successful speakers
-      const sonosState = getStoredSonosState();
+      // Build arrays of successful speakers using domain model
+      const speakerGroups = getSpeakerGroups();
       const successfulIps = successfulResults.map((r) => r.speakerIp);
-      const successfulNames = successfulResults.map((r) => {
-        const group = sonosState.groups.find((g) => g.coordinatorIp === r.speakerIp);
-        return group?.name ?? r.speakerIp;
-      });
+      const successfulNames = successfulResults.map((r) => speakerGroups.getGroupName(r.speakerIp));
 
       // Derive source from tab URL for cache
       const source = getSourceFromUrl(tab.url);

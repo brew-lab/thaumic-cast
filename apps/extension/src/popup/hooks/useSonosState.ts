@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'preact/hooks';
+import { useState, useEffect, useCallback, useMemo } from 'preact/hooks';
 import type { SonosStateSnapshot, ZoneGroup, TransportState } from '@thaumic-cast/protocol';
 import { createEmptySonosState } from '@thaumic-cast/protocol';
 import type {
@@ -8,6 +8,7 @@ import type {
   MuteUpdateMessage,
   TransportStateUpdateMessage,
 } from '../../lib/messages';
+import { SpeakerGroupCollection } from '../../domain/speaker';
 
 /**
  * Result of the useSonosState hook.
@@ -17,6 +18,8 @@ interface SonosStateResult {
   state: SonosStateSnapshot;
   /** Zone groups from state */
   groups: ZoneGroup[];
+  /** Speaker groups as domain model collection (for type-safe lookups) */
+  speakerGroups: SpeakerGroupCollection;
   /** Whether initial data is loading */
   loading: boolean;
   /** Get volume for a speaker */
@@ -127,9 +130,16 @@ export function useSonosState(): SonosStateResult {
     await chrome.runtime.sendMessage({ type: 'SET_MUTE', speakerIp, muted });
   }, []);
 
+  // Memoize speaker groups collection for stable reference
+  const speakerGroups = useMemo(
+    () => SpeakerGroupCollection.fromZoneGroups(state.groups),
+    [state.groups],
+  );
+
   return {
     state,
     groups: state.groups,
+    speakerGroups,
     loading,
     getVolume,
     getMuted,
