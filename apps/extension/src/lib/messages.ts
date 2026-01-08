@@ -1,6 +1,5 @@
 import {
   EncoderConfig,
-  StreamMetadata,
   SonosStateSnapshot,
   BroadcastEvent,
   LatencyBroadcastEvent,
@@ -9,7 +8,9 @@ import {
   TransportState,
   MediaAction,
   PlaybackResult,
+  StreamMetadata,
 } from '@thaumic-cast/protocol';
+import type { RawMediaState } from './message-schemas';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Message Type Constants (organized by direction)
@@ -220,10 +221,11 @@ export interface OffscreenMetadataMessage {
 /**
  * Metadata update from content script (via bridge) to background.
  * Uses TAB_METADATA_UPDATE to distinguish from offscreen messages.
+ * Payload includes supportedActions and playbackState from MediaSession.
  */
 export interface TabMetadataUpdateMessage {
   type: 'TAB_METADATA_UPDATE';
-  payload: StreamMetadata;
+  payload: RawMediaState | null;
 }
 
 /**

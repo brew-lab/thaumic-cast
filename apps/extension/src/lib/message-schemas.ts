@@ -10,7 +10,7 @@ import { z } from 'zod';
 import {
   MediaActionSchema,
   EncoderConfigSchema,
-  StreamMetadataSchema,
+  PlaybackStateSchema,
   SonosStateSnapshotSchema,
   BroadcastEventSchema,
 } from '@thaumic-cast/protocol';
@@ -140,9 +140,23 @@ export const VideoSyncStateChangedMessageSchema = z.object({
 // Metadata Schemas
 // ─────────────────────────────────────────────────────────────────────────────
 
+/**
+ * Raw media state from content script.
+ * Includes supportedActions and playbackState that StreamMetadata doesn't have.
+ */
+export const RawMediaStateSchema = z.object({
+  title: z.string().optional(),
+  artist: z.string().optional(),
+  album: z.string().optional(),
+  artwork: z.string().optional(),
+  supportedActions: z.array(MediaActionSchema).default([]),
+  playbackState: PlaybackStateSchema.default('none'),
+});
+export type RawMediaState = z.infer<typeof RawMediaStateSchema>;
+
 export const TabMetadataUpdateMessageSchema = z.object({
   type: z.literal('TAB_METADATA_UPDATE'),
-  payload: StreamMetadataSchema,
+  payload: RawMediaStateSchema.nullable(),
 }) satisfies z.ZodType<TabMetadataUpdateMessage>;
 
 export const TabOgImageMessageSchema = z.object({
