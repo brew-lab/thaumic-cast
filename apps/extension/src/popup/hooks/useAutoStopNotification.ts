@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'preact/hooks';
+import { useState, useCallback, useRef, useEffect } from 'preact/hooks';
 import { useTranslation } from 'react-i18next';
 import type { CastAutoStoppedMessage } from '../../lib/messages';
 import { useChromeMessage } from './useChromeMessage';
@@ -38,22 +38,48 @@ const AUTO_DISMISS_MS = 5000;
 export function useAutoStopNotification(): AutoStopNotificationResult {
   const { t } = useTranslation();
   const [notification, setNotification] = useState<AutoStopNotification | null>(null);
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Cleanup timer on unmount
+  useEffect(() => {
+    return () => {
+      if (timerRef.current) {
+        clearTimeout(timerRef.current);
+      }
+    };
+  }, []);
 
   useChromeMessage((message) => {
     const msg = message as { type: string };
     if (msg.type === 'CAST_AUTO_STOPPED') {
       const stopMsg = message as CastAutoStoppedMessage;
+
+      // Cancel previous timer before setting new notification
+      if (timerRef.current) {
+        clearTimeout(timerRef.current);
+      }
+
       setNotification({
         tabId: stopMsg.tabId,
         speakerIp: stopMsg.speakerIp,
         reason: stopMsg.reason,
       });
 
-      setTimeout(() => setNotification(null), AUTO_DISMISS_MS);
+      timerRef.current = setTimeout(() => {
+        setNotification(null);
+        timerRef.current = null;
+      }, AUTO_DISMISS_MS);
     }
   });
 
-  const dismiss = useCallback(() => setNotification(null), []);
+  const dismiss = useCallback(() => {
+    // Clear timer when manually dismissing
+    if (timerRef.current) {
+      clearTimeout(timerRef.current);
+      timerRef.current = null;
+    }
+    setNotification(null);
+  }, []);
 
   const message = notification ? t(`auto_stop_${notification.reason}`) : null;
 
