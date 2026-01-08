@@ -9,13 +9,7 @@ import { registerRoute } from '../router';
 import { getConnectionState } from '../connection-state';
 import { ensureConnection, handleWsConnectRequest } from '../handlers/connection';
 import { sendToOffscreen } from '../offscreen-manager';
-
-/** WS_CONNECT message with optional maxStreams (not in base type) */
-interface WsConnectMessageWithMaxStreams {
-  type: 'WS_CONNECT';
-  url: string;
-  maxStreams?: number;
-}
+import { WsConnectMessageSchema, WsReconnectMessageSchema } from '../../lib/message-schemas';
 
 /**
  * Registers all connection routes.
@@ -30,18 +24,19 @@ export function registerConnectionRoutes(): void {
   });
 
   registerRoute('WS_CONNECT', async (msg) => {
-    const { url, maxStreams } = msg as WsConnectMessageWithMaxStreams;
-    await handleWsConnectRequest(url, maxStreams);
+    const validated = WsConnectMessageSchema.parse(msg);
+    await handleWsConnectRequest(validated.url, validated.maxStreams);
     return { success: true };
   });
 
-  registerRoute('WS_DISCONNECT', async (msg) => {
-    await sendToOffscreen(msg);
+  registerRoute('WS_DISCONNECT', async () => {
+    await sendToOffscreen({ type: 'WS_DISCONNECT' });
     return { success: true };
   });
 
   registerRoute('WS_RECONNECT', async (msg) => {
-    await sendToOffscreen(msg);
+    const validated = WsReconnectMessageSchema.parse(msg);
+    await sendToOffscreen(validated);
     return { success: true };
   });
 }

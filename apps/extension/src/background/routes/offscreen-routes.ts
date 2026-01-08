@@ -8,13 +8,7 @@
  */
 
 import { createLogger } from '@thaumic-cast/shared';
-import type {
-  WsConnectedMessage,
-  SonosEventMessage,
-  NetworkEventMessage,
-  TopologyEventMessage,
-  SessionHealthMessage,
-} from '../../lib/messages';
+import type { BroadcastEvent } from '@thaumic-cast/protocol';
 import { recordStableSession, recordBadSession } from '../../lib/device-config';
 import { registerRoute } from '../router';
 import {
@@ -26,6 +20,13 @@ import {
 } from '../handlers/connection';
 import { handleSonosEvent } from '../sonos-event-handlers';
 import { handleOffscreenReady } from '../offscreen-manager';
+import {
+  WsConnectedMessageSchema,
+  SonosEventMessageSchema,
+  NetworkEventMessageSchema,
+  TopologyEventMessageSchema,
+  SessionHealthMessageSchema,
+} from '../../lib/message-schemas';
 
 const log = createLogger('OffscreenRoutes');
 
@@ -33,8 +34,9 @@ const log = createLogger('OffscreenRoutes');
  * Registers all offscreen communication routes.
  */
 export function registerOffscreenRoutes(): void {
-  registerRoute<WsConnectedMessage>('WS_CONNECTED', (msg) => {
-    handleWsConnected(msg.state);
+  registerRoute('WS_CONNECTED', (msg) => {
+    const validated = WsConnectedMessageSchema.parse(msg);
+    handleWsConnected(validated.state);
     return { success: true };
   });
 
@@ -48,18 +50,22 @@ export function registerOffscreenRoutes(): void {
     return { success: true };
   });
 
-  registerRoute<SonosEventMessage>('SONOS_EVENT', async (msg) => {
-    await handleSonosEvent(msg.payload);
+  registerRoute('SONOS_EVENT', async (msg) => {
+    const validated = SonosEventMessageSchema.parse(msg);
+    // Cast needed because BroadcastEventSchema uses passthrough()
+    await handleSonosEvent(validated.payload as BroadcastEvent);
     return { success: true };
   });
 
-  registerRoute<NetworkEventMessage>('NETWORK_EVENT', (msg) => {
-    handleNetworkEvent(msg.payload);
+  registerRoute('NETWORK_EVENT', (msg) => {
+    const validated = NetworkEventMessageSchema.parse(msg);
+    handleNetworkEvent(validated.payload);
     return { success: true };
   });
 
-  registerRoute<TopologyEventMessage>('TOPOLOGY_EVENT', (msg) => {
-    handleTopologyEvent(msg.payload);
+  registerRoute('TOPOLOGY_EVENT', (msg) => {
+    const validated = TopologyEventMessageSchema.parse(msg);
+    handleTopologyEvent(validated.payload);
     return { success: true };
   });
 
@@ -68,8 +74,10 @@ export function registerOffscreenRoutes(): void {
     return { success: true };
   });
 
-  registerRoute<SessionHealthMessage>('SESSION_HEALTH', async (msg) => {
-    const { payload } = msg;
+  registerRoute('SESSION_HEALTH', async (msg) => {
+    const validated = SessionHealthMessageSchema.parse(msg);
+    const { payload } = validated;
+
     log.info(
       `Session health for tab ${payload.tabId}: ` +
         `hadDrops=${payload.hadDrops}, ` +
