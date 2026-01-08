@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'preact/hooks';
 import type { TabMediaState } from '@thaumic-cast/protocol';
 import type { CurrentTabStateResponse, TabStateChangedMessage } from '../../lib/messages';
+import { getActiveTab } from '../../lib/tab-utils';
 
 /**
  * Result of the useCurrentTabState hook.
@@ -42,7 +43,7 @@ export function useCurrentTabState(): CurrentTabResult {
     const handler = (message: { type: string; tabId?: number; state?: TabMediaState }) => {
       if (message.type === 'TAB_STATE_CHANGED' && message.state) {
         // Only update if it's about the current tab
-        chrome.tabs.query({ active: true, currentWindow: true }).then(([tab]) => {
+        getActiveTab().then((tab) => {
           if (tab?.id === message.tabId) {
             setState((message as TabStateChangedMessage).state);
           }
