@@ -21,20 +21,24 @@ import type {
 } from '@thaumic-cast/protocol';
 import { createTabMediaState } from '@thaumic-cast/protocol';
 import { createLogger } from '@thaumic-cast/shared';
+import { createDebouncedStorage } from '../lib/debounced-storage';
 
 const log = createLogger('MetadataCache');
 
 /** In-memory cache storage */
 const cache = new Map<number, TabMediaState>();
 
-/** Session storage key for persistence */
-const STORAGE_KEY = 'metadataCache';
-
-/** Debounce timer for persistence */
-let persistTimer: ReturnType<typeof setTimeout> | null = null;
-
-/** Debounce interval for persistence (ms) */
-const PERSIST_DEBOUNCE_MS = 500;
+/** Debounced storage for persistence */
+const storage = createDebouncedStorage<[number, TabMediaState][]>({
+  storageKey: 'metadataCache',
+  debounceMs: 500,
+  loggerName: 'MetadataCache',
+  serialize: () => Array.from(cache.entries()),
+  restore: (stored) => {
+    if (!Array.isArray(stored)) return undefined;
+    return stored as [number, TabMediaState][];
+  },
+});
 
 /**
  * Gets cached state for a specific tab.
@@ -95,7 +99,7 @@ export function updateCache(
     playbackState,
   );
   cache.set(tabId, state);
-  schedulePersist();
+  storage.schedule();
   return state;
 }
 
@@ -126,7 +130,7 @@ export function updateTabInfo(
     updatedAt: Date.now(),
   };
   cache.set(tabId, updated);
-  schedulePersist();
+  storage.schedule();
   return updated;
 }
 
@@ -136,7 +140,7 @@ export function updateTabInfo(
  */
 export function removeFromCache(tabId: number): void {
   if (cache.delete(tabId)) {
-    schedulePersist();
+    storage.schedule();
   }
 }
 
@@ -145,7 +149,7 @@ export function removeFromCache(tabId: number): void {
  */
 export function clearCache(): void {
   cache.clear();
-  schedulePersist();
+  storage.schedule();
 }
 
 /**
@@ -157,43 +161,16 @@ export function getCacheSize(): number {
 }
 
 /**
- * Schedules a debounced persistence to session storage.
- * Prevents excessive writes during rapid updates.
- */
-function schedulePersist(): void {
-  if (persistTimer) clearTimeout(persistTimer);
-  persistTimer = setTimeout(persist, PERSIST_DEBOUNCE_MS);
-}
-
-/**
- * Persists cache to session storage.
- */
-async function persist(): Promise<void> {
-  try {
-    const data = Array.from(cache.entries());
-    await chrome.storage.session.set({ [STORAGE_KEY]: data });
-    log.debug(`Persisted ${data.length} cached states`);
-  } catch (err) {
-    log.error('Persist failed:', err);
-  }
-}
-
-/**
  * Restores cache from session storage.
  * Call on service worker startup.
  */
 export async function restoreCache(): Promise<void> {
-  try {
-    const result = await chrome.storage.session.get(STORAGE_KEY);
-    const data = result[STORAGE_KEY];
-    if (Array.isArray(data)) {
-      cache.clear();
-      for (const [tabId, state] of data) {
-        cache.set(tabId, state);
-      }
-      log.info(`Restored ${cache.size} cached states`);
+  const data = await storage.restore();
+  if (data) {
+    cache.clear();
+    for (const [tabId, state] of data) {
+      cache.set(tabId, state);
     }
-  } catch (err) {
-    log.error('Restore failed:', err);
+    log.info(`Restored ${cache.size} cached states`);
   }
 }

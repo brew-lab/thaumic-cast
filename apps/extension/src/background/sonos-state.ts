@@ -16,17 +16,20 @@
 import type { SonosStateSnapshot, ZoneGroup, TransportState } from '@thaumic-cast/protocol';
 import { createEmptySonosState } from '@thaumic-cast/protocol';
 import { createLogger } from '@thaumic-cast/shared';
+import { createDebouncedStorage } from '../lib/debounced-storage';
 
 const log = createLogger('SonosState');
-
-/** Storage key for session persistence */
-const STORAGE_KEY = 'sonosState';
 
 /** Current Sonos state */
 let state: SonosStateSnapshot = createEmptySonosState();
 
-/** Debounce timer for persistence */
-let persistTimer: ReturnType<typeof setTimeout> | null = null;
+/** Debounced storage for persistence */
+const storage = createDebouncedStorage<SonosStateSnapshot>({
+  storageKey: 'sonosState',
+  debounceMs: 500,
+  loggerName: 'SonosState',
+  serialize: () => state,
+});
 
 /**
  * Gets the current Sonos state (read-only).
@@ -43,7 +46,7 @@ export function getSonosState(): SonosStateSnapshot {
  */
 export function setSonosState(newState: SonosStateSnapshot): void {
   state = newState;
-  schedulePersist();
+  storage.schedule();
 }
 
 /**
@@ -53,7 +56,7 @@ export function setSonosState(newState: SonosStateSnapshot): void {
  */
 export function updateGroups(groups: ZoneGroup[]): SonosStateSnapshot {
   state = { ...state, groups };
-  schedulePersist();
+  storage.schedule();
   return state;
 }
 
@@ -68,7 +71,7 @@ export function updateVolume(speakerIp: string, volume: number): SonosStateSnaps
     ...state,
     groupVolumes: { ...state.groupVolumes, [speakerIp]: volume },
   };
-  schedulePersist();
+  storage.schedule();
   return state;
 }
 
@@ -83,7 +86,7 @@ export function updateMute(speakerIp: string, muted: boolean): SonosStateSnapsho
     ...state,
     groupMutes: { ...state.groupMutes, [speakerIp]: muted },
   };
-  schedulePersist();
+  storage.schedule();
   return state;
 }
 
@@ -101,29 +104,8 @@ export function updateTransportState(
     ...state,
     transportStates: { ...state.transportStates, [speakerIp]: transport },
   };
-  schedulePersist();
+  storage.schedule();
   return state;
-}
-
-/**
- * Schedules a debounced persist to session storage.
- * Prevents excessive writes during rapid state changes.
- */
-function schedulePersist(): void {
-  if (persistTimer) clearTimeout(persistTimer);
-  persistTimer = setTimeout(persist, 500);
-}
-
-/**
- * Persists current state to session storage.
- */
-async function persist(): Promise<void> {
-  try {
-    await chrome.storage.session.set({ [STORAGE_KEY]: state });
-    log.debug('Persisted Sonos state');
-  } catch (err) {
-    log.error('Persist failed:', err);
-  }
 }
 
 /**
@@ -131,13 +113,9 @@ async function persist(): Promise<void> {
  * Call on service worker startup.
  */
 export async function restoreSonosState(): Promise<void> {
-  try {
-    const result = await chrome.storage.session.get(STORAGE_KEY);
-    if (result[STORAGE_KEY]) {
-      state = result[STORAGE_KEY];
-      log.info('Restored Sonos state from session storage');
-    }
-  } catch (err) {
-    log.error('Restore failed:', err);
+  const restored = await storage.restore();
+  if (restored) {
+    state = restored;
+    log.info('Restored Sonos state from session storage');
   }
 }
