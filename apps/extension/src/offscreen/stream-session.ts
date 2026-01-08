@@ -445,35 +445,6 @@ export class StreamSession {
   }
 
   /**
-   * Returns session health data for reporting.
-   * @returns Health data including drop stats and encoder config
-   */
-  public getHealthData(): {
-    encoderConfig: EncoderConfig;
-    hadDrops: boolean;
-    totalProducerDrops: number;
-    totalCatchUpDrops: number;
-    totalConsumerDrops: number;
-    totalUnderflows: number;
-  } {
-    // Include underflows in hadDrops - they indicate audio source issues
-    const hadDrops =
-      this.totalProducerDrops > 0 ||
-      this.totalCatchUpDrops > 0 ||
-      this.totalConsumerDrops > 0 ||
-      this.totalUnderflows > 0;
-
-    return {
-      encoderConfig: this.encoderConfig,
-      hadDrops,
-      totalProducerDrops: this.totalProducerDrops,
-      totalCatchUpDrops: this.totalCatchUpDrops,
-      totalConsumerDrops: this.totalConsumerDrops,
-      totalUnderflows: this.totalUnderflows,
-    };
-  }
-
-  /**
    * Stops the session and releases all resources.
    */
   public stop(): void {

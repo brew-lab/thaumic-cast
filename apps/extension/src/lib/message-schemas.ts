@@ -30,7 +30,6 @@ import type {
   WsConnectedMessage,
   NetworkEventMessage,
   TopologyEventMessage,
-  SessionHealthMessage,
 } from './messages';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -215,16 +214,3 @@ export const TopologyEventMessageSchema = z.object({
     timestamp: z.number(),
   }),
 }) satisfies z.ZodType<TopologyEventMessage>;
-
-export const SessionHealthMessageSchema = z.object({
-  type: z.literal('SESSION_HEALTH'),
-  payload: z.object({
-    tabId: TabIdSchema,
-    encoderConfig: EncoderConfigSchema,
-    hadDrops: z.boolean(),
-    totalProducerDrops: z.number().int().nonnegative(),
-    totalCatchUpDrops: z.number().int().nonnegative(),
-    totalConsumerDrops: z.number().int().nonnegative(),
-    totalUnderflows: z.number().int().nonnegative(),
-  }),
-}) satisfies z.ZodType<SessionHealthMessage>;

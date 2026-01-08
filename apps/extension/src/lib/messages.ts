@@ -88,8 +88,7 @@ export type OffscreenToBackgroundType =
   | 'SONOS_EVENT'
   | 'NETWORK_EVENT'
   | 'TOPOLOGY_EVENT'
-  | 'OFFSCREEN_READY'
-  | 'SESSION_HEALTH';
+  | 'OFFSCREEN_READY';
 
 /** Message types: Content broadcast */
 export type ContentBroadcastType = 'VIDEO_SYNC_STATE_CHANGED';
@@ -178,28 +177,6 @@ export interface StartPlaybackResponse {
   results: PlaybackResult[];
   /** Overall error (if all speakers failed). */
   error?: string;
-}
-
-/**
- * Session health report sent from offscreen to background when a session ends.
- * Used to record whether the session was stable (for config learning).
- */
-export interface SessionHealthMessage {
-  type: 'SESSION_HEALTH';
-  payload: {
-    tabId: number;
-    encoderConfig: EncoderConfig;
-    /** Whether any audio drops occurred during the session. */
-    hadDrops: boolean;
-    /** Total samples dropped by producer (buffer overflow). */
-    totalProducerDrops: number;
-    /** Total samples dropped by consumer catch-up. */
-    totalCatchUpDrops: number;
-    /** Total frames dropped due to backpressure. */
-    totalConsumerDrops: number;
-    /** Total underflows (source starvation events). */
-    totalUnderflows: number;
-  };
 }
 
 /**
@@ -797,8 +774,7 @@ export type OffscreenToBackgroundMessage =
   | SonosEventMessage
   | NetworkEventMessage
   | TopologyEventMessage
-  | OffscreenReadyMessage
-  | SessionHealthMessage;
+  | OffscreenReadyMessage;
 
 /**
  * Messages broadcast from content script (video sync state).

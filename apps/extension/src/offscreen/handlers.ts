@@ -202,22 +202,6 @@ export function setupMessageHandlers(): void {
       const tabId = (msg as StopCaptureMessage).payload.tabId;
       const session = activeSessions.get(tabId);
       if (session) {
-        // Get health data before stopping
-        const healthData = session.getHealthData();
-
-        // Send session health to background for config learning
-        chrome.runtime
-          .sendMessage({
-            type: 'SESSION_HEALTH',
-            payload: {
-              tabId,
-              ...healthData,
-            },
-          })
-          .catch((err) => {
-            log.warn('Failed to send SESSION_HEALTH:', err);
-          });
-
         session.stop();
         activeSessions.delete(tabId);
       }
