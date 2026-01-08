@@ -16,7 +16,7 @@
 import type { ActiveCast, EncoderConfig, TabMediaState } from '@thaumic-cast/protocol';
 import { createLogger } from '@thaumic-cast/shared';
 import { getCachedState } from './metadata-cache';
-import { notifyPopup } from './notify';
+import { notifyPopup } from './notification-service';
 import { createDebouncedStorage } from '../lib/debounced-storage';
 
 const log = createLogger('SessionManager');

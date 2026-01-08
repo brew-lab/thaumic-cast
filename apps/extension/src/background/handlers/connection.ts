@@ -32,7 +32,7 @@ import {
 } from '../connection-state';
 import { setSonosState, getSonosState as getStoredSonosState, updateGroups } from '../sonos-state';
 import { ensureOffscreen, sendToOffscreen } from '../offscreen-manager';
-import { notifyPopup } from '../notify';
+import { notifyPopup } from '../notification-service';
 
 const log = createLogger('Background');
 

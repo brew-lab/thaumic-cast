@@ -35,7 +35,7 @@ import {
   removeSpeakerFromSession,
   hasSession,
 } from './session-manager';
-import { notifyPopup } from './notify';
+import { notifyPopup } from './notification-service';
 import { sendToOffscreen } from './offscreen-manager';
 
 const log = createLogger('SonosEvents');

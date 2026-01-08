@@ -26,7 +26,7 @@ import {
   restoreConnectionState,
 } from './connection-state';
 import { stopCastForTab } from './sonos-event-handlers';
-import { notifyPopup } from './notify';
+import { notifyPopup } from './notification-service';
 
 // Router and routes
 import { dispatch } from './router';

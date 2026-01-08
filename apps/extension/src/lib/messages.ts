@@ -756,7 +756,8 @@ export type BackgroundToPopupMessage =
   | WsConnectionLostMessage
   | NetworkHealthChangedMessage
   | LatencyUpdateMessage
-  | LatencyStaleMessage;
+  | LatencyStaleMessage
+  | VideoSyncStateChangedMessage;
 
 /**
  * Messages sent from content script to background.

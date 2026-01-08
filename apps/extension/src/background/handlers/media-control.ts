@@ -13,9 +13,14 @@
  * - Content script message handling (handled by content scripts)
  */
 
-import type { SetVolumeMessage, SetMuteMessage, ControlMediaMessage } from '../../lib/messages';
+import type {
+  SetVolumeMessage,
+  SetMuteMessage,
+  ControlMediaMessage,
+  VideoSyncStateChangedMessage,
+} from '../../lib/messages';
 import { sendToOffscreen } from '../offscreen-manager';
-import { notifyPopup } from '../notify';
+import { notifyPopup } from '../notification-service';
 
 /**
  * Handles SET_VOLUME message from popup.
@@ -94,6 +99,6 @@ export async function handleGetVideoSyncState(
  * Forwards to popup.
  * @param msg - The state change message
  */
-export function handleVideoSyncStateChanged(msg: object): void {
+export function handleVideoSyncStateChanged(msg: VideoSyncStateChangedMessage): void {
   notifyPopup(msg);
 }

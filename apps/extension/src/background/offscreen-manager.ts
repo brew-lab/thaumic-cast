@@ -19,7 +19,7 @@ import { createLogger } from '@thaumic-cast/shared';
 import type { WsStatusResponse } from '../lib/messages';
 import { setConnected, getConnectionState } from './connection-state';
 import { setSonosState } from './sonos-state';
-import { notifyPopup } from './notify';
+import { notifyPopup } from './notification-service';
 
 const log = createLogger('Background');
 

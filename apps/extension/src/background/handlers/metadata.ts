@@ -30,7 +30,7 @@ import { getSourceFromUrl } from '../../lib/url-utils';
 import { getActiveTab } from '../../lib/tab-utils';
 import { getCachedState, updateCache, updateTabInfo } from '../metadata-cache';
 import { hasSession, onMetadataUpdate } from '../session-manager';
-import { notifyPopup } from '../notify';
+import { notifyPopup } from '../notification-service';
 import { sendToOffscreen } from '../offscreen-manager';
 
 /**
