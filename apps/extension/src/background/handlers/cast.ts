@@ -32,7 +32,7 @@ import { registerSession, hasSession, getSessionCount } from '../session-manager
 import { getSonosState as getStoredSonosState } from '../sonos-state';
 import { getConnectionState, clearConnectionState } from '../connection-state';
 import { stopCastForTab } from '../sonos-event-handlers';
-import { ensureOffscreen } from '../offscreen-manager';
+import { ensureOffscreen, sendToOffscreen } from '../offscreen-manager';
 import { detectAndCacheCodecSupport } from '../codec-support';
 import { discoverAndCache, connectWebSocket } from './connection';
 
@@ -129,7 +129,7 @@ export async function handleStartCast(
     }
 
     // 7. Start Offscreen Session
-    const response: ExtensionResponse = await chrome.runtime.sendMessage({
+    const response = await sendToOffscreen<ExtensionResponse>({
       type: 'START_CAPTURE',
       payload: {
         tabId: tab.id,
@@ -138,6 +138,7 @@ export async function handleStartCast(
         baseUrl: app.url,
       },
     });
+    if (!response) throw new Error('error_offscreen_unavailable');
 
     if (response.success && response.streamId) {
       // Get cached state to build initial metadata for Sonos display
@@ -155,10 +156,11 @@ export async function handleStartCast(
 
       // 8. Start playback via WebSocket (waits for STREAM_READY internally)
       // Include initial metadata so Sonos displays correct info immediately
-      const playbackResponse: StartPlaybackResponse = await chrome.runtime.sendMessage({
+      const playbackResponse = await sendToOffscreen<StartPlaybackResponse>({
         type: 'START_PLAYBACK',
         payload: { tabId: tab.id, speakerIps, metadata: initialMetadata },
       });
+      if (!playbackResponse) throw new Error('error_offscreen_unavailable');
 
       // Filter successful results for session registration
       const successfulResults = playbackResponse.results.filter((r) => r.success);
@@ -166,7 +168,7 @@ export async function handleStartCast(
       if (successfulResults.length === 0) {
         // All speakers failed - clean up the capture
         log.error('All playback attempts failed, cleaning up capture');
-        await chrome.runtime.sendMessage({ type: 'STOP_CAPTURE', payload: { tabId: tab.id } });
+        await sendToOffscreen({ type: 'STOP_CAPTURE', payload: { tabId: tab.id } });
         throw new Error('error_playback_failed');
       }
 
