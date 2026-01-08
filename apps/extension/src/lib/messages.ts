@@ -3,6 +3,7 @@ import {
   StreamMetadata,
   SonosStateSnapshot,
   BroadcastEvent,
+  LatencyBroadcastEvent,
   TabMediaState,
   ActiveCast,
   TransportState,
@@ -46,7 +47,9 @@ export type BackgroundToPopupType =
   | 'MUTE_UPDATE'
   | 'TRANSPORT_STATE_UPDATE'
   | 'WS_CONNECTION_LOST'
-  | 'NETWORK_HEALTH_CHANGED';
+  | 'NETWORK_HEALTH_CHANGED'
+  | 'LATENCY_UPDATE'
+  | 'LATENCY_STALE';
 
 /** Message types: Content → Background */
 export type ContentToBackgroundType = 'TAB_METADATA_UPDATE' | 'TAB_OG_IMAGE';
@@ -58,7 +61,8 @@ export type BackgroundToContentType =
   | 'SET_VIDEO_SYNC_ENABLED'
   | 'SET_VIDEO_SYNC_TRIM'
   | 'TRIGGER_RESYNC'
-  | 'GET_VIDEO_SYNC_STATE';
+  | 'GET_VIDEO_SYNC_STATE'
+  | 'LATENCY_EVENT';
 
 /** Message types: Background → Offscreen */
 export type BackgroundToOffscreenType =
@@ -554,6 +558,37 @@ export interface NetworkHealthChangedMessage {
 }
 
 /**
+ * Latency measurement update (background → popup).
+ */
+export interface LatencyUpdateMessage {
+  type: 'LATENCY_UPDATE';
+  streamId: string;
+  speakerIp: string;
+  epochId: number;
+  latencyMs: number;
+  jitterMs: number;
+  confidence: number;
+}
+
+/**
+ * Latency measurement stale notification (background → popup).
+ */
+export interface LatencyStaleMessage {
+  type: 'LATENCY_STALE';
+  streamId: string;
+  speakerIp: string;
+  epochId: number;
+}
+
+/**
+ * Latency event forwarded to content script (background → content).
+ */
+export interface LatencyEventMessage {
+  type: 'LATENCY_EVENT';
+  payload: LatencyBroadcastEvent;
+}
+
+/**
  * Topology event from desktop app (offscreen → background).
  */
 export interface TopologyEventMessage {
@@ -597,6 +632,15 @@ export interface ControlMediaMessage {
     tabId: number;
     action: MediaAction;
   };
+}
+
+/**
+ * Control media message sent to content script (background → content).
+ * Note: Different shape from ControlMediaMessage - no payload wrapper.
+ */
+export interface ContentControlMediaMessage {
+  type: 'CONTROL_MEDIA';
+  action: MediaAction;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -710,7 +754,9 @@ export type BackgroundToPopupMessage =
   | MuteUpdateMessage
   | TransportStateUpdateMessage
   | WsConnectionLostMessage
-  | NetworkHealthChangedMessage;
+  | NetworkHealthChangedMessage
+  | LatencyUpdateMessage
+  | LatencyStaleMessage;
 
 /**
  * Messages sent from content script to background.
@@ -721,14 +767,16 @@ export type ContentToBackgroundMessage = TabMetadataUpdateMessage | TabOgImageMe
 /**
  * Messages sent from background to content script.
  * Used for media control and video sync commands.
+ * Note: Uses ContentControlMediaMessage (no payload wrapper) for content.
  */
 export type BackgroundToContentMessage =
   | RequestMetadataMessage
-  | ControlMediaMessage
+  | ContentControlMediaMessage
   | SetVideoSyncEnabledMessage
   | SetVideoSyncTrimMessage
   | TriggerResyncMessage
-  | GetVideoSyncStateMessage;
+  | GetVideoSyncStateMessage
+  | LatencyEventMessage;
 
 /**
  * Messages sent from background to offscreen document.
