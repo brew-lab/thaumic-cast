@@ -1,4 +1,5 @@
 import { h } from 'preact';
+import styles from './Button.module.css';
 
 interface ButtonProps extends h.JSX.HTMLAttributes<HTMLButtonElement> {
   /** Button style variant */
@@ -27,9 +28,13 @@ export function Button({
   ...props
 }: ButtonProps) {
   const variantClass =
-    variant === 'primary' ? 'btnPrimary' : variant === 'secondary' ? 'btnSecondary' : 'btnDanger';
-  const widthClass = fullWidth ? 'btnFullWidth' : '';
-  const combinedClass = `btn ${variantClass} ${widthClass} ${className || ''}`.trim();
+    variant === 'primary'
+      ? styles.primary
+      : variant === 'secondary'
+        ? styles.secondary
+        : styles.danger;
+  const widthClass = fullWidth ? styles.fullWidth : '';
+  const combinedClass = [styles.btn, variantClass, widthClass, className].filter(Boolean).join(' ');
 
   return <button {...props} disabled={disabled} className={combinedClass} />;
 }

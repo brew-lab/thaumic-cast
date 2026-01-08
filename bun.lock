@@ -25,7 +25,7 @@
     },
     "apps/desktop": {
       "name": "@thaumic-cast/desktop",
-      "version": "0.4.0",
+      "version": "0.7.0",
       "dependencies": {
         "@preact/signals": "^2.5.1",
         "@tauri-apps/api": "^2.0.0",
@@ -51,7 +51,7 @@
     },
     "apps/extension": {
       "name": "@thaumic-cast/extension",
-      "version": "0.4.0",
+      "version": "0.7.0",
       "dependencies": {
         "@thaumic-cast/protocol": "workspace:*",
         "@thaumic-cast/shared": "workspace:*",
@@ -71,7 +71,7 @@
     },
     "packages/protocol": {
       "name": "@thaumic-cast/protocol",
-      "version": "0.0.1",
+      "version": "0.1.1",
       "dependencies": {
         "zod": "^4.2.1",
       },
@@ -88,12 +88,14 @@
     },
     "packages/ui": {
       "name": "@thaumic-cast/ui",
-      "version": "0.0.1",
+      "version": "0.0.2",
       "devDependencies": {
+        "@thaumic-cast/protocol": "workspace:*",
         "lucide-preact": "^0.562.0",
         "typescript": "^5.0.0",
       },
       "peerDependencies": {
+        "@thaumic-cast/protocol": "workspace:*",
         "lucide-preact": "^0.562.0",
         "preact": "^10.0.0",
       },

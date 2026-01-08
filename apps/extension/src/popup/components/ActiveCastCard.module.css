@@ -8,19 +8,19 @@
   --card-border-width: 1px;
 
   position: relative;
+  overflow: hidden;
+  margin-block-end: 1rem;
+
+  /* View Transition API: name the card for track change transitions */
+  view-transition-name: active-cast-card;
+}
+
+.cardInner {
   display: flex;
   flex-direction: column;
   gap: 0.5rem;
   padding-block: 0.5rem;
   padding-inline: 0.5rem;
-  background: var(--card-bg);
-  border-radius: var(--card-radius);
-  border: var(--card-border-width) solid var(--card-border);
-  box-shadow: var(--card-shadow);
-  overflow: hidden;
-
-  /* View Transition API: name the card for track change transitions */
-  view-transition-name: active-cast-card;
 }
 
 /* Background artwork layer with adaptive darkness vignette */
@@ -59,7 +59,7 @@
   --accent-contrast: oklch(20% 0 0);
 
   /* Use original dominant color for card background (smoother visual transition) */
-  background: oklch(calc(var(--dominant-l) * 100%) var(--dominant-c) var(--dominant-h));
+  --card-bg: oklch(calc(var(--dominant-l) * 100%) var(--dominant-c) var(--dominant-h));
 
   /* Text: light for contrast against dark backdrop overlay */
   --color-text: oklch(95% 0 0);
@@ -68,45 +68,38 @@
   /* Use accent for interactive elements */
   --color-primary: var(--accent);
   --color-error: var(--accent);
+  --color-surface: transparent;
+
+  /* Tier 3 component token overrides */
+  --button-ghost-bg: transparent;
+  --button-ghost-text: var(--color-text-muted);
+  --button-ghost-bg-hover: oklch(100% 0 0 / 15%);
+  --button-ghost-text-hover: var(--color-text);
+
+  /* Outlined icon buttons (like the resync button) can keep solid accent look for visibility if needed, 
+     or also be adjusted. The user specifically mentioned ghost buttons. */
+  --icon-button-outline-border: var(--accent);
+  --icon-button-outline-border-hover: var(--accent);
+  --slider-fill: var(--accent);
+  --slider-track: oklch(from var(--accent) l c h / 40%);
+  --slider-thumb: var(--accent);
+
+  /* Toggle: thumb/track swap colors between states */
+  --toggle-bg: oklch(100% 0 0 / 25%);
+  --toggle-on-bg: var(--accent);
+  --toggle-thumb-bg: var(--accent);
+  --status-chip-bg: oklch(18% calc(var(--dominant-c) * 0.4) var(--dominant-h) / 85%);
+  --status-chip-text: var(--color-text);
+
+  /* Solid icon button tokens (play/pause) */
+  --button-solid-bg: var(--accent);
+  --button-solid-text: var(--accent-contrast);
+  --button-solid-bg-hover: oklch(
+    calc((var(--safe-l) + 0.08) * 100%) var(--dominant-c) var(--dominant-h)
+  );
+  --button-solid-text-hover: var(--accent-contrast);
 
   accent-color: var(--accent);
-}
-
-/* Icon buttons use solid accent background with proper contrast */
-.card.hasArtwork :global(.iconBtn) {
-  color: var(--accent-contrast);
-  background: var(--accent);
-  border-color: transparent;
-}
-
-.card.hasArtwork :global(.iconBtn:not(:disabled):hover) {
-  color: var(--accent-contrast);
-  background: oklch(calc((var(--safe-l) + 0.08) * 100%) var(--dominant-c) var(--dominant-h));
-}
-
-/* Volume control container - transparent on artwork cards */
-.card.hasArtwork :global(.volumeControl) {
-  background: transparent;
-}
-
-/* Slider track uses accent colors */
-.card.hasArtwork :global(.volumeControlSlider) {
-  background: linear-gradient(
-    to right,
-    var(--accent) var(--volume),
-    oklch(from var(--accent) l c h / 40%) var(--volume)
-  );
-}
-
-/* Slider thumb uses accent color */
-.card.hasArtwork :global(.volumeControlSlider::-webkit-slider-thumb) {
-  background: var(--accent);
-}
-
-/* Focus outlines for accessibility */
-.card.hasArtwork :global(input[type='range']:focus-visible) {
-  outline: 2px solid var(--color-focus);
-  outline-offset: 2px;
 }
 
 .header {
@@ -128,14 +121,6 @@
 /* Skip buttons (prev/next) - ghost style with text color */
 .skipBtn {
   flex-shrink: 0;
-  background: transparent !important;
-  border: none !important;
-  color: var(--color-text-muted) !important;
-}
-
-.skipBtn:hover {
-  color: var(--color-text) !important;
-  background: var(--color-surface-hover) !important;
 }
 
 .favicon {
@@ -282,56 +267,20 @@
   border-color: oklch(100% 0 0 / 15%);
 }
 
-.card.hasArtwork .videoSyncTrimSlider {
-  background: oklch(from var(--accent) l c h / 40%);
-}
-
-.card.hasArtwork .videoSyncTrimSlider::-webkit-slider-thumb {
-  background: var(--accent);
-}
-
-/* Toggle switch on artwork cards - use accent colors */
-.card.hasArtwork :global(.toggleSwitch) {
-  background: oklch(100% 0 0 / 25%);
-}
-
-.card.hasArtwork :global(.toggleSwitchOn) {
-  background: var(--accent);
-}
-
-.card.hasArtwork :global(.toggleSwitchThumb) {
-  background: var(--accent-contrast);
-}
-
-/* Status chip on artwork cards - WCAG AA compliant
- * Background: Dark version of dominant color (cohesive with artwork)
- * Text: High-lightness semantic colors (maintains meaning, ensures 4.5:1 contrast)
- */
-.card.hasArtwork :global(.statusChip) {
-  /* Dark dominant-tinted background: 18% lightness, 40% chroma, 85% opacity */
-  background: oklch(18% calc(var(--dominant-c) * 0.4) var(--dominant-h) / 85%);
-  color: var(--color-text);
-}
-
-.card.hasArtwork :global(.statusChipSynced) {
-  background: oklch(18% calc(var(--dominant-c) * 0.4) var(--dominant-h) / 85%);
-
+/* Status chip variants on artwork cards - WCAG AA compliant */
+.card.hasArtwork .synced {
   /* High-lightness success (hue 175 from theme) */
-  color: oklch(80% 0.15 175);
+  --status-chip-text: oklch(80% 0.15 175);
 }
 
-.card.hasArtwork :global(.statusChipAcquiring) {
-  background: oklch(18% calc(var(--dominant-c) * 0.4) var(--dominant-h) / 85%);
-
+.card.hasArtwork .acquiring {
   /* High-lightness warning (hue 55 from theme) */
-  color: oklch(88% 0.15 55);
+  --status-chip-text: oklch(88% 0.15 55);
 }
 
-.card.hasArtwork :global(.statusChipLost) {
-  background: oklch(18% calc(var(--dominant-c) * 0.4) var(--dominant-h) / 85%);
-
+.card.hasArtwork .lost {
   /* High-lightness error (hue 350 from theme) */
-  color: oklch(78% 0.18 350);
+  --status-chip-text: oklch(78% 0.18 350);
 }
 
 /* Transition animation for track changes (background + colors) */

@@ -1,0 +1,19 @@
+.card {
+  background: var(--card-bg);
+  border: 1px solid var(--card-border);
+  border-radius: var(--card-radius);
+  padding-block: var(--card-padding);
+  padding-inline: var(--card-padding);
+  box-shadow: var(--card-shadow);
+  overflow: hidden;
+}
+
+.noPadding {
+  padding: 0;
+}
+
+.title {
+  font-size: 1rem;
+  font-weight: 600;
+  margin-block: 0 var(--space-md);
+}

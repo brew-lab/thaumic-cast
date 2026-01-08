@@ -1,4 +1,5 @@
-import type { ComponentChildren } from 'preact';
+import type { ComponentChildren, CSSProperties } from 'preact';
+import styles from './Card.module.css';
 
 interface CardProps {
   /** Card content */
@@ -9,6 +10,8 @@ interface CardProps {
   className?: string;
   /** Remove default padding (for cards with custom internal layout) */
   noPadding?: boolean;
+  /** Inline styles */
+  style?: CSSProperties;
 }
 
 /**
@@ -18,14 +21,15 @@ interface CardProps {
  * @param props.title - Optional card title
  * @param props.className - Additional CSS class
  * @param props.noPadding - Remove default padding
+ * @param props.style - Inline styles
  * @returns The rendered Card component
  */
-export function Card({ children, title, className, noPadding }: CardProps) {
-  const classes = ['card', noPadding && 'cardNoPadding', className].filter(Boolean).join(' ');
+export function Card({ children, title, className, noPadding, style }: CardProps) {
+  const classes = [styles.card, noPadding && styles.noPadding, className].filter(Boolean).join(' ');
 
   return (
-    <div className={classes}>
-      {title && <h2 className="cardTitle">{title}</h2>}
+    <div className={classes} style={style}>
+      {title && <h2 className={styles.title}>{title}</h2>}
       {children}
     </div>
   );

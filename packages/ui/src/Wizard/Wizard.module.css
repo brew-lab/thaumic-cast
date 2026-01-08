@@ -1,0 +1,170 @@
+/* Wizard Styles */
+.wizard {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  block-size: 100%;
+  padding: var(--space-lg);
+}
+
+.content {
+  flex: 1;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-primary) transparent;
+  padding-inline: var(--space-lg);
+  display: flex;
+  justify-content: center;
+}
+
+.footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding-block-start: var(--space-lg);
+  border-block-start: 1px solid var(--color-border);
+  margin-block-start: var(--space-lg);
+}
+
+.footerStart {
+  display: flex;
+  align-items: center;
+}
+
+.footerEnd {
+  display: flex;
+  gap: var(--space-sm);
+}
+
+.footerButton {
+  inline-size: auto;
+  min-inline-size: 6rem;
+}
+
+.skipBtn {
+  background: none;
+  border: none;
+  color: var(--color-text-muted);
+  cursor: pointer;
+  font-size: 0.875rem;
+  padding: var(--space-sm);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  transition: var(--transition-color);
+}
+
+.skipBtn:hover {
+  color: var(--color-text);
+}
+
+.skipBtn:focus-visible {
+  outline: 2px solid var(--color-focus);
+  outline-offset: 2px;
+}
+
+/* Compact wizard for popups - uses grid for stable layout */
+.compact {
+  display: grid;
+  grid-template:
+    'header' auto
+    'content' 1fr
+    'footer' auto / 1fr;
+}
+
+.compact .header {
+  grid-area: header;
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.compact .back {
+  position: absolute;
+  inset-inline-start: 0;
+}
+
+/* Step Indicator Styles - must be before .compact .header .indicator */
+.indicator {
+  display: flex;
+  justify-content: center;
+  gap: var(--space-sm);
+  margin-block-end: var(--space-lg);
+}
+
+.compact .header .indicator {
+  margin-block-end: 0;
+}
+
+.compact .content {
+  grid-area: content;
+  min-block-size: 240px;
+  padding-block-start: var(--space-lg);
+}
+
+.compact .footer {
+  grid-area: footer;
+}
+
+/* Wizard Step Styles */
+.step {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-lg);
+  max-inline-size: 60ch;
+  inline-size: 100%;
+}
+
+.stepHeader {
+  text-align: center;
+}
+
+.stepIcon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  inline-size: 4rem;
+  block-size: 4rem;
+  border-radius: 50%;
+  background: var(--color-surface-hover);
+  color: var(--color-primary);
+  margin-block-end: var(--space-md);
+}
+
+.stepTitle {
+  font-size: 1.5rem;
+  font-weight: 600;
+  margin: 0;
+  color: var(--color-text);
+}
+
+.stepSubtitle {
+  font-size: 0.9rem;
+  color: var(--color-text-muted);
+  margin-block: var(--space-sm) 0;
+  text-wrap: pretty;
+}
+
+.stepContent {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+  text-align: start;
+}
+
+.dot {
+  inline-size: 0.5rem;
+  block-size: 0.5rem;
+  border-radius: 50%;
+  background-color: var(--color-border);
+  transition: var(--transition-bg);
+}
+
+.dotActive {
+  background-color: var(--color-primary);
+  transform: scale(1.25);
+}
+
+.dotCompleted {
+  background-color: var(--color-success);
+}

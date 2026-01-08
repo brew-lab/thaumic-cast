@@ -1,1034 +1,421 @@
-:root {
-  /* Default to dark mode; override with data-theme attribute for user preference */
-  color-scheme: dark;
+@layer tokens, base, components, utilities;
 
-  /*
-   * ═══════════════════════════════════════════════════════════════════════════
-   * TIER 1: PRIMITIVE TOKENS - Raw OKLCH color values
-   * ═══════════════════════════════════════════════════════════════════════════
-   */
-
-  /*
-   * Gray scale - Open Props inspired 16-step progression
-   * Customizable via --gray-hue and --gray-chroma
-   * Mystical violet tint for thaumic/magical aesthetic
-   */
-  --gray-hue: 280;
-  --gray-chroma: 0.02;
-  --gray-0: oklch(99% var(--gray-chroma) var(--gray-hue));
-  --gray-1: oklch(95% var(--gray-chroma) var(--gray-hue));
-  --gray-2: oklch(88% var(--gray-chroma) var(--gray-hue));
-  --gray-3: oklch(80% var(--gray-chroma) var(--gray-hue));
-  --gray-4: oklch(74% var(--gray-chroma) var(--gray-hue));
-  --gray-5: oklch(68% var(--gray-chroma) var(--gray-hue));
-  --gray-6: oklch(63% var(--gray-chroma) var(--gray-hue));
-  --gray-7: oklch(58% var(--gray-chroma) var(--gray-hue));
-  --gray-8: oklch(53% var(--gray-chroma) var(--gray-hue));
-  --gray-9: oklch(49% var(--gray-chroma) var(--gray-hue));
-  --gray-10: oklch(43% var(--gray-chroma) var(--gray-hue));
-  --gray-11: oklch(37% var(--gray-chroma) var(--gray-hue));
-  --gray-12: oklch(31% var(--gray-chroma) var(--gray-hue));
-  --gray-13: oklch(25% var(--gray-chroma) var(--gray-hue));
-  --gray-14: oklch(18% var(--gray-chroma) var(--gray-hue));
-  --gray-15: oklch(10% var(--gray-chroma) var(--gray-hue));
-
-  /*
-   * Brand color hues - customize these to change the entire color scheme
-   * Arcane neon palette for thaumic/magical aesthetic
-   */
-  --hue-primary: 285;
-  --hue-error: 350;
-  --hue-success: 175;
-  --hue-warning: 55;
-  --hue-info: 230;
-  --hue-casting: 190;
-  --chroma-vibrant: 0.28;
-  --chroma-muted: 0.18;
-
-  /*
-   * ═══════════════════════════════════════════════════════════════════════════
-   * TIER 2: SEMANTIC TOKENS - Purpose-based colors (light-dark pairs)
-   * ═══════════════════════════════════════════════════════════════════════════
-   */
-
-  /* Backgrounds - dark mode uses gray-14/15, light mode uses gray-1/0 */
-  --color-bg: light-dark(var(--gray-1), var(--gray-15));
-  --color-surface: light-dark(var(--gray-0), var(--gray-14));
-  --color-surface-inset: light-dark(var(--gray-1), var(--gray-15));
-  --color-surface-hover: light-dark(
-    oklch(50% 0.04 var(--hue-primary) / 10%),
-    oklch(70% 0.04 var(--hue-primary) / 12%)
-  );
-  --color-overlay: light-dark(oklch(99% 0 0 / 50%), oklch(10% 0 0 / 50%));
-
-  /* Borders */
-  --color-border: light-dark(var(--gray-3), var(--gray-12));
-  --color-border-subtle: light-dark(var(--gray-2), var(--gray-13));
-
-  /* Text */
-  --color-text: light-dark(var(--gray-14), var(--gray-1));
-  --color-text-muted: light-dark(var(--gray-10), var(--gray-5));
-  --color-text-disabled: light-dark(var(--gray-7), var(--gray-9));
-
-  /* Primary (interactive) - blue */
-  --color-primary: light-dark(
-    oklch(50% var(--chroma-vibrant) var(--hue-primary)),
-    oklch(65% var(--chroma-vibrant) var(--hue-primary))
-  );
-  --color-primary-hover: light-dark(
-    oklch(45% var(--chroma-vibrant) var(--hue-primary)),
-    oklch(60% var(--chroma-vibrant) var(--hue-primary))
-  );
-  --color-primary-active: light-dark(
-    oklch(40% var(--chroma-vibrant) var(--hue-primary)),
-    oklch(55% var(--chroma-vibrant) var(--hue-primary))
-  );
-  --color-on-primary: var(--gray-1);
-
-  /* Error/Danger - red */
-  --color-error: light-dark(
-    oklch(55% var(--chroma-vibrant) var(--hue-error)),
-    oklch(65% var(--chroma-vibrant) var(--hue-error))
-  );
-  --color-error-hover: light-dark(
-    oklch(50% var(--chroma-vibrant) var(--hue-error)),
-    oklch(60% var(--chroma-vibrant) var(--hue-error))
-  );
-  --color-error-active: light-dark(
-    oklch(45% var(--chroma-vibrant) var(--hue-error)),
-    oklch(55% var(--chroma-vibrant) var(--hue-error))
-  );
-  --color-on-error: oklch(100% 0 0);
-
-  /* Success - green */
-  --color-success: light-dark(
-    oklch(45% var(--chroma-muted) var(--hue-success)),
-    oklch(65% var(--chroma-muted) var(--hue-success))
-  );
-  --color-success-hover: light-dark(
-    oklch(40% var(--chroma-muted) var(--hue-success)),
-    oklch(60% var(--chroma-muted) var(--hue-success))
-  );
-  --color-on-success: var(--gray-1);
-
-  /* Warning - yellow/gold */
-  --color-warning: light-dark(
-    oklch(55% var(--chroma-muted) var(--hue-warning)),
-    oklch(85% var(--chroma-muted) var(--hue-warning))
-  );
-  --color-warning-hover: light-dark(
-    oklch(50% var(--chroma-muted) var(--hue-warning)),
-    oklch(80% var(--chroma-muted) var(--hue-warning))
-  );
-  --color-on-warning: var(--gray-14);
-
-  /* Casting/Active state - orange/amber */
-  --color-casting: light-dark(
-    oklch(55% var(--chroma-muted) var(--hue-casting)),
-    oklch(70% var(--chroma-muted) var(--hue-casting))
-  );
-  --color-casting-hover: light-dark(
-    oklch(50% var(--chroma-muted) var(--hue-casting)),
-    oklch(65% var(--chroma-muted) var(--hue-casting))
-  );
-  --color-on-casting: var(--gray-14);
-
-  /* Info - blue */
-  --color-info: light-dark(
-    oklch(50% var(--chroma-muted) var(--hue-info)),
-    oklch(70% var(--chroma-muted) var(--hue-info))
-  );
-
-  /* Focus ring */
-  --color-focus: light-dark(
-    oklch(50% var(--chroma-vibrant) var(--hue-primary)),
-    oklch(70% var(--chroma-vibrant) var(--hue-primary))
-  );
-
-  /*
-   * ═══════════════════════════════════════════════════════════════════════════
-   * TIER 3: COMPONENT TOKENS - Scoped to UI components
-   * ═══════════════════════════════════════════════════════════════════════════
-   */
-
-  /* Button: Primary */
-  --button-primary-bg: var(--color-primary);
-  --button-primary-bg-hover: var(--color-primary-hover);
-  --button-primary-text: var(--color-on-primary);
-
-  /* Button: Secondary */
-  --button-secondary-bg: var(--color-surface);
-  --button-secondary-bg-hover: var(--color-surface-hover);
-  --button-secondary-text: var(--color-text);
-  --button-secondary-border: var(--color-border);
-
-  /* Button: Danger */
-  --button-danger-bg: var(--color-error);
-  --button-danger-bg-hover: var(--color-error-hover);
-  --button-danger-text: var(--color-on-error);
-
-  /* Button: Ghost */
-  --button-ghost-bg: transparent;
-  --button-ghost-bg-hover: var(--color-surface-hover);
-  --button-ghost-text: var(--color-text-muted);
-  --button-ghost-text-hover: var(--color-text);
-
-  /* Button: Disabled */
-  --button-disabled-opacity: 0.5;
-
-  /* Icon Button: Outline */
-  --icon-button-outline-border: var(--color-border);
-  --icon-button-outline-border-hover: var(--color-primary);
-
-  /* Icon Button: Danger */
-  --icon-button-danger-hover-bg: var(--color-error);
-  --icon-button-danger-hover-text: var(--color-on-error);
-
-  /* Input/Select */
-  --input-bg: var(--color-bg);
-  --input-text: var(--color-text);
-  --input-border: var(--color-border);
-  --input-border-focus: var(--color-focus);
-  --input-placeholder: var(--color-text-muted);
-  --input-disabled-opacity: 0.6;
-
-  /* Card */
-  --card-bg: var(--color-surface);
-  --card-border: light-dark(
-    oklch(70% 0.02 var(--hue-primary) / 10%),
-    oklch(40% 0.02 var(--hue-primary) / 10%)
-  );
-  --card-shadow: var(--shadow-5);
-  --card-radius: var(--radius-md);
-  --card-padding: 0.75rem;
-  --card-text: var(--color-text);
-  --card-text-muted: var(--color-text-muted);
-
-  /* Inset panels (recessed surfaces like placeholders, read-only displays) */
-  --inset-bg: var(--color-surface-inset);
-
-  /* Volume/Slider */
-  --slider-track: var(--color-border);
-  --slider-fill: var(--color-primary);
-  --slider-thumb: var(--color-primary);
-
-  /* Status indicators */
-  --status-connected: var(--color-success);
-  --status-disconnected: var(--color-error);
-  --status-checking: var(--color-warning);
-  --status-casting: var(--color-casting);
-
-  /* Alert component */
-  --alert-warning-bg: light-dark(
-    oklch(75% var(--chroma-muted) var(--hue-warning) / 15%),
-    oklch(55% var(--chroma-muted) var(--hue-warning) / 15%)
-  );
-  --alert-warning-border: light-dark(
-    oklch(65% var(--chroma-muted) var(--hue-warning) / 40%),
-    oklch(65% var(--chroma-muted) var(--hue-warning) / 30%)
-  );
-  --alert-warning-text: var(--color-warning);
-  --alert-warning-icon: var(--color-warning);
-  --alert-error-bg: light-dark(
-    oklch(75% var(--chroma-muted) var(--hue-error) / 15%),
-    oklch(55% var(--chroma-muted) var(--hue-error) / 15%)
-  );
-  --alert-error-border: light-dark(
-    oklch(65% var(--chroma-muted) var(--hue-error) / 40%),
-    oklch(65% var(--chroma-muted) var(--hue-error) / 30%)
-  );
-  --alert-error-text: var(--color-error);
-  --alert-error-icon: var(--color-error);
-  --alert-success-bg: light-dark(
-    oklch(75% var(--chroma-muted) var(--hue-success) / 15%),
-    oklch(55% var(--chroma-muted) var(--hue-success) / 15%)
-  );
-  --alert-success-border: light-dark(
-    oklch(65% var(--chroma-muted) var(--hue-success) / 40%),
-    oklch(65% var(--chroma-muted) var(--hue-success) / 30%)
-  );
-  --alert-success-text: var(--color-success);
-  --alert-success-icon: var(--color-success);
-  --alert-info-bg: light-dark(
-    oklch(75% var(--chroma-muted) var(--hue-info) / 15%),
-    oklch(55% var(--chroma-muted) var(--hue-info) / 15%)
-  );
-  --alert-info-border: light-dark(
-    oklch(65% var(--chroma-muted) var(--hue-info) / 40%),
-    oklch(65% var(--chroma-muted) var(--hue-info) / 30%)
-  );
-  --alert-info-text: var(--color-info);
-  --alert-info-icon: var(--color-info);
-
-  /* Device card status badges */
-  --device-status-playing-bg: light-dark(
-    oklch(65% var(--chroma-muted) var(--hue-success) / 15%),
-    oklch(45% var(--chroma-muted) var(--hue-success) / 20%)
-  );
-  --device-status-playing-text: light-dark(
-    oklch(40% var(--chroma-muted) var(--hue-success)),
-    oklch(70% var(--chroma-muted) var(--hue-success))
-  );
-  --device-status-casting-bg: light-dark(
-    oklch(60% var(--chroma-muted) var(--hue-primary) / 15%),
-    oklch(50% var(--chroma-muted) var(--hue-primary) / 20%)
-  );
-  --device-status-casting-text: light-dark(
-    oklch(45% var(--chroma-muted) var(--hue-primary)),
-    oklch(75% var(--chroma-muted) var(--hue-primary))
-  );
-
-  /* Spacing */
-  --space-xs: 0.25rem;
-  --space-sm: 0.5rem;
-  --space-md: 1rem;
-  --space-lg: 1.5rem;
-  --space-xl: 2rem;
-
-  /* Radii */
-  --radius-sm: 0.25rem;
-  --radius-md: 0.5rem;
-  --radius-lg: 0.75rem;
-
-  /*
-   * Shadows - Open Props inspired layered shadows
-   * Customize via --shadow-color and --shadow-strength
-   */
-  --shadow-color: var(--hue-primary);
-  --shadow-strength: 2%;
-  --shadow-1: 0 1px 2px -1px oklch(20% 0.02 var(--shadow-color) / calc(var(--shadow-strength) + 9%));
-  --shadow-2:
-    0 3px 5px -2px oklch(20% 0.02 var(--shadow-color) / calc(var(--shadow-strength) + 3%)),
-    0 7px 14px -5px oklch(20% 0.02 var(--shadow-color) / calc(var(--shadow-strength) + 5%));
-  --shadow-3:
-    0 -1px 3px 0 oklch(20% 0.02 var(--shadow-color) / calc(var(--shadow-strength) + 2%)),
-    0 1px 2px -5px oklch(20% 0.02 var(--shadow-color) / calc(var(--shadow-strength) + 2%)),
-    0 2px 5px -5px oklch(20% 0.02 var(--shadow-color) / calc(var(--shadow-strength) + 4%)),
-    0 4px 12px -5px oklch(20% 0.02 var(--shadow-color) / calc(var(--shadow-strength) + 5%)),
-    0 12px 15px -5px oklch(20% 0.02 var(--shadow-color) / calc(var(--shadow-strength) + 7%));
-  --shadow-4:
-    0 -2px 5px 0 oklch(20% 0.02 var(--shadow-color) / calc(var(--shadow-strength) + 2%)),
-    0 1px 1px -2px oklch(20% 0.02 var(--shadow-color) / calc(var(--shadow-strength) + 3%)),
-    0 2px 2px -2px oklch(20% 0.02 var(--shadow-color) / calc(var(--shadow-strength) + 3%)),
-    0 5px 5px -2px oklch(20% 0.02 var(--shadow-color) / calc(var(--shadow-strength) + 4%)),
-    0 9px 9px -2px oklch(20% 0.02 var(--shadow-color) / calc(var(--shadow-strength) + 5%)),
-    0 16px 16px -2px oklch(20% 0.02 var(--shadow-color) / calc(var(--shadow-strength) + 6%));
-  --shadow-5:
-    0 -1px 2px 0 oklch(20% 0.02 var(--shadow-color) / calc(var(--shadow-strength) + 2%)),
-    0 2px 1px -2px oklch(20% 0.02 var(--shadow-color) / calc(var(--shadow-strength) + 3%)),
-    0 5px 5px -2px oklch(20% 0.02 var(--shadow-color) / calc(var(--shadow-strength) + 3%)),
-    0 10px 10px -2px oklch(20% 0.02 var(--shadow-color) / calc(var(--shadow-strength) + 4%)),
-    0 20px 20px -2px oklch(20% 0.02 var(--shadow-color) / calc(var(--shadow-strength) + 5%)),
-    0 40px 40px -2px oklch(20% 0.02 var(--shadow-color) / calc(var(--shadow-strength) + 7%));
-
-  /*
-   * ═══════════════════════════════════════════════════════════════════════════
-   * MOTION TOKENS - Easing curves and durations (Open Props inspired)
-   * ═══════════════════════════════════════════════════════════════════════════
-   */
-
-  /* Easing curves */
-  --ease-out-1: cubic-bezier(0, 0, 0.75, 1);
-  --ease-out-2: cubic-bezier(0, 0, 0.5, 1);
-  --ease-out-3: cubic-bezier(0, 0, 0.3, 1);
-  --ease-in-out-1: cubic-bezier(0.5, 0, 0.5, 1);
-  --ease-in-out-2: cubic-bezier(0.45, 0, 0.55, 1);
-
-  /* Durations */
-  --duration-fast: 100ms;
-  --duration-normal: 150ms;
-  --duration-slow: 250ms;
-
-  /* Semantic transitions (disabled by default, enabled via media query) */
-  --transition-bg: none;
-  --transition-color: none;
-  --transition-opacity: none;
-  --transition-transform: none;
-}
-
-/* Enable transitions only when user has no motion preference */
-@media (prefers-reduced-motion: no-preference) {
+@layer tokens {
   :root {
-    --transition-bg: background-color var(--duration-normal) var(--ease-out-2);
-    --transition-color: color var(--duration-normal) var(--ease-out-2);
-    --transition-opacity: opacity var(--duration-normal) var(--ease-out-1);
-    --transition-transform: transform var(--duration-normal) var(--ease-out-3);
+    /* Default to dark mode; override with data-theme attribute for user preference */
+    color-scheme: dark;
+
+    /*
+     * ═══════════════════════════════════════════════════════════════════════════
+     * TIER 1: PRIMITIVE TOKENS - Raw OKLCH color values
+     * ═══════════════════════════════════════════════════════════════════════════
+     */
+
+    /*
+     * Gray scale - Open Props inspired 16-step progression
+     * Customizable via --gray-hue and --gray-chroma
+     * Mystical violet tint for thaumic/magical aesthetic
+     */
+    --gray-hue: 280;
+    --gray-chroma: 0.02;
+    --gray-0: oklch(99% var(--gray-chroma) var(--gray-hue));
+    --gray-1: oklch(95% var(--gray-chroma) var(--gray-hue));
+    --gray-2: oklch(88% var(--gray-chroma) var(--gray-hue));
+    --gray-3: oklch(80% var(--gray-chroma) var(--gray-hue));
+    --gray-4: oklch(74% var(--gray-chroma) var(--gray-hue));
+    --gray-5: oklch(68% var(--gray-chroma) var(--gray-hue));
+    --gray-6: oklch(63% var(--gray-chroma) var(--gray-hue));
+    --gray-7: oklch(58% var(--gray-chroma) var(--gray-hue));
+    --gray-8: oklch(53% var(--gray-chroma) var(--gray-hue));
+    --gray-9: oklch(49% var(--gray-chroma) var(--gray-hue));
+    --gray-10: oklch(43% var(--gray-chroma) var(--gray-hue));
+    --gray-11: oklch(37% var(--gray-chroma) var(--gray-hue));
+    --gray-12: oklch(31% var(--gray-chroma) var(--gray-hue));
+    --gray-13: oklch(25% var(--gray-chroma) var(--gray-hue));
+    --gray-14: oklch(18% var(--gray-chroma) var(--gray-hue));
+    --gray-15: oklch(10% var(--gray-chroma) var(--gray-hue));
+
+    /*
+     * Brand color hues - customize these to change the entire color scheme
+     * Arcane neon palette for thaumic/magical aesthetic
+     */
+    --hue-primary: 285;
+    --hue-error: 350;
+    --hue-success: 175;
+    --hue-warning: 55;
+    --hue-info: 230;
+    --hue-casting: 190;
+    --chroma-vibrant: 0.28;
+    --chroma-muted: 0.18;
+
+    /*
+     * ═══════════════════════════════════════════════════════════════════════════
+     * TIER 2: SEMANTIC TOKENS - Purpose-based colors (light-dark pairs)
+     * ═══════════════════════════════════════════════════════════════════════════
+     */
+
+    /* Backgrounds - dark mode uses gray-14/15, light mode uses gray-1/0 */
+    --color-bg: light-dark(var(--gray-1), var(--gray-15));
+    --color-surface: light-dark(var(--gray-0), var(--gray-14));
+    --color-surface-inset: light-dark(var(--gray-1), var(--gray-15));
+    --color-surface-hover: light-dark(
+      oklch(50% 0.04 var(--hue-primary) / 10%),
+      oklch(70% 0.04 var(--hue-primary) / 12%)
+    );
+    --color-overlay: light-dark(oklch(99% 0 0 / 50%), oklch(10% 0 0 / 50%));
+
+    /* Borders */
+    --color-border: light-dark(var(--gray-3), var(--gray-12));
+    --color-border-subtle: light-dark(var(--gray-2), var(--gray-13));
+
+    /* Text */
+    --color-text: light-dark(var(--gray-14), var(--gray-1));
+    --color-text-muted: light-dark(var(--gray-10), var(--gray-5));
+    --color-text-disabled: light-dark(var(--gray-7), var(--gray-9));
+
+    /* Primary (interactive) - blue */
+    --color-primary: light-dark(
+      oklch(50% var(--chroma-vibrant) var(--hue-primary)),
+      oklch(65% var(--chroma-vibrant) var(--hue-primary))
+    );
+    --color-primary-hover: light-dark(
+      oklch(45% var(--chroma-vibrant) var(--hue-primary)),
+      oklch(60% var(--chroma-vibrant) var(--hue-primary))
+    );
+    --color-primary-active: light-dark(
+      oklch(40% var(--chroma-vibrant) var(--hue-primary)),
+      oklch(55% var(--chroma-vibrant) var(--hue-primary))
+    );
+    --color-on-primary: var(--gray-1);
+
+    /* Error/Danger - red */
+    --color-error: light-dark(
+      oklch(55% var(--chroma-vibrant) var(--hue-error)),
+      oklch(65% var(--chroma-vibrant) var(--hue-error))
+    );
+    --color-error-hover: light-dark(
+      oklch(50% var(--chroma-vibrant) var(--hue-error)),
+      oklch(60% var(--chroma-vibrant) var(--hue-error))
+    );
+    --color-error-active: light-dark(
+      oklch(45% var(--chroma-vibrant) var(--hue-error)),
+      oklch(55% var(--chroma-vibrant) var(--hue-error))
+    );
+    --color-on-error: oklch(100% 0 0);
+
+    /* Success - green */
+    --color-success: light-dark(
+      oklch(45% var(--chroma-muted) var(--hue-success)),
+      oklch(65% var(--chroma-muted) var(--hue-success))
+    );
+    --color-success-hover: light-dark(
+      oklch(40% var(--chroma-muted) var(--hue-success)),
+      oklch(60% var(--chroma-muted) var(--hue-success))
+    );
+    --color-on-success: var(--gray-1);
+
+    /* Warning - yellow/gold */
+    --color-warning: light-dark(
+      oklch(55% var(--chroma-muted) var(--hue-warning)),
+      oklch(85% var(--chroma-muted) var(--hue-warning))
+    );
+    --color-warning-hover: light-dark(
+      oklch(50% var(--chroma-muted) var(--hue-warning)),
+      oklch(80% var(--chroma-muted) var(--hue-warning))
+    );
+    --color-on-warning: var(--gray-14);
+
+    /* Casting/Active state - orange/amber */
+    --color-casting: light-dark(
+      oklch(55% var(--chroma-muted) var(--hue-casting)),
+      oklch(70% var(--chroma-muted) var(--hue-casting))
+    );
+    --color-casting-hover: light-dark(
+      oklch(50% var(--chroma-muted) var(--hue-casting)),
+      oklch(65% var(--chroma-muted) var(--hue-casting))
+    );
+    --color-on-casting: var(--gray-14);
+
+    /* Info - blue */
+    --color-info: light-dark(
+      oklch(50% var(--chroma-muted) var(--hue-info)),
+      oklch(70% var(--chroma-muted) var(--hue-info))
+    );
+
+    /* Focus ring */
+    --color-focus: light-dark(
+      oklch(50% var(--chroma-vibrant) var(--hue-primary)),
+      oklch(70% var(--chroma-vibrant) var(--hue-primary))
+    );
+
+    /*
+     * ═══════════════════════════════════════════════════════════════════════════
+     * TIER 3: COMPONENT TOKENS - Scoped to UI components
+     * ═══════════════════════════════════════════════════════════════════════════
+     */
+
+    /* Button: Primary */
+    --button-primary-bg: var(--color-primary);
+    --button-primary-bg-hover: var(--color-primary-hover);
+    --button-primary-text: var(--color-on-primary);
+
+    /* Button: Secondary */
+    --button-secondary-bg: var(--color-surface);
+    --button-secondary-bg-hover: var(--color-surface-hover);
+    --button-secondary-text: var(--color-text);
+    --button-secondary-border: var(--color-border);
+
+    /* Button: Danger */
+    --button-danger-bg: var(--color-error);
+    --button-danger-bg-hover: var(--color-error-hover);
+    --button-danger-text: var(--color-on-error);
+
+    /* Button: Ghost */
+    --button-ghost-bg: transparent;
+    --button-ghost-bg-hover: var(--color-surface-hover);
+    --button-ghost-text: var(--color-text-muted);
+    --button-ghost-text-hover: var(--color-text);
+
+    /* Button: Solid (icon buttons with filled background) */
+    --button-solid-bg: var(--color-primary);
+    --button-solid-bg-hover: var(--color-primary-hover);
+    --button-solid-text: var(--color-on-primary);
+    --button-solid-text-hover: var(--color-on-primary);
+
+    /* Button: Disabled */
+    --button-disabled-opacity: 0.5;
+
+    /* Icon Button: Outline */
+    --icon-button-outline-border: var(--color-border);
+    --icon-button-outline-border-hover: var(--color-primary);
+
+    /* Icon Button: Danger */
+    --icon-button-danger-hover-bg: var(--color-error);
+    --icon-button-danger-hover-text: var(--color-on-error);
+
+    /* Input/Select */
+    --input-bg: var(--color-bg);
+    --input-text: var(--color-text);
+    --input-border: var(--color-border);
+    --input-border-focus: var(--color-focus);
+    --input-placeholder: var(--color-text-muted);
+    --input-disabled-opacity: 0.6;
+
+    /* Card */
+    --card-bg: var(--color-surface);
+    --card-border: light-dark(
+      oklch(70% 0.02 var(--hue-primary) / 10%),
+      oklch(40% 0.02 var(--hue-primary) / 10%)
+    );
+    --card-shadow: var(--shadow-5);
+    --card-radius: var(--radius-md);
+    --card-padding: 0.75rem;
+    --card-text: var(--color-text);
+    --card-text-muted: var(--color-text-muted);
+
+    /* Inset panels (recessed surfaces like placeholders, read-only displays) */
+    --inset-bg: var(--color-surface-inset);
+
+    /* Volume/Slider */
+    --slider-track: var(--color-border);
+    --slider-fill: var(--color-primary);
+    --slider-thumb: var(--color-primary);
+
+    /* Status indicators */
+    --status-connected: var(--color-success);
+    --status-disconnected: var(--color-error);
+    --status-checking: var(--color-warning);
+    --status-casting: var(--color-casting);
+
+    /* Alert component */
+    --alert-warning-bg: light-dark(
+      oklch(75% var(--chroma-muted) var(--hue-warning) / 15%),
+      oklch(55% var(--chroma-muted) var(--hue-warning) / 15%)
+    );
+    --alert-warning-border: light-dark(
+      oklch(65% var(--chroma-muted) var(--hue-warning) / 40%),
+      oklch(65% var(--chroma-muted) var(--hue-warning) / 30%)
+    );
+    --alert-warning-text: var(--color-warning);
+    --alert-warning-icon: var(--color-warning);
+    --alert-error-bg: light-dark(
+      oklch(75% var(--chroma-muted) var(--hue-error) / 15%),
+      oklch(55% var(--chroma-muted) var(--hue-error) / 15%)
+    );
+    --alert-error-border: light-dark(
+      oklch(65% var(--chroma-muted) var(--hue-error) / 40%),
+      oklch(65% var(--chroma-muted) var(--hue-error) / 30%)
+    );
+    --alert-error-text: var(--color-error);
+    --alert-error-icon: var(--color-error);
+    --alert-success-bg: light-dark(
+      oklch(75% var(--chroma-muted) var(--hue-success) / 15%),
+      oklch(55% var(--chroma-muted) var(--hue-success) / 15%)
+    );
+    --alert-success-border: light-dark(
+      oklch(65% var(--chroma-muted) var(--hue-success) / 40%),
+      oklch(65% var(--chroma-muted) var(--hue-success) / 30%)
+    );
+    --alert-success-text: var(--color-success);
+    --alert-success-icon: var(--color-success);
+    --alert-info-bg: light-dark(
+      oklch(75% var(--chroma-muted) var(--hue-info) / 15%),
+      oklch(55% var(--chroma-muted) var(--hue-info) / 15%)
+    );
+    --alert-info-border: light-dark(
+      oklch(65% var(--chroma-muted) var(--hue-info) / 40%),
+      oklch(65% var(--chroma-muted) var(--hue-info) / 30%)
+    );
+    --alert-info-text: var(--color-info);
+    --alert-info-icon: var(--color-info);
+
+    /* Device card status badges */
+    --device-status-playing-bg: light-dark(
+      oklch(65% var(--chroma-muted) var(--hue-success) / 15%),
+      oklch(45% var(--chroma-muted) var(--hue-success) / 20%)
+    );
+    --device-status-playing-text: light-dark(
+      oklch(40% var(--chroma-muted) var(--hue-success)),
+      oklch(70% var(--chroma-muted) var(--hue-success))
+    );
+    --device-status-casting-bg: light-dark(
+      oklch(60% var(--chroma-muted) var(--hue-primary) / 15%),
+      oklch(50% var(--chroma-muted) var(--hue-primary) / 20%)
+    );
+    --device-status-casting-text: light-dark(
+      oklch(45% var(--chroma-muted) var(--hue-primary)),
+      oklch(75% var(--chroma-muted) var(--hue-primary))
+    );
+
+    /* Spacing */
+    --space-xs: 0.25rem;
+    --space-sm: 0.5rem;
+    --space-md: 1rem;
+    --space-lg: 1.5rem;
+    --space-xl: 2rem;
+
+    /* Radii */
+    --radius-sm: 0.25rem;
+    --radius-md: 0.5rem;
+    --radius-lg: 0.75rem;
+
+    /*
+     * Shadows - Open Props inspired layered shadows
+     * Customize via --shadow-color and --shadow-strength
+     */
+    --shadow-color: var(--hue-primary);
+    --shadow-strength: 2%;
+    --shadow-1: 0 1px 2px -1px
+      oklch(20% 0.02 var(--shadow-color) / calc(var(--shadow-strength) + 9%));
+    --shadow-2:
+      0 3px 5px -2px oklch(20% 0.02 var(--shadow-color) / calc(var(--shadow-strength) + 3%)),
+      0 7px 14px -5px oklch(20% 0.02 var(--shadow-color) / calc(var(--shadow-strength) + 5%));
+    --shadow-3:
+      0 -1px 3px 0 oklch(20% 0.02 var(--shadow-color) / calc(var(--shadow-strength) + 2%)),
+      0 1px 2px -5px oklch(20% 0.02 var(--shadow-color) / calc(var(--shadow-strength) + 2%)),
+      0 2px 5px -5px oklch(20% 0.02 var(--shadow-color) / calc(var(--shadow-strength) + 4%)),
+      0 4px 12px -5px oklch(20% 0.02 var(--shadow-color) / calc(var(--shadow-strength) + 5%)),
+      0 12px 15px -5px oklch(20% 0.02 var(--shadow-color) / calc(var(--shadow-strength) + 7%));
+    --shadow-4:
+      0 -2px 5px 0 oklch(20% 0.02 var(--shadow-color) / calc(var(--shadow-strength) + 2%)),
+      0 1px 1px -2px oklch(20% 0.02 var(--shadow-color) / calc(var(--shadow-strength) + 3%)),
+      0 2px 2px -2px oklch(20% 0.02 var(--shadow-color) / calc(var(--shadow-strength) + 3%)),
+      0 5px 5px -2px oklch(20% 0.02 var(--shadow-color) / calc(var(--shadow-strength) + 4%)),
+      0 9px 9px -2px oklch(20% 0.02 var(--shadow-color) / calc(var(--shadow-strength) + 5%)),
+      0 16px 16px -2px oklch(20% 0.02 var(--shadow-color) / calc(var(--shadow-strength) + 6%));
+    --shadow-5:
+      0 -1px 2px 0 oklch(20% 0.02 var(--shadow-color) / calc(var(--shadow-strength) + 2%)),
+      0 2px 1px -2px oklch(20% 0.02 var(--shadow-color) / calc(var(--shadow-strength) + 3%)),
+      0 5px 5px -2px oklch(20% 0.02 var(--shadow-color) / calc(var(--shadow-strength) + 3%)),
+      0 10px 10px -2px oklch(20% 0.02 var(--shadow-color) / calc(var(--shadow-strength) + 4%)),
+      0 20px 20px -2px oklch(20% 0.02 var(--shadow-color) / calc(var(--shadow-strength) + 5%)),
+      0 40px 40px -2px oklch(20% 0.02 var(--shadow-color) / calc(var(--shadow-strength) + 7%));
+
+    /*
+     * ═══════════════════════════════════════════════════════════════════════════
+     * MOTION TOKENS - Easing curves and durations (Open Props inspired)
+     * ═══════════════════════════════════════════════════════════════════════════
+     */
+
+    /* Easing curves */
+    --ease-out-1: cubic-bezier(0, 0, 0.75, 1);
+    --ease-out-2: cubic-bezier(0, 0, 0.5, 1);
+    --ease-out-3: cubic-bezier(0, 0, 0.3, 1);
+    --ease-in-out-1: cubic-bezier(0.5, 0, 0.5, 1);
+    --ease-in-out-2: cubic-bezier(0.45, 0, 0.55, 1);
+
+    /* Durations */
+    --duration-fast: 100ms;
+    --duration-normal: 150ms;
+    --duration-slow: 250ms;
+
+    /* Semantic transitions (disabled by default, enabled via media query) */
+    --transition-bg: none;
+    --transition-color: none;
+    --transition-opacity: none;
+    --transition-transform: none;
+  }
+
+  /* Enable transitions only when user has no motion preference */
+  @media (prefers-reduced-motion: no-preference) {
+    :root {
+      --transition-bg: background-color var(--duration-normal) var(--ease-out-2);
+      --transition-color: color var(--duration-normal) var(--ease-out-2);
+      --transition-opacity: opacity var(--duration-normal) var(--ease-out-1);
+      --transition-transform: transform var(--duration-normal) var(--ease-out-3);
+    }
   }
 }
 
-html {
-  scroll-behavior: smooth;
-  caret-color: var(--color-primary);
-}
-
-@media (prefers-reduced-motion: reduce) {
+@layer base {
   html {
-    scroll-behavior: auto;
+    scroll-behavior: smooth;
+    caret-color: var(--color-primary);
   }
-}
 
-body {
-  font-family:
-    system-ui,
-    -apple-system,
-    sans-serif;
-  background-color: var(--color-bg);
-  color: var(--color-text);
-  accent-color: var(--color-primary);
-  margin: 0;
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
-}
-
-::selection {
-  background: var(--color-primary);
-  color: var(--color-on-primary);
-}
-
-:where(h1, h2, h3, h4, h5, h6) {
-  text-wrap: balance;
-}
-
-:where(p) {
-  text-wrap: pretty;
-}
-
-:where(
-  a[href],
-  area,
-  button,
-  input,
-  label[for],
-  select,
-  summary,
-  textarea,
-  [tabindex]:not([tabindex*='-'])
-) {
-  -webkit-tap-highlight-color: transparent;
-}
-
-/* Button Styles */
-.btn {
-  padding-block: var(--space-sm);
-  padding-inline: var(--space-md);
-  border-radius: var(--radius-sm);
-  border: none;
-  cursor: pointer;
-  font-weight: 500;
-  inline-size: fit-content;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: var(--space-sm);
-  transition: var(--transition-bg), var(--transition-opacity);
-  font-size: 0.9rem;
-}
-
-.btnFullWidth {
-  inline-size: 100%;
-}
-
-.btn:disabled {
-  opacity: 0.6;
-  cursor: not-allowed;
-}
-
-.btn:focus-visible {
-  outline: 2px solid var(--color-focus);
-  outline-offset: 2px;
-}
-
-.btnPrimary {
-  background-color: var(--button-primary-bg);
-  color: var(--button-primary-text);
-  border: 1px solid transparent;
-}
-
-.btnPrimary:not(:disabled):hover {
-  background-color: var(--button-primary-bg-hover);
-}
-
-.btnSecondary {
-  background-color: var(--button-secondary-bg);
-  color: var(--button-secondary-text);
-  border: 1px solid var(--button-secondary-border);
-}
-
-.btnSecondary:not(:disabled):hover {
-  background-color: var(--button-secondary-bg-hover);
-}
-
-.btnDanger {
-  background-color: var(--button-danger-bg);
-  color: var(--button-danger-text);
-  border: 1px solid transparent;
-}
-
-.btnDanger:not(:disabled):hover {
-  background-color: var(--button-danger-bg-hover);
-}
-
-/* Card Styles */
-.card {
-  background: var(--card-bg);
-  border: 1px solid var(--card-border);
-  border-radius: var(--card-radius);
-  padding-block: var(--card-padding);
-  padding-inline: var(--card-padding);
-  box-shadow: var(--card-shadow);
-  overflow: hidden;
-}
-
-.cardNoPadding {
-  padding: 0;
-}
-
-.cardTitle {
-  font-size: 1rem;
-  font-weight: 600;
-  margin-block: 0 var(--space-md);
-}
-
-/* Volume Control Styles */
-.volumeControl {
-  display: flex;
-  align-items: center;
-  gap: var(--space-sm);
-  padding-block: var(--space-xs);
-  padding-inline: var(--space-xs);
-  background: var(--color-surface);
-  border-radius: var(--radius-sm);
-}
-
-.volumeControlMuteBtn.muted {
-  opacity: 0.5;
-}
-
-.volumeControlSlider {
-  --volume: 0%;
-
-  flex: 1;
-  height: 4px;
-  appearance: none;
-  background: linear-gradient(
-    to right,
-    var(--slider-fill) var(--volume),
-    var(--slider-track) var(--volume)
-  );
-  border-radius: 2px;
-  outline: none;
-  cursor: pointer;
-}
-
-.volumeControlSlider:focus-visible {
-  outline: 2px solid var(--color-focus);
-  outline-offset: 2px;
-}
-
-.volumeControlSlider::-webkit-slider-thumb {
-  appearance: none;
-  width: 12px;
-  height: 12px;
-  background: var(--slider-thumb);
-  border-radius: 50%;
-  cursor: pointer;
-}
-
-.volumeControlValue {
-  flex-shrink: 0;
-  font-size: 0.65rem;
-  color: var(--color-text-muted);
-  min-width: 1.5rem;
-  text-align: end;
-}
-
-/* Icon Button Styles */
-.iconBtn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  flex-shrink: 0;
-  border: none;
-  border-radius: var(--radius-sm);
-  cursor: pointer;
-  transition: var(--transition-bg), var(--transition-color), var(--transition-opacity);
-}
-
-.iconBtn:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-
-.iconBtn:focus-visible {
-  outline: 2px solid var(--color-focus);
-  outline-offset: 2px;
-}
-
-/* Sizes */
-.iconBtnSm {
-  width: 1.25rem;
-  height: 1.25rem;
-  padding: 0.125rem;
-}
-
-.iconBtnMd {
-  width: 1.75rem;
-  height: 1.75rem;
-  padding: 0.25rem;
-}
-
-.iconBtnLg {
-  width: 2.25rem;
-  height: 2.25rem;
-  padding: 0.375rem;
-}
-
-/* Variants */
-.iconBtnGhost {
-  background: var(--button-ghost-bg);
-  color: var(--button-ghost-text);
-}
-
-.iconBtnGhost:not(:disabled):hover {
-  background: var(--button-ghost-bg-hover);
-  color: var(--button-ghost-text-hover);
-}
-
-.iconBtnOutline {
-  background: transparent;
-  color: var(--color-text-muted);
-  border: 1px solid var(--icon-button-outline-border);
-}
-
-.iconBtnOutline:not(:disabled):hover {
-  background: var(--color-surface-hover);
-  color: var(--color-text);
-}
-
-.iconBtnDanger {
-  background: transparent;
-  color: var(--color-text-muted);
-  border: 1px solid var(--color-border);
-}
-
-.iconBtnDanger:not(:disabled):hover {
-  background: var(--icon-button-danger-hover-bg);
-  border-color: var(--icon-button-danger-hover-bg);
-  color: var(--icon-button-danger-hover-text);
-}
-
-/* Wizard Styles */
-.wizard {
-  position: relative;
-  display: flex;
-  flex-direction: column;
-  block-size: 100%;
-  padding: var(--space-lg);
-}
-
-.wizardContent {
-  flex: 1;
-  overflow-y: auto;
-  scrollbar-width: thin;
-  scrollbar-color: var(--color-primary) transparent;
-  padding-inline: var(--space-lg);
-  display: flex;
-  justify-content: center;
-}
-
-.wizardFooter {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding-block-start: var(--space-lg);
-  border-block-start: 1px solid var(--color-border);
-  margin-block-start: var(--space-lg);
-}
-
-.wizardFooterStart {
-  display: flex;
-  align-items: center;
-}
-
-.wizardFooterEnd {
-  display: flex;
-  gap: var(--space-sm);
-}
-
-.wizardFooterEnd .btn {
-  inline-size: auto;
-  min-inline-size: 6rem;
-}
-
-.wizardSkipBtn {
-  background: none;
-  border: none;
-  color: var(--color-text-muted);
-  cursor: pointer;
-  font-size: 0.875rem;
-  padding: var(--space-sm);
-  text-decoration: underline;
-  text-underline-offset: 2px;
-  transition: var(--transition-color);
-}
-
-.wizardSkipBtn:hover {
-  color: var(--color-text);
-}
-
-.wizardSkipBtn:focus-visible {
-  outline: 2px solid var(--color-focus);
-  outline-offset: 2px;
-}
-
-/* Wizard Step Styles */
-.wizardStep {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-lg);
-  max-inline-size: 60ch;
-  inline-size: 100%;
-}
-
-.wizardStepHeader {
-  text-align: center;
-}
-
-.wizardStepIcon {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  inline-size: 4rem;
-  block-size: 4rem;
-  border-radius: 50%;
-  background: var(--color-surface-hover);
-  color: var(--color-primary);
-  margin-block-end: var(--space-md);
-}
-
-.wizardStepTitle {
-  font-size: 1.5rem;
-  font-weight: 600;
-  margin: 0;
-  color: var(--color-text);
-}
-
-.wizardStepSubtitle {
-  font-size: 0.9rem;
-  color: var(--color-text-muted);
-  margin-block: var(--space-sm) 0;
-  text-wrap: pretty;
-}
-
-.wizardStepContent {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-md);
-  text-align: start;
-}
-
-/* Step Indicator Styles */
-.stepIndicator {
-  display: flex;
-  justify-content: center;
-  gap: var(--space-sm);
-  margin-block-end: var(--space-lg);
-}
-
-.stepDot {
-  inline-size: 0.5rem;
-  block-size: 0.5rem;
-  border-radius: 50%;
-  background-color: var(--color-border);
-  transition: var(--transition-bg);
-}
-
-.stepDotActive {
-  background-color: var(--color-primary);
-  transform: scale(1.25);
-}
-
-.stepDotCompleted {
-  background-color: var(--color-success);
-}
-
-/* Compact wizard for popups - uses grid for stable layout */
-.wizardCompact {
-  display: grid;
-  grid-template:
-    'header' auto
-    'content' 1fr
-    'footer' auto / 1fr;
-}
-
-.wizardCompact .wizardHeader {
-  grid-area: header;
-  position: relative;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-
-.wizardCompact .wizardBack {
-  position: absolute;
-  inset-inline-start: 0;
-}
-
-.wizardCompact .wizardHeader .stepIndicator {
-  margin-block-end: 0;
-}
-
-.wizardCompact .wizardContent {
-  grid-area: content;
-  min-block-size: 240px;
-  padding-block-start: var(--space-lg);
-}
-
-.wizardCompact .wizardFooter {
-  grid-area: footer;
-}
-
-/* Alert Styles */
-.alert {
-  display: flex;
-  align-items: flex-start;
-  gap: var(--space-sm);
-  padding-block: var(--space-sm);
-  padding-inline: var(--space-md);
-  border-radius: var(--radius-md);
-  font-size: 0.875rem;
-  line-height: 1.4;
-}
-
-.alertIcon {
-  flex-shrink: 0;
-  margin-block-start: 0.125rem;
-}
-
-.alertContent {
-  flex: 1;
-  min-inline-size: 0;
-  text-wrap: pretty;
-}
-
-.alertDismiss {
-  flex-shrink: 0;
-  margin-inline-start: var(--space-xs);
-}
-
-.alertWarning {
-  background-color: var(--alert-warning-bg);
-  border: 1px solid var(--alert-warning-border);
-  color: var(--alert-warning-text);
-}
-
-.alertWarning .alertIcon {
-  color: var(--alert-warning-icon);
-}
-
-.alertError {
-  background-color: var(--alert-error-bg);
-  border: 1px solid var(--alert-error-border);
-  color: var(--alert-error-text);
-}
-
-.alertError .alertIcon {
-  color: var(--alert-error-icon);
-}
-
-.alertSuccess {
-  background-color: var(--alert-success-bg);
-  border: 1px solid var(--alert-success-border);
-  color: var(--alert-success-text);
-}
-
-.alertSuccess .alertIcon {
-  color: var(--alert-success-icon);
-}
-
-.alertInfo {
-  background-color: var(--alert-info-bg);
-  border: 1px solid var(--alert-info-border);
-  color: var(--alert-info-text);
-}
-
-.alertInfo .alertIcon {
-  color: var(--alert-info-icon);
-}
-
-/* Speaker Multi-Select Styles */
-.speakerMultiSelect {
-  display: flex;
-  flex-direction: column;
-  gap: 0.25rem;
-}
-
-.speakerMultiSelectLabel {
-  font-size: 0.75rem;
-  color: var(--color-text-muted);
-}
-
-.speakerMultiSelectList {
-  display: flex;
-  flex-direction: column;
-  gap: 0.25rem;
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  max-block-size: 8rem;
-  overflow-y: auto;
-  scrollbar-width: thin;
-  scrollbar-color: var(--color-primary) transparent;
-  border-radius: var(--radius-sm);
-  background: var(--input-bg);
-  border: 1px solid var(--input-border);
-}
-
-.speakerMultiSelectItem {
-  display: flex;
-  align-items: center;
-  gap: var(--space-sm);
-  padding-block: 0.375rem;
-  padding-inline: var(--space-sm);
-  cursor: pointer;
-  transition: var(--transition-bg);
-  user-select: none;
-}
-
-.speakerMultiSelectItem:focus-visible {
-  outline: 2px solid var(--color-focus);
-  outline-offset: -2px;
-  border-radius: 2px;
-}
-
-.speakerMultiSelectItem:hover:not(.speakerMultiSelectItemDisabled) {
-  background: var(--color-surface-hover);
-}
-
-.speakerMultiSelectItemSelected {
-  background: oklch(from var(--color-primary) l c h / 10%);
-}
-
-.speakerMultiSelectItemSelected:hover:not(.speakerMultiSelectItemDisabled) {
-  background: oklch(from var(--color-primary) l c h / 15%);
-}
-
-.speakerMultiSelectItemDisabled {
-  opacity: var(--input-disabled-opacity);
-  cursor: not-allowed;
-}
-
-.speakerMultiSelectCheckbox {
-  flex-shrink: 0;
-  width: 1rem;
-  height: 1rem;
-  accent-color: var(--color-primary);
-  pointer-events: none;
-}
-
-.speakerMultiSelectName {
-  flex: 1;
-  min-width: 0;
-  font-size: 0.8125rem;
-  color: var(--color-text);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-/* Speaker Volume Row Styles */
-.speakerVolumeRow {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-xs);
-}
-
-.speakerVolumeRowHeader {
-  display: flex;
-  align-items: center;
-  gap: 0.25rem;
-}
-
-.speakerVolumeRowName {
-  font-size: 0.65rem;
-  color: var(--color-text-muted);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-/* Toggle Switch Styles */
-.toggleSwitch {
-  position: relative;
-  display: inline-flex;
-  align-items: center;
-  inline-size: 2.5rem;
-  block-size: 1.25rem;
-  padding: 0;
-  background: var(--color-border);
-  border: none;
-  border-radius: 0.75rem;
-  cursor: pointer;
-  transition: var(--transition-bg);
-}
-
-.toggleSwitch:focus-visible {
-  outline: 2px solid var(--color-focus);
-  outline-offset: 2px;
-}
-
-.toggleSwitchOn {
-  background: var(--color-primary);
-}
-
-.toggleSwitchDisabled {
-  opacity: var(--input-disabled-opacity);
-  cursor: not-allowed;
-}
-
-.toggleSwitchThumb {
-  position: absolute;
-  inset-inline-start: 0.125rem;
-  inline-size: 1rem;
-  block-size: 1rem;
-  background: var(--color-on-primary);
-  border-radius: 50%;
-  transition: transform var(--duration-fast) var(--ease-out-2);
-}
-
-.toggleSwitchOn .toggleSwitchThumb {
-  transform: translateX(1.25rem);
-}
-
-/* Status Chip Styles */
-.statusChip {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-xs);
-  padding-block: 0.125rem;
-  padding-inline: var(--space-sm);
-  font-size: 0.6875rem;
-  font-weight: 500;
-  border-radius: var(--radius-sm);
-  white-space: nowrap;
-}
-
-.statusChipWaiting {
-  background: var(--color-surface-hover);
-  color: var(--color-text-muted);
-}
-
-.statusChipAcquiring {
-  background: var(--alert-warning-bg);
-  color: var(--color-warning);
-}
-
-.statusChipSynced {
-  background: var(--alert-success-bg);
-  color: var(--color-success);
-}
-
-.statusChipLost {
-  background: var(--alert-error-bg);
-  color: var(--color-error);
+  @media (prefers-reduced-motion: reduce) {
+    html {
+      scroll-behavior: auto;
+    }
+  }
+
+  body {
+    font-family:
+      system-ui,
+      -apple-system,
+      sans-serif;
+    background-color: var(--color-bg);
+    color: var(--color-text);
+    accent-color: var(--color-primary);
+    margin: 0;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  ::selection {
+    background: var(--color-primary);
+    color: var(--color-on-primary);
+  }
+
+  :where(h1, h2, h3, h4, h5, h6) {
+    text-wrap: balance;
+  }
+
+  :where(p) {
+    text-wrap: pretty;
+  }
+
+  :where(
+    a[href],
+    area,
+    button,
+    input,
+    label[for],
+    select,
+    summary,
+    textarea,
+    [tabindex]:not([tabindex*='-'])
+  ) {
+    -webkit-tap-highlight-color: transparent;
+  }
 }

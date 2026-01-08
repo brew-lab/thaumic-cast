@@ -12,10 +12,12 @@
     "typecheck": "tsc --noEmit"
   },
   "peerDependencies": {
+    "@thaumic-cast/protocol": "workspace:*",
     "lucide-preact": "^0.562.0",
     "preact": "^10.0.0"
   },
   "devDependencies": {
+    "@thaumic-cast/protocol": "workspace:*",
     "lucide-preact": "^0.562.0",
     "typescript": "^5.0.0"
   }

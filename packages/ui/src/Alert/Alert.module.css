@@ -1,0 +1,66 @@
+.alert {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-sm);
+  padding-block: var(--space-sm);
+  padding-inline: var(--space-md);
+  border-radius: var(--radius-md);
+  font-size: 0.875rem;
+  line-height: 1.4;
+}
+
+.icon {
+  flex-shrink: 0;
+  margin-block-start: 0.125rem;
+}
+
+.content {
+  flex: 1;
+  min-inline-size: 0;
+  text-wrap: pretty;
+}
+
+.dismiss {
+  flex-shrink: 0;
+  margin-inline-start: var(--space-xs);
+}
+
+.warning {
+  background-color: var(--alert-warning-bg);
+  border: 1px solid var(--alert-warning-border);
+  color: var(--alert-warning-text);
+}
+
+.warning .icon {
+  color: var(--alert-warning-icon);
+}
+
+.error {
+  background-color: var(--alert-error-bg);
+  border: 1px solid var(--alert-error-border);
+  color: var(--alert-error-text);
+}
+
+.error .icon {
+  color: var(--alert-error-icon);
+}
+
+.success {
+  background-color: var(--alert-success-bg);
+  border: 1px solid var(--alert-success-border);
+  color: var(--alert-success-text);
+}
+
+.success .icon {
+  color: var(--alert-success-icon);
+}
+
+.info {
+  background-color: var(--alert-info-bg);
+  border: 1px solid var(--alert-info-border);
+  color: var(--alert-info-text);
+}
+
+.info .icon {
+  color: var(--alert-info-icon);
+}

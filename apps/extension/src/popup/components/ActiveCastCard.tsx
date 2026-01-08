@@ -1,11 +1,11 @@
-import type { JSX } from 'preact';
+import { type JSX, type CSSProperties } from 'preact';
 import { flushSync } from 'preact/compat';
 import { useCallback, useState, useRef, useEffect } from 'preact/hooks';
 import { useTranslation } from 'react-i18next';
 import type { ActiveCast, TransportState, MediaAction } from '@thaumic-cast/protocol';
 import { getDisplayTitle, getDisplayImage, getDisplaySubtitle } from '@thaumic-cast/protocol';
 import { X, Play, Pause, SkipBack, SkipForward, RefreshCw } from 'lucide-preact';
-import { IconButton, SpeakerVolumeRow, ToggleSwitch, StatusChip } from '@thaumic-cast/ui';
+import { IconButton, SpeakerVolumeRow, ToggleSwitch, StatusChip, Card } from '@thaumic-cast/ui';
 import { TransportIcon } from './TransportIcon';
 import { useDominantColor } from '../hooks/useDominantColor';
 import { useVideoSyncState } from '../hooks/useVideoSyncState';
@@ -171,165 +171,180 @@ export function ActiveCastCard({
   }
 
   return (
-    <div
+    <Card
+      noPadding
       className={`${styles.card} ${stagedImage ? styles.hasArtwork : ''}`}
-      style={Object.keys(cardStyle).length > 0 ? (cardStyle as JSX.CSSProperties) : undefined}
+      style={Object.keys(cardStyle).length > 0 ? (cardStyle as CSSProperties) : undefined}
     >
-      <div className={styles.header}>
-        {favicon && <img src={favicon} alt="" className={styles.favicon} loading="lazy" />}
-        <span className={styles.headerSpacer} />
-        <IconButton
-          className={styles.skipBtn}
-          size="sm"
-          onClick={onStop}
-          aria-label={t('stop_cast')}
-          title={t('stop_cast')}
-        >
-          <X size={12} />
-        </IconButton>
-      </div>
-
-      <div className={styles.mainRow}>
-        {canPrev && onControl && (
+      <div className={styles.cardInner}>
+        <div className={styles.header}>
+          {favicon && <img src={favicon} alt="" className={styles.favicon} loading="lazy" />}
+          <span className={styles.headerSpacer} />
           <IconButton
             className={styles.skipBtn}
-            onClick={() => handleControl('previoustrack')}
-            aria-label={t('previous_track')}
-            title={t('previous_track')}
+            size="sm"
+            onClick={onStop}
+            aria-label={t('stop_cast')}
+            title={t('stop_cast')}
           >
-            <SkipBack size={14} />
+            <X size={12} />
           </IconButton>
-        )}
-
-        <div className={styles.info}>
-          <button
-            type="button"
-            className={styles.title}
-            onClick={goToTab}
-            title={t('go_to_tab')}
-            aria-label={`${t('go_to_tab')}: ${title}`}
-          >
-            {title}
-          </button>
-          {subtitle && <p className={styles.subtitle}>{subtitle}</p>}
         </div>
 
-        {(canPlay || canPause) && onControl && (
-          <IconButton
-            onClick={handlePlayPause}
-            aria-label={displayIsPlaying ? t('pause') : t('play')}
-            title={displayIsPlaying ? t('pause') : t('play')}
-          >
-            {displayIsPlaying ? <Pause size={14} /> : <Play size={14} />}
-          </IconButton>
-        )}
+        <div className={styles.mainRow}>
+          {canPrev && onControl && (
+            <IconButton
+              className={styles.skipBtn}
+              onClick={() => handleControl('previoustrack')}
+              aria-label={t('previous_track')}
+              title={t('previous_track')}
+            >
+              <SkipBack size={14} />
+            </IconButton>
+          )}
 
-        {canNext && onControl && (
-          <IconButton
-            className={styles.skipBtn}
-            onClick={() => handleControl('nexttrack')}
-            aria-label={t('next_track')}
-            title={t('next_track')}
-          >
-            <SkipForward size={14} />
-          </IconButton>
-        )}
-      </div>
-
-      {/* Per-speaker volume controls */}
-      <div className={styles.speakerRows}>
-        {cast.speakerIps.map((ip, idx) => {
-          const name = cast.speakerNames[idx] ?? ip;
-          const transportState = getTransportState?.(ip);
-          return (
-            <SpeakerVolumeRow
-              key={ip}
-              speakerName={name}
-              speakerIp={ip}
-              volume={getVolume(ip)}
-              muted={isMuted(ip)}
-              onVolumeChange={(vol) => onVolumeChange(ip, vol)}
-              onMuteToggle={() => onMuteToggle(ip)}
-              muteLabel={t('mute')}
-              unmuteLabel={t('unmute')}
-              volumeLabel={t('volume')}
-              statusIndicator={
-                transportState ? <TransportIcon state={transportState} size={10} /> : undefined
-              }
-            />
-          );
-        })}
-      </div>
-
-      {/* Video sync controls (conditional on global setting) */}
-      {showVideoSync && (
-        <div className={styles.videoSyncSection}>
-          <div className={styles.videoSyncHeader}>
-            <span className={styles.videoSyncLabel}>{t('video_sync')}</span>
-            <ToggleSwitch
-              checked={videoSync.enabled}
-              onChange={videoSync.setEnabled}
-              aria-label={t('video_sync_toggle')}
-            />
-            {videoSync.enabled && (
-              <StatusChip
-                variant={
-                  videoSync.state === 'locked'
-                    ? 'synced'
-                    : videoSync.state === 'acquiring'
-                      ? 'acquiring'
-                      : videoSync.state === 'stale'
-                        ? 'lost'
-                        : 'waiting'
-                }
-              >
-                {videoSync.state === 'locked'
-                  ? t('video_sync_status_synced')
-                  : videoSync.state === 'acquiring'
-                    ? t('video_sync_status_acquiring')
-                    : videoSync.state === 'stale'
-                      ? t('video_sync_status_lost')
-                      : t('video_sync_status_waiting')}
-              </StatusChip>
-            )}
+          <div className={styles.info}>
+            <button
+              type="button"
+              className={styles.title}
+              onClick={goToTab}
+              title={t('go_to_tab')}
+              aria-label={`${t('go_to_tab')}: ${title}`}
+            >
+              {title}
+            </button>
+            {subtitle && <p className={styles.subtitle}>{subtitle}</p>}
           </div>
 
-          {videoSync.enabled && (
-            <div className={styles.videoSyncControls}>
-              <div className={styles.videoSyncTrim}>
-                <label htmlFor="trim-slider" className={styles.videoSyncTrimLabel}>
-                  {t('video_sync_trim')}
-                </label>
-                <input
-                  id="trim-slider"
-                  type="range"
-                  min={-500}
-                  max={500}
-                  step={10}
-                  value={videoSync.trimMs}
-                  onChange={(e) => videoSync.setTrim(Number((e.target as HTMLInputElement).value))}
-                  className={styles.videoSyncTrimSlider}
-                  aria-valuetext={t('video_sync_delay_ms', { delay: videoSync.trimMs })}
-                />
-                <span className={styles.videoSyncTrimValue}>
-                  {videoSync.trimMs > 0 ? '+' : ''}
-                  {videoSync.trimMs}ms
-                </span>
-              </div>
-              {videoSync.state === 'stale' && (
-                <IconButton
-                  onClick={videoSync.resync}
-                  aria-label={t('video_sync_resync')}
-                  title={t('video_sync_resync')}
-                  size="sm"
-                >
-                  <RefreshCw size={12} />
-                </IconButton>
-              )}
-            </div>
+          {(canPlay || canPause) && onControl && (
+            <IconButton
+              variant="solid"
+              onClick={handlePlayPause}
+              aria-label={displayIsPlaying ? t('pause') : t('play')}
+              title={displayIsPlaying ? t('pause') : t('play')}
+            >
+              {displayIsPlaying ? <Pause size={14} /> : <Play size={14} />}
+            </IconButton>
+          )}
+
+          {canNext && onControl && (
+            <IconButton
+              className={styles.skipBtn}
+              onClick={() => handleControl('nexttrack')}
+              aria-label={t('next_track')}
+              title={t('next_track')}
+            >
+              <SkipForward size={14} />
+            </IconButton>
           )}
         </div>
-      )}
-    </div>
+
+        {/* Per-speaker volume controls */}
+        <div className={styles.speakerRows}>
+          {cast.speakerIps.map((ip, idx) => {
+            const name = cast.speakerNames[idx] ?? ip;
+            const transportState = getTransportState?.(ip);
+            return (
+              <SpeakerVolumeRow
+                key={ip}
+                speakerName={name}
+                speakerIp={ip}
+                volume={getVolume(ip)}
+                muted={isMuted(ip)}
+                onVolumeChange={(vol) => onVolumeChange(ip, vol)}
+                onMuteToggle={() => onMuteToggle(ip)}
+                muteLabel={t('mute')}
+                unmuteLabel={t('unmute')}
+                volumeLabel={t('volume')}
+                statusIndicator={
+                  transportState ? <TransportIcon state={transportState} size={10} /> : undefined
+                }
+              />
+            );
+          })}
+        </div>
+
+        {/* Video sync controls (conditional on global setting) */}
+        {showVideoSync && (
+          <div className={styles.videoSyncSection}>
+            <div className={styles.videoSyncHeader}>
+              <span className={styles.videoSyncLabel}>{t('video_sync')}</span>
+              <ToggleSwitch
+                checked={videoSync.enabled}
+                onChange={videoSync.setEnabled}
+                aria-label={t('video_sync_toggle')}
+              />
+              {videoSync.enabled && (
+                <StatusChip
+                  variant={
+                    videoSync.state === 'locked'
+                      ? 'synced'
+                      : videoSync.state === 'acquiring'
+                        ? 'acquiring'
+                        : videoSync.state === 'stale'
+                          ? 'lost'
+                          : 'waiting'
+                  }
+                  className={
+                    videoSync.state === 'locked'
+                      ? styles.synced
+                      : videoSync.state === 'acquiring'
+                        ? styles.acquiring
+                        : videoSync.state === 'stale'
+                          ? styles.lost
+                          : undefined
+                  }
+                >
+                  {videoSync.state === 'locked'
+                    ? t('video_sync_status_synced')
+                    : videoSync.state === 'acquiring'
+                      ? t('video_sync_status_acquiring')
+                      : videoSync.state === 'stale'
+                        ? t('video_sync_status_lost')
+                        : t('video_sync_status_waiting')}
+                </StatusChip>
+              )}{' '}
+            </div>
+
+            {videoSync.enabled && (
+              <div className={styles.videoSyncControls}>
+                <div className={styles.videoSyncTrim}>
+                  <label htmlFor="trim-slider" className={styles.videoSyncTrimLabel}>
+                    {t('video_sync_trim')}
+                  </label>
+                  <input
+                    id="trim-slider"
+                    type="range"
+                    min={-500}
+                    max={500}
+                    step={10}
+                    value={videoSync.trimMs}
+                    onChange={(e) =>
+                      videoSync.setTrim(Number((e.target as HTMLInputElement).value))
+                    }
+                    className={styles.videoSyncTrimSlider}
+                    aria-valuetext={t('video_sync_delay_ms', { delay: videoSync.trimMs })}
+                  />
+                  <span className={styles.videoSyncTrimValue}>
+                    {videoSync.trimMs > 0 ? '+' : ''}
+                    {videoSync.trimMs}ms
+                  </span>
+                </div>
+                {videoSync.state === 'stale' && (
+                  <IconButton
+                    onClick={videoSync.resync}
+                    aria-label={t('video_sync_resync')}
+                    title={t('video_sync_resync')}
+                    size="sm"
+                  >
+                    <RefreshCw size={12} />
+                  </IconButton>
+                )}
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+    </Card>
   );
 }

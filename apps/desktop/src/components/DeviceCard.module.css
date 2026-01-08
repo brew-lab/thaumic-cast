@@ -1,13 +1,13 @@
-.deviceCard {
-  background: var(--card-bg);
-  border-radius: var(--card-radius);
+.container {
+  /* Use shared Card styles, but we can add specific margins if needed */
+}
+
+.content {
   padding-block: var(--card-padding);
   padding-inline: var(--card-padding);
   display: flex;
   flex-direction: column;
   gap: var(--space-sm);
-  border: 1px solid var(--card-border);
-  box-shadow: var(--card-shadow);
 }
 
 .header {

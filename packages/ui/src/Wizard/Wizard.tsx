@@ -1,8 +1,9 @@
 import type { ComponentChildren } from 'preact';
 import { ChevronLeft } from 'lucide-preact';
-import { Button } from './Button';
-import { IconButton } from './IconButton';
+import { Button } from '../Button';
+import { IconButton } from '../IconButton';
 import { StepIndicator } from './StepIndicator';
+import styles from './Wizard.module.css';
 
 interface WizardLabels {
   next?: string;
@@ -80,32 +81,42 @@ export function Wizard({
   if (compact) {
     return (
       <div
-        className="wizard wizardCompact"
+        className={[styles.wizard, styles.compact].join(' ')}
         role="dialog"
         aria-modal="true"
         aria-label="Setup wizard"
       >
-        <div className="wizardHeader">
-          <div className="wizardBack">
+        <div className={styles.header}>
+          <div className={styles.back}>
             {showBackInHeader && (
               <IconButton variant="ghost" size="sm" onClick={onBack} title={back} aria-label={back}>
                 <ChevronLeft size={18} />
               </IconButton>
             )}
           </div>
-          <StepIndicator current={currentStep} total={totalSteps} labels={stepLabels} />
+          <StepIndicator
+            current={currentStep}
+            total={totalSteps}
+            labels={stepLabels}
+            className={styles.indicator}
+          />
         </div>
-        <div className="wizardContent">{children}</div>
-        <div className="wizardFooter">
-          <div className="wizardFooterStart">
+        <div className={styles.content}>{children}</div>
+        <div className={styles.footer}>
+          <div className={styles.footerStart}>
             {showSkip && onSkip && (
-              <button type="button" className="wizardSkipBtn" onClick={onSkip} aria-label={skip}>
+              <button type="button" className={styles.skipBtn} onClick={onSkip} aria-label={skip}>
                 {skip}
               </button>
             )}
           </div>
-          <div className="wizardFooterEnd">
-            <Button variant="primary" onClick={onNext} disabled={nextDisabled}>
+          <div className={styles.footerEnd}>
+            <Button
+              variant="primary"
+              onClick={onNext}
+              disabled={nextDisabled}
+              className={styles.footerButton}
+            >
               {nextLabel}
             </Button>
           </div>
@@ -115,27 +126,37 @@ export function Wizard({
   }
 
   return (
-    <div className="wizard" role="dialog" aria-modal="true" aria-label="Setup wizard">
-      <StepIndicator current={currentStep} total={totalSteps} labels={stepLabels} />
+    <div className={styles.wizard} role="dialog" aria-modal="true" aria-label="Setup wizard">
+      <StepIndicator
+        current={currentStep}
+        total={totalSteps}
+        labels={stepLabels}
+        className={styles.indicator}
+      />
 
-      <div className="wizardContent">{children}</div>
+      <div className={styles.content}>{children}</div>
 
-      <div className="wizardFooter">
-        <div className="wizardFooterStart">
+      <div className={styles.footer}>
+        <div className={styles.footerStart}>
           {showSkip && onSkip && (
-            <button type="button" className="wizardSkipBtn" onClick={onSkip} aria-label={skip}>
+            <button type="button" className={styles.skipBtn} onClick={onSkip} aria-label={skip}>
               {skip}
             </button>
           )}
         </div>
 
-        <div className="wizardFooterEnd">
+        <div className={styles.footerEnd}>
           {!isFirstStep && onBack && (
-            <Button variant="secondary" onClick={onBack}>
+            <Button variant="secondary" onClick={onBack} className={styles.footerButton}>
               {back}
             </Button>
           )}
-          <Button variant="primary" onClick={onNext} disabled={nextDisabled}>
+          <Button
+            variant="primary"
+            onClick={onNext}
+            disabled={nextDisabled}
+            className={styles.footerButton}
+          >
             {nextLabel}
           </Button>
         </div>
