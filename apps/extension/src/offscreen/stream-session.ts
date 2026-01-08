@@ -26,20 +26,6 @@ import { isSupportedSampleRate, getNearestSupportedSampleRate } from '@thaumic-c
 
 const log = createLogger('Offscreen');
 
-/**
- * Chrome-specific constraints for tab audio capture.
- * Standard MediaStreamConstraints doesn't include these Chrome-specific properties.
- */
-interface ChromeTabCaptureConstraints {
-  audio: {
-    mandatory: {
-      chromeMediaSource: 'tab';
-      chromeMediaSourceId: string;
-    };
-  };
-  video: false;
-}
-
 /** Interval for checking worklet heartbeat (ms). */
 const WORKLET_HEARTBEAT_CHECK_INTERVAL = 2000;
 
@@ -608,9 +594,3 @@ export const MAX_OFFSCREEN_SESSIONS = 10;
 
 /** Registry of active sessions by tab ID. */
 export const activeSessions = new Map<number, StreamSession>();
-
-/**
- * Chrome-specific constraints for tab audio capture.
- * Exported for use in handlers.
- */
-export type { ChromeTabCaptureConstraints };

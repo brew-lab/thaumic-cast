@@ -33,14 +33,23 @@ import {
   getControlConnection,
   setCachedSonosState,
 } from './control-connection';
-import {
-  StreamSession,
-  activeSessions,
-  MAX_OFFSCREEN_SESSIONS,
-  type ChromeTabCaptureConstraints,
-} from './stream-session';
+import { StreamSession, activeSessions, MAX_OFFSCREEN_SESSIONS } from './stream-session';
 
 const log = createLogger('Offscreen');
+
+/**
+ * Chrome-specific constraints for tab audio capture.
+ * Standard MediaStreamConstraints doesn't include these Chrome-specific properties.
+ */
+interface ChromeTabCaptureConstraints {
+  audio: {
+    mandatory: {
+      chromeMediaSource: 'tab';
+      chromeMediaSourceId: string;
+    };
+  };
+  video: false;
+}
 
 /**
  * Sets up the global message listener for offscreen document control.
