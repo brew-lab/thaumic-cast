@@ -216,8 +216,10 @@ function handleWsDisconnected(): void {
 async function ensureConnection(): Promise<EnsureConnectionResponse> {
   const connState = getConnectionState();
 
-  // Already connected - return current state
+  // Already connected - notify popup and return current state
   if (connState.connected) {
+    // Send state update in case popup missed the original WS_STATE_CHANGED
+    notifyPopup({ type: 'WS_STATE_CHANGED', state: getStoredSonosState() });
     return {
       connected: true,
       desktopAppUrl: connState.desktopAppUrl,
@@ -346,6 +348,11 @@ async function recoverOffscreenState(): Promise<void> {
         if (status.state) {
           setSonosState(status.state);
           log.info('Recovered Sonos state from offscreen cache');
+
+          // Notify popup of recovered state (it may already be open)
+          if (status.connected) {
+            notifyPopup({ type: 'WS_STATE_CHANGED', state: status.state });
+          }
         }
 
         // If not connected but has URL, trigger reconnection
@@ -354,9 +361,16 @@ async function recoverOffscreenState(): Promise<void> {
           sendToOffscreen({ type: 'WS_RECONNECT' }).catch(() => {});
         }
       }
+    } else {
+      // No offscreen document exists - we're definitely not connected
+      // Clear stale connected state from session storage
+      setConnected(false);
+      log.info('No offscreen document found, cleared stale connection state');
     }
   } catch (err) {
     log.warn('Failed to recover offscreen state:', err);
+    // On error, assume not connected to prevent stale state
+    setConnected(false);
   }
 }
 
