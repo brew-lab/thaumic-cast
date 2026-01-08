@@ -34,6 +34,7 @@ import { setSonosState, getSonosState as getStoredSonosState, updateGroups } fro
 import { ensureOffscreen } from '../offscreen-manager';
 import { offscreenBroker } from '../offscreen-broker';
 import { notifyPopup } from '../notification-service';
+import { clearAllSessions } from '../session-manager';
 
 const log = createLogger('Background');
 
@@ -124,8 +125,12 @@ export function handleWsTemporarilyDisconnected(): void {
 
 /**
  * Handles WebSocket permanently disconnected event.
+ * Clears all sessions since desktop is unreachable.
  */
 export function handleWsPermanentlyDisconnected(): void {
+  // Clear all sessions - offscreen's stopAllSessions() terminates workers
+  // synchronously, so SESSION_DISCONNECTED messages are never sent
+  clearAllSessions();
   setConnectionError('error_connection_lost');
   log.warn('WebSocket permanently disconnected');
   notifyPopup({ type: 'WS_CONNECTION_LOST', reason: 'max_retries_exceeded' });

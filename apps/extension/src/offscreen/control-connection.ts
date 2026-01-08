@@ -20,6 +20,7 @@
 import { createLogger } from '@thaumic-cast/shared';
 import type { SonosStateSnapshot, WsControlCommand } from '@thaumic-cast/protocol';
 import type { WsStatusResponse } from '../lib/messages';
+import { stopAllSessions } from './stream-session';
 
 const log = createLogger('Offscreen');
 
@@ -153,6 +154,8 @@ function attemptControlReconnect(): void {
 
   if (controlConnection.reconnectAttempts > MAX_RECONNECT_ATTEMPTS) {
     log.error('Control WS max reconnect attempts exceeded');
+    // Stop all active sessions - desktop is unreachable
+    stopAllSessions();
     chrome.runtime.sendMessage({ type: 'WS_PERMANENTLY_DISCONNECTED' }).catch(() => {});
     controlConnection = null;
     return;

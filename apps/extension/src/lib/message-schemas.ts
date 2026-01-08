@@ -30,6 +30,7 @@ import type {
   WsConnectedMessage,
   NetworkEventMessage,
   TopologyEventMessage,
+  SessionDisconnectedMessage,
 } from './messages';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -214,3 +215,8 @@ export const TopologyEventMessageSchema = z.object({
     timestamp: z.number(),
   }),
 }) satisfies z.ZodType<TopologyEventMessage>;
+
+export const SessionDisconnectedMessageSchema = z.object({
+  type: z.literal('SESSION_DISCONNECTED'),
+  tabId: TabIdSchema,
+}) satisfies z.ZodType<SessionDisconnectedMessage>;

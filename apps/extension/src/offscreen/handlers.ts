@@ -180,7 +180,14 @@ export function setupMessageHandlers(): void {
       navigator.mediaDevices
         .getUserMedia(constraints as MediaStreamConstraints)
         .then(async (stream) => {
-          const session = new StreamSession(stream, encoderConfig, baseUrl);
+          // Callback when worker WebSocket disconnects unexpectedly
+          const onDisconnected = () => {
+            activeSessions.delete(tabId);
+            // Notify background that session was lost
+            chrome.runtime.sendMessage({ type: 'SESSION_DISCONNECTED', tabId }).catch(() => {});
+          };
+
+          const session = new StreamSession(stream, encoderConfig, baseUrl, onDisconnected);
           try {
             await session.init();
             activeSessions.set(tabId, session);

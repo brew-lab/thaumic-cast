@@ -103,17 +103,23 @@ export class StreamSession {
   private totalConsumerDrops = 0;
   private totalUnderflows = 0;
 
+  /** Callback when worker disconnects (for cleanup coordination). */
+  private onDisconnected?: () => void;
+
   /**
    * Creates a new StreamSession.
    * @param mediaStream - The captured media stream
    * @param encoderConfig - Audio encoder configuration
    * @param baseUrl - Desktop app base URL
+   * @param onDisconnected - Optional callback when worker WebSocket disconnects
    */
   constructor(
     private mediaStream: MediaStream,
     private encoderConfig: EncoderConfig,
     private baseUrl: string,
+    onDisconnected?: () => void,
   ) {
+    this.onDisconnected = onDisconnected;
     this.audioContext = new AudioContext({
       sampleRate: encoderConfig.sampleRate,
       latencyHint: 'playback',
@@ -344,6 +350,8 @@ export class StreamSession {
 
         case 'DISCONNECTED':
           log.warn(`Worker disconnected: ${msg.reason}`);
+          this.onDisconnected?.();
+          this.stop();
           break;
 
         case 'ERROR':
@@ -565,3 +573,18 @@ export const MAX_OFFSCREEN_SESSIONS = 10;
 
 /** Registry of active sessions by tab ID. */
 export const activeSessions = new Map<number, StreamSession>();
+
+/**
+ * Stops all active sessions and clears the registry.
+ * Called when the control WebSocket permanently disconnects.
+ */
+export function stopAllSessions(): void {
+  if (activeSessions.size === 0) return;
+
+  log.info(`Stopping all ${activeSessions.size} active session(s)`);
+  for (const [tabId, session] of activeSessions) {
+    log.info(`Stopping session for tab ${tabId}`);
+    session.stop();
+  }
+  activeSessions.clear();
+}

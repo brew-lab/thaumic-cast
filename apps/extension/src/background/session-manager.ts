@@ -172,6 +172,20 @@ export function removeSession(tabId: number): void {
 }
 
 /**
+ * Clears all sessions.
+ * Called when the desktop app becomes permanently unreachable.
+ */
+export function clearAllSessions(): void {
+  if (sessions.size === 0) return;
+
+  log.info(`Clearing all ${sessions.size} session(s) - desktop unreachable`);
+  sessions.clear();
+  releaseKeepAwake();
+  persistSessions();
+  notifySessionsChanged();
+}
+
+/**
  * Checks if a tab has an active session.
  * @param tabId - The Chrome tab ID
  * @returns True if the tab has an active session

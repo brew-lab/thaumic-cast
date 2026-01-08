@@ -88,7 +88,8 @@ export type OffscreenToBackgroundType =
   | 'SONOS_EVENT'
   | 'NETWORK_EVENT'
   | 'TOPOLOGY_EVENT'
-  | 'OFFSCREEN_READY';
+  | 'OFFSCREEN_READY'
+  | 'SESSION_DISCONNECTED';
 
 /** Message types: Content broadcast */
 export type ContentBroadcastType = 'VIDEO_SYNC_STATE_CHANGED';
@@ -411,6 +412,15 @@ export interface SonosEventMessage {
  */
 export interface OffscreenReadyMessage {
   type: 'OFFSCREEN_READY';
+}
+
+/**
+ * Session disconnected unexpectedly (worker WebSocket closed).
+ * Sent from offscreen to background to clean up session state.
+ */
+export interface SessionDisconnectedMessage {
+  type: 'SESSION_DISCONNECTED';
+  tabId: number;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -774,7 +784,8 @@ export type OffscreenToBackgroundMessage =
   | SonosEventMessage
   | NetworkEventMessage
   | TopologyEventMessage
-  | OffscreenReadyMessage;
+  | OffscreenReadyMessage
+  | SessionDisconnectedMessage;
 
 /**
  * Messages broadcast from content script (video sync state).

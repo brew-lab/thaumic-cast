@@ -4,9 +4,10 @@
  * Handles message routing for offscreen document communication:
  * - WS_CONNECTED, WS_DISCONNECTED, WS_PERMANENTLY_DISCONNECTED
  * - SONOS_EVENT, NETWORK_EVENT, TOPOLOGY_EVENT
- * - OFFSCREEN_READY
+ * - OFFSCREEN_READY, SESSION_DISCONNECTED
  */
 
+import { createLogger } from '@thaumic-cast/shared';
 import type { BroadcastEvent } from '@thaumic-cast/protocol';
 import { registerRoute } from '../router';
 import {
@@ -18,12 +19,16 @@ import {
 } from '../handlers/connection';
 import { handleSonosEvent } from '../sonos-event-handlers';
 import { handleOffscreenReady } from '../offscreen-manager';
+import { removeSession, hasSession } from '../session-manager';
 import {
   WsConnectedMessageSchema,
   SonosEventMessageSchema,
   NetworkEventMessageSchema,
   TopologyEventMessageSchema,
+  SessionDisconnectedMessageSchema,
 } from '../../lib/message-schemas';
+
+const log = createLogger('OffscreenRoutes');
 
 /**
  * Registers all offscreen communication routes.
@@ -66,6 +71,18 @@ export function registerOffscreenRoutes(): void {
 
   registerRoute('OFFSCREEN_READY', () => {
     handleOffscreenReady();
+    return { success: true };
+  });
+
+  registerRoute('SESSION_DISCONNECTED', (msg) => {
+    const validated = SessionDisconnectedMessageSchema.parse(msg);
+    const { tabId } = validated;
+
+    if (hasSession(tabId)) {
+      log.warn(`Session for tab ${tabId} disconnected unexpectedly`);
+      removeSession(tabId);
+    }
+
     return { success: true };
   });
 }
