@@ -1,8 +1,9 @@
-import { useState, useEffect, useRef } from 'preact/hooks';
+import { useState, useEffect } from 'preact/hooks';
 import { useTranslation } from 'react-i18next';
 import type { ConnectionState } from '../../background/connection-state';
 import type { EnsureConnectionResponse } from '../../lib/messages';
 import { useChromeMessage } from './useChromeMessage';
+import { useMountedRef } from './useMountedRef';
 
 /** Network health status from desktop app */
 export type NetworkHealthStatus = 'ok' | 'degraded';
@@ -46,11 +47,9 @@ export function useConnectionStatus(): ConnectionStatus {
     networkHealth: 'ok',
     networkHealthReason: null,
   });
-  const mountedRef = useRef(true);
+  const mountedRef = useMountedRef();
 
   useEffect(() => {
-    mountedRef.current = true;
-
     /** Initializes connection status from background state. */
     async function init() {
       try {
@@ -97,10 +96,6 @@ export function useConnectionStatus(): ConnectionStatus {
     }
 
     init();
-
-    return () => {
-      mountedRef.current = false;
-    };
   }, []);
 
   useChromeMessage((message) => {
