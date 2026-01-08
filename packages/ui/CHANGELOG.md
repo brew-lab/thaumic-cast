@@ -1,5 +1,23 @@
 # @thaumic-cast/ui
 
+## 0.0.4
+
+### Patch Changes
+
+- [#28](https://github.com/brew-lab/thaumic-cast/pull/28) [`21e4991`](https://github.com/brew-lab/thaumic-cast/commit/21e4991c5769c6d50b7cff677d05245fb6021afa) Thanks [@skezo](https://github.com/skezo)! - Fix SoC and DRY violations across extension and UI packages
+
+  **Extension:**
+  - Fix connection state sync after service worker wake-up
+  - Unify connection state to single source of truth
+  - Centralize discovery/connection logic in background
+  - Centralize stop-cast cleanup in stopCastForTab
+  - Move i18n translations to presentation layer
+  - Use validated settings module for init functions
+  - Extract codec cache to shared module
+
+  **UI:**
+  - Remove hardcoded English defaults from ActionButton labels for i18n support
+
 ## 0.0.3
 
 ### Patch Changes
