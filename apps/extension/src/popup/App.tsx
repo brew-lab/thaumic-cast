@@ -103,6 +103,7 @@ function MainPopup(): JSX.Element {
   const {
     state: sonosState,
     groups,
+    speakerGroups,
     loading: sonosLoading,
     getVolume,
     getMuted: isMuted,
@@ -124,13 +125,16 @@ function MainPopup(): JSX.Element {
 
   // Update selected IPs when groups change
   useEffect(() => {
-    if (groups.length > 0 && selectedIps.length === 0) {
+    if (!speakerGroups.isEmpty && selectedIps.length === 0) {
       // Default to first group selected
-      setSelectedIps([groups[0]!.coordinatorIp]);
-    } else if (groups.length === 0 && selectedIps.length > 0) {
+      const firstGroup = speakerGroups.groups[0];
+      if (firstGroup) {
+        setSelectedIps([firstGroup.coordinatorIp]);
+      }
+    } else if (speakerGroups.isEmpty && selectedIps.length > 0) {
       setSelectedIps([]);
     }
-  }, [groups, selectedIps.length]);
+  }, [speakerGroups, selectedIps.length]);
 
   /**
    * Opens the extension settings page.
@@ -252,13 +256,13 @@ function MainPopup(): JSX.Element {
         </Alert>
       )}
 
-      {!connectionChecking && wsConnected && !sonosLoading && groups.length === 0 && (
+      {!connectionChecking && wsConnected && !sonosLoading && speakerGroups.isEmpty && (
         <Alert variant="warning" className={styles.alert}>
           {t('no_speakers_found')}
         </Alert>
       )}
 
-      {wsConnected && networkHealth === 'degraded' && groups.length > 0 && (
+      {wsConnected && networkHealth === 'degraded' && !speakerGroups.isEmpty && (
         <Alert variant="warning" className={styles.alert}>
           {t(`network.${networkHealthReason}`, {
             defaultValue: t('network.speakers_not_responding'),
