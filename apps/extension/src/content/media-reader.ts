@@ -18,6 +18,8 @@
  * - Caching (background handles this)
  */
 
+import { METADATA_EVENT, REQUEST_EVENT, CONTROL_EVENT } from './constants';
+
 (function mediaReaderMain() {
   /**
    * Minimal logger for MAIN world context.
@@ -28,15 +30,6 @@
       console.error(`[MediaReader] ${message}`, ...args);
     },
   };
-
-  /** Event name for metadata updates (reader -> bridge) */
-  const METADATA_EVENT = '__thaumic_metadata__';
-
-  /** Event name for metadata requests (bridge -> reader) */
-  const REQUEST_EVENT = '__thaumic_request_metadata__';
-
-  /** Event name for control commands (bridge -> reader) */
-  const CONTROL_EVENT = '__thaumic_control__';
 
   /** Debounce interval in milliseconds */
   const DEBOUNCE_MS = 150;

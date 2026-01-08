@@ -17,16 +17,9 @@
  * - Any business logic
  */
 
+import { METADATA_EVENT, REQUEST_EVENT, CONTROL_EVENT } from './constants';
+
 (function mediaBridgeIsolated() {
-  /** Event name for metadata updates (reader -> bridge) */
-  const METADATA_EVENT = '__thaumic_metadata__';
-
-  /** Event name for metadata requests (bridge -> reader) */
-  const REQUEST_EVENT = '__thaumic_request_metadata__';
-
-  /** Event name for control commands (bridge -> reader) */
-  const CONTROL_EVENT = '__thaumic_control__';
-
   /**
    * Extracts the Open Graph image URL from the page.
    * @returns The og:image URL or undefined
