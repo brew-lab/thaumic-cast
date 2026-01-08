@@ -56,10 +56,13 @@ export function connectControlWebSocket(url: string): void {
 
   const ws = new WebSocket(url);
 
+  // Preserve reconnectAttempts during reconnection, only reset on successful connect
+  const currentAttempts = controlConnection?.reconnectAttempts ?? 0;
+
   controlConnection = {
     ws,
     url,
-    reconnectAttempts: 0,
+    reconnectAttempts: currentAttempts,
     reconnectTimer: null,
     heartbeatTimer: null,
   };
