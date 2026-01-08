@@ -11,7 +11,7 @@
  * - Type-safe: Leverages directional message types
  */
 
-import type { ExtensionMessage } from '../lib/messages';
+import type { BackgroundInboundMessage } from '../lib/messages';
 
 /**
  * Handler function signature for message routes.
@@ -19,7 +19,7 @@ import type { ExtensionMessage } from '../lib/messages';
  * @param sender - Chrome message sender information
  * @returns Response to send back (or void for fire-and-forget)
  */
-export type RouteHandler<T extends ExtensionMessage = ExtensionMessage> = (
+export type RouteHandler<T extends BackgroundInboundMessage = BackgroundInboundMessage> = (
   msg: T,
   sender: chrome.runtime.MessageSender,
 ) => Promise<unknown> | unknown;
@@ -32,7 +32,7 @@ const routes = new Map<string, RouteHandler>();
  * @param type - The message type string
  * @param handler - The handler function
  */
-export function registerRoute<T extends ExtensionMessage>(
+export function registerRoute<T extends BackgroundInboundMessage>(
   type: T['type'],
   handler: RouteHandler<T>,
 ): void {
@@ -49,7 +49,7 @@ export function registerRoute<T extends ExtensionMessage>(
  * @returns Handler response, or undefined if no handler registered
  */
 export async function dispatch(
-  msg: ExtensionMessage,
+  msg: BackgroundInboundMessage,
   sender: chrome.runtime.MessageSender,
 ): Promise<unknown> {
   const handler = routes.get(msg.type);

@@ -804,18 +804,21 @@ export type OffscreenToBackgroundMessage =
 export type ContentBroadcastMessage = VideoSyncStateChangedMessage;
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Legacy Union Type (for backward compatibility)
+// Inbound Message Types (for listeners)
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
- * Union of all internal extension messages.
- * @deprecated Prefer using directional union types for better type safety.
+ * Messages that the background service worker receives.
+ * From popup, content scripts (including broadcasts), and offscreen document.
  */
-export type ExtensionMessage =
+export type BackgroundInboundMessage =
   | PopupToBackgroundMessage
-  | BackgroundToPopupMessage
   | ContentToBackgroundMessage
-  | BackgroundToContentMessage
-  | BackgroundToOffscreenMessage
   | OffscreenToBackgroundMessage
   | ContentBroadcastMessage;
+
+/**
+ * Messages that the offscreen document receives.
+ * From background service worker only.
+ */
+export type OffscreenInboundMessage = BackgroundToOffscreenMessage;

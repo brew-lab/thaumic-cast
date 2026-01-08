@@ -15,7 +15,7 @@
 
 import { createLogger } from '@thaumic-cast/shared';
 import { detectSupportedCodecs } from '@thaumic-cast/protocol';
-import type { ExtensionMessage } from '../lib/messages';
+import type { OffscreenInboundMessage } from '../lib/messages';
 import type {
   StartCaptureMessage,
   StopCaptureMessage,
@@ -55,7 +55,7 @@ interface ChromeTabCaptureConstraints {
  * Sets up the global message listener for offscreen document control.
  */
 export function setupMessageHandlers(): void {
-  chrome.runtime.onMessage.addListener((msg: ExtensionMessage, _sender, sendResponse) => {
+  chrome.runtime.onMessage.addListener((msg: OffscreenInboundMessage, _sender, sendResponse) => {
     // ─────────────────────────────────────────────────────────────────────────
     // WebSocket Control Messages
     // ─────────────────────────────────────────────────────────────────────────

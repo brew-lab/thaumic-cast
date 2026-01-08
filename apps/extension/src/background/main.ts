@@ -14,7 +14,7 @@
  */
 
 import { createLogger } from '@thaumic-cast/shared';
-import type { ExtensionMessage } from '../lib/messages';
+import type { BackgroundInboundMessage } from '../lib/messages';
 
 // State management modules (these register themselves with persistenceManager on import)
 import { removeFromCache } from './metadata-cache';
@@ -74,7 +74,7 @@ const initPromise = (async () => {
  * Global message listener for the Extension Background Script.
  * Dispatches messages to registered route handlers.
  */
-chrome.runtime.onMessage.addListener((msg: ExtensionMessage, sender, sendResponse) => {
+chrome.runtime.onMessage.addListener((msg: BackgroundInboundMessage, sender, sendResponse) => {
   initPromise.then(async () => {
     try {
       const result = await dispatch(msg, sender);
