@@ -15,8 +15,7 @@ import {
   type Speaker,
 } from '../state/store';
 import { DeviceCard } from '../components/DeviceCard';
-import { ActionButton } from '../components/ActionButton';
-import { Alert } from '@thaumic-cast/ui';
+import { ActionButton, Alert } from '@thaumic-cast/ui';
 import { RefreshCw, Square } from 'lucide-preact';
 import { useTranslation } from 'react-i18next';
 import styles from './Speakers.module.css';

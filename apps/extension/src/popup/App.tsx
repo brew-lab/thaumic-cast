@@ -55,7 +55,6 @@ function MainPopup(): JSX.Element {
   const { t } = useTranslation();
   const [selectedIps, setSelectedIps] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
-  const [isStarting, setIsStarting] = useState(false);
   const [videoSyncEnabled, setVideoSyncEnabled] = useState(false);
 
   // Load video sync setting from extension settings
@@ -144,9 +143,8 @@ function MainPopup(): JSX.Element {
    * Uses global audio settings from extension settings (auto-selected by background).
    */
   const handleStart = useCallback(async () => {
-    if (selectedIps.length === 0 || isStarting) return;
+    if (selectedIps.length === 0) return;
     setError(null);
-    setIsStarting(true);
     try {
       const msg: StartCastMessage = {
         type: 'START_CAST',
@@ -155,16 +153,17 @@ function MainPopup(): JSX.Element {
       const response: ExtensionResponse = await chrome.runtime.sendMessage(msg);
 
       if (!response.success) {
-        setError(response.error || t('error_cast_failed'));
+        const msg = response.error || t('error_cast_failed');
+        setError(msg);
+        throw new Error(msg);
       }
       // isCasting is derived from activeCasts - will auto-update via ACTIVE_CASTS_CHANGED
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       setError(message);
-    } finally {
-      setIsStarting(false);
+      throw err;
     }
-  }, [selectedIps, isStarting]);
+  }, [selectedIps, t]);
 
   /**
    * Handles mute toggle for a speaker.
@@ -288,7 +287,6 @@ function MainPopup(): JSX.Element {
           selectedIps={selectedIps}
           onSelectSpeakers={setSelectedIps}
           onStartCast={handleStart}
-          isStarting={isStarting}
           disabled={connectionChecking || sonosLoading || !baseUrl}
           speakersLoading={sonosLoading || connectionChecking}
           volume={primarySelectedIp ? getVolume(primarySelectedIp) : 50}

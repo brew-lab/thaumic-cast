@@ -1,6 +1,7 @@
 import type { Speaker } from '../state/store';
 import { Speaker as SpeakerIcon } from 'lucide-preact';
 import { useTranslation } from 'react-i18next';
+import { Card } from '@thaumic-cast/ui';
 import styles from './DeviceCard.module.css';
 
 interface DeviceCardProps {
@@ -44,26 +45,30 @@ export function DeviceCard({
     isCasting && isPlaying ? styles.statusCasting : isPlaying ? styles.statusPlaying : '';
 
   return (
-    <div className={styles.deviceCard}>
-      <div className={styles.header}>
-        <div className={styles.iconWrapper}>
-          <SpeakerIcon size={20} />
+    <Card noPadding className={styles.container}>
+      <div className={styles.content}>
+        <div className={styles.header}>
+          <div className={styles.iconWrapper}>
+            <SpeakerIcon size={20} />
+          </div>
+          <div className={styles.info}>
+            <h3 className={styles.name}>{speaker.name}</h3>
+            <p className={styles.model}>
+              {speaker.model} {isCoordinator ? `• ${t('device.coordinator')}` : ''}
+              {memberCount > 1 && ` • ${t('device.others', { count: memberCount - 1 })}`}
+            </p>
+          </div>
+          {displayState && (
+            <span className={`${styles.status} ${statusClass}`}>
+              {isCasting && isPlaying
+                ? displayState
+                : t(`transport.${transportState?.toLowerCase()}`, {
+                    defaultValue: transportState,
+                  })}
+            </span>
+          )}
         </div>
-        <div className={styles.info}>
-          <h3 className={styles.name}>{speaker.name}</h3>
-          <p className={styles.model}>
-            {speaker.model} {isCoordinator ? `• ${t('device.coordinator')}` : ''}
-            {memberCount > 1 && ` • ${t('device.others', { count: memberCount - 1 })}`}
-          </p>
-        </div>
-        {displayState && (
-          <span className={`${styles.status} ${statusClass}`}>
-            {isCasting && isPlaying
-              ? displayState
-              : t(`transport.${transportState?.toLowerCase()}`, { defaultValue: transportState })}
-          </span>
-        )}
       </div>
-    </div>
+    </Card>
   );
 }

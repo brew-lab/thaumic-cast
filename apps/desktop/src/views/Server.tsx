@@ -1,7 +1,6 @@
 import { useEffect, useState } from 'preact/hooks';
 import { stats, fetchStats, clearAllConnections, restartServer, stopAll } from '../state/store';
-import { Button, Card } from '@thaumic-cast/ui';
-import { ActionButton } from '../components/ActionButton';
+import { ActionButton, Button, Card } from '@thaumic-cast/ui';
 import { useTranslation } from 'react-i18next';
 import { Copy, Check, RefreshCcw, Unplug, Square, Circle } from 'lucide-preact';
 import styles from './Server.module.css';

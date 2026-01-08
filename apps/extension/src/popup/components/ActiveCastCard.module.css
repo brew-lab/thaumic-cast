@@ -8,19 +8,19 @@
   --card-border-width: 1px;
 
   position: relative;
+  overflow: hidden;
+  margin-block-end: 1rem;
+
+  /* View Transition API: name the card for track change transitions */
+  view-transition-name: active-cast-card;
+}
+
+.cardInner {
   display: flex;
   flex-direction: column;
   gap: 0.5rem;
   padding-block: 0.5rem;
   padding-inline: 0.5rem;
-  background: var(--card-bg);
-  border-radius: var(--card-radius);
-  border: var(--card-border-width) solid var(--card-border);
-  box-shadow: var(--card-shadow);
-  overflow: hidden;
-
-  /* View Transition API: name the card for track change transitions */
-  view-transition-name: active-cast-card;
 }
 
 /* Background artwork layer with adaptive darkness vignette */

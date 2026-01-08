@@ -1,7 +1,6 @@
-import { Button } from '@thaumic-cast/ui';
+import { Button } from './Button';
 import { Loader2, Check, X, LucideIcon } from 'lucide-preact';
-import { clsx } from 'clsx';
-import { useButtonAction } from '../hooks/useButtonAction';
+import { useButtonAction } from './hooks/useButtonAction';
 import styles from './ActionButton.module.css';
 
 interface ActionButtonProps {
@@ -25,6 +24,10 @@ interface ActionButtonProps {
   errorDuration?: number;
   /** Minimum loading state duration in ms (default: 600) */
   minLoadingDuration?: number;
+  /** Whether the button should take full width of its container */
+  fullWidth?: boolean;
+  /** Whether the button is disabled */
+  disabled?: boolean;
 }
 
 /**
@@ -43,6 +46,8 @@ interface ActionButtonProps {
  * @param props.successDuration - Success state duration in ms
  * @param props.errorDuration - Error state duration in ms
  * @param props.minLoadingDuration - Minimum loading state duration in ms
+ * @param props.fullWidth - Whether the button should take full width
+ * @param props.disabled - Whether the button is disabled
  * @returns The rendered ActionButton component
  *
  * @example
@@ -67,6 +72,8 @@ export function ActionButton({
   successDuration,
   errorDuration,
   minLoadingDuration,
+  fullWidth,
+  disabled,
 }: ActionButtonProps) {
   const { status, error, isDisabled, execute } = useButtonAction(action, {
     successDuration,
@@ -106,17 +113,17 @@ export function ActionButton({
     return variant;
   };
 
+  const statusClass =
+    status === 'success' ? styles.success : status === 'error' ? styles.error : '';
+  const combinedClass = [className, styles.actionButton, statusClass].filter(Boolean).join(' ');
+
   return (
     <Button
       variant={getVariant()}
       onClick={execute}
-      disabled={isDisabled}
-      className={clsx(
-        className,
-        styles.actionButton,
-        status === 'success' && styles.success,
-        status === 'error' && styles.error,
-      )}
+      disabled={disabled || isDisabled}
+      className={combinedClass}
+      fullWidth={fullWidth}
     >
       {getIcon()} {getLabel()}
     </Button>

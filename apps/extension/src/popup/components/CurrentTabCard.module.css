@@ -1,11 +1,10 @@
 .card {
+  margin-block-end: 1rem;
+}
+
+.cardInner {
   padding-block: var(--card-padding);
   padding-inline: var(--card-padding);
-  background: var(--card-bg);
-  border-radius: var(--card-radius);
-  border: 1px solid var(--card-border);
-  box-shadow: var(--card-shadow);
-  margin-block-end: 1rem;
 }
 
 .mediaRow {
