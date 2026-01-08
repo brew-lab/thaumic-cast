@@ -1,6 +1,7 @@
-import { useState, useEffect, useCallback } from 'preact/hooks';
+import { useState, useCallback } from 'preact/hooks';
 import { useTranslation } from 'react-i18next';
 import type { CastAutoStoppedMessage } from '../../lib/messages';
+import { useChromeMessage } from './useChromeMessage';
 
 /**
  * Information about an auto-stopped cast.
@@ -38,29 +39,22 @@ export function useAutoStopNotification(): AutoStopNotificationResult {
   const { t } = useTranslation();
   const [notification, setNotification] = useState<AutoStopNotification | null>(null);
 
-  useEffect(() => {
-    const handler = (message: unknown) => {
-      const msg = message as { type: string };
-      if (msg.type === 'CAST_AUTO_STOPPED') {
-        const stopMsg = message as CastAutoStoppedMessage;
-        setNotification({
-          tabId: stopMsg.tabId,
-          speakerIp: stopMsg.speakerIp,
-          reason: stopMsg.reason,
-        });
+  useChromeMessage((message) => {
+    const msg = message as { type: string };
+    if (msg.type === 'CAST_AUTO_STOPPED') {
+      const stopMsg = message as CastAutoStoppedMessage;
+      setNotification({
+        tabId: stopMsg.tabId,
+        speakerIp: stopMsg.speakerIp,
+        reason: stopMsg.reason,
+      });
 
-        // Auto-dismiss after timeout
-        setTimeout(() => setNotification(null), AUTO_DISMISS_MS);
-      }
-    };
-
-    chrome.runtime.onMessage.addListener(handler);
-    return () => chrome.runtime.onMessage.removeListener(handler);
-  }, []);
+      setTimeout(() => setNotification(null), AUTO_DISMISS_MS);
+    }
+  });
 
   const dismiss = useCallback(() => setNotification(null), []);
 
-  // Translate reason code to localized message
   const message = notification ? t(`auto_stop_${notification.reason}`) : null;
 
   return { notification, message, dismiss };

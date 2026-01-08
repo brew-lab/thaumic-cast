@@ -1,7 +1,8 @@
-import { useState, useEffect } from 'preact/hooks';
+import { useState, useEffect, useRef } from 'preact/hooks';
 import { useTranslation } from 'react-i18next';
 import type { ConnectionState } from '../../background/connection-state';
 import type { EnsureConnectionResponse } from '../../lib/messages';
+import { useChromeMessage } from './useChromeMessage';
 
 /** Network health status from desktop app */
 export type NetworkHealthStatus = 'ok' | 'degraded';
@@ -45,27 +46,24 @@ export function useConnectionStatus(): ConnectionStatus {
     networkHealth: 'ok',
     networkHealthReason: null,
   });
+  const mountedRef = useRef(true);
 
   useEffect(() => {
-    let mounted = true;
+    mountedRef.current = true;
 
-    /**
-     * Initializes the connection status by checking the background state.
-     */
+    /** Initializes connection status from background state. */
     async function init() {
       try {
-        // 1. Get cached state from background for instant display
         const cached: ConnectionState = await chrome.runtime.sendMessage({
           type: 'GET_CONNECTION_STATUS',
         });
 
-        if (!mounted) return;
+        if (!mountedRef.current) return;
 
-        // Show cached state immediately (instant display)
         if (cached.desktopAppUrl) {
           setStatus({
             connected: cached.connected,
-            checking: !cached.connected, // Still checking if not connected
+            checking: !cached.connected,
             error: cached.lastError ? t(cached.lastError) : null,
             desktopAppUrl: cached.desktopAppUrl,
             maxStreams: cached.maxStreams,
@@ -74,14 +72,12 @@ export function useConnectionStatus(): ConnectionStatus {
           });
         }
 
-        // 2. Request background to ensure connection (discovers if needed)
         const response: EnsureConnectionResponse = await chrome.runtime.sendMessage({
           type: 'ENSURE_CONNECTION',
         });
 
-        if (!mounted) return;
+        if (!mountedRef.current) return;
 
-        // Update with response - connection may still be in progress
         setStatus((s) => ({
           ...s,
           checking: !response.connected && !response.error,
@@ -90,7 +86,7 @@ export function useConnectionStatus(): ConnectionStatus {
           maxStreams: response.maxStreams ?? s.maxStreams,
         }));
       } catch (err) {
-        if (!mounted) return;
+        if (!mountedRef.current) return;
         const message = err instanceof Error ? err.message : String(err);
         setStatus((s) => ({
           ...s,
@@ -102,49 +98,46 @@ export function useConnectionStatus(): ConnectionStatus {
 
     init();
 
-    // Listen for connection state changes from background
-    const handler = (message: { type: string; [key: string]: unknown }) => {
-      switch (message.type) {
-        case 'WS_STATE_CHANGED':
-          setStatus((s) => ({
-            ...s,
-            connected: true,
-            checking: false,
-            error: null,
-          }));
-          break;
-
-        case 'WS_CONNECTION_LOST': {
-          const reason = message.reason as string;
-          setStatus((s) => ({
-            ...s,
-            connected: false,
-            checking: false,
-            error: reason === 'max_retries_exceeded' ? t('error_connection_lost') : null,
-          }));
-          break;
-        }
-
-        case 'NETWORK_HEALTH_CHANGED': {
-          const health = message.health as NetworkHealthStatus;
-          const reason = message.reason as string | null;
-          setStatus((s) => ({
-            ...s,
-            networkHealth: health,
-            networkHealthReason: reason,
-          }));
-          break;
-        }
-      }
-    };
-
-    chrome.runtime.onMessage.addListener(handler);
-
     return () => {
-      mounted = false;
-      chrome.runtime.onMessage.removeListener(handler);
+      mountedRef.current = false;
     };
   }, []);
+
+  useChromeMessage((message) => {
+    const msg = message as { type: string; [key: string]: unknown };
+    switch (msg.type) {
+      case 'WS_STATE_CHANGED':
+        setStatus((s) => ({
+          ...s,
+          connected: true,
+          checking: false,
+          error: null,
+        }));
+        break;
+
+      case 'WS_CONNECTION_LOST': {
+        const reason = msg.reason as string;
+        setStatus((s) => ({
+          ...s,
+          connected: false,
+          checking: false,
+          error: reason === 'max_retries_exceeded' ? t('error_connection_lost') : null,
+        }));
+        break;
+      }
+
+      case 'NETWORK_HEALTH_CHANGED': {
+        const health = msg.health as NetworkHealthStatus;
+        const reason = msg.reason as string | null;
+        setStatus((s) => ({
+          ...s,
+          networkHealth: health,
+          networkHealthReason: reason,
+        }));
+        break;
+      }
+    }
+  });
 
   return status;
 }

@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'preact/hooks';
 import type { ActiveCast } from '@thaumic-cast/protocol';
-import type { ActiveCastsResponse, ActiveCastsChangedMessage } from '../../lib/messages';
+import type { ActiveCastsResponse } from '../../lib/messages';
+import { useChromeMessage } from './useChromeMessage';
 
 /**
  * Result of the useActiveCasts hook.
@@ -25,7 +26,6 @@ export function useActiveCasts(): ActiveCastsResult {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    // Initial fetch
     chrome.runtime
       .sendMessage({ type: 'GET_ACTIVE_CASTS' })
       .then((response: ActiveCastsResponse) => {
@@ -35,17 +35,14 @@ export function useActiveCasts(): ActiveCastsResult {
         // Background might not be ready
       })
       .finally(() => setLoading(false));
-
-    // Listen for updates
-    const handler = (message: { type: string; casts?: ActiveCast[] }) => {
-      if (message.type === 'ACTIVE_CASTS_CHANGED' && message.casts) {
-        setCasts((message as ActiveCastsChangedMessage).casts);
-      }
-    };
-
-    chrome.runtime.onMessage.addListener(handler);
-    return () => chrome.runtime.onMessage.removeListener(handler);
   }, []);
+
+  useChromeMessage((message) => {
+    const msg = message as { type: string; casts?: ActiveCast[] };
+    if (msg.type === 'ACTIVE_CASTS_CHANGED' && msg.casts) {
+      setCasts(msg.casts);
+    }
+  });
 
   /**
    * Stops a cast session for the specified tab.

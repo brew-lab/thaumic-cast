@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'preact/hooks';
 import type { VideoSyncStatus } from '@thaumic-cast/protocol';
 import type { VideoSyncStateChangedMessage } from '../../lib/messages';
+import { useChromeMessage } from './useChromeMessage';
 
 /** Debounce interval for trim slider (ms) */
 const TRIM_DEBOUNCE_MS = 100;
@@ -35,7 +36,6 @@ export function useVideoSyncState(tabId: number | undefined): VideoSyncStateResu
   useEffect(() => {
     if (!tabId) return;
 
-    // Query initial state from content script (via background)
     chrome.runtime
       .sendMessage({ type: 'GET_VIDEO_SYNC_STATE', payload: { tabId } })
       .then((response: VideoSyncStatus | undefined) => {
@@ -44,9 +44,11 @@ export function useVideoSyncState(tabId: number | undefined): VideoSyncStateResu
       .catch(() => {
         // Content script may not be ready
       });
+  }, [tabId]);
 
-    // Listen for state broadcasts from content script
-    const handler = (message: unknown) => {
+  useChromeMessage(
+    (message) => {
+      if (!tabId) return;
       const msg = message as { type: string };
       if (msg.type === 'VIDEO_SYNC_STATE_CHANGED') {
         const stateMsg = message as VideoSyncStateChangedMessage;
@@ -57,11 +59,9 @@ export function useVideoSyncState(tabId: number | undefined): VideoSyncStateResu
           lockedLatencyMs: stateMsg.lockedLatencyMs,
         });
       }
-    };
-
-    chrome.runtime.onMessage.addListener(handler);
-    return () => chrome.runtime.onMessage.removeListener(handler);
-  }, [tabId]);
+    },
+    [tabId],
+  );
 
   const setEnabled = useCallback(
     (enabled: boolean) => {
