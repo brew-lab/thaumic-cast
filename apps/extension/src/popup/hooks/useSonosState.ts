@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'preact/hooks';
+import { useState, useEffect, useCallback, useMemo } from 'preact/hooks';
 import type { SonosStateSnapshot, ZoneGroup, TransportState } from '@thaumic-cast/protocol';
 import { createEmptySonosState } from '@thaumic-cast/protocol';
 import type {
@@ -8,6 +8,9 @@ import type {
   MuteUpdateMessage,
   TransportStateUpdateMessage,
 } from '../../lib/messages';
+import { SpeakerGroupCollection } from '../../domain/speaker';
+import { noop } from '../../lib/noop';
+import { useChromeMessage } from './useChromeMessage';
 
 /**
  * Result of the useSonosState hook.
@@ -17,6 +20,8 @@ interface SonosStateResult {
   state: SonosStateSnapshot;
   /** Zone groups from state */
   groups: ZoneGroup[];
+  /** Speaker groups as domain model collection (for type-safe lookups) */
+  speakerGroups: SpeakerGroupCollection;
   /** Whether initial data is loading */
   loading: boolean;
   /** Get volume for a speaker */
@@ -41,7 +46,6 @@ export function useSonosState(): SonosStateResult {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    // Initial fetch
     chrome.runtime
       .sendMessage({ type: 'GET_SONOS_STATE' })
       .then((response: SonosStateResponse) => {
@@ -49,50 +53,44 @@ export function useSonosState(): SonosStateResult {
           setState(response.state);
         }
       })
-      .catch(() => {
-        // Background might not be ready
-      })
+      .catch(noop)
       .finally(() => setLoading(false));
-
-    // Listen for updates
-    const handler = (message: unknown) => {
-      const msg = message as { type: string };
-      switch (msg.type) {
-        case 'WS_STATE_CHANGED': {
-          const { state: newState } = message as WsStateChangedMessage;
-          setState(newState);
-          break;
-        }
-        case 'VOLUME_UPDATE': {
-          const { speakerIp, volume } = message as VolumeUpdateMessage;
-          setState((prev) => ({
-            ...prev,
-            groupVolumes: { ...prev.groupVolumes, [speakerIp]: volume },
-          }));
-          break;
-        }
-        case 'MUTE_UPDATE': {
-          const { speakerIp, muted } = message as MuteUpdateMessage;
-          setState((prev) => ({
-            ...prev,
-            groupMutes: { ...prev.groupMutes, [speakerIp]: muted },
-          }));
-          break;
-        }
-        case 'TRANSPORT_STATE_UPDATE': {
-          const { speakerIp, state: transport } = message as TransportStateUpdateMessage;
-          setState((prev) => ({
-            ...prev,
-            transportStates: { ...prev.transportStates, [speakerIp]: transport },
-          }));
-          break;
-        }
-      }
-    };
-
-    chrome.runtime.onMessage.addListener(handler);
-    return () => chrome.runtime.onMessage.removeListener(handler);
   }, []);
+
+  useChromeMessage((message) => {
+    const msg = message as { type: string };
+    switch (msg.type) {
+      case 'WS_STATE_CHANGED': {
+        const { state: newState } = message as WsStateChangedMessage;
+        setState(newState);
+        break;
+      }
+      case 'VOLUME_UPDATE': {
+        const { speakerIp, volume } = message as VolumeUpdateMessage;
+        setState((prev) => ({
+          ...prev,
+          groupVolumes: { ...prev.groupVolumes, [speakerIp]: volume },
+        }));
+        break;
+      }
+      case 'MUTE_UPDATE': {
+        const { speakerIp, muted } = message as MuteUpdateMessage;
+        setState((prev) => ({
+          ...prev,
+          groupMutes: { ...prev.groupMutes, [speakerIp]: muted },
+        }));
+        break;
+      }
+      case 'TRANSPORT_STATE_UPDATE': {
+        const { speakerIp, state: transport } = message as TransportStateUpdateMessage;
+        setState((prev) => ({
+          ...prev,
+          transportStates: { ...prev.transportStates, [speakerIp]: transport },
+        }));
+        break;
+      }
+    }
+  });
 
   const getVolume = useCallback(
     (speakerIp: string): number => state.groupVolumes[speakerIp] ?? 50,
@@ -127,9 +125,16 @@ export function useSonosState(): SonosStateResult {
     await chrome.runtime.sendMessage({ type: 'SET_MUTE', speakerIp, muted });
   }, []);
 
+  // Memoize speaker groups collection for stable reference
+  const speakerGroups = useMemo(
+    () => SpeakerGroupCollection.fromZoneGroups(state.groups),
+    [state.groups],
+  );
+
   return {
     state,
     groups: state.groups,
+    speakerGroups,
     loading,
     getVolume,
     getMuted,

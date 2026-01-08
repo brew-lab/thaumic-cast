@@ -6,6 +6,8 @@ import {
   type ExtensionSettings,
   getDefaultExtensionSettings,
 } from '../../lib/settings';
+import { useMountedRef } from '../../popup/hooks/useMountedRef';
+import { useStorageListener } from '../../popup/hooks/useStorageListener';
 
 /**
  * Hook for loading and updating extension settings.
@@ -22,20 +24,20 @@ export function useExtensionSettings(): {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
+  const mountedRef = useMountedRef();
+
   // Load settings on mount
   useEffect(() => {
-    let mounted = true;
-
     /** Loads settings from storage. */
     async function load() {
       try {
         const loaded = await loadExtensionSettings();
-        if (mounted) {
+        if (mountedRef.current) {
           setSettings(loaded);
           setLoading(false);
         }
       } catch (err) {
-        if (mounted) {
+        if (mountedRef.current) {
           setError(err instanceof Error ? err.message : t('error_load_settings'));
           setLoading(false);
         }
@@ -43,23 +45,10 @@ export function useExtensionSettings(): {
     }
 
     load();
-
-    return () => {
-      mounted = false;
-    };
   }, []);
 
   // Listen for storage changes from other contexts
-  useEffect(() => {
-    const handler = (changes: { [key: string]: chrome.storage.StorageChange }) => {
-      if (changes['extensionSettings']?.newValue) {
-        setSettings(changes['extensionSettings'].newValue);
-      }
-    };
-
-    chrome.storage.sync.onChanged.addListener(handler);
-    return () => chrome.storage.sync.onChanged.removeListener(handler);
-  }, []);
+  useStorageListener<ExtensionSettings>('extensionSettings', setSettings);
 
   const updateSettings = useCallback(
     async (partial: Partial<ExtensionSettings>) => {

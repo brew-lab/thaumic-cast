@@ -24,6 +24,7 @@ import type {
 } from '@thaumic-cast/protocol';
 import { VIDEO_SYNC_CONSTANTS as C } from '@thaumic-cast/protocol';
 import { createLogger } from '@thaumic-cast/shared';
+import { noop } from '../lib/noop';
 
 const log = createLogger('VideoSync');
 
@@ -79,6 +80,9 @@ let lastSyncErrorMs = 0;
 
 /** Timer for "persisted stall" check */
 let stallDebounceTimer: ReturnType<typeof setTimeout> | null = null;
+
+/** Interval ID for video element polling (only runs when sync enabled) */
+let videoCheckInterval: ReturnType<typeof setInterval> | null = null;
 
 /**
  * Creates a key for the sync state map.
@@ -169,9 +173,7 @@ function broadcastSyncState(): void {
       type: 'VIDEO_SYNC_STATE_CHANGED',
       ...status,
     })
-    .catch(() => {
-      // Popup may not be open
-    });
+    .catch(noop);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -434,6 +436,59 @@ function updateTargetVideo(): boolean {
     return true;
   }
   return false;
+}
+
+/**
+ * Starts periodic video element checking.
+ * Only runs when video sync is enabled to avoid unnecessary DOM polling.
+ */
+function startVideoChecking(): void {
+  if (videoCheckInterval) return;
+
+  // Initial check
+  updateTargetVideo();
+  if (targetVideo) {
+    log.info(`Initial video found: ${targetVideo.src || targetVideo.currentSrc || 'blob/stream'}`);
+  }
+
+  videoCheckInterval = setInterval(() => {
+    const changed = updateTargetVideo();
+    if (changed) {
+      if (targetVideo) {
+        log.info(
+          `Target video changed: ${targetVideo.src || targetVideo.currentSrc || 'blob/stream'}`,
+        );
+        // Video element changed - clean up old listeners and re-acquire
+        detachVideoEventListeners();
+        // If we're locked, need to re-acquire
+        for (const [key, state] of syncStates.entries()) {
+          if (state.kind === 'Locked') {
+            const [streamId, speakerIp] = key.split(':');
+            const samples = createSampleWindow();
+            setState(streamId, speakerIp, {
+              kind: 'Acquiring',
+              epochId: state.epochId,
+              samples,
+            });
+          }
+        }
+        stopSyncLoop();
+      } else {
+        log.debug('No video element found on page');
+        detachVideoEventListeners();
+      }
+    }
+  }, 2000);
+}
+
+/**
+ * Stops periodic video element checking.
+ */
+function stopVideoChecking(): void {
+  if (videoCheckInterval) {
+    clearInterval(videoCheckInterval);
+    videoCheckInterval = null;
+  }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -837,7 +892,7 @@ function runSyncIteration(): void {
       log.info(`Hard correction: micro-pause for ${pauseMs.toFixed(0)}ms`);
       video.pause();
       setTimeout(() => {
-        video.play().catch(() => {});
+        video.play().catch(noop);
       }, pauseMs);
     }
     expectedPlaybackRate = 1.0;
@@ -856,7 +911,7 @@ function runSyncIteration(): void {
         const pauseMs = Math.min(C.MAX_MICRO_PAUSE_MS, (error - C.ERROR_DEADBAND_SEC) * 1000);
         video.pause();
         setTimeout(() => {
-          video.play().catch(() => {});
+          video.play().catch(noop);
         }, pauseMs);
       }
     }
@@ -1086,11 +1141,13 @@ function init(): void {
       if (!videoSyncEnabled && wasEnabled) {
         // Disable: stop everything, restore playbackRate
         stopSyncLoop();
+        stopVideoChecking();
         detachVideoEventListeners();
         resetAllStates();
         if (targetVideo) targetVideo.playbackRate = 1.0;
         log.info('Video sync disabled');
       } else if (videoSyncEnabled && !wasEnabled) {
+        startVideoChecking();
         log.info('Video sync enabled, waiting for latency events');
       }
       broadcastSyncState();
@@ -1125,44 +1182,6 @@ function init(): void {
 
     return false;
   });
-
-  // Periodically check for video element changes
-  setInterval(() => {
-    const changed = updateTargetVideo();
-    if (changed) {
-      if (targetVideo) {
-        log.info(
-          `Target video changed: ${targetVideo.src || targetVideo.currentSrc || 'blob/stream'}`,
-        );
-        // Video element changed - clean up old listeners and re-acquire
-        detachVideoEventListeners();
-        // If we're locked, need to re-acquire
-        for (const [key, state] of syncStates.entries()) {
-          if (state.kind === 'Locked') {
-            const [streamId, speakerIp] = key.split(':');
-            const samples = createSampleWindow();
-            setState(streamId, speakerIp, {
-              kind: 'Acquiring',
-              epochId: state.epochId,
-              samples,
-            });
-          }
-        }
-        stopSyncLoop();
-      } else {
-        log.debug('No video element found on page');
-        detachVideoEventListeners();
-      }
-    }
-  }, 2000);
-
-  // Initial video detection
-  updateTargetVideo();
-  if (targetVideo) {
-    log.info(`Initial video found: ${targetVideo.src || targetVideo.currentSrc || 'blob/stream'}`);
-  } else {
-    log.debug('No video element found on initial scan');
-  }
 }
 
 // Run initialization

@@ -20,12 +20,11 @@ interface SpeakerStepProps {
  */
 export function SpeakerStep({ onSpeakersFound }: SpeakerStepProps): preact.JSX.Element {
   const { t } = useTranslation();
-  const { groups, loading } = useSonosState();
-  const speakerCount = groups.length;
+  const { speakerGroups, loading } = useSonosState();
 
   useEffect(() => {
-    onSpeakersFound(speakerCount > 0);
-  }, [speakerCount, onSpeakersFound]);
+    onSpeakersFound(!speakerGroups.isEmpty);
+  }, [speakerGroups.size, onSpeakersFound]);
 
   return (
     <WizardStep
@@ -35,17 +34,19 @@ export function SpeakerStep({ onSpeakersFound }: SpeakerStepProps): preact.JSX.E
     >
       {loading ? (
         <Alert variant="info">{t('onboarding.speakers.loading')}</Alert>
-      ) : speakerCount > 0 ? (
+      ) : !speakerGroups.isEmpty ? (
         <>
-          <Alert variant="success">{t('onboarding.speakers.found', { count: speakerCount })}</Alert>
+          <Alert variant="success">
+            {t('onboarding.speakers.found', { count: speakerGroups.size })}
+          </Alert>
 
           <div className={styles.speakerList}>
-            {groups.map((group) => (
-              <div key={group.coordinatorUuid} className={styles.speakerItem}>
+            {[...speakerGroups].map((group) => (
+              <div key={group.id} className={styles.speakerItem}>
                 <Speaker size={16} />
                 <span>{group.name}</span>
-                {group.members.length > 1 && (
-                  <span className={styles.memberCount}>+{group.members.length - 1}</span>
+                {group.isMultiSpeaker && (
+                  <span className={styles.memberCount}>+{group.size - 1}</span>
                 )}
               </div>
             ))}

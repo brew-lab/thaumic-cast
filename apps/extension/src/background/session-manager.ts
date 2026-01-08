@@ -14,13 +14,12 @@
  */
 
 import type { ActiveCast, EncoderConfig, TabMediaState } from '@thaumic-cast/protocol';
-import { getCachedState } from './metadata-cache';
 import { createLogger } from '@thaumic-cast/shared';
+import { getCachedState } from './metadata-cache';
+import { notifyPopup } from './notification-service';
+import { persistenceManager } from './persistence-manager';
 
 const log = createLogger('SessionManager');
-
-/** Session storage key for persistence */
-const STORAGE_KEY = 'activeSessions';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Power Management
@@ -72,6 +71,50 @@ interface ActiveCastSession {
 
 /** In-memory storage of active sessions by tab ID */
 const sessions = new Map<number, ActiveCastSession>();
+
+/**
+ * Debounced storage for session persistence, registered with manager.
+ * Uses immediate persist() calls (not schedule()) since session data is critical
+ * and changes are infrequent.
+ */
+const storage = persistenceManager.register<[number, ActiveCastSession][]>(
+  {
+    storageKey: 'activeSessions',
+    debounceMs: 0, // Not used - we call persist() directly for immediate writes
+    loggerName: 'SessionManager',
+    serialize: () => Array.from(sessions.entries()),
+    restore: (stored) => {
+      if (!Array.isArray(stored)) return undefined;
+
+      // Migrate old single-speaker format to multi-speaker arrays
+      const migrated = (stored as [number, ActiveCastSession][]).map(([tabId, session]) => {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const legacy = session as any;
+        if (legacy.speakerIp && !legacy.speakerIps) {
+          session.speakerIps = [legacy.speakerIp];
+          session.speakerNames = [legacy.speakerName || legacy.speakerIp];
+          delete legacy.speakerIp;
+          delete legacy.speakerName;
+          log.info(`Migrated session for tab ${tabId} from single to multi-speaker format`);
+        }
+        return [tabId, session] as [number, ActiveCastSession];
+      });
+
+      return migrated;
+    },
+  },
+  (data) => {
+    if (data && data.length > 0) {
+      sessions.clear();
+      for (const [tabId, session] of data) {
+        sessions.set(tabId, session);
+      }
+      log.info(`Restored ${sessions.size} sessions`);
+      // Re-request keep-awake for restored sessions
+      requestKeepAwake();
+    }
+  },
+);
 
 /**
  * Registers a new cast session.
@@ -126,6 +169,20 @@ export function removeSession(tabId: number): void {
     notifySessionsChanged();
     log.info(`Removed session for tab ${tabId}`);
   }
+}
+
+/**
+ * Clears all sessions.
+ * Called when the desktop app becomes permanently unreachable.
+ */
+export function clearAllSessions(): void {
+  if (sessions.size === 0) return;
+
+  log.info(`Clearing all ${sessions.size} session(s) - desktop unreachable`);
+  sessions.clear();
+  releaseKeepAwake();
+  persistSessions();
+  notifySessionsChanged();
 }
 
 /**
@@ -278,14 +335,10 @@ export function getActiveCasts(): ActiveCast[] {
  * Called after session registration or removal.
  */
 function notifySessionsChanged(): void {
-  chrome.runtime
-    .sendMessage({
-      type: 'ACTIVE_CASTS_CHANGED',
-      casts: getActiveCasts(),
-    })
-    .catch(() => {
-      // Popup may not be open
-    });
+  notifyPopup({
+    type: 'ACTIVE_CASTS_CHANGED',
+    casts: getActiveCasts(),
+  });
 }
 
 /**
@@ -300,50 +353,9 @@ export function onMetadataUpdate(tabId: number): void {
 }
 
 /**
- * Persists sessions to session storage.
+ * Persists sessions to session storage immediately.
+ * Uses storage.persist() directly (not schedule()) for critical data.
  */
-async function persistSessions(): Promise<void> {
-  try {
-    await chrome.storage.session.set({
-      [STORAGE_KEY]: Array.from(sessions.entries()),
-    });
-    log.debug(`Persisted ${sessions.size} sessions`);
-  } catch (err) {
-    log.error('Persist failed:', err);
-  }
-}
-
-/**
- * Restores sessions from session storage.
- * Call on service worker startup.
- * Includes migration from old single-speaker format to multi-speaker arrays.
- */
-export async function restoreSessions(): Promise<void> {
-  try {
-    const result = await chrome.storage.session.get(STORAGE_KEY);
-    const data = result[STORAGE_KEY];
-    if (Array.isArray(data)) {
-      sessions.clear();
-      for (const [tabId, session] of data) {
-        // Migrate old single-speaker format to multi-speaker arrays
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const legacySession = session as any;
-        if (legacySession.speakerIp && !legacySession.speakerIps) {
-          session.speakerIps = [legacySession.speakerIp];
-          session.speakerNames = [legacySession.speakerName || legacySession.speakerIp];
-          delete legacySession.speakerIp;
-          delete legacySession.speakerName;
-          log.info(`Migrated session for tab ${tabId} from single to multi-speaker format`);
-        }
-        sessions.set(tabId, session);
-      }
-      if (sessions.size > 0) {
-        log.info(`Restored ${sessions.size} sessions`);
-        // Re-request keep-awake for restored sessions
-        requestKeepAwake();
-      }
-    }
-  } catch (err) {
-    log.error('Restore failed:', err);
-  }
+function persistSessions(): void {
+  storage.persist();
 }

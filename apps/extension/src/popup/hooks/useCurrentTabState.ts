@@ -1,6 +1,9 @@
 import { useState, useEffect } from 'preact/hooks';
 import type { TabMediaState } from '@thaumic-cast/protocol';
-import type { CurrentTabStateResponse, TabStateChangedMessage } from '../../lib/messages';
+import type { CurrentTabStateResponse } from '../../lib/messages';
+import { getActiveTab } from '../../lib/tab-utils';
+import { noop } from '../../lib/noop';
+import { useChromeMessage } from './useChromeMessage';
 
 /**
  * Result of the useCurrentTabState hook.
@@ -26,33 +29,26 @@ export function useCurrentTabState(): CurrentTabResult {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    // Initial fetch
     chrome.runtime
       .sendMessage({ type: 'GET_CURRENT_TAB_STATE' })
       .then((response: CurrentTabStateResponse) => {
         setState(response.state);
         setIsCasting(response.isCasting);
       })
-      .catch(() => {
-        // Background might not be ready
-      })
+      .catch(noop)
       .finally(() => setLoading(false));
-
-    // Listen for updates
-    const handler = (message: { type: string; tabId?: number; state?: TabMediaState }) => {
-      if (message.type === 'TAB_STATE_CHANGED' && message.state) {
-        // Only update if it's about the current tab
-        chrome.tabs.query({ active: true, currentWindow: true }).then(([tab]) => {
-          if (tab?.id === message.tabId) {
-            setState((message as TabStateChangedMessage).state);
-          }
-        });
-      }
-    };
-
-    chrome.runtime.onMessage.addListener(handler);
-    return () => chrome.runtime.onMessage.removeListener(handler);
   }, []);
+
+  useChromeMessage((message) => {
+    const msg = message as { type: string; tabId?: number; state?: TabMediaState };
+    if (msg.type === 'TAB_STATE_CHANGED' && msg.state) {
+      getActiveTab().then((tab) => {
+        if (tab?.id === msg.tabId && msg.state) {
+          setState(msg.state);
+        }
+      });
+    }
+  });
 
   return { state, isCasting, loading };
 }

@@ -258,24 +258,3 @@ export function describeEncoderConfig(config: EncoderConfig): string {
 
   return `${codecMeta.label} • ${bitrateStr} • ${channelStr} • ${config.sampleRate / 1000}kHz`;
 }
-
-/**
- * Gets a short label for the current mode and config.
- * Used in popup footer.
- * @param mode - The audio mode
- * @param config - The resolved encoder config
- * @returns A short label like "Auto • AAC-LC 192kbps"
- */
-export function getModeLabel(mode: AudioMode, config: EncoderConfig): string {
-  const modeLabels: Record<AudioMode, string> = {
-    low: 'Low',
-    mid: 'Balanced',
-    high: 'High',
-    custom: 'Custom',
-  };
-
-  const codecMeta = CODEC_METADATA[config.codec];
-  const bitrateStr = config.bitrate === 0 ? 'Lossless' : `${config.bitrate}kbps`;
-
-  return `${modeLabels[mode]} • ${codecMeta.label} ${bitrateStr}`;
-}

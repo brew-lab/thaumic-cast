@@ -83,8 +83,28 @@ const colorCache = new Map<string, DominantColorResult | null>();
 /** Storage key for persistent cache */
 const STORAGE_KEY = 'dominantColorCache';
 
-/** Max entries to persist (LRU-style limit) */
+/** Max entries in cache (FIFO eviction) */
 const MAX_CACHE_ENTRIES = 50;
+
+/**
+ * Adds to cache with FIFO eviction when limit exceeded.
+ * @param url - The image URL key
+ * @param result - The color result to cache
+ */
+function cacheSet(url: string, result: DominantColorResult | null): void {
+  colorCache.set(url, result);
+
+  // Evict oldest entries if over limit
+  if (colorCache.size > MAX_CACHE_ENTRIES) {
+    const keysToDelete = Array.from(colorCache.keys()).slice(
+      0,
+      colorCache.size - MAX_CACHE_ENTRIES,
+    );
+    for (const key of keysToDelete) {
+      colorCache.delete(key);
+    }
+  }
+}
 
 /** Reusable canvas for color extraction */
 let sharedCanvas: HTMLCanvasElement | null = null;
@@ -174,7 +194,7 @@ async function extractDominantColor(imageUrl: string): Promise<DominantColorResu
     clearTimeout(timeoutId);
 
     if (!response.ok) {
-      colorCache.set(imageUrl, null);
+      cacheSet(imageUrl, null);
       return null;
     }
 
@@ -190,7 +210,7 @@ async function extractDominantColor(imageUrl: string): Promise<DominantColorResu
     const ctx = getSharedCanvas();
     if (!ctx) {
       bitmap.close();
-      colorCache.set(imageUrl, null);
+      cacheSet(imageUrl, null);
       return null;
     }
 
@@ -229,7 +249,7 @@ async function extractDominantColor(imageUrl: string): Promise<DominantColorResu
     }
 
     if (count === 0) {
-      colorCache.set(imageUrl, null);
+      cacheSet(imageUrl, null);
       return null;
     }
 
@@ -244,11 +264,11 @@ async function extractDominantColor(imageUrl: string): Promise<DominantColorResu
       safeL: calculateSafeL(oklch[0]),
     };
 
-    colorCache.set(imageUrl, result);
+    cacheSet(imageUrl, result);
     saveCacheToStorage();
     return result;
   } catch {
-    colorCache.set(imageUrl, null);
+    cacheSet(imageUrl, null);
     return null;
   }
 }

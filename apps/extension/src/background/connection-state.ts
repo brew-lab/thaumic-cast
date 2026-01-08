@@ -14,11 +14,9 @@
  */
 
 import { createLogger } from '@thaumic-cast/shared';
+import { persistenceManager } from './persistence-manager';
 
 const log = createLogger('ConnectionState');
-
-/** Storage key for session persistence */
-const STORAGE_KEY = 'connectionState';
 
 /** Network health status from desktop app */
 export type NetworkHealthStatus = 'ok' | 'degraded';
@@ -54,8 +52,42 @@ let state: ConnectionState = {
   networkHealthReason: null,
 };
 
-/** Debounce timer for persistence */
-let persistTimer: ReturnType<typeof setTimeout> | null = null;
+/**
+ * Debounced storage for persistence, registered with manager.
+ * Includes migration support for new fields added in updates.
+ */
+const storage = persistenceManager.register<ConnectionState>(
+  {
+    storageKey: 'connectionState',
+    debounceMs: 300,
+    loggerName: 'ConnectionState',
+    serialize: () => state,
+    restore: (stored): ConnectionState | undefined => {
+      if (!stored || typeof stored !== 'object') return undefined;
+      const s = stored as Partial<ConnectionState>;
+      // Merge with defaults to handle new fields added in updates
+      return {
+        connected: s.connected ?? false,
+        desktopAppUrl: s.desktopAppUrl ?? null,
+        maxStreams: s.maxStreams ?? null,
+        lastDiscoveredAt: s.lastDiscoveredAt ?? null,
+        lastError: s.lastError ?? null,
+        networkHealth: s.networkHealth ?? 'ok',
+        networkHealthReason: s.networkHealthReason ?? null,
+      };
+    },
+  },
+  (restored) => {
+    if (restored) {
+      state = restored;
+      log.info(
+        'Restored connection state:',
+        state.connected ? 'connected' : 'disconnected',
+        state.desktopAppUrl ? `(${state.desktopAppUrl})` : '',
+      );
+    }
+  },
+);
 
 /**
  * Gets the current connection state (read-only copy).
@@ -76,7 +108,7 @@ export function setConnected(connected: boolean): void {
     connected,
     lastError: connected ? null : state.lastError,
   };
-  schedulePersist();
+  storage.schedule();
 }
 
 /**
@@ -92,7 +124,7 @@ export function setDesktopApp(url: string, maxStreams: number): void {
     lastDiscoveredAt: Date.now(),
     lastError: null,
   };
-  schedulePersist();
+  storage.schedule();
 }
 
 /**
@@ -105,7 +137,7 @@ export function setConnectionError(error: string): void {
     connected: false,
     lastError: error,
   };
-  schedulePersist();
+  storage.schedule();
 }
 
 /**
@@ -119,7 +151,7 @@ export function setNetworkHealth(health: NetworkHealthStatus, reason: string | n
     networkHealth: health,
     networkHealthReason: reason,
   };
-  schedulePersist();
+  storage.schedule();
 }
 
 /**
@@ -136,56 +168,5 @@ export function clearConnectionState(): void {
     networkHealth: 'ok',
     networkHealthReason: null,
   };
-  schedulePersist();
-}
-
-/**
- * Schedules a debounced persist to session storage.
- * Prevents excessive writes during rapid state changes.
- */
-function schedulePersist(): void {
-  if (persistTimer) clearTimeout(persistTimer);
-  persistTimer = setTimeout(persist, 300);
-}
-
-/**
- * Persists current state to session storage.
- */
-async function persist(): Promise<void> {
-  try {
-    await chrome.storage.session.set({ [STORAGE_KEY]: state });
-    log.debug('Persisted connection state');
-  } catch (err) {
-    log.error('Persist failed:', err);
-  }
-}
-
-/**
- * Restores state from session storage.
- * Call on service worker startup.
- */
-export async function restoreConnectionState(): Promise<void> {
-  try {
-    const result = await chrome.storage.session.get(STORAGE_KEY);
-    if (result[STORAGE_KEY]) {
-      const stored = result[STORAGE_KEY];
-      // Merge with defaults to handle new fields added in updates
-      state = {
-        connected: stored.connected ?? false,
-        desktopAppUrl: stored.desktopAppUrl ?? null,
-        maxStreams: stored.maxStreams ?? null,
-        lastDiscoveredAt: stored.lastDiscoveredAt ?? null,
-        lastError: stored.lastError ?? null,
-        networkHealth: stored.networkHealth ?? 'ok',
-        networkHealthReason: stored.networkHealthReason ?? null,
-      };
-      log.info(
-        'Restored connection state:',
-        state.connected ? 'connected' : 'disconnected',
-        state.desktopAppUrl ? `(${state.desktopAppUrl})` : '',
-      );
-    }
-  } catch (err) {
-    log.error('Restore failed:', err);
-  }
+  storage.schedule();
 }

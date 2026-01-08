@@ -9,6 +9,7 @@ import { IconButton, SpeakerVolumeRow, ToggleSwitch, StatusChip, Card } from '@t
 import { TransportIcon } from './TransportIcon';
 import { useDominantColor } from '../hooks/useDominantColor';
 import { useVideoSyncState } from '../hooks/useVideoSyncState';
+import { useOptimisticOverlay } from '../hooks/useOptimisticOverlay';
 import styles from './ActiveCastCard.module.css';
 
 /** Debounce interval for playback control buttons (ms) */
@@ -94,16 +95,8 @@ export function ActiveCastCard({
   const playbackState = cast.mediaState.playbackState ?? 'none';
   const isPlaying = playbackState === 'playing';
 
-  // Local state for optimistic UI updates (immediate feedback before site confirms)
-  const [optimisticPlaying, setOptimisticPlaying] = useState<boolean | null>(null);
-
-  // Reset optimistic state when real playback state updates
-  useEffect(() => {
-    setOptimisticPlaying(null);
-  }, [playbackState]);
-
-  // Use optimistic state if set, otherwise use real state
-  const displayIsPlaying = optimisticPlaying ?? isPlaying;
+  // Optimistic UI for immediate feedback before site confirms
+  const [displayIsPlaying, setOptimisticPlaying] = useOptimisticOverlay(isPlaying);
 
   // Debounce ref to prevent rapid clicking
   const lastControlTime = useRef<Record<string, number>>({});

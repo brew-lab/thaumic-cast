@@ -1,79 +1,98 @@
 import {
   EncoderConfig,
-  StreamMetadata,
   SonosStateSnapshot,
   BroadcastEvent,
+  LatencyBroadcastEvent,
   TabMediaState,
   ActiveCast,
   TransportState,
   MediaAction,
   PlaybackResult,
+  StreamMetadata,
 } from '@thaumic-cast/protocol';
+import type { RawMediaState } from './message-schemas';
 
-/**
- * Internal message types for extension communication.
- */
-export type ExtensionMessageType =
+// ─────────────────────────────────────────────────────────────────────────────
+// Message Type Constants (organized by direction)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Message types: Popup → Background */
+export type PopupToBackgroundType =
   | 'START_CAST'
   | 'STOP_CAST'
   | 'GET_CAST_STATUS'
   | 'GET_SONOS_STATE'
   | 'GET_CONNECTION_STATUS'
-  | 'START_CAPTURE'
-  | 'STOP_CAPTURE'
-  | 'START_PLAYBACK'
-  | 'METADATA_UPDATE'
-  // Metadata messages (content → background → offscreen)
-  | 'TAB_METADATA_UPDATE'
-  | 'TAB_OG_IMAGE'
-  | 'REQUEST_METADATA'
-  // Popup queries (popup → background)
   | 'GET_CURRENT_TAB_STATE'
   | 'GET_ACTIVE_CASTS'
   | 'ENSURE_CONNECTION'
-  // Popup notifications (background → popup)
+  | 'SET_VOLUME'
+  | 'SET_MUTE'
+  | 'CONTROL_MEDIA'
+  | 'SET_VIDEO_SYNC_ENABLED'
+  | 'SET_VIDEO_SYNC_TRIM'
+  | 'TRIGGER_RESYNC'
+  | 'GET_VIDEO_SYNC_STATE'
+  | 'WS_CONNECT'
+  | 'WS_DISCONNECT'
+  | 'WS_RECONNECT';
+
+/** Message types: Background → Popup */
+export type BackgroundToPopupType =
   | 'TAB_STATE_CHANGED'
   | 'ACTIVE_CASTS_CHANGED'
   | 'CAST_AUTO_STOPPED'
   | 'SPEAKER_REMOVED'
+  | 'WS_STATE_CHANGED'
+  | 'VOLUME_UPDATE'
+  | 'MUTE_UPDATE'
+  | 'TRANSPORT_STATE_UPDATE'
+  | 'WS_CONNECTION_LOST'
   | 'NETWORK_HEALTH_CHANGED'
-  // WebSocket control messages (background ↔ offscreen)
+  | 'LATENCY_UPDATE'
+  | 'LATENCY_STALE';
+
+/** Message types: Content → Background */
+export type ContentToBackgroundType = 'TAB_METADATA_UPDATE' | 'TAB_OG_IMAGE';
+
+/** Message types: Background → Content */
+export type BackgroundToContentType =
+  | 'REQUEST_METADATA'
+  | 'CONTROL_MEDIA'
+  | 'SET_VIDEO_SYNC_ENABLED'
+  | 'SET_VIDEO_SYNC_TRIM'
+  | 'TRIGGER_RESYNC'
+  | 'GET_VIDEO_SYNC_STATE'
+  | 'LATENCY_EVENT';
+
+/** Message types: Background → Offscreen */
+export type BackgroundToOffscreenType =
+  | 'START_CAPTURE'
+  | 'STOP_CAPTURE'
+  | 'START_PLAYBACK'
+  | 'OFFSCREEN_METADATA_UPDATE'
   | 'WS_CONNECT'
   | 'WS_DISCONNECT'
   | 'WS_RECONNECT'
   | 'GET_WS_STATUS'
   | 'SYNC_SONOS_STATE'
-  // WebSocket status messages (offscreen → background)
+  | 'DETECT_CODECS'
+  | 'SET_VOLUME'
+  | 'SET_MUTE';
+
+/** Message types: Offscreen → Background */
+export type OffscreenToBackgroundType =
   | 'WS_CONNECTED'
   | 'WS_DISCONNECTED'
   | 'WS_PERMANENTLY_DISCONNECTED'
   | 'SONOS_EVENT'
   | 'NETWORK_EVENT'
   | 'TOPOLOGY_EVENT'
-  // State update messages (background → popup)
-  | 'WS_STATE_CHANGED'
-  | 'VOLUME_UPDATE'
-  | 'MUTE_UPDATE'
-  | 'TRANSPORT_STATE_UPDATE'
-  | 'WS_CONNECTION_LOST'
-  // Control commands (popup → background → offscreen)
-  | 'SET_VOLUME'
-  | 'SET_MUTE'
-  // Offscreen lifecycle
   | 'OFFSCREEN_READY'
-  // Session health (offscreen → background)
-  | 'SESSION_HEALTH'
-  // Media playback control (popup → background → content)
-  | 'CONTROL_MEDIA'
-  // Codec detection (background → offscreen)
-  | 'DETECT_CODECS'
-  // Video sync control (popup → background → content)
-  | 'SET_VIDEO_SYNC_ENABLED'
-  | 'SET_VIDEO_SYNC_TRIM'
-  | 'TRIGGER_RESYNC'
-  | 'GET_VIDEO_SYNC_STATE'
-  // Video sync state broadcast (content → popup)
-  | 'VIDEO_SYNC_STATE_CHANGED';
+  | 'SESSION_DISCONNECTED';
+
+/** Message types: Content broadcast */
+export type ContentBroadcastType = 'VIDEO_SYNC_STATE_CHANGED';
 
 /**
  * Message payload for starting a cast.
@@ -100,13 +119,6 @@ export interface StopCastMessage {
   payload?: {
     tabId?: number;
   };
-}
-
-/**
- * Message payload for getting cast status.
- */
-export interface GetCastStatusMessage {
-  type: 'GET_CAST_STATUS';
 }
 
 /**
@@ -162,42 +174,11 @@ export interface StartPlaybackResponse {
 }
 
 /**
- * Session health report sent from offscreen to background when a session ends.
- * Used to record whether the session was stable (for config learning).
- */
-export interface SessionHealthMessage {
-  type: 'SESSION_HEALTH';
-  payload: {
-    tabId: number;
-    encoderConfig: EncoderConfig;
-    /** Whether any audio drops occurred during the session. */
-    hadDrops: boolean;
-    /** Total samples dropped by producer (buffer overflow). */
-    totalProducerDrops: number;
-    /** Total samples dropped by consumer catch-up. */
-    totalCatchUpDrops: number;
-    /** Total frames dropped due to backpressure. */
-    totalConsumerDrops: number;
-    /** Total underflows (source starvation events). */
-    totalUnderflows: number;
-  };
-}
-
-/**
- * Message payload for metadata updates from content script to background.
- * Contains only the track metadata.
- */
-export interface ContentMetadataMessage {
-  type: 'METADATA_UPDATE';
-  payload: StreamMetadata;
-}
-
-/**
  * Message payload for metadata updates from background to offscreen.
  * Uses nested structure with tabId and metadata separated.
  */
 export interface OffscreenMetadataMessage {
-  type: 'METADATA_UPDATE';
+  type: 'OFFSCREEN_METADATA_UPDATE';
   payload: {
     tabId: number;
     metadata: StreamMetadata;
@@ -211,10 +192,11 @@ export interface OffscreenMetadataMessage {
 /**
  * Metadata update from content script (via bridge) to background.
  * Uses TAB_METADATA_UPDATE to distinguish from offscreen messages.
+ * Payload includes supportedActions and playbackState from MediaSession.
  */
 export interface TabMetadataUpdateMessage {
   type: 'TAB_METADATA_UPDATE';
-  payload: StreamMetadata;
+  payload: RawMediaState | null;
 }
 
 /**
@@ -237,24 +219,6 @@ export interface TabOgImageMessage {
 // ─────────────────────────────────────────────────────────────────────────────
 // Connection Status Messages (popup → background)
 // ─────────────────────────────────────────────────────────────────────────────
-
-/**
- * Query for cached connection status.
- */
-export interface GetConnectionStatusMessage {
-  type: 'GET_CONNECTION_STATUS';
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Popup Query Messages (popup → background)
-// ─────────────────────────────────────────────────────────────────────────────
-
-/**
- * Query for current tab's media state.
- */
-export interface GetCurrentTabStateMessage {
-  type: 'GET_CURRENT_TAB_STATE';
-}
 
 /**
  * Response to GET_CURRENT_TAB_STATE.
@@ -425,6 +389,15 @@ export interface OffscreenReadyMessage {
   type: 'OFFSCREEN_READY';
 }
 
+/**
+ * Session disconnected unexpectedly (worker WebSocket closed).
+ * Sent from offscreen to background to clean up session state.
+ */
+export interface SessionDisconnectedMessage {
+  type: 'SESSION_DISCONNECTED';
+  tabId: number;
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // State Update Messages (background → popup)
 // ─────────────────────────────────────────────────────────────────────────────
@@ -536,6 +509,37 @@ export interface NetworkHealthChangedMessage {
 }
 
 /**
+ * Latency measurement update (background → popup).
+ */
+export interface LatencyUpdateMessage {
+  type: 'LATENCY_UPDATE';
+  streamId: string;
+  speakerIp: string;
+  epochId: number;
+  latencyMs: number;
+  jitterMs: number;
+  confidence: number;
+}
+
+/**
+ * Latency measurement stale notification (background → popup).
+ */
+export interface LatencyStaleMessage {
+  type: 'LATENCY_STALE';
+  streamId: string;
+  speakerIp: string;
+  epochId: number;
+}
+
+/**
+ * Latency event forwarded to content script (background → content).
+ */
+export interface LatencyEventMessage {
+  type: 'LATENCY_EVENT';
+  payload: LatencyBroadcastEvent;
+}
+
+/**
  * Topology event from desktop app (offscreen → background).
  */
 export interface TopologyEventMessage {
@@ -579,6 +583,15 @@ export interface ControlMediaMessage {
     tabId: number;
     action: MediaAction;
   };
+}
+
+/**
+ * Control media message sent to content script (background → content).
+ * Note: Different shape from ControlMediaMessage - no payload wrapper.
+ */
+export interface ContentControlMediaMessage {
+  type: 'CONTROL_MEDIA';
+  action: MediaAction;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -651,42 +664,95 @@ export interface VideoSyncStateChangedMessage {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Updated Union Type
+// Directional Message Union Types
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
- * Union of all internal extension messages.
+ * Messages sent from popup to background.
+ * Used for cast control, state queries, and settings changes.
  */
-export type ExtensionMessage =
+export type PopupToBackgroundMessage =
   | StartCastMessage
   | StopCastMessage
-  | GetCastStatusMessage
+  | { type: 'GET_CAST_STATUS' }
   | GetSonosStateMessage
-  | GetConnectionStatusMessage
-  | StartCaptureMessage
-  | StopCaptureMessage
-  | StartPlaybackMessage
-  | ContentMetadataMessage
-  // Tab metadata messages
-  | TabMetadataUpdateMessage
-  | TabOgImageMessage
-  | RequestMetadataMessage
-  // Popup query messages
-  | GetCurrentTabStateMessage
+  | { type: 'GET_CONNECTION_STATUS' }
+  | { type: 'GET_CURRENT_TAB_STATE' }
   | GetActiveCastsMessage
   | EnsureConnectionMessage
-  // Popup notification messages
+  | SetVolumeMessage
+  | SetMuteMessage
+  | ControlMediaMessage
+  | SetVideoSyncEnabledMessage
+  | SetVideoSyncTrimMessage
+  | TriggerResyncMessage
+  | GetVideoSyncStateMessage
+  | WsConnectMessage
+  | WsDisconnectMessage
+  | WsReconnectMessage;
+
+/**
+ * Messages sent from background to popup.
+ * Used for state updates and notifications.
+ */
+export type BackgroundToPopupMessage =
   | TabStateChangedMessage
   | ActiveCastsChangedMessage
   | CastAutoStoppedMessage
   | SpeakerRemovedMessage
+  | WsStateChangedMessage
+  | VolumeUpdateMessage
+  | MuteUpdateMessage
+  | TransportStateUpdateMessage
+  | WsConnectionLostMessage
   | NetworkHealthChangedMessage
-  // WebSocket messages
+  | LatencyUpdateMessage
+  | LatencyStaleMessage
+  | VideoSyncStateChangedMessage;
+
+/**
+ * Messages sent from content script to background.
+ * Used for metadata updates from web pages.
+ */
+export type ContentToBackgroundMessage = TabMetadataUpdateMessage | TabOgImageMessage;
+
+/**
+ * Messages sent from background to content script.
+ * Used for media control and video sync commands.
+ * Note: Uses ContentControlMediaMessage (no payload wrapper) for content.
+ */
+export type BackgroundToContentMessage =
+  | RequestMetadataMessage
+  | ContentControlMediaMessage
+  | SetVideoSyncEnabledMessage
+  | SetVideoSyncTrimMessage
+  | TriggerResyncMessage
+  | GetVideoSyncStateMessage
+  | LatencyEventMessage;
+
+/**
+ * Messages sent from background to offscreen document.
+ * Used for capture control, WebSocket management, and codec detection.
+ */
+export type BackgroundToOffscreenMessage =
+  | StartCaptureMessage
+  | StopCaptureMessage
+  | StartPlaybackMessage
+  | OffscreenMetadataMessage
   | WsConnectMessage
   | WsDisconnectMessage
   | WsReconnectMessage
   | GetWsStatusMessage
   | SyncSonosStateMessage
+  | DetectCodecsMessage
+  | SetVolumeMessage
+  | SetMuteMessage;
+
+/**
+ * Messages sent from offscreen document to background.
+ * Used for WebSocket events, session status, and lifecycle signals.
+ */
+export type OffscreenToBackgroundMessage =
   | WsConnectedMessage
   | WsDisconnectedMessage
   | WsPermanentlyDisconnectedMessage
@@ -694,22 +760,29 @@ export type ExtensionMessage =
   | NetworkEventMessage
   | TopologyEventMessage
   | OffscreenReadyMessage
-  | WsStateChangedMessage
-  | VolumeUpdateMessage
-  | MuteUpdateMessage
-  | TransportStateUpdateMessage
-  | WsConnectionLostMessage
-  | SetVolumeMessage
-  | SetMuteMessage
-  // Media playback control
-  | ControlMediaMessage
-  // Session health
-  | SessionHealthMessage
-  // Codec detection
-  | DetectCodecsMessage
-  // Video sync
-  | SetVideoSyncEnabledMessage
-  | SetVideoSyncTrimMessage
-  | TriggerResyncMessage
-  | GetVideoSyncStateMessage
-  | VideoSyncStateChangedMessage;
+  | SessionDisconnectedMessage;
+
+/**
+ * Messages broadcast from content script (video sync state).
+ */
+export type ContentBroadcastMessage = VideoSyncStateChangedMessage;
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Inbound Message Types (for listeners)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Messages that the background service worker receives.
+ * From popup, content scripts (including broadcasts), and offscreen document.
+ */
+export type BackgroundInboundMessage =
+  | PopupToBackgroundMessage
+  | ContentToBackgroundMessage
+  | OffscreenToBackgroundMessage
+  | ContentBroadcastMessage;
+
+/**
+ * Messages that the offscreen document receives.
+ * From background service worker only.
+ */
+export type OffscreenInboundMessage = BackgroundToOffscreenMessage;
