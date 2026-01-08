@@ -83,11 +83,11 @@ const colorCache = new Map<string, DominantColorResult | null>();
 /** Storage key for persistent cache */
 const STORAGE_KEY = 'dominantColorCache';
 
-/** Max entries in cache (LRU-style limit) */
+/** Max entries in cache (FIFO eviction) */
 const MAX_CACHE_ENTRIES = 50;
 
 /**
- * Adds to cache with LRU eviction when limit exceeded.
+ * Adds to cache with FIFO eviction when limit exceeded.
  * @param url - The image URL key
  * @param result - The color result to cache
  */
