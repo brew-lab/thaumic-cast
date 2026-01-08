@@ -27,7 +27,7 @@ import type {
   SessionHealthMessage,
   ActiveCastsResponse,
 } from '../lib/messages';
-import { clearDiscoveryCache } from '../lib/discovery';
+import { clearDiscoveryCache } from './discovery';
 import { recordStableSession, recordBadSession } from '../lib/device-config';
 
 // State management modules

@@ -17,7 +17,7 @@
 import { createLogger } from '@thaumic-cast/shared';
 import type { SonosStateSnapshot } from '@thaumic-cast/protocol';
 import type { EnsureConnectionResponse } from '../../lib/messages';
-import { discoverDesktopApp } from '../../lib/discovery';
+import { discoverDesktopApp } from '../discovery';
 import {
   getConnectionState,
   setConnected,

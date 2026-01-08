@@ -1,6 +1,22 @@
+/**
+ * Desktop App Discovery Module
+ *
+ * Discovers the Thaumic Cast Desktop App on localhost.
+ * This module is background-only as it depends on connection-state.
+ *
+ * Responsibilities:
+ * - Probe localhost ports for desktop app
+ * - Handle custom server URL from settings
+ * - Cache discovery results in connection-state
+ *
+ * Non-responsibilities:
+ * - Connection management (handled by handlers/connection.ts)
+ * - WebSocket lifecycle (handled by offscreen-manager.ts)
+ */
+
 import { createLogger } from '@thaumic-cast/shared';
-import { loadExtensionSettings } from './settings';
-import { getConnectionState, setDesktopApp } from '../background/connection-state';
+import { loadExtensionSettings } from '../lib/settings';
+import { getConnectionState, setDesktopApp } from './connection-state';
 
 const log = createLogger('Discovery');
 
@@ -33,6 +49,7 @@ const DEFAULT_MAX_STREAMS = 5;
  * Clears the discovery cache, forcing a fresh discovery on next call.
  * Note: This is now a no-op since cache is managed by connection-state.
  * Use clearConnectionState() from connection-state.ts instead.
+ * @deprecated Use clearConnectionState() instead
  */
 export function clearDiscoveryCache(): void {
   log.debug('Discovery cache cleared (cache now managed by connection-state)');
