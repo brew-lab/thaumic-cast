@@ -256,13 +256,8 @@ async function handleSourceChanged(speakerIp: string, currentUri: string): Promi
     } else {
       log.info(`Auto-stopping cast for tab ${tabId} due to source change (last speaker)`);
 
-      // Clear tracked media action state for this tab
-      clearTabMediaActionState(tabId);
-
       // Last speaker removed - stop the capture
-      await chrome.runtime.sendMessage({ type: 'STOP_CAPTURE', payload: { tabId } }).catch(() => {
-        // Offscreen might not be available
-      });
+      await stopCastForTab(tabId);
 
       // Notify popup that cast ended
       notifyPopup({
@@ -334,10 +329,10 @@ function notifyPopup(message: object): void {
 
 /**
  * Stops a cast for a specific tab.
- * Sends stop message to offscreen and removes session.
+ * Centralizes the stop-cast cleanup sequence to avoid duplication.
  * @param tabId - The tab ID to stop
  */
-async function stopCastForTab(tabId: number): Promise<void> {
+export async function stopCastForTab(tabId: number): Promise<void> {
   // Clear tracked media action state for this tab
   clearTabMediaActionState(tabId);
 
@@ -414,13 +409,8 @@ async function handlePlaybackStopped(speakerIp: string): Promise<void> {
     } else {
       log.info(`Playback stopped on ${speakerIp}, stopping cast for tab ${tabId} (last speaker)`);
 
-      // Clear tracked media action state for this tab
-      clearTabMediaActionState(tabId);
-
       // Last speaker removed - stop the capture
-      await chrome.runtime.sendMessage({ type: 'STOP_CAPTURE', payload: { tabId } }).catch(() => {
-        // Offscreen might not be available
-      });
+      await stopCastForTab(tabId);
 
       // Notify popup that cast ended
       notifyPopup({

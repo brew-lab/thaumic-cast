@@ -40,7 +40,6 @@ import {
 } from './metadata-cache';
 import {
   registerSession,
-  removeSession,
   hasSession,
   getActiveCasts,
   onMetadataUpdate,
@@ -62,7 +61,7 @@ import {
   restoreConnectionState,
   setNetworkHealth,
 } from './connection-state';
-import { handleSonosEvent } from './sonos-event-handlers';
+import { handleSonosEvent, stopCastForTab } from './sonos-event-handlers';
 import {
   selectEncoderConfig,
   recordStableSession,
@@ -1036,18 +1035,7 @@ async function handleStopCast(
     }
 
     if (tabId && hasSession(tabId)) {
-      // Disable video sync before stopping capture
-      chrome.tabs
-        .sendMessage(tabId, {
-          type: 'SET_VIDEO_SYNC_ENABLED',
-          payload: { tabId, enabled: false },
-        })
-        .catch(() => {
-          // Content script may not be available
-        });
-
-      await chrome.runtime.sendMessage({ type: 'STOP_CAPTURE', payload: { tabId } });
-      removeSession(tabId);
+      await stopCastForTab(tabId);
     }
     sendResponse({ success: true });
   } catch (err) {
@@ -1084,10 +1072,7 @@ chrome.tabs.onRemoved.addListener(async (tabId) => {
   // Clean up active session if exists
   if (hasSession(tabId)) {
     log.info(`Tab ${tabId} closed, cleaning up session`);
-    chrome.runtime.sendMessage({ type: 'STOP_CAPTURE', payload: { tabId } }).catch(() => {
-      // Offscreen might already be closed
-    });
-    removeSession(tabId);
+    await stopCastForTab(tabId);
   }
 });
 
