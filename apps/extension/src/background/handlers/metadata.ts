@@ -27,6 +27,7 @@ import type {
   CurrentTabStateResponse,
 } from '../../lib/messages';
 import { getSourceFromUrl } from '../../lib/url-utils';
+import { getActiveTab } from '../../lib/tab-utils';
 import { getCachedState, updateCache, updateTabInfo } from '../metadata-cache';
 import { hasSession, onMetadataUpdate } from '../session-manager';
 import { notifyPopup } from '../notify';
@@ -164,7 +165,7 @@ function forwardMetadataToOffscreen(tabId: number, metadata: unknown): void {
  * @returns The current tab state response
  */
 export async function handleGetCurrentTabState(): Promise<CurrentTabStateResponse> {
-  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  const tab = await getActiveTab();
   if (!tab?.id) {
     return { state: null, isCasting: false };
   }

@@ -40,6 +40,9 @@ import { sendToOffscreen } from './offscreen-manager';
 
 const log = createLogger('SonosEvents');
 
+/** Reason for speaker removal from a cast session */
+type SpeakerRemovalReason = 'source_changed' | 'playback_stopped';
+
 /** Per-speaker debounce timers for transport state changes */
 const transportDebounceTimers = new Map<string, ReturnType<typeof setTimeout>>();
 const TRANSPORT_DEBOUNCE_MS = 500;
@@ -231,42 +234,7 @@ function syncStateToOffscreen(): void {
  */
 async function handleSourceChanged(speakerIp: string, currentUri: string): Promise<void> {
   log.warn(`Source changed on ${speakerIp}: ${currentUri}`);
-
-  // Find if we have an active cast to this speaker
-  const session = getSessionBySpeakerIp(speakerIp);
-
-  if (session) {
-    const tabId = session.tabId;
-
-    // Remove just this speaker from the session
-    removeSpeakerFromSession(tabId, speakerIp);
-
-    // Check if session still has other speakers
-    if (hasSession(tabId)) {
-      log.info(`Removed speaker ${speakerIp} from cast for tab ${tabId} due to source change`);
-
-      // Notify popup that one speaker was removed
-      notifyPopup({
-        type: 'SPEAKER_REMOVED',
-        tabId,
-        speakerIp,
-        reason: 'source_changed',
-      });
-    } else {
-      log.info(`Auto-stopping cast for tab ${tabId} due to source change (last speaker)`);
-
-      // Last speaker removed - stop the capture
-      await stopCastForTab(tabId);
-
-      // Notify popup that cast ended
-      notifyPopup({
-        type: 'CAST_AUTO_STOPPED',
-        tabId,
-        speakerIp,
-        reason: 'source_changed',
-      });
-    }
-  }
+  await handleSpeakerRemoval(speakerIp, 'source_changed');
 }
 
 /**
@@ -341,6 +309,52 @@ export async function stopCastForTab(tabId: number): Promise<void> {
 }
 
 /**
+ * Handles removal of a speaker from an active cast session.
+ * Consolidates the common pattern of:
+ * 1. Finding session by speaker IP
+ * 2. Removing speaker from session
+ * 3. Stopping cast if last speaker, or notifying popup of partial removal
+ *
+ * @param speakerIp - The speaker IP address being removed
+ * @param reason - Why the speaker is being removed
+ */
+async function handleSpeakerRemoval(
+  speakerIp: string,
+  reason: SpeakerRemovalReason,
+): Promise<void> {
+  const session = getSessionBySpeakerIp(speakerIp);
+  if (!session) return;
+
+  const tabId = session.tabId;
+
+  // Remove this speaker from the session
+  removeSpeakerFromSession(tabId, speakerIp);
+
+  // Check if session still has other speakers
+  if (hasSession(tabId)) {
+    log.info(`Removed speaker ${speakerIp} from cast for tab ${tabId} due to ${reason}`);
+
+    notifyPopup({
+      type: 'SPEAKER_REMOVED',
+      tabId,
+      speakerIp,
+      reason,
+    });
+  } else {
+    log.info(`Stopping cast for tab ${tabId} due to ${reason} (last speaker)`);
+
+    await stopCastForTab(tabId);
+
+    notifyPopup({
+      type: 'CAST_AUTO_STOPPED',
+      tabId,
+      speakerIp,
+      reason,
+    });
+  }
+}
+
+/**
  * Handles stream ended events.
  * Cleans up the session when the desktop app ends the stream.
  * @param streamId - The stream ID that ended
@@ -371,40 +385,7 @@ async function handleStreamEnded(streamId: string): Promise<void> {
  * @param speakerIp - The speaker IP where playback stopped
  */
 async function handlePlaybackStopped(speakerIp: string): Promise<void> {
-  const session = getSessionBySpeakerIp(speakerIp);
-
-  if (session) {
-    const tabId = session.tabId;
-
-    // Remove just this speaker from the session
-    removeSpeakerFromSession(tabId, speakerIp);
-
-    // Check if session still has other speakers
-    if (hasSession(tabId)) {
-      log.info(`Removed speaker ${speakerIp} from cast for tab ${tabId} due to playback stopped`);
-
-      // Notify popup that one speaker was removed
-      notifyPopup({
-        type: 'SPEAKER_REMOVED',
-        tabId,
-        speakerIp,
-        reason: 'playback_stopped',
-      });
-    } else {
-      log.info(`Playback stopped on ${speakerIp}, stopping cast for tab ${tabId} (last speaker)`);
-
-      // Last speaker removed - stop the capture
-      await stopCastForTab(tabId);
-
-      // Notify popup that cast ended
-      notifyPopup({
-        type: 'CAST_AUTO_STOPPED',
-        tabId,
-        speakerIp,
-        reason: 'playback_stopped',
-      });
-    }
-  }
+  await handleSpeakerRemoval(speakerIp, 'playback_stopped');
 }
 
 /**

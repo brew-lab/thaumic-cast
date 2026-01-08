@@ -23,6 +23,7 @@ import type {
   StartPlaybackResponse,
 } from '../../lib/messages';
 import { getSourceFromUrl } from '../../lib/url-utils';
+import { getActiveTab, getActiveTabId } from '../../lib/tab-utils';
 import { loadExtensionSettings } from '../../lib/settings';
 import { getCachedCodecSupport } from '../../lib/codec-cache';
 import { selectEncoderConfig, describeConfig } from '../../lib/device-config';
@@ -60,7 +61,7 @@ export async function handleStartCast(
     const { speakerIps } = msg.payload;
     if (!speakerIps.length) throw new Error('error_no_speakers_selected');
 
-    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    const tab = await getActiveTab();
     if (!tab?.id) throw new Error('error_no_active_tab');
 
     // 1. Discover Desktop App and its limits (do this early to fail fast)
@@ -226,8 +227,7 @@ export async function handleStopCast(
     let tabId = msg.payload?.tabId;
 
     if (!tabId) {
-      const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-      tabId = tab?.id;
+      tabId = (await getActiveTabId()) ?? undefined;
     }
 
     if (tabId && hasSession(tabId)) {
@@ -250,8 +250,8 @@ export async function handleGetStatus(
   sendResponse: (res: ExtensionResponse) => void,
 ): Promise<void> {
   try {
-    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-    const isActive = !!(tab?.id && hasSession(tab.id));
+    const tabId = await getActiveTabId();
+    const isActive = !!(tabId && hasSession(tabId));
     sendResponse({ success: true, isActive });
   } catch {
     sendResponse({ success: false, isActive: false });
