@@ -125,15 +125,3 @@ export function updateTransportState(
   storage.schedule();
   return state;
 }
-
-/**
- * Restores state from session storage.
- * @deprecated Use persistenceManager.restoreAll() instead
- */
-export async function restoreSonosState(): Promise<void> {
-  const data = await storage.restore();
-  // onRestore callback handles population
-  if (data) {
-    log.debug('restoreSonosState called directly (prefer persistenceManager.restoreAll)');
-  }
-}

@@ -345,15 +345,3 @@ export function onMetadataUpdate(tabId: number): void {
 function persistSessions(): void {
   storage.persist();
 }
-
-/**
- * Restores sessions from session storage.
- * @deprecated Use persistenceManager.restoreAll() instead
- */
-export async function restoreSessions(): Promise<void> {
-  const data = await storage.restore();
-  // onRestore callback handles population
-  if (data) {
-    log.debug('restoreSessions called directly (prefer persistenceManager.restoreAll)');
-  }
-}

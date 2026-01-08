@@ -170,15 +170,3 @@ export function clearCache(): void {
 export function getCacheSize(): number {
   return cache.size;
 }
-
-/**
- * Restores cache from session storage.
- * @deprecated Use persistenceManager.restoreAll() instead
- */
-export async function restoreCache(): Promise<void> {
-  const data = await storage.restore();
-  // onRestore callback handles population
-  if (data) {
-    log.debug('restoreCache called directly (prefer persistenceManager.restoreAll)');
-  }
-}

@@ -170,15 +170,3 @@ export function clearConnectionState(): void {
   };
   storage.schedule();
 }
-
-/**
- * Restores state from session storage.
- * @deprecated Use persistenceManager.restoreAll() instead
- */
-export async function restoreConnectionState(): Promise<void> {
-  const data = await storage.restore();
-  // onRestore callback handles population
-  if (data) {
-    log.debug('restoreConnectionState called directly (prefer persistenceManager.restoreAll)');
-  }
-}
