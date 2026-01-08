@@ -7,6 +7,7 @@ import {
   getDefaultExtensionSettings,
 } from '../../lib/settings';
 import { useMountedRef } from '../../popup/hooks/useMountedRef';
+import { useStorageListener } from '../../popup/hooks/useStorageListener';
 
 /**
  * Hook for loading and updating extension settings.
@@ -47,16 +48,7 @@ export function useExtensionSettings(): {
   }, []);
 
   // Listen for storage changes from other contexts
-  useEffect(() => {
-    const handler = (changes: { [key: string]: chrome.storage.StorageChange }) => {
-      if (changes['extensionSettings']?.newValue) {
-        setSettings(changes['extensionSettings'].newValue);
-      }
-    };
-
-    chrome.storage.sync.onChanged.addListener(handler);
-    return () => chrome.storage.sync.onChanged.removeListener(handler);
-  }, []);
+  useStorageListener<ExtensionSettings>('extensionSettings', setSettings);
 
   const updateSettings = useCallback(
     async (partial: Partial<ExtensionSettings>) => {

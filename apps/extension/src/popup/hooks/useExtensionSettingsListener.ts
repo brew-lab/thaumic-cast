@@ -5,9 +5,10 @@
  * Automatically updates when settings are modified in the options page.
  */
 
-import { useState, useEffect } from 'preact/hooks';
-import { loadExtensionSettings } from '../../lib/settings';
+import { useState, useEffect, useCallback } from 'preact/hooks';
+import { loadExtensionSettings, type ExtensionSettings } from '../../lib/settings';
 import { noop } from '../../lib/noop';
+import { useStorageListener } from './useStorageListener';
 
 /**
  * Settings values returned by the hook.
@@ -24,23 +25,21 @@ interface ExtensionSettingsState {
 export function useExtensionSettingsListener(): ExtensionSettingsState {
   const [videoSyncEnabled, setVideoSyncEnabled] = useState(false);
 
+  // Load initial settings
   useEffect(() => {
-    // Load initial settings
     loadExtensionSettings()
       .then((settings) => setVideoSyncEnabled(settings.videoSyncEnabled))
       .catch(noop);
-
-    // Listen for settings changes from options page
-    const handler = (changes: { [key: string]: chrome.storage.StorageChange }) => {
-      const newSettings = changes['extensionSettings']?.newValue;
-      if (newSettings?.videoSyncEnabled !== undefined) {
-        setVideoSyncEnabled(newSettings.videoSyncEnabled);
-      }
-    };
-
-    chrome.storage.sync.onChanged.addListener(handler);
-    return () => chrome.storage.sync.onChanged.removeListener(handler);
   }, []);
+
+  // Listen for settings changes from options page
+  const handleSettingsChange = useCallback((newSettings: ExtensionSettings) => {
+    if (newSettings?.videoSyncEnabled !== undefined) {
+      setVideoSyncEnabled(newSettings.videoSyncEnabled);
+    }
+  }, []);
+
+  useStorageListener('extensionSettings', handleSettingsChange);
 
   return { videoSyncEnabled };
 }
