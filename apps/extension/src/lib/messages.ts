@@ -94,19 +94,6 @@ export type OffscreenToBackgroundType =
 export type ContentBroadcastType = 'VIDEO_SYNC_STATE_CHANGED';
 
 /**
- * Union of all internal extension message types.
- * @deprecated Prefer using directional type unions for better type safety.
- */
-export type ExtensionMessageType =
-  | PopupToBackgroundType
-  | BackgroundToPopupType
-  | ContentToBackgroundType
-  | BackgroundToContentType
-  | BackgroundToOffscreenType
-  | OffscreenToBackgroundType
-  | ContentBroadcastType;
-
-/**
  * Message payload for starting a cast.
  * Supports multi-group casting via speakerIps array.
  */
