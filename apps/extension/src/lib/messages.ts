@@ -480,13 +480,13 @@ export interface TransportStateUpdateMessage {
 
 /**
  * Cast was automatically stopped (e.g., user switched Sonos source).
+ * The popup translates the reason code to a localized message.
  */
 export interface CastAutoStoppedMessage {
   type: 'CAST_AUTO_STOPPED';
   tabId: number;
   speakerIp: string;
   reason: 'source_changed' | 'playback_stopped' | 'stream_ended';
-  message: string;
 }
 
 /**

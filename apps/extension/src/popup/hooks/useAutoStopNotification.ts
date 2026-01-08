@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'preact/hooks';
+import { useTranslation } from 'react-i18next';
 import type { CastAutoStoppedMessage } from '../../lib/messages';
 
 /**
@@ -11,8 +12,6 @@ interface AutoStopNotification {
   speakerIp: string;
   /** The reason for auto-stop */
   reason: 'source_changed' | 'playback_stopped' | 'stream_ended';
-  /** Human-readable message */
-  message: string;
 }
 
 /**
@@ -21,6 +20,8 @@ interface AutoStopNotification {
 interface AutoStopNotificationResult {
   /** Current notification (or null) */
   notification: AutoStopNotification | null;
+  /** Localized message for the notification (or null if no notification) */
+  message: string | null;
   /** Dismiss the notification */
   dismiss: () => void;
 }
@@ -31,9 +32,10 @@ const AUTO_DISMISS_MS = 5000;
 /**
  * Hook to handle auto-stop notifications.
  * Shows when a cast was automatically stopped (e.g., user switched Sonos source).
- * @returns Notification state and dismiss function
+ * @returns Notification state, localized message, and dismiss function
  */
 export function useAutoStopNotification(): AutoStopNotificationResult {
+  const { t } = useTranslation();
   const [notification, setNotification] = useState<AutoStopNotification | null>(null);
 
   useEffect(() => {
@@ -45,7 +47,6 @@ export function useAutoStopNotification(): AutoStopNotificationResult {
           tabId: stopMsg.tabId,
           speakerIp: stopMsg.speakerIp,
           reason: stopMsg.reason,
-          message: stopMsg.message,
         });
 
         // Auto-dismiss after timeout
@@ -59,5 +60,8 @@ export function useAutoStopNotification(): AutoStopNotificationResult {
 
   const dismiss = useCallback(() => setNotification(null), []);
 
-  return { notification, dismiss };
+  // Translate reason code to localized message
+  const message = notification ? t(`auto_stop_${notification.reason}`) : null;
+
+  return { notification, message, dismiss };
 }

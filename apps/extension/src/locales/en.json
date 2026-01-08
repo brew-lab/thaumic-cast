@@ -19,6 +19,7 @@
   "error_desktop_not_found": "The Desktop App appears to have wandered off",
   "error_connection_lost": "The connection has wandered off",
   "error_no_active_tab": "Nothing here seems worth casting",
+  "error_no_speakers_selected": "No speakers have been chosen for the ritual",
   "error_max_sessions": "Too many rituals in progress. Dispel one first.",
   "error_capture_denied": "The browser politely but firmly refused",
   "error_playback_failed": "Playback has failed, for reasons of its own",

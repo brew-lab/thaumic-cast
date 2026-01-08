@@ -35,7 +35,6 @@ import {
   removeSpeakerFromSession,
   hasSession,
 } from './session-manager';
-import i18n from '../lib/i18n';
 
 const log = createLogger('SonosEvents');
 
@@ -265,7 +264,6 @@ async function handleSourceChanged(speakerIp: string, currentUri: string): Promi
         tabId,
         speakerIp,
         reason: 'source_changed',
-        message: i18n.t('auto_stop_source_changed'),
       });
     }
   }
@@ -375,7 +373,6 @@ async function handleStreamEnded(streamId: string): Promise<void> {
       tabId: session.tabId,
       speakerIp: session.speakerIps[0],
       reason: 'stream_ended',
-      message: i18n.t('auto_stop_stream_ended'),
     });
   }
 }
@@ -418,7 +415,6 @@ async function handlePlaybackStopped(speakerIp: string): Promise<void> {
         tabId,
         speakerIp,
         reason: 'playback_stopped',
-        message: i18n.t('auto_stop_playback_stopped'),
       });
     }
   }

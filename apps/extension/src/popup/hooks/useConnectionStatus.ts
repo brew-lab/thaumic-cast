@@ -66,7 +66,7 @@ export function useConnectionStatus(): ConnectionStatus {
           setStatus({
             connected: cached.connected,
             checking: !cached.connected, // Still checking if not connected
-            error: cached.lastError,
+            error: cached.lastError ? t(cached.lastError) : null,
             desktopAppUrl: cached.desktopAppUrl,
             maxStreams: cached.maxStreams,
             networkHealth: cached.networkHealth ?? 'ok',
@@ -85,7 +85,7 @@ export function useConnectionStatus(): ConnectionStatus {
         setStatus((s) => ({
           ...s,
           checking: !response.connected && !response.error,
-          error: response.error,
+          error: response.error ? t(response.error) : null,
           desktopAppUrl: response.desktopAppUrl ?? s.desktopAppUrl,
           maxStreams: response.maxStreams ?? s.maxStreams,
         }));

@@ -71,7 +71,6 @@ import {
 import { loadExtensionSettings } from '../lib/settings';
 import { resolveAudioMode, describeEncoderConfig } from '../lib/presets';
 import type { SupportedCodecsResult, EncoderConfig } from '@thaumic-cast/protocol';
-import i18n from '../lib/i18n';
 
 const log = createLogger('Background');
 
@@ -205,7 +204,7 @@ function handleWsConnected(state: SonosStateSnapshot): void {
  * Handles WebSocket permanently disconnected event.
  */
 function handleWsDisconnected(): void {
-  setConnectionError(i18n.t('error_connection_lost'));
+  setConnectionError('error_connection_lost');
   log.warn('WebSocket permanently disconnected');
   notifyPopup({ type: 'WS_CONNECTION_LOST', reason: 'max_retries_exceeded' });
 }
@@ -256,7 +255,7 @@ async function ensureConnection(): Promise<EnsureConnectionResponse> {
         connected: false,
         desktopAppUrl: null,
         maxStreams: null,
-        error: i18n.t('error_desktop_not_found'),
+        error: 'error_desktop_not_found',
       };
     }
 
@@ -863,21 +862,21 @@ async function handleStartCast(
 
   try {
     const { speakerIps } = msg.payload;
-    if (!speakerIps.length) throw new Error(i18n.t('error_no_speakers_selected'));
+    if (!speakerIps.length) throw new Error('error_no_speakers_selected');
 
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-    if (!tab?.id) throw new Error(i18n.t('error_no_active_tab'));
+    if (!tab?.id) throw new Error('error_no_active_tab');
 
     // 1. Discover Desktop App and its limits (do this early to fail fast)
     const app = await discoverAndCache();
     if (!app) {
       clearConnectionState();
-      throw new Error(i18n.t('error_desktop_not_found'));
+      throw new Error('error_desktop_not_found');
     }
 
     // 2. Check session limits
     if (getSessionCount() >= app.maxStreams) {
-      throw new Error(i18n.t('error_max_sessions'));
+      throw new Error('error_max_sessions');
     }
 
     // 3. Create offscreen document (needed for audio capture)
@@ -925,7 +924,7 @@ async function handleStartCast(
     const mediaStreamId = await new Promise<string>((resolve, reject) => {
       chrome.tabCapture.getMediaStreamId({ targetTabId: tab.id! }, (id) => {
         if (id) resolve(id);
-        else reject(new Error(i18n.t('error_capture_denied')));
+        else reject(new Error('error_capture_denied'));
       });
     });
 
@@ -973,7 +972,7 @@ async function handleStartCast(
         // All speakers failed - clean up the capture
         log.error('All playback attempts failed, cleaning up capture');
         await chrome.runtime.sendMessage({ type: 'STOP_CAPTURE', payload: { tabId: tab.id } });
-        throw new Error(i18n.t('error_playback_failed'));
+        throw new Error('error_playback_failed');
       }
 
       // Log partial failures
