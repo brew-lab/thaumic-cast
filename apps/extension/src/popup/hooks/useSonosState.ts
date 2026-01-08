@@ -19,8 +19,6 @@ interface SonosStateResult {
   groups: ZoneGroup[];
   /** Whether initial data is loading */
   loading: boolean;
-  /** Whether WebSocket is connected */
-  connected: boolean;
   /** Get volume for a speaker */
   getVolume: (speakerIp: string) => number;
   /** Get mute state for a speaker */
@@ -41,7 +39,6 @@ interface SonosStateResult {
 export function useSonosState(): SonosStateResult {
   const [state, setState] = useState<SonosStateSnapshot>(createEmptySonosState());
   const [loading, setLoading] = useState(true);
-  const [connected, setConnected] = useState(false);
 
   useEffect(() => {
     // Initial fetch
@@ -51,7 +48,6 @@ export function useSonosState(): SonosStateResult {
         if (response.state) {
           setState(response.state);
         }
-        setConnected(response.connected);
       })
       .catch(() => {
         // Background might not be ready
@@ -65,7 +61,6 @@ export function useSonosState(): SonosStateResult {
         case 'WS_STATE_CHANGED': {
           const { state: newState } = message as WsStateChangedMessage;
           setState(newState);
-          setConnected(true);
           break;
         }
         case 'VOLUME_UPDATE': {
@@ -92,9 +87,6 @@ export function useSonosState(): SonosStateResult {
           }));
           break;
         }
-        case 'WS_CONNECTION_LOST':
-          setConnected(false);
-          break;
       }
     };
 
@@ -139,7 +131,6 @@ export function useSonosState(): SonosStateResult {
     state,
     groups: state.groups,
     loading,
-    connected,
     getVolume,
     getMuted,
     getTransportState,

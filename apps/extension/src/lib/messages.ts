@@ -417,7 +417,6 @@ export interface GetSonosStateMessage {
  */
 export interface SonosStateResponse {
   state: SonosStateSnapshot | null;
-  connected: boolean;
 }
 
 /**

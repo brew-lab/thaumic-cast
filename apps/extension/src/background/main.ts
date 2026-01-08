@@ -118,9 +118,6 @@ async function detectAndCacheCodecSupport(): Promise<SupportedCodecsResult | nul
 // Sonos State Management
 // ─────────────────────────────────────────────────────────────────────────────
 
-/** Whether the control WebSocket is connected. */
-let wsConnected = false;
-
 /**
  * Updates the cached Sonos state and syncs to offscreen for recovery.
  * @param state - The new Sonos state snapshot
@@ -132,14 +129,14 @@ function updateSonosState(state: SonosStateSnapshot): void {
 }
 
 /**
- * Returns the current Sonos state and connection status.
- * @returns Object with state and connected flag
+ * Returns the current Sonos state.
+ * @returns Object with state (null if no groups discovered)
  */
-function getSonosState(): { state: SonosStateSnapshot | null; connected: boolean } {
+function getSonosState(): { state: SonosStateSnapshot | null } {
   const state = getStoredSonosState();
   // Return null if state is empty (no groups)
   const hasState = state.groups.length > 0;
-  return { state: hasState ? state : null, connected: wsConnected };
+  return { state: hasState ? state : null };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -162,7 +159,6 @@ async function connectWebSocket(serverUrl: string): Promise<void> {
  * @param state - The initial Sonos state from desktop (may include network health)
  */
 function handleWsConnected(state: SonosStateSnapshot): void {
-  wsConnected = true;
   setConnected(true);
   updateSonosState(state);
   log.info('WebSocket connected');
@@ -188,7 +184,6 @@ function handleWsConnected(state: SonosStateSnapshot): void {
  * Handles WebSocket permanently disconnected event.
  */
 function handleWsDisconnected(): void {
-  wsConnected = false;
   setConnectionError(i18n.t('error_connection_lost'));
   log.warn('WebSocket permanently disconnected');
   notifyPopup({ type: 'WS_CONNECTION_LOST', reason: 'max_retries_exceeded' });
@@ -257,7 +252,7 @@ async function recoverOffscreenState(): Promise<void> {
 
       const status = await sendToOffscreen<WsStatusResponse>({ type: 'GET_WS_STATUS' });
       if (status) {
-        wsConnected = status.connected;
+        setConnected(status.connected);
         if (status.state) {
           setSonosState(status.state);
           log.info('Recovered Sonos state from offscreen cache');
@@ -478,7 +473,6 @@ chrome.runtime.onMessage.addListener((msg: ExtensionMessage, _sender, sendRespon
 
         case 'WS_DISCONNECTED':
           // Temporary disconnect - will attempt reconnect
-          wsConnected = false;
           setConnected(false);
           log.warn('WebSocket disconnected, reconnecting...');
           notifyPopup({ type: 'WS_CONNECTION_LOST', reason: 'reconnecting' });
@@ -840,7 +834,7 @@ async function handleStartCast(
     });
 
     // 6. Connect control WebSocket if not already connected
-    if (!wsConnected) {
+    if (!getConnectionState().connected) {
       await connectWebSocket(app.url);
     }
 
@@ -1040,7 +1034,7 @@ chrome.runtime.onStartup?.addListener(async () => {
  */
 initPromise.then(async () => {
   const connState = getConnectionState();
-  if (connState.desktopAppUrl && !wsConnected) {
+  if (connState.desktopAppUrl && !connState.connected) {
     // Check if offscreen already has an active connection
     const existing = await chrome.runtime.getContexts({
       contextTypes: [chrome.runtime.ContextType.OFFSCREEN_DOCUMENT],
@@ -1077,15 +1071,14 @@ chrome.storage.sync.onChanged.addListener(async (changes) => {
   if (serverUrlChanged || autoDiscoverChanged) {
     log.info('Server settings changed, reconnecting...');
 
+    // Disconnect existing WebSocket before clearing state
+    if (getConnectionState().connected) {
+      await sendToOffscreen({ type: 'WS_DISCONNECT' }).catch(() => {});
+    }
+
     // Clear caches to force fresh discovery
     clearDiscoveryCache();
     clearConnectionState();
-
-    // Disconnect existing WebSocket
-    if (wsConnected) {
-      await sendToOffscreen({ type: 'WS_DISCONNECT' }).catch(() => {});
-      wsConnected = false;
-    }
 
     // Trigger fresh discovery and connection
     const app = await discoverDesktopApp(true);
