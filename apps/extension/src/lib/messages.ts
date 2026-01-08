@@ -122,13 +122,6 @@ export interface StopCastMessage {
 }
 
 /**
- * Message payload for getting cast status.
- */
-export interface GetCastStatusMessage {
-  type: 'GET_CAST_STATUS';
-}
-
-/**
  * Message payload for starting audio capture in offscreen.
  */
 export interface StartCaptureMessage {
@@ -226,24 +219,6 @@ export interface TabOgImageMessage {
 // ─────────────────────────────────────────────────────────────────────────────
 // Connection Status Messages (popup → background)
 // ─────────────────────────────────────────────────────────────────────────────
-
-/**
- * Query for cached connection status.
- */
-export interface GetConnectionStatusMessage {
-  type: 'GET_CONNECTION_STATUS';
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Popup Query Messages (popup → background)
-// ─────────────────────────────────────────────────────────────────────────────
-
-/**
- * Query for current tab's media state.
- */
-export interface GetCurrentTabStateMessage {
-  type: 'GET_CURRENT_TAB_STATE';
-}
 
 /**
  * Response to GET_CURRENT_TAB_STATE.
@@ -699,10 +674,10 @@ export interface VideoSyncStateChangedMessage {
 export type PopupToBackgroundMessage =
   | StartCastMessage
   | StopCastMessage
-  | GetCastStatusMessage
+  | { type: 'GET_CAST_STATUS' }
   | GetSonosStateMessage
-  | GetConnectionStatusMessage
-  | GetCurrentTabStateMessage
+  | { type: 'GET_CONNECTION_STATUS' }
+  | { type: 'GET_CURRENT_TAB_STATE' }
   | GetActiveCastsMessage
   | EnsureConnectionMessage
   | SetVolumeMessage
