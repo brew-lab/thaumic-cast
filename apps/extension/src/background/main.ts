@@ -70,12 +70,10 @@ import {
 } from '../lib/device-config';
 import { loadExtensionSettings } from '../lib/settings';
 import { resolveAudioMode, describeEncoderConfig } from '../lib/presets';
+import { getCachedCodecSupport, setCachedCodecSupport } from '../lib/codec-cache';
 import type { SupportedCodecsResult, EncoderConfig } from '@thaumic-cast/protocol';
 
 const log = createLogger('Background');
-
-/** Storage key for caching codec detection results in session storage. */
-const CODEC_CACHE_KEY = 'codecSupportCache';
 
 /**
  * Detects supported audio codecs via offscreen document and caches the result.
@@ -86,10 +84,10 @@ const CODEC_CACHE_KEY = 'codecSupportCache';
 async function detectAndCacheCodecSupport(): Promise<SupportedCodecsResult | null> {
   try {
     // Check if already cached
-    const cached = await chrome.storage.session.get(CODEC_CACHE_KEY);
-    if (cached[CODEC_CACHE_KEY]) {
+    const cached = await getCachedCodecSupport();
+    if (cached) {
       log.debug('Codec support already cached');
-      return cached[CODEC_CACHE_KEY] as SupportedCodecsResult;
+      return cached;
     }
 
     // Request detection from offscreen document (AudioEncoder available there)
@@ -98,7 +96,7 @@ async function detectAndCacheCodecSupport(): Promise<SupportedCodecsResult | nul
 
     if (response?.success && response.result) {
       const result = response.result as SupportedCodecsResult;
-      await chrome.storage.session.set({ [CODEC_CACHE_KEY]: result });
+      await setCachedCodecSupport(result);
       log.info(
         `Codec detection complete: ${result.availableCodecs.length} codecs available (default: ${result.defaultCodec})`,
       );
@@ -887,8 +885,7 @@ async function handleStartCast(
 
     // Load extension settings and cached codec support
     const settings = await loadExtensionSettings();
-    const codecCache = await chrome.storage.session.get(CODEC_CACHE_KEY);
-    let codecSupport: SupportedCodecsResult | null = codecCache[CODEC_CACHE_KEY] ?? null;
+    let codecSupport = await getCachedCodecSupport();
 
     // If codec support not cached, try to detect now (should rarely happen after startup fix)
     if (!codecSupport || codecSupport.availableCodecs.length === 0) {
