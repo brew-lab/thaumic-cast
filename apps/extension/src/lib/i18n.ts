@@ -7,6 +7,7 @@
 import i18n from 'i18next';
 import { initReactI18next } from 'react-i18next';
 import en from '../locales/en.json';
+import { loadExtensionSettings } from './settings';
 
 /**
  * Available translation resources.
@@ -95,16 +96,11 @@ export async function changeLanguage(locale: SupportedLocale): Promise<void> {
  * Should be called early in the app lifecycle.
  */
 export async function initLanguage(): Promise<void> {
-  try {
-    const result = await chrome.storage.sync.get('extensionSettings');
-    const savedLanguage = result.extensionSettings?.language;
-    const language = getInitialLanguage(savedLanguage);
+  const settings = await loadExtensionSettings();
+  const language = getInitialLanguage(settings.language);
 
-    if (language !== i18n.language) {
-      await i18n.changeLanguage(language);
-    }
-  } catch {
-    // Storage not available or error - keep detected language
+  if (language !== i18n.language) {
+    await i18n.changeLanguage(language);
   }
 }
 

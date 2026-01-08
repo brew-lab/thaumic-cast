@@ -14,7 +14,6 @@
  */
 
 import { createLogger } from '@thaumic-cast/shared';
-import i18n from '../lib/i18n';
 
 const log = createLogger('ConnectionState');
 
@@ -125,6 +124,7 @@ export function setNetworkHealth(health: NetworkHealthStatus, reason: string | n
 
 /**
  * Clears connection state when desktop app is not found.
+ * Sets lastError to the i18n key for the popup to translate.
  */
 export function clearConnectionState(): void {
   state = {
@@ -132,7 +132,7 @@ export function clearConnectionState(): void {
     desktopAppUrl: null,
     maxStreams: null,
     lastDiscoveredAt: null,
-    lastError: i18n.t('error_desktop_not_found'),
+    lastError: 'error_desktop_not_found',
     networkHealth: 'ok',
     networkHealthReason: null,
   };

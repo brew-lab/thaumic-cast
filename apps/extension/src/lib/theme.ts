@@ -1,4 +1,4 @@
-import type { ThemeMode } from './settings';
+import { loadExtensionSettings, type ThemeMode } from './settings';
 
 /**
  * Applies the theme to the document root element.
@@ -23,13 +23,7 @@ export function applyTheme(theme: ThemeMode): void {
  * Should be called early in page initialization.
  */
 export async function initTheme(): Promise<void> {
-  try {
-    const result = await chrome.storage.sync.get('extensionSettings');
-    const theme = result.extensionSettings?.theme ?? 'auto';
-    // Apply directly without transition on initial load
-    document.documentElement.dataset.theme = theme;
-  } catch {
-    // Default to auto if storage access fails
-    document.documentElement.dataset.theme = 'auto';
-  }
+  const settings = await loadExtensionSettings();
+  // Apply directly without transition on initial load
+  document.documentElement.dataset.theme = settings.theme;
 }

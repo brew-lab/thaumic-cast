@@ -1,9 +1,7 @@
 import { useState, useEffect } from 'preact/hooks';
 import { useTranslation } from 'react-i18next';
 import { detectSupportedCodecs, type SupportedCodecsResult } from '@thaumic-cast/protocol';
-
-/** Storage key for caching codec detection results */
-const CODEC_CACHE_KEY = 'codecSupportCache';
+import { getCachedCodecSupport, setCachedCodecSupport } from '../../lib/codec-cache';
 
 /**
  * Default empty codec support result.
@@ -38,7 +36,7 @@ export function useCodecSupport(): {
    */
   async function detectAndCache(): Promise<SupportedCodecsResult> {
     const result = await detectSupportedCodecs();
-    await chrome.storage.session.set({ [CODEC_CACHE_KEY]: result });
+    await setCachedCodecSupport(result);
     return result;
   }
 
@@ -51,9 +49,9 @@ export function useCodecSupport(): {
       setError(null);
 
       // Try to load from cache first
-      const cached = await chrome.storage.session.get(CODEC_CACHE_KEY);
-      if (cached[CODEC_CACHE_KEY]) {
-        setCodecSupport(cached[CODEC_CACHE_KEY]);
+      const cached = await getCachedCodecSupport();
+      if (cached) {
+        setCodecSupport(cached);
         setLoading(false);
         return;
       }

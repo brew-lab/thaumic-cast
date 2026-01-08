@@ -29,6 +29,7 @@ import {
   StartPlaybackResponse,
   SessionHealthMessage,
   ControlMediaMessage,
+  EnsureConnectionResponse,
 } from '../lib/messages';
 import {
   getCachedState,
@@ -39,7 +40,6 @@ import {
 } from './metadata-cache';
 import {
   registerSession,
-  removeSession,
   hasSession,
   getActiveCasts,
   onMetadataUpdate,
@@ -61,7 +61,7 @@ import {
   restoreConnectionState,
   setNetworkHealth,
 } from './connection-state';
-import { handleSonosEvent } from './sonos-event-handlers';
+import { handleSonosEvent, stopCastForTab } from './sonos-event-handlers';
 import {
   selectEncoderConfig,
   recordStableSession,
@@ -70,13 +70,10 @@ import {
 } from '../lib/device-config';
 import { loadExtensionSettings } from '../lib/settings';
 import { resolveAudioMode, describeEncoderConfig } from '../lib/presets';
+import { getCachedCodecSupport, setCachedCodecSupport } from '../lib/codec-cache';
 import type { SupportedCodecsResult, EncoderConfig } from '@thaumic-cast/protocol';
-import i18n from '../lib/i18n';
 
 const log = createLogger('Background');
-
-/** Storage key for caching codec detection results in session storage. */
-const CODEC_CACHE_KEY = 'codecSupportCache';
 
 /**
  * Detects supported audio codecs via offscreen document and caches the result.
@@ -87,10 +84,10 @@ const CODEC_CACHE_KEY = 'codecSupportCache';
 async function detectAndCacheCodecSupport(): Promise<SupportedCodecsResult | null> {
   try {
     // Check if already cached
-    const cached = await chrome.storage.session.get(CODEC_CACHE_KEY);
-    if (cached[CODEC_CACHE_KEY]) {
+    const cached = await getCachedCodecSupport();
+    if (cached) {
       log.debug('Codec support already cached');
-      return cached[CODEC_CACHE_KEY] as SupportedCodecsResult;
+      return cached;
     }
 
     // Request detection from offscreen document (AudioEncoder available there)
@@ -99,7 +96,7 @@ async function detectAndCacheCodecSupport(): Promise<SupportedCodecsResult | nul
 
     if (response?.success && response.result) {
       const result = response.result as SupportedCodecsResult;
-      await chrome.storage.session.set({ [CODEC_CACHE_KEY]: result });
+      await setCachedCodecSupport(result);
       log.info(
         `Codec detection complete: ${result.availableCodecs.length} codecs available (default: ${result.defaultCodec})`,
       );
@@ -118,9 +115,6 @@ async function detectAndCacheCodecSupport(): Promise<SupportedCodecsResult | nul
 // Sonos State Management
 // ─────────────────────────────────────────────────────────────────────────────
 
-/** Whether the control WebSocket is connected. */
-let wsConnected = false;
-
 /**
  * Updates the cached Sonos state and syncs to offscreen for recovery.
  * @param state - The new Sonos state snapshot
@@ -132,14 +126,14 @@ function updateSonosState(state: SonosStateSnapshot): void {
 }
 
 /**
- * Returns the current Sonos state and connection status.
- * @returns Object with state and connected flag
+ * Returns the current Sonos state.
+ * @returns Object with state (null if no groups discovered)
  */
-function getSonosState(): { state: SonosStateSnapshot | null; connected: boolean } {
+function getSonosState(): { state: SonosStateSnapshot | null } {
   const state = getStoredSonosState();
   // Return null if state is empty (no groups)
   const hasState = state.groups.length > 0;
-  return { state: hasState ? state : null, connected: wsConnected };
+  return { state: hasState ? state : null };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -157,12 +151,32 @@ async function connectWebSocket(serverUrl: string): Promise<void> {
   await sendToOffscreen({ type: 'WS_CONNECT', url: wsUrl });
 }
 
+/** Result of discovering and caching desktop app info. */
+interface DiscoverResult {
+  /** The discovered app URL */
+  url: string;
+  /** Maximum concurrent streams allowed */
+  maxStreams: number;
+}
+
+/**
+ * Discovers the desktop app and caches the result.
+ * Centralizes the discover + cache pattern to avoid duplication.
+ * @param force - Whether to force fresh discovery (ignore cache)
+ * @returns The discovered app info, or null if not found
+ */
+async function discoverAndCache(force = false): Promise<DiscoverResult | null> {
+  const app = await discoverDesktopApp(force);
+  if (!app) return null;
+  setDesktopApp(app.url, app.maxStreams);
+  return { url: app.url, maxStreams: app.maxStreams };
+}
+
 /**
  * Handles WebSocket connected event from offscreen.
  * @param state - The initial Sonos state from desktop (may include network health)
  */
 function handleWsConnected(state: SonosStateSnapshot): void {
-  wsConnected = true;
   setConnected(true);
   updateSonosState(state);
   log.info('WebSocket connected');
@@ -188,10 +202,83 @@ function handleWsConnected(state: SonosStateSnapshot): void {
  * Handles WebSocket permanently disconnected event.
  */
 function handleWsDisconnected(): void {
-  wsConnected = false;
-  setConnectionError(i18n.t('error_connection_lost'));
+  setConnectionError('error_connection_lost');
   log.warn('WebSocket permanently disconnected');
   notifyPopup({ type: 'WS_CONNECTION_LOST', reason: 'max_retries_exceeded' });
+}
+
+/**
+ * Ensures connection to the desktop app.
+ * Discovers and connects if needed, returns current connection state.
+ * This centralizes all discovery/connection logic in the background.
+ * @returns The connection result
+ */
+async function ensureConnection(): Promise<EnsureConnectionResponse> {
+  const connState = getConnectionState();
+
+  // Already connected - notify popup and return current state
+  if (connState.connected) {
+    // Send state update in case popup missed the original WS_STATE_CHANGED
+    notifyPopup({ type: 'WS_STATE_CHANGED', state: getStoredSonosState() });
+    return {
+      connected: true,
+      desktopAppUrl: connState.desktopAppUrl,
+      maxStreams: connState.maxStreams,
+      error: null,
+    };
+  }
+
+  // Have a cached URL - try to reconnect
+  if (connState.desktopAppUrl) {
+    try {
+      await connectWebSocket(connState.desktopAppUrl);
+      // Connection is async - return optimistically, WS_STATE_CHANGED will confirm
+      return {
+        connected: false, // Not yet confirmed, but connecting
+        desktopAppUrl: connState.desktopAppUrl,
+        maxStreams: connState.maxStreams,
+        error: null,
+      };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      log.warn('Reconnection failed, will try discovery:', message);
+      // Fall through to discovery
+    }
+  }
+
+  // No cached URL or reconnection failed - discover desktop app
+  try {
+    const app = await discoverAndCache();
+    if (!app) {
+      clearConnectionState();
+      return {
+        connected: false,
+        desktopAppUrl: null,
+        maxStreams: null,
+        error: 'error_desktop_not_found',
+      };
+    }
+
+    // Connect WebSocket
+    await connectWebSocket(app.url);
+
+    // Connection is async - return optimistically
+    return {
+      connected: false, // Not yet confirmed, but connecting
+      desktopAppUrl: app.url,
+      maxStreams: app.maxStreams,
+      error: null,
+    };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    log.error('Discovery/connection failed:', message);
+    return {
+      connected: false,
+      desktopAppUrl: null,
+      maxStreams: null,
+      error: message,
+    };
+  }
 }
 
 /**
@@ -257,10 +344,15 @@ async function recoverOffscreenState(): Promise<void> {
 
       const status = await sendToOffscreen<WsStatusResponse>({ type: 'GET_WS_STATUS' });
       if (status) {
-        wsConnected = status.connected;
+        setConnected(status.connected);
         if (status.state) {
           setSonosState(status.state);
           log.info('Recovered Sonos state from offscreen cache');
+
+          // Notify popup of recovered state (it may already be open)
+          if (status.connected) {
+            notifyPopup({ type: 'WS_STATE_CHANGED', state: status.state });
+          }
         }
 
         // If not connected but has URL, trigger reconnection
@@ -269,9 +361,16 @@ async function recoverOffscreenState(): Promise<void> {
           sendToOffscreen({ type: 'WS_RECONNECT' }).catch(() => {});
         }
       }
+    } else {
+      // No offscreen document exists - we're definitely not connected
+      // Clear stale connected state from session storage
+      setConnected(false);
+      log.info('No offscreen document found, cleared stale connection state');
     }
   } catch (err) {
     log.warn('Failed to recover offscreen state:', err);
+    // On error, assume not connected to prevent stale state
+    setConnected(false);
   }
 }
 
@@ -404,6 +503,12 @@ chrome.runtime.onMessage.addListener((msg: ExtensionMessage, _sender, sendRespon
           sendResponse(getConnectionState());
           break;
 
+        case 'ENSURE_CONNECTION': {
+          const response = await ensureConnection();
+          sendResponse(response);
+          break;
+        }
+
         // ─────────────────────────────────────────────────────────────────
         // Sonos State Messages (from popup)
         // ─────────────────────────────────────────────────────────────────
@@ -478,7 +583,6 @@ chrome.runtime.onMessage.addListener((msg: ExtensionMessage, _sender, sendRespon
 
         case 'WS_DISCONNECTED':
           // Temporary disconnect - will attempt reconnect
-          wsConnected = false;
           setConnected(false);
           log.warn('WebSocket disconnected, reconnecting...');
           notifyPopup({ type: 'WS_CONNECTION_LOST', reason: 'reconnecting' });
@@ -770,24 +874,21 @@ async function handleStartCast(
 
   try {
     const { speakerIps } = msg.payload;
-    if (!speakerIps.length) throw new Error(i18n.t('error_no_speakers_selected'));
+    if (!speakerIps.length) throw new Error('error_no_speakers_selected');
 
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-    if (!tab?.id) throw new Error(i18n.t('error_no_active_tab'));
+    if (!tab?.id) throw new Error('error_no_active_tab');
 
     // 1. Discover Desktop App and its limits (do this early to fail fast)
-    const app = await discoverDesktopApp();
+    const app = await discoverAndCache();
     if (!app) {
       clearConnectionState();
-      throw new Error(i18n.t('error_desktop_not_found'));
+      throw new Error('error_desktop_not_found');
     }
-
-    // Cache the discovered URL for instant popup display
-    setDesktopApp(app.url, app.maxStreams);
 
     // 2. Check session limits
     if (getSessionCount() >= app.maxStreams) {
-      throw new Error(i18n.t('error_max_sessions'));
+      throw new Error('error_max_sessions');
     }
 
     // 3. Create offscreen document (needed for audio capture)
@@ -798,8 +899,7 @@ async function handleStartCast(
 
     // Load extension settings and cached codec support
     const settings = await loadExtensionSettings();
-    const codecCache = await chrome.storage.session.get(CODEC_CACHE_KEY);
-    let codecSupport: SupportedCodecsResult | null = codecCache[CODEC_CACHE_KEY] ?? null;
+    let codecSupport = await getCachedCodecSupport();
 
     // If codec support not cached, try to detect now (should rarely happen after startup fix)
     if (!codecSupport || codecSupport.availableCodecs.length === 0) {
@@ -835,12 +935,12 @@ async function handleStartCast(
     const mediaStreamId = await new Promise<string>((resolve, reject) => {
       chrome.tabCapture.getMediaStreamId({ targetTabId: tab.id! }, (id) => {
         if (id) resolve(id);
-        else reject(new Error(i18n.t('error_capture_denied')));
+        else reject(new Error('error_capture_denied'));
       });
     });
 
     // 6. Connect control WebSocket if not already connected
-    if (!wsConnected) {
+    if (!getConnectionState().connected) {
       await connectWebSocket(app.url);
     }
 
@@ -883,7 +983,7 @@ async function handleStartCast(
         // All speakers failed - clean up the capture
         log.error('All playback attempts failed, cleaning up capture');
         await chrome.runtime.sendMessage({ type: 'STOP_CAPTURE', payload: { tabId: tab.id } });
-        throw new Error(i18n.t('error_playback_failed'));
+        throw new Error('error_playback_failed');
       }
 
       // Log partial failures
@@ -945,18 +1045,7 @@ async function handleStopCast(
     }
 
     if (tabId && hasSession(tabId)) {
-      // Disable video sync before stopping capture
-      chrome.tabs
-        .sendMessage(tabId, {
-          type: 'SET_VIDEO_SYNC_ENABLED',
-          payload: { tabId, enabled: false },
-        })
-        .catch(() => {
-          // Content script may not be available
-        });
-
-      await chrome.runtime.sendMessage({ type: 'STOP_CAPTURE', payload: { tabId } });
-      removeSession(tabId);
+      await stopCastForTab(tabId);
     }
     sendResponse({ success: true });
   } catch (err) {
@@ -993,10 +1082,7 @@ chrome.tabs.onRemoved.addListener(async (tabId) => {
   // Clean up active session if exists
   if (hasSession(tabId)) {
     log.info(`Tab ${tabId} closed, cleaning up session`);
-    chrome.runtime.sendMessage({ type: 'STOP_CAPTURE', payload: { tabId } }).catch(() => {
-      // Offscreen might already be closed
-    });
-    removeSession(tabId);
+    await stopCastForTab(tabId);
   }
 });
 
@@ -1040,7 +1126,7 @@ chrome.runtime.onStartup?.addListener(async () => {
  */
 initPromise.then(async () => {
   const connState = getConnectionState();
-  if (connState.desktopAppUrl && !wsConnected) {
+  if (connState.desktopAppUrl && !connState.connected) {
     // Check if offscreen already has an active connection
     const existing = await chrome.runtime.getContexts({
       contextTypes: [chrome.runtime.ContextType.OFFSCREEN_DOCUMENT],
@@ -1077,20 +1163,18 @@ chrome.storage.sync.onChanged.addListener(async (changes) => {
   if (serverUrlChanged || autoDiscoverChanged) {
     log.info('Server settings changed, reconnecting...');
 
+    // Disconnect existing WebSocket before clearing state
+    if (getConnectionState().connected) {
+      await sendToOffscreen({ type: 'WS_DISCONNECT' }).catch(() => {});
+    }
+
     // Clear caches to force fresh discovery
     clearDiscoveryCache();
     clearConnectionState();
 
-    // Disconnect existing WebSocket
-    if (wsConnected) {
-      await sendToOffscreen({ type: 'WS_DISCONNECT' }).catch(() => {});
-      wsConnected = false;
-    }
-
     // Trigger fresh discovery and connection
-    const app = await discoverDesktopApp(true);
+    const app = await discoverAndCache(true);
     if (app) {
-      setDesktopApp(app.url, app.maxStreams);
       await connectWebSocket(app.url);
     }
 

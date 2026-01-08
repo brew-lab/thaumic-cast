@@ -112,14 +112,15 @@ function MainPopup(): JSX.Element {
   } = useSonosState();
 
   // Auto-stop notification hook
-  const { notification: autoStopNotification } = useAutoStopNotification();
+  const { notification: autoStopNotification, message: autoStopMessage } =
+    useAutoStopNotification();
 
   // Show auto-stop notification as error
   useEffect(() => {
-    if (autoStopNotification) {
-      setError(autoStopNotification.message);
+    if (autoStopNotification && autoStopMessage) {
+      setError(autoStopMessage);
     }
-  }, [autoStopNotification]);
+  }, [autoStopNotification, autoStopMessage]);
 
   // Update selected IPs when groups change
   useEffect(() => {
@@ -153,7 +154,7 @@ function MainPopup(): JSX.Element {
       const response: ExtensionResponse = await chrome.runtime.sendMessage(msg);
 
       if (!response.success) {
-        const msg = response.error || t('error_cast_failed');
+        const msg = response.error ? t(response.error) : t('error_cast_failed');
         setError(msg);
         throw new Error(msg);
       }

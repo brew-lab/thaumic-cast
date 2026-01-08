@@ -10,8 +10,10 @@ interface ActionButtonProps {
   label: string;
   /** Label shown during loading (optional, defaults to label) */
   loadingLabel?: string;
-  /** Label shown on success (optional, defaults to "Done") */
+  /** Label shown on success (optional, falls back to label) */
   successLabel?: string;
+  /** Label shown on error (optional, falls back to label) */
+  errorLabel?: string;
   /** Icon component shown in idle state */
   icon: LucideIcon;
   /** Button variant */
@@ -40,6 +42,7 @@ interface ActionButtonProps {
  * @param props.label - Default button label
  * @param props.loadingLabel - Label shown during loading
  * @param props.successLabel - Label shown on success
+ * @param props.errorLabel - Label shown on error
  * @param props.icon - Icon component to display
  * @param props.variant - Button style variant
  * @param props.className - Additional CSS class
@@ -65,7 +68,8 @@ export function ActionButton({
   action,
   label,
   loadingLabel,
-  successLabel = 'Done',
+  successLabel,
+  errorLabel,
   icon: Icon,
   variant = 'primary',
   className,
@@ -75,7 +79,7 @@ export function ActionButton({
   fullWidth,
   disabled,
 }: ActionButtonProps) {
-  const { status, error, isDisabled, execute } = useButtonAction(action, {
+  const { status, isDisabled, execute } = useButtonAction(action, {
     successDuration,
     errorDuration,
     minLoadingDuration,
@@ -99,9 +103,9 @@ export function ActionButton({
       case 'loading':
         return loadingLabel ?? label;
       case 'success':
-        return successLabel;
+        return successLabel ?? label;
       case 'error':
-        return error ?? 'Error';
+        return errorLabel ?? label;
       default:
         return label;
     }

@@ -30,6 +30,7 @@ export type ExtensionMessageType =
   // Popup queries (popup → background)
   | 'GET_CURRENT_TAB_STATE'
   | 'GET_ACTIVE_CASTS'
+  | 'ENSURE_CONNECTION'
   // Popup notifications (background → popup)
   | 'TAB_STATE_CHANGED'
   | 'ACTIVE_CASTS_CHANGED'
@@ -277,6 +278,29 @@ export interface ActiveCastsResponse {
   casts: ActiveCast[];
 }
 
+/**
+ * Request background to ensure connection to desktop app.
+ * Background handles discovery and WebSocket connection.
+ */
+export interface EnsureConnectionMessage {
+  type: 'ENSURE_CONNECTION';
+}
+
+/**
+ * Response to ENSURE_CONNECTION.
+ * Background discovers and connects if needed, returns current state.
+ */
+export interface EnsureConnectionResponse {
+  /** Whether connection is now established */
+  connected: boolean;
+  /** Desktop app URL if discovered */
+  desktopAppUrl: string | null;
+  /** Maximum concurrent streams allowed */
+  maxStreams: number | null;
+  /** Error message if connection failed */
+  error: string | null;
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Popup Notification Messages (background → popup)
 // ─────────────────────────────────────────────────────────────────────────────
@@ -417,7 +441,6 @@ export interface GetSonosStateMessage {
  */
 export interface SonosStateResponse {
   state: SonosStateSnapshot | null;
-  connected: boolean;
 }
 
 /**
@@ -457,13 +480,13 @@ export interface TransportStateUpdateMessage {
 
 /**
  * Cast was automatically stopped (e.g., user switched Sonos source).
+ * The popup translates the reason code to a localized message.
  */
 export interface CastAutoStoppedMessage {
   type: 'CAST_AUTO_STOPPED';
   tabId: number;
   speakerIp: string;
   reason: 'source_changed' | 'playback_stopped' | 'stream_ended';
-  message: string;
 }
 
 /**
@@ -651,6 +674,7 @@ export type ExtensionMessage =
   // Popup query messages
   | GetCurrentTabStateMessage
   | GetActiveCastsMessage
+  | EnsureConnectionMessage
   // Popup notification messages
   | TabStateChangedMessage
   | ActiveCastsChangedMessage
