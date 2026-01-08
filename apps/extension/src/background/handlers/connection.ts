@@ -94,9 +94,18 @@ export function handleWsConnected(state: SonosStateSnapshot): void {
 }
 
 /**
+ * Handles temporary WebSocket disconnect (will attempt reconnect).
+ */
+export function handleWsTemporarilyDisconnected(): void {
+  setConnected(false);
+  log.warn('WebSocket disconnected, reconnecting...');
+  notifyPopup({ type: 'WS_CONNECTION_LOST', reason: 'reconnecting' });
+}
+
+/**
  * Handles WebSocket permanently disconnected event.
  */
-export function handleWsDisconnected(): void {
+export function handleWsPermanentlyDisconnected(): void {
   setConnectionError('error_connection_lost');
   log.warn('WebSocket permanently disconnected');
   notifyPopup({ type: 'WS_CONNECTION_LOST', reason: 'max_retries_exceeded' });

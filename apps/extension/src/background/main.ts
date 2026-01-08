@@ -35,7 +35,6 @@ import { restoreSessions, getActiveCasts, hasSession } from './session-manager';
 import { restoreSonosState } from './sonos-state';
 import {
   getConnectionState,
-  setConnected,
   setDesktopApp,
   clearConnectionState,
   restoreConnectionState,
@@ -50,7 +49,8 @@ import {
   discoverAndCache,
   ensureConnection,
   handleWsConnected,
-  handleWsDisconnected,
+  handleWsTemporarilyDisconnected,
+  handleWsPermanentlyDisconnected,
   handleNetworkEvent,
   handleTopologyEvent,
   getSonosState,
@@ -216,15 +216,12 @@ chrome.runtime.onMessage.addListener((msg: ExtensionMessage, sender, sendRespons
         }
 
         case 'WS_DISCONNECTED':
-          // Temporary disconnect - will attempt reconnect
-          setConnected(false);
-          log.warn('WebSocket disconnected, reconnecting...');
-          notifyPopup({ type: 'WS_CONNECTION_LOST', reason: 'reconnecting' });
+          handleWsTemporarilyDisconnected();
           sendResponse({ success: true });
           break;
 
         case 'WS_PERMANENTLY_DISCONNECTED':
-          handleWsDisconnected();
+          handleWsPermanentlyDisconnected();
           sendResponse({ success: true });
           break;
 
