@@ -36,6 +36,7 @@ import {
   hasSession,
 } from './session-manager';
 import { notifyPopup } from './notify';
+import { sendToOffscreen } from './offscreen-manager';
 
 const log = createLogger('SonosEvents');
 
@@ -218,9 +219,7 @@ async function sendMediaControlToTab(
  */
 function syncStateToOffscreen(): void {
   const state = getSonosState();
-  chrome.runtime.sendMessage({ type: 'SYNC_SONOS_STATE', state }).catch(() => {
-    // Offscreen may not be available
-  });
+  sendToOffscreen({ type: 'SYNC_SONOS_STATE', state }).catch(() => {});
 }
 
 /**
@@ -335,9 +334,7 @@ export async function stopCastForTab(tabId: number): Promise<void> {
     });
 
   // Send stop message to offscreen
-  await chrome.runtime.sendMessage({ type: 'STOP_CAPTURE', payload: { tabId } }).catch(() => {
-    // Offscreen might not be available
-  });
+  await sendToOffscreen({ type: 'STOP_CAPTURE', payload: { tabId } }).catch(() => {});
 
   // Remove session from manager
   removeSession(tabId);

@@ -30,6 +30,7 @@ import { getSourceFromUrl } from '../../lib/url-utils';
 import { getCachedState, updateCache, updateTabInfo } from '../metadata-cache';
 import { hasSession, onMetadataUpdate } from '../session-manager';
 import { notifyPopup } from '../notify';
+import { sendToOffscreen } from '../offscreen-manager';
 
 /**
  * Extracts and validates supported actions from raw payload.
@@ -154,7 +155,7 @@ function forwardMetadataToOffscreen(tabId: number, metadata: unknown): void {
       metadata: metadata as OffscreenMetadataMessage['payload']['metadata'],
     },
   };
-  chrome.runtime.sendMessage(offscreenMsg).catch(() => {});
+  sendToOffscreen(offscreenMsg).catch(() => {});
 }
 
 /**
