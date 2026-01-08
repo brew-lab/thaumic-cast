@@ -142,6 +142,7 @@ export function CurrentTabCard({
                 : t('start_casting')
             }
             loadingLabel={t('starting')}
+            errorLabel={t('cast_failed')}
             icon={Cast}
             disabled={disabled || selectedIps.length === 0}
             aria-describedby="cast-hint"

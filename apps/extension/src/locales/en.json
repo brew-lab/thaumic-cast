@@ -5,6 +5,7 @@
   "start_casting": "Cast",
   "cast_to_n_speakers": "Cast to {{count}} speakers",
   "starting": "Summoning...",
+  "cast_failed": "Failed",
   "stop_cast": "Dispel",
   "go_to_tab": "Return to source",
   "dismiss": "Dismiss",
