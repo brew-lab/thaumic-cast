@@ -16,15 +16,12 @@
 import { createLogger } from '@thaumic-cast/shared';
 import type { ExtensionMessage } from '../lib/messages';
 
-// State management modules
-import { restoreCache, removeFromCache } from './metadata-cache';
-import { restoreSessions, hasSession } from './session-manager';
-import { restoreSonosState } from './sonos-state';
-import {
-  getConnectionState,
-  clearConnectionState,
-  restoreConnectionState,
-} from './connection-state';
+// State management modules (these register themselves with persistenceManager on import)
+import { removeFromCache } from './metadata-cache';
+import { hasSession } from './session-manager';
+import './sonos-state'; // Side-effect import to register storage
+import { getConnectionState, clearConnectionState } from './connection-state';
+import { persistenceManager } from './persistence-manager';
 import { stopCastForTab } from './sonos-event-handlers';
 import { notifyPopup } from './notification-service';
 
@@ -62,10 +59,8 @@ registerOffscreenRoutes();
 
 /** Initialization promise to ensure storage is restored before processing messages. */
 const initPromise = (async () => {
-  await restoreCache();
-  await restoreSessions();
-  await restoreSonosState();
-  await restoreConnectionState();
+  // Restore all persisted state in registration order
+  await persistenceManager.restoreAll();
   await recoverOffscreenState();
   log.info('Background initialized');
 })();

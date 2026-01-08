@@ -17,7 +17,7 @@ import type { ActiveCast, EncoderConfig, TabMediaState } from '@thaumic-cast/pro
 import { createLogger } from '@thaumic-cast/shared';
 import { getCachedState } from './metadata-cache';
 import { notifyPopup } from './notification-service';
-import { createDebouncedStorage } from '../lib/debounced-storage';
+import { persistenceManager } from './persistence-manager';
 
 const log = createLogger('SessionManager');
 
@@ -73,35 +73,48 @@ interface ActiveCastSession {
 const sessions = new Map<number, ActiveCastSession>();
 
 /**
- * Debounced storage for session persistence.
+ * Debounced storage for session persistence, registered with manager.
  * Uses immediate persist() calls (not schedule()) since session data is critical
  * and changes are infrequent.
  */
-const storage = createDebouncedStorage<[number, ActiveCastSession][]>({
-  storageKey: 'activeSessions',
-  debounceMs: 0, // Not used - we call persist() directly for immediate writes
-  loggerName: 'SessionManager',
-  serialize: () => Array.from(sessions.entries()),
-  restore: (stored) => {
-    if (!Array.isArray(stored)) return undefined;
+const storage = persistenceManager.register<[number, ActiveCastSession][]>(
+  {
+    storageKey: 'activeSessions',
+    debounceMs: 0, // Not used - we call persist() directly for immediate writes
+    loggerName: 'SessionManager',
+    serialize: () => Array.from(sessions.entries()),
+    restore: (stored) => {
+      if (!Array.isArray(stored)) return undefined;
 
-    // Migrate old single-speaker format to multi-speaker arrays
-    const migrated = (stored as [number, ActiveCastSession][]).map(([tabId, session]) => {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const legacy = session as any;
-      if (legacy.speakerIp && !legacy.speakerIps) {
-        session.speakerIps = [legacy.speakerIp];
-        session.speakerNames = [legacy.speakerName || legacy.speakerIp];
-        delete legacy.speakerIp;
-        delete legacy.speakerName;
-        log.info(`Migrated session for tab ${tabId} from single to multi-speaker format`);
-      }
-      return [tabId, session] as [number, ActiveCastSession];
-    });
+      // Migrate old single-speaker format to multi-speaker arrays
+      const migrated = (stored as [number, ActiveCastSession][]).map(([tabId, session]) => {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const legacy = session as any;
+        if (legacy.speakerIp && !legacy.speakerIps) {
+          session.speakerIps = [legacy.speakerIp];
+          session.speakerNames = [legacy.speakerName || legacy.speakerIp];
+          delete legacy.speakerIp;
+          delete legacy.speakerName;
+          log.info(`Migrated session for tab ${tabId} from single to multi-speaker format`);
+        }
+        return [tabId, session] as [number, ActiveCastSession];
+      });
 
-    return migrated;
+      return migrated;
+    },
   },
-});
+  (data) => {
+    if (data && data.length > 0) {
+      sessions.clear();
+      for (const [tabId, session] of data) {
+        sessions.set(tabId, session);
+      }
+      log.info(`Restored ${sessions.size} sessions`);
+      // Re-request keep-awake for restored sessions
+      requestKeepAwake();
+    }
+  },
+);
 
 /**
  * Registers a new cast session.
@@ -335,18 +348,12 @@ function persistSessions(): void {
 
 /**
  * Restores sessions from session storage.
- * Call on service worker startup.
- * Migration is handled by the storage restore callback.
+ * @deprecated Use persistenceManager.restoreAll() instead
  */
 export async function restoreSessions(): Promise<void> {
   const data = await storage.restore();
-  if (data && data.length > 0) {
-    sessions.clear();
-    for (const [tabId, session] of data) {
-      sessions.set(tabId, session);
-    }
-    log.info(`Restored ${sessions.size} sessions`);
-    // Re-request keep-awake for restored sessions
-    requestKeepAwake();
+  // onRestore callback handles population
+  if (data) {
+    log.debug('restoreSessions called directly (prefer persistenceManager.restoreAll)');
   }
 }

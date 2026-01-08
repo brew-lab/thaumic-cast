@@ -14,7 +14,7 @@
  */
 
 import { createLogger } from '@thaumic-cast/shared';
-import { createDebouncedStorage } from '../lib/debounced-storage';
+import { persistenceManager } from './persistence-manager';
 
 const log = createLogger('ConnectionState');
 
@@ -52,27 +52,42 @@ let state: ConnectionState = {
   networkHealthReason: null,
 };
 
-/** Debounced storage for persistence with migration support */
-const storage = createDebouncedStorage<ConnectionState>({
-  storageKey: 'connectionState',
-  debounceMs: 300,
-  loggerName: 'ConnectionState',
-  serialize: () => state,
-  restore: (stored): ConnectionState | undefined => {
-    if (!stored || typeof stored !== 'object') return undefined;
-    const s = stored as Partial<ConnectionState>;
-    // Merge with defaults to handle new fields added in updates
-    return {
-      connected: s.connected ?? false,
-      desktopAppUrl: s.desktopAppUrl ?? null,
-      maxStreams: s.maxStreams ?? null,
-      lastDiscoveredAt: s.lastDiscoveredAt ?? null,
-      lastError: s.lastError ?? null,
-      networkHealth: s.networkHealth ?? 'ok',
-      networkHealthReason: s.networkHealthReason ?? null,
-    };
+/**
+ * Debounced storage for persistence, registered with manager.
+ * Includes migration support for new fields added in updates.
+ */
+const storage = persistenceManager.register<ConnectionState>(
+  {
+    storageKey: 'connectionState',
+    debounceMs: 300,
+    loggerName: 'ConnectionState',
+    serialize: () => state,
+    restore: (stored): ConnectionState | undefined => {
+      if (!stored || typeof stored !== 'object') return undefined;
+      const s = stored as Partial<ConnectionState>;
+      // Merge with defaults to handle new fields added in updates
+      return {
+        connected: s.connected ?? false,
+        desktopAppUrl: s.desktopAppUrl ?? null,
+        maxStreams: s.maxStreams ?? null,
+        lastDiscoveredAt: s.lastDiscoveredAt ?? null,
+        lastError: s.lastError ?? null,
+        networkHealth: s.networkHealth ?? 'ok',
+        networkHealthReason: s.networkHealthReason ?? null,
+      };
+    },
   },
-});
+  (restored) => {
+    if (restored) {
+      state = restored;
+      log.info(
+        'Restored connection state:',
+        state.connected ? 'connected' : 'disconnected',
+        state.desktopAppUrl ? `(${state.desktopAppUrl})` : '',
+      );
+    }
+  },
+);
 
 /**
  * Gets the current connection state (read-only copy).
@@ -158,16 +173,12 @@ export function clearConnectionState(): void {
 
 /**
  * Restores state from session storage.
- * Call on service worker startup.
+ * @deprecated Use persistenceManager.restoreAll() instead
  */
 export async function restoreConnectionState(): Promise<void> {
-  const restored = await storage.restore();
-  if (restored) {
-    state = restored;
-    log.info(
-      'Restored connection state:',
-      state.connected ? 'connected' : 'disconnected',
-      state.desktopAppUrl ? `(${state.desktopAppUrl})` : '',
-    );
+  const data = await storage.restore();
+  // onRestore callback handles population
+  if (data) {
+    log.debug('restoreConnectionState called directly (prefer persistenceManager.restoreAll)');
   }
 }

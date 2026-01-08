@@ -21,24 +21,35 @@ import type {
 } from '@thaumic-cast/protocol';
 import { createTabMediaState } from '@thaumic-cast/protocol';
 import { createLogger } from '@thaumic-cast/shared';
-import { createDebouncedStorage } from '../lib/debounced-storage';
+import { persistenceManager } from './persistence-manager';
 
 const log = createLogger('MetadataCache');
 
 /** In-memory cache storage */
 const cache = new Map<number, TabMediaState>();
 
-/** Debounced storage for persistence */
-const storage = createDebouncedStorage<[number, TabMediaState][]>({
-  storageKey: 'metadataCache',
-  debounceMs: 500,
-  loggerName: 'MetadataCache',
-  serialize: () => Array.from(cache.entries()),
-  restore: (stored) => {
-    if (!Array.isArray(stored)) return undefined;
-    return stored as [number, TabMediaState][];
+/** Debounced storage for persistence, registered with manager */
+const storage = persistenceManager.register<[number, TabMediaState][]>(
+  {
+    storageKey: 'metadataCache',
+    debounceMs: 500,
+    loggerName: 'MetadataCache',
+    serialize: () => Array.from(cache.entries()),
+    restore: (stored) => {
+      if (!Array.isArray(stored)) return undefined;
+      return stored as [number, TabMediaState][];
+    },
   },
-});
+  (data) => {
+    if (data) {
+      cache.clear();
+      for (const [tabId, state] of data) {
+        cache.set(tabId, state);
+      }
+      log.info(`Restored ${cache.size} cached states`);
+    }
+  },
+);
 
 /**
  * Gets cached state for a specific tab.
@@ -162,15 +173,12 @@ export function getCacheSize(): number {
 
 /**
  * Restores cache from session storage.
- * Call on service worker startup.
+ * @deprecated Use persistenceManager.restoreAll() instead
  */
 export async function restoreCache(): Promise<void> {
   const data = await storage.restore();
+  // onRestore callback handles population
   if (data) {
-    cache.clear();
-    for (const [tabId, state] of data) {
-      cache.set(tabId, state);
-    }
-    log.info(`Restored ${cache.size} cached states`);
+    log.debug('restoreCache called directly (prefer persistenceManager.restoreAll)');
   }
 }

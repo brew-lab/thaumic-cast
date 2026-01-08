@@ -16,20 +16,28 @@
 import type { SonosStateSnapshot, ZoneGroup, TransportState } from '@thaumic-cast/protocol';
 import { createEmptySonosState } from '@thaumic-cast/protocol';
 import { createLogger } from '@thaumic-cast/shared';
-import { createDebouncedStorage } from '../lib/debounced-storage';
+import { persistenceManager } from './persistence-manager';
 
 const log = createLogger('SonosState');
 
 /** Current Sonos state */
 let state: SonosStateSnapshot = createEmptySonosState();
 
-/** Debounced storage for persistence */
-const storage = createDebouncedStorage<SonosStateSnapshot>({
-  storageKey: 'sonosState',
-  debounceMs: 500,
-  loggerName: 'SonosState',
-  serialize: () => state,
-});
+/** Debounced storage for persistence, registered with manager */
+const storage = persistenceManager.register<SonosStateSnapshot>(
+  {
+    storageKey: 'sonosState',
+    debounceMs: 500,
+    loggerName: 'SonosState',
+    serialize: () => state,
+  },
+  (restored) => {
+    if (restored) {
+      state = restored;
+      log.info('Restored Sonos state from session storage');
+    }
+  },
+);
 
 /**
  * Gets the current Sonos state (read-only).
@@ -110,12 +118,12 @@ export function updateTransportState(
 
 /**
  * Restores state from session storage.
- * Call on service worker startup.
+ * @deprecated Use persistenceManager.restoreAll() instead
  */
 export async function restoreSonosState(): Promise<void> {
-  const restored = await storage.restore();
-  if (restored) {
-    state = restored;
-    log.info('Restored Sonos state from session storage');
+  const data = await storage.restore();
+  // onRestore callback handles population
+  if (data) {
+    log.debug('restoreSonosState called directly (prefer persistenceManager.restoreAll)');
   }
 }
