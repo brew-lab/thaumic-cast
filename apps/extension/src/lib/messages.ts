@@ -30,6 +30,7 @@ export type ExtensionMessageType =
   // Popup queries (popup → background)
   | 'GET_CURRENT_TAB_STATE'
   | 'GET_ACTIVE_CASTS'
+  | 'ENSURE_CONNECTION'
   // Popup notifications (background → popup)
   | 'TAB_STATE_CHANGED'
   | 'ACTIVE_CASTS_CHANGED'
@@ -275,6 +276,29 @@ export interface GetActiveCastsMessage {
  */
 export interface ActiveCastsResponse {
   casts: ActiveCast[];
+}
+
+/**
+ * Request background to ensure connection to desktop app.
+ * Background handles discovery and WebSocket connection.
+ */
+export interface EnsureConnectionMessage {
+  type: 'ENSURE_CONNECTION';
+}
+
+/**
+ * Response to ENSURE_CONNECTION.
+ * Background discovers and connects if needed, returns current state.
+ */
+export interface EnsureConnectionResponse {
+  /** Whether connection is now established */
+  connected: boolean;
+  /** Desktop app URL if discovered */
+  desktopAppUrl: string | null;
+  /** Maximum concurrent streams allowed */
+  maxStreams: number | null;
+  /** Error message if connection failed */
+  error: string | null;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -650,6 +674,7 @@ export type ExtensionMessage =
   // Popup query messages
   | GetCurrentTabStateMessage
   | GetActiveCastsMessage
+  | EnsureConnectionMessage
   // Popup notification messages
   | TabStateChangedMessage
   | ActiveCastsChangedMessage

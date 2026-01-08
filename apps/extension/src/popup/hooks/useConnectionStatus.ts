@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'preact/hooks';
 import { useTranslation } from 'react-i18next';
-import { discoverDesktopApp } from '../../lib/discovery';
 import type { ConnectionState } from '../../background/connection-state';
+import type { EnsureConnectionResponse } from '../../lib/messages';
 
 /** Network health status from desktop app */
 export type NetworkHealthStatus = 'ok' | 'degraded';
@@ -54,78 +54,41 @@ export function useConnectionStatus(): ConnectionStatus {
      */
     async function init() {
       try {
-        // 1. Get cached state from background
+        // 1. Get cached state from background for instant display
         const cached: ConnectionState = await chrome.runtime.sendMessage({
           type: 'GET_CONNECTION_STATUS',
         });
 
         if (!mounted) return;
 
-        // If we have a cached URL, show cached state immediately
+        // Show cached state immediately (instant display)
         if (cached.desktopAppUrl) {
-          // Show cached state (instant display)
           setStatus({
             connected: cached.connected,
-            checking: false,
+            checking: !cached.connected, // Still checking if not connected
             error: cached.lastError,
             desktopAppUrl: cached.desktopAppUrl,
             maxStreams: cached.maxStreams,
             networkHealth: cached.networkHealth ?? 'ok',
             networkHealthReason: cached.networkHealthReason ?? null,
           });
-
-          // Always attempt connection to verify/establish connection.
-          // If already connected, this ensures offscreen is alive.
-          // If not connected, this attempts reconnection.
-          // The message listener will update state based on result.
-          try {
-            await chrome.runtime.sendMessage({
-              type: 'WS_CONNECT',
-              url: cached.desktopAppUrl,
-              maxStreams: cached.maxStreams,
-            });
-          } catch {
-            // Connection attempt failed - message listener will handle state update
-          }
-        } else {
-          // First time - need to discover
-          // Keep checking: true during discovery and connection
-          const app = await discoverDesktopApp();
-
-          if (!mounted) return;
-
-          if (!app) {
-            setStatus({
-              connected: false,
-              checking: false,
-              error: t('error_desktop_not_found'),
-              desktopAppUrl: null,
-              maxStreams: null,
-              networkHealth: 'ok',
-              networkHealthReason: null,
-            });
-            return;
-          }
-
-          // Found app - store URL but keep checking: true until connected
-          setStatus((s) => ({
-            ...s,
-            desktopAppUrl: app.url,
-            maxStreams: app.maxStreams,
-            // Keep checking: true - we're still connecting
-          }));
-
-          // Connect WebSocket - message listener will update state on result
-          try {
-            await chrome.runtime.sendMessage({
-              type: 'WS_CONNECT',
-              url: app.url,
-              maxStreams: app.maxStreams,
-            });
-          } catch {
-            // Connection attempt failed - message listener will handle state update
-          }
         }
+
+        // 2. Request background to ensure connection (discovers if needed)
+        const response: EnsureConnectionResponse = await chrome.runtime.sendMessage({
+          type: 'ENSURE_CONNECTION',
+        });
+
+        if (!mounted) return;
+
+        // Update with response - connection may still be in progress
+        setStatus((s) => ({
+          ...s,
+          checking: !response.connected && !response.error,
+          error: response.error,
+          desktopAppUrl: response.desktopAppUrl ?? s.desktopAppUrl,
+          maxStreams: response.maxStreams ?? s.maxStreams,
+        }));
       } catch (err) {
         if (!mounted) return;
         const message = err instanceof Error ? err.message : String(err);

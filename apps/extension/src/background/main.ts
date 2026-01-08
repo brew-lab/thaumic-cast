@@ -29,6 +29,7 @@ import {
   StartPlaybackResponse,
   SessionHealthMessage,
   ControlMediaMessage,
+  EnsureConnectionResponse,
 } from '../lib/messages';
 import {
   getCachedState,
@@ -154,6 +155,27 @@ async function connectWebSocket(serverUrl: string): Promise<void> {
   await sendToOffscreen({ type: 'WS_CONNECT', url: wsUrl });
 }
 
+/** Result of discovering and caching desktop app info. */
+interface DiscoverResult {
+  /** The discovered app URL */
+  url: string;
+  /** Maximum concurrent streams allowed */
+  maxStreams: number;
+}
+
+/**
+ * Discovers the desktop app and caches the result.
+ * Centralizes the discover + cache pattern to avoid duplication.
+ * @param force - Whether to force fresh discovery (ignore cache)
+ * @returns The discovered app info, or null if not found
+ */
+async function discoverAndCache(force = false): Promise<DiscoverResult | null> {
+  const app = await discoverDesktopApp(force);
+  if (!app) return null;
+  setDesktopApp(app.url, app.maxStreams);
+  return { url: app.url, maxStreams: app.maxStreams };
+}
+
 /**
  * Handles WebSocket connected event from offscreen.
  * @param state - The initial Sonos state from desktop (may include network health)
@@ -187,6 +209,78 @@ function handleWsDisconnected(): void {
   setConnectionError(i18n.t('error_connection_lost'));
   log.warn('WebSocket permanently disconnected');
   notifyPopup({ type: 'WS_CONNECTION_LOST', reason: 'max_retries_exceeded' });
+}
+
+/**
+ * Ensures connection to the desktop app.
+ * Discovers and connects if needed, returns current connection state.
+ * This centralizes all discovery/connection logic in the background.
+ * @returns The connection result
+ */
+async function ensureConnection(): Promise<EnsureConnectionResponse> {
+  const connState = getConnectionState();
+
+  // Already connected - return current state
+  if (connState.connected) {
+    return {
+      connected: true,
+      desktopAppUrl: connState.desktopAppUrl,
+      maxStreams: connState.maxStreams,
+      error: null,
+    };
+  }
+
+  // Have a cached URL - try to reconnect
+  if (connState.desktopAppUrl) {
+    try {
+      await connectWebSocket(connState.desktopAppUrl);
+      // Connection is async - return optimistically, WS_STATE_CHANGED will confirm
+      return {
+        connected: false, // Not yet confirmed, but connecting
+        desktopAppUrl: connState.desktopAppUrl,
+        maxStreams: connState.maxStreams,
+        error: null,
+      };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      log.warn('Reconnection failed, will try discovery:', message);
+      // Fall through to discovery
+    }
+  }
+
+  // No cached URL or reconnection failed - discover desktop app
+  try {
+    const app = await discoverAndCache();
+    if (!app) {
+      clearConnectionState();
+      return {
+        connected: false,
+        desktopAppUrl: null,
+        maxStreams: null,
+        error: i18n.t('error_desktop_not_found'),
+      };
+    }
+
+    // Connect WebSocket
+    await connectWebSocket(app.url);
+
+    // Connection is async - return optimistically
+    return {
+      connected: false, // Not yet confirmed, but connecting
+      desktopAppUrl: app.url,
+      maxStreams: app.maxStreams,
+      error: null,
+    };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    log.error('Discovery/connection failed:', message);
+    return {
+      connected: false,
+      desktopAppUrl: null,
+      maxStreams: null,
+      error: message,
+    };
+  }
 }
 
 /**
@@ -398,6 +492,12 @@ chrome.runtime.onMessage.addListener((msg: ExtensionMessage, _sender, sendRespon
         case 'GET_CONNECTION_STATUS':
           sendResponse(getConnectionState());
           break;
+
+        case 'ENSURE_CONNECTION': {
+          const response = await ensureConnection();
+          sendResponse(response);
+          break;
+        }
 
         // ─────────────────────────────────────────────────────────────────
         // Sonos State Messages (from popup)
@@ -770,14 +870,11 @@ async function handleStartCast(
     if (!tab?.id) throw new Error(i18n.t('error_no_active_tab'));
 
     // 1. Discover Desktop App and its limits (do this early to fail fast)
-    const app = await discoverDesktopApp();
+    const app = await discoverAndCache();
     if (!app) {
       clearConnectionState();
       throw new Error(i18n.t('error_desktop_not_found'));
     }
-
-    // Cache the discovered URL for instant popup display
-    setDesktopApp(app.url, app.maxStreams);
 
     // 2. Check session limits
     if (getSessionCount() >= app.maxStreams) {
@@ -1081,9 +1178,8 @@ chrome.storage.sync.onChanged.addListener(async (changes) => {
     clearConnectionState();
 
     // Trigger fresh discovery and connection
-    const app = await discoverDesktopApp(true);
+    const app = await discoverAndCache(true);
     if (app) {
-      setDesktopApp(app.url, app.maxStreams);
       await connectWebSocket(app.url);
     }
 

@@ -3,7 +3,6 @@ import { WizardStep, Alert, Button } from '@thaumic-cast/ui';
 import { Monitor, Download, RefreshCw } from 'lucide-preact';
 import { useTranslation } from 'react-i18next';
 import { useConnectionStatus } from '../../hooks/useConnectionStatus';
-import { discoverDesktopApp } from '../../../lib/discovery';
 import styles from './DesktopConnectionStep.module.css';
 
 interface DesktopConnectionStepProps {
@@ -29,14 +28,7 @@ export function DesktopConnectionStep({
   const handleRetry = useCallback(async () => {
     setIsRetrying(true);
     try {
-      const app = await discoverDesktopApp();
-      if (app) {
-        await chrome.runtime.sendMessage({
-          type: 'WS_CONNECT',
-          url: app.url,
-          maxStreams: app.maxStreams,
-        });
-      }
+      await chrome.runtime.sendMessage({ type: 'ENSURE_CONNECTION' });
     } finally {
       setIsRetrying(false);
     }
