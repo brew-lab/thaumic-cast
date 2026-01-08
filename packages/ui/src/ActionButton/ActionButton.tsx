@@ -1,6 +1,6 @@
-import { Button } from './Button';
+import { Button } from '../Button';
 import { Loader2, Check, X, LucideIcon } from 'lucide-preact';
-import { useButtonAction } from './hooks/useButtonAction';
+import { useButtonAction } from '../hooks/useButtonAction';
 import styles from './ActionButton.module.css';
 
 interface ActionButtonProps {

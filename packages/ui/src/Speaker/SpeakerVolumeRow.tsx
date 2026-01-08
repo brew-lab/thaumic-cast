@@ -1,5 +1,5 @@
 import type { JSX } from 'preact';
-import { VolumeControl } from './VolumeControl';
+import { VolumeControl } from '../VolumeControl';
 
 interface SpeakerVolumeRowProps {
   /** Display name for the speaker/group */

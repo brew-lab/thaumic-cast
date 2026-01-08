@@ -1,7 +1,7 @@
 import type { JSX } from 'preact';
 import { useState, useEffect, useRef, useCallback } from 'preact/hooks';
 import { Volume2, VolumeX } from 'lucide-preact';
-import { IconButton } from './IconButton';
+import { IconButton } from '../IconButton';
 
 /** Debounce delay for volume slider in milliseconds */
 const VOLUME_DEBOUNCE_MS = 100;

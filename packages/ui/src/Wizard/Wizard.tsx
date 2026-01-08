@@ -1,7 +1,7 @@
 import type { ComponentChildren } from 'preact';
 import { ChevronLeft } from 'lucide-preact';
-import { Button } from './Button';
-import { IconButton } from './IconButton';
+import { Button } from '../Button';
+import { IconButton } from '../IconButton';
 import { StepIndicator } from './StepIndicator';
 
 interface WizardLabels {

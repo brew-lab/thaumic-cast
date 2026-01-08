@@ -1,7 +1,7 @@
 import type { ComponentChildren, FunctionComponent } from 'preact';
 import type { LucideProps } from 'lucide-preact';
 import { AlertTriangle, CircleAlert, CircleCheck, Info, X } from 'lucide-preact';
-import { IconButton } from './IconButton';
+import { IconButton } from '../IconButton';
 
 type AlertVariant = 'warning' | 'error' | 'success' | 'info';
 
