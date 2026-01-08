@@ -1,18 +1,13 @@
 import type { JSX } from 'preact';
 import { useState, useEffect, useCallback, useMemo } from 'preact/hooks';
 import { useTranslation } from 'react-i18next';
-import {
-  getSpeakerAvailability,
-  SPEAKER_AVAILABILITY_LABELS,
-  MediaAction,
-} from '@thaumic-cast/protocol';
+import { SPEAKER_AVAILABILITY_LABELS, MediaAction } from '@thaumic-cast/protocol';
+import { getSpeakerAvailability } from '@thaumic-cast/protocol';
 import { Radio, Settings } from 'lucide-preact';
 import { Alert, IconButton } from '@thaumic-cast/ui';
 import styles from './App.module.css';
 import { ExtensionResponse, StartCastMessage } from '../lib/messages';
 import type { ZoneGroup } from '@thaumic-cast/protocol';
-import { loadExtensionSettings } from '../lib/settings';
-import { noop } from '../lib/noop';
 import { CurrentTabCard } from './components/CurrentTabCard';
 import { ActiveCastsList } from './components/ActiveCastsList';
 import { useCurrentTabState } from './hooks/useCurrentTabState';
@@ -21,6 +16,8 @@ import { useSonosState } from './hooks/useSonosState';
 import { useAutoStopNotification } from './hooks/useAutoStopNotification';
 import { useConnectionStatus } from './hooks/useConnectionStatus';
 import { useOnboarding } from './hooks/useOnboarding';
+import { useExtensionSettingsListener } from './hooks/useExtensionSettingsListener';
+import { useSpeakerSelection } from './hooks/useSpeakerSelection';
 import { Onboarding } from './components/Onboarding';
 
 /**
@@ -54,26 +51,10 @@ export function App(): JSX.Element {
  */
 function MainPopup(): JSX.Element {
   const { t } = useTranslation();
-  const [selectedIps, setSelectedIps] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
-  const [videoSyncEnabled, setVideoSyncEnabled] = useState(false);
 
-  // Load video sync setting from extension settings
-  useEffect(() => {
-    loadExtensionSettings()
-      .then((settings) => setVideoSyncEnabled(settings.videoSyncEnabled))
-      .catch(noop);
-
-    // Listen for settings changes
-    const handler = (changes: { [key: string]: chrome.storage.StorageChange }) => {
-      const newSettings = changes['extensionSettings']?.newValue;
-      if (newSettings?.videoSyncEnabled !== undefined) {
-        setVideoSyncEnabled(newSettings.videoSyncEnabled);
-      }
-    };
-    chrome.storage.sync.onChanged.addListener(handler);
-    return () => chrome.storage.sync.onChanged.removeListener(handler);
-  }, []);
+  // Extension settings with live updates
+  const { videoSyncEnabled } = useExtensionSettingsListener();
 
   // Connection status with instant cached display
   const {
@@ -113,6 +94,10 @@ function MainPopup(): JSX.Element {
     setMuted,
   } = useSonosState();
 
+  // Speaker selection with auto-select behavior
+  const { selectedIps, setSelectedIps, primarySelectedIp, selectedAvailability } =
+    useSpeakerSelection(speakerGroups, sonosState, castingSpeakerIps);
+
   // Auto-stop notification hook
   const { notification: autoStopNotification, message: autoStopMessage } =
     useAutoStopNotification();
@@ -123,19 +108,6 @@ function MainPopup(): JSX.Element {
       setError(autoStopMessage);
     }
   }, [autoStopNotification, autoStopMessage]);
-
-  // Update selected IPs when groups change
-  useEffect(() => {
-    if (!speakerGroups.isEmpty && selectedIps.length === 0) {
-      // Default to first group selected
-      const firstGroup = speakerGroups.groups[0];
-      if (firstGroup) {
-        setSelectedIps([firstGroup.coordinatorIp]);
-      }
-    } else if (speakerGroups.isEmpty && selectedIps.length > 0) {
-      setSelectedIps([]);
-    }
-  }, [speakerGroups, selectedIps.length]);
 
   /**
    * Opens the extension settings page.
@@ -221,16 +193,6 @@ function MainPopup(): JSX.Element {
       return `${group.name} • ${label}`;
     },
     [sonosState, castingSpeakerIps],
-  );
-
-  // Get primary selected speaker's availability for hint text
-  const primarySelectedIp = selectedIps[0];
-  const selectedAvailability = useMemo(
-    () =>
-      primarySelectedIp
-        ? getSpeakerAvailability(primarySelectedIp, sonosState, castingSpeakerIps)
-        : 'available',
-    [primarySelectedIp, sonosState, castingSpeakerIps],
   );
 
   return (
