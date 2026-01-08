@@ -21,17 +21,14 @@ import {
   PlaybackState,
   PlaybackStateSchema,
 } from '@thaumic-cast/protocol';
-import type {
-  TabMetadataUpdateMessage,
-  OffscreenMetadataMessage,
-  CurrentTabStateResponse,
-} from '../../lib/messages';
+import type { StreamMetadata } from '@thaumic-cast/protocol';
+import type { TabMetadataUpdateMessage, CurrentTabStateResponse } from '../../lib/messages';
 import { getSourceFromUrl } from '../../lib/url-utils';
 import { getActiveTab } from '../../lib/tab-utils';
 import { getCachedState, updateCache, updateTabInfo } from '../metadata-cache';
 import { hasSession, onMetadataUpdate } from '../session-manager';
 import { notifyPopup } from '../notification-service';
-import { sendToOffscreen } from '../offscreen-manager';
+import { offscreenBroker } from '../offscreen-broker';
 
 /**
  * Extracts and validates supported actions from raw payload.
@@ -149,14 +146,7 @@ export function handleTabOgImage(
  * @param metadata - The stream metadata to forward
  */
 function forwardMetadataToOffscreen(tabId: number, metadata: unknown): void {
-  const offscreenMsg: OffscreenMetadataMessage = {
-    type: 'OFFSCREEN_METADATA_UPDATE',
-    payload: {
-      tabId,
-      metadata: metadata as OffscreenMetadataMessage['payload']['metadata'],
-    },
-  };
-  sendToOffscreen(offscreenMsg).catch(() => {});
+  offscreenBroker.updateMetadata(tabId, metadata as StreamMetadata);
 }
 
 /**

@@ -17,7 +17,7 @@
 import { createLogger } from '@thaumic-cast/shared';
 import type { SupportedCodecsResult } from '@thaumic-cast/protocol';
 import { getCachedCodecSupport, setCachedCodecSupport } from '../lib/codec-cache';
-import { sendToOffscreen } from './offscreen-manager';
+import { offscreenBroker } from './offscreen-broker';
 
 const log = createLogger('Background');
 
@@ -38,11 +38,7 @@ export async function detectAndCacheCodecSupport(): Promise<SupportedCodecsResul
 
     // Request detection from offscreen document (AudioEncoder available there)
     log.info('Requesting codec detection from offscreen...');
-    const response = await sendToOffscreen<{
-      success: boolean;
-      result?: SupportedCodecsResult;
-      error?: string;
-    }>({ type: 'DETECT_CODECS' });
+    const response = await offscreenBroker.detectCodecs();
 
     if (response?.success && response.result) {
       const result = response.result as SupportedCodecsResult;

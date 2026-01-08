@@ -19,7 +19,7 @@ import type {
   ControlMediaMessage,
   VideoSyncStateChangedMessage,
 } from '../../lib/messages';
-import { sendToOffscreen } from '../offscreen-manager';
+import { offscreenBroker } from '../offscreen-broker';
 import { notifyPopup } from '../notification-service';
 
 /**
@@ -31,8 +31,7 @@ import { notifyPopup } from '../notification-service';
 export async function handleSetVolume(
   msg: SetVolumeMessage,
 ): Promise<{ success: boolean } | undefined> {
-  const { speakerIp, volume } = msg;
-  return sendToOffscreen({ type: 'SET_VOLUME', speakerIp, volume });
+  return offscreenBroker.setVolume(msg.speakerIp, msg.volume);
 }
 
 /**
@@ -44,8 +43,7 @@ export async function handleSetVolume(
 export async function handleSetMute(
   msg: SetMuteMessage,
 ): Promise<{ success: boolean } | undefined> {
-  const { speakerIp, muted } = msg;
-  return sendToOffscreen({ type: 'SET_MUTE', speakerIp, muted });
+  return offscreenBroker.setMute(msg.speakerIp, msg.muted);
 }
 
 /**

@@ -36,7 +36,7 @@ import {
   hasSession,
 } from './session-manager';
 import { notifyPopup } from './notification-service';
-import { sendToOffscreen } from './offscreen-manager';
+import { offscreenBroker } from './offscreen-broker';
 
 const log = createLogger('SonosEvents');
 
@@ -222,7 +222,7 @@ async function sendMediaControlToTab(
  */
 function syncStateToOffscreen(): void {
   const state = getSonosState();
-  sendToOffscreen({ type: 'SYNC_SONOS_STATE', state }).catch(() => {});
+  offscreenBroker.syncSonosState(state);
 }
 
 /**
@@ -302,7 +302,7 @@ export async function stopCastForTab(tabId: number): Promise<void> {
     });
 
   // Send stop message to offscreen
-  await sendToOffscreen({ type: 'STOP_CAPTURE', payload: { tabId } }).catch(() => {});
+  await offscreenBroker.stopCapture(tabId).catch(() => {});
 
   // Remove session from manager
   removeSession(tabId);

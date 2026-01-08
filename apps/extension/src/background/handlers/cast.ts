@@ -16,12 +16,7 @@
 
 import { createLogger } from '@thaumic-cast/shared';
 import type { EncoderConfig, StreamMetadata } from '@thaumic-cast/protocol';
-import type {
-  StartCastMessage,
-  StopCastMessage,
-  ExtensionResponse,
-  StartPlaybackResponse,
-} from '../../lib/messages';
+import type { StartCastMessage, StopCastMessage, ExtensionResponse } from '../../lib/messages';
 import { getSourceFromUrl } from '../../lib/url-utils';
 import { getActiveTab, getActiveTabId } from '../../lib/tab-utils';
 import { loadExtensionSettings } from '../../lib/settings';
@@ -33,7 +28,8 @@ import { registerSession, hasSession, getSessionCount } from '../session-manager
 import { getSonosState as getStoredSonosState } from '../sonos-state';
 import { getConnectionState, clearConnectionState } from '../connection-state';
 import { stopCastForTab } from '../sonos-event-handlers';
-import { ensureOffscreen, sendToOffscreen } from '../offscreen-manager';
+import { ensureOffscreen } from '../offscreen-manager';
+import { offscreenBroker } from '../offscreen-broker';
 import { detectAndCacheCodecSupport } from '../codec-support';
 import { discoverAndCache, connectWebSocket } from './connection';
 
@@ -130,15 +126,12 @@ export async function handleStartCast(
     }
 
     // 7. Start Offscreen Session
-    const response = await sendToOffscreen<ExtensionResponse>({
-      type: 'START_CAPTURE',
-      payload: {
-        tabId: tab.id,
-        mediaStreamId,
-        encoderConfig,
-        baseUrl: app.url,
-      },
-    });
+    const response = await offscreenBroker.startCapture(
+      tab.id,
+      mediaStreamId,
+      encoderConfig,
+      app.url,
+    );
     if (!response) throw new Error('error_offscreen_unavailable');
 
     if (response.success && response.streamId) {
@@ -157,10 +150,11 @@ export async function handleStartCast(
 
       // 8. Start playback via WebSocket (waits for STREAM_READY internally)
       // Include initial metadata so Sonos displays correct info immediately
-      const playbackResponse = await sendToOffscreen<StartPlaybackResponse>({
-        type: 'START_PLAYBACK',
-        payload: { tabId: tab.id, speakerIps, metadata: initialMetadata },
-      });
+      const playbackResponse = await offscreenBroker.startPlayback(
+        tab.id,
+        speakerIps,
+        initialMetadata,
+      );
       if (!playbackResponse) throw new Error('error_offscreen_unavailable');
 
       // Filter successful results for session registration
@@ -169,7 +163,7 @@ export async function handleStartCast(
       if (successfulResults.length === 0) {
         // All speakers failed - clean up the capture
         log.error('All playback attempts failed, cleaning up capture');
-        await sendToOffscreen({ type: 'STOP_CAPTURE', payload: { tabId: tab.id } });
+        await offscreenBroker.stopCapture(tab.id);
         throw new Error('error_playback_failed');
       }
 

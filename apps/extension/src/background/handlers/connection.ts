@@ -31,7 +31,8 @@ import {
   setDesktopApp,
 } from '../connection-state';
 import { setSonosState, getSonosState as getStoredSonosState, updateGroups } from '../sonos-state';
-import { ensureOffscreen, sendToOffscreen } from '../offscreen-manager';
+import { ensureOffscreen } from '../offscreen-manager';
+import { offscreenBroker } from '../offscreen-broker';
 import { notifyPopup } from '../notification-service';
 
 const log = createLogger('Background');
@@ -52,7 +53,7 @@ export async function connectWebSocket(serverUrl: string): Promise<void> {
   await ensureOffscreen();
   const wsUrl = serverUrl.replace(/^http/, 'ws') + '/ws';
   log.info(`Connecting WebSocket to: ${wsUrl}`);
-  await sendToOffscreen({ type: 'WS_CONNECT', url: wsUrl });
+  await offscreenBroker.connectWebSocket(wsUrl);
 }
 
 /**
@@ -211,7 +212,7 @@ export async function ensureConnection(): Promise<EnsureConnectionResponse> {
 function updateSonosState(state: SonosStateSnapshot): void {
   setSonosState(state);
   // Sync to offscreen for service worker recovery
-  sendToOffscreen({ type: 'SYNC_SONOS_STATE', state }).catch(() => {});
+  offscreenBroker.syncSonosState(state);
 }
 
 /**

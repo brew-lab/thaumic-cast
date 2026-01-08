@@ -35,7 +35,8 @@ import { registerVideoSyncRoutes } from './routes/video-sync-routes';
 import { registerOffscreenRoutes } from './routes/offscreen-routes';
 
 // Offscreen management
-import { recoverOffscreenState, sendToOffscreen, checkAndReconnect } from './offscreen-manager';
+import { recoverOffscreenState, checkAndReconnect } from './offscreen-manager';
+import { offscreenBroker } from './offscreen-broker';
 
 // Connection handlers needed for lifecycle events
 import { connectWebSocket, discoverAndCache } from './handlers/connection';
@@ -169,7 +170,7 @@ chrome.storage.sync.onChanged.addListener(async (changes) => {
 
     // Disconnect existing WebSocket before clearing state
     if (getConnectionState().connected) {
-      await sendToOffscreen({ type: 'WS_DISCONNECT' }).catch(() => {});
+      await offscreenBroker.disconnectWebSocket().catch(() => {});
     }
 
     // Clear connection state to force fresh discovery

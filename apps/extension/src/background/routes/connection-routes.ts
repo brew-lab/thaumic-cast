@@ -8,7 +8,7 @@
 import { registerRoute } from '../router';
 import { getConnectionState } from '../connection-state';
 import { ensureConnection, handleWsConnectRequest } from '../handlers/connection';
-import { sendToOffscreen } from '../offscreen-manager';
+import { offscreenBroker } from '../offscreen-broker';
 import { WsConnectMessageSchema, WsReconnectMessageSchema } from '../../lib/message-schemas';
 
 /**
@@ -30,13 +30,13 @@ export function registerConnectionRoutes(): void {
   });
 
   registerRoute('WS_DISCONNECT', async () => {
-    await sendToOffscreen({ type: 'WS_DISCONNECT' });
+    await offscreenBroker.disconnectWebSocket();
     return { success: true };
   });
 
   registerRoute('WS_RECONNECT', async (msg) => {
     const validated = WsReconnectMessageSchema.parse(msg);
-    await sendToOffscreen(validated);
+    await offscreenBroker.reconnectWebSocket(validated.url);
     return { success: true };
   });
 }
