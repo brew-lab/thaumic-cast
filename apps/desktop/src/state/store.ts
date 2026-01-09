@@ -150,12 +150,10 @@ export const fetchGroups = async (): Promise<void> => {
 
 /**
  * Triggers a manual SSDP discovery refresh.
- * Polls for updated groups after a short delay.
+ * Callers should listen for the 'discovery-complete' event to know when discovery finishes.
  */
 export const refreshTopology = async (): Promise<void> => {
   await invoke('refresh_topology');
-  // Poll briefly after trigger
-  setTimeout(fetchGroups, 1000);
 };
 
 /**

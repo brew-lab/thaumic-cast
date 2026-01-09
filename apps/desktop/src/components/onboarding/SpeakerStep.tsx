@@ -5,6 +5,11 @@ import { createLogger } from '@thaumic-cast/shared';
 import { Speaker, RefreshCw } from 'lucide-preact';
 import { useTranslation } from 'react-i18next';
 import { groups, fetchGroups, refreshTopology, networkHealth } from '../../state/store';
+import {
+  listenOnce,
+  type DiscoveryCompletePayload,
+  type NetworkHealthPayload,
+} from '../../lib/events';
 
 import styles from './SpeakerStep.module.css';
 
@@ -13,17 +18,6 @@ const log = createLogger('SpeakerStep');
 interface SpeakerStepProps {
   /** Whether speakers have been found (controls next button) */
   onSpeakersFound: (found: boolean) => void;
-}
-
-/** Payload from the discovery-complete Tauri event. */
-interface DiscoveryCompletePayload {
-  groupCount: number;
-}
-
-/** Payload from the network-health-changed Tauri event. */
-interface NetworkHealthPayload {
-  health: 'ok' | 'degraded';
-  reason: string | null;
 }
 
 /**
@@ -44,6 +38,16 @@ export function SpeakerStep({ onSpeakersFound }: SpeakerStepProps): preact.JSX.E
     let unlistenHealth: UnlistenFn | null = null;
     let healthCheckTimer: ReturnType<typeof setTimeout> | null = null;
     let timeoutTimer: ReturnType<typeof setTimeout> | null = null;
+
+    // Immediately fetch any already-discovered speakers.
+    // Discovery may have completed before this component mounted (race condition
+    // between startNetworkServices() in previous step and listener registration).
+    fetchGroups().then(() => {
+      if (groups.value.length > 0) {
+        log.debug('Found already-discovered speakers on mount');
+        setIsSearching(false);
+      }
+    });
 
     // Listen for discovery-complete event from the backend
     listen<DiscoveryCompletePayload>('discovery-complete', async (event) => {
@@ -97,12 +101,23 @@ export function SpeakerStep({ onSpeakersFound }: SpeakerStepProps): preact.JSX.E
 
   const handleScan = async () => {
     setIsSearching(true);
+
+    // Set up one-time listener BEFORE triggering scan to avoid race conditions.
+    // The permanent useEffect listener handles fetchGroups() when the event fires.
+    // This listenOnce only provides timeout behavior for the manual scan.
+    const waitPromise = listenOnce<DiscoveryCompletePayload>('discovery-complete', 10000);
+
     await refreshTopology();
-    // Give discovery time to complete
-    setTimeout(async () => {
+    const { timedOut } = await waitPromise;
+
+    if (timedOut) {
+      // Event didn't fire within timeout - fetch groups as fallback
+      log.debug('Manual scan fallback timeout reached');
       await fetchGroups();
-      setIsSearching(false);
-    }, 1500);
+    }
+    // If not timed out, the permanent listener already called fetchGroups()
+
+    setIsSearching(false);
   };
 
   return (

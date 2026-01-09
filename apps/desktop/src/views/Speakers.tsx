@@ -14,23 +14,12 @@ import {
   type ZoneGroup,
   type Speaker,
 } from '../state/store';
+import { type NetworkHealthPayload, type TransportStatePayload } from '../lib/events';
 import { DeviceCard } from '../components/DeviceCard';
 import { ActionButton, Alert } from '@thaumic-cast/ui';
 import { RefreshCw, Square } from 'lucide-preact';
 import { useTranslation } from 'react-i18next';
 import styles from './Speakers.module.css';
-
-/** Payload from the network-health-changed Tauri event. */
-interface NetworkHealthPayload {
-  health: 'ok' | 'degraded';
-  reason: string | null;
-}
-
-/** Payload from the transport-state-changed Tauri event. */
-interface TransportStatePayload {
-  speakerIp: string;
-  state: string;
-}
 
 /**
  * Extracts the coordinator as a Speaker from a ZoneGroup.
