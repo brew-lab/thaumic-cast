@@ -4,13 +4,15 @@
 //! common actions: viewing status, toggling autostart, and controlling streams.
 //!
 //! The tray menu status line updates dynamically when streams are created or ended.
+//! On macOS, the tray icon uses template images that adapt to light/dark mode.
 
 use std::future::Future;
 
 use rust_i18n::t;
 use tauri::{
+    image::Image,
     menu::{CheckMenuItemBuilder, MenuBuilder, MenuItem, MenuItemBuilder, PredefinedMenuItem},
-    tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
+    tray::{MouseButton, MouseButtonState, TrayIcon, TrayIconBuilder, TrayIconEvent},
     AppHandle, Manager, WebviewWindow,
 };
 use tauri_plugin_autostart::ManagerExt;
@@ -28,6 +30,8 @@ use crate::events::{BroadcastEvent, StreamEvent};
 pub struct TrayState {
     /// The status menu item showing streaming state.
     status_item: MenuItem<tauri::Wry>,
+    /// The tray icon for dynamic icon updates.
+    tray_icon: TrayIcon<tauri::Wry>,
 }
 
 impl TrayState {
@@ -38,6 +42,45 @@ impl TrayState {
             log::warn!("Failed to update tray status: {}", e);
         }
     }
+
+    /// Updates the tray icon based on streaming state.
+    fn update_icon(&self, is_streaming: bool) {
+        let icon = if is_streaming {
+            load_tray_icon_active()
+        } else {
+            load_tray_icon_idle()
+        };
+
+        match icon {
+            Ok(img) => {
+                if let Err(e) = self.tray_icon.set_icon(Some(img)) {
+                    log::warn!("Failed to update tray icon: {}", e);
+                }
+            }
+            Err(e) => {
+                log::warn!("Failed to load tray icon: {}", e);
+            }
+        }
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Icon Loading
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Icon bytes for active state (embedded at compile time).
+const TRAY_ICON_ACTIVE: &[u8] = include_bytes!("../../icons/tray/tray-template.png");
+/// Icon bytes for idle state (embedded at compile time).
+const TRAY_ICON_IDLE: &[u8] = include_bytes!("../../icons/tray/tray-idle.png");
+
+/// Loads the active tray icon.
+fn load_tray_icon_active() -> Result<Image<'static>, TrayError> {
+    Image::from_bytes(TRAY_ICON_ACTIVE).map_err(|e| TrayError::Build(e.to_string()))
+}
+
+/// Loads the idle tray icon.
+fn load_tray_icon_idle() -> Result<Image<'static>, TrayError> {
+    Image::from_bytes(TRAY_ICON_IDLE).map_err(|e| TrayError::Build(e.to_string()))
 }
 
 /// Formats the status text for a given stream count.
@@ -108,9 +151,6 @@ impl MenuItemId {
 pub enum TrayError {
     #[error("failed to build tray: {0}")]
     Build(String),
-
-    #[error("application icon not available")]
-    MissingIcon,
 }
 
 /// Extension trait for converting menu errors to `TrayError`.
@@ -167,7 +207,8 @@ where
 ///
 /// Also starts a background task to update the status line when streams change.
 pub fn setup_tray(app: &tauri::App) -> Result<(), TrayError> {
-    let icon = app.default_window_icon().ok_or(TrayError::MissingIcon)?;
+    // Load initial icon (idle state)
+    let icon = load_tray_icon_idle()?;
 
     // Get app version from config
     let version = app.config().version.clone().unwrap_or_default();
@@ -227,18 +268,27 @@ pub fn setup_tray(app: &tauri::App) -> Result<(), TrayError> {
         .build()
         .tray_err()?;
 
-    TrayIconBuilder::new()
-        .icon(icon.clone())
+    // Build tray icon with platform-specific settings
+    #[allow(unused_mut)] // mut needed for macOS icon_as_template
+    let mut builder = TrayIconBuilder::new()
+        .icon(icon)
         .menu(&menu)
         .tooltip(t!("tray.tooltip"))
         .on_menu_event(on_menu_event)
-        .on_tray_icon_event(on_tray_click)
-        .build(app)
-        .tray_err()?;
+        .on_tray_icon_event(on_tray_click);
+
+    // On macOS, mark the icon as a template for automatic light/dark mode adaptation
+    #[cfg(target_os = "macos")]
+    {
+        builder = builder.icon_as_template(true);
+    }
+
+    let tray_icon = builder.build(app).tray_err()?;
 
     // Store tray state for dynamic updates
     let tray_state = TrayState {
         status_item: status,
+        tray_icon,
     };
     app.manage(tray_state);
 
@@ -249,7 +299,7 @@ pub fn setup_tray(app: &tauri::App) -> Result<(), TrayError> {
     Ok(())
 }
 
-/// Starts a background task that listens for stream events and updates the tray status.
+/// Starts a background task that listens for stream events and updates the tray.
 fn start_status_listener(app: AppHandle) {
     let Some(app_state) = app.try_state::<AppState>() else {
         log::warn!("AppState not available for tray status listener");
@@ -272,6 +322,7 @@ fn start_status_listener(app: AppHandle) {
 
                         if let Some(tray_state) = app.try_state::<TrayState>() {
                             tray_state.update_status(stream_count);
+                            tray_state.update_icon(stream_count > 0);
                         }
                     }
                 }
