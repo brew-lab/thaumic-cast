@@ -284,3 +284,47 @@ export async function skipOnboarding(): Promise<void> {
     completedAt: new Date().toISOString(),
   });
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Speaker Selection State (device-specific, uses chrome.storage.local)
+// ─────────────────────────────────────────────────────────────────────────────
+
+const SPEAKER_SELECTION_KEY = 'speakerSelection';
+
+/**
+ * Speaker selection state stored in chrome.storage.local.
+ * Uses local storage because speakers are on the local network
+ * and shouldn't sync across devices.
+ */
+export interface SpeakerSelectionState {
+  /** Array of selected speaker coordinator IPs */
+  selectedIps: string[];
+}
+
+/**
+ * Loads speaker selection from chrome.storage.local.
+ * @returns The saved speaker IPs, or empty array if not set
+ */
+export async function loadSpeakerSelection(): Promise<string[]> {
+  try {
+    const result = await chrome.storage.local.get(SPEAKER_SELECTION_KEY);
+    const data = result[SPEAKER_SELECTION_KEY] as SpeakerSelectionState | undefined;
+    return data?.selectedIps ?? [];
+  } catch (err) {
+    log.error('Failed to load speaker selection:', err);
+    return [];
+  }
+}
+
+/**
+ * Saves speaker selection to chrome.storage.local.
+ * @param selectedIps - Array of selected speaker coordinator IPs
+ */
+export async function saveSpeakerSelection(selectedIps: string[]): Promise<void> {
+  try {
+    const state: SpeakerSelectionState = { selectedIps };
+    await chrome.storage.local.set({ [SPEAKER_SELECTION_KEY]: state });
+  } catch (err) {
+    log.error('Failed to save speaker selection:', err);
+  }
+}
