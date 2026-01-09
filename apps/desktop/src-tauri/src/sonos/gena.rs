@@ -298,25 +298,6 @@ impl GenaSubscriptionManager {
         }
     }
 
-    /// Unsubscribes from a specific service on a specific speaker IP.
-    ///
-    /// Use this when you need to remove just one service subscription
-    /// while keeping others (e.g., removing GroupRenderingControl when
-    /// a speaker is demoted from coordinator, but keeping AVTransport).
-    pub async fn unsubscribe_service(&self, ip: &str, service: SonosService) {
-        if let Some(sid) = self.store.get_sid(ip, service) {
-            if let Err(e) = self.unsubscribe(&sid).await {
-                log::error!(
-                    "[GENA] Failed to unsubscribe {} ({}) from {}: {}",
-                    service.name(),
-                    sid,
-                    ip,
-                    e
-                );
-            }
-        }
-    }
-
     /// Unsubscribes from all active subscriptions.
     pub async fn unsubscribe_all(&self) {
         let sids = self.store.get_all_sids();
