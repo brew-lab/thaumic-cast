@@ -5,7 +5,7 @@
  * Auto-selects first group when groups load, clears when empty.
  */
 
-import { useState, useEffect, useMemo, useCallback } from 'preact/hooks';
+import { useState, useEffect, useMemo, useCallback, useRef } from 'preact/hooks';
 import { getSpeakerAvailability } from '@thaumic-cast/protocol';
 import type { SonosStateSnapshot, SpeakerAvailability } from '@thaumic-cast/protocol';
 import type { SpeakerGroupCollection } from '../../domain/speaker';
@@ -37,15 +37,19 @@ export function useSpeakerSelection(
   castingSpeakerIps: string[],
 ): UseSpeakerSelectionResult {
   const [selectedIps, setSelectedIps] = useState<string[]>([]);
+  const hasAutoSelected = useRef(false);
 
-  // Auto-select first group when groups load, clear when empty
+  // Auto-select first group on initial load only, clear when groups become empty
   useEffect(() => {
-    if (!speakerGroups.isEmpty && selectedIps.length === 0) {
+    if (!speakerGroups.isEmpty && selectedIps.length === 0 && !hasAutoSelected.current) {
       const firstGroup = speakerGroups.groups[0];
       if (firstGroup) {
         setSelectedIps([firstGroup.coordinatorIp]);
+        hasAutoSelected.current = true;
       }
     } else if (speakerGroups.isEmpty && selectedIps.length > 0) {
+      // Reset auto-selection flag when groups become empty (e.g., disconnect)
+      hasAutoSelected.current = false;
       setSelectedIps([]);
     }
   }, [speakerGroups, selectedIps.length]);
