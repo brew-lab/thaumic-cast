@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useMemo } from 'preact/hooks';
-import type { SonosStateSnapshot, ZoneGroup, TransportState } from '@thaumic-cast/protocol';
+import type { SonosStateSnapshot, TransportState } from '@thaumic-cast/protocol';
 import { createEmptySonosState } from '@thaumic-cast/protocol';
 import type {
   SonosStateResponse,
@@ -18,9 +18,7 @@ import { useChromeMessage } from './useChromeMessage';
 interface SonosStateResult {
   /** The current Sonos state */
   state: SonosStateSnapshot;
-  /** Zone groups from state */
-  groups: ZoneGroup[];
-  /** Speaker groups as domain model collection (for type-safe lookups) */
+  /** Speaker groups as domain model collection (sorted, type-safe) */
   speakerGroups: SpeakerGroupCollection;
   /** Whether initial data is loading */
   loading: boolean;
@@ -133,7 +131,6 @@ export function useSonosState(): SonosStateResult {
 
   return {
     state,
-    groups: state.groups,
     speakerGroups,
     loading,
     getVolume,

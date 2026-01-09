@@ -7,7 +7,7 @@ import { Radio, Settings } from 'lucide-preact';
 import { Alert, IconButton } from '@thaumic-cast/ui';
 import styles from './App.module.css';
 import { ExtensionResponse, StartCastMessage } from '../lib/messages';
-import type { ZoneGroup } from '@thaumic-cast/protocol';
+import type { SpeakerGroup } from '../domain/speaker';
 import { CurrentTabCard } from './components/CurrentTabCard';
 import { ActiveCastsList } from './components/ActiveCastsList';
 import { useCurrentTabState } from './hooks/useCurrentTabState';
@@ -84,7 +84,6 @@ function MainPopup(): JSX.Element {
   // Sonos state hook - handles real-time updates
   const {
     state: sonosState,
-    groups,
     speakerGroups,
     loading: sonosLoading,
     getVolume,
@@ -179,11 +178,11 @@ function MainPopup(): JSX.Element {
 
   /**
    * Gets display name for a group with availability status.
-   * @param group - The zone group
+   * @param group - The speaker group
    * @returns Display name with availability status
    */
   const getGroupDisplayName = useCallback(
-    (group: ZoneGroup) => {
+    (group: SpeakerGroup) => {
       const availability = getSpeakerAvailability(
         group.coordinatorIp,
         sonosState,
@@ -251,7 +250,7 @@ function MainPopup(): JSX.Element {
       {currentTabState && !isCasting && (
         <CurrentTabCard
           state={currentTabState}
-          groups={groups}
+          groups={speakerGroups.groups}
           selectedIps={selectedIps}
           onSelectSpeakers={setSelectedIps}
           onStartCast={handleStart}

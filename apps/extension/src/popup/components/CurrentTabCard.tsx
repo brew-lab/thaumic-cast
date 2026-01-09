@@ -1,16 +1,22 @@
 import type { JSX } from 'preact';
 import { useTranslation } from 'react-i18next';
-import type { TabMediaState, ZoneGroup, SpeakerAvailability } from '@thaumic-cast/protocol';
+import type { TabMediaState, SpeakerAvailability } from '@thaumic-cast/protocol';
 import { getDisplayTitle, getDisplaySubtitle } from '@thaumic-cast/protocol';
-import { ActionButton, SpeakerMultiSelect, VolumeControl, Card } from '@thaumic-cast/ui';
+import {
+  ActionButton,
+  SpeakerMultiSelect,
+  VolumeControl,
+  Card,
+  type SpeakerGroupLike,
+} from '@thaumic-cast/ui';
 import { Cast, Music } from 'lucide-preact';
 import styles from './CurrentTabCard.module.css';
 
-interface CurrentTabCardProps {
+interface CurrentTabCardProps<T extends SpeakerGroupLike> {
   /** The tab's media state */
   state: TabMediaState;
-  /** Available speaker groups */
-  groups: ZoneGroup[];
+  /** Available speaker groups (sorted) */
+  groups: readonly T[];
   /** Currently selected speaker IPs */
   selectedIps: string[];
   /** Callback when speaker selection changes */
@@ -32,7 +38,7 @@ interface CurrentTabCardProps {
   /** Whether volume controls should be shown */
   showVolumeControls: boolean;
   /** Function to get display name for a group */
-  getGroupDisplayName: (group: ZoneGroup) => string;
+  getGroupDisplayName: (group: T) => string;
   /** Availability status of the primary selected speaker */
   selectedAvailability: SpeakerAvailability;
 }
@@ -56,7 +62,7 @@ interface CurrentTabCardProps {
  * @param props.selectedAvailability
  * @returns The rendered CurrentTabCard component
  */
-export function CurrentTabCard({
+export function CurrentTabCard<T extends SpeakerGroupLike>({
   state,
   groups,
   selectedIps,
@@ -71,7 +77,7 @@ export function CurrentTabCard({
   showVolumeControls,
   getGroupDisplayName,
   selectedAvailability,
-}: CurrentTabCardProps): JSX.Element {
+}: CurrentTabCardProps<T>): JSX.Element {
   const { t } = useTranslation();
   const title = getDisplayTitle(state);
   // Use metadata artwork if available, otherwise favicon (skip og:image)
