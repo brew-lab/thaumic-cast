@@ -94,8 +94,11 @@ function MainPopup(): JSX.Element {
   } = useSonosState();
 
   // Speaker selection with auto-select behavior
-  const { selectedIps, setSelectedIps, primarySelectedIp, selectedAvailability } =
-    useSpeakerSelection(speakerGroups, sonosState, castingSpeakerIps);
+  const { selectedIps, setSelectedIps, selectedAvailability } = useSpeakerSelection(
+    speakerGroups,
+    sonosState,
+    castingSpeakerIps,
+  );
 
   // Auto-stop notification hook
   const { notification: autoStopNotification, message: autoStopMessage } =
@@ -256,12 +259,13 @@ function MainPopup(): JSX.Element {
           onStartCast={handleStart}
           disabled={connectionChecking || sonosLoading || !baseUrl}
           speakersLoading={sonosLoading || connectionChecking}
-          volume={primarySelectedIp ? getVolume(primarySelectedIp) : 50}
-          muted={primarySelectedIp ? isMuted(primarySelectedIp) : false}
-          onVolumeChange={(vol) => primarySelectedIp && handleVolumeChange(primarySelectedIp, vol)}
-          onMuteToggle={() => primarySelectedIp && handleMuteToggle(primarySelectedIp)}
+          getVolume={getVolume}
+          isMuted={isMuted}
+          onVolumeChange={handleVolumeChange}
+          onMuteToggle={handleMuteToggle}
           showVolumeControls={wsConnected && selectedIps.length > 0}
           getGroupDisplayName={getGroupDisplayName}
+          getSpeakerName={(ip) => speakerGroups.getGroupName(ip)}
           selectedAvailability={selectedAvailability}
         />
       )}

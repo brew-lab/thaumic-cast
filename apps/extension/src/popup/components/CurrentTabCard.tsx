@@ -5,7 +5,7 @@ import { getDisplayTitle, getDisplaySubtitle } from '@thaumic-cast/protocol';
 import {
   ActionButton,
   SpeakerMultiSelect,
-  VolumeControl,
+  SpeakerVolumeRow,
   Card,
   type SpeakerGroupLike,
 } from '@thaumic-cast/ui';
@@ -27,18 +27,20 @@ interface CurrentTabCardProps<T extends SpeakerGroupLike> {
   disabled: boolean;
   /** Whether speakers are loading */
   speakersLoading: boolean;
-  /** Current volume (0-100) - for primary selected speaker */
-  volume: number;
-  /** Whether primary selected speaker is muted */
-  muted: boolean;
-  /** Callback when volume changes */
-  onVolumeChange: (volume: number) => void;
-  /** Callback when mute is toggled */
-  onMuteToggle: () => void;
+  /** Function to get volume for a speaker IP */
+  getVolume: (speakerIp: string) => number;
+  /** Function to check if a speaker is muted */
+  isMuted: (speakerIp: string) => boolean;
+  /** Callback when volume changes for a speaker */
+  onVolumeChange: (speakerIp: string, volume: number) => void;
+  /** Callback when mute is toggled for a speaker */
+  onMuteToggle: (speakerIp: string) => void;
   /** Whether volume controls should be shown */
   showVolumeControls: boolean;
   /** Function to get display name for a group */
   getGroupDisplayName: (group: T) => string;
+  /** Function to get speaker name by IP */
+  getSpeakerName: (speakerIp: string) => string;
   /** Availability status of the primary selected speaker */
   selectedAvailability: SpeakerAvailability;
 }
@@ -53,12 +55,13 @@ interface CurrentTabCardProps<T extends SpeakerGroupLike> {
  * @param props.onStartCast
  * @param props.disabled
  * @param props.speakersLoading
- * @param props.volume
- * @param props.muted
+ * @param props.getVolume
+ * @param props.isMuted
  * @param props.onVolumeChange
  * @param props.onMuteToggle
  * @param props.showVolumeControls
  * @param props.getGroupDisplayName
+ * @param props.getSpeakerName
  * @param props.selectedAvailability
  * @returns The rendered CurrentTabCard component
  */
@@ -70,12 +73,13 @@ export function CurrentTabCard<T extends SpeakerGroupLike>({
   onStartCast,
   disabled,
   speakersLoading,
-  volume,
-  muted,
+  getVolume,
+  isMuted,
   onVolumeChange,
   onMuteToggle,
   showVolumeControls,
   getGroupDisplayName,
+  getSpeakerName,
   selectedAvailability,
 }: CurrentTabCardProps<T>): JSX.Element {
   const { t } = useTranslation();
@@ -120,24 +124,25 @@ export function CurrentTabCard<T extends SpeakerGroupLike>({
             />
           )}
 
-          {/* Volume Controls - always rendered to prevent layout shift */}
-          <div
-            className={styles.volumeWrapper}
-            style={{
-              visibility: showVolumeControls && selectedIps.length > 0 ? 'visible' : 'hidden',
-            }}
-            inert={!showVolumeControls || selectedIps.length === 0 ? true : undefined}
-          >
-            <VolumeControl
-              volume={volume}
-              muted={muted}
-              onVolumeChange={onVolumeChange}
-              onMuteToggle={onMuteToggle}
-              muteLabel={t('mute')}
-              unmuteLabel={t('unmute')}
-              volumeLabel={t('volume')}
-            />
-          </div>
+          {/* Per-speaker Volume Controls */}
+          {showVolumeControls && selectedIps.length > 0 && (
+            <div className={styles.speakerRows}>
+              {selectedIps.map((ip) => (
+                <SpeakerVolumeRow
+                  key={ip}
+                  speakerName={getSpeakerName(ip)}
+                  speakerIp={ip}
+                  volume={getVolume(ip)}
+                  muted={isMuted(ip)}
+                  onVolumeChange={(vol) => onVolumeChange(ip, vol)}
+                  onMuteToggle={() => onMuteToggle(ip)}
+                  muteLabel={t('mute')}
+                  unmuteLabel={t('unmute')}
+                  volumeLabel={t('volume')}
+                />
+              ))}
+            </div>
+          )}
 
           {/* Cast Button */}
           <ActionButton
