@@ -7,7 +7,7 @@ import { Radio, Settings } from 'lucide-preact';
 import { Alert, IconButton } from '@thaumic-cast/ui';
 import styles from './App.module.css';
 import { ExtensionResponse, StartCastMessage } from '../lib/messages';
-import type { ZoneGroup } from '@thaumic-cast/protocol';
+import type { SpeakerGroup } from '../domain/speaker';
 import { CurrentTabCard } from './components/CurrentTabCard';
 import { ActiveCastsList } from './components/ActiveCastsList';
 import { useCurrentTabState } from './hooks/useCurrentTabState';
@@ -84,7 +84,6 @@ function MainPopup(): JSX.Element {
   // Sonos state hook - handles real-time updates
   const {
     state: sonosState,
-    groups,
     speakerGroups,
     loading: sonosLoading,
     getVolume,
@@ -95,8 +94,11 @@ function MainPopup(): JSX.Element {
   } = useSonosState();
 
   // Speaker selection with auto-select behavior
-  const { selectedIps, setSelectedIps, primarySelectedIp, selectedAvailability } =
-    useSpeakerSelection(speakerGroups, sonosState, castingSpeakerIps);
+  const { selectedIps, setSelectedIps, selectedAvailability } = useSpeakerSelection(
+    speakerGroups,
+    sonosState,
+    castingSpeakerIps,
+  );
 
   // Auto-stop notification hook
   const { notification: autoStopNotification, message: autoStopMessage } =
@@ -179,11 +181,11 @@ function MainPopup(): JSX.Element {
 
   /**
    * Gets display name for a group with availability status.
-   * @param group - The zone group
+   * @param group - The speaker group
    * @returns Display name with availability status
    */
   const getGroupDisplayName = useCallback(
-    (group: ZoneGroup) => {
+    (group: SpeakerGroup) => {
       const availability = getSpeakerAvailability(
         group.coordinatorIp,
         sonosState,
@@ -251,18 +253,19 @@ function MainPopup(): JSX.Element {
       {currentTabState && !isCasting && (
         <CurrentTabCard
           state={currentTabState}
-          groups={groups}
+          groups={speakerGroups.groups}
           selectedIps={selectedIps}
           onSelectSpeakers={setSelectedIps}
           onStartCast={handleStart}
           disabled={connectionChecking || sonosLoading || !baseUrl}
           speakersLoading={sonosLoading || connectionChecking}
-          volume={primarySelectedIp ? getVolume(primarySelectedIp) : 50}
-          muted={primarySelectedIp ? isMuted(primarySelectedIp) : false}
-          onVolumeChange={(vol) => primarySelectedIp && handleVolumeChange(primarySelectedIp, vol)}
-          onMuteToggle={() => primarySelectedIp && handleMuteToggle(primarySelectedIp)}
+          getVolume={getVolume}
+          isMuted={isMuted}
+          onVolumeChange={handleVolumeChange}
+          onMuteToggle={handleMuteToggle}
           showVolumeControls={wsConnected && selectedIps.length > 0}
           getGroupDisplayName={getGroupDisplayName}
+          getSpeakerName={(ip) => speakerGroups.getGroupName(ip)}
           selectedAvailability={selectedAvailability}
         />
       )}

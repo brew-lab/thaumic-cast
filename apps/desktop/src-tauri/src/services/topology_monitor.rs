@@ -358,15 +358,11 @@ impl TopologyMonitor {
         self.ensure_topology_subscription(&speakers, &current_speaker_ips, callback_url)
             .await;
 
-        self.sync_speaker_subscriptions(&speakers, callback_url)
-            .await;
         self.sync_coordinator_subscriptions(&coordinator_ips, callback_url)
             .await;
 
-        // Cleanup stale subscriptions
-        self.cleanup_disappeared_speakers(&current_speaker_ips)
-            .await;
-        self.cleanup_stale_coordinators(&coordinator_ips).await;
+        // Cleanup stale subscriptions (coordinators that disappeared or were demoted)
+        self.cleanup_stale_subscriptions(&coordinator_ips).await;
 
         let av_sub_count = self
             .gena_manager
@@ -497,36 +493,34 @@ impl TopologyMonitor {
         }
     }
 
-    /// Subscribes to AVTransport on all speakers that aren't already subscribed.
-    async fn sync_speaker_subscriptions(&self, speakers: &[Speaker], callback_url: &str) {
-        // Log new speaker discoveries before subscribing
-        for speaker in speakers {
-            if !self
-                .gena_manager
-                .is_subscribed(&speaker.ip, SonosService::AVTransport)
-            {
-                log::info!(
-                    "[TopologyMonitor] New speaker discovered: {} ({})",
-                    speaker.name,
-                    speaker.ip
-                );
-            }
-        }
-
-        self.ensure_subscriptions(
-            speakers.iter().map(|s| s.ip.as_str()),
-            SonosService::AVTransport,
-            callback_url,
-        )
-        .await;
-    }
-
-    /// Subscribes to GroupRenderingControl on coordinators that aren't already subscribed.
+    /// Subscribes to AVTransport and GroupRenderingControl on coordinators.
+    ///
+    /// Only coordinators support AVTransport subscriptions. Satellites (Sub, surrounds)
+    /// and bridges (Boost) return 503 errors when subscription is attempted.
     async fn sync_coordinator_subscriptions(
         &self,
         coordinator_ips: &HashSet<String>,
         callback_url: &str,
     ) {
+        // Log new coordinator discoveries
+        for ip in coordinator_ips {
+            if !self
+                .gena_manager
+                .is_subscribed(ip, SonosService::AVTransport)
+            {
+                log::info!("[TopologyMonitor] New coordinator discovered: {}", ip);
+            }
+        }
+
+        // Subscribe to AVTransport (playback state) on coordinators only
+        self.ensure_subscriptions(
+            coordinator_ips.iter().map(String::as_str),
+            SonosService::AVTransport,
+            callback_url,
+        )
+        .await;
+
+        // Subscribe to GroupRenderingControl (volume/mute) on coordinators
         self.ensure_subscriptions(
             coordinator_ips.iter().map(String::as_str),
             SonosService::GroupRenderingControl,
@@ -535,46 +529,28 @@ impl TopologyMonitor {
         .await;
     }
 
-    /// Unsubscribes from speakers that are no longer discovered.
-    async fn cleanup_disappeared_speakers(&self, current_speaker_ips: &HashSet<String>) {
+    /// Unsubscribes from coordinators that are no longer in the topology.
+    ///
+    /// This handles both disappeared speakers and demoted coordinators (satellites).
+    /// Since we only subscribe to coordinators, we compare against coordinator IPs.
+    async fn cleanup_stale_subscriptions(&self, coordinator_ips: &HashSet<String>) {
         let subscribed_av_ips: HashSet<String> = self
             .gena_manager
             .get_subscribed_ips(SonosService::AVTransport)
             .into_iter()
             .collect();
 
-        let disappeared: Vec<String> = subscribed_av_ips
-            .difference(current_speaker_ips)
-            .cloned()
-            .collect();
-
-        for ip in disappeared {
-            log::info!("[TopologyMonitor] Speaker disappeared: {}", ip);
-            self.gena_manager.unsubscribe_by_ip(&ip).await;
-        }
-    }
-
-    /// Unsubscribes GroupRenderingControl from speakers that are no longer coordinators.
-    async fn cleanup_stale_coordinators(&self, coordinator_ips: &HashSet<String>) {
-        let subscribed_grc_ips: HashSet<String> = self
-            .gena_manager
-            .get_subscribed_ips(SonosService::GroupRenderingControl)
-            .into_iter()
-            .collect();
-
-        let stale: Vec<String> = subscribed_grc_ips
+        let stale: Vec<String> = subscribed_av_ips
             .difference(coordinator_ips)
             .cloned()
             .collect();
 
         for ip in stale {
             log::info!(
-                "[TopologyMonitor] Speaker {} is no longer a coordinator, unsubscribing GroupRenderingControl",
+                "[TopologyMonitor] Speaker {} is no longer a coordinator, unsubscribing",
                 ip
             );
-            self.gena_manager
-                .unsubscribe_service(&ip, SonosService::GroupRenderingControl)
-                .await;
+            self.gena_manager.unsubscribe_by_ip(&ip).await;
         }
     }
 }

@@ -1,9 +1,19 @@
-import type { ZoneGroup } from '@thaumic-cast/protocol';
 import styles from './SpeakerMultiSelect.module.css';
 
-interface SpeakerMultiSelectProps {
+/**
+ * Minimal interface for speaker groups.
+ * Compatible with both protocol ZoneGroup and domain SpeakerGroup types.
+ */
+export interface SpeakerGroupLike {
+  /** The coordinator speaker's IP address */
+  coordinatorIp: string;
+  /** Display name for the group */
+  name: string;
+}
+
+interface SpeakerMultiSelectProps<T extends SpeakerGroupLike> {
   /** Array of available speaker groups */
-  groups: ZoneGroup[];
+  groups: readonly T[];
   /** Array of currently selected speaker/coordinator IPs */
   selectedIps: string[];
   /** Callback when selection changes */
@@ -13,7 +23,7 @@ interface SpeakerMultiSelectProps {
   /** Label for the control */
   label?: string;
   /** Function to get display name for a group */
-  getGroupDisplayName: (group: ZoneGroup) => string;
+  getGroupDisplayName: (group: T) => string;
 }
 
 /**
@@ -29,14 +39,14 @@ interface SpeakerMultiSelectProps {
  * @param props.getGroupDisplayName
  * @returns The rendered SpeakerMultiSelect component
  */
-export function SpeakerMultiSelect({
+export function SpeakerMultiSelect<T extends SpeakerGroupLike>({
   groups,
   selectedIps,
   onSelectionChange,
   disabled = false,
   label,
   getGroupDisplayName,
-}: SpeakerMultiSelectProps) {
+}: SpeakerMultiSelectProps<T>) {
   const toggleSpeaker = (ip: string, isDisabled: boolean) => {
     if (isDisabled) return;
 
@@ -60,8 +70,7 @@ export function SpeakerMultiSelect({
       <ul className={styles.list} role="listbox" aria-multiselectable="true" aria-label={label}>
         {groups.map((group) => {
           const isSelected = selectedIps.includes(group.coordinatorIp);
-          // Disabled if globally disabled OR if it's the last selected item (can't have zero)
-          const isDisabled = disabled || (isSelected && selectedIps.length === 1);
+          const isDisabled = disabled;
           return (
             <li
               key={group.coordinatorIp}

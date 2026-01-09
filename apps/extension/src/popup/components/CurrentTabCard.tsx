@@ -1,16 +1,22 @@
 import type { JSX } from 'preact';
 import { useTranslation } from 'react-i18next';
-import type { TabMediaState, ZoneGroup, SpeakerAvailability } from '@thaumic-cast/protocol';
+import type { TabMediaState, SpeakerAvailability } from '@thaumic-cast/protocol';
 import { getDisplayTitle, getDisplaySubtitle } from '@thaumic-cast/protocol';
-import { ActionButton, SpeakerMultiSelect, VolumeControl, Card } from '@thaumic-cast/ui';
+import {
+  ActionButton,
+  SpeakerMultiSelect,
+  SpeakerVolumeRow,
+  Card,
+  type SpeakerGroupLike,
+} from '@thaumic-cast/ui';
 import { Cast, Music } from 'lucide-preact';
 import styles from './CurrentTabCard.module.css';
 
-interface CurrentTabCardProps {
+interface CurrentTabCardProps<T extends SpeakerGroupLike> {
   /** The tab's media state */
   state: TabMediaState;
-  /** Available speaker groups */
-  groups: ZoneGroup[];
+  /** Available speaker groups (sorted) */
+  groups: readonly T[];
   /** Currently selected speaker IPs */
   selectedIps: string[];
   /** Callback when speaker selection changes */
@@ -21,18 +27,20 @@ interface CurrentTabCardProps {
   disabled: boolean;
   /** Whether speakers are loading */
   speakersLoading: boolean;
-  /** Current volume (0-100) - for primary selected speaker */
-  volume: number;
-  /** Whether primary selected speaker is muted */
-  muted: boolean;
-  /** Callback when volume changes */
-  onVolumeChange: (volume: number) => void;
-  /** Callback when mute is toggled */
-  onMuteToggle: () => void;
+  /** Function to get volume for a speaker IP */
+  getVolume: (speakerIp: string) => number;
+  /** Function to check if a speaker is muted */
+  isMuted: (speakerIp: string) => boolean;
+  /** Callback when volume changes for a speaker */
+  onVolumeChange: (speakerIp: string, volume: number) => void;
+  /** Callback when mute is toggled for a speaker */
+  onMuteToggle: (speakerIp: string) => void;
   /** Whether volume controls should be shown */
   showVolumeControls: boolean;
   /** Function to get display name for a group */
-  getGroupDisplayName: (group: ZoneGroup) => string;
+  getGroupDisplayName: (group: T) => string;
+  /** Function to get speaker name by IP */
+  getSpeakerName: (speakerIp: string) => string;
   /** Availability status of the primary selected speaker */
   selectedAvailability: SpeakerAvailability;
 }
@@ -47,16 +55,17 @@ interface CurrentTabCardProps {
  * @param props.onStartCast
  * @param props.disabled
  * @param props.speakersLoading
- * @param props.volume
- * @param props.muted
+ * @param props.getVolume
+ * @param props.isMuted
  * @param props.onVolumeChange
  * @param props.onMuteToggle
  * @param props.showVolumeControls
  * @param props.getGroupDisplayName
+ * @param props.getSpeakerName
  * @param props.selectedAvailability
  * @returns The rendered CurrentTabCard component
  */
-export function CurrentTabCard({
+export function CurrentTabCard<T extends SpeakerGroupLike>({
   state,
   groups,
   selectedIps,
@@ -64,14 +73,15 @@ export function CurrentTabCard({
   onStartCast,
   disabled,
   speakersLoading,
-  volume,
-  muted,
+  getVolume,
+  isMuted,
   onVolumeChange,
   onMuteToggle,
   showVolumeControls,
   getGroupDisplayName,
+  getSpeakerName,
   selectedAvailability,
-}: CurrentTabCardProps): JSX.Element {
+}: CurrentTabCardProps<T>): JSX.Element {
   const { t } = useTranslation();
   const title = getDisplayTitle(state);
   // Use metadata artwork if available, otherwise favicon (skip og:image)
@@ -114,24 +124,25 @@ export function CurrentTabCard({
             />
           )}
 
-          {/* Volume Controls - always rendered to prevent layout shift */}
-          <div
-            className={styles.volumeWrapper}
-            style={{
-              visibility: showVolumeControls && selectedIps.length > 0 ? 'visible' : 'hidden',
-            }}
-            inert={!showVolumeControls || selectedIps.length === 0 ? true : undefined}
-          >
-            <VolumeControl
-              volume={volume}
-              muted={muted}
-              onVolumeChange={onVolumeChange}
-              onMuteToggle={onMuteToggle}
-              muteLabel={t('mute')}
-              unmuteLabel={t('unmute')}
-              volumeLabel={t('volume')}
-            />
-          </div>
+          {/* Per-speaker Volume Controls */}
+          {showVolumeControls && selectedIps.length > 0 && (
+            <div className={styles.speakerRows}>
+              {selectedIps.map((ip) => (
+                <SpeakerVolumeRow
+                  key={ip}
+                  speakerName={getSpeakerName(ip)}
+                  speakerIp={ip}
+                  volume={getVolume(ip)}
+                  muted={isMuted(ip)}
+                  onVolumeChange={(vol) => onVolumeChange(ip, vol)}
+                  onMuteToggle={() => onMuteToggle(ip)}
+                  muteLabel={t('mute')}
+                  unmuteLabel={t('unmute')}
+                  volumeLabel={t('volume')}
+                />
+              ))}
+            </div>
+          )}
 
           {/* Cast Button */}
           <ActionButton

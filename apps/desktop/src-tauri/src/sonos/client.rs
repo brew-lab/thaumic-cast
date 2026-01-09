@@ -8,6 +8,7 @@ use quick_xml::events::Event;
 use quick_xml::reader::Reader;
 use reqwest::Client;
 use std::sync::{Arc, OnceLock};
+use std::time::Duration;
 
 use crate::error::{DiscoveryResult, SoapResult};
 use crate::sonos::discovery::{DiscoveryConfig, DiscoveryCoordinator, Speaker};
@@ -277,9 +278,55 @@ fn format_didl_lite(stream_url: &str, metadata: Option<&StreamMetadata>, icon_ur
 // Playback Control
 // ─────────────────────────────────────────────────────────────────────────────
 
+/// Retry delays for transient SOAP errors (exponential backoff).
+const RETRY_DELAYS_MS: [u64; 3] = [200, 500, 1000];
+
+/// Executes a SOAP request with retry logic for transient errors.
+///
+/// Retries on transient SOAP faults (701, 714, 716) and timeouts with
+/// exponential backoff (200ms, 500ms, 1000ms).
+///
+/// # Arguments
+/// * `action` - Action name for logging
+/// * `operation` - Closure that performs the SOAP request
+async fn with_retry<F, Fut>(action: &str, mut operation: F) -> SoapResult<String>
+where
+    F: FnMut() -> Fut,
+    Fut: std::future::Future<Output = SoapResult<String>>,
+{
+    let mut last_error = None;
+    for (attempt, &delay_ms) in std::iter::once(&0)
+        .chain(RETRY_DELAYS_MS.iter())
+        .enumerate()
+    {
+        if attempt > 0 {
+            log::info!(
+                "[Sonos] Retrying {} (attempt {}/{}) after {}ms",
+                action,
+                attempt + 1,
+                RETRY_DELAYS_MS.len() + 1,
+                delay_ms
+            );
+            tokio::time::sleep(Duration::from_millis(delay_ms)).await;
+        }
+
+        match operation().await {
+            Ok(r) => return Ok(r),
+            Err(e) if e.is_transient() => {
+                log::warn!("[Sonos] {} transient error: {}", action, e);
+                last_error = Some(e);
+            }
+            Err(e) => return Err(e),
+        }
+    }
+
+    Err(last_error.expect("retry loop should have set last_error"))
+}
+
 /// Commands a Sonos speaker to play a specific audio URI.
 ///
 /// Optionally includes metadata for display on the Sonos UI.
+/// Retries transient SOAP faults (701, 714, 716) with exponential backoff.
 ///
 /// # Arguments
 /// * `client` - The HTTP client to use for the request
@@ -302,24 +349,28 @@ pub async fn play_uri(
 
     log::info!("[Sonos] SetAVTransportURI: ip={}, uri={}", ip, sonos_uri);
 
-    SoapRequestBuilder::new(client, ip)
-        .service(SonosService::AVTransport)
-        .action("SetAVTransportURI")
-        .instance_id()
-        .arg("CurrentURI", &sonos_uri)
-        .arg("CurrentURIMetaData", &didl_metadata)
-        .send()
-        .await?;
+    with_retry("SetAVTransportURI", || {
+        SoapRequestBuilder::new(client, ip)
+            .service(SonosService::AVTransport)
+            .action("SetAVTransportURI")
+            .instance_id()
+            .arg("CurrentURI", &sonos_uri)
+            .arg("CurrentURIMetaData", &didl_metadata)
+            .send()
+    })
+    .await?;
 
     log::info!("[Sonos] SetAVTransportURI succeeded, sending Play command");
 
-    SoapRequestBuilder::new(client, ip)
-        .service(SonosService::AVTransport)
-        .action("Play")
-        .instance_id()
-        .arg("Speed", "1")
-        .send()
-        .await?;
+    with_retry("Play", || {
+        SoapRequestBuilder::new(client, ip)
+            .service(SonosService::AVTransport)
+            .action("Play")
+            .instance_id()
+            .arg("Speed", "1")
+            .send()
+    })
+    .await?;
 
     log::info!("[Sonos] Play command succeeded");
 

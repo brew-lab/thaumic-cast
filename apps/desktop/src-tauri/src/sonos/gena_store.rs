@@ -149,12 +149,6 @@ impl GenaSubscriptionStore {
             .map(|s| (s.ip.clone(), s.service))
     }
 
-    /// Gets the SID for a (ip, service) pair.
-    pub fn get_sid(&self, ip: &str, service: SonosService) -> Option<String> {
-        let key = SubscriptionKey::new(ip, service);
-        self.subscription_keys.read().get(&key).cloned()
-    }
-
     /// Updates the expiration time for a subscription.
     pub fn update_expiry(&self, sid: &str, timeout_secs: u64) {
         if let Some(sub) = self.subscriptions.write().get_mut(sid) {
@@ -269,25 +263,6 @@ mod tests {
         let (ip, service) = info.unwrap();
         assert_eq!(ip, "192.168.1.100");
         assert_eq!(service, SonosService::AVTransport);
-    }
-
-    #[test]
-    fn get_sid_returns_correct_sid() {
-        let store = GenaSubscriptionStore::new();
-
-        store.insert(
-            "uuid:123".to_string(),
-            "192.168.1.100".to_string(),
-            SonosService::AVTransport,
-            "http://callback".to_string(),
-            300,
-        );
-
-        let sid = store.get_sid("192.168.1.100", SonosService::AVTransport);
-        assert_eq!(sid, Some("uuid:123".to_string()));
-
-        let no_sid = store.get_sid("192.168.1.100", SonosService::GroupRenderingControl);
-        assert!(no_sid.is_none());
     }
 
     #[test]

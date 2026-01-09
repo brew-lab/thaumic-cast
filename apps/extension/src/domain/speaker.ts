@@ -250,10 +250,12 @@ export class SpeakerGroupCollection {
 
   /**
    * Creates a collection from an array of ZoneGroups.
+   * Groups are sorted alphabetically by name for consistent UI ordering.
    * @param groups - The zone groups from protocol
    * @returns A new SpeakerGroupCollection
    */
   static fromZoneGroups(groups: ZoneGroup[]): SpeakerGroupCollection {
-    return new SpeakerGroupCollection(groups.map(SpeakerGroup.fromZoneGroup));
+    const sorted = [...groups].sort((a, b) => a.name.localeCompare(b.name));
+    return new SpeakerGroupCollection(sorted.map(SpeakerGroup.fromZoneGroup));
   }
 }

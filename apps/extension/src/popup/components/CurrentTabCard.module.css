@@ -81,8 +81,10 @@
   color: var(--color-text-muted);
 }
 
-.volumeWrapper {
-  /* Container for visibility toggle to prevent layout shift */
+.speakerRows {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
 }
 
 .spinner {
