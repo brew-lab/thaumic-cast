@@ -11,8 +11,8 @@
   overflow: hidden;
   margin-block-end: 1rem;
 
-  /* View Transition API: name the card for track change transitions */
-  view-transition-name: active-cast-card;
+  /* View Transition API: unique name per card, shared class for animation styling */
+  view-transition-class: activecastcard;
 }
 
 .cardInner {
@@ -284,8 +284,8 @@
 }
 
 /* Transition animation for track changes (background + colors) */
-::view-transition-old(active-cast-card),
-::view-transition-new(active-cast-card) {
+::view-transition-old(.activecastcard),
+::view-transition-new(.activecastcard) {
   animation-duration: 300ms;
   animation-timing-function: ease-out;
 }

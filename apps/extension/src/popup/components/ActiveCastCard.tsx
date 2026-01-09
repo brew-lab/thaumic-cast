@@ -151,7 +151,12 @@ export function ActiveCastCard({
   }, [displayIsPlaying, handleControl]);
 
   // Build style object with artwork and color CSS custom properties
-  const cardStyle: Record<string, string> = {};
+  const cardStyle: Record<string, string> = {
+    // Unique view-transition-name per card to avoid spec violation with duplicates.
+    // Uses kebab-case for consistency with CSS custom idents.
+    // The shared view-transition-class (in CSS) uses lowercase due to stylelint rules.
+    viewTransitionName: `active-cast-card-${cast.tabId}`,
+  };
   if (stagedImage) {
     cardStyle['--artwork'] = `url(${stagedImage})`;
   }
@@ -167,7 +172,7 @@ export function ActiveCastCard({
     <Card
       noPadding
       className={`${styles.card} ${stagedImage ? styles.hasArtwork : ''}`}
-      style={Object.keys(cardStyle).length > 0 ? (cardStyle as CSSProperties) : undefined}
+      style={cardStyle as CSSProperties}
     >
       <div className={styles.cardInner}>
         <div className={styles.header}>
