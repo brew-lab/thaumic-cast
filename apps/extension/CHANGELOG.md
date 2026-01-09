@@ -1,5 +1,47 @@
 # @thaumic-cast/extension
 
+## 0.8.3
+
+### Patch Changes
+
+- [#32](https://github.com/brew-lab/thaumic-cast/pull/32) [`f633dda`](https://github.com/brew-lab/thaumic-cast/commit/f633dda4f4146a81a908c14a6b79dfc44ca6f674) Thanks [@skezo](https://github.com/skezo)! - ### Bug Fixes
+  - **SpeakerMultiSelect**: Allow deselecting all speakers. Previously the last selected speaker's checkbox was disabled to prevent empty selection. Now all checkboxes behave consistently, and the Cast button disables when no speakers are selected.
+  - **Speaker Selection**: Fix auto-reselection bug where clearing all speakers would immediately re-select the first one. Auto-selection now only occurs on initial load.
+  - **Speaker Ordering**: Sort speaker groups alphabetically by name for consistent UI ordering. Previously order could vary depending on which speaker responded to topology queries.
+  - **Speaker Selection Persistence**: Remember selected speakers across popup opens. Selection is stored in chrome.storage.local (device-specific). On load, validates saved IPs against available speakers and falls back to auto-select if speakers are no longer available.
+
+  ### Features
+  - **Multi-Speaker Volume Controls**: When multiple speakers are selected, show labeled volume controls for each speaker instead of just the first one. Each control displays the speaker name and allows independent volume/mute adjustment before casting.
+
+- [#30](https://github.com/brew-lab/thaumic-cast/pull/30) [`ed53246`](https://github.com/brew-lab/thaumic-cast/commit/ed5324601596c527a378fe56a95b4d33aab1b83f) Thanks [@skezo](https://github.com/skezo)! - ### Refactoring & Code Quality
+  - **Route System**: Replace switch-based router with typed route registry and `registerValidatedRoute` factory, eliminating 17 manual `.parse()` calls
+  - **Message Types**: Reorganize message types by direction (inbound/outbound), remove deprecated types and unused exports
+  - **Domain Models**: Add `Speaker` and `SpeakerGroupCollection` domain models with type-safe operations
+  - **Service Layer**: Add `OffscreenBroker` for type-safe offscreen communication, `NotificationService`, and `PersistenceManager`
+  - **Hook Extraction**: Extract reusable hooks (`useChromeMessage`, `useMountedRef`, `useOptimisticOverlay`, `useStorageListener`, `useSpeakerSelection`, `useExtensionSettingsListener`) to reduce boilerplate
+  - **Background Split**: Split monolithic `main.ts` files into focused domain handler modules
+  - **Validation**: Add Zod schema validation for runtime message type safety
+
+  ### Bug Fixes
+  - Fix auto-stop notification timer lifecycle (prevent race conditions with rapid notifications)
+  - Add FIFO eviction to in-memory dominant color cache (prevent unbounded growth)
+  - Preserve reconnect counter across WebSocket reconnection attempts
+  - Clean up sessions properly on disconnect
+  - Preserve `supportedActions` and `playbackState` in metadata validation
+  - Fix message type shape mismatches
+
+  ### Performance
+  - Only poll for video elements when video sync is enabled (eliminates unnecessary `getBoundingClientRect` calls)
+
+  ### Cleanup
+  - Remove dead code: `device-config.ts`, `getModeLabel`, `BitrateSelector`, `CodecSelector`, `createDebouncedStorage`, `clearDiscoveryCache`
+  - Remove unused Battery Status API permission
+  - Remove redundant `SESSION_HEALTH` message
+  - Add `noop` utility for explicit silent error handling
+
+- Updated dependencies [[`f633dda`](https://github.com/brew-lab/thaumic-cast/commit/f633dda4f4146a81a908c14a6b79dfc44ca6f674)]:
+  - @thaumic-cast/ui@0.0.5
+
 ## 0.8.2
 
 ### Patch Changes
