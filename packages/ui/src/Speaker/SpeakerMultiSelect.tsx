@@ -60,8 +60,7 @@ export function SpeakerMultiSelect({
       <ul className={styles.list} role="listbox" aria-multiselectable="true" aria-label={label}>
         {groups.map((group) => {
           const isSelected = selectedIps.includes(group.coordinatorIp);
-          // Disabled if globally disabled OR if it's the last selected item (can't have zero)
-          const isDisabled = disabled || (isSelected && selectedIps.length === 1);
+          const isDisabled = disabled;
           return (
             <li
               key={group.coordinatorIp}
