@@ -1,5 +1,27 @@
 # @thaumic-cast/desktop
 
+## 0.8.3
+
+### Patch Changes
+
+- [#32](https://github.com/brew-lab/thaumic-cast/pull/32) [`06490c3`](https://github.com/brew-lab/thaumic-cast/commit/06490c3aebf5c2f9d81b87932001ca9f5f400d8b) Thanks [@skezo](https://github.com/skezo)! - ### Bug Fixes
+  - **Speaker Discovery**: Fix race condition where initial scan could miss speakers if discovery completed before the listener was registered. Now fetches existing groups immediately on mount.
+  - **Playback Reliability**: Add retry logic with exponential backoff (200ms, 500ms, 1s) for transient SOAP errors (701, 714, 716) when starting playback. Previously, busy speakers would fail immediately requiring manual retry.
+  - **GENA Subscriptions**: Only subscribe to coordinators for AVTransport. Satellites (Sub, surrounds) and bridges (Boost) don't support AVTransport and were returning 503 errors.
+
+  ### Code Quality
+  - Extract shared Tauri event payload types (`DiscoveryCompletePayload`, `NetworkHealthPayload`, `TransportStatePayload`) to `lib/events.ts`
+  - Add `listenOnce` utility for one-shot event listening with timeout fallback
+  - Add `SoapError::is_transient()` method to identify retryable errors
+  - Add `with_retry` helper for SOAP operations with exponential backoff
+  - Consolidate GENA subscription sync/cleanup functions for coordinators
+
+- [#32](https://github.com/brew-lab/thaumic-cast/pull/32) [`7848217`](https://github.com/brew-lab/thaumic-cast/commit/784821772da8e0b1501653cd680f157d881b0a0e) Thanks [@skezo](https://github.com/skezo)! - ### Documentation
+  - **Onboarding Firewall Step**: Update copy to explain mDNS multicast addresses (224._) that may appear in third-party firewalls like Little Snitch. Users were confused when seeing connections to unfamiliar 224._ addresses during speaker discovery.
+
+- Updated dependencies [[`f633dda`](https://github.com/brew-lab/thaumic-cast/commit/f633dda4f4146a81a908c14a6b79dfc44ca6f674)]:
+  - @thaumic-cast/ui@0.0.5
+
 ## 0.8.2
 
 ### Patch Changes
