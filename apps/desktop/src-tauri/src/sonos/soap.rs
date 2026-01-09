@@ -36,6 +36,29 @@ pub enum SoapError {
     Parse,
 }
 
+impl SoapError {
+    /// Returns true if this error is transient and the operation should be retried.
+    ///
+    /// Transient Sonos SOAP fault codes:
+    /// - 701: Transition not available (device changing states)
+    /// - 714: Illegal seek target (previous source still loading)
+    /// - 716: Resource not found (device busy initializing)
+    #[must_use]
+    pub fn is_transient(&self) -> bool {
+        match self {
+            SoapError::Fault(msg) => {
+                msg.contains("701")
+                    || msg.contains("714")
+                    || msg.contains("716")
+                    || msg.to_lowercase().contains("transition")
+            }
+            // Network timeouts can also be transient
+            SoapError::Http(e) => e.is_timeout(),
+            _ => false,
+        }
+    }
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // SOAP Request/Response
 // ─────────────────────────────────────────────────────────────────────────────
