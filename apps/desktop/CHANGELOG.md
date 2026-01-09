@@ -1,5 +1,12 @@
 # @thaumic-cast/desktop
 
+## 0.8.4
+
+### Patch Changes
+
+- [#33](https://github.com/brew-lab/thaumic-cast/pull/33) [`a15f0f9`](https://github.com/brew-lab/thaumic-cast/commit/a15f0f9f028a36efcdf66e6c91c3545cc43473d2) Thanks [@skezo](https://github.com/skezo)! - ### Improvements
+  - **System Tray**: Add macOS template icons that automatically adapt to light/dark menu bar. The tray icon now switches between idle and active states based on streaming activity.
+
 ## 0.8.3
 
 ### Patch Changes
