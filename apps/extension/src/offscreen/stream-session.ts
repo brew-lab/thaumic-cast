@@ -107,8 +107,8 @@ export class StreamSession {
   private totalConsumerDrops = 0;
   private totalUnderflows = 0;
 
-  /** Last time we logged healthy diagnostics (for rate-limiting). */
-  private lastHealthyStatsLogTime = 0;
+  /** Last time we logged diagnostics (for rate-limiting when healthy). */
+  private lastDiagLogTime = 0;
 
   /** Callback when worker disconnects (for cleanup coordination). */
   private onDisconnected?: () => void;
@@ -435,7 +435,7 @@ export class StreamSession {
             msg.catchUpDroppedSamples > 0 ||
             msg.consumerDroppedFrames > 0;
           const now = performance.now();
-          const timeSinceLastLog = now - this.lastHealthyStatsLogTime;
+          const timeSinceLastLog = now - this.lastDiagLogTime;
 
           if (hasIssues || timeSinceLastLog >= HEALTHY_STATS_LOG_INTERVAL) {
             log.info(
@@ -444,7 +444,7 @@ export class StreamSession {
                 `underflows=${msg.underflows} producerDrops=${msg.producerDroppedSamples} ` +
                 `catchUpDrops=${msg.catchUpDroppedSamples} consumerDrops=${msg.consumerDroppedFrames}`,
             );
-            this.lastHealthyStatsLogTime = now;
+            this.lastDiagLogTime = now;
           }
           break;
         }
