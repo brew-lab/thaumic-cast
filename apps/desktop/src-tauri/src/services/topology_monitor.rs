@@ -294,10 +294,7 @@ impl TopologyMonitor {
         }
 
         if speakers.is_empty() {
-            log::warn!(
-                "[TopologyMonitor] No speakers found (speakers_discovered={})",
-                self.speakers_discovered.load(Ordering::Relaxed)
-            );
+            log::warn!("[TopologyMonitor] No speakers found");
 
             // Clear groups and notify frontend so UI updates
             {
@@ -314,11 +311,15 @@ impl TopologyMonitor {
                 timestamp,
             });
 
-            // Reset health to OK - no speakers isn't a network issue, just empty state
-            self.set_network_health(NetworkHealth::Ok, None);
+            // No speakers found - warn about potential VPN/firewall issues
+            self.set_network_health(
+                NetworkHealth::Degraded,
+                Some("speakers_unreachable".to_string()),
+            );
 
-            // Reset discovery flag since we have no speakers to track
+            // Reset discovery flag since we have no speakers
             self.speakers_discovered.store(false, Ordering::Relaxed);
+
             return Err(ThaumicError::SpeakerNotFound(
                 "no speakers discovered".to_string(),
             ));
