@@ -49,14 +49,14 @@ impl Default for NetworkHealthState {
 
 /// Configuration for the topology monitor.
 pub struct TopologyMonitorConfig {
+    /// Interval between automatic topology refreshes (seconds).
+    pub topology_refresh_interval_secs: u64,
     /// Network configuration (port, local IP).
     pub network: NetworkContext,
     /// Notifier for manual refresh requests.
     pub refresh_notify: Arc<Notify>,
     /// Shared HTTP client for probing manual speaker IPs.
     pub http_client: Client,
-    /// Interval between automatic topology refreshes (seconds).
-    pub topology_refresh_interval_secs: u64,
 }
 
 /// Monitors Sonos network topology and manages GENA subscriptions.

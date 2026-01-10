@@ -60,10 +60,10 @@ impl DiscoveryService {
             Arc::clone(&sonos_state),
             Arc::clone(&emitter),
             TopologyMonitorConfig {
+                topology_refresh_interval_secs,
                 network,
                 refresh_notify: Arc::clone(&refresh_notify),
                 http_client,
-                topology_refresh_interval_secs,
             },
         ));
 
