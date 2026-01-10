@@ -47,9 +47,7 @@ export function SpeakerMultiSelect<T extends SpeakerGroupLike>({
   label,
   getGroupDisplayName,
 }: SpeakerMultiSelectProps<T>) {
-  const toggleSpeaker = (ip: string, isDisabled: boolean) => {
-    if (isDisabled) return;
-
+  const toggleSpeaker = (ip: string) => {
     if (selectedIps.includes(ip)) {
       onSelectionChange(selectedIps.filter((selectedIp) => selectedIp !== ip));
     } else {
@@ -57,46 +55,33 @@ export function SpeakerMultiSelect<T extends SpeakerGroupLike>({
     }
   };
 
-  const handleKeyDown = (e: KeyboardEvent, ip: string, isDisabled: boolean) => {
-    if (e.key === ' ' || e.key === 'Enter') {
-      e.preventDefault();
-      toggleSpeaker(ip, isDisabled);
-    }
-  };
-
   return (
-    <div className={styles.container}>
-      {label && <span className={styles.label}>{label}</span>}
-      <ul className={styles.list} role="listbox" aria-multiselectable="true" aria-label={label}>
+    <fieldset className={styles.container} disabled={disabled}>
+      {label && <legend className={styles.label}>{label}</legend>}
+      <ul className={styles.list}>
         {groups.map((group) => {
           const isSelected = selectedIps.includes(group.coordinatorIp);
-          const isDisabled = disabled;
+          const displayName = getGroupDisplayName(group);
           return (
-            <li
-              key={group.coordinatorIp}
-              role="option"
-              aria-selected={isSelected}
-              aria-disabled={isDisabled}
-              tabIndex={isDisabled ? -1 : 0}
-              className={[styles.item, isSelected && styles.selected, isDisabled && styles.disabled]
-                .filter(Boolean)
-                .join(' ')}
-              onClick={() => toggleSpeaker(group.coordinatorIp, isDisabled)}
-              onKeyDown={(e) => handleKeyDown(e, group.coordinatorIp, isDisabled)}
-            >
-              <input
-                type="checkbox"
-                checked={isSelected}
-                disabled={isDisabled}
-                tabIndex={-1}
-                className={styles.checkbox}
-                aria-hidden="true"
-              />
-              <span className={styles.name}>{getGroupDisplayName(group)}</span>
+            <li key={group.coordinatorIp} className={styles.itemWrapper}>
+              <label
+                className={[styles.item, isSelected && styles.selected, disabled && styles.disabled]
+                  .filter(Boolean)
+                  .join(' ')}
+              >
+                <input
+                  type="checkbox"
+                  checked={isSelected}
+                  disabled={disabled}
+                  onChange={() => toggleSpeaker(group.coordinatorIp)}
+                  className={styles.checkbox}
+                />
+                <span className={styles.name}>{displayName}</span>
+              </label>
             </li>
           );
         })}
       </ul>
-    </div>
+    </fieldset>
   );
 }

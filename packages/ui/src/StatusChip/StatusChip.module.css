@@ -12,6 +12,10 @@
   color: var(--status-chip-text);
 }
 
+.icon {
+  flex-shrink: 0;
+}
+
 .waiting {
   --status-chip-bg: var(--color-surface-hover);
   --status-chip-text: var(--color-text-muted);

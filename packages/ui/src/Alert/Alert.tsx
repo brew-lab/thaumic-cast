@@ -50,7 +50,7 @@ export function Alert({ children, variant = 'warning', className, onDismiss }: A
       <div className={styles.content}>{children}</div>
       {onDismiss && (
         <IconButton size="sm" className={styles.dismiss} onClick={onDismiss} aria-label="Dismiss">
-          <X size={14} />
+          <X size={14} aria-hidden="true" />
         </IconButton>
       )}
     </div>

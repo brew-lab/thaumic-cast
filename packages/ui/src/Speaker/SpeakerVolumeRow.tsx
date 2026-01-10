@@ -15,12 +15,12 @@ interface SpeakerVolumeRowProps {
   onVolumeChange: (volume: number) => void;
   /** Callback when mute is toggled */
   onMuteToggle: () => void;
-  /** Label for mute button when unmuted */
-  muteLabel?: string;
-  /** Label for mute button when muted */
-  unmuteLabel?: string;
-  /** Accessible label for the volume slider */
-  volumeLabel?: string;
+  /** Accessible label for mute button. Should include speaker name for context (e.g., "Mute Living Room"). */
+  muteLabel: string;
+  /** Accessible label for unmute button. Should include speaker name for context (e.g., "Unmute Living Room"). */
+  unmuteLabel: string;
+  /** Accessible label for the volume slider. Should include speaker name for context (e.g., "Living Room volume"). */
+  volumeLabel: string;
   /** Optional status indicator element */
   statusIndicator?: JSX.Element;
   /** Additional CSS class */
@@ -36,9 +36,9 @@ interface SpeakerVolumeRowProps {
  * @param props.muted - Whether muted
  * @param props.onVolumeChange - Volume change callback
  * @param props.onMuteToggle - Mute toggle callback
- * @param props.muteLabel - Label for mute action
- * @param props.unmuteLabel - Label for unmute action
- * @param props.volumeLabel - Accessible label for the volume slider
+ * @param props.muteLabel - Accessible label for mute button (include speaker name)
+ * @param props.unmuteLabel - Accessible label for unmute button (include speaker name)
+ * @param props.volumeLabel - Accessible label for volume slider (include speaker name)
  * @param props.statusIndicator - Optional status indicator element
  * @param props.className - Additional CSS class
  * @returns The rendered SpeakerVolumeRow component
@@ -50,14 +50,19 @@ export function SpeakerVolumeRow({
   muted,
   onVolumeChange,
   onMuteToggle,
-  muteLabel = 'Mute',
-  unmuteLabel = 'Unmute',
-  volumeLabel = 'Volume',
+  muteLabel,
+  unmuteLabel,
+  volumeLabel,
   statusIndicator,
   className,
 }: SpeakerVolumeRowProps): JSX.Element {
   return (
-    <div className={[styles.row, className].filter(Boolean).join(' ')} data-speaker-ip={speakerIp}>
+    <div
+      className={[styles.row, className].filter(Boolean).join(' ')}
+      data-speaker-ip={speakerIp}
+      role="group"
+      aria-label={speakerName}
+    >
       <div className={styles.header}>
         <span className={styles.name}>{speakerName}</span>
         {statusIndicator}

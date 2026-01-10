@@ -127,20 +127,23 @@ export function CurrentTabCard<T extends SpeakerGroupLike>({
           {/* Per-speaker Volume Controls */}
           {showVolumeControls && selectedIps.length > 0 && (
             <div className={styles.speakerRows}>
-              {selectedIps.map((ip) => (
-                <SpeakerVolumeRow
-                  key={ip}
-                  speakerName={getSpeakerName(ip)}
-                  speakerIp={ip}
-                  volume={getVolume(ip)}
-                  muted={isMuted(ip)}
-                  onVolumeChange={(vol) => onVolumeChange(ip, vol)}
-                  onMuteToggle={() => onMuteToggle(ip)}
-                  muteLabel={t('mute')}
-                  unmuteLabel={t('unmute')}
-                  volumeLabel={t('volume')}
-                />
-              ))}
+              {selectedIps.map((ip) => {
+                const name = getSpeakerName(ip);
+                return (
+                  <SpeakerVolumeRow
+                    key={ip}
+                    speakerName={name}
+                    speakerIp={ip}
+                    volume={getVolume(ip)}
+                    muted={isMuted(ip)}
+                    onVolumeChange={(vol) => onVolumeChange(ip, vol)}
+                    onMuteToggle={() => onMuteToggle(ip)}
+                    muteLabel={t('mute_speaker', { name })}
+                    unmuteLabel={t('unmute_speaker', { name })}
+                    volumeLabel={t('volume_speaker', { name })}
+                  />
+                );
+              })}
             </div>
           )}
 

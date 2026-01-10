@@ -251,9 +251,9 @@ export function ActiveCastCard({
                 muted={isMuted(ip)}
                 onVolumeChange={(vol) => onVolumeChange(ip, vol)}
                 onMuteToggle={() => onMuteToggle(ip)}
-                muteLabel={t('mute')}
-                unmuteLabel={t('unmute')}
-                volumeLabel={t('volume')}
+                muteLabel={t('mute_speaker', { name })}
+                unmuteLabel={t('unmute_speaker', { name })}
+                volumeLabel={t('volume_speaker', { name })}
                 statusIndicator={
                   transportState ? <TransportIcon state={transportState} size={10} /> : undefined
                 }

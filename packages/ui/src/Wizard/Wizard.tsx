@@ -84,7 +84,7 @@ export function Wizard({
         className={[styles.wizard, styles.compact].join(' ')}
         role="dialog"
         aria-modal="true"
-        aria-label="Setup wizard"
+        aria-labelledby="wizard-title"
       >
         <div className={styles.header}>
           <div className={styles.back}>
@@ -126,7 +126,7 @@ export function Wizard({
   }
 
   return (
-    <div className={styles.wizard} role="dialog" aria-modal="true" aria-label="Setup wizard">
+    <div className={styles.wizard} role="dialog" aria-modal="true" aria-labelledby="wizard-title">
       <StepIndicator
         current={currentStep}
         total={totalSteps}

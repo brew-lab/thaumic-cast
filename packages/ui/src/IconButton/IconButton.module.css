@@ -12,6 +12,7 @@
 .icon-btn:disabled {
   opacity: 0.5;
   cursor: not-allowed;
+  filter: grayscale(30%);
 }
 
 .icon-btn:focus-visible {

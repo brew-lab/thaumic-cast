@@ -1,5 +1,5 @@
 import type { ComponentChildren } from 'preact';
-import { useState, useCallback } from 'preact/hooks';
+import { useState, useCallback, useId } from 'preact/hooks';
 import { ChevronDown, ChevronUp } from 'lucide-preact';
 import styles from './Disclosure.module.css';
 
@@ -47,6 +47,8 @@ export function Disclosure({
   onExpandedChange,
 }: DisclosureProps): preact.JSX.Element {
   const [internalExpanded, setInternalExpanded] = useState(defaultExpanded);
+  const contentId = useId();
+  const hintId = useId();
 
   const isControlled = controlledExpanded !== undefined;
   const expanded = isControlled ? controlledExpanded : internalExpanded;
@@ -68,14 +70,24 @@ export function Disclosure({
         className={styles.toggle}
         onClick={handleToggle}
         aria-expanded={expanded}
+        aria-controls={expanded ? contentId : undefined}
+        aria-describedby={expanded && hint ? hintId : undefined}
       >
         <span className={styles.label}>{label}</span>
-        <ChevronIcon size={16} className={styles.chevron} />
+        <ChevronIcon size={16} className={styles.chevron} aria-hidden="true" />
       </button>
 
-      {expanded && hint && <p className={styles.hint}>{hint}</p>}
+      {expanded && hint && (
+        <p id={hintId} className={styles.hint}>
+          {hint}
+        </p>
+      )}
 
-      {expanded && <div className={styles.content}>{children}</div>}
+      {expanded && (
+        <div id={contentId} className={styles.content}>
+          {children}
+        </div>
+      )}
     </div>
   );
 }

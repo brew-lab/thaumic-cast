@@ -42,8 +42,11 @@
   "network.speakers_not_responding": "The speakers have been located but appear to be giving us the silent treatment. A VPN or firewall is the likely culprit.",
 
   "volume": "Volume",
+  "volume_speaker": "{{name}} volume",
   "mute": "Mute",
+  "mute_speaker": "Mute {{name}}",
   "unmute": "Unmute",
+  "unmute_speaker": "Unmute {{name}}",
   "play": "Play",
   "pause": "Pause",
   "previous_track": "Previous track",
