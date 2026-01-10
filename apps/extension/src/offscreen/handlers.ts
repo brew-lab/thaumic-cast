@@ -155,7 +155,7 @@ export function setupMessageHandlers(): void {
     // ─────────────────────────────────────────────────────────────────────────
 
     if (msg.type === 'START_CAPTURE') {
-      const { tabId, mediaStreamId, encoderConfig, baseUrl } =
+      const { tabId, mediaStreamId, encoderConfig, baseUrl, keepTabAudible } =
         msg.payload as StartCaptureMessage['payload'];
 
       // Prevent duplicate sessions for the same tab
@@ -193,7 +193,9 @@ export function setupMessageHandlers(): void {
             chrome.runtime.sendMessage({ type: 'SESSION_DISCONNECTED', tabId }).catch(noop);
           };
 
-          const session = new StreamSession(stream, encoderConfig, baseUrl, onDisconnected);
+          const session = new StreamSession(stream, encoderConfig, baseUrl, onDisconnected, {
+            keepTabAudible,
+          });
           try {
             await session.init();
             activeSessions.set(tabId, session);

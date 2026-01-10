@@ -5,24 +5,29 @@ import { Card } from '@thaumic-cast/ui';
 import type { ExtensionSettings } from '../../lib/settings';
 import styles from '../Options.module.css';
 
-interface VideoSyncSectionProps {
+interface AdvancedSectionProps {
   settings: ExtensionSettings;
   onUpdate: (partial: Partial<ExtensionSettings>) => Promise<void>;
 }
 
 /**
- * Video sync settings section for enabling/disabling video sync controls.
+ * Advanced settings section for experimental features.
+ * Includes video sync and keep tab audible options.
  * @param props - Component props
  * @param props.settings - Current extension settings
  * @param props.onUpdate - Callback to update settings
- * @returns The video sync section element
+ * @returns The advanced section element
  */
-export function VideoSyncSection({ settings, onUpdate }: VideoSyncSectionProps): JSX.Element {
+export function AdvancedSection({ settings, onUpdate }: AdvancedSectionProps): JSX.Element {
   const { t } = useTranslation();
 
-  const handleToggle = useCallback(async () => {
+  const handleVideoSyncToggle = useCallback(async () => {
     await onUpdate({ videoSyncEnabled: !settings.videoSyncEnabled });
   }, [settings.videoSyncEnabled, onUpdate]);
+
+  const handleKeepTabAudibleToggle = useCallback(async () => {
+    await onUpdate({ keepTabAudible: !settings.keepTabAudible });
+  }, [settings.keepTabAudible, onUpdate]);
 
   return (
     <Card title={t('advanced_section_title')}>
@@ -32,13 +37,29 @@ export function VideoSyncSection({ settings, onUpdate }: VideoSyncSectionProps):
             type="checkbox"
             className={styles.radioInput}
             checked={settings.videoSyncEnabled}
-            onChange={handleToggle}
+            onChange={handleVideoSyncToggle}
             aria-describedby="video-sync-desc"
           />
           <div className={styles.radioContent}>
             <span className={styles.radioLabel}>{t('video_sync_enable')}</span>
             <span id="video-sync-desc" className={styles.radioDesc}>
               {t('video_sync_description')}
+            </span>
+          </div>
+        </label>
+
+        <label className={styles.radioOption}>
+          <input
+            type="checkbox"
+            className={styles.radioInput}
+            checked={settings.keepTabAudible}
+            onChange={handleKeepTabAudibleToggle}
+            aria-describedby="keep-tab-audible-desc"
+          />
+          <div className={styles.radioContent}>
+            <span className={styles.radioLabel}>{t('keep_tab_audible_enable')}</span>
+            <span id="keep-tab-audible-desc" className={styles.radioDesc}>
+              {t('keep_tab_audible_description')}
             </span>
           </div>
         </label>

@@ -159,6 +159,8 @@
   "advanced_section_title": "Advanced",
   "video_sync_enable": "Video sync controls",
   "video_sync_description": "For when the lips move but the words arrive fashionably late",
+  "keep_tab_audible_enable": "Keep the tab awake",
+  "keep_tab_audible_description": "A whisper of sound to keep Chrome from getting ideas about throttling",
   "video_sync": "Video Sync",
   "video_sync_toggle": "Sync video to audio",
   "video_sync_status_waiting": "Waiting",

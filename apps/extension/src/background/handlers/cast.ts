@@ -123,6 +123,7 @@ export async function handleStartCast(
       mediaStreamId,
       encoderConfig,
       app.url,
+      { keepTabAudible: settings.keepTabAudible },
     );
     if (!response) throw new Error('error_offscreen_unavailable');
 

@@ -131,6 +131,8 @@ export interface StartCaptureMessage {
     mediaStreamId: string;
     encoderConfig: EncoderConfig;
     baseUrl: string;
+    /** Play audio at very low volume to prevent Chrome throttling */
+    keepTabAudible?: boolean;
   };
 }
 

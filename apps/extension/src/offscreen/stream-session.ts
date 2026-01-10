@@ -39,6 +39,9 @@ const STALL_LOG_BACKOFF_INTERVAL = 5000;
 /** Interval for logging healthy stats as a heartbeat (ms). */
 const HEALTHY_STATS_LOG_INTERVAL = 30000;
 
+/** Minimum gain value to keep Chrome's audio detection active without audible sound. */
+const KEEP_AUDIBLE_GAIN = 0.01;
+
 /**
  * Manages an active capture session from a browser tab.
  *
@@ -56,7 +59,7 @@ export class StreamSession {
   private ringBuffer: SharedArrayBuffer;
   private sourceNode: MediaStreamAudioSourceNode | null = null;
   private workletNode: AudioWorkletNode | null = null;
-  private silentGainNode: GainNode | null = null;
+  private outputGainNode: GainNode | null = null;
 
   /** Last time we received a heartbeat from the worklet. */
   private lastWorkletHeartbeat = 0;
@@ -113,20 +116,27 @@ export class StreamSession {
   /** Callback when worker disconnects (for cleanup coordination). */
   private onDisconnected?: () => void;
 
+  /** Whether to play audio at low volume to prevent Chrome throttling. */
+  private keepTabAudible: boolean;
+
   /**
    * Creates a new StreamSession.
    * @param mediaStream - The captured media stream
    * @param encoderConfig - Audio encoder configuration
    * @param baseUrl - Desktop app base URL
    * @param onDisconnected - Optional callback when worker WebSocket disconnects
+   * @param options - Additional session options
+   * @param options.keepTabAudible - Play audio at low volume to prevent Chrome throttling
    */
   constructor(
     private mediaStream: MediaStream,
     private encoderConfig: EncoderConfig,
     private baseUrl: string,
     onDisconnected?: () => void,
+    options?: { keepTabAudible?: boolean },
   ) {
     this.onDisconnected = onDisconnected;
+    this.keepTabAudible = options?.keepTabAudible ?? false;
     this.audioContext = new AudioContext({
       sampleRate: encoderConfig.sampleRate,
       latencyHint: 'playback',
@@ -218,11 +228,17 @@ export class StreamSession {
 
     this.sourceNode.connect(this.workletNode);
 
-    // Connect to destination through a silent gain node to ensure audio processing
-    this.silentGainNode = this.audioContext.createGain();
-    this.silentGainNode.gain.value = 0;
-    this.workletNode.connect(this.silentGainNode);
-    this.silentGainNode.connect(this.audioContext.destination);
+    // Connect to destination through a gain node to ensure audio processing
+    // When keepTabAudible is enabled, play at very low volume to prevent Chrome throttling
+    // Chrome exempts tabs that are "playing audio" from background throttling
+    this.outputGainNode = this.audioContext.createGain();
+    this.outputGainNode.gain.value = this.keepTabAudible ? KEEP_AUDIBLE_GAIN : 0;
+    this.workletNode.connect(this.outputGainNode);
+    this.outputGainNode.connect(this.audioContext.destination);
+
+    if (this.keepTabAudible) {
+      log.info('Keep tab audible enabled - playing audio at low volume to prevent throttling');
+    }
 
     // Monitor AudioContext state changes (suspension, interruption, etc.)
     this.audioContext.onstatechange = () => {
@@ -499,7 +515,7 @@ export class StreamSession {
 
     this.sourceNode?.disconnect();
     this.workletNode?.disconnect();
-    this.silentGainNode?.disconnect();
+    this.outputGainNode?.disconnect();
     this.audioContext.close().catch(noop);
     this.mediaStream.getTracks().forEach((t) => t.stop());
   }
