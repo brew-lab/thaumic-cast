@@ -1,5 +1,6 @@
 export default {
   extends: ['stylelint-config-standard'],
+  ignoreFiles: ['**/dist/**', '**/node_modules/**', '**/target/**', '**/old/**'],
   rules: {
     // Allow OKLCH hue values without deg suffix (both are valid)
     'hue-degree-notation': 'number',
@@ -39,10 +40,10 @@ export default {
     'at-rule-no-unknown': [true, { ignoreAtRules: ['tailwind', 'apply', 'layer'] }],
     // Allow CSS Modules pseudo-classes
     'selector-pseudo-class-no-unknown': [true, { ignorePseudoClasses: ['global', 'local'] }],
-    // Consistent naming
+    // Consistent naming (kebab-case)
     'selector-class-pattern': [
-      '^[a-z][a-zA-Z0-9]*$',
-      { message: 'Use camelCase for class names (CSS Modules)' },
+      '^[a-z][a-z0-9]*(-[a-z0-9]+)*$',
+      { message: 'Use kebab-case for class names' },
     ],
   },
 };

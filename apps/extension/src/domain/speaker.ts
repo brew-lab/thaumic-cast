@@ -90,6 +90,7 @@ export class SpeakerGroup {
   /**
    * The coordinator's IP address.
    * Convenience accessor for the most common lookup pattern.
+   * @returns The coordinator's IP address
    */
   get coordinatorIp(): string {
     return this.coordinator.ip;
@@ -97,6 +98,7 @@ export class SpeakerGroup {
 
   /**
    * The number of speakers in the group.
+   * @returns The speaker count
    */
   get size(): number {
     return this.members.length;
@@ -104,6 +106,7 @@ export class SpeakerGroup {
 
   /**
    * Whether this is a stereo pair or bonded group (multiple physical speakers).
+   * @returns True if the group has multiple speakers
    */
   get isMultiSpeaker(): boolean {
     return this.members.length > 1;
@@ -193,6 +196,7 @@ export class SpeakerGroupCollection {
 
   /**
    * The number of groups in the collection.
+   * @returns The group count
    */
   get size(): number {
     return this.groups.length;
@@ -200,6 +204,7 @@ export class SpeakerGroupCollection {
 
   /**
    * Whether the collection is empty.
+   * @returns True if no groups exist
    */
   get isEmpty(): boolean {
     return this.groups.length === 0;
@@ -243,6 +248,7 @@ export class SpeakerGroupCollection {
 
   /**
    * Iterates over all groups.
+   * @returns An iterator over all speaker groups
    */
   [Symbol.iterator](): Iterator<SpeakerGroup> {
     return this.groups[Symbol.iterator]();

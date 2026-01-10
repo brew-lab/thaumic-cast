@@ -171,15 +171,15 @@ export function ActiveCastCard({
   return (
     <Card
       noPadding
-      className={`${styles.card} ${stagedImage ? styles.hasArtwork : ''}`}
+      className={`${styles.card} ${stagedImage ? styles['has-artwork'] : ''}`}
       style={cardStyle as CSSProperties}
     >
-      <div className={styles.cardInner}>
+      <div className={styles['card-inner']}>
         <div className={styles.header}>
           {favicon && <img src={favicon} alt="" className={styles.favicon} loading="lazy" />}
-          <span className={styles.headerSpacer} />
+          <span className={styles['header-spacer']} />
           <IconButton
-            className={styles.skipBtn}
+            className={styles['skip-btn']}
             size="sm"
             onClick={onStop}
             aria-label={t('stop_cast')}
@@ -189,10 +189,10 @@ export function ActiveCastCard({
           </IconButton>
         </div>
 
-        <div className={styles.mainRow}>
+        <div className={styles['main-row']}>
           {canPrev && onControl && (
             <IconButton
-              className={styles.skipBtn}
+              className={styles['skip-btn']}
               onClick={() => handleControl('previoustrack')}
               aria-label={t('previous_track')}
               title={t('previous_track')}
@@ -227,7 +227,7 @@ export function ActiveCastCard({
 
           {canNext && onControl && (
             <IconButton
-              className={styles.skipBtn}
+              className={styles['skip-btn']}
               onClick={() => handleControl('nexttrack')}
               aria-label={t('next_track')}
               title={t('next_track')}
@@ -238,7 +238,7 @@ export function ActiveCastCard({
         </div>
 
         {/* Per-speaker volume controls */}
-        <div className={styles.speakerRows}>
+        <div className={styles['speaker-rows']}>
           {cast.speakerIps.map((ip, idx) => {
             const name = cast.speakerNames[idx] ?? ip;
             const transportState = getTransportState?.(ip);
@@ -264,9 +264,9 @@ export function ActiveCastCard({
 
         {/* Video sync controls (conditional on global setting) */}
         {showVideoSync && (
-          <div className={styles.videoSyncSection}>
-            <div className={styles.videoSyncHeader}>
-              <span className={styles.videoSyncLabel}>{t('video_sync')}</span>
+          <div className={styles['video-sync-section']}>
+            <div className={styles['video-sync-header']}>
+              <span className={styles['video-sync-label']}>{t('video_sync')}</span>
               <ToggleSwitch
                 checked={videoSync.enabled}
                 onChange={videoSync.setEnabled}
@@ -305,9 +305,9 @@ export function ActiveCastCard({
             </div>
 
             {videoSync.enabled && (
-              <div className={styles.videoSyncControls}>
-                <div className={styles.videoSyncTrim}>
-                  <label htmlFor="trim-slider" className={styles.videoSyncTrimLabel}>
+              <div className={styles['video-sync-controls']}>
+                <div className={styles['video-sync-trim']}>
+                  <label htmlFor="trim-slider" className={styles['video-sync-trim-label']}>
                     {t('video_sync_trim')}
                   </label>
                   <input
@@ -320,10 +320,10 @@ export function ActiveCastCard({
                     onChange={(e) =>
                       videoSync.setTrim(Number((e.target as HTMLInputElement).value))
                     }
-                    className={styles.videoSyncTrimSlider}
+                    className={styles['video-sync-trim-slider']}
                     aria-valuetext={t('video_sync_delay_ms', { delay: videoSync.trimMs })}
                   />
-                  <span className={styles.videoSyncTrimValue}>
+                  <span className={styles['video-sync-trim-value']}>
                     {videoSync.trimMs > 0 ? '+' : ''}
                     {videoSync.trimMs}ms
                   </span>

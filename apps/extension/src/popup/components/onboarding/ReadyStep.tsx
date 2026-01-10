@@ -21,9 +21,11 @@ export function ReadyStep(): preact.JSX.Element {
       subtitle={t('onboarding.ready.subtitle')}
       icon={Zap}
     >
-      <p className={styles.introText}>{t('onboarding.ready.intro', { maxStreams: MAX_STREAMS })}</p>
+      <p className={styles['intro-text']}>
+        {t('onboarding.ready.intro', { maxStreams: MAX_STREAMS })}
+      </p>
 
-      <p className={styles.performanceText}>{t('onboarding.ready.performance_body')}</p>
+      <p className={styles['performance-text']}>{t('onboarding.ready.performance_body')}</p>
 
       <Alert variant="warning">{t('onboarding.ready.battery_warning')}</Alert>
     </WizardStep>

@@ -118,6 +118,7 @@ class PersistenceManager {
   /**
    * Returns all registered storage keys.
    * Useful for debugging.
+   * @returns Array of registered storage keys
    */
   get registeredKeys(): string[] {
     return Array.from(this.entries.keys());
@@ -125,6 +126,7 @@ class PersistenceManager {
 
   /**
    * Returns the count of registered storages.
+   * @returns The number of registered storages
    */
   get count(): number {
     return this.entries.size;

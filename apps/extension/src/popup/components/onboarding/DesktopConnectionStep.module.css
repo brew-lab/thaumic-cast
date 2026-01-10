@@ -1,4 +1,4 @@
-.downloadPrompt {
+.download-prompt {
   margin: 0;
   color: var(--color-text-muted);
   font-size: 0.9rem;
@@ -11,13 +11,13 @@
 }
 
 /* Manual configuration form - vertical/intrinsic layout */
-.manualForm {
+.manual-form {
   display: flex;
   flex-direction: column;
   gap: var(--space-sm);
 }
 
-.urlInput {
+.url-input {
   padding-block: var(--space-sm);
   padding-inline: var(--space-sm);
   background: var(--input-bg);
@@ -27,17 +27,17 @@
   font-size: 0.875rem;
 }
 
-.urlInput:focus {
+.url-input:focus {
   outline: 2px solid var(--input-border-focus);
   outline-offset: 2px;
 }
 
-.urlInput::placeholder {
+.url-input::placeholder {
   color: var(--color-text-muted);
   opacity: 0.7;
 }
 
-.testError {
+.test-error {
   display: inline-flex;
   align-items: center;
   gap: var(--space-xs);
@@ -45,7 +45,7 @@
   color: var(--color-error);
 }
 
-.errorDot {
+.error-dot {
   inline-size: 0.5rem;
   block-size: 0.5rem;
   border-radius: 50%;

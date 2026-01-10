@@ -174,9 +174,9 @@ function MainPopup(): JSX.Element {
    * @returns The appropriate CSS class name
    */
   const getStatusClass = useCallback(() => {
-    if (connectionChecking) return styles.statusChecking;
-    if (connectionError || !wsConnected) return styles.statusDisconnected;
-    return styles.statusConnected;
+    if (connectionChecking) return styles['status-checking'];
+    if (connectionError || !wsConnected) return styles['status-disconnected'];
+    return styles['status-connected'];
   }, [connectionChecking, connectionError, wsConnected]);
 
   /**
@@ -200,7 +200,7 @@ function MainPopup(): JSX.Element {
   return (
     <div className={styles.container}>
       <div className={styles.header}>
-        <div className={styles.titleGroup}>
+        <div className={styles['title-group']}>
           <Radio size={20} color="var(--color-primary)" />
           <h1 className={styles.title}>{t('app_name')}</h1>
         </div>

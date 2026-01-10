@@ -1,4 +1,4 @@
-.volumeControl {
+.volume-control {
   display: flex;
   align-items: center;
   gap: var(--space-sm);
@@ -8,7 +8,7 @@
   border-radius: var(--radius-sm);
 }
 
-.muteBtn.muted {
+.mute-btn.muted {
   opacity: 0.5;
 }
 

@@ -94,7 +94,7 @@ export function Speakers() {
   return (
     <div className={styles.speakers}>
       <div className={styles.header}>
-        <div className={styles.headerLeft}>
+        <div className={styles['header-left']}>
           <h2 className={styles.title}>{t('nav.speakers')}</h2>
           <span className={styles.summary}>
             {t('speakers.summary', { speakers: speakerCount, streams: streamCount })}
@@ -107,7 +107,7 @@ export function Speakers() {
             loadingLabel={t('speakers.scanning')}
             icon={RefreshCw}
             variant="secondary"
-            className={styles.controlButton}
+            className={styles['control-button']}
           />
           <ActionButton
             action={stopAll}
@@ -115,13 +115,13 @@ export function Speakers() {
             loadingLabel={t('speakers.stopping')}
             icon={Square}
             variant="primary"
-            className={styles.controlButton}
+            className={styles['control-button']}
           />
         </div>
       </div>
 
       {networkHealth.value.health === 'degraded' && (
-        <Alert variant="warning" className={styles.networkAlert}>
+        <Alert variant="warning" className={styles['network-alert']}>
           {t(`network.${networkHealth.value.reason}`, {
             defaultValue: t('network.degraded_warning'),
           })}
@@ -129,9 +129,9 @@ export function Speakers() {
       )}
 
       {groupsWithCoordinators.length === 0 ? (
-        <div className={styles.emptyState}>
-          <p className={styles.emptyTitle}>{t('speakers.none')}</p>
-          <p className={styles.emptyDescription}>{t('speakers.scan_hint')}</p>
+        <div className={styles['empty-state']}>
+          <p className={styles['empty-title']}>{t('speakers.none')}</p>
+          <p className={styles['empty-description']}>{t('speakers.scan_hint')}</p>
         </div>
       ) : (
         <div className={styles.grid}>

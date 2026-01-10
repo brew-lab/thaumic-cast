@@ -39,24 +39,24 @@ export function Server() {
 
       {/* Status Section */}
       <Card noPadding className={styles.section}>
-        <div className={styles.statusHeader}>
-          <div className={styles.statusIndicator}>
+        <div className={styles['status-header']}>
+          <div className={styles['status-indicator']}>
             <Circle size={10} fill="var(--color-success)" color="var(--color-success)" />
             <span>{t('server.running')}</span>
           </div>
         </div>
 
-        <div className={styles.statusGrid}>
-          <div className={styles.statusItem}>
-            <span className={styles.statusLabel}>{t('server.address')}</span>
-            <div className={styles.addressRow}>
-              <code className={styles.statusValue}>
+        <div className={styles['status-grid']}>
+          <div className={styles['status-item']}>
+            <span className={styles['status-label']}>{t('server.address')}</span>
+            <div className={styles['address-row']}>
+              <code className={styles['status-value']}>
                 {stats.value ? `${stats.value.localIp}:${stats.value.port}` : '---'}
               </code>
               <Button
                 variant="secondary"
                 onClick={copyAddress}
-                className={styles.copyButton}
+                className={styles['copy-button']}
                 title={t('server.copy_address')}
               >
                 {copied ? <Check size={14} color="var(--color-success)" /> : <Copy size={14} />}
@@ -64,27 +64,29 @@ export function Server() {
             </div>
           </div>
 
-          <div className={styles.statusItem}>
-            <span className={styles.statusLabel}>{t('server.clients')}</span>
-            <span className={styles.statusValue}>{stats.value?.connectionCount ?? 0}</span>
+          <div className={styles['status-item']}>
+            <span className={styles['status-label']}>{t('server.clients')}</span>
+            <span className={styles['status-value']}>{stats.value?.connectionCount ?? 0}</span>
           </div>
 
-          <div className={styles.statusItem}>
-            <span className={styles.statusLabel}>{t('server.streams')}</span>
-            <span className={styles.statusValue}>{stats.value?.streamCount ?? 0}</span>
+          <div className={styles['status-item']}>
+            <span className={styles['status-label']}>{t('server.streams')}</span>
+            <span className={styles['status-value']}>{stats.value?.streamCount ?? 0}</span>
           </div>
         </div>
       </Card>
 
       {/* Actions Section */}
       <Card noPadding className={styles.section}>
-        <h3 className={styles.sectionTitle}>{t('server.actions')}</h3>
+        <h3 className={styles['section-title']}>{t('server.actions')}</h3>
 
-        <div className={styles.actionList}>
-          <div className={styles.actionRow}>
-            <div className={styles.actionInfo}>
-              <span className={styles.actionTitle}>{t('server.restart')}</span>
-              <span className={styles.actionDescription}>{t('server.restart_description')}</span>
+        <div className={styles['action-list']}>
+          <div className={styles['action-row']}>
+            <div className={styles['action-info']}>
+              <span className={styles['action-title']}>{t('server.restart')}</span>
+              <span className={styles['action-description']}>
+                {t('server.restart_description')}
+              </span>
             </div>
             <ActionButton
               action={restartServer}
@@ -93,14 +95,16 @@ export function Server() {
               successLabel={t('server.restarting')}
               icon={RefreshCcw}
               variant="secondary"
-              className={styles.actionButton}
+              className={styles['action-button']}
             />
           </div>
 
-          <div className={styles.actionRow}>
-            <div className={styles.actionInfo}>
-              <span className={styles.actionTitle}>{t('server.disconnect_all')}</span>
-              <span className={styles.actionDescription}>{t('server.disconnect_description')}</span>
+          <div className={styles['action-row']}>
+            <div className={styles['action-info']}>
+              <span className={styles['action-title']}>{t('server.disconnect_all')}</span>
+              <span className={styles['action-description']}>
+                {t('server.disconnect_description')}
+              </span>
             </div>
             <ActionButton
               action={async () => {
@@ -110,14 +114,14 @@ export function Server() {
               loadingLabel={t('server.disconnecting')}
               icon={Unplug}
               variant="primary"
-              className={styles.actionButton}
+              className={styles['action-button']}
             />
           </div>
 
-          <div className={styles.actionRow}>
-            <div className={styles.actionInfo}>
-              <span className={styles.actionTitle}>{t('server.stop_streams')}</span>
-              <span className={styles.actionDescription}>
+          <div className={styles['action-row']}>
+            <div className={styles['action-info']}>
+              <span className={styles['action-title']}>{t('server.stop_streams')}</span>
+              <span className={styles['action-description']}>
                 {t('server.stop_streams_description')}
               </span>
             </div>
@@ -127,7 +131,7 @@ export function Server() {
               loadingLabel={t('server.stopping')}
               icon={Square}
               variant="primary"
-              className={styles.actionButton}
+              className={styles['action-button']}
             />
           </div>
         </div>

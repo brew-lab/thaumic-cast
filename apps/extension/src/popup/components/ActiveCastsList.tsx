@@ -58,7 +58,7 @@ export function ActiveCastsList({
 
   if (casts.length === 0) return null;
 
-  const sectionClass = showDivider ? `${styles.section} ${styles.withDivider}` : styles.section;
+  const sectionClass = showDivider ? `${styles.section} ${styles['with-divider']}` : styles.section;
 
   return (
     <section className={sectionClass}>

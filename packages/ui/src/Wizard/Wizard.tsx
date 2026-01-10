@@ -103,19 +103,24 @@ export function Wizard({
         </div>
         <div className={styles.content}>{children}</div>
         <div className={styles.footer}>
-          <div className={styles.footerStart}>
+          <div className={styles['footer-start']}>
             {showSkip && onSkip && (
-              <button type="button" className={styles.skipBtn} onClick={onSkip} aria-label={skip}>
+              <button
+                type="button"
+                className={styles['skip-btn']}
+                onClick={onSkip}
+                aria-label={skip}
+              >
                 {skip}
               </button>
             )}
           </div>
-          <div className={styles.footerEnd}>
+          <div className={styles['footer-end']}>
             <Button
               variant="primary"
               onClick={onNext}
               disabled={nextDisabled}
-              className={styles.footerButton}
+              className={styles['footer-button']}
             >
               {nextLabel}
             </Button>
@@ -137,17 +142,17 @@ export function Wizard({
       <div className={styles.content}>{children}</div>
 
       <div className={styles.footer}>
-        <div className={styles.footerStart}>
+        <div className={styles['footer-start']}>
           {showSkip && onSkip && (
-            <button type="button" className={styles.skipBtn} onClick={onSkip} aria-label={skip}>
+            <button type="button" className={styles['skip-btn']} onClick={onSkip} aria-label={skip}>
               {skip}
             </button>
           )}
         </div>
 
-        <div className={styles.footerEnd}>
+        <div className={styles['footer-end']}>
           {!isFirstStep && onBack && (
-            <Button variant="secondary" onClick={onBack} className={styles.footerButton}>
+            <Button variant="secondary" onClick={onBack} className={styles['footer-button']}>
               {back}
             </Button>
           )}
@@ -155,7 +160,7 @@ export function Wizard({
             variant="primary"
             onClick={onNext}
             disabled={nextDisabled}
-            className={styles.footerButton}
+            className={styles['footer-button']}
           >
             {nextLabel}
           </Button>

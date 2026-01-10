@@ -1,11 +1,11 @@
-.reasonList {
+.reason-list {
   margin: 0;
   padding-inline-start: var(--space-lg);
   line-height: 1.8;
   color: var(--color-text-muted);
 }
 
-.reasonList li {
+.reason-list li {
   margin-block-end: var(--space-sm);
 }
 

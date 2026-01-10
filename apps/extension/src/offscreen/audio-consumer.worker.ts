@@ -438,8 +438,9 @@ function maybePostStats(): void {
 
 /**
  * Connects to the WebSocket and performs handshake.
- * @param wsUrl
- * @param encoderConfig
+ * @param wsUrl - The WebSocket URL to connect to
+ * @param encoderConfig - The encoder configuration for the stream
+ * @returns A promise resolving to the stream ID
  */
 async function connectWebSocket(wsUrl: string, encoderConfig: EncoderConfig): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -641,7 +642,8 @@ function stopHeartbeat(): void {
 
 /**
  * Sends a message over WebSocket.
- * @param message
+ * @param message - The message object to send
+ * @returns True if the message was sent, false otherwise
  */
 function sendWsMessage(message: object): boolean {
   if (!socket || socket.readyState !== WebSocket.OPEN) {
@@ -687,6 +689,7 @@ function getMaxFramesPerWake(): number {
  * Yields to the macrotask queue via setTimeout.
  * Unlike microtasks (Promise.resolve), this actually yields CPU time.
  * @param ms - Milliseconds to wait
+ * @returns A promise that resolves after the delay
  */
 function yieldMacrotask(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));

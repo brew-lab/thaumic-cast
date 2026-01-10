@@ -26,22 +26,22 @@
   margin-block-start: var(--space-lg);
 }
 
-.footerStart {
+.footer-start {
   display: flex;
   align-items: center;
 }
 
-.footerEnd {
+.footer-end {
   display: flex;
   gap: var(--space-sm);
 }
 
-.footerButton {
+.footer-button {
   inline-size: auto;
   min-inline-size: 6rem;
 }
 
-.skipBtn {
+.skip-btn {
   background: none;
   border: none;
   color: var(--color-text-muted);
@@ -53,11 +53,11 @@
   transition: var(--transition-color);
 }
 
-.skipBtn:hover {
+.skip-btn:hover {
   color: var(--color-text);
 }
 
-.skipBtn:focus-visible {
+.skip-btn:focus-visible {
   outline: 2px solid var(--color-focus);
   outline-offset: 2px;
 }
@@ -115,11 +115,11 @@
   inline-size: 100%;
 }
 
-.stepHeader {
+.step-header {
   text-align: center;
 }
 
-.stepIcon {
+.step-icon {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -131,21 +131,21 @@
   margin-block-end: var(--space-md);
 }
 
-.stepTitle {
+.step-title {
   font-size: 1.5rem;
   font-weight: 600;
   margin: 0;
   color: var(--color-text);
 }
 
-.stepSubtitle {
+.step-subtitle {
   font-size: 0.9rem;
   color: var(--color-text-muted);
   margin-block: var(--space-sm) 0;
   text-wrap: pretty;
 }
 
-.stepContent {
+.step-content {
   display: flex;
   flex-direction: column;
   gap: var(--space-md);
@@ -163,11 +163,11 @@
   transition: var(--transition-bg);
 }
 
-.dotActive {
+.dot-active {
   background-color: var(--color-primary);
   transform: scale(1.25);
 }
 
-.dotCompleted {
+.dot-completed {
   background-color: var(--color-success);
 }

@@ -9,15 +9,18 @@ export class FlacEncoder extends BaseAudioEncoder {
   private headerSent = false;
 
   /**
-   *
+   * Returns the logger name for this encoder.
+   * @returns The logger identifier string
    */
   protected getLoggerName(): string {
     return 'FlacEncoder';
   }
 
   /**
+   * Creates the WebCodecs encoder configuration.
    * @param webCodecsId - WebCodecs codec identifier
    * @param latencyMode - Latency mode for encoding
+   * @returns The encoder configuration object
    */
   protected getEncoderConfig(
     webCodecsId: string,
@@ -33,7 +36,7 @@ export class FlacEncoder extends BaseAudioEncoder {
   }
 
   /**
-   *
+   * Logs the encoder configuration details.
    */
   protected logConfiguration(): void {
     this.log.info(`Configured FLAC @ ${this.config.sampleRate}Hz, ${this.config.channels}ch`);

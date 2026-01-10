@@ -52,12 +52,12 @@ export function ExtensionStep(): preact.JSX.Element {
 
       <p className={styles.body}>{t('onboarding.extension.body')}</p>
 
-      <Button variant="primary" onClick={handleOpenStore} className={styles.storeButton}>
+      <Button variant="primary" onClick={handleOpenStore} className={styles['store-button']}>
         <ExternalLink size={16} />
         {t('onboarding.extension.chrome_link')}
       </Button>
 
-      <p className={styles.skipHint}>{t('onboarding.extension.skip_hint')}</p>
+      <p className={styles['skip-hint']}>{t('onboarding.extension.skip_hint')}</p>
     </WizardStep>
   );
 }

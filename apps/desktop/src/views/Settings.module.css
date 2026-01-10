@@ -13,7 +13,7 @@
   margin-block-end: var(--space-lg);
 }
 
-.sectionHeader {
+.section-header {
   display: flex;
   align-items: center;
   gap: var(--space-sm);
@@ -23,14 +23,14 @@
   color: var(--color-text-muted);
 }
 
-.sectionTitle {
+.section-title {
   margin: 0;
   font-size: 0.9rem;
   font-weight: 600;
   color: var(--color-text);
 }
 
-.sectionContent {
+.section-content {
   padding-block: var(--space-md);
   padding-inline: var(--space-md);
 }
@@ -42,17 +42,17 @@
   cursor: pointer;
 }
 
-.toggleInfo {
+.toggle-info {
   display: flex;
   flex-direction: column;
   gap: var(--space-xs);
 }
 
-.toggleLabel {
+.toggle-label {
   font-weight: 500;
 }
 
-.toggleDescription {
+.toggle-description {
   font-size: 0.85rem;
   color: var(--color-text-muted);
   text-wrap: pretty;
@@ -71,7 +71,7 @@
   gap: var(--space-sm);
 }
 
-.fieldLabel {
+.field-label {
   font-size: 0.9rem;
   color: var(--color-text-muted);
 }

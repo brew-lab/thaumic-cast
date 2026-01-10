@@ -12,7 +12,7 @@
   gap: var(--space-md);
 }
 
-.headerLeft {
+.header-left {
   display: flex;
   flex-direction: column;
   gap: var(--space-xs);
@@ -32,7 +32,7 @@
   gap: var(--space-sm);
 }
 
-.controlButton {
+.control-button {
   inline-size: auto;
 }
 
@@ -42,7 +42,7 @@
   gap: var(--space-md);
 }
 
-.emptyState {
+.empty-state {
   text-align: center;
   padding-block: var(--space-xl);
   padding-inline: var(--space-xl);
@@ -50,18 +50,18 @@
   border-radius: var(--radius-lg);
 }
 
-.emptyTitle {
+.empty-title {
   margin: 0;
   margin-block-end: var(--space-sm);
   color: var(--color-text);
 }
 
-.emptyDescription {
+.empty-description {
   margin: 0;
   color: var(--color-text-muted);
   text-wrap: pretty;
 }
 
-.networkAlert {
+.network-alert {
   margin-block-end: var(--space-md);
 }

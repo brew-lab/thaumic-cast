@@ -41,8 +41,8 @@ export class DebouncedStorage<T> {
   private readonly log: ReturnType<typeof createLogger>;
 
   /**
-   *
-   * @param options
+   * Creates a new DebouncedStorage instance.
+   * @param options - Configuration options for debounced storage
    */
   constructor(private readonly options: DebouncedStorageOptions<T>) {
     this.log = createLogger(options.loggerName);

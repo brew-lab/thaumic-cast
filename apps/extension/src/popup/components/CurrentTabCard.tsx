@@ -90,8 +90,8 @@ export function CurrentTabCard<T extends SpeakerGroupLike>({
 
   return (
     <Card noPadding className={styles.card}>
-      <div className={styles.cardInner}>
-        <div className={styles.mediaRow}>
+      <div className={styles['card-inner']}>
+        <div className={styles['media-row']}>
           <div className={styles.artwork}>
             {image ? (
               <img src={image} alt="" className={styles.image} loading="lazy" />
@@ -126,7 +126,7 @@ export function CurrentTabCard<T extends SpeakerGroupLike>({
 
           {/* Per-speaker Volume Controls */}
           {showVolumeControls && selectedIps.length > 0 && (
-            <div className={styles.speakerRows}>
+            <div className={styles['speaker-rows']}>
               {selectedIps.map((ip) => (
                 <SpeakerVolumeRow
                   key={ip}
@@ -161,7 +161,7 @@ export function CurrentTabCard<T extends SpeakerGroupLike>({
           />
 
           {/* Hint text - reserved space prevents layout shift */}
-          <p id="cast-hint" className={styles.castHint} aria-live="polite">
+          <p id="cast-hint" className={styles['cast-hint']} aria-live="polite">
             {selectedAvailability === 'in_use' && t('hint_replace_source')}
             {selectedAvailability === 'casting' && t('hint_replace_cast')}
           </p>

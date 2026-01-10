@@ -38,37 +38,39 @@ export function ReadyStep(): preact.JSX.Element {
       subtitle={t('onboarding.ready.subtitle')}
       icon={Zap}
     >
-      <div className={styles.summaryBox}>
-        <div className={styles.summaryItem}>
-          <Check size={16} className={styles.checkIcon} />
+      <div className={styles['summary-box']}>
+        <div className={styles['summary-item']}>
+          <Check size={16} className={styles['check-icon']} />
           <span>Desktop App: Running</span>
         </div>
-        <div className={styles.summaryItem}>
-          <Check size={16} className={styles.checkIcon} />
+        <div className={styles['summary-item']}>
+          <Check size={16} className={styles['check-icon']} />
           <span>Speakers: {speakerCount} found</span>
         </div>
-        <div className={styles.summaryItem}>
+        <div className={styles['summary-item']}>
           {connectionCount > 0 ? (
-            <Check size={16} className={styles.checkIcon} />
+            <Check size={16} className={styles['check-icon']} />
           ) : (
-            <Timer size={16} className={styles.pendingIcon} />
+            <Timer size={16} className={styles['pending-icon']} />
           )}
           <span>Extension: {extensionStatus}</span>
         </div>
       </div>
 
-      <p className={styles.introText}>{t('onboarding.ready.intro', { maxStreams: MAX_STREAMS })}</p>
+      <p className={styles['intro-text']}>
+        {t('onboarding.ready.intro', { maxStreams: MAX_STREAMS })}
+      </p>
 
-      <h3 className={styles.sectionTitle}>{t('onboarding.ready.performance_title')}</h3>
-      <p className={styles.sectionBody}>{t('onboarding.ready.performance_body')}</p>
+      <h3 className={styles['section-title']}>{t('onboarding.ready.performance_title')}</h3>
+      <p className={styles['section-body']}>{t('onboarding.ready.performance_body')}</p>
 
       <Alert variant="warning">{t('onboarding.ready.battery_warning')}</Alert>
 
-      <label className={styles.autostartToggle}>
+      <label className={styles['autostart-toggle']}>
         <input type="checkbox" checked={autostartEnabled} onChange={handleAutostartChange} />
-        <div className={styles.autostartContent}>
-          <span className={styles.autostartLabel}>{t('onboarding.ready.autostart_label')}</span>
-          <span className={styles.autostartDescription}>
+        <div className={styles['autostart-content']}>
+          <span className={styles['autostart-label']}>{t('onboarding.ready.autostart_label')}</span>
+          <span className={styles['autostart-description']}>
             {t('onboarding.ready.autostart_description')}
           </span>
         </div>

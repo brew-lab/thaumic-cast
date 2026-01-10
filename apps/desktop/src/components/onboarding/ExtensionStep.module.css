@@ -3,11 +3,11 @@
   line-height: 1.6;
 }
 
-.storeButton {
+.store-button {
   /* Button styling handled by component */
 }
 
-.skipHint {
+.skip-hint {
   margin: 0;
   font-size: 0.85rem;
   color: var(--color-text-muted);

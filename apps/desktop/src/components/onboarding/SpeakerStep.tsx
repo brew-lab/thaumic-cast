@@ -139,29 +139,29 @@ export function SpeakerStep({ onSpeakersFound }: SpeakerStepProps): preact.JSX.E
       ) : speakerCount > 0 ? (
         <Alert variant="success">{t('onboarding.speakers.found', { count: speakerCount })}</Alert>
       ) : (
-        <div className={styles.emptyState}>
-          <p className={styles.emptyTitle}>{t('onboarding.speakers.none_found')}</p>
-          <p className={styles.emptyHint}>{t('onboarding.speakers.none_found_hint')}</p>
+        <div className={styles['empty-state']}>
+          <p className={styles['empty-title']}>{t('onboarding.speakers.none_found')}</p>
+          <p className={styles['empty-hint']}>{t('onboarding.speakers.none_found_hint')}</p>
         </div>
       )}
 
-      <div className={styles.speakerList}>
+      <div className={styles['speaker-list']}>
         {groups.value.map((group) => {
           const coordinator = group.members.find((m) => m.uuid === group.coordinatorUuid);
           if (!coordinator) return null;
           return (
-            <div key={group.coordinatorUuid} className={styles.speakerItem}>
+            <div key={group.coordinatorUuid} className={styles['speaker-item']}>
               <Speaker size={16} />
               <span>{coordinator.zoneName}</span>
               {group.members.length > 1 && (
-                <span className={styles.memberCount}>+{group.members.length - 1}</span>
+                <span className={styles['member-count']}>+{group.members.length - 1}</span>
               )}
             </div>
           );
         })}
       </div>
 
-      <Button variant="secondary" onClick={handleScan} className={styles.scanButton}>
+      <Button variant="secondary" onClick={handleScan} className={styles['scan-button']}>
         <RefreshCw size={16} />
         {t('onboarding.speakers.scan_button')}
       </Button>

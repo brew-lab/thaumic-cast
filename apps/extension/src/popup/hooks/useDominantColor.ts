@@ -154,6 +154,7 @@ loadCacheFromStorage();
 
 /**
  * Gets or creates the shared canvas for color extraction.
+ * @returns The canvas rendering context, or null if unavailable
  */
 function getSharedCanvas(): CanvasRenderingContext2D | null {
   if (!sharedCanvas) {

@@ -40,13 +40,13 @@ export function SpeakerStep({ onSpeakersFound }: SpeakerStepProps): preact.JSX.E
             {t('onboarding.speakers.found', { count: speakerGroups.size })}
           </Alert>
 
-          <div className={styles.speakerList}>
+          <div className={styles['speaker-list']}>
             {[...speakerGroups].map((group) => (
-              <div key={group.id} className={styles.speakerItem}>
+              <div key={group.id} className={styles['speaker-item']}>
                 <Speaker size={16} />
                 <span>{group.name}</span>
                 {group.isMultiSpeaker && (
-                  <span className={styles.memberCount}>+{group.size - 1}</span>
+                  <span className={styles['member-count']}>+{group.size - 1}</span>
                 )}
               </div>
             ))}

@@ -15,7 +15,7 @@
   view-transition-class: activecastcard;
 }
 
-.cardInner {
+.card-inner {
   display: flex;
   flex-direction: column;
   gap: 0.5rem;
@@ -24,7 +24,7 @@
 }
 
 /* Background artwork layer with adaptive darkness vignette */
-.card.hasArtwork::before {
+.card.has-artwork::before {
   content: '';
   position: absolute;
   inset-block: var(--card-border-width);
@@ -45,13 +45,13 @@
 }
 
 /* Ensure content is above background layers */
-.card.hasArtwork > * {
+.card.has-artwork > * {
   position: relative;
   z-index: 2;
 }
 
 /* Color scheme derived from dominant color */
-.card.hasArtwork {
+.card.has-artwork {
   /* Safe accent for button backgrounds (lightened if needed for contrast) */
   --accent: oklch(calc(var(--safe-l) * 100%) var(--dominant-c) var(--dominant-h));
 
@@ -108,18 +108,18 @@
   gap: 0.5rem;
 }
 
-.headerSpacer {
+.header-spacer {
   flex: 1;
 }
 
-.mainRow {
+.main-row {
   display: flex;
   align-items: center;
   gap: 0.5rem;
 }
 
 /* Skip buttons (prev/next) - ghost style with text color */
-.skipBtn {
+.skip-btn {
   flex-shrink: 0;
 }
 
@@ -167,7 +167,7 @@
 }
 
 /* Title hover stays white on artwork cards - rely on underline for feedback */
-.card.hasArtwork .title:hover {
+.card.has-artwork .title:hover {
   color: var(--color-text);
 }
 
@@ -184,14 +184,14 @@
   margin-block-start: 0.25rem;
 }
 
-.speakerRows {
+.speaker-rows {
   display: flex;
   flex-direction: column;
   gap: 0.25rem;
 }
 
 /* Video sync section */
-.videoSyncSection {
+.video-sync-section {
   display: flex;
   flex-direction: column;
   gap: 0.5rem;
@@ -199,24 +199,24 @@
   border-block-start: 1px solid var(--color-border);
 }
 
-.videoSyncHeader {
+.video-sync-header {
   display: flex;
   align-items: center;
   gap: 0.5rem;
 }
 
-.videoSyncLabel {
+.video-sync-label {
   font-size: 0.75rem;
   color: var(--color-text-muted);
 }
 
-.videoSyncControls {
+.video-sync-controls {
   display: flex;
   align-items: center;
   gap: 0.5rem;
 }
 
-.videoSyncTrim {
+.video-sync-trim {
   flex: 1;
   display: flex;
   align-items: center;
@@ -224,13 +224,13 @@
   min-inline-size: 0;
 }
 
-.videoSyncTrimLabel {
+.video-sync-trim-label {
   font-size: 0.65rem;
   color: var(--color-text-muted);
   white-space: nowrap;
 }
 
-.videoSyncTrimSlider {
+.video-sync-trim-slider {
   flex: 1;
   block-size: 4px;
   appearance: none;
@@ -241,12 +241,12 @@
   min-inline-size: 0;
 }
 
-.videoSyncTrimSlider:focus-visible {
+.video-sync-trim-slider:focus-visible {
   outline: 2px solid var(--color-focus);
   outline-offset: 2px;
 }
 
-.videoSyncTrimSlider::-webkit-slider-thumb {
+.video-sync-trim-slider::-webkit-slider-thumb {
   appearance: none;
   inline-size: 12px;
   block-size: 12px;
@@ -255,7 +255,7 @@
   cursor: pointer;
 }
 
-.videoSyncTrimValue {
+.video-sync-trim-value {
   font-size: 0.65rem;
   color: var(--color-text-muted);
   min-inline-size: 3rem;
@@ -263,22 +263,22 @@
 }
 
 /* Video sync on artwork cards */
-.card.hasArtwork .videoSyncSection {
+.card.has-artwork .video-sync-section {
   border-color: oklch(100% 0 0 / 15%);
 }
 
 /* Status chip variants on artwork cards - WCAG AA compliant */
-.card.hasArtwork .synced {
+.card.has-artwork .synced {
   /* High-lightness success (hue 175 from theme) */
   --status-chip-text: oklch(80% 0.15 175);
 }
 
-.card.hasArtwork .acquiring {
+.card.has-artwork .acquiring {
   /* High-lightness warning (hue 55 from theme) */
   --status-chip-text: oklch(88% 0.15 55);
 }
 
-.card.hasArtwork .lost {
+.card.has-artwork .lost {
   /* High-lightness error (hue 350 from theme) */
   --status-chip-text: oklch(78% 0.18 350);
 }

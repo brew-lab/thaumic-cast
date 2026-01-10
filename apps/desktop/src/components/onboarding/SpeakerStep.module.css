@@ -1,4 +1,4 @@
-.emptyState {
+.empty-state {
   text-align: center;
   padding: var(--space-lg);
   background: var(--color-surface-inset);
@@ -6,25 +6,25 @@
   margin-block-end: var(--space-md);
 }
 
-.emptyTitle {
+.empty-title {
   margin: 0 0 var(--space-sm);
   font-weight: 500;
 }
 
-.emptyHint {
+.empty-hint {
   margin: 0;
   color: var(--color-text-muted);
   font-size: 0.9rem;
 }
 
-.speakerList {
+.speaker-list {
   display: flex;
   flex-direction: column;
   gap: var(--space-sm);
   margin-block-end: var(--space-lg);
 }
 
-.speakerItem {
+.speaker-item {
   display: flex;
   align-items: center;
   gap: var(--space-sm);
@@ -34,12 +34,12 @@
   border-radius: var(--radius-sm);
 }
 
-.memberCount {
+.member-count {
   margin-inline-start: auto;
   font-size: 0.85rem;
   color: var(--color-text-muted);
 }
 
-.scanButton {
+.scan-button {
   margin-block-start: var(--space-md);
 }
