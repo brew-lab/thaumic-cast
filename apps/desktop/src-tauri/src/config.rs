@@ -53,6 +53,10 @@ pub const STREAM_BUFFER_FRAMES: usize = 50;
 /// See [`Config::event_channel_capacity`](crate::state::Config::event_channel_capacity).
 pub const EVENT_CHANNEL_CAPACITY: usize = 100;
 
+/// Capacity of the internal GENA event channel (SubscriptionLost events).
+/// Lower than other channels since these are rare failure-only events.
+pub const GENA_EVENT_CHANNEL_CAPACITY: usize = 64;
+
 /// WebSocket heartbeat timeout (seconds).
 /// See [`Config::ws_heartbeat_timeout_secs`](crate::state::Config::ws_heartbeat_timeout_secs).
 pub const WS_HEARTBEAT_TIMEOUT_SECS: u64 = 10;

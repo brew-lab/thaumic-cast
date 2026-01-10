@@ -30,7 +30,7 @@ pub struct GenaEventProcessor {
     gena_manager: Arc<GenaSubscriptionManager>,
     stream_coordinator: Arc<StreamCoordinator>,
     deps: EventProcessorDeps,
-    gena_event_rx: Arc<Mutex<Option<mpsc::UnboundedReceiver<SonosEvent>>>>,
+    gena_event_rx: Arc<Mutex<Option<mpsc::Receiver<SonosEvent>>>>,
 }
 
 impl GenaEventProcessor {
@@ -40,7 +40,7 @@ impl GenaEventProcessor {
         stream_coordinator: Arc<StreamCoordinator>,
         sonos_state: Arc<SonosState>,
         emitter: Arc<dyn EventEmitter>,
-        gena_event_rx: mpsc::UnboundedReceiver<SonosEvent>,
+        gena_event_rx: mpsc::Receiver<SonosEvent>,
         refresh_notify: Arc<Notify>,
     ) -> Self {
         Self {
