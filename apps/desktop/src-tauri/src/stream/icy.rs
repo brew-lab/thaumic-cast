@@ -38,8 +38,7 @@ impl IcyFormatter {
             }
         };
 
-        // [DIAG] Log what ICY StreamTitle we're sending
-        log::info!(
+        log::trace!(
             "[ICY] StreamTitle='{}' (from artist={:?}, title={:?})",
             title,
             metadata.artist,
@@ -71,24 +70,55 @@ impl IcyFormatter {
 /// Stateful injector for ICY metadata blocks into audio streams.
 ///
 /// Tracks byte position to insert metadata at the correct intervals.
+/// Caches formatted metadata to avoid repeated allocations when metadata
+/// hasn't changed (which is the common case during playback).
+///
 /// Each instance should be used for a single stream session.
 pub struct IcyMetadataInjector {
     bytes_since_meta: usize,
+    /// Cached formatted ICY metadata block (includes length byte + padded content).
+    cached_metadata: Vec<u8>,
+    /// Last artist value used to generate cached metadata (for cache invalidation).
+    last_artist: Option<String>,
+    /// Last title value used to generate cached metadata (for cache invalidation).
+    last_title: Option<String>,
 }
 
 impl IcyMetadataInjector {
-    /// Creates a new injector with byte counter at zero.
+    /// Creates a new injector with byte counter at zero and empty metadata cache.
     #[must_use]
     pub fn new() -> Self {
         Self {
             bytes_since_meta: 0,
+            cached_metadata: vec![0], // Default: empty metadata (single zero byte)
+            last_artist: None,
+            last_title: None,
         }
+    }
+
+    /// Updates the cached metadata if artist or title has changed.
+    ///
+    /// Only artist and title are compared because ICY protocol's StreamTitle
+    /// field only includes these values. Album, artwork, and source are used
+    /// elsewhere (DIDL-Lite, WebSocket events) but not in ICY metadata blocks.
+    ///
+    /// Returns the byte length of the cached metadata for pre-allocation.
+    fn update_metadata_cache(&mut self, metadata: &StreamMetadata) -> usize {
+        if self.last_artist != metadata.artist || self.last_title != metadata.title {
+            self.cached_metadata = IcyFormatter::format_metadata(metadata);
+            self.last_artist = metadata.artist.clone();
+            self.last_title = metadata.title.clone();
+        }
+        self.cached_metadata.len()
     }
 
     /// Injects ICY metadata blocks into an audio chunk at the correct intervals.
     ///
     /// ICY protocol requires metadata blocks to be inserted every `ICY_METAINT` bytes.
     /// This method tracks the byte position and inserts formatted metadata when needed.
+    ///
+    /// Uses cached metadata formatting and pre-sized buffers to minimize allocations
+    /// on this hot path.
     ///
     /// # Arguments
     /// * `chunk` - The raw audio data chunk to process
@@ -97,7 +127,15 @@ impl IcyMetadataInjector {
     /// # Returns
     /// A new `Bytes` buffer containing the audio data with ICY metadata blocks inserted.
     pub fn inject(&mut self, chunk: &[u8], metadata: &StreamMetadata) -> Bytes {
-        let mut output = Vec::new();
+        // Update cache if needed and get metadata size for pre-allocation
+        let meta_len = self.update_metadata_cache(metadata);
+
+        // Calculate number of metadata insertions for this chunk
+        let total_bytes = self.bytes_since_meta + chunk.len();
+        let num_insertions = total_bytes / ICY_METAINT;
+
+        // Pre-allocate output buffer: audio bytes + metadata blocks
+        let mut output = Vec::with_capacity(chunk.len() + num_insertions * meta_len);
         let mut remaining = chunk;
 
         while !remaining.is_empty() {
@@ -112,7 +150,7 @@ impl IcyMetadataInjector {
 
             // Write bytes up to metadata point, then inject metadata block
             output.extend_from_slice(&remaining[..bytes_to_meta]);
-            output.extend_from_slice(&IcyFormatter::format_metadata(metadata));
+            output.extend_from_slice(&self.cached_metadata);
             remaining = &remaining[bytes_to_meta..];
             self.bytes_since_meta = 0;
         }
@@ -228,5 +266,51 @@ mod tests {
         // Should have 2 metadata insertions (1 byte each for empty metadata)
         assert_eq!(result.len(), ICY_METAINT * 2 + ICY_METAINT / 2 + 2);
         assert_eq!(injector.bytes_since_meta(), ICY_METAINT / 2);
+    }
+
+    #[test]
+    fn injector_caches_metadata_and_updates_on_change() {
+        let mut injector = IcyMetadataInjector::new();
+
+        let metadata1 = StreamMetadata {
+            title: Some("Song A".to_string()),
+            artist: Some("Artist".to_string()),
+            album: None,
+            artwork: None,
+            source: None,
+        };
+
+        // First injection with metadata1
+        let chunk = vec![0u8; ICY_METAINT];
+        let result1 = injector.inject(&chunk, &metadata1);
+        let meta_block_1: Vec<u8> = result1[ICY_METAINT..].to_vec();
+
+        // Second injection with same metadata should produce identical metadata block
+        let result2 = injector.inject(&chunk, &metadata1);
+        let meta_block_2: Vec<u8> = result2[ICY_METAINT..].to_vec();
+        assert_eq!(
+            meta_block_1, meta_block_2,
+            "Same metadata should produce same block"
+        );
+
+        // Change metadata
+        let metadata2 = StreamMetadata {
+            title: Some("Song B".to_string()),
+            artist: Some("Artist".to_string()),
+            album: None,
+            artwork: None,
+            source: None,
+        };
+
+        let result3 = injector.inject(&chunk, &metadata2);
+        let meta_block_3: Vec<u8> = result3[ICY_METAINT..].to_vec();
+        assert_ne!(
+            meta_block_1, meta_block_3,
+            "Different metadata should produce different block"
+        );
+
+        // Verify new metadata contains updated title
+        let content = String::from_utf8_lossy(&meta_block_3[1..]);
+        assert!(content.contains("Song B"));
     }
 }
