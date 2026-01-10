@@ -304,6 +304,10 @@ export async function stopCastForTab(tabId: number): Promise<void> {
   // Clear tracked media action state for this tab
   clearTabMediaActionState(tabId);
 
+  // Re-enable auto-discardable now that cast is stopping
+  // (was disabled during cast to prevent Memory Saver from discarding the tab)
+  chrome.tabs.update(tabId, { autoDiscardable: true }).catch(noop);
+
   // Disable video sync before stopping capture
   chrome.tabs
     .sendMessage(tabId, {

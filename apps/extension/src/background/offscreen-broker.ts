@@ -45,6 +45,8 @@ class OffscreenBroker {
    * @param mediaStreamId - The media stream ID from chrome.tabCapture
    * @param encoderConfig - The encoder configuration to use
    * @param baseUrl - The desktop app base URL for streaming
+   * @param options - Additional capture options
+   * @param options.keepTabAudible - Play audio at low volume to prevent Chrome throttling
    * @returns The capture response with stream ID on success
    */
   async startCapture(
@@ -52,10 +54,17 @@ class OffscreenBroker {
     mediaStreamId: string,
     encoderConfig: EncoderConfig,
     baseUrl: string,
+    options?: { keepTabAudible?: boolean },
   ): Promise<ExtensionResponse | undefined> {
     return sendToOffscreen<ExtensionResponse>({
       type: 'START_CAPTURE',
-      payload: { tabId, mediaStreamId, encoderConfig, baseUrl },
+      payload: {
+        tabId,
+        mediaStreamId,
+        encoderConfig,
+        baseUrl,
+        keepTabAudible: options?.keepTabAudible,
+      },
     });
   }
 

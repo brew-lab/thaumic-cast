@@ -83,6 +83,10 @@ export const ExtensionSettingsSchema = z.object({
 
   // Video sync: controls visibility of video sync controls in popup (default: false)
   videoSyncEnabled: z.boolean().default(false),
+
+  // Keep tab audible: plays audio at very low volume to prevent Chrome throttling
+  // When enabled, Chrome sees the tab as "playing audio" and won't throttle it
+  keepTabAudible: z.boolean().default(false),
 });
 export type ExtensionSettings = z.infer<typeof ExtensionSettingsSchema>;
 
@@ -102,6 +106,7 @@ const DEFAULT_EXTENSION_SETTINGS: ExtensionSettings = {
     latencyMode: 'quality',
   },
   videoSyncEnabled: false,
+  keepTabAudible: false,
 };
 
 /**
