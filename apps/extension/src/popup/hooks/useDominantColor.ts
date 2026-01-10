@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'preact/hooks';
+import { DebouncedStorage } from '../../lib/debounced-storage';
 
 /**
  * RGB color tuple.
@@ -86,6 +87,9 @@ const STORAGE_KEY = 'dominantColorCache';
 /** Max entries in cache (FIFO eviction) */
 const MAX_CACHE_ENTRIES = 50;
 
+/** Debounce interval for cache persistence (ms) */
+const CACHE_PERSIST_DEBOUNCE_MS = 500;
+
 /**
  * Adds to cache with FIFO eviction when limit exceeded.
  * @param url - The image URL key
@@ -112,48 +116,31 @@ let sharedCtx: CanvasRenderingContext2D | null = null;
 
 const CANVAS_SIZE = 10;
 
-/** Whether we've loaded from storage */
-let cacheLoaded = false;
-
-/**
- * Loads cached colors from session storage into memory.
- * Called once on first use.
- */
-async function loadCacheFromStorage(): Promise<void> {
-  if (cacheLoaded) return;
-  cacheLoaded = true;
-
-  try {
-    const result = await chrome.storage.session.get(STORAGE_KEY);
-    const stored = result[STORAGE_KEY];
+/** Debounced storage for color cache persistence */
+const cacheStorage = new DebouncedStorage<Array<[string, DominantColorResult | null]>>({
+  storageKey: STORAGE_KEY,
+  debounceMs: CACHE_PERSIST_DEBOUNCE_MS,
+  loggerName: 'DominantColor',
+  serialize: () => Array.from(colorCache.entries()).slice(-MAX_CACHE_ENTRIES),
+  restore: (stored) => {
     if (Array.isArray(stored)) {
       for (const [url, data] of stored) {
-        colorCache.set(url, data);
+        // Validate stored data structure before using
+        if (data === null || (typeof data === 'object' && 'rgb' in data)) {
+          colorCache.set(url, data as DominantColorResult | null);
+        }
       }
     }
-  } catch {
-    // Storage not available or error - continue with empty cache
-  }
-}
-
-/**
- * Persists current cache to session storage.
- */
-async function saveCacheToStorage(): Promise<void> {
-  try {
-    // Limit entries to prevent storage bloat
-    const entries = Array.from(colorCache.entries()).slice(-MAX_CACHE_ENTRIES);
-    await chrome.storage.session.set({ [STORAGE_KEY]: entries });
-  } catch {
-    // Storage not available - ignore
-  }
-}
+    return undefined; // We populate colorCache directly, don't need return value
+  },
+});
 
 // Load cache immediately on module init
-loadCacheFromStorage();
+cacheStorage.restore();
 
 /**
  * Gets or creates the shared canvas for color extraction.
+ * @returns The canvas rendering context, or null if unavailable
  */
 function getSharedCanvas(): CanvasRenderingContext2D | null {
   if (!sharedCanvas) {
@@ -265,9 +252,11 @@ async function extractDominantColor(imageUrl: string): Promise<DominantColorResu
     };
 
     cacheSet(imageUrl, result);
-    saveCacheToStorage();
+    cacheStorage.schedule();
     return result;
   } catch {
+    // Cache failure in-memory to avoid retrying within this session,
+    // but don't persist - allows retry on next session if failure was transient
     cacheSet(imageUrl, null);
     return null;
   }

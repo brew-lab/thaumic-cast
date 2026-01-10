@@ -8,22 +8,25 @@
 //! - Network health monitoring
 
 use std::collections::HashSet;
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
+use futures::future::join_all;
 use parking_lot::RwLock;
+use reqwest::Client;
 use tokio::sync::Notify;
 use tokio_util::sync::CancellationToken;
 
 use crate::context::NetworkContext;
 use crate::error::{ThaumicError, ThaumicResult};
 use crate::events::{EventEmitter, NetworkEvent, NetworkHealth, TopologyEvent};
-use crate::sonos::discovery::Speaker;
+use crate::sonos::discovery::{probe_speaker_by_ip, Speaker};
 use crate::sonos::gena::GenaSubscriptionManager;
 use crate::sonos::SonosService;
 use crate::sonos::SonosTopologyClient;
-use crate::state::SonosState;
+use crate::state::{ManualSpeakerConfig, SonosState};
 use crate::types::ZoneGroup;
 
 /// Current network health state with reason.
@@ -42,6 +45,18 @@ impl Default for NetworkHealthState {
             reason: None,
         }
     }
+}
+
+/// Configuration for the topology monitor.
+pub struct TopologyMonitorConfig {
+    /// Interval between automatic topology refreshes (seconds).
+    pub topology_refresh_interval_secs: u64,
+    /// Network configuration (port, local IP).
+    pub network: NetworkContext,
+    /// Notifier for manual refresh requests.
+    pub refresh_notify: Arc<Notify>,
+    /// Shared HTTP client for probing manual speaker IPs.
+    pub http_client: Client,
 }
 
 /// Monitors Sonos network topology and manages GENA subscriptions.
@@ -63,6 +78,10 @@ pub struct TopologyMonitor {
     refresh_notify: Arc<Notify>,
     /// Token to signal background tasks to stop.
     cancel_token: CancellationToken,
+    /// App data directory for loading manual speaker configuration.
+    app_data_dir: RwLock<Option<PathBuf>>,
+    /// HTTP client for probing manual speaker IPs.
+    http_client: Client,
 }
 
 impl TopologyMonitor {
@@ -73,17 +92,13 @@ impl TopologyMonitor {
     /// * `gena_manager` - Manager for GENA subscriptions
     /// * `sonos_state` - Shared state for Sonos groups
     /// * `emitter` - Event emitter for broadcasting network health changes
-    /// * `network` - Network configuration (port, local IP)
-    /// * `refresh_notify` - Notifier for manual refresh requests
-    /// * `topology_refresh_interval_secs` - Interval between automatic refreshes
+    /// * `config` - Configuration for the topology monitor
     pub fn new(
         sonos: Arc<dyn SonosTopologyClient>,
         gena_manager: Arc<GenaSubscriptionManager>,
         sonos_state: Arc<SonosState>,
         emitter: Arc<dyn EventEmitter>,
-        network: NetworkContext,
-        refresh_notify: Arc<Notify>,
-        topology_refresh_interval_secs: u64,
+        config: TopologyMonitorConfig,
     ) -> Self {
         Self {
             sonos,
@@ -92,11 +107,20 @@ impl TopologyMonitor {
             emitter,
             network_health: RwLock::new(NetworkHealthState::default()),
             speakers_discovered: AtomicBool::new(false),
-            topology_refresh_interval_secs,
-            network,
-            refresh_notify,
+            topology_refresh_interval_secs: config.topology_refresh_interval_secs,
+            network: config.network,
+            refresh_notify: config.refresh_notify,
             cancel_token: CancellationToken::new(),
+            app_data_dir: RwLock::new(None),
+            http_client: config.http_client,
         }
+    }
+
+    /// Sets the app data directory for loading manual speaker configuration.
+    ///
+    /// This should be called after the app is set up and the AppHandle is available.
+    pub fn set_app_data_dir(&self, path: PathBuf) {
+        *self.app_data_dir.write() = Some(path);
     }
 
     /// Returns the current network health state.
@@ -239,8 +263,8 @@ impl TopologyMonitor {
             self.speakers_discovered.load(Ordering::Relaxed)
         );
 
-        // Phase 1: SSDP Discovery
-        let speakers = match self.sonos.discover_speakers().await {
+        // Phase 1a: SSDP Discovery
+        let mut speakers = match self.sonos.discover_speakers().await {
             Ok(speakers) => {
                 log::info!(
                     "[TopologyMonitor] Discovery found {} speakers",
@@ -254,30 +278,56 @@ impl TopologyMonitor {
                     e,
                     self.speakers_discovered.load(Ordering::Relaxed)
                 );
-                // Discovery failed - mark as degraded if we previously had speakers
-                if self.speakers_discovered.load(Ordering::Relaxed) {
-                    self.set_network_health(
-                        NetworkHealth::Degraded,
-                        Some("Unable to scan for speakers. Check network connection.".to_string()),
-                    );
-                }
-                return Err(e.into());
+                // Discovery failed, but we might still have manual speakers to try
+                Vec::new()
             }
         };
 
-        if speakers.is_empty() {
-            log::warn!(
-                "[TopologyMonitor] Discovery returned empty (speakers_discovered={})",
-                self.speakers_discovered.load(Ordering::Relaxed)
+        // Phase 1b: Probe manual speaker IPs
+        let manual_speakers = self.probe_manual_speakers().await;
+        if !manual_speakers.is_empty() {
+            log::info!(
+                "[TopologyMonitor] Probed {} manual speaker(s)",
+                manual_speakers.len()
             );
-            // No speakers discovered - could be network issue or just no speakers
-            // Only mark as degraded if we previously had speakers
-            if self.speakers_discovered.load(Ordering::Relaxed) {
-                self.set_network_health(
-                    NetworkHealth::Degraded,
-                    Some("Speakers previously discovered are no longer visible.".to_string()),
-                );
+            // Merge manual speakers with auto-discovered, avoiding duplicates by UUID
+            let existing_uuids: HashSet<String> = speakers.iter().map(|s| s.uuid.clone()).collect();
+            for speaker in manual_speakers {
+                if !existing_uuids.contains(&speaker.uuid) {
+                    speakers.push(speaker);
+                }
             }
+        }
+
+        if speakers.is_empty() {
+            // Atomically read and reset the discovery flag
+            let was_previously_discovered = self.speakers_discovered.swap(false, Ordering::Relaxed);
+            log::warn!(
+                "[TopologyMonitor] No speakers found (was_previously_discovered={})",
+                was_previously_discovered
+            );
+
+            // Clear groups and notify frontend so UI updates
+            {
+                let mut state = self.sonos_state.groups.write();
+                state.clear();
+            }
+
+            let timestamp = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_millis() as u64;
+            self.emitter.emit_topology(TopologyEvent::GroupsDiscovered {
+                groups: Vec::new(),
+                timestamp,
+            });
+
+            // No speakers found - warn about potential VPN/firewall issues
+            self.set_network_health(
+                NetworkHealth::Degraded,
+                Some("speakers_unreachable".to_string()),
+            );
+
             return Err(ThaumicError::SpeakerNotFound(
                 "no speakers discovered".to_string(),
             ));
@@ -317,10 +367,7 @@ impl TopologyMonitor {
                 // Discovery worked but communication failed - this is the VPN/firewall scenario
                 self.set_network_health(
                     NetworkHealth::Degraded,
-                    Some(
-                        "Speakers found but unreachable. Check VPN or firewall settings."
-                            .to_string(),
-                    ),
+                    Some("speakers_not_responding".to_string()),
                 );
                 return Err(e.into());
             }
@@ -414,6 +461,59 @@ impl TopologyMonitor {
         log::info!("[TopologyMonitor] Initiating shutdown");
         self.cancel_token.cancel();
         self.gena_manager.shutdown().await;
+    }
+
+    /// Probes manually configured speaker IPs and returns valid speakers.
+    ///
+    /// Loads IPs from ManualSpeakerConfig and probes each in parallel.
+    /// Invalid/unreachable IPs are logged and skipped.
+    async fn probe_manual_speakers(&self) -> Vec<Speaker> {
+        let app_data_dir = match self.app_data_dir.read().clone() {
+            Some(path) => path,
+            None => {
+                log::debug!("[TopologyMonitor] App data dir not set, skipping manual speakers");
+                return Vec::new();
+            }
+        };
+
+        let config = ManualSpeakerConfig::load(&app_data_dir);
+        if config.speaker_ips.is_empty() {
+            return Vec::new();
+        }
+
+        log::debug!(
+            "[TopologyMonitor] Probing {} manual speaker IP(s)",
+            config.speaker_ips.len()
+        );
+
+        // Probe all IPs in parallel
+        let futures: Vec<_> = config
+            .speaker_ips
+            .iter()
+            .map(|ip| {
+                let ip = ip.clone();
+                let client = self.http_client.clone();
+                async move {
+                    match probe_speaker_by_ip(&client, &ip).await {
+                        Ok(speaker) => {
+                            log::debug!(
+                                "[TopologyMonitor] Manual IP {} is valid: {}",
+                                ip,
+                                speaker.name
+                            );
+                            Some(speaker)
+                        }
+                        Err(e) => {
+                            log::warn!("[TopologyMonitor] Manual IP {} probe failed: {}", ip, e);
+                            None
+                        }
+                    }
+                }
+            })
+            .collect();
+
+        let results = join_all(futures).await;
+        results.into_iter().flatten().collect()
     }
 
     // ─────────────────────────────────────────────────────────────────────────────

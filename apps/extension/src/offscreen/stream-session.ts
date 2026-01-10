@@ -36,6 +36,9 @@ const WORKLET_HEARTBEAT_TIMEOUT = 3000;
 /** Interval between repeated stall warnings during prolonged stalls (ms). */
 const STALL_LOG_BACKOFF_INTERVAL = 5000;
 
+/** Interval for logging healthy stats as a heartbeat (ms). */
+const HEALTHY_STATS_LOG_INTERVAL = 30000;
+
 /**
  * Manages an active capture session from a browser tab.
  *
@@ -103,6 +106,9 @@ export class StreamSession {
   private totalCatchUpDrops = 0;
   private totalConsumerDrops = 0;
   private totalUnderflows = 0;
+
+  /** Last time we logged diagnostics (for rate-limiting when healthy). */
+  private lastDiagLogTime = 0;
 
   /** Callback when worker disconnects (for cleanup coordination). */
   private onDisconnected?: () => void;
@@ -397,7 +403,7 @@ export class StreamSession {
           this.playbackResultsResolver = null;
           break;
 
-        case 'STATS':
+        case 'STATS': {
           // Accumulate drops for session health reporting
           this.totalProducerDrops += msg.producerDroppedSamples ?? 0;
           this.totalCatchUpDrops += msg.catchUpDroppedSamples ?? 0;
@@ -421,13 +427,27 @@ export class StreamSession {
               `${msg.underflows} underflow(s) detected - audio source may be stalled or throttled`,
             );
           }
-          log.info(
-            `[DIAG] wakeups=${msg.wakeups} avgSamples=${msg.avgSamplesPerWake.toFixed(0)} ` +
-              `encodeQueue=${msg.encodeQueueSize} wsBuffer=${msg.wsBufferedAmount} ` +
-              `underflows=${msg.underflows} producerDrops=${msg.producerDroppedSamples} ` +
-              `catchUpDrops=${msg.catchUpDroppedSamples} consumerDrops=${msg.consumerDroppedFrames}`,
-          );
+
+          // Rate-limit diagnostic logs: log immediately on issues, otherwise every 30s
+          const hasIssues =
+            msg.underflows > 0 ||
+            msg.producerDroppedSamples > 0 ||
+            msg.catchUpDroppedSamples > 0 ||
+            msg.consumerDroppedFrames > 0;
+          const now = performance.now();
+          const timeSinceLastLog = now - this.lastDiagLogTime;
+
+          if (hasIssues || timeSinceLastLog >= HEALTHY_STATS_LOG_INTERVAL) {
+            log.info(
+              `[DIAG] wakeups=${msg.wakeups} avgSamples=${msg.avgSamplesPerWake.toFixed(0)} ` +
+                `encodeQueue=${msg.encodeQueueSize} wsBuffer=${msg.wsBufferedAmount} ` +
+                `underflows=${msg.underflows} producerDrops=${msg.producerDroppedSamples} ` +
+                `catchUpDrops=${msg.catchUpDroppedSamples} consumerDrops=${msg.consumerDroppedFrames}`,
+            );
+            this.lastDiagLogTime = now;
+          }
           break;
+        }
       }
     };
 

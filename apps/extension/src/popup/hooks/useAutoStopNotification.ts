@@ -1,6 +1,6 @@
 import { useState, useCallback, useRef, useEffect } from 'preact/hooks';
 import { useTranslation } from 'react-i18next';
-import type { CastAutoStoppedMessage } from '../../lib/messages';
+import type { CastAutoStoppedMessage, CastAutoStopReason } from '../../lib/messages';
 import { useChromeMessage } from './useChromeMessage';
 
 /**
@@ -12,7 +12,7 @@ interface AutoStopNotification {
   /** The speaker IP that changed */
   speakerIp: string;
   /** The reason for auto-stop */
-  reason: 'source_changed' | 'playback_stopped' | 'stream_ended';
+  reason: CastAutoStopReason;
 }
 
 /**

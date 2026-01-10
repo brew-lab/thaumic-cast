@@ -7,6 +7,11 @@
 //! On macOS, the tray icon uses template images that adapt to light/dark mode.
 
 use std::future::Future;
+#[cfg(target_os = "windows")]
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc,
+};
 
 use rust_i18n::t;
 use tauri::{
@@ -32,6 +37,12 @@ pub struct TrayState {
     status_item: MenuItem<tauri::Wry>,
     /// The tray icon for dynamic icon updates.
     tray_icon: TrayIcon<tauri::Wry>,
+    /// Current streaming state (for Windows icon selection).
+    #[cfg(target_os = "windows")]
+    is_streaming: Arc<AtomicBool>,
+    /// Current theme - true if dark (for Windows icon selection).
+    #[cfg(target_os = "windows")]
+    is_dark_theme: Arc<AtomicBool>,
 }
 
 impl TrayState {
@@ -44,13 +55,48 @@ impl TrayState {
     }
 
     /// Updates the tray icon based on streaming state.
+    /// On Windows, also considers current theme for icon selection.
     fn update_icon(&self, is_streaming: bool) {
-        let icon = if is_streaming {
-            load_tray_icon_active()
-        } else {
-            load_tray_icon_idle()
-        };
+        #[cfg(target_os = "windows")]
+        {
+            self.is_streaming.store(is_streaming, Ordering::Relaxed);
+            let is_dark = self.is_dark_theme.load(Ordering::Relaxed);
+            let theme = if is_dark {
+                tauri::Theme::Dark
+            } else {
+                tauri::Theme::Light
+            };
+            self.set_icon_or_warn(load_tray_icon_for_state(theme, is_streaming));
+        }
 
+        #[cfg(not(target_os = "windows"))]
+        {
+            let icon = if is_streaming {
+                load_tray_icon_active()
+            } else {
+                load_tray_icon_idle()
+            };
+            self.set_icon_or_warn(icon);
+        }
+    }
+
+    /// Updates the tray icon when system theme changes (Windows only).
+    #[cfg(target_os = "windows")]
+    pub fn update_for_theme(&self, theme: tauri::Theme) {
+        self.is_dark_theme
+            .store(matches!(theme, tauri::Theme::Dark), Ordering::Relaxed);
+        let is_streaming = self.is_streaming.load(Ordering::Relaxed);
+        self.set_icon_or_warn(load_tray_icon_for_state(theme, is_streaming));
+    }
+
+    /// Updates the tray icon when system theme changes (no-op on non-Windows).
+    #[cfg(not(target_os = "windows"))]
+    pub fn update_for_theme(&self, _theme: tauri::Theme) {
+        // No-op: macOS uses template icons, Linux has no theme detection
+    }
+
+    /// Sets the tray icon, logging warnings on failure.
+    fn set_icon_or_warn(&self, icon: Result<Image<'static>, TrayError>) {
         match icon {
             Ok(img) => {
                 if let Err(e) = self.tray_icon.set_icon(Some(img)) {
@@ -69,18 +115,71 @@ impl TrayState {
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// Icon bytes for active state (embedded at compile time).
+/// Used on macOS (template) and Linux.
+#[cfg(not(target_os = "windows"))]
 const TRAY_ICON_ACTIVE: &[u8] = include_bytes!("../../icons/tray/tray-template.png");
 /// Icon bytes for idle state (embedded at compile time).
+/// Used on macOS and Linux.
+#[cfg(not(target_os = "windows"))]
 const TRAY_ICON_IDLE: &[u8] = include_bytes!("../../icons/tray/tray-idle.png");
 
-/// Loads the active tray icon.
+// Windows icons: 4-state matrix (theme × streaming state)
+#[cfg(target_os = "windows")]
+const TRAY_ICON_LIGHT_IDLE: &[u8] = include_bytes!("../../icons/tray/tray-light-idle.png");
+#[cfg(target_os = "windows")]
+const TRAY_ICON_LIGHT_ACTIVE: &[u8] = include_bytes!("../../icons/tray/tray-light-active.png");
+#[cfg(target_os = "windows")]
+const TRAY_ICON_DARK_IDLE: &[u8] = include_bytes!("../../icons/tray/tray-dark-idle.png");
+#[cfg(target_os = "windows")]
+const TRAY_ICON_DARK_ACTIVE: &[u8] = include_bytes!("../../icons/tray/tray-dark-active.png");
+
+/// Loads the active tray icon (macOS/Linux).
+#[cfg(not(target_os = "windows"))]
 fn load_tray_icon_active() -> Result<Image<'static>, TrayError> {
     Image::from_bytes(TRAY_ICON_ACTIVE).map_err(|e| TrayError::Build(e.to_string()))
 }
 
-/// Loads the idle tray icon.
+/// Loads the idle tray icon (macOS/Linux).
+#[cfg(not(target_os = "windows"))]
 fn load_tray_icon_idle() -> Result<Image<'static>, TrayError> {
     Image::from_bytes(TRAY_ICON_IDLE).map_err(|e| TrayError::Build(e.to_string()))
+}
+
+/// Detects the current system theme from the main window (Windows).
+#[cfg(target_os = "windows")]
+fn detect_system_theme(app: &tauri::App) -> tauri::Theme {
+    app.get_webview_window("main")
+        .and_then(|w| w.theme().ok())
+        .unwrap_or(tauri::Theme::Light)
+}
+
+/// Loads the appropriate tray icon based on theme and streaming state (Windows).
+#[cfg(target_os = "windows")]
+fn load_tray_icon_for_state(
+    theme: tauri::Theme,
+    is_streaming: bool,
+) -> Result<Image<'static>, TrayError> {
+    let bytes = match (theme, is_streaming) {
+        (tauri::Theme::Light, false) => TRAY_ICON_LIGHT_IDLE,
+        (tauri::Theme::Light, true) => TRAY_ICON_LIGHT_ACTIVE,
+        (tauri::Theme::Dark, false) => TRAY_ICON_DARK_IDLE,
+        (tauri::Theme::Dark, true) => TRAY_ICON_DARK_ACTIVE,
+        // tauri::Theme is non_exhaustive, but currently only has Light/Dark
+        _ => TRAY_ICON_LIGHT_IDLE,
+    };
+    Image::from_bytes(bytes).map_err(|e| TrayError::Build(e.to_string()))
+}
+
+/// Loads the initial tray icon (Windows - uses theme detection).
+#[cfg(target_os = "windows")]
+fn load_initial_tray_icon(app: &tauri::App) -> Result<Image<'static>, TrayError> {
+    load_tray_icon_for_state(detect_system_theme(app), false)
+}
+
+/// Loads the initial tray icon (macOS/Linux - idle state).
+#[cfg(not(target_os = "windows"))]
+fn load_initial_tray_icon(_app: &tauri::App) -> Result<Image<'static>, TrayError> {
+    load_tray_icon_idle()
 }
 
 /// Formats the status text for a given stream count.
@@ -207,8 +306,12 @@ where
 ///
 /// Also starts a background task to update the status line when streams change.
 pub fn setup_tray(app: &tauri::App) -> Result<(), TrayError> {
-    // Load initial icon (idle state)
-    let icon = load_tray_icon_idle()?;
+    // Load initial icon (theme-aware on Windows, idle on other platforms)
+    let icon = load_initial_tray_icon(app)?;
+
+    // Detect initial theme for Windows state tracking
+    #[cfg(target_os = "windows")]
+    let initial_is_dark = matches!(detect_system_theme(app), tauri::Theme::Dark);
 
     // Get app version from config
     let version = app.config().version.clone().unwrap_or_default();
@@ -289,6 +392,10 @@ pub fn setup_tray(app: &tauri::App) -> Result<(), TrayError> {
     let tray_state = TrayState {
         status_item: status,
         tray_icon,
+        #[cfg(target_os = "windows")]
+        is_streaming: Arc::new(AtomicBool::new(false)),
+        #[cfg(target_os = "windows")]
+        is_dark_theme: Arc::new(AtomicBool::new(initial_is_dark)),
     };
     app.manage(tray_state);
 

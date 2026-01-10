@@ -34,6 +34,8 @@ impl ErrorCode for DiscoveryError {
             Self::NoInterfaces => "no_network_interfaces",
             Self::MdnsDaemon(_) => "mdns_daemon_failed",
             Self::AllMethodsFailed(_) => "all_discovery_methods_failed",
+            Self::IpUnreachable(_) => "ip_unreachable",
+            Self::NotSonosDevice(_) => "not_sonos_device",
         }
     }
 }

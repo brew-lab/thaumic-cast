@@ -1,10 +1,10 @@
-.introText {
+.intro-text {
   margin: 0;
   line-height: 1.6;
   text-wrap: pretty;
 }
 
-.performanceText {
+.performance-text {
   margin: 0;
   line-height: 1.6;
   color: var(--color-text-muted);

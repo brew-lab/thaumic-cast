@@ -8,6 +8,7 @@
  * - metadata-cache.ts
  * - sonos-state.ts
  * - connection-state.ts
+ * - useDominantColor.ts
  */
 
 import { createLogger } from '@thaumic-cast/shared';
@@ -41,8 +42,8 @@ export class DebouncedStorage<T> {
   private readonly log: ReturnType<typeof createLogger>;
 
   /**
-   *
-   * @param options
+   * Creates a new DebouncedStorage instance.
+   * @param options - Configuration options for debounced storage
    */
   constructor(private readonly options: DebouncedStorageOptions<T>) {
     this.log = createLogger(options.loggerName);

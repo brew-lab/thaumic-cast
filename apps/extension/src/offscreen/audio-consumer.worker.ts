@@ -23,6 +23,7 @@ import { createEncoder, type AudioEncoder } from './encoders';
 import type { EncoderConfig, StreamMetadata, WsMessage } from '@thaumic-cast/protocol';
 import { WsMessageSchema } from '@thaumic-cast/protocol';
 import { createLogger } from '@thaumic-cast/shared';
+import { exponentialBackoff } from '../lib/backoff';
 
 const log = createLogger('AudioWorker');
 
@@ -37,6 +38,12 @@ const WS_BUFFER_HIGH_WATER = 512000;
 
 /** Macrotask yield duration (ms). Gives encoder thread CPU time. */
 const YIELD_MS = 1;
+
+/** Initial backpressure backoff delay (ms). */
+const BACKPRESSURE_BACKOFF_INITIAL_MS = 5;
+
+/** Maximum backpressure backoff delay (ms). */
+const BACKPRESSURE_BACKOFF_MAX_MS = 40;
 
 /** Default frames per wake. 3 frames = ~60ms, balances latency vs CPU. */
 const DEFAULT_FRAMES_PER_WAKE = 3;
@@ -215,6 +222,8 @@ let catchUpDroppedSamples = 0;
 // Backpressure tracking
 /** Count of cycles where we skipped draining due to backpressure. */
 let backpressureCycles = 0;
+/** Consecutive backpressure cycles for adaptive backoff calculation. */
+let consecutiveBackpressureCycles = 0;
 
 // Catch-up thresholds (computed from constants and sample rate)
 let catchUpTargetSamples = 0;
@@ -438,8 +447,9 @@ function maybePostStats(): void {
 
 /**
  * Connects to the WebSocket and performs handshake.
- * @param wsUrl
- * @param encoderConfig
+ * @param wsUrl - The WebSocket URL to connect to
+ * @param encoderConfig - The encoder configuration for the stream
+ * @returns A promise resolving to the stream ID
  */
 async function connectWebSocket(wsUrl: string, encoderConfig: EncoderConfig): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -641,7 +651,8 @@ function stopHeartbeat(): void {
 
 /**
  * Sends a message over WebSocket.
- * @param message
+ * @param message - The message object to send
+ * @returns True if the message was sent, false otherwise
  */
 function sendWsMessage(message: object): boolean {
   if (!socket || socket.readyState !== WebSocket.OPEN) {
@@ -687,6 +698,7 @@ function getMaxFramesPerWake(): number {
  * Yields to the macrotask queue via setTimeout.
  * Unlike microtasks (Promise.resolve), this actually yields CPU time.
  * @param ms - Milliseconds to wait
+ * @returns A promise that resolves after the delay
  */
 function yieldMacrotask(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -745,9 +757,20 @@ async function consumeLoop(): Promise<void> {
     // tracked in flushFrameIfReady() when we have a frame but can't encode it
     if (isBackpressured()) {
       backpressureCycles++;
-      await yieldMacrotask(YIELD_MS);
+      consecutiveBackpressureCycles++;
+      // Adaptive backoff: 5ms → 10ms → 20ms → 40ms (capped)
+      // Pressure won't ease in 1ms, so back off to reduce CPU spinning
+      const backoffMs = exponentialBackoff(
+        consecutiveBackpressureCycles,
+        BACKPRESSURE_BACKOFF_INITIAL_MS,
+        BACKPRESSURE_BACKOFF_MAX_MS,
+      );
+      await yieldMacrotask(backoffMs);
       continue;
     }
+
+    // Reset consecutive backpressure counter when pressure eases
+    consecutiveBackpressureCycles = 0;
 
     // Drain with bounded work per wake (dynamic based on backpressure)
     const framesThisWake = drainWithLimit(getMaxFramesPerWake());
@@ -874,6 +897,7 @@ self.onmessage = async (event: MessageEvent<InboundMessage>) => {
       droppedFrameCount = 0;
       catchUpDroppedSamples = 0;
       backpressureCycles = 0;
+      consecutiveBackpressureCycles = 0;
       wakeupCount = 0;
       totalSamplesRead = 0;
       lastProducerDroppedSamples = 0;

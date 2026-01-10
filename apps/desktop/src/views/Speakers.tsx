@@ -6,6 +6,7 @@ import {
   castingSpeakers,
   networkHealth,
   fetchGroups,
+  debouncedFetchGroups,
   refreshTopology,
   stopAll,
   stats,
@@ -52,26 +53,28 @@ export function Speakers() {
   useEffect(() => {
     const unlisteners: UnlistenFn[] = [];
 
-    // Initial fetch
+    // Initial fetch (immediate, no debounce)
     fetchGroups();
 
     // Listen for discovery-complete event (topology changes)
+    // Uses debounced fetch since discovery may trigger multiple events
     listen('discovery-complete', () => {
-      fetchGroups();
+      debouncedFetchGroups();
     }).then((fn) => unlisteners.push(fn));
 
-    // Listen for network health changes
+    // Listen for network health changes (direct state update, no fetch needed)
     listen<NetworkHealthPayload>('network-health-changed', (event) => {
       updateNetworkHealth(event.payload.health, event.payload.reason);
     }).then((fn) => unlisteners.push(fn));
 
     // Listen for stream/playback events (casting status changes)
-    listen('stream-created', () => fetchGroups()).then((fn) => unlisteners.push(fn));
-    listen('stream-ended', () => fetchGroups()).then((fn) => unlisteners.push(fn));
-    listen('playback-started', () => fetchGroups()).then((fn) => unlisteners.push(fn));
-    listen('playback-stopped', () => fetchGroups()).then((fn) => unlisteners.push(fn));
+    // Uses debounced fetch to coalesce rapid bursts (e.g., multi-speaker start/stop)
+    listen('stream-created', debouncedFetchGroups).then((fn) => unlisteners.push(fn));
+    listen('stream-ended', debouncedFetchGroups).then((fn) => unlisteners.push(fn));
+    listen('playback-started', debouncedFetchGroups).then((fn) => unlisteners.push(fn));
+    listen('playback-stopped', debouncedFetchGroups).then((fn) => unlisteners.push(fn));
 
-    // Listen for transport state changes (real-time status updates)
+    // Listen for transport state changes (direct state update, no fetch needed)
     listen<TransportStatePayload>('transport-state-changed', (event) => {
       updateTransportState(event.payload.speakerIp, event.payload.state);
     }).then((fn) => unlisteners.push(fn));

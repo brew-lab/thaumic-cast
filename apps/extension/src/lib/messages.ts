@@ -452,6 +452,21 @@ export interface TransportStateUpdateMessage {
 }
 
 /**
+ * Reasons for removing a speaker from an active cast session.
+ * - `source_changed`: User switched Sonos to another source (Spotify, AirPlay, etc.)
+ * - `playback_stopped`: Playback stopped on the speaker
+ * - `speaker_stopped`: Speaker stopped unexpectedly (e.g., stream killed due to underflow)
+ */
+export type SpeakerRemovalReason = 'source_changed' | 'playback_stopped' | 'speaker_stopped';
+
+/**
+ * Reasons for auto-stopping an entire cast session.
+ * Includes all speaker removal reasons plus stream-level events.
+ * - `stream_ended`: The stream ended on the server side
+ */
+export type CastAutoStopReason = SpeakerRemovalReason | 'stream_ended';
+
+/**
  * Cast was automatically stopped (e.g., user switched Sonos source).
  * The popup translates the reason code to a localized message.
  */
@@ -459,7 +474,7 @@ export interface CastAutoStoppedMessage {
   type: 'CAST_AUTO_STOPPED';
   tabId: number;
   speakerIp: string;
-  reason: 'source_changed' | 'playback_stopped' | 'stream_ended';
+  reason: CastAutoStopReason;
 }
 
 /**
@@ -470,7 +485,7 @@ export interface SpeakerRemovedMessage {
   type: 'SPEAKER_REMOVED';
   tabId: number;
   speakerIp: string;
-  reason: 'source_changed' | 'playback_stopped';
+  reason: SpeakerRemovalReason;
 }
 
 /**

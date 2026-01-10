@@ -3,17 +3,16 @@ import { useState, useCallback } from 'preact/hooks';
 import { useTranslation } from 'react-i18next';
 import { Card, Button } from '@thaumic-cast/ui';
 import type { ExtensionSettings } from '../../lib/settings';
+import {
+  testServerConnection,
+  getServerTestErrorKey,
+  type ServerTestResult,
+} from '../../lib/serverTest';
 import styles from '../Options.module.css';
 
 interface ServerSectionProps {
   settings: ExtensionSettings;
   onUpdate: (partial: Partial<ExtensionSettings>) => Promise<void>;
-}
-
-interface TestResult {
-  success: boolean;
-  latency?: number;
-  error?: string;
 }
 
 /**
@@ -28,55 +27,25 @@ export function ServerSection({ settings, onUpdate }: ServerSectionProps): JSX.E
   const { t } = useTranslation();
   const [urlInput, setUrlInput] = useState(settings.serverUrl ?? '');
   const [testing, setTesting] = useState(false);
-  const [testResult, setTestResult] = useState<TestResult | null>(null);
+  const [testResult, setTestResult] = useState<ServerTestResult | null>(null);
 
   /**
    * Tests connection to the specified server URL.
+   * Uses a minimum delay to prevent the loading state from flashing.
    */
-  const testConnection = useCallback(
-    async (url: string) => {
-      setTesting(true);
-      setTestResult(null);
+  const handleTestConnection = useCallback(async (url: string) => {
+    setTesting(true);
+    setTestResult(null);
 
-      const start = performance.now();
-      try {
-        const res = await fetch(`${url}/health`, {
-          signal: AbortSignal.timeout(3000),
-        });
+    // Ensure loading state shows for at least 400ms to avoid flashing
+    const [result] = await Promise.all([
+      testServerConnection(url),
+      new Promise((resolve) => setTimeout(resolve, 400)),
+    ]);
+    setTestResult(result);
 
-        if (!res.ok) {
-          throw new Error(t('error_server_error'));
-        }
-
-        const data = await res.json();
-        if (data.service !== 'thaumic-cast-desktop') {
-          throw new Error(t('error_wrong_server'));
-        }
-
-        setTestResult({
-          success: true,
-          latency: Math.round(performance.now() - start),
-        });
-      } catch (err) {
-        // Map common network errors to user-friendly messages
-        let errorMessage = t('server_test_failed');
-        if (err instanceof Error) {
-          if (err.message === 'Failed to fetch' || err.name === 'TypeError') {
-            errorMessage = t('error_network_failed');
-          } else {
-            errorMessage = err.message;
-          }
-        }
-        setTestResult({
-          success: false,
-          error: errorMessage,
-        });
-      } finally {
-        setTesting(false);
-      }
-    },
-    [t],
-  );
+    setTesting(false);
+  }, []);
 
   /**
    * Handles auto-discover toggle.
@@ -106,8 +75,8 @@ export function ServerSection({ settings, onUpdate }: ServerSectionProps): JSX.E
     if (!url) return;
 
     await onUpdate({ serverUrl: url, useAutoDiscover: false });
-    await testConnection(url);
-  }, [urlInput, onUpdate, testConnection]);
+    await handleTestConnection(url);
+  }, [urlInput, onUpdate, handleTestConnection]);
 
   return (
     <Card title={t('server_section_title')}>
@@ -182,7 +151,7 @@ export function ServerSection({ settings, onUpdate }: ServerSectionProps): JSX.E
                     {t('server_status_latency', { latency: testResult.latency })})
                   </span>
                 ) : (
-                  <span>{testResult.error ?? t('server_test_failed')}</span>
+                  <span>{t(getServerTestErrorKey(testResult) ?? 'server_test_failed')}</span>
                 )}
               </div>
             )}

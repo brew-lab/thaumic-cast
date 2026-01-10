@@ -62,6 +62,7 @@ class NotificationService {
   /**
    * Returns the count of active listeners.
    * Useful for debugging.
+   * @returns The number of active listeners
    */
   get listenerCount(): number {
     return this.listeners.size;
@@ -70,6 +71,7 @@ class NotificationService {
   /**
    * Returns the total number of notifications sent.
    * Useful for debugging.
+   * @returns The total notification count
    */
   get notificationCount(): number {
     return this.callCount;

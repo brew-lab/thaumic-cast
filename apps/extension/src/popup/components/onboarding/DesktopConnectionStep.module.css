@@ -1,4 +1,4 @@
-.downloadPrompt {
+.download-prompt {
   margin: 0;
   color: var(--color-text-muted);
   font-size: 0.9rem;
@@ -8,4 +8,46 @@
   display: flex;
   flex-direction: column;
   gap: var(--space-sm);
+}
+
+/* Manual configuration form - vertical/intrinsic layout */
+.manual-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+.url-input {
+  padding-block: var(--space-sm);
+  padding-inline: var(--space-sm);
+  background: var(--input-bg);
+  color: var(--input-text);
+  border: 1px solid var(--input-border);
+  border-radius: var(--radius-sm);
+  font-size: 0.875rem;
+}
+
+.url-input:focus {
+  outline: 2px solid var(--input-border-focus);
+  outline-offset: 2px;
+}
+
+.url-input::placeholder {
+  color: var(--color-text-muted);
+  opacity: 0.7;
+}
+
+.test-error {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+  font-size: 0.875rem;
+  color: var(--color-error);
+}
+
+.error-dot {
+  inline-size: 0.5rem;
+  block-size: 0.5rem;
+  border-radius: 50%;
+  background-color: var(--color-error);
 }

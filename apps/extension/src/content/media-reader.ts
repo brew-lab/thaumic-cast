@@ -61,13 +61,18 @@ import { METADATA_EVENT, REQUEST_EVENT, CONTROL_EVENT } from './constants';
   function selectBestArtwork(artwork: readonly MediaImage[] | undefined): string | undefined {
     if (!artwork?.length) return undefined;
 
-    const sorted = Array.from(artwork).sort((a, b) => {
-      const aSize = parseInt(a.sizes?.split('x')[0] || '0', 10);
-      const bSize = parseInt(b.sizes?.split('x')[0] || '0', 10);
-      return bSize - aSize;
-    });
+    let bestSrc: string | undefined;
+    let bestSize = 0;
 
-    return sorted[0]?.src;
+    for (const img of artwork) {
+      const size = parseInt(img.sizes?.split('x')[0] || '0', 10);
+      if (!bestSrc || size > bestSize) {
+        bestSize = size;
+        bestSrc = img.src;
+      }
+    }
+
+    return bestSrc;
   }
 
   /**

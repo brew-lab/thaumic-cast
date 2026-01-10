@@ -89,7 +89,13 @@ impl DiscoveryCoordinator {
         let http_client = Client::builder()
             .timeout(config.description_fetch_timeout)
             .build()
-            .unwrap_or_default();
+            .unwrap_or_else(|e| {
+                log::warn!(
+                    "[Discovery] Failed to build HTTP client with custom timeout: {}. Using default.",
+                    e
+                );
+                Client::default()
+            });
 
         Self {
             config,
@@ -476,6 +482,104 @@ fn error_to_kind(error: &DiscoveryError, timeout_ms: u64) -> DiscoveryErrorKind 
         DiscoveryError::AllMethodsFailed(_) => DiscoveryErrorKind::Timeout {
             configured_ms: timeout_ms,
         },
+        // These are only used for manual IP probing
+        DiscoveryError::IpUnreachable(_) | DiscoveryError::NotSonosDevice(_) => {
+            DiscoveryErrorKind::Timeout {
+                configured_ms: timeout_ms,
+            }
+        }
+    }
+}
+
+/// Probes a single IP address to verify it's a Sonos speaker.
+///
+/// Tries port 1400 first (standard Sonos UPnP port used by most devices), then
+/// port 1410 as fallback. Port 1410 is used by Sonos Connect and some older Boost
+/// devices for HTTP control instead of the standard 1400. See Sonos API docs.
+///
+/// Returns speaker metadata if successful.
+///
+/// # Arguments
+/// * `client` - HTTP client for making requests
+/// * `ip` - IP address to probe (e.g., "192.168.1.100")
+///
+/// # Errors
+/// * `IpUnreachable` - Cannot connect to the IP address on either port
+/// * `NotSonosDevice` - IP responds but is not a valid Sonos device description
+pub async fn probe_speaker_by_ip(client: &Client, ip: &str) -> Result<Speaker, DiscoveryError> {
+    /// Result of probing a URL, distinguishing connection failure from parse failure.
+    enum ProbeResult {
+        Success(DeviceInfo),
+        /// Responded but not a valid Sonos device (wrong content, parse failure, non-2xx status)
+        NotSonos,
+        /// Could not connect (connection refused, timeout, DNS failure)
+        Unreachable,
+    }
+
+    /// Probes a URL for device description, tracking failure reason.
+    async fn probe_url(client: &Client, url: &str) -> ProbeResult {
+        let response = match client.get(url).send().await {
+            Ok(r) => r,
+            Err(_) => return ProbeResult::Unreachable,
+        };
+
+        // Check for successful HTTP status before attempting to parse
+        if !response.status().is_success() {
+            return ProbeResult::NotSonos;
+        }
+
+        let body = match response.text().await {
+            Ok(b) => b,
+            Err(_) => return ProbeResult::NotSonos,
+        };
+
+        match parse_device_description(&body) {
+            Some(info) => ProbeResult::Success(info),
+            None => ProbeResult::NotSonos,
+        }
+    }
+
+    // Track if any port was reachable (even if not Sonos)
+    let mut any_reachable = false;
+
+    // Try port 1400 first (standard Sonos control port)
+    let url_1400 = format!("http://{}:1400/xml/device_description.xml", ip);
+    match probe_url(client, &url_1400).await {
+        ProbeResult::Success(info) => {
+            return Ok(Speaker {
+                ip: ip.to_string(),
+                uuid: normalize_uuid(&info.uuid),
+                name: info.friendly_name,
+                model_name: info.model_name,
+            });
+        }
+        ProbeResult::NotSonos => {
+            any_reachable = true;
+            // Try fallback port
+        }
+        ProbeResult::Unreachable => {
+            // Try fallback port
+        }
+    }
+
+    // Try port 1410 as fallback (some Sonos devices)
+    let url_1410 = format!("http://{}:1410/xml/device_description.xml", ip);
+    match probe_url(client, &url_1410).await {
+        ProbeResult::Success(info) => Ok(Speaker {
+            ip: ip.to_string(),
+            uuid: normalize_uuid(&info.uuid),
+            name: info.friendly_name,
+            model_name: info.model_name,
+        }),
+        ProbeResult::NotSonos => Err(DiscoveryError::NotSonosDevice(ip.to_string())),
+        ProbeResult::Unreachable => {
+            // If either port was reachable, the device exists but isn't Sonos
+            if any_reachable {
+                Err(DiscoveryError::NotSonosDevice(ip.to_string()))
+            } else {
+                Err(DiscoveryError::IpUnreachable(ip.to_string()))
+            }
+        }
     }
 }
 

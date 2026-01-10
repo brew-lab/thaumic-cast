@@ -84,6 +84,14 @@ pub enum DiscoveryError {
     /// All discovery methods failed.
     #[error("all discovery methods failed")]
     AllMethodsFailed(Vec<(DiscoveryMethod, DiscoveryErrorKind)>),
+
+    /// IP address is unreachable or not responding.
+    #[error("IP unreachable: {0}")]
+    IpUnreachable(String),
+
+    /// IP responds but is not a valid Sonos device.
+    #[error("not a Sonos device: {0}")]
+    NotSonosDevice(String),
 }
 
 /// A discovered Sonos speaker with resolved metadata.
@@ -96,7 +104,7 @@ pub struct Speaker {
     /// Canonical UUID (normalized RINCON_xxx).
     pub uuid: String,
     /// Model name (e.g., "Sonos Arc", "Sonos Boost").
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "modelName", skip_serializing_if = "Option::is_none")]
     pub model_name: Option<String>,
 }
 

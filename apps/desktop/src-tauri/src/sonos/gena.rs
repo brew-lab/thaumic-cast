@@ -12,7 +12,9 @@ use thiserror::Error;
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
-use crate::config::{GENA_RENEWAL_BUFFER_SECS, GENA_RENEWAL_CHECK_SECS};
+use crate::config::{
+    GENA_EVENT_CHANNEL_CAPACITY, GENA_RENEWAL_BUFFER_SECS, GENA_RENEWAL_CHECK_SECS,
+};
 use crate::error::GenaResult;
 
 use super::gena_client::GenaClient;
@@ -102,8 +104,8 @@ pub struct GenaSubscriptionManager {
     store: GenaSubscriptionStore,
     /// HTTP client for GENA operations.
     client: GenaClient,
-    /// Event sender for emitting SonosEvents (always available).
-    event_tx: mpsc::UnboundedSender<SonosEvent>,
+    /// Event sender for emitting SonosEvents (bounded to prevent unbounded memory growth).
+    event_tx: mpsc::Sender<SonosEvent>,
     /// Token to signal background tasks to stop.
     cancel_token: CancellationToken,
 }
@@ -111,13 +113,14 @@ pub struct GenaSubscriptionManager {
 impl GenaSubscriptionManager {
     /// Creates a new GenaSubscriptionManager instance along with an event receiver.
     ///
-    /// The returned receiver will receive all GENA events (subscription lost, etc.).
-    /// The channel is unbounded to prevent blocking the GENA notification handler.
+    /// The returned receiver will receive internal GENA events (subscription lost, etc.).
+    /// The channel is bounded to prevent unbounded memory growth; events are dropped
+    /// if the channel fills (with a warning log).
     ///
     /// # Arguments
     /// * `http_client` - The HTTP client to use for GENA requests
-    pub fn new(http_client: Client) -> (Self, mpsc::UnboundedReceiver<SonosEvent>) {
-        let (event_tx, event_rx) = mpsc::unbounded_channel();
+    pub fn new(http_client: Client) -> (Self, mpsc::Receiver<SonosEvent>) {
+        let (event_tx, event_rx) = mpsc::channel(GENA_EVENT_CHANNEL_CAPACITY);
         let manager = Self {
             store: GenaSubscriptionStore::new(),
             client: GenaClient::new(http_client),
@@ -140,14 +143,27 @@ impl GenaSubscriptionManager {
     }
 
     /// Emits a SubscriptionLost event to the event channel.
+    ///
+    /// Uses `try_send` to avoid blocking. If the channel is full, the event is
+    /// dropped with a warning (acceptable since all SubscriptionLost events
+    /// trigger the same recovery action - a topology refresh).
     fn emit_subscription_lost(&self, speaker_ip: String, service: SonosService, reason: String) {
         let event = SonosEvent::SubscriptionLost {
             speaker_ip,
             service,
             reason,
         };
-        if let Err(e) = self.event_tx.send(event) {
-            log::error!("[GENA] Failed to emit SubscriptionLost event: {}", e);
+        if let Err(e) = self.event_tx.try_send(event) {
+            match e {
+                mpsc::error::TrySendError::Full(_) => {
+                    log::warn!(
+                        "[GENA] Event channel full, dropping SubscriptionLost event (recovery already pending)"
+                    );
+                }
+                mpsc::error::TrySendError::Closed(_) => {
+                    log::error!("[GENA] Event channel closed, cannot emit SubscriptionLost");
+                }
+            }
         }
     }
 

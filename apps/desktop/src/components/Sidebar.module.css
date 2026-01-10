@@ -30,7 +30,7 @@
   gap: var(--space-xs);
 }
 
-.navLink {
+.nav-link {
   display: flex;
   align-items: center;
   gap: var(--space-sm);
@@ -46,11 +46,11 @@
     color 0.15s ease;
 }
 
-.navLink:hover {
+.nav-link:hover {
   background-color: var(--color-bg);
 }
 
-.navLinkActive {
+.nav-link-active {
   color: var(--color-primary);
   background-color: var(--color-bg);
   font-weight: 600;

@@ -1,0 +1,18 @@
+.form {
+  display: flex;
+  gap: var(--space-sm);
+  align-items: stretch;
+}
+
+.form input {
+  flex: 1;
+}
+
+.error {
+  margin-block-start: var(--space-sm);
+  padding: var(--space-sm);
+  background: oklch(from var(--color-error) l c h / 10%);
+  border-radius: var(--radius-sm);
+  color: var(--color-error);
+  font-size: 0.9rem;
+}

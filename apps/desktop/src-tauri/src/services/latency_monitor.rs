@@ -434,7 +434,11 @@ impl LatencyMonitor {
         cancel: CancellationToken,
     ) {
         let sessions: DashMap<SessionKey, LatencySession> = DashMap::new();
-        let poll_interval = Duration::from_millis(POLL_INTERVAL_MS);
+
+        // Use interval instead of sleep to reduce timer allocations and prevent drift.
+        // Delay mode skips missed ticks rather than bursting to catch up.
+        let mut poll_interval = tokio::time::interval(Duration::from_millis(POLL_INTERVAL_MS));
+        poll_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
 
         log::info!("[LatencyMonitor] Background task started");
 
@@ -467,8 +471,13 @@ impl LatencyMonitor {
                     }
                 }
 
-                _ = tokio::time::sleep(poll_interval) => {
-                    // Poll all active sessions
+                _ = poll_interval.tick() => {
+                    // Poll all active sessions, collecting orphaned ones for cleanup.
+                    // Sessions become orphaned when StreamGuard::drop removes the stream
+                    // without calling stop_stream (e.g., WS handler panic/unexpected exit).
+                    // Use Option to avoid Vec allocation on every poll (common case: no orphans).
+                    let mut orphaned_keys: Option<Vec<SessionKey>> = None;
+
                     for mut entry in sessions.iter_mut() {
                         // Extract key before mutable borrow to satisfy borrow checker
                         let (stream_id, speaker_ip) = entry.key().clone();
@@ -477,7 +486,13 @@ impl LatencyMonitor {
                         // Get stream for timing info
                         let stream = match stream_manager.get_stream(&stream_id) {
                             Some(s) => s,
-                            None => continue,
+                            None => {
+                                // Stream no longer exists - mark session for removal
+                                orphaned_keys
+                                    .get_or_insert_with(Vec::new)
+                                    .push((stream_id, speaker_ip));
+                                continue;
+                            }
                         };
 
                         // Parse speaker IP and sync with current epoch for this speaker
@@ -586,6 +601,20 @@ impl LatencyMonitor {
                                 session.latency_ms(),
                                 session.jitter_ms(),
                                 session.confidence()
+                            );
+                        }
+                    }
+
+                    // Clean up orphaned sessions (stream no longer exists).
+                    // This handles cases where StreamGuard::drop removed the stream
+                    // but stop_stream was never called (panic, unexpected exit, etc.).
+                    if let Some(keys) = orphaned_keys {
+                        for key in keys {
+                            sessions.remove(&key);
+                            log::info!(
+                                "[LatencyMonitor] Pruned orphaned session: stream={}, speaker={}",
+                                key.0,
+                                key.1
                             );
                         }
                     }

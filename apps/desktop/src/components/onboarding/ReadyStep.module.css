@@ -1,4 +1,4 @@
-.summaryBox {
+.summary-box {
   display: flex;
   flex-direction: column;
   gap: var(--space-sm);
@@ -8,41 +8,41 @@
   border-radius: var(--radius-md);
 }
 
-.summaryItem {
+.summary-item {
   display: flex;
   align-items: center;
   gap: var(--space-sm);
 }
 
-.checkIcon {
+.check-icon {
   color: var(--color-success);
   flex-shrink: 0;
 }
 
-.pendingIcon {
+.pending-icon {
   color: var(--color-warning);
   flex-shrink: 0;
 }
 
-.introText {
+.intro-text {
   margin: 0;
   line-height: 1.6;
   text-wrap: pretty;
 }
 
-.sectionTitle {
+.section-title {
   font-size: 1rem;
   font-weight: 600;
   margin: 0;
 }
 
-.sectionBody {
+.section-body {
   margin: 0;
   line-height: 1.6;
   color: var(--color-text-muted);
 }
 
-.autostartToggle {
+.autostart-toggle {
   display: flex;
   align-items: flex-start;
   gap: var(--space-md);
@@ -54,11 +54,11 @@
   transition: var(--transition-bg);
 }
 
-.autostartToggle:hover {
+.autostart-toggle:hover {
   background: var(--color-surface-hover);
 }
 
-.autostartToggle input[type='checkbox'] {
+.autostart-toggle input[type='checkbox'] {
   margin: 0;
   margin-block-start: 0.25rem;
   accent-color: var(--color-primary);
@@ -67,17 +67,17 @@
   flex-shrink: 0;
 }
 
-.autostartContent {
+.autostart-content {
   display: flex;
   flex-direction: column;
   gap: var(--space-xs);
 }
 
-.autostartLabel {
+.autostart-label {
   font-weight: 500;
 }
 
-.autostartDescription {
+.autostart-description {
   font-size: 0.85rem;
   color: var(--color-text-muted);
   line-height: 1.5;

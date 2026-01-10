@@ -52,15 +52,18 @@ export class AacEncoder extends BaseAudioEncoder {
   }
 
   /**
-   *
+   * Returns the logger name for this encoder.
+   * @returns The logger identifier string
    */
   protected getLoggerName(): string {
     return 'AacEncoder';
   }
 
   /**
+   * Creates the WebCodecs encoder configuration.
    * @param webCodecsId - WebCodecs codec identifier
    * @param latencyMode - Latency mode for encoding
+   * @returns The encoder configuration object
    */
   protected getEncoderConfig(
     webCodecsId: string,
@@ -76,7 +79,7 @@ export class AacEncoder extends BaseAudioEncoder {
   }
 
   /**
-   *
+   * Logs the encoder configuration details.
    */
   protected logConfiguration(): void {
     this.log.info(`Configured ${this.config.codec} @ ${this.config.bitrate}kbps`);

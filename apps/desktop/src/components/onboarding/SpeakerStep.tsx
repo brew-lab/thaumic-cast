@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'preact/hooks';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
-import { WizardStep, Alert, Button } from '@thaumic-cast/ui';
+import { WizardStep, Alert, Button, Disclosure } from '@thaumic-cast/ui';
 import { createLogger } from '@thaumic-cast/shared';
 import { Speaker, RefreshCw } from 'lucide-preact';
 import { useTranslation } from 'react-i18next';
@@ -10,6 +10,7 @@ import {
   type DiscoveryCompletePayload,
   type NetworkHealthPayload,
 } from '../../lib/events';
+import { ManualSpeakerForm } from '../ManualSpeakerForm';
 
 import styles from './SpeakerStep.module.css';
 
@@ -143,6 +144,16 @@ export function SpeakerStep({ onSpeakersFound }: SpeakerStepProps): preact.JSX.E
           <p className={styles.emptyTitle}>{t('onboarding.speakers.none_found')}</p>
           <p className={styles.emptyHint}>{t('onboarding.speakers.none_found_hint')}</p>
         </div>
+      )}
+
+      {/* Manual IP entry - shown when no speakers found */}
+      {speakerCount === 0 && !isSearching && (
+        <Disclosure
+          label={t('onboarding.speakers.manual_toggle')}
+          hint={t('onboarding.speakers.manual_hint')}
+        >
+          <ManualSpeakerForm buttonVariant="primary" />
+        </Disclosure>
       )}
 
       <div className={styles.speakerList}>

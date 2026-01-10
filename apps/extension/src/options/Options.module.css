@@ -16,7 +16,7 @@
   font-size: 0.875rem;
 }
 
-.cardContent {
+.card-content {
   display: flex;
   flex-direction: column;
   gap: var(--space-md);
@@ -82,13 +82,13 @@
 }
 
 /* Radio group */
-.radioGroup {
+.radio-group {
   display: flex;
   flex-direction: column;
   gap: var(--space-sm);
 }
 
-.radioOption {
+.radio-option {
   display: flex;
   align-items: flex-start;
   gap: var(--space-sm);
@@ -99,27 +99,27 @@
   transition: var(--transition-bg);
 }
 
-.radioOption:hover {
+.radio-option:hover {
   background: var(--color-surface-hover);
 }
 
-.radioInput {
+.radio-input {
   margin: 0;
   margin-block-start: 0.125rem;
 }
 
-.radioContent {
+.radio-content {
   display: flex;
   flex-direction: column;
   gap: 0.125rem;
 }
 
-.radioLabel {
+.radio-label {
   font-size: 0.875rem;
   font-weight: 500;
 }
 
-.radioDesc {
+.radio-desc {
   font-size: 0.75rem;
   color: var(--color-text-muted);
 }
@@ -132,21 +132,21 @@
   font-size: 0.875rem;
 }
 
-.statusDot {
+.status-dot {
   inline-size: 0.5rem;
   block-size: 0.5rem;
   border-radius: 50%;
 }
 
-.statusDotConnected {
+.status-dot-connected {
   background-color: var(--color-success);
 }
 
-.statusDotDisconnected {
+.status-dot-disconnected {
   background-color: var(--color-error);
 }
 
-.statusDotChecking {
+.status-dot-checking {
   background-color: var(--color-warning);
   animation: pulse 1.5s infinite;
 }
@@ -163,14 +163,14 @@
 }
 
 /* Inline row */
-.inlineRow {
+.inline-row {
   display: flex;
   align-items: center;
   gap: var(--space-sm);
 }
 
 /* Resolved settings display */
-.resolvedSettings {
+.resolved-settings {
   background: var(--inset-bg);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-sm);
@@ -178,18 +178,18 @@
   padding-inline: var(--space-md);
 }
 
-.resolvedRow {
+.resolved-row {
   display: flex;
   justify-content: space-between;
   padding-block: var(--space-xs);
 }
 
-.resolvedLabel {
+.resolved-label {
   color: var(--color-text-muted);
   font-size: 0.875rem;
 }
 
-.resolvedValue {
+.resolved-value {
   font-size: 0.875rem;
   font-weight: 500;
 }

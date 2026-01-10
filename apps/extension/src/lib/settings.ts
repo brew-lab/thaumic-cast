@@ -72,9 +72,10 @@ export const ExtensionSettingsSchema = z.object({
   audioMode: AudioModeSchema.default('high'),
 
   // Custom audio settings (used when audioMode is 'custom')
+  // Default to PCM as it's always available (no WebCodecs dependency)
   customAudioSettings: CustomAudioSettingsSchema.default({
-    codec: 'aac-lc',
-    bitrate: 192,
+    codec: 'pcm',
+    bitrate: 0,
     channels: 2,
     sampleRate: 48000,
     latencyMode: 'quality',
@@ -94,8 +95,8 @@ const DEFAULT_EXTENSION_SETTINGS: ExtensionSettings = {
   language: 'en',
   audioMode: 'high',
   customAudioSettings: {
-    codec: 'aac-lc',
-    bitrate: 192,
+    codec: 'pcm',
+    bitrate: 0,
     channels: 2,
     sampleRate: 48000,
     latencyMode: 'quality',

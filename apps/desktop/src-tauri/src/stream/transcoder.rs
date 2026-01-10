@@ -16,11 +16,13 @@ pub trait Transcoder: Send + Sync {
     /// Transcodes audio data from input format to output format.
     ///
     /// # Arguments
-    /// * `input` - Raw input bytes (format depends on implementation)
+    /// * `input` - Input bytes as a `Bytes` buffer. Implementations that don't
+    ///   need to transform the data can return this directly (zero-copy).
+    ///   Implementations that need raw access can use `input.as_ref()`.
     ///
     /// # Returns
     /// Transcoded output bytes ready for streaming.
-    fn transcode(&self, input: &[u8]) -> Bytes;
+    fn transcode(&self, input: Bytes) -> Bytes;
 
     /// Returns a description of the transcoding operation for logging.
     fn description(&self) -> &'static str;
@@ -34,8 +36,8 @@ pub trait Transcoder: Send + Sync {
 pub struct Passthrough;
 
 impl Transcoder for Passthrough {
-    fn transcode(&self, input: &[u8]) -> Bytes {
-        Bytes::copy_from_slice(input)
+    fn transcode(&self, input: Bytes) -> Bytes {
+        input
     }
 
     fn description(&self) -> &'static str {
@@ -50,8 +52,8 @@ mod tests {
     #[test]
     fn test_passthrough() {
         let transcoder = Passthrough;
-        let input = vec![1u8, 2, 3, 4, 5];
-        let output = transcoder.transcode(&input);
-        assert_eq!(output.as_ref(), input.as_slice());
+        let input = Bytes::from_static(&[1u8, 2, 3, 4, 5]);
+        let output = transcoder.transcode(input.clone());
+        assert_eq!(output, input);
     }
 }

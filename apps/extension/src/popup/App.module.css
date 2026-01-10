@@ -11,7 +11,7 @@
   margin-block-end: 1rem;
 }
 
-.titleGroup {
+.title-group {
   display: flex;
   align-items: center;
   gap: 0.5rem;
@@ -43,7 +43,7 @@
   margin-block-end: 0.25rem;
 }
 
-.toggleRow {
+.toggle-row {
   display: flex;
   align-items: center;
   gap: 0.5rem;
@@ -51,7 +51,7 @@
   cursor: pointer;
 }
 
-.toggleInput {
+.toggle-input {
   margin: 0;
 }
 
@@ -71,7 +71,7 @@
   border: 1px solid var(--input-border);
 }
 
-.statusMsg {
+.status-msg {
   font-size: 0.85rem;
   margin-block-end: 1rem;
 }
@@ -87,20 +87,20 @@
   font-weight: 500;
 }
 
-.statusChecking {
+.status-checking {
   color: var(--status-checking);
 }
 
-.statusDisconnected {
+.status-disconnected {
   color: var(--color-error);
 }
 
-.statusConnected {
+.status-connected {
   color: var(--color-success);
 }
 
 /* Volume Controls */
-.volumeControl {
+.volume-control {
   margin-block-end: 1rem;
   padding-block: 0.75rem;
   padding-inline: 0.75rem;
@@ -109,14 +109,14 @@
   border: 1px solid var(--color-border);
 }
 
-.volumeHeader {
+.volume-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
   margin-block-end: 0.5rem;
 }
 
-.muteButton {
+.mute-button {
   background: transparent;
   border: none;
   cursor: pointer;
@@ -126,15 +126,15 @@
   transition: var(--transition-bg);
 }
 
-.muteButton:hover {
+.mute-button:hover {
   background: var(--button-ghost-bg-hover);
 }
 
-.muteButton.muted {
+.mute-button.muted {
   opacity: 0.6;
 }
 
-.volumeSlider {
+.volume-slider {
   width: 100%;
   height: 6px;
   appearance: none;
@@ -144,7 +144,7 @@
   cursor: pointer;
 }
 
-.volumeSlider::-webkit-slider-thumb {
+.volume-slider::-webkit-slider-thumb {
   appearance: none;
   width: 16px;
   height: 16px;
@@ -153,16 +153,16 @@
   cursor: pointer;
 }
 
-.volumeSlider:disabled {
+.volume-slider:disabled {
   opacity: 0.5;
   cursor: not-allowed;
 }
 
-.volumeSlider:disabled::-webkit-slider-thumb {
+.volume-slider:disabled::-webkit-slider-thumb {
   cursor: not-allowed;
 }
 
-.volumeValue {
+.volume-value {
   display: block;
   text-align: end;
   font-size: 0.75rem;
@@ -170,7 +170,7 @@
   margin-block-start: 0.25rem;
 }
 
-.castButton {
+.cast-button {
   display: inline-flex;
   align-items: center;
   justify-content: center;

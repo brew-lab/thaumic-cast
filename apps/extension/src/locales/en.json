@@ -34,6 +34,7 @@
   "auto_stop_source_changed": "Sonos has been distracted by something else",
   "auto_stop_stream_ended": "The stream has concluded its journey",
   "auto_stop_playback_stopped": "Playback has decided to take a break",
+  "auto_stop_speaker_stopped": "The speaker has wandered off mid-sentence",
 
   "loading_speakers": "Seeking speakers...",
   "no_speakers_found": "The network was searched. The speakers were not forthcoming.",
@@ -42,8 +43,11 @@
   "network.speakers_not_responding": "The speakers have been located but appear to be giving us the silent treatment. A VPN or firewall is the likely culprit.",
 
   "volume": "Volume",
+  "volume_speaker": "{{name}} volume",
   "mute": "Mute",
+  "mute_speaker": "Mute {{name}}",
   "unmute": "Unmute",
+  "unmute_speaker": "Unmute {{name}}",
   "play": "Play",
   "pause": "Pause",
   "previous_track": "Previous track",
@@ -136,6 +140,9 @@
   "onboarding.desktop.download_prompt": "You'll need to install it first:",
   "onboarding.desktop.download_button": "Download Desktop App",
   "onboarding.desktop.retry_button": "I've installed it, try again",
+  "onboarding.desktop.manual_toggle": "Can't find it? Configure manually",
+  "onboarding.desktop.manual_hint": "For non-standard ports or remote servers",
+  "onboarding.desktop.manual_connected": "Connection established. You may proceed.",
 
   "onboarding.speakers.title": "Your Speakers Await",
   "onboarding.speakers.subtitle": "Let's see who's listening",

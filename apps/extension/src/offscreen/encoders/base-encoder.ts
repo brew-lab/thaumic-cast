@@ -42,6 +42,7 @@ export abstract class BaseAudioEncoder implements AudioEncoder {
 
   /**
    * Returns the number of pending encode requests.
+   * @returns The encode queue size
    */
   get encodeQueueSize(): number {
     return this.encoder.encodeQueueSize;
@@ -49,6 +50,7 @@ export abstract class BaseAudioEncoder implements AudioEncoder {
 
   /**
    * Returns the current latency mode.
+   * @returns The latency mode setting
    */
   get latencyMode(): LatencyMode {
     return this._latencyMode;
@@ -80,6 +82,7 @@ export abstract class BaseAudioEncoder implements AudioEncoder {
 
   /**
    * Creates and configures a new WebCodecs AudioEncoder.
+   * @returns The configured AudioEncoder instance
    */
   private createEncoder(): globalThis.AudioEncoder {
     const encoder = new AudioEncoder({

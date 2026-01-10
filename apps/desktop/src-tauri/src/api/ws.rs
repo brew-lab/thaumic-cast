@@ -427,6 +427,12 @@ async fn handle_ws(socket: WebSocket, state: AppState) {
         }
     }
 
+    // Use interval instead of sleep to reduce timer allocations and prevent drift.
+    // Delay mode skips missed ticks rather than bursting to catch up.
+    let mut heartbeat_interval =
+        tokio::time::interval(Duration::from_secs(WS_HEARTBEAT_CHECK_INTERVAL_SECS));
+    heartbeat_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+
     loop {
         tokio::select! {
             // Handle force-close request
@@ -634,7 +640,7 @@ async fn handle_ws(socket: WebSocket, state: AppState) {
                 }
             }
             // Heartbeat timeout check
-            _ = tokio::time::sleep(Duration::from_secs(WS_HEARTBEAT_CHECK_INTERVAL_SECS)) => {
+            _ = heartbeat_interval.tick() => {
                 if last_activity.elapsed() > Duration::from_secs(WS_HEARTBEAT_TIMEOUT_SECS) {
                     log::warn!("[WS] Heartbeat timeout");
                     break;

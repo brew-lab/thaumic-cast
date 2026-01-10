@@ -38,15 +38,17 @@ import {
 import { notifyPopup } from './notification-service';
 import { offscreenBroker } from './offscreen-broker';
 import { noop } from '../lib/noop';
+import type { SpeakerRemovalReason } from '../lib/messages';
 
 const log = createLogger('SonosEvents');
-
-/** Reason for speaker removal from a cast session */
-type SpeakerRemovalReason = 'source_changed' | 'playback_stopped';
 
 /** Per-speaker debounce timers for transport state changes */
 const transportDebounceTimers = new Map<string, ReturnType<typeof setTimeout>>();
 const TRANSPORT_DEBOUNCE_MS = 500;
+
+/** Tracks recently removed speakers to dedupe events from multiple sources */
+const recentlyRemovedSpeakers = new Map<string, number>();
+const REMOVAL_DEDUPE_MS = 2000;
 
 /**
  * Handles a broadcast event from the desktop app.
@@ -136,6 +138,16 @@ function handleTransportState(speakerIp: string, state: TransportState): void {
     });
 
     log.info(`Transport state: ${speakerIp} → ${state}`);
+
+    // If Sonos stopped (e.g., stream killed due to underflow), remove speaker from session
+    if (state === 'Stopped') {
+      const session = getSessionBySpeakerIp(speakerIp);
+      if (session) {
+        log.warn(`Speaker ${speakerIp} stopped while casting - removing from session`);
+        await handleSpeakerRemoval(speakerIp, 'speaker_stopped');
+        return;
+      }
+    }
 
     // Control tab media when Sonos transport state changes
     await handleTransportMediaControl(speakerIp, state);
@@ -310,19 +322,33 @@ export async function stopCastForTab(tabId: number): Promise<void> {
 /**
  * Handles removal of a speaker from an active cast session.
  * Consolidates the common pattern of:
- * 1. Finding session by speaker IP
- * 2. Removing speaker from session
- * 3. Stopping cast if last speaker, or notifying popup of partial removal
+ * 1. Deduping rapid removals from multiple event sources
+ * 2. Finding session by speaker IP
+ * 3. Removing speaker from session
+ * 4. Stopping cast if last speaker, or notifying popup of partial removal
+ *
+ * Deduplication is needed because a single speaker stop can trigger both
+ * a GENA transportState:Stopped event and a stream playbackStopped event.
  *
  * @param speakerIp - The speaker IP address being removed
- * @param reason - Why the speaker is being removed
+ * @param reason - Why the speaker is being removed (source_changed, playback_stopped, or speaker_stopped)
+ * @returns Resolves when the speaker has been removed and notifications sent
  */
 async function handleSpeakerRemoval(
   speakerIp: string,
   reason: SpeakerRemovalReason,
 ): Promise<void> {
+  // Dedupe rapid removals from multiple event sources (GENA + stream events)
+  const lastRemoval = recentlyRemovedSpeakers.get(speakerIp);
+  if (lastRemoval && Date.now() - lastRemoval < REMOVAL_DEDUPE_MS) {
+    log.debug(`Ignoring duplicate removal for ${speakerIp} (reason: ${reason})`);
+    return;
+  }
+
   const session = getSessionBySpeakerIp(speakerIp);
   if (!session) return;
+
+  recentlyRemovedSpeakers.set(speakerIp, Date.now());
 
   const tabId = session.tabId;
 

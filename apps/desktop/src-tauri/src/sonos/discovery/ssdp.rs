@@ -23,6 +23,55 @@ use tokio::time::timeout;
 
 use super::types::{is_virtual_interface, DiscoveredSpeaker, DiscoveryError, DiscoveryMethod};
 
+// ─────────────────────────────────────────────────────────────────────────────
+// ASCII Case-Insensitive Helpers
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// These avoid allocations from to_lowercase() during SSDP response parsing.
+// HTTP headers are ASCII, so byte-level comparison is safe and efficient.
+
+/// Checks if `haystack` contains `needle` (ASCII case-insensitive, no allocation).
+///
+/// Complexity: O(n*m) where n=haystack.len(), m=needle.len().
+/// Acceptable for small needles in HTTP response parsing.
+#[inline]
+fn contains_ignore_ascii_case(haystack: &str, needle: &str) -> bool {
+    if needle.is_empty() {
+        return true;
+    }
+    if needle.len() > haystack.len() {
+        return false;
+    }
+    haystack
+        .as_bytes()
+        .windows(needle.len())
+        .any(|window| window.eq_ignore_ascii_case(needle.as_bytes()))
+}
+
+/// Checks if `s` starts with `prefix` (ASCII case-insensitive, no allocation).
+#[inline]
+fn starts_with_ignore_ascii_case(s: &str, prefix: &str) -> bool {
+    s.len() >= prefix.len() && s.as_bytes()[..prefix.len()].eq_ignore_ascii_case(prefix.as_bytes())
+}
+
+/// Finds the byte index of `needle` in `haystack` (ASCII case-insensitive, no allocation).
+/// Returns the index of the first match, or None if not found.
+#[inline]
+fn find_ignore_ascii_case(haystack: &str, needle: &str) -> Option<usize> {
+    if needle.is_empty() {
+        return Some(0);
+    }
+    if needle.len() > haystack.len() {
+        return None;
+    }
+    haystack
+        .as_bytes()
+        .windows(needle.len())
+        .position(|window| window.eq_ignore_ascii_case(needle.as_bytes()))
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+
 /// Standard SSDP multicast address and port (protocol specification).
 const MULTICAST_ADDR: &str = "239.255.255.250:1900";
 
@@ -146,38 +195,37 @@ fn create_socket(iface_ip: Ipv4Addr, enable_broadcast: bool) -> Result<UdpSocket
 /// Parses an SSDP response and extracts speaker info.
 ///
 /// Returns None if the response doesn't appear to be from a Sonos device.
+/// Uses ASCII case-insensitive comparison to avoid allocations during discovery burst.
 fn parse_ssdp_response(
     response: &str,
     src_ip: &str,
     method: DiscoveryMethod,
 ) -> Option<DiscoveredSpeaker> {
-    let response_lower = response.to_lowercase();
-
-    // Case-insensitive check for Sonos device markers
-    if !response_lower.contains("sonos") && !response_lower.contains("rincon") {
+    // Case-insensitive check for Sonos device markers (no allocation)
+    if !contains_ignore_ascii_case(response, "sonos")
+        && !contains_ignore_ascii_case(response, "rincon")
+    {
         return None;
     }
 
     // Extract LOCATION header (find colon index to preserve URL colons)
     let location = response
         .lines()
-        .find(|l| l.to_lowercase().starts_with("location:"))
+        .find(|l| starts_with_ignore_ascii_case(l, "location:"))
         .and_then(|l| l.find(':').map(|idx| l[idx + 1..].trim().to_string()));
 
     // Extract UUID from USN (e.g. uuid:RINCON_...::...)
-    // Use case-insensitive search for "uuid:" prefix
+    // Use case-insensitive search for "uuid:" prefix (no allocation)
     let uuid = response
         .lines()
-        .find(|l| l.to_lowercase().starts_with("usn:"))
-        .and_then(|l| {
-            let lower = l.to_lowercase();
-            lower.find("uuid:").map(|idx| &l[idx + 5..])
-        })
+        .find(|l| starts_with_ignore_ascii_case(l, "usn:"))
+        .and_then(|l| find_ignore_ascii_case(l, "uuid:").map(|idx| &l[idx + 5..]))
         .and_then(|s| s.split("::").next())
         .unwrap_or("")
         .to_string();
 
-    // Only accept responses with RINCON UUIDs
+    // Only accept responses with RINCON UUIDs.
+    // Case-sensitive check is intentional: Sonos UUIDs are always uppercase RINCON_.
     if !uuid.starts_with("RINCON_") {
         return None;
     }
@@ -490,5 +538,54 @@ USN: uuid:some-other-device
 "#;
         let speaker = parse_ssdp_response(response, "192.168.1.20", DiscoveryMethod::SsdpMulticast);
         assert!(speaker.is_none());
+    }
+
+    #[test]
+    fn test_parse_ssdp_response_case_insensitive() {
+        // Headers with mixed case (some devices send lowercase headers)
+        let response = r#"HTTP/1.1 200 OK
+cache-control: max-age=1800
+location: http://192.168.1.10:1400/xml/device_description.xml
+server: Linux UPnP/1.0 SONOS/63.2-88230
+usn: UUID:RINCON_ABC12345678901400::urn:schemas-upnp-org:device:ZonePlayer:1
+
+"#;
+        let speaker = parse_ssdp_response(response, "192.168.1.10", DiscoveryMethod::SsdpMulticast);
+        assert!(speaker.is_some());
+        let speaker = speaker.unwrap();
+        assert_eq!(speaker.uuid, "RINCON_ABC12345678901400");
+        assert!(speaker.location.is_some());
+    }
+
+    #[test]
+    fn test_contains_ignore_ascii_case() {
+        assert!(contains_ignore_ascii_case("Hello World", "world"));
+        assert!(contains_ignore_ascii_case("Hello World", "HELLO"));
+        assert!(contains_ignore_ascii_case("SONOS Speaker", "sonos"));
+        assert!(!contains_ignore_ascii_case("Hello", "xyz"));
+        assert!(contains_ignore_ascii_case("test", "")); // Empty needle
+        assert!(!contains_ignore_ascii_case("ab", "abc")); // Needle longer than haystack
+    }
+
+    #[test]
+    fn test_starts_with_ignore_ascii_case() {
+        assert!(starts_with_ignore_ascii_case(
+            "Location: http://...",
+            "location:"
+        ));
+        assert!(starts_with_ignore_ascii_case(
+            "LOCATION: http://...",
+            "location:"
+        ));
+        assert!(starts_with_ignore_ascii_case("USN: uuid:...", "usn:"));
+        assert!(!starts_with_ignore_ascii_case("X-Custom: value", "usn:"));
+    }
+
+    #[test]
+    fn test_find_ignore_ascii_case() {
+        assert_eq!(find_ignore_ascii_case("USN: uuid:RINCON", "uuid:"), Some(5));
+        assert_eq!(find_ignore_ascii_case("USN: UUID:RINCON", "uuid:"), Some(5));
+        assert_eq!(find_ignore_ascii_case("no match here", "uuid:"), None);
+        assert_eq!(find_ignore_ascii_case("test", ""), Some(0)); // Empty needle
     }
 }

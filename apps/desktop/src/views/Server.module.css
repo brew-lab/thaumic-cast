@@ -13,13 +13,13 @@
   margin-block-end: var(--space-lg);
 }
 
-.statusHeader {
+.status-header {
   padding-block: var(--space-md);
   padding-inline: var(--space-md);
   border-block-end: 1px solid var(--color-border);
 }
 
-.statusIndicator {
+.status-indicator {
   display: flex;
   align-items: center;
   gap: var(--space-sm);
@@ -27,42 +27,42 @@
   color: var(--color-success);
 }
 
-.statusGrid {
+.status-grid {
   display: grid;
   gap: var(--space-md);
   padding-block: var(--space-md);
   padding-inline: var(--space-md);
 }
 
-.statusItem {
+.status-item {
   display: flex;
   flex-direction: column;
   gap: var(--space-xs);
 }
 
-.statusLabel {
+.status-label {
   font-size: 0.85rem;
   color: var(--color-text-muted);
 }
 
-.statusValue {
+.status-value {
   font-weight: 600;
   font-family: monospace;
 }
 
-.addressRow {
+.address-row {
   display: flex;
   align-items: center;
   gap: var(--space-sm);
 }
 
-.copyButton {
+.copy-button {
   padding-block: var(--space-xs);
   padding-inline: var(--space-xs);
   inline-size: auto;
 }
 
-.sectionTitle {
+.section-title {
   margin: 0;
   padding-block: var(--space-md);
   padding-inline: var(--space-md);
@@ -70,40 +70,41 @@
   font-size: 1rem;
 }
 
-.actionList {
+.action-list {
   display: grid;
 }
 
-.actionRow {
+.action-row {
   display: flex;
   justify-content: space-between;
   align-items: center;
+  gap: var(--space-md);
   padding-block: var(--space-md);
   padding-inline: var(--space-md);
   border-block-end: 1px solid var(--color-border);
 }
 
-.actionRow:last-child {
+.action-row:last-child {
   border-block-end: none;
 }
 
-.actionInfo {
+.action-info {
   display: flex;
   flex-direction: column;
   gap: var(--space-xs);
 }
 
-.actionTitle {
+.action-title {
   font-weight: 600;
 }
 
-.actionDescription {
+.action-description {
   font-size: 0.85rem;
   color: var(--color-text-muted);
   text-wrap: pretty;
 }
 
-.actionButton {
+.action-button {
   inline-size: auto;
   flex-shrink: 0;
 }

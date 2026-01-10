@@ -16,7 +16,7 @@
   gap: var(--space-sm);
 }
 
-.iconWrapper {
+.icon-wrapper {
   background-color: var(--color-bg);
   padding-block: var(--space-xs);
   padding-inline: var(--space-xs);
@@ -56,12 +56,12 @@
   text-transform: capitalize;
 }
 
-.statusPlaying {
+.status-playing {
   background-color: var(--device-status-playing-bg);
   color: var(--device-status-playing-text);
 }
 
-.statusCasting {
+.status-casting {
   background-color: var(--device-status-casting-bg);
   color: var(--device-status-casting-text);
 }
