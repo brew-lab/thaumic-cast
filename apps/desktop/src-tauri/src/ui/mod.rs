@@ -5,4 +5,4 @@
 
 pub mod tray;
 
-pub use tray::setup_tray;
+pub use tray::{setup_tray, TrayState};

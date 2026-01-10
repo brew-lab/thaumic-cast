@@ -101,19 +101,28 @@ pub fn run() {
             Ok(())
         })
         .on_window_event(|window, event| {
-            // Hide to tray instead of closing
-            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
-                api.prevent_close();
-                let _ = window.hide();
+            match event {
+                tauri::WindowEvent::CloseRequested { api, .. } => {
+                    // Hide to tray instead of closing
+                    api.prevent_close();
+                    let _ = window.hide();
 
-                // On macOS, hide the dock icon when window is hidden
-                #[cfg(target_os = "macos")]
-                {
-                    use tauri::ActivationPolicy;
-                    let _ = window
-                        .app_handle()
-                        .set_activation_policy(ActivationPolicy::Accessory);
+                    // On macOS, hide the dock icon when window is hidden
+                    #[cfg(target_os = "macos")]
+                    {
+                        use tauri::ActivationPolicy;
+                        let _ = window
+                            .app_handle()
+                            .set_activation_policy(ActivationPolicy::Accessory);
+                    }
                 }
+                tauri::WindowEvent::ThemeChanged(theme) => {
+                    // Update tray icon for new theme (Windows only, no-op on other platforms)
+                    if let Some(tray_state) = window.app_handle().try_state::<ui::TrayState>() {
+                        tray_state.update_for_theme(*theme);
+                    }
+                }
+                _ => {}
             }
         })
         .build(tauri::generate_context!())
