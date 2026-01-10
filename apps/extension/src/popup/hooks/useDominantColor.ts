@@ -125,7 +125,10 @@ const cacheStorage = new DebouncedStorage<Array<[string, DominantColorResult | n
   restore: (stored) => {
     if (Array.isArray(stored)) {
       for (const [url, data] of stored) {
-        colorCache.set(url, data as DominantColorResult | null);
+        // Validate stored data structure before using
+        if (data === null || (typeof data === 'object' && 'rgb' in data)) {
+          colorCache.set(url, data as DominantColorResult | null);
+        }
       }
     }
     return undefined; // We populate colorCache directly, don't need return value
@@ -252,6 +255,8 @@ async function extractDominantColor(imageUrl: string): Promise<DominantColorResu
     cacheStorage.schedule();
     return result;
   } catch {
+    // Cache failure in-memory to avoid retrying within this session,
+    // but don't persist - allows retry on next session if failure was transient
     cacheSet(imageUrl, null);
     return null;
   }
