@@ -1,5 +1,86 @@
 # @thaumic-cast/extension
 
+## 0.9.0
+
+### Patch Changes
+
+- [#35](https://github.com/brew-lab/thaumic-cast/pull/35) [`03e3c7e`](https://github.com/brew-lab/thaumic-cast/commit/03e3c7e02bc27047448f8c43e9b505eee99bad51) Thanks [@skezo](https://github.com/skezo)! - Use adaptive backoff for backpressure handling in audio consumer worker
+  - Reduces CPU spinning during sustained backpressure from ~1000 wakeups/sec to ~25 wakeups/sec
+  - Exponential backoff: 5ms → 10ms → 20ms → 40ms (capped) while backpressured
+  - Recovers quickly when pressure eases by resetting consecutive cycle counter
+
+- [#35](https://github.com/brew-lab/thaumic-cast/pull/35) [`5943fa0`](https://github.com/brew-lab/thaumic-cast/commit/5943fa0c896b0b6fce4b3c1d25f4cfa435f17a00) Thanks [@skezo](https://github.com/skezo)! - Convert CSS module classes from camelCase to kebab-case
+  - Updated all CSS module class selectors to use kebab-case naming convention
+  - Updated corresponding TSX imports to use bracket notation for kebab-case properties
+  - Enforced by new stylelint selector-class-pattern rule
+
+- [#35](https://github.com/brew-lab/thaumic-cast/pull/35) [`caa3e5d`](https://github.com/brew-lab/thaumic-cast/commit/caa3e5d02416764e11b68b4bb949f3a7ab1598e6) Thanks [@skezo](https://github.com/skezo)! - Debounce dominant color cache persistence
+  - Refactored to use DebouncedStorage utility for consistency with other caches
+  - Cache writes are now debounced (500ms) instead of firing on every extraction
+  - Reduces chrome.storage.session.set calls during rapid image changes
+
+- [#35](https://github.com/brew-lab/thaumic-cast/pull/35) [`8375f3a`](https://github.com/brew-lab/thaumic-cast/commit/8375f3a50b11df70d428d52a451141257c0b3123) Thanks [@skezo](https://github.com/skezo)! - Add manual server configuration to onboarding and new Disclosure component
+  - When auto-discovery fails during onboarding, users can now manually configure the server URL
+  - Added collapsible Disclosure component to shared UI package
+  - Extracted testServerConnection utility for connection testing
+  - Fixed WizardStep content padding to prevent focus outline clipping
+
+- [#35](https://github.com/brew-lab/thaumic-cast/pull/35) [`e6c382b`](https://github.com/brew-lab/thaumic-cast/commit/e6c382b3137fc98264e3bd809314550c2c25ec5c) Thanks [@skezo](https://github.com/skezo)! - Default custom audio settings to PCM codec instead of AAC-LC
+
+  PCM is always available as raw audio passthrough with no WebCodecs dependency, ensuring the default settings always work regardless of browser/system codec support.
+
+- [#35](https://github.com/brew-lab/thaumic-cast/pull/35) [`1d38aa1`](https://github.com/brew-lab/thaumic-cast/commit/1d38aa1265c51a22787e33bf13e5f9c592277c79) Thanks [@skezo](https://github.com/skezo)! - Rate-limit healthy stats logging to reduce log noise
+  - Diagnostic logs now fire immediately when issues are detected (drops, underflows)
+  - When healthy, logs are rate-limited to once every 30 seconds as a heartbeat
+  - Reduces log churn from 1/sec to 1/30sec during normal operation
+
+- [#35](https://github.com/brew-lab/thaumic-cast/pull/35) [`2f7b86e`](https://github.com/brew-lab/thaumic-cast/commit/2f7b86e4f2c461a836adec7e91e3d8ce56c590c8) Thanks [@skezo](https://github.com/skezo)! - Use single-pass max for artwork selection
+  - Replaces sort-based selection with O(n) single-pass approach
+  - Avoids array allocation from Array.from()
+  - Parses each size only once instead of multiple times during sort
+
+- [#35](https://github.com/brew-lab/thaumic-cast/pull/35) [`070afca`](https://github.com/brew-lab/thaumic-cast/commit/070afca65cc5c323aa0cc2e57117be1e846d04ed) Thanks [@skezo](https://github.com/skezo)! - fix(ui): WCAG 2.1 AA accessibility improvements
+
+  **SpeakerMultiSelect**
+  - Replace incorrect `role="listbox"` with semantic `<fieldset>` and native checkboxes
+  - Use `<label>` wrapping for proper accessible names
+
+  **VolumeControl**
+  - Add `:focus-visible` styling for slider thumbs (webkit + moz)
+  - Use logical properties consistently (`block-size` instead of `height`)
+
+  **Disclosure**
+  - Add `aria-controls` and `aria-describedby` (only when elements exist in DOM)
+  - Add `aria-hidden` to decorative chevron icon
+
+  **StatusChip**
+  - Add Lucide icons to convey status without relying on color alone (WCAG 1.4.1)
+
+  **Button/IconButton**
+  - Fix disabled state contrast using `opacity` + `grayscale` filter to preserve variant identity
+
+  **ToggleSwitch**
+  - Make `aria-label` a required prop for WCAG 4.1.2 compliance
+
+  **Wizard**
+  - Use `aria-labelledby` to reference step title
+
+  **Alert**
+  - Add `aria-hidden="true"` to dismiss button icon
+
+  **Card**
+  - Add `titleLevel` prop for configurable heading hierarchy
+
+  **SpeakerVolumeRow**
+  - Add `role="group"` with `aria-label` for speaker context
+  - Make label props required for proper i18n support
+
+  **Extension**
+  - Add interpolated i18n keys for speaker-specific accessible labels
+
+- Updated dependencies [[`5943fa0`](https://github.com/brew-lab/thaumic-cast/commit/5943fa0c896b0b6fce4b3c1d25f4cfa435f17a00), [`8375f3a`](https://github.com/brew-lab/thaumic-cast/commit/8375f3a50b11df70d428d52a451141257c0b3123), [`0bb42f7`](https://github.com/brew-lab/thaumic-cast/commit/0bb42f7d38b93fbb523c87978ef8de066d357b12), [`070afca`](https://github.com/brew-lab/thaumic-cast/commit/070afca65cc5c323aa0cc2e57117be1e846d04ed)]:
+  - @thaumic-cast/ui@0.1.0
+
 ## 0.8.4
 
 ## 0.8.3

@@ -1,5 +1,68 @@
 # @thaumic-cast/ui
 
+## 0.1.0
+
+### Minor Changes
+
+- [#35](https://github.com/brew-lab/thaumic-cast/pull/35) [`070afca`](https://github.com/brew-lab/thaumic-cast/commit/070afca65cc5c323aa0cc2e57117be1e846d04ed) Thanks [@skezo](https://github.com/skezo)! - fix(ui): WCAG 2.1 AA accessibility improvements
+
+  **SpeakerMultiSelect**
+  - Replace incorrect `role="listbox"` with semantic `<fieldset>` and native checkboxes
+  - Use `<label>` wrapping for proper accessible names
+
+  **VolumeControl**
+  - Add `:focus-visible` styling for slider thumbs (webkit + moz)
+  - Use logical properties consistently (`block-size` instead of `height`)
+
+  **Disclosure**
+  - Add `aria-controls` and `aria-describedby` (only when elements exist in DOM)
+  - Add `aria-hidden` to decorative chevron icon
+
+  **StatusChip**
+  - Add Lucide icons to convey status without relying on color alone (WCAG 1.4.1)
+
+  **Button/IconButton**
+  - Fix disabled state contrast using `opacity` + `grayscale` filter to preserve variant identity
+
+  **ToggleSwitch**
+  - Make `aria-label` a required prop for WCAG 4.1.2 compliance
+
+  **Wizard**
+  - Use `aria-labelledby` to reference step title
+
+  **Alert**
+  - Add `aria-hidden="true"` to dismiss button icon
+
+  **Card**
+  - Add `titleLevel` prop for configurable heading hierarchy
+
+  **SpeakerVolumeRow**
+  - Add `role="group"` with `aria-label` for speaker context
+  - Make label props required for proper i18n support
+
+  **Extension**
+  - Add interpolated i18n keys for speaker-specific accessible labels
+
+### Patch Changes
+
+- [#35](https://github.com/brew-lab/thaumic-cast/pull/35) [`5943fa0`](https://github.com/brew-lab/thaumic-cast/commit/5943fa0c896b0b6fce4b3c1d25f4cfa435f17a00) Thanks [@skezo](https://github.com/skezo)! - Convert CSS module classes from camelCase to kebab-case
+  - Updated all CSS module class selectors to use kebab-case naming convention
+  - Updated corresponding TSX imports to use bracket notation for kebab-case properties
+  - Enforced by new stylelint selector-class-pattern rule
+
+- [#35](https://github.com/brew-lab/thaumic-cast/pull/35) [`8375f3a`](https://github.com/brew-lab/thaumic-cast/commit/8375f3a50b11df70d428d52a451141257c0b3123) Thanks [@skezo](https://github.com/skezo)! - Add manual server configuration to onboarding and new Disclosure component
+  - When auto-discovery fails during onboarding, users can now manually configure the server URL
+  - Added collapsible Disclosure component to shared UI package
+  - Extracted testServerConnection utility for connection testing
+  - Fixed WizardStep content padding to prevent focus outline clipping
+
+- [#35](https://github.com/brew-lab/thaumic-cast/pull/35) [`0bb42f7`](https://github.com/brew-lab/thaumic-cast/commit/0bb42f7d38b93fbb523c87978ef8de066d357b12) Thanks [@skezo](https://github.com/skezo)! - Add manual speaker IP entry for networks where discovery fails
+  - Users can manually enter Sonos speaker IP addresses when SSDP/mDNS discovery fails (VPNs, firewalls, network segmentation)
+  - IPs are probed to verify they're valid Sonos devices before being saved
+  - Manual speakers are merged with auto-discovered speakers during topology refresh
+  - Added Input component to shared UI package
+  - Manual entry available in onboarding SpeakerStep and Settings view
+
 ## 0.0.5
 
 ### Patch Changes
