@@ -67,7 +67,19 @@ export interface AppStats {
   port: number;
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Debounce Configuration
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Debounce delay for fetchGroups calls in milliseconds.
+ * Coalesces rapid event bursts (e.g., multi-speaker start/stop) into a single fetch.
+ */
+const FETCH_GROUPS_DEBOUNCE_MS = 150;
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Actions
+// ─────────────────────────────────────────────────────────────────────────────
 
 /**
  * Fetches current application statistics from the backend.
@@ -123,6 +135,8 @@ export const updateNetworkHealth = (health: NetworkHealthStatus, reason: string 
 /**
  * Fetches zone groups, transport states, playback sessions, stats, and network health.
  * Updates the groups, transportStates, castingSpeakers, and networkHealth signals.
+ *
+ * For event-driven updates, prefer `debouncedFetchGroups` to coalesce rapid bursts.
  */
 export const fetchGroups = async (): Promise<void> => {
   try {
@@ -147,6 +161,26 @@ export const fetchGroups = async (): Promise<void> => {
     isLoading.value = false;
   }
 };
+
+/**
+ * Debounced version of fetchGroups for event-driven updates.
+ *
+ * Coalesces multiple rapid calls (e.g., from stream-created + playback-started
+ * events firing in quick succession) into a single fetch after a short delay.
+ * This prevents UI churn and reduces backend load during multi-speaker operations.
+ *
+ * Uses IIFE to encapsulate timer state, avoiding module-level mutable variables.
+ */
+export const debouncedFetchGroups = (() => {
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  return () => {
+    if (timer) clearTimeout(timer);
+    timer = setTimeout(() => {
+      timer = null;
+      fetchGroups();
+    }, FETCH_GROUPS_DEBOUNCE_MS);
+  };
+})();
 
 /**
  * Triggers a manual SSDP discovery refresh.
