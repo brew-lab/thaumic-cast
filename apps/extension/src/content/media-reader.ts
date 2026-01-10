@@ -66,7 +66,7 @@ import { METADATA_EVENT, REQUEST_EVENT, CONTROL_EVENT } from './constants';
 
     for (const img of artwork) {
       const size = parseInt(img.sizes?.split('x')[0] || '0', 10);
-      if (size > bestSize || !bestSrc) {
+      if (!bestSrc || size > bestSize) {
         bestSize = size;
         bestSrc = img.src;
       }
