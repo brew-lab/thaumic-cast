@@ -22,6 +22,7 @@ import type { SonosStateSnapshot, WsControlCommand } from '@thaumic-cast/protoco
 import type { WsStatusResponse } from '../lib/messages';
 import { stopAllSessions } from './stream-session';
 import { noop } from '../lib/noop';
+import { exponentialBackoff } from '../lib/backoff';
 
 const log = createLogger('Offscreen');
 
@@ -157,7 +158,7 @@ function attemptControlReconnect(): void {
     return;
   }
 
-  const delay = Math.min(500 * Math.pow(2, controlConnection.reconnectAttempts - 1), 5000);
+  const delay = exponentialBackoff(controlConnection.reconnectAttempts, 500, 5000);
   log.info(
     `Reconnecting control WS in ${delay}ms (attempt ${controlConnection.reconnectAttempts})...`,
   );

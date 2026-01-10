@@ -23,6 +23,7 @@ import { createEncoder, type AudioEncoder } from './encoders';
 import type { EncoderConfig, StreamMetadata, WsMessage } from '@thaumic-cast/protocol';
 import { WsMessageSchema } from '@thaumic-cast/protocol';
 import { createLogger } from '@thaumic-cast/shared';
+import { exponentialBackoff } from '../lib/backoff';
 
 const log = createLogger('AudioWorker');
 
@@ -759,8 +760,9 @@ async function consumeLoop(): Promise<void> {
       consecutiveBackpressureCycles++;
       // Adaptive backoff: 5ms → 10ms → 20ms → 40ms (capped)
       // Pressure won't ease in 1ms, so back off to reduce CPU spinning
-      const backoffMs = Math.min(
-        BACKPRESSURE_BACKOFF_INITIAL_MS * 2 ** Math.min(consecutiveBackpressureCycles - 1, 3),
+      const backoffMs = exponentialBackoff(
+        consecutiveBackpressureCycles,
+        BACKPRESSURE_BACKOFF_INITIAL_MS,
         BACKPRESSURE_BACKOFF_MAX_MS,
       );
       await yieldMacrotask(backoffMs);
