@@ -108,6 +108,10 @@ export async function handleStartCast(
       });
     });
 
+    // Prevent Chrome from discarding the captured tab (Memory Saver exemption)
+    // This helps maintain stream quality when the tab is backgrounded
+    await chrome.tabs.update(tab.id!, { autoDiscardable: false });
+
     // 6. Connect control WebSocket if not already connected
     if (!getConnectionState().connected) {
       await connectWebSocket(app.url);
