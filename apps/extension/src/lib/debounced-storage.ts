@@ -8,6 +8,7 @@
  * - metadata-cache.ts
  * - sonos-state.ts
  * - connection-state.ts
+ * - useDominantColor.ts
  */
 
 import { createLogger } from '@thaumic-cast/shared';
