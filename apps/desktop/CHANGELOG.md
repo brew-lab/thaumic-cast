@@ -1,5 +1,70 @@
 # @thaumic-cast/desktop
 
+## 0.9.0
+
+### Minor Changes
+
+- [#35](https://github.com/brew-lab/thaumic-cast/pull/35) [`0bb42f7`](https://github.com/brew-lab/thaumic-cast/commit/0bb42f7d38b93fbb523c87978ef8de066d357b12) Thanks [@skezo](https://github.com/skezo)! - Add manual speaker IP entry for networks where discovery fails
+  - Users can manually enter Sonos speaker IP addresses when SSDP/mDNS discovery fails (VPNs, firewalls, network segmentation)
+  - IPs are probed to verify they're valid Sonos devices before being saved
+  - Manual speakers are merged with auto-discovered speakers during topology refresh
+  - Added Input component to shared UI package
+  - Manual entry available in onboarding SpeakerStep and Settings view
+
+### Patch Changes
+
+- [#35](https://github.com/brew-lab/thaumic-cast/pull/35) [`5943fa0`](https://github.com/brew-lab/thaumic-cast/commit/5943fa0c896b0b6fce4b3c1d25f4cfa435f17a00) Thanks [@skezo](https://github.com/skezo)! - Convert CSS module classes from camelCase to kebab-case
+  - Updated all CSS module class selectors to use kebab-case naming convention
+  - Updated corresponding TSX imports to use bracket notation for kebab-case properties
+  - Enforced by new stylelint selector-class-pattern rule
+
+- [#35](https://github.com/brew-lab/thaumic-cast/pull/35) [`da980ad`](https://github.com/brew-lab/thaumic-cast/commit/da980ad6a4baf8215e41379f190c252e9b1b9e8b) Thanks [@skezo](https://github.com/skezo)! - Debounce speaker list updates to reduce UI churn
+  - Coalesce rapid event bursts (multi-speaker start/stop) into single fetch
+  - Reduces API calls from 20+ to 5 during typical multi-speaker operations
+  - 150ms debounce window balances responsiveness with efficiency
+
+- [#35](https://github.com/brew-lab/thaumic-cast/pull/35) [`b91f86f`](https://github.com/brew-lab/thaumic-cast/commit/b91f86f3490c0343f454c76eefb4ea6a51ca8ca2) Thanks [@skezo](https://github.com/skezo)! - Use bounded channel for internal GENA events to prevent unbounded memory growth
+  - Replaced unbounded channel with bounded channel (capacity 64)
+  - Events are dropped with a warning if channel fills (safe since all trigger same recovery)
+  - Prevents theoretical memory growth if receiver stalls during event spikes
+
+- [#35](https://github.com/brew-lab/thaumic-cast/pull/35) [`37da618`](https://github.com/brew-lab/thaumic-cast/commit/37da618baaa04c4a314847e6862e026fd9b409ae) Thanks [@skezo](https://github.com/skezo)! - Optimize ICY metadata injection hot path
+  - Cache formatted metadata to avoid repeated allocations when metadata unchanged
+  - Pre-size output buffers based on expected metadata insertions
+  - Lower per-block logging from info to trace level
+
+- [#35](https://github.com/brew-lab/thaumic-cast/pull/35) [`9c37879`](https://github.com/brew-lab/thaumic-cast/commit/9c37879504d915177e9f0c955cb522b353308256) Thanks [@skezo](https://github.com/skezo)! - Reuse scratch buffer in ICY metadata injection to reduce allocation pressure
+  - Replace per-chunk Vec allocation with reusable BytesMut buffer
+  - Buffer grows to typical chunk size and stabilizes after a few calls
+  - Reduces allocator churn on long audio streams
+
+- [#35](https://github.com/brew-lab/thaumic-cast/pull/35) [`e188cd6`](https://github.com/brew-lab/thaumic-cast/commit/e188cd61c44d7f20de9520b8630efbb07be28789) Thanks [@skezo](https://github.com/skezo)! - Use tokio interval instead of sleep for timer loops
+  - Reduces timer allocation overhead in WebSocket heartbeat and latency polling
+  - Prevents timing drift by compensating for processing time
+
+- [#35](https://github.com/brew-lab/thaumic-cast/pull/35) [`5e94ffd`](https://github.com/brew-lab/thaumic-cast/commit/5e94ffd4d5570e3bd2c7c65ff067c799b18a7712) Thanks [@skezo](https://github.com/skezo)! - Eliminate unnecessary memory copy for passthrough audio streams
+  - Changed Transcoder trait to accept `Bytes` instead of `&[u8]`
+  - Passthrough now returns input directly without copying
+  - Removes ~100 memcpys/second for pre-encoded streams (AAC, FLAC, Vorbis)
+
+- [#35](https://github.com/brew-lab/thaumic-cast/pull/35) [`3743c52`](https://github.com/brew-lab/thaumic-cast/commit/3743c520b35b115c246b6084cb57e20f0d4620d5) Thanks [@skezo](https://github.com/skezo)! - Fix latency session leak when WebSocket handler exits unexpectedly
+  - Prune orphaned sessions during poll loop when stream no longer exists
+  - Prevents sessions from being polled indefinitely after unexpected disconnects
+  - Defense-in-depth cleanup for StreamGuard::drop edge cases
+
+- [#35](https://github.com/brew-lab/thaumic-cast/pull/35) [`add7dd6`](https://github.com/brew-lab/thaumic-cast/commit/add7dd6abbc00b8e655352c64bbc42b1139252e1) Thanks [@skezo](https://github.com/skezo)! - Use allocation-free ASCII case-insensitive parsing for SSDP responses
+  - Eliminates multiple string allocations per response during discovery burst
+  - Uses byte-level comparison instead of to_lowercase()
+  - Improves discovery performance on networks with many speakers
+
+- [#35](https://github.com/brew-lab/thaumic-cast/pull/35) [`b166791`](https://github.com/brew-lab/thaumic-cast/commit/b1667915c0110df2809fe95cfd3028a8636024ba) Thanks [@skezo](https://github.com/skezo)! - Add theme-aware tray icons on Windows
+  - Tray icon now adapts to Windows light/dark mode with 4 icon variants (light/dark x idle/active)
+  - Icon updates automatically when system theme changes
+  - macOS continues to use template icons for native theme adaptation
+
+- Updated dependencies [[`5943fa0`](https://github.com/brew-lab/thaumic-cast/commit/5943fa0c896b0b6fce4b3c1d25f4cfa435f17a00), [`8375f3a`](https://github.com/brew-lab/thaumic-cast/commit/8375f3a50b11df70d428d52a451141257c0b3123), [`0bb42f7`](https://github.com/brew-lab/thaumic-cast/commit/0bb42f7d38b93fbb523c87978ef8de066d357b12), [`070afca`](https://github.com/brew-lab/thaumic-cast/commit/070afca65cc5c323aa0cc2e57117be1e846d04ed)]:
+  - @thaumic-cast/ui@0.1.0
+
 ## 0.8.4
 
 ### Patch Changes
