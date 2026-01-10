@@ -36,6 +36,12 @@
     --gray-15: oklch(10% var(--gray-chroma) var(--gray-hue));
 
     /*
+     * Font stacks
+     */
+    --font-sans: system-ui, -apple-system, sans-serif;
+    --font-mono: ui-monospace, 'SF Mono', menlo, consolas, monospace;
+
+    /*
      * Brand color hues - customize these to change the entire color scheme
      * Arcane neon palette for thaumic/magical aesthetic
      */
@@ -380,10 +386,7 @@
   }
 
   body {
-    font-family:
-      system-ui,
-      -apple-system,
-      sans-serif;
+    font-family: var(--font-sans);
     background-color: var(--color-bg);
     color: var(--color-text);
     accent-color: var(--color-primary);

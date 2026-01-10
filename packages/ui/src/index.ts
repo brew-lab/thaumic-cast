@@ -6,6 +6,7 @@ export * from './hooks/useButtonAction';
 export * from './Card';
 export * from './Disclosure';
 export * from './IconButton';
+export * from './Input';
 export * from './Speaker';
 export * from './StatusChip';
 export * from './ToggleSwitch';

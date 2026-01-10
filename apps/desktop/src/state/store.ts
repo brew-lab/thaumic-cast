@@ -230,3 +230,50 @@ export type Platform = 'windows' | 'macos' | 'linux' | 'unknown';
 export const getPlatform = async (): Promise<Platform> => {
   return invoke<Platform>('get_platform');
 };
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Manual Speaker IP Management
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Result from probing a speaker IP. */
+export interface ProbeResult {
+  ip: string;
+  name: string;
+  uuid: string;
+  modelName?: string;
+}
+
+/**
+ * Probes an IP address to verify it's a Sonos speaker.
+ * @param ip - The IP address to probe
+ * @returns Speaker info if valid
+ * @throws Error if unreachable or not a Sonos device
+ */
+export const probeSpeakerIp = async (ip: string): Promise<ProbeResult> => {
+  return invoke<ProbeResult>('probe_speaker_ip', { ip });
+};
+
+/**
+ * Adds a manually configured speaker IP address.
+ * The IP should be pre-validated with probeSpeakerIp first.
+ * @param ip - The IP address to add
+ */
+export const addManualSpeakerIp = async (ip: string): Promise<void> => {
+  await invoke('add_manual_speaker_ip', { ip });
+};
+
+/**
+ * Removes a manually configured speaker IP address.
+ * @param ip - The IP address to remove
+ */
+export const removeManualSpeakerIp = async (ip: string): Promise<void> => {
+  await invoke('remove_manual_speaker_ip', { ip });
+};
+
+/**
+ * Gets the list of manually configured speaker IP addresses.
+ * @returns Array of IP addresses
+ */
+export const getManualSpeakerIps = async (): Promise<string[]> => {
+  return invoke<string[]>('get_manual_speaker_ips');
+};

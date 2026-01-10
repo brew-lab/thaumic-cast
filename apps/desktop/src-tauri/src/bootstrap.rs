@@ -49,6 +49,15 @@ pub struct BootstrappedServices {
     pub ws_manager: Arc<WsConnectionManager>,
     /// Latency monitoring service.
     pub latency_monitor: Arc<LatencyMonitor>,
+    /// Shared HTTP client for connection pooling.
+    http_client: Client,
+}
+
+impl BootstrappedServices {
+    /// Returns the shared HTTP client.
+    pub fn http_client(&self) -> &Client {
+        &self.http_client
+    }
 }
 
 /// Creates the shared HTTP client for all Sonos communication.
@@ -128,7 +137,7 @@ pub fn bootstrap_services(config: &Config) -> BootstrappedServices {
         Arc::clone(&sonos_state),
         Arc::clone(&event_bridge) as Arc<dyn EventEmitter>,
         network.clone(),
-        http_client,
+        http_client.clone(),
         config.topology_refresh_interval,
     ));
 
@@ -153,6 +162,7 @@ pub fn bootstrap_services(config: &Config) -> BootstrappedServices {
         network,
         ws_manager,
         latency_monitor,
+        http_client,
     }
 }
 

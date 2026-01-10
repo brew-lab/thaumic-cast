@@ -67,9 +67,21 @@ impl AppState {
     /// This propagates the handle to services that need it for:
     /// - Application restart functionality (AppLifecycle)
     /// - Emitting frontend events (BroadcastEventBridge)
+    /// - Loading manual speaker configuration (DiscoveryService)
     pub fn set_app_handle(&self, handle: AppHandle) {
+        use tauri::Manager;
+
         self.services.lifecycle.set_app_handle(handle.clone());
-        self.services.event_bridge.set_app_handle(handle);
+        self.services.event_bridge.set_app_handle(handle.clone());
+
+        // Set app data dir for manual speaker configuration
+        match handle.path().app_data_dir() {
+            Ok(path) => self.services.discovery_service.set_app_data_dir(path),
+            Err(e) => log::warn!(
+                "Failed to get app data dir, manual speakers will not persist: {}",
+                e
+            ),
+        }
     }
 
     /// Starts all background services (GENA renewal, topology monitor, latency monitor).

@@ -50,7 +50,7 @@ impl DiscoveryService {
         http_client: Client,
         topology_refresh_interval_secs: u64,
     ) -> Self {
-        let (gena_manager, gena_event_rx) = GenaSubscriptionManager::new(http_client);
+        let (gena_manager, gena_event_rx) = GenaSubscriptionManager::new(http_client.clone());
         let gena_manager = Arc::new(gena_manager);
         let refresh_notify = Arc::new(Notify::new());
 
@@ -61,6 +61,7 @@ impl DiscoveryService {
             Arc::clone(&emitter),
             network,
             Arc::clone(&refresh_notify),
+            http_client,
             topology_refresh_interval_secs,
         ));
 
@@ -99,6 +100,13 @@ impl DiscoveryService {
     /// Triggers a manual topology refresh.
     pub fn trigger_refresh(&self) {
         self.topology_monitor.trigger_refresh();
+    }
+
+    /// Sets the app data directory for loading manual speaker configuration.
+    ///
+    /// This should be called after the app is set up and the AppHandle is available.
+    pub fn set_app_data_dir(&self, path: std::path::PathBuf) {
+        self.topology_monitor.set_app_data_dir(path);
     }
 
     /// Handles a GENA NOTIFY event from an HTTP handler.

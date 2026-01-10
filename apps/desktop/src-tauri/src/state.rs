@@ -1,7 +1,8 @@
 use std::hash::Hash;
+use std::sync::OnceLock;
 
 use dashmap::DashMap;
-use parking_lot::RwLock;
+use parking_lot::{Mutex, RwLock};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
@@ -184,4 +185,104 @@ where
     map.iter()
         .map(|r| (r.key().to_string(), json!(r.value().clone())))
         .collect()
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Manual Speaker Configuration (persisted)
+// ─────────────────────────────────────────────────────────────────────────────
+
+const MANUAL_SPEAKERS_FILE: &str = "manual_speakers.json";
+
+/// Global mutex to serialize all manual speaker config file operations.
+/// Prevents race conditions from concurrent add/remove operations.
+static CONFIG_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+
+fn config_lock() -> &'static Mutex<()> {
+    CONFIG_LOCK.get_or_init(|| Mutex::new(()))
+}
+
+/// Persisted configuration for manually added speakers.
+///
+/// Used when auto-discovery fails due to network configuration (VPN, firewall, etc.).
+/// These IPs are probed alongside auto-discovered speakers during topology refresh.
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
+pub struct ManualSpeakerConfig {
+    /// Manually configured speaker IP addresses.
+    pub speaker_ips: Vec<String>,
+}
+
+impl ManualSpeakerConfig {
+    /// Loads manual speaker configuration from the app data directory.
+    ///
+    /// Returns default (empty) config if file doesn't exist or is invalid.
+    pub fn load(app_data_dir: &std::path::Path) -> Self {
+        let path = app_data_dir.join(MANUAL_SPEAKERS_FILE);
+        match std::fs::read_to_string(&path) {
+            Ok(contents) => serde_json::from_str(&contents).unwrap_or_default(),
+            Err(_) => Self::default(),
+        }
+    }
+
+    /// Saves manual speaker configuration to the app data directory.
+    ///
+    /// Uses atomic write (temp file + rename) to prevent corruption on crash.
+    /// Creates the directory if it doesn't exist.
+    pub fn save(&self, app_data_dir: &std::path::Path) -> std::io::Result<()> {
+        std::fs::create_dir_all(app_data_dir)?;
+        let path = app_data_dir.join(MANUAL_SPEAKERS_FILE);
+        let temp_path = app_data_dir.join("manual_speakers.json.tmp");
+        let contents = serde_json::to_string_pretty(self)?;
+
+        // Write to temp file first
+        std::fs::write(&temp_path, contents)?;
+        // Atomic rename (on most filesystems)
+        std::fs::rename(&temp_path, &path)
+    }
+
+    /// Adds an IP address if not already present.
+    ///
+    /// Returns true if the IP was added, false if already present.
+    fn add_ip(&mut self, ip: String) -> bool {
+        if self.speaker_ips.contains(&ip) {
+            false
+        } else {
+            self.speaker_ips.push(ip);
+            true
+        }
+    }
+
+    /// Removes an IP address if present.
+    ///
+    /// Returns true if the IP was removed, false if not found.
+    fn remove_ip(&mut self, ip: &str) -> bool {
+        let len_before = self.speaker_ips.len();
+        self.speaker_ips.retain(|i| i != ip);
+        self.speaker_ips.len() < len_before
+    }
+
+    /// Atomically adds an IP address to the config file.
+    ///
+    /// Acquires a lock, loads the config, adds the IP (if not present), and saves.
+    /// Idempotent - adding an existing IP is a no-op (skips disk write).
+    pub fn add_ip_atomic(app_data_dir: &std::path::Path, ip: String) -> std::io::Result<()> {
+        let _guard = config_lock().lock();
+        let mut config = Self::load(app_data_dir);
+        if config.add_ip(ip) {
+            config.save(app_data_dir)?;
+        }
+        Ok(())
+    }
+
+    /// Atomically removes an IP address from the config file.
+    ///
+    /// Acquires a lock, loads the config, removes the IP (if present), and saves.
+    /// Idempotent - removing a non-existent IP is a no-op (skips disk write).
+    pub fn remove_ip_atomic(app_data_dir: &std::path::Path, ip: &str) -> std::io::Result<()> {
+        let _guard = config_lock().lock();
+        let mut config = Self::load(app_data_dir);
+        if config.remove_ip(ip) {
+            config.save(app_data_dir)?;
+        }
+        Ok(())
+    }
 }
