@@ -4,6 +4,7 @@ export * from './Button';
 export * from './ActionButton';
 export * from './hooks/useButtonAction';
 export * from './Card';
+export * from './Disclosure';
 export * from './IconButton';
 export * from './Speaker';
 export * from './StatusChip';

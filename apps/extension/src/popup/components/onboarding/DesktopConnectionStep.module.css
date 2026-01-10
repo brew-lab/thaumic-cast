@@ -9,3 +9,45 @@
   flex-direction: column;
   gap: var(--space-sm);
 }
+
+/* Manual configuration form - vertical/intrinsic layout */
+.manualForm {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+.urlInput {
+  padding-block: var(--space-sm);
+  padding-inline: var(--space-sm);
+  background: var(--input-bg);
+  color: var(--input-text);
+  border: 1px solid var(--input-border);
+  border-radius: var(--radius-sm);
+  font-size: 0.875rem;
+}
+
+.urlInput:focus {
+  outline: 2px solid var(--input-border-focus);
+  outline-offset: 2px;
+}
+
+.urlInput::placeholder {
+  color: var(--color-text-muted);
+  opacity: 0.7;
+}
+
+.testError {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+  font-size: 0.875rem;
+  color: var(--color-error);
+}
+
+.errorDot {
+  inline-size: 0.5rem;
+  block-size: 0.5rem;
+  border-radius: 50%;
+  background-color: var(--color-error);
+}

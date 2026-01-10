@@ -136,6 +136,9 @@
   "onboarding.desktop.download_prompt": "You'll need to install it first:",
   "onboarding.desktop.download_button": "Download Desktop App",
   "onboarding.desktop.retry_button": "I've installed it, try again",
+  "onboarding.desktop.manual_toggle": "Can't find it? Configure manually",
+  "onboarding.desktop.manual_hint": "For non-standard ports or remote servers",
+  "onboarding.desktop.manual_connected": "Connection established. You may proceed.",
 
   "onboarding.speakers.title": "Your Speakers Await",
   "onboarding.speakers.subtitle": "Let's see who's listening",

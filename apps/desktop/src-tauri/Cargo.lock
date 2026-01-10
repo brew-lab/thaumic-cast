@@ -4646,7 +4646,7 @@ dependencies = [
 
 [[package]]
 name = "thaumic-cast-desktop"
-version = "0.8.3"
+version = "0.8.4"
 dependencies = [
  "async-trait",
  "axum",

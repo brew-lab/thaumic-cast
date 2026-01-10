@@ -150,6 +150,9 @@
   flex-direction: column;
   gap: var(--space-md);
   text-align: start;
+
+  /* Account for focus outline (2px + 2px offset) on interactive elements */
+  padding-block-end: var(--space-xs);
 }
 
 .dot {
