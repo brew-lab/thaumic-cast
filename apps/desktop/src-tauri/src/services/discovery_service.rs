@@ -17,7 +17,7 @@ use crate::state::SonosState;
 
 use super::gena_event_processor::GenaEventProcessor;
 use super::stream_coordinator::StreamCoordinator;
-use super::topology_monitor::TopologyMonitor;
+use super::topology_monitor::{TopologyMonitor, TopologyMonitorConfig};
 
 /// Service responsible for Sonos speaker discovery and GENA event management.
 ///
@@ -59,10 +59,12 @@ impl DiscoveryService {
             Arc::clone(&gena_manager),
             Arc::clone(&sonos_state),
             Arc::clone(&emitter),
-            network,
-            Arc::clone(&refresh_notify),
-            http_client,
-            topology_refresh_interval_secs,
+            TopologyMonitorConfig {
+                network,
+                refresh_notify: Arc::clone(&refresh_notify),
+                http_client,
+                topology_refresh_interval_secs,
+            },
         ));
 
         let event_processor = Arc::new(GenaEventProcessor::new(

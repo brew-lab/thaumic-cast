@@ -47,6 +47,18 @@ impl Default for NetworkHealthState {
     }
 }
 
+/// Configuration for the topology monitor.
+pub struct TopologyMonitorConfig {
+    /// Network configuration (port, local IP).
+    pub network: NetworkContext,
+    /// Notifier for manual refresh requests.
+    pub refresh_notify: Arc<Notify>,
+    /// Shared HTTP client for probing manual speaker IPs.
+    pub http_client: Client,
+    /// Interval between automatic topology refreshes (seconds).
+    pub topology_refresh_interval_secs: u64,
+}
+
 /// Monitors Sonos network topology and manages GENA subscriptions.
 pub struct TopologyMonitor {
     /// Sonos client for discovery and topology operations.
@@ -80,19 +92,13 @@ impl TopologyMonitor {
     /// * `gena_manager` - Manager for GENA subscriptions
     /// * `sonos_state` - Shared state for Sonos groups
     /// * `emitter` - Event emitter for broadcasting network health changes
-    /// * `network` - Network configuration (port, local IP)
-    /// * `refresh_notify` - Notifier for manual refresh requests
-    /// * `http_client` - Shared HTTP client for probing manual speaker IPs
-    /// * `topology_refresh_interval_secs` - Interval between automatic refreshes
+    /// * `config` - Configuration for the topology monitor
     pub fn new(
         sonos: Arc<dyn SonosTopologyClient>,
         gena_manager: Arc<GenaSubscriptionManager>,
         sonos_state: Arc<SonosState>,
         emitter: Arc<dyn EventEmitter>,
-        network: NetworkContext,
-        refresh_notify: Arc<Notify>,
-        http_client: Client,
-        topology_refresh_interval_secs: u64,
+        config: TopologyMonitorConfig,
     ) -> Self {
         Self {
             sonos,
@@ -101,12 +107,12 @@ impl TopologyMonitor {
             emitter,
             network_health: RwLock::new(NetworkHealthState::default()),
             speakers_discovered: AtomicBool::new(false),
-            topology_refresh_interval_secs,
-            network,
-            refresh_notify,
+            topology_refresh_interval_secs: config.topology_refresh_interval_secs,
+            network: config.network,
+            refresh_notify: config.refresh_notify,
             cancel_token: CancellationToken::new(),
             app_data_dir: RwLock::new(None),
-            http_client,
+            http_client: config.http_client,
         }
     }
 
