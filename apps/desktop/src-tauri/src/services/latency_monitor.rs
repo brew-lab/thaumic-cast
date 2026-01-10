@@ -434,7 +434,11 @@ impl LatencyMonitor {
         cancel: CancellationToken,
     ) {
         let sessions: DashMap<SessionKey, LatencySession> = DashMap::new();
-        let poll_interval = Duration::from_millis(POLL_INTERVAL_MS);
+
+        // Use interval instead of sleep to reduce timer allocations and prevent drift.
+        // Delay mode skips missed ticks rather than bursting to catch up.
+        let mut poll_interval = tokio::time::interval(Duration::from_millis(POLL_INTERVAL_MS));
+        poll_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
 
         log::info!("[LatencyMonitor] Background task started");
 
@@ -467,7 +471,7 @@ impl LatencyMonitor {
                     }
                 }
 
-                _ = tokio::time::sleep(poll_interval) => {
+                _ = poll_interval.tick() => {
                     // Poll all active sessions, collecting orphaned ones for cleanup.
                     // Sessions become orphaned when StreamGuard::drop removes the stream
                     // without calling stop_stream (e.g., WS handler panic/unexpected exit).
