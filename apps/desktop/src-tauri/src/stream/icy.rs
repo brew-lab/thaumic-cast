@@ -3,7 +3,7 @@
 //! This module encapsulates ICY metadata formatting and injection,
 //! keeping protocol-specific concerns separate from stream state management.
 
-use bytes::Bytes;
+use bytes::{Bytes, BytesMut};
 
 use super::StreamMetadata;
 pub use crate::protocol_constants::ICY_METAINT;
@@ -73,6 +73,9 @@ impl IcyFormatter {
 /// Caches formatted metadata to avoid repeated allocations when metadata
 /// hasn't changed (which is the common case during playback).
 ///
+/// Uses a reusable scratch buffer to minimize allocation pressure on
+/// the hot audio path.
+///
 /// Each instance should be used for a single stream session.
 pub struct IcyMetadataInjector {
     bytes_since_meta: usize,
@@ -82,6 +85,9 @@ pub struct IcyMetadataInjector {
     last_artist: Option<String>,
     /// Last title value used to generate cached metadata (for cache invalidation).
     last_title: Option<String>,
+    /// Scratch buffer reused across inject() calls to reduce allocation pressure.
+    /// Grows to accommodate typical chunk sizes and stabilizes after a few calls.
+    output_buffer: BytesMut,
 }
 
 impl IcyMetadataInjector {
@@ -93,6 +99,7 @@ impl IcyMetadataInjector {
             cached_metadata: vec![0], // Default: empty metadata (single zero byte)
             last_artist: None,
             last_title: None,
+            output_buffer: BytesMut::new(),
         }
     }
 
@@ -117,8 +124,8 @@ impl IcyMetadataInjector {
     /// ICY protocol requires metadata blocks to be inserted every `ICY_METAINT` bytes.
     /// This method tracks the byte position and inserts formatted metadata when needed.
     ///
-    /// Uses cached metadata formatting and pre-sized buffers to minimize allocations
-    /// on this hot path.
+    /// Uses a reusable scratch buffer that grows to accommodate typical chunk sizes,
+    /// eliminating per-call allocations after the first few invocations.
     ///
     /// # Arguments
     /// * `chunk` - The raw audio data chunk to process
@@ -127,15 +134,18 @@ impl IcyMetadataInjector {
     /// # Returns
     /// A new `Bytes` buffer containing the audio data with ICY metadata blocks inserted.
     pub fn inject(&mut self, chunk: &[u8], metadata: &StreamMetadata) -> Bytes {
-        // Update cache if needed and get metadata size for pre-allocation
+        // Update cache if needed and get metadata size for capacity calculation
         let meta_len = self.update_metadata_cache(metadata);
 
         // Calculate number of metadata insertions for this chunk
         let total_bytes = self.bytes_since_meta + chunk.len();
         let num_insertions = total_bytes / ICY_METAINT;
+        let required_capacity = chunk.len() + num_insertions * meta_len;
 
-        // Pre-allocate output buffer: audio bytes + metadata blocks
-        let mut output = Vec::with_capacity(chunk.len() + num_insertions * meta_len);
+        // Reuse scratch buffer: reserve() only allocates if capacity is insufficient.
+        // After a few chunks, the buffer stabilizes at typical size and stops growing.
+        self.output_buffer.reserve(required_capacity);
+
         let mut remaining = chunk;
 
         while !remaining.is_empty() {
@@ -143,19 +153,21 @@ impl IcyMetadataInjector {
 
             if remaining.len() < bytes_to_meta {
                 // Not enough bytes to reach next metadata point
-                output.extend_from_slice(remaining);
+                self.output_buffer.extend_from_slice(remaining);
                 self.bytes_since_meta += remaining.len();
                 break;
             }
 
             // Write bytes up to metadata point, then inject metadata block
-            output.extend_from_slice(&remaining[..bytes_to_meta]);
-            output.extend_from_slice(&self.cached_metadata);
+            self.output_buffer
+                .extend_from_slice(&remaining[..bytes_to_meta]);
+            self.output_buffer.extend_from_slice(&self.cached_metadata);
             remaining = &remaining[bytes_to_meta..];
             self.bytes_since_meta = 0;
         }
 
-        Bytes::from(output)
+        // Return content as Bytes. split() leaves buffer empty for next call.
+        self.output_buffer.split().freeze()
     }
 
     /// Returns the current byte count since the last metadata block.
