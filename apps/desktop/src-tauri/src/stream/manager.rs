@@ -244,7 +244,7 @@ impl StreamState {
         let captured_at = Instant::now();
 
         // Transcode the frame (PCM → FLAC, or passthrough for pre-encoded)
-        let output_frame = self.transcoder.transcode(&frame);
+        let output_frame = self.transcoder.transcode(frame);
 
         // Add to recent buffer (ring buffer behavior)
         // Clone the Bytes (cheap - just Arc bump) for buffer storage
