@@ -300,7 +300,12 @@ impl TopologyMonitor {
         }
 
         if speakers.is_empty() {
-            log::warn!("[TopologyMonitor] No speakers found");
+            // Atomically read and reset the discovery flag
+            let was_previously_discovered = self.speakers_discovered.swap(false, Ordering::Relaxed);
+            log::warn!(
+                "[TopologyMonitor] No speakers found (was_previously_discovered={})",
+                was_previously_discovered
+            );
 
             // Clear groups and notify frontend so UI updates
             {
@@ -322,9 +327,6 @@ impl TopologyMonitor {
                 NetworkHealth::Degraded,
                 Some("speakers_unreachable".to_string()),
             );
-
-            // Reset discovery flag since we have no speakers
-            self.speakers_discovered.store(false, Ordering::Relaxed);
 
             return Err(ThaumicError::SpeakerNotFound(
                 "no speakers discovered".to_string(),
@@ -365,10 +367,7 @@ impl TopologyMonitor {
                 // Discovery worked but communication failed - this is the VPN/firewall scenario
                 self.set_network_health(
                     NetworkHealth::Degraded,
-                    Some(
-                        "Speakers found but unreachable. Check VPN or firewall settings."
-                            .to_string(),
-                    ),
+                    Some("speakers_not_responding".to_string()),
                 );
                 return Err(e.into());
             }
