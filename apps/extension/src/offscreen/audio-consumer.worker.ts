@@ -38,6 +38,12 @@ const WS_BUFFER_HIGH_WATER = 512000;
 /** Macrotask yield duration (ms). Gives encoder thread CPU time. */
 const YIELD_MS = 1;
 
+/** Initial backpressure backoff delay (ms). */
+const BACKPRESSURE_BACKOFF_INITIAL_MS = 5;
+
+/** Maximum backpressure backoff delay (ms). */
+const BACKPRESSURE_BACKOFF_MAX_MS = 40;
+
 /** Default frames per wake. 3 frames = ~60ms, balances latency vs CPU. */
 const DEFAULT_FRAMES_PER_WAKE = 3;
 
@@ -215,6 +221,8 @@ let catchUpDroppedSamples = 0;
 // Backpressure tracking
 /** Count of cycles where we skipped draining due to backpressure. */
 let backpressureCycles = 0;
+/** Consecutive backpressure cycles for adaptive backoff calculation. */
+let consecutiveBackpressureCycles = 0;
 
 // Catch-up thresholds (computed from constants and sample rate)
 let catchUpTargetSamples = 0;
@@ -748,9 +756,19 @@ async function consumeLoop(): Promise<void> {
     // tracked in flushFrameIfReady() when we have a frame but can't encode it
     if (isBackpressured()) {
       backpressureCycles++;
-      await yieldMacrotask(YIELD_MS);
+      consecutiveBackpressureCycles++;
+      // Adaptive backoff: 5ms → 10ms → 20ms → 40ms (capped)
+      // Pressure won't ease in 1ms, so back off to reduce CPU spinning
+      const backoffMs = Math.min(
+        BACKPRESSURE_BACKOFF_INITIAL_MS * 2 ** Math.min(consecutiveBackpressureCycles - 1, 3),
+        BACKPRESSURE_BACKOFF_MAX_MS,
+      );
+      await yieldMacrotask(backoffMs);
       continue;
     }
+
+    // Reset consecutive backpressure counter when pressure eases
+    consecutiveBackpressureCycles = 0;
 
     // Drain with bounded work per wake (dynamic based on backpressure)
     const framesThisWake = drainWithLimit(getMaxFramesPerWake());
@@ -877,6 +895,7 @@ self.onmessage = async (event: MessageEvent<InboundMessage>) => {
       droppedFrameCount = 0;
       catchUpDroppedSamples = 0;
       backpressureCycles = 0;
+      consecutiveBackpressureCycles = 0;
       wakeupCount = 0;
       totalSamplesRead = 0;
       lastProducerDroppedSamples = 0;
