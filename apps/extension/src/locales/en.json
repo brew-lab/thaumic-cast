@@ -34,6 +34,7 @@
   "auto_stop_source_changed": "Sonos has been distracted by something else",
   "auto_stop_stream_ended": "The stream has concluded its journey",
   "auto_stop_playback_stopped": "Playback has decided to take a break",
+  "auto_stop_speaker_stopped": "The speaker has wandered off mid-sentence",
 
   "loading_speakers": "Seeking speakers...",
   "no_speakers_found": "The network was searched. The speakers were not forthcoming.",
