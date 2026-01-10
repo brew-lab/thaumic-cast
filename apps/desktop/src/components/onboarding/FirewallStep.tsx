@@ -31,7 +31,7 @@ export function FirewallStep(): preact.JSX.Element {
     >
       <Alert variant="warning">{t(`onboarding.firewall.warning_text_${platformKey}`)}</Alert>
 
-      <ul className={styles['reason-list']}>
+      <ul className={styles.reasonList}>
         <li>{t('onboarding.firewall.reason_1')}</li>
         <li>{t('onboarding.firewall.reason_2')}</li>
         <li>{t('onboarding.firewall.reason_3')}</li>

@@ -119,7 +119,7 @@ export function ActionButton({
 
   const statusClass =
     status === 'success' ? styles.success : status === 'error' ? styles.error : '';
-  const combinedClass = [className, styles['action-button'], statusClass].filter(Boolean).join(' ');
+  const combinedClass = [className, styles.actionButton, statusClass].filter(Boolean).join(' ');
 
   return (
     <Button

@@ -25,9 +25,7 @@ interface CardProps {
  * @returns The rendered Card component
  */
 export function Card({ children, title, className, noPadding, style }: CardProps) {
-  const classes = [styles.card, noPadding && styles['no-padding'], className]
-    .filter(Boolean)
-    .join(' ');
+  const classes = [styles.card, noPadding && styles.noPadding, className].filter(Boolean).join(' ');
 
   return (
     <div className={classes} style={style}>

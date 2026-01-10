@@ -42,13 +42,13 @@ export function DeviceCard({
   const isPlaying = transportState === 'Playing';
   const displayState = isCasting && isPlaying ? t('device.streaming') : transportState;
   const statusClass =
-    isCasting && isPlaying ? styles['status-casting'] : isPlaying ? styles['status-playing'] : '';
+    isCasting && isPlaying ? styles.statusCasting : isPlaying ? styles.statusPlaying : '';
 
   return (
     <Card noPadding className={styles.container}>
       <div className={styles.content}>
         <div className={styles.header}>
-          <div className={styles['icon-wrapper']}>
+          <div className={styles.iconWrapper}>
             <SpeakerIcon size={20} />
           </div>
           <div className={styles.info}>

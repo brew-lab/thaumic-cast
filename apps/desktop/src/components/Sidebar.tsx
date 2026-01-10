@@ -44,7 +44,7 @@ export function Sidebar() {
             <Link
               key={href}
               href={href}
-              className={clsx(styles['nav-link'], isActive && styles['nav-link-active'])}
+              className={clsx(styles.navLink, isActive && styles.navLinkActive)}
             >
               <Icon size={20} />
               {label}

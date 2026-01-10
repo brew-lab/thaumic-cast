@@ -48,7 +48,7 @@ export function App() {
           <Route path="/server" component={Server} />
           <Route path="/settings" component={Settings} />
           <Route>
-            <div className={styles['not-found']}>
+            <div className={styles.notFound}>
               <h2>{t('error.page_not_found')}</h2>
               <a href="/">{t('error.go_home')}</a>
             </div>

@@ -114,10 +114,10 @@ export function VolumeControl({
   );
 
   return (
-    <div className={[styles['volume-control'], className].filter(Boolean).join(' ')}>
+    <div className={[styles.volumeControl, className].filter(Boolean).join(' ')}>
       <IconButton
         size="sm"
-        className={[styles['mute-btn'], muted ? styles.muted : ''].filter(Boolean).join(' ')}
+        className={[styles.muteBtn, muted ? styles.muted : ''].filter(Boolean).join(' ')}
         onClick={handleMuteToggle}
         title={muted ? unmuteLabel : muteLabel}
         aria-label={muted ? unmuteLabel : muteLabel}

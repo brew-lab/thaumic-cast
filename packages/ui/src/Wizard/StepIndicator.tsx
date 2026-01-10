@@ -46,8 +46,8 @@ export function StepIndicator({
 
         const className = [
           styles.dot,
-          isCompleted && styles['dot-completed'],
-          isActive && styles['dot-active'],
+          isCompleted && styles.dotCompleted,
+          isActive && styles.dotActive,
         ]
           .filter(Boolean)
           .join(' ');

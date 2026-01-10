@@ -109,7 +109,7 @@ export function DesktopConnectionStep({
         <>
           <Alert variant="warning">{t('onboarding.desktop.not_found')}</Alert>
 
-          <p className={styles['download-prompt']}>{t('onboarding.desktop.download_prompt')}</p>
+          <p className={styles.downloadPrompt}>{t('onboarding.desktop.download_prompt')}</p>
 
           <div className={styles.actions}>
             <Button variant="primary" onClick={handleDownload}>
@@ -128,10 +128,10 @@ export function DesktopConnectionStep({
             label={t('onboarding.desktop.manual_toggle')}
             hint={t('onboarding.desktop.manual_hint')}
           >
-            <div className={styles['manual-form']}>
+            <div className={styles.manualForm}>
               <input
                 type="url"
-                className={styles['url-input']}
+                className={styles.urlInput}
                 placeholder={t('server_url_placeholder')}
                 value={urlInput}
                 onInput={handleUrlChange}
@@ -149,8 +149,8 @@ export function DesktopConnectionStep({
             </div>
 
             {testResult && !testResult.success && (
-              <div className={styles['test-error']}>
-                <span className={styles['error-dot']} />
+              <div className={styles.testError}>
+                <span className={styles.errorDot} />
                 <span>{t(getServerTestErrorKey(testResult) ?? 'server_test_failed')}</span>
               </div>
             )}

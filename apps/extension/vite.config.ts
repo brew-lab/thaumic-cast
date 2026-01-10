@@ -6,6 +6,11 @@ import { resolve } from 'path';
 
 export default defineConfig({
   plugins: [preact(), crx({ manifest })],
+  css: {
+    modules: {
+      localsConvention: 'camelCaseOnly',
+    },
+  },
   build: {
     minify: 'esbuild',
     sourcemap: false,

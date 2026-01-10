@@ -32,22 +32,22 @@ export function WizardStep({
 }: WizardStepProps): preact.JSX.Element {
   return (
     <div className={styles.step}>
-      <div className={styles['step-header']}>
+      <div className={styles.stepHeader}>
         {Icon && (
-          <div className={styles['step-icon']}>
+          <div className={styles.stepIcon}>
             <Icon size={32} />
           </div>
         )}
-        <h2 className={styles['step-title']} id="wizard-title">
+        <h2 className={styles.stepTitle} id="wizard-title">
           {title}
         </h2>
         {subtitle && (
-          <p className={styles['step-subtitle']} id="wizard-description">
+          <p className={styles.stepSubtitle} id="wizard-description">
             {subtitle}
           </p>
         )}
       </div>
-      <div className={styles['step-content']}>{children}</div>
+      <div className={styles.stepContent}>{children}</div>
     </div>
   );
 }

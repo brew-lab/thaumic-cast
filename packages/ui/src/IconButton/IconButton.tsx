@@ -36,7 +36,7 @@ export function IconButton({
         : variant === 'danger'
           ? styles.danger
           : styles.ghost;
-  const combinedClass = [styles['icon-btn'], sizeClass, variantClass, className]
+  const combinedClass = [styles.iconBtn, sizeClass, variantClass, className]
     .filter(Boolean)
     .join(' ');
 

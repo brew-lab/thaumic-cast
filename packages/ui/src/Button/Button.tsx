@@ -33,7 +33,7 @@ export function Button({
       : variant === 'secondary'
         ? styles.secondary
         : styles.danger;
-  const widthClass = fullWidth ? styles['full-width'] : '';
+  const widthClass = fullWidth ? styles.fullWidth : '';
   const combinedClass = [styles.btn, variantClass, widthClass, className].filter(Boolean).join(' ');
 
   return <button {...props} disabled={disabled} className={combinedClass} />;

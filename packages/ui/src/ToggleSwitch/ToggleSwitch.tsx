@@ -27,7 +27,7 @@ export function ToggleSwitch({
   ...props
 }: ToggleSwitchProps) {
   const combinedClass = [
-    styles['toggle-switch'],
+    styles.toggleSwitch,
     checked && styles.on,
     disabled && styles.disabled,
     className,

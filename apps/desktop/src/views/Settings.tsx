@@ -66,16 +66,16 @@ export function Settings() {
 
       {/* Startup Section */}
       <Card noPadding className={styles.section}>
-        <div className={styles['section-header']}>
+        <div className={styles.sectionHeader}>
           <Power size={18} />
-          <h3 className={styles['section-title']}>{t('settings.startup')}</h3>
+          <h3 className={styles.sectionTitle}>{t('settings.startup')}</h3>
         </div>
 
-        <div className={styles['section-content']}>
+        <div className={styles.sectionContent}>
           <label className={styles.toggle}>
-            <div className={styles['toggle-info']}>
-              <span className={styles['toggle-label']}>{t('settings.autostart')}</span>
-              <span className={styles['toggle-description']}>
+            <div className={styles.toggleInfo}>
+              <span className={styles.toggleLabel}>{t('settings.autostart')}</span>
+              <span className={styles.toggleDescription}>
                 {t('settings.autostart_description')}
               </span>
             </div>
@@ -92,14 +92,14 @@ export function Settings() {
 
       {/* Language Section */}
       <Card noPadding className={styles.section}>
-        <div className={styles['section-header']}>
+        <div className={styles.sectionHeader}>
           <Globe size={18} />
-          <h3 className={styles['section-title']}>{t('settings.language')}</h3>
+          <h3 className={styles.sectionTitle}>{t('settings.language')}</h3>
         </div>
 
-        <div className={styles['section-content']}>
+        <div className={styles.sectionContent}>
           <div className={styles.field}>
-            <label className={styles['field-label']}>{t('settings.display_language')}</label>
+            <label className={styles.fieldLabel}>{t('settings.display_language')}</label>
             <select
               value={currentLanguage}
               onChange={(e) => handleLanguageChange(e.currentTarget.value as SupportedLocale)}
@@ -117,14 +117,14 @@ export function Settings() {
 
       {/* Appearance Section */}
       <Card noPadding className={styles.section}>
-        <div className={styles['section-header']}>
+        <div className={styles.sectionHeader}>
           <Palette size={18} />
-          <h3 className={styles['section-title']}>{t('settings.appearance')}</h3>
+          <h3 className={styles.sectionTitle}>{t('settings.appearance')}</h3>
         </div>
 
-        <div className={styles['section-content']}>
+        <div className={styles.sectionContent}>
           <div className={styles.field}>
-            <label className={styles['field-label']}>{t('settings.theme')}</label>
+            <label className={styles.fieldLabel}>{t('settings.theme')}</label>
             <select
               value={currentTheme}
               onChange={(e) => handleThemeChange(e.currentTarget.value as ThemeMode)}
