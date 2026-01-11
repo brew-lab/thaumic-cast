@@ -32,7 +32,7 @@ use crate::config::{
 };
 use crate::error::{ThaumicError, ThaumicResult};
 use crate::protocol_constants::WAV_STREAM_SIZE_MAX;
-use crate::stream::{create_wav_header, AudioCodec, IcyMetadataInjector, ICY_METAINT};
+use crate::stream::{create_wav_header, AudioCodec, IcyMetadataInjector, TaggedFrame, ICY_METAINT};
 
 /// Boxed stream type for audio data with ICY metadata support.
 type AudioStream = Pin<Box<dyn futures::Stream<Item = Result<Bytes, std::io::Error>> + Send>>;
@@ -464,7 +464,18 @@ async fn stream_audio(
     let connected_at = Instant::now();
     let remote_ip = remote_addr.ip();
 
-    // Subscribe to get epoch candidate, prefill frames, and live receiver
+    // Upfront buffering delay for WAV streams BEFORE subscribing.
+    // This lets the ring buffer accumulate more frames. Subscribing after
+    // ensures the broadcast receiver doesn't fill up during the delay.
+    if stream_state.codec == AudioCodec::Wav && HTTP_PREFILL_DELAY_MS > 0 {
+        log::debug!(
+            "[Stream] Applying {}ms prefill delay for WAV stream",
+            HTTP_PREFILL_DELAY_MS
+        );
+        tokio::time::sleep(Duration::from_millis(HTTP_PREFILL_DELAY_MS)).await;
+    }
+
+    // Subscribe AFTER delay to get fresh prefill snapshot and avoid rx backlog
     let (epoch_candidate, prefill_frames, rx) = stream_state.subscribe();
 
     log::debug!(
@@ -474,20 +485,15 @@ async fn stream_audio(
         prefill_frames.len()
     );
 
-    // Upfront buffering delay for WAV streams (similar to swyh-rs "initial buffering").
-    // This lets the ring buffer accumulate more frames before we start draining,
-    // reducing sensitivity to early-connection jitter during CPU spikes.
-    if stream_state.codec == AudioCodec::Wav && HTTP_PREFILL_DELAY_MS > 0 {
-        log::debug!(
-            "[Stream] Applying {}ms prefill delay for WAV stream",
-            HTTP_PREFILL_DELAY_MS
-        );
-        tokio::time::sleep(Duration::from_millis(HTTP_PREFILL_DELAY_MS)).await;
-    }
+    // Type alias for tagged frame stream
+    type TaggedStream = Pin<Box<dyn Stream<Item = Result<TaggedFrame, std::io::Error>> + Send>>;
 
-    // Create streams for prefill and live data
-    let prefill_stream =
-        futures::stream::iter(prefill_frames.into_iter().map(Ok::<Bytes, std::io::Error>));
+    // Create streams for prefill and live data - all prefill frames are real audio
+    let prefill_stream = futures::stream::iter(
+        prefill_frames
+            .into_iter()
+            .map(|b| Ok(TaggedFrame::Audio(b))),
+    );
 
     // Build live stream - WAV gets silence injection, compressed codecs don't.
     //
@@ -498,50 +504,49 @@ async fn stream_audio(
     // Compressed codecs (AAC, MP3, FLAC) have their own framing and silence
     // representation - raw zeros would corrupt the stream. These codecs also
     // tend to be more resilient to jitter due to their buffering behavior.
-    let live_stream: Pin<Box<dyn Stream<Item = Result<Bytes, std::io::Error>> + Send>> =
-        if stream_state.codec == AudioCodec::Wav {
-            // WAV: timeout-based silence injection
-            let silence_frame = stream_state
-                .audio_format
-                .silence_frame(SILENCE_FRAME_DURATION_MS);
+    let live_stream: TaggedStream = if stream_state.codec == AudioCodec::Wav {
+        // WAV: timeout-based silence injection
+        let silence_frame = stream_state
+            .audio_format
+            .silence_frame(SILENCE_FRAME_DURATION_MS);
 
-            use tokio_stream::StreamExt as TokioStreamExt;
-            Box::pin(TokioStreamExt::map(
-                TokioStreamExt::timeout(
-                    BroadcastStream::new(rx),
-                    Duration::from_millis(SILENCE_INJECTION_TIMEOUT_MS),
-                ),
-                move |res| match res {
-                    Ok(Ok(frame)) => Ok(frame),
-                    Ok(Err(BroadcastStreamRecvError::Lagged(n))) => {
-                        log::warn!(
-                            "[Stream] Broadcast receiver lagged by {} frames - possible CPU contention",
-                            n
-                        );
-                        Err(std::io::Error::other(format!("lagged by {} frames", n)))
-                    }
-                    Err(_elapsed) => {
-                        log::trace!(
-                            "[Stream] Injecting silence frame (no data for {}ms)",
-                            SILENCE_INJECTION_TIMEOUT_MS
-                        );
-                        Ok(silence_frame.clone())
-                    }
-                },
-            ))
-        } else {
-            // Compressed codecs: no silence injection
-            Box::pin(BroadcastStream::new(rx).map(|res| match res {
-                Ok(frame) => Ok(frame),
-                Err(BroadcastStreamRecvError::Lagged(n)) => {
+        use tokio_stream::StreamExt as TokioStreamExt;
+        Box::pin(TokioStreamExt::map(
+            TokioStreamExt::timeout(
+                BroadcastStream::new(rx),
+                Duration::from_millis(SILENCE_INJECTION_TIMEOUT_MS),
+            ),
+            move |res| match res {
+                Ok(Ok(frame)) => Ok(TaggedFrame::Audio(frame)),
+                Ok(Err(BroadcastStreamRecvError::Lagged(n))) => {
                     log::warn!(
                         "[Stream] Broadcast receiver lagged by {} frames - possible CPU contention",
                         n
                     );
                     Err(std::io::Error::other(format!("lagged by {} frames", n)))
                 }
-            }))
-        };
+                Err(_elapsed) => {
+                    log::trace!(
+                        "[Stream] Injecting silence frame (no data for {}ms)",
+                        SILENCE_INJECTION_TIMEOUT_MS
+                    );
+                    Ok(TaggedFrame::Silence(silence_frame.clone()))
+                }
+            },
+        ))
+    } else {
+        // Compressed codecs: no silence injection, all frames are real audio
+        Box::pin(BroadcastStream::new(rx).map(|res| match res {
+            Ok(frame) => Ok(TaggedFrame::Audio(frame)),
+            Err(BroadcastStreamRecvError::Lagged(n)) => {
+                log::warn!(
+                    "[Stream] Broadcast receiver lagged by {} frames - possible CPU contention",
+                    n
+                );
+                Err(std::io::Error::other(format!("lagged by {} frames", n)))
+            }
+        }))
+    };
 
     // Chain prefill frames before live stream
     let combined_stream = futures::StreamExt::chain(prefill_stream, live_stream);
@@ -563,12 +568,13 @@ async fn stream_audio(
         remote_ip,
     ));
 
-    let tracked_stream =
-        combined_stream.scan(hook_state, |state, item: Result<Bytes, std::io::Error>| {
+    let tracked_stream = combined_stream.scan(
+        hook_state,
+        |state, item: Result<TaggedFrame, std::io::Error>| {
             if let Some((stream_state, epoch_candidate, connected_at, remote_ip)) = state.take() {
-                // Only fire on a real, non-empty audio chunk
-                if let Ok(ref chunk) = item {
-                    if !chunk.is_empty() {
+                // Only fire epoch on REAL audio, not injected silence
+                if let Ok(ref frame) = item {
+                    if frame.is_real_audio() {
                         let first_audio_polled_at = Instant::now();
                         stream_state.timing.start_new_epoch(
                             epoch_candidate,
@@ -577,16 +583,17 @@ async fn stream_audio(
                             remote_ip,
                         );
                     } else {
-                        // Empty chunk - don't burn the hook, try again
+                        // Silence frame - don't burn the hook, wait for real audio
                         *state = Some((stream_state, epoch_candidate, connected_at, remote_ip));
                     }
                 } else {
-                    // Error on first item - don't burn the hook, try again
+                    // Error - don't burn the hook
                     *state = Some((stream_state, epoch_candidate, connected_at, remote_ip));
                 }
             }
             futures::future::ready(Some(item))
-        });
+        },
+    );
 
     // Content-Type based on output codec
     let content_type = match stream_state.codec {
@@ -618,12 +625,15 @@ async fn stream_audio(
         builder = builder.header(header::CONTENT_LENGTH, WAV_STREAM_SIZE_MAX.to_string());
     }
 
-    // Apply ICY injection or WAV header to the tracked stream (after epoch hook)
+    // Unwrap TaggedFrame to Bytes after epoch hook, before final stream processing
+    let unwrapped_stream = tracked_stream.map(|res| res.map(TaggedFrame::into_bytes));
+
+    // Apply ICY injection or WAV header to the unwrapped stream
     let inner_stream: AudioStream = if wants_icy {
         let stream_ref = Arc::clone(&stream_state);
         let mut injector = IcyMetadataInjector::new();
 
-        Box::pin(tracked_stream.map(move |res| {
+        Box::pin(unwrapped_stream.map(move |res| {
             let chunk = res?;
             let metadata = stream_ref.metadata.read();
             Ok::<Bytes, std::io::Error>(injector.inject(chunk.as_ref(), &metadata))
@@ -634,10 +644,10 @@ async fn stream_audio(
         let wav_header = create_wav_header(audio_format.sample_rate, audio_format.channels);
         Box::pin(futures::StreamExt::chain(
             futures::stream::once(async move { Ok(wav_header) }),
-            tracked_stream,
+            unwrapped_stream,
         ))
     } else {
-        Box::pin(tracked_stream)
+        Box::pin(unwrapped_stream)
     };
 
     // Wrap stream with logging guard to track when/why it ends.

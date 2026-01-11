@@ -61,3 +61,31 @@ impl Default for AudioFormat {
         }
     }
 }
+
+/// Tagged audio frame distinguishing real audio from injected silence.
+///
+/// Used in the HTTP stream pipeline to ensure epoch tracking only fires
+/// on actual audio data, not keepalive silence frames.
+#[derive(Clone)]
+pub enum TaggedFrame {
+    /// Real audio data from the broadcast channel
+    Audio(Bytes),
+    /// Injected silence to keep connection alive during delivery gaps
+    Silence(Bytes),
+}
+
+impl TaggedFrame {
+    /// Returns the underlying bytes regardless of frame type.
+    #[inline]
+    pub fn into_bytes(self) -> Bytes {
+        match self {
+            TaggedFrame::Audio(b) | TaggedFrame::Silence(b) => b,
+        }
+    }
+
+    /// Returns true if this is real audio (not injected silence).
+    #[inline]
+    pub fn is_real_audio(&self) -> bool {
+        matches!(self, TaggedFrame::Audio(_))
+    }
+}
