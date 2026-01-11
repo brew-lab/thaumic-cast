@@ -108,15 +108,21 @@ impl EventEmitter for BroadcastEventBridge {
                     },
                 );
             }
-            StreamEvent::PlaybackStopped { speaker_ip, .. } => {
+            StreamEvent::PlaybackStopped {
+                stream_id,
+                speaker_ip,
+                ..
+            } => {
                 #[derive(serde::Serialize, Clone)]
                 #[serde(rename_all = "camelCase")]
                 struct PlaybackStoppedPayload {
+                    stream_id: String,
                     speaker_ip: String,
                 }
                 self.emit_to_tauri(
                     "playback-stopped",
                     PlaybackStoppedPayload {
+                        stream_id: stream_id.clone(),
                         speaker_ip: speaker_ip.clone(),
                     },
                 );

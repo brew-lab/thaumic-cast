@@ -343,9 +343,39 @@ impl StreamCoordinator {
             };
         }
 
-        // Note: If the speaker is playing a DIFFERENT stream, Sonos will switch sources.
-        // We don't need to stop the old stream - the old session cleanup happens
-        // when that stream's WebSocket connection closes.
+        // Check if this speaker is already playing a DIFFERENT stream.
+        // If so, we must explicitly stop the old playback first to avoid race conditions.
+        // Without an explicit stop, Sonos may not cleanly switch sources when receiving
+        // a new SetAVTransportURI while still consuming an active HTTP stream.
+        let existing_session = self
+            .playback_sessions
+            .iter()
+            .find(|r| r.key().speaker_ip == speaker_ip && r.key().stream_id != stream_id)
+            .map(|r| (r.key().clone(), r.value().stream_id.clone()));
+
+        if let Some((old_key, old_stream_id)) = existing_session {
+            log::info!(
+                "Speaker {} switching from stream {} to {} - stopping old playback first",
+                speaker_ip,
+                old_stream_id,
+                stream_id
+            );
+
+            // Remove old session
+            self.playback_sessions.remove(&old_key);
+
+            // Best-effort stop - ignore errors (speaker might already be stopped)
+            if let Err(e) = self.sonos.stop(speaker_ip).await {
+                log::warn!("Failed to stop old playback on {}: {}", speaker_ip, e);
+            }
+
+            // Emit PlaybackStopped for the old stream so extension cleans up correctly
+            self.emit_event(StreamEvent::PlaybackStopped {
+                stream_id: old_stream_id,
+                speaker_ip: speaker_ip.to_string(),
+                timestamp: now_millis(),
+            });
+        }
 
         log::info!("Starting playback: {} -> {}", speaker_ip, stream_url);
 
@@ -456,6 +486,7 @@ impl StreamCoordinator {
 
             // Broadcast playback stopped event
             self.emit_event(StreamEvent::PlaybackStopped {
+                stream_id: stream_id.to_string(),
                 speaker_ip: speaker_ip.to_string(),
                 timestamp: now_millis(),
             });
@@ -479,17 +510,22 @@ impl StreamCoordinator {
             .find(|r| r.key().speaker_ip == speaker_ip)
             .map(|r| r.key().clone());
 
+        let stream_id = key.as_ref().map(|k| k.stream_id.clone());
+
         if let Some(key) = key {
             self.playback_sessions.remove(&key);
         }
 
         self.sonos.stop(speaker_ip).await?;
 
-        // Broadcast playback stopped event
-        self.emit_event(StreamEvent::PlaybackStopped {
-            speaker_ip: speaker_ip.to_string(),
-            timestamp: now_millis(),
-        });
+        // Broadcast playback stopped event (only if we had a session)
+        if let Some(stream_id) = stream_id {
+            self.emit_event(StreamEvent::PlaybackStopped {
+                stream_id,
+                speaker_ip: speaker_ip.to_string(),
+                timestamp: now_millis(),
+            });
+        }
 
         Ok(())
     }

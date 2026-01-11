@@ -75,9 +75,12 @@ pub enum StreamEvent {
     },
     /// Playback stopped on a speaker.
     ///
-    /// Reserved for future use (partial speaker removal).
-    #[allow(dead_code)]
+    /// Emitted when playback is explicitly stopped on a speaker, such as when
+    /// recasting to the same speaker from a different stream.
     PlaybackStopped {
+        /// The stream ID that was stopped.
+        #[serde(rename = "streamId")]
+        stream_id: String,
         /// The speaker IP address that stopped playback.
         #[serde(rename = "speakerIp")]
         speaker_ip: String,

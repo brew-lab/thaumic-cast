@@ -1075,6 +1075,7 @@ export const StreamEventSchema = z.discriminatedUnion('type', [
   }),
   z.object({
     type: z.literal('playbackStopped'),
+    streamId: z.string(),
     speakerIp: z.string(),
     timestamp: z.number(),
   }),
