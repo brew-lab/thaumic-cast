@@ -114,15 +114,19 @@ pub fn bootstrap_services(config: &Config) -> BootstrappedServices {
     // Create the Sonos client (implements multiple traits)
     let sonos_impl = Arc::new(SonosClientImpl::new(http_client.clone()));
 
+    // Validate streaming config (panics early if invalid)
+    config
+        .streaming
+        .validate()
+        .expect("Invalid streaming configuration");
+
     // Wire up stream coordinator with its dependencies
     let stream_coordinator = Arc::new(StreamCoordinator::new(
         Arc::clone(&sonos_impl) as Arc<dyn SonosPlayback>,
         Arc::clone(&sonos_state),
         network.clone(),
         Arc::clone(&event_bridge) as Arc<dyn EventEmitter>,
-        config.max_concurrent_streams,
-        config.stream_buffer_frames,
-        config.stream_channel_capacity,
+        config.streaming.clone(),
     ));
 
     // Wire up latency monitor with its dependencies

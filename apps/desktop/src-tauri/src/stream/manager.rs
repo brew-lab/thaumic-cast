@@ -9,6 +9,7 @@ use std::time::Instant;
 use tokio::sync::broadcast;
 use uuid::Uuid;
 
+use crate::state::StreamingConfig;
 use crate::stream::transcoder::Transcoder;
 use crate::stream::AudioFormat;
 
@@ -348,31 +349,19 @@ impl Drop for StreamState {
 /// Manages all active audio streams in the application.
 pub struct StreamManager {
     streams: DashMap<String, Arc<StreamState>>,
-    /// Maximum number of concurrent streams allowed.
-    max_concurrent_streams: usize,
-    /// Maximum frames to buffer for late-joining clients.
-    stream_buffer_frames: usize,
-    /// Capacity of the broadcast channel for audio frames.
-    stream_channel_capacity: usize,
+    /// Streaming configuration (concurrency, buffering, channel capacity).
+    config: StreamingConfig,
 }
 
 impl StreamManager {
     /// Creates a new StreamManager instance.
     ///
     /// # Arguments
-    /// * `max_concurrent_streams` - Maximum number of concurrent streams allowed
-    /// * `stream_buffer_frames` - Maximum frames to buffer for late-joining clients
-    /// * `stream_channel_capacity` - Capacity of the broadcast channel for audio frames
-    pub fn new(
-        max_concurrent_streams: usize,
-        stream_buffer_frames: usize,
-        stream_channel_capacity: usize,
-    ) -> Self {
+    /// * `config` - Streaming configuration (concurrency, buffering, channel capacity)
+    pub fn new(config: StreamingConfig) -> Self {
         Self {
             streams: DashMap::new(),
-            max_concurrent_streams,
-            stream_buffer_frames,
-            stream_channel_capacity,
+            config,
         }
     }
 
@@ -388,7 +377,7 @@ impl StreamManager {
         audio_format: AudioFormat,
         transcoder: Arc<dyn Transcoder>,
     ) -> Result<String, String> {
-        if self.streams.len() >= self.max_concurrent_streams {
+        if self.streams.len() >= self.config.max_concurrent_streams {
             return Err("Maximum number of concurrent streams reached".to_string());
         }
 
@@ -398,8 +387,8 @@ impl StreamManager {
             codec,
             audio_format,
             transcoder,
-            self.stream_buffer_frames,
-            self.stream_channel_capacity,
+            self.config.buffer_frames,
+            self.config.channel_capacity,
         ));
         self.streams.insert(id.clone(), state);
         Ok(id)

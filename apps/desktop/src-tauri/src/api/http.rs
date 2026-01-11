@@ -253,7 +253,7 @@ pub fn create_router(state: AppState) -> Router {
 /// Always returns 200 OK if the server is responding. Use `/ready` for
 /// readiness checks that verify the service can handle requests.
 async fn health_check(State(state): State<AppState>) -> impl IntoResponse {
-    let max_streams = state.config.read().max_concurrent_streams;
+    let max_streams = state.config.read().streaming.max_concurrent_streams;
     api_success(json!({
         "status": "ok",
         "service": "thaumic-cast-desktop",

@@ -8,12 +8,92 @@ use serde_json::json;
 
 use crate::types::{TransportState, ZoneGroup};
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Streaming Configuration
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Configuration for audio streaming behavior.
+///
+/// Groups related streaming parameters that control concurrency,
+/// buffering, and channel capacity. These values are validated on
+/// construction to prevent runtime panics.
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct StreamingConfig {
+    /// Maximum number of concurrent audio streams.
+    /// Increase for powerful hardware, decrease for resource-constrained systems.
+    pub max_concurrent_streams: usize,
+
+    /// Maximum frames to buffer for late-joining clients.
+    /// Higher values = more memory, better catchup for slow clients.
+    /// Extension sends 20ms frames, so 50 frames ≈ 1 second of audio.
+    pub buffer_frames: usize,
+
+    /// Capacity of the broadcast channel for audio frames.
+    pub channel_capacity: usize,
+}
+
+impl StreamingConfig {
+    /// Creates a new StreamingConfig with validated values.
+    ///
+    /// # Errors
+    /// Returns an error if any value would cause runtime issues:
+    /// - `max_concurrent_streams` must be >= 1
+    /// - `buffer_frames` must be >= 1
+    /// - `channel_capacity` must be >= 1 (broadcast::channel panics on 0)
+    pub fn new(
+        max_concurrent_streams: usize,
+        buffer_frames: usize,
+        channel_capacity: usize,
+    ) -> Result<Self, String> {
+        let config = Self {
+            max_concurrent_streams,
+            buffer_frames,
+            channel_capacity,
+        };
+        config.validate()?;
+        Ok(config)
+    }
+
+    /// Validates the configuration values.
+    ///
+    /// # Errors
+    /// Returns an error string describing the invalid configuration.
+    pub fn validate(&self) -> Result<(), String> {
+        if self.max_concurrent_streams == 0 {
+            return Err("max_concurrent_streams must be >= 1".to_string());
+        }
+        if self.buffer_frames == 0 {
+            return Err("buffer_frames must be >= 1".to_string());
+        }
+        if self.channel_capacity == 0 {
+            return Err(
+                "channel_capacity must be >= 1 (broadcast::channel panics on 0)".to_string(),
+            );
+        }
+        Ok(())
+    }
+}
+
+impl Default for StreamingConfig {
+    fn default() -> Self {
+        Self {
+            max_concurrent_streams: 10,
+            buffer_frames: 50,
+            channel_capacity: 100,
+        }
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Application Configuration
+// ─────────────────────────────────────────────────────────────────────────────
+
 /// Configuration for the Thaumic Cast Desktop application.
 ///
 /// All fields have sensible defaults. These values can be tuned based on:
-/// - Hardware capabilities (`max_concurrent_streams`)
+/// - Hardware capabilities (`streaming.max_concurrent_streams`)
 /// - Network conditions (`ws_heartbeat_timeout_secs`, `ssdp_send_count`)
-/// - Latency vs memory tradeoffs (`stream_buffer_frames`)
+/// - Latency vs memory tradeoffs (`streaming.buffer_frames`)
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Config {
     // ─────────────────────────────────────────────────────────────────────────
@@ -50,17 +130,9 @@ pub struct Config {
     // ─────────────────────────────────────────────────────────────────────────
     // Streaming
     // ─────────────────────────────────────────────────────────────────────────
-    /// Maximum number of concurrent audio streams.
-    /// Increase for powerful hardware, decrease for resource-constrained systems.
-    pub max_concurrent_streams: usize,
-
-    /// Maximum frames to buffer for late-joining clients.
-    /// Higher values = more memory, better catchup for slow clients.
-    /// Extension sends 20ms frames, so 50 frames ≈ 1 second of audio.
-    pub stream_buffer_frames: usize,
-
-    /// Capacity of the broadcast channel for audio frames.
-    pub stream_channel_capacity: usize,
+    /// Streaming configuration (concurrency, buffering, channel capacity).
+    #[serde(default)]
+    pub streaming: StreamingConfig,
 
     // ─────────────────────────────────────────────────────────────────────────
     // WebSocket
@@ -92,9 +164,7 @@ impl Default for Config {
             mdns_browse_timeout_ms: 2000,
 
             // Streaming
-            max_concurrent_streams: 10,
-            stream_buffer_frames: 50,
-            stream_channel_capacity: 100,
+            streaming: StreamingConfig::default(),
 
             // WebSocket
             ws_heartbeat_timeout_secs: 10,

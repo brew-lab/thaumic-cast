@@ -17,7 +17,7 @@ use crate::error::ThaumicResult;
 use crate::events::{EventEmitter, StreamEvent};
 use crate::sonos::utils::build_sonos_stream_uri;
 use crate::sonos::SonosPlayback;
-use crate::state::SonosState;
+use crate::state::{SonosState, StreamingConfig};
 use crate::stream::{
     AudioCodec, AudioFormat, StreamManager, StreamMetadata, StreamState, Transcoder,
 };
@@ -95,26 +95,18 @@ impl StreamCoordinator {
     /// * `sonos_state` - Sonos state for UUID lookups
     /// * `network` - Network configuration (port, local IP)
     /// * `emitter` - Event emitter for broadcasting stream events
-    /// * `max_concurrent_streams` - Maximum number of concurrent streams allowed
-    /// * `stream_buffer_frames` - Maximum frames to buffer for late-joining clients
-    /// * `stream_channel_capacity` - Capacity of the broadcast channel for audio frames
+    /// * `streaming_config` - Streaming configuration (concurrency, buffering, channel capacity)
     pub fn new(
         sonos: Arc<dyn SonosPlayback>,
         sonos_state: Arc<SonosState>,
         network: NetworkContext,
         emitter: Arc<dyn EventEmitter>,
-        max_concurrent_streams: usize,
-        stream_buffer_frames: usize,
-        stream_channel_capacity: usize,
+        streaming_config: StreamingConfig,
     ) -> Self {
         Self {
             sonos,
             sonos_state,
-            stream_manager: Arc::new(StreamManager::new(
-                max_concurrent_streams,
-                stream_buffer_frames,
-                stream_channel_capacity,
-            )),
+            stream_manager: Arc::new(StreamManager::new(streaming_config)),
             network,
             playback_sessions: DashMap::new(),
             emitter,
