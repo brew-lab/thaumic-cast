@@ -1,5 +1,7 @@
 use bytes::{BufMut, Bytes, BytesMut};
 
+use crate::protocol_constants::WAV_STREAM_SIZE_MAX;
+
 /// Generates a standard 44-byte WAVE header for an infinite LPCM stream.
 ///
 /// @param sample_rate - Typically 44100 or 48000.
@@ -9,7 +11,7 @@ pub fn create_wav_header(sample_rate: u32, channels: u16) -> Bytes {
 
     // RIFF header
     header.put_slice(b"RIFF");
-    header.put_u32_le(0xFFFFFFFF); // File size (infinite)
+    header.put_u32_le(WAV_STREAM_SIZE_MAX); // File size (infinite stream)
     header.put_slice(b"WAVE");
 
     // fmt chunk
@@ -24,7 +26,7 @@ pub fn create_wav_header(sample_rate: u32, channels: u16) -> Bytes {
 
     // data chunk
     header.put_slice(b"data");
-    header.put_u32_le(0xFFFFFFFF); // Data size (infinite)
+    header.put_u32_le(WAV_STREAM_SIZE_MAX); // Data size (infinite stream)
 
     header.freeze()
 }

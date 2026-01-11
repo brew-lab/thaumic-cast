@@ -31,6 +31,7 @@ use crate::config::{
     SILENCE_INJECTION_TIMEOUT_MS,
 };
 use crate::error::{ThaumicError, ThaumicResult};
+use crate::protocol_constants::WAV_STREAM_SIZE_MAX;
 use crate::stream::{create_wav_header, AudioCodec, IcyMetadataInjector, ICY_METAINT};
 
 /// Boxed stream type for audio data with ICY metadata support.
@@ -606,6 +607,14 @@ async fn stream_audio(
 
     if wants_icy {
         builder = builder.header("icy-metaint", ICY_METAINT.to_string());
+    }
+
+    // WAV: Use fixed Content-Length to avoid chunked transfer encoding.
+    // Some renderers (including Sonos) stutter or disconnect with chunked encoding.
+    // The stream will end before reaching this length, but it signals "file-like"
+    // behavior to the renderer.
+    if stream_state.codec == AudioCodec::Wav {
+        builder = builder.header(header::CONTENT_LENGTH, WAV_STREAM_SIZE_MAX.to_string());
     }
 
     // Apply ICY injection or WAV header to the tracked stream (after epoch hook)

@@ -32,6 +32,13 @@ pub const DEFAULT_SAMPLE_RATE: u32 = 48000;
 /// Default number of audio channels (stereo).
 pub const DEFAULT_CHANNELS: u16 = 2;
 
+/// Maximum size indicator for WAV streams (4,294,967,295 bytes / ~4.3 GB).
+///
+/// Used in WAV headers (RIFF file size, data chunk size) and HTTP Content-Length
+/// to signal an "infinite" stream. This prevents chunked transfer encoding,
+/// which some renderers (including Sonos) handle poorly for WAV.
+pub const WAV_STREAM_SIZE_MAX: u32 = u32::MAX;
+
 // ─────────────────────────────────────────────────────────────────────────────
 // ICY Protocol (Shoutcast/Icecast metadata)
 // ─────────────────────────────────────────────────────────────────────────────
