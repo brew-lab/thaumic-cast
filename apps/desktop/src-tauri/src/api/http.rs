@@ -18,6 +18,7 @@ use std::net::SocketAddr;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::time::Instant;
+use tokio_stream::wrappers::errors::BroadcastStreamRecvError;
 use tokio_stream::wrappers::BroadcastStream;
 
 use crate::api::response::{api_error, api_ok, api_success};
@@ -353,8 +354,19 @@ async fn stream_audio(
     // Create streams for prefill and live data
     let prefill_stream =
         futures::stream::iter(prefill_frames.into_iter().map(Ok::<Bytes, std::io::Error>));
-    let live_stream =
-        BroadcastStream::new(rx).map(|res| res.map_err(|e| std::io::Error::other(e.to_string())));
+    let live_stream = BroadcastStream::new(rx).map(|res| {
+        res.map_err(|e| {
+            match &e {
+                BroadcastStreamRecvError::Lagged(n) => {
+                    log::warn!(
+                        "[Stream] Broadcast receiver lagged by {} frames - possible CPU contention",
+                        n
+                    );
+                }
+            }
+            std::io::Error::other(e.to_string())
+        })
+    });
 
     // Chain prefill frames before live stream
     let combined_stream = prefill_stream.chain(live_stream);
