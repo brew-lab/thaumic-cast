@@ -13,7 +13,7 @@ use std::time::{Duration, Instant};
 use crate::api::AppState;
 use crate::config::{WS_HEARTBEAT_CHECK_INTERVAL_SECS, WS_HEARTBEAT_TIMEOUT_SECS};
 use crate::services::StreamCoordinator;
-use crate::stream::{AudioCodec, Passthrough, StreamMetadata, Transcoder};
+use crate::stream::{AudioCodec, AudioFormat, Passthrough, StreamMetadata, Transcoder};
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Stream Guard (RAII cleanup)
@@ -127,9 +127,7 @@ struct EncoderConfig {
     codec: String,
     #[allow(dead_code)]
     bitrate: Option<u32>,
-    #[allow(dead_code)]
     sample_rate: Option<u32>,
-    #[allow(dead_code)]
     channels: Option<u8>,
 }
 
@@ -342,7 +340,7 @@ fn handle_handshake(state: &AppState, payload: HandshakeRequest) -> HandshakeRes
 
     let (output_codec, transcoder) = resolve_codec(codec_str);
 
-    // Extract audio format from encoder config (for latency timing)
+    // Extract audio format from encoder config
     let sample_rate = payload
         .encoder_config
         .as_ref()
@@ -352,20 +350,24 @@ fn handle_handshake(state: &AppState, payload: HandshakeRequest) -> HandshakeRes
         .encoder_config
         .as_ref()
         .and_then(|c| c.channels)
-        .unwrap_or(2) as u32;
+        .unwrap_or(2);
+
+    // Bit depth is always 16: the extension uses Web Audio API which outputs
+    // 32-bit float samples, but we convert to 16-bit PCM before sending.
+    // This matches the WAV header generation and silence frame calculations.
+    let audio_format = AudioFormat::new(sample_rate, channels as u16, 16);
 
     log::info!(
-        "[WS] Creating stream: input={:?}, output={:?}, sample_rate={}, channels={}",
+        "[WS] Creating stream: input={:?}, output={:?}, format={:?}",
         codec_str,
         output_codec,
-        sample_rate,
-        channels
+        audio_format
     );
 
     match state
         .services
         .stream_coordinator
-        .create_stream(output_codec, transcoder)
+        .create_stream(output_codec, audio_format, transcoder)
     {
         Ok(id) => HandshakeResult::Success(id),
         Err(e) => HandshakeResult::Error(e),

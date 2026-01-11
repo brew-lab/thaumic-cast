@@ -11,13 +11,14 @@ use axum::{
     Json, Router,
 };
 use bytes::Bytes;
-use futures::stream::StreamExt;
+use futures::stream::{Stream, StreamExt};
 use serde::Deserialize;
 use serde_json::json;
 use std::net::{IpAddr, SocketAddr};
 use std::pin::Pin;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::time::Duration;
 use std::time::Instant;
 use tokio_stream::wrappers::errors::BroadcastStreamRecvError;
 use tokio_stream::wrappers::BroadcastStream;
@@ -26,7 +27,8 @@ use crate::api::response::{api_error, api_ok, api_success};
 use crate::api::ws::ws_handler;
 use crate::api::AppState;
 use crate::config::{
-    DEFAULT_CHANNELS, DEFAULT_SAMPLE_RATE, MAX_CONCURRENT_STREAMS, MAX_GENA_BODY_SIZE,
+    MAX_CONCURRENT_STREAMS, MAX_GENA_BODY_SIZE, SILENCE_FRAME_DURATION_MS,
+    SILENCE_INJECTION_TIMEOUT_MS,
 };
 use crate::error::{ThaumicError, ThaumicResult};
 use crate::stream::{create_wav_header, AudioCodec, IcyMetadataInjector, ICY_METAINT};
@@ -473,22 +475,63 @@ async fn stream_audio(
     // Create streams for prefill and live data
     let prefill_stream =
         futures::stream::iter(prefill_frames.into_iter().map(Ok::<Bytes, std::io::Error>));
-    let live_stream = BroadcastStream::new(rx).map(|res| {
-        res.map_err(|e| {
-            match &e {
-                BroadcastStreamRecvError::Lagged(n) => {
+
+    // Build live stream - WAV gets silence injection, compressed codecs don't.
+    //
+    // Why WAV-only: Sonos treats WAV as a "file" requiring continuous data flow.
+    // CPU spikes that delay delivery cause Sonos to close the connection.
+    // Injecting PCM silence (zeros) keeps the stream alive.
+    //
+    // Compressed codecs (AAC, MP3, FLAC) have their own framing and silence
+    // representation - raw zeros would corrupt the stream. These codecs also
+    // tend to be more resilient to jitter due to their buffering behavior.
+    let live_stream: Pin<Box<dyn Stream<Item = Result<Bytes, std::io::Error>> + Send>> =
+        if stream_state.codec == AudioCodec::Wav {
+            // WAV: timeout-based silence injection
+            let silence_frame = stream_state
+                .audio_format
+                .silence_frame(SILENCE_FRAME_DURATION_MS);
+
+            use tokio_stream::StreamExt as TokioStreamExt;
+            Box::pin(TokioStreamExt::map(
+                TokioStreamExt::timeout(
+                    BroadcastStream::new(rx),
+                    Duration::from_millis(SILENCE_INJECTION_TIMEOUT_MS),
+                ),
+                move |res| match res {
+                    Ok(Ok(frame)) => Ok(frame),
+                    Ok(Err(BroadcastStreamRecvError::Lagged(n))) => {
+                        log::warn!(
+                            "[Stream] Broadcast receiver lagged by {} frames - possible CPU contention",
+                            n
+                        );
+                        Err(std::io::Error::other(format!("lagged by {} frames", n)))
+                    }
+                    Err(_elapsed) => {
+                        log::trace!(
+                            "[Stream] Injecting silence frame (no data for {}ms)",
+                            SILENCE_INJECTION_TIMEOUT_MS
+                        );
+                        Ok(silence_frame.clone())
+                    }
+                },
+            ))
+        } else {
+            // Compressed codecs: no silence injection
+            Box::pin(BroadcastStream::new(rx).map(|res| match res {
+                Ok(frame) => Ok(frame),
+                Err(BroadcastStreamRecvError::Lagged(n)) => {
                     log::warn!(
                         "[Stream] Broadcast receiver lagged by {} frames - possible CPU contention",
                         n
                     );
+                    Err(std::io::Error::other(format!("lagged by {} frames", n)))
                 }
-            }
-            std::io::Error::other(e.to_string())
-        })
-    });
+            }))
+        };
 
     // Chain prefill frames before live stream
-    let combined_stream = prefill_stream.chain(live_stream);
+    let combined_stream = futures::StreamExt::chain(prefill_stream, live_stream);
 
     // === Epoch Hook ===
     // This embeds epoch lifecycle management in the HTTP layer. While this might seem
@@ -507,29 +550,30 @@ async fn stream_audio(
         remote_ip,
     ));
 
-    let tracked_stream = combined_stream.scan(hook_state, |state, item| {
-        if let Some((stream_state, epoch_candidate, connected_at, remote_ip)) = state.take() {
-            // Only fire on a real, non-empty audio chunk
-            if let Ok(ref chunk) = item {
-                if !chunk.is_empty() {
-                    let first_audio_polled_at = Instant::now();
-                    stream_state.timing.start_new_epoch(
-                        epoch_candidate,
-                        connected_at,
-                        first_audio_polled_at,
-                        remote_ip,
-                    );
+    let tracked_stream =
+        combined_stream.scan(hook_state, |state, item: Result<Bytes, std::io::Error>| {
+            if let Some((stream_state, epoch_candidate, connected_at, remote_ip)) = state.take() {
+                // Only fire on a real, non-empty audio chunk
+                if let Ok(ref chunk) = item {
+                    if !chunk.is_empty() {
+                        let first_audio_polled_at = Instant::now();
+                        stream_state.timing.start_new_epoch(
+                            epoch_candidate,
+                            connected_at,
+                            first_audio_polled_at,
+                            remote_ip,
+                        );
+                    } else {
+                        // Empty chunk - don't burn the hook, try again
+                        *state = Some((stream_state, epoch_candidate, connected_at, remote_ip));
+                    }
                 } else {
-                    // Empty chunk - don't burn the hook, try again
+                    // Error on first item - don't burn the hook, try again
                     *state = Some((stream_state, epoch_candidate, connected_at, remote_ip));
                 }
-            } else {
-                // Error on first item - don't burn the hook, try again
-                *state = Some((stream_state, epoch_candidate, connected_at, remote_ip));
             }
-        }
-        futures::future::ready(Some(item))
-    });
+            futures::future::ready(Some(item))
+        });
 
     // Content-Type based on output codec
     let content_type = match stream_state.codec {
@@ -565,8 +609,12 @@ async fn stream_audio(
         }))
     } else if stream_state.codec == AudioCodec::Wav {
         // WAV streams need header prepended per-connection (Sonos may reconnect)
-        let wav_header = create_wav_header(DEFAULT_SAMPLE_RATE, DEFAULT_CHANNELS);
-        Box::pin(futures::stream::once(async move { Ok(wav_header) }).chain(tracked_stream))
+        let audio_format = stream_state.audio_format;
+        let wav_header = create_wav_header(audio_format.sample_rate, audio_format.channels);
+        Box::pin(futures::StreamExt::chain(
+            futures::stream::once(async move { Ok(wav_header) }),
+            tracked_stream,
+        ))
     } else {
         Box::pin(tracked_stream)
     };

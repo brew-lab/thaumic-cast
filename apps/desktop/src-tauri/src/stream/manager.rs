@@ -11,6 +11,7 @@ use uuid::Uuid;
 
 use crate::config::{MAX_CONCURRENT_STREAMS, STREAM_BUFFER_FRAMES, STREAM_CHANNEL_CAPACITY};
 use crate::stream::transcoder::Transcoder;
+use crate::stream::AudioFormat;
 
 /// Supported audio codecs for the stream
 #[derive(Debug, Clone, Copy, Serialize, PartialEq)]
@@ -187,6 +188,9 @@ pub struct StreamState {
     /// Output codec for HTTP Content-Type header.
     /// This is what Sonos receives, which may differ from input format.
     pub codec: AudioCodec,
+    /// Audio format configuration (sample rate, channels, bit depth).
+    /// Used for WAV header generation and silence frame creation.
+    pub audio_format: AudioFormat,
     pub metadata: Arc<parking_lot::RwLock<StreamMetadata>>,
     /// Broadcast channel for distributing audio frames to HTTP clients
     pub tx: broadcast::Sender<Bytes>,
@@ -209,18 +213,26 @@ impl StreamState {
     /// # Arguments
     /// * `id` - Unique stream identifier
     /// * `codec` - Output codec for HTTP Content-Type (what Sonos receives)
+    /// * `audio_format` - Audio format configuration (sample rate, channels, bit depth)
     /// * `transcoder` - Transcoder for converting input to output format
-    pub fn new(id: String, codec: AudioCodec, transcoder: Arc<dyn Transcoder>) -> Self {
+    pub fn new(
+        id: String,
+        codec: AudioCodec,
+        audio_format: AudioFormat,
+        transcoder: Arc<dyn Transcoder>,
+    ) -> Self {
         let (tx, _) = broadcast::channel(STREAM_CHANNEL_CAPACITY);
         log::debug!(
-            "[Stream] Creating {} with codec {:?}, transcoder: {}",
+            "[Stream] Creating {} with codec {:?}, format {:?}, transcoder: {}",
             id,
             codec,
+            audio_format,
             transcoder.description()
         );
         Self {
             id,
             codec,
+            audio_format,
             metadata: Arc::new(parking_lot::RwLock::new(StreamMetadata::default())),
             tx,
             buffer: Arc::new(parking_lot::RwLock::new(VecDeque::with_capacity(
@@ -344,10 +356,12 @@ impl StreamManager {
     ///
     /// # Arguments
     /// * `codec` - Output codec for HTTP Content-Type (what Sonos receives)
+    /// * `audio_format` - Audio format configuration (sample rate, channels, bit depth)
     /// * `transcoder` - Transcoder for converting input to output format
     pub fn create_stream(
         &self,
         codec: AudioCodec,
+        audio_format: AudioFormat,
         transcoder: Arc<dyn Transcoder>,
     ) -> Result<String, String> {
         if self.streams.len() >= MAX_CONCURRENT_STREAMS {
@@ -355,7 +369,12 @@ impl StreamManager {
         }
 
         let id = Uuid::new_v4().to_string();
-        let state = Arc::new(StreamState::new(id.clone(), codec, transcoder));
+        let state = Arc::new(StreamState::new(
+            id.clone(),
+            codec,
+            audio_format,
+            transcoder,
+        ));
         self.streams.insert(id.clone(), state);
         Ok(id)
     }

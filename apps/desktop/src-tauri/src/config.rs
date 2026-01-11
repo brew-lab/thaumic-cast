@@ -26,8 +26,8 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 pub use crate::protocol_constants::{
-    DEFAULT_CHANNELS, DEFAULT_SAMPLE_RATE, GENA_RENEWAL_BUFFER_SECS, GENA_RENEWAL_CHECK_SECS,
-    GENA_SUBSCRIPTION_TIMEOUT_SECS, MAX_GENA_BODY_SIZE, SOAP_TIMEOUT_SECS,
+    GENA_RENEWAL_BUFFER_SECS, GENA_RENEWAL_CHECK_SECS, GENA_SUBSCRIPTION_TIMEOUT_SECS,
+    MAX_GENA_BODY_SIZE, SOAP_TIMEOUT_SECS,
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -64,3 +64,19 @@ pub const WS_HEARTBEAT_TIMEOUT_SECS: u64 = 10;
 /// Interval between WebSocket heartbeat checks (seconds).
 /// See [`Config::ws_heartbeat_check_interval_secs`](crate::state::Config::ws_heartbeat_check_interval_secs).
 pub const WS_HEARTBEAT_CHECK_INTERVAL_SECS: u64 = 1;
+
+/// Timeout before injecting silence to keep Sonos connection alive (ms).
+///
+/// When streaming WAV, Sonos treats it as a "file" requiring continuous data.
+/// If no audio arrives within this window, we inject a silence frame to prevent
+/// Sonos from closing the connection. Based on swyh-rs approach.
+///
+/// Lower values = more responsive to gaps but may inject silence too often.
+/// Higher values = less silence injection but risks Sonos disconnect on longer gaps.
+pub const SILENCE_INJECTION_TIMEOUT_MS: u64 = 250;
+
+/// Duration of injected silence frames (ms).
+///
+/// Matches our standard frame duration from the extension (20ms).
+/// This is the atomic unit of silence injected when a timeout occurs.
+pub const SILENCE_FRAME_DURATION_MS: u32 = 20;
