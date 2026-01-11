@@ -34,15 +34,31 @@ use crate::stream::{create_wav_header, AudioCodec, IcyMetadataInjector, ICY_META
 /// Boxed stream type for audio data with ICY metadata support.
 type AudioStream = Pin<Box<dyn futures::Stream<Item = Result<Bytes, std::io::Error>> + Send>>;
 
-/// Wrapper that logs HTTP audio stream lifecycle.
+/// Threshold for counting delivery gaps (100ms).
+/// PCM at 48kHz stereo 16-bit = 192KB/s, so 100ms = ~19KB of audio.
+const DELIVERY_GAP_THRESHOLD_MS: u64 = 100;
+
+/// Only log gaps exceeding this threshold to avoid log spam (500ms).
+const DELIVERY_GAP_LOG_THRESHOLD_MS: u64 = 500;
+
+/// Wrapper that logs HTTP audio stream lifecycle and tracks delivery timing.
 ///
-/// Logs when the stream starts and ends, providing visibility for debugging
-/// issues where Sonos stops receiving audio unexpectedly.
+/// Logs when the stream starts and ends, and tracks gaps in frame delivery
+/// to help diagnose issues where Sonos stops receiving audio unexpectedly.
 struct LoggingStreamGuard {
     stream_id: String,
     client_ip: IpAddr,
     frames_sent: AtomicU64,
     first_error: parking_lot::Mutex<Option<String>>,
+    /// Tracks delivery timing to detect gaps
+    delivery_stats: parking_lot::Mutex<DeliveryStats>,
+}
+
+/// Tracks frame delivery timing statistics.
+struct DeliveryStats {
+    last_delivery: Option<Instant>,
+    max_gap_ms: u64,
+    gaps_over_threshold: u64,
 }
 
 impl LoggingStreamGuard {
@@ -57,11 +73,42 @@ impl LoggingStreamGuard {
             client_ip,
             frames_sent: AtomicU64::new(0),
             first_error: parking_lot::Mutex::new(None),
+            delivery_stats: parking_lot::Mutex::new(DeliveryStats {
+                last_delivery: None,
+                max_gap_ms: 0,
+                gaps_over_threshold: 0,
+            }),
         }
     }
 
     fn record_frame(&self) {
         self.frames_sent.fetch_add(1, Ordering::Relaxed);
+
+        let now = Instant::now();
+        let mut stats = self.delivery_stats.lock();
+
+        if let Some(last) = stats.last_delivery {
+            let gap_ms = now.duration_since(last).as_millis() as u64;
+
+            if gap_ms > stats.max_gap_ms {
+                stats.max_gap_ms = gap_ms;
+            }
+
+            if gap_ms > DELIVERY_GAP_THRESHOLD_MS {
+                stats.gaps_over_threshold += 1;
+                // Only log significant gaps to avoid spam; summary captures total count
+                if gap_ms > DELIVERY_GAP_LOG_THRESHOLD_MS {
+                    log::warn!(
+                        "[Stream] Delivery gap detected: stream={}, client={}, gap={}ms",
+                        self.stream_id,
+                        self.client_ip,
+                        gap_ms
+                    );
+                }
+            }
+        }
+
+        stats.last_delivery = Some(now);
     }
 
     fn record_error(&self, err: &str) {
@@ -76,20 +123,30 @@ impl Drop for LoggingStreamGuard {
     fn drop(&mut self) {
         let frames = self.frames_sent.load(Ordering::Relaxed);
         let first_error = self.first_error.get_mut();
+        let stats = self.delivery_stats.get_mut();
+
         if let Some(ref err) = *first_error {
             log::warn!(
-                "[Stream] HTTP stream ended with error: stream={}, client={}, frames_sent={}, error={}",
+                "[Stream] HTTP stream ended with error: stream={}, client={}, frames_sent={}, \
+                 max_gap={}ms, gaps_over_{}ms={}, error={}",
                 self.stream_id,
                 self.client_ip,
                 frames,
+                stats.max_gap_ms,
+                DELIVERY_GAP_THRESHOLD_MS,
+                stats.gaps_over_threshold,
                 err
             );
         } else {
             log::info!(
-                "[Stream] HTTP stream ended normally: stream={}, client={}, frames_sent={}",
+                "[Stream] HTTP stream ended normally: stream={}, client={}, frames_sent={}, \
+                 max_gap={}ms, gaps_over_{}ms={}",
                 self.stream_id,
                 self.client_ip,
-                frames
+                frames,
+                stats.max_gap_ms,
+                DELIVERY_GAP_THRESHOLD_MS,
+                stats.gaps_over_threshold
             );
         }
     }
