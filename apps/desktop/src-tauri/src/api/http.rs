@@ -14,8 +14,9 @@ use bytes::Bytes;
 use futures::stream::StreamExt;
 use serde::Deserialize;
 use serde_json::json;
-use std::net::SocketAddr;
+use std::net::{IpAddr, SocketAddr};
 use std::pin::Pin;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Instant;
 use tokio_stream::wrappers::errors::BroadcastStreamRecvError;
@@ -32,6 +33,67 @@ use crate::stream::{create_wav_header, AudioCodec, IcyMetadataInjector, ICY_META
 
 /// Boxed stream type for audio data with ICY metadata support.
 type AudioStream = Pin<Box<dyn futures::Stream<Item = Result<Bytes, std::io::Error>> + Send>>;
+
+/// Wrapper that logs HTTP audio stream lifecycle.
+///
+/// Logs when the stream starts and ends, providing visibility for debugging
+/// issues where Sonos stops receiving audio unexpectedly.
+struct LoggingStreamGuard {
+    stream_id: String,
+    client_ip: IpAddr,
+    frames_sent: AtomicU64,
+    first_error: parking_lot::Mutex<Option<String>>,
+}
+
+impl LoggingStreamGuard {
+    fn new(stream_id: String, client_ip: IpAddr) -> Self {
+        log::info!(
+            "[Stream] HTTP stream started: stream={}, client={}",
+            stream_id,
+            client_ip
+        );
+        Self {
+            stream_id,
+            client_ip,
+            frames_sent: AtomicU64::new(0),
+            first_error: parking_lot::Mutex::new(None),
+        }
+    }
+
+    fn record_frame(&self) {
+        self.frames_sent.fetch_add(1, Ordering::Relaxed);
+    }
+
+    fn record_error(&self, err: &str) {
+        let mut first = self.first_error.lock();
+        if first.is_none() {
+            *first = Some(err.to_string());
+        }
+    }
+}
+
+impl Drop for LoggingStreamGuard {
+    fn drop(&mut self) {
+        let frames = self.frames_sent.load(Ordering::Relaxed);
+        let first_error = self.first_error.get_mut();
+        if let Some(ref err) = *first_error {
+            log::warn!(
+                "[Stream] HTTP stream ended with error: stream={}, client={}, frames_sent={}, error={}",
+                self.stream_id,
+                self.client_ip,
+                frames,
+                err
+            );
+        } else {
+            log::info!(
+                "[Stream] HTTP stream ended normally: stream={}, client={}, frames_sent={}",
+                self.stream_id,
+                self.client_ip,
+                frames
+            );
+        }
+    }
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // GENA Helpers
@@ -435,7 +497,7 @@ async fn stream_audio(
     }
 
     // Apply ICY injection or WAV header to the tracked stream (after epoch hook)
-    let final_stream: AudioStream = if wants_icy {
+    let inner_stream: AudioStream = if wants_icy {
         let stream_ref = Arc::clone(&stream_state);
         let mut injector = IcyMetadataInjector::new();
 
@@ -451,6 +513,17 @@ async fn stream_audio(
     } else {
         Box::pin(tracked_stream)
     };
+
+    // Wrap stream with logging guard to track when/why it ends.
+    // The guard is moved into the closure and logs on drop when stream ends.
+    let guard = LoggingStreamGuard::new(id.to_string(), remote_ip);
+    let final_stream: AudioStream = Box::pin(inner_stream.map(move |res| {
+        match &res {
+            Ok(_) => guard.record_frame(),
+            Err(e) => guard.record_error(&e.to_string()),
+        }
+        res
+    }));
 
     builder
         .body(Body::from_stream(final_stream))

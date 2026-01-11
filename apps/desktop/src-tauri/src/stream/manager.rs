@@ -318,6 +318,15 @@ impl StreamState {
     }
 }
 
+impl Drop for StreamState {
+    fn drop(&mut self) {
+        log::info!(
+            "[Stream] {} broadcast sender dropped (channel closing)",
+            self.id
+        );
+    }
+}
+
 /// Manages all active audio streams in the application.
 pub struct StreamManager {
     streams: DashMap<String, Arc<StreamState>>,
