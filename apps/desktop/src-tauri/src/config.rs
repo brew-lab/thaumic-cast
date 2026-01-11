@@ -65,6 +65,16 @@ pub const WS_HEARTBEAT_TIMEOUT_SECS: u64 = 10;
 /// See [`Config::ws_heartbeat_check_interval_secs`](crate::state::Config::ws_heartbeat_check_interval_secs).
 pub const WS_HEARTBEAT_CHECK_INTERVAL_SECS: u64 = 1;
 
+/// Delay before serving audio after Sonos connects (ms).
+///
+/// When Sonos connects, we wait this long before starting to serve audio.
+/// This allows the ring buffer to accumulate frames, reducing sensitivity
+/// to early-connection jitter. Similar to swyh-rs "initial buffering".
+///
+/// Set to 0 to disable (start serving immediately).
+/// Higher values = more buffer headroom but increased startup latency.
+pub const HTTP_PREFILL_DELAY_MS: u64 = 250;
+
 /// Timeout before injecting silence to keep Sonos connection alive (ms).
 ///
 /// When streaming WAV, Sonos treats it as a "file" requiring continuous data.
@@ -73,7 +83,8 @@ pub const WS_HEARTBEAT_CHECK_INTERVAL_SECS: u64 = 1;
 ///
 /// Lower values = more responsive to gaps but may inject silence too often.
 /// Higher values = less silence injection but risks Sonos disconnect on longer gaps.
-pub const SILENCE_INJECTION_TIMEOUT_MS: u64 = 250;
+/// swyh-rs defaults to 2000ms; we use 500ms as a balance.
+pub const SILENCE_INJECTION_TIMEOUT_MS: u64 = 500;
 
 /// Duration of injected silence frames (ms).
 ///

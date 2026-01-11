@@ -27,7 +27,7 @@ use crate::api::response::{api_error, api_ok, api_success};
 use crate::api::ws::ws_handler;
 use crate::api::AppState;
 use crate::config::{
-    MAX_CONCURRENT_STREAMS, MAX_GENA_BODY_SIZE, SILENCE_FRAME_DURATION_MS,
+    HTTP_PREFILL_DELAY_MS, MAX_CONCURRENT_STREAMS, MAX_GENA_BODY_SIZE, SILENCE_FRAME_DURATION_MS,
     SILENCE_INJECTION_TIMEOUT_MS,
 };
 use crate::error::{ThaumicError, ThaumicResult};
@@ -471,6 +471,17 @@ async fn stream_audio(
         id,
         prefill_frames.len()
     );
+
+    // Upfront buffering delay for WAV streams (similar to swyh-rs "initial buffering").
+    // This lets the ring buffer accumulate more frames before we start draining,
+    // reducing sensitivity to early-connection jitter during CPU spikes.
+    if stream_state.codec == AudioCodec::Wav && HTTP_PREFILL_DELAY_MS > 0 {
+        log::debug!(
+            "[Stream] Applying {}ms prefill delay for WAV stream",
+            HTTP_PREFILL_DELAY_MS
+        );
+        tokio::time::sleep(Duration::from_millis(HTTP_PREFILL_DELAY_MS)).await;
+    }
 
     // Create streams for prefill and live data
     let prefill_stream =
