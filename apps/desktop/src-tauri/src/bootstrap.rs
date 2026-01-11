@@ -120,6 +120,9 @@ pub fn bootstrap_services(config: &Config) -> BootstrappedServices {
         Arc::clone(&sonos_state),
         network.clone(),
         Arc::clone(&event_bridge) as Arc<dyn EventEmitter>,
+        config.max_concurrent_streams,
+        config.stream_buffer_frames,
+        config.stream_channel_capacity,
     ));
 
     // Wire up latency monitor with its dependencies

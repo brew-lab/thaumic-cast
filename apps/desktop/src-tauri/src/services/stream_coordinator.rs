@@ -95,16 +95,26 @@ impl StreamCoordinator {
     /// * `sonos_state` - Sonos state for UUID lookups
     /// * `network` - Network configuration (port, local IP)
     /// * `emitter` - Event emitter for broadcasting stream events
+    /// * `max_concurrent_streams` - Maximum number of concurrent streams allowed
+    /// * `stream_buffer_frames` - Maximum frames to buffer for late-joining clients
+    /// * `stream_channel_capacity` - Capacity of the broadcast channel for audio frames
     pub fn new(
         sonos: Arc<dyn SonosPlayback>,
         sonos_state: Arc<SonosState>,
         network: NetworkContext,
         emitter: Arc<dyn EventEmitter>,
+        max_concurrent_streams: usize,
+        stream_buffer_frames: usize,
+        stream_channel_capacity: usize,
     ) -> Self {
         Self {
             sonos,
             sonos_state,
-            stream_manager: Arc::new(StreamManager::new()),
+            stream_manager: Arc::new(StreamManager::new(
+                max_concurrent_streams,
+                stream_buffer_frames,
+                stream_channel_capacity,
+            )),
             network,
             playback_sessions: DashMap::new(),
             emitter,

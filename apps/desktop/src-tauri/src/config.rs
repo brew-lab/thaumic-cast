@@ -37,18 +37,6 @@ pub use crate::protocol_constants::{
 // They exist for backward compatibility with code that imports from config.rs.
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// Maximum number of concurrent audio streams.
-/// See [`Config::max_concurrent_streams`](crate::state::Config::max_concurrent_streams).
-pub const MAX_CONCURRENT_STREAMS: usize = 10;
-
-/// Capacity of the broadcast channel for audio frames.
-/// See [`Config::stream_channel_capacity`](crate::state::Config::stream_channel_capacity).
-pub const STREAM_CHANNEL_CAPACITY: usize = 100;
-
-/// Maximum number of frames to buffer for late-joining clients.
-/// See [`Config::stream_buffer_frames`](crate::state::Config::stream_buffer_frames).
-pub const STREAM_BUFFER_FRAMES: usize = 50;
-
 /// Capacity of the event broadcast channel for WebSocket clients.
 /// See [`Config::event_channel_capacity`](crate::state::Config::event_channel_capacity).
 pub const EVENT_CHANNEL_CAPACITY: usize = 100;

@@ -56,7 +56,7 @@ pub struct Config {
 
     /// Maximum frames to buffer for late-joining clients.
     /// Higher values = more memory, better catchup for slow clients.
-    /// At 48kHz stereo with ~100ms frames, 50 frames = ~5 seconds.
+    /// Extension sends 20ms frames, so 50 frames ≈ 1 second of audio.
     pub stream_buffer_frames: usize,
 
     /// Capacity of the broadcast channel for audio frames.

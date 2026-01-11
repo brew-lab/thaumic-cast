@@ -9,7 +9,6 @@ use std::time::Instant;
 use tokio::sync::broadcast;
 use uuid::Uuid;
 
-use crate::config::{MAX_CONCURRENT_STREAMS, STREAM_BUFFER_FRAMES, STREAM_CHANNEL_CAPACITY};
 use crate::stream::transcoder::Transcoder;
 use crate::stream::AudioFormat;
 
@@ -197,6 +196,8 @@ pub struct StreamState {
     /// Recent frames buffer with timestamps for epoch calculation.
     /// Stores transcoded frames with their pre-transcode capture time.
     buffer: Arc<parking_lot::RwLock<VecDeque<TimestampedFrame>>>,
+    /// Maximum frames to keep in buffer (ring buffer limit).
+    buffer_frames: usize,
     /// Whether the stream has received its first frame (for STREAM_READY signaling)
     has_frames: AtomicBool,
     /// Transcoder for converting input format to output format.
@@ -215,13 +216,17 @@ impl StreamState {
     /// * `codec` - Output codec for HTTP Content-Type (what Sonos receives)
     /// * `audio_format` - Audio format configuration (sample rate, channels, bit depth)
     /// * `transcoder` - Transcoder for converting input to output format
+    /// * `buffer_frames` - Maximum frames to buffer for late-joining clients
+    /// * `channel_capacity` - Capacity of the broadcast channel for audio frames
     pub fn new(
         id: String,
         codec: AudioCodec,
         audio_format: AudioFormat,
         transcoder: Arc<dyn Transcoder>,
+        buffer_frames: usize,
+        channel_capacity: usize,
     ) -> Self {
-        let (tx, _) = broadcast::channel(STREAM_CHANNEL_CAPACITY);
+        let (tx, _) = broadcast::channel(channel_capacity);
         log::debug!(
             "[Stream] Creating {} with codec {:?}, format {:?}, transcoder: {}",
             id,
@@ -236,8 +241,9 @@ impl StreamState {
             metadata: Arc::new(parking_lot::RwLock::new(StreamMetadata::default())),
             tx,
             buffer: Arc::new(parking_lot::RwLock::new(VecDeque::with_capacity(
-                STREAM_BUFFER_FRAMES,
+                buffer_frames,
             ))),
+            buffer_frames,
             has_frames: AtomicBool::new(false),
             transcoder,
             timing: StreamTiming::new(),
@@ -262,7 +268,7 @@ impl StreamState {
         // Clone the Bytes (cheap - just Arc bump) for buffer storage
         {
             let mut buffer = self.buffer.write();
-            if buffer.len() >= STREAM_BUFFER_FRAMES {
+            if buffer.len() >= self.buffer_frames {
                 buffer.pop_front();
             }
             buffer.push_back(TimestampedFrame {
@@ -342,13 +348,31 @@ impl Drop for StreamState {
 /// Manages all active audio streams in the application.
 pub struct StreamManager {
     streams: DashMap<String, Arc<StreamState>>,
+    /// Maximum number of concurrent streams allowed.
+    max_concurrent_streams: usize,
+    /// Maximum frames to buffer for late-joining clients.
+    stream_buffer_frames: usize,
+    /// Capacity of the broadcast channel for audio frames.
+    stream_channel_capacity: usize,
 }
 
 impl StreamManager {
     /// Creates a new StreamManager instance.
-    pub fn new() -> Self {
+    ///
+    /// # Arguments
+    /// * `max_concurrent_streams` - Maximum number of concurrent streams allowed
+    /// * `stream_buffer_frames` - Maximum frames to buffer for late-joining clients
+    /// * `stream_channel_capacity` - Capacity of the broadcast channel for audio frames
+    pub fn new(
+        max_concurrent_streams: usize,
+        stream_buffer_frames: usize,
+        stream_channel_capacity: usize,
+    ) -> Self {
         Self {
             streams: DashMap::new(),
+            max_concurrent_streams,
+            stream_buffer_frames,
+            stream_channel_capacity,
         }
     }
 
@@ -364,7 +388,7 @@ impl StreamManager {
         audio_format: AudioFormat,
         transcoder: Arc<dyn Transcoder>,
     ) -> Result<String, String> {
-        if self.streams.len() >= MAX_CONCURRENT_STREAMS {
+        if self.streams.len() >= self.max_concurrent_streams {
             return Err("Maximum number of concurrent streams reached".to_string());
         }
 
@@ -374,6 +398,8 @@ impl StreamManager {
             codec,
             audio_format,
             transcoder,
+            self.stream_buffer_frames,
+            self.stream_channel_capacity,
         ));
         self.streams.insert(id.clone(), state);
         Ok(id)
@@ -399,11 +425,5 @@ impl StreamManager {
     #[must_use]
     pub fn list_stream_ids(&self) -> Vec<String> {
         self.streams.iter().map(|r| r.key().clone()).collect()
-    }
-}
-
-impl Default for StreamManager {
-    fn default() -> Self {
-        Self::new()
     }
 }

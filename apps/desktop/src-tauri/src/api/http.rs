@@ -27,7 +27,7 @@ use crate::api::response::{api_error, api_ok, api_success};
 use crate::api::ws::ws_handler;
 use crate::api::AppState;
 use crate::config::{
-    HTTP_PREFILL_DELAY_MS, MAX_CONCURRENT_STREAMS, MAX_GENA_BODY_SIZE, SILENCE_FRAME_DURATION_MS,
+    HTTP_PREFILL_DELAY_MS, MAX_GENA_BODY_SIZE, SILENCE_FRAME_DURATION_MS,
     SILENCE_INJECTION_TIMEOUT_MS,
 };
 use crate::error::{ThaumicError, ThaumicResult};
@@ -252,12 +252,13 @@ pub fn create_router(state: AppState) -> Router {
 ///
 /// Always returns 200 OK if the server is responding. Use `/ready` for
 /// readiness checks that verify the service can handle requests.
-async fn health_check() -> impl IntoResponse {
+async fn health_check(State(state): State<AppState>) -> impl IntoResponse {
+    let max_streams = state.config.read().max_concurrent_streams;
     api_success(json!({
         "status": "ok",
         "service": "thaumic-cast-desktop",
         "limits": {
-            "maxStreams": MAX_CONCURRENT_STREAMS
+            "maxStreams": max_streams
         }
     }))
 }
