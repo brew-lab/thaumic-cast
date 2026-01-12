@@ -44,6 +44,18 @@ const DELIVERY_GAP_THRESHOLD_MS: u64 = 100;
 /// Only log gaps exceeding this threshold to avoid log spam (500ms).
 const DELIVERY_GAP_LOG_THRESHOLD_MS: u64 = 500;
 
+/// Creates an IO error for broadcast channel lag.
+///
+/// Logs a warning and returns a formatted error. Centralizes the handling
+/// of `BroadcastStreamRecvError::Lagged` to avoid duplication.
+fn lagged_error(frames: u64) -> std::io::Error {
+    log::warn!(
+        "[Stream] Broadcast receiver lagged by {} frames - possible CPU contention",
+        frames
+    );
+    std::io::Error::other(format!("lagged by {} frames", frames))
+}
+
 /// Wrapper that logs HTTP audio stream lifecycle and tracks delivery timing.
 ///
 /// Logs when the stream starts and ends, and tracks gaps in frame delivery
@@ -521,13 +533,7 @@ async fn stream_audio(
             ),
             move |res| match res {
                 Ok(Ok(frame)) => Ok(TaggedFrame::Audio(frame)),
-                Ok(Err(BroadcastStreamRecvError::Lagged(n))) => {
-                    log::warn!(
-                        "[Stream] Broadcast receiver lagged by {} frames - possible CPU contention",
-                        n
-                    );
-                    Err(std::io::Error::other(format!("lagged by {} frames", n)))
-                }
+                Ok(Err(BroadcastStreamRecvError::Lagged(n))) => Err(lagged_error(n)),
                 Err(_elapsed) => {
                     log::trace!(
                         "[Stream] Injecting silence frame (no data for {}ms)",
@@ -541,13 +547,7 @@ async fn stream_audio(
         // Compressed codecs: no silence injection, all frames are real audio
         Box::pin(BroadcastStream::new(rx).map(|res| match res {
             Ok(frame) => Ok(TaggedFrame::Audio(frame)),
-            Err(BroadcastStreamRecvError::Lagged(n)) => {
-                log::warn!(
-                    "[Stream] Broadcast receiver lagged by {} frames - possible CPU contention",
-                    n
-                );
-                Err(std::io::Error::other(format!("lagged by {} frames", n)))
-            }
+            Err(BroadcastStreamRecvError::Lagged(n)) => Err(lagged_error(n)),
         }))
     };
 

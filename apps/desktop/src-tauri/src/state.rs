@@ -356,3 +356,56 @@ impl ManualSpeakerConfig {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    mod streaming_config {
+        use super::*;
+
+        #[test]
+        fn new_with_valid_values_succeeds() {
+            let config = StreamingConfig::new(5, 25, 50);
+            assert!(config.is_ok());
+            let config = config.unwrap();
+            assert_eq!(config.max_concurrent_streams, 5);
+            assert_eq!(config.buffer_frames, 25);
+            assert_eq!(config.channel_capacity, 50);
+        }
+
+        #[test]
+        fn new_with_zero_max_streams_fails() {
+            let result = StreamingConfig::new(0, 50, 100);
+            assert!(result.is_err());
+            assert!(result.unwrap_err().contains("max_concurrent_streams"));
+        }
+
+        #[test]
+        fn new_with_zero_buffer_frames_fails() {
+            let result = StreamingConfig::new(10, 0, 100);
+            assert!(result.is_err());
+            assert!(result.unwrap_err().contains("buffer_frames"));
+        }
+
+        #[test]
+        fn new_with_zero_channel_capacity_fails() {
+            let result = StreamingConfig::new(10, 50, 0);
+            assert!(result.is_err());
+            assert!(result.unwrap_err().contains("channel_capacity"));
+        }
+
+        #[test]
+        fn default_values_are_valid() {
+            let config = StreamingConfig::default();
+            assert!(config.validate().is_ok());
+        }
+
+        #[test]
+        fn validate_catches_invalid_after_manual_modification() {
+            let mut config = StreamingConfig::default();
+            config.channel_capacity = 0;
+            assert!(config.validate().is_err());
+        }
+    }
+}
