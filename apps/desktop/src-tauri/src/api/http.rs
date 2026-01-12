@@ -461,7 +461,6 @@ async fn stream_audio(
         .get_stream(&id)
         .ok_or_else(|| ThaumicError::StreamNotFound(id.clone()))?;
 
-    let connected_at = Instant::now();
     let remote_ip = remote_addr.ip();
 
     // Upfront buffering delay for WAV streams BEFORE subscribing.
@@ -474,6 +473,10 @@ async fn stream_audio(
         );
         tokio::time::sleep(Duration::from_millis(HTTP_PREFILL_DELAY_MS)).await;
     }
+
+    // Capture connected_at AFTER prefill delay so latency metrics
+    // reflect actual transport latency, not intentional buffering.
+    let connected_at = Instant::now();
 
     // Subscribe AFTER delay to get fresh prefill snapshot and avoid rx backlog
     let (epoch_candidate, prefill_frames, rx) = stream_state.subscribe();
@@ -572,9 +575,9 @@ async fn stream_audio(
         hook_state,
         |state, item: Result<TaggedFrame, std::io::Error>| {
             if let Some((stream_state, epoch_candidate, connected_at, remote_ip)) = state.take() {
-                // Only fire epoch on REAL audio, not injected silence
+                // Only fire epoch on REAL, NON-EMPTY audio (not silence or empty buffers)
                 if let Ok(ref frame) = item {
-                    if frame.is_real_audio() {
+                    if frame.is_real_audio() && !frame.as_bytes().is_empty() {
                         let first_audio_polled_at = Instant::now();
                         stream_state.timing.start_new_epoch(
                             epoch_candidate,
@@ -583,7 +586,7 @@ async fn stream_audio(
                             remote_ip,
                         );
                     } else {
-                        // Silence frame - don't burn the hook, wait for real audio
+                        // Silence or empty frame - don't burn the hook, wait for real audio
                         *state = Some((stream_state, epoch_candidate, connected_at, remote_ip));
                     }
                 } else {

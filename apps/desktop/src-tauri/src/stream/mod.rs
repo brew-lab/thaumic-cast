@@ -83,6 +83,14 @@ impl TaggedFrame {
         }
     }
 
+    /// Returns a reference to the underlying bytes.
+    #[inline]
+    pub fn as_bytes(&self) -> &Bytes {
+        match self {
+            TaggedFrame::Audio(b) | TaggedFrame::Silence(b) => b,
+        }
+    }
+
     /// Returns true if this is real audio (not injected silence).
     #[inline]
     pub fn is_real_audio(&self) -> bool {
