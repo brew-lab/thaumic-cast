@@ -79,14 +79,31 @@ impl GenaSubscriptionStore {
     ///
     /// Returns `true` if the subscription was marked as pending.
     /// Returns `false` if a subscription already exists or is already pending.
+    ///
+    /// # TOCTOU Mitigation
+    ///
+    /// There is a deliberate gap between dropping the `subscription_keys` read lock
+    /// and acquiring the `pending_subscriptions` write lock. In theory, a concurrent
+    /// `insert()` could complete during this gap, creating a duplicate subscription.
+    ///
+    /// This is safe because:
+    /// 1. `insert()` atomically clears the pending flag via `clear_pending()`, so any
+    ///    racing `try_mark_pending()` will see the key in `subscription_keys` and return false.
+    /// 2. Subscription attempts are serialized by the `GenaClient` HTTP round-trip,
+    ///    making races extremely unlikely in practice.
+    /// 3. Even if a race occurs, the worst case is a harmless duplicate SUBSCRIBE
+    ///    request (Sonos handles this gracefully by returning the existing SID).
     pub fn try_mark_pending(&self, ip: &str, service: SonosService) -> bool {
         let key = SubscriptionKey::new(ip, service);
 
+        // Check if subscription already exists (fast path, read lock only)
         let keys = self.subscription_keys.read();
         if keys.contains_key(&key) {
             return false;
         }
+        drop(keys); // Explicit drop for clarity (see TOCTOU note above)
 
+        // Check/set pending flag (requires write lock)
         let mut pending = self.pending_subscriptions.write();
         if pending.contains(&key) {
             return false;

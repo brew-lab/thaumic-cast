@@ -10,9 +10,48 @@ pub use manager::{
 pub use transcoder::{Passthrough, Transcoder};
 pub use wav::create_wav_header;
 
+use std::collections::HashMap;
+use std::sync::OnceLock;
+
 use bytes::Bytes;
+use parking_lot::RwLock;
 
 use crate::protocol_constants::{DEFAULT_CHANNELS, DEFAULT_SAMPLE_RATE};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Silence Frame Cache
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Global cache for silence frames to avoid repeated allocations.
+///
+/// Silence frames are keyed by their byte length since different audio formats
+/// with the same duration may produce the same byte count. The cache is lazily
+/// initialized and never cleared (silence frames are small and finite).
+static SILENCE_CACHE: OnceLock<RwLock<HashMap<usize, Bytes>>> = OnceLock::new();
+
+/// Gets a cached silence frame of the given byte length, or creates and caches one.
+///
+/// This avoids ~200KB/s of allocations during delivery gaps by reusing
+/// pre-allocated silence buffers. The `Bytes::clone()` is O(1) (Arc bump).
+fn get_or_create_silence(byte_len: usize) -> Bytes {
+    let cache = SILENCE_CACHE.get_or_init(|| RwLock::new(HashMap::new()));
+
+    // Fast path: check if already cached
+    if let Some(silence) = cache.read().get(&byte_len) {
+        return silence.clone();
+    }
+
+    // Slow path: create and cache
+    let mut cache_write = cache.write();
+    // Double-check after acquiring write lock (another thread may have inserted)
+    if let Some(silence) = cache_write.get(&byte_len) {
+        return silence.clone();
+    }
+
+    let silence = Bytes::from(vec![0u8; byte_len]);
+    cache_write.insert(byte_len, silence.clone());
+    silence
+}
 
 /// Audio format configuration for a stream.
 ///
@@ -52,10 +91,14 @@ impl AudioFormat {
 
     /// Creates a silence frame of the specified duration.
     ///
-    /// Returns a `Bytes` buffer filled with zeros (digital silence).
+    /// Returns a cached `Bytes` buffer filled with zeros (digital silence).
     /// Used to keep the HTTP stream alive during delivery gaps.
+    ///
+    /// Silence frames are cached globally by byte length to avoid repeated
+    /// allocations (~200KB/s during delivery gaps). The returned `Bytes`
+    /// clone is O(1) since it's just an Arc reference count bump.
     pub fn silence_frame(&self, duration_ms: u32) -> Bytes {
-        Bytes::from(vec![0u8; self.frame_bytes(duration_ms)])
+        get_or_create_silence(self.frame_bytes(duration_ms))
     }
 }
 

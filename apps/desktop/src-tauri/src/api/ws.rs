@@ -270,10 +270,14 @@ fn build_initial_state(state: &AppState) -> Option<Message> {
     // Add sessions to the initial state
     if let serde_json::Value::Object(ref mut map) = payload {
         let sessions = state.services.stream_coordinator.get_all_sessions();
-        map.insert(
-            "sessions".to_string(),
-            serde_json::to_value(&sessions).unwrap_or(serde_json::Value::Array(vec![])),
-        );
+        let sessions_json = match serde_json::to_value(&sessions) {
+            Ok(v) => v,
+            Err(e) => {
+                log::warn!("[WS] Failed to serialize sessions: {}", e);
+                serde_json::Value::Array(vec![])
+            }
+        };
+        map.insert("sessions".to_string(), sessions_json);
 
         // Add network health to the initial state
         let health_state = state
@@ -281,10 +285,14 @@ fn build_initial_state(state: &AppState) -> Option<Message> {
             .discovery_service
             .topology_monitor()
             .get_network_health();
-        map.insert(
-            "networkHealth".to_string(),
-            serde_json::to_value(health_state.health).unwrap_or(serde_json::Value::Null),
-        );
+        let health_json = match serde_json::to_value(health_state.health) {
+            Ok(v) => v,
+            Err(e) => {
+                log::warn!("[WS] Failed to serialize networkHealth: {}", e);
+                serde_json::Value::Null
+            }
+        };
+        map.insert("networkHealth".to_string(), health_json);
         if let Some(reason) = &health_state.reason {
             map.insert(
                 "networkHealthReason".to_string(),
