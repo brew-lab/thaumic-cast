@@ -79,7 +79,7 @@ impl Default for StreamingConfig {
         Self {
             max_concurrent_streams: 10,
             buffer_frames: 50,
-            channel_capacity: 100,
+            channel_capacity: 500,
         }
     }
 }
@@ -167,7 +167,7 @@ impl Default for Config {
             streaming: StreamingConfig::default(),
 
             // WebSocket
-            ws_heartbeat_timeout_secs: 10,
+            ws_heartbeat_timeout_secs: 30,
             ws_heartbeat_check_interval_secs: 1,
             event_channel_capacity: 100,
         }

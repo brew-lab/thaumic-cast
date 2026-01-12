@@ -47,7 +47,7 @@ pub const GENA_EVENT_CHANNEL_CAPACITY: usize = 64;
 
 /// WebSocket heartbeat timeout (seconds).
 /// See [`Config::ws_heartbeat_timeout_secs`](crate::state::Config::ws_heartbeat_timeout_secs).
-pub const WS_HEARTBEAT_TIMEOUT_SECS: u64 = 10;
+pub const WS_HEARTBEAT_TIMEOUT_SECS: u64 = 30;
 
 /// Interval between WebSocket heartbeat checks (seconds).
 /// See [`Config::ws_heartbeat_check_interval_secs`](crate::state::Config::ws_heartbeat_check_interval_secs).
