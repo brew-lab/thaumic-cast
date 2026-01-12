@@ -8,7 +8,7 @@ use async_trait::async_trait;
 use crate::error::{DiscoveryResult, SoapResult};
 use crate::sonos::discovery::Speaker;
 use crate::sonos::types::{PositionInfo, ZoneGroup};
-use crate::stream::StreamMetadata;
+use crate::stream::{AudioCodec, AudioFormat, StreamMetadata};
 
 /// Trait for Sonos playback control operations.
 ///
@@ -20,14 +20,16 @@ pub trait SonosPlayback: Send + Sync {
     /// # Arguments
     /// * `ip` - IP address of the Sonos speaker (coordinator for grouped speakers)
     /// * `uri` - The audio stream URL to play
-    /// * `codec` - The audio codec (e.g., "wav", "aac", "mp3") for proper URI formatting
+    /// * `codec` - The audio codec for proper URI formatting and DIDL-Lite metadata
+    /// * `audio_format` - Audio format configuration (sample rate, channels, bit depth)
     /// * `metadata` - Optional stream metadata for display (title, artist, source)
     /// * `icon_url` - URL to the static app icon for album art display
     async fn play_uri(
         &self,
         ip: &str,
         uri: &str,
-        codec: &str,
+        codec: AudioCodec,
+        audio_format: &AudioFormat,
         metadata: Option<&StreamMetadata>,
         icon_url: &str,
     ) -> SoapResult<()>;

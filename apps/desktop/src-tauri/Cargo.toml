@@ -45,6 +45,13 @@ sys-locale = "0.3"
 bytemuck = { version = "1", features = ["derive"] }
 mdns-sd = "0.17"
 
+# Platform-specific dependencies for process priority
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.59", features = ["Win32_System_Threading", "Win32_Foundation"] }
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
 [profile.release]
 codegen-units = 1
 lto = true

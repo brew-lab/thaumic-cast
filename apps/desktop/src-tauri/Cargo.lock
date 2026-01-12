@@ -4655,6 +4655,7 @@ dependencies = [
  "dashmap",
  "futures",
  "html-escape",
+ "libc",
  "local-ip-address",
  "log",
  "mdns-sd",
@@ -4679,6 +4680,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "uuid",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]

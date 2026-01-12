@@ -23,6 +23,30 @@ pub enum AudioCodec {
     Flac,
 }
 
+impl AudioCodec {
+    /// Returns the codec as a short string identifier (e.g., "wav", "aac").
+    #[must_use]
+    pub const fn as_str(&self) -> &'static str {
+        match self {
+            Self::Wav => "wav",
+            Self::Aac => "aac",
+            Self::Mp3 => "mp3",
+            Self::Flac => "flac",
+        }
+    }
+
+    /// Returns the MIME type for this codec (e.g., "audio/wav", "audio/aac").
+    #[must_use]
+    pub const fn mime_type(&self) -> &'static str {
+        match self {
+            Self::Wav => "audio/wav",
+            Self::Aac => "audio/aac",
+            Self::Mp3 => "audio/mpeg",
+            Self::Flac => "audio/flac",
+        }
+    }
+}
+
 /// Metadata for the current track.
 ///
 /// Note: `album` and `artwork` from MediaSession are not used in DIDL-Lite
@@ -35,7 +59,7 @@ pub struct StreamMetadata {
     pub album: Option<String>,
     pub artwork: Option<String>,
     /// Source name derived from tab URL (e.g., "YouTube", "Spotify").
-    /// Used to format album as "{source} • Thaumic Cast" in DIDL-Lite.
+    /// Used to format album as "{source} • {APP_NAME}" in DIDL-Lite.
     pub source: Option<String>,
 }
 

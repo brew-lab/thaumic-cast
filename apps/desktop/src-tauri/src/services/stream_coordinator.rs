@@ -40,6 +40,17 @@ impl PlaybackSessionKey {
     }
 }
 
+/// Parameters for starting playback on a single speaker.
+struct SinglePlaybackParams<'a> {
+    speaker_ip: &'a str,
+    stream_id: &'a str,
+    stream_url: &'a str,
+    codec: AudioCodec,
+    audio_format: &'a AudioFormat,
+    icon_url: &'a str,
+    metadata: Option<&'a StreamMetadata>,
+}
+
 /// Tracks an active playback session linking a stream to a speaker.
 #[derive(Debug, Clone, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -51,7 +62,7 @@ pub struct PlaybackSession {
     /// The full URL the speaker is fetching audio from.
     pub stream_url: String,
     /// The codec being used (for Sonos URI formatting).
-    pub codec: String,
+    pub codec: AudioCodec,
 }
 
 /// Result of starting playback on a single speaker.
@@ -131,7 +142,7 @@ impl StreamCoordinator {
         self.playback_sessions
             .iter()
             .find(|r| r.key().speaker_ip == speaker_ip)
-            .map(|r| build_sonos_stream_uri(&r.value().stream_url, &r.value().codec))
+            .map(|r| build_sonos_stream_uri(&r.value().stream_url, r.value().codec))
     }
 
     /// Gets all playback sessions for a specific stream.
@@ -290,16 +301,19 @@ impl StreamCoordinator {
         stream_id: &str,
         metadata: Option<&StreamMetadata>,
     ) -> Vec<PlaybackResult> {
-        // Get codec from stream state for proper Sonos URI formatting
-        let codec = self
-            .get_stream(stream_id)
-            .map(|s| match s.codec {
-                AudioCodec::Wav => "wav",
-                AudioCodec::Flac => "flac",
-                AudioCodec::Aac => "aac",
-                AudioCodec::Mp3 => "mp3",
-            })
-            .unwrap_or("aac");
+        // Get stream state for codec and audio format
+        let stream_state = self.get_stream(stream_id);
+
+        // Get codec and audio format from stream state
+        let codec = stream_state
+            .as_ref()
+            .map(|s| s.codec)
+            .unwrap_or(AudioCodec::Aac);
+
+        let audio_format = stream_state
+            .as_ref()
+            .map(|s| s.audio_format)
+            .unwrap_or_default();
 
         let url_builder = self.network.url_builder();
         let stream_url = url_builder.stream_url(stream_id);
@@ -309,14 +323,15 @@ impl StreamCoordinator {
 
         for speaker_ip in speaker_ips {
             let result = self
-                .start_single_playback(
+                .start_single_playback(SinglePlaybackParams {
                     speaker_ip,
                     stream_id,
-                    &stream_url,
+                    stream_url: &stream_url,
                     codec,
-                    &icon_url,
+                    audio_format: &audio_format,
+                    icon_url: &icon_url,
                     metadata,
-                )
+                })
                 .await;
             results.push(result);
         }
@@ -325,15 +340,17 @@ impl StreamCoordinator {
     }
 
     /// Starts playback on a single speaker.
-    async fn start_single_playback(
-        &self,
-        speaker_ip: &str,
-        stream_id: &str,
-        stream_url: &str,
-        codec: &str,
-        icon_url: &str,
-        metadata: Option<&StreamMetadata>,
-    ) -> PlaybackResult {
+    async fn start_single_playback(&self, params: SinglePlaybackParams<'_>) -> PlaybackResult {
+        let SinglePlaybackParams {
+            speaker_ip,
+            stream_id,
+            stream_url,
+            codec,
+            audio_format,
+            icon_url,
+            metadata,
+        } = params;
+
         let key = PlaybackSessionKey::new(stream_id, speaker_ip);
 
         // Check if this exact (stream, speaker) pair already exists (no-op)
@@ -389,7 +406,14 @@ impl StreamCoordinator {
 
         match self
             .sonos
-            .play_uri(speaker_ip, stream_url, codec, metadata, icon_url)
+            .play_uri(
+                speaker_ip,
+                stream_url,
+                codec,
+                audio_format,
+                metadata,
+                icon_url,
+            )
             .await
         {
             Ok(()) => {
@@ -400,7 +424,7 @@ impl StreamCoordinator {
                         stream_id: stream_id.to_string(),
                         speaker_ip: speaker_ip.to_string(),
                         stream_url: stream_url.to_string(),
-                        codec: codec.to_string(),
+                        codec,
                     },
                 );
 

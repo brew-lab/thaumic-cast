@@ -3,6 +3,8 @@ use std::collections::HashMap;
 use quick_xml::events::{BytesStart, Event};
 use quick_xml::reader::Reader;
 
+use crate::stream::AudioCodec;
+
 /// Default Sonos speaker control port.
 pub const SONOS_PORT: u16 = 1400;
 
@@ -246,18 +248,18 @@ pub fn normalize_sonos_uri(uri: &str) -> String {
 ///
 /// # Returns
 /// A properly formatted URI for Sonos playback
-pub fn build_sonos_stream_uri(base_uri: &str, codec: &str) -> String {
+pub fn build_sonos_stream_uri(base_uri: &str, codec: AudioCodec) -> String {
     match codec {
-        "wav" => {
+        AudioCodec::Wav => {
             // WAV: Keep http://, add .wav extension
             // Sonos identifies format by URL suffix, not Content-Type
             format!("{}.wav", base_uri)
         }
-        "flac" => {
+        AudioCodec::Flac => {
             // FLAC: Keep http://, add .flac extension
             format!("{}.flac", base_uri)
         }
-        _ => {
+        AudioCodec::Aac | AudioCodec::Mp3 => {
             // MP3/AAC: Use x-rincon-mp3radio:// scheme
             normalize_sonos_uri(base_uri)
         }

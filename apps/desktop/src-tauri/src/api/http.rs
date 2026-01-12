@@ -31,7 +31,7 @@ use crate::config::{
     SILENCE_INJECTION_TIMEOUT_MS,
 };
 use crate::error::{ThaumicError, ThaumicResult};
-use crate::protocol_constants::WAV_STREAM_SIZE_MAX;
+use crate::protocol_constants::{APP_NAME, WAV_STREAM_SIZE_MAX};
 use crate::stream::{create_wav_header, AudioCodec, IcyMetadataInjector, TaggedFrame, ICY_METAINT};
 
 /// Boxed stream type for audio data with ICY metadata support.
@@ -599,12 +599,7 @@ async fn stream_audio(
     );
 
     // Content-Type based on output codec
-    let content_type = match stream_state.codec {
-        AudioCodec::Wav => "audio/wav",
-        AudioCodec::Aac => "audio/aac",
-        AudioCodec::Mp3 => "audio/mpeg",
-        AudioCodec::Flac => "audio/flac",
-    };
+    let content_type = stream_state.codec.mime_type();
 
     // ICY metadata only supported for MP3/AAC streams (not WAV/FLAC)
     let supports_icy = matches!(stream_state.codec, AudioCodec::Mp3 | AudioCodec::Aac);
@@ -614,7 +609,11 @@ async fn stream_audio(
     let mut builder = Response::builder()
         .header(header::CONTENT_TYPE, content_type)
         .header(header::CACHE_CONTROL, "no-cache")
-        .header(header::CONNECTION, "keep-alive");
+        .header(header::CONNECTION, "keep-alive")
+        // DLNA streaming header: indicates real-time playback vs download-first
+        .header("TransferMode.dlna.org", "Streaming")
+        // Stream identification for renderers that display station name
+        .header("icy-name", APP_NAME);
 
     if wants_icy {
         builder = builder.header("icy-metaint", ICY_METAINT.to_string());

@@ -31,6 +31,10 @@ use crate::api::AppState;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // Elevate process priority to reduce audio stuttering under CPU load.
+    // Must be called early, before starting the HTTP server.
+    utils::raise_process_priority();
+
     let app = tauri::Builder::default()
         .plugin(
             tauri_plugin_log::Builder::new()

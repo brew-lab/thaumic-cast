@@ -12,6 +12,9 @@ Improve WAV streaming reliability for Sonos speakers
 - Use fixed Content-Length header instead of chunked transfer encoding (some renderers stutter with chunked)
 - Add upfront buffer delay (250ms) before serving audio to reduce early-connection jitter sensitivity
 - Cache silence frames globally to avoid ~200KB/s allocations during delivery gaps
+- Add TransferMode.dlna.org and icy-name headers to all audio streams for DLNA compatibility
+- Elevate process priority to reduce audio stuttering under CPU load (HIGH_PRIORITY_CLASS on Windows, nice -10 on Unix)
+- Enrich DIDL-Lite metadata with audio format attributes (sampleFrequency, nrAudioChannels, bitsPerSample)
 
 **Epoch Tracking Accuracy**
 

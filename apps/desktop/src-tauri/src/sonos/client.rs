@@ -11,6 +11,7 @@ use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
 use crate::error::{DiscoveryResult, SoapResult};
+use crate::protocol_constants::APP_NAME;
 use crate::sonos::discovery::{DiscoveryConfig, DiscoveryCoordinator, Speaker};
 use crate::sonos::services::SonosService;
 use crate::sonos::soap::{SoapError, SoapRequestBuilder};
@@ -20,7 +21,7 @@ use crate::sonos::utils::{
     build_sonos_stream_uri, escape_xml, extract_ip_from_location, extract_model_from_icon,
     extract_xml_text, get_channel_role, get_xml_attr,
 };
-use crate::stream::StreamMetadata;
+use crate::stream::{AudioCodec, AudioFormat, StreamMetadata};
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Zone Groups
@@ -204,19 +205,36 @@ pub async fn get_zone_groups(client: &Client, ip: &str) -> SoapResult<Vec<ZoneGr
 /// album and artwork to prevent stale data:
 ///
 /// - **Title**: Source name (e.g., "YouTube Music") - static, branded
-/// - **Artist**: "Thaumic Cast" - static branding
-/// - **Album**: "{source} • Thaumic Cast" for additional branding
+/// - **Artist**: APP_NAME constant - static branding
+/// - **Album**: "{source} • {APP_NAME}" for additional branding
 /// - **Artwork**: Static app icon
 ///
 /// The actual track info ("Artist - Title") comes from ICY StreamTitle which updates.
-fn format_didl_lite(stream_url: &str, metadata: Option<&StreamMetadata>, icon_url: &str) -> String {
+///
+/// # Audio Format Attributes
+///
+/// The `<res>` element includes audio format attributes to help Sonos configure
+/// playback correctly:
+/// - `sampleFrequency`: Sample rate in Hz (e.g., 48000)
+/// - `nrAudioChannels`: Number of channels (e.g., 2 for stereo)
+/// - `bitsPerSample`: Bit depth (e.g., 16)
+/// - `protocolInfo`: MIME type based on codec (audio/wav, audio/aac, etc.)
+fn format_didl_lite(
+    stream_url: &str,
+    codec: AudioCodec,
+    audio_format: &AudioFormat,
+    metadata: Option<&StreamMetadata>,
+    icon_url: &str,
+) -> String {
     // [DIAG] Log incoming metadata for debugging
     log::info!(
-        "[DIDL] Incoming metadata: {:?}",
+        "[DIDL] Incoming metadata: {:?}, codec={}, format={:?}",
         metadata.map(|m| format!(
             "title={:?}, artist={:?}, album={:?}, source={:?}",
             m.title, m.artist, m.album, m.source
-        ))
+        )),
+        codec.as_str(),
+        audio_format
     );
 
     // IMPORTANT: DIDL-Lite is sent once and never updates. ICY StreamTitle handles
@@ -227,22 +245,25 @@ fn format_didl_lite(stream_url: &str, metadata: Option<&StreamMetadata>, icon_ur
     //   Line 1: ICY StreamTitle (dynamic, updates with each track)
     //   Line 2: DIDL-Lite dc:title (static, set once at playback start)
     //
-    // So we set dc:title to "{source} • Thaumic Cast", not the song title.
+    // So we set dc:title to "{source} • {APP_NAME}", not the song title.
     let title = match metadata.and_then(|m| m.source.as_deref()) {
-        Some(source) => format!("{} • Thaumic Cast", source),
-        None => "Thaumic Cast".to_string(),
+        Some(source) => format!("{} • {}", source, APP_NAME),
+        None => APP_NAME.to_string(),
     };
-    let artist = "Thaumic Cast";
+    let artist = APP_NAME;
 
-    // Album also shows "{source} • Thaumic Cast" for consistency
+    // Album also shows "{source} • {APP_NAME}" for consistency
     let album = title.clone();
+
+    let mime_type = codec.mime_type();
 
     // [DIAG] Log what we're sending to Sonos
     log::info!(
-        "[DIDL] Sending to Sonos: title={:?}, artist={:?}, album={:?}, icon={:?}",
+        "[DIDL] Sending to Sonos: title={:?}, artist={:?}, album={:?}, mime={}, icon={:?}",
         title,
         artist,
         album,
+        mime_type,
         icon_url
     );
 
@@ -263,9 +284,14 @@ fn format_didl_lite(stream_url: &str, metadata: Option<&StreamMetadata>, icon_ur
     ));
 
     didl.push_str("<upnp:class>object.item.audioItem.audioBroadcast</upnp:class>");
-    // Use audio/* to allow Sonos to auto-detect format (supports MP3, AAC-LC, HE-AAC)
+
+    // Build <res> element with audio format attributes for proper Sonos configuration
     didl.push_str(&format!(
-        r#"<res protocolInfo="http-get:*:audio/*:*">{}</res>"#,
+        r#"<res protocolInfo="http-get:*:{}:*" sampleFrequency="{}" nrAudioChannels="{}" bitsPerSample="{}">{}</res>"#,
+        mime_type,
+        audio_format.sample_rate,
+        audio_format.channels,
+        audio_format.bits_per_sample,
         escape_xml(stream_url)
     ));
     didl.push_str("</item>");
@@ -332,20 +358,22 @@ where
 /// * `client` - The HTTP client to use for the request
 /// * `ip` - IP address of the Sonos speaker (coordinator for grouped speakers)
 /// * `uri` - The audio stream URL to play
-/// * `codec` - The audio codec (e.g., "wav", "aac", "mp3") for proper URI formatting
+/// * `codec` - The audio codec for proper URI formatting and DIDL-Lite metadata
+/// * `audio_format` - Audio format configuration (sample rate, channels, bit depth)
 /// * `metadata` - Optional stream metadata for display (title, artist, source)
 /// * `icon_url` - URL to the static app icon for album art display
 pub async fn play_uri(
     client: &Client,
     ip: &str,
     uri: &str,
-    codec: &str,
+    codec: AudioCodec,
+    audio_format: &AudioFormat,
     metadata: Option<&StreamMetadata>,
     icon_url: &str,
 ) -> SoapResult<()> {
     // Build Sonos-compatible URI with proper scheme and extension for codec
     let sonos_uri = build_sonos_stream_uri(uri, codec);
-    let didl_metadata = format_didl_lite(uri, metadata, icon_url);
+    let didl_metadata = format_didl_lite(uri, codec, audio_format, metadata, icon_url);
 
     log::info!("[Sonos] SetAVTransportURI: ip={}, uri={}", ip, sonos_uri);
 
@@ -658,11 +686,21 @@ impl SonosPlayback for SonosClientImpl {
         &self,
         ip: &str,
         uri: &str,
-        codec: &str,
+        codec: AudioCodec,
+        audio_format: &AudioFormat,
         metadata: Option<&StreamMetadata>,
         icon_url: &str,
     ) -> SoapResult<()> {
-        play_uri(&self.client, ip, uri, codec, metadata, icon_url).await
+        play_uri(
+            &self.client,
+            ip,
+            uri,
+            codec,
+            audio_format,
+            metadata,
+            icon_url,
+        )
+        .await
     }
 
     async fn stop(&self, ip: &str) -> SoapResult<()> {

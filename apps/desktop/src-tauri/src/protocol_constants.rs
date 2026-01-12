@@ -60,3 +60,13 @@ pub const SOAP_TIMEOUT_SECS: u64 = 10;
 
 /// Maximum size of GENA notification body (bytes).
 pub const MAX_GENA_BODY_SIZE: usize = 64 * 1024;
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Application Identity
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Application name used in protocol data (DIDL-Lite metadata, ICY headers).
+///
+/// This is intentionally NOT localized since it appears in network protocols
+/// where consistency matters more than translation.
+pub const APP_NAME: &str = "Thaumic Cast";
