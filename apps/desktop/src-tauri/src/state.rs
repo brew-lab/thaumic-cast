@@ -40,6 +40,7 @@ impl StreamingConfig {
     /// - `max_concurrent_streams` must be >= 1
     /// - `buffer_frames` must be >= 1
     /// - `channel_capacity` must be >= 1 (broadcast::channel panics on 0)
+    #[allow(dead_code)] // Used in tests; kept for future custom config support
     pub fn new(
         max_concurrent_streams: usize,
         buffer_frames: usize,
