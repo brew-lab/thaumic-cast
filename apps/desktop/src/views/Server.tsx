@@ -5,6 +5,9 @@ import { useTranslation } from 'react-i18next';
 import { Copy, Check, RefreshCcw, Unplug, Square, Circle } from 'lucide-preact';
 import styles from './Server.module.css';
 
+/** Duration to show "copied" feedback before reverting to copy icon (ms). */
+const COPIED_FEEDBACK_DURATION_MS = 2000;
+
 /**
  * Server management page.
  *
@@ -29,7 +32,7 @@ export function Server() {
       const url = `http://${stats.value.localIp}:${stats.value.port}`;
       navigator.clipboard.writeText(url);
       setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
+      setTimeout(() => setCopied(false), COPIED_FEEDBACK_DURATION_MS);
     }
   };
 
