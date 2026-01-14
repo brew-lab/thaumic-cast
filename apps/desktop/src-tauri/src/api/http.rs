@@ -66,127 +66,88 @@ fn lagged_error(frames: u64) -> std::io::Error {
 /// - Metronome ticks every `SILENCE_FRAME_DURATION_MS` (20ms)
 /// - On each tick: send queued frame if available, else send silence
 ///
-/// The cadence loop runs on the provided `streaming_handle` (high-priority runtime)
-/// to isolate timing-critical work from other HTTP traffic. Frames are sent via
-/// an mpsc channel to the returned stream.
-///
 /// This ensures Sonos always receives continuous data, smoothing
 /// over input jitter and CPU spikes up to `CADENCE_QUEUE_SIZE * 20ms`.
 fn create_wav_stream_with_cadence(
-    rx: broadcast::Receiver<Bytes>,
-    silence_frame: Bytes,
-    guard: Arc<LoggingStreamGuard>,
-    streaming_handle: tokio::runtime::Handle,
-) -> impl Stream<Item = Result<TaggedFrame, std::io::Error>> {
-    // Channel capacity matches cadence queue - if consumer can't keep up, we have bigger problems
-    let (tx, mut mpsc_rx) =
-        tokio::sync::mpsc::channel::<Result<TaggedFrame, std::io::Error>>(CADENCE_QUEUE_SIZE);
-
-    // Spawn the cadence loop on the HIGH-PRIORITY streaming runtime.
-    // This isolates the 20ms metronome from HTTP request handling, WebSocket traffic,
-    // GENA callbacks, and other work that could cause scheduler contention.
-    streaming_handle.spawn(run_cadence_loop(rx, silence_frame, guard, tx));
-
-    // Return a stream that reads from the mpsc receiver
-    stream! {
-        while let Some(result) = mpsc_rx.recv().await {
-            yield result;
-        }
-    }
-}
-
-/// The actual cadence loop that runs on the streaming runtime.
-///
-/// Separated from `create_wav_stream_with_cadence` to allow spawning on a different runtime.
-async fn run_cadence_loop(
     mut rx: broadcast::Receiver<Bytes>,
     silence_frame: Bytes,
     guard: Arc<LoggingStreamGuard>,
-    tx: tokio::sync::mpsc::Sender<Result<TaggedFrame, std::io::Error>>,
-) {
-    let cadence_duration = Duration::from_millis(SILENCE_FRAME_DURATION_MS as u64);
+) -> impl Stream<Item = Result<TaggedFrame, std::io::Error>> {
+    stream! {
+        let cadence_duration = Duration::from_millis(SILENCE_FRAME_DURATION_MS as u64);
 
-    let mut queue: VecDeque<Bytes> = VecDeque::with_capacity(CADENCE_QUEUE_SIZE);
-    // Start first tick after one cadence period, giving frames time to queue up.
-    // This avoids the "first tick is instant" behavior of interval().
-    let mut metronome = interval_at(TokioInstant::now() + cadence_duration, cadence_duration);
-    metronome.set_missed_tick_behavior(MissedTickBehavior::Skip);
+        let mut queue: VecDeque<Bytes> = VecDeque::with_capacity(CADENCE_QUEUE_SIZE);
+        // Start first tick after one cadence period, giving frames time to queue up.
+        // This avoids the "first tick is instant" behavior of interval().
+        let mut metronome = interval_at(TokioInstant::now() + cadence_duration, cadence_duration);
+        metronome.set_missed_tick_behavior(MissedTickBehavior::Skip);
 
-    let mut rx_closed = false;
-    let mut in_silence = false;
-    let mut silence_start: Option<TokioInstant> = None;
+        let mut rx_closed = false;
+        let mut in_silence = false;
+        let mut silence_start: Option<TokioInstant> = None;
 
-    // Rate-limit lagged warnings (max once per second)
-    let mut last_lagged_log: Option<TokioInstant> = None;
+        // Rate-limit lagged warnings (max once per second)
+        let mut last_lagged_log: Option<TokioInstant> = None;
 
-    loop {
-        // Exit when channel closed AND queue drained
-        if rx_closed && queue.is_empty() {
-            break;
-        }
-
-        tokio::select! {
-            biased;
-
-            // PRIORITY 1: Metronome tick - MUST emit something every 20ms
-            _ = metronome.tick() => {
-                let frame = if let Some(frame) = queue.pop_front() {
-                    // Real audio available
-                    if in_silence {
-                        if let Some(start) = silence_start.take() {
-                            log::info!(
-                                "[Stream] Exiting silence (cadence) after {:.1}s",
-                                start.elapsed().as_secs_f32()
-                            );
-                        }
-                        in_silence = false;
-                    }
-                    Some(Ok(TaggedFrame::Audio(frame)))
-                } else if !rx_closed {
-                    // No frame available, emit silence
-                    if !in_silence {
-                        log::info!("[Stream] Entering silence (cadence) - queue empty");
-                        in_silence = true;
-                        silence_start = Some(TokioInstant::now());
-                    }
-                    Some(Ok(TaggedFrame::Silence(silence_frame.clone())))
-                } else {
-                    // rx_closed and queue empty - don't send, loop will break
-                    None
-                };
-
-                if let Some(f) = frame {
-                    if tx.send(f).await.is_err() {
-                        // Receiver dropped (HTTP connection closed)
-                        log::debug!("[Stream] Cadence loop stopping - receiver dropped");
-                        break;
-                    }
-                }
+        loop {
+            // Exit when channel closed AND queue drained
+            if rx_closed && queue.is_empty() {
+                break;
             }
 
-            // PRIORITY 2: Receive frames into queue (when channel open)
-            result = rx.recv(), if !rx_closed => {
-                match result {
-                    Ok(frame) => {
-                        if queue.len() >= CADENCE_QUEUE_SIZE {
-                            // Queue full - drop oldest to maintain bounded latency
-                            queue.pop_front();
-                            guard.record_frame_dropped();
-                            log::trace!("[Stream] Queue full, dropped oldest frame");
+            tokio::select! {
+                biased;
+
+                // PRIORITY 1: Metronome tick - MUST emit something every 20ms
+                _ = metronome.tick() => {
+                    if let Some(frame) = queue.pop_front() {
+                        // Real audio available
+                        if in_silence {
+                            if let Some(start) = silence_start.take() {
+                                log::info!(
+                                    "[Stream] Exiting silence (cadence) after {:.1}s",
+                                    start.elapsed().as_secs_f32()
+                                );
+                            }
+                            in_silence = false;
                         }
-                        queue.push_back(frame);
-                    }
-                    Err(broadcast::error::RecvError::Lagged(n)) => {
-                        let now = TokioInstant::now();
-                        if last_lagged_log.map_or(true, |t| now.duration_since(t).as_secs() >= 1) {
-                            log::warn!("[Stream] Lagged by {n} frames");
-                            last_lagged_log = Some(now);
+                        yield Ok(TaggedFrame::Audio(frame));
+                    } else if !rx_closed {
+                        // No frame available, emit silence
+                        if !in_silence {
+                            log::info!("[Stream] Entering silence (cadence) - queue empty");
+                            in_silence = true;
+                            silence_start = Some(TokioInstant::now());
                         }
-                        // Continue - next recv will get latest
+                        yield Ok(TaggedFrame::Silence(silence_frame.clone()));
                     }
-                    Err(broadcast::error::RecvError::Closed) => {
-                        rx_closed = true;
-                        log::debug!("[Stream] Channel closed, draining {} queued frames", queue.len());
+                    // If rx_closed and queue empty, don't yield - loop will break
+                }
+
+                // PRIORITY 2: Receive frames into queue (when channel open)
+                result = rx.recv(), if !rx_closed => {
+                    match result {
+                        Ok(frame) => {
+                            if queue.len() >= CADENCE_QUEUE_SIZE {
+                                // Queue full - drop oldest to maintain bounded latency
+                                queue.pop_front();
+                                guard.record_frame_dropped();
+                                log::trace!("[Stream] Queue full, dropped oldest frame");
+                            }
+                            queue.push_back(frame);
+                        }
+                        Err(broadcast::error::RecvError::Lagged(n)) => {
+                            let now = TokioInstant::now();
+                            if last_lagged_log.map_or(true, |t| now.duration_since(t).as_secs() >= 1) {
+                                log::warn!("[Stream] Lagged by {n} frames");
+                                last_lagged_log = Some(now);
+                            }
+                            // Continue - next recv will get latest
+                        }
+                        Err(broadcast::error::RecvError::Closed) => {
+                            rx_closed = true;
+                            log::debug!("[Stream] Channel closed, draining {} queued frames", queue.len());
+                        }
                     }
                 }
             }
@@ -726,13 +687,10 @@ async fn stream_audio(
         let silence_frame = stream_state
             .audio_format
             .silence_frame(SILENCE_FRAME_DURATION_MS);
-        // Pass streaming runtime handle so cadence loop runs on high-priority threads
-        let streaming_handle = state.services.streaming_runtime.handle().clone();
         Box::pin(create_wav_stream_with_cadence(
             rx,
             silence_frame,
             Arc::clone(&guard),
-            streaming_handle,
         ))
     } else {
         // Compressed codecs: no silence injection, all frames are real audio
@@ -921,7 +879,6 @@ mod tests {
         use super::*;
         use crate::config::CADENCE_QUEUE_SIZE;
         use std::net::Ipv4Addr;
-        use tokio::runtime::Handle;
 
         /// Creates a test guard for cadence stream tests.
         fn test_guard() -> Arc<LoggingStreamGuard> {
@@ -931,11 +888,6 @@ mod tests {
             ))
         }
 
-        /// Returns the current runtime handle for tests.
-        fn test_handle() -> Handle {
-            Handle::current()
-        }
-
         #[tokio::test(start_paused = true)]
         async fn emits_frames_at_cadence() {
             let (tx, rx) = broadcast::channel::<Bytes>(16);
@@ -943,12 +895,7 @@ mod tests {
             let audio = test_audio_frame();
             let guard = test_guard();
 
-            let mut stream = Box::pin(create_wav_stream_with_cadence(
-                rx,
-                silence.clone(),
-                guard,
-                test_handle(),
-            ));
+            let mut stream = Box::pin(create_wav_stream_with_cadence(rx, silence.clone(), guard));
 
             // Queue some frames before the first tick
             tx.send(audio.clone()).expect("send should succeed");
@@ -991,12 +938,7 @@ mod tests {
             let silence = test_silence_frame();
             let guard = test_guard();
 
-            let mut stream = Box::pin(create_wav_stream_with_cadence(
-                rx,
-                silence.clone(),
-                guard,
-                test_handle(),
-            ));
+            let mut stream = Box::pin(create_wav_stream_with_cadence(rx, silence.clone(), guard));
 
             // Don't send any frames - queue will be empty
 
@@ -1036,12 +978,7 @@ mod tests {
             let silence = test_silence_frame();
             let guard = test_guard();
 
-            let mut stream = Box::pin(create_wav_stream_with_cadence(
-                rx,
-                silence.clone(),
-                guard,
-                test_handle(),
-            ));
+            let mut stream = Box::pin(create_wav_stream_with_cadence(rx, silence.clone(), guard));
 
             // Queue 3 frames as a burst
             for i in 0..3 {
@@ -1091,12 +1028,7 @@ mod tests {
             let silence = test_silence_frame();
             let guard = test_guard();
 
-            let mut stream = Box::pin(create_wav_stream_with_cadence(
-                rx,
-                silence.clone(),
-                guard,
-                test_handle(),
-            ));
+            let mut stream = Box::pin(create_wav_stream_with_cadence(rx, silence.clone(), guard));
 
             // Fill the queue to capacity + 2 (should drop 2 oldest)
             // Each frame is marked with its index so we can verify order
@@ -1135,12 +1067,7 @@ mod tests {
             let guard = test_guard();
             let guard_for_check = Arc::clone(&guard);
 
-            let mut stream = Box::pin(create_wav_stream_with_cadence(
-                rx,
-                silence.clone(),
-                guard,
-                test_handle(),
-            ));
+            let mut stream = Box::pin(create_wav_stream_with_cadence(rx, silence.clone(), guard));
 
             // Overflow queue by CADENCE_QUEUE_SIZE + 3 frames
             let overflow_count = 3;
@@ -1176,12 +1103,7 @@ mod tests {
             let silence = test_silence_frame();
             let guard = test_guard();
 
-            let mut stream = Box::pin(create_wav_stream_with_cadence(
-                rx,
-                silence.clone(),
-                guard,
-                test_handle(),
-            ));
+            let mut stream = Box::pin(create_wav_stream_with_cadence(rx, silence.clone(), guard));
 
             // Queue some frames
             tx.send(Bytes::from(vec![1; 64]))
@@ -1240,12 +1162,7 @@ mod tests {
             let audio = test_audio_frame();
             let guard = test_guard();
 
-            let mut stream = Box::pin(create_wav_stream_with_cadence(
-                rx,
-                silence.clone(),
-                guard,
-                test_handle(),
-            ));
+            let mut stream = Box::pin(create_wav_stream_with_cadence(rx, silence.clone(), guard));
 
             // First tick with empty queue -> silence
             poll_and_advance(
