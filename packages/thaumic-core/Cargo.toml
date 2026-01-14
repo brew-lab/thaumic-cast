@@ -49,6 +49,7 @@ log = "0.4"
 bytes = "1"
 bytemuck = { version = "1", features = ["derive"] }
 uuid = { version = "1", features = ["v4"] }
+hostname = "0.4"
 
 # Platform-specific dependencies for process priority
 [target.'cfg(windows)'.dependencies]
