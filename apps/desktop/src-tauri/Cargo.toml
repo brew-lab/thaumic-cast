@@ -59,10 +59,3 @@ libc = "0.2"
 
 [dev-dependencies]
 tokio = { version = "1", features = ["test-util"] }
-
-[profile.release]
-codegen-units = 1
-lto = true
-opt-level = "s"
-panic = "abort"
-strip = true
