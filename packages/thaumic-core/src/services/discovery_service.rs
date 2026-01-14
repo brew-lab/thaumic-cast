@@ -43,6 +43,7 @@ impl DiscoveryService {
     /// * `http_client` - HTTP client for GENA requests
     /// * `topology_refresh_interval_secs` - Interval between automatic topology refreshes
     /// * `spawner` - Task spawner for background tasks
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         sonos: Arc<dyn SonosTopologyClient>,
         stream_coordinator: Arc<StreamCoordinator>,
