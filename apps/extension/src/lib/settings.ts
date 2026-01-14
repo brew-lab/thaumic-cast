@@ -6,6 +6,9 @@ import {
   LatencyModeSchema,
   isValidBitrateForCodec,
   getDefaultBitrate,
+  STREAMING_BUFFER_MS_MIN,
+  STREAMING_BUFFER_MS_MAX,
+  STREAMING_BUFFER_MS_DEFAULT,
 } from '@thaumic-cast/protocol';
 import { createLogger } from '@thaumic-cast/shared';
 
@@ -51,8 +54,12 @@ export const CustomAudioSettingsSchema = z.object({
   channels: z.union([z.literal(1), z.literal(2)]).default(2),
   sampleRate: SampleRateSchema.default(48000),
   latencyMode: LatencyModeSchema.default('quality'),
-  /** Buffer size for WAV streaming in milliseconds (100-1000). Only affects PCM codec. */
-  streamingBufferMs: z.number().min(100).max(1000).default(200),
+  /** Buffer size for WAV streaming in milliseconds. Only affects PCM codec. */
+  streamingBufferMs: z
+    .number()
+    .min(STREAMING_BUFFER_MS_MIN)
+    .max(STREAMING_BUFFER_MS_MAX)
+    .default(STREAMING_BUFFER_MS_DEFAULT),
 });
 export type CustomAudioSettings = z.infer<typeof CustomAudioSettingsSchema>;
 
@@ -81,7 +88,7 @@ export const ExtensionSettingsSchema = z.object({
     channels: 2,
     sampleRate: 48000,
     latencyMode: 'quality',
-    streamingBufferMs: 200,
+    streamingBufferMs: STREAMING_BUFFER_MS_DEFAULT,
   }),
 
   // Video sync: controls visibility of video sync controls in popup (default: false)
@@ -107,7 +114,7 @@ const DEFAULT_EXTENSION_SETTINGS: ExtensionSettings = {
     channels: 2,
     sampleRate: 48000,
     latencyMode: 'quality',
-    streamingBufferMs: 200,
+    streamingBufferMs: STREAMING_BUFFER_MS_DEFAULT,
   },
   videoSyncEnabled: false,
   keepTabAudible: false,

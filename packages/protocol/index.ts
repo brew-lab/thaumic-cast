@@ -79,6 +79,14 @@ export const LatencyModeSchema = z.enum(['quality', 'realtime']);
 export type LatencyMode = z.infer<typeof LatencyModeSchema>;
 
 /**
+ * Streaming buffer size constraints and default (in milliseconds).
+ * Used for WAV/PCM streaming to balance latency vs. reliability.
+ */
+export const STREAMING_BUFFER_MS_MIN = 100;
+export const STREAMING_BUFFER_MS_MAX = 1000;
+export const STREAMING_BUFFER_MS_DEFAULT = 200;
+
+/**
  * Complete encoder configuration passed from UI to offscreen.
  */
 export const EncoderConfigSchema = z.object({
@@ -87,8 +95,12 @@ export const EncoderConfigSchema = z.object({
   sampleRate: SampleRateSchema.default(48000),
   channels: z.union([z.literal(1), z.literal(2)]).default(2),
   latencyMode: LatencyModeSchema.default('quality'),
-  /** Buffer size for WAV streaming in milliseconds (100-1000). Only affects PCM codec. */
-  streamingBufferMs: z.number().min(100).max(1000).default(200),
+  /** Buffer size for WAV streaming in milliseconds. Only affects PCM codec. */
+  streamingBufferMs: z
+    .number()
+    .min(STREAMING_BUFFER_MS_MIN)
+    .max(STREAMING_BUFFER_MS_MAX)
+    .default(STREAMING_BUFFER_MS_DEFAULT),
 });
 export type EncoderConfig = z.infer<typeof EncoderConfigSchema>;
 
@@ -240,7 +252,7 @@ export function createEncoderConfig(options: CreateEncoderConfigOptions): Encode
     sampleRate = 48000,
     channels = 2,
     latencyMode = 'quality',
-    streamingBufferMs = 200,
+    streamingBufferMs = STREAMING_BUFFER_MS_DEFAULT,
   } = options;
   const effectiveBitrate =
     bitrate && isValidBitrateForCodec(codec, bitrate) ? bitrate : getDefaultBitrate(codec);

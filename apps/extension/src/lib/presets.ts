@@ -17,6 +17,7 @@ import {
   CODEC_METADATA,
   generateDynamicPresets,
   getSupportedSampleRates,
+  STREAMING_BUFFER_MS_DEFAULT,
 } from '@thaumic-cast/protocol';
 import { createLogger } from '@thaumic-cast/shared';
 import type { AudioMode, CustomAudioSettings } from './settings';
@@ -43,7 +44,7 @@ function getFallbackConfig(codecSupport: SupportedCodecsResult): EncoderConfig |
     sampleRate: 48000,
     channels: 2,
     latencyMode: 'quality',
-    streamingBufferMs: 200,
+    streamingBufferMs: STREAMING_BUFFER_MS_DEFAULT,
   };
 }
 
@@ -107,7 +108,7 @@ function buildConfigFromOption(
     sampleRate,
     channels,
     latencyMode,
-    streamingBufferMs: 200,
+    streamingBufferMs: STREAMING_BUFFER_MS_DEFAULT,
   };
 }
 
@@ -158,7 +159,7 @@ export function resolveAudioMode(
         channels: customSettings.channels,
         sampleRate: customSettings.sampleRate,
         latencyMode: customSettings.latencyMode,
-        streamingBufferMs: customSettings.streamingBufferMs ?? 200,
+        streamingBufferMs: customSettings.streamingBufferMs ?? STREAMING_BUFFER_MS_DEFAULT,
       };
     }
 
@@ -222,7 +223,7 @@ export function getResolvedConfigForDisplay(
         channels: customSettings.channels,
         sampleRate: customSettings.sampleRate,
         latencyMode: customSettings.latencyMode,
-        streamingBufferMs: customSettings.streamingBufferMs ?? 200,
+        streamingBufferMs: customSettings.streamingBufferMs ?? STREAMING_BUFFER_MS_DEFAULT,
       };
     }
     return null;
