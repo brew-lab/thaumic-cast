@@ -593,12 +593,6 @@ export function generateDynamicPresets(supportInfo: SupportedCodecsResult): Dyna
 }
 
 /**
- * High-level quality presets for the user interface.
- */
-export const QualityPresetSchema = z.enum(['instant', 'balanced', 'efficient']);
-export type QualityPreset = z.infer<typeof QualityPresetSchema>;
-
-/**
  * Track-level metadata for display on Sonos devices.
  */
 export const StreamMetadataSchema = z.object({

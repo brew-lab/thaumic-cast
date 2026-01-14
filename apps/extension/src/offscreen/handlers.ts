@@ -67,9 +67,14 @@ export function setupMessageHandlers(): void {
     // ─────────────────────────────────────────────────────────────────────────
 
     if (msg.type === 'WS_CONNECT') {
-      const validated = WsConnectMessageSchema.parse(msg);
-      connectControlWebSocket(validated.url);
-      sendResponse({ success: true });
+      try {
+        const validated = WsConnectMessageSchema.parse(msg);
+        connectControlWebSocket(validated.url);
+        sendResponse({ success: true });
+      } catch (err) {
+        log.error('WS_CONNECT validation failed:', err);
+        sendResponse({ success: false, error: String(err) });
+      }
       return true;
     }
 
@@ -80,20 +85,25 @@ export function setupMessageHandlers(): void {
     }
 
     if (msg.type === 'WS_RECONNECT') {
-      const validated = WsReconnectMessageSchema.parse(msg);
-      const controlConnection = getControlConnection();
-      if (validated.url) {
-        disconnectControlWebSocket();
-        connectControlWebSocket(validated.url);
-      } else if (controlConnection) {
-        controlConnection.reconnectAttempts = 0;
-        if (controlConnection.reconnectTimer) {
-          clearTimeout(controlConnection.reconnectTimer);
-          controlConnection.reconnectTimer = null;
+      try {
+        const validated = WsReconnectMessageSchema.parse(msg);
+        const controlConnection = getControlConnection();
+        if (validated.url) {
+          disconnectControlWebSocket();
+          connectControlWebSocket(validated.url);
+        } else if (controlConnection) {
+          controlConnection.reconnectAttempts = 0;
+          if (controlConnection.reconnectTimer) {
+            clearTimeout(controlConnection.reconnectTimer);
+            controlConnection.reconnectTimer = null;
+          }
+          connectControlWebSocket(controlConnection.url);
         }
-        connectControlWebSocket(controlConnection.url);
+        sendResponse({ success: true });
+      } catch (err) {
+        log.error('WS_RECONNECT validation failed:', err);
+        sendResponse({ success: false, error: String(err) });
       }
-      sendResponse({ success: true });
       return true;
     }
 
@@ -103,31 +113,46 @@ export function setupMessageHandlers(): void {
     }
 
     if (msg.type === 'SYNC_SONOS_STATE') {
-      const validated = SyncSonosStateMessageSchema.parse(msg);
-      setCachedSonosState(validated.state);
-      sendResponse({ success: true });
+      try {
+        const validated = SyncSonosStateMessageSchema.parse(msg);
+        setCachedSonosState(validated.state);
+        sendResponse({ success: true });
+      } catch (err) {
+        log.error('SYNC_SONOS_STATE validation failed:', err);
+        sendResponse({ success: false, error: String(err) });
+      }
       return true;
     }
 
     if (msg.type === 'SET_VOLUME') {
-      const validated = SetVolumeMessageSchema.parse(msg);
-      // Desktop expects: { type: "SET_VOLUME", payload: { ip, volume } }
-      const success = sendControlCommand({
-        type: 'SET_VOLUME',
-        payload: { ip: validated.speakerIp, volume: validated.volume },
-      });
-      sendResponse({ success });
+      try {
+        const validated = SetVolumeMessageSchema.parse(msg);
+        // Desktop expects: { type: "SET_VOLUME", payload: { ip, volume } }
+        const success = sendControlCommand({
+          type: 'SET_VOLUME',
+          payload: { ip: validated.speakerIp, volume: validated.volume },
+        });
+        sendResponse({ success });
+      } catch (err) {
+        log.error('SET_VOLUME validation failed:', err);
+        sendResponse({ success: false, error: String(err) });
+      }
       return true;
     }
 
     if (msg.type === 'SET_MUTE') {
-      const validated = SetMuteMessageSchema.parse(msg);
-      // Desktop expects: { type: "SET_MUTE", payload: { ip, mute } }
-      const success = sendControlCommand({
-        type: 'SET_MUTE',
-        payload: { ip: validated.speakerIp, mute: validated.muted },
-      });
-      sendResponse({ success });
+      try {
+        const validated = SetMuteMessageSchema.parse(msg);
+        // Desktop expects: { type: "SET_MUTE", payload: { ip, mute } }
+        const success = sendControlCommand({
+          type: 'SET_MUTE',
+          payload: { ip: validated.speakerIp, mute: validated.muted },
+        });
+        sendResponse({ success });
+      } catch (err) {
+        log.error('SET_MUTE validation failed:', err);
+        sendResponse({ success: false, error: String(err) });
+      }
       return true;
     }
 
