@@ -691,8 +691,9 @@ async fn stream_audio(
 
         // Calculate queue size from streaming buffer (ceil division)
         // queue_size = ceil(buffer_ms / frame_ms), clamped to [1, MAX_CADENCE_QUEUE_SIZE]
-        let queue_size = ((stream_state.streaming_buffer_ms + SILENCE_FRAME_DURATION_MS as u64 - 1)
-            / SILENCE_FRAME_DURATION_MS as u64) as usize;
+        let queue_size = stream_state
+            .streaming_buffer_ms
+            .div_ceil(SILENCE_FRAME_DURATION_MS as u64) as usize;
         let queue_size = queue_size.clamp(1, MAX_CADENCE_QUEUE_SIZE);
 
         Box::pin(create_wav_stream_with_cadence(

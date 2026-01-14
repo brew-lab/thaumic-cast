@@ -404,8 +404,10 @@ mod tests {
 
         #[test]
         fn validate_catches_invalid_after_manual_modification() {
-            let mut config = StreamingConfig::default();
-            config.channel_capacity = 0;
+            let config = StreamingConfig {
+                channel_capacity: 0,
+                ..Default::default()
+            };
             assert!(config.validate().is_err());
         }
     }
