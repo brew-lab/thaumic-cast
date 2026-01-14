@@ -51,9 +51,15 @@ impl AppState {
     /// Delegates to `bootstrap_services()` for dependency wiring.
     /// Note: Services are not started automatically. Call `start_services()`
     /// after the user acknowledges the firewall warning or skips onboarding.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the streaming runtime fails to initialize. This is intentional
+    /// as the application cannot function without the streaming runtime.
     pub fn new() -> Self {
         let config = Config::default();
-        let services = bootstrap_services(&config);
+        let services = bootstrap_services(&config)
+            .expect("Failed to bootstrap services - streaming runtime initialization failed");
 
         Self {
             services,
@@ -100,6 +106,9 @@ impl AppState {
     /// Should be called after the user acknowledges the firewall warning or skips onboarding,
     /// or immediately on startup if onboarding was already completed.
     ///
+    /// The HTTP server runs on a dedicated high-priority streaming runtime to ensure
+    /// consistent audio delivery even during UI freezes or CPU contention.
+    ///
     /// This method spawns the HTTP server in a background task and returns immediately.
     pub fn start_services(&self) {
         // Only start once - use compare_exchange for thread safety
@@ -114,12 +123,14 @@ impl AppState {
 
         log::info!("Starting network services...");
 
-        // Start background tasks (GENA renewal, topology monitor)
+        // Start background tasks (GENA renewal, topology monitor) on Tauri's runtime
         self.start_background_tasks();
 
-        // Spawn HTTP server in background task
+        // Spawn HTTP server on the DEDICATED STREAMING RUNTIME
+        // This runs on high-priority threads to maintain consistent audio cadence
+        // even when the main Tauri runtime is starved (e.g., during UI freezes)
         let state_clone = self.clone();
-        tauri::async_runtime::spawn(async move {
+        self.services.streaming_runtime.spawn(async move {
             if let Err(e) = start_server(state_clone).await {
                 log::error!("Server error: {}", e);
             }

@@ -9,6 +9,7 @@ mod services;
 mod sonos;
 mod state;
 mod stream;
+mod streaming_runtime;
 mod types;
 mod ui;
 mod utils;

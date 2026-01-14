@@ -16,10 +16,12 @@ use tokio::sync::broadcast;
 use crate::api::ws_connection::WsConnectionManager;
 use crate::config::{EVENT_CHANNEL_CAPACITY, SOAP_TIMEOUT_SECS};
 use crate::context::NetworkContext;
+use crate::error::{ThaumicError, ThaumicResult};
 use crate::events::{BroadcastEvent, BroadcastEventBridge, EventEmitter};
 use crate::services::{AppLifecycle, DiscoveryService, LatencyMonitor, StreamCoordinator};
 use crate::sonos::{SonosClient, SonosClientImpl, SonosPlayback, SonosTopologyClient};
 use crate::state::{Config, SonosState};
+use crate::streaming_runtime::StreamingRuntime;
 use crate::utils::{IpDetector, LocalIpDetector};
 use tokio_util::sync::CancellationToken;
 
@@ -49,6 +51,8 @@ pub struct BootstrappedServices {
     pub ws_manager: Arc<WsConnectionManager>,
     /// Latency monitoring service.
     pub latency_monitor: Arc<LatencyMonitor>,
+    /// Dedicated high-priority runtime for HTTP streaming.
+    pub streaming_runtime: Arc<StreamingRuntime>,
     /// Shared HTTP client for connection pooling.
     http_client: Client,
 }
@@ -77,12 +81,13 @@ fn create_http_client() -> Client {
 /// wired together. The wiring order matters - services are created in
 /// dependency order:
 ///
-/// 1. Shared infrastructure (HTTP client, broadcast channel, cancellation token)
-/// 2. Shared state (port, local_ip, sonos_state)
-/// 3. Sonos client (depends on HTTP client)
-/// 4. Stream coordinator (depends on sonos, port, local_ip)
-/// 5. Latency monitor (depends on sonos, stream_manager, event_bridge)
-/// 6. Discovery service (depends on sonos, stream_coordinator, sonos_state, broadcast, HTTP client)
+/// 1. Streaming runtime (dedicated high-priority thread pool)
+/// 2. Shared infrastructure (HTTP client, broadcast channel, cancellation token)
+/// 3. Shared state (port, local_ip, sonos_state)
+/// 4. Sonos client (depends on HTTP client)
+/// 5. Stream coordinator (depends on sonos, port, local_ip)
+/// 6. Latency monitor (depends on sonos, stream_manager, event_bridge)
+/// 7. Discovery service (depends on sonos, stream_coordinator, sonos_state, broadcast, HTTP client)
 ///
 /// # Arguments
 /// * `config` - Application configuration
@@ -90,7 +95,16 @@ fn create_http_client() -> Client {
 /// # Returns
 ///
 /// A `BootstrappedServices` container with all services ready to use.
-pub fn bootstrap_services(config: &Config) -> BootstrappedServices {
+///
+/// # Errors
+///
+/// Returns an error if the streaming runtime fails to start.
+pub fn bootstrap_services(config: &Config) -> ThaumicResult<BootstrappedServices> {
+    // Create dedicated streaming runtime first (high-priority threads)
+    let streaming_runtime = Arc::new(StreamingRuntime::new().map_err(|e| {
+        ThaumicError::Internal(format!("Failed to create streaming runtime: {}", e))
+    })?);
+
     // Create shared HTTP client for connection pooling
     let http_client = create_http_client();
 
@@ -158,7 +172,7 @@ pub fn bootstrap_services(config: &Config) -> BootstrappedServices {
     // Coerce to the general SonosClient trait for storage
     let sonos: Arc<dyn SonosClient> = sonos_impl;
 
-    BootstrappedServices {
+    Ok(BootstrappedServices {
         sonos,
         stream_coordinator,
         discovery_service,
@@ -169,8 +183,9 @@ pub fn bootstrap_services(config: &Config) -> BootstrappedServices {
         network,
         ws_manager,
         latency_monitor,
+        streaming_runtime,
         http_client,
-    }
+    })
 }
 
 /// Detects the local IP address at startup.
@@ -193,7 +208,7 @@ mod tests {
     #[test]
     fn bootstrap_creates_all_services() {
         let config = Config::default();
-        let services = bootstrap_services(&config);
+        let services = bootstrap_services(&config).expect("bootstrap should succeed");
 
         // Verify all services are created
         assert_eq!(services.network.get_port(), 0);
