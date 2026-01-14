@@ -115,19 +115,10 @@ fn create_http_client() -> Client {
         .expect("Failed to create HTTP client")
 }
 
-/// Bootstraps all application services with their dependencies.
+/// Bootstraps all application services with auto-detected network configuration.
 ///
-/// This is the composition root where all services are instantiated and
-/// wired together. The wiring order matters - services are created in
-/// dependency order:
-///
-/// 1. Streaming runtime (dedicated high-priority thread pool)
-/// 2. Shared infrastructure (HTTP client, broadcast channel, cancellation token)
-/// 3. Shared state (port, local_ip, sonos_state)
-/// 4. Sonos client (depends on HTTP client)
-/// 5. Stream coordinator (depends on sonos, port, local_ip)
-/// 6. Latency monitor (depends on sonos, stream_manager, event_bridge)
-/// 7. Discovery service (depends on sonos, stream_coordinator, sonos_state, broadcast, HTTP client)
+/// This variant automatically detects the local IP address and is suitable
+/// for desktop applications where the network environment may change.
 ///
 /// # Arguments
 /// * `config` - Application configuration
@@ -138,8 +129,35 @@ fn create_http_client() -> Client {
 ///
 /// # Errors
 ///
-/// Returns an error if the streaming runtime fails to start.
+/// Returns an error if the streaming runtime fails to start or IP detection fails.
 pub fn bootstrap_services(config: &Config) -> ThaumicResult<BootstrappedServices> {
+    let ip_detector = LocalIpDetector::arc();
+    let network = NetworkContext::auto_detect(0, ip_detector)
+        .map_err(|e| ThaumicError::Internal(format!("Failed to detect local IP: {}", e)))?;
+
+    bootstrap_services_with_network(config, network)
+}
+
+/// Bootstraps all application services with an explicit network configuration.
+///
+/// This variant is suitable for server deployments where the network
+/// configuration (bind port, advertise IP) is known in advance.
+///
+/// # Arguments
+/// * `config` - Application configuration
+/// * `network` - Pre-configured network context
+///
+/// # Returns
+///
+/// A `BootstrappedServices` container with all services ready to use.
+///
+/// # Errors
+///
+/// Returns an error if the streaming runtime fails to start.
+pub fn bootstrap_services_with_network(
+    config: &Config,
+    network: NetworkContext,
+) -> ThaumicResult<BootstrappedServices> {
     // Create dedicated streaming runtime first (high-priority threads)
     let streaming_runtime = Arc::new(StreamingRuntime::new().map_err(|e| {
         ThaumicError::Internal(format!("Failed to create streaming runtime: {}", e))
@@ -159,11 +177,6 @@ pub fn bootstrap_services(config: &Config) -> ThaumicResult<BootstrappedServices
 
     // Create cancellation token for graceful shutdown
     let cancel_token = CancellationToken::new();
-
-    // Create IP detector and network context (auto-detect mode for desktop app)
-    let ip_detector = LocalIpDetector::arc();
-    let network = NetworkContext::auto_detect(0, ip_detector)
-        .map_err(|e| ThaumicError::Internal(format!("Failed to detect local IP: {}", e)))?;
 
     // Shared mutable state
     let sonos_state = Arc::new(SonosState::default());

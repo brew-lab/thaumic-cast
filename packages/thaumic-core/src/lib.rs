@@ -73,7 +73,7 @@ pub use services::stream_coordinator::PlaybackSession;
 pub use stream::{AudioCodec, AudioFormat, StreamMetadata, TaggedFrame};
 
 // Re-export bootstrap types
-pub use bootstrap::{bootstrap_services, BootstrappedServices};
+pub use bootstrap::{bootstrap_services, bootstrap_services_with_network, BootstrappedServices};
 
 // Re-export streaming runtime
 pub use streaming_runtime::StreamingRuntime;
