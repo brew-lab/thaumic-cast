@@ -189,8 +189,7 @@ fn raise_thread_priority() {
 #[cfg(target_os = "windows")]
 fn raise_thread_priority_windows() {
     use windows_sys::Win32::System::Threading::{
-        AvSetMmThreadCharacteristicsW, AvSetMmThreadPriority, GetCurrentThread, SetThreadPriority,
-        AVRT_PRIORITY_HIGH, THREAD_PRIORITY_HIGHEST,
+        GetCurrentThread, SetThreadPriority, THREAD_PRIORITY_HIGHEST,
     };
 
     // Try MMCSS first - this is the gold standard for audio on Windows
@@ -360,23 +359,29 @@ fn raise_thread_priority_generic_unix() {
 mod tests {
     use super::*;
     use std::sync::atomic::{AtomicU32, Ordering};
+    use std::sync::mpsc;
     use std::sync::Arc;
-    use tokio::sync::oneshot;
+    use std::time::Duration;
+
+    /// Test timeout to prevent CI hangs
+    const TEST_TIMEOUT: Duration = Duration::from_secs(5);
 
     #[test]
     fn runtime_starts_and_stops() {
         let mut runtime = StreamingRuntime::new().expect("Failed to create runtime");
 
-        // Use oneshot to signal task completion
-        let (tx, rx) = oneshot::channel();
+        // Use mpsc channel with timeout to signal task completion
+        let (tx, rx) = mpsc::channel();
 
         runtime.spawn(async move {
             let _ = tx.send(42);
         });
 
-        // Wait for task with timeout
-        let result = rx.blocking_recv();
-        assert_eq!(result, Ok(42));
+        // Wait for task with timeout to prevent CI hangs
+        let result = rx
+            .recv_timeout(TEST_TIMEOUT)
+            .expect("Task did not complete in time");
+        assert_eq!(result, 42);
 
         // Shutdown should complete cleanly
         runtime.shutdown();
@@ -387,23 +392,24 @@ mod tests {
         let mut runtime = StreamingRuntime::new().expect("Failed to create runtime");
 
         let counter = Arc::new(AtomicU32::new(0));
-        let (tx, rx) = oneshot::channel::<()>();
-        let mut tx_opt = Some(tx);
+        let (tx, rx) = mpsc::channel::<()>();
 
         // Spawn 10 tasks, the last one signals completion
         for i in 0..10 {
             let counter_clone = Arc::clone(&counter);
-            let tx = if i == 9 { tx_opt.take() } else { None };
+            let tx = tx.clone();
+            let is_last = i == 9;
             runtime.spawn(async move {
                 counter_clone.fetch_add(1, Ordering::SeqCst);
-                if let Some(tx) = tx {
+                if is_last {
                     let _ = tx.send(());
                 }
             });
         }
 
-        // Wait for all tasks to complete via oneshot signal
-        let _ = rx.blocking_recv();
+        // Wait for final task with timeout to prevent CI hangs
+        rx.recv_timeout(TEST_TIMEOUT)
+            .expect("Tasks did not complete in time");
 
         assert_eq!(counter.load(Ordering::SeqCst), 10);
 
