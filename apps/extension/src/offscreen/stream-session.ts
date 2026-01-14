@@ -22,7 +22,7 @@ import {
   RING_BUFFER_MASK,
 } from './ring-buffer';
 import type { EncoderConfig, StreamMetadata } from '@thaumic-cast/protocol';
-import { isSupportedSampleRate, getNearestSupportedSampleRate } from '@thaumic-cast/protocol';
+import { isSupportedSampleRate } from '@thaumic-cast/protocol';
 import { noop } from '../lib/noop';
 
 const log = createLogger('Offscreen');
@@ -54,7 +54,7 @@ const KEEP_AUDIBLE_GAIN = 0.01;
  *   - Receiving status updates from Worker
  */
 export class StreamSession {
-  private audioContext: AudioContext;
+  private audioContext: AudioContext | null = null;
   private consumerWorker: Worker | null = null;
   private ringBuffer: SharedArrayBuffer;
   private sourceNode: MediaStreamAudioSourceNode | null = null;
@@ -137,38 +137,6 @@ export class StreamSession {
   ) {
     this.onDisconnected = onDisconnected;
     this.keepTabAudible = options?.keepTabAudible ?? false;
-    this.audioContext = new AudioContext({
-      sampleRate: encoderConfig.sampleRate,
-      latencyHint: 'playback',
-    });
-
-    // Check if browser honored our sample rate request
-    const actualSampleRate = this.audioContext.sampleRate;
-    if (actualSampleRate !== encoderConfig.sampleRate) {
-      if (isSupportedSampleRate(actualSampleRate)) {
-        // Browser gave us a different but supported rate
-        log.warn(
-          `Sample rate mismatch: requested ${encoderConfig.sampleRate}Hz, got ${actualSampleRate}Hz.`,
-        );
-        this.encoderConfig = {
-          ...encoderConfig,
-          sampleRate: actualSampleRate,
-        };
-      } else {
-        // Non-supported rate (e.g., 96kHz from pro audio interface)
-        const targetRate = getNearestSupportedSampleRate(actualSampleRate);
-        log.warn(
-          `Non-standard sample rate: ${actualSampleRate}Hz. ` +
-            `Would need resampling to ${targetRate}Hz (not yet implemented).`,
-        );
-        // For now, proceed with the target rate and hope AudioContext resamples
-        this.encoderConfig = {
-          ...encoderConfig,
-          sampleRate: targetRate,
-        };
-      }
-    }
-
     this.ringBuffer = createAudioRingBuffer();
 
     this.streamReadyPromise = new Promise<void>((resolve) => {
@@ -194,6 +162,31 @@ export class StreamSession {
    * Sets up the Web Audio graph and loads the AudioWorklet.
    */
   private async setupAudioPipeline(): Promise<void> {
+    // Create AudioContext - browser may give us a different sample rate than requested
+    this.audioContext = new AudioContext({
+      sampleRate: this.encoderConfig.sampleRate,
+      latencyHint: 'playback',
+    });
+
+    // Validate sample rate - browser may not honor our request
+    const actualSampleRate = this.audioContext.sampleRate;
+    if (actualSampleRate !== this.encoderConfig.sampleRate) {
+      if (isSupportedSampleRate(actualSampleRate)) {
+        // Browser gave us a different but supported rate - adjust config
+        log.warn(
+          `Sample rate: requested ${this.encoderConfig.sampleRate}Hz, got ${actualSampleRate}Hz`,
+        );
+        this.encoderConfig = { ...this.encoderConfig, sampleRate: actualSampleRate };
+      } else {
+        // Unsupported rate (e.g., 96kHz from pro audio interface) - reject
+        log.error(
+          `Unsupported sample rate: ${actualSampleRate}Hz. ` +
+            `Supported rates: 48000, 44100, 32000, 24000, 22050, 16000, 11025, 8000`,
+        );
+        throw new Error('error_unsupported_sample_rate');
+      }
+    }
+
     const workletUrl = chrome.runtime.getURL('pcm-processor.js');
     await this.audioContext.audioWorklet.addModule(workletUrl);
 
@@ -242,6 +235,9 @@ export class StreamSession {
 
     // Monitor AudioContext state changes (suspension, interruption, etc.)
     this.audioContext.onstatechange = () => {
+      // Guard for TypeScript - audioContext is always set when this callback fires
+      if (!this.audioContext) return;
+
       const state = this.audioContext.state;
       log.warn(`AudioContext state changed: ${state}`);
 
@@ -250,7 +246,7 @@ export class StreamSession {
         this.audioContext
           .resume()
           .then(() => {
-            log.info(`AudioContext resumed, new state: ${this.audioContext.state}`);
+            log.info(`AudioContext resumed, new state: ${this.audioContext?.state}`);
           })
           .catch((err) => {
             log.error('Failed to resume AudioContext:', err);
@@ -302,6 +298,9 @@ export class StreamSession {
     this.stopHeartbeatChecker();
 
     this.heartbeatCheckTimer = setInterval(() => {
+      // Guard for TypeScript - audioContext is always set when heartbeat checker runs
+      if (!this.audioContext) return;
+
       const now = performance.now();
       const timeSinceHeartbeat = now - this.lastWorkletHeartbeat;
 
@@ -516,7 +515,7 @@ export class StreamSession {
     this.sourceNode?.disconnect();
     this.workletNode?.disconnect();
     this.outputGainNode?.disconnect();
-    this.audioContext.close().catch(noop);
+    this.audioContext?.close().catch(noop);
     this.mediaStream.getTracks().forEach((t) => t.stop());
   }
 

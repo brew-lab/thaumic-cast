@@ -30,6 +30,7 @@
   "error_load_settings": "Settings declined to be loaded",
   "error_save_settings": "Settings declined to be saved",
   "error_codec_detection": "Audio capabilities remain mysterious",
+  "error_unsupported_sample_rate": "Your audio hardware speaks an unfamiliar dialect. Try 48kHz or 44.1kHz in system settings.",
 
   "auto_stop_source_changed": "Sonos has been distracted by something else",
   "auto_stop_stream_ended": "The stream has concluded its journey",

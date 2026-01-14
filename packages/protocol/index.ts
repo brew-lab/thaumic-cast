@@ -71,33 +71,6 @@ export function isSupportedSampleRate(rate: number): rate is SupportedSampleRate
 }
 
 /**
- * Gets the nearest supported sample rate for resampling.
- * Prefers 48kHz family for rates >= 48kHz, otherwise finds closest match.
- * @param rate - The actual sample rate from the audio device
- * @returns The nearest supported sample rate
- */
-export function getNearestSupportedSampleRate(rate: number): SupportedSampleRate {
-  if (isSupportedSampleRate(rate)) {
-    return rate;
-  }
-  // For high sample rates (96k, 192k, etc.), downsample to 48kHz
-  if (rate >= 48000) {
-    return 48000;
-  }
-  // Find the closest supported rate
-  let closest: SupportedSampleRate = SUPPORTED_SAMPLE_RATES[0];
-  let minDiff = Math.abs(rate - closest);
-  for (const supported of SUPPORTED_SAMPLE_RATES) {
-    const diff = Math.abs(rate - supported);
-    if (diff < minDiff) {
-      minDiff = diff;
-      closest = supported;
-    }
-  }
-  return closest;
-}
-
-/**
  * Latency mode for encoder operation.
  * - 'quality': Prioritize audio quality (default, best for music)
  * - 'realtime': Prioritize encoding speed, may sacrifice quality (for low-end devices)
