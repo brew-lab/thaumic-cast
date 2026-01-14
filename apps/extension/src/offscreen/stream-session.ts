@@ -40,7 +40,7 @@ const STALL_LOG_BACKOFF_INTERVAL = 5000;
 const HEALTHY_STATS_LOG_INTERVAL = 30000;
 
 /** Minimum gain value to keep Chrome's audio detection active without audible sound. */
-const KEEP_AUDIBLE_GAIN = 0.01;
+const KEEP_AUDIBLE_GAIN = 0.0001;
 
 /**
  * Manages an active capture session from a browser tab.
