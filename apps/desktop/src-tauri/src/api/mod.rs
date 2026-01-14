@@ -52,6 +52,8 @@ impl AppState {
     /// as the application cannot function without the streaming runtime.
     pub fn new() -> Self {
         let config = Config::default();
+        // Note: handle() initializes the global runtime. If you need to use
+        // tauri::async_runtime::set() for a custom runtime, call it before this.
         let handle = tauri::async_runtime::handle().inner().clone();
         let services = bootstrap_services(&config, handle)
             .expect("Failed to bootstrap services - streaming runtime initialization failed");
