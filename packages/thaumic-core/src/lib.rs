@@ -40,6 +40,7 @@ pub mod events;
 pub mod lifecycle;
 pub mod protocol_constants;
 pub mod runtime;
+pub mod services;
 pub mod sonos;
 pub mod state;
 pub mod stream;
@@ -54,7 +55,7 @@ pub use events::{
 };
 pub use lifecycle::{Lifecycle, NoopLifecycle, ServerLifecycle};
 pub use runtime::{TaskSpawner, TokioSpawner};
-pub use state::{Config, CoreState, StreamingConfig};
+pub use state::{Config, CoreState, ManualSpeakerConfig, SonosState, StreamingConfig};
 pub use utils::now_millis;
 
 // Re-export Sonos types
