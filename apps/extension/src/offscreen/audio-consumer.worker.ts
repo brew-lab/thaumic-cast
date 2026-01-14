@@ -773,6 +773,7 @@ async function consumeLoop(): Promise<void> {
         BACKPRESSURE_BACKOFF_INITIAL_MS,
         BACKPRESSURE_BACKOFF_MAX_MS,
       );
+      maybePostStats();
       await yieldMacrotask(backoffMs);
       continue;
     }
