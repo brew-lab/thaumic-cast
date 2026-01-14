@@ -407,7 +407,7 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/playback/start", post(handle_start_playback))
         .route("/api/speakers/:ip/volume", get(get_volume).post(set_volume))
         .route("/api/speakers/:ip/mute", get(get_mute).post(set_mute))
-        .route("/api/sonos/notify", any(handle_gena_notify))
+        .route("/sonos/gena", any(handle_gena_notify))
         .route("/stream/:id/live", get(stream_audio))
         .route("/stream/:id/live.wav", get(stream_audio))
         .route("/stream/:id/live.flac", get(stream_audio))
