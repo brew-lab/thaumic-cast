@@ -71,6 +71,13 @@ pub const MAX_GENA_BODY_SIZE: usize = 64 * 1024;
 /// where consistency matters more than translation.
 pub const APP_NAME: &str = "Thaumic Cast";
 
+/// Service identifier used for discovery (health endpoint).
+///
+/// The extension probes /health and expects this exact string to identify
+/// a valid Thaumic Cast server. Generic name since the core runs in both
+/// desktop app and standalone server.
+pub const SERVICE_ID: &str = "thaumic-cast";
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Streaming Configuration Constants
 // ─────────────────────────────────────────────────────────────────────────────

@@ -33,7 +33,7 @@ use crate::api::AppState;
 use crate::error::{ThaumicError, ThaumicResult};
 use crate::protocol_constants::{
     APP_NAME, HTTP_PREFILL_DELAY_MS, ICY_METAINT, MAX_CADENCE_QUEUE_SIZE, MAX_GENA_BODY_SIZE,
-    SILENCE_FRAME_DURATION_MS, WAV_STREAM_SIZE_MAX,
+    SERVICE_ID, SILENCE_FRAME_DURATION_MS, WAV_STREAM_SIZE_MAX,
 };
 use crate::stream::{create_wav_header, AudioCodec, IcyMetadataInjector, TaggedFrame};
 
@@ -428,7 +428,7 @@ async fn health_check(State(state): State<AppState>) -> impl IntoResponse {
     let max_streams = state.config.read().streaming.max_concurrent_streams;
     api_success(json!({
         "status": "ok",
-        "service": APP_NAME,
+        "service": SERVICE_ID,
         "limits": {
             "maxStreams": max_streams
         }

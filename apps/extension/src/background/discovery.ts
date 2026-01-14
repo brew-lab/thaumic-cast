@@ -55,7 +55,7 @@ async function probeUrl(url: string): Promise<DiscoveredApp | null> {
     if (response.ok) {
       const data = await response.json();
 
-      if (data.service === 'thaumic-cast-desktop') {
+      if (data.service === 'thaumic-cast') {
         return {
           url,
           maxStreams: data.limits?.maxStreams || DEFAULT_MAX_CONCURRENT_STREAMS,
