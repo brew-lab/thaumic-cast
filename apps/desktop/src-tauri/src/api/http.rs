@@ -91,7 +91,7 @@ fn create_wav_stream_with_silence(
                         Ok(frame) => {
                             if in_metronome_mode {
                                 if let Some(start) = silence_start.take() {
-                                    log::debug!(
+                                    log::info!(
                                         "[Stream] Exiting silence mode after {:.1}s",
                                         start.elapsed().as_secs_f32()
                                     );
@@ -121,7 +121,7 @@ fn create_wav_stream_with_silence(
 
                 // Branch 2: Watchdog timeout (only in watchdog mode)
                 _ = &mut watchdog, if !in_metronome_mode => {
-                    log::debug!(
+                    log::info!(
                         "[Stream] No data for {}ms, entering silence mode",
                         SILENCE_INJECTION_TIMEOUT_MS
                     );
@@ -158,6 +158,10 @@ struct DeliveryStats {
     last_delivery: Option<Instant>,
     max_gap_ms: u64,
     gaps_over_threshold: u64,
+    /// Number of times silence mode was entered
+    silence_events: u64,
+    /// Total silence frames injected
+    silence_frames: u64,
 }
 
 impl LoggingStreamGuard {
@@ -176,8 +180,20 @@ impl LoggingStreamGuard {
                 last_delivery: None,
                 max_gap_ms: 0,
                 gaps_over_threshold: 0,
+                silence_events: 0,
+                silence_frames: 0,
             }),
         }
+    }
+
+    /// Records that silence mode was entered.
+    fn record_silence_event(&self) {
+        self.delivery_stats.lock().silence_events += 1;
+    }
+
+    /// Records a silence frame being sent.
+    fn record_silence_frame(&self) {
+        self.delivery_stats.lock().silence_frames += 1;
     }
 
     fn record_frame(&self) {
@@ -224,28 +240,55 @@ impl Drop for LoggingStreamGuard {
         let first_error = self.first_error.get_mut();
         let stats = self.delivery_stats.get_mut();
 
+        // Calculate time since last frame delivery
+        let final_gap_ms = stats
+            .last_delivery
+            .map(|t| t.elapsed().as_millis() as u64)
+            .unwrap_or(0);
+        let stalled_suffix = if final_gap_ms > DELIVERY_GAP_LOG_THRESHOLD_MS {
+            " (stalled)"
+        } else {
+            ""
+        };
+
+        // Build silence stats string if any silence was injected
+        let silence_info = if stats.silence_events > 0 {
+            format!(
+                ", silence_events={}, silence_frames={}",
+                stats.silence_events, stats.silence_frames
+            )
+        } else {
+            String::new()
+        };
+
         if let Some(ref err) = *first_error {
             log::warn!(
-                "[Stream] HTTP stream ended with error: stream={}, client={}, frames_sent={}, \
-                 max_gap={}ms, gaps_over_{}ms={}, error={}",
+                "[Stream] HTTP stream ended with error{}: stream={}, client={}, frames_sent={}, \
+                 max_gap={}ms, gaps_over_{}ms={}, final_gap={}ms{}, error={}",
+                stalled_suffix,
                 self.stream_id,
                 self.client_ip,
                 frames,
                 stats.max_gap_ms,
                 DELIVERY_GAP_THRESHOLD_MS,
                 stats.gaps_over_threshold,
+                final_gap_ms,
+                silence_info,
                 err
             );
         } else {
             log::info!(
-                "[Stream] HTTP stream ended normally: stream={}, client={}, frames_sent={}, \
-                 max_gap={}ms, gaps_over_{}ms={}",
+                "[Stream] HTTP stream ended normally{}: stream={}, client={}, frames_sent={}, \
+                 max_gap={}ms, gaps_over_{}ms={}, final_gap={}ms{}",
+                stalled_suffix,
                 self.stream_id,
                 self.client_ip,
                 frames,
                 stats.max_gap_ms,
                 DELIVERY_GAP_THRESHOLD_MS,
-                stats.gaps_over_threshold
+                stats.gaps_over_threshold,
+                final_gap_ms,
+                silence_info
             );
         }
     }
@@ -693,8 +736,33 @@ async fn stream_audio(
         builder = builder.header(header::CONTENT_LENGTH, WAV_STREAM_SIZE_MAX.to_string());
     }
 
-    // Unwrap TaggedFrame to Bytes after epoch hook, before final stream processing
-    let unwrapped_stream = tracked_stream.map(|res| res.map(TaggedFrame::into_bytes));
+    // Create logging guard early so we can track silence stats during TaggedFrame processing.
+    // Uses Arc so it can be shared between the silence tracking and final frame recording.
+    let guard = Arc::new(LoggingStreamGuard::new(id.to_string(), remote_ip));
+
+    // Unwrap TaggedFrame to Bytes, tracking silence events/frames for the final summary.
+    // This must happen before the TaggedFrame type information is lost.
+    let guard_for_silence = Arc::clone(&guard);
+    let mut silence_event_recorded = false;
+    let unwrapped_stream = tracked_stream.map(move |res| {
+        if let Ok(ref frame) = res {
+            match frame {
+                TaggedFrame::Silence(_) => {
+                    // Record first silence frame as an "event" (entering silence mode)
+                    if !silence_event_recorded {
+                        guard_for_silence.record_silence_event();
+                        silence_event_recorded = true;
+                    }
+                    guard_for_silence.record_silence_frame();
+                }
+                TaggedFrame::Audio(_) => {
+                    // Reset so next silence burst counts as new event
+                    silence_event_recorded = false;
+                }
+            }
+        }
+        res.map(TaggedFrame::into_bytes)
+    });
 
     // Apply ICY injection or WAV header to the unwrapped stream
     let inner_stream: AudioStream = if wants_icy {
@@ -718,13 +786,13 @@ async fn stream_audio(
         Box::pin(unwrapped_stream)
     };
 
-    // Wrap stream with logging guard to track when/why it ends.
-    // The guard is moved into the closure and logs on drop when stream ends.
-    let guard = LoggingStreamGuard::new(id.to_string(), remote_ip);
+    // Wrap stream with logging guard to track delivery timing and errors.
+    // The guard logs summary stats on drop when the stream ends.
+    let guard_for_frames = Arc::clone(&guard);
     let final_stream: AudioStream = Box::pin(inner_stream.map(move |res| {
         match &res {
-            Ok(_) => guard.record_frame(),
-            Err(e) => guard.record_error(&e.to_string()),
+            Ok(_) => guard_for_frames.record_frame(),
+            Err(e) => guard_for_frames.record_error(&e.to_string()),
         }
         res
     }));
