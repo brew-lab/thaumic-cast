@@ -52,7 +52,8 @@ impl AppState {
     /// as the application cannot function without the streaming runtime.
     pub fn new() -> Self {
         let config = Config::default();
-        let services = bootstrap_services(&config)
+        let handle = tauri::async_runtime::handle().inner().clone();
+        let services = bootstrap_services(&config, handle)
             .expect("Failed to bootstrap services - streaming runtime initialization failed");
 
         // Create Tauri event emitter and set it on the bridge

@@ -54,18 +54,6 @@ impl TokioSpawner {
     pub fn new(handle: tokio::runtime::Handle) -> Self {
         Self { handle }
     }
-
-    /// Creates a new `TokioSpawner` using the current runtime's handle.
-    ///
-    /// # Panics
-    ///
-    /// Panics if called outside of a Tokio runtime context.
-    #[must_use]
-    pub fn current() -> Self {
-        Self {
-            handle: tokio::runtime::Handle::current(),
-        }
-    }
 }
 
 impl TaskSpawner for TokioSpawner {
@@ -85,7 +73,7 @@ mod tests {
 
     #[tokio::test]
     async fn tokio_spawner_executes_task() {
-        let spawner = TokioSpawner::current();
+        let spawner = TokioSpawner::new(tokio::runtime::Handle::current());
         let executed = Arc::new(AtomicBool::new(false));
         let executed_clone = executed.clone();
 

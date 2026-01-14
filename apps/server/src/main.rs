@@ -76,7 +76,8 @@ async fn main() -> Result<()> {
 
     // Bootstrap services with explicit network configuration
     let core_config = config.to_core_config();
-    let services = bootstrap_services_with_network(&core_config, network)
+    let handle = tokio::runtime::Handle::current();
+    let services = bootstrap_services_with_network(&core_config, network, handle)
         .context("Failed to bootstrap services")?;
 
     log::info!("Services bootstrapped successfully");

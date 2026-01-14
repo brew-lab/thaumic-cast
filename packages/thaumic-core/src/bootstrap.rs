@@ -122,6 +122,7 @@ fn create_http_client() -> Client {
 ///
 /// # Arguments
 /// * `config` - Application configuration
+/// * `runtime_handle` - Tokio runtime handle for spawning background tasks
 ///
 /// # Returns
 ///
@@ -130,12 +131,15 @@ fn create_http_client() -> Client {
 /// # Errors
 ///
 /// Returns an error if the streaming runtime fails to start or IP detection fails.
-pub fn bootstrap_services(config: &Config) -> ThaumicResult<BootstrappedServices> {
+pub fn bootstrap_services(
+    config: &Config,
+    runtime_handle: tokio::runtime::Handle,
+) -> ThaumicResult<BootstrappedServices> {
     let ip_detector = LocalIpDetector::arc();
     let network = NetworkContext::auto_detect(0, ip_detector)
         .map_err(|e| ThaumicError::Internal(format!("Failed to detect local IP: {}", e)))?;
 
-    bootstrap_services_with_network(config, network)
+    bootstrap_services_with_network(config, network, runtime_handle)
 }
 
 /// Bootstraps all application services with an explicit network configuration.
@@ -146,6 +150,7 @@ pub fn bootstrap_services(config: &Config) -> ThaumicResult<BootstrappedServices
 /// # Arguments
 /// * `config` - Application configuration
 /// * `network` - Pre-configured network context
+/// * `runtime_handle` - Tokio runtime handle for spawning background tasks
 ///
 /// # Returns
 ///
@@ -157,14 +162,15 @@ pub fn bootstrap_services(config: &Config) -> ThaumicResult<BootstrappedServices
 pub fn bootstrap_services_with_network(
     config: &Config,
     network: NetworkContext,
+    runtime_handle: tokio::runtime::Handle,
 ) -> ThaumicResult<BootstrappedServices> {
     // Create dedicated streaming runtime first (high-priority threads)
     let streaming_runtime = Arc::new(StreamingRuntime::new().map_err(|e| {
         ThaumicError::Internal(format!("Failed to create streaming runtime: {}", e))
     })?);
 
-    // Create task spawner from current runtime
-    let spawner = TokioSpawner::current();
+    // Create task spawner with explicit handle
+    let spawner = TokioSpawner::new(runtime_handle);
 
     // Create shared HTTP client for connection pooling
     let http_client = create_http_client();
