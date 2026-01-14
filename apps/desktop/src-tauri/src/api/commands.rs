@@ -25,6 +25,8 @@ pub struct AppStats {
     pub local_ip: String,
     /// Current server port.
     pub port: u16,
+    /// Maximum concurrent streams allowed.
+    pub max_streams: usize,
 }
 
 /// Discovers Sonos speakers on the network.
@@ -63,6 +65,7 @@ pub async fn get_stats(state: tauri::State<'_, AppState>) -> Result<AppStats, Co
         stream_count: state.services.stream_coordinator.stream_count(),
         local_ip: state.services.network.get_local_ip(),
         port: state.services.network.get_port(),
+        max_streams: state.config.read().streaming.max_concurrent_streams,
     })
 }
 

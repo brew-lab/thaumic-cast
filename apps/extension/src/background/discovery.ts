@@ -14,6 +14,7 @@
  * - WebSocket lifecycle (handled by offscreen-manager.ts)
  */
 
+import { DEFAULT_MAX_CONCURRENT_STREAMS } from '@thaumic-cast/protocol';
 import { createLogger } from '@thaumic-cast/shared';
 import { loadExtensionSettings } from '../lib/settings';
 import { getConnectionState, setDesktopApp } from './connection-state';
@@ -41,11 +42,6 @@ export interface DiscoveredApp {
 const CACHE_TTL = 5 * 60 * 1000;
 
 /**
- * Default fallback stream limit if not provided by server.
- */
-const DEFAULT_MAX_STREAMS = 5;
-
-/**
  * Probes a specific URL to check if it's a valid Thaumic Cast Desktop App.
  * @param url - The URL to probe
  * @returns Discovered app info or null if not valid
@@ -62,7 +58,7 @@ async function probeUrl(url: string): Promise<DiscoveredApp | null> {
       if (data.service === 'thaumic-cast-desktop') {
         return {
           url,
-          maxStreams: data.limits?.maxStreams || DEFAULT_MAX_STREAMS,
+          maxStreams: data.limits?.maxStreams || DEFAULT_MAX_CONCURRENT_STREAMS,
         };
       }
     }
@@ -118,7 +114,7 @@ export async function discoverDesktopApp(force = false): Promise<DiscoveredApp |
         if (response.ok) {
           return {
             url: connState.desktopAppUrl,
-            maxStreams: connState.maxStreams ?? DEFAULT_MAX_STREAMS,
+            maxStreams: connState.maxStreams ?? DEFAULT_MAX_CONCURRENT_STREAMS,
           };
         }
       } catch {

@@ -1,5 +1,21 @@
 import { z } from 'zod';
 
+// ─────────────────────────────────────────────────────────────────────────────
+// System Defaults
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Default maximum concurrent streams.
+ *
+ * This value should match the Rust default in `thaumic-core/src/state.rs`.
+ * Used as a fallback when the server's actual limit is unavailable.
+ */
+export const DEFAULT_MAX_CONCURRENT_STREAMS = 10;
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Audio Codecs
+// ─────────────────────────────────────────────────────────────────────────────
+
 /**
  * Audio codecs supported by Sonos speakers.
  * This list includes all codecs that:
