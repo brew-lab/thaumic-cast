@@ -11,7 +11,10 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use crate::api::AppState;
-use crate::config::{WS_HEARTBEAT_CHECK_INTERVAL_SECS, WS_HEARTBEAT_TIMEOUT_SECS};
+use crate::config::{
+    DEFAULT_STREAMING_BUFFER_MS, MAX_STREAMING_BUFFER_MS, MIN_STREAMING_BUFFER_MS,
+    WS_HEARTBEAT_CHECK_INTERVAL_SECS, WS_HEARTBEAT_TIMEOUT_SECS,
+};
 use crate::services::StreamCoordinator;
 use crate::stream::{AudioCodec, AudioFormat, Passthrough, StreamMetadata, Transcoder};
 
@@ -129,6 +132,8 @@ struct EncoderConfig {
     bitrate: Option<u32>,
     sample_rate: Option<u32>,
     channels: Option<u8>,
+    /// Streaming buffer size in milliseconds (100-1000). Only affects PCM codec.
+    streaming_buffer_ms: Option<u64>,
 }
 
 /// Handshake request payload from client.
@@ -360,23 +365,33 @@ fn handle_handshake(state: &AppState, payload: HandshakeRequest) -> HandshakeRes
         .and_then(|c| c.channels)
         .unwrap_or(2);
 
+    // Extract streaming buffer with bounds validation
+    let streaming_buffer_ms = payload
+        .encoder_config
+        .as_ref()
+        .and_then(|c| c.streaming_buffer_ms)
+        .unwrap_or(DEFAULT_STREAMING_BUFFER_MS)
+        .clamp(MIN_STREAMING_BUFFER_MS, MAX_STREAMING_BUFFER_MS);
+
     // Bit depth is always 16: the extension uses Web Audio API which outputs
     // 32-bit float samples, but we convert to 16-bit PCM before sending.
     // This matches the WAV header generation and silence frame calculations.
     let audio_format = AudioFormat::new(sample_rate, channels as u16, 16);
 
     log::info!(
-        "[WS] Creating stream: input={:?}, output={:?}, format={:?}",
+        "[WS] Creating stream: input={:?}, output={:?}, format={:?}, buffer={}ms",
         codec_str,
         output_codec,
-        audio_format
+        audio_format,
+        streaming_buffer_ms
     );
 
-    match state
-        .services
-        .stream_coordinator
-        .create_stream(output_codec, audio_format, transcoder)
-    {
+    match state.services.stream_coordinator.create_stream(
+        output_codec,
+        audio_format,
+        transcoder,
+        streaming_buffer_ms,
+    ) {
         Ok(id) => HandshakeResult::Success(id),
         Err(e) => HandshakeResult::Error(e),
     }

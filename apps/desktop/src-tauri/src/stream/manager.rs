@@ -231,6 +231,9 @@ pub struct StreamState {
     transcoder: Arc<dyn Transcoder>,
     /// Timing information for latency measurement.
     pub timing: StreamTiming,
+    /// Streaming buffer size in milliseconds (100-1000, default 200).
+    /// Used to calculate cadence queue size for WAV streams.
+    pub streaming_buffer_ms: u64,
 }
 
 impl StreamState {
@@ -243,6 +246,7 @@ impl StreamState {
     /// * `transcoder` - Transcoder for converting input to output format
     /// * `buffer_frames` - Maximum frames to buffer for late-joining clients
     /// * `channel_capacity` - Capacity of the broadcast channel for audio frames
+    /// * `streaming_buffer_ms` - Streaming buffer size in milliseconds (100-1000)
     pub fn new(
         id: String,
         codec: AudioCodec,
@@ -250,14 +254,16 @@ impl StreamState {
         transcoder: Arc<dyn Transcoder>,
         buffer_frames: usize,
         channel_capacity: usize,
+        streaming_buffer_ms: u64,
     ) -> Self {
         let (tx, _) = broadcast::channel(channel_capacity);
         log::debug!(
-            "[Stream] Creating {} with codec {:?}, format {:?}, transcoder: {}",
+            "[Stream] Creating {} with codec {:?}, format {:?}, transcoder: {}, buffer: {}ms",
             id,
             codec,
             audio_format,
-            transcoder.description()
+            transcoder.description(),
+            streaming_buffer_ms
         );
         Self {
             id,
@@ -272,6 +278,7 @@ impl StreamState {
             has_frames: AtomicBool::new(false),
             transcoder,
             timing: StreamTiming::new(),
+            streaming_buffer_ms,
         }
     }
 
@@ -395,11 +402,13 @@ impl StreamManager {
     /// * `codec` - Output codec for HTTP Content-Type (what Sonos receives)
     /// * `audio_format` - Audio format configuration (sample rate, channels, bit depth)
     /// * `transcoder` - Transcoder for converting input to output format
+    /// * `streaming_buffer_ms` - Streaming buffer size in milliseconds (100-1000)
     pub fn create_stream(
         &self,
         codec: AudioCodec,
         audio_format: AudioFormat,
         transcoder: Arc<dyn Transcoder>,
+        streaming_buffer_ms: u64,
     ) -> Result<String, String> {
         if self.streams.len() >= self.config.max_concurrent_streams {
             return Err("Maximum number of concurrent streams reached".to_string());
@@ -413,6 +422,7 @@ impl StreamManager {
             transcoder,
             self.config.buffer_frames,
             self.config.channel_capacity,
+            streaming_buffer_ms,
         ));
         self.streams.insert(id.clone(), state);
         Ok(id)

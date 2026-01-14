@@ -187,6 +187,21 @@ export function AudioSection({
     [settings.customAudioSettings, onUpdate],
   );
 
+  /**
+   * Handles streaming buffer change (PCM only).
+   */
+  const handleStreamingBufferChange = useCallback(
+    async (streamingBufferMs: number) => {
+      await onUpdate({
+        customAudioSettings: {
+          ...settings.customAudioSettings,
+          streamingBufferMs,
+        },
+      });
+    },
+    [settings.customAudioSettings, onUpdate],
+  );
+
   // Get available bitrates for current codec (excluding 0 = lossless)
   const availableBitrates = useMemo(() => {
     if (codecLoading) return [];
@@ -365,6 +380,29 @@ export function AudioSection({
                         <option value="quality">{t('audio_latency_quality')}</option>
                         <option value="realtime">{t('audio_latency_realtime')}</option>
                       </select>
+                    </div>
+                  )}
+
+                  {/* Streaming Buffer - only show for PCM codec */}
+                  {settings.customAudioSettings.codec === 'pcm' && (
+                    <div className={styles.field}>
+                      <label htmlFor="audio-streaming-buffer" className={styles.label}>
+                        {t('audio_streaming_buffer')}
+                      </label>
+                      <select
+                        id="audio-streaming-buffer"
+                        className={styles.select}
+                        value={settings.customAudioSettings.streamingBufferMs}
+                        onChange={(e) =>
+                          handleStreamingBufferChange(Number((e.target as HTMLSelectElement).value))
+                        }
+                      >
+                        <option value={100}>{t('audio_buffer_low')} (100ms)</option>
+                        <option value={200}>{t('audio_buffer_balanced')} (200ms)</option>
+                        <option value={500}>{t('audio_buffer_stable')} (500ms)</option>
+                        <option value={1000}>{t('audio_buffer_max')} (1000ms)</option>
+                      </select>
+                      <span className={styles.hint}>{t('audio_buffer_hint')}</span>
                     </div>
                   )}
                 </div>

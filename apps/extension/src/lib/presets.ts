@@ -43,6 +43,7 @@ function getFallbackConfig(codecSupport: SupportedCodecsResult): EncoderConfig |
     sampleRate: 48000,
     channels: 2,
     latencyMode: 'quality',
+    streamingBufferMs: 200,
   };
 }
 
@@ -106,6 +107,7 @@ function buildConfigFromOption(
     sampleRate,
     channels,
     latencyMode,
+    streamingBufferMs: 200,
   };
 }
 
@@ -156,6 +158,7 @@ export function resolveAudioMode(
         channels: customSettings.channels,
         sampleRate: customSettings.sampleRate,
         latencyMode: customSettings.latencyMode,
+        streamingBufferMs: customSettings.streamingBufferMs ?? 200,
       };
     }
 
@@ -219,6 +222,7 @@ export function getResolvedConfigForDisplay(
         channels: customSettings.channels,
         sampleRate: customSettings.sampleRate,
         latencyMode: customSettings.latencyMode,
+        streamingBufferMs: customSettings.streamingBufferMs ?? 200,
       };
     }
     return null;

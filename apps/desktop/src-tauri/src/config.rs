@@ -69,11 +69,27 @@ pub const HTTP_PREFILL_DELAY_MS: u64 = 250;
 /// This is the atomic unit of silence injected when a timeout occurs.
 pub const SILENCE_FRAME_DURATION_MS: u32 = 20;
 
-/// Maximum frames to buffer for cadence smoothing.
+/// Minimum streaming buffer size (ms).
 ///
-/// The cadence stream queues incoming frames and emits them at a fixed 20ms
-/// cadence. This absorbs input jitter and CPU spikes up to this many frames.
+/// Lower bound for user-configurable streaming buffer. Values below this
+/// provide insufficient jitter absorption for reliable playback.
+pub const MIN_STREAMING_BUFFER_MS: u64 = 100;
+
+/// Maximum streaming buffer size (ms).
 ///
-/// Higher values = absorbs more jitter but adds latency.
-/// At 20ms/frame: 10 frames = 200ms max buffer latency.
-pub const CADENCE_QUEUE_SIZE: usize = 10;
+/// Upper bound for user-configurable streaming buffer. Higher values add
+/// latency without meaningful benefit for typical network conditions.
+pub const MAX_STREAMING_BUFFER_MS: u64 = 1000;
+
+/// Default streaming buffer size (ms).
+///
+/// Balances latency (~200ms) with jitter absorption. Suitable for most
+/// home network conditions.
+pub const DEFAULT_STREAMING_BUFFER_MS: u64 = 200;
+
+/// Maximum cadence queue size (frames).
+///
+/// Derived from `MAX_STREAMING_BUFFER_MS / SILENCE_FRAME_DURATION_MS`.
+/// At 20ms/frame, 1000ms buffer = 50 frames max.
+pub const MAX_CADENCE_QUEUE_SIZE: usize =
+    (MAX_STREAMING_BUFFER_MS / SILENCE_FRAME_DURATION_MS as u64) as usize;

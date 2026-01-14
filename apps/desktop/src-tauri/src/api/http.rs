@@ -31,7 +31,7 @@ use crate::api::response::{api_error, api_ok, api_success};
 use crate::api::ws::ws_handler;
 use crate::api::AppState;
 use crate::config::{
-    CADENCE_QUEUE_SIZE, HTTP_PREFILL_DELAY_MS, MAX_GENA_BODY_SIZE, SILENCE_FRAME_DURATION_MS,
+    HTTP_PREFILL_DELAY_MS, MAX_CADENCE_QUEUE_SIZE, MAX_GENA_BODY_SIZE, SILENCE_FRAME_DURATION_MS,
 };
 use crate::error::{ThaumicError, ThaumicResult};
 use crate::protocol_constants::{APP_NAME, WAV_STREAM_SIZE_MAX};
@@ -62,21 +62,22 @@ fn lagged_error(frames: u64) -> std::io::Error {
 /// Creates a WAV audio stream with fixed-cadence output.
 ///
 /// Maintains real-time 20ms cadence regardless of input timing:
-/// - Incoming frames are queued (bounded to `CADENCE_QUEUE_SIZE`)
+/// - Incoming frames are queued (bounded to `queue_size`)
 /// - Metronome ticks every `SILENCE_FRAME_DURATION_MS` (20ms)
 /// - On each tick: send queued frame if available, else send silence
 ///
 /// This ensures Sonos always receives continuous data, smoothing
-/// over input jitter and CPU spikes up to `CADENCE_QUEUE_SIZE * 20ms`.
+/// over input jitter and CPU spikes up to `queue_size * 20ms`.
 fn create_wav_stream_with_cadence(
     mut rx: broadcast::Receiver<Bytes>,
     silence_frame: Bytes,
     guard: Arc<LoggingStreamGuard>,
+    queue_size: usize,
 ) -> impl Stream<Item = Result<TaggedFrame, std::io::Error>> {
     stream! {
         let cadence_duration = Duration::from_millis(SILENCE_FRAME_DURATION_MS as u64);
 
-        let mut queue: VecDeque<Bytes> = VecDeque::with_capacity(CADENCE_QUEUE_SIZE);
+        let mut queue: VecDeque<Bytes> = VecDeque::with_capacity(queue_size);
         // Start first tick after one cadence period, giving frames time to queue up.
         // This avoids the "first tick is instant" behavior of interval().
         let mut metronome = interval_at(TokioInstant::now() + cadence_duration, cadence_duration);
@@ -128,7 +129,7 @@ fn create_wav_stream_with_cadence(
                 result = rx.recv(), if !rx_closed => {
                     match result {
                         Ok(frame) => {
-                            if queue.len() >= CADENCE_QUEUE_SIZE {
+                            if queue.len() >= queue_size {
                                 // Queue full - drop oldest to maintain bounded latency
                                 queue.pop_front();
                                 guard.record_frame_dropped();
@@ -687,10 +688,18 @@ async fn stream_audio(
         let silence_frame = stream_state
             .audio_format
             .silence_frame(SILENCE_FRAME_DURATION_MS);
+
+        // Calculate queue size from streaming buffer (ceil division)
+        // queue_size = ceil(buffer_ms / frame_ms), clamped to [1, MAX_CADENCE_QUEUE_SIZE]
+        let queue_size = ((stream_state.streaming_buffer_ms + SILENCE_FRAME_DURATION_MS as u64 - 1)
+            / SILENCE_FRAME_DURATION_MS as u64) as usize;
+        let queue_size = queue_size.clamp(1, MAX_CADENCE_QUEUE_SIZE);
+
         Box::pin(create_wav_stream_with_cadence(
             rx,
             silence_frame,
             Arc::clone(&guard),
+            queue_size,
         ))
     } else {
         // Compressed codecs: no silence injection, all frames are real audio
@@ -877,8 +886,10 @@ mod tests {
 
     mod wav_cadence_streaming {
         use super::*;
-        use crate::config::CADENCE_QUEUE_SIZE;
         use std::net::Ipv4Addr;
+
+        /// Default queue size for tests (10 frames = 200ms at 20ms/frame).
+        const TEST_QUEUE_SIZE: usize = 10;
 
         /// Creates a test guard for cadence stream tests.
         fn test_guard() -> Arc<LoggingStreamGuard> {
@@ -895,7 +906,12 @@ mod tests {
             let audio = test_audio_frame();
             let guard = test_guard();
 
-            let mut stream = Box::pin(create_wav_stream_with_cadence(rx, silence.clone(), guard));
+            let mut stream = Box::pin(create_wav_stream_with_cadence(
+                rx,
+                silence.clone(),
+                guard,
+                TEST_QUEUE_SIZE,
+            ));
 
             // Queue some frames before the first tick
             tx.send(audio.clone()).expect("send should succeed");
@@ -938,7 +954,12 @@ mod tests {
             let silence = test_silence_frame();
             let guard = test_guard();
 
-            let mut stream = Box::pin(create_wav_stream_with_cadence(rx, silence.clone(), guard));
+            let mut stream = Box::pin(create_wav_stream_with_cadence(
+                rx,
+                silence.clone(),
+                guard,
+                TEST_QUEUE_SIZE,
+            ));
 
             // Don't send any frames - queue will be empty
 
@@ -978,7 +999,12 @@ mod tests {
             let silence = test_silence_frame();
             let guard = test_guard();
 
-            let mut stream = Box::pin(create_wav_stream_with_cadence(rx, silence.clone(), guard));
+            let mut stream = Box::pin(create_wav_stream_with_cadence(
+                rx,
+                silence.clone(),
+                guard,
+                TEST_QUEUE_SIZE,
+            ));
 
             // Queue 3 frames as a burst
             for i in 0..3 {
@@ -1028,11 +1054,16 @@ mod tests {
             let silence = test_silence_frame();
             let guard = test_guard();
 
-            let mut stream = Box::pin(create_wav_stream_with_cadence(rx, silence.clone(), guard));
+            let mut stream = Box::pin(create_wav_stream_with_cadence(
+                rx,
+                silence.clone(),
+                guard,
+                TEST_QUEUE_SIZE,
+            ));
 
             // Fill the queue to capacity + 2 (should drop 2 oldest)
             // Each frame is marked with its index so we can verify order
-            for i in 0..(CADENCE_QUEUE_SIZE + 2) as u8 {
+            for i in 0..(TEST_QUEUE_SIZE + 2) as u8 {
                 tx.send(Bytes::from(vec![i; 64]))
                     .expect("send should succeed");
             }
@@ -1067,11 +1098,16 @@ mod tests {
             let guard = test_guard();
             let guard_for_check = Arc::clone(&guard);
 
-            let mut stream = Box::pin(create_wav_stream_with_cadence(rx, silence.clone(), guard));
+            let mut stream = Box::pin(create_wav_stream_with_cadence(
+                rx,
+                silence.clone(),
+                guard,
+                TEST_QUEUE_SIZE,
+            ));
 
-            // Overflow queue by CADENCE_QUEUE_SIZE + 3 frames
+            // Overflow queue by TEST_QUEUE_SIZE + 3 frames
             let overflow_count = 3;
-            for i in 0..(CADENCE_QUEUE_SIZE + overflow_count) as u8 {
+            for i in 0..(TEST_QUEUE_SIZE + overflow_count) as u8 {
                 tx.send(Bytes::from(vec![i; 64]))
                     .expect("send should succeed");
             }
@@ -1103,7 +1139,12 @@ mod tests {
             let silence = test_silence_frame();
             let guard = test_guard();
 
-            let mut stream = Box::pin(create_wav_stream_with_cadence(rx, silence.clone(), guard));
+            let mut stream = Box::pin(create_wav_stream_with_cadence(
+                rx,
+                silence.clone(),
+                guard,
+                TEST_QUEUE_SIZE,
+            ));
 
             // Queue some frames
             tx.send(Bytes::from(vec![1; 64]))
@@ -1162,7 +1203,12 @@ mod tests {
             let audio = test_audio_frame();
             let guard = test_guard();
 
-            let mut stream = Box::pin(create_wav_stream_with_cadence(rx, silence.clone(), guard));
+            let mut stream = Box::pin(create_wav_stream_with_cadence(
+                rx,
+                silence.clone(),
+                guard,
+                TEST_QUEUE_SIZE,
+            ));
 
             // First tick with empty queue -> silence
             poll_and_advance(

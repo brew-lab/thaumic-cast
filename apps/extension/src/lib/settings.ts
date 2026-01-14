@@ -51,6 +51,8 @@ export const CustomAudioSettingsSchema = z.object({
   channels: z.union([z.literal(1), z.literal(2)]).default(2),
   sampleRate: SampleRateSchema.default(48000),
   latencyMode: LatencyModeSchema.default('quality'),
+  /** Buffer size for WAV streaming in milliseconds (100-1000). Only affects PCM codec. */
+  streamingBufferMs: z.number().min(100).max(1000).default(200),
 });
 export type CustomAudioSettings = z.infer<typeof CustomAudioSettingsSchema>;
 
@@ -79,6 +81,7 @@ export const ExtensionSettingsSchema = z.object({
     channels: 2,
     sampleRate: 48000,
     latencyMode: 'quality',
+    streamingBufferMs: 200,
   }),
 
   // Video sync: controls visibility of video sync controls in popup (default: false)
@@ -104,6 +107,7 @@ const DEFAULT_EXTENSION_SETTINGS: ExtensionSettings = {
     channels: 2,
     sampleRate: 48000,
     latencyMode: 'quality',
+    streamingBufferMs: 200,
   },
   videoSyncEnabled: false,
   keepTabAudible: false,

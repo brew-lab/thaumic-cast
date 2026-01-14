@@ -164,6 +164,7 @@ impl StreamCoordinator {
     /// * `codec` - Output codec for HTTP Content-Type (what Sonos receives)
     /// * `audio_format` - Audio format configuration (sample rate, channels, bit depth)
     /// * `transcoder` - Transcoder for converting input to output format
+    /// * `streaming_buffer_ms` - Streaming buffer size in milliseconds (100-1000)
     ///
     /// Returns the stream ID on success. Broadcasts a `StreamEvent::Created` event.
     pub fn create_stream(
@@ -171,10 +172,14 @@ impl StreamCoordinator {
         codec: AudioCodec,
         audio_format: AudioFormat,
         transcoder: Arc<dyn Transcoder>,
+        streaming_buffer_ms: u64,
     ) -> Result<String, String> {
-        let stream_id = self
-            .stream_manager
-            .create_stream(codec, audio_format, transcoder)?;
+        let stream_id = self.stream_manager.create_stream(
+            codec,
+            audio_format,
+            transcoder,
+            streaming_buffer_ms,
+        )?;
 
         // Broadcast stream created event
         self.emit_event(StreamEvent::Created {
