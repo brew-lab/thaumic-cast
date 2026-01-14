@@ -163,9 +163,11 @@ export class StreamSession {
    */
   private async setupAudioPipeline(): Promise<void> {
     // Create AudioContext - browser may give us a different sample rate than requested
+    // Use 'interactive' for realtime mode to minimize latency on capable devices
+    // Use 'playback' for quality mode to prioritize power efficiency
     this.audioContext = new AudioContext({
       sampleRate: this.encoderConfig.sampleRate,
-      latencyHint: 'playback',
+      latencyHint: this.encoderConfig.latencyMode === 'realtime' ? 'interactive' : 'playback',
     });
 
     // Validate sample rate - browser may not honor our request
