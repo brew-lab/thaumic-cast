@@ -72,7 +72,7 @@ pub const HTTP_PREFILL_DELAY_MS: u64 = 250;
 /// Lower values = more responsive to gaps but may inject silence too often.
 /// Higher values = less silence injection but risks Sonos disconnect on longer gaps.
 /// swyh-rs defaults to 2000ms; we use 500ms as a balance.
-pub const SILENCE_INJECTION_TIMEOUT_MS: u64 = 500;
+pub const SILENCE_INJECTION_TIMEOUT_MS: u64 = 200;
 
 /// Duration of injected silence frames (ms).
 ///
