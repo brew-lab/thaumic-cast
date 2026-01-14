@@ -129,6 +129,7 @@ impl StreamingRuntime {
     /// Spawns a future on the streaming runtime.
     ///
     /// Use this for latency-sensitive operations like HTTP streaming.
+    #[allow(dead_code)]
     pub fn spawn<F>(&self, future: F) -> tokio::task::JoinHandle<F::Output>
     where
         F: std::future::Future + Send + 'static,

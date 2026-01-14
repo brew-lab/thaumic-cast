@@ -126,11 +126,12 @@ impl AppState {
         // Start background tasks (GENA renewal, topology monitor) on Tauri's runtime
         self.start_background_tasks();
 
-        // Spawn HTTP server on the DEDICATED STREAMING RUNTIME
-        // This runs on high-priority threads to maintain consistent audio cadence
-        // even when the main Tauri runtime is starved (e.g., during UI freezes)
+        // Spawn HTTP server on Tauri's runtime.
+        // The server handles WebSocket, GENA callbacks, and other non-latency-critical traffic.
+        // Only the WAV cadence loop is spawned on the streaming runtime (via handle passed
+        // to create_wav_stream_with_cadence) to isolate timing-critical work.
         let state_clone = self.clone();
-        self.services.streaming_runtime.spawn(async move {
+        tauri::async_runtime::spawn(async move {
             if let Err(e) = start_server(state_clone).await {
                 log::error!("Server error: {}", e);
             }
