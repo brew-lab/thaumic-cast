@@ -39,14 +39,16 @@ These traits decouple core logic from platform-specific implementations:
 ```rust
 use thaumic_core::{bootstrap_services, Config};
 
-// Auto-detect network configuration (for desktop apps)
-let services = bootstrap_services(&Config::default())?;
+// Auto-detect network configuration (for desktop apps with Tauri)
+let handle = tauri::async_runtime::handle().inner().clone();
+let services = bootstrap_services(&Config::default(), handle)?;
 
-// Or with explicit network configuration (for servers)
+// Or with explicit network configuration (for servers in #[tokio::main])
 use thaumic_core::{bootstrap_services_with_network, NetworkContext};
 
+let handle = tokio::runtime::Handle::current();
 let network = NetworkContext::explicit(8080, "192.168.1.100".parse()?);
-let services = bootstrap_services_with_network(&Config::default(), network)?;
+let services = bootstrap_services_with_network(&Config::default(), network, handle)?;
 ```
 
 ### Starting the Server
