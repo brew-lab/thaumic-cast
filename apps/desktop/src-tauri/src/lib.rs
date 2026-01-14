@@ -1,16 +1,15 @@
+//! Thaumic Cast Desktop - Tauri desktop application.
+//!
+//! This crate provides the Tauri desktop wrapper around thaumic-core.
+//! It handles platform-specific concerns like:
+//! - Tauri event emission to the frontend
+//! - System tray integration
+//! - Process priority elevation
+//! - Application lifecycle (restart via Tauri)
+
 mod api;
-mod bootstrap;
-mod config;
-mod context;
 mod error;
-mod events;
-mod protocol_constants;
-mod services;
-mod sonos;
-mod state;
-mod stream;
-mod streaming_runtime;
-mod types;
+mod tauri_emitter;
 mod ui;
 mod utils;
 

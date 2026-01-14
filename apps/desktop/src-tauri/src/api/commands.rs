@@ -2,14 +2,14 @@
 //!
 //! These commands delegate to the service layer - no business logic here.
 
-use crate::api::AppState;
-use crate::error::CommandError;
-use crate::events::NetworkHealth;
-use crate::sonos::discovery::{probe_speaker_by_ip, Speaker};
-use crate::state::ManualSpeakerConfig;
-use crate::types::ZoneGroup;
 use serde::Serialize;
 use tauri::Manager;
+use thaumic_core::{
+    probe_speaker_by_ip, ManualSpeakerConfig, NetworkHealth, PlaybackSession, Speaker, ZoneGroup,
+};
+
+use crate::api::AppState;
+use crate::error::CommandError;
 
 /// Application statistics for the dashboard.
 #[derive(Debug, Serialize)]
@@ -124,9 +124,7 @@ pub fn get_transport_states(
 ///
 /// A playback session indicates a speaker that is currently casting one of our streams.
 #[tauri::command]
-pub fn get_playback_sessions(
-    state: tauri::State<'_, AppState>,
-) -> Vec<crate::services::stream_coordinator::PlaybackSession> {
+pub fn get_playback_sessions(state: tauri::State<'_, AppState>) -> Vec<PlaybackSession> {
     state.services.stream_coordinator.get_all_sessions()
 }
 

@@ -62,8 +62,12 @@ pub use state::{Config, CoreState, ManualSpeakerConfig, SonosState, StreamingCon
 pub use utils::now_millis;
 
 // Re-export Sonos types
+pub use sonos::discovery::{probe_speaker_by_ip, Speaker};
 pub use sonos::types::{TransportState, ZoneGroup};
 pub use sonos::{SonosClient, SonosClientImpl, SonosPlayback, SonosService, SonosTopologyClient};
+
+// Re-export service types
+pub use services::stream_coordinator::PlaybackSession;
 
 // Re-export stream types
 pub use stream::{AudioCodec, AudioFormat, StreamMetadata, TaggedFrame};

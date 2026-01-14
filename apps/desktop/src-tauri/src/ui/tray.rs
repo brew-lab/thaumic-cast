@@ -23,8 +23,9 @@ use tauri::{
 use tauri_plugin_autostart::ManagerExt;
 use thiserror::Error;
 
+use thaumic_core::{BroadcastEvent, StreamEvent};
+
 use crate::api::AppState;
-use crate::events::{BroadcastEvent, StreamEvent};
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Tray State

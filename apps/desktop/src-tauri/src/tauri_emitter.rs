@@ -1,46 +1,41 @@
-//! Bridge implementation that maps domain events to broadcast transport.
+//! Tauri-specific event emitter for forwarding events to the desktop frontend.
 //!
-//! The [`BroadcastEventBridge`] lives at the boundary between domain services
-//! and transport concerns, mapping typed domain events to the WebSocket
-//! broadcast channel and optionally to the Tauri frontend.
+//! This module provides [`TauriEventEmitter`] which implements the
+//! [`EventEmitter`] trait from `thaumic-core` and emits events to the
+//! Tauri frontend via `AppHandle::emit()`.
+
+use std::sync::Arc;
 
 use parking_lot::RwLock;
 use tauri::{AppHandle, Emitter};
-use tokio::sync::broadcast;
+use thaumic_core::{
+    EventEmitter, LatencyEvent, NetworkEvent, SonosEvent, StreamEvent, TopologyEvent,
+};
 
-use super::emitter::EventEmitter;
-use super::{BroadcastEvent, LatencyEvent, NetworkEvent, StreamEvent, TopologyEvent};
-use crate::sonos::gena::SonosEvent;
-
-/// Bridges domain events to the WebSocket broadcast channel and Tauri frontend.
+/// Event emitter that forwards events to the Tauri frontend.
 ///
-/// This adapter implements [`EventEmitter`] by forwarding events to:
-/// 1. A `tokio::sync::broadcast` channel that WebSocket handlers subscribe to
-/// 2. The Tauri frontend via `AppHandle::emit()` (when configured)
+/// This adapter implements [`EventEmitter`] by emitting events to the
+/// Tauri frontend via `AppHandle::emit()`. It's designed to be set as the
+/// external emitter on `BroadcastEventBridge` after the Tauri app is set up.
 ///
 /// # Thread Safety
 ///
-/// The bridge is `Send + Sync` and can be shared across async tasks.
-/// The underlying broadcast sender and RwLock handle concurrent access.
-#[derive(Clone)]
-pub struct BroadcastEventBridge {
-    tx: broadcast::Sender<BroadcastEvent>,
-    app_handle: std::sync::Arc<RwLock<Option<AppHandle>>>,
+/// Uses `RwLock` internally to allow setting the app handle after construction.
+pub struct TauriEventEmitter {
+    app_handle: Arc<RwLock<Option<AppHandle>>>,
 }
 
-impl BroadcastEventBridge {
-    /// Creates a new bridge wrapping the given broadcast sender.
-    pub fn new(tx: broadcast::Sender<BroadcastEvent>) -> Self {
+impl TauriEventEmitter {
+    /// Creates a new TauriEventEmitter without an app handle.
+    ///
+    /// Call `set_app_handle()` after Tauri setup to enable event emission.
+    pub fn new() -> Self {
         Self {
-            tx,
-            app_handle: std::sync::Arc::new(RwLock::new(None)),
+            app_handle: Arc::new(RwLock::new(None)),
         }
     }
 
     /// Sets the Tauri app handle for emitting frontend events.
-    ///
-    /// This enables the bridge to emit events to the Tauri frontend
-    /// in addition to the WebSocket broadcast channel.
     pub fn set_app_handle(&self, handle: AppHandle) {
         *self.app_handle.write() = Some(handle);
     }
@@ -50,7 +45,7 @@ impl BroadcastEventBridge {
         if let Some(handle) = self.app_handle.read().as_ref() {
             if let Err(e) = handle.emit(event_name, payload) {
                 log::warn!(
-                    "[EventBridge] Failed to emit {} to Tauri: {}",
+                    "[TauriEventEmitter] Failed to emit {} to Tauri: {}",
                     event_name,
                     e
                 );
@@ -59,9 +54,14 @@ impl BroadcastEventBridge {
     }
 }
 
-impl EventEmitter for BroadcastEventBridge {
+impl Default for TauriEventEmitter {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl EventEmitter for TauriEventEmitter {
     fn emit_stream(&self, event: StreamEvent) {
-        // Emit to Tauri frontend for UI reactivity
         match &event {
             StreamEvent::Created { stream_id, .. } => {
                 #[derive(serde::Serialize, Clone)]
@@ -128,11 +128,6 @@ impl EventEmitter for BroadcastEventBridge {
                 );
             }
         }
-
-        // Emit to WebSocket broadcast channel
-        if let Err(e) = self.tx.send(BroadcastEvent::Stream(event)) {
-            log::trace!("[EventBridge] No broadcast receivers: {}", e);
-        }
     }
 
     fn emit_sonos(&self, event: SonosEvent) {
@@ -155,15 +150,9 @@ impl EventEmitter for BroadcastEventBridge {
                 },
             );
         }
-
-        // Emit to WebSocket broadcast channel
-        if let Err(e) = self.tx.send(BroadcastEvent::Sonos(event)) {
-            log::trace!("[EventBridge] No broadcast receivers: {}", e);
-        }
     }
 
     fn emit_network(&self, event: NetworkEvent) {
-        // Emit to Tauri frontend for UI reactivity
         match &event {
             NetworkEvent::HealthChanged { health, reason, .. } => {
                 #[derive(serde::Serialize, Clone)]
@@ -181,15 +170,9 @@ impl EventEmitter for BroadcastEventBridge {
                 );
             }
         }
-
-        // Emit to WebSocket broadcast channel
-        if let Err(e) = self.tx.send(BroadcastEvent::Network(event)) {
-            log::trace!("[EventBridge] No broadcast receivers: {}", e);
-        }
     }
 
     fn emit_topology(&self, event: TopologyEvent) {
-        // Emit to Tauri frontend for UI reactivity
         match &event {
             TopologyEvent::GroupsDiscovered { groups, .. } => {
                 #[derive(serde::Serialize, Clone)]
@@ -205,16 +188,10 @@ impl EventEmitter for BroadcastEventBridge {
                 );
             }
         }
-
-        // Emit to WebSocket broadcast channel
-        if let Err(e) = self.tx.send(BroadcastEvent::Topology(event)) {
-            log::trace!("[EventBridge] No broadcast receivers: {}", e);
-        }
     }
 
-    fn emit_latency(&self, event: LatencyEvent) {
-        if let Err(e) = self.tx.send(BroadcastEvent::Latency(event)) {
-            log::trace!("[EventBridge] No broadcast receivers: {}", e);
-        }
+    fn emit_latency(&self, _event: LatencyEvent) {
+        // Latency events are not forwarded to the Tauri frontend
+        // They're only sent to the extension via WebSocket
     }
 }

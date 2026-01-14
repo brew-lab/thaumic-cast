@@ -1,46 +1,40 @@
-//! HTTP/WebSocket API layer.
+//! HTTP/WebSocket API layer for the desktop app.
 //!
-//! This module contains thin handlers that delegate to services.
+//! This module provides the desktop-specific state wrapper and delegates
+//! HTTP handling to thaumic-core.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use parking_lot::RwLock;
-use tauri::AppHandle;
-use thiserror::Error;
+use tauri::{AppHandle, Manager};
+use thaumic_core::{
+    bootstrap_services, AppState as CoreAppState, AppStateBuilder, BootstrappedServices, Config,
+};
 
-use crate::bootstrap::{bootstrap_services, BootstrappedServices};
-use crate::state::Config;
+use crate::tauri_emitter::TauriEventEmitter;
 
 pub mod commands;
-pub mod http;
-pub mod response;
-pub mod ws;
-pub mod ws_connection;
 
-/// Errors that can occur when starting or running the server.
-#[derive(Debug, Error)]
-pub enum ServerError {
-    /// Failed to bind to a TCP port.
-    #[error("Failed to bind to port: {0}")]
-    Bind(#[from] std::io::Error),
+/// Application icon data embedded at compile time.
+static ICON_DATA: &[u8] = include_bytes!("../../icons/icon.png");
 
-    /// No available ports in the specified range.
-    #[error("No available ports in range {start}-{end}")]
-    NoAvailablePort { start: u16, end: u16 },
-}
-
-/// Shared application state for the API layer.
+/// Desktop-specific application state.
 ///
-/// This is a thin wrapper that holds references to services.
-/// All business logic lives in the services themselves.
-/// Lifecycle operations are delegated to `AppLifecycle`.
+/// Wraps thaumic-core's services and adds Tauri-specific functionality:
+/// - TauriEventEmitter for frontend events
+/// - AppHandle for restart and app data directory
+/// - Lifecycle operations (shutdown, restart)
 #[derive(Clone)]
 pub struct AppState {
-    /// All bootstrapped services (sonos client, coordinators, discovery, lifecycle, etc.).
+    /// All bootstrapped services from thaumic-core.
     pub services: BootstrappedServices,
     /// Application configuration.
     pub config: Arc<RwLock<Config>>,
+    /// Tauri event emitter for frontend notifications.
+    pub tauri_emitter: Arc<TauriEventEmitter>,
+    /// Tauri app handle for restart functionality.
+    app_handle: Arc<RwLock<Option<AppHandle>>>,
     /// Whether network services have been started.
     services_started: Arc<AtomicBool>,
 }
@@ -48,7 +42,7 @@ pub struct AppState {
 impl AppState {
     /// Creates a new AppState with initialized services.
     ///
-    /// Delegates to `bootstrap_services()` for dependency wiring.
+    /// Delegates to `thaumic_core::bootstrap_services()` for dependency wiring.
     /// Note: Services are not started automatically. Call `start_services()`
     /// after the user acknowledges the firewall warning or skips onboarding.
     ///
@@ -61,9 +55,17 @@ impl AppState {
         let services = bootstrap_services(&config)
             .expect("Failed to bootstrap services - streaming runtime initialization failed");
 
+        // Create Tauri event emitter and set it on the bridge
+        let tauri_emitter = Arc::new(TauriEventEmitter::new());
+        services
+            .event_bridge
+            .set_external_emitter(Arc::clone(&tauri_emitter) as Arc<dyn thaumic_core::EventEmitter>);
+
         Self {
             services,
             config: Arc::new(RwLock::new(config)),
+            tauri_emitter,
+            app_handle: Arc::new(RwLock::new(None)),
             services_started: Arc::new(AtomicBool::new(false)),
         }
     }
@@ -71,14 +73,14 @@ impl AppState {
     /// Sets the Tauri app handle (called during app setup).
     ///
     /// This propagates the handle to services that need it for:
-    /// - Application restart functionality (AppLifecycle)
-    /// - Emitting frontend events (BroadcastEventBridge)
-    /// - Loading manual speaker configuration (DiscoveryService)
+    /// - Application restart functionality
+    /// - Emitting frontend events
+    /// - Loading manual speaker configuration
     pub fn set_app_handle(&self, handle: AppHandle) {
-        use tauri::Manager;
+        *self.app_handle.write() = Some(handle.clone());
 
-        self.services.lifecycle.set_app_handle(handle.clone());
-        self.services.event_bridge.set_app_handle(handle.clone());
+        // Set app handle on TauriEventEmitter for frontend events
+        self.tauri_emitter.set_app_handle(handle.clone());
 
         // Set app data dir for manual speaker configuration
         match handle.path().app_data_dir() {
@@ -91,9 +93,6 @@ impl AppState {
     }
 
     /// Starts all background services (GENA renewal, topology monitor, latency monitor).
-    ///
-    /// This is called internally by `start_services()`. Prefer using `start_services()`
-    /// which also starts the HTTP server and is idempotent.
     fn start_background_tasks(&self) {
         self.services.discovery_service.start_renewal_task();
         Arc::clone(&self.services.discovery_service).start_topology_monitor();
@@ -108,8 +107,6 @@ impl AppState {
     ///
     /// The HTTP server runs on a dedicated high-priority streaming runtime to ensure
     /// consistent audio delivery even during UI freezes or CPU contention.
-    ///
-    /// This method spawns the HTTP server in a background task and returns immediately.
     pub fn start_services(&self) {
         // Only start once - use compare_exchange for thread safety
         if self
@@ -126,38 +123,67 @@ impl AppState {
         // Start background tasks (GENA renewal, topology monitor) on Tauri's runtime
         self.start_background_tasks();
 
+        // Build the core AppState for the HTTP server
+        let core_state = self.build_core_app_state();
+
         // Spawn HTTP server on the DEDICATED STREAMING RUNTIME
         // This runs on high-priority threads to maintain consistent audio cadence
         // even when the main Tauri runtime is starved (e.g., during UI freezes)
-        let state_clone = self.clone();
         self.services.streaming_runtime.spawn(async move {
-            if let Err(e) = start_server(state_clone).await {
+            if let Err(e) = thaumic_core::start_server(core_state).await {
                 log::error!("Server error: {}", e);
             }
         });
     }
 
+    /// Builds the core AppState for the HTTP server.
+    fn build_core_app_state(&self) -> CoreAppState {
+        AppStateBuilder::new()
+            .sonos(Arc::clone(&self.services.sonos))
+            .stream_coordinator(Arc::clone(&self.services.stream_coordinator))
+            .discovery_service(Arc::clone(&self.services.discovery_service))
+            .sonos_state(Arc::clone(&self.services.sonos_state))
+            .broadcast_tx(self.services.broadcast_tx.clone())
+            .event_bridge(Arc::clone(&self.services.event_bridge))
+            .network(self.services.network.clone())
+            .ws_manager(Arc::clone(&self.services.ws_manager))
+            .latency_monitor(Arc::clone(&self.services.latency_monitor))
+            .config(Arc::clone(&self.config))
+            .icon_data(ICON_DATA)
+            .build()
+    }
+
     /// Graceful shutdown - cleans up all streams and subscriptions.
-    ///
-    /// This performs a complete cleanup:
-    /// 1. Stops all playback and clears all streams
-    /// 2. Unsubscribes from all GENA subscriptions
     pub async fn shutdown(&self) {
-        self.services.lifecycle.shutdown().await;
+        self.services.shutdown().await;
     }
 
     /// Restarts the application with graceful cleanup.
     ///
     /// Performs a full shutdown before restarting to ensure clean state.
     pub async fn restart(&self) {
-        self.services.lifecycle.restart().await;
+        log::info!("[AppState] Restart requested, performing cleanup...");
+
+        // Perform full cleanup
+        self.shutdown().await;
+
+        // Small delay to allow cleanup to propagate
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+
+        // Trigger restart
+        if let Some(handle) = self.app_handle.read().as_ref() {
+            log::info!("[AppState] Restarting application...");
+            tauri::process::restart(&handle.env());
+        } else {
+            log::error!("[AppState] Cannot restart: AppHandle not set");
+        }
     }
 
     /// Clears all active streams without restarting.
     ///
     /// Use this when you need to stop all streaming activity but keep the app running.
     pub async fn clear_all_streams(&self) -> usize {
-        self.services.lifecycle.clear_all_streams().await
+        self.services.clear_all_streams().await
     }
 }
 
@@ -165,43 +191,4 @@ impl Default for AppState {
     fn default() -> Self {
         Self::new()
     }
-}
-
-async fn find_available_port(
-    start: u16,
-    end: u16,
-) -> Result<(u16, tokio::net::TcpListener), ServerError> {
-    for port in start..=end {
-        let addr = std::net::SocketAddr::from(([0, 0, 0, 0], port));
-        match tokio::net::TcpListener::bind(&addr).await {
-            Ok(listener) => return Ok((port, listener)),
-            Err(_) => continue,
-        }
-    }
-    Err(ServerError::NoAvailablePort { start, end })
-}
-
-/// Starts the HTTP server on the configured or auto-discovered port.
-pub async fn start_server(state: AppState) -> Result<(), ServerError> {
-    let preferred_port = state.config.read().preferred_port;
-    let (port, listener) = if preferred_port > 0 {
-        let addr = std::net::SocketAddr::from(([0, 0, 0, 0], preferred_port));
-        (preferred_port, tokio::net::TcpListener::bind(&addr).await?)
-    } else {
-        find_available_port(49400, 49410).await?
-    };
-
-    // Set port and signal waiters
-    state.services.network.set_port(port);
-
-    log::info!("Server listening on http://0.0.0.0:{}", port);
-    let app = http::create_router(state);
-
-    // Use into_make_service_with_connect_info to enable ConnectInfo<SocketAddr> extraction
-    axum::serve(
-        listener,
-        app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
-    )
-    .await?;
-    Ok(())
 }

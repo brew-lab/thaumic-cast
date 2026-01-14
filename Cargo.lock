@@ -4696,6 +4696,7 @@ dependencies = [
  "tauri-plugin-autostart",
  "tauri-plugin-log",
  "tauri-plugin-shell",
+ "thaumic-core",
  "thiserror 1.0.69",
  "tokio",
  "tokio-stream",

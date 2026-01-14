@@ -5,6 +5,8 @@
 //! broadcast channel.
 
 use std::sync::Arc;
+
+use parking_lot::RwLock;
 use tokio::sync::broadcast;
 
 use super::emitter::EventEmitter;
@@ -17,16 +19,17 @@ use crate::sonos::gena::SonosEvent;
 /// a `tokio::sync::broadcast` channel that WebSocket handlers subscribe to.
 ///
 /// For platform-specific emission (e.g., Tauri frontend), the bridge also
-/// forwards to an optional external emitter.
+/// forwards to an optional external emitter that can be set after construction.
 ///
 /// # Thread Safety
 ///
 /// The bridge is `Send + Sync` and can be shared across async tasks.
+/// The external emitter uses `RwLock` to allow setting it after construction.
 #[derive(Clone)]
 pub struct BroadcastEventBridge {
     tx: broadcast::Sender<BroadcastEvent>,
     /// Optional external emitter for platform-specific event delivery
-    external_emitter: Option<Arc<dyn EventEmitter>>,
+    external_emitter: Arc<RwLock<Option<Arc<dyn EventEmitter>>>>,
 }
 
 impl BroadcastEventBridge {
@@ -35,7 +38,7 @@ impl BroadcastEventBridge {
         let (tx, _) = broadcast::channel(capacity);
         Self {
             tx,
-            external_emitter: None,
+            external_emitter: Arc::new(RwLock::new(None)),
         }
     }
 
@@ -43,7 +46,7 @@ impl BroadcastEventBridge {
     pub fn with_sender(tx: broadcast::Sender<BroadcastEvent>) -> Self {
         Self {
             tx,
-            external_emitter: None,
+            external_emitter: Arc::new(RwLock::new(None)),
         }
     }
 
@@ -51,9 +54,16 @@ impl BroadcastEventBridge {
     ///
     /// This is typically used by the desktop app to forward events to the
     /// Tauri frontend in addition to the WebSocket broadcast.
-    pub fn with_external_emitter(mut self, emitter: Arc<dyn EventEmitter>) -> Self {
-        self.external_emitter = Some(emitter);
-        self
+    ///
+    /// Can be called after construction, which is useful when the platform
+    /// handle (e.g., Tauri AppHandle) isn't available until later.
+    pub fn set_external_emitter(&self, emitter: Arc<dyn EventEmitter>) {
+        *self.external_emitter.write() = Some(emitter);
+    }
+
+    /// Clears the external emitter.
+    pub fn clear_external_emitter(&self) {
+        *self.external_emitter.write() = None;
     }
 
     /// Returns a new receiver for the broadcast channel.
@@ -72,7 +82,7 @@ impl BroadcastEventBridge {
 impl EventEmitter for BroadcastEventBridge {
     fn emit_stream(&self, event: StreamEvent) {
         // Forward to external emitter if configured
-        if let Some(ref emitter) = self.external_emitter {
+        if let Some(ref emitter) = *self.external_emitter.read() {
             emitter.emit_stream(event.clone());
         }
 
@@ -84,7 +94,7 @@ impl EventEmitter for BroadcastEventBridge {
 
     fn emit_sonos(&self, event: SonosEvent) {
         // Forward to external emitter if configured
-        if let Some(ref emitter) = self.external_emitter {
+        if let Some(ref emitter) = *self.external_emitter.read() {
             emitter.emit_sonos(event.clone());
         }
 
@@ -96,7 +106,7 @@ impl EventEmitter for BroadcastEventBridge {
 
     fn emit_network(&self, event: NetworkEvent) {
         // Forward to external emitter if configured
-        if let Some(ref emitter) = self.external_emitter {
+        if let Some(ref emitter) = *self.external_emitter.read() {
             emitter.emit_network(event.clone());
         }
 
@@ -108,7 +118,7 @@ impl EventEmitter for BroadcastEventBridge {
 
     fn emit_topology(&self, event: TopologyEvent) {
         // Forward to external emitter if configured
-        if let Some(ref emitter) = self.external_emitter {
+        if let Some(ref emitter) = *self.external_emitter.read() {
             emitter.emit_topology(event.clone());
         }
 
@@ -120,7 +130,7 @@ impl EventEmitter for BroadcastEventBridge {
 
     fn emit_latency(&self, event: LatencyEvent) {
         // Forward to external emitter if configured
-        if let Some(ref emitter) = self.external_emitter {
+        if let Some(ref emitter) = *self.external_emitter.read() {
             emitter.emit_latency(event.clone());
         }
 
