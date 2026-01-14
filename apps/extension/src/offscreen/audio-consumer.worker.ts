@@ -482,6 +482,14 @@ async function connectWebSocket(wsUrl: string, encoderConfig: EncoderConfig): Pr
         reject(new Error('Handshake timeout'));
       }, HANDSHAKE_TIMEOUT_MS);
 
+      // Handle clean close during handshake (overwritten by handleWsClose on success)
+      ws.onclose = (event: CloseEvent) => {
+        clearTimeout(handshakeTimeout);
+        reject(
+          new Error(`WebSocket closed during handshake: ${event.reason || `Code ${event.code}`}`),
+        );
+      };
+
       const handshakeHandler = (event: MessageEvent) => {
         if (typeof event.data !== 'string') return;
 
