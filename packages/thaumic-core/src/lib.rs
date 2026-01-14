@@ -35,6 +35,7 @@
 #![warn(clippy::all)]
 
 pub mod api;
+pub mod bootstrap;
 pub mod context;
 pub mod error;
 pub mod events;
@@ -45,6 +46,7 @@ pub mod services;
 pub mod sonos;
 pub mod state;
 pub mod stream;
+pub mod streaming_runtime;
 pub mod utils;
 
 // Re-export commonly used types at the crate root
@@ -65,3 +67,12 @@ pub use sonos::{SonosClient, SonosClientImpl, SonosPlayback, SonosService, Sonos
 
 // Re-export stream types
 pub use stream::{AudioCodec, AudioFormat, StreamMetadata, TaggedFrame};
+
+// Re-export bootstrap types
+pub use bootstrap::{bootstrap_services, BootstrappedServices};
+
+// Re-export streaming runtime
+pub use streaming_runtime::StreamingRuntime;
+
+// Re-export API types
+pub use api::{start_server, AppState, AppStateBuilder, ServerError, WsConnectionManager};
