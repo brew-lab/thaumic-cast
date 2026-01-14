@@ -2,6 +2,7 @@
 //!
 //! All handlers are thin - they delegate to services for business logic.
 
+use std::collections::VecDeque;
 use std::net::{IpAddr, SocketAddr};
 use std::pin::Pin;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -22,7 +23,7 @@ use futures::stream::{Stream, StreamExt};
 use serde::Deserialize;
 use serde_json::json;
 use tokio::sync::broadcast;
-use tokio::time::{interval, sleep, Instant as TokioInstant, MissedTickBehavior};
+use tokio::time::{interval_at, Instant as TokioInstant, MissedTickBehavior};
 use tokio_stream::wrappers::errors::BroadcastStreamRecvError;
 use tokio_stream::wrappers::BroadcastStream;
 
@@ -30,8 +31,7 @@ use crate::api::response::{api_error, api_ok, api_success};
 use crate::api::ws::ws_handler;
 use crate::api::AppState;
 use crate::config::{
-    HTTP_PREFILL_DELAY_MS, MAX_GENA_BODY_SIZE, SILENCE_FRAME_DURATION_MS,
-    SILENCE_INJECTION_TIMEOUT_MS,
+    CADENCE_QUEUE_SIZE, HTTP_PREFILL_DELAY_MS, MAX_GENA_BODY_SIZE, SILENCE_FRAME_DURATION_MS,
 };
 use crate::error::{ThaumicError, ThaumicResult};
 use crate::protocol_constants::{APP_NAME, WAV_STREAM_SIZE_MAX};
@@ -59,81 +59,96 @@ fn lagged_error(frames: u64) -> std::io::Error {
     std::io::Error::other(format!("lagged by {} frames", frames))
 }
 
-/// Creates a WAV audio stream with stateful silence injection.
+/// Creates a WAV audio stream with fixed-cadence output.
 ///
-/// Two modes:
-/// - **Watchdog**: Wait for data. If no data for SILENCE_INJECTION_TIMEOUT_MS, switch to Metronome.
-/// - **Metronome**: Emit silence every SILENCE_FRAME_DURATION_MS until real audio arrives.
-fn create_wav_stream_with_silence(
+/// Maintains real-time 20ms cadence regardless of input timing:
+/// - Incoming frames are queued (bounded to `CADENCE_QUEUE_SIZE`)
+/// - Metronome ticks every `SILENCE_FRAME_DURATION_MS` (20ms)
+/// - On each tick: send queued frame if available, else send silence
+///
+/// This ensures Sonos always receives continuous data, smoothing
+/// over input jitter and CPU spikes up to `CADENCE_QUEUE_SIZE * 20ms`.
+fn create_wav_stream_with_cadence(
     mut rx: broadcast::Receiver<Bytes>,
     silence_frame: Bytes,
+    guard: Arc<LoggingStreamGuard>,
 ) -> impl Stream<Item = Result<TaggedFrame, std::io::Error>> {
     stream! {
-        let watchdog_duration = Duration::from_millis(SILENCE_INJECTION_TIMEOUT_MS);
-        let metronome_duration = Duration::from_millis(SILENCE_FRAME_DURATION_MS as u64);
+        let cadence_duration = Duration::from_millis(SILENCE_FRAME_DURATION_MS as u64);
 
-        let mut in_metronome_mode = false;
-        let mut silence_start: Option<TokioInstant> = None;
-        let mut watchdog = Box::pin(sleep(watchdog_duration));
-        let mut metronome = interval(metronome_duration);
+        let mut queue: VecDeque<Bytes> = VecDeque::with_capacity(CADENCE_QUEUE_SIZE);
+        // Start first tick after one cadence period, giving frames time to queue up.
+        // This avoids the "first tick is instant" behavior of interval().
+        let mut metronome = interval_at(TokioInstant::now() + cadence_duration, cadence_duration);
         metronome.set_missed_tick_behavior(MissedTickBehavior::Skip);
+
+        let mut rx_closed = false;
+        let mut in_silence = false;
+        let mut silence_start: Option<TokioInstant> = None;
 
         // Rate-limit lagged warnings (max once per second)
         let mut last_lagged_log: Option<TokioInstant> = None;
 
         loop {
+            // Exit when channel closed AND queue drained
+            if rx_closed && queue.is_empty() {
+                break;
+            }
+
             tokio::select! {
                 biased;
 
-                // Branch 1: Real audio (always wins)
-                result = rx.recv() => {
+                // PRIORITY 1: Metronome tick - MUST emit something every 20ms
+                _ = metronome.tick() => {
+                    if let Some(frame) = queue.pop_front() {
+                        // Real audio available
+                        if in_silence {
+                            if let Some(start) = silence_start.take() {
+                                log::info!(
+                                    "[Stream] Exiting silence (cadence) after {:.1}s",
+                                    start.elapsed().as_secs_f32()
+                                );
+                            }
+                            in_silence = false;
+                        }
+                        yield Ok(TaggedFrame::Audio(frame));
+                    } else if !rx_closed {
+                        // No frame available, emit silence
+                        if !in_silence {
+                            log::info!("[Stream] Entering silence (cadence) - queue empty");
+                            in_silence = true;
+                            silence_start = Some(TokioInstant::now());
+                        }
+                        yield Ok(TaggedFrame::Silence(silence_frame.clone()));
+                    }
+                    // If rx_closed and queue empty, don't yield - loop will break
+                }
+
+                // PRIORITY 2: Receive frames into queue (when channel open)
+                result = rx.recv(), if !rx_closed => {
                     match result {
                         Ok(frame) => {
-                            if in_metronome_mode {
-                                if let Some(start) = silence_start.take() {
-                                    log::info!(
-                                        "[Stream] Exiting silence mode after {:.1}s",
-                                        start.elapsed().as_secs_f32()
-                                    );
-                                }
-                                in_metronome_mode = false;
+                            if queue.len() >= CADENCE_QUEUE_SIZE {
+                                // Queue full - drop oldest to maintain bounded latency
+                                queue.pop_front();
+                                guard.record_frame_dropped();
+                                log::trace!("[Stream] Queue full, dropped oldest frame");
                             }
-                            watchdog.as_mut().reset(TokioInstant::now() + watchdog_duration);
-                            yield Ok(TaggedFrame::Audio(frame));
+                            queue.push_back(frame);
                         }
                         Err(broadcast::error::RecvError::Lagged(n)) => {
-                            // Producer was active, consumer couldn't keep up
-                            // Rate-limited logging
                             let now = TokioInstant::now();
                             if last_lagged_log.map_or(true, |t| now.duration_since(t).as_secs() >= 1) {
                                 log::warn!("[Stream] Lagged by {n} frames");
                                 last_lagged_log = Some(now);
                             }
-                            // Reset watchdog (activity detected), don't exit silence mode
-                            watchdog.as_mut().reset(now + watchdog_duration);
-                            continue;
+                            // Continue - next recv will get latest
                         }
                         Err(broadcast::error::RecvError::Closed) => {
-                            break;
+                            rx_closed = true;
+                            log::debug!("[Stream] Channel closed, draining {} queued frames", queue.len());
                         }
                     }
-                }
-
-                // Branch 2: Watchdog timeout (only in watchdog mode)
-                _ = &mut watchdog, if !in_metronome_mode => {
-                    log::info!(
-                        "[Stream] No data for {}ms, entering silence mode",
-                        SILENCE_INJECTION_TIMEOUT_MS
-                    );
-                    in_metronome_mode = true;
-                    silence_start = Some(TokioInstant::now());
-                    metronome.reset();
-                    yield Ok(TaggedFrame::Silence(silence_frame.clone()));
-                }
-
-                // Branch 3: Metronome tick (only in metronome mode)
-                _ = metronome.tick(), if in_metronome_mode => {
-                    yield Ok(TaggedFrame::Silence(silence_frame.clone()));
                 }
             }
         }
@@ -162,6 +177,8 @@ struct DeliveryStats {
     silence_events: u64,
     /// Total silence frames injected
     silence_frames: u64,
+    /// Frames dropped due to cadence queue overflow
+    frames_dropped: u64,
 }
 
 impl LoggingStreamGuard {
@@ -182,6 +199,7 @@ impl LoggingStreamGuard {
                 gaps_over_threshold: 0,
                 silence_events: 0,
                 silence_frames: 0,
+                frames_dropped: 0,
             }),
         }
     }
@@ -194,6 +212,11 @@ impl LoggingStreamGuard {
     /// Records a silence frame being sent.
     fn record_silence_frame(&self) {
         self.delivery_stats.lock().silence_frames += 1;
+    }
+
+    /// Records a frame being dropped due to queue overflow.
+    fn record_frame_dropped(&self) {
+        self.delivery_stats.lock().frames_dropped += 1;
     }
 
     fn record_frame(&self) {
@@ -261,10 +284,17 @@ impl Drop for LoggingStreamGuard {
             String::new()
         };
 
+        // Build dropped frames string if any frames were dropped
+        let dropped_info = if stats.frames_dropped > 0 {
+            format!(", frames_dropped={}", stats.frames_dropped)
+        } else {
+            String::new()
+        };
+
         if let Some(ref err) = *first_error {
             log::warn!(
                 "[Stream] HTTP stream ended with error{}: stream={}, client={}, frames_sent={}, \
-                 max_gap={}ms, gaps_over_{}ms={}, final_gap={}ms{}, error={}",
+                 max_gap={}ms, gaps_over_{}ms={}, final_gap={}ms{}{}, error={}",
                 stalled_suffix,
                 self.stream_id,
                 self.client_ip,
@@ -274,12 +304,13 @@ impl Drop for LoggingStreamGuard {
                 stats.gaps_over_threshold,
                 final_gap_ms,
                 silence_info,
+                dropped_info,
                 err
             );
         } else {
             log::info!(
                 "[Stream] HTTP stream ended normally{}: stream={}, client={}, frames_sent={}, \
-                 max_gap={}ms, gaps_over_{}ms={}, final_gap={}ms{}",
+                 max_gap={}ms, gaps_over_{}ms={}, final_gap={}ms{}{}",
                 stalled_suffix,
                 self.stream_id,
                 self.client_ip,
@@ -288,7 +319,8 @@ impl Drop for LoggingStreamGuard {
                 DELIVERY_GAP_THRESHOLD_MS,
                 stats.gaps_over_threshold,
                 final_gap_ms,
-                silence_info
+                silence_info,
+                dropped_info
             );
         }
     }
@@ -637,21 +669,29 @@ async fn stream_audio(
             .map(|b| Ok(TaggedFrame::Audio(b))),
     );
 
-    // Build live stream - WAV gets silence injection, compressed codecs don't.
+    // Create logging guard early so we can pass it to the cadence stream for drop tracking.
+    // Uses Arc so it can be shared between cadence stream, silence tracking, and final frame recording.
+    let guard = Arc::new(LoggingStreamGuard::new(id.to_string(), remote_ip));
+
+    // Build live stream - WAV gets cadence-based streaming, compressed codecs don't.
     //
     // Why WAV-only: Sonos treats WAV as a "file" requiring continuous data flow.
     // CPU spikes that delay delivery cause Sonos to close the connection.
-    // Injecting PCM silence (zeros) keeps the stream alive.
+    // The cadence stream maintains 20ms output cadence, injecting silence when needed.
     //
     // Compressed codecs (AAC, MP3, FLAC) have their own framing and silence
     // representation - raw zeros would corrupt the stream. These codecs also
     // tend to be more resilient to jitter due to their buffering behavior.
     let live_stream: TaggedStream = if stream_state.codec == AudioCodec::Wav {
-        // WAV: stateful silence injection via watchdog/metronome state machine
+        // WAV: fixed-cadence streaming with queue buffer and silence injection
         let silence_frame = stream_state
             .audio_format
             .silence_frame(SILENCE_FRAME_DURATION_MS);
-        Box::pin(create_wav_stream_with_silence(rx, silence_frame))
+        Box::pin(create_wav_stream_with_cadence(
+            rx,
+            silence_frame,
+            Arc::clone(&guard),
+        ))
     } else {
         // Compressed codecs: no silence injection, all frames are real audio
         Box::pin(BroadcastStream::new(rx).map(|res| match res {
@@ -735,10 +775,6 @@ async fn stream_audio(
     if stream_state.codec == AudioCodec::Wav {
         builder = builder.header(header::CONTENT_LENGTH, WAV_STREAM_SIZE_MAX.to_string());
     }
-
-    // Create logging guard early so we can track silence stats during TaggedFrame processing.
-    // Uses Arc so it can be shared between the silence tracking and final frame recording.
-    let guard = Arc::new(LoggingStreamGuard::new(id.to_string(), remote_ip));
 
     // Unwrap TaggedFrame to Bytes, tracking silence events/frames for the final summary.
     // This must happen before the TaggedFrame type information is lost.
@@ -839,209 +875,322 @@ mod tests {
         time::advance(duration).await;
     }
 
-    mod wav_silence_injection {
+    mod wav_cadence_streaming {
         use super::*;
+        use crate::config::CADENCE_QUEUE_SIZE;
+        use std::net::Ipv4Addr;
 
-        #[tokio::test(start_paused = true)]
-        async fn enters_metronome_mode_after_timeout() {
-            let (tx, rx) = broadcast::channel::<Bytes>(16);
-            let silence = test_silence_frame();
-
-            let mut stream = Box::pin(create_wav_stream_with_silence(rx, silence.clone()));
-
-            // Poll to register timers, then advance past watchdog timeout
-            poll_and_advance(
-                &mut stream.as_mut(),
-                Duration::from_millis(SILENCE_INJECTION_TIMEOUT_MS + 10),
-            )
-            .await;
-
-            // Should receive a silence frame
-            let frame = stream.next().await.expect("stream should yield");
-            let frame = frame.expect("should be Ok");
-            assert!(
-                matches!(frame, TaggedFrame::Silence(_)),
-                "expected Silence frame after timeout, got Audio"
-            );
-
-            drop(tx);
+        /// Creates a test guard for cadence stream tests.
+        fn test_guard() -> Arc<LoggingStreamGuard> {
+            Arc::new(LoggingStreamGuard::new(
+                "test-stream".to_string(),
+                IpAddr::V4(Ipv4Addr::LOCALHOST),
+            ))
         }
 
         #[tokio::test(start_paused = true)]
-        async fn metronome_emits_silence_at_cadence() {
+        async fn emits_frames_at_cadence() {
             let (tx, rx) = broadcast::channel::<Bytes>(16);
             let silence = test_silence_frame();
+            let audio = test_audio_frame();
+            let guard = test_guard();
 
-            let mut stream = Box::pin(create_wav_stream_with_silence(rx, silence.clone()));
+            let mut stream = Box::pin(create_wav_stream_with_cadence(rx, silence.clone(), guard));
 
-            // Enter metronome mode
-            poll_and_advance(
-                &mut stream.as_mut(),
-                Duration::from_millis(SILENCE_INJECTION_TIMEOUT_MS + 10),
-            )
-            .await;
-            let _ = stream.next().await; // consume first silence
+            // Queue some frames before the first tick
+            tx.send(audio.clone()).expect("send should succeed");
+            tx.send(audio.clone()).expect("send should succeed");
 
-            // Poll to register metronome timer, then advance by one tick
+            // Poll to register metronome, advance one tick (20ms)
             poll_and_advance(
                 &mut stream.as_mut(),
                 Duration::from_millis(SILENCE_FRAME_DURATION_MS as u64),
             )
             .await;
 
-            let frame = stream.next().await.expect("stream should yield");
-            let frame = frame.expect("should be Ok");
-            assert!(
-                matches!(frame, TaggedFrame::Silence(_)),
-                "expected Silence frame from metronome tick"
-            );
-
-            // Another tick
-            poll_and_advance(
-                &mut stream.as_mut(),
-                Duration::from_millis(SILENCE_FRAME_DURATION_MS as u64),
-            )
-            .await;
-
-            let frame = stream.next().await.expect("stream should yield");
-            let frame = frame.expect("should be Ok");
-            assert!(
-                matches!(frame, TaggedFrame::Silence(_)),
-                "expected Silence frame from second metronome tick"
-            );
-
-            drop(tx);
-        }
-
-        #[tokio::test(start_paused = true)]
-        async fn exits_metronome_mode_on_real_audio() {
-            let (tx, rx) = broadcast::channel::<Bytes>(16);
-            let silence = test_silence_frame();
-            let audio = test_audio_frame();
-
-            let mut stream = Box::pin(create_wav_stream_with_silence(rx, silence.clone()));
-
-            // Enter metronome mode
-            poll_and_advance(
-                &mut stream.as_mut(),
-                Duration::from_millis(SILENCE_INJECTION_TIMEOUT_MS + 10),
-            )
-            .await;
-            let frame = stream.next().await.expect("stream should yield");
-            assert!(matches!(frame.unwrap(), TaggedFrame::Silence(_)));
-
-            // Send real audio - should exit metronome mode
-            tx.send(audio.clone()).expect("send should succeed");
-
-            let frame = stream.next().await.expect("stream should yield");
-            let frame = frame.expect("should be Ok");
-            assert!(
-                matches!(frame, TaggedFrame::Audio(_)),
-                "expected Audio frame after sending data"
-            );
-
-            // Poll to register watchdog, advance but NOT past timeout
-            poll_and_advance(&mut stream.as_mut(), Duration::from_millis(100)).await;
-
-            // Send more audio - should still be in watchdog mode (not metronome)
-            tx.send(audio.clone()).expect("send should succeed");
-
-            let frame = stream.next().await.expect("stream should yield");
-            let frame = frame.expect("should be Ok");
-            assert!(
-                matches!(frame, TaggedFrame::Audio(_)),
-                "expected Audio frame, watchdog should have reset"
-            );
-
-            drop(tx);
-        }
-
-        #[tokio::test(start_paused = true)]
-        async fn watchdog_resets_on_each_audio_frame() {
-            let (tx, rx) = broadcast::channel::<Bytes>(16);
-            let silence = test_silence_frame();
-            let audio = test_audio_frame();
-
-            let mut stream = Box::pin(create_wav_stream_with_silence(rx, silence.clone()));
-
-            // Poll to register watchdog, advance but not past timeout
-            poll_and_advance(&mut stream.as_mut(), Duration::from_millis(400)).await;
-            tx.send(audio.clone()).expect("send should succeed");
-
-            let frame = stream.next().await.expect("stream should yield");
-            assert!(matches!(frame.unwrap(), TaggedFrame::Audio(_)));
-
-            // Poll to register reset watchdog, advance another 400ms
-            // (total 800ms since start, but only 400ms since last audio)
-            poll_and_advance(&mut stream.as_mut(), Duration::from_millis(400)).await;
-            tx.send(audio.clone()).expect("send should succeed");
-
+            // Should get first audio frame
             let frame = stream.next().await.expect("stream should yield");
             assert!(
                 matches!(frame.unwrap(), TaggedFrame::Audio(_)),
-                "watchdog should have reset, not silence"
+                "expected first Audio frame at cadence tick"
+            );
+
+            // Advance another tick
+            poll_and_advance(
+                &mut stream.as_mut(),
+                Duration::from_millis(SILENCE_FRAME_DURATION_MS as u64),
+            )
+            .await;
+
+            // Should get second audio frame
+            let frame = stream.next().await.expect("stream should yield");
+            assert!(
+                matches!(frame.unwrap(), TaggedFrame::Audio(_)),
+                "expected second Audio frame at cadence tick"
             );
 
             drop(tx);
         }
 
         #[tokio::test(start_paused = true)]
-        async fn stream_ends_when_channel_closes() {
+        async fn fills_gaps_with_silence() {
             let (tx, rx) = broadcast::channel::<Bytes>(16);
             let silence = test_silence_frame();
+            let guard = test_guard();
 
-            let mut stream = Box::pin(create_wav_stream_with_silence(rx, silence.clone()));
+            let mut stream = Box::pin(create_wav_stream_with_cadence(rx, silence.clone(), guard));
+
+            // Don't send any frames - queue will be empty
+
+            // Poll to register metronome, advance one tick
+            poll_and_advance(
+                &mut stream.as_mut(),
+                Duration::from_millis(SILENCE_FRAME_DURATION_MS as u64),
+            )
+            .await;
+
+            // Should get silence frame since queue is empty
+            let frame = stream.next().await.expect("stream should yield");
+            assert!(
+                matches!(frame.unwrap(), TaggedFrame::Silence(_)),
+                "expected Silence frame when queue is empty"
+            );
+
+            // Another tick should also yield silence
+            poll_and_advance(
+                &mut stream.as_mut(),
+                Duration::from_millis(SILENCE_FRAME_DURATION_MS as u64),
+            )
+            .await;
+
+            let frame = stream.next().await.expect("stream should yield");
+            assert!(
+                matches!(frame.unwrap(), TaggedFrame::Silence(_)),
+                "expected Silence frame on continued empty queue"
+            );
+
+            drop(tx);
+        }
+
+        #[tokio::test(start_paused = true)]
+        async fn queue_drains_at_cadence() {
+            let (tx, rx) = broadcast::channel::<Bytes>(16);
+            let silence = test_silence_frame();
+            let guard = test_guard();
+
+            let mut stream = Box::pin(create_wav_stream_with_cadence(rx, silence.clone(), guard));
+
+            // Queue 3 frames as a burst
+            for i in 0..3 {
+                tx.send(Bytes::from(vec![i; 64]))
+                    .expect("send should succeed");
+            }
+
+            // Each tick should drain one frame
+            for expected_byte in 0..3u8 {
+                poll_and_advance(
+                    &mut stream.as_mut(),
+                    Duration::from_millis(SILENCE_FRAME_DURATION_MS as u64),
+                )
+                .await;
+
+                let frame = stream.next().await.expect("stream should yield");
+                let frame = frame.expect("should be Ok");
+                if let TaggedFrame::Audio(bytes) = frame {
+                    assert_eq!(
+                        bytes[0], expected_byte,
+                        "frames should drain in order at cadence"
+                    );
+                } else {
+                    panic!("expected Audio frame, got Silence");
+                }
+            }
+
+            // Queue is now empty, next tick should yield silence
+            poll_and_advance(
+                &mut stream.as_mut(),
+                Duration::from_millis(SILENCE_FRAME_DURATION_MS as u64),
+            )
+            .await;
+
+            let frame = stream.next().await.expect("stream should yield");
+            assert!(
+                matches!(frame.unwrap(), TaggedFrame::Silence(_)),
+                "expected Silence after queue drained"
+            );
+
+            drop(tx);
+        }
+
+        #[tokio::test(start_paused = true)]
+        async fn drops_oldest_on_overflow() {
+            let (tx, rx) = broadcast::channel::<Bytes>(32);
+            let silence = test_silence_frame();
+            let guard = test_guard();
+
+            let mut stream = Box::pin(create_wav_stream_with_cadence(rx, silence.clone(), guard));
+
+            // Fill the queue to capacity + 2 (should drop 2 oldest)
+            // Each frame is marked with its index so we can verify order
+            for i in 0..(CADENCE_QUEUE_SIZE + 2) as u8 {
+                tx.send(Bytes::from(vec![i; 64]))
+                    .expect("send should succeed");
+            }
+
+            // Give time for frames to be received into queue
+            poll_and_advance(
+                &mut stream.as_mut(),
+                Duration::from_millis(SILENCE_FRAME_DURATION_MS as u64),
+            )
+            .await;
+
+            // First frame should be the 3rd one (index 2), since 0 and 1 were dropped
+            let frame = stream.next().await.expect("stream should yield");
+            let frame = frame.expect("should be Ok");
+            if let TaggedFrame::Audio(bytes) = frame {
+                assert_eq!(
+                    bytes[0], 2,
+                    "oldest frames should be dropped, got frame {}",
+                    bytes[0]
+                );
+            } else {
+                panic!("expected Audio frame");
+            }
+
+            drop(tx);
+        }
+
+        #[tokio::test(start_paused = true)]
+        async fn tracks_dropped_frames() {
+            let (tx, rx) = broadcast::channel::<Bytes>(32);
+            let silence = test_silence_frame();
+            let guard = test_guard();
+            let guard_for_check = Arc::clone(&guard);
+
+            let mut stream = Box::pin(create_wav_stream_with_cadence(rx, silence.clone(), guard));
+
+            // Overflow queue by CADENCE_QUEUE_SIZE + 3 frames
+            let overflow_count = 3;
+            for i in 0..(CADENCE_QUEUE_SIZE + overflow_count) as u8 {
+                tx.send(Bytes::from(vec![i; 64]))
+                    .expect("send should succeed");
+            }
+
+            // Give time for frames to be received and processed
+            poll_and_advance(
+                &mut stream.as_mut(),
+                Duration::from_millis(SILENCE_FRAME_DURATION_MS as u64),
+            )
+            .await;
+
+            // Consume a frame to ensure internal processing has happened
+            let _ = stream.next().await;
+
+            // Check the guard counter - should have recorded dropped frames
+            let stats = guard_for_check.delivery_stats.lock();
+            assert_eq!(
+                stats.frames_dropped, overflow_count as u64,
+                "guard should track {} dropped frames",
+                overflow_count
+            );
+
+            drop(tx);
+        }
+
+        #[tokio::test(start_paused = true)]
+        async fn drains_queue_on_channel_close() {
+            let (tx, rx) = broadcast::channel::<Bytes>(16);
+            let silence = test_silence_frame();
+            let guard = test_guard();
+
+            let mut stream = Box::pin(create_wav_stream_with_cadence(rx, silence.clone(), guard));
+
+            // Queue some frames
+            tx.send(Bytes::from(vec![1; 64]))
+                .expect("send should succeed");
+            tx.send(Bytes::from(vec![2; 64]))
+                .expect("send should succeed");
+
+            // Give time for frames to be queued
+            poll_and_advance(
+                &mut stream.as_mut(),
+                Duration::from_millis(SILENCE_FRAME_DURATION_MS as u64),
+            )
+            .await;
+            let _ = stream.next().await; // consume first frame
 
             // Close the channel
             drop(tx);
 
-            // Stream should end
+            // Advance and drain remaining frame
+            poll_and_advance(
+                &mut stream.as_mut(),
+                Duration::from_millis(SILENCE_FRAME_DURATION_MS as u64),
+            )
+            .await;
+
+            // Should still get the queued frame
+            let frame = stream
+                .next()
+                .await
+                .expect("stream should yield queued frame");
+            let frame = frame.expect("should be Ok");
+            if let TaggedFrame::Audio(bytes) = frame {
+                assert_eq!(bytes[0], 2, "should drain remaining queued frame");
+            } else {
+                panic!("expected Audio frame from queue");
+            }
+
+            // Now stream should end (channel closed AND queue empty)
+            poll_and_advance(
+                &mut stream.as_mut(),
+                Duration::from_millis(SILENCE_FRAME_DURATION_MS as u64),
+            )
+            .await;
+
             let frame = stream.next().await;
-            assert!(frame.is_none(), "stream should end when channel closes");
+            assert!(
+                frame.is_none(),
+                "stream should end when channel closed and queue empty"
+            );
         }
 
         #[tokio::test(start_paused = true)]
-        async fn lagged_resets_watchdog_and_continues_streaming() {
-            // Small channel to easily cause lag
-            let (tx, rx) = broadcast::channel::<Bytes>(2);
+        async fn exits_silence_when_frames_arrive() {
+            let (tx, rx) = broadcast::channel::<Bytes>(16);
             let silence = test_silence_frame();
             let audio = test_audio_frame();
+            let guard = test_guard();
 
-            let mut stream = Box::pin(create_wav_stream_with_silence(rx, silence.clone()));
+            let mut stream = Box::pin(create_wav_stream_with_cadence(rx, silence.clone(), guard));
 
-            // Overflow the channel to cause lag (send more than capacity without consuming)
-            // Channel capacity is 2, so sending 4 messages will lag by 2
-            for _ in 0..4 {
-                let _ = tx.send(audio.clone());
-            }
-
-            // The next polls will:
-            // 1. Encounter Lagged(2) - handled internally, resets watchdog, continues
-            // 2. Return remaining audio frames from the channel
-            // Stream should recover and deliver the non-lagged frames
-            let frame = stream.next().await.expect("stream should yield after lag");
-            let frame = frame.expect("should be Ok");
-            assert!(
-                matches!(frame, TaggedFrame::Audio(_)),
-                "should receive audio after lag is handled"
-            );
-
-            // Consume remaining frame
-            let frame = stream.next().await.expect("stream should yield");
-            assert!(matches!(frame.unwrap(), TaggedFrame::Audio(_)));
-
-            // Now channel is empty. Poll to register watchdog, then advance past timeout.
+            // First tick with empty queue -> silence
             poll_and_advance(
                 &mut stream.as_mut(),
-                Duration::from_millis(SILENCE_INJECTION_TIMEOUT_MS + 10),
+                Duration::from_millis(SILENCE_FRAME_DURATION_MS as u64),
             )
             .await;
 
             let frame = stream.next().await.expect("stream should yield");
-            let frame = frame.expect("should be Ok");
             assert!(
-                matches!(frame, TaggedFrame::Silence(_)),
-                "should enter metronome mode after timeout post-lag"
+                matches!(frame.unwrap(), TaggedFrame::Silence(_)),
+                "expected Silence when queue empty"
+            );
+
+            // Queue a frame
+            tx.send(audio.clone()).expect("send should succeed");
+
+            // Next tick should yield audio (exit silence)
+            poll_and_advance(
+                &mut stream.as_mut(),
+                Duration::from_millis(SILENCE_FRAME_DURATION_MS as u64),
+            )
+            .await;
+
+            let frame = stream.next().await.expect("stream should yield");
+            assert!(
+                matches!(frame.unwrap(), TaggedFrame::Audio(_)),
+                "expected Audio when frame queued after silence"
             );
 
             drop(tx);

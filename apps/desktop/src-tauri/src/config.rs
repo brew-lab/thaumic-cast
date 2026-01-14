@@ -63,19 +63,17 @@ pub const WS_HEARTBEAT_CHECK_INTERVAL_SECS: u64 = 1;
 /// Higher values = more buffer headroom but increased startup latency.
 pub const HTTP_PREFILL_DELAY_MS: u64 = 250;
 
-/// Timeout before injecting silence to keep Sonos connection alive (ms).
-///
-/// When streaming WAV, Sonos treats it as a "file" requiring continuous data.
-/// If no audio arrives within this window, we inject a silence frame to prevent
-/// Sonos from closing the connection. Based on swyh-rs approach.
-///
-/// Lower values = more responsive to gaps but may inject silence too often.
-/// Higher values = less silence injection but risks Sonos disconnect on longer gaps.
-/// swyh-rs defaults to 2000ms; we use 500ms as a balance.
-pub const SILENCE_INJECTION_TIMEOUT_MS: u64 = 200;
-
 /// Duration of injected silence frames (ms).
 ///
 /// Matches our standard frame duration from the extension (20ms).
 /// This is the atomic unit of silence injected when a timeout occurs.
 pub const SILENCE_FRAME_DURATION_MS: u32 = 20;
+
+/// Maximum frames to buffer for cadence smoothing.
+///
+/// The cadence stream queues incoming frames and emits them at a fixed 20ms
+/// cadence. This absorbs input jitter and CPU spikes up to this many frames.
+///
+/// Higher values = absorbs more jitter but adds latency.
+/// At 20ms/frame: 10 frames = 200ms max buffer latency.
+pub const CADENCE_QUEUE_SIZE: usize = 10;
