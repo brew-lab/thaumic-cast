@@ -13,6 +13,9 @@
 //! - [`events`]: Event system for real-time client communication
 //! - [`context`]: Network configuration and URL building
 //! - [`state`]: Core application state and configuration
+//! - [`sonos`]: Sonos speaker control and discovery (UPnP/SOAP)
+//! - [`stream`]: Audio streaming and transcoding
+//! - [`error`]: Centralized error types
 //!
 //! # Abstraction Traits
 //!
@@ -26,46 +29,37 @@
 //!
 //! Each trait has default implementations suitable for the standalone server.
 //! The desktop app provides Tauri-specific implementations.
-//!
-//! # Example (Standalone Server)
-//!
-//! ```ignore
-//! use std::net::{IpAddr, Ipv4Addr};
-//! use thaumic_core::{
-//!     context::NetworkContext,
-//!     state::{Config, CoreState},
-//!     runtime::TokioSpawner,
-//! };
-//!
-//! #[tokio::main]
-//! async fn main() {
-//!     let config = Config::default();
-//!     let network_ctx = NetworkContext::explicit(
-//!         8080,
-//!         IpAddr::V4(Ipv4Addr::new(192, 168, 1, 100)),
-//!     );
-//!     let spawner = TokioSpawner::current();
-//!
-//!     let state = CoreState::new(config, network_ctx);
-//!     // Start server...
-//! }
-//! ```
 
-#![warn(missing_docs)]
+// Allow missing docs for now during migration - will be cleaned up later
+#![allow(missing_docs)]
 #![warn(clippy::all)]
 
 pub mod context;
+pub mod error;
 pub mod events;
 pub mod lifecycle;
+pub mod protocol_constants;
 pub mod runtime;
+pub mod sonos;
 pub mod state;
+pub mod stream;
+pub mod utils;
 
 // Re-export commonly used types at the crate root
 pub use context::{IpDetector, LocalIpDetector, NetworkContext, NetworkError, UrlBuilder};
+pub use error::{DiscoveryResult, GenaResult, SoapResult, ThaumicError, ThaumicResult};
 pub use events::{
-    BroadcastEvent, EventEmitter, LatencyEvent, LoggingEventEmitter, NetworkEvent, NetworkHealth,
-    NoopEventEmitter, SonosEvent, StreamEvent, TopologyEvent,
+    BroadcastEvent, BroadcastEventBridge, EventEmitter, LatencyEvent, LoggingEventEmitter,
+    NetworkEvent, NetworkHealth, NoopEventEmitter, SonosEvent, StreamEvent, TopologyEvent,
 };
 pub use lifecycle::{Lifecycle, NoopLifecycle, ServerLifecycle};
 pub use runtime::{TaskSpawner, TokioSpawner};
 pub use state::{Config, CoreState, StreamingConfig};
+pub use utils::now_millis;
+
+// Re-export Sonos types
+pub use sonos::types::{TransportState, ZoneGroup};
+pub use sonos::{SonosClient, SonosClientImpl, SonosPlayback, SonosService, SonosTopologyClient};
+
+// Re-export stream types
+pub use stream::{AudioCodec, AudioFormat, StreamMetadata, TaggedFrame};

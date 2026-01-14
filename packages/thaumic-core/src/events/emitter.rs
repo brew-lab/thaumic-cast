@@ -144,7 +144,10 @@ mod tests {
             stream_id: "test".to_string(),
             timestamp: 0,
         });
-        emitter.emit_sonos(SonosEvent::TopologyChanged { timestamp: 0 });
+        emitter.emit_sonos(SonosEvent::ZoneGroupsUpdated {
+            groups: vec![],
+            timestamp: 0,
+        });
 
         assert_eq!(emitter.stream_count.load(Ordering::SeqCst), 2);
         assert_eq!(emitter.sonos_count.load(Ordering::SeqCst), 1);

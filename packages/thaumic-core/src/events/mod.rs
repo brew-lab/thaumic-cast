@@ -2,14 +2,19 @@
 //!
 //! This module provides:
 //! - [`EventEmitter`] trait for domain services to emit events
-//! - Event types for various domains (streams, Sonos, network, etc.)
+//! - [`BroadcastEventBridge`] for WebSocket transport
+//! - Event types for various domains (streams, network, etc.)
 //!
-//! The actual transport implementation (WebSocket, SSE, etc.) is handled
-//! separately in the `api` module using [`BroadcastEventBridge`].
+//! The `SonosEvent` type is defined in [`crate::sonos::gena`] and re-exported here.
 
+mod bridge;
 mod emitter;
 
+pub use bridge::BroadcastEventBridge;
 pub use emitter::{EventEmitter, LoggingEventEmitter, NoopEventEmitter};
+
+// Re-export SonosEvent from sonos::gena for convenience
+pub use crate::sonos::gena::SonosEvent;
 
 use serde::Serialize;
 
@@ -34,49 +39,6 @@ pub enum BroadcastEvent {
 
     /// Events related to latency measurement.
     Latency(LatencyEvent),
-}
-
-/// Events from Sonos speakers via GENA notifications.
-///
-/// These events are pushed by Sonos speakers when their state changes.
-#[derive(Debug, Clone, Serialize)]
-#[serde(tag = "type", rename_all = "camelCase")]
-pub enum SonosEvent {
-    /// Transport state changed (play, pause, stop).
-    TransportChanged {
-        /// IP address of the speaker.
-        #[serde(rename = "speakerIp")]
-        speaker_ip: String,
-        /// New transport state.
-        state: String,
-        /// Unix timestamp in milliseconds.
-        timestamp: u64,
-    },
-    /// Group volume changed.
-    VolumeChanged {
-        /// IP address of the group coordinator.
-        #[serde(rename = "coordinatorIp")]
-        coordinator_ip: String,
-        /// New volume level (0-100).
-        volume: u8,
-        /// Unix timestamp in milliseconds.
-        timestamp: u64,
-    },
-    /// Group mute state changed.
-    MuteChanged {
-        /// IP address of the group coordinator.
-        #[serde(rename = "coordinatorIp")]
-        coordinator_ip: String,
-        /// Whether the group is muted.
-        muted: bool,
-        /// Unix timestamp in milliseconds.
-        timestamp: u64,
-    },
-    /// Zone topology changed (speakers grouped/ungrouped).
-    TopologyChanged {
-        /// Unix timestamp in milliseconds.
-        timestamp: u64,
-    },
 }
 
 /// Events related to audio stream state changes.
@@ -159,9 +121,8 @@ pub enum NetworkEvent {
 pub enum TopologyEvent {
     /// Zone groups discovered or updated.
     GroupsDiscovered {
-        /// Number of groups discovered.
-        #[serde(rename = "groupCount")]
-        group_count: usize,
+        /// The discovered zone groups.
+        groups: Vec<crate::sonos::types::ZoneGroup>,
         /// Unix timestamp in milliseconds.
         timestamp: u64,
     },
