@@ -213,9 +213,12 @@ impl UrlBuilder {
     }
 
     /// Returns the stream URL for a given stream ID.
+    ///
+    /// Returns the base URL without codec extension. The caller (build_sonos_stream_uri)
+    /// will append the appropriate extension (.wav, .flac) based on codec.
     #[must_use]
     pub fn stream_url(&self, stream_id: &str) -> String {
-        format!("{}/stream/{}", self.base_url(), stream_id)
+        format!("{}/stream/{}/live", self.base_url(), stream_id)
     }
 
     /// Returns the GENA callback URL for receiving Sonos notifications.
@@ -280,7 +283,7 @@ mod tests {
         assert_eq!(builder.base_url(), "http://192.168.1.100:8080");
         assert_eq!(
             builder.stream_url("abc123"),
-            "http://192.168.1.100:8080/stream/abc123"
+            "http://192.168.1.100:8080/stream/abc123/live"
         );
         assert_eq!(
             builder.gena_callback_url(),

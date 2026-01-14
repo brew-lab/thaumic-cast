@@ -556,7 +556,7 @@ impl LatencyMonitor {
                         let rtt_ms = rtt.as_millis() as u32;
 
                         // Verify Sonos is playing OUR stream (not previous content)
-                        // Our stream URLs look like: http://192.168.x.x:port/stream/{stream_id}/audio.flac
+                        // Our stream URLs look like: http://192.168.x.x:port/stream/{stream_id}/live.wav
                         if !position.track_uri.contains(&stream_id) {
                             log::debug!(
                                 "[LatencyMonitor] Waiting for stream {} (current URI: {})",
