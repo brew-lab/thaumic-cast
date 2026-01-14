@@ -54,9 +54,6 @@ jobs:
   rust-check:
     name: Rust Check
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: apps/desktop/src-tauri
     steps:
       - uses: actions/checkout@v4
 
@@ -78,15 +75,18 @@ jobs:
             ~/.cargo/registry/index/
             ~/.cargo/registry/cache/
             ~/.cargo/git/db/
-            apps/desktop/src-tauri/target/
-          key: ${{ runner.os }}-cargo-${{ hashFiles('apps/desktop/src-tauri/Cargo.toml') }}
+            target/
+          key: ${{ runner.os }}-cargo-${{ hashFiles('Cargo.lock') }}
           restore-keys: ${{ runner.os }}-cargo-
 
       - name: Check formatting
-        run: cargo fmt --check
+        run: cargo fmt --all --check
 
       - name: Run Clippy
-        run: cargo clippy -- -D warnings
+        run: cargo clippy --workspace -- -D warnings
+
+      - name: Run tests
+        run: cargo test --workspace
 
   build-extension:
     name: Build Extension
