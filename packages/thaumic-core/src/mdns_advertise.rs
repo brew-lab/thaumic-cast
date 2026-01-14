@@ -5,7 +5,7 @@
 
 use std::collections::HashMap;
 use std::net::IpAddr;
-use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use mdns_sd::{ServiceDaemon, ServiceInfo};
 
@@ -17,8 +17,10 @@ const SERVICE_TYPE: &str = "_thaumic._tcp.local.";
 /// When created, registers the service with the local mDNS responder.
 /// The service is automatically unregistered when dropped.
 pub struct MdnsAdvertiser {
-    daemon: Arc<ServiceDaemon>,
+    daemon: ServiceDaemon,
     service_fullname: String,
+    /// Tracks whether shutdown has been called to prevent double unregister.
+    shutdown_called: AtomicBool,
 }
 
 impl MdnsAdvertiser {
@@ -74,15 +76,21 @@ impl MdnsAdvertiser {
         );
 
         Ok(Self {
-            daemon: Arc::new(daemon),
+            daemon,
             service_fullname: fullname,
+            shutdown_called: AtomicBool::new(false),
         })
     }
 
     /// Unregisters the service from mDNS.
     ///
     /// Called automatically on drop, but can be called manually for explicit cleanup.
+    /// Safe to call multiple times - subsequent calls are no-ops.
     pub fn shutdown(&self) {
+        // Only unregister once
+        if self.shutdown_called.swap(true, Ordering::SeqCst) {
+            return;
+        }
         if let Err(e) = self.daemon.unregister(&self.service_fullname) {
             log::warn!("[mDNS] Failed to unregister service: {}", e);
         }

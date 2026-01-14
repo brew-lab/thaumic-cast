@@ -40,7 +40,7 @@ pub mod context;
 pub mod error;
 pub mod events;
 pub mod lifecycle;
-pub mod mdns_advertise;
+mod mdns_advertise;
 pub mod protocol_constants;
 pub mod runtime;
 pub mod services;
@@ -81,6 +81,3 @@ pub use streaming_runtime::StreamingRuntime;
 
 // Re-export API types
 pub use api::{start_server, AppState, AppStateBuilder, ServerError, WsConnectionManager};
-
-// Re-export mDNS advertiser
-pub use mdns_advertise::MdnsAdvertiser;

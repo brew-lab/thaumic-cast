@@ -18,7 +18,6 @@ use crate::api::WsConnectionManager;
 use crate::context::{LocalIpDetector, NetworkContext};
 use crate::error::{ThaumicError, ThaumicResult};
 use crate::events::{BroadcastEvent, BroadcastEventBridge, EventEmitter};
-use crate::mdns_advertise::MdnsAdvertiser;
 use crate::protocol_constants::{EVENT_CHANNEL_CAPACITY, SOAP_TIMEOUT_SECS};
 use crate::runtime::TokioSpawner;
 use crate::services::{DiscoveryService, LatencyMonitor, StreamCoordinator};
@@ -58,10 +57,6 @@ pub struct BootstrappedServices {
     pub spawner: TokioSpawner,
     /// Cancellation token for graceful shutdown.
     pub cancel_token: CancellationToken,
-    /// mDNS advertiser for network discovery (optional, may fail on some systems).
-    /// Kept alive for its Drop impl to unregister the service on shutdown.
-    #[allow(dead_code)]
-    mdns_advertiser: Option<Arc<MdnsAdvertiser>>,
 }
 
 impl BootstrappedServices {
@@ -247,17 +242,6 @@ pub fn bootstrap_services_with_network(
     // Coerce to the general SonosClient trait for storage
     let sonos: Arc<dyn SonosClient> = sonos_impl;
 
-    // Start mDNS advertisement (best-effort, non-fatal if it fails)
-    let mdns_advertiser = network.get_local_ip().parse().ok().and_then(|ip| {
-        match MdnsAdvertiser::new(ip, network.get_port()) {
-            Ok(adv) => Some(Arc::new(adv)),
-            Err(e) => {
-                log::debug!("[Bootstrap] mDNS advertisement unavailable: {}", e);
-                None
-            }
-        }
-    });
-
     Ok(BootstrappedServices {
         sonos,
         stream_coordinator,
@@ -272,7 +256,6 @@ pub fn bootstrap_services_with_network(
         http_client,
         spawner,
         cancel_token,
-        mdns_advertiser,
     })
 }
 

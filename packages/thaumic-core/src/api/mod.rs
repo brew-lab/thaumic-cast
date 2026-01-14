@@ -3,6 +3,7 @@
 //! This module contains thin handlers that delegate to services.
 //! It provides the router construction and server startup functionality.
 
+use std::net::IpAddr;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
@@ -12,6 +13,7 @@ use tokio::sync::broadcast;
 
 use crate::context::NetworkContext;
 use crate::events::{BroadcastEvent, BroadcastEventBridge};
+use crate::mdns_advertise::MdnsAdvertiser;
 use crate::services::{DiscoveryService, LatencyMonitor, StreamCoordinator};
 use crate::sonos::SonosClient;
 use crate::state::{Config, SonosState};
@@ -65,6 +67,11 @@ pub struct AppState {
     services_started: Arc<AtomicBool>,
     /// Optional icon data for album art display.
     pub icon_data: Option<&'static [u8]>,
+    /// mDNS advertiser for network discovery (optional, may fail on some systems).
+    /// Kept alive for its Drop impl to unregister the service on shutdown.
+    /// Created after server binds to get the actual port.
+    #[allow(dead_code)]
+    mdns_advertiser: Arc<RwLock<Option<MdnsAdvertiser>>>,
 }
 
 /// Builder for constructing an `AppState`.
@@ -174,6 +181,7 @@ impl AppStateBuilder {
             config: self.config.expect("config is required"),
             services_started: Arc::new(AtomicBool::new(false)),
             icon_data: self.icon_data,
+            mdns_advertiser: Arc::new(RwLock::new(None)),
         }
     }
 }
@@ -226,6 +234,18 @@ pub async fn start_server(state: AppState) -> Result<(), ServerError> {
 
     // Set port and signal waiters
     state.network.set_port(port);
+
+    // Start mDNS advertisement now that we know the actual port (best-effort, non-fatal)
+    if let Ok(ip) = state.network.get_local_ip().parse::<IpAddr>() {
+        match MdnsAdvertiser::new(ip, port) {
+            Ok(advertiser) => {
+                *state.mdns_advertiser.write() = Some(advertiser);
+            }
+            Err(e) => {
+                log::debug!("[Server] mDNS advertisement unavailable: {}", e);
+            }
+        }
+    }
 
     log::info!("Server listening on http://0.0.0.0:{}", port);
     let app = http::create_router(state);
