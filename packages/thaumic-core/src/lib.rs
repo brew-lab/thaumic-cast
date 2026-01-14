@@ -34,6 +34,7 @@
 #![allow(missing_docs)]
 #![warn(clippy::all)]
 
+pub mod api;
 pub mod context;
 pub mod error;
 pub mod events;
