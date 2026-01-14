@@ -13,7 +13,7 @@ use anyhow::{Context, Result};
 use clap::Parser;
 use parking_lot::RwLock;
 use thaumic_core::{
-    bootstrap_services_with_network, start_server, AppStateBuilder, NetworkContext,
+    bootstrap_services_with_network, start_server, AppStateBuilder, LocalIpDetector, NetworkContext,
 };
 use tokio::signal;
 
@@ -62,17 +62,29 @@ async fn main() -> Result<()> {
         config.bind_port = port;
     }
     if let Some(ip) = args.advertise_ip {
-        config.advertise_ip = ip;
+        config.advertise_ip = Some(ip);
     }
 
-    log::info!(
-        "Configuration: bind_port={}, advertise_ip={}",
-        config.bind_port,
-        config.advertise_ip
-    );
-
-    // Create explicit network context for server mode
-    let network = NetworkContext::explicit(config.bind_port, config.advertise_ip);
+    // Resolve advertise IP: use explicit config, or fall back to auto-detection
+    let network = if let Some(ip) = config.advertise_ip {
+        log::info!(
+            "Configuration: bind_port={}, advertise_ip={}",
+            config.bind_port,
+            ip
+        );
+        NetworkContext::explicit(config.bind_port, ip)
+    } else {
+        log::info!(
+            "Configuration: bind_port={}, advertise_ip=auto",
+            config.bind_port
+        );
+        let detector = LocalIpDetector::arc();
+        NetworkContext::auto_detect(config.bind_port, detector).context(
+            "Failed to auto-detect local IP address. \
+             Please specify --advertise-ip or set THAUMIC_ADVERTISE_IP to the IP \
+             address that Sonos speakers can reach.",
+        )?
+    };
 
     // Bootstrap services with explicit network configuration
     let core_config = config.to_core_config();
@@ -83,9 +95,7 @@ async fn main() -> Result<()> {
     log::info!("Services bootstrapped successfully");
 
     // Start background tasks
-    services.discovery_service.start_renewal_task();
-    Arc::clone(&services.discovery_service).start_topology_monitor();
-    services.latency_monitor.start();
+    services.start_background_tasks();
 
     log::info!("Background tasks started");
 
@@ -103,7 +113,10 @@ async fn main() -> Result<()> {
         .config(Arc::new(RwLock::new(core_config)))
         .build();
 
-    // Spawn HTTP server
+    // Spawn HTTP server on the main tokio runtime.
+    // Unlike the desktop app (which uses a dedicated high-priority streaming runtime
+    // to avoid UI thread contention), the server has no UI and the main runtime
+    // is sufficient for consistent audio delivery.
     let server_handle = tokio::spawn(async move {
         if let Err(e) = start_server(app_state).await {
             log::error!("Server error: {}", e);

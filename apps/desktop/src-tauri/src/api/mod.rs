@@ -97,9 +97,7 @@ impl AppState {
 
     /// Starts all background services (GENA renewal, topology monitor, latency monitor).
     fn start_background_tasks(&self) {
-        self.services.discovery_service.start_renewal_task();
-        Arc::clone(&self.services.discovery_service).start_topology_monitor();
-        self.services.latency_monitor.start();
+        self.services.start_background_tasks();
     }
 
     /// Starts network services (HTTP server and background tasks).

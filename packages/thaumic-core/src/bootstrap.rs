@@ -65,6 +65,18 @@ impl BootstrappedServices {
         &self.http_client
     }
 
+    /// Starts all background services.
+    ///
+    /// This includes:
+    /// - GENA subscription renewal task
+    /// - Sonos topology monitor
+    /// - Latency monitor
+    pub fn start_background_tasks(&self) {
+        self.discovery_service.start_renewal_task();
+        Arc::clone(&self.discovery_service).start_topology_monitor();
+        self.latency_monitor.start();
+    }
+
     /// Initiates graceful shutdown of all services.
     pub async fn shutdown(&self) {
         log::info!("[Bootstrap] Beginning graceful shutdown...");

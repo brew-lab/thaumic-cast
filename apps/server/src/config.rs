@@ -18,8 +18,9 @@ pub struct ServerConfig {
 
     /// IP address to advertise to Sonos speakers.
     /// This should be the IP that Sonos speakers can reach.
+    /// If not specified, auto-detection will be attempted.
     /// Override: `THAUMIC_ADVERTISE_IP`
-    pub advertise_ip: IpAddr,
+    pub advertise_ip: Option<IpAddr>,
 
     /// Interval in seconds between topology refresh checks.
     /// Override: `THAUMIC_TOPOLOGY_REFRESH_INTERVAL`
@@ -39,7 +40,7 @@ impl Default for ServerConfig {
     fn default() -> Self {
         Self {
             bind_port: 49400,
-            advertise_ip: "127.0.0.1".parse().unwrap(),
+            advertise_ip: None,
             topology_refresh_interval: 30,
             discovery_ssdp_multicast: true,
             discovery_ssdp_broadcast: true,
@@ -74,7 +75,7 @@ impl ServerConfig {
 
         if let Ok(val) = std::env::var("THAUMIC_ADVERTISE_IP") {
             if let Ok(ip) = val.parse() {
-                self.advertise_ip = ip;
+                self.advertise_ip = Some(ip);
             }
         }
 
