@@ -444,16 +444,16 @@ async fn serve_artwork(
     ConnectInfo(remote_addr): ConnectInfo<SocketAddr>,
 ) -> Response {
     match state.artwork {
-        Some(icon) => {
+        Some(artwork) => {
             log::info!(
-                "[Icon] Album art requested by {} ({} bytes)",
+                "[Artwork] Album art requested by {} ({} bytes)",
                 remote_addr.ip(),
-                icon.len()
+                artwork.len()
             );
-            ([(header::CONTENT_TYPE, "image/jpeg")], icon).into_response()
+            ([(header::CONTENT_TYPE, "image/jpeg")], artwork).into_response()
         }
         None => {
-            log::debug!("[Icon] Album art requested but no icon configured");
+            log::debug!("[Artwork] Album art requested but no artwork configured");
             StatusCode::NOT_FOUND.into_response()
         }
     }
