@@ -66,7 +66,7 @@ pub struct AppState {
     /// Whether network services have been started.
     services_started: Arc<AtomicBool>,
     /// Optional icon data for album art display.
-    pub icon_data: Option<&'static [u8]>,
+    pub artwork: Option<&'static [u8]>,
     /// mDNS advertiser for network discovery (optional, may fail on some systems).
     /// Kept alive for its Drop impl to unregister the service on shutdown.
     /// Created after server binds to get the actual port.
@@ -87,7 +87,7 @@ pub struct AppStateBuilder {
     ws_manager: Option<Arc<WsConnectionManager>>,
     latency_monitor: Option<Arc<LatencyMonitor>>,
     config: Option<Arc<RwLock<Config>>>,
-    icon_data: Option<&'static [u8]>,
+    artwork: Option<&'static [u8]>,
 }
 
 impl AppStateBuilder {
@@ -157,8 +157,8 @@ impl AppStateBuilder {
     }
 
     /// Sets the icon data for album art display.
-    pub fn icon_data(mut self, data: &'static [u8]) -> Self {
-        self.icon_data = Some(data);
+    pub fn artwork(mut self, data: &'static [u8]) -> Self {
+        self.artwork = Some(data);
         self
     }
 
@@ -180,7 +180,7 @@ impl AppStateBuilder {
             latency_monitor: self.latency_monitor.expect("latency_monitor is required"),
             config: self.config.expect("config is required"),
             services_started: Arc::new(AtomicBool::new(false)),
-            icon_data: self.icon_data,
+            artwork: self.artwork,
             mdns_advertiser: Arc::new(RwLock::new(None)),
         }
     }

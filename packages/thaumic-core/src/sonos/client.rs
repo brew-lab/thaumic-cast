@@ -224,7 +224,7 @@ fn format_didl_lite(
     codec: AudioCodec,
     audio_format: &AudioFormat,
     metadata: Option<&StreamMetadata>,
-    icon_url: &str,
+    artwork_url: &str,
 ) -> String {
     // [DIAG] Log incoming metadata for debugging
     log::info!(
@@ -264,7 +264,7 @@ fn format_didl_lite(
         artist,
         album,
         mime_type,
-        icon_url
+        artwork_url
     );
 
     let mut didl = String::from(
@@ -280,7 +280,7 @@ fn format_didl_lite(
     // Always use static icon URL (ICY metadata doesn't support artwork updates)
     didl.push_str(&format!(
         "<upnp:albumArtURI>{}</upnp:albumArtURI>",
-        escape_xml(icon_url)
+        escape_xml(artwork_url)
     ));
 
     didl.push_str("<upnp:class>object.item.audioItem.audioBroadcast</upnp:class>");
@@ -361,7 +361,7 @@ where
 /// * `codec` - The audio codec for proper URI formatting and DIDL-Lite metadata
 /// * `audio_format` - Audio format configuration (sample rate, channels, bit depth)
 /// * `metadata` - Optional stream metadata for display (title, artist, source)
-/// * `icon_url` - URL to the static app icon for album art display
+/// * `artwork_url` - URL to the static app icon for album art display
 pub async fn play_uri(
     client: &Client,
     ip: &str,
@@ -369,11 +369,11 @@ pub async fn play_uri(
     codec: AudioCodec,
     audio_format: &AudioFormat,
     metadata: Option<&StreamMetadata>,
-    icon_url: &str,
+    artwork_url: &str,
 ) -> SoapResult<()> {
     // Build Sonos-compatible URI with proper scheme and extension for codec
     let sonos_uri = build_sonos_stream_uri(uri, codec);
-    let didl_metadata = format_didl_lite(uri, codec, audio_format, metadata, icon_url);
+    let didl_metadata = format_didl_lite(uri, codec, audio_format, metadata, artwork_url);
 
     log::info!("[Sonos] SetAVTransportURI: ip={}, uri={}", ip, sonos_uri);
 
@@ -689,7 +689,7 @@ impl SonosPlayback for SonosClientImpl {
         codec: AudioCodec,
         audio_format: &AudioFormat,
         metadata: Option<&StreamMetadata>,
-        icon_url: &str,
+        artwork_url: &str,
     ) -> SoapResult<()> {
         play_uri(
             &self.client,
@@ -698,7 +698,7 @@ impl SonosPlayback for SonosClientImpl {
             codec,
             audio_format,
             metadata,
-            icon_url,
+            artwork_url,
         )
         .await
     }

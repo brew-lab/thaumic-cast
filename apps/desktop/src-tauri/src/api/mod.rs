@@ -10,14 +10,12 @@ use parking_lot::RwLock;
 use tauri::{AppHandle, Manager};
 use thaumic_core::{
     bootstrap_services, AppState as CoreAppState, AppStateBuilder, BootstrappedServices, Config,
+    DEFAULT_ARTWORK,
 };
 
 use crate::tauri_emitter::TauriEventEmitter;
 
 pub mod commands;
-
-/// Application icon data embedded at compile time.
-static ICON_DATA: &[u8] = include_bytes!("../../icons/icon.png");
 
 /// Desktop-specific application state.
 ///
@@ -150,7 +148,7 @@ impl AppState {
             .ws_manager(Arc::clone(&self.services.ws_manager))
             .latency_monitor(Arc::clone(&self.services.latency_monitor))
             .config(Arc::clone(&self.config))
-            .icon_data(ICON_DATA)
+            .artwork(DEFAULT_ARTWORK)
             .build()
     }
 

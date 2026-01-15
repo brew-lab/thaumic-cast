@@ -81,3 +81,9 @@ pub use streaming_runtime::StreamingRuntime;
 
 // Re-export API types
 pub use api::{start_server, AppState, AppStateBuilder, ServerError, WsConnectionManager};
+
+/// Default artwork for Sonos album art display.
+///
+/// This image is embedded at compile time and can be used by both desktop and server
+/// apps to provide consistent branding. Pass to `AppStateBuilder::artwork()`.
+pub static DEFAULT_ARTWORK: &[u8] = include_bytes!("../assets/artwork-template.jpg");

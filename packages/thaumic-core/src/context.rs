@@ -233,10 +233,10 @@ impl UrlBuilder {
         format!("ws://{}:{}/ws", self.ip, self.port)
     }
 
-    /// Returns the icon URL for Sonos metadata display.
+    /// Returns the artwork URL for Sonos metadata display.
     #[must_use]
-    pub fn icon_url(&self) -> String {
-        format!("{}/icon.png", self.base_url())
+    pub fn artwork_url(&self) -> String {
+        format!("{}/artwork.jpg", self.base_url())
     }
 }
 

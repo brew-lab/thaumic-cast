@@ -47,7 +47,7 @@ struct SinglePlaybackParams<'a> {
     stream_url: &'a str,
     codec: AudioCodec,
     audio_format: &'a AudioFormat,
-    icon_url: &'a str,
+    artwork_url: &'a str,
     metadata: Option<&'a StreamMetadata>,
 }
 
@@ -322,7 +322,7 @@ impl StreamCoordinator {
 
         let url_builder = self.network.url_builder();
         let stream_url = url_builder.stream_url(stream_id);
-        let icon_url = url_builder.icon_url();
+        let artwork_url = url_builder.artwork_url();
 
         let mut results = Vec::with_capacity(speaker_ips.len());
 
@@ -334,7 +334,7 @@ impl StreamCoordinator {
                     stream_url: &stream_url,
                     codec,
                     audio_format: &audio_format,
-                    icon_url: &icon_url,
+                    artwork_url: &artwork_url,
                     metadata,
                 })
                 .await;
@@ -352,7 +352,7 @@ impl StreamCoordinator {
             stream_url,
             codec,
             audio_format,
-            icon_url,
+            artwork_url,
             metadata,
         } = params;
 
@@ -417,7 +417,7 @@ impl StreamCoordinator {
                 codec,
                 audio_format,
                 metadata,
-                icon_url,
+                artwork_url,
             )
             .await
         {

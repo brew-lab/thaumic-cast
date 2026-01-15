@@ -23,7 +23,7 @@ pub trait SonosPlayback: Send + Sync {
     /// * `codec` - The audio codec for proper URI formatting and DIDL-Lite metadata
     /// * `audio_format` - Audio format configuration (sample rate, channels, bit depth)
     /// * `metadata` - Optional stream metadata for display (title, artist, source)
-    /// * `icon_url` - URL to the static app icon for album art display
+    /// * `artwork_url` - URL to the static app icon for album art display
     async fn play_uri(
         &self,
         ip: &str,
@@ -31,7 +31,7 @@ pub trait SonosPlayback: Send + Sync {
         codec: AudioCodec,
         audio_format: &AudioFormat,
         metadata: Option<&StreamMetadata>,
-        icon_url: &str,
+        artwork_url: &str,
     ) -> SoapResult<()>;
 
     /// Stops playback on a Sonos speaker.

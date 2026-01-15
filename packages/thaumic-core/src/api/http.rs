@@ -411,7 +411,7 @@ pub fn create_router(state: AppState) -> Router {
         .route("/stream/:id/live", get(stream_audio))
         .route("/stream/:id/live.wav", get(stream_audio))
         .route("/stream/:id/live.flac", get(stream_audio))
-        .route("/icon.png", get(serve_icon))
+        .route("/artwork.jpg", get(serve_artwork))
         .route("/ws", get(ws_handler))
         .with_state(state)
 }
@@ -435,22 +435,22 @@ async fn health_check(State(state): State<AppState>) -> impl IntoResponse {
     }))
 }
 
-/// Serves the static app icon for Sonos album art display.
+/// Serves the static artwork for Sonos album art display.
 ///
-/// Returns a PNG image if configured, or 404 if no icon is set.
+/// Returns a JPEG image if configured, or 404 if no artwork is set.
 /// This provides consistent branding since ICY metadata doesn't support artwork.
-async fn serve_icon(
+async fn serve_artwork(
     State(state): State<AppState>,
     ConnectInfo(remote_addr): ConnectInfo<SocketAddr>,
 ) -> Response {
-    match state.icon_data {
+    match state.artwork {
         Some(icon) => {
             log::info!(
                 "[Icon] Album art requested by {} ({} bytes)",
                 remote_addr.ip(),
                 icon.len()
             );
-            ([(header::CONTENT_TYPE, "image/png")], icon).into_response()
+            ([(header::CONTENT_TYPE, "image/jpeg")], icon).into_response()
         }
         None => {
             log::debug!("[Icon] Album art requested but no icon configured");
