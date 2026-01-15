@@ -277,7 +277,8 @@ fn format_didl_lite(
     // Always set album for consistent branding
     didl.push_str(&format!("<upnp:album>{}</upnp:album>", escape_xml(&album)));
 
-    // Always use static icon URL (ICY metadata doesn't support artwork updates)
+    // Album art URL for Sonos display. Note: Android Sonos app requires HTTPS,
+    // iOS works with HTTP. See: https://github.com/amp64/sonosbugtracker/issues/33
     didl.push_str(&format!(
         "<upnp:albumArtURI>{}</upnp:albumArtURI>",
         escape_xml(artwork_url)

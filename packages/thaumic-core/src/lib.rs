@@ -86,4 +86,14 @@ pub use api::{start_server, AppState, AppStateBuilder, ServerError, WsConnection
 ///
 /// This image is embedded at compile time and can be used by both desktop and server
 /// apps to provide consistent branding. Pass to `AppStateBuilder::artwork()`.
+///
+/// # Platform Note: Android TLS Requirement
+///
+/// The Android Sonos app blocks `http://` URLs for album art, requiring HTTPS.
+/// The iOS app works with both HTTP and HTTPS.
+///
+/// For album art to display on Android, host the image on an HTTPS endpoint
+/// (e.g., a CDN or cloud storage) and configure the artwork URL accordingly.
+///
+/// Reference: <https://github.com/amp64/sonosbugtracker/issues/33>
 pub static DEFAULT_ARTWORK: &[u8] = include_bytes!("../assets/artwork-template.jpg");
