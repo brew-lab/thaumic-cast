@@ -230,26 +230,51 @@ impl StreamCoordinator {
 
     /// Removes a stream with graceful speaker cleanup.
     ///
-    /// This is the preferred method for stream removal. It:
-    /// 1. Removes the stream (closes HTTP connections, broadcasts `StreamEvent::Ended`)
-    /// 2. Switches each speaker's source to its queue (clears stale stream)
-    /// 3. Sends STOP to each speaker as cleanup
+    /// This is the preferred method for stream removal. The cleanup order depends
+    /// on the codec:
     ///
-    /// The stream is removed BEFORE sending SOAP commands because Sonos may block
-    /// on HTTP reads, causing Stop commands to timeout. Removing the stream first
-    /// closes HTTP connections, freeing Sonos to respond to SOAP commands.
+    /// **WAV (PCM passthrough):**
+    /// 1. Close HTTP first (Sonos blocks on reads, SOAP would timeout)
+    /// 2. Send SOAP stop commands
+    ///
+    /// **Compressed codecs (AAC/MP3/FLAC):**
+    /// 1. Send SOAP stop commands first (stops playback immediately)
+    /// 2. Then close HTTP (Sonos has internal buffer that would otherwise drain)
     ///
     /// Speaker stop/switch failures are logged but don't prevent cleanup.
     pub async fn remove_stream_async(&self, stream_id: &str) {
-        // Remove the stream FIRST to close HTTP connections and get speaker IPs.
-        // This is critical because Sonos may block on HTTP reads, causing SOAP
-        // commands to timeout. Removing the stream closes the broadcast channel,
-        // which ends the HTTP response streams and frees Sonos to respond.
-        let speaker_ips = self.remove_stream(stream_id);
+        // Get codec and speaker IPs before removing the stream
+        let stream_state = self.get_stream(stream_id);
+        let is_wav = stream_state
+            .as_ref()
+            .map(|s| s.codec == AudioCodec::Wav)
+            .unwrap_or(false);
 
-        // Now stop each speaker and switch to queue (best-effort)
-        // The HTTP connection is closed, so Sonos should respond quickly.
-        for ip in &speaker_ips {
+        // Collect speaker IPs before removal
+        let speaker_ips: Vec<String> = self
+            .playback_sessions
+            .iter()
+            .filter(|r| r.key().stream_id == stream_id)
+            .map(|r| r.key().speaker_ip.clone())
+            .collect();
+
+        if is_wav {
+            // WAV: Close HTTP first to unblock Sonos, then send SOAP commands.
+            // Sonos blocks on HTTP reads for WAV streams, causing SOAP timeouts.
+            self.remove_stream(stream_id);
+            self.stop_speakers(&speaker_ips).await;
+        } else {
+            // Compressed: Send SOAP stop first, then close HTTP.
+            // Compressed codecs buffer in Sonos's decoder; stopping first prevents
+            // playback of buffered audio after the stream is removed.
+            self.stop_speakers(&speaker_ips).await;
+            self.remove_stream(stream_id);
+        }
+    }
+
+    /// Sends stop commands to a list of speakers (best-effort).
+    async fn stop_speakers(&self, speaker_ips: &[String]) {
+        for ip in speaker_ips {
             // Switch to queue first - this is the reliable way to stop our stream
             if let Some(uuid) = self.sonos_state.get_coordinator_uuid_by_ip(ip) {
                 if let Err(e) = self.sonos.switch_to_queue(ip, &uuid).await {
