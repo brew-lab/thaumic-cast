@@ -278,9 +278,6 @@ fn format_didl_lite(
     didl.push_str(&format!("<upnp:album>{}</upnp:album>", escape_xml(&album)));
 
     // Always use static icon URL (ICY metadata doesn't support artwork updates)
-    // TODO: Remove hardcoded test URL
-    let _artwork_url = artwork_url;
-    let artwork_url = "https://images.ctfassets.net/jkdhe7m0f5uj/1pGOg9JgXxABLIW09dAYcb/8c5a26a6162b7797f98dbd7fc31680dd/Projects_-_Android_Kakotte_-_Landscape.jpg?w=700&fm=jpg&q=75";
     didl.push_str(&format!(
         "<upnp:albumArtURI>{}</upnp:albumArtURI>",
         escape_xml(artwork_url)
