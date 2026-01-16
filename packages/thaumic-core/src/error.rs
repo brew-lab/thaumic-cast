@@ -84,6 +84,13 @@ pub enum ThaumicError {
     #[error("Invalid request: {0}")]
     InvalidRequest(String),
 
+    /// Invalid IP address for speaker configuration.
+    ///
+    /// Used for IP validation errors (IPv6, loopback, broadcast, etc.).
+    /// Returns `"invalid_ip"` error code for API compatibility.
+    #[error("Invalid IP: {0}")]
+    InvalidIp(String),
+
     /// Network-related error (IP detection, connection issues).
     #[error("Network error: {0}")]
     Network(String),
@@ -91,6 +98,16 @@ pub enum ThaumicError {
     /// Internal server error.
     #[error("Internal error: {0}")]
     Internal(String),
+
+    /// Server configuration error (missing required settings).
+    #[error("Configuration error: {0}")]
+    Configuration(String),
+
+    /// Data directory not configured (required for persistence).
+    ///
+    /// Returns `"data_dir_not_configured"` for API compatibility.
+    #[error("Data directory not configured: {0}")]
+    DataDirNotConfigured(String),
 }
 
 impl ThaumicError {
@@ -102,8 +119,11 @@ impl ThaumicError {
             Self::SpeakerNotFound(_) => "speaker_not_found",
             Self::StreamNotFound(_) => "stream_not_found",
             Self::InvalidRequest(_) => "invalid_request",
+            Self::InvalidIp(_) => "invalid_ip",
             Self::Network(_) => "network_error",
             Self::Internal(_) => "internal_error",
+            Self::Configuration(_) => "configuration_error",
+            Self::DataDirNotConfigured(_) => "data_dir_not_configured",
         }
     }
 
@@ -111,7 +131,10 @@ impl ThaumicError {
     pub fn status_code(&self) -> StatusCode {
         match self {
             Self::SpeakerNotFound(_) | Self::StreamNotFound(_) => StatusCode::NOT_FOUND,
-            Self::InvalidRequest(_) => StatusCode::BAD_REQUEST,
+            Self::InvalidRequest(_) | Self::InvalidIp(_) => StatusCode::BAD_REQUEST,
+            Self::Configuration(_) | Self::DataDirNotConfigured(_) => {
+                StatusCode::SERVICE_UNAVAILABLE
+            }
             _ => StatusCode::INTERNAL_SERVER_ERROR,
         }
     }
@@ -164,5 +187,24 @@ impl From<SoapError> for ThaumicError {
 impl From<DiscoveryError> for ThaumicError {
     fn from(err: DiscoveryError) -> Self {
         Self::Discovery(err.to_string())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn invalid_ip_error_returns_correct_code() {
+        let err = ThaumicError::InvalidIp("test".into());
+        assert_eq!(err.code(), "invalid_ip");
+        assert_eq!(err.status_code(), StatusCode::BAD_REQUEST);
+    }
+
+    #[test]
+    fn data_dir_not_configured_returns_correct_code() {
+        let err = ThaumicError::DataDirNotConfigured("test".into());
+        assert_eq!(err.code(), "data_dir_not_configured");
+        assert_eq!(err.status_code(), StatusCode::SERVICE_UNAVAILABLE);
     }
 }

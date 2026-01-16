@@ -455,23 +455,24 @@ async fn health_check(State(state): State<AppState>) -> impl IntoResponse {
 
 /// Serves the static artwork for Sonos album art display.
 ///
-/// Returns a JPEG image if configured, or 404 if no artwork is set.
-/// This provides consistent branding since ICY metadata doesn't support artwork.
+/// Returns a JPEG image if artwork bytes are available, or 404 if artwork
+/// is configured as an external URL (in which case Sonos fetches directly).
 async fn serve_artwork(
     State(state): State<AppState>,
     ConnectInfo(remote_addr): ConnectInfo<SocketAddr>,
 ) -> Response {
-    match state.artwork {
-        Some(artwork) => {
+    match state.artwork.as_bytes() {
+        Some(bytes) => {
             log::info!(
                 "[Artwork] Album art requested by {} ({} bytes)",
                 remote_addr.ip(),
-                artwork.len()
+                bytes.len()
             );
-            ([(header::CONTENT_TYPE, "image/jpeg")], artwork).into_response()
+            ([(header::CONTENT_TYPE, "image/jpeg")], bytes.clone()).into_response()
         }
         None => {
-            log::debug!("[Artwork] Album art requested but no artwork configured");
+            // Artwork is configured as external URL; Sonos fetches directly
+            log::debug!("[Artwork] Album art requested but using external URL");
             StatusCode::NOT_FOUND.into_response()
         }
     }
@@ -542,9 +543,10 @@ async fn handle_start_playback(
     State(state): State<AppState>,
     Json(payload): Json<PlaybackRequest>,
 ) -> ThaumicResult<impl IntoResponse> {
+    let artwork_url = state.artwork_metadata_url();
     state
         .stream_coordinator
-        .start_playback(&payload.ip, &payload.stream_id, None)
+        .start_playback(&payload.ip, &payload.stream_id, None, &artwork_url)
         .await?;
 
     Ok(api_ok())
@@ -555,32 +557,24 @@ async fn handle_start_playback(
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// Returns the app data directory or an error response if not configured.
-fn require_data_dir(state: &AppState) -> Result<PathBuf, Response> {
+fn require_data_dir(state: &AppState) -> ThaumicResult<PathBuf> {
     state.discovery_service.get_app_data_dir().ok_or_else(|| {
-        api_error(
-            StatusCode::SERVICE_UNAVAILABLE,
-            "data_dir_not_configured",
-            "Manual speaker persistence requires --data-dir or THAUMIC_DATA_DIR to be set",
+        ThaumicError::DataDirNotConfigured(
+            "Manual speaker persistence requires --data-dir or THAUMIC_DATA_DIR to be set".into(),
         )
-        .into_response()
     })
 }
 
 /// Parses and validates an IP address for use as a Sonos speaker.
 ///
 /// Returns the canonical IPv4 string representation on success.
-fn parse_and_validate_ip(ip: &str) -> Result<String, Response> {
-    let parsed: IpAddr = ip.parse().map_err(|_| {
-        api_error(
-            StatusCode::BAD_REQUEST,
-            "invalid_ip",
-            "Invalid IP address format",
-        )
-        .into_response()
-    })?;
+fn parse_and_validate_ip(ip: &str) -> ThaumicResult<String> {
+    let parsed: IpAddr = ip
+        .parse()
+        .map_err(|_| ThaumicError::InvalidIp("Invalid IP address format".into()))?;
 
-    let ipv4 = validate_speaker_ip(&parsed)
-        .map_err(|e| api_error(StatusCode::BAD_REQUEST, e.code(), e.message()).into_response())?;
+    let ipv4 =
+        validate_speaker_ip(&parsed).map_err(|e| ThaumicError::InvalidIp(e.message().into()))?;
 
     Ok(ipv4.to_string())
 }
@@ -595,7 +589,7 @@ async fn probe_manual_speaker(
 ) -> Response {
     let canonical_ip = match parse_and_validate_ip(&payload.ip) {
         Ok(ip) => ip,
-        Err(resp) => return resp,
+        Err(e) => return e.into_response(),
     };
 
     match probe_speaker_by_ip(state.discovery_service.http_client(), &canonical_ip).await {
@@ -619,12 +613,12 @@ async fn add_manual_speaker(
 ) -> Response {
     let data_dir = match require_data_dir(&state) {
         Ok(dir) => dir,
-        Err(resp) => return resp,
+        Err(e) => return e.into_response(),
     };
 
     let canonical_ip = match parse_and_validate_ip(&payload.ip) {
         Ok(ip) => ip,
-        Err(resp) => return resp,
+        Err(e) => return e.into_response(),
     };
 
     // Probe to verify it's actually a Sonos speaker before persisting
@@ -652,7 +646,7 @@ async fn add_manual_speaker(
 async fn remove_manual_speaker(Path(ip): Path<String>, State(state): State<AppState>) -> Response {
     let data_dir = match require_data_dir(&state) {
         Ok(dir) => dir,
-        Err(resp) => return resp,
+        Err(e) => return e.into_response(),
     };
 
     // Try canonical matching first, fall back to exact string for invalid/legacy entries
@@ -672,7 +666,7 @@ async fn remove_manual_speaker(Path(ip): Path<String>, State(state): State<AppSt
 async fn list_manual_speakers(State(state): State<AppState>) -> Response {
     let data_dir = match require_data_dir(&state) {
         Ok(dir) => dir,
-        Err(resp) => return resp,
+        Err(e) => return e.into_response(),
     };
 
     let config = ManualSpeakerConfig::load(&data_dir);

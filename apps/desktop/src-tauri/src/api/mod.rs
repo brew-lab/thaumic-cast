@@ -9,8 +9,8 @@ use std::sync::Arc;
 use parking_lot::RwLock;
 use tauri::{AppHandle, Manager};
 use thaumic_core::{
-    bootstrap_services, AppState as CoreAppState, AppStateBuilder, BootstrappedServices, Config,
-    DEFAULT_ARTWORK,
+    bootstrap_services, AppState as CoreAppState, AppStateBuilder, ArtworkConfig, ArtworkSource,
+    BootstrappedServices, Config,
 };
 
 use crate::tauri_emitter::TauriEventEmitter;
@@ -35,6 +35,12 @@ pub struct AppState {
     app_handle: Arc<RwLock<Option<AppHandle>>>,
     /// Whether network services have been started.
     services_started: Arc<AtomicBool>,
+    /// Cached artwork source, resolved once at startup.
+    ///
+    /// Caches the `ArtworkSource` (not the final URL) to avoid repeated disk I/O
+    /// while still computing the URL on-demand with current IP/port. This handles
+    /// both auto-assigned ports and IP changes from network switches.
+    cached_artwork_source: Arc<RwLock<Option<ArtworkSource>>>,
 }
 
 impl AppState {
@@ -68,6 +74,50 @@ impl AppState {
             tauri_emitter,
             app_handle: Arc::new(RwLock::new(None)),
             services_started: Arc::new(AtomicBool::new(false)),
+            cached_artwork_source: Arc::new(RwLock::new(None)),
+        }
+    }
+
+    /// Returns the artwork URL to use in Sonos DIDL-Lite metadata.
+    ///
+    /// Uses the cached `ArtworkSource` if available, otherwise resolves it
+    /// (which may involve disk I/O) and caches it. The final URL is always
+    /// computed on-demand using the current IP/port from `NetworkContext`,
+    /// ensuring it stays correct after IP changes or port assignment.
+    #[must_use]
+    pub fn artwork_metadata_url(&self) -> String {
+        // Get or resolve the artwork source (caches to avoid repeated disk I/O)
+        let source = {
+            let cached = self.cached_artwork_source.read();
+            if let Some(source) = cached.as_ref() {
+                source.clone()
+            } else {
+                drop(cached); // Release read lock before acquiring write lock
+                let resolved = self.artwork_config().resolve();
+                *self.cached_artwork_source.write() = Some(resolved.clone());
+                resolved
+            }
+        };
+
+        // Always compute URL with current IP/port (handles IP changes and port assignment)
+        let local_url = self.services.network.url_builder().artwork_url();
+        source.metadata_url(&local_url)
+    }
+
+    /// Creates the artwork configuration for this app instance.
+    ///
+    /// Uses the app data directory if available, allowing users to customize
+    /// artwork by placing `artwork.jpg` in the data directory.
+    fn artwork_config(&self) -> ArtworkConfig {
+        let data_dir = self
+            .app_handle
+            .read()
+            .as_ref()
+            .and_then(|h| h.path().app_data_dir().ok());
+
+        ArtworkConfig {
+            url: None, // Desktop app doesn't support external URL config yet
+            data_dir,
         }
     }
 
@@ -77,6 +127,7 @@ impl AppState {
     /// - Application restart functionality
     /// - Emitting frontend events
     /// - Loading manual speaker configuration
+    /// - Resolving and caching artwork source
     pub fn set_app_handle(&self, handle: AppHandle) {
         *self.app_handle.write() = Some(handle.clone());
 
@@ -85,12 +136,21 @@ impl AppState {
 
         // Set app data dir for manual speaker configuration
         match handle.path().app_data_dir() {
-            Ok(path) => self.services.discovery_service.set_app_data_dir(path),
+            Ok(path) => self
+                .services
+                .discovery_service
+                .set_app_data_dir(path.clone()),
             Err(e) => log::warn!(
                 "Failed to get app data dir, manual speakers will not persist: {}",
                 e
             ),
         }
+
+        // Resolve and cache artwork source (avoids disk I/O on every playback).
+        // We cache ArtworkSource (not the URL) so the URL can be computed on-demand
+        // with the current IP/port, handling both auto-assigned ports and IP changes.
+        let artwork_source = self.artwork_config().resolve();
+        *self.cached_artwork_source.write() = Some(artwork_source);
     }
 
     /// Starts all background services (GENA renewal, topology monitor, latency monitor).
@@ -148,7 +208,7 @@ impl AppState {
             .ws_manager(Arc::clone(&self.services.ws_manager))
             .latency_monitor(Arc::clone(&self.services.latency_monitor))
             .config(Arc::clone(&self.config))
-            .artwork(DEFAULT_ARTWORK)
+            .artwork_config(self.artwork_config())
             .build()
     }
 

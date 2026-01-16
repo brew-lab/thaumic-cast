@@ -38,6 +38,12 @@ pub struct ServerConfig {
     /// Directory for persistent data (manual speakers config).
     /// Override: `THAUMIC_DATA_DIR`
     pub data_dir: Option<PathBuf>,
+
+    /// URL for custom artwork (album art) displayed on Sonos.
+    /// Should be an HTTPS URL for Android Sonos app compatibility.
+    /// If not set, checks for `artwork.jpg` in data_dir, then uses embedded default.
+    /// Override: `THAUMIC_ARTWORK_URL`
+    pub artwork_url: Option<String>,
 }
 
 impl Default for ServerConfig {
@@ -50,6 +56,7 @@ impl Default for ServerConfig {
             discovery_ssdp_broadcast: true,
             discovery_mdns: true,
             data_dir: None,
+            artwork_url: None,
         }
     }
 }
@@ -90,6 +97,12 @@ impl ServerConfig {
             }
         }
 
+        if let Ok(val) = std::env::var("THAUMIC_ARTWORK_URL") {
+            if !val.is_empty() {
+                self.artwork_url = Some(val);
+            }
+        }
+
         // Note: THAUMIC_DATA_DIR is handled by clap via #[arg(env = ...)] in main.rs
     }
 
@@ -102,6 +115,14 @@ impl ServerConfig {
             discovery_ssdp_broadcast: self.discovery_ssdp_broadcast,
             discovery_mdns: self.discovery_mdns,
             ..Default::default()
+        }
+    }
+
+    /// Converts to thaumic-core's ArtworkConfig type.
+    pub fn to_artwork_config(&self) -> thaumic_core::ArtworkConfig {
+        thaumic_core::ArtworkConfig {
+            url: self.artwork_url.clone(),
+            data_dir: self.data_dir.clone(),
         }
     }
 }

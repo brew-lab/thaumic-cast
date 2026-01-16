@@ -333,11 +333,13 @@ impl StreamCoordinator {
     /// * `speaker_ips` - IP addresses of the Sonos speakers (coordinators)
     /// * `stream_id` - The stream ID to play
     /// * `metadata` - Optional initial metadata to display on Sonos
+    /// * `artwork_url` - URL for album artwork in Sonos DIDL-Lite metadata
     pub async fn start_playback_multi(
         &self,
         speaker_ips: &[String],
         stream_id: &str,
         metadata: Option<&StreamMetadata>,
+        artwork_url: &str,
     ) -> Vec<PlaybackResult> {
         // Get stream state for codec and audio format
         let stream_state = self.get_stream(stream_id);
@@ -355,7 +357,6 @@ impl StreamCoordinator {
 
         let url_builder = self.network.url_builder();
         let stream_url = url_builder.stream_url(stream_id);
-        let artwork_url = url_builder.artwork_url();
 
         let mut results = Vec::with_capacity(speaker_ips.len());
 
@@ -367,7 +368,7 @@ impl StreamCoordinator {
                     stream_url: &stream_url,
                     codec,
                     audio_format: &audio_format,
-                    artwork_url: &artwork_url,
+                    artwork_url,
                     metadata,
                 })
                 .await;
@@ -502,14 +503,16 @@ impl StreamCoordinator {
     /// * `speaker_ip` - IP address of the Sonos speaker
     /// * `stream_id` - The stream ID to play
     /// * `metadata` - Optional initial metadata to display on Sonos
+    /// * `artwork_url` - URL for album artwork in Sonos DIDL-Lite metadata
     pub async fn start_playback(
         &self,
         speaker_ip: &str,
         stream_id: &str,
         metadata: Option<&StreamMetadata>,
+        artwork_url: &str,
     ) -> ThaumicResult<()> {
         let results = self
-            .start_playback_multi(&[speaker_ip.to_string()], stream_id, metadata)
+            .start_playback_multi(&[speaker_ip.to_string()], stream_id, metadata, artwork_url)
             .await;
 
         if let Some(result) = results.first() {

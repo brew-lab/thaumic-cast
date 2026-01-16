@@ -93,10 +93,11 @@ pub async fn start_playback(
     stream_id: String,
     state: tauri::State<'_, AppState>,
 ) -> Result<(), CommandError> {
+    let artwork_url = state.artwork_metadata_url();
     state
         .services
         .stream_coordinator
-        .start_playback(&ip, &stream_id, None)
+        .start_playback(&ip, &stream_id, None, &artwork_url)
         .await
         .map_err(Into::into)
 }

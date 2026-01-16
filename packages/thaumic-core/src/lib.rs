@@ -35,6 +35,7 @@
 #![warn(clippy::all)]
 
 pub mod api;
+pub mod artwork;
 pub mod bootstrap;
 pub mod context;
 pub mod error;
@@ -51,6 +52,7 @@ pub mod streaming_runtime;
 pub mod utils;
 
 // Re-export commonly used types at the crate root
+pub use artwork::{ArtworkConfig, ArtworkSource};
 pub use context::{IpDetector, LocalIpDetector, NetworkContext, NetworkError, UrlBuilder};
 pub use error::{DiscoveryResult, ErrorCode, GenaResult, SoapResult, ThaumicError, ThaumicResult};
 pub use events::{
@@ -84,8 +86,9 @@ pub use api::{start_server, AppState, AppStateBuilder, ServerError, WsConnection
 
 /// Default artwork for Sonos album art display.
 ///
-/// This image is embedded at compile time and can be used by both desktop and server
-/// apps to provide consistent branding. Pass to `AppStateBuilder::artwork()`.
+/// This image is embedded at compile time and served via the `/artwork.jpg` HTTP endpoint
+/// when no custom artwork is configured. The [`ArtworkConfig`] resolution chain uses this
+/// as the final fallback.
 ///
 /// # Platform Note: Android TLS Requirement
 ///
@@ -93,7 +96,7 @@ pub use api::{start_server, AppState, AppStateBuilder, ServerError, WsConnection
 /// The iOS app works with both HTTP and HTTPS.
 ///
 /// For album art to display on Android, host the image on an HTTPS endpoint
-/// (e.g., a CDN or cloud storage) and configure the artwork URL accordingly.
+/// (e.g., a CDN or cloud storage) and configure via [`ArtworkConfig::url`].
 ///
 /// Reference: <https://github.com/amp64/sonosbugtracker/issues/33>
 pub static DEFAULT_ARTWORK: &[u8] = include_bytes!("../assets/artwork-template.jpg");

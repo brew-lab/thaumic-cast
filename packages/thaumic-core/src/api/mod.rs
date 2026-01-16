@@ -11,6 +11,7 @@ use parking_lot::RwLock;
 use thiserror::Error;
 use tokio::sync::broadcast;
 
+use crate::artwork::{ArtworkConfig, ArtworkSource};
 use crate::context::NetworkContext;
 use crate::events::{BroadcastEvent, BroadcastEventBridge};
 use crate::mdns_advertise::MdnsAdvertiser;
@@ -65,8 +66,8 @@ pub struct AppState {
     pub config: Arc<RwLock<Config>>,
     /// Whether network services have been started.
     services_started: Arc<AtomicBool>,
-    /// Optional icon data for album art display.
-    pub artwork: Option<&'static [u8]>,
+    /// Artwork source for Sonos album art display.
+    pub artwork: ArtworkSource,
     /// mDNS advertiser for network discovery (optional, may fail on some systems).
     /// Kept alive for its Drop impl to unregister the service on shutdown.
     /// Created after server binds to get the actual port.
@@ -87,7 +88,7 @@ pub struct AppStateBuilder {
     ws_manager: Option<Arc<WsConnectionManager>>,
     latency_monitor: Option<Arc<LatencyMonitor>>,
     config: Option<Arc<RwLock<Config>>>,
-    artwork: Option<&'static [u8]>,
+    artwork_config: Option<ArtworkConfig>,
 }
 
 impl AppStateBuilder {
@@ -156,14 +157,24 @@ impl AppStateBuilder {
         self
     }
 
-    /// Sets the icon data for album art display.
-    pub fn artwork(mut self, data: &'static [u8]) -> Self {
-        self.artwork = Some(data);
+    /// Sets the artwork configuration.
+    ///
+    /// The configuration will be resolved during `build()` using the precedence chain:
+    /// 1. `url` (hosted) → `ArtworkSource::Url`
+    /// 2. `data_dir/artwork.jpg` (local file) → `ArtworkSource::Bytes`
+    /// 3. Embedded `DEFAULT_ARTWORK` → `ArtworkSource::Bytes`
+    pub fn artwork_config(mut self, config: ArtworkConfig) -> Self {
+        self.artwork_config = Some(config);
         self
     }
 
     /// Builds the `AppState`, panicking if required fields are missing.
+    ///
+    /// Resolves the artwork configuration using the precedence chain.
     pub fn build(self) -> AppState {
+        // Resolve artwork config, defaulting to embedded artwork if not specified
+        let artwork = self.artwork_config.unwrap_or_default().resolve();
+
         AppState {
             sonos: self.sonos.expect("sonos is required"),
             stream_coordinator: self
@@ -180,7 +191,7 @@ impl AppStateBuilder {
             latency_monitor: self.latency_monitor.expect("latency_monitor is required"),
             config: self.config.expect("config is required"),
             services_started: Arc::new(AtomicBool::new(false)),
-            artwork: self.artwork,
+            artwork,
             mdns_advertiser: Arc::new(RwLock::new(None)),
         }
     }
@@ -190,6 +201,16 @@ impl AppState {
     /// Creates a new builder for constructing an `AppState`.
     pub fn builder() -> AppStateBuilder {
         AppStateBuilder::new()
+    }
+
+    /// Returns the artwork URL to use in Sonos DIDL-Lite metadata.
+    ///
+    /// For external URLs, returns that URL directly.
+    /// For local bytes, returns the local `/artwork.jpg` endpoint URL.
+    #[must_use]
+    pub fn artwork_metadata_url(&self) -> String {
+        let local_url = self.network.url_builder().artwork_url();
+        self.artwork.metadata_url(&local_url)
     }
 
     /// Marks services as started.

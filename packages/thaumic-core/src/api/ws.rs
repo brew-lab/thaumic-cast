@@ -614,12 +614,14 @@ async fn handle_ws(socket: WebSocket, state: AppState) {
                                     }
 
                                     // Start playback on all speakers (multi-group support)
+                                    let artwork_url = state.artwork_metadata_url();
                                     let results = state
                                         .stream_coordinator
                                         .start_playback_multi(
                                             &speaker_ips,
                                             &stream_id,
                                             payload.metadata.as_ref(),
+                                            &artwork_url,
                                         )
                                         .await;
 

@@ -25,3 +25,9 @@ discovery_mdns: true
 # If not set, manual speaker configuration won't persist across restarts.
 # Environment: THAUMIC_DATA_DIR
 # data_dir: '/var/lib/thaumic-server'
+
+# Custom artwork URL for Sonos album art display (optional)
+# Should be an HTTPS URL for Android Sonos app compatibility.
+# Precedence: artwork_url > data_dir/artwork.jpg > embedded default
+# Environment: THAUMIC_ARTWORK_URL
+# artwork_url: 'https://cdn.example.com/my-artwork.jpg'

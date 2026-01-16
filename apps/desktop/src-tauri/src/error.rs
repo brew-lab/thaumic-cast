@@ -20,17 +20,8 @@ pub struct CommandError {
 
 impl From<ThaumicError> for CommandError {
     fn from(err: ThaumicError) -> Self {
-        let code = match &err {
-            ThaumicError::Discovery(_) => "discovery_failed",
-            ThaumicError::Soap(_) => "soap_error",
-            ThaumicError::SpeakerNotFound(_) => "speaker_not_found",
-            ThaumicError::StreamNotFound(_) => "stream_not_found",
-            ThaumicError::InvalidRequest(_) => "invalid_request",
-            ThaumicError::Network(_) => "network_error",
-            ThaumicError::Internal(_) => "internal_error",
-        };
         Self {
-            code,
+            code: err.code(),
             message: err.to_string(),
         }
     }

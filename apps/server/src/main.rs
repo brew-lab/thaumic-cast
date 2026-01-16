@@ -13,8 +13,7 @@ use anyhow::{Context, Result};
 use clap::Parser;
 use parking_lot::RwLock;
 use thaumic_core::{
-    bootstrap_services_with_network, start_server, AppStateBuilder, LocalIpDetector,
-    NetworkContext, DEFAULT_ARTWORK,
+    bootstrap_services_with_network, start_server, AppStateBuilder, LocalIpDetector, NetworkContext,
 };
 use tokio::signal;
 
@@ -128,7 +127,7 @@ async fn main() -> Result<()> {
         .ws_manager(Arc::clone(&services.ws_manager))
         .latency_monitor(Arc::clone(&services.latency_monitor))
         .config(Arc::new(RwLock::new(core_config)))
-        .artwork(DEFAULT_ARTWORK)
+        .artwork_config(config.to_artwork_config())
         .build();
 
     // Spawn HTTP server on the main tokio runtime.
