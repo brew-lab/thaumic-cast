@@ -50,8 +50,8 @@ const BACKPRESSURE_BACKOFF_INITIAL_MS = 5;
 /** Maximum backpressure backoff delay (ms). */
 const BACKPRESSURE_BACKOFF_MAX_MS = 40;
 
-/** Timeout for waiting on producer (ms). Triggers underflow if exceeded. */
-const WAIT_TIMEOUT_MS = 100;
+/** Timeout for waiting on producer (ms). Triggers underflow if exceeded. 200ms = 10 frames of headroom. */
+const WAIT_TIMEOUT_MS = 200;
 
 /** Frame period in milliseconds (derived from FRAME_DURATION_SEC). */
 const FRAME_PERIOD_MS = FRAME_DURATION_SEC * 1000;
