@@ -30,8 +30,8 @@ const log = createLogger('AudioWorker');
 /** Frame duration in seconds (10ms). Smaller frames = finer drop granularity. */
 const FRAME_DURATION_SEC = 0.01;
 
-/** Maximum pending encode operations before dropping frames. */
-const MAX_ENCODE_QUEUE = 3;
+/** Maximum pending encode operations before dropping frames. PCM encoder always returns 0 (synchronous). */
+const MAX_ENCODE_QUEUE = 8;
 
 /** WebSocket buffer high water mark (256KB). Drop frames if exceeded. ~1.3s at PCM rate. */
 const WS_BUFFER_HIGH_WATER = 256000;
