@@ -17,8 +17,8 @@
  *
  * Availability Calculation:
  *   availableRead = (writeIdx - readIdx) >>> 0
- *   availableWrite = RING_BUFFER_SIZE - availableRead
- *   bufferOffset = index & RING_BUFFER_MASK
+ *   availableWrite = bufferSize - availableRead
+ *   bufferOffset = index & bufferMask
  *
  * The unsigned subtraction (>>> 0) handles 32-bit wrap correctly
  * for sessions >12 hours at 48kHz stereo.
@@ -30,11 +30,8 @@
  * at the encoder level, allowing for 24-bit FLAC encoding without precision loss.
  */
 
-/** Power-of-two buffer size for bitmask optimization. ~2.7 seconds at 48kHz stereo. */
-export const RING_BUFFER_SIZE = 262144; // 2^18
-
-/** Bitmask for efficient index wrapping (replaces costly modulo). */
-export const RING_BUFFER_MASK = RING_BUFFER_SIZE - 1;
+/** Target buffer duration in seconds. Used to calculate power-of-two buffer size. */
+const TARGET_BUFFER_SECONDS = 3;
 
 /** Number of control integers at the start of the buffer. */
 export const HEADER_SIZE = 3;
@@ -49,31 +46,54 @@ export const CTRL_DROPPED_SAMPLES = 2;
 /** Byte offset where Float32 audio data begins. */
 export const DATA_BYTE_OFFSET = HEADER_SIZE * Int32Array.BYTES_PER_ELEMENT;
 
+/** Result of creating an audio ring buffer. */
+export interface RingBufferConfig {
+  /** The SharedArrayBuffer containing the ring buffer. */
+  sab: SharedArrayBuffer;
+  /** Power-of-two buffer size in samples. */
+  size: number;
+  /** Bitmask for efficient index wrapping (size - 1). */
+  mask: number;
+}
+
 /**
- * Creates a SharedArrayBuffer for audio data.
- * @returns A new SharedArrayBuffer for the audio ring buffer
+ * Calculates the power-of-two buffer size for a given audio configuration.
+ * Ensures consistent ~3 second buffer duration regardless of sample rate/channels.
+ * @param sampleRate - Audio sample rate in Hz
+ * @param channels - Number of audio channels
+ * @returns Power-of-two buffer size in samples
  */
-export function createAudioRingBuffer(): SharedArrayBuffer {
-  // Static assertions for configuration validity
-  if ((RING_BUFFER_SIZE & (RING_BUFFER_SIZE - 1)) !== 0) {
-    throw new Error('RING_BUFFER_SIZE must be a power of two for bitmask wrapping');
-  }
-  if (RING_BUFFER_MASK !== RING_BUFFER_SIZE - 1) {
-    throw new Error('RING_BUFFER_MASK must be RING_BUFFER_SIZE - 1');
+function calculateBufferSize(sampleRate: number, channels: number): number {
+  const minSamples = sampleRate * channels * TARGET_BUFFER_SECONDS;
+  return 1 << Math.ceil(Math.log2(minSamples));
+}
+
+/**
+ * Creates a SharedArrayBuffer for audio data, sized for the given audio configuration.
+ * @param sampleRate - Audio sample rate in Hz
+ * @param channels - Number of audio channels
+ * @returns Ring buffer configuration with SharedArrayBuffer, size, and mask
+ */
+export function createAudioRingBuffer(sampleRate: number, channels: number): RingBufferConfig {
+  const size = calculateBufferSize(sampleRate, channels);
+  const mask = size - 1;
+
+  // Verify power-of-two (should always pass given calculateBufferSize implementation)
+  if ((size & (size - 1)) !== 0) {
+    throw new Error('Buffer size must be a power of two for bitmask wrapping');
   }
 
-  // Correct allocation: header uses Int32, data uses Float32
-  // Float32 buffer is ~2x larger than Int16 but keeps full precision for 24-bit encoding
-  const size = DATA_BYTE_OFFSET + RING_BUFFER_SIZE * Float32Array.BYTES_PER_ELEMENT;
-  const sab = new SharedArrayBuffer(size);
+  // Allocate: header uses Int32, data uses Float32
+  const byteLength = DATA_BYTE_OFFSET + size * Float32Array.BYTES_PER_ELEMENT;
+  const sab = new SharedArrayBuffer(byteLength);
 
-  // Verify the Float32Array view will have exactly RING_BUFFER_SIZE elements
+  // Verify the Float32Array view has the expected size
   const dataView = new Float32Array(sab, DATA_BYTE_OFFSET);
-  if (dataView.length !== RING_BUFFER_SIZE) {
+  if (dataView.length !== size) {
     throw new Error(
-      `Ring buffer data view length mismatch: expected ${RING_BUFFER_SIZE}, got ${dataView.length}`,
+      `Ring buffer data view length mismatch: expected ${size}, got ${dataView.length}`,
     );
   }
 
-  return sab;
+  return { sab, size, mask };
 }

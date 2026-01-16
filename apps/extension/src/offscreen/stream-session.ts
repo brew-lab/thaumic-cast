@@ -15,12 +15,7 @@
  */
 
 import { createLogger } from '@thaumic-cast/shared';
-import {
-  createAudioRingBuffer,
-  HEADER_SIZE,
-  RING_BUFFER_SIZE,
-  RING_BUFFER_MASK,
-} from './ring-buffer';
+import { createAudioRingBuffer, HEADER_SIZE } from './ring-buffer';
 import type { EncoderConfig, StreamMetadata } from '@thaumic-cast/protocol';
 import { isSupportedSampleRate } from '@thaumic-cast/protocol';
 import { noop } from '../lib/noop';
@@ -57,6 +52,8 @@ export class StreamSession {
   private audioContext: AudioContext | null = null;
   private consumerWorker: Worker | null = null;
   private ringBuffer: SharedArrayBuffer;
+  private bufferSize: number;
+  private bufferMask: number;
   private sourceNode: MediaStreamAudioSourceNode | null = null;
   private workletNode: AudioWorkletNode | null = null;
   private outputGainNode: GainNode | null = null;
@@ -137,7 +134,14 @@ export class StreamSession {
   ) {
     this.onDisconnected = onDisconnected;
     this.keepTabAudible = options?.keepTabAudible ?? false;
-    this.ringBuffer = createAudioRingBuffer();
+
+    const ringBufferConfig = createAudioRingBuffer(
+      encoderConfig.sampleRate,
+      encoderConfig.channels,
+    );
+    this.ringBuffer = ringBufferConfig.sab;
+    this.bufferSize = ringBufferConfig.size;
+    this.bufferMask = ringBufferConfig.mask;
 
     this.streamReadyPromise = new Promise<void>((resolve) => {
       this.streamReadyResolve = resolve;
@@ -198,8 +202,8 @@ export class StreamSession {
     this.workletNode.port.postMessage({
       type: 'INIT_BUFFER',
       buffer: this.ringBuffer,
-      bufferSize: RING_BUFFER_SIZE,
-      bufferMask: RING_BUFFER_MASK,
+      bufferSize: this.bufferSize,
+      bufferMask: this.bufferMask,
       headerSize: HEADER_SIZE,
       sampleRate: this.encoderConfig.sampleRate,
       channels: this.encoderConfig.channels,
@@ -483,8 +487,8 @@ export class StreamSession {
     this.consumerWorker.postMessage({
       type: 'INIT',
       sab: this.ringBuffer,
-      bufferSize: RING_BUFFER_SIZE,
-      bufferMask: RING_BUFFER_MASK,
+      bufferSize: this.bufferSize,
+      bufferMask: this.bufferMask,
       headerSize: HEADER_SIZE,
       sampleRate: this.encoderConfig.sampleRate,
       encoderConfig: this.encoderConfig,
