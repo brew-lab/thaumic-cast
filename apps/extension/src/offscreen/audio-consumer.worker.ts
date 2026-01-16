@@ -52,7 +52,7 @@ const DEFAULT_FRAMES_PER_WAKE = 3;
 const WAIT_TIMEOUT_MS = 100;
 
 /** Interval for posting diagnostic stats to main thread (ms). */
-const STATS_INTERVAL_MS = 1000;
+const STATS_INTERVAL_MS = 2000;
 
 /** Heartbeat interval for WebSocket (ms). */
 const HEARTBEAT_INTERVAL_MS = 5000;

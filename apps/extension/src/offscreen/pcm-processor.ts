@@ -155,8 +155,8 @@ class PCMProcessor extends AudioWorkletProcessor {
     // - NaN values (s !== s check) - replaced with 0 to avoid undefined WebCodecs behavior
     // - Future API changes
     // Note: ±Infinity is already handled correctly (clamped to ±1).
-    // Clipping is fused into the clamp operation using comma operator to avoid extra function
-    // calls in this hot path (~192k samples/sec at 48kHz stereo).
+    // Clipping detection is guarded by __DEBUG_AUDIO__ to eliminate per-sample overhead
+    // in production builds (~192k samples/sec at 48kHz stereo).
     if (this.channels === 1) {
       // Mono output: average both channels for proper downmix
       // If input is already mono (channel1 === channel0), this still works correctly
@@ -165,28 +165,15 @@ class PCMProcessor extends AudioWorkletProcessor {
         // Proper stereo-to-mono downmix: average both channels
         for (let i = 0; i < frameCount; i++) {
           const s = (channel0[i]! + channel1[i]!) * 0.5;
-          // Fused NaN check + clamp + clip count: s !== s is true only for NaN
-          this.conversionBuffer[i] =
-            s !== s
-              ? (this.clippedSampleCount++, 0)
-              : s < -1
-                ? (this.clippedSampleCount++, -1)
-                : s > 1
-                  ? (this.clippedSampleCount++, 1)
-                  : s;
+          if (__DEBUG_AUDIO__ && (s !== s || s < -1 || s > 1)) this.clippedSampleCount++;
+          this.conversionBuffer[i] = s !== s ? 0 : s < -1 ? -1 : s > 1 ? 1 : s;
         }
       } else {
         // Input is already mono, just clamp
         for (let i = 0; i < frameCount; i++) {
           const s = channel0[i]!;
-          this.conversionBuffer[i] =
-            s !== s
-              ? (this.clippedSampleCount++, 0)
-              : s < -1
-                ? (this.clippedSampleCount++, -1)
-                : s > 1
-                  ? (this.clippedSampleCount++, 1)
-                  : s;
+          if (__DEBUG_AUDIO__ && (s !== s || s < -1 || s > 1)) this.clippedSampleCount++;
+          this.conversionBuffer[i] = s !== s ? 0 : s < -1 ? -1 : s > 1 ? 1 : s;
         }
       }
     } else {
@@ -194,22 +181,10 @@ class PCMProcessor extends AudioWorkletProcessor {
       for (let i = 0; i < frameCount; i++) {
         const l = channel0[i]!;
         const r = channel1[i]!;
-        this.conversionBuffer[i * 2] =
-          l !== l
-            ? (this.clippedSampleCount++, 0)
-            : l < -1
-              ? (this.clippedSampleCount++, -1)
-              : l > 1
-                ? (this.clippedSampleCount++, 1)
-                : l;
-        this.conversionBuffer[i * 2 + 1] =
-          r !== r
-            ? (this.clippedSampleCount++, 0)
-            : r < -1
-              ? (this.clippedSampleCount++, -1)
-              : r > 1
-                ? (this.clippedSampleCount++, 1)
-                : r;
+        if (__DEBUG_AUDIO__ && (l !== l || l < -1 || l > 1)) this.clippedSampleCount++;
+        this.conversionBuffer[i * 2] = l !== l ? 0 : l < -1 ? -1 : l > 1 ? 1 : l;
+        if (__DEBUG_AUDIO__ && (r !== r || r < -1 || r > 1)) this.clippedSampleCount++;
+        this.conversionBuffer[i * 2 + 1] = r !== r ? 0 : r < -1 ? -1 : r > 1 ? 1 : r;
       }
     }
 
@@ -240,6 +215,7 @@ class PCMProcessor extends AudioWorkletProcessor {
     if (this.blockCount >= this.heartbeatIntervalBlocks) {
       this.blockCount = 0;
       // Include clipping count in heartbeat for debugging audio quality issues
+      // In production, clippedSampleCount is always 0 (counting disabled via __DEBUG_AUDIO__)
       const clipped = this.clippedSampleCount;
       this.clippedSampleCount = 0;
       this.port.postMessage({ type: 'HEARTBEAT', clippedSamples: clipped });

@@ -10,6 +10,7 @@
     "dev:desktop": "bun run --filter @thaumic-cast/desktop tauri dev",
     "dev:extension": "bun run --filter @thaumic-cast/extension dev",
     "build": "bun run --filter '*' build",
+    "build:extension": "bun run --filter @thaumic-cast/extension build",
     "build:desktop:windows": "bun run --filter @thaumic-cast/desktop tauri build --target x86_64-pc-windows-msvc --debug",
     "typecheck": "bun run --filter '*' typecheck",
     "lint": "eslint . && stylelint '**/*.css'",
