@@ -174,6 +174,13 @@ export class StreamSession {
       latencyHint: this.encoderConfig.latencyMode === 'realtime' ? 'interactive' : 'playback',
     });
 
+    // Log actual latency for diagnostics - browser may not honor latencyHint
+    const baseLatencyMs = (this.audioContext.baseLatency * 1000).toFixed(1);
+    const outputLatencyMs = (this.audioContext.outputLatency * 1000).toFixed(1);
+    log.info(
+      `AudioContext created: baseLatency=${baseLatencyMs}ms, outputLatency=${outputLatencyMs}ms, state=${this.audioContext.state}`,
+    );
+
     // Validate sample rate - browser may not honor our request
     const actualSampleRate = this.audioContext.sampleRate;
     if (actualSampleRate !== this.encoderConfig.sampleRate) {
