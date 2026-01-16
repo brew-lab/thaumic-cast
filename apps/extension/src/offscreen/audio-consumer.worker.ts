@@ -36,8 +36,13 @@ const MAX_ENCODE_QUEUE = 3;
 /** WebSocket buffer high water mark (512KB). Drop frames if exceeded. */
 const WS_BUFFER_HIGH_WATER = 512000;
 
-/** Macrotask yield duration (ms). Gives encoder thread CPU time. */
-const YIELD_MS = 1;
+/**
+ * Time budget for processing frames per wake cycle (ms).
+ * Stay under typical browser timer quantum (~4ms) to avoid timer coalescing issues.
+ * Per web.dev/articles/audio-scheduling: setTimeout can be skewed by 10ms+ from
+ * layout, rendering, and GC, so we busy-poll within budget instead.
+ */
+const PROCESS_BUDGET_MS = 4;
 
 /** Initial backpressure backoff delay (ms). */
 const BACKPRESSURE_BACKOFF_INITIAL_MS = 5;
@@ -45,11 +50,17 @@ const BACKPRESSURE_BACKOFF_INITIAL_MS = 5;
 /** Maximum backpressure backoff delay (ms). */
 const BACKPRESSURE_BACKOFF_MAX_MS = 40;
 
-/** Default frames per wake. 3 frames = ~60ms, balances latency vs CPU. */
-const DEFAULT_FRAMES_PER_WAKE = 3;
-
 /** Timeout for waiting on producer (ms). Triggers underflow if exceeded. */
 const WAIT_TIMEOUT_MS = 100;
+
+/** Frame period in milliseconds (derived from FRAME_DURATION_SEC). */
+const FRAME_PERIOD_MS = FRAME_DURATION_SEC * 1000;
+
+/**
+ * Maximum drift allowed before clamping frame timing (ms).
+ * Allows burst catch-up of ~3 frames when recovering from brief stalls.
+ */
+const MAX_DRIFT_MS = FRAME_PERIOD_MS * 3;
 
 /** Interval for posting diagnostic stats to main thread (ms). */
 const STATS_INTERVAL_MS = 2000;
@@ -224,6 +235,10 @@ let catchUpDroppedSamples = 0;
 let backpressureCycles = 0;
 /** Consecutive backpressure cycles for adaptive backoff calculation. */
 let consecutiveBackpressureCycles = 0;
+
+// Time-based pacing
+/** Next frame due time for time-based pacing (performance.now() timestamp). */
+let nextFrameDueTime = 0;
 
 // Catch-up thresholds (computed from constants and sample rate)
 let catchUpTargetSamples = 0;
@@ -686,26 +701,9 @@ function isBackpressured(): boolean {
 }
 
 /**
- * Dynamically compute max frames based on backpressure.
- * Process fewer frames when encoder/network is struggling.
- * @returns Number of frames to process this wake cycle
- */
-function getMaxFramesPerWake(): number {
-  const queueSize = encoder?.encodeQueueSize ?? 0;
-  const buffered = socket?.bufferedAmount ?? 0;
-
-  // If encoder queue building up, process less per wake
-  if (queueSize >= 2 || buffered >= WS_BUFFER_HIGH_WATER / 2) {
-    return 1; // Minimal work, let encoder catch up
-  }
-
-  return DEFAULT_FRAMES_PER_WAKE;
-}
-
-/**
  * Yields to the macrotask queue via setTimeout.
  * Unlike microtasks (Promise.resolve), this actually yields CPU time.
- * @param ms - Milliseconds to wait
+ * @param ms - Milliseconds to wait (use 0 to just yield without delay)
  * @returns A promise that resolves after the delay
  */
 function yieldMacrotask(ms: number): Promise<void> {
@@ -713,14 +711,20 @@ function yieldMacrotask(ms: number): Promise<void> {
 }
 
 /**
- * Drains up to maxFrames complete frames from the ring buffer.
- * @param maxFrames - Maximum number of frames to drain
+ * Drains frames from the ring buffer within a time budget.
+ * Uses busy-polling to avoid timer coalescing issues with setTimeout.
+ * Checks backpressure between frames to avoid overloading encoder/network.
+ *
  * @returns Number of complete frames drained
  */
-function drainWithLimit(maxFrames: number): number {
+function drainWithTimeBudget(): number {
   let framesProcessed = 0;
+  const budgetStart = performance.now();
 
-  while (framesProcessed < maxFrames) {
+  while (performance.now() - budgetStart < PROCESS_BUDGET_MS) {
+    // Check backpressure before processing each frame
+    if (isBackpressured()) break;
+
     const samplesRead = readFromRingBuffer();
     if (samplesRead === 0) break;
 
@@ -741,12 +745,21 @@ function drainWithLimit(maxFrames: number): number {
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
- * Main consumption loop with backpressure-aware flow control.
+ * Main consumption loop with time-based pacing and backpressure-aware flow control.
  *
- * - If backpressured: skip reads entirely, letting the ring buffer fill
- *   and triggering producer-side drops naturally
- * - If data available: drain with bounded work, then yield via macrotask
+ * Uses performance.now() for rate control to pace frame production at ~20ms intervals,
+ * preventing burst processing and smoothing encoder/network load. Avoids setTimeout
+ * timer coalescing issues by busy-polling within a ~4ms time budget per wake cycle.
+ *
+ * Flow:
+ * - If backpressured: skip reads, back off exponentially (5→40ms)
+ * - If ahead of schedule: yield until next frame is due
+ * - If data available: drain within time budget, update frame timing, yield thread
  * - If buffer empty: wait on write index via Atomics.waitAsync
+ *
+ * Drift handling:
+ * - Allows burst catch-up of ~3 frames (MAX_DRIFT_MS) when recovering from stalls
+ * - Clamps drift to prevent unbounded catch-up after long pauses
  */
 async function consumeLoop(): Promise<void> {
   if (!control) return;
@@ -781,11 +794,35 @@ async function consumeLoop(): Promise<void> {
     // Reset consecutive backpressure counter when pressure eases
     consecutiveBackpressureCycles = 0;
 
-    // Drain with bounded work per wake (dynamic based on backpressure)
-    const framesThisWake = drainWithLimit(getMaxFramesPerWake());
+    // TIME-BASED PACING: Wait if we're ahead of schedule
+    // This prevents burst processing and smooths encoder/network load
+    const now = performance.now();
+    if (nextFrameDueTime > 0 && now < nextFrameDueTime) {
+      const waitTime = nextFrameDueTime - now;
+      if (waitTime > 1) {
+        await yieldMacrotask(waitTime);
+      }
+    }
+
+    // Drain frames within time budget, checking backpressure between frames
+    const framesThisWake = drainWithTimeBudget();
 
     if (framesThisWake > 0) {
       wakeupCount++;
+
+      // Update frame due time for time-based pacing
+      if (nextFrameDueTime === 0) {
+        // First frame - initialize due time to now
+        nextFrameDueTime = performance.now();
+      }
+      nextFrameDueTime += framesThisWake * FRAME_PERIOD_MS;
+
+      // Clamp: don't let due time fall more than MAX_DRIFT_MS behind wall clock
+      // This allows burst catch-up but prevents unbounded drift accumulation
+      const nowAfterDrain = performance.now();
+      if (nextFrameDueTime < nowAfterDrain - MAX_DRIFT_MS) {
+        nextFrameDueTime = nowAfterDrain - MAX_DRIFT_MS;
+      }
     }
 
     maybePostStats();
@@ -796,9 +833,9 @@ async function consumeLoop(): Promise<void> {
     const available = (write - read) >>> 0;
 
     if (available > 0) {
-      // Data available - yield via macrotask to prevent encoder starvation
-      // Microtasks don't yield CPU time; setTimeout(0) does
-      await yieldMacrotask(YIELD_MS);
+      // Data available but we've exhausted our time budget
+      // Just yield the thread (setTimeout(0)), time-based pacing handles the wait
+      await yieldMacrotask(0);
       continue;
     }
 
@@ -907,6 +944,7 @@ self.onmessage = async (event: MessageEvent<InboundMessage>) => {
       catchUpDroppedSamples = 0;
       backpressureCycles = 0;
       consecutiveBackpressureCycles = 0;
+      nextFrameDueTime = 0;
       wakeupCount = 0;
       totalSamplesRead = 0;
       lastProducerDroppedSamples = 0;
