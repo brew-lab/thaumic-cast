@@ -553,6 +553,8 @@ fn restart_server(app: &AppHandle) {
     });
 }
 
+/// Shows and focuses the window from the system tray.
+/// On macOS, also shows the dock icon.
 fn focus_window(window: &WebviewWindow) {
     // On macOS, show the dock icon when window is shown
     #[cfg(target_os = "macos")]

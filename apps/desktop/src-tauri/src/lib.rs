@@ -86,6 +86,23 @@ pub fn run() {
                 log::debug!("Locale set to: {} (detected: {})", base_locale, locale);
             }
 
+            // Check if started with --minimized flag (auto-start mode)
+            // If so, hide the window to start in system tray only
+            let start_minimized = std::env::args().any(|arg| arg == "--minimized");
+            if start_minimized {
+                log::info!("Starting minimized to system tray (auto-start mode)");
+                if let Some(window) = app.get_webview_window("main") {
+                    let _ = window.hide();
+
+                    // On macOS, hide the dock icon when starting minimized
+                    #[cfg(target_os = "macos")]
+                    {
+                        use tauri::ActivationPolicy;
+                        let _ = app.set_activation_policy(ActivationPolicy::Accessory);
+                    }
+                }
+            }
+
             let state = Arc::new(AppState::new());
 
             // Store app handle for restart functionality
