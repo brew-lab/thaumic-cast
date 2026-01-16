@@ -1,11 +1,10 @@
 .layout {
   /*
-   * Intrinsic sidebar with snap behavior.
-   * Snaps between expanded (15rem) and collapsed (4.5rem) states
-   * based on #app container width (defined in App.css).
+   * Intrinsic sidebar with snap behavior (mobile-first).
+   * Default: collapsed (4.5rem), expands at >= 53rem.
    */
   display: grid;
-  grid-template-columns: 15rem 1fr;
+  grid-template-columns: 4.5rem 1fr;
   block-size: 100dvb;
   inline-size: 100vi;
   background-color: var(--color-bg);
@@ -13,9 +12,9 @@
   transition: grid-template-columns var(--duration-slow) var(--ease-out-3);
 }
 
-@container app (inline-size < 53rem) {
+@container app (inline-size >= 53rem) {
   .layout {
-    grid-template-columns: 4.5rem 1fr;
+    grid-template-columns: 15rem 1fr;
   }
 }
 

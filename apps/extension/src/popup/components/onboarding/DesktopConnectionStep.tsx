@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback } from 'preact/hooks';
-import { WizardStep, Alert, Button, Disclosure } from '@thaumic-cast/ui';
+import { WizardStep, Alert, Button, Disclosure, Input } from '@thaumic-cast/ui';
 import { Monitor, Download, RefreshCw } from 'lucide-preact';
 import { useTranslation } from 'react-i18next';
 import { useConnectionStatus } from '../../hooks/useConnectionStatus';
@@ -129,9 +129,8 @@ export function DesktopConnectionStep({
             hint={t('onboarding.desktop.manual_hint')}
           >
             <div className={styles.manualForm}>
-              <input
+              <Input
                 type="url"
-                className={styles.urlInput}
                 placeholder={t('server_url_placeholder')}
                 value={urlInput}
                 onInput={handleUrlChange}

@@ -98,7 +98,7 @@ export function Speakers() {
     <div className={styles.speakers}>
       <div className={styles.header}>
         <div className={styles.headerLeft}>
-          <h2 className={styles.title}>{t('nav.speakers')}</h2>
+          <h2 className={styles.pageTitle}>{t('nav.speakers')}</h2>
           <span className={styles.summary}>
             {t('speakers.summary', { speakers: speakerCount, streams: streamCount })}
           </span>

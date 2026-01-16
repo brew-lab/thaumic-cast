@@ -18,22 +18,24 @@
   gap: var(--space-xs);
 }
 
-.title {
+.page-title {
   margin: 0;
 }
 
 .summary {
   font-size: 0.9rem;
   color: var(--color-text-muted);
+  text-wrap: pretty;
 }
 
 .controls {
   display: flex;
+  flex-wrap: wrap;
   gap: var(--space-sm);
 }
 
 .control-button {
-  inline-size: auto;
+  flex: 1 0 auto;
 }
 
 .grid {

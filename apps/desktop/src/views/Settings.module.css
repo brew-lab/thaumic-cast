@@ -4,7 +4,7 @@
   max-inline-size: 38rem;
 }
 
-.title {
+.page-title {
   margin: 0;
   margin-block-end: var(--space-lg);
 }
@@ -13,29 +13,10 @@
   margin-block-end: var(--space-lg);
 }
 
-.section-header {
-  display: flex;
-  align-items: center;
-  gap: var(--space-sm);
-  padding-block: var(--space-md);
-  padding-inline: var(--space-md);
-  border-block-end: 1px solid var(--color-border);
-  color: var(--color-text-muted);
-}
-
-.section-title {
-  margin: 0;
-  font-size: 0.9rem;
-  font-weight: 600;
-  color: var(--color-text);
-}
-
 .section-content {
   display: flex;
   flex-direction: column;
   gap: var(--space-lg);
-  padding-block: var(--space-md);
-  padding-inline: var(--space-md);
 }
 
 .toggle {
@@ -52,13 +33,15 @@
 }
 
 .toggle-label {
-  font-weight: 500;
+  margin: 0;
+  font-size: 0.85rem;
+  font-weight: 600;
 }
 
 .toggle-description {
+  margin: 0;
   font-size: 0.85rem;
   color: var(--color-text-muted);
-  text-wrap: pretty;
 }
 
 .checkbox {
