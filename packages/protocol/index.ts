@@ -37,10 +37,10 @@ export type AudioCodec = z.infer<typeof AudioCodecSchema>;
 /**
  * Supported bitrates in kbps.
  * Not all bitrates are valid for all codecs - use `getValidBitrates()` to filter.
- * WAV uses 0 to indicate lossless (uncompressed).
+ * PCM uses 0 to indicate lossless (uncompressed).
  */
 export const BitrateSchema = z.union([
-  z.literal(0), // Lossless (WAV)
+  z.literal(0), // Lossless (PCM)
   z.literal(64),
   z.literal(96),
   z.literal(128),
@@ -129,7 +129,7 @@ export function clampSample(s: number): number {
 
 /**
  * Streaming buffer size constraints and default (in milliseconds).
- * Used for WAV/PCM streaming to balance latency vs. reliability.
+ * Used for PCM streaming to balance latency vs. reliability.
  */
 export const STREAMING_BUFFER_MS_MIN = 100;
 export const STREAMING_BUFFER_MS_MAX = 1000;
@@ -150,7 +150,7 @@ export const EncoderConfigSchema = z
      */
     bitsPerSample: BitDepthSchema.default(16),
     latencyMode: LatencyModeSchema.default('quality'),
-    /** Buffer size for WAV streaming in milliseconds. Only affects PCM codec. */
+    /** Buffer size for PCM streaming in milliseconds. */
     streamingBufferMs: z
       .number()
       .min(STREAMING_BUFFER_MS_MIN)
@@ -213,7 +213,7 @@ export function hasEncoderImplementation(codec: AudioCodec): boolean {
  */
 export const CODEC_METADATA: Record<AudioCodec, CodecMetadata> = {
   pcm: {
-    label: 'WAV',
+    label: 'PCM',
     description: 'Uncompressed lossless audio',
     validBitrates: [] as const,
     defaultBitrate: 0, // 0 indicates lossless/variable bitrate
@@ -326,7 +326,7 @@ export interface CreateEncoderConfigOptions {
   /** Bit depth (16 or 24). 24-bit only supported for FLAC. */
   bitsPerSample?: BitDepth;
   latencyMode?: LatencyMode;
-  /** Buffer size for WAV streaming in milliseconds (100-1000). Only affects PCM codec. */
+  /** Buffer size for PCM streaming in milliseconds (100-1000). */
   streamingBufferMs?: number;
 }
 

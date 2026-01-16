@@ -233,7 +233,7 @@ impl StreamCoordinator {
     /// This is the preferred method for stream removal. The cleanup order depends
     /// on the codec:
     ///
-    /// **WAV (PCM passthrough):**
+    /// **PCM:**
     /// 1. Close HTTP first (Sonos blocks on reads, SOAP would timeout)
     /// 2. Send SOAP stop commands
     ///
@@ -245,9 +245,9 @@ impl StreamCoordinator {
     pub async fn remove_stream_async(&self, stream_id: &str) {
         // Get codec and speaker IPs before removing the stream
         let stream_state = self.get_stream(stream_id);
-        let is_wav = stream_state
+        let is_pcm = stream_state
             .as_ref()
-            .map(|s| s.codec == AudioCodec::Wav)
+            .map(|s| s.codec == AudioCodec::Pcm)
             .unwrap_or(false);
 
         // Collect speaker IPs before removal
@@ -258,9 +258,9 @@ impl StreamCoordinator {
             .map(|r| r.key().speaker_ip.clone())
             .collect();
 
-        if is_wav {
-            // WAV: Close HTTP first to unblock Sonos, then send SOAP commands.
-            // Sonos blocks on HTTP reads for WAV streams, causing SOAP timeouts.
+        if is_pcm {
+            // PCM: Close HTTP first to unblock Sonos, then send SOAP commands.
+            // Sonos blocks on HTTP reads for PCM streams, causing SOAP timeouts.
             self.remove_stream(stream_id);
             self.stop_speakers(&speaker_ips).await;
         } else {

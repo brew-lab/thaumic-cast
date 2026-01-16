@@ -58,7 +58,7 @@ export const CustomAudioSettingsSchema = z.object({
   latencyMode: LatencyModeSchema.default('quality'),
   /** Bit depth (16 or 24). Supported depths depend on the codec. */
   bitsPerSample: BitDepthSchema.default(DEFAULT_BITS_PER_SAMPLE),
-  /** Buffer size for WAV streaming in milliseconds. Only affects PCM codec. */
+  /** Buffer size for PCM streaming in milliseconds. */
   streamingBufferMs: z
     .number()
     .min(STREAMING_BUFFER_MS_MIN)

@@ -13,33 +13,39 @@ use crate::state::StreamingConfig;
 use crate::stream::transcoder::Transcoder;
 use crate::stream::AudioFormat;
 
-/// Supported audio codecs for the stream
+/// Supported audio codecs for the stream.
+///
+/// Note: `Pcm` outputs as WAV container (PCM + RIFF headers) for Sonos compatibility.
+/// The MIME type and file extensions remain `audio/wav` and `.wav` because that's
+/// what Sonos expects, but the actual codec is uncompressed PCM.
 #[derive(Debug, Clone, Copy, Serialize, PartialEq)]
 #[serde(rename_all = "lowercase")]
 pub enum AudioCodec {
-    Wav,
+    Pcm,
     Aac,
     Mp3,
     Flac,
 }
 
 impl AudioCodec {
-    /// Returns the codec as a short string identifier (e.g., "wav", "aac").
+    /// Returns the codec as a short string identifier (e.g., "pcm", "aac").
     #[must_use]
     pub const fn as_str(&self) -> &'static str {
         match self {
-            Self::Wav => "wav",
+            Self::Pcm => "pcm",
             Self::Aac => "aac",
             Self::Mp3 => "mp3",
             Self::Flac => "flac",
         }
     }
 
-    /// Returns the MIME type for this codec (e.g., "audio/wav", "audio/aac").
+    /// Returns the MIME type for this codec.
+    ///
+    /// Note: PCM returns "audio/wav" because it's served in a WAV container for Sonos.
     #[must_use]
     pub const fn mime_type(&self) -> &'static str {
         match self {
-            Self::Wav => "audio/wav",
+            Self::Pcm => "audio/wav", // WAV container for Sonos compatibility
             Self::Aac => "audio/aac",
             Self::Mp3 => "audio/mpeg",
             Self::Flac => "audio/flac",
@@ -226,13 +232,13 @@ pub struct StreamState {
     /// Whether the stream has received its first frame (for STREAM_READY signaling)
     has_frames: AtomicBool,
     /// Transcoder for converting input format to output format.
-    /// For PCM input, this passes through raw data (WAV header added by HTTP handler).
+    /// For PCM, this passes through raw data (WAV header added by HTTP handler).
     /// For pre-encoded formats (AAC, FLAC), this is also a passthrough.
     transcoder: Arc<dyn Transcoder>,
     /// Timing information for latency measurement.
     pub timing: StreamTiming,
     /// Streaming buffer size in milliseconds (100-1000, default 200).
-    /// Used to calculate cadence queue size for WAV streams.
+    /// Used to calculate cadence queue size for PCM streams.
     pub streaming_buffer_ms: u64,
 }
 

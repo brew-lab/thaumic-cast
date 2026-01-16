@@ -320,14 +320,14 @@ enum HandshakeResult {
 
 /// Resolves input codec string to output codec and transcoder.
 ///
-/// For PCM input, returns WAV output with passthrough (WAV header added by HTTP handler).
+/// For PCM, returns passthrough (WAV header added by HTTP handler for Sonos).
 /// For pre-encoded formats, returns passthrough transcoder.
 fn resolve_codec(codec_str: Option<&str>) -> (AudioCodec, Arc<dyn Transcoder>) {
     match codec_str {
-        // PCM input: output as WAV (header added per-connection by HTTP handler)
+        // PCM: passthrough, WAV header added per-connection by HTTP handler
         Some("pcm") => {
-            log::info!("[WS] PCM input → WAV output");
-            (AudioCodec::Wav, Arc::new(Passthrough))
+            log::info!("[WS] PCM codec selected");
+            (AudioCodec::Pcm, Arc::new(Passthrough))
         }
         // Pre-encoded formats: passthrough
         Some("aac") | Some("aac-lc") | Some("he-aac") | Some("he-aac-v2") => {
@@ -335,10 +335,10 @@ fn resolve_codec(codec_str: Option<&str>) -> (AudioCodec, Arc<dyn Transcoder>) {
         }
         Some("mp3") => (AudioCodec::Mp3, Arc::new(Passthrough)),
         Some("flac") => (AudioCodec::Flac, Arc::new(Passthrough)),
-        Some("wav") => (AudioCodec::Wav, Arc::new(Passthrough)),
+        Some("wav") => (AudioCodec::Pcm, Arc::new(Passthrough)), // Legacy alias
         _ => {
-            log::warn!("[WS] Unknown codec {:?}, defaulting to WAV", codec_str);
-            (AudioCodec::Wav, Arc::new(Passthrough))
+            log::warn!("[WS] Unknown codec {:?}, defaulting to PCM", codec_str);
+            (AudioCodec::Pcm, Arc::new(Passthrough))
         }
     }
 }

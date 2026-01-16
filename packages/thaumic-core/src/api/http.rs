@@ -773,12 +773,12 @@ async fn stream_audio(
 
     let remote_ip = remote_addr.ip();
 
-    // Upfront buffering delay for WAV streams BEFORE subscribing.
+    // Upfront buffering delay for PCM streams BEFORE subscribing.
     // This lets the ring buffer accumulate more frames. Subscribing after
     // ensures the broadcast receiver doesn't fill up during the delay.
-    if stream_state.codec == AudioCodec::Wav && HTTP_PREFILL_DELAY_MS > 0 {
+    if stream_state.codec == AudioCodec::Pcm && HTTP_PREFILL_DELAY_MS > 0 {
         log::debug!(
-            "[Stream] Applying {}ms prefill delay for WAV stream",
+            "[Stream] Applying {}ms prefill delay for PCM stream",
             HTTP_PREFILL_DELAY_MS
         );
         tokio::time::sleep(Duration::from_millis(HTTP_PREFILL_DELAY_MS)).await;
@@ -812,17 +812,17 @@ async fn stream_audio(
     // Uses Arc so it can be shared between cadence stream, silence tracking, and final frame recording.
     let guard = Arc::new(LoggingStreamGuard::new(id.to_string(), remote_ip));
 
-    // Build live stream - WAV gets cadence-based streaming, compressed codecs don't.
+    // Build live stream - PCM gets cadence-based streaming, compressed codecs don't.
     //
-    // Why WAV-only: Sonos treats WAV as a "file" requiring continuous data flow.
+    // Why PCM-only: Sonos treats PCM/WAV as a "file" requiring continuous data flow.
     // CPU spikes that delay delivery cause Sonos to close the connection.
     // The cadence stream maintains 20ms output cadence, injecting silence when needed.
     //
     // Compressed codecs (AAC, MP3, FLAC) have their own framing and silence
     // representation - raw zeros would corrupt the stream. These codecs also
     // tend to be more resilient to jitter due to their buffering behavior.
-    let live_stream: TaggedStream = if stream_state.codec == AudioCodec::Wav {
-        // WAV: fixed-cadence streaming with queue buffer and silence injection
+    let live_stream: TaggedStream = if stream_state.codec == AudioCodec::Pcm {
+        // PCM: fixed-cadence streaming with queue buffer and silence injection
         let silence_frame = stream_state
             .audio_format
             .silence_frame(SILENCE_FRAME_DURATION_MS);
@@ -898,7 +898,7 @@ async fn stream_audio(
     // Content-Type based on output codec
     let content_type = stream_state.codec.mime_type();
 
-    // ICY metadata only supported for MP3/AAC streams (not WAV/FLAC)
+    // ICY metadata only supported for MP3/AAC streams (not PCM/FLAC)
     let supports_icy = matches!(stream_state.codec, AudioCodec::Mp3 | AudioCodec::Aac);
     let wants_icy =
         supports_icy && headers.get("icy-metadata").and_then(|v| v.to_str().ok()) == Some("1");
@@ -916,11 +916,11 @@ async fn stream_audio(
         builder = builder.header("icy-metaint", ICY_METAINT.to_string());
     }
 
-    // WAV: Use fixed Content-Length to avoid chunked transfer encoding.
+    // PCM: Use fixed Content-Length to avoid chunked transfer encoding.
     // Some renderers (including Sonos) stutter or disconnect with chunked encoding.
     // The stream will end before reaching this length, but it signals "file-like"
     // behavior to the renderer.
-    if stream_state.codec == AudioCodec::Wav {
+    if stream_state.codec == AudioCodec::Pcm {
         builder = builder.header(header::CONTENT_LENGTH, WAV_STREAM_SIZE_MAX.to_string());
     }
 
@@ -948,7 +948,7 @@ async fn stream_audio(
         res.map(TaggedFrame::into_bytes)
     });
 
-    // Apply ICY injection or WAV header to the unwrapped stream
+    // Apply ICY injection or PCM/WAV header to the unwrapped stream
     let inner_stream: AudioStream = if wants_icy {
         let stream_ref = Arc::clone(&stream_state);
         let mut injector = IcyMetadataInjector::new();
@@ -958,8 +958,8 @@ async fn stream_audio(
             let metadata = stream_ref.metadata.read();
             Ok::<Bytes, std::io::Error>(injector.inject(chunk.as_ref(), &metadata))
         }))
-    } else if stream_state.codec == AudioCodec::Wav {
-        // WAV streams need header prepended per-connection (Sonos may reconnect)
+    } else if stream_state.codec == AudioCodec::Pcm {
+        // PCM streams need WAV header prepended per-connection (Sonos may reconnect)
         let audio_format = stream_state.audio_format;
         let wav_header = create_wav_header(
             audio_format.sample_rate,
