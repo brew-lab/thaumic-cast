@@ -197,7 +197,11 @@ export class StreamSession {
     await this.audioContext.audioWorklet.addModule(workletUrl);
 
     this.sourceNode = this.audioContext.createMediaStreamSource(this.mediaStream);
-    this.workletNode = new AudioWorkletNode(this.audioContext, 'pcm-processor');
+    this.workletNode = new AudioWorkletNode(this.audioContext, 'pcm-processor', {
+      channelCount: this.encoderConfig.channels,
+      channelCountMode: 'explicit',
+      channelInterpretation: 'discrete', // No mixing, direct passthrough
+    });
 
     this.workletNode.port.postMessage({
       type: 'INIT_BUFFER',
