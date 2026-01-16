@@ -50,8 +50,10 @@ impl IcyFormatter {
             return vec![0];
         }
 
-        // ICY metadata uses single quotes as delimiters, so escape them
-        let title = title.replace('\'', "\\'");
+        // ICY metadata uses single quotes as delimiters. Instead of backslash
+        // escaping (which Sonos displays literally as "It\'s"), replace with
+        // Unicode RIGHT SINGLE QUOTATION MARK (U+2019) which looks identical.
+        let title = title.replace('\'', "\u{2019}");
         let meta_str = format!("StreamTitle='{}';", title);
         let meta_bytes = meta_str.as_bytes();
 
@@ -224,9 +226,9 @@ mod tests {
     }
 
     #[test]
-    fn single_quotes_are_escaped() {
+    fn single_quotes_are_replaced_with_unicode() {
         let metadata = StreamMetadata {
-            title: Some("It's a Test".to_string()),
+            title: Some("It's a Test".to_string()), // ASCII apostrophe U+0027
             artist: None,
             album: None,
             artwork: None,
@@ -234,7 +236,9 @@ mod tests {
         };
         let result = IcyFormatter::format_metadata(&metadata);
         let content = String::from_utf8_lossy(&result[1..]);
-        assert!(content.contains("It\\'s a Test"));
+        // ASCII apostrophe (U+0027) should be replaced with Unicode RIGHT SINGLE QUOTATION MARK (U+2019)
+        assert!(content.contains("It\u{2019}s a Test")); // Unicode apostrophe
+        assert!(!content.contains("It\u{0027}s a Test")); // NOT ASCII apostrophe
     }
 
     #[test]
