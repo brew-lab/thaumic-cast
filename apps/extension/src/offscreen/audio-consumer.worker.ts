@@ -27,8 +27,8 @@ import { exponentialBackoff } from '../lib/backoff';
 
 const log = createLogger('AudioWorker');
 
-/** Frame duration in seconds (20ms). */
-const FRAME_DURATION_SEC = 0.02;
+/** Frame duration in seconds (10ms). Smaller frames = finer drop granularity. */
+const FRAME_DURATION_SEC = 0.01;
 
 /** Maximum pending encode operations before dropping frames. */
 const MAX_ENCODE_QUEUE = 3;
@@ -50,7 +50,7 @@ const BACKPRESSURE_BACKOFF_INITIAL_MS = 5;
 /** Maximum backpressure backoff delay (ms). */
 const BACKPRESSURE_BACKOFF_MAX_MS = 40;
 
-/** Timeout for waiting on producer (ms). Triggers underflow if exceeded. 200ms = 10 frames of headroom. */
+/** Timeout for waiting on producer (ms). Triggers underflow if exceeded. 200ms = 20 frames of headroom. */
 const WAIT_TIMEOUT_MS = 200;
 
 /** Frame period in milliseconds (derived from FRAME_DURATION_SEC). */
@@ -58,9 +58,9 @@ const FRAME_PERIOD_MS = FRAME_DURATION_SEC * 1000;
 
 /**
  * Maximum drift allowed before clamping frame timing (ms).
- * Allows burst catch-up of ~3 frames when recovering from brief stalls.
+ * Allows burst catch-up of ~6 frames (~60ms) when recovering from brief stalls.
  */
-const MAX_DRIFT_MS = FRAME_PERIOD_MS * 3;
+const MAX_DRIFT_MS = FRAME_PERIOD_MS * 6;
 
 /** Interval for posting diagnostic stats to main thread (ms). */
 const STATS_INTERVAL_MS = 2000;
