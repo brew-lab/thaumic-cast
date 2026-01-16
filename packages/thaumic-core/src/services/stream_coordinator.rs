@@ -275,7 +275,14 @@ impl StreamCoordinator {
     /// Sends stop commands to a list of speakers (best-effort).
     async fn stop_speakers(&self, speaker_ips: &[String]) {
         for ip in speaker_ips {
-            // Switch to queue first - this is the reliable way to stop our stream
+            // Send Stop FIRST - this immediately halts playback (like the Sonos app).
+            // Sending switch_to_queue first would cause Sonos to buffer/transition
+            // between sources, allowing buffered audio to continue playing.
+            if let Err(e) = self.sonos.stop(ip).await {
+                log::warn!("[StreamCoordinator] Failed to stop {}: {}", ip, e);
+            }
+
+            // Then switch to queue as cleanup (clears stale stream source in Sonos UI)
             if let Some(uuid) = self.sonos_state.get_coordinator_uuid_by_ip(ip) {
                 if let Err(e) = self.sonos.switch_to_queue(ip, &uuid).await {
                     log::warn!(
@@ -284,11 +291,6 @@ impl StreamCoordinator {
                         e
                     );
                 }
-            }
-
-            // Then send Stop as cleanup (in case Sonos is in a weird state)
-            if let Err(e) = self.sonos.stop(ip).await {
-                log::warn!("[StreamCoordinator] Failed to stop {}: {}", ip, e);
             }
         }
     }
