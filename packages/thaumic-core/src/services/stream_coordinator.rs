@@ -273,6 +273,12 @@ impl StreamCoordinator {
     }
 
     /// Sends stop commands to a list of speakers (best-effort).
+    ///
+    /// Sends `Stop` first to immediately halt playback (like the Sonos app),
+    /// then `switch_to_queue` to clear the stale stream source from Sonos UI.
+    ///
+    /// The order matters: sending `switch_to_queue` first would cause Sonos to
+    /// buffer/transition between sources, allowing buffered audio to continue.
     async fn stop_speakers(&self, speaker_ips: &[String]) {
         for ip in speaker_ips {
             // Send Stop FIRST - this immediately halts playback (like the Sonos app).
