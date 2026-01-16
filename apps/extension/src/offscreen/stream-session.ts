@@ -236,15 +236,14 @@ export class StreamSession {
 
     this.sourceNode.connect(this.workletNode);
 
-    // Connect to destination through a gain node to ensure audio processing
-    // When keepTabAudible is enabled, play at very low volume to prevent Chrome throttling
-    // Chrome exempts tabs that are "playing audio" from background throttling
-    this.outputGainNode = this.audioContext.createGain();
-    this.outputGainNode.gain.value = this.keepTabAudible ? KEEP_AUDIBLE_GAIN : 0;
-    this.workletNode.connect(this.outputGainNode);
-    this.outputGainNode.connect(this.audioContext.destination);
-
+    // Only connect to destination when keepTabAudible is enabled
+    // This plays audio at very low volume to prevent Chrome from throttling the tab
+    // When disabled, the worklet is a dead-end (no output) which is fine for capture-only
     if (this.keepTabAudible) {
+      this.outputGainNode = this.audioContext.createGain();
+      this.outputGainNode.gain.value = KEEP_AUDIBLE_GAIN;
+      this.workletNode.connect(this.outputGainNode);
+      this.outputGainNode.connect(this.audioContext.destination);
       log.info('Keep tab audible enabled - playing audio at low volume to prevent throttling');
     }
 
