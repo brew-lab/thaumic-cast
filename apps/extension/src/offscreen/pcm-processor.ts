@@ -76,7 +76,7 @@ class PCMProcessor extends AudioWorkletProcessor {
   /** Number of audio channels (1 for mono, 2 for stereo). */
   private channels = 2;
   /** Pre-allocated buffer for clamping and channel handling (avoids per-frame allocation). */
-  private conversionBuffer: Float32Array | null = null;
+  private readonly conversionBuffer = new Float32Array(BLOCK_SIZE * 2);
   /** Counter for heartbeat interval. */
   private blockCount = 0;
   /** Number of blocks between heartbeats (computed from sampleRate). */
@@ -142,11 +142,6 @@ class PCMProcessor extends AudioWorkletProcessor {
 
     // Check if buffer was empty (for notification)
     const wasEmpty = write === read;
-
-    // Ensure conversion buffer exists with adequate size
-    if (!this.conversionBuffer || this.conversionBuffer.length < samplesToWrite) {
-      this.conversionBuffer = new Float32Array(samplesToWrite);
-    }
 
     // Clamp Float32 samples to [-1, 1] range (no quantization - that happens at encoder).
     // Web Audio API nominally outputs [-1, 1], but clamping is defensive against:
