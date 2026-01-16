@@ -54,8 +54,9 @@ export function useExtensionSettings(): {
     async (partial: Partial<ExtensionSettings>) => {
       try {
         setError(null);
-        await saveExtensionSettings(partial);
-        setSettings((prev) => ({ ...prev, ...partial }));
+        // saveExtensionSettings returns the fully merged and Zod-validated settings
+        const saved = await saveExtensionSettings(partial);
+        setSettings(saved);
       } catch (err) {
         setError(err instanceof Error ? err.message : t('error_save_settings'));
         throw err;

@@ -157,8 +157,8 @@ export const EncoderConfigSchema = z
       .max(STREAMING_BUFFER_MS_MAX)
       .default(STREAMING_BUFFER_MS_DEFAULT),
   })
-  .refine((c) => c.bitsPerSample === 16 || c.codec === 'flac', {
-    message: '24-bit audio only supported for FLAC codec',
+  .refine((c) => CODEC_METADATA[c.codec].supportedBitDepths.includes(c.bitsPerSample), {
+    message: 'Bit depth not supported for this codec',
   });
 export type EncoderConfig = z.infer<typeof EncoderConfigSchema>;
 
@@ -178,6 +178,11 @@ export interface CodecMetadata {
    * Example: HE-AAC at 64kbps ≈ AAC-LC at 96kbps (efficiency = 1.5)
    */
   efficiency: number;
+  /**
+   * Supported bit depths for this codec.
+   * Most codecs only support 16-bit, FLAC supports both 16 and 24-bit.
+   */
+  supportedBitDepths: readonly BitDepth[];
 }
 
 /**
@@ -214,6 +219,7 @@ export const CODEC_METADATA: Record<AudioCodec, CodecMetadata> = {
     defaultBitrate: 0, // 0 indicates lossless/variable bitrate
     webCodecsId: null, // No WebCodecs - raw PCM passthrough
     efficiency: 10.0, // Lossless - uncompressed
+    supportedBitDepths: [16] as const,
   },
   'aac-lc': {
     label: 'AAC-LC',
@@ -222,6 +228,7 @@ export const CODEC_METADATA: Record<AudioCodec, CodecMetadata> = {
     defaultBitrate: 192,
     webCodecsId: 'mp4a.40.2',
     efficiency: 1.0, // Baseline
+    supportedBitDepths: [16] as const,
   },
   'he-aac': {
     label: 'HE-AAC',
@@ -230,6 +237,7 @@ export const CODEC_METADATA: Record<AudioCodec, CodecMetadata> = {
     defaultBitrate: 96,
     webCodecsId: 'mp4a.40.5',
     efficiency: 1.5, // ~50% more efficient than AAC-LC
+    supportedBitDepths: [16] as const,
   },
   'he-aac-v2': {
     label: 'HE-AAC v2',
@@ -238,6 +246,7 @@ export const CODEC_METADATA: Record<AudioCodec, CodecMetadata> = {
     defaultBitrate: 64,
     webCodecsId: 'mp4a.40.29',
     efficiency: 2.0, // ~100% more efficient (uses Parametric Stereo)
+    supportedBitDepths: [16] as const,
   },
   flac: {
     label: 'FLAC',
@@ -246,6 +255,7 @@ export const CODEC_METADATA: Record<AudioCodec, CodecMetadata> = {
     defaultBitrate: 0,
     webCodecsId: 'flac',
     efficiency: 10.0, // Lossless - highest possible quality
+    supportedBitDepths: [16, 24] as const,
   },
   vorbis: {
     label: 'Ogg Vorbis',
@@ -254,6 +264,7 @@ export const CODEC_METADATA: Record<AudioCodec, CodecMetadata> = {
     defaultBitrate: 192,
     webCodecsId: 'vorbis',
     efficiency: 1.1, // Slightly better than AAC-LC
+    supportedBitDepths: [16] as const,
   },
 } as const;
 
@@ -283,6 +294,25 @@ export function getDefaultBitrate(codec: AudioCodec): Bitrate {
  */
 export function isValidBitrateForCodec(codec: AudioCodec, bitrate: Bitrate): boolean {
   return CODEC_METADATA[codec].validBitrates.includes(bitrate);
+}
+
+/**
+ * Returns supported bit depths for a given codec.
+ * @param codec - The audio codec
+ * @returns Array of supported bit depths for the codec
+ */
+export function getSupportedBitDepths(codec: AudioCodec): readonly BitDepth[] {
+  return CODEC_METADATA[codec].supportedBitDepths;
+}
+
+/**
+ * Validates that a bit depth is valid for a codec.
+ * @param codec - The audio codec
+ * @param bitDepth - The bit depth to validate
+ * @returns True if the bit depth is valid for the codec
+ */
+export function isValidBitDepthForCodec(codec: AudioCodec, bitDepth: BitDepth): boolean {
+  return CODEC_METADATA[codec].supportedBitDepths.includes(bitDepth);
 }
 
 /**
@@ -318,11 +348,8 @@ export function createEncoderConfig(options: CreateEncoderConfigOptions): Encode
   const effectiveBitrate =
     bitrate && isValidBitrateForCodec(codec, bitrate) ? bitrate : getDefaultBitrate(codec);
 
-  // Validate bitsPerSample (Zod validates at parse time, but this function doesn't use schema)
-  const validBitsPerSample = bitsPerSample === 16 || bitsPerSample === 24 ? bitsPerSample : 16;
-  // 24-bit is only valid for FLAC codec
-  const effectiveBitsPerSample =
-    validBitsPerSample === 24 && codec !== 'flac' ? 16 : validBitsPerSample;
+  // Validate bitsPerSample against codec support
+  const effectiveBitsPerSample = isValidBitDepthForCodec(codec, bitsPerSample) ? bitsPerSample : 16;
 
   return {
     codec,

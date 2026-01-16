@@ -4,11 +4,13 @@ import {
   BitrateSchema,
   SampleRateSchema,
   LatencyModeSchema,
-  isValidBitrateForCodec,
-  getDefaultBitrate,
+  BitDepthSchema,
+  DEFAULT_BITS_PER_SAMPLE,
   STREAMING_BUFFER_MS_MIN,
   STREAMING_BUFFER_MS_MAX,
   STREAMING_BUFFER_MS_DEFAULT,
+  isValidBitrateForCodec,
+  getDefaultBitrate,
 } from '@thaumic-cast/protocol';
 import { createLogger } from '@thaumic-cast/shared';
 
@@ -54,6 +56,8 @@ export const CustomAudioSettingsSchema = z.object({
   channels: z.union([z.literal(1), z.literal(2)]).default(2),
   sampleRate: SampleRateSchema.default(48000),
   latencyMode: LatencyModeSchema.default('quality'),
+  /** Bit depth (16 or 24). Supported depths depend on the codec. */
+  bitsPerSample: BitDepthSchema.default(DEFAULT_BITS_PER_SAMPLE),
   /** Buffer size for WAV streaming in milliseconds. Only affects PCM codec. */
   streamingBufferMs: z
     .number()
@@ -88,6 +92,7 @@ export const ExtensionSettingsSchema = z.object({
     channels: 2,
     sampleRate: 48000,
     latencyMode: 'quality',
+    bitsPerSample: DEFAULT_BITS_PER_SAMPLE,
     streamingBufferMs: STREAMING_BUFFER_MS_DEFAULT,
   }),
 
@@ -114,6 +119,7 @@ const DEFAULT_EXTENSION_SETTINGS: ExtensionSettings = {
     channels: 2,
     sampleRate: 48000,
     latencyMode: 'quality',
+    bitsPerSample: DEFAULT_BITS_PER_SAMPLE,
     streamingBufferMs: STREAMING_BUFFER_MS_DEFAULT,
   },
   videoSyncEnabled: false,
@@ -147,26 +153,38 @@ export async function loadExtensionSettings(): Promise<ExtensionSettings> {
 
 /**
  * Saves extension settings to chrome.storage.sync.
+ * Merges partial settings with current, validates through Zod, and returns the result.
  * @param settings - The settings to save (can be partial)
+ * @returns The fully merged and validated settings (with Zod defaults applied)
  */
-export async function saveExtensionSettings(settings: Partial<ExtensionSettings>): Promise<void> {
+export async function saveExtensionSettings(
+  settings: Partial<ExtensionSettings>,
+): Promise<ExtensionSettings> {
   try {
     const current = await loadExtensionSettings();
-    const merged = { ...current, ...settings };
 
-    // Validate custom audio settings if provided
-    if (settings.customAudioSettings) {
-      const { codec, bitrate } = settings.customAudioSettings;
-      if (!isValidBitrateForCodec(codec, bitrate)) {
-        merged.customAudioSettings = {
-          ...settings.customAudioSettings,
-          bitrate: getDefaultBitrate(codec),
-        };
-      }
+    // Deep merge customAudioSettings to preserve all fields
+    const merged = {
+      ...current,
+      ...settings,
+      customAudioSettings: settings.customAudioSettings
+        ? { ...current.customAudioSettings, ...settings.customAudioSettings }
+        : current.customAudioSettings,
+    };
+
+    // Normalize bitrate if it's invalid for the selected codec.
+    const { codec, bitrate } = merged.customAudioSettings;
+    if (!isValidBitrateForCodec(codec, bitrate)) {
+      merged.customAudioSettings = {
+        ...merged.customAudioSettings,
+        bitrate: getDefaultBitrate(codec),
+      };
     }
 
+    // Validate and apply Zod defaults
     const parsed = ExtensionSettingsSchema.parse(merged);
     await chrome.storage.sync.set({ [EXTENSION_SETTINGS_KEY]: parsed });
+    return parsed;
   } catch (err) {
     log.error('Failed to save extension settings:', err);
     throw err;

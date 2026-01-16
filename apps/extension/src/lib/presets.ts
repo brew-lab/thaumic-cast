@@ -26,6 +26,28 @@ import type { AudioMode, CustomAudioSettings } from './settings';
 const log = createLogger('Presets');
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Helper Functions
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Builds an encoder config from custom audio settings.
+ * Applies defaults for optional fields (bitsPerSample, streamingBufferMs).
+ * @param customSettings - The custom audio settings from user preferences
+ * @returns A complete encoder config
+ */
+function buildConfigFromCustomSettings(customSettings: CustomAudioSettings): EncoderConfig {
+  return {
+    codec: customSettings.codec,
+    bitrate: customSettings.bitrate,
+    channels: customSettings.channels,
+    sampleRate: customSettings.sampleRate,
+    bitsPerSample: customSettings.bitsPerSample ?? DEFAULT_BITS_PER_SAMPLE,
+    latencyMode: customSettings.latencyMode,
+    streamingBufferMs: customSettings.streamingBufferMs ?? STREAMING_BUFFER_MS_DEFAULT,
+  };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Resolution Functions
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -156,15 +178,7 @@ export function resolveAudioMode(
     );
 
     if (isSupported) {
-      return {
-        codec: customSettings.codec,
-        bitrate: customSettings.bitrate,
-        channels: customSettings.channels,
-        sampleRate: customSettings.sampleRate,
-        bitsPerSample: DEFAULT_BITS_PER_SAMPLE,
-        latencyMode: customSettings.latencyMode,
-        streamingBufferMs: customSettings.streamingBufferMs ?? STREAMING_BUFFER_MS_DEFAULT,
-      };
+      return buildConfigFromCustomSettings(customSettings);
     }
 
     // Custom settings not supported - fall back to mid preset
@@ -221,15 +235,7 @@ export function getResolvedConfigForDisplay(
     );
 
     if (isSupported) {
-      return {
-        codec: customSettings.codec,
-        bitrate: customSettings.bitrate,
-        channels: customSettings.channels,
-        sampleRate: customSettings.sampleRate,
-        bitsPerSample: DEFAULT_BITS_PER_SAMPLE,
-        latencyMode: customSettings.latencyMode,
-        streamingBufferMs: customSettings.streamingBufferMs ?? STREAMING_BUFFER_MS_DEFAULT,
-      };
+      return buildConfigFromCustomSettings(customSettings);
     }
     return null;
   }
