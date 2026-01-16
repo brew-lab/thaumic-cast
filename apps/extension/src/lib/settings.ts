@@ -331,10 +331,11 @@ const SPEAKER_SELECTION_KEY = 'speakerSelection';
  * Uses local storage because speakers are on the local network
  * and shouldn't sync across devices.
  */
-export interface SpeakerSelectionState {
+export const SpeakerSelectionStateSchema = z.object({
   /** Array of selected speaker coordinator IPs */
-  selectedIps: string[];
-}
+  selectedIps: z.array(z.string()),
+});
+export type SpeakerSelectionState = z.infer<typeof SpeakerSelectionStateSchema>;
 
 /**
  * Loads speaker selection from chrome.storage.local.
@@ -343,8 +344,8 @@ export interface SpeakerSelectionState {
 export async function loadSpeakerSelection(): Promise<string[]> {
   try {
     const result = await chrome.storage.local.get(SPEAKER_SELECTION_KEY);
-    const data = result[SPEAKER_SELECTION_KEY] as SpeakerSelectionState | undefined;
-    return data?.selectedIps ?? [];
+    const parsed = SpeakerSelectionStateSchema.safeParse(result[SPEAKER_SELECTION_KEY]);
+    return parsed.success ? parsed.data.selectedIps : [];
   } catch (err) {
     log.error('Failed to load speaker selection:', err);
     return [];

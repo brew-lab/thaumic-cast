@@ -211,8 +211,22 @@ export type WsInitialStateMessage = z.infer<typeof WsInitialStateMessageSchema>;
  * Control commands sent from extension to desktop app via WebSocket.
  * Must match the Rust `WsIncoming` enum format (SCREAMING_SNAKE_CASE type tag).
  */
-export type WsControlCommand =
-  | { type: 'SET_VOLUME'; payload: { ip: string; volume: number } }
-  | { type: 'SET_MUTE'; payload: { ip: string; mute: boolean } }
-  | { type: 'GET_VOLUME'; payload: { ip: string } }
-  | { type: 'GET_MUTE'; payload: { ip: string } };
+export const WsControlCommandSchema = z.discriminatedUnion('type', [
+  z.object({
+    type: z.literal('SET_VOLUME'),
+    payload: z.object({ ip: z.string(), volume: z.number().int().min(0).max(100) }),
+  }),
+  z.object({
+    type: z.literal('SET_MUTE'),
+    payload: z.object({ ip: z.string(), mute: z.boolean() }),
+  }),
+  z.object({
+    type: z.literal('GET_VOLUME'),
+    payload: z.object({ ip: z.string() }),
+  }),
+  z.object({
+    type: z.literal('GET_MUTE'),
+    payload: z.object({ ip: z.string() }),
+  }),
+]);
+export type WsControlCommand = z.infer<typeof WsControlCommandSchema>;
