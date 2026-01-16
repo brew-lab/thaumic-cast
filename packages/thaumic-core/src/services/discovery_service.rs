@@ -113,8 +113,20 @@ impl DiscoveryService {
     /// Sets the app data directory for loading manual speaker configuration.
     ///
     /// This should be called after the app is set up and the AppHandle is available.
-    pub fn set_app_data_dir(&self, path: std::path::PathBuf) {
+    pub fn set_app_data_dir(&self, path: impl AsRef<std::path::Path>) {
         self.topology_monitor.set_app_data_dir(path);
+    }
+
+    /// Returns the app data directory if set.
+    ///
+    /// Returns `None` if `set_app_data_dir` has not been called.
+    pub fn get_app_data_dir(&self) -> Option<std::path::PathBuf> {
+        self.topology_monitor.get_app_data_dir()
+    }
+
+    /// Returns a reference to the HTTP client for manual IP probing.
+    pub fn http_client(&self) -> &Client {
+        self.topology_monitor.http_client()
     }
 
     /// Handles a GENA NOTIFY event from an HTTP handler.

@@ -3,7 +3,7 @@
 //! Supports loading from YAML files with environment variable overrides.
 
 use std::net::IpAddr;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 use serde::Deserialize;
@@ -34,6 +34,10 @@ pub struct ServerConfig {
 
     /// Enable mDNS/Bonjour discovery.
     pub discovery_mdns: bool,
+
+    /// Directory for persistent data (manual speakers config).
+    /// Override: `THAUMIC_DATA_DIR`
+    pub data_dir: Option<PathBuf>,
 }
 
 impl Default for ServerConfig {
@@ -45,6 +49,7 @@ impl Default for ServerConfig {
             discovery_ssdp_multicast: true,
             discovery_ssdp_broadcast: true,
             discovery_mdns: true,
+            data_dir: None,
         }
     }
 }
@@ -84,6 +89,8 @@ impl ServerConfig {
                 self.topology_refresh_interval = interval;
             }
         }
+
+        // Note: THAUMIC_DATA_DIR is handled by clap via #[arg(env = ...)] in main.rs
     }
 
     /// Converts to thaumic-core's Config type.

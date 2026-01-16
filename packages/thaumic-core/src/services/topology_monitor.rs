@@ -8,7 +8,7 @@
 //! - Network health monitoring
 
 use std::collections::HashSet;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
@@ -125,8 +125,21 @@ impl TopologyMonitor {
     /// Sets the app data directory for loading manual speaker configuration.
     ///
     /// This should be called after the app is set up and the AppHandle is available.
-    pub fn set_app_data_dir(&self, path: PathBuf) {
-        *self.app_data_dir.write() = Some(path);
+    pub fn set_app_data_dir(&self, path: impl AsRef<Path>) {
+        *self.app_data_dir.write() = Some(path.as_ref().to_path_buf());
+    }
+
+    /// Returns the app data directory if set.
+    ///
+    /// Returns `None` if `set_app_data_dir` has not been called or if it was
+    /// called with an invalid path.
+    pub fn get_app_data_dir(&self) -> Option<PathBuf> {
+        self.app_data_dir.read().clone()
+    }
+
+    /// Returns a reference to the HTTP client for manual IP probing.
+    pub fn http_client(&self) -> &Client {
+        &self.http_client
     }
 
     /// Returns the current network health state.

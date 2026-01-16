@@ -40,6 +40,10 @@ struct Args {
     /// Advertise IP address (overrides config file).
     #[arg(short = 'a', long, env = "THAUMIC_ADVERTISE_IP")]
     advertise_ip: Option<std::net::IpAddr>,
+
+    /// Data directory for persistent state (manual speakers, etc.).
+    #[arg(short = 'd', long, env = "THAUMIC_DATA_DIR")]
+    data_dir: Option<PathBuf>,
 }
 
 #[tokio::main]
@@ -64,6 +68,9 @@ async fn main() -> Result<()> {
     }
     if let Some(ip) = args.advertise_ip {
         config.advertise_ip = Some(ip);
+    }
+    if let Some(data_dir) = args.data_dir {
+        config.data_dir = Some(data_dir);
     }
 
     // Resolve advertise IP: use explicit config, or fall back to auto-detection
@@ -95,7 +102,16 @@ async fn main() -> Result<()> {
 
     log::info!("Services bootstrapped successfully");
 
-    // Start background tasks
+    // Set data directory BEFORE starting background tasks so initial topology
+    // refresh includes manual speakers. This must happen before start_background_tasks().
+    if let Some(ref data_dir) = config.data_dir {
+        log::info!("Using data directory: {}", data_dir.display());
+        services.discovery_service.set_app_data_dir(data_dir);
+    } else {
+        log::info!("No data directory configured - manual speakers will not persist");
+    }
+
+    // Start background tasks (topology monitor will load manual speakers if data_dir set)
     services.start_background_tasks();
 
     log::info!("Background tasks started");

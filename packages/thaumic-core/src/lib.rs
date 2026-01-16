@@ -52,7 +52,7 @@ pub mod utils;
 
 // Re-export commonly used types at the crate root
 pub use context::{IpDetector, LocalIpDetector, NetworkContext, NetworkError, UrlBuilder};
-pub use error::{DiscoveryResult, GenaResult, SoapResult, ThaumicError, ThaumicResult};
+pub use error::{DiscoveryResult, ErrorCode, GenaResult, SoapResult, ThaumicError, ThaumicResult};
 pub use events::{
     BroadcastEvent, BroadcastEventBridge, EventEmitter, LatencyEvent, LoggingEventEmitter,
     NetworkEvent, NetworkHealth, NoopEventEmitter, SonosEvent, StreamEvent, TopologyEvent,
@@ -60,7 +60,7 @@ pub use events::{
 pub use lifecycle::{Lifecycle, NoopLifecycle, ServerLifecycle};
 pub use runtime::{TaskSpawner, TokioSpawner};
 pub use state::{Config, CoreState, ManualSpeakerConfig, SonosState, StreamingConfig};
-pub use utils::now_millis;
+pub use utils::{now_millis, validate_speaker_ip, IpValidationError};
 
 // Re-export Sonos types
 pub use sonos::discovery::{probe_speaker_by_ip, Speaker};

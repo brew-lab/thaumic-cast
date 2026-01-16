@@ -4,6 +4,7 @@
 
 use std::collections::VecDeque;
 use std::net::{IpAddr, SocketAddr};
+use std::path::PathBuf;
 use std::pin::Pin;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
@@ -30,12 +31,15 @@ use tokio_stream::wrappers::BroadcastStream;
 use crate::api::response::{api_error, api_ok, api_success};
 use crate::api::ws::ws_handler;
 use crate::api::AppState;
-use crate::error::{ThaumicError, ThaumicResult};
+use crate::error::{ErrorCode, ThaumicError, ThaumicResult};
 use crate::protocol_constants::{
     APP_NAME, HTTP_PREFILL_DELAY_MS, ICY_METAINT, MAX_CADENCE_QUEUE_SIZE, MAX_GENA_BODY_SIZE,
     SERVICE_ID, SILENCE_FRAME_DURATION_MS, WAV_STREAM_SIZE_MAX,
 };
+use crate::sonos::discovery::probe_speaker_by_ip;
+use crate::state::ManualSpeakerConfig;
 use crate::stream::{create_wav_header, AudioCodec, IcyMetadataInjector, TaggedFrame};
+use crate::utils::validate_speaker_ip;
 
 /// Boxed stream type for audio data with ICY metadata support.
 type AudioStream = Pin<Box<dyn futures::Stream<Item = Result<Bytes, std::io::Error>> + Send>>;
@@ -391,6 +395,11 @@ struct MuteRequest {
     mute: bool,
 }
 
+#[derive(Deserialize)]
+struct ManualSpeakerRequest {
+    ip: String,
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Router
 // ─────────────────────────────────────────────────────────────────────────────
@@ -407,6 +416,15 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/playback/start", post(handle_start_playback))
         .route("/api/speakers/:ip/volume", get(get_volume).post(set_volume))
         .route("/api/speakers/:ip/mute", get(get_mute).post(set_mute))
+        .route("/api/speakers/manual/probe", post(probe_manual_speaker))
+        .route(
+            "/api/speakers/manual",
+            get(list_manual_speakers).post(add_manual_speaker),
+        )
+        .route(
+            "/api/speakers/manual/:ip",
+            axum::routing::delete(remove_manual_speaker),
+        )
         .route("/sonos/gena", any(handle_gena_notify))
         .route("/stream/:id/live", get(stream_audio))
         .route("/stream/:id/live.wav", get(stream_audio))
@@ -530,6 +548,135 @@ async fn handle_start_playback(
         .await?;
 
     Ok(api_ok())
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Manual Speaker Handlers
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Returns the app data directory or an error response if not configured.
+fn require_data_dir(state: &AppState) -> Result<PathBuf, Response> {
+    state.discovery_service.get_app_data_dir().ok_or_else(|| {
+        api_error(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "data_dir_not_configured",
+            "Manual speaker persistence requires --data-dir or THAUMIC_DATA_DIR to be set",
+        )
+        .into_response()
+    })
+}
+
+/// Parses and validates an IP address for use as a Sonos speaker.
+///
+/// Returns the canonical IPv4 string representation on success.
+fn parse_and_validate_ip(ip: &str) -> Result<String, Response> {
+    let parsed: IpAddr = ip.parse().map_err(|_| {
+        api_error(
+            StatusCode::BAD_REQUEST,
+            "invalid_ip",
+            "Invalid IP address format",
+        )
+        .into_response()
+    })?;
+
+    let ipv4 = validate_speaker_ip(&parsed)
+        .map_err(|e| api_error(StatusCode::BAD_REQUEST, e.code(), e.message()).into_response())?;
+
+    Ok(ipv4.to_string())
+}
+
+/// POST /api/speakers/manual/probe
+///
+/// Validates an IP address and probes it to confirm it's a Sonos speaker.
+/// Does not persist the IP - use POST /api/speakers/manual to add after probing.
+async fn probe_manual_speaker(
+    State(state): State<AppState>,
+    Json(payload): Json<ManualSpeakerRequest>,
+) -> Response {
+    let canonical_ip = match parse_and_validate_ip(&payload.ip) {
+        Ok(ip) => ip,
+        Err(resp) => return resp,
+    };
+
+    match probe_speaker_by_ip(state.discovery_service.http_client(), &canonical_ip).await {
+        Ok(speaker) => api_success(json!({ "speaker": speaker })).into_response(),
+        Err(e) => {
+            // DiscoveryError implements ErrorCode trait with specific codes
+            // like "ip_unreachable" and "not_sonos_device"
+            api_error(StatusCode::BAD_REQUEST, e.code(), e).into_response()
+        }
+    }
+}
+
+/// POST /api/speakers/manual
+///
+/// Adds a manually configured speaker IP address.
+/// Probes the IP first to verify it's a Sonos speaker before persisting.
+/// Triggers a topology refresh after adding.
+async fn add_manual_speaker(
+    State(state): State<AppState>,
+    Json(payload): Json<ManualSpeakerRequest>,
+) -> Response {
+    let data_dir = match require_data_dir(&state) {
+        Ok(dir) => dir,
+        Err(resp) => return resp,
+    };
+
+    let canonical_ip = match parse_and_validate_ip(&payload.ip) {
+        Ok(ip) => ip,
+        Err(resp) => return resp,
+    };
+
+    // Probe to verify it's actually a Sonos speaker before persisting
+    if let Err(e) = probe_speaker_by_ip(state.discovery_service.http_client(), &canonical_ip).await
+    {
+        return api_error(StatusCode::BAD_REQUEST, e.code(), e).into_response();
+    }
+
+    if let Err(e) = ManualSpeakerConfig::add_ip_atomic(&data_dir, canonical_ip) {
+        return api_error(StatusCode::INTERNAL_SERVER_ERROR, "save_failed", e).into_response();
+    }
+
+    state.discovery_service.trigger_refresh();
+    api_ok().into_response()
+}
+
+/// DELETE /api/speakers/manual/:ip
+///
+/// Removes a manually configured speaker IP address.
+/// Triggers a topology refresh after removing.
+///
+/// If the IP can be parsed and validated, uses canonical form for storage matching.
+/// If parsing fails (e.g., IPv6, malformed input), falls back to exact string
+/// matching to allow removal of legacy/invalid entries from the config file.
+async fn remove_manual_speaker(Path(ip): Path<String>, State(state): State<AppState>) -> Response {
+    let data_dir = match require_data_dir(&state) {
+        Ok(dir) => dir,
+        Err(resp) => return resp,
+    };
+
+    // Try canonical matching first, fall back to exact string for invalid/legacy entries
+    let ip_to_remove = parse_and_validate_ip(&ip).unwrap_or_else(|_| ip.clone());
+
+    if let Err(e) = ManualSpeakerConfig::remove_ip_atomic(&data_dir, &ip_to_remove) {
+        return api_error(StatusCode::INTERNAL_SERVER_ERROR, "save_failed", e).into_response();
+    }
+
+    state.discovery_service.trigger_refresh();
+    api_ok().into_response()
+}
+
+/// GET /api/speakers/manual
+///
+/// Lists manually configured speaker IP addresses.
+async fn list_manual_speakers(State(state): State<AppState>) -> Response {
+    let data_dir = match require_data_dir(&state) {
+        Ok(dir) => dir,
+        Err(resp) => return resp,
+    };
+
+    let config = ManualSpeakerConfig::load(&data_dir);
+    api_success(json!({ "ips": config.speaker_ips })).into_response()
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1238,6 +1385,75 @@ mod tests {
             );
 
             drop(tx);
+        }
+    }
+
+    mod manual_speaker_handlers {
+        use super::*;
+
+        #[test]
+        fn parse_and_validate_ip_valid_ipv4() {
+            let result = parse_and_validate_ip("192.168.1.100");
+            assert!(result.is_ok());
+            assert_eq!(result.unwrap(), "192.168.1.100");
+        }
+
+        #[test]
+        fn parse_and_validate_ip_leading_zeros_rejected() {
+            // Rust's IpAddr parser rejects leading zeros (ambiguous - could be octal)
+            let result = parse_and_validate_ip("192.168.001.100");
+            assert!(result.is_err());
+        }
+
+        #[test]
+        fn parse_and_validate_ip_invalid_format() {
+            let result = parse_and_validate_ip("not-an-ip");
+            assert!(result.is_err());
+        }
+
+        #[test]
+        fn parse_and_validate_ip_empty_string() {
+            let result = parse_and_validate_ip("");
+            assert!(result.is_err());
+        }
+
+        #[test]
+        fn parse_and_validate_ip_ipv6_rejected() {
+            let result = parse_and_validate_ip("::1");
+            assert!(result.is_err());
+
+            let result = parse_and_validate_ip("2001:db8::1");
+            assert!(result.is_err());
+        }
+
+        #[test]
+        fn parse_and_validate_ip_loopback_rejected() {
+            let result = parse_and_validate_ip("127.0.0.1");
+            assert!(result.is_err());
+        }
+
+        #[test]
+        fn parse_and_validate_ip_broadcast_rejected() {
+            let result = parse_and_validate_ip("255.255.255.255");
+            assert!(result.is_err());
+        }
+
+        #[test]
+        fn parse_and_validate_ip_multicast_rejected() {
+            let result = parse_and_validate_ip("224.0.0.1");
+            assert!(result.is_err());
+        }
+
+        #[test]
+        fn parse_and_validate_ip_link_local_rejected() {
+            let result = parse_and_validate_ip("169.254.1.1");
+            assert!(result.is_err());
+        }
+
+        #[test]
+        fn parse_and_validate_ip_unspecified_rejected() {
+            let result = parse_and_validate_ip("0.0.0.0");
+            assert!(result.is_err());
         }
     }
 }

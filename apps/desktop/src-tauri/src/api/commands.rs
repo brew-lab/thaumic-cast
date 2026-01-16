@@ -5,7 +5,8 @@
 use serde::Serialize;
 use tauri::Manager;
 use thaumic_core::{
-    probe_speaker_by_ip, ManualSpeakerConfig, NetworkHealth, PlaybackSession, Speaker, ZoneGroup,
+    probe_speaker_by_ip, validate_speaker_ip, ErrorCode, ManualSpeakerConfig, NetworkHealth,
+    PlaybackSession, Speaker, ZoneGroup,
 };
 
 use crate::api::AppState;
@@ -270,42 +271,25 @@ pub async fn probe_speaker_ip(
     ip: String,
     state: tauri::State<'_, AppState>,
 ) -> Result<Speaker, CommandError> {
-    use std::net::{IpAddr, Ipv6Addr};
+    use std::net::IpAddr;
 
     // Extract IP from URL-like input (e.g., "http://192.168.1.100:1400/")
     let cleaned_ip = extract_ip_from_input(&ip);
 
-    // Parse and validate IP address format
+    // Parse IP address format
     let parsed_ip: IpAddr = cleaned_ip.parse().map_err(|_| CommandError {
         code: "invalid_ip",
         message: "Invalid IP address format".to_string(),
     })?;
 
-    // Reject special addresses that can't be valid Sonos speakers
-    let is_invalid = match parsed_ip {
-        IpAddr::V4(ipv4) => {
-            ipv4.is_loopback()                          // 127.x.x.x
-                || ipv4.is_unspecified()                // 0.0.0.0
-                || ipv4.is_broadcast()                  // 255.255.255.255
-                || ipv4.is_multicast()                  // 224.0.0.0/4
-                || ipv4.is_link_local() // 169.254.x.x
-        }
-        IpAddr::V6(ipv6) => {
-            ipv6.is_loopback()                          // ::1
-                || ipv6.is_unspecified()                // ::
-                || ipv6.is_multicast()                  // ff00::/8
-                || ipv6 == Ipv6Addr::UNSPECIFIED
-        }
-    };
+    // Validate using shared validation (rejects IPv6, loopback, multicast, etc.)
+    let ipv4 = validate_speaker_ip(&parsed_ip).map_err(|e| CommandError {
+        code: e.code(),
+        message: e.message().to_string(),
+    })?;
 
-    if is_invalid {
-        return Err(CommandError {
-            code: "invalid_ip",
-            message: "This IP address cannot be a Sonos speaker".to_string(),
-        });
-    }
-
-    probe_speaker_by_ip(state.services.http_client(), &cleaned_ip)
+    // Use canonical IP string for probing
+    probe_speaker_by_ip(state.services.http_client(), &ipv4.to_string())
         .await
         .map_err(Into::into)
 }
