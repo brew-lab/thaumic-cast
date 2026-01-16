@@ -33,8 +33,8 @@ const FRAME_DURATION_SEC = 0.01;
 /** Maximum pending encode operations before dropping frames. */
 const MAX_ENCODE_QUEUE = 3;
 
-/** WebSocket buffer high water mark (512KB). Drop frames if exceeded. */
-const WS_BUFFER_HIGH_WATER = 512000;
+/** WebSocket buffer high water mark (256KB). Drop frames if exceeded. ~1.3s at PCM rate. */
+const WS_BUFFER_HIGH_WATER = 256000;
 
 /**
  * Time budget for processing frames per wake cycle (ms).
