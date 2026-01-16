@@ -15,6 +15,7 @@ import type {
 } from '@thaumic-cast/protocol';
 import {
   CODEC_METADATA,
+  DEFAULT_BITS_PER_SAMPLE,
   generateDynamicPresets,
   getSupportedSampleRates,
   STREAMING_BUFFER_MS_DEFAULT,
@@ -43,6 +44,7 @@ function getFallbackConfig(codecSupport: SupportedCodecsResult): EncoderConfig |
     bitrate: codecSupport.defaultBitrate,
     sampleRate: 48000,
     channels: 2,
+    bitsPerSample: DEFAULT_BITS_PER_SAMPLE,
     latencyMode: 'quality',
     streamingBufferMs: STREAMING_BUFFER_MS_DEFAULT,
   };
@@ -107,6 +109,7 @@ function buildConfigFromOption(
     bitrate: option.bitrate,
     sampleRate,
     channels,
+    bitsPerSample: DEFAULT_BITS_PER_SAMPLE,
     latencyMode,
     streamingBufferMs: STREAMING_BUFFER_MS_DEFAULT,
   };
@@ -158,6 +161,7 @@ export function resolveAudioMode(
         bitrate: customSettings.bitrate,
         channels: customSettings.channels,
         sampleRate: customSettings.sampleRate,
+        bitsPerSample: DEFAULT_BITS_PER_SAMPLE,
         latencyMode: customSettings.latencyMode,
         streamingBufferMs: customSettings.streamingBufferMs ?? STREAMING_BUFFER_MS_DEFAULT,
       };
@@ -222,6 +226,7 @@ export function getResolvedConfigForDisplay(
         bitrate: customSettings.bitrate,
         channels: customSettings.channels,
         sampleRate: customSettings.sampleRate,
+        bitsPerSample: DEFAULT_BITS_PER_SAMPLE,
         latencyMode: customSettings.latencyMode,
         streamingBufferMs: customSettings.streamingBufferMs ?? STREAMING_BUFFER_MS_DEFAULT,
       };

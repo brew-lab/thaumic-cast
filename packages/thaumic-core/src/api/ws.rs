@@ -132,6 +132,8 @@ struct EncoderConfig {
     bitrate: Option<u32>,
     sample_rate: Option<u32>,
     channels: Option<u8>,
+    /// Bit depth for audio encoding (16 or 24). Only 24-bit is supported for FLAC.
+    bits_per_sample: Option<u16>,
     /// Streaming buffer size in milliseconds (100-1000). Only affects PCM codec.
     streaming_buffer_ms: Option<u64>,
 }
@@ -372,10 +374,36 @@ fn handle_handshake(state: &AppState, payload: HandshakeRequest) -> HandshakeRes
         .unwrap_or(DEFAULT_STREAMING_BUFFER_MS)
         .clamp(MIN_STREAMING_BUFFER_MS, MAX_STREAMING_BUFFER_MS);
 
-    // Bit depth is always 16: the extension uses Web Audio API which outputs
-    // 32-bit float samples, but we convert to 16-bit PCM before sending.
-    // This matches the WAV header generation and silence frame calculations.
-    let audio_format = AudioFormat::new(sample_rate, channels as u16, 16);
+    // Extract and validate bit depth (16 or 24), defaulting to 16.
+    // 24-bit is only supported for FLAC codec on Sonos S2 speakers.
+    let requested_bits = payload
+        .encoder_config
+        .as_ref()
+        .and_then(|c| c.bits_per_sample)
+        .unwrap_or(16);
+
+    let bits_per_sample = match requested_bits {
+        24 if output_codec == AudioCodec::Flac => 24,
+        24 => {
+            // Valid request, but 24-bit only supported for FLAC - downgrade gracefully
+            log::warn!(
+                "[WS] 24-bit audio requested but codec is {:?}, falling back to 16-bit",
+                output_codec
+            );
+            16
+        }
+        16 => 16,
+        other => {
+            // Invalid value indicates a bug in the extension - reject handshake
+            log::error!("[WS] Invalid bits_per_sample {}, must be 16 or 24", other);
+            return HandshakeResult::Error(format!(
+                "Invalid bits_per_sample: {}. Must be 16 or 24.",
+                other
+            ));
+        }
+    };
+
+    let audio_format = AudioFormat::new(sample_rate, channels as u16, bits_per_sample);
 
     log::info!(
         "[WS] Creating stream: input={:?}, output={:?}, format={:?}, buffer={}ms",

@@ -190,14 +190,14 @@ type OutboundMessage =
 
 // Ring buffer state
 let control: Int32Array | null = null;
-let buffer: Int16Array | null = null;
+let buffer: Float32Array | null = null;
 let bufferSize = 0;
 let bufferMask = 0;
 let running = false;
 
 // Frame accumulation
 let frameSizeSamples = 0;
-let frameBuffer: Int16Array | null = null;
+let frameBuffer: Float32Array | null = null;
 let frameOffset = 0;
 
 // Encoder and WebSocket
@@ -823,8 +823,8 @@ async function consumeLoop(): Promise<void> {
 function flushRemaining(): void {
   // Flush partial frame
   if (frameBuffer && frameOffset > 0 && encoder && socket?.readyState === WebSocket.OPEN) {
-    const partial = new Int16Array(frameBuffer.subarray(0, frameOffset));
-    const encoded = encoder.encode(partial);
+    // subarray() returns a view, no copy needed
+    const encoded = encoder.encode(frameBuffer.subarray(0, frameOffset));
     if (encoded) {
       socket.send(encoded);
     }
@@ -892,13 +892,13 @@ self.onmessage = async (event: MessageEvent<InboundMessage>) => {
 
       // Initialize ring buffer views
       control = new Int32Array(sab, 0, headerSize);
-      buffer = new Int16Array(sab, DATA_BYTE_OFFSET);
+      buffer = new Float32Array(sab, DATA_BYTE_OFFSET);
       bufferSize = size;
       bufferMask = mask;
 
       // Calculate frame size from sample rate and channels
       frameSizeSamples = Math.round(sampleRate * FRAME_DURATION_SEC) * encoderConfig.channels;
-      frameBuffer = new Int16Array(frameSizeSamples);
+      frameBuffer = new Float32Array(frameSizeSamples);
       frameOffset = 0;
 
       // Reset state

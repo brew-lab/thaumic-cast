@@ -211,6 +211,11 @@ export class StreamSession {
         const now = performance.now();
         this.lastWorkletHeartbeat = now;
 
+        // Log clipping if detected (helps diagnose audio quality issues)
+        if (event.data.clippedSamples > 0) {
+          log.warn(`Audio clipping: ${event.data.clippedSamples} samples exceeded [-1, 1] range`);
+        }
+
         // Log recovery if we were stalled
         if (this.stallStartTime > 0) {
           const stallDuration = (now - this.stallStartTime) / 1000;

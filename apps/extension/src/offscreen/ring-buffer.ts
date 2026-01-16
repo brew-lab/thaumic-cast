@@ -23,8 +23,11 @@
  * The unsigned subtraction (>>> 0) handles 32-bit wrap correctly
  * for sessions >12 hours at 48kHz stereo.
  *
- * Data Layout (Int16Array starting at HEADER_SIZE * 4 bytes):
- * [0..N] - Interleaved PCM Int16 samples (L, R, L, R, ...)
+ * Data Layout (Float32Array starting at HEADER_SIZE * 4 bytes):
+ * [0..N] - Interleaved PCM Float32 samples (L, R, L, R, ...)
+ *
+ * Float32 samples are kept throughout the pipeline until final quantization
+ * at the encoder level, allowing for 24-bit FLAC encoding without precision loss.
  */
 
 /** Power-of-two buffer size for bitmask optimization. ~5.4 seconds at 48kHz stereo. */
@@ -43,7 +46,7 @@ export const CTRL_READ_IDX = 1;
 /** Control index for the producer dropped samples count (diagnostics). */
 export const CTRL_DROPPED_SAMPLES = 2;
 
-/** Byte offset where Int16 audio data begins. */
+/** Byte offset where Float32 audio data begins. */
 export const DATA_BYTE_OFFSET = HEADER_SIZE * Int32Array.BYTES_PER_ELEMENT;
 
 /**
@@ -59,12 +62,13 @@ export function createAudioRingBuffer(): SharedArrayBuffer {
     throw new Error('RING_BUFFER_MASK must be RING_BUFFER_SIZE - 1');
   }
 
-  // Correct allocation: header uses Int32, data uses Int16
-  const size = DATA_BYTE_OFFSET + RING_BUFFER_SIZE * Int16Array.BYTES_PER_ELEMENT;
+  // Correct allocation: header uses Int32, data uses Float32
+  // Float32 buffer is ~2x larger than Int16 but keeps full precision for 24-bit encoding
+  const size = DATA_BYTE_OFFSET + RING_BUFFER_SIZE * Float32Array.BYTES_PER_ELEMENT;
   const sab = new SharedArrayBuffer(size);
 
-  // Verify the Int16Array view will have exactly RING_BUFFER_SIZE elements
-  const dataView = new Int16Array(sab, DATA_BYTE_OFFSET);
+  // Verify the Float32Array view will have exactly RING_BUFFER_SIZE elements
+  const dataView = new Float32Array(sab, DATA_BYTE_OFFSET);
   if (dataView.length !== RING_BUFFER_SIZE) {
     throw new Error(
       `Ring buffer data view length mismatch: expected ${RING_BUFFER_SIZE}, got ${dataView.length}`,

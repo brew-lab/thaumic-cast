@@ -967,7 +967,11 @@ async fn stream_audio(
     } else if stream_state.codec == AudioCodec::Wav {
         // WAV streams need header prepended per-connection (Sonos may reconnect)
         let audio_format = stream_state.audio_format;
-        let wav_header = create_wav_header(audio_format.sample_rate, audio_format.channels);
+        let wav_header = create_wav_header(
+            audio_format.sample_rate,
+            audio_format.channels,
+            audio_format.bits_per_sample,
+        );
         Box::pin(futures::StreamExt::chain(
             futures::stream::once(async move { Ok(wav_header) }),
             unwrapped_stream,

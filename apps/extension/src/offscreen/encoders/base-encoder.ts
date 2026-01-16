@@ -11,8 +11,8 @@ export interface ChromeAudioEncoderConfig extends AudioEncoderConfig {
 }
 
 /**
- * Default capacity for pre-allocated buffers.
- * Sized for 10ms of stereo audio at 48kHz (480 frames * 2 channels).
+ * Default capacity in samples for pre-allocated buffers.
+ * Sized for 10ms of stereo audio at 48kHz (480 frames × 2 channels).
  */
 const DEFAULT_BUFFER_CAPACITY = 960;
 
@@ -37,8 +37,8 @@ export abstract class BaseAudioEncoder implements AudioEncoder {
   /** Current latency mode */
   private _latencyMode: LatencyMode;
 
-  /** Pre-allocated planar conversion buffer */
-  protected planarBuffer: Float32Array;
+  /** Pre-allocated planar conversion buffer (explicitly ArrayBuffer-backed for BufferSource compatibility) */
+  protected planarBuffer: Float32Array<ArrayBuffer>;
 
   /**
    * Returns the number of pending encode requests.
@@ -155,7 +155,7 @@ export abstract class BaseAudioEncoder implements AudioEncoder {
     // Fast path: single item, no consolidation needed
     if (this.outputQueue.length === 1) {
       const result = this.outputQueue[0]!;
-      this.outputQueue = [];
+      this.outputQueue.length = 0; // Reuse array to reduce GC pressure
       return result;
     }
 
@@ -167,18 +167,21 @@ export abstract class BaseAudioEncoder implements AudioEncoder {
       result.set(buf, offset);
       offset += buf.byteLength;
     }
-    this.outputQueue = [];
+    this.outputQueue.length = 0; // Reuse array to reduce GC pressure
 
     return result;
   }
 
   /**
-   * Converts interleaved Int16 samples to planar Float32 format.
+   * Converts interleaved Float32 samples to planar Float32 format.
    * Uses pre-allocated buffer to minimize GC pressure.
-   * @param samples - Interleaved Int16 samples
+   * @param samples - Interleaved Float32 samples (range [-1.0, 1.0])
    * @returns Object with planar data view and frame count
    */
-  protected convertToPlanar(samples: Int16Array): { planarData: Float32Array; frameCount: number } {
+  protected convertToPlanar(samples: Float32Array): {
+    planarData: Float32Array<ArrayBuffer>;
+    frameCount: number;
+  } {
     const channels = this.config.channels;
     const frameCount = samples.length / channels;
     const sampleCount = samples.length;
@@ -186,11 +189,11 @@ export abstract class BaseAudioEncoder implements AudioEncoder {
     // Ensure buffer is large enough (rare reallocation for larger frames)
     this.ensureBufferCapacity(sampleCount);
 
-    // Deinterleave and convert Int16 to Float32 into pre-allocated buffer
+    // Deinterleave into pre-allocated buffer (samples are already Float32)
     // Planar format: all samples for channel 0, then channel 1, etc.
     for (let ch = 0; ch < channels; ch++) {
       for (let i = 0; i < frameCount; i++) {
-        this.planarBuffer[ch * frameCount + i] = samples[i * channels + ch]! / 0x7fff;
+        this.planarBuffer[ch * frameCount + i] = samples[i * channels + ch]!;
       }
     }
 
@@ -207,25 +210,24 @@ export abstract class BaseAudioEncoder implements AudioEncoder {
    * @param frameCount - Number of audio frames
    * @returns The AudioData object (caller must close it)
    */
-  protected createAudioData(planarData: Float32Array, frameCount: number): AudioData {
+  protected createAudioData(planarData: Float32Array<ArrayBuffer>, frameCount: number): AudioData {
     return new AudioData({
       format: 'f32-planar',
       sampleRate: this.config.sampleRate,
       numberOfFrames: frameCount,
       numberOfChannels: this.config.channels,
       timestamp: this.timestamp,
-      // Cast needed: TS strict typing doesn't recognize Float32Array<ArrayBufferLike> as BufferSource
-      data: planarData as unknown as BufferSource,
+      data: planarData,
     });
   }
 
   /**
    * Encodes PCM samples.
    * Uses pre-allocated buffer to minimize GC pressure.
-   * @param samples - Interleaved Int16 samples (mono or stereo)
+   * @param samples - Interleaved Float32 samples (mono or stereo, range [-1.0, 1.0])
    * @returns Encoded data or null if unavailable
    */
-  encode(samples: Int16Array): Uint8Array | null {
+  encode(samples: Float32Array): Uint8Array | null {
     if (this.isClosed) return null;
 
     const { planarData, frameCount } = this.convertToPlanar(samples);

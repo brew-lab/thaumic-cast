@@ -95,6 +95,39 @@ export const LatencyModeSchema = z.enum(['quality', 'realtime']);
 export type LatencyMode = z.infer<typeof LatencyModeSchema>;
 
 /**
+ * Bit depths supported for audio encoding.
+ * - 16: Standard CD quality, supported by all codecs
+ * - 24: High-resolution audio, only supported by FLAC on Sonos S2 speakers
+ */
+export const BIT_DEPTHS = [16, 24] as const;
+export type BitDepth = (typeof BIT_DEPTHS)[number];
+export const BitDepthSchema = z.union([z.literal(16), z.literal(24)]);
+
+/** Default bit depth for audio encoding. */
+export const DEFAULT_BITS_PER_SAMPLE: BitDepth = 16;
+
+/**
+ * Audio sample scaling constants.
+ * Used for converting between Float32 [-1.0, 1.0] and integer formats.
+ */
+export const INT16_MAX = 0x7fff; // 32767
+export const INT24_MAX = 0x7fffff; // 8388607
+
+/**
+ * Clamps a Float32 audio sample to the valid range [-1.0, 1.0].
+ * Uses ternary operators instead of Math.max/min for better performance in hot paths.
+ *
+ * SYNC REQUIRED: pcm-processor.ts has a duplicate (AudioWorklet can't import modules).
+ * If you change this, update the copy in apps/extension/src/offscreen/pcm-processor.ts.
+ *
+ * @param s - The sample value to clamp
+ * @returns The clamped value
+ */
+export function clampSample(s: number): number {
+  return s < -1 ? -1 : s > 1 ? 1 : s;
+}
+
+/**
  * Streaming buffer size constraints and default (in milliseconds).
  * Used for WAV/PCM streaming to balance latency vs. reliability.
  */
@@ -105,19 +138,28 @@ export const STREAMING_BUFFER_MS_DEFAULT = 200;
 /**
  * Complete encoder configuration passed from UI to offscreen.
  */
-export const EncoderConfigSchema = z.object({
-  codec: AudioCodecSchema,
-  bitrate: BitrateSchema,
-  sampleRate: SampleRateSchema.default(48000),
-  channels: z.union([z.literal(1), z.literal(2)]).default(2),
-  latencyMode: LatencyModeSchema.default('quality'),
-  /** Buffer size for WAV streaming in milliseconds. Only affects PCM codec. */
-  streamingBufferMs: z
-    .number()
-    .min(STREAMING_BUFFER_MS_MIN)
-    .max(STREAMING_BUFFER_MS_MAX)
-    .default(STREAMING_BUFFER_MS_DEFAULT),
-});
+export const EncoderConfigSchema = z
+  .object({
+    codec: AudioCodecSchema,
+    bitrate: BitrateSchema,
+    sampleRate: SampleRateSchema.default(48000),
+    channels: z.union([z.literal(1), z.literal(2)]).default(2),
+    /**
+     * Bit depth for audio encoding.
+     * 24-bit is only supported for FLAC codec on Sonos S2 speakers.
+     */
+    bitsPerSample: BitDepthSchema.default(16),
+    latencyMode: LatencyModeSchema.default('quality'),
+    /** Buffer size for WAV streaming in milliseconds. Only affects PCM codec. */
+    streamingBufferMs: z
+      .number()
+      .min(STREAMING_BUFFER_MS_MIN)
+      .max(STREAMING_BUFFER_MS_MAX)
+      .default(STREAMING_BUFFER_MS_DEFAULT),
+  })
+  .refine((c) => c.bitsPerSample === 16 || c.codec === 'flac', {
+    message: '24-bit audio only supported for FLAC codec',
+  });
 export type EncoderConfig = z.infer<typeof EncoderConfigSchema>;
 
 /**
@@ -251,6 +293,8 @@ export interface CreateEncoderConfigOptions {
   bitrate?: Bitrate;
   sampleRate?: SupportedSampleRate;
   channels?: 1 | 2;
+  /** Bit depth (16 or 24). 24-bit only supported for FLAC. */
+  bitsPerSample?: BitDepth;
   latencyMode?: LatencyMode;
   /** Buffer size for WAV streaming in milliseconds (100-1000). Only affects PCM codec. */
   streamingBufferMs?: number;
@@ -267,17 +311,25 @@ export function createEncoderConfig(options: CreateEncoderConfigOptions): Encode
     bitrate,
     sampleRate = 48000,
     channels = 2,
+    bitsPerSample = 16,
     latencyMode = 'quality',
     streamingBufferMs = STREAMING_BUFFER_MS_DEFAULT,
   } = options;
   const effectiveBitrate =
     bitrate && isValidBitrateForCodec(codec, bitrate) ? bitrate : getDefaultBitrate(codec);
 
+  // Validate bitsPerSample (Zod validates at parse time, but this function doesn't use schema)
+  const validBitsPerSample = bitsPerSample === 16 || bitsPerSample === 24 ? bitsPerSample : 16;
+  // 24-bit is only valid for FLAC codec
+  const effectiveBitsPerSample =
+    validBitsPerSample === 24 && codec !== 'flac' ? 16 : validBitsPerSample;
+
   return {
     codec,
     bitrate: effectiveBitrate,
     sampleRate,
     channels,
+    bitsPerSample: effectiveBitsPerSample,
     latencyMode,
     streamingBufferMs,
   };

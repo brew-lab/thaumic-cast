@@ -51,16 +51,23 @@ declare function registerProcessor(name: string, processorCtor: typeof AudioWork
 /** Global sample rate in AudioWorklet scope. */
 declare const sampleRate: number;
 
+// Note: clampSample logic is inlined in the hot path below for performance.
+// The canonical implementation is in protocol/index.ts - keep them in sync:
+//   return s < -1 ? -1 : s > 1 ? 1 : s;
+
 /**
- * AudioWorkletProcessor for converting Float32 audio to Int16 PCM in shared memory.
+ * AudioWorkletProcessor for writing Float32 audio to shared memory.
  *
  * Uses monotonic indices that wrap at 32-bit boundary with unsigned interpretation.
  * Checks available space once per block and drops entire blocks when full.
  * Uses bulk TypedArray.set() for efficient writes with wrap handling.
  * Only notifies consumer on empty→non-empty transition.
+ *
+ * Float32 samples are preserved throughout the pipeline until final quantization
+ * at the encoder level, enabling 24-bit FLAC encoding without precision loss.
  */
 class PCMProcessor extends AudioWorkletProcessor {
-  private sharedBuffer: Int16Array | null = null;
+  private sharedBuffer: Float32Array | null = null;
   private control: Int32Array | null = null;
   /** Bitmask for efficient buffer offset calculation (power-of-two optimization). */
   private bufferMask = 0;
@@ -68,12 +75,14 @@ class PCMProcessor extends AudioWorkletProcessor {
   private capacity = 0;
   /** Number of audio channels (1 for mono, 2 for stereo). */
   private channels = 2;
-  /** Pre-allocated buffer for Float32→Int16 conversion (avoids per-frame allocation). */
-  private conversionBuffer: Int16Array | null = null;
+  /** Pre-allocated buffer for clamping and channel handling (avoids per-frame allocation). */
+  private conversionBuffer: Float32Array | null = null;
   /** Counter for heartbeat interval. */
   private blockCount = 0;
   /** Number of blocks between heartbeats (computed from sampleRate). */
   private readonly heartbeatIntervalBlocks: number;
+  /** Count of samples clipped since last heartbeat. Reset every ~1s, max ~96k - safe from overflow. */
+  private clippedSampleCount = 0;
 
   /**
    * Creates a new PCM processor instance.
@@ -93,7 +102,7 @@ class PCMProcessor extends AudioWorkletProcessor {
     this.port.onmessage = (event) => {
       if (event.data.type === 'INIT_BUFFER') {
         const { buffer: sab, bufferMask, headerSize, channels } = event.data;
-        this.sharedBuffer = new Int16Array(sab, headerSize * 4);
+        this.sharedBuffer = new Float32Array(sab, headerSize * 4);
         this.control = new Int32Array(sab, 0, headerSize);
         this.bufferMask = bufferMask;
         this.capacity = bufferMask + 1; // Power of two: mask + 1 = size
@@ -136,11 +145,18 @@ class PCMProcessor extends AudioWorkletProcessor {
 
     // Ensure conversion buffer exists with adequate size
     if (!this.conversionBuffer || this.conversionBuffer.length < samplesToWrite) {
-      this.conversionBuffer = new Int16Array(samplesToWrite);
+      this.conversionBuffer = new Float32Array(samplesToWrite);
     }
 
-    // Bulk convert Float32 to Int16 (no atomics in this loop).
-    // Uses ternary operators for clamping instead of Math.max/min for better performance in this hot loop.
+    // Clamp Float32 samples to [-1, 1] range (no quantization - that happens at encoder).
+    // Web Audio API nominally outputs [-1, 1], but clamping is defensive against:
+    // - Audio processing effects that may exceed range
+    // - Browser implementation variations
+    // - NaN values (s !== s check) - replaced with 0 to avoid undefined WebCodecs behavior
+    // - Future API changes
+    // Note: ±Infinity is already handled correctly (clamped to ±1).
+    // Clipping is fused into the clamp operation using comma operator to avoid extra function
+    // calls in this hot path (~192k samples/sec at 48kHz stereo).
     if (this.channels === 1) {
       // Mono output: average both channels for proper downmix
       // If input is already mono (channel1 === channel0), this still works correctly
@@ -148,14 +164,29 @@ class PCMProcessor extends AudioWorkletProcessor {
       if (hasSecondChannel) {
         // Proper stereo-to-mono downmix: average both channels
         for (let i = 0; i < frameCount; i++) {
-          const avg = (channel0[i]! + channel1[i]!) * 0.5;
-          this.conversionBuffer[i] = (avg < -1 ? -1 : avg > 1 ? 1 : avg) * 0x7fff;
+          const s = (channel0[i]! + channel1[i]!) * 0.5;
+          // Fused NaN check + clamp + clip count: s !== s is true only for NaN
+          this.conversionBuffer[i] =
+            s !== s
+              ? (this.clippedSampleCount++, 0)
+              : s < -1
+                ? (this.clippedSampleCount++, -1)
+                : s > 1
+                  ? (this.clippedSampleCount++, 1)
+                  : s;
         }
       } else {
-        // Input is already mono, just convert
+        // Input is already mono, just clamp
         for (let i = 0; i < frameCount; i++) {
           const s = channel0[i]!;
-          this.conversionBuffer[i] = (s < -1 ? -1 : s > 1 ? 1 : s) * 0x7fff;
+          this.conversionBuffer[i] =
+            s !== s
+              ? (this.clippedSampleCount++, 0)
+              : s < -1
+                ? (this.clippedSampleCount++, -1)
+                : s > 1
+                  ? (this.clippedSampleCount++, 1)
+                  : s;
         }
       }
     } else {
@@ -163,8 +194,22 @@ class PCMProcessor extends AudioWorkletProcessor {
       for (let i = 0; i < frameCount; i++) {
         const l = channel0[i]!;
         const r = channel1[i]!;
-        this.conversionBuffer[i * 2] = (l < -1 ? -1 : l > 1 ? 1 : l) * 0x7fff;
-        this.conversionBuffer[i * 2 + 1] = (r < -1 ? -1 : r > 1 ? 1 : r) * 0x7fff;
+        this.conversionBuffer[i * 2] =
+          l !== l
+            ? (this.clippedSampleCount++, 0)
+            : l < -1
+              ? (this.clippedSampleCount++, -1)
+              : l > 1
+                ? (this.clippedSampleCount++, 1)
+                : l;
+        this.conversionBuffer[i * 2 + 1] =
+          r !== r
+            ? (this.clippedSampleCount++, 0)
+            : r < -1
+              ? (this.clippedSampleCount++, -1)
+              : r > 1
+                ? (this.clippedSampleCount++, 1)
+                : r;
       }
     }
 
@@ -194,7 +239,10 @@ class PCMProcessor extends AudioWorkletProcessor {
     this.blockCount++;
     if (this.blockCount >= this.heartbeatIntervalBlocks) {
       this.blockCount = 0;
-      this.port.postMessage({ type: 'HEARTBEAT' });
+      // Include clipping count in heartbeat for debugging audio quality issues
+      const clipped = this.clippedSampleCount;
+      this.clippedSampleCount = 0;
+      this.port.postMessage({ type: 'HEARTBEAT', clippedSamples: clipped });
     }
 
     return true;
