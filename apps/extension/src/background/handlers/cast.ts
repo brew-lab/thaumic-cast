@@ -45,6 +45,8 @@ export async function handleStartCast(
   sendResponse: (res: ExtensionResponse) => void,
 ): Promise<void> {
   let finished = false;
+  let disabledAutoDiscard = false;
+  let tab: chrome.tabs.Tab | null | undefined;
   const safeSendResponse = (res: ExtensionResponse) => {
     if (!finished) {
       sendResponse(res);
@@ -56,8 +58,9 @@ export async function handleStartCast(
     const { speakerIps } = msg.payload;
     if (!speakerIps.length) throw new Error('error_no_speakers_selected');
 
-    const tab = await getActiveTab();
+    tab = await getActiveTab();
     if (!tab?.id) throw new Error('error_no_active_tab');
+    const tabId = tab.id;
 
     // 1. Discover Desktop App and its limits (do this early to fail fast)
     const app = await discoverAndCache();
@@ -102,7 +105,7 @@ export async function handleStartCast(
 
     // 5. Capture Tab
     const mediaStreamId = await new Promise<string>((resolve, reject) => {
-      chrome.tabCapture.getMediaStreamId({ targetTabId: tab.id! }, (id) => {
+      chrome.tabCapture.getMediaStreamId({ targetTabId: tabId }, (id) => {
         if (id) resolve(id);
         else reject(new Error('error_capture_denied'));
       });
@@ -110,7 +113,8 @@ export async function handleStartCast(
 
     // Prevent Chrome from discarding the captured tab (Memory Saver exemption)
     // This helps maintain stream quality when the tab is backgrounded
-    await chrome.tabs.update(tab.id!, { autoDiscardable: false });
+    await chrome.tabs.update(tabId, { autoDiscardable: false });
+    disabledAutoDiscard = true;
 
     // 6. Connect control WebSocket if not already connected
     if (!getConnectionState().connected) {
@@ -186,10 +190,15 @@ export async function handleStartCast(
 
       safeSendResponse({ success: true });
     } else {
-      // Offscreen capture failed - no cleanup needed
+      // Offscreen capture failed - re-enable auto-discard since we won't register a session
+      chrome.tabs.update(tabId, { autoDiscardable: true }).catch(() => {});
       safeSendResponse(response);
     }
   } catch (err) {
+    // Re-enable auto-discard if we disabled it but failed before registering session
+    if (disabledAutoDiscard && tab?.id) {
+      chrome.tabs.update(tab.id, { autoDiscardable: true }).catch(() => {});
+    }
     const message = err instanceof Error ? err.message : String(err);
     log.error(`Cast failed: ${message}`);
     safeSendResponse({ success: false, error: message });
