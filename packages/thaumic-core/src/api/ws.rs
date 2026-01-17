@@ -364,11 +364,27 @@ fn handle_handshake(state: &AppState, payload: HandshakeRequest) -> HandshakeRes
         .as_ref()
         .and_then(|c| c.sample_rate)
         .unwrap_or(48000);
-    let channels = payload
+    // Extract and validate channels (1 or 2 only).
+    // Multi-channel (>2) is not supported - crossfade utilities assume stereo or mono.
+    let requested_channels = payload
         .encoder_config
         .as_ref()
         .and_then(|c| c.channels)
         .unwrap_or(2);
+
+    let channels = match requested_channels {
+        1 | 2 => requested_channels,
+        other => {
+            log::error!(
+                "[WS] Invalid channels {}, must be 1 (mono) or 2 (stereo)",
+                other
+            );
+            return HandshakeResult::Error(format!(
+                "Invalid channels: {}. Must be 1 (mono) or 2 (stereo).",
+                other
+            ));
+        }
+    };
 
     // Extract streaming buffer with bounds validation
     let streaming_buffer_ms = payload

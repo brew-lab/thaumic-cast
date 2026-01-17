@@ -38,7 +38,11 @@ use crate::protocol_constants::{
 };
 use crate::sonos::discovery::probe_speaker_by_ip;
 use crate::state::ManualSpeakerConfig;
-use crate::stream::{create_wav_header, AudioCodec, IcyMetadataInjector, TaggedFrame};
+use crate::stream::{
+    apply_fade_in, create_fade_out_frame, create_wav_header, crossfade_samples,
+    extract_last_sample_pair, is_crossfade_compatible, AudioCodec, AudioFormat,
+    IcyMetadataInjector, TaggedFrame,
+};
 use crate::utils::validate_speaker_ip;
 
 /// Boxed stream type for audio data with ICY metadata support.
@@ -63,21 +67,26 @@ fn lagged_error(frames: u64) -> std::io::Error {
     std::io::Error::other(format!("lagged by {} frames", frames))
 }
 
-/// Creates a WAV audio stream with fixed-cadence output.
+/// Creates a WAV audio stream with fixed-cadence output and crossfade on silence transitions.
 ///
 /// Maintains real-time cadence regardless of input timing:
 /// - Incoming frames are queued (bounded to `queue_size`)
 /// - Metronome ticks every `frame_duration_ms`
 /// - On each tick: send queued frame if available, else send silence
 ///
-/// This ensures Sonos always receives continuous data, smoothing
-/// over input jitter and CPU spikes up to `queue_size * frame_duration_ms`.
+/// Crossfade on silence transitions:
+/// - When entering silence: emits a fade-out frame from the last audio sample to zero
+/// - When exiting silence: applies fade-in to the first audio frame
+///
+/// This ensures Sonos always receives continuous data with smooth transitions,
+/// eliminating pops from abrupt audio/silence boundaries.
 fn create_wav_stream_with_cadence(
     mut rx: broadcast::Receiver<Bytes>,
     silence_frame: Bytes,
     guard: Arc<LoggingStreamGuard>,
     queue_size: usize,
     frame_duration_ms: u32,
+    audio_format: AudioFormat,
 ) -> impl Stream<Item = Result<TaggedFrame, std::io::Error>> {
     stream! {
         let cadence_duration = Duration::from_millis(frame_duration_ms as u64);
@@ -91,6 +100,21 @@ fn create_wav_stream_with_cadence(
         let mut rx_closed = false;
         let mut in_silence = false;
         let mut silence_start: Option<TokioInstant> = None;
+
+        // Crossfade is only supported for 16-bit PCM. The handshake enforces this
+        // for PCM streams, but we guard here defensively in case the invariant breaks.
+        let crossfade_enabled = is_crossfade_compatible(&audio_format);
+        if !crossfade_enabled {
+            log::warn!(
+                "[Stream] Crossfade disabled: requires 16-bit PCM, got {}-bit",
+                audio_format.bits_per_sample
+            );
+        }
+
+        // Crossfade state: track last sample pair for fade-out generation
+        let fade_samples = crossfade_samples(audio_format.sample_rate);
+        let samples_per_frame = audio_format.frame_samples(frame_duration_ms);
+        let mut last_sample_pair: Option<(i16, i16)> = None;
 
         // Rate-limit lagged warnings (max once per second)
         let mut last_lagged_log: Option<TokioInstant> = None;
@@ -108,6 +132,7 @@ fn create_wav_stream_with_cadence(
                 _ = metronome.tick() => {
                     if let Some(frame) = queue.pop_front() {
                         // Real audio available
+                        let was_in_silence = in_silence;
                         if in_silence {
                             if let Some(start) = silence_start.take() {
                                 log::info!(
@@ -117,15 +142,48 @@ fn create_wav_stream_with_cadence(
                             }
                             in_silence = false;
                         }
-                        yield Ok(TaggedFrame::Audio(frame));
+
+                        // Track last sample pair for potential future fade-out
+                        if crossfade_enabled {
+                            last_sample_pair = extract_last_sample_pair(&frame, audio_format.channels);
+                        }
+
+                        // Apply fade-in if we just exited silence (and crossfade is enabled)
+                        if was_in_silence && crossfade_enabled {
+                            let mut faded = frame.to_vec();
+                            apply_fade_in(&mut faded, audio_format.channels, fade_samples);
+                            yield Ok(TaggedFrame::Audio(Bytes::from(faded)));
+                        } else {
+                            yield Ok(TaggedFrame::Audio(frame));
+                        }
                     } else if !rx_closed {
                         // No frame available, emit silence
-                        if !in_silence {
+                        let entering_silence = !in_silence;
+                        if entering_silence {
                             log::info!("[Stream] Entering silence (cadence) - queue empty");
                             in_silence = true;
                             silence_start = Some(TokioInstant::now());
+
+                            // Generate fade-out frame if crossfade is enabled and we have last sample values
+                            if crossfade_enabled {
+                                if let Some((left, right)) = last_sample_pair.take() {
+                                    let fade_out = create_fade_out_frame(
+                                        left,
+                                        right,
+                                        audio_format.channels,
+                                        fade_samples,
+                                        samples_per_frame,
+                                    );
+                                    yield Ok(TaggedFrame::Silence(fade_out));
+                                } else {
+                                    yield Ok(TaggedFrame::Silence(silence_frame.clone()));
+                                }
+                            } else {
+                                yield Ok(TaggedFrame::Silence(silence_frame.clone()));
+                            }
+                        } else {
+                            yield Ok(TaggedFrame::Silence(silence_frame.clone()));
                         }
-                        yield Ok(TaggedFrame::Silence(silence_frame.clone()));
                     }
                     // If rx_closed and queue empty, don't yield - loop will break
 
@@ -874,6 +932,7 @@ async fn stream_audio(
             Arc::clone(&guard),
             queue_size,
             frame_duration_ms,
+            stream_state.audio_format,
         ))
     } else {
         // Compressed codecs: no silence injection, all frames are real audio
@@ -1064,6 +1123,7 @@ mod tests {
 
     mod wav_cadence_streaming {
         use super::*;
+        use crate::protocol_constants::SILENCE_FRAME_DURATION_MS;
         use std::net::Ipv4Addr;
 
         /// Default queue size for tests (10 frames = 200ms at 20ms/frame).
@@ -1075,6 +1135,11 @@ mod tests {
                 "test-stream".to_string(),
                 IpAddr::V4(Ipv4Addr::LOCALHOST),
             ))
+        }
+
+        /// Creates a test audio format for cadence stream tests.
+        fn test_audio_format() -> AudioFormat {
+            AudioFormat::new(48000, 2, 16)
         }
 
         #[tokio::test(start_paused = true)]
@@ -1089,6 +1154,8 @@ mod tests {
                 silence.clone(),
                 guard,
                 TEST_QUEUE_SIZE,
+                SILENCE_FRAME_DURATION_MS,
+                test_audio_format(),
             ));
 
             // Queue some frames before the first tick
@@ -1137,6 +1204,8 @@ mod tests {
                 silence.clone(),
                 guard,
                 TEST_QUEUE_SIZE,
+                SILENCE_FRAME_DURATION_MS,
+                test_audio_format(),
             ));
 
             // Don't send any frames - queue will be empty
@@ -1182,6 +1251,8 @@ mod tests {
                 silence.clone(),
                 guard,
                 TEST_QUEUE_SIZE,
+                SILENCE_FRAME_DURATION_MS,
+                test_audio_format(),
             ));
 
             // Queue 3 frames as a burst
@@ -1237,6 +1308,8 @@ mod tests {
                 silence.clone(),
                 guard,
                 TEST_QUEUE_SIZE,
+                SILENCE_FRAME_DURATION_MS,
+                test_audio_format(),
             ));
 
             // Fill the queue to capacity + 2 (should drop 2 oldest)
@@ -1281,6 +1354,8 @@ mod tests {
                 silence.clone(),
                 guard,
                 TEST_QUEUE_SIZE,
+                SILENCE_FRAME_DURATION_MS,
+                test_audio_format(),
             ));
 
             // Overflow queue by TEST_QUEUE_SIZE + 3 frames
@@ -1322,6 +1397,8 @@ mod tests {
                 silence.clone(),
                 guard,
                 TEST_QUEUE_SIZE,
+                SILENCE_FRAME_DURATION_MS,
+                test_audio_format(),
             ));
 
             // Queue some frames
@@ -1386,6 +1463,8 @@ mod tests {
                 silence.clone(),
                 guard,
                 TEST_QUEUE_SIZE,
+                SILENCE_FRAME_DURATION_MS,
+                test_audio_format(),
             ));
 
             // First tick with empty queue -> silence
