@@ -191,9 +191,18 @@ export abstract class BaseAudioEncoder implements AudioEncoder {
 
     // Deinterleave into pre-allocated buffer (samples are already Float32)
     // Planar format: all samples for channel 0, then channel 1, etc.
+    // Loop unrolled by 4 for better instruction-level parallelism.
+    const len4 = frameCount & ~3;
     for (let ch = 0; ch < channels; ch++) {
-      for (let i = 0; i < frameCount; i++) {
-        this.planarBuffer[ch * frameCount + i] = samples[i * channels + ch]!;
+      const writeBase = ch * frameCount;
+      for (let i = 0; i < len4; i += 4) {
+        this.planarBuffer[writeBase + i] = samples[i * channels + ch]!;
+        this.planarBuffer[writeBase + i + 1] = samples[(i + 1) * channels + ch]!;
+        this.planarBuffer[writeBase + i + 2] = samples[(i + 2) * channels + ch]!;
+        this.planarBuffer[writeBase + i + 3] = samples[(i + 3) * channels + ch]!;
+      }
+      for (let i = len4; i < frameCount; i++) {
+        this.planarBuffer[writeBase + i] = samples[i * channels + ch]!;
       }
     }
 
