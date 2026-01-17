@@ -780,12 +780,31 @@ function shouldPause(): boolean {
 }
 
 /**
- * Yields to the macrotask queue via setTimeout.
+ * Reusable MessageChannel for zero-delay yields.
+ * MessageChannel posts directly to the task queue with sub-millisecond latency,
+ * unlike setTimeout(0) which has minimum 1-4ms delay due to browser throttling.
+ */
+const yieldChannel = new MessageChannel();
+let yieldResolve: (() => void) | null = null;
+yieldChannel.port2.onmessage = () => {
+  yieldResolve?.();
+  yieldResolve = null;
+};
+
+/**
+ * Yields to the macrotask queue.
  * Unlike microtasks (Promise.resolve), this actually yields CPU time.
  * @param ms - Milliseconds to wait (use 0 to just yield without delay)
  * @returns A promise that resolves after the delay
  */
 function yieldMacrotask(ms: number): Promise<void> {
+  if (ms === 0) {
+    // Use MessageChannel for zero-delay yield - faster than setTimeout(0)
+    return new Promise((resolve) => {
+      yieldResolve = resolve;
+      yieldChannel.port1.postMessage(null);
+    });
+  }
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
