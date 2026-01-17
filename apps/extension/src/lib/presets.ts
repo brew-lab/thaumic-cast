@@ -18,8 +18,8 @@ import {
   DEFAULT_BITS_PER_SAMPLE,
   FRAME_DURATION_MS_DEFAULT,
   generateDynamicPresets,
+  getStreamingPolicy,
   getSupportedSampleRates,
-  STREAMING_BUFFER_MS_DEFAULT,
 } from '@thaumic-cast/protocol';
 import { createLogger } from '@thaumic-cast/shared';
 import type { AudioMode, CustomAudioSettings } from './settings';
@@ -37,6 +37,8 @@ const log = createLogger('Presets');
  * @returns A complete encoder config
  */
 function buildConfigFromCustomSettings(customSettings: CustomAudioSettings): EncoderConfig {
+  const policy = getStreamingPolicy(customSettings.latencyMode);
+
   return {
     codec: customSettings.codec,
     bitrate: customSettings.bitrate,
@@ -44,7 +46,7 @@ function buildConfigFromCustomSettings(customSettings: CustomAudioSettings): Enc
     sampleRate: customSettings.sampleRate,
     bitsPerSample: customSettings.bitsPerSample ?? DEFAULT_BITS_PER_SAMPLE,
     latencyMode: customSettings.latencyMode,
-    streamingBufferMs: customSettings.streamingBufferMs ?? STREAMING_BUFFER_MS_DEFAULT,
+    streamingBufferMs: customSettings.streamingBufferMs ?? policy.streamingBufferMs,
     // Placeholder: worker computes optimal frame duration based on codec and overwrites this
     frameDurationMs: FRAME_DURATION_MS_DEFAULT,
   };
@@ -64,6 +66,8 @@ function getFallbackConfig(codecSupport: SupportedCodecsResult): EncoderConfig |
     return null;
   }
 
+  const policy = getStreamingPolicy('quality');
+
   return {
     codec: codecSupport.defaultCodec,
     bitrate: codecSupport.defaultBitrate,
@@ -71,7 +75,7 @@ function getFallbackConfig(codecSupport: SupportedCodecsResult): EncoderConfig |
     channels: 2,
     bitsPerSample: DEFAULT_BITS_PER_SAMPLE,
     latencyMode: 'quality',
-    streamingBufferMs: STREAMING_BUFFER_MS_DEFAULT,
+    streamingBufferMs: policy.streamingBufferMs,
     // Placeholder: worker computes optimal frame duration based on codec and overwrites this
     frameDurationMs: FRAME_DURATION_MS_DEFAULT,
   };
@@ -115,10 +119,13 @@ function pickSampleRate(
 
 /**
  * Builds an encoder config from a scored codec option.
+ *
  * @param option - The scored codec option from dynamic presets
  * @param codecSupport - Runtime codec support info
  * @param tier - The quality tier (affects sample rate and channel selection)
- * @param latencyMode - The latency mode to use
+ * @param latencyMode - The latency mode controls both encoder and streaming behavior:
+ *   - 'quality': 10s ring buffer, no catch-up drops, pause on backpressure (for music)
+ *   - 'realtime': 3s ring buffer, bounded latency with drops, drop on backpressure (for sync)
  * @returns A complete encoder config
  */
 function buildConfigFromOption(
@@ -130,6 +137,8 @@ function buildConfigFromOption(
   const sampleRate = pickSampleRate(option.codec, codecSupport, tier === 'low');
   // Low tier uses mono for bandwidth savings
   const channels: 1 | 2 = tier === 'low' ? 1 : 2;
+  // Use policy-defined streaming buffer for server-side jitter tolerance
+  const policy = getStreamingPolicy(latencyMode);
 
   return {
     codec: option.codec,
@@ -138,7 +147,7 @@ function buildConfigFromOption(
     channels,
     bitsPerSample: DEFAULT_BITS_PER_SAMPLE,
     latencyMode,
-    streamingBufferMs: STREAMING_BUFFER_MS_DEFAULT,
+    streamingBufferMs: policy.streamingBufferMs,
     // Placeholder: worker computes optimal frame duration based on codec and overwrites this
     frameDurationMs: FRAME_DURATION_MS_DEFAULT,
   };

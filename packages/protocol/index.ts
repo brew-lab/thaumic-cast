@@ -31,3 +31,6 @@ export * from './src/media.js';
 
 // Video sync state machine types
 export * from './src/video-sync.js';
+
+// Streaming policy configuration (buffer sizing, drop thresholds)
+export * from './src/streaming-policy.js';

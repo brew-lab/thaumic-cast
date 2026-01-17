@@ -21,7 +21,7 @@ import {
 } from './ring-buffer';
 import { createEncoder, type AudioEncoder } from './encoders';
 import type { AudioCodec, EncoderConfig, StreamMetadata, WsMessage } from '@thaumic-cast/protocol';
-import { WsMessageSchema } from '@thaumic-cast/protocol';
+import { WsMessageSchema, getStreamingPolicy, type StreamingPolicy } from '@thaumic-cast/protocol';
 import { createLogger } from '@thaumic-cast/shared';
 import { exponentialBackoff } from '../lib/backoff';
 
@@ -81,12 +81,6 @@ function frameSizeToMs(frameSizeSamples: number, sampleRate: number): number {
 // Constants
 // ─────────────────────────────────────────────────────────────────────────────
 
-/** Maximum pending encode operations before dropping frames. PCM encoder always returns 0 (synchronous). */
-const MAX_ENCODE_QUEUE = 8;
-
-/** WebSocket buffer high water mark (256KB). Drop frames if exceeded. ~1.3s at PCM rate. */
-const WS_BUFFER_HIGH_WATER = 256000;
-
 /**
  * Time budget for processing frames per wake cycle (ms).
  * Stay under typical browser timer quantum (~4ms) to avoid timer coalescing issues.
@@ -115,24 +109,6 @@ const WS_CONNECT_TIMEOUT_MS = 5000;
 
 /** Handshake timeout (ms). */
 const HANDSHAKE_TIMEOUT_MS = 5000;
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Bounded Latency (Catch-up) Constants
-// ─────────────────────────────────────────────────────────────────────────────
-
-/**
- * Target buffer depth after catch-up (ms).
- * When catching up, we drop oldest audio to reach this target.
- * 200ms provides a reasonable buffer for encoding variance.
- */
-const CATCHUP_TARGET_MS = 200;
-
-/**
- * Maximum allowed buffer depth before triggering catch-up (ms).
- * If the buffer exceeds this, we're too far behind and need to drop audio.
- * 1000ms allows for significant CPU spikes while keeping latency bounded.
- */
-const CATCHUP_MAX_MS = 1000;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Message Types
@@ -241,6 +217,13 @@ type OutboundMessage =
 // Worker State
 // ─────────────────────────────────────────────────────────────────────────────
 
+// Streaming policy (derived from latencyMode)
+let policy: StreamingPolicy | null = null;
+
+// Pause state for quality mode backpressure handling
+let isPaused = false;
+let pauseStartTime = 0;
+
 // Ring buffer state
 let control: Int32Array | null = null;
 let buffer: Float32Array | null = null;
@@ -320,7 +303,8 @@ function alignDown(samples: number, frameSize: number): number {
  * Performs catch-up if the ring buffer has accumulated too much data.
  * This bounds latency by dropping oldest audio when we fall behind.
  *
- * When buffer exceeds CATCHUP_MAX_MS, we:
+ * In quality mode (catchUpMaxMs === null), catch-up is disabled to prevent
+ * any audio drops. In realtime mode, when buffer exceeds catchUpMaxMs, we:
  * 1. Advance readIdx to (writeIdx - targetSamples) aligned to frame boundaries
  * 2. Reset frameOffset to discard any partial frame
  * 3. Advance encoder timestamp to keep audio time monotonic
@@ -329,7 +313,10 @@ function alignDown(samples: number, frameSize: number): number {
  * @returns The number of samples dropped, or 0 if no catch-up needed
  */
 function performCatchUpIfNeeded(): number {
-  if (!control || !encoder) return 0;
+  if (!control || !encoder || !policy) return 0;
+
+  // Quality mode: catch-up is disabled
+  if (policy.catchUpMaxMs === null) return 0;
 
   const writeIdx = Atomics.load(control, CTRL_WRITE_IDX);
   const readIdx = Atomics.load(control, CTRL_READ_IDX);
@@ -430,26 +417,34 @@ function readFromRingBuffer(): number {
 
 /**
  * Encodes and sends the accumulated frame if complete.
- * Implements backpressure by dropping frames when encoder queue or
- * WebSocket buffer is overloaded.
+ *
+ * Backpressure handling depends on streaming policy:
+ * - Realtime mode: drop frames to maintain timing
+ * - Quality mode: frames are held (not dropped) - pause is handled by consumeLoop
  */
 function flushFrameIfReady(): void {
   if (!frameBuffer || frameOffset < frameSizeSamples) return;
-  if (!encoder || !socket || socket.readyState !== WebSocket.OPEN) return;
+  if (!encoder || !socket || socket.readyState !== WebSocket.OPEN || !policy) return;
 
-  // Check backpressure before encoding
-  if (
-    encoder.encodeQueueSize >= MAX_ENCODE_QUEUE ||
-    socket.bufferedAmount >= WS_BUFFER_HIGH_WATER
-  ) {
-    droppedFrameCount++;
+  // Check backpressure
+  const isBackpressured =
+    encoder.encodeQueueSize >= policy.maxEncodeQueue ||
+    socket.bufferedAmount >= policy.wsBufferHighWater;
 
-    // Advance encoder timestamp to avoid time compression when we resume
-    // frameSizeSamples is interleaved samples, divide by channels for frame count
-    encoder.advanceTimestamp(frameSizeSamples / encoder.config.channels);
+  if (isBackpressured) {
+    if (policy.dropOnBackpressure) {
+      // Realtime mode: drop frame to maintain timing
+      droppedFrameCount++;
 
-    // Reset frame buffer - data already drained from ring buffer
-    frameOffset = 0;
+      // Advance encoder timestamp to avoid time compression when we resume
+      // frameSizeSamples is interleaved samples, divide by channels for frame count
+      encoder.advanceTimestamp(frameSizeSamples / encoder.config.channels);
+
+      // Reset frame buffer - data already drained from ring buffer
+      frameOffset = 0;
+    }
+    // Quality mode: keep frame data for later (don't reset frameOffset)
+    // consumeLoop will pause and retry
     return;
   }
 
@@ -737,13 +732,51 @@ function sendWsMessage(message: object): boolean {
 
 /**
  * Checks if the pipeline is backpressured.
+ * Uses thresholds from the current streaming policy.
  * @returns True if encoder queue or WebSocket buffer is overloaded
  */
 function isBackpressured(): boolean {
+  if (!policy) return false;
   return (
-    (encoder?.encodeQueueSize ?? 0) >= MAX_ENCODE_QUEUE ||
-    (socket?.bufferedAmount ?? 0) >= WS_BUFFER_HIGH_WATER
+    (encoder?.encodeQueueSize ?? 0) >= policy.maxEncodeQueue ||
+    (socket?.bufferedAmount ?? 0) >= policy.wsBufferHighWater
   );
+}
+
+/**
+ * Checks if encoding should be paused (quality mode only).
+ * Implements hysteresis: pause at high water mark, resume at lower threshold.
+ *
+ * In realtime mode, this always returns false (drops instead of pausing).
+ * In quality mode, pauses encoding until backpressure eases.
+ *
+ * @returns True if encoding should be paused
+ */
+function shouldPause(): boolean {
+  if (!policy || policy.dropOnBackpressure) return false; // Realtime mode never pauses
+
+  const encodeQueue = encoder?.encodeQueueSize ?? 0;
+  const wsBuffer = socket?.bufferedAmount ?? 0;
+
+  if (isPaused) {
+    // Resume with hysteresis - need both conditions to clear
+    if (encodeQueue < policy.maxEncodeQueue / 2 && wsBuffer < policy.wsBufferResumeThreshold) {
+      isPaused = false;
+      const duration = (performance.now() - pauseStartTime) / 1000;
+      log.info(`Resumed after ${duration.toFixed(1)}s pause`);
+      return false;
+    }
+    return true;
+  } else {
+    // Check if we should pause
+    if (encodeQueue >= policy.maxEncodeQueue || wsBuffer >= policy.wsBufferHighWater) {
+      isPaused = true;
+      pauseStartTime = performance.now();
+      log.warn(`PAUSED: encodeQueue=${encodeQueue}, wsBuffer=${wsBuffer}`);
+      return true;
+    }
+    return false;
+  }
 }
 
 /**
@@ -797,8 +830,11 @@ function drainWithTimeBudget(): number {
  * preventing burst processing and smoothing encoder/network load. Avoids setTimeout
  * timer coalescing issues by busy-polling within a ~4ms time budget per wake cycle.
  *
- * Flow:
- * - If backpressured: skip reads, back off exponentially (5→40ms)
+ * Flow control varies by streaming policy:
+ * - Quality mode: pause encoding on backpressure (no drops), resume with hysteresis
+ * - Realtime mode: drop frames on backpressure, maintain bounded latency
+ *
+ * Common flow:
  * - If ahead of schedule: yield until next frame is due
  * - If data available: drain within time budget, update frame timing, yield thread
  * - If buffer empty: wait on write index via Atomics.waitAsync
@@ -814,14 +850,22 @@ async function consumeLoop(): Promise<void> {
   lastProducerDroppedSamples = Atomics.load(control, CTRL_DROPPED_SAMPLES);
 
   while (running) {
-    // BOUNDED LATENCY: Check if buffer has grown too large and catch up
-    // This drops oldest audio to keep latency within bounds
+    // BOUNDED LATENCY (realtime mode only): Check if buffer has grown too large
+    // Quality mode skips this - catch-up is disabled
     performCatchUpIfNeeded();
 
-    // SHORT-CIRCUIT: If backpressured, don't drain - let buffer fill
-    // This allows producer drops to kick in naturally
-    // Note: We don't increment droppedFrameCount here - actual drops are
-    // tracked in flushFrameIfReady() when we have a frame but can't encode it
+    // QUALITY MODE: Check if we should pause encoding
+    // shouldPause() handles hysteresis for pause/resume transitions
+    if (shouldPause()) {
+      backpressureCycles++;
+      maybePostStats();
+      // Quality mode: longer backoff since we're preserving all audio
+      await yieldMacrotask(100);
+      continue;
+    }
+
+    // REALTIME MODE: Check backpressure for adaptive backoff
+    // Actual frame drops happen in flushFrameIfReady()
     if (isBackpressured()) {
       backpressureCycles++;
       consecutiveBackpressureCycles++;
@@ -948,6 +992,9 @@ function cleanup(): void {
   }
 
   streamId = null;
+  policy = null;
+  isPaused = false;
+  pauseStartTime = 0;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1000,6 +1047,13 @@ self.onmessage = async (event: MessageEvent<InboundMessage>) => {
         `Frame size: ${optimalFrameSamples} samples (${framePeriodMs.toFixed(1)}ms) for ${encoderConfig.codec}`,
       );
 
+      // Initialize streaming policy from latency mode
+      policy = getStreamingPolicy(encoderConfig.latencyMode);
+      log.info(
+        `Streaming policy: ${encoderConfig.latencyMode} mode ` +
+          `(catchUp=${policy.catchUpMaxMs ?? 'disabled'}, dropOnBackpressure=${policy.dropOnBackpressure})`,
+      );
+
       // Reset state
       underflowCount = 0;
       droppedFrameCount = 0;
@@ -1010,12 +1064,15 @@ self.onmessage = async (event: MessageEvent<InboundMessage>) => {
       wakeupCount = 0;
       totalSamplesRead = 0;
       lastProducerDroppedSamples = 0;
+      isPaused = false;
+      pauseStartTime = 0;
 
-      // Compute catch-up thresholds based on sample rate and channels
-      // These define the bounded latency window
+      // Compute catch-up thresholds based on policy and sample rate
+      // These define the bounded latency window (only used in realtime mode)
       const samplesPerMs = (sampleRate * encoderConfig.channels) / 1000;
-      catchUpTargetSamples = Math.floor(CATCHUP_TARGET_MS * samplesPerMs);
-      catchUpMaxSamples = Math.floor(CATCHUP_MAX_MS * samplesPerMs);
+      catchUpTargetSamples = Math.floor(policy.catchUpTargetMs * samplesPerMs);
+      catchUpMaxSamples =
+        policy.catchUpMaxMs !== null ? Math.floor(policy.catchUpMaxMs * samplesPerMs) : Infinity; // Quality mode: effectively disable catch-up
 
       // Create encoder
       log.info(`Creating encoder: ${encoderConfig.codec} @ ${encoderConfig.bitrate}kbps`);

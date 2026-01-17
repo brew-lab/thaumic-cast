@@ -30,8 +30,8 @@
  * at the encoder level, allowing for 24-bit FLAC encoding without precision loss.
  */
 
-/** Target buffer duration in seconds. Used to calculate power-of-two buffer size. */
-const TARGET_BUFFER_SECONDS = 3;
+import type { LatencyMode } from '@thaumic-cast/protocol';
+import { getStreamingPolicy } from '@thaumic-cast/protocol';
 
 /** Number of control integers at the start of the buffer. */
 export const HEADER_SIZE = 3;
@@ -58,24 +58,42 @@ export interface RingBufferConfig {
 
 /**
  * Calculates the power-of-two buffer size for a given audio configuration.
- * Ensures consistent ~3 second buffer duration regardless of sample rate/channels.
+ * Buffer duration varies by latency mode:
+ * - 'quality': ~10 seconds for music/podcasts
+ * - 'realtime': ~3 seconds for low-latency sync
+ *
  * @param sampleRate - Audio sample rate in Hz
  * @param channels - Number of audio channels
+ * @param latencyMode - The latency mode (affects buffer duration)
  * @returns Power-of-two buffer size in samples
  */
-function calculateBufferSize(sampleRate: number, channels: number): number {
-  const minSamples = sampleRate * channels * TARGET_BUFFER_SECONDS;
+function calculateBufferSize(
+  sampleRate: number,
+  channels: number,
+  latencyMode: LatencyMode = 'quality',
+): number {
+  const policy = getStreamingPolicy(latencyMode);
+  const minSamples = sampleRate * channels * policy.ringBufferSeconds;
   return 1 << Math.ceil(Math.log2(minSamples));
 }
 
 /**
  * Creates a SharedArrayBuffer for audio data, sized for the given audio configuration.
+ * Buffer duration varies by latency mode:
+ * - 'quality': ~10 seconds for music/podcasts
+ * - 'realtime': ~3 seconds for low-latency sync
+ *
  * @param sampleRate - Audio sample rate in Hz
  * @param channels - Number of audio channels
+ * @param latencyMode - The latency mode (affects buffer sizing)
  * @returns Ring buffer configuration with SharedArrayBuffer, size, and mask
  */
-export function createAudioRingBuffer(sampleRate: number, channels: number): RingBufferConfig {
-  const size = calculateBufferSize(sampleRate, channels);
+export function createAudioRingBuffer(
+  sampleRate: number,
+  channels: number,
+  latencyMode: LatencyMode = 'quality',
+): RingBufferConfig {
+  const size = calculateBufferSize(sampleRate, channels, latencyMode);
   const mask = size - 1;
 
   // Verify power-of-two (should always pass given calculateBufferSize implementation)

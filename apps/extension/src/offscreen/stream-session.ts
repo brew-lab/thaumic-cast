@@ -138,6 +138,7 @@ export class StreamSession {
     const ringBufferConfig = createAudioRingBuffer(
       encoderConfig.sampleRate,
       encoderConfig.channels,
+      encoderConfig.latencyMode,
     );
     this.ringBuffer = ringBufferConfig.sab;
     this.bufferSize = ringBufferConfig.size;
