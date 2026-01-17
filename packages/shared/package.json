@@ -8,7 +8,10 @@
     ".": "./src/index.ts"
   },
   "scripts": {
-    "typecheck": "tsc --noEmit"
+    "build": "echo 'No build step (consumed as TS source)'",
+    "typecheck": "tsc --noEmit",
+    "clean": "echo 'No clean'",
+    "test": "echo 'No tests yet'"
   },
   "devDependencies": {
     "typescript": "^5.0.0"

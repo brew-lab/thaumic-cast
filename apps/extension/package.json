@@ -6,7 +6,9 @@
   "scripts": {
     "dev": "vite build --watch --mode development",
     "build": "vite build",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "clean": "rm -rf dist",
+    "test": "echo 'No tests yet'"
   },
   "dependencies": {
     "@thaumic-cast/protocol": "workspace:*",
