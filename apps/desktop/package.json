@@ -8,13 +8,15 @@
     "build": "vite build",
     "preview": "vite preview",
     "tauri": "tauri",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "clean": "rm -rf dist",
+    "test": "echo 'No tests yet'"
   },
   "dependencies": {
     "@preact/signals": "^2.5.1",
     "@tauri-apps/api": "^2.0.0",
-    "@tauri-apps/plugin-autostart": "^2",
-    "@tauri-apps/plugin-log": "~2",
+    "@tauri-apps/plugin-autostart": "^2.0.0",
+    "@tauri-apps/plugin-log": "^2.0.0",
     "@tauri-apps/plugin-shell": "^2.0.0",
     "@thaumic-cast/protocol": "workspace:*",
     "@thaumic-cast/shared": "workspace:*",

@@ -1,15 +1,15 @@
+//! Thaumic Cast Desktop - Tauri desktop application.
+//!
+//! This crate provides the Tauri desktop wrapper around thaumic-core.
+//! It handles platform-specific concerns like:
+//! - Tauri event emission to the frontend
+//! - System tray integration
+//! - Process priority elevation
+//! - Application lifecycle (restart via Tauri)
+
 mod api;
-mod bootstrap;
-mod config;
-mod context;
 mod error;
-mod events;
-mod protocol_constants;
-mod services;
-mod sonos;
-mod state;
-mod stream;
-mod types;
+mod tauri_emitter;
 mod ui;
 mod utils;
 
@@ -31,6 +31,10 @@ use crate::api::AppState;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // Elevate process priority to reduce audio stuttering under CPU load.
+    // Must be called early, before starting the HTTP server.
+    utils::raise_process_priority();
+
     let app = tauri::Builder::default()
         .plugin(
             tauri_plugin_log::Builder::new()
@@ -80,6 +84,23 @@ pub fn run() {
                 let base_locale = locale.split('-').next().unwrap_or("en");
                 rust_i18n::set_locale(base_locale);
                 log::debug!("Locale set to: {} (detected: {})", base_locale, locale);
+            }
+
+            // Check if started with --minimized flag (auto-start mode)
+            // If so, hide the window to start in system tray only
+            let start_minimized = std::env::args().any(|arg| arg == "--minimized");
+            if start_minimized {
+                log::info!("Starting minimized to system tray (auto-start mode)");
+                if let Some(window) = app.get_webview_window("main") {
+                    let _ = window.hide();
+
+                    // On macOS, hide the dock icon when starting minimized
+                    #[cfg(target_os = "macos")]
+                    {
+                        use tauri::ActivationPolicy;
+                        let _ = app.set_activation_policy(ActivationPolicy::Accessory);
+                    }
+                }
             }
 
             let state = Arc::new(AppState::new());

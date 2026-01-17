@@ -11,6 +11,7 @@ import { clsx } from 'clsx';
  * Sidebar navigation component.
  *
  * Contains app branding, navigation links, and version display.
+ * Automatically collapses to a compact icon mode based on available space.
  * @returns The rendered Sidebar component
  */
 export function Sidebar() {
@@ -33,7 +34,7 @@ export function Sidebar() {
   return (
     <aside className={styles.sidebar}>
       <div className={styles.brand}>
-        <Radio size={24} color="var(--color-primary)" />
+        <Radio size={24} color="var(--color-primary)" className={styles['brand-icon']} />
         <h1 className={styles.title}>{t('app.title')}</h1>
       </div>
 
@@ -46,8 +47,10 @@ export function Sidebar() {
               href={href}
               className={clsx(styles.navLink, isActive && styles.navLinkActive)}
             >
-              <Icon size={20} />
-              {label}
+              <span className={styles.navIcon}>
+                <Icon size={20} />
+              </span>
+              <span className={styles.navLabel}>{label}</span>
             </Link>
           );
         })}

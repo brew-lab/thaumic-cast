@@ -15,13 +15,42 @@ import type {
 } from '@thaumic-cast/protocol';
 import {
   CODEC_METADATA,
+  DEFAULT_BITS_PER_SAMPLE,
+  FRAME_DURATION_MS_DEFAULT,
   generateDynamicPresets,
+  getStreamingPolicy,
   getSupportedSampleRates,
 } from '@thaumic-cast/protocol';
 import { createLogger } from '@thaumic-cast/shared';
 import type { AudioMode, CustomAudioSettings } from './settings';
 
 const log = createLogger('Presets');
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Helper Functions
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Builds an encoder config from custom audio settings.
+ * Applies defaults for optional fields (bitsPerSample, streamingBufferMs, frameDurationMs).
+ * @param customSettings - The custom audio settings from user preferences
+ * @returns A complete encoder config
+ */
+function buildConfigFromCustomSettings(customSettings: CustomAudioSettings): EncoderConfig {
+  const policy = getStreamingPolicy(customSettings.latencyMode);
+
+  return {
+    codec: customSettings.codec,
+    bitrate: customSettings.bitrate,
+    channels: customSettings.channels,
+    sampleRate: customSettings.sampleRate,
+    bitsPerSample: customSettings.bitsPerSample ?? DEFAULT_BITS_PER_SAMPLE,
+    latencyMode: customSettings.latencyMode,
+    streamingBufferMs: customSettings.streamingBufferMs ?? policy.streamingBufferMs,
+    frameDurationMs: customSettings.frameDurationMs ?? FRAME_DURATION_MS_DEFAULT,
+    // frameSizeSamples is computed by the audio worker based on codec-optimal frame size
+  };
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Resolution Functions
@@ -37,12 +66,18 @@ function getFallbackConfig(codecSupport: SupportedCodecsResult): EncoderConfig |
     return null;
   }
 
+  const policy = getStreamingPolicy('quality');
+
   return {
     codec: codecSupport.defaultCodec,
     bitrate: codecSupport.defaultBitrate,
     sampleRate: 48000,
     channels: 2,
+    bitsPerSample: DEFAULT_BITS_PER_SAMPLE,
     latencyMode: 'quality',
+    streamingBufferMs: policy.streamingBufferMs,
+    frameDurationMs: FRAME_DURATION_MS_DEFAULT,
+    // frameSizeSamples is computed by the audio worker based on codec-optimal frame size
   };
 }
 
@@ -84,10 +119,13 @@ function pickSampleRate(
 
 /**
  * Builds an encoder config from a scored codec option.
+ *
  * @param option - The scored codec option from dynamic presets
  * @param codecSupport - Runtime codec support info
  * @param tier - The quality tier (affects sample rate and channel selection)
- * @param latencyMode - The latency mode to use
+ * @param latencyMode - The latency mode controls both encoder and streaming behavior:
+ *   - 'quality': 10s ring buffer, no catch-up drops, pause on backpressure (for music)
+ *   - 'realtime': 3s ring buffer, bounded latency with drops, drop on backpressure (for sync)
  * @returns A complete encoder config
  */
 function buildConfigFromOption(
@@ -99,13 +137,19 @@ function buildConfigFromOption(
   const sampleRate = pickSampleRate(option.codec, codecSupport, tier === 'low');
   // Low tier uses mono for bandwidth savings
   const channels: 1 | 2 = tier === 'low' ? 1 : 2;
+  // Use policy-defined streaming buffer for server-side jitter tolerance
+  const policy = getStreamingPolicy(latencyMode);
 
   return {
     codec: option.codec,
     bitrate: option.bitrate,
     sampleRate,
     channels,
+    bitsPerSample: DEFAULT_BITS_PER_SAMPLE,
     latencyMode,
+    streamingBufferMs: policy.streamingBufferMs,
+    frameDurationMs: FRAME_DURATION_MS_DEFAULT,
+    // frameSizeSamples is computed by the audio worker based on codec-optimal frame size
   };
 }
 
@@ -150,13 +194,7 @@ export function resolveAudioMode(
     );
 
     if (isSupported) {
-      return {
-        codec: customSettings.codec,
-        bitrate: customSettings.bitrate,
-        channels: customSettings.channels,
-        sampleRate: customSettings.sampleRate,
-        latencyMode: customSettings.latencyMode,
-      };
+      return buildConfigFromCustomSettings(customSettings);
     }
 
     // Custom settings not supported - fall back to mid preset
@@ -213,13 +251,7 @@ export function getResolvedConfigForDisplay(
     );
 
     if (isSupported) {
-      return {
-        codec: customSettings.codec,
-        bitrate: customSettings.bitrate,
-        channels: customSettings.channels,
-        sampleRate: customSettings.sampleRate,
-        latencyMode: customSettings.latencyMode,
-      };
+      return buildConfigFromCustomSettings(customSettings);
     }
     return null;
   }

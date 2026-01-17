@@ -2,14 +2,15 @@
 //!
 //! These commands delegate to the service layer - no business logic here.
 
-use crate::api::AppState;
-use crate::error::CommandError;
-use crate::events::NetworkHealth;
-use crate::sonos::discovery::{probe_speaker_by_ip, Speaker};
-use crate::state::ManualSpeakerConfig;
-use crate::types::ZoneGroup;
 use serde::Serialize;
 use tauri::Manager;
+use thaumic_core::{
+    probe_speaker_by_ip, validate_speaker_ip, ErrorCode, ManualSpeakerConfig, NetworkHealth,
+    PlaybackSession, Speaker, ZoneGroup,
+};
+
+use crate::api::AppState;
+use crate::error::CommandError;
 
 /// Application statistics for the dashboard.
 #[derive(Debug, Serialize)]
@@ -25,6 +26,8 @@ pub struct AppStats {
     pub local_ip: String,
     /// Current server port.
     pub port: u16,
+    /// Maximum concurrent streams allowed.
+    pub max_streams: usize,
 }
 
 /// Discovers Sonos speakers on the network.
@@ -63,6 +66,7 @@ pub async fn get_stats(state: tauri::State<'_, AppState>) -> Result<AppStats, Co
         stream_count: state.services.stream_coordinator.stream_count(),
         local_ip: state.services.network.get_local_ip(),
         port: state.services.network.get_port(),
+        max_streams: state.config.read().streaming.max_concurrent_streams,
     })
 }
 
@@ -89,10 +93,11 @@ pub async fn start_playback(
     stream_id: String,
     state: tauri::State<'_, AppState>,
 ) -> Result<(), CommandError> {
+    let artwork_url = state.artwork_metadata_url();
     state
         .services
         .stream_coordinator
-        .start_playback(&ip, &stream_id, None)
+        .start_playback(&ip, &stream_id, None, &artwork_url)
         .await
         .map_err(Into::into)
 }
@@ -124,9 +129,7 @@ pub fn get_transport_states(
 ///
 /// A playback session indicates a speaker that is currently casting one of our streams.
 #[tauri::command]
-pub fn get_playback_sessions(
-    state: tauri::State<'_, AppState>,
-) -> Vec<crate::services::stream_coordinator::PlaybackSession> {
+pub fn get_playback_sessions(state: tauri::State<'_, AppState>) -> Vec<PlaybackSession> {
     state.services.stream_coordinator.get_all_sessions()
 }
 
@@ -269,42 +272,25 @@ pub async fn probe_speaker_ip(
     ip: String,
     state: tauri::State<'_, AppState>,
 ) -> Result<Speaker, CommandError> {
-    use std::net::{IpAddr, Ipv6Addr};
+    use std::net::IpAddr;
 
     // Extract IP from URL-like input (e.g., "http://192.168.1.100:1400/")
     let cleaned_ip = extract_ip_from_input(&ip);
 
-    // Parse and validate IP address format
+    // Parse IP address format
     let parsed_ip: IpAddr = cleaned_ip.parse().map_err(|_| CommandError {
         code: "invalid_ip",
         message: "Invalid IP address format".to_string(),
     })?;
 
-    // Reject special addresses that can't be valid Sonos speakers
-    let is_invalid = match parsed_ip {
-        IpAddr::V4(ipv4) => {
-            ipv4.is_loopback()                          // 127.x.x.x
-                || ipv4.is_unspecified()                // 0.0.0.0
-                || ipv4.is_broadcast()                  // 255.255.255.255
-                || ipv4.is_multicast()                  // 224.0.0.0/4
-                || ipv4.is_link_local() // 169.254.x.x
-        }
-        IpAddr::V6(ipv6) => {
-            ipv6.is_loopback()                          // ::1
-                || ipv6.is_unspecified()                // ::
-                || ipv6.is_multicast()                  // ff00::/8
-                || ipv6 == Ipv6Addr::UNSPECIFIED
-        }
-    };
+    // Validate using shared validation (rejects IPv6, loopback, multicast, etc.)
+    let ipv4 = validate_speaker_ip(&parsed_ip).map_err(|e| CommandError {
+        code: e.code(),
+        message: e.message().to_string(),
+    })?;
 
-    if is_invalid {
-        return Err(CommandError {
-            code: "invalid_ip",
-            message: "This IP address cannot be a Sonos speaker".to_string(),
-        });
-    }
-
-    probe_speaker_by_ip(state.services.http_client(), &cleaned_ip)
+    // Use canonical IP string for probing
+    probe_speaker_by_ip(state.services.http_client(), &ipv4.to_string())
         .await
         .map_err(Into::into)
 }

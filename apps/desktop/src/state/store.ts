@@ -65,6 +65,7 @@ export interface AppStats {
   streamCount: number;
   localIp: string;
   port: number;
+  maxStreams: number;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

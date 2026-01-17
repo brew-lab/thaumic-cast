@@ -20,66 +20,118 @@ import {
   DATA_BYTE_OFFSET,
 } from './ring-buffer';
 import { createEncoder, type AudioEncoder } from './encoders';
-import type { EncoderConfig, StreamMetadata, WsMessage } from '@thaumic-cast/protocol';
-import { WsMessageSchema } from '@thaumic-cast/protocol';
+import type { AudioCodec, EncoderConfig, StreamMetadata, WsMessage } from '@thaumic-cast/protocol';
+import {
+  WsMessageSchema,
+  getStreamingPolicy,
+  type StreamingPolicy,
+  FRAME_DURATION_MS_DEFAULT,
+} from '@thaumic-cast/protocol';
 import { createLogger } from '@thaumic-cast/shared';
 import { exponentialBackoff } from '../lib/backoff';
 
 const log = createLogger('AudioWorker');
 
-/** Frame duration in seconds (20ms). */
-const FRAME_DURATION_SEC = 0.02;
+// ─────────────────────────────────────────────────────────────────────────────
+// Codec-Aware Frame Sizing
+// ─────────────────────────────────────────────────────────────────────────────
 
-/** Maximum pending encode operations before dropping frames. */
-const MAX_ENCODE_QUEUE = 3;
+/**
+ * Returns the optimal frame size in samples for a given codec and sample rate.
+ * Frame size is codec-aware for optimal efficiency:
+ * - AAC: 1024 samples (spec-mandated per ISO/IEC 14496-3)
+ * - FLAC: 4096 samples (larger frames improve compression ratio)
+ * - Vorbis: 2048 samples (good balance for VBR encoding)
+ * - PCM: Configurable duration (10ms, 20ms, or 40ms) - see frameDurationMs
+ *
+ * Frame duration varies by sample rate (e.g., AAC 1024 samples = 21ms at 48kHz, 128ms at 8kHz).
+ * Server limits: MIN_FRAME_SIZE_SAMPLES=64, MAX_FRAME_SIZE_SAMPLES=8192.
+ * See packages/thaumic-core/src/protocol_constants.rs for Rust-side constants.
+ *
+ * @param codec - The audio codec
+ * @param sampleRate - The sample rate in Hz
+ * @param frameDurationMs - Frame duration in milliseconds (10, 20, or 40). Currently only used for PCM.
+ * @returns Frame size in samples (mono frames, multiply by channels for interleaved)
+ */
+function getOptimalFrameSizeSamples(
+  codec: AudioCodec,
+  sampleRate: number,
+  frameDurationMs: number = FRAME_DURATION_MS_DEFAULT,
+): number {
+  switch (codec) {
+    case 'aac-lc':
+    case 'he-aac':
+    case 'he-aac-v2':
+      // AAC's native frame size is always 1024 samples (spec-mandated)
+      return 1024;
+    case 'flac':
+      // Larger frames improve FLAC compression ratio
+      return 4096;
+    case 'vorbis':
+      // Vorbis uses variable block sizes internally; 2048 is a good batching choice
+      return 2048;
+    case 'pcm':
+    default:
+      // PCM: configurable frame duration for balancing latency vs. stability
+      return Math.round(sampleRate * (frameDurationMs / 1000));
+  }
+}
 
-/** WebSocket buffer high water mark (512KB). Drop frames if exceeded. */
-const WS_BUFFER_HIGH_WATER = 512000;
+/**
+ * Converts frame size in samples to duration in milliseconds.
+ * @param frameSizeSamples - Frame size in mono samples
+ * @param sampleRate - Sample rate in Hz
+ * @returns Duration in milliseconds
+ */
+function frameSizeToMs(frameSizeSamples: number, sampleRate: number): number {
+  return (frameSizeSamples / sampleRate) * 1000;
+}
 
-/** Macrotask yield duration (ms). Gives encoder thread CPU time. */
-const YIELD_MS = 1;
+// ─────────────────────────────────────────────────────────────────────────────
+// Constants
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Time budget for processing frames per wake cycle (ms).
+ * Stay under typical browser timer quantum (~4ms) to avoid timer coalescing issues.
+ * Per web.dev/articles/audio-scheduling: setTimeout can be skewed by 10ms+ from
+ * layout, rendering, and GC, so we busy-poll within budget instead.
+ */
+const PROCESS_BUDGET_MS = 4;
 
 /** Initial backpressure backoff delay (ms). */
 const BACKPRESSURE_BACKOFF_INITIAL_MS = 5;
 
-/** Maximum backpressure backoff delay (ms). */
+/** Maximum backpressure backoff delay for realtime mode (ms). */
 const BACKPRESSURE_BACKOFF_MAX_MS = 40;
 
-/** Default frames per wake. 3 frames = ~60ms, balances latency vs CPU. */
-const DEFAULT_FRAMES_PER_WAKE = 3;
+/** Maximum backpressure backoff delay for quality mode (ms). */
+const QUALITY_BACKOFF_MAX_MS = 50;
 
-/** Timeout for waiting on producer (ms). Triggers underflow if exceeded. */
-const WAIT_TIMEOUT_MS = 100;
+/** Timeout for waiting on producer (ms). Triggers underflow if exceeded. 200ms = 20 frames of headroom. */
+const WAIT_TIMEOUT_MS = 200;
 
 /** Interval for posting diagnostic stats to main thread (ms). */
-const STATS_INTERVAL_MS = 1000;
+const STATS_INTERVAL_MS = 2000;
 
 /** Heartbeat interval for WebSocket (ms). */
 const HEARTBEAT_INTERVAL_MS = 5000;
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Underflow Ramp Constants
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Ramp duration in milliseconds for fade-in/fade-out on underflow.
+ * Short ramp (3ms) smooths discontinuities without audible delay.
+ */
+const RAMP_MS = 3;
 
 /** WebSocket connection timeout (ms). */
 const WS_CONNECT_TIMEOUT_MS = 5000;
 
 /** Handshake timeout (ms). */
 const HANDSHAKE_TIMEOUT_MS = 5000;
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Bounded Latency (Catch-up) Constants
-// ─────────────────────────────────────────────────────────────────────────────
-
-/**
- * Target buffer depth after catch-up (ms).
- * When catching up, we drop oldest audio to reach this target.
- * 200ms provides a reasonable buffer for encoding variance.
- */
-const CATCHUP_TARGET_MS = 200;
-
-/**
- * Maximum allowed buffer depth before triggering catch-up (ms).
- * If the buffer exceeds this, we're too far behind and need to drop audio.
- * 1000ms allows for significant CPU spikes while keeping latency bounded.
- */
-const CATCHUP_MAX_MS = 1000;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Message Types
@@ -188,16 +240,23 @@ type OutboundMessage =
 // Worker State
 // ─────────────────────────────────────────────────────────────────────────────
 
+// Streaming policy (derived from latencyMode)
+let policy: StreamingPolicy | null = null;
+
+// Pause state for quality mode backpressure handling
+let isPaused = false;
+let pauseStartTime = 0;
+
 // Ring buffer state
 let control: Int32Array | null = null;
-let buffer: Int16Array | null = null;
+let buffer: Float32Array | null = null;
 let bufferSize = 0;
 let bufferMask = 0;
 let running = false;
 
 // Frame accumulation
 let frameSizeSamples = 0;
-let frameBuffer: Int16Array | null = null;
+let frameBuffer: Float32Array | null = null;
 let frameOffset = 0;
 
 // Encoder and WebSocket
@@ -225,9 +284,25 @@ let backpressureCycles = 0;
 /** Consecutive backpressure cycles for adaptive backoff calculation. */
 let consecutiveBackpressureCycles = 0;
 
+// Time-based pacing (computed from codec-aware frame size)
+/** Next frame due time for time-based pacing (performance.now() timestamp). */
+let nextFrameDueTime = 0;
+/** Frame period in milliseconds (codec-dependent). */
+let framePeriodMs = 0;
+/** Maximum drift allowed before clamping frame timing (ms). ~6 frames of catch-up. */
+let maxDriftMs = 0;
+
 // Catch-up thresholds (computed from constants and sample rate)
 let catchUpTargetSamples = 0;
 let catchUpMaxSamples = 0;
+
+// Underflow ramp state
+/** Whether next frame needs a fade-in ramp after underflow. */
+let needsRampIn = false;
+/** Last sample value per channel for ramping from/to. */
+let lastSamples: Float32Array | null = null;
+/** Ramp length in interleaved samples (computed from RAMP_MS and sample rate). */
+let rampSamples = 0;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Utilities
@@ -239,6 +314,78 @@ let catchUpMaxSamples = 0;
  */
 function postToMain(message: OutboundMessage): void {
   self.postMessage(message);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Underflow Ramp Utilities
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Applies a linear amplitude ramp to interleaved samples in-place.
+ *
+ * For fade-in: ramps from 0 to 1 over rampLen samples.
+ * For fade-out: ramps from 1 to 0 over rampLen samples, starting from startSamples.
+ *
+ * @param buffer - Interleaved Float32 samples to modify in-place
+ * @param channels - Number of audio channels (1 or 2)
+ * @param rampLen - Number of interleaved samples to ramp (clamped to buffer length)
+ * @param fadeIn - True for fade-in (0→1), false for fade-out (1→0)
+ * @param startSamples - Per-channel starting values for fade-out (ignored for fade-in)
+ */
+function applyRamp(
+  buffer: Float32Array,
+  channels: number,
+  rampLen: number,
+  fadeIn: boolean,
+  startSamples?: Float32Array,
+): void {
+  const len = Math.min(rampLen, buffer.length);
+  const frames = Math.floor(len / channels);
+  if (frames === 0) return;
+
+  // Divisor for interpolation: (frames-1) to span [0,1], minimum 1 to avoid division by zero
+  const divisor = Math.max(frames - 1, 1);
+
+  for (let frame = 0; frame < frames; frame++) {
+    // Linear ramp coefficient:
+    // Fade-in: 0→1 (first sample at silence, last at full amplitude)
+    // Fade-out: 1→0 (first sample at full amplitude, last at silence)
+    const t = fadeIn ? frame / divisor : 1 - frame / divisor;
+
+    for (let ch = 0; ch < channels; ch++) {
+      const idx = frame * channels + ch;
+      if (fadeIn) {
+        // Fade-in: scale sample toward full amplitude
+        buffer[idx] *= t;
+      } else {
+        // Fade-out: interpolate from startSample toward zero
+        const start = startSamples?.[ch] ?? 0;
+        buffer[idx] = start * t;
+      }
+    }
+  }
+}
+
+/**
+ * Captures the last sample value per channel from an interleaved buffer.
+ * Used to track the final amplitude for smooth ramp transitions.
+ *
+ * @param buffer - Interleaved Float32 samples
+ * @param channels - Number of audio channels
+ * @param length - Number of valid interleaved samples in buffer
+ * @param target - Float32Array to store last samples (length >= channels)
+ */
+function captureLastSamples(
+  buffer: Float32Array,
+  channels: number,
+  length: number,
+  target: Float32Array,
+): void {
+  if (length < channels) return;
+  const lastFrameStart = length - channels;
+  for (let ch = 0; ch < channels; ch++) {
+    target[ch] = buffer[lastFrameStart + ch] ?? 0;
+  }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -259,7 +406,8 @@ function alignDown(samples: number, frameSize: number): number {
  * Performs catch-up if the ring buffer has accumulated too much data.
  * This bounds latency by dropping oldest audio when we fall behind.
  *
- * When buffer exceeds CATCHUP_MAX_MS, we:
+ * In quality mode (catchUpMaxMs === null), catch-up is disabled to prevent
+ * any audio drops. In realtime mode, when buffer exceeds catchUpMaxMs, we:
  * 1. Advance readIdx to (writeIdx - targetSamples) aligned to frame boundaries
  * 2. Reset frameOffset to discard any partial frame
  * 3. Advance encoder timestamp to keep audio time monotonic
@@ -268,7 +416,10 @@ function alignDown(samples: number, frameSize: number): number {
  * @returns The number of samples dropped, or 0 if no catch-up needed
  */
 function performCatchUpIfNeeded(): number {
-  if (!control || !encoder) return 0;
+  if (!control || !encoder || !policy) return 0;
+
+  // Quality mode: catch-up is disabled
+  if (policy.catchUpMaxMs === null) return 0;
 
   const writeIdx = Atomics.load(control, CTRL_WRITE_IDX);
   const readIdx = Atomics.load(control, CTRL_READ_IDX);
@@ -368,28 +519,115 @@ function readFromRingBuffer(): number {
 }
 
 /**
+ * Handles underflow by flushing a partial frame with ramp-down to silence.
+ *
+ * When underflow occurs mid-frame (frameOffset > 0), this function:
+ * 1. Captures the actual last samples from the partial frameBuffer
+ * 2. Fills the remainder of the frame with a smooth ramp to zero
+ * 3. Encodes and sends the frame
+ * 4. Sets needsRampIn for smooth fade-in when audio resumes
+ *
+ * This prevents audible clicks at the point of underflow by smoothly
+ * transitioning to silence rather than abruptly stopping.
+ */
+function handleUnderflowRamp(): void {
+  if (!frameBuffer || !encoder || !socket || socket.readyState !== WebSocket.OPEN || !lastSamples) {
+    return;
+  }
+
+  const channels = encoder.config.channels;
+
+  if (frameOffset < channels) {
+    // No complete sample set in partial frame - just mark for ramp-in
+    needsRampIn = true;
+    return;
+  }
+
+  // Capture last samples from the actual partial frame into reusable buffer
+  // This ensures continuity: ramp starts exactly where the audio stopped
+  captureLastSamples(frameBuffer, channels, frameOffset, lastSamples);
+
+  const remainingSamples = frameSizeSamples - frameOffset;
+  const rampDownLen = Math.min(rampSamples, remainingSamples);
+
+  // Apply fade-out ramp using shared utility (DRY)
+  // subarray() returns a view, so applyRamp modifies frameBuffer in-place
+  if (rampDownLen >= channels) {
+    applyRamp(
+      frameBuffer.subarray(frameOffset, frameOffset + rampDownLen),
+      channels,
+      rampDownLen,
+      false, // fadeIn = false (fade-out)
+      lastSamples,
+    );
+  }
+
+  // Fill remainder with silence
+  const silenceStart = frameOffset + rampDownLen;
+  if (silenceStart < frameSizeSamples) {
+    frameBuffer.fill(0, silenceStart, frameSizeSamples);
+  }
+
+  // Mark frame as complete
+  frameOffset = frameSizeSamples;
+
+  // Encode and send (skip backpressure check for underflow frame)
+  const encoded = encoder.encode(frameBuffer);
+  if (encoded) {
+    socket.send(encoded);
+  }
+
+  // Reset for next frame
+  frameOffset = 0;
+  needsRampIn = true;
+
+  log.debug('Flushed underflow frame with ramp-down');
+}
+
+/**
  * Encodes and sends the accumulated frame if complete.
- * Implements backpressure by dropping frames when encoder queue or
- * WebSocket buffer is overloaded.
+ *
+ * Backpressure handling depends on streaming policy:
+ * - Realtime mode: drop frames to maintain timing
+ * - Quality mode: frames are held (not dropped) - pause is handled by consumeLoop
+ *
+ * Also handles underflow recovery by applying fade-in ramp when resuming
+ * after an underflow event, preventing audible clicks.
  */
 function flushFrameIfReady(): void {
   if (!frameBuffer || frameOffset < frameSizeSamples) return;
-  if (!encoder || !socket || socket.readyState !== WebSocket.OPEN) return;
+  if (!encoder || !socket || socket.readyState !== WebSocket.OPEN || !policy) return;
 
-  // Check backpressure before encoding
-  if (
-    encoder.encodeQueueSize >= MAX_ENCODE_QUEUE ||
-    socket.bufferedAmount >= WS_BUFFER_HIGH_WATER
-  ) {
-    droppedFrameCount++;
+  const channels = encoder.config.channels;
 
-    // Advance encoder timestamp to avoid time compression when we resume
-    // frameSizeSamples is interleaved samples, divide by channels for frame count
-    encoder.advanceTimestamp(frameSizeSamples / encoder.config.channels);
+  // Check backpressure
+  const isBackpressured =
+    encoder.encodeQueueSize >= policy.maxEncodeQueue ||
+    socket.bufferedAmount >= policy.wsBufferHighWater;
 
-    // Reset frame buffer - data already drained from ring buffer
-    frameOffset = 0;
+  if (isBackpressured) {
+    if (policy.dropOnBackpressure) {
+      // Realtime mode: drop frame to maintain timing
+      droppedFrameCount++;
+
+      // Advance encoder timestamp to avoid time compression when we resume
+      // frameSizeSamples is interleaved samples, divide by channels for frame count
+      encoder.advanceTimestamp(frameSizeSamples / channels);
+
+      // Reset frame buffer - data already drained from ring buffer
+      frameOffset = 0;
+    }
+    // Quality mode: keep frame data for later (don't reset frameOffset)
+    // consumeLoop will pause and retry
     return;
+  }
+
+  // Apply fade-in ramp if resuming from underflow
+  // Only clear flag if ramp was actually applied (requires at least one full audio frame)
+  if (needsRampIn && rampSamples >= channels) {
+    applyRamp(frameBuffer, channels, rampSamples, true);
+    needsRampIn = false;
+    log.debug('Applied fade-in ramp after underflow');
   }
 
   // Encode the frame
@@ -481,6 +719,14 @@ async function connectWebSocket(wsUrl: string, encoderConfig: EncoderConfig): Pr
         ws.close();
         reject(new Error('Handshake timeout'));
       }, HANDSHAKE_TIMEOUT_MS);
+
+      // Handle clean close during handshake (overwritten by handleWsClose on success)
+      ws.onclose = (event: CloseEvent) => {
+        clearTimeout(handshakeTimeout);
+        reject(
+          new Error(`WebSocket closed during handshake: ${event.reason || `Code ${event.code}`}`),
+        );
+      };
 
       const handshakeHandler = (event: MessageEvent) => {
         if (typeof event.data !== 'string') return;
@@ -668,51 +914,97 @@ function sendWsMessage(message: object): boolean {
 
 /**
  * Checks if the pipeline is backpressured.
+ * Uses thresholds from the current streaming policy.
  * @returns True if encoder queue or WebSocket buffer is overloaded
  */
 function isBackpressured(): boolean {
+  if (!policy) return false;
   return (
-    (encoder?.encodeQueueSize ?? 0) >= MAX_ENCODE_QUEUE ||
-    (socket?.bufferedAmount ?? 0) >= WS_BUFFER_HIGH_WATER
+    (encoder?.encodeQueueSize ?? 0) >= policy.maxEncodeQueue ||
+    (socket?.bufferedAmount ?? 0) >= policy.wsBufferHighWater
   );
 }
 
 /**
- * Dynamically compute max frames based on backpressure.
- * Process fewer frames when encoder/network is struggling.
- * @returns Number of frames to process this wake cycle
+ * Checks if encoding should be paused (quality mode only).
+ * Implements hysteresis: pause at high water mark, resume at lower threshold.
+ *
+ * In realtime mode, this always returns false (drops instead of pausing).
+ * In quality mode, pauses encoding until backpressure eases.
+ *
+ * @returns True if encoding should be paused
  */
-function getMaxFramesPerWake(): number {
-  const queueSize = encoder?.encodeQueueSize ?? 0;
-  const buffered = socket?.bufferedAmount ?? 0;
+function shouldPause(): boolean {
+  if (!policy || policy.dropOnBackpressure) return false; // Realtime mode never pauses
 
-  // If encoder queue building up, process less per wake
-  if (queueSize >= 2 || buffered >= WS_BUFFER_HIGH_WATER / 2) {
-    return 1; // Minimal work, let encoder catch up
+  const encodeQueue = encoder?.encodeQueueSize ?? 0;
+  const wsBuffer = socket?.bufferedAmount ?? 0;
+
+  if (isPaused) {
+    // Resume with hysteresis - need both conditions to clear
+    if (encodeQueue < policy.maxEncodeQueue / 2 && wsBuffer < policy.wsBufferResumeThreshold) {
+      isPaused = false;
+      const duration = (performance.now() - pauseStartTime) / 1000;
+      log.info(`Resumed after ${duration.toFixed(1)}s pause`);
+      return false;
+    }
+    return true;
+  } else {
+    // Check if we should pause
+    if (encodeQueue >= policy.maxEncodeQueue || wsBuffer >= policy.wsBufferHighWater) {
+      isPaused = true;
+      pauseStartTime = performance.now();
+      log.warn(`PAUSED: encodeQueue=${encodeQueue}, wsBuffer=${wsBuffer}`);
+      return true;
+    }
+    return false;
   }
-
-  return DEFAULT_FRAMES_PER_WAKE;
 }
 
 /**
- * Yields to the macrotask queue via setTimeout.
+ * Reusable MessageChannel for zero-delay yields.
+ * MessageChannel posts directly to the task queue with sub-millisecond latency,
+ * unlike setTimeout(0) which has minimum 1-4ms delay due to browser throttling.
+ */
+const yieldChannel = new MessageChannel();
+let yieldResolve: (() => void) | null = null;
+yieldChannel.port2.onmessage = () => {
+  yieldResolve?.();
+  yieldResolve = null;
+};
+
+/**
+ * Yields to the macrotask queue.
  * Unlike microtasks (Promise.resolve), this actually yields CPU time.
- * @param ms - Milliseconds to wait
+ * @param ms - Milliseconds to wait (use 0 to just yield without delay)
  * @returns A promise that resolves after the delay
  */
 function yieldMacrotask(ms: number): Promise<void> {
+  if (ms === 0) {
+    // Use MessageChannel for zero-delay yield - faster than setTimeout(0)
+    return new Promise((resolve) => {
+      yieldResolve = resolve;
+      yieldChannel.port1.postMessage(null);
+    });
+  }
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 /**
- * Drains up to maxFrames complete frames from the ring buffer.
- * @param maxFrames - Maximum number of frames to drain
+ * Drains frames from the ring buffer within a time budget.
+ * Uses busy-polling to avoid timer coalescing issues with setTimeout.
+ * Checks backpressure between frames to avoid overloading encoder/network.
+ *
  * @returns Number of complete frames drained
  */
-function drainWithLimit(maxFrames: number): number {
+function drainWithTimeBudget(): number {
   let framesProcessed = 0;
+  const budgetStart = performance.now();
 
-  while (framesProcessed < maxFrames) {
+  while (performance.now() - budgetStart < PROCESS_BUDGET_MS) {
+    // Check backpressure before processing each frame
+    if (isBackpressured()) break;
+
     const samplesRead = readFromRingBuffer();
     if (samplesRead === 0) break;
 
@@ -733,12 +1025,24 @@ function drainWithLimit(maxFrames: number): number {
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
- * Main consumption loop with backpressure-aware flow control.
+ * Main consumption loop with time-based pacing and backpressure-aware flow control.
  *
- * - If backpressured: skip reads entirely, letting the ring buffer fill
- *   and triggering producer-side drops naturally
- * - If data available: drain with bounded work, then yield via macrotask
+ * Uses performance.now() for rate control to pace frame production at ~20ms intervals,
+ * preventing burst processing and smoothing encoder/network load. Avoids setTimeout
+ * timer coalescing issues by busy-polling within a ~4ms time budget per wake cycle.
+ *
+ * Flow control varies by streaming policy:
+ * - Quality mode: pause encoding on backpressure (no drops), resume with hysteresis
+ * - Realtime mode: drop frames on backpressure, maintain bounded latency
+ *
+ * Common flow:
+ * - If ahead of schedule: yield until next frame is due
+ * - If data available: drain within time budget, update frame timing, yield thread
  * - If buffer empty: wait on write index via Atomics.waitAsync
+ *
+ * Drift handling:
+ * - Allows burst catch-up of ~6 frames when recovering from stalls
+ * - Clamps drift to prevent unbounded catch-up after long pauses
  */
 async function consumeLoop(): Promise<void> {
   if (!control) return;
@@ -747,14 +1051,29 @@ async function consumeLoop(): Promise<void> {
   lastProducerDroppedSamples = Atomics.load(control, CTRL_DROPPED_SAMPLES);
 
   while (running) {
-    // BOUNDED LATENCY: Check if buffer has grown too large and catch up
-    // This drops oldest audio to keep latency within bounds
+    // BOUNDED LATENCY (realtime mode only): Check if buffer has grown too large
+    // Quality mode skips this - catch-up is disabled
     performCatchUpIfNeeded();
 
-    // SHORT-CIRCUIT: If backpressured, don't drain - let buffer fill
-    // This allows producer drops to kick in naturally
-    // Note: We don't increment droppedFrameCount here - actual drops are
-    // tracked in flushFrameIfReady() when we have a frame but can't encode it
+    // QUALITY MODE: Check if we should pause encoding
+    // shouldPause() handles hysteresis for pause/resume transitions
+    if (shouldPause()) {
+      backpressureCycles++;
+      consecutiveBackpressureCycles++;
+      // Adaptive backoff: 5ms → 10ms → 20ms → 40ms → 50ms (capped)
+      // Responds faster than fixed 100ms when backpressure clears quickly
+      const backoffMs = exponentialBackoff(
+        consecutiveBackpressureCycles,
+        BACKPRESSURE_BACKOFF_INITIAL_MS,
+        QUALITY_BACKOFF_MAX_MS,
+      );
+      maybePostStats();
+      await yieldMacrotask(backoffMs);
+      continue;
+    }
+
+    // REALTIME MODE: Check backpressure for adaptive backoff
+    // Actual frame drops happen in flushFrameIfReady()
     if (isBackpressured()) {
       backpressureCycles++;
       consecutiveBackpressureCycles++;
@@ -765,6 +1084,7 @@ async function consumeLoop(): Promise<void> {
         BACKPRESSURE_BACKOFF_INITIAL_MS,
         BACKPRESSURE_BACKOFF_MAX_MS,
       );
+      maybePostStats();
       await yieldMacrotask(backoffMs);
       continue;
     }
@@ -772,11 +1092,35 @@ async function consumeLoop(): Promise<void> {
     // Reset consecutive backpressure counter when pressure eases
     consecutiveBackpressureCycles = 0;
 
-    // Drain with bounded work per wake (dynamic based on backpressure)
-    const framesThisWake = drainWithLimit(getMaxFramesPerWake());
+    // TIME-BASED PACING: Wait if we're ahead of schedule
+    // This prevents burst processing and smooths encoder/network load
+    const now = performance.now();
+    if (nextFrameDueTime > 0 && now < nextFrameDueTime) {
+      const waitTime = nextFrameDueTime - now;
+      if (waitTime > 1) {
+        await yieldMacrotask(waitTime);
+      }
+    }
+
+    // Drain frames within time budget, checking backpressure between frames
+    const framesThisWake = drainWithTimeBudget();
 
     if (framesThisWake > 0) {
       wakeupCount++;
+
+      // Update frame due time for time-based pacing
+      if (nextFrameDueTime === 0) {
+        // First frame - initialize due time to now
+        nextFrameDueTime = performance.now();
+      }
+      nextFrameDueTime += framesThisWake * framePeriodMs;
+
+      // Clamp: don't let due time fall more than maxDriftMs behind wall clock
+      // This allows burst catch-up but prevents unbounded drift accumulation
+      const nowAfterDrain = performance.now();
+      if (nextFrameDueTime < nowAfterDrain - maxDriftMs) {
+        nextFrameDueTime = nowAfterDrain - maxDriftMs;
+      }
     }
 
     maybePostStats();
@@ -787,9 +1131,9 @@ async function consumeLoop(): Promise<void> {
     const available = (write - read) >>> 0;
 
     if (available > 0) {
-      // Data available - yield via macrotask to prevent encoder starvation
-      // Microtasks don't yield CPU time; setTimeout(0) does
-      await yieldMacrotask(YIELD_MS);
+      // Data available but we've exhausted our time budget
+      // Just yield the thread (setTimeout(0)), time-based pacing handles the wait
+      await yieldMacrotask(0);
       continue;
     }
 
@@ -801,6 +1145,8 @@ async function consumeLoop(): Promise<void> {
       if (result === 'timed-out') {
         // Producer didn't write within timeout - underflow condition
         underflowCount++;
+        // Flush partial frame with ramp-down and prepare for ramp-in on resume
+        handleUnderflowRamp();
       }
       // 'ok' = notified, 'not-equal' = value changed before wait
     }
@@ -814,8 +1160,8 @@ async function consumeLoop(): Promise<void> {
 function flushRemaining(): void {
   // Flush partial frame
   if (frameBuffer && frameOffset > 0 && encoder && socket?.readyState === WebSocket.OPEN) {
-    const partial = new Int16Array(frameBuffer.subarray(0, frameOffset));
-    const encoded = encoder.encode(partial);
+    // subarray() returns a view, no copy needed
+    const encoded = encoder.encode(frameBuffer.subarray(0, frameOffset));
     if (encoded) {
       socket.send(encoded);
     }
@@ -856,6 +1202,14 @@ function cleanup(): void {
   }
 
   streamId = null;
+  policy = null;
+  isPaused = false;
+  pauseStartTime = 0;
+
+  // Reset ramp state
+  needsRampIn = false;
+  lastSamples = null;
+  rampSamples = 0;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -883,14 +1237,48 @@ self.onmessage = async (event: MessageEvent<InboundMessage>) => {
 
       // Initialize ring buffer views
       control = new Int32Array(sab, 0, headerSize);
-      buffer = new Int16Array(sab, DATA_BYTE_OFFSET);
+      buffer = new Float32Array(sab, DATA_BYTE_OFFSET);
       bufferSize = size;
       bufferMask = mask;
 
-      // Calculate frame size from sample rate and channels
-      frameSizeSamples = Math.round(sampleRate * FRAME_DURATION_SEC) * encoderConfig.channels;
-      frameBuffer = new Int16Array(frameSizeSamples);
+      // Calculate codec-aware frame size for optimal encoder efficiency
+      const optimalFrameSamples = getOptimalFrameSizeSamples(
+        encoderConfig.codec,
+        sampleRate,
+        encoderConfig.frameDurationMs ?? FRAME_DURATION_MS_DEFAULT,
+      );
+      frameSizeSamples = optimalFrameSamples * encoderConfig.channels;
+      frameBuffer = new Float32Array(frameSizeSamples);
       frameOffset = 0;
+
+      // Initialize underflow ramp state
+      // Ramp length clamped to fit within a single frame
+      const rampSamplesPerChannel = Math.floor(sampleRate * (RAMP_MS / 1000));
+      rampSamples = Math.min(rampSamplesPerChannel * encoderConfig.channels, frameSizeSamples);
+      lastSamples = new Float32Array(encoderConfig.channels);
+      needsRampIn = false;
+
+      // Compute frame timing for pacing
+      framePeriodMs = frameSizeToMs(optimalFrameSamples, sampleRate);
+      maxDriftMs = framePeriodMs * 6; // Allow ~6 frames of burst catch-up
+
+      // Update encoderConfig with frame size for server handshake
+      // Send samples (integer) instead of duration (float) to avoid rounding errors
+      const configWithFrameSize: EncoderConfig = {
+        ...encoderConfig,
+        frameSizeSamples: optimalFrameSamples,
+      };
+
+      log.info(
+        `Frame size: ${optimalFrameSamples} samples (${framePeriodMs.toFixed(1)}ms) for ${encoderConfig.codec}`,
+      );
+
+      // Initialize streaming policy from latency mode
+      policy = getStreamingPolicy(encoderConfig.latencyMode);
+      log.info(
+        `Streaming policy: ${encoderConfig.latencyMode} mode ` +
+          `(catchUp=${policy.catchUpMaxMs ?? 'disabled'}, dropOnBackpressure=${policy.dropOnBackpressure})`,
+      );
 
       // Reset state
       underflowCount = 0;
@@ -898,22 +1286,26 @@ self.onmessage = async (event: MessageEvent<InboundMessage>) => {
       catchUpDroppedSamples = 0;
       backpressureCycles = 0;
       consecutiveBackpressureCycles = 0;
+      nextFrameDueTime = 0;
       wakeupCount = 0;
       totalSamplesRead = 0;
       lastProducerDroppedSamples = 0;
+      isPaused = false;
+      pauseStartTime = 0;
 
-      // Compute catch-up thresholds based on sample rate and channels
-      // These define the bounded latency window
+      // Compute catch-up thresholds based on policy and sample rate
+      // These define the bounded latency window (only used in realtime mode)
       const samplesPerMs = (sampleRate * encoderConfig.channels) / 1000;
-      catchUpTargetSamples = Math.floor(CATCHUP_TARGET_MS * samplesPerMs);
-      catchUpMaxSamples = Math.floor(CATCHUP_MAX_MS * samplesPerMs);
+      catchUpTargetSamples = Math.floor(policy.catchUpTargetMs * samplesPerMs);
+      catchUpMaxSamples =
+        policy.catchUpMaxMs !== null ? Math.floor(policy.catchUpMaxMs * samplesPerMs) : Infinity; // Quality mode: effectively disable catch-up
 
       // Create encoder
       log.info(`Creating encoder: ${encoderConfig.codec} @ ${encoderConfig.bitrate}kbps`);
-      encoder = await createEncoder(encoderConfig);
+      encoder = await createEncoder(configWithFrameSize);
 
-      // Connect WebSocket
-      const id = await connectWebSocket(wsUrl, encoderConfig);
+      // Connect WebSocket (sends frame size to server in handshake)
+      const id = await connectWebSocket(wsUrl, configWithFrameSize);
 
       running = true;
       postToMain({ type: 'CONNECTED', streamId: id });

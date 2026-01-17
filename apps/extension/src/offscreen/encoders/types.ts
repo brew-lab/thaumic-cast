@@ -20,11 +20,12 @@ export interface ReconfigureOptions {
  */
 export interface AudioEncoder {
   /**
-   * Encodes a chunk of interleaved stereo Int16 PCM samples.
+   * Encodes a chunk of interleaved Float32 PCM samples.
+   * Samples should be in the range [-1.0, 1.0].
    * @param samples - Raw PCM samples from AudioWorklet
    * @returns Encoded bytes to send over WebSocket, or null if buffering
    */
-  encode(samples: Int16Array): Uint8Array | null;
+  encode(samples: Float32Array): Uint8Array | null;
 
   /**
    * Flushes any remaining buffered data.

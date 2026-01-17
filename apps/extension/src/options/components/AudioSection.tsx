@@ -4,15 +4,20 @@ import { useTranslation } from 'react-i18next';
 import { Card } from '@thaumic-cast/ui';
 import type {
   AudioCodec,
+  BitDepth,
   Bitrate,
+  FrameDurationMs,
   LatencyMode,
   SupportedCodecsResult,
   SupportedSampleRate,
 } from '@thaumic-cast/protocol';
 import {
   CODEC_METADATA,
+  FRAME_DURATIONS,
   getSupportedBitrates,
   getSupportedSampleRates,
+  getSupportedBitDepths,
+  isValidBitDepthForCodec,
 } from '@thaumic-cast/protocol';
 import type { ExtensionSettings, AudioMode } from '../../lib/settings';
 import { getResolvedConfigForDisplay, getDynamicPresets } from '../../lib/presets';
@@ -115,12 +120,17 @@ export function AudioSection({
         ? currentSampleRate
         : (sampleRates[0] ?? 48000);
 
+      // Reset bit depth to 16 if current bit depth is not supported by new codec
+      const currentBitDepth = settings.customAudioSettings.bitsPerSample;
+      const bitsPerSample = isValidBitDepthForCodec(codec, currentBitDepth) ? currentBitDepth : 16;
+
       await onUpdate({
         customAudioSettings: {
           ...settings.customAudioSettings,
           codec,
           bitrate: defaultBitrate,
           sampleRate,
+          bitsPerSample,
         },
       });
     },
@@ -187,6 +197,51 @@ export function AudioSection({
     [settings.customAudioSettings, onUpdate],
   );
 
+  /**
+   * Handles streaming buffer change (PCM only).
+   */
+  const handleStreamingBufferChange = useCallback(
+    async (streamingBufferMs: number) => {
+      await onUpdate({
+        customAudioSettings: {
+          ...settings.customAudioSettings,
+          streamingBufferMs,
+        },
+      });
+    },
+    [settings.customAudioSettings, onUpdate],
+  );
+
+  /**
+   * Handles bit depth change.
+   */
+  const handleBitDepthChange = useCallback(
+    async (bitsPerSample: BitDepth) => {
+      await onUpdate({
+        customAudioSettings: {
+          ...settings.customAudioSettings,
+          bitsPerSample,
+        },
+      });
+    },
+    [settings.customAudioSettings, onUpdate],
+  );
+
+  /**
+   * Handles frame duration change.
+   */
+  const handleFrameDurationChange = useCallback(
+    async (frameDurationMs: FrameDurationMs) => {
+      await onUpdate({
+        customAudioSettings: {
+          ...settings.customAudioSettings,
+          frameDurationMs,
+        },
+      });
+    },
+    [settings.customAudioSettings, onUpdate],
+  );
+
   // Get available bitrates for current codec (excluding 0 = lossless)
   const availableBitrates = useMemo(() => {
     if (codecLoading) return [];
@@ -202,6 +257,65 @@ export function AudioSection({
   }, [settings.customAudioSettings.codec, codecSupport, codecLoading]);
 
   const isCustomMode = settings.audioMode === 'custom';
+  const resolvedRows = useMemo(() => {
+    if (!resolvedConfig) return [];
+    const rows: { key: string; label: string; value: string }[] = [
+      {
+        key: 'codec',
+        label: t('audio_codec'),
+        value: CODEC_METADATA[resolvedConfig.codec].label,
+      },
+      {
+        key: 'bitrate',
+        label: t('audio_bitrate'),
+        value: resolvedConfig.bitrate === 0 ? t('lossless') : `${resolvedConfig.bitrate} kbps`,
+      },
+      {
+        key: 'channels',
+        label: t('audio_channels'),
+        value:
+          resolvedConfig.channels === 2 ? t('audio_channels_stereo') : t('audio_channels_mono'),
+      },
+      {
+        key: 'sample-rate',
+        label: t('audio_sample_rate'),
+        value: `${resolvedConfig.sampleRate / 1000} kHz`,
+      },
+    ];
+
+    if (CODEC_METADATA[resolvedConfig.codec].webCodecsId !== null) {
+      rows.push({
+        key: 'latency-mode',
+        label: t('audio_latency_mode'),
+        value:
+          resolvedConfig.latencyMode === 'quality'
+            ? t('audio_latency_quality')
+            : t('audio_latency_realtime'),
+      });
+    }
+
+    rows.push({
+      key: 'bit-depth',
+      label: t('audio_bit_depth'),
+      value:
+        resolvedConfig.bitsPerSample === 24 ? t('audio_bit_depth_24') : t('audio_bit_depth_16'),
+    });
+
+    if (resolvedConfig.codec === 'pcm') {
+      rows.push({
+        key: 'streaming-buffer',
+        label: t('audio_streaming_buffer'),
+        value: `${resolvedConfig.streamingBufferMs}ms`,
+      });
+      rows.push({
+        key: 'frame-duration',
+        label: t('audio_frame_duration'),
+        value: `${resolvedConfig.frameDurationMs}ms`,
+      });
+    }
+
+    return rows;
+  }, [resolvedConfig, t]);
 
   return (
     <Card title={t('audio_section_title')}>
@@ -367,49 +481,95 @@ export function AudioSection({
                       </select>
                     </div>
                   )}
+
+                  {/* Bit Depth - show supported bit depths for selected codec */}
+                  <div className={styles.field}>
+                    <label htmlFor="audio-bit-depth" className={styles.label}>
+                      {t('audio_bit_depth')}
+                    </label>
+                    <select
+                      id="audio-bit-depth"
+                      className={styles.select}
+                      value={settings.customAudioSettings.bitsPerSample}
+                      onChange={(e) =>
+                        handleBitDepthChange(
+                          Number((e.target as HTMLSelectElement).value) as BitDepth,
+                        )
+                      }
+                    >
+                      {getSupportedBitDepths(settings.customAudioSettings.codec).map((depth) => (
+                        <option key={depth} value={depth}>
+                          {depth === 16 ? t('audio_bit_depth_16') : t('audio_bit_depth_24')}
+                        </option>
+                      ))}
+                    </select>
+                    <span className={styles.hint}>{t('audio_bit_depth_hint')}</span>
+                  </div>
+
+                  {/* Streaming Buffer - only show for PCM codec */}
+                  {settings.customAudioSettings.codec === 'pcm' && (
+                    <div className={styles.field}>
+                      <label htmlFor="audio-streaming-buffer" className={styles.label}>
+                        {t('audio_streaming_buffer')}
+                      </label>
+                      <select
+                        id="audio-streaming-buffer"
+                        className={styles.select}
+                        value={settings.customAudioSettings.streamingBufferMs}
+                        onChange={(e) =>
+                          handleStreamingBufferChange(Number((e.target as HTMLSelectElement).value))
+                        }
+                      >
+                        <option value={100}>{t('audio_buffer_low')} (100ms)</option>
+                        <option value={200}>{t('audio_buffer_balanced')} (200ms)</option>
+                        <option value={500}>{t('audio_buffer_stable')} (500ms)</option>
+                        <option value={1000}>{t('audio_buffer_max')} (1000ms)</option>
+                      </select>
+                      <span className={styles.hint}>{t('audio_buffer_hint')}</span>
+                    </div>
+                  )}
+
+                  {/* Frame Duration - only show for PCM codec (for now) */}
+                  {settings.customAudioSettings.codec === 'pcm' && (
+                    <div className={styles.field}>
+                      <label htmlFor="audio-frame-duration" className={styles.label}>
+                        {t('audio_frame_duration')}
+                      </label>
+                      <select
+                        id="audio-frame-duration"
+                        className={styles.select}
+                        value={settings.customAudioSettings.frameDurationMs}
+                        onChange={(e) =>
+                          handleFrameDurationChange(
+                            Number((e.target as HTMLSelectElement).value) as FrameDurationMs,
+                          )
+                        }
+                      >
+                        {FRAME_DURATIONS.map((duration) => (
+                          <option key={duration} value={duration}>
+                            {duration === 10
+                              ? t('audio_frame_low')
+                              : duration === 20
+                                ? t('audio_frame_balanced')
+                                : t('audio_frame_stable')}{' '}
+                            ({duration}ms)
+                          </option>
+                        ))}
+                      </select>
+                      <span className={styles.hint}>{t('audio_frame_hint')}</span>
+                    </div>
+                  )}
                 </div>
               ) : (
                 /* Non-custom mode: read-only display */
                 resolvedConfig && (
                   <div className={styles.resolvedSettings}>
-                    <div className={styles.resolvedRow}>
-                      <span className={styles.resolvedLabel}>{t('audio_codec')}</span>
-                      <span className={styles.resolvedValue}>
-                        {CODEC_METADATA[resolvedConfig.codec].label}
-                      </span>
-                    </div>
-                    <div className={styles.resolvedRow}>
-                      <span className={styles.resolvedLabel}>{t('audio_bitrate')}</span>
-                      <span className={styles.resolvedValue}>
-                        {resolvedConfig.bitrate === 0
-                          ? t('lossless')
-                          : `${resolvedConfig.bitrate} kbps`}
-                      </span>
-                    </div>
-                    <div className={styles.resolvedRow}>
-                      <span className={styles.resolvedLabel}>{t('audio_channels')}</span>
-                      <span className={styles.resolvedValue}>
-                        {resolvedConfig.channels === 2
-                          ? t('audio_channels_stereo')
-                          : t('audio_channels_mono')}
-                      </span>
-                    </div>
-                    <div className={styles.resolvedRow}>
-                      <span className={styles.resolvedLabel}>{t('audio_sample_rate')}</span>
-                      <span className={styles.resolvedValue}>
-                        {resolvedConfig.sampleRate / 1000} kHz
-                      </span>
-                    </div>
-                    {CODEC_METADATA[resolvedConfig.codec].webCodecsId !== null && (
-                      <div className={styles.resolvedRow}>
-                        <span className={styles.resolvedLabel}>{t('audio_latency_mode')}</span>
-                        <span className={styles.resolvedValue}>
-                          {resolvedConfig.latencyMode === 'quality'
-                            ? t('audio_latency_quality')
-                            : t('audio_latency_realtime')}
-                        </span>
+                    {resolvedRows.map((row) => (
+                      <div key={row.key} className={styles.resolvedRow}>
+                        <span className={styles.resolvedLabel}>{row.label}</span>
+                        <span className={styles.resolvedValue}>{row.value}</span>
                       </div>
-                    )}
+                    ))}
                   </div>
                 )
               )}

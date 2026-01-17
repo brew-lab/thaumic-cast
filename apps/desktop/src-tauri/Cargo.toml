@@ -14,6 +14,7 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
+thaumic-core = { path = "../../../packages/thaumic-core" }
 tauri = { version = "2", features = ["tray-icon", "image-png"] }
 tauri-plugin-shell = "2"
 tauri-plugin-log = "2"
@@ -44,10 +45,17 @@ rust-i18n = "3"
 sys-locale = "0.3"
 bytemuck = { version = "1", features = ["derive"] }
 mdns-sd = "0.17"
+async-stream = "0.3"
 
-[profile.release]
-codegen-units = 1
-lto = true
-opt-level = "s"
-panic = "abort"
-strip = true
+# Platform-specific dependencies for process priority and MMCSS
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.59", features = [
+    "Win32_System_Threading",  # For thread priority and MMCSS (AvSetMmThreadCharacteristicsW)
+    "Win32_Foundation",
+] }
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[dev-dependencies]
+tokio = { version = "1", features = ["test-util"] }

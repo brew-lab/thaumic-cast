@@ -16,6 +16,11 @@ import styles from './SpeakerStep.module.css';
 
 const log = createLogger('SpeakerStep');
 
+/** Delay before running health check after discovery completes (ms). */
+const HEALTH_CHECK_DELAY_MS = 3000;
+/** Fallback timeout if discovery-complete event never fires (ms). */
+const DISCOVERY_FALLBACK_TIMEOUT_MS = 10000;
+
 interface SpeakerStepProps {
   /** Whether speakers have been found (controls next button) */
   onSpeakersFound: (found: boolean) => void;
@@ -63,7 +68,7 @@ export function SpeakerStep({ onSpeakersFound }: SpeakerStepProps): preact.JSX.E
       healthCheckTimer = setTimeout(async () => {
         await refreshTopology();
         await fetchGroups();
-      }, 3000);
+      }, HEALTH_CHECK_DELAY_MS);
     }).then((fn) => {
       unlistenDiscovery = fn;
     });
@@ -86,7 +91,7 @@ export function SpeakerStep({ onSpeakersFound }: SpeakerStepProps): preact.JSX.E
         await fetchGroups();
         setIsSearching(false);
       }
-    }, 10000);
+    }, DISCOVERY_FALLBACK_TIMEOUT_MS);
 
     return () => {
       if (unlistenDiscovery) unlistenDiscovery();
@@ -106,7 +111,10 @@ export function SpeakerStep({ onSpeakersFound }: SpeakerStepProps): preact.JSX.E
     // Set up one-time listener BEFORE triggering scan to avoid race conditions.
     // The permanent useEffect listener handles fetchGroups() when the event fires.
     // This listenOnce only provides timeout behavior for the manual scan.
-    const waitPromise = listenOnce<DiscoveryCompletePayload>('discovery-complete', 10000);
+    const waitPromise = listenOnce<DiscoveryCompletePayload>(
+      'discovery-complete',
+      DISCOVERY_FALLBACK_TIMEOUT_MS,
+    );
 
     await refreshTopology();
     const { timedOut } = await waitPromise;

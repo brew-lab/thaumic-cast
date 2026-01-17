@@ -6,7 +6,7 @@ import {
   removeManualSpeakerIp,
 } from '../state/store';
 import { useTranslation } from 'react-i18next';
-import { Power, Globe, Palette, Speaker, X } from 'lucide-preact';
+import { X } from 'lucide-preact';
 import { Card } from '@thaumic-cast/ui';
 import { createLogger } from '@thaumic-cast/shared';
 import i18n, { resources, SupportedLocale } from '../lib/i18n';
@@ -98,22 +98,15 @@ export function Settings() {
 
   return (
     <div className={styles.settings}>
-      <h2 className={styles.title}>{t('nav.settings')}</h2>
+      <h2 className={styles.pageTitle}>{t('nav.settings')}</h2>
 
       {/* Startup Section */}
-      <Card noPadding className={styles.section}>
-        <div className={styles.sectionHeader}>
-          <Power size={18} />
-          <h3 className={styles.sectionTitle}>{t('settings.startup')}</h3>
-        </div>
-
+      <Card title={t('settings.startup')} titleLevel="h3" className={styles.section}>
         <div className={styles.sectionContent}>
           <label className={styles.toggle}>
             <div className={styles.toggleInfo}>
-              <span className={styles.toggleLabel}>{t('settings.autostart')}</span>
-              <span className={styles.toggleDescription}>
-                {t('settings.autostart_description')}
-              </span>
+              <h4 className={styles.toggleLabel}>{t('settings.autostart')}</h4>
+              <p className={styles.toggleDescription}>{t('settings.autostart_description')}</p>
             </div>
             <input
               type="checkbox"
@@ -127,12 +120,7 @@ export function Settings() {
       </Card>
 
       {/* Language Section */}
-      <Card noPadding className={styles.section}>
-        <div className={styles.sectionHeader}>
-          <Globe size={18} />
-          <h3 className={styles.sectionTitle}>{t('settings.language')}</h3>
-        </div>
-
+      <Card title={t('settings.language')} titleLevel="h3" className={styles.section}>
         <div className={styles.sectionContent}>
           <div className={styles.field}>
             <label className={styles.fieldLabel}>{t('settings.display_language')}</label>
@@ -152,12 +140,7 @@ export function Settings() {
       </Card>
 
       {/* Appearance Section */}
-      <Card noPadding className={styles.section}>
-        <div className={styles.sectionHeader}>
-          <Palette size={18} />
-          <h3 className={styles.sectionTitle}>{t('settings.appearance')}</h3>
-        </div>
-
+      <Card title={t('settings.appearance')} titleLevel="h3" className={styles.section}>
         <div className={styles.sectionContent}>
           <div className={styles.field}>
             <label className={styles.fieldLabel}>{t('settings.theme')}</label>
@@ -178,12 +161,7 @@ export function Settings() {
       </Card>
 
       {/* Speakers Section */}
-      <Card noPadding className={styles.section}>
-        <div className={styles.sectionHeader}>
-          <Speaker size={18} />
-          <h3 className={styles.sectionTitle}>{t('settings.speakers')}</h3>
-        </div>
-
+      <Card title={t('settings.speakers')} titleLevel="h3" className={styles.section}>
         <div className={styles.sectionContent}>
           {manualIps.length > 0 && (
             <div className={styles.field}>

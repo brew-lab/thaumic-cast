@@ -112,8 +112,35 @@ function syncExtensionVersion(): void {
   }
 }
 
+/**
+ * Syncs the thaumic-core version from desktop's package.json to Cargo.toml.
+ * This ensures the core library version stays in sync with the product version.
+ */
+function syncCoreVersion(): void {
+  const pkgPath = join(ROOT, 'apps/desktop/package.json');
+  const cargoPath = join(ROOT, 'packages/thaumic-core/Cargo.toml');
+
+  const pkg = readJson<PackageJson>(pkgPath);
+  const cargoContent = readFileSync(cargoPath, 'utf-8');
+  const cargoMatch = cargoContent.match(CARGO_VERSION_REGEX);
+
+  if (cargoMatch) {
+    const currentVersion = cargoMatch[2];
+    if (currentVersion !== pkg.version) {
+      console.log(`thaumic-core (Cargo.toml): ${currentVersion} -> ${pkg.version}`);
+      const updatedCargo = cargoContent.replace(CARGO_VERSION_REGEX, `$1${pkg.version}$3`);
+      writeFileSync(cargoPath, updatedCargo);
+    } else {
+      console.log(`thaumic-core (Cargo.toml): ${pkg.version} (no change)`);
+    }
+  } else {
+    console.warn('thaumic-core (Cargo.toml): version not found');
+  }
+}
+
 // Main execution
 console.log('Syncing versions...');
 syncDesktopVersion();
 syncExtensionVersion();
+syncCoreVersion();
 console.log('Done.');

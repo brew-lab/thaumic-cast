@@ -1,13 +1,24 @@
 .layout {
-  display: flex;
+  /*
+   * Intrinsic sidebar with snap behavior (mobile-first).
+   * Default: collapsed (4.5rem), expands at >= 53rem.
+   */
+  display: grid;
+  grid-template-columns: 4.5rem 1fr;
   block-size: 100dvb;
   inline-size: 100vi;
   background-color: var(--color-bg);
   color: var(--color-text);
+  transition: grid-template-columns var(--duration-slow) var(--ease-out-3);
+}
+
+@container app (inline-size >= 53rem) {
+  .layout {
+    grid-template-columns: 15rem 1fr;
+  }
 }
 
 .content {
-  flex: 1;
   overflow-y: auto;
   scrollbar-width: thin;
   scrollbar-color: var(--color-primary) transparent;

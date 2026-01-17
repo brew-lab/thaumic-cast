@@ -1,20 +1,25 @@
 import type { EncoderConfig, LatencyMode } from '@thaumic-cast/protocol';
+import { INT16_MAX, tpdfDither } from '@thaumic-cast/protocol';
 import { createLogger } from '@thaumic-cast/shared';
 import type { AudioEncoder } from './types';
 
 const log = createLogger('PcmEncoder');
 
 /**
- * PCM "encoder" that passes through raw Int16 samples without encoding.
+ * PCM encoder that quantizes Float32 samples to Int16 for transmission.
  *
- * This is used for server-side FLAC encoding: the desktop app receives
- * uncompressed PCM over WebSocket and encodes it to FLAC before serving
- * to Sonos speakers. This provides lossless audio quality without requiring
- * browser WebCodecs FLAC support.
+ * Accepts Float32 samples from the audio pipeline and converts them to
+ * Int16 for the wire protocol. The desktop app receives uncompressed PCM
+ * over WebSocket and wraps it in a WAV container before serving to Sonos.
+ *
+ * Allocates a fresh Int16Array each call and returns a Uint8Array view of it.
+ * No buffer reuse means no risk of WebSocket.send() corruption from async copies.
+ * The allocation cost (~3.8KB/frame at 50 frames/sec = ~192KB/s for 48kHz stereo)
+ * is negligible, and V8's generational GC handles short-lived allocations efficiently.
  *
  * Unlike other encoders that extend BaseAudioEncoder and use WebCodecs,
  * PcmEncoder implements the AudioEncoder interface directly since there's
- * no actual encoding happening in the browser.
+ * no codec encoding happening in the browser - just format conversion.
  */
 export class PcmEncoder implements AudioEncoder {
   readonly config: EncoderConfig;
@@ -23,16 +28,16 @@ export class PcmEncoder implements AudioEncoder {
   private timestamp = 0;
 
   /**
-   * Creates a new PCM passthrough encoder.
+   * Creates a new PCM encoder.
    * @param config - The encoder configuration
    */
   constructor(config: EncoderConfig) {
     this.config = config;
-    log.info(`Configured PCM passthrough @ ${config.sampleRate}Hz, ${config.channels}ch`);
+    log.info(`Configured PCM encoder @ ${config.sampleRate}Hz, ${config.channels}ch`);
   }
 
   /**
-   * Returns 0 since PCM passthrough is synchronous with no queue.
+   * Returns 0 since PCM conversion is synchronous with no queue.
    * @returns Always 0
    */
   get encodeQueueSize(): number {
@@ -41,7 +46,7 @@ export class PcmEncoder implements AudioEncoder {
 
   /**
    * Returns 'quality' for interface compatibility.
-   * Latency mode is not applicable to PCM passthrough.
+   * Latency mode is not applicable to PCM format conversion.
    * @returns Always 'quality'
    */
   get latencyMode(): LatencyMode {
@@ -49,21 +54,37 @@ export class PcmEncoder implements AudioEncoder {
   }
 
   /**
-   * Passes through raw PCM samples without encoding.
+   * Converts Float32 samples to Int16 for wire protocol.
    *
-   * The samples are already in Int16 interleaved format from the AudioWorklet,
-   * which is exactly what the desktop app expects for FLAC encoding.
+   * The desktop app expects Int16 interleaved samples for WAV container generation.
+   * We quantize here at the final step to preserve precision throughout the pipeline.
    *
-   * @param samples - Interleaved Int16 PCM samples
-   * @returns Raw bytes to send over WebSocket
+   * @param samples - Interleaved Float32 PCM samples (range [-1.0, 1.0])
+   * @returns Raw Int16 bytes to send over WebSocket
    */
-  encode(samples: Int16Array): Uint8Array {
+  encode(samples: Float32Array): Uint8Array {
     // Advance timestamp for consistency with other encoders
     const frameCount = samples.length / this.config.channels;
     this.timestamp += (frameCount / this.config.sampleRate) * 1_000_000;
 
-    // Return raw bytes - samples are already Int16 interleaved from AudioWorklet
-    return new Uint8Array(samples.buffer, samples.byteOffset, samples.byteLength);
+    // Fresh buffer each call - no reuse means no WebSocket async copy issues
+    const int16 = new Int16Array(samples.length);
+
+    // Convert Float32 to Int16 with TPDF dithering
+    // Dithering decorrelates quantization error from the signal, converting
+    // audible harmonic distortion into inaudible white noise floor
+    for (let i = 0; i < samples.length; i++) {
+      const s = samples[i]!;
+      const safe = s !== s ? 0 : s < -1 ? -1 : s > 1 ? 1 : s;
+      // Scale to Int16 range, add dither, then quantize
+      // Clamp after rounding to prevent overflow: dither can push peaks past ±32767
+      const dithered = safe * INT16_MAX + tpdfDither();
+      const rounded = Math.round(dithered);
+      int16[i] = rounded < -32768 ? -32768 : rounded > 32767 ? 32767 : rounded;
+    }
+
+    // Return view of the fresh buffer - safe since buffer isn't reused
+    return new Uint8Array(int16.buffer);
   }
 
   /**
@@ -76,7 +97,7 @@ export class PcmEncoder implements AudioEncoder {
   }
 
   /**
-   * Returns null since PCM passthrough has no buffering.
+   * Returns null since PCM conversion has no buffering.
    * @returns Always null
    */
   flush(): Uint8Array | null {
@@ -84,17 +105,16 @@ export class PcmEncoder implements AudioEncoder {
   }
 
   /**
-   * No-op for PCM passthrough.
-   * Latency mode reconfiguration is not applicable.
+   * No-op for PCM encoder.
+   * Latency mode reconfiguration is not applicable to format conversion.
    * @returns Always null
    */
   reconfigure(): Uint8Array | null {
-    // PCM passthrough has no configuration to change
     return null;
   }
 
   /**
-   * No-op for PCM passthrough - no resources to release.
+   * No-op - no resources to release.
    */
   close(): void {
     log.debug('PCM encoder closed');

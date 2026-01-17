@@ -17,6 +17,7 @@
 }
 
 .icon-wrapper {
+  flex-shrink: 0;
   background-color: var(--color-bg);
   padding-block: var(--space-xs);
   padding-inline: var(--space-xs);

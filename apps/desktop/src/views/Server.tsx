@@ -5,6 +5,9 @@ import { useTranslation } from 'react-i18next';
 import { Copy, Check, RefreshCcw, Unplug, Square, Circle } from 'lucide-preact';
 import styles from './Server.module.css';
 
+/** Duration to show "copied" feedback before reverting to copy icon (ms). */
+const COPIED_FEEDBACK_DURATION_MS = 2000;
+
 /**
  * Server management page.
  *
@@ -29,27 +32,25 @@ export function Server() {
       const url = `http://${stats.value.localIp}:${stats.value.port}`;
       navigator.clipboard.writeText(url);
       setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
+      setTimeout(() => setCopied(false), COPIED_FEEDBACK_DURATION_MS);
     }
   };
 
   return (
     <div className={styles.server}>
-      <h2 className={styles.title}>{t('nav.server')}</h2>
+      <h2 className={styles.pageTitle}>{t('nav.server')}</h2>
 
       {/* Status Section */}
-      <Card noPadding className={styles.section}>
-        <div className={styles.statusHeader}>
-          <div className={styles.statusIndicator}>
-            <Circle size={10} fill="var(--color-success)" color="var(--color-success)" />
-            <span>{t('server.running')}</span>
-          </div>
-        </div>
-
-        <div className={styles.statusGrid}>
+      <Card
+        title={t('server.running')}
+        icon={Circle}
+        titleLevel="h3"
+        className={`${styles.section} ${styles.statusCard}`}
+      >
+        <dl className={styles.statusGrid}>
           <div className={styles.statusItem}>
-            <span className={styles.statusLabel}>{t('server.address')}</span>
-            <div className={styles.addressRow}>
+            <dt className={styles.statusLabel}>{t('server.address')}</dt>
+            <dd className={styles.addressRow}>
               <code className={styles.statusValue}>
                 {stats.value ? `${stats.value.localIp}:${stats.value.port}` : '---'}
               </code>
@@ -61,30 +62,28 @@ export function Server() {
               >
                 {copied ? <Check size={14} color="var(--color-success)" /> : <Copy size={14} />}
               </Button>
-            </div>
+            </dd>
           </div>
 
           <div className={styles.statusItem}>
-            <span className={styles.statusLabel}>{t('server.clients')}</span>
-            <span className={styles.statusValue}>{stats.value?.connectionCount ?? 0}</span>
+            <dt className={styles.statusLabel}>{t('server.clients')}</dt>
+            <dd className={styles.statusValue}>{stats.value?.connectionCount ?? 0}</dd>
           </div>
 
           <div className={styles.statusItem}>
-            <span className={styles.statusLabel}>{t('server.streams')}</span>
-            <span className={styles.statusValue}>{stats.value?.streamCount ?? 0}</span>
+            <dt className={styles.statusLabel}>{t('server.streams')}</dt>
+            <dd className={styles.statusValue}>{stats.value?.streamCount ?? 0}</dd>
           </div>
-        </div>
+        </dl>
       </Card>
 
       {/* Actions Section */}
-      <Card noPadding className={styles.section}>
-        <h3 className={styles.sectionTitle}>{t('server.actions')}</h3>
-
+      <Card title={t('server.actions')} titleLevel="h3" className={styles.section}>
         <div className={styles.actionList}>
           <div className={styles.actionRow}>
             <div className={styles.actionInfo}>
-              <span className={styles.actionTitle}>{t('server.restart')}</span>
-              <span className={styles.actionDescription}>{t('server.restart_description')}</span>
+              <h4 className={styles.actionTitle}>{t('server.restart')}</h4>
+              <p className={styles.actionDescription}>{t('server.restart_description')}</p>
             </div>
             <ActionButton
               action={restartServer}
@@ -99,8 +98,8 @@ export function Server() {
 
           <div className={styles.actionRow}>
             <div className={styles.actionInfo}>
-              <span className={styles.actionTitle}>{t('server.disconnect_all')}</span>
-              <span className={styles.actionDescription}>{t('server.disconnect_description')}</span>
+              <h4 className={styles.actionTitle}>{t('server.disconnect_all')}</h4>
+              <p className={styles.actionDescription}>{t('server.disconnect_description')}</p>
             </div>
             <ActionButton
               action={async () => {
@@ -116,10 +115,8 @@ export function Server() {
 
           <div className={styles.actionRow}>
             <div className={styles.actionInfo}>
-              <span className={styles.actionTitle}>{t('server.stop_streams')}</span>
-              <span className={styles.actionDescription}>
-                {t('server.stop_streams_description')}
-              </span>
+              <h4 className={styles.actionTitle}>{t('server.stop_streams')}</h4>
+              <p className={styles.actionDescription}>{t('server.stop_streams_description')}</p>
             </div>
             <ActionButton
               action={stopAll}

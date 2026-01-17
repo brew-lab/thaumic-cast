@@ -1,12 +1,10 @@
 import { useEffect, useState } from 'preact/hooks';
 import { WizardStep, Alert } from '@thaumic-cast/ui';
+import { DEFAULT_MAX_CONCURRENT_STREAMS } from '@thaumic-cast/protocol';
 import { Zap, Check, Timer } from 'lucide-preact';
 import { useTranslation } from 'react-i18next';
 import { groups, stats, getAutostartEnabled, setAutostartEnabled } from '../../state/store';
 import styles from './ReadyStep.module.css';
-
-/** Maximum concurrent streams allowed (matches backend constant) */
-const MAX_STREAMS = 10;
 
 /**
  * Final onboarding step confirming setup is complete.
@@ -57,7 +55,11 @@ export function ReadyStep(): preact.JSX.Element {
         </div>
       </div>
 
-      <p className={styles.introText}>{t('onboarding.ready.intro', { maxStreams: MAX_STREAMS })}</p>
+      <p className={styles.introText}>
+        {t('onboarding.ready.intro', {
+          maxStreams: stats.value?.maxStreams ?? DEFAULT_MAX_CONCURRENT_STREAMS,
+        })}
+      </p>
 
       <h3 className={styles.sectionTitle}>{t('onboarding.ready.performance_title')}</h3>
       <p className={styles.sectionBody}>{t('onboarding.ready.performance_body')}</p>

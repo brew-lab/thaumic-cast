@@ -19,6 +19,24 @@ Thank you for your interest in contributing! We use a Monorepo structure managed
     - Desktop App: `bun run dev:desktop`
     - Extension: `bun run dev:extension`
 
+## Building
+
+Release builds for distribution:
+
+```bash
+bun run build:desktop          # Current platform
+bun run build:desktop:windows  # Windows (x64)
+bun run build:desktop:linux    # Linux (x64)
+bun run build:desktop:macos    # macOS (ARM64)
+bun run build:extension        # Chrome extension
+```
+
+For debug builds (with debug symbols, no optimization), append `-- --debug`:
+
+```bash
+bun run build:desktop:windows -- --debug
+```
+
 ## Monorepo Structure
 
 - `apps/desktop`: Rust (Tauri) backend + Preact frontend.

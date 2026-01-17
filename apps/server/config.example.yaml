@@ -1,0 +1,33 @@
+# Thaumic Server Configuration
+#
+# Copy this file to config.yaml and adjust values for your environment.
+# All settings can be overridden with environment variables.
+
+# Port to bind the HTTP server to (default: 49400)
+# Environment: THAUMIC_BIND_PORT
+bind_port: 49400
+
+# IP address to advertise to Sonos speakers
+# This should be the IP that Sonos speakers can reach from your network.
+# Environment: THAUMIC_ADVERTISE_IP
+advertise_ip: '192.168.1.100'
+
+# Interval in seconds between topology refresh checks (default: 30)
+# Environment: THAUMIC_TOPOLOGY_REFRESH_INTERVAL
+topology_refresh_interval: 30
+
+# Discovery methods (all enabled by default)
+discovery_ssdp_multicast: true
+discovery_ssdp_broadcast: true
+discovery_mdns: true
+
+# Directory for persistent data (manual speakers, etc.)
+# If not set, manual speaker configuration won't persist across restarts.
+# Environment: THAUMIC_DATA_DIR
+# data_dir: '/var/lib/thaumic-server'
+
+# Custom artwork URL for Sonos album art display (optional)
+# Should be an HTTPS URL for Android Sonos app compatibility.
+# Precedence: artwork_url > data_dir/artwork.jpg > embedded default
+# Environment: THAUMIC_ARTWORK_URL
+# artwork_url: 'https://cdn.example.com/my-artwork.jpg'

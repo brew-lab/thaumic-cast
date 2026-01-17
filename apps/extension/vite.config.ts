@@ -4,8 +4,15 @@ import { crx } from '@crxjs/vite-plugin';
 import manifest from './manifest.json';
 import { resolve } from 'path';
 
-export default defineConfig({
+export default defineConfig(({ mode }) => ({
   plugins: [preact(), crx({ manifest })],
+  define: {
+    /**
+     * Build-time flag for audio diagnostics (clipping detection, verbose tracing).
+     * Enabled in development, completely eliminated in production builds.
+     */
+    __DEBUG_AUDIO__: JSON.stringify(mode === 'development'),
+  },
   css: {
     modules: {
       localsConvention: 'camelCaseOnly',
@@ -30,4 +37,4 @@ export default defineConfig({
       },
     },
   },
-});
+}));

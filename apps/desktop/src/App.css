@@ -28,7 +28,9 @@
   box-sizing: border-box;
 }
 
-#root {
-  block-size: 100%;
-  inline-size: 100%;
+#app {
+  block-size: 100dvb;
+  inline-size: 100vi;
+  container-type: inline-size;
+  container-name: app;
 }

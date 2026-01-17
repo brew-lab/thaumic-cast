@@ -4,7 +4,7 @@
   max-inline-size: 44rem;
 }
 
-.title {
+.page-title {
   margin: 0;
   margin-block-end: var(--space-lg);
 }
@@ -13,25 +13,14 @@
   margin-block-end: var(--space-lg);
 }
 
-.status-header {
-  padding-block: var(--space-md);
-  padding-inline: var(--space-md);
-  border-block-end: 1px solid var(--color-border);
-}
-
-.status-indicator {
-  display: flex;
-  align-items: center;
-  gap: var(--space-sm);
-  font-weight: 600;
+.status-card h3 {
   color: var(--color-success);
 }
 
 .status-grid {
   display: grid;
   gap: var(--space-md);
-  padding-block: var(--space-md);
-  padding-inline: var(--space-md);
+  margin: 0;
 }
 
 .status-item {
@@ -45,13 +34,24 @@
   color: var(--color-text-muted);
 }
 
+.status-item dd {
+  margin: 0;
+}
+
 .status-value {
   font-weight: 600;
   font-family: monospace;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-inline-size: 0;
 }
 
 .address-row {
+  container-type: inline-size;
+  container-name: address-row;
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: var(--space-sm);
 }
@@ -59,52 +59,60 @@
 .copy-button {
   padding-block: var(--space-xs);
   padding-inline: var(--space-xs);
-  inline-size: auto;
+  inline-size: 100%;
 }
 
-.section-title {
-  margin: 0;
-  padding-block: var(--space-md);
-  padding-inline: var(--space-md);
-  border-block-end: 1px solid var(--color-border);
-  font-size: 1rem;
+@container address-row (inline-size >= 12rem) {
+  .copy-button {
+    inline-size: auto;
+  }
 }
 
 .action-list {
+  container-type: inline-size;
+  container-name: action-list;
   display: grid;
+  gap: var(--space-md);
 }
 
 .action-row {
-  display: flex;
-  justify-content: space-between;
+  display: grid;
+  grid-template-columns: 1fr;
   align-items: center;
   gap: var(--space-md);
-  padding-block: var(--space-md);
-  padding-inline: var(--space-md);
-  border-block-end: 1px solid var(--color-border);
 }
 
-.action-row:last-child {
-  border-block-end: none;
+@container action-list (inline-size >= 20rem) {
+  .action-row {
+    grid-template-columns: 1fr auto;
+  }
 }
 
 .action-info {
   display: flex;
   flex-direction: column;
   gap: var(--space-xs);
+  min-inline-size: 0;
 }
 
 .action-title {
+  margin: 0;
+  font-size: 0.85rem;
   font-weight: 600;
 }
 
 .action-description {
+  margin: 0;
   font-size: 0.85rem;
   color: var(--color-text-muted);
-  text-wrap: pretty;
 }
 
 .action-button {
-  inline-size: auto;
-  flex-shrink: 0;
+  inline-size: 100%;
+}
+
+@container action-list (inline-size >= 20rem) {
+  .action-button {
+    inline-size: auto;
+  }
 }

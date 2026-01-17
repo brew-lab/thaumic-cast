@@ -1,4 +1,5 @@
 import type { ComponentChildren, CSSProperties } from 'preact';
+import type { LucideIcon } from 'lucide-preact';
 import styles from './Card.module.css';
 
 type HeadingLevel = 'h2' | 'h3' | 'h4' | 'h5' | 'h6';
@@ -8,6 +9,8 @@ interface CardProps {
   children: ComponentChildren;
   /** Optional card title */
   title?: string;
+  /** Optional icon to display before the title */
+  icon?: LucideIcon;
   /** Heading level for the title (default: h2). Use to maintain proper heading hierarchy. */
   titleLevel?: HeadingLevel;
   /** Additional CSS class */
@@ -23,6 +26,7 @@ interface CardProps {
  * @param props - Component props
  * @param props.children - Card content
  * @param props.title - Optional card title
+ * @param props.icon - Optional icon to display before the title
  * @param props.titleLevel - Heading level for title (default: h2)
  * @param props.className - Additional CSS class
  * @param props.noPadding - Remove default padding
@@ -32,6 +36,7 @@ interface CardProps {
 export function Card({
   children,
   title,
+  icon: Icon,
   titleLevel = 'h2',
   className,
   noPadding,
@@ -42,7 +47,12 @@ export function Card({
 
   return (
     <div className={classes} style={style}>
-      {title && <TitleTag className={styles.title}>{title}</TitleTag>}
+      {title && (
+        <TitleTag className={styles.title}>
+          {Icon && <Icon size={18} fill="currentColor" className={styles.icon} />}
+          <span className={styles.titleText}>{title}</span>
+        </TitleTag>
+      )}
       {children}
     </div>
   );

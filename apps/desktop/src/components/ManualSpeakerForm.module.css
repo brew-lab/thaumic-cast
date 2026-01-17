@@ -1,11 +1,17 @@
 .form {
   display: flex;
+  flex-wrap: wrap;
   gap: var(--space-sm);
   align-items: stretch;
 }
 
-.form input {
-  flex: 1;
+.form > :first-child {
+  flex: 1 1 12rem;
+  inline-size: 100%;
+}
+
+.form > :last-child {
+  flex: 1 0 auto;
 }
 
 .error {

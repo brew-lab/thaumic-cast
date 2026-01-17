@@ -21,7 +21,7 @@ import {
   PlaybackState,
   PlaybackStateSchema,
 } from '@thaumic-cast/protocol';
-import type { StreamMetadata } from '@thaumic-cast/protocol';
+import type { StreamMetadata, MediaMetadata, TabMediaState } from '@thaumic-cast/protocol';
 import type { TabMetadataUpdateMessage, CurrentTabStateResponse } from '../../lib/messages';
 import { getSourceFromUrl } from '../../lib/url-utils';
 import { getActiveTab } from '../../lib/tab-utils';
@@ -59,6 +59,77 @@ function extractPlaybackState(payload: unknown): PlaybackState {
 }
 
 /**
+ * Compares two MediaMetadata objects for equality.
+ * @param a - First metadata object (or null)
+ * @param b - Second metadata object (or null)
+ * @returns True if both are equal
+ */
+function metadataEqual(a: MediaMetadata | null, b: MediaMetadata | null): boolean {
+  if (a === b) return true;
+  if (!a || !b) return false;
+  return (
+    a.title === b.title && a.artist === b.artist && a.album === b.album && a.artwork === b.artwork
+  );
+}
+
+/**
+ * Compares two arrays of media actions for equality.
+ * @param a - First actions array
+ * @param b - Second actions array
+ * @returns True if both contain the same actions
+ */
+function actionsEqual(a: MediaAction[], b: MediaAction[]): boolean {
+  if (a.length !== b.length) return false;
+  // Actions are typically in order, so simple comparison works
+  for (let i = 0; i < a.length; i++) {
+    if (a[i] !== b[i]) return false;
+  }
+  return true;
+}
+
+/**
+ * Checks if an update would change the cached state.
+ * Used to skip redundant cache writes and notifications.
+ * @param existing - The existing cached state (or undefined)
+ * @param tabInfo - New tab info
+ * @param tabInfo.title - Tab title
+ * @param tabInfo.favIconUrl - Tab favicon URL
+ * @param tabInfo.ogImage - Tab Open Graph image URL
+ * @param tabInfo.source - Source name derived from URL
+ * @param metadata - New metadata
+ * @param supportedActions - New supported actions
+ * @param playbackState - New playback state
+ * @returns True if the update would change the state
+ */
+function hasStateChanged(
+  existing: TabMediaState | undefined,
+  tabInfo: { title?: string; favIconUrl?: string; ogImage?: string; source?: string },
+  metadata: MediaMetadata | null,
+  supportedActions: MediaAction[],
+  playbackState: PlaybackState,
+): boolean {
+  // No existing state means this is a new entry
+  if (!existing) return true;
+
+  // Compare tab info fields
+  if ((tabInfo.title || 'Unknown Tab') !== existing.tabTitle) return true;
+  if (tabInfo.favIconUrl !== existing.tabFavicon) return true;
+  if (tabInfo.ogImage !== existing.tabOgImage) return true;
+  if (tabInfo.source !== existing.source) return true;
+
+  // Compare metadata
+  if (!metadataEqual(metadata, existing.metadata)) return true;
+
+  // Compare supported actions
+  if (!actionsEqual(supportedActions, existing.supportedActions)) return true;
+
+  // Compare playback state
+  if (playbackState !== existing.playbackState) return true;
+
+  return false;
+}
+
+/**
  * Handles metadata updates from content scripts.
  * Updates the cache and forwards to offscreen if casting.
  *
@@ -91,6 +162,11 @@ export async function handleTabMetadataUpdate(
     source,
   };
 
+  // Early-return if nothing changed to avoid redundant writes/notifications
+  if (!hasStateChanged(existing, tabInfo, metadata, supportedActions, playbackState)) {
+    return;
+  }
+
   // Update the cache with metadata, supported actions, and playback state
   const state = updateCache(tabId, tabInfo, metadata, supportedActions, playbackState);
 
@@ -120,6 +196,12 @@ export function handleTabOgImage(
 ): void {
   const tabId = sender.tab?.id;
   if (!tabId) return;
+
+  // Check if ogImage has actually changed
+  const existing = getCachedState(tabId);
+  if (existing?.tabOgImage === payload.ogImage) {
+    return;
+  }
 
   // Try to update existing cache entry
   let state = updateTabInfo(tabId, { ogImage: payload.ogImage });

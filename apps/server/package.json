@@ -1,0 +1,12 @@
+{
+  "name": "@thaumic-cast/server",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "echo 'No build step'",
+    "typecheck": "echo 'No typecheck'",
+    "clean": "echo 'No clean'",
+    "test": "echo 'No tests yet'"
+  }
+}

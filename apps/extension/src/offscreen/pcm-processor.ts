@@ -51,16 +51,23 @@ declare function registerProcessor(name: string, processorCtor: typeof AudioWork
 /** Global sample rate in AudioWorklet scope. */
 declare const sampleRate: number;
 
+// Note: Clamping logic is inlined and unrolled in the hot path below for performance.
+// Uses Math.max(-1, Math.min(1, s || 0)) which handles NaN (via || 0) and ±Infinity.
+// See protocol/audio.ts clampSample for the canonical (non-NaN-safe) version.
+
 /**
- * AudioWorkletProcessor for converting Float32 audio to Int16 PCM in shared memory.
+ * AudioWorkletProcessor for writing Float32 audio to shared memory.
  *
  * Uses monotonic indices that wrap at 32-bit boundary with unsigned interpretation.
  * Checks available space once per block and drops entire blocks when full.
  * Uses bulk TypedArray.set() for efficient writes with wrap handling.
  * Only notifies consumer on empty→non-empty transition.
+ *
+ * Float32 samples are preserved throughout the pipeline until final quantization
+ * at the encoder level, enabling 24-bit FLAC encoding without precision loss.
  */
 class PCMProcessor extends AudioWorkletProcessor {
-  private sharedBuffer: Int16Array | null = null;
+  private sharedBuffer: Float32Array | null = null;
   private control: Int32Array | null = null;
   /** Bitmask for efficient buffer offset calculation (power-of-two optimization). */
   private bufferMask = 0;
@@ -68,8 +75,8 @@ class PCMProcessor extends AudioWorkletProcessor {
   private capacity = 0;
   /** Number of audio channels (1 for mono, 2 for stereo). */
   private channels = 2;
-  /** Pre-allocated buffer for Float32→Int16 conversion (avoids per-frame allocation). */
-  private conversionBuffer: Int16Array | null = null;
+  /** Pre-allocated buffer for clamping and channel handling (avoids per-frame allocation). */
+  private readonly conversionBuffer = new Float32Array(BLOCK_SIZE * 2);
   /** Counter for heartbeat interval. */
   private blockCount = 0;
   /** Number of blocks between heartbeats (computed from sampleRate). */
@@ -93,7 +100,7 @@ class PCMProcessor extends AudioWorkletProcessor {
     this.port.onmessage = (event) => {
       if (event.data.type === 'INIT_BUFFER') {
         const { buffer: sab, bufferMask, headerSize, channels } = event.data;
-        this.sharedBuffer = new Int16Array(sab, headerSize * 4);
+        this.sharedBuffer = new Float32Array(sab, headerSize * 4);
         this.control = new Int32Array(sab, 0, headerSize);
         this.bufferMask = bufferMask;
         this.capacity = bufferMask + 1; // Power of two: mask + 1 = size
@@ -134,33 +141,77 @@ class PCMProcessor extends AudioWorkletProcessor {
     // Check if buffer was empty (for notification)
     const wasEmpty = write === read;
 
-    // Ensure conversion buffer exists with adequate size
-    if (!this.conversionBuffer || this.conversionBuffer.length < samplesToWrite) {
-      this.conversionBuffer = new Int16Array(samplesToWrite);
-    }
+    // Clamp Float32 samples to [-1, 1] range (no quantization - that happens at encoder).
+    // Web Audio API nominally outputs [-1, 1], but clamping is defensive against:
+    // - Audio processing effects that may exceed range
+    // - Browser implementation variations
+    // - NaN values (s || 0 converts NaN to 0 to avoid undefined WebCodecs behavior)
+    // - Future API changes
+    // Note: ±Infinity is already handled correctly (clamped to ±1).
+    //
+    // Loop is unrolled by 4 for better instruction-level parallelism.
+    // frameCount is typically 128 (render quantum), always divisible by 4.
+    const len4 = frameCount & ~3;
 
-    // Bulk convert Float32 to Int16 (no atomics in this loop)
     if (this.channels === 1) {
       // Mono output: average both channels for proper downmix
       // If input is already mono (channel1 === channel0), this still works correctly
       const hasSecondChannel = input[1] !== undefined;
       if (hasSecondChannel) {
         // Proper stereo-to-mono downmix: average both channels
-        for (let i = 0; i < frameCount; i++) {
-          const avg = (channel0[i]! + channel1[i]!) * 0.5;
-          this.conversionBuffer[i] = Math.max(-1, Math.min(1, avg)) * 0x7fff;
+        for (let i = 0; i < len4; i += 4) {
+          const s0 = (channel0[i]! + channel1[i]!) * 0.5;
+          const s1 = (channel0[i + 1]! + channel1[i + 1]!) * 0.5;
+          const s2 = (channel0[i + 2]! + channel1[i + 2]!) * 0.5;
+          const s3 = (channel0[i + 3]! + channel1[i + 3]!) * 0.5;
+          this.conversionBuffer[i] = Math.max(-1, Math.min(1, s0 || 0));
+          this.conversionBuffer[i + 1] = Math.max(-1, Math.min(1, s1 || 0));
+          this.conversionBuffer[i + 2] = Math.max(-1, Math.min(1, s2 || 0));
+          this.conversionBuffer[i + 3] = Math.max(-1, Math.min(1, s3 || 0));
+        }
+        for (let i = len4; i < frameCount; i++) {
+          const s = (channel0[i]! + channel1[i]!) * 0.5;
+          this.conversionBuffer[i] = Math.max(-1, Math.min(1, s || 0));
         }
       } else {
-        // Input is already mono, just convert
-        for (let i = 0; i < frameCount; i++) {
-          this.conversionBuffer[i] = Math.max(-1, Math.min(1, channel0[i]!)) * 0x7fff;
+        // Input is already mono, just clamp
+        for (let i = 0; i < len4; i += 4) {
+          const s0 = channel0[i]!;
+          const s1 = channel0[i + 1]!;
+          const s2 = channel0[i + 2]!;
+          const s3 = channel0[i + 3]!;
+          this.conversionBuffer[i] = Math.max(-1, Math.min(1, s0 || 0));
+          this.conversionBuffer[i + 1] = Math.max(-1, Math.min(1, s1 || 0));
+          this.conversionBuffer[i + 2] = Math.max(-1, Math.min(1, s2 || 0));
+          this.conversionBuffer[i + 3] = Math.max(-1, Math.min(1, s3 || 0));
+        }
+        for (let i = len4; i < frameCount; i++) {
+          this.conversionBuffer[i] = Math.max(-1, Math.min(1, channel0[i]! || 0));
         }
       }
     } else {
-      // Stereo output
-      for (let i = 0; i < frameCount; i++) {
-        this.conversionBuffer[i * 2] = Math.max(-1, Math.min(1, channel0[i]!)) * 0x7fff;
-        this.conversionBuffer[i * 2 + 1] = Math.max(-1, Math.min(1, channel1[i]!)) * 0x7fff;
+      // Stereo output (interleaved L/R)
+      for (let i = 0; i < len4; i += 4) {
+        const l0 = channel0[i]!,
+          r0 = channel1[i]!;
+        const l1 = channel0[i + 1]!,
+          r1 = channel1[i + 1]!;
+        const l2 = channel0[i + 2]!,
+          r2 = channel1[i + 2]!;
+        const l3 = channel0[i + 3]!,
+          r3 = channel1[i + 3]!;
+        this.conversionBuffer[i * 2] = Math.max(-1, Math.min(1, l0 || 0));
+        this.conversionBuffer[i * 2 + 1] = Math.max(-1, Math.min(1, r0 || 0));
+        this.conversionBuffer[i * 2 + 2] = Math.max(-1, Math.min(1, l1 || 0));
+        this.conversionBuffer[i * 2 + 3] = Math.max(-1, Math.min(1, r1 || 0));
+        this.conversionBuffer[i * 2 + 4] = Math.max(-1, Math.min(1, l2 || 0));
+        this.conversionBuffer[i * 2 + 5] = Math.max(-1, Math.min(1, r2 || 0));
+        this.conversionBuffer[i * 2 + 6] = Math.max(-1, Math.min(1, l3 || 0));
+        this.conversionBuffer[i * 2 + 7] = Math.max(-1, Math.min(1, r3 || 0));
+      }
+      for (let i = len4; i < frameCount; i++) {
+        this.conversionBuffer[i * 2] = Math.max(-1, Math.min(1, channel0[i]! || 0));
+        this.conversionBuffer[i * 2 + 1] = Math.max(-1, Math.min(1, channel1[i]! || 0));
       }
     }
 

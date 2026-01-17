@@ -89,7 +89,7 @@ export async function handleSonosEvent(event: BroadcastEvent): Promise<void> {
         break;
 
       case 'playbackStopped':
-        await handlePlaybackStopped(eventData.speakerIp as string);
+        await handlePlaybackStopped(eventData.streamId as string, eventData.speakerIp as string);
         break;
     }
   } else if (event.category === 'latency') {
@@ -327,7 +327,7 @@ export async function stopCastForTab(tabId: number): Promise<void> {
  * Handles removal of a speaker from an active cast session.
  * Consolidates the common pattern of:
  * 1. Deduping rapid removals from multiple event sources
- * 2. Finding session by speaker IP
+ * 2. Finding session (by speaker IP or pre-resolved)
  * 3. Removing speaker from session
  * 4. Stopping cast if last speaker, or notifying popup of partial removal
  *
@@ -335,12 +335,16 @@ export async function stopCastForTab(tabId: number): Promise<void> {
  * a GENA transportState:Stopped event and a stream playbackStopped event.
  *
  * @param speakerIp - The speaker IP address being removed
- * @param reason - Why the speaker is being removed (source_changed, playback_stopped, or speaker_stopped)
+ * @param reason - Why the speaker is being removed
+ * @param preResolvedSession - Optional pre-resolved session (avoids lookup by speaker IP)
+ * @param preResolvedSession.tabId
+ * @param preResolvedSession.speakerIps
  * @returns Resolves when the speaker has been removed and notifications sent
  */
 async function handleSpeakerRemoval(
   speakerIp: string,
   reason: SpeakerRemovalReason,
+  preResolvedSession?: { tabId: number; speakerIps: string[] },
 ): Promise<void> {
   // Dedupe rapid removals from multiple event sources (GENA + stream events)
   const lastRemoval = recentlyRemovedSpeakers.get(speakerIp);
@@ -349,7 +353,7 @@ async function handleSpeakerRemoval(
     return;
   }
 
-  const session = getSessionBySpeakerIp(speakerIp);
+  const session = preResolvedSession ?? getSessionBySpeakerIp(speakerIp);
   if (!session) return;
 
   recentlyRemovedSpeakers.set(speakerIp, Date.now());
@@ -411,10 +415,23 @@ async function handleStreamEnded(streamId: string): Promise<void> {
  * Handles playback stopped events.
  * Removes speaker from session when playback stops on it.
  * If no speakers remain, stops the entire cast.
+ *
+ * Uses streamId to find the correct session, ensuring we don't accidentally
+ * remove a speaker from a newly started session during recast scenarios.
+ *
+ * @param streamId - The stream ID that was stopped
  * @param speakerIp - The speaker IP where playback stopped
  */
-async function handlePlaybackStopped(speakerIp: string): Promise<void> {
-  await handleSpeakerRemoval(speakerIp, 'playback_stopped');
+async function handlePlaybackStopped(streamId: string, speakerIp: string): Promise<void> {
+  // Use streamId to find the correct session (avoids race conditions during recast)
+  const session = getSessionByStreamId(streamId);
+  if (!session || !session.speakerIps.includes(speakerIp)) {
+    log.debug(`PlaybackStopped: stream ${streamId} / speaker ${speakerIp} not found, ignoring`);
+    return;
+  }
+
+  // Delegate to shared removal logic with pre-resolved session
+  await handleSpeakerRemoval(speakerIp, 'playback_stopped', session);
 }
 
 /**
