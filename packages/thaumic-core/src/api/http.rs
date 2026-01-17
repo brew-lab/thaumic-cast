@@ -104,7 +104,7 @@ fn create_wav_stream_with_cadence(
             tokio::select! {
                 biased;
 
-                // PRIORITY 1: Metronome tick - MUST emit something every 20ms
+                // PRIORITY 1: Metronome tick - MUST emit something every frame_duration_ms
                 _ = metronome.tick() => {
                     if let Some(frame) = queue.pop_front() {
                         // Real audio available
@@ -128,9 +128,41 @@ fn create_wav_stream_with_cadence(
                         yield Ok(TaggedFrame::Silence(silence_frame.clone()));
                     }
                     // If rx_closed and queue empty, don't yield - loop will break
+
+                    // Drain any pending frames from rx into queue after emitting.
+                    // This prevents starvation: with biased select, ticks always win,
+                    // so without this drain, frames could pile up in rx while we
+                    // emit silence (especially during recovery from underflow).
+                    if !rx_closed {
+                        loop {
+                            match rx.try_recv() {
+                                Ok(frame) => {
+                                    if queue.len() >= queue_size {
+                                        queue.pop_front();
+                                        guard.record_frame_dropped();
+                                    }
+                                    queue.push_back(frame);
+                                }
+                                Err(broadcast::error::TryRecvError::Empty) => break,
+                                Err(broadcast::error::TryRecvError::Lagged(n)) => {
+                                    let now = TokioInstant::now();
+                                    if last_lagged_log.map_or(true, |t| now.duration_since(t).as_secs() >= 1) {
+                                        log::warn!("[Stream] Lagged by {n} frames (during drain)");
+                                        last_lagged_log = Some(now);
+                                    }
+                                    // Continue draining - next try_recv will get latest
+                                }
+                                Err(broadcast::error::TryRecvError::Closed) => {
+                                    rx_closed = true;
+                                    log::debug!("[Stream] Channel closed, draining {} queued frames", queue.len());
+                                    break;
+                                }
+                            }
+                        }
+                    }
                 }
 
-                // PRIORITY 2: Receive frames into queue (when channel open)
+                // PRIORITY 2: Receive frames into queue (when channel open and tick not ready)
                 result = rx.recv(), if !rx_closed => {
                     match result {
                         Ok(frame) => {
