@@ -51,9 +51,9 @@ declare function registerProcessor(name: string, processorCtor: typeof AudioWork
 /** Global sample rate in AudioWorklet scope. */
 declare const sampleRate: number;
 
-// Note: clampSample logic is inlined in the hot path below for performance.
-// The canonical implementation is in protocol/index.ts - keep them in sync:
-//   return s < -1 ? -1 : s > 1 ? 1 : s;
+// Note: Clamping logic is inlined and unrolled in the hot path below for performance.
+// Uses Math.max(-1, Math.min(1, s || 0)) which handles NaN (via || 0) and ±Infinity.
+// See protocol/audio.ts clampSample for the canonical (non-NaN-safe) version.
 
 /**
  * AudioWorkletProcessor for writing Float32 audio to shared memory.
@@ -81,8 +81,6 @@ class PCMProcessor extends AudioWorkletProcessor {
   private blockCount = 0;
   /** Number of blocks between heartbeats (computed from sampleRate). */
   private readonly heartbeatIntervalBlocks: number;
-  /** Count of samples clipped since last heartbeat. Reset every ~1s, max ~96k - safe from overflow. */
-  private clippedSampleCount = 0;
 
   /**
    * Creates a new PCM processor instance.
@@ -147,39 +145,73 @@ class PCMProcessor extends AudioWorkletProcessor {
     // Web Audio API nominally outputs [-1, 1], but clamping is defensive against:
     // - Audio processing effects that may exceed range
     // - Browser implementation variations
-    // - NaN values (s !== s check) - replaced with 0 to avoid undefined WebCodecs behavior
+    // - NaN values (s || 0 converts NaN to 0 to avoid undefined WebCodecs behavior)
     // - Future API changes
     // Note: ±Infinity is already handled correctly (clamped to ±1).
-    // Clipping detection is guarded by __DEBUG_AUDIO__ to eliminate per-sample overhead
-    // in production builds (~192k samples/sec at 48kHz stereo).
+    //
+    // Loop is unrolled by 4 for better instruction-level parallelism.
+    // frameCount is typically 128 (render quantum), always divisible by 4.
+    const len4 = frameCount & ~3;
+
     if (this.channels === 1) {
       // Mono output: average both channels for proper downmix
       // If input is already mono (channel1 === channel0), this still works correctly
       const hasSecondChannel = input[1] !== undefined;
       if (hasSecondChannel) {
         // Proper stereo-to-mono downmix: average both channels
-        for (let i = 0; i < frameCount; i++) {
+        for (let i = 0; i < len4; i += 4) {
+          const s0 = (channel0[i]! + channel1[i]!) * 0.5;
+          const s1 = (channel0[i + 1]! + channel1[i + 1]!) * 0.5;
+          const s2 = (channel0[i + 2]! + channel1[i + 2]!) * 0.5;
+          const s3 = (channel0[i + 3]! + channel1[i + 3]!) * 0.5;
+          this.conversionBuffer[i] = Math.max(-1, Math.min(1, s0 || 0));
+          this.conversionBuffer[i + 1] = Math.max(-1, Math.min(1, s1 || 0));
+          this.conversionBuffer[i + 2] = Math.max(-1, Math.min(1, s2 || 0));
+          this.conversionBuffer[i + 3] = Math.max(-1, Math.min(1, s3 || 0));
+        }
+        for (let i = len4; i < frameCount; i++) {
           const s = (channel0[i]! + channel1[i]!) * 0.5;
-          if (__DEBUG_AUDIO__ && (s !== s || s < -1 || s > 1)) this.clippedSampleCount++;
-          this.conversionBuffer[i] = s !== s ? 0 : s < -1 ? -1 : s > 1 ? 1 : s;
+          this.conversionBuffer[i] = Math.max(-1, Math.min(1, s || 0));
         }
       } else {
         // Input is already mono, just clamp
-        for (let i = 0; i < frameCount; i++) {
-          const s = channel0[i]!;
-          if (__DEBUG_AUDIO__ && (s !== s || s < -1 || s > 1)) this.clippedSampleCount++;
-          this.conversionBuffer[i] = s !== s ? 0 : s < -1 ? -1 : s > 1 ? 1 : s;
+        for (let i = 0; i < len4; i += 4) {
+          const s0 = channel0[i]!;
+          const s1 = channel0[i + 1]!;
+          const s2 = channel0[i + 2]!;
+          const s3 = channel0[i + 3]!;
+          this.conversionBuffer[i] = Math.max(-1, Math.min(1, s0 || 0));
+          this.conversionBuffer[i + 1] = Math.max(-1, Math.min(1, s1 || 0));
+          this.conversionBuffer[i + 2] = Math.max(-1, Math.min(1, s2 || 0));
+          this.conversionBuffer[i + 3] = Math.max(-1, Math.min(1, s3 || 0));
+        }
+        for (let i = len4; i < frameCount; i++) {
+          this.conversionBuffer[i] = Math.max(-1, Math.min(1, channel0[i]! || 0));
         }
       }
     } else {
-      // Stereo output
-      for (let i = 0; i < frameCount; i++) {
-        const l = channel0[i]!;
-        const r = channel1[i]!;
-        if (__DEBUG_AUDIO__ && (l !== l || l < -1 || l > 1)) this.clippedSampleCount++;
-        this.conversionBuffer[i * 2] = l !== l ? 0 : l < -1 ? -1 : l > 1 ? 1 : l;
-        if (__DEBUG_AUDIO__ && (r !== r || r < -1 || r > 1)) this.clippedSampleCount++;
-        this.conversionBuffer[i * 2 + 1] = r !== r ? 0 : r < -1 ? -1 : r > 1 ? 1 : r;
+      // Stereo output (interleaved L/R)
+      for (let i = 0; i < len4; i += 4) {
+        const l0 = channel0[i]!,
+          r0 = channel1[i]!;
+        const l1 = channel0[i + 1]!,
+          r1 = channel1[i + 1]!;
+        const l2 = channel0[i + 2]!,
+          r2 = channel1[i + 2]!;
+        const l3 = channel0[i + 3]!,
+          r3 = channel1[i + 3]!;
+        this.conversionBuffer[i * 2] = Math.max(-1, Math.min(1, l0 || 0));
+        this.conversionBuffer[i * 2 + 1] = Math.max(-1, Math.min(1, r0 || 0));
+        this.conversionBuffer[i * 2 + 2] = Math.max(-1, Math.min(1, l1 || 0));
+        this.conversionBuffer[i * 2 + 3] = Math.max(-1, Math.min(1, r1 || 0));
+        this.conversionBuffer[i * 2 + 4] = Math.max(-1, Math.min(1, l2 || 0));
+        this.conversionBuffer[i * 2 + 5] = Math.max(-1, Math.min(1, r2 || 0));
+        this.conversionBuffer[i * 2 + 6] = Math.max(-1, Math.min(1, l3 || 0));
+        this.conversionBuffer[i * 2 + 7] = Math.max(-1, Math.min(1, r3 || 0));
+      }
+      for (let i = len4; i < frameCount; i++) {
+        this.conversionBuffer[i * 2] = Math.max(-1, Math.min(1, channel0[i]! || 0));
+        this.conversionBuffer[i * 2 + 1] = Math.max(-1, Math.min(1, channel1[i]! || 0));
       }
     }
 
@@ -209,11 +241,7 @@ class PCMProcessor extends AudioWorkletProcessor {
     this.blockCount++;
     if (this.blockCount >= this.heartbeatIntervalBlocks) {
       this.blockCount = 0;
-      // Include clipping count in heartbeat for debugging audio quality issues
-      // In production, clippedSampleCount is always 0 (counting disabled via __DEBUG_AUDIO__)
-      const clipped = this.clippedSampleCount;
-      this.clippedSampleCount = 0;
-      this.port.postMessage({ type: 'HEARTBEAT', clippedSamples: clipped });
+      this.port.postMessage({ type: 'HEARTBEAT' });
     }
 
     return true;
