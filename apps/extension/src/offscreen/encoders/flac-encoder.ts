@@ -106,8 +106,11 @@ export class FlacEncoder extends BaseAudioEncoder {
         // Defensive: handle NaN (s !== s) and clamp to [-1, 1] to prevent overflow
         const safe = s !== s ? 0 : s < -1 ? -1 : s > 1 ? 1 : s;
         // Scale to 24-bit range, add dither, then quantize
+        // Clamp after rounding to prevent overflow: dither can push peaks past ±8388607
         const dithered = safe * INT24_MAX + tpdfDither();
-        this.int32PlanarBuffer[ch * frameCount + i] = Math.round(dithered);
+        const rounded = Math.round(dithered);
+        this.int32PlanarBuffer[ch * frameCount + i] =
+          rounded < -8388608 ? -8388608 : rounded > 8388607 ? 8388607 : rounded;
       }
     }
 

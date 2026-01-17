@@ -77,8 +77,10 @@ export class PcmEncoder implements AudioEncoder {
       const s = samples[i]!;
       const safe = s !== s ? 0 : s < -1 ? -1 : s > 1 ? 1 : s;
       // Scale to Int16 range, add dither, then quantize
+      // Clamp after rounding to prevent overflow: dither can push peaks past ±32767
       const dithered = safe * INT16_MAX + tpdfDither();
-      int16[i] = Math.round(dithered);
+      const rounded = Math.round(dithered);
+      int16[i] = rounded < -32768 ? -32768 : rounded > 32767 ? 32767 : rounded;
     }
 
     // Return view of the fresh buffer - safe since buffer isn't reused
