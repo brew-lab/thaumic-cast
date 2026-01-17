@@ -51,9 +51,10 @@ const KEEP_AUDIBLE_GAIN = 0.0001;
 export class StreamSession {
   private audioContext: AudioContext | null = null;
   private consumerWorker: Worker | null = null;
-  private ringBuffer: SharedArrayBuffer;
-  private bufferSize: number;
-  private bufferMask: number;
+  // Ring buffer is created in setupAudioPipeline() after sample rate is verified
+  private ringBuffer!: SharedArrayBuffer;
+  private bufferSize!: number;
+  private bufferMask!: number;
   private sourceNode: MediaStreamAudioSourceNode | null = null;
   private workletNode: AudioWorkletNode | null = null;
   private outputGainNode: GainNode | null = null;
@@ -135,15 +136,6 @@ export class StreamSession {
     this.onDisconnected = onDisconnected;
     this.keepTabAudible = options?.keepTabAudible ?? false;
 
-    const ringBufferConfig = createAudioRingBuffer(
-      encoderConfig.sampleRate,
-      encoderConfig.channels,
-      encoderConfig.latencyMode,
-    );
-    this.ringBuffer = ringBufferConfig.sab;
-    this.bufferSize = ringBufferConfig.size;
-    this.bufferMask = ringBufferConfig.mask;
-
     this.streamReadyPromise = new Promise<void>((resolve) => {
       this.streamReadyResolve = resolve;
     });
@@ -200,6 +192,16 @@ export class StreamSession {
         throw new Error('error_unsupported_sample_rate');
       }
     }
+
+    // Create ring buffer now that we know the actual sample rate
+    const ringBufferConfig = createAudioRingBuffer(
+      this.encoderConfig.sampleRate,
+      this.encoderConfig.channels,
+      this.encoderConfig.latencyMode,
+    );
+    this.ringBuffer = ringBufferConfig.sab;
+    this.bufferSize = ringBufferConfig.size;
+    this.bufferMask = ringBufferConfig.mask;
 
     const workletUrl = chrome.runtime.getURL('pcm-processor.js');
     await this.audioContext.audioWorklet.addModule(workletUrl);
