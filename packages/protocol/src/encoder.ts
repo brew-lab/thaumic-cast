@@ -7,9 +7,8 @@ import {
   BitDepthSchema,
   type Bitrate,
   BitrateSchema,
-  FRAME_DURATION_MS_DEFAULT,
-  FRAME_DURATION_MS_MAX,
-  FRAME_DURATION_MS_MIN,
+  FRAME_SIZE_SAMPLES_MAX,
+  FRAME_SIZE_SAMPLES_MIN,
   type LatencyMode,
   LatencyModeSchema,
   SampleRateSchema,
@@ -193,12 +192,17 @@ export const EncoderConfigSchema = z
       .min(STREAMING_BUFFER_MS_MIN)
       .max(STREAMING_BUFFER_MS_MAX)
       .default(STREAMING_BUFFER_MS_DEFAULT),
-    /** Frame duration in milliseconds. Affects backend cadence timing. */
-    frameDurationMs: z
+    /**
+     * Frame size in samples per channel.
+     * Server derives exact frame duration: duration_ms = samples * 1000 / sample_rate.
+     * Set by the audio worker based on codec-optimal frame size.
+     */
+    frameSizeSamples: z
       .number()
-      .min(FRAME_DURATION_MS_MIN)
-      .max(FRAME_DURATION_MS_MAX)
-      .default(FRAME_DURATION_MS_DEFAULT),
+      .int()
+      .min(FRAME_SIZE_SAMPLES_MIN)
+      .max(FRAME_SIZE_SAMPLES_MAX)
+      .optional(),
   })
   .refine((c) => CODEC_METADATA[c.codec].supportedBitDepths.includes(c.bitsPerSample), {
     message: 'Bit depth not supported for this codec',
@@ -218,8 +222,8 @@ export interface CreateEncoderConfigOptions {
   latencyMode?: LatencyMode;
   /** Buffer size for PCM streaming in milliseconds (100-1000). */
   streamingBufferMs?: number;
-  /** Frame duration in milliseconds (5-150). Affects backend cadence timing. */
-  frameDurationMs?: number;
+  /** Frame size in samples per channel. Set by audio worker. */
+  frameSizeSamples?: number;
 }
 
 /**
@@ -236,7 +240,7 @@ export function createEncoderConfig(options: CreateEncoderConfigOptions): Encode
     bitsPerSample = 16,
     latencyMode = 'quality',
     streamingBufferMs = STREAMING_BUFFER_MS_DEFAULT,
-    frameDurationMs = FRAME_DURATION_MS_DEFAULT,
+    frameSizeSamples,
   } = options;
   const effectiveBitrate =
     bitrate && isValidBitrateForCodec(codec, bitrate) ? bitrate : getDefaultBitrate(codec);
@@ -252,6 +256,6 @@ export function createEncoderConfig(options: CreateEncoderConfigOptions): Encode
     bitsPerSample: effectiveBitsPerSample,
     latencyMode,
     streamingBufferMs,
-    frameDurationMs,
+    frameSizeSamples,
   };
 }

@@ -98,13 +98,8 @@ pub const WS_HEARTBEAT_CHECK_INTERVAL_SECS: u64 = 1;
 pub const HTTP_PREFILL_DELAY_MS: u64 = 250;
 
 /// Default frame duration for injected silence (ms).
-/// Used as fallback when client doesn't specify frame_duration_ms.
-///
-/// SYNC REQUIRED: These must match the TypeScript constants in:
-///   packages/protocol/src/audio.ts
-///   - FRAME_DURATION_MS_DEFAULT
-///   - FRAME_DURATION_MS_MIN
-///   - FRAME_DURATION_MS_MAX
+/// Used as fallback when client doesn't specify frame_size_samples.
+/// At 48kHz this corresponds to 480 samples.
 pub const SILENCE_FRAME_DURATION_MS: u32 = 10;
 
 /// Minimum frame duration (ms).
@@ -117,6 +112,18 @@ pub const MIN_FRAME_DURATION_MS: u32 = 5;
 /// - FLAC: 4096 samples at 48kHz = 85ms (larger frames improve compression)
 /// 150ms provides margin for all cases.
 pub const MAX_FRAME_DURATION_MS: u32 = 150;
+
+/// Frame size constraints (samples per channel).
+/// Used to derive exact frame duration without floating-point rounding.
+///
+/// SYNC REQUIRED: These must match the TypeScript constants in:
+///   packages/protocol/src/audio.ts
+///   - FRAME_SIZE_SAMPLES_MIN
+///   - FRAME_SIZE_SAMPLES_MAX
+#[allow(dead_code)]
+pub const MIN_FRAME_SIZE_SAMPLES: u32 = 64;
+#[allow(dead_code)]
+pub const MAX_FRAME_SIZE_SAMPLES: u32 = 8192;
 
 /// Minimum streaming buffer size (ms).
 pub const MIN_STREAMING_BUFFER_MS: u64 = 100;

@@ -137,8 +137,9 @@ struct EncoderConfig {
     bits_per_sample: Option<u16>,
     /// Streaming buffer size in milliseconds (100-1000). Only affects PCM codec.
     streaming_buffer_ms: Option<u64>,
-    /// Frame duration in milliseconds (5-50). Affects backend cadence timing.
-    frame_duration_ms: Option<u32>,
+    /// Frame size in samples per channel.
+    /// Server derives exact duration: duration_ms = samples * 1000 / sample_rate
+    frame_size_samples: Option<u32>,
 }
 
 /// Handshake request payload from client.
@@ -377,11 +378,14 @@ fn handle_handshake(state: &AppState, payload: HandshakeRequest) -> HandshakeRes
         .unwrap_or(DEFAULT_STREAMING_BUFFER_MS)
         .clamp(MIN_STREAMING_BUFFER_MS, MAX_STREAMING_BUFFER_MS);
 
-    // Extract frame duration with bounds validation
+    // Derive frame duration from frame_size_samples.
+    // Using samples avoids floating-point rounding errors in the extension.
+    // Formula: duration_ms = samples * 1000 / sample_rate
     let frame_duration_ms = payload
         .encoder_config
         .as_ref()
-        .and_then(|c| c.frame_duration_ms)
+        .and_then(|c| c.frame_size_samples)
+        .map(|samples| (samples as u64 * 1000 / sample_rate as u64) as u32)
         .unwrap_or(SILENCE_FRAME_DURATION_MS)
         .clamp(MIN_FRAME_DURATION_MS, MAX_FRAME_DURATION_MS);
 

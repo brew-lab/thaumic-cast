@@ -40,7 +40,7 @@ const log = createLogger('AudioWorker');
  * - PCM: 10ms worth of samples (low latency for real-time streaming)
  *
  * Frame duration varies by sample rate (e.g., AAC 1024 samples = 21ms at 48kHz, 128ms at 8kHz).
- * Server limits: MIN_FRAME_DURATION_MS=5, MAX_FRAME_DURATION_MS=150.
+ * Server limits: MIN_FRAME_SIZE_SAMPLES=64, MAX_FRAME_SIZE_SAMPLES=8192.
  * See packages/thaumic-core/src/protocol_constants.rs for Rust-side constants.
  *
  * @param codec - The audio codec
@@ -1065,11 +1065,11 @@ self.onmessage = async (event: MessageEvent<InboundMessage>) => {
       framePeriodMs = frameSizeToMs(optimalFrameSamples, sampleRate);
       maxDriftMs = framePeriodMs * 6; // Allow ~6 frames of burst catch-up
 
-      // Update encoderConfig with computed frame duration for server handshake
-      // Round to integer - server expects u32, and sub-millisecond precision isn't needed for scheduling
-      const configWithFrameDuration: EncoderConfig = {
+      // Update encoderConfig with frame size for server handshake
+      // Send samples (integer) instead of duration (float) to avoid rounding errors
+      const configWithFrameSize: EncoderConfig = {
         ...encoderConfig,
-        frameDurationMs: Math.round(framePeriodMs),
+        frameSizeSamples: optimalFrameSamples,
       };
 
       log.info(
@@ -1105,10 +1105,10 @@ self.onmessage = async (event: MessageEvent<InboundMessage>) => {
 
       // Create encoder
       log.info(`Creating encoder: ${encoderConfig.codec} @ ${encoderConfig.bitrate}kbps`);
-      encoder = await createEncoder(configWithFrameDuration);
+      encoder = await createEncoder(configWithFrameSize);
 
-      // Connect WebSocket (sends frame duration to server in handshake)
-      const id = await connectWebSocket(wsUrl, configWithFrameDuration);
+      // Connect WebSocket (sends frame size to server in handshake)
+      const id = await connectWebSocket(wsUrl, configWithFrameSize);
 
       running = true;
       postToMain({ type: 'CONNECTED', streamId: id });

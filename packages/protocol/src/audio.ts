@@ -174,19 +174,16 @@ export const STREAMING_BUFFER_MS_MAX = 1000;
 export const STREAMING_BUFFER_MS_DEFAULT = 200;
 
 /**
- * Frame duration constraints and default (in milliseconds).
- * Affects backend cadence timing for silence injection.
+ * Frame size constraints (in samples per channel).
+ * Used to derive exact frame duration without floating-point rounding.
+ * Server computes: duration_ms = samples * 1000 / sample_rate
  *
  * SYNC REQUIRED: These must match the Rust constants in:
  *   packages/thaumic-core/src/protocol_constants.rs
- *   - MIN_FRAME_DURATION_MS
- *   - MAX_FRAME_DURATION_MS
- *   - SILENCE_FRAME_DURATION_MS (default)
  *
- * Bounds are based on actual codec requirements:
- * - Min 5ms: reasonable for low-latency PCM
- * - Max 150ms: covers AAC at 8kHz (1024 samples = 128ms)
+ * Bounds are based on codec frame sizes:
+ * - Min 64: ~1.3ms at 48kHz (reasonable minimum)
+ * - Max 8192: ~170ms at 48kHz (covers all codec frame sizes)
  */
-export const FRAME_DURATION_MS_MIN = 5;
-export const FRAME_DURATION_MS_MAX = 150;
-export const FRAME_DURATION_MS_DEFAULT = 10;
+export const FRAME_SIZE_SAMPLES_MIN = 64;
+export const FRAME_SIZE_SAMPLES_MAX = 8192;

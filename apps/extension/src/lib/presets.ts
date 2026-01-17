@@ -16,7 +16,6 @@ import type {
 import {
   CODEC_METADATA,
   DEFAULT_BITS_PER_SAMPLE,
-  FRAME_DURATION_MS_DEFAULT,
   generateDynamicPresets,
   getStreamingPolicy,
   getSupportedSampleRates,
@@ -47,8 +46,7 @@ function buildConfigFromCustomSettings(customSettings: CustomAudioSettings): Enc
     bitsPerSample: customSettings.bitsPerSample ?? DEFAULT_BITS_PER_SAMPLE,
     latencyMode: customSettings.latencyMode,
     streamingBufferMs: customSettings.streamingBufferMs ?? policy.streamingBufferMs,
-    // Placeholder: worker computes optimal frame duration based on codec and overwrites this
-    frameDurationMs: FRAME_DURATION_MS_DEFAULT,
+    // frameSizeSamples is computed by the audio worker based on codec-optimal frame size
   };
 }
 
@@ -76,8 +74,7 @@ function getFallbackConfig(codecSupport: SupportedCodecsResult): EncoderConfig |
     bitsPerSample: DEFAULT_BITS_PER_SAMPLE,
     latencyMode: 'quality',
     streamingBufferMs: policy.streamingBufferMs,
-    // Placeholder: worker computes optimal frame duration based on codec and overwrites this
-    frameDurationMs: FRAME_DURATION_MS_DEFAULT,
+    // frameSizeSamples is computed by the audio worker based on codec-optimal frame size
   };
 }
 
@@ -148,8 +145,7 @@ function buildConfigFromOption(
     bitsPerSample: DEFAULT_BITS_PER_SAMPLE,
     latencyMode,
     streamingBufferMs: policy.streamingBufferMs,
-    // Placeholder: worker computes optimal frame duration based on codec and overwrites this
-    frameDurationMs: FRAME_DURATION_MS_DEFAULT,
+    // frameSizeSamples is computed by the audio worker based on codec-optimal frame size
   };
 }
 
