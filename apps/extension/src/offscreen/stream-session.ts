@@ -205,10 +205,13 @@ export class StreamSession {
     await this.audioContext.audioWorklet.addModule(workletUrl);
 
     this.sourceNode = this.audioContext.createMediaStreamSource(this.mediaStream);
+    // Always receive stereo input - the processor handles mono downmixing.
+    // Using channelCount: 1 with 'discrete' interpretation would drop the right
+    // channel before it reaches the processor, resulting in left-only output.
     this.workletNode = new AudioWorkletNode(this.audioContext, 'pcm-processor', {
-      channelCount: this.encoderConfig.channels,
+      channelCount: 2,
       channelCountMode: 'explicit',
-      channelInterpretation: 'discrete', // No mixing, direct passthrough
+      channelInterpretation: 'discrete',
     });
 
     this.workletNode.port.postMessage({
