@@ -97,8 +97,26 @@ pub const WS_HEARTBEAT_CHECK_INTERVAL_SECS: u64 = 1;
 /// Delay before serving audio after Sonos connects (ms).
 pub const HTTP_PREFILL_DELAY_MS: u64 = 250;
 
-/// Duration of injected silence frames (ms).
-pub const SILENCE_FRAME_DURATION_MS: u32 = 20;
+/// Default frame duration for injected silence (ms).
+/// Used as fallback when client doesn't specify frame_duration_ms.
+///
+/// SYNC REQUIRED: These must match the TypeScript constants in:
+///   packages/protocol/src/audio.ts
+///   - FRAME_DURATION_MS_DEFAULT
+///   - FRAME_DURATION_MS_MIN
+///   - FRAME_DURATION_MS_MAX
+pub const SILENCE_FRAME_DURATION_MS: u32 = 10;
+
+/// Minimum frame duration (ms).
+/// 5ms is reasonable for low-latency PCM streaming.
+pub const MIN_FRAME_DURATION_MS: u32 = 5;
+
+/// Maximum frame duration (ms).
+/// Must accommodate codec requirements at all supported sample rates:
+/// - AAC: 1024 samples at 8kHz = 128ms (spec-mandated frame size)
+/// - FLAC: 4096 samples at 48kHz = 85ms (larger frames improve compression)
+/// 150ms provides margin for all cases.
+pub const MAX_FRAME_DURATION_MS: u32 = 150;
 
 /// Minimum streaming buffer size (ms).
 pub const MIN_STREAMING_BUFFER_MS: u64 = 100;
@@ -110,5 +128,7 @@ pub const MAX_STREAMING_BUFFER_MS: u64 = 1000;
 pub const DEFAULT_STREAMING_BUFFER_MS: u64 = 200;
 
 /// Maximum cadence queue size (frames).
+/// Calculated using MIN_FRAME_DURATION_MS to ensure buffer can hold enough frames
+/// at the smallest possible frame duration.
 pub const MAX_CADENCE_QUEUE_SIZE: usize =
-    (MAX_STREAMING_BUFFER_MS / SILENCE_FRAME_DURATION_MS as u64) as usize;
+    (MAX_STREAMING_BUFFER_MS / MIN_FRAME_DURATION_MS as u64) as usize;

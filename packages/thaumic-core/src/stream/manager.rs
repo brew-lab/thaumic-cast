@@ -240,6 +240,9 @@ pub struct StreamState {
     /// Streaming buffer size in milliseconds (100-1000, default 200).
     /// Used to calculate cadence queue size for PCM streams.
     pub streaming_buffer_ms: u64,
+    /// Frame duration in milliseconds for cadence timing.
+    /// Determines silence frame duration and cadence tick interval.
+    pub frame_duration_ms: u32,
 }
 
 impl StreamState {
@@ -253,6 +256,7 @@ impl StreamState {
     /// * `buffer_frames` - Maximum frames to buffer for late-joining clients
     /// * `channel_capacity` - Capacity of the broadcast channel for audio frames
     /// * `streaming_buffer_ms` - Streaming buffer size in milliseconds (100-1000)
+    /// * `frame_duration_ms` - Frame duration in milliseconds for cadence timing
     pub fn new(
         id: String,
         codec: AudioCodec,
@@ -261,15 +265,17 @@ impl StreamState {
         buffer_frames: usize,
         channel_capacity: usize,
         streaming_buffer_ms: u64,
+        frame_duration_ms: u32,
     ) -> Self {
         let (tx, _) = broadcast::channel(channel_capacity);
         log::debug!(
-            "[Stream] Creating {} with codec {:?}, format {:?}, transcoder: {}, buffer: {}ms",
+            "[Stream] Creating {} with codec {:?}, format {:?}, transcoder: {}, buffer: {}ms, frame: {}ms",
             id,
             codec,
             audio_format,
             transcoder.description(),
-            streaming_buffer_ms
+            streaming_buffer_ms,
+            frame_duration_ms
         );
         Self {
             id,
@@ -285,6 +291,7 @@ impl StreamState {
             transcoder,
             timing: StreamTiming::new(),
             streaming_buffer_ms,
+            frame_duration_ms,
         }
     }
 
@@ -409,12 +416,14 @@ impl StreamManager {
     /// * `audio_format` - Audio format configuration (sample rate, channels, bit depth)
     /// * `transcoder` - Transcoder for converting input to output format
     /// * `streaming_buffer_ms` - Streaming buffer size in milliseconds (100-1000)
+    /// * `frame_duration_ms` - Frame duration in milliseconds for cadence timing
     pub fn create_stream(
         &self,
         codec: AudioCodec,
         audio_format: AudioFormat,
         transcoder: Arc<dyn Transcoder>,
         streaming_buffer_ms: u64,
+        frame_duration_ms: u32,
     ) -> Result<String, String> {
         if self.streams.len() >= self.config.max_concurrent_streams {
             return Err("Maximum number of concurrent streams reached".to_string());
@@ -429,6 +438,7 @@ impl StreamManager {
             self.config.buffer_frames,
             self.config.channel_capacity,
             streaming_buffer_ms,
+            frame_duration_ms,
         ));
         self.streams.insert(id.clone(), state);
         Ok(id)

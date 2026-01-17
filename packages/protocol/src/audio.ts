@@ -134,3 +134,21 @@ export function clampSample(s: number): number {
 export const STREAMING_BUFFER_MS_MIN = 100;
 export const STREAMING_BUFFER_MS_MAX = 1000;
 export const STREAMING_BUFFER_MS_DEFAULT = 200;
+
+/**
+ * Frame duration constraints and default (in milliseconds).
+ * Affects backend cadence timing for silence injection.
+ *
+ * SYNC REQUIRED: These must match the Rust constants in:
+ *   packages/thaumic-core/src/protocol_constants.rs
+ *   - MIN_FRAME_DURATION_MS
+ *   - MAX_FRAME_DURATION_MS
+ *   - SILENCE_FRAME_DURATION_MS (default)
+ *
+ * Bounds are based on actual codec requirements:
+ * - Min 5ms: reasonable for low-latency PCM
+ * - Max 150ms: covers AAC at 8kHz (1024 samples = 128ms)
+ */
+export const FRAME_DURATION_MS_MIN = 5;
+export const FRAME_DURATION_MS_MAX = 150;
+export const FRAME_DURATION_MS_DEFAULT = 10;

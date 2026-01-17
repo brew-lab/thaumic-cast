@@ -20,15 +20,66 @@ import {
   DATA_BYTE_OFFSET,
 } from './ring-buffer';
 import { createEncoder, type AudioEncoder } from './encoders';
-import type { EncoderConfig, StreamMetadata, WsMessage } from '@thaumic-cast/protocol';
+import type { AudioCodec, EncoderConfig, StreamMetadata, WsMessage } from '@thaumic-cast/protocol';
 import { WsMessageSchema } from '@thaumic-cast/protocol';
 import { createLogger } from '@thaumic-cast/shared';
 import { exponentialBackoff } from '../lib/backoff';
 
 const log = createLogger('AudioWorker');
 
-/** Frame duration in seconds (10ms). Smaller frames = finer drop granularity. */
-const FRAME_DURATION_SEC = 0.01;
+// ─────────────────────────────────────────────────────────────────────────────
+// Codec-Aware Frame Sizing
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Returns the optimal frame size in samples for a given codec and sample rate.
+ * Frame size is codec-aware for optimal efficiency:
+ * - AAC: 1024 samples (spec-mandated per ISO/IEC 14496-3)
+ * - FLAC: 4096 samples (larger frames improve compression ratio)
+ * - Vorbis: 2048 samples (good balance for VBR encoding)
+ * - PCM: 10ms worth of samples (low latency for real-time streaming)
+ *
+ * Frame duration varies by sample rate (e.g., AAC 1024 samples = 21ms at 48kHz, 128ms at 8kHz).
+ * Server limits: MIN_FRAME_DURATION_MS=5, MAX_FRAME_DURATION_MS=150.
+ * See packages/thaumic-core/src/protocol_constants.rs for Rust-side constants.
+ *
+ * @param codec - The audio codec
+ * @param sampleRate - The sample rate in Hz
+ * @returns Frame size in samples (mono frames, multiply by channels for interleaved)
+ */
+function getOptimalFrameSizeSamples(codec: AudioCodec, sampleRate: number): number {
+  switch (codec) {
+    case 'aac-lc':
+    case 'he-aac':
+    case 'he-aac-v2':
+      // AAC's native frame size is always 1024 samples (spec-mandated)
+      return 1024;
+    case 'flac':
+      // Larger frames improve FLAC compression ratio
+      return 4096;
+    case 'vorbis':
+      // Vorbis uses variable block sizes internally; 2048 is a good batching choice
+      return 2048;
+    case 'pcm':
+    default:
+      // PCM: prioritize low latency with 10ms frames
+      return Math.round(sampleRate * 0.01);
+  }
+}
+
+/**
+ * Converts frame size in samples to duration in milliseconds.
+ * @param frameSizeSamples - Frame size in mono samples
+ * @param sampleRate - Sample rate in Hz
+ * @returns Duration in milliseconds
+ */
+function frameSizeToMs(frameSizeSamples: number, sampleRate: number): number {
+  return (frameSizeSamples / sampleRate) * 1000;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Constants
+// ─────────────────────────────────────────────────────────────────────────────
 
 /** Maximum pending encode operations before dropping frames. PCM encoder always returns 0 (synchronous). */
 const MAX_ENCODE_QUEUE = 8;
@@ -52,15 +103,6 @@ const BACKPRESSURE_BACKOFF_MAX_MS = 40;
 
 /** Timeout for waiting on producer (ms). Triggers underflow if exceeded. 200ms = 20 frames of headroom. */
 const WAIT_TIMEOUT_MS = 200;
-
-/** Frame period in milliseconds (derived from FRAME_DURATION_SEC). */
-const FRAME_PERIOD_MS = FRAME_DURATION_SEC * 1000;
-
-/**
- * Maximum drift allowed before clamping frame timing (ms).
- * Allows burst catch-up of ~6 frames (~60ms) when recovering from brief stalls.
- */
-const MAX_DRIFT_MS = FRAME_PERIOD_MS * 6;
 
 /** Interval for posting diagnostic stats to main thread (ms). */
 const STATS_INTERVAL_MS = 2000;
@@ -236,9 +278,13 @@ let backpressureCycles = 0;
 /** Consecutive backpressure cycles for adaptive backoff calculation. */
 let consecutiveBackpressureCycles = 0;
 
-// Time-based pacing
+// Time-based pacing (computed from codec-aware frame size)
 /** Next frame due time for time-based pacing (performance.now() timestamp). */
 let nextFrameDueTime = 0;
+/** Frame period in milliseconds (codec-dependent). */
+let framePeriodMs = 0;
+/** Maximum drift allowed before clamping frame timing (ms). ~6 frames of catch-up. */
+let maxDriftMs = 0;
 
 // Catch-up thresholds (computed from constants and sample rate)
 let catchUpTargetSamples = 0;
@@ -758,7 +804,7 @@ function drainWithTimeBudget(): number {
  * - If buffer empty: wait on write index via Atomics.waitAsync
  *
  * Drift handling:
- * - Allows burst catch-up of ~3 frames (MAX_DRIFT_MS) when recovering from stalls
+ * - Allows burst catch-up of ~6 frames when recovering from stalls
  * - Clamps drift to prevent unbounded catch-up after long pauses
  */
 async function consumeLoop(): Promise<void> {
@@ -815,13 +861,13 @@ async function consumeLoop(): Promise<void> {
         // First frame - initialize due time to now
         nextFrameDueTime = performance.now();
       }
-      nextFrameDueTime += framesThisWake * FRAME_PERIOD_MS;
+      nextFrameDueTime += framesThisWake * framePeriodMs;
 
-      // Clamp: don't let due time fall more than MAX_DRIFT_MS behind wall clock
+      // Clamp: don't let due time fall more than maxDriftMs behind wall clock
       // This allows burst catch-up but prevents unbounded drift accumulation
       const nowAfterDrain = performance.now();
-      if (nextFrameDueTime < nowAfterDrain - MAX_DRIFT_MS) {
-        nextFrameDueTime = nowAfterDrain - MAX_DRIFT_MS;
+      if (nextFrameDueTime < nowAfterDrain - maxDriftMs) {
+        nextFrameDueTime = nowAfterDrain - maxDriftMs;
       }
     }
 
@@ -933,10 +979,25 @@ self.onmessage = async (event: MessageEvent<InboundMessage>) => {
       bufferSize = size;
       bufferMask = mask;
 
-      // Calculate frame size from sample rate and channels
-      frameSizeSamples = Math.round(sampleRate * FRAME_DURATION_SEC) * encoderConfig.channels;
+      // Calculate codec-aware frame size for optimal encoder efficiency
+      const optimalFrameSamples = getOptimalFrameSizeSamples(encoderConfig.codec, sampleRate);
+      frameSizeSamples = optimalFrameSamples * encoderConfig.channels;
       frameBuffer = new Float32Array(frameSizeSamples);
       frameOffset = 0;
+
+      // Compute frame timing for pacing
+      framePeriodMs = frameSizeToMs(optimalFrameSamples, sampleRate);
+      maxDriftMs = framePeriodMs * 6; // Allow ~6 frames of burst catch-up
+
+      // Update encoderConfig with computed frame duration for server handshake
+      const configWithFrameDuration: EncoderConfig = {
+        ...encoderConfig,
+        frameDurationMs: framePeriodMs,
+      };
+
+      log.info(
+        `Frame size: ${optimalFrameSamples} samples (${framePeriodMs.toFixed(1)}ms) for ${encoderConfig.codec}`,
+      );
 
       // Reset state
       underflowCount = 0;
@@ -957,10 +1018,10 @@ self.onmessage = async (event: MessageEvent<InboundMessage>) => {
 
       // Create encoder
       log.info(`Creating encoder: ${encoderConfig.codec} @ ${encoderConfig.bitrate}kbps`);
-      encoder = await createEncoder(encoderConfig);
+      encoder = await createEncoder(configWithFrameDuration);
 
-      // Connect WebSocket
-      const id = await connectWebSocket(wsUrl, encoderConfig);
+      // Connect WebSocket (sends frame duration to server in handshake)
+      const id = await connectWebSocket(wsUrl, configWithFrameDuration);
 
       running = true;
       postToMain({ type: 'CONNECTED', streamId: id });

@@ -12,7 +12,8 @@ use std::time::{Duration, Instant};
 
 use crate::api::AppState;
 use crate::protocol_constants::{
-    DEFAULT_STREAMING_BUFFER_MS, MAX_STREAMING_BUFFER_MS, MIN_STREAMING_BUFFER_MS,
+    DEFAULT_STREAMING_BUFFER_MS, MAX_FRAME_DURATION_MS, MAX_STREAMING_BUFFER_MS,
+    MIN_FRAME_DURATION_MS, MIN_STREAMING_BUFFER_MS, SILENCE_FRAME_DURATION_MS,
     WS_HEARTBEAT_CHECK_INTERVAL_SECS, WS_HEARTBEAT_TIMEOUT_SECS,
 };
 use crate::services::StreamCoordinator;
@@ -136,6 +137,8 @@ struct EncoderConfig {
     bits_per_sample: Option<u16>,
     /// Streaming buffer size in milliseconds (100-1000). Only affects PCM codec.
     streaming_buffer_ms: Option<u64>,
+    /// Frame duration in milliseconds (5-50). Affects backend cadence timing.
+    frame_duration_ms: Option<u32>,
 }
 
 /// Handshake request payload from client.
@@ -374,6 +377,14 @@ fn handle_handshake(state: &AppState, payload: HandshakeRequest) -> HandshakeRes
         .unwrap_or(DEFAULT_STREAMING_BUFFER_MS)
         .clamp(MIN_STREAMING_BUFFER_MS, MAX_STREAMING_BUFFER_MS);
 
+    // Extract frame duration with bounds validation
+    let frame_duration_ms = payload
+        .encoder_config
+        .as_ref()
+        .and_then(|c| c.frame_duration_ms)
+        .unwrap_or(SILENCE_FRAME_DURATION_MS)
+        .clamp(MIN_FRAME_DURATION_MS, MAX_FRAME_DURATION_MS);
+
     // Extract and validate bit depth (16 or 24), defaulting to 16.
     // 24-bit is only supported for FLAC codec on Sonos S2 speakers.
     let requested_bits = payload
@@ -406,11 +417,12 @@ fn handle_handshake(state: &AppState, payload: HandshakeRequest) -> HandshakeRes
     let audio_format = AudioFormat::new(sample_rate, channels as u16, bits_per_sample);
 
     log::info!(
-        "[WS] Creating stream: input={:?}, output={:?}, format={:?}, buffer={}ms",
+        "[WS] Creating stream: input={:?}, output={:?}, format={:?}, buffer={}ms, frame={}ms",
         codec_str,
         output_codec,
         audio_format,
-        streaming_buffer_ms
+        streaming_buffer_ms,
+        frame_duration_ms
     );
 
     match state.stream_coordinator.create_stream(
@@ -418,6 +430,7 @@ fn handle_handshake(state: &AppState, payload: HandshakeRequest) -> HandshakeRes
         audio_format,
         transcoder,
         streaming_buffer_ms,
+        frame_duration_ms,
     ) {
         Ok(id) => HandshakeResult::Success(id),
         Err(e) => HandshakeResult::Error(e),

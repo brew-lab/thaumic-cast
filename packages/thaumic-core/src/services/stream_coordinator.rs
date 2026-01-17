@@ -165,6 +165,7 @@ impl StreamCoordinator {
     /// * `audio_format` - Audio format configuration (sample rate, channels, bit depth)
     /// * `transcoder` - Transcoder for converting input to output format
     /// * `streaming_buffer_ms` - Streaming buffer size in milliseconds (100-1000)
+    /// * `frame_duration_ms` - Frame duration in milliseconds for cadence timing
     ///
     /// Returns the stream ID on success. Broadcasts a `StreamEvent::Created` event.
     pub fn create_stream(
@@ -173,12 +174,14 @@ impl StreamCoordinator {
         audio_format: AudioFormat,
         transcoder: Arc<dyn Transcoder>,
         streaming_buffer_ms: u64,
+        frame_duration_ms: u32,
     ) -> Result<String, String> {
         let stream_id = self.stream_manager.create_stream(
             codec,
             audio_format,
             transcoder,
             streaming_buffer_ms,
+            frame_duration_ms,
         )?;
 
         // Broadcast stream created event

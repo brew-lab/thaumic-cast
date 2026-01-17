@@ -7,6 +7,9 @@ import {
   BitDepthSchema,
   type Bitrate,
   BitrateSchema,
+  FRAME_DURATION_MS_DEFAULT,
+  FRAME_DURATION_MS_MAX,
+  FRAME_DURATION_MS_MIN,
   type LatencyMode,
   LatencyModeSchema,
   SampleRateSchema,
@@ -190,6 +193,12 @@ export const EncoderConfigSchema = z
       .min(STREAMING_BUFFER_MS_MIN)
       .max(STREAMING_BUFFER_MS_MAX)
       .default(STREAMING_BUFFER_MS_DEFAULT),
+    /** Frame duration in milliseconds. Affects backend cadence timing. */
+    frameDurationMs: z
+      .number()
+      .min(FRAME_DURATION_MS_MIN)
+      .max(FRAME_DURATION_MS_MAX)
+      .default(FRAME_DURATION_MS_DEFAULT),
   })
   .refine((c) => CODEC_METADATA[c.codec].supportedBitDepths.includes(c.bitsPerSample), {
     message: 'Bit depth not supported for this codec',
@@ -209,6 +218,8 @@ export interface CreateEncoderConfigOptions {
   latencyMode?: LatencyMode;
   /** Buffer size for PCM streaming in milliseconds (100-1000). */
   streamingBufferMs?: number;
+  /** Frame duration in milliseconds (5-150). Affects backend cadence timing. */
+  frameDurationMs?: number;
 }
 
 /**
@@ -225,6 +236,7 @@ export function createEncoderConfig(options: CreateEncoderConfigOptions): Encode
     bitsPerSample = 16,
     latencyMode = 'quality',
     streamingBufferMs = STREAMING_BUFFER_MS_DEFAULT,
+    frameDurationMs = FRAME_DURATION_MS_DEFAULT,
   } = options;
   const effectiveBitrate =
     bitrate && isValidBitrateForCodec(codec, bitrate) ? bitrate : getDefaultBitrate(codec);
@@ -240,5 +252,6 @@ export function createEncoderConfig(options: CreateEncoderConfigOptions): Encode
     bitsPerSample: effectiveBitsPerSample,
     latencyMode,
     streamingBufferMs,
+    frameDurationMs,
   };
 }

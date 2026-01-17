@@ -34,7 +34,7 @@ use crate::api::AppState;
 use crate::error::{ErrorCode, ThaumicError, ThaumicResult};
 use crate::protocol_constants::{
     APP_NAME, HTTP_PREFILL_DELAY_MS, ICY_METAINT, MAX_CADENCE_QUEUE_SIZE, MAX_GENA_BODY_SIZE,
-    SERVICE_ID, SILENCE_FRAME_DURATION_MS, WAV_STREAM_SIZE_MAX,
+    SERVICE_ID, WAV_STREAM_SIZE_MAX,
 };
 use crate::sonos::discovery::probe_speaker_by_ip;
 use crate::state::ManualSpeakerConfig;
@@ -65,21 +65,22 @@ fn lagged_error(frames: u64) -> std::io::Error {
 
 /// Creates a WAV audio stream with fixed-cadence output.
 ///
-/// Maintains real-time 20ms cadence regardless of input timing:
+/// Maintains real-time cadence regardless of input timing:
 /// - Incoming frames are queued (bounded to `queue_size`)
-/// - Metronome ticks every `SILENCE_FRAME_DURATION_MS` (20ms)
+/// - Metronome ticks every `frame_duration_ms`
 /// - On each tick: send queued frame if available, else send silence
 ///
 /// This ensures Sonos always receives continuous data, smoothing
-/// over input jitter and CPU spikes up to `queue_size * 20ms`.
+/// over input jitter and CPU spikes up to `queue_size * frame_duration_ms`.
 fn create_wav_stream_with_cadence(
     mut rx: broadcast::Receiver<Bytes>,
     silence_frame: Bytes,
     guard: Arc<LoggingStreamGuard>,
     queue_size: usize,
+    frame_duration_ms: u32,
 ) -> impl Stream<Item = Result<TaggedFrame, std::io::Error>> {
     stream! {
-        let cadence_duration = Duration::from_millis(SILENCE_FRAME_DURATION_MS as u64);
+        let cadence_duration = Duration::from_millis(frame_duration_ms as u64);
 
         let mut queue: VecDeque<Bytes> = VecDeque::with_capacity(queue_size);
         // Start first tick after one cadence period, giving frames time to queue up.
@@ -823,15 +824,14 @@ async fn stream_audio(
     // tend to be more resilient to jitter due to their buffering behavior.
     let live_stream: TaggedStream = if stream_state.codec == AudioCodec::Pcm {
         // PCM: fixed-cadence streaming with queue buffer and silence injection
-        let silence_frame = stream_state
-            .audio_format
-            .silence_frame(SILENCE_FRAME_DURATION_MS);
+        let frame_duration_ms = stream_state.frame_duration_ms;
+        let silence_frame = stream_state.audio_format.silence_frame(frame_duration_ms);
 
         // Calculate queue size from streaming buffer (ceil division)
         // queue_size = ceil(buffer_ms / frame_ms), clamped to [1, MAX_CADENCE_QUEUE_SIZE]
         let queue_size = stream_state
             .streaming_buffer_ms
-            .div_ceil(SILENCE_FRAME_DURATION_MS as u64) as usize;
+            .div_ceil(frame_duration_ms as u64) as usize;
         let queue_size = queue_size.clamp(1, MAX_CADENCE_QUEUE_SIZE);
 
         Box::pin(create_wav_stream_with_cadence(
@@ -839,6 +839,7 @@ async fn stream_audio(
             silence_frame,
             Arc::clone(&guard),
             queue_size,
+            frame_duration_ms,
         ))
     } else {
         // Compressed codecs: no silence injection, all frames are real audio
