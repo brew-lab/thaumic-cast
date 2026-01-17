@@ -990,9 +990,10 @@ self.onmessage = async (event: MessageEvent<InboundMessage>) => {
       maxDriftMs = framePeriodMs * 6; // Allow ~6 frames of burst catch-up
 
       // Update encoderConfig with computed frame duration for server handshake
+      // Round to integer - server expects u32, and sub-millisecond precision isn't needed for scheduling
       const configWithFrameDuration: EncoderConfig = {
         ...encoderConfig,
-        frameDurationMs: framePeriodMs,
+        frameDurationMs: Math.round(framePeriodMs),
       };
 
       log.info(
