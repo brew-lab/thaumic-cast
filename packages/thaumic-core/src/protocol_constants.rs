@@ -94,9 +94,6 @@ pub const WS_HEARTBEAT_TIMEOUT_SECS: u64 = 30;
 /// Interval between WebSocket heartbeat checks (seconds).
 pub const WS_HEARTBEAT_CHECK_INTERVAL_SECS: u64 = 1;
 
-/// Delay before serving audio after Sonos connects (ms).
-pub const HTTP_PREFILL_DELAY_MS: u64 = 250;
-
 /// Default frame duration for injected silence (ms).
 /// Used as fallback when client doesn't specify frame_size_samples.
 /// At 48kHz this corresponds to 480 samples.

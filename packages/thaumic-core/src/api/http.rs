@@ -33,8 +33,8 @@ use crate::api::ws::ws_handler;
 use crate::api::AppState;
 use crate::error::{ErrorCode, ThaumicError, ThaumicResult};
 use crate::protocol_constants::{
-    APP_NAME, HTTP_PREFILL_DELAY_MS, ICY_METAINT, MAX_CADENCE_QUEUE_SIZE, MAX_GENA_BODY_SIZE,
-    SERVICE_ID, WAV_STREAM_SIZE_MAX,
+    APP_NAME, ICY_METAINT, MAX_CADENCE_QUEUE_SIZE, MAX_GENA_BODY_SIZE, SERVICE_ID,
+    WAV_STREAM_SIZE_MAX,
 };
 use crate::sonos::discovery::probe_speaker_by_ip;
 use crate::state::ManualSpeakerConfig;
@@ -777,12 +777,14 @@ async fn stream_audio(
     // Upfront buffering delay for PCM streams BEFORE subscribing.
     // This lets the ring buffer accumulate more frames. Subscribing after
     // ensures the broadcast receiver doesn't fill up during the delay.
-    if stream_state.codec == AudioCodec::Pcm && HTTP_PREFILL_DELAY_MS > 0 {
+    // Delay matches streaming_buffer_ms so cadence queue starts full.
+    let prefill_delay_ms = stream_state.streaming_buffer_ms;
+    if stream_state.codec == AudioCodec::Pcm && prefill_delay_ms > 0 {
         log::debug!(
             "[Stream] Applying {}ms prefill delay for PCM stream",
-            HTTP_PREFILL_DELAY_MS
+            prefill_delay_ms
         );
-        tokio::time::sleep(Duration::from_millis(HTTP_PREFILL_DELAY_MS)).await;
+        tokio::time::sleep(Duration::from_millis(prefill_delay_ms)).await;
     }
 
     // Capture connected_at AFTER prefill delay so latency metrics
