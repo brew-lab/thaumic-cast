@@ -115,16 +115,34 @@ export const INT24_MAX = 0x7fffff; // 8388607
 
 /**
  * Clamps a Float32 audio sample to the valid range [-1.0, 1.0].
- * Uses ternary operators instead of Math.max/min for better performance in hot paths.
  *
- * SYNC REQUIRED: pcm-processor.ts has a duplicate (AudioWorklet can't import modules).
- * If you change this, update the copy in apps/extension/src/offscreen/pcm-processor.ts.
+ * Note: This function does NOT handle NaN - it assumes valid input.
+ * For NaN-safe clamping, use: Math.max(-1, Math.min(1, s || 0))
  *
- * @param s - The sample value to clamp
+ * The pcm-processor.ts AudioWorklet uses an optimized, loop-unrolled,
+ * NaN-safe version inline (AudioWorklet can't import modules).
+ *
+ * @param s - The sample value to clamp (must not be NaN)
  * @returns The clamped value
  */
 export function clampSample(s: number): number {
-  return s < -1 ? -1 : s > 1 ? 1 : s;
+  return Math.max(-1, Math.min(1, s));
+}
+
+/**
+ * Generates TPDF (Triangular Probability Density Function) dither noise.
+ *
+ * Triangular distribution is achieved by summing two uniform random values.
+ * The result has amplitude of ±1 LSB, which decorrelates quantization error
+ * from the signal, converting harmonic distortion into benign white noise.
+ *
+ * Used during quantization from Float32 to Int16/Int24 to improve perceived
+ * dynamic range, especially noticeable in quiet passages and fade-outs.
+ *
+ * @returns Dither value in the range [-1, 1] with triangular distribution
+ */
+export function tpdfDither(): number {
+  return Math.random() - 0.5 + (Math.random() - 0.5);
 }
 
 /**

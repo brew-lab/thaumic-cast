@@ -1,4 +1,4 @@
-import { INT24_MAX } from '@thaumic-cast/protocol';
+import { INT24_MAX, tpdfDither } from '@thaumic-cast/protocol';
 import { BaseAudioEncoder, type ChromeAudioEncoderConfig } from './base-encoder';
 import type { LatencyMode } from './types';
 
@@ -97,13 +97,17 @@ export class FlacEncoder extends BaseAudioEncoder {
 
     this.ensureInt32BufferCapacity(sampleCount);
 
-    // Scale to 24-bit range and deinterleave to planar format
-    // Defensive: handle NaN (s !== s) and clamp to [-1, 1] to prevent overflow
+    // Scale to 24-bit range and deinterleave to planar format with TPDF dithering
+    // Dithering decorrelates quantization error from the signal, converting
+    // audible harmonic distortion into inaudible white noise floor
     for (let ch = 0; ch < channels; ch++) {
       for (let i = 0; i < frameCount; i++) {
         const s = samples[i * channels + ch]!;
+        // Defensive: handle NaN (s !== s) and clamp to [-1, 1] to prevent overflow
         const safe = s !== s ? 0 : s < -1 ? -1 : s > 1 ? 1 : s;
-        this.int32PlanarBuffer[ch * frameCount + i] = Math.round(safe * INT24_MAX);
+        // Scale to 24-bit range, add dither, then quantize
+        const dithered = safe * INT24_MAX + tpdfDither();
+        this.int32PlanarBuffer[ch * frameCount + i] = Math.round(dithered);
       }
     }
 

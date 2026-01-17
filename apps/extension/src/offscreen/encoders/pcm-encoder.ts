@@ -1,5 +1,5 @@
 import type { EncoderConfig, LatencyMode } from '@thaumic-cast/protocol';
-import { INT16_MAX } from '@thaumic-cast/protocol';
+import { INT16_MAX, tpdfDither } from '@thaumic-cast/protocol';
 import { createLogger } from '@thaumic-cast/shared';
 import type { AudioEncoder } from './types';
 
@@ -70,11 +70,15 @@ export class PcmEncoder implements AudioEncoder {
     // Fresh buffer each call - no reuse means no WebSocket async copy issues
     const int16 = new Int16Array(samples.length);
 
-    // Convert Float32 to Int16 with defensive NaN/clamp handling
+    // Convert Float32 to Int16 with TPDF dithering
+    // Dithering decorrelates quantization error from the signal, converting
+    // audible harmonic distortion into inaudible white noise floor
     for (let i = 0; i < samples.length; i++) {
       const s = samples[i]!;
       const safe = s !== s ? 0 : s < -1 ? -1 : s > 1 ? 1 : s;
-      int16[i] = Math.round(safe * INT16_MAX);
+      // Scale to Int16 range, add dither, then quantize
+      const dithered = safe * INT16_MAX + tpdfDither();
+      int16[i] = Math.round(dithered);
     }
 
     // Return view of the fresh buffer - safe since buffer isn't reused
