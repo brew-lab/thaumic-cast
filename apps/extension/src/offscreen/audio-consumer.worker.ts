@@ -117,6 +117,16 @@ const STATS_INTERVAL_MS = 2000;
 /** Heartbeat interval for WebSocket (ms). */
 const HEARTBEAT_INTERVAL_MS = 5000;
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Underflow Ramp Constants
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Ramp duration in milliseconds for fade-in/fade-out on underflow.
+ * Short ramp (3ms) smooths discontinuities without audible delay.
+ */
+const RAMP_MS = 3;
+
 /** WebSocket connection timeout (ms). */
 const WS_CONNECT_TIMEOUT_MS = 5000;
 
@@ -286,6 +296,14 @@ let maxDriftMs = 0;
 let catchUpTargetSamples = 0;
 let catchUpMaxSamples = 0;
 
+// Underflow ramp state
+/** Whether next frame needs a fade-in ramp after underflow. */
+let needsRampIn = false;
+/** Last sample value per channel for ramping from/to. */
+let lastSamples: Float32Array | null = null;
+/** Ramp length in interleaved samples (computed from RAMP_MS and sample rate). */
+let rampSamples = 0;
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Utilities
 // ─────────────────────────────────────────────────────────────────────────────
@@ -296,6 +314,78 @@ let catchUpMaxSamples = 0;
  */
 function postToMain(message: OutboundMessage): void {
   self.postMessage(message);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Underflow Ramp Utilities
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Applies a linear amplitude ramp to interleaved samples in-place.
+ *
+ * For fade-in: ramps from 0 to 1 over rampLen samples.
+ * For fade-out: ramps from 1 to 0 over rampLen samples, starting from startSamples.
+ *
+ * @param buffer - Interleaved Float32 samples to modify in-place
+ * @param channels - Number of audio channels (1 or 2)
+ * @param rampLen - Number of interleaved samples to ramp (clamped to buffer length)
+ * @param fadeIn - True for fade-in (0→1), false for fade-out (1→0)
+ * @param startSamples - Per-channel starting values for fade-out (ignored for fade-in)
+ */
+function applyRamp(
+  buffer: Float32Array,
+  channels: number,
+  rampLen: number,
+  fadeIn: boolean,
+  startSamples?: Float32Array,
+): void {
+  const len = Math.min(rampLen, buffer.length);
+  const frames = Math.floor(len / channels);
+  if (frames === 0) return;
+
+  // Divisor for interpolation: (frames-1) to span [0,1], minimum 1 to avoid division by zero
+  const divisor = Math.max(frames - 1, 1);
+
+  for (let frame = 0; frame < frames; frame++) {
+    // Linear ramp coefficient:
+    // Fade-in: 0→1 (first sample at silence, last at full amplitude)
+    // Fade-out: 1→0 (first sample at full amplitude, last at silence)
+    const t = fadeIn ? frame / divisor : 1 - frame / divisor;
+
+    for (let ch = 0; ch < channels; ch++) {
+      const idx = frame * channels + ch;
+      if (fadeIn) {
+        // Fade-in: scale sample toward full amplitude
+        buffer[idx] *= t;
+      } else {
+        // Fade-out: interpolate from startSample toward zero
+        const start = startSamples?.[ch] ?? 0;
+        buffer[idx] = start * t;
+      }
+    }
+  }
+}
+
+/**
+ * Captures the last sample value per channel from an interleaved buffer.
+ * Used to track the final amplitude for smooth ramp transitions.
+ *
+ * @param buffer - Interleaved Float32 samples
+ * @param channels - Number of audio channels
+ * @param length - Number of valid interleaved samples in buffer
+ * @param target - Float32Array to store last samples (length >= channels)
+ */
+function captureLastSamples(
+  buffer: Float32Array,
+  channels: number,
+  length: number,
+  target: Float32Array,
+): void {
+  if (length < channels) return;
+  const lastFrameStart = length - channels;
+  for (let ch = 0; ch < channels; ch++) {
+    target[ch] = buffer[lastFrameStart + ch] ?? 0;
+  }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -429,15 +519,86 @@ function readFromRingBuffer(): number {
 }
 
 /**
+ * Handles underflow by flushing a partial frame with ramp-down to silence.
+ *
+ * When underflow occurs mid-frame (frameOffset > 0), this function:
+ * 1. Captures the actual last samples from the partial frameBuffer
+ * 2. Fills the remainder of the frame with a smooth ramp to zero
+ * 3. Encodes and sends the frame
+ * 4. Sets needsRampIn for smooth fade-in when audio resumes
+ *
+ * This prevents audible clicks at the point of underflow by smoothly
+ * transitioning to silence rather than abruptly stopping.
+ */
+function handleUnderflowRamp(): void {
+  if (!frameBuffer || !encoder || !socket || socket.readyState !== WebSocket.OPEN || !lastSamples) {
+    return;
+  }
+
+  const channels = encoder.config.channels;
+
+  if (frameOffset < channels) {
+    // No complete sample set in partial frame - just mark for ramp-in
+    needsRampIn = true;
+    return;
+  }
+
+  // Capture last samples from the actual partial frame into reusable buffer
+  // This ensures continuity: ramp starts exactly where the audio stopped
+  captureLastSamples(frameBuffer, channels, frameOffset, lastSamples);
+
+  const remainingSamples = frameSizeSamples - frameOffset;
+  const rampDownLen = Math.min(rampSamples, remainingSamples);
+
+  // Apply fade-out ramp using shared utility (DRY)
+  // subarray() returns a view, so applyRamp modifies frameBuffer in-place
+  if (rampDownLen >= channels) {
+    applyRamp(
+      frameBuffer.subarray(frameOffset, frameOffset + rampDownLen),
+      channels,
+      rampDownLen,
+      false, // fadeIn = false (fade-out)
+      lastSamples,
+    );
+  }
+
+  // Fill remainder with silence
+  const silenceStart = frameOffset + rampDownLen;
+  if (silenceStart < frameSizeSamples) {
+    frameBuffer.fill(0, silenceStart, frameSizeSamples);
+  }
+
+  // Mark frame as complete
+  frameOffset = frameSizeSamples;
+
+  // Encode and send (skip backpressure check for underflow frame)
+  const encoded = encoder.encode(frameBuffer);
+  if (encoded) {
+    socket.send(encoded);
+  }
+
+  // Reset for next frame
+  frameOffset = 0;
+  needsRampIn = true;
+
+  log.debug('Flushed underflow frame with ramp-down');
+}
+
+/**
  * Encodes and sends the accumulated frame if complete.
  *
  * Backpressure handling depends on streaming policy:
  * - Realtime mode: drop frames to maintain timing
  * - Quality mode: frames are held (not dropped) - pause is handled by consumeLoop
+ *
+ * Also handles underflow recovery by applying fade-in ramp when resuming
+ * after an underflow event, preventing audible clicks.
  */
 function flushFrameIfReady(): void {
   if (!frameBuffer || frameOffset < frameSizeSamples) return;
   if (!encoder || !socket || socket.readyState !== WebSocket.OPEN || !policy) return;
+
+  const channels = encoder.config.channels;
 
   // Check backpressure
   const isBackpressured =
@@ -451,7 +612,7 @@ function flushFrameIfReady(): void {
 
       // Advance encoder timestamp to avoid time compression when we resume
       // frameSizeSamples is interleaved samples, divide by channels for frame count
-      encoder.advanceTimestamp(frameSizeSamples / encoder.config.channels);
+      encoder.advanceTimestamp(frameSizeSamples / channels);
 
       // Reset frame buffer - data already drained from ring buffer
       frameOffset = 0;
@@ -459,6 +620,14 @@ function flushFrameIfReady(): void {
     // Quality mode: keep frame data for later (don't reset frameOffset)
     // consumeLoop will pause and retry
     return;
+  }
+
+  // Apply fade-in ramp if resuming from underflow
+  // Only clear flag if ramp was actually applied (requires at least one full audio frame)
+  if (needsRampIn && rampSamples >= channels) {
+    applyRamp(frameBuffer, channels, rampSamples, true);
+    needsRampIn = false;
+    log.debug('Applied fade-in ramp after underflow');
   }
 
   // Encode the frame
@@ -976,6 +1145,8 @@ async function consumeLoop(): Promise<void> {
       if (result === 'timed-out') {
         // Producer didn't write within timeout - underflow condition
         underflowCount++;
+        // Flush partial frame with ramp-down and prepare for ramp-in on resume
+        handleUnderflowRamp();
       }
       // 'ok' = notified, 'not-equal' = value changed before wait
     }
@@ -1034,6 +1205,11 @@ function cleanup(): void {
   policy = null;
   isPaused = false;
   pauseStartTime = 0;
+
+  // Reset ramp state
+  needsRampIn = false;
+  lastSamples = null;
+  rampSamples = 0;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1074,6 +1250,13 @@ self.onmessage = async (event: MessageEvent<InboundMessage>) => {
       frameSizeSamples = optimalFrameSamples * encoderConfig.channels;
       frameBuffer = new Float32Array(frameSizeSamples);
       frameOffset = 0;
+
+      // Initialize underflow ramp state
+      // Ramp length clamped to fit within a single frame
+      const rampSamplesPerChannel = Math.floor(sampleRate * (RAMP_MS / 1000));
+      rampSamples = Math.min(rampSamplesPerChannel * encoderConfig.channels, frameSizeSamples);
+      lastSamples = new Float32Array(encoderConfig.channels);
+      needsRampIn = false;
 
       // Compute frame timing for pacing
       framePeriodMs = frameSizeToMs(optimalFrameSamples, sampleRate);
