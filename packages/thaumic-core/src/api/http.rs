@@ -86,7 +86,7 @@ fn create_wav_stream_with_cadence(
         // Start first tick after one cadence period, giving frames time to queue up.
         // This avoids the "first tick is instant" behavior of interval().
         let mut metronome = interval_at(TokioInstant::now() + cadence_duration, cadence_duration);
-        metronome.set_missed_tick_behavior(MissedTickBehavior::Skip);
+        metronome.set_missed_tick_behavior(MissedTickBehavior::Burst);
 
         let mut rx_closed = false;
         let mut in_silence = false;
