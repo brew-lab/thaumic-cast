@@ -107,6 +107,7 @@ pub const MIN_FRAME_DURATION_MS: u32 = 5;
 /// Must accommodate codec requirements at all supported sample rates:
 /// - AAC: 1024 samples at 8kHz = 128ms (spec-mandated frame size)
 /// - FLAC: 4096 samples at 48kHz = 85ms (larger frames improve compression)
+///
 /// 150ms provides margin for all cases.
 pub const MAX_FRAME_DURATION_MS: u32 = 150;
 

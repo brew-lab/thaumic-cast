@@ -257,6 +257,7 @@ impl StreamState {
     /// * `channel_capacity` - Capacity of the broadcast channel for audio frames
     /// * `streaming_buffer_ms` - Streaming buffer size in milliseconds (100-1000)
     /// * `frame_duration_ms` - Frame duration in milliseconds for cadence timing
+    #[allow(clippy::too_many_arguments)] // Constructor needs all params; grouping wouldn't improve clarity
     pub fn new(
         id: String,
         codec: AudioCodec,
