@@ -21,7 +21,12 @@ import {
 } from './ring-buffer';
 import { createEncoder, type AudioEncoder } from './encoders';
 import type { AudioCodec, EncoderConfig, StreamMetadata, WsMessage } from '@thaumic-cast/protocol';
-import { WsMessageSchema, getStreamingPolicy, type StreamingPolicy } from '@thaumic-cast/protocol';
+import {
+  WsMessageSchema,
+  getStreamingPolicy,
+  type StreamingPolicy,
+  FRAME_DURATION_MS_DEFAULT,
+} from '@thaumic-cast/protocol';
 import { createLogger } from '@thaumic-cast/shared';
 import { exponentialBackoff } from '../lib/backoff';
 
@@ -37,7 +42,7 @@ const log = createLogger('AudioWorker');
  * - AAC: 1024 samples (spec-mandated per ISO/IEC 14496-3)
  * - FLAC: 4096 samples (larger frames improve compression ratio)
  * - Vorbis: 2048 samples (good balance for VBR encoding)
- * - PCM: 10ms worth of samples (low latency for real-time streaming)
+ * - PCM: Configurable duration (10ms, 20ms, or 40ms) - see frameDurationMs
  *
  * Frame duration varies by sample rate (e.g., AAC 1024 samples = 21ms at 48kHz, 128ms at 8kHz).
  * Server limits: MIN_FRAME_SIZE_SAMPLES=64, MAX_FRAME_SIZE_SAMPLES=8192.
@@ -45,9 +50,14 @@ const log = createLogger('AudioWorker');
  *
  * @param codec - The audio codec
  * @param sampleRate - The sample rate in Hz
+ * @param frameDurationMs - Frame duration in milliseconds (10, 20, or 40). Currently only used for PCM.
  * @returns Frame size in samples (mono frames, multiply by channels for interleaved)
  */
-function getOptimalFrameSizeSamples(codec: AudioCodec, sampleRate: number): number {
+function getOptimalFrameSizeSamples(
+  codec: AudioCodec,
+  sampleRate: number,
+  frameDurationMs: number = FRAME_DURATION_MS_DEFAULT,
+): number {
   switch (codec) {
     case 'aac-lc':
     case 'he-aac':
@@ -62,8 +72,8 @@ function getOptimalFrameSizeSamples(codec: AudioCodec, sampleRate: number): numb
       return 2048;
     case 'pcm':
     default:
-      // PCM: prioritize low latency with 10ms frames
-      return Math.round(sampleRate * 0.01);
+      // PCM: configurable frame duration for balancing latency vs. stability
+      return Math.round(sampleRate * (frameDurationMs / 1000));
   }
 }
 
@@ -1056,7 +1066,11 @@ self.onmessage = async (event: MessageEvent<InboundMessage>) => {
       bufferMask = mask;
 
       // Calculate codec-aware frame size for optimal encoder efficiency
-      const optimalFrameSamples = getOptimalFrameSizeSamples(encoderConfig.codec, sampleRate);
+      const optimalFrameSamples = getOptimalFrameSizeSamples(
+        encoderConfig.codec,
+        sampleRate,
+        encoderConfig.frameDurationMs ?? FRAME_DURATION_MS_DEFAULT,
+      );
       frameSizeSamples = optimalFrameSamples * encoderConfig.channels;
       frameBuffer = new Float32Array(frameSizeSamples);
       frameOffset = 0;

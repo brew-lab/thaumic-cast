@@ -174,6 +174,31 @@ export const STREAMING_BUFFER_MS_MAX = 1000;
 export const STREAMING_BUFFER_MS_DEFAULT = 200;
 
 /**
+ * Frame duration options (in milliseconds).
+ * Controls how audio is chunked for streaming:
+ * - 10ms: Low latency, higher CPU overhead (default)
+ * - 20ms: Balanced latency and efficiency
+ * - 40ms: More stable on slower networks/devices, higher latency
+ *
+ * Currently only configurable for PCM. Other codecs have fixed frame sizes
+ * dictated by codec specifications (e.g., AAC uses 1024 samples).
+ */
+export const FRAME_DURATION_MS_MIN = 10;
+export const FRAME_DURATION_MS_MAX = 40;
+export const FRAME_DURATION_MS_DEFAULT = 10;
+
+/**
+ * Valid frame duration values in milliseconds.
+ */
+export const FRAME_DURATIONS = [10, 20, 40] as const;
+export type FrameDurationMs = (typeof FRAME_DURATIONS)[number];
+
+/**
+ * Zod schema for frame duration.
+ */
+export const FrameDurationMsSchema = z.union([z.literal(10), z.literal(20), z.literal(40)]);
+
+/**
  * Frame size constraints (in samples per channel).
  * Used to derive exact frame duration without floating-point rounding.
  * Server computes: duration_ms = samples * 1000 / sample_rate

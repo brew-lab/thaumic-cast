@@ -16,6 +16,7 @@ import type {
 import {
   CODEC_METADATA,
   DEFAULT_BITS_PER_SAMPLE,
+  FRAME_DURATION_MS_DEFAULT,
   generateDynamicPresets,
   getStreamingPolicy,
   getSupportedSampleRates,
@@ -31,7 +32,7 @@ const log = createLogger('Presets');
 
 /**
  * Builds an encoder config from custom audio settings.
- * Applies defaults for optional fields (bitsPerSample, streamingBufferMs).
+ * Applies defaults for optional fields (bitsPerSample, streamingBufferMs, frameDurationMs).
  * @param customSettings - The custom audio settings from user preferences
  * @returns A complete encoder config
  */
@@ -46,6 +47,7 @@ function buildConfigFromCustomSettings(customSettings: CustomAudioSettings): Enc
     bitsPerSample: customSettings.bitsPerSample ?? DEFAULT_BITS_PER_SAMPLE,
     latencyMode: customSettings.latencyMode,
     streamingBufferMs: customSettings.streamingBufferMs ?? policy.streamingBufferMs,
+    frameDurationMs: customSettings.frameDurationMs ?? FRAME_DURATION_MS_DEFAULT,
     // frameSizeSamples is computed by the audio worker based on codec-optimal frame size
   };
 }
@@ -74,6 +76,7 @@ function getFallbackConfig(codecSupport: SupportedCodecsResult): EncoderConfig |
     bitsPerSample: DEFAULT_BITS_PER_SAMPLE,
     latencyMode: 'quality',
     streamingBufferMs: policy.streamingBufferMs,
+    frameDurationMs: FRAME_DURATION_MS_DEFAULT,
     // frameSizeSamples is computed by the audio worker based on codec-optimal frame size
   };
 }
@@ -145,6 +148,7 @@ function buildConfigFromOption(
     bitsPerSample: DEFAULT_BITS_PER_SAMPLE,
     latencyMode,
     streamingBufferMs: policy.streamingBufferMs,
+    frameDurationMs: FRAME_DURATION_MS_DEFAULT,
     // frameSizeSamples is computed by the audio worker based on codec-optimal frame size
   };
 }

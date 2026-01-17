@@ -9,6 +9,8 @@ import {
   STREAMING_BUFFER_MS_MIN,
   STREAMING_BUFFER_MS_MAX,
   STREAMING_BUFFER_MS_DEFAULT,
+  FRAME_DURATION_MS_DEFAULT,
+  FrameDurationMsSchema,
   isValidBitrateForCodec,
   getDefaultBitrate,
 } from '@thaumic-cast/protocol';
@@ -64,6 +66,8 @@ export const CustomAudioSettingsSchema = z.object({
     .min(STREAMING_BUFFER_MS_MIN)
     .max(STREAMING_BUFFER_MS_MAX)
     .default(STREAMING_BUFFER_MS_DEFAULT),
+  /** Frame duration in milliseconds. Currently only used when codec is 'pcm'. */
+  frameDurationMs: FrameDurationMsSchema.default(FRAME_DURATION_MS_DEFAULT),
 });
 export type CustomAudioSettings = z.infer<typeof CustomAudioSettingsSchema>;
 
@@ -94,6 +98,7 @@ export const ExtensionSettingsSchema = z.object({
     latencyMode: 'quality',
     bitsPerSample: DEFAULT_BITS_PER_SAMPLE,
     streamingBufferMs: STREAMING_BUFFER_MS_DEFAULT,
+    frameDurationMs: FRAME_DURATION_MS_DEFAULT,
   }),
 
   // Video sync: controls visibility of video sync controls in popup (default: false)
@@ -121,6 +126,7 @@ const DEFAULT_EXTENSION_SETTINGS: ExtensionSettings = {
     latencyMode: 'quality',
     bitsPerSample: DEFAULT_BITS_PER_SAMPLE,
     streamingBufferMs: STREAMING_BUFFER_MS_DEFAULT,
+    frameDurationMs: FRAME_DURATION_MS_DEFAULT,
   },
   videoSyncEnabled: false,
   keepTabAudible: false,

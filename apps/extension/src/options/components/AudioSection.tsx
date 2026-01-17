@@ -6,12 +6,14 @@ import type {
   AudioCodec,
   BitDepth,
   Bitrate,
+  FrameDurationMs,
   LatencyMode,
   SupportedCodecsResult,
   SupportedSampleRate,
 } from '@thaumic-cast/protocol';
 import {
   CODEC_METADATA,
+  FRAME_DURATIONS,
   getSupportedBitrates,
   getSupportedSampleRates,
   getSupportedBitDepths,
@@ -225,6 +227,21 @@ export function AudioSection({
     [settings.customAudioSettings, onUpdate],
   );
 
+  /**
+   * Handles frame duration change.
+   */
+  const handleFrameDurationChange = useCallback(
+    async (frameDurationMs: FrameDurationMs) => {
+      await onUpdate({
+        customAudioSettings: {
+          ...settings.customAudioSettings,
+          frameDurationMs,
+        },
+      });
+    },
+    [settings.customAudioSettings, onUpdate],
+  );
+
   // Get available bitrates for current codec (excluding 0 = lossless)
   const availableBitrates = useMemo(() => {
     if (codecLoading) return [];
@@ -289,6 +306,11 @@ export function AudioSection({
         key: 'streaming-buffer',
         label: t('audio_streaming_buffer'),
         value: `${resolvedConfig.streamingBufferMs}ms`,
+      });
+      rows.push({
+        key: 'frame-duration',
+        label: t('audio_frame_duration'),
+        value: `${resolvedConfig.frameDurationMs}ms`,
       });
     }
 
@@ -504,6 +526,37 @@ export function AudioSection({
                         <option value={1000}>{t('audio_buffer_max')} (1000ms)</option>
                       </select>
                       <span className={styles.hint}>{t('audio_buffer_hint')}</span>
+                    </div>
+                  )}
+
+                  {/* Frame Duration - only show for PCM codec (for now) */}
+                  {settings.customAudioSettings.codec === 'pcm' && (
+                    <div className={styles.field}>
+                      <label htmlFor="audio-frame-duration" className={styles.label}>
+                        {t('audio_frame_duration')}
+                      </label>
+                      <select
+                        id="audio-frame-duration"
+                        className={styles.select}
+                        value={settings.customAudioSettings.frameDurationMs}
+                        onChange={(e) =>
+                          handleFrameDurationChange(
+                            Number((e.target as HTMLSelectElement).value) as FrameDurationMs,
+                          )
+                        }
+                      >
+                        {FRAME_DURATIONS.map((duration) => (
+                          <option key={duration} value={duration}>
+                            {duration === 10
+                              ? t('audio_frame_low')
+                              : duration === 20
+                                ? t('audio_frame_balanced')
+                                : t('audio_frame_stable')}{' '}
+                            ({duration}ms)
+                          </option>
+                        ))}
+                      </select>
+                      <span className={styles.hint}>{t('audio_frame_hint')}</span>
                     </div>
                   )}
                 </div>
