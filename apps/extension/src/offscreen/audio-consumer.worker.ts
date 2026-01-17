@@ -92,8 +92,11 @@ const PROCESS_BUDGET_MS = 4;
 /** Initial backpressure backoff delay (ms). */
 const BACKPRESSURE_BACKOFF_INITIAL_MS = 5;
 
-/** Maximum backpressure backoff delay (ms). */
+/** Maximum backpressure backoff delay for realtime mode (ms). */
 const BACKPRESSURE_BACKOFF_MAX_MS = 40;
+
+/** Maximum backpressure backoff delay for quality mode (ms). */
+const QUALITY_BACKOFF_MAX_MS = 50;
 
 /** Timeout for waiting on producer (ms). Triggers underflow if exceeded. 200ms = 20 frames of headroom. */
 const WAIT_TIMEOUT_MS = 200;
@@ -877,9 +880,16 @@ async function consumeLoop(): Promise<void> {
     // shouldPause() handles hysteresis for pause/resume transitions
     if (shouldPause()) {
       backpressureCycles++;
+      consecutiveBackpressureCycles++;
+      // Adaptive backoff: 5ms → 10ms → 20ms → 40ms → 50ms (capped)
+      // Responds faster than fixed 100ms when backpressure clears quickly
+      const backoffMs = exponentialBackoff(
+        consecutiveBackpressureCycles,
+        BACKPRESSURE_BACKOFF_INITIAL_MS,
+        QUALITY_BACKOFF_MAX_MS,
+      );
       maybePostStats();
-      // Quality mode: longer backoff since we're preserving all audio
-      await yieldMacrotask(100);
+      await yieldMacrotask(backoffMs);
       continue;
     }
 
