@@ -1,5 +1,32 @@
 # @thaumic-cast/ui
 
+## 1.0.0
+
+### Minor Changes
+
+- [#38](https://github.com/brew-lab/thaumic-cast/pull/38) [`478ab65`](https://github.com/brew-lab/thaumic-cast/commit/478ab650978fe271f8857307b835a4e1b61c5262) Thanks [@skezo](https://github.com/skezo)! - Standardize Card usage and mobile-first responsive design
+
+  **Card Component**
+  - Add optional `icon` prop that renders before the title (inherits title color via `currentColor`)
+  - Add title text truncation support when Card has icons (flexbox layout with span wrapper)
+
+  **Desktop App**
+  - Update views to use Card's `title`/`icon` props instead of custom header styles
+  - Convert sidebar and views to mobile-first container queries
+  - Align Settings toggle layout with Server action row pattern (h4/p structure)
+  - Server status card shows operational state with colored icon
+
+  **Extension**
+  - Use shared Input component in onboarding for consistent placeholder styling
+
+  **Shared Styles**
+  - Standardize input placeholder opacity (0.7) across apps
+
+### Patch Changes
+
+- Updated dependencies [[`6921795`](https://github.com/brew-lab/thaumic-cast/commit/6921795b559217b5ee5342852e7c59b80fc858d4), [`7629de4`](https://github.com/brew-lab/thaumic-cast/commit/7629de408fa0aad7e2a454726d890fb32df3d6ee), [`a8ee07e`](https://github.com/brew-lab/thaumic-cast/commit/a8ee07e4510f88292c9452d8ead84ac79a3d077a), [`9ee78a4`](https://github.com/brew-lab/thaumic-cast/commit/9ee78a4240e0abe22ddff3765baf18988de2f9b3), [`823bbf7`](https://github.com/brew-lab/thaumic-cast/commit/823bbf7ec9cf517ddf5e1076c195de7e05b8be2b), [`4082c40`](https://github.com/brew-lab/thaumic-cast/commit/4082c40e2b7bef74d4a46d61c7325880a2169ddd), [`f158fb2`](https://github.com/brew-lab/thaumic-cast/commit/f158fb22a398e1adcac5b344b118a10a9bdcde61), [`b2d3b7c`](https://github.com/brew-lab/thaumic-cast/commit/b2d3b7c146d183217d79c04004f775c8dbedf0c8), [`08673ee`](https://github.com/brew-lab/thaumic-cast/commit/08673eee4b0c1916f7e4abb79caa49effcffc4f7), [`2109faf`](https://github.com/brew-lab/thaumic-cast/commit/2109faf6fa40452a56789ddd08f22ccf08d884bb), [`be4e2d0`](https://github.com/brew-lab/thaumic-cast/commit/be4e2d0c281f8f3ec0cb24cbe00bec55c97808d9)]:
+  - @thaumic-cast/protocol@0.2.0
+
 ## 0.1.0
 
 ### Minor Changes
