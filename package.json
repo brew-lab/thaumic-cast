@@ -1,6 +1,17 @@
 {
   "name": "thaumic-cast-monorepo",
   "private": true,
+  "license": "AGPL-3.0",
+  "author": {
+    "name": "Brew",
+    "url": "https://thisisbrew.com/"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/brew-lab/thaumic-cast.git"
+  },
+  "homepage": "https://github.com/brew-lab/thaumic-cast",
+  "bugs": "https://github.com/brew-lab/thaumic-cast/issues",
   "type": "module",
   "workspaces": [
     "apps/*",

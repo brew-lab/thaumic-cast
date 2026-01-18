@@ -3,7 +3,7 @@ name = "thaumic-server"
 version = "0.1.0"
 edition = "2021"
 description = "Standalone headless server for Thaumic Cast"
-license = "MIT"
+license = "AGPL-3.0"
 
 [[bin]]
 name = "thaumic-server"

@@ -2,6 +2,10 @@
   "name": "@thaumic-cast/protocol",
   "version": "0.1.1",
   "private": true,
+  "author": {
+    "name": "Brew",
+    "url": "https://thisisbrew.com/"
+  },
   "type": "module",
   "main": "index.ts",
   "exports": {
