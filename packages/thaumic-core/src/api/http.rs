@@ -505,21 +505,24 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/state", get(get_current_state))
         .route("/api/refresh", post(handle_refresh))
         .route("/api/playback/start", post(handle_start_playback))
-        .route("/api/speakers/:ip/volume", get(get_volume).post(set_volume))
-        .route("/api/speakers/:ip/mute", get(get_mute).post(set_mute))
+        .route(
+            "/api/speakers/{ip}/volume",
+            get(get_volume).post(set_volume),
+        )
+        .route("/api/speakers/{ip}/mute", get(get_mute).post(set_mute))
         .route("/api/speakers/manual/probe", post(probe_manual_speaker))
         .route(
             "/api/speakers/manual",
             get(list_manual_speakers).post(add_manual_speaker),
         )
         .route(
-            "/api/speakers/manual/:ip",
+            "/api/speakers/manual/{ip}",
             axum::routing::delete(remove_manual_speaker),
         )
         .route("/sonos/gena", any(handle_gena_notify))
-        .route("/stream/:id/live", get(stream_audio))
-        .route("/stream/:id/live.wav", get(stream_audio))
-        .route("/stream/:id/live.flac", get(stream_audio))
+        .route("/stream/{id}/live", get(stream_audio))
+        .route("/stream/{id}/live.wav", get(stream_audio))
+        .route("/stream/{id}/live.flac", get(stream_audio))
         .route("/artwork.jpg", get(serve_artwork))
         .route("/ws", get(ws_handler))
         .with_state(state)
