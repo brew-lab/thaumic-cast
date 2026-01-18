@@ -55,6 +55,7 @@ speaking). The server can be the Desktop app or the headless server.
 - [Architecture overview](docs/ARCHITECTURE.md)
 - [Headless server](apps/server/README.md)
 - [Core library](packages/thaumic-core/README.md)
+- [Privacy policy](PRIVACY.md)
 
 ## Development
 

@@ -8,7 +8,7 @@
 import { useEffect, useRef } from 'preact/hooks';
 
 /**
- * Hook that listens for chrome.storage.sync changes on a specific key.
+ * Hook that listens for chrome.storage.local changes on a specific key.
  * @param key - The storage key to listen for
  * @param onChanged - Callback when the value changes
  */
@@ -28,7 +28,7 @@ export function useStorageListener<T>(key: string, onChanged: (newValue: T) => v
       }
     };
 
-    chrome.storage.sync.onChanged.addListener(handler);
-    return () => chrome.storage.sync.onChanged.removeListener(handler);
+    chrome.storage.local.onChanged.addListener(handler);
+    return () => chrome.storage.local.onChanged.removeListener(handler);
   }, [key]);
 }
