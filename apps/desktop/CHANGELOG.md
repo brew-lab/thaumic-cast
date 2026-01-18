@@ -1,5 +1,230 @@
 # @thaumic-cast/desktop
 
+## 0.10.0
+
+### Minor Changes
+
+- [#38](https://github.com/brew-lab/thaumic-cast/pull/38) [`6921795`](https://github.com/brew-lab/thaumic-cast/commit/6921795b559217b5ee5342852e7c59b80fc858d4) Thanks [@skezo](https://github.com/skezo)! - Add mDNS service discovery and user-configurable streaming buffer
+
+  **mDNS Service Advertisement**
+  - Advertise Thaumic Cast as `_thaumic._tcp.local.` for native client discovery
+  - Unique instance name per hostname to avoid conflicts
+  - TXT records include http_path, ws_path, and version
+  - Auto-unregisters on shutdown; best-effort if mDNS unavailable
+
+  **User-Configurable Streaming Buffer**
+  - Add streaming buffer setting (100-1000ms, default 200ms) for PCM mode
+  - Higher values provide more jitter absorption at the cost of latency
+  - Exposed in extension Audio options panel
+  - Dynamically derives WAV cadence queue size from buffer setting
+
+  **Extension Improvements**
+  - Skip redundant metadata cache updates for better performance
+  - Reduce keep-audible gain and optimize PCM conversion
+  - Add error handling for Zod validation in offscreen handlers
+  - Post stats during sustained backpressure
+  - Use interactive latency hint for realtime mode
+  - Handle WebSocket close during handshake gracefully
+  - Reject unsupported audio sample rates with clear error
+
+  **Architecture**
+  - Extract thaumic-core crate with Sonos client, stream management, and API layer
+  - Centralize background task startup and add server IP auto-detection
+  - Require explicit runtime handle in bootstrap for predictable initialization
+
+  **Bug Fixes**
+  - Align stream URL path with HTTP route
+  - Align GENA route with callback URL
+  - Use generic SERVICE_ID for health endpoint discovery
+
+- [#38](https://github.com/brew-lab/thaumic-cast/pull/38) [`cbbe631`](https://github.com/brew-lab/thaumic-cast/commit/cbbe6312d28c029d6c8f4bd9d716452e2baf9a60) Thanks [@skezo](https://github.com/skezo)! - Add configurable artwork resolution with precedence chain
+
+  **New Artwork Module (thaumic-core)**
+  - Add `ArtworkConfig` and `ArtworkSource` types for flexible artwork configuration
+  - Support precedence chain: external HTTPS URL > `data_dir/artwork.jpg` > embedded default
+  - External URL option enables Android Sonos app compatibility (requires HTTPS)
+  - Single `read()` call with `NotFound` handling avoids TOCTTOU race
+
+  **Server Configuration**
+  - Add `artwork_url` config option and `THAUMIC_ARTWORK_URL` env var
+  - Document artwork precedence in `config.example.yaml`
+
+  **API Changes**
+  - Replace `AppStateBuilder::artwork(&[u8])` with `artwork_config(ArtworkConfig)`
+  - Add `AppState::artwork_metadata_url()` for Sonos DIDL-Lite metadata
+  - Pass artwork URL through `start_playback()` and `start_playback_multi()`
+
+  **Desktop App**
+  - Cache resolved `ArtworkSource` to avoid disk I/O on every playback; URL computed on-demand with current IP/port
+  - Support custom artwork via `artwork.jpg` in app data directory
+
+- [#38](https://github.com/brew-lab/thaumic-cast/pull/38) [`19c7e2b`](https://github.com/brew-lab/thaumic-cast/commit/19c7e2b971ceb3595a759ab3068141bdce318812) Thanks [@skezo](https://github.com/skezo)! - Add crossfade on silence transitions to eliminate audio pops
+
+  **Crossfade on Silence Transitions**
+  - Apply 2ms linear fade-out when entering silence (audio → silence)
+  - Apply 2ms linear fade-in when exiting silence (silence → audio)
+  - Track last sample pair for fade-out generation
+  - Cap fade samples to available frame size for short frame durations
+
+  **Channel Validation**
+  - Reject channel counts other than 1 (mono) or 2 (stereo) in handshake
+  - Crossfade utilities require mono/stereo; multi-channel is not supported
+
+  **AudioFormat Helpers**
+  - Add `bytes_per_sample()` and `frame_samples()` methods
+  - Add `is_crossfade_compatible()` check for 16-bit PCM validation
+
+- [#38](https://github.com/brew-lab/thaumic-cast/pull/38) [`2109faf`](https://github.com/brew-lab/thaumic-cast/commit/2109faf6fa40452a56789ddd08f22ccf08d884bb) Thanks [@skezo](https://github.com/skezo)! - Extract core streaming logic into thaumic-core crate
+
+  **Architectural Refactor**
+
+  Extract the core Sonos streaming logic from the desktop app into a standalone Rust library (`packages/thaumic-core`). This enables:
+  - Headless server deployments without Tauri/GUI dependencies
+  - Shared code between desktop app and standalone server
+  - Cleaner separation of concerns
+
+  **New Abstractions**
+  - `EventEmitter` trait: Pluggable event dispatch (Tauri events, WebSocket broadcast, etc.)
+  - `Context`: Shared application state with runtime handles
+  - `StreamingRuntime`: Dedicated high-priority runtime for audio streaming
+  - `bootstrap_services()`: Unified service initialization
+
+  **Modules Migrated**
+  - Sonos client, discovery (SSDP/mDNS), GENA subscriptions
+  - Stream manager, WAV/ICY formatters, transcoder
+  - HTTP API routes, WebSocket handlers
+  - All background services (topology monitor, latency monitor, etc.)
+
+  The desktop app now depends on thaumic-core and provides only Tauri-specific glue code.
+
+- [#38](https://github.com/brew-lab/thaumic-cast/pull/38) [`4082c40`](https://github.com/brew-lab/thaumic-cast/commit/4082c40e2b7bef74d4a46d61c7325880a2169ddd) Thanks [@skezo](https://github.com/skezo)! - Improve WAV streaming reliability for Sonos speakers
+
+  **WAV Stream Stability**
+  - Inject silence frames during delivery gaps to prevent Sonos disconnection (WAV streams require continuous data flow)
+  - Use fixed Content-Length header instead of chunked transfer encoding (some renderers stutter with chunked)
+  - Add upfront buffer delay (250ms) before serving audio to reduce early-connection jitter sensitivity
+  - Cache silence frames globally to avoid ~200KB/s allocations during delivery gaps
+  - Add TransferMode.dlna.org and icy-name headers to all audio streams for DLNA compatibility
+  - Elevate process priority to reduce audio stuttering under CPU load (HIGH_PRIORITY_CLASS on Windows, nice -10 on Unix)
+  - Enrich DIDL-Lite metadata with audio format attributes (sampleFrequency, nrAudioChannels, bitsPerSample)
+
+  **Epoch Tracking Accuracy**
+  - Introduce TaggedFrame enum to distinguish real audio from injected silence
+  - Only fire epoch on real audio frames, not silence or empty buffers
+  - Reorder subscribe/delay sequence for more accurate timing
+
+  **Race Condition Fixes**
+  - Add stream_id to PlaybackStopped event to prevent incorrect session cleanup during recast
+  - Stop old playback before starting new stream on same speaker to ensure clean source switching
+
+  **Configuration & Architecture**
+  - Extract StreamingConfig struct with validation (max_concurrent_streams, buffer_frames, channel_capacity)
+  - Wire streaming config through bootstrap chain for proper dependency injection
+  - Add unit tests for StreamingConfig validation and AudioFormat calculations
+
+  **Observability**
+  - Add HTTP stream lifecycle logging (start/end, frames sent, delivery gaps)
+  - Log frame delivery gap instrumentation (max gap, gaps over threshold)
+  - Log broadcast channel lag errors and JSON serialization failures
+  - Document TOCTOU mitigation in GENA subscription store
+
+  **Other**
+  - Add Windows debug build script
+  - Add resolve.dedupe for Windows monorepo compatibility
+
+- [#38](https://github.com/brew-lab/thaumic-cast/pull/38) [`f158fb2`](https://github.com/brew-lab/thaumic-cast/commit/f158fb22a398e1adcac5b344b118a10a9bdcde61) Thanks [@skezo](https://github.com/skezo)! - Preserve Float32 audio throughout pipeline to enable 24-bit FLAC encoding
+
+  **Audio Pipeline Refactor**
+  - Keep Float32 samples throughout the audio pipeline (AudioWorklet → ring buffer → encoders) instead of early Int16 quantization
+  - Change ring buffer from Int16Array to Float32Array to preserve full precision
+  - Move Int16 quantization to PCM encoder as the final step before wire transmission
+  - Enable 24-bit FLAC encoding without precision loss from the audio source
+
+  **24-bit FLAC Support**
+  - Add `bitsPerSample` field to `EncoderConfig` (16 or 24, default 16)
+  - FLAC encoder uses s32-planar format scaled to 24-bit range when configured for 24-bit
+  - Validate that 24-bit encoding is only allowed for FLAC codec (Sonos S2 requirement)
+  - Extract and verify actual bit depth from FLAC header, warn on mismatch
+
+  **Clipping Detection**
+  - Track clipped samples (NaN, values outside [-1, 1]) in PCM processor
+  - Report clipping count via heartbeat messages for audio quality diagnostics
+  - Replace NaN values with 0 to prevent undefined encoder behavior
+
+  **Encoder Optimizations**
+  - Pre-allocate ADTS header buffer in AAC encoder (only bytes 3-6 vary per frame)
+  - Reuse output queue array instead of reallocating to reduce GC pressure
+  - Add detailed documentation for ADTS header structure and bit field layout
+
+  **WAV Header Updates**
+  - Support variable bit depth (16 or 24) in WAV header generation
+  - Validate bits_per_sample in WebSocket handshake, reject invalid values
+  - Calculate byte_rate and block_align dynamically based on bit depth
+
+### Patch Changes
+
+- [#38](https://github.com/brew-lab/thaumic-cast/pull/38) [`3f07d14`](https://github.com/brew-lab/thaumic-cast/commit/3f07d14365f3798baea4e34c37a42ced545529ad) Thanks [@skezo](https://github.com/skezo)! - Add manual speaker IP management API to standalone server
+
+  **New HTTP Endpoints (thaumic-server)**
+  - `POST /api/speakers/manual/probe` - Validate IP and probe for Sonos speaker
+  - `POST /api/speakers/manual` - Add manual speaker (probes before persisting)
+  - `DELETE /api/speakers/manual/:ip` - Remove manual speaker (with fallback for legacy entries)
+  - `GET /api/speakers/manual` - List manual speaker IPs
+
+  **Server Configuration**
+  - Add `--data-dir` CLI option and `THAUMIC_DATA_DIR` env var for persistence
+  - Add `data_dir` field to config.yaml
+  - Return 503 SERVICE_UNAVAILABLE when data_dir not configured
+
+  **Shared Code (thaumic-core)**
+  - Add `validate_speaker_ip()` with `IpValidationError` enum
+  - Add `ErrorCode` trait implementation for consistent error codes
+  - Export `ErrorCode` trait for use by consumers
+  - Add `set_app_data_dir(impl AsRef<Path>)` for flexible path passing
+
+  **Desktop Refactoring**
+  - Use shared `validate_speaker_ip()` instead of inline validation
+  - Import `ErrorCode` trait for IP validation error handling
+
+- [#38](https://github.com/brew-lab/thaumic-cast/pull/38) [`2109faf`](https://github.com/brew-lab/thaumic-cast/commit/2109faf6fa40452a56789ddd08f22ccf08d884bb) Thanks [@skezo](https://github.com/skezo)! - Add collapsible sidebar with intrinsic design
+  - Sidebar can now be collapsed to icon-only mode for more content space
+  - Collapse state persists across sessions via app store
+  - Smooth CSS transitions for expand/collapse animation
+  - Icons remain visible and functional in collapsed state
+  - Responsive behavior adjusts to container width
+
+- [#38](https://github.com/brew-lab/thaumic-cast/pull/38) [`896fabc`](https://github.com/brew-lab/thaumic-cast/commit/896fabc8df8a5b42ec400c48103ccaada8d2485f) Thanks [@skezo](https://github.com/skezo)! - Improve resilience to CPU spikes during audio streaming
+  - Increase broadcast channel capacity from 100 to 500 frames (~10 seconds of buffer instead of ~2 seconds), allowing HTTP clients to absorb longer delivery delays without disconnecting
+  - Increase WebSocket heartbeat timeout from 10 to 30 seconds, reducing spurious disconnects during system-wide CPU contention
+
+- [#38](https://github.com/brew-lab/thaumic-cast/pull/38) [`478ab65`](https://github.com/brew-lab/thaumic-cast/commit/478ab650978fe271f8857307b835a4e1b61c5262) Thanks [@skezo](https://github.com/skezo)! - Standardize Card usage and mobile-first responsive design
+
+  **Card Component**
+  - Add optional `icon` prop that renders before the title (inherits title color via `currentColor`)
+  - Add title text truncation support when Card has icons (flexbox layout with span wrapper)
+
+  **Desktop App**
+  - Update views to use Card's `title`/`icon` props instead of custom header styles
+  - Convert sidebar and views to mobile-first container queries
+  - Align Settings toggle layout with Server action row pattern (h4/p structure)
+  - Server status card shows operational state with colored icon
+
+  **Extension**
+  - Use shared Input component in onboarding for consistent placeholder styling
+
+  **Shared Styles**
+  - Standardize input placeholder opacity (0.7) across apps
+
+- [#38](https://github.com/brew-lab/thaumic-cast/pull/38) [`b03c4ee`](https://github.com/brew-lab/thaumic-cast/commit/b03c4ee54ce8c0590ad57a767c1b9315550b3dc4) Thanks [@skezo](https://github.com/skezo)! - Start minimized to system tray when launched via autostart
+
+  When the app is launched with the `--minimized` flag (automatically passed by the autostart plugin), the main window is now hidden on startup, leaving only the system tray icon visible. On macOS, the dock icon is also hidden in this mode.
+
+  This provides a seamless auto-start experience where the app runs in the background without interrupting the user's workflow.
+
+- Updated dependencies [[`6921795`](https://github.com/brew-lab/thaumic-cast/commit/6921795b559217b5ee5342852e7c59b80fc858d4), [`7629de4`](https://github.com/brew-lab/thaumic-cast/commit/7629de408fa0aad7e2a454726d890fb32df3d6ee), [`a8ee07e`](https://github.com/brew-lab/thaumic-cast/commit/a8ee07e4510f88292c9452d8ead84ac79a3d077a), [`9ee78a4`](https://github.com/brew-lab/thaumic-cast/commit/9ee78a4240e0abe22ddff3765baf18988de2f9b3), [`823bbf7`](https://github.com/brew-lab/thaumic-cast/commit/823bbf7ec9cf517ddf5e1076c195de7e05b8be2b), [`4082c40`](https://github.com/brew-lab/thaumic-cast/commit/4082c40e2b7bef74d4a46d61c7325880a2169ddd), [`f158fb2`](https://github.com/brew-lab/thaumic-cast/commit/f158fb22a398e1adcac5b344b118a10a9bdcde61), [`b2d3b7c`](https://github.com/brew-lab/thaumic-cast/commit/b2d3b7c146d183217d79c04004f775c8dbedf0c8), [`08673ee`](https://github.com/brew-lab/thaumic-cast/commit/08673eee4b0c1916f7e4abb79caa49effcffc4f7), [`2109faf`](https://github.com/brew-lab/thaumic-cast/commit/2109faf6fa40452a56789ddd08f22ccf08d884bb), [`478ab65`](https://github.com/brew-lab/thaumic-cast/commit/478ab650978fe271f8857307b835a4e1b61c5262), [`be4e2d0`](https://github.com/brew-lab/thaumic-cast/commit/be4e2d0c281f8f3ec0cb24cbe00bec55c97808d9)]:
+  - @thaumic-cast/protocol@0.2.0
+  - @thaumic-cast/ui@1.0.0
+
 ## 0.9.0
 
 ### Minor Changes
