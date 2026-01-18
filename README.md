@@ -9,41 +9,6 @@ A browser-to-Sonos audio streaming system. Capture audio from browser tabs and s
 - **Modern Pipeline:** AudioWorklet, WebCodecs, and SharedArrayBuffer for high-performance audio
 - **Flexible Deployment:** Desktop app with GUI or headless server
 
-## Architecture
-
-```
-┌─────────────────────────────────────────────────────────────────────┐
-│                        Browser Extension                            │
-│  ┌─────────┐    ┌─────────────┐    ┌─────────┐    ┌─────────────┐  │
-│  │   Tab   │───▶│ AudioWorklet│───▶│ Encoder │───▶│  WebSocket  │  │
-│  └─────────┘    └─────────────┘    └─────────┘    └──────┬──────┘  │
-└──────────────────────────────────────────────────────────┼──────────┘
-                                                           │
-                           ┌───────────────────────────────┘
-                           │
-                           ▼
-┌──────────────────────────────────────────────────────────────────────┐
-│                     Desktop App / Server                             │
-│  ┌──────────────────────────────────────────────────────────────┐   │
-│  │                      thaumic-core                             │   │
-│  │  ┌─────────────┐  ┌─────────────┐  ┌─────────────────────┐   │   │
-│  │  │  Discovery  │  │   Stream    │  │    Sonos Control    │   │   │
-│  │  │   (SSDP)    │  │ Coordinator │  │   (UPnP/SOAP/GENA)  │   │   │
-│  │  └─────────────┘  └──────┬──────┘  └─────────────────────┘   │   │
-│  └──────────────────────────┼───────────────────────────────────┘   │
-│                             │                                        │
-│                             ▼                                        │
-│                    HTTP Stream Server                                │
-│                   /stream/{id}/live                                  │
-└──────────────────────────┬───────────────────────────────────────────┘
-                           │
-                           ▼
-                    ┌─────────────┐
-                    │    Sonos    │
-                    │   Speaker   │
-                    └─────────────┘
-```
-
 ## Monorepo Structure
 
 ```
@@ -54,6 +19,7 @@ apps/
 packages/
   thaumic-core/      # Shared Rust library (Sonos, streaming, API)
   protocol/          # Shared TypeScript types
+  shared/            # Shared TypeScript utilities (logger)
   ui/                # Shared Preact components
 ```
 
@@ -64,15 +30,15 @@ packages/
 | `apps/server`           | Standalone headless server for NAS/Docker      |
 | `packages/thaumic-core` | Core Rust library shared by desktop and server |
 | `packages/protocol`     | TypeScript types for WebSocket protocol        |
+| `packages/shared`       | Shared TypeScript utilities (logger)           |
 | `packages/ui`           | Shared Preact components and design system     |
 
 ## Getting Started
 
 ### Prerequisites
 
-- [Rust](https://rustup.rs/) 1.75+
+- [Rust](https://rustup.rs/) (latest stable)
 - [Bun](https://bun.sh/) 1.0+
-- [Node.js](https://nodejs.org/) 20+
 
 ### Development
 
@@ -113,7 +79,6 @@ See [`apps/server/README.md`](apps/server/README.md) for server configuration an
 ## Documentation
 
 - [Architecture Overview](docs/ARCHITECTURE.md)
-- [Desktop App](apps/desktop/README.md)
 - [Headless Server](apps/server/README.md)
 - [Core Library](packages/thaumic-core/README.md)
 

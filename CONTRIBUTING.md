@@ -7,7 +7,6 @@ Thank you for your interest in contributing! We use a Monorepo structure managed
 1.  **Prerequisites:**
     - [Bun](https://bun.sh/) (v1.0+)
     - [Rust](https://www.rust-lang.org/) (latest stable)
-    - Node.js (v18+)
 
 2.  **Install Dependencies:**
 
@@ -41,7 +40,10 @@ bun run build:desktop:windows -- --debug
 
 - `apps/desktop`: Rust (Tauri) backend + Preact frontend.
 - `apps/extension`: Chrome Extension (Manifest V3).
+- `apps/server`: Headless server binary.
+- `packages/thaumic-core`: Shared Rust library (Sonos, streaming, API).
 - `packages/protocol`: Shared Types/Interfaces.
+- `packages/shared`: Shared TypeScript utilities.
 - `packages/ui`: Shared UI components.
 
 ## Commit Standards
@@ -51,7 +53,7 @@ We use **Conventional Commits** to automate versioning.
 Format: `<type>(<scope>): <description>`
 
 - **Types:** `feat`, `fix`, `docs`, `style`, `refactor`, `perf`, `test`, `build`, `ci`, `chore`.
-- **Scopes:** `desktop`, `extension`, `protocol`, `ui`, `docs`, `ci`, `deps`.
+- **Scopes:** `desktop`, `extension`, `server`, `protocol`, `core`, `ui`, `docs`, `ci`, `deps`.
 
 Examples:
 
