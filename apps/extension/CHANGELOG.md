@@ -1,5 +1,11 @@
 # @thaumic-cast/extension
 
+## 0.10.4
+
+### Patch Changes
+
+- [#49](https://github.com/brew-lab/thaumic-cast/pull/49) [`f8824d1`](https://github.com/brew-lab/thaumic-cast/commit/f8824d1dbc5bdef26a6e693dda4b002d910bc133) Thanks [@skezo](https://github.com/skezo)! - Fix service ID check to match thaumic-core constant
+
 ## 0.10.3
 
 ## 0.10.2
