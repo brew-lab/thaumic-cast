@@ -24,24 +24,24 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tokio = { version = "1", features = ["full"] }
 tokio-util = "0.7"
-axum = { version = "0.7", features = ["ws"] }
-tower-http = { version = "0.5", features = ["cors", "trace"] }
+axum = { version = "0.8", features = ["ws"] }
+tower-http = { version = "0.6", features = ["cors", "trace"] }
 tracing = "0.1"
 tracing-subscriber = "0.3"
 bytes = "1"
 futures = "0.3"
-reqwest = { version = "0.11", features = ["json"] }
+reqwest = { version = "0.12", features = ["json"] }
 uuid = { version = "1", features = ["v4"] }
-thiserror = "1"
+thiserror = "2"
 async-trait = "0.1"
-dashmap = "5"
-local-ip-address = "0.5"
+dashmap = "6"
+local-ip-address = "0.6"
 parking_lot = "0.12"
 log = "0.4"
 tokio-stream = { version = "0.1", features = ["sync"] }
-quick-xml = { version = "0.38.4", features = ["serialize"] }
+quick-xml = { version = "0.39.0", features = ["serialize"] }
 html-escape = "0.2.13"
-socket2 = { version = "0.5", features = ["all"] }
+socket2 = { version = "0.6", features = ["all"] }
 rust-i18n = "3"
 sys-locale = "0.3"
 bytemuck = { version = "1", features = ["derive"] }
@@ -50,7 +50,7 @@ async-stream = "0.3"
 
 # Platform-specific dependencies for process priority and MMCSS
 [target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.59", features = [
+windows-sys = { version = "0.61", features = [
     "Win32_System_Threading",  # For thread priority and MMCSS (AvSetMmThreadCharacteristicsW)
     "Win32_Foundation",
 ] }
