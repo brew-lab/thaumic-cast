@@ -37,7 +37,10 @@ export function ExtensionStep(): preact.JSX.Element {
   const handleOpenStore = () => {
     // Open Chrome Web Store in default browser
     // In Tauri, this would use shell.open
-    window.open('https://chrome.google.com/webstore', '_blank');
+    window.open(
+      'https://chromewebstore.google.com/detail/hpemmkbecklfacogdidaoncjmfadgedm',
+      '_blank',
+    );
   };
 
   return (
