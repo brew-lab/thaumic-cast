@@ -2,6 +2,10 @@
   "name": "@thaumic-cast/ui",
   "version": "0.1.0",
   "private": true,
+  "author": {
+    "name": "Brew",
+    "url": "https://thisisbrew.com/"
+  },
   "type": "module",
   "main": "src/index.ts",
   "exports": {

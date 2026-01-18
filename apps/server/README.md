@@ -44,6 +44,7 @@ thaumic-server --log-level debug
 | `-c, --config <FILE>`     | -                      | Path to YAML config file                |
 | `-p, --port <PORT>`       | `THAUMIC_BIND_PORT`    | HTTP server port                        |
 | `-a, --advertise-ip <IP>` | `THAUMIC_ADVERTISE_IP` | IP address to advertise to Sonos        |
+| `-d, --data-dir <DIR>`    | `THAUMIC_DATA_DIR`     | Directory for persistent data           |
 | `-l, --log-level <LEVEL>` | `THAUMIC_LOG_LEVEL`    | Log level (error/warn/info/debug/trace) |
 
 ## Configuration
@@ -65,6 +66,12 @@ topology_refresh_interval: 30
 discovery_ssdp_multicast: true
 discovery_ssdp_broadcast: true
 discovery_mdns: true
+
+# Directory for persistent data (manual speakers, etc.)
+# data_dir: '/var/lib/thaumic-server'
+
+# Custom artwork URL for Sonos album art (optional, must be HTTPS for Android)
+# artwork_url: 'https://cdn.example.com/my-artwork.jpg'
 ```
 
 ### Environment Variables
@@ -76,6 +83,8 @@ All config options can be overridden with environment variables:
 | `THAUMIC_BIND_PORT`                 | HTTP server port                    |
 | `THAUMIC_ADVERTISE_IP`              | Advertise IP address                |
 | `THAUMIC_TOPOLOGY_REFRESH_INTERVAL` | Topology refresh interval (seconds) |
+| `THAUMIC_DATA_DIR`                  | Directory for persistent data       |
+| `THAUMIC_ARTWORK_URL`               | Custom artwork URL for Sonos        |
 | `THAUMIC_LOG_LEVEL`                 | Log level                           |
 
 ## Running as a Service
@@ -127,13 +136,23 @@ CMD ["thaumic-server"]
 
 The server exposes the same HTTP/WebSocket API as the desktop app:
 
-| Endpoint                   | Description                              |
-| -------------------------- | ---------------------------------------- |
-| `GET /api/groups`          | List Sonos groups                        |
-| `GET /api/stats`           | Server statistics                        |
-| `POST /api/playback/start` | Start playback on a speaker              |
-| `WS /ws`                   | WebSocket for real-time events and audio |
-| `GET /stream/{id}/live`    | Audio stream endpoint (for Sonos)        |
+| Endpoint                             | Description                              |
+| ------------------------------------ | ---------------------------------------- |
+| `GET /health`                        | Liveness probe                           |
+| `GET /ready`                         | Readiness probe                          |
+| `GET /api/speakers`                  | List all discovered speakers             |
+| `GET /api/groups`                    | List Sonos groups                        |
+| `GET /api/state`                     | Current server state                     |
+| `POST /api/refresh`                  | Trigger topology refresh                 |
+| `POST /api/playback/start`           | Start playback on a speaker              |
+| `GET/POST /api/speakers/:ip/volume`  | Get/set speaker volume                   |
+| `GET/POST /api/speakers/:ip/mute`    | Get/set speaker mute state               |
+| `POST /api/speakers/manual/probe`    | Probe a manual speaker by IP             |
+| `GET/POST /api/speakers/manual`      | List/add manual speakers                 |
+| `DELETE /api/speakers/manual/:ip`    | Remove a manual speaker                  |
+| `GET /stream/{id}/live[.wav\|.flac]` | Audio stream endpoint (for Sonos)        |
+| `GET /artwork.jpg`                   | Album artwork for Sonos display          |
+| `WS /ws`                             | WebSocket for real-time events and audio |
 
 ## Graceful Shutdown
 

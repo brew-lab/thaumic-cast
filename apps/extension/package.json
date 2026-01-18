@@ -2,6 +2,10 @@
   "name": "@thaumic-cast/extension",
   "version": "0.9.0",
   "private": true,
+  "author": {
+    "name": "Brew",
+    "url": "https://thisisbrew.com/"
+  },
   "type": "module",
   "scripts": {
     "dev": "vite build --watch --mode development",

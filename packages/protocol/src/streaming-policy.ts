@@ -13,6 +13,13 @@
 import type { LatencyMode } from './audio.js';
 
 /**
+ * Frame queue hysteresis ratio for quality mode.
+ * When the frame queue exceeds max size, it trims to this fraction of max
+ * to prevent oscillation (repeatedly hitting the cap).
+ */
+export const FRAME_QUEUE_HYSTERESIS_RATIO = 0.67;
+
+/**
  * Streaming policy configuration derived from latency mode.
  * Centralizes buffer sizing, drop thresholds, and backpressure behavior.
  */
@@ -32,9 +39,6 @@ export interface StreamingPolicy {
   /** Backpressure: whether to drop frames (true) or pause (false). */
   dropOnBackpressure: boolean;
 
-  /** Pause mode: resume threshold for WebSocket buffer (bytes). */
-  wsBufferResumeThreshold: number;
-
   /** Server-side streaming buffer size (ms). Sent in handshake. */
   streamingBufferMs: number;
 }
@@ -49,8 +53,7 @@ const QUALITY_POLICY: StreamingPolicy = {
   catchUpTargetMs: 200, // Unused when catchUpMaxMs is null
   maxEncodeQueue: 16, // More lenient queue
   wsBufferHighWater: 512_000, // 512KB before pausing
-  dropOnBackpressure: false, // Pause instead of drop
-  wsBufferResumeThreshold: 128_000, // Resume at 128KB (hysteresis)
+  dropOnBackpressure: false, // Queue frames instead of drop
   streamingBufferMs: 500, // Larger server buffer for jitter tolerance
 };
 
@@ -65,7 +68,6 @@ const REALTIME_POLICY: StreamingPolicy = {
   maxEncodeQueue: 8, // Tight queue
   wsBufferHighWater: 256_000, // 256KB before dropping
   dropOnBackpressure: true, // Drop to maintain timing
-  wsBufferResumeThreshold: 128_000, // Not used in realtime mode
   streamingBufferMs: 200, // Tighter server buffer for lower latency
 };
 

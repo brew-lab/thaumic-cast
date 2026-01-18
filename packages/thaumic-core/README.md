@@ -33,6 +33,7 @@ These traits decouple core logic from platform-specific implementations:
 - `TaskSpawner` - Spawning background tasks
 - `EventEmitter` - Emitting domain events
 - `IpDetector` - Local IP detection
+- `Lifecycle` - Application lifecycle control (restart, shutdown)
 
 ### Bootstrap
 
