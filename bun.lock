@@ -19,6 +19,7 @@
         "prettier": "^3.7.4",
         "stylelint": "^17.0.0",
         "stylelint-config-standard": "^40.0.0",
+        "stylelint-use-logical": "^2.1.2",
         "typescript-eslint": "^8.50.0",
       },
     },
@@ -1055,6 +1056,8 @@
     "stylelint-config-recommended": ["stylelint-config-recommended@18.0.0", "", { "peerDependencies": { "stylelint": "^17.0.0" } }, "sha512-mxgT2XY6YZ3HWWe3Di8umG6aBmWmHTblTgu/f10rqFXnyWxjKWwNdjSWkgkwCtxIKnqjSJzvFmPT5yabVIRxZg=="],
 
     "stylelint-config-standard": ["stylelint-config-standard@40.0.0", "", { "dependencies": { "stylelint-config-recommended": "^18.0.0" }, "peerDependencies": { "stylelint": "^17.0.0" } }, "sha512-EznGJxOUhtWck2r6dJpbgAdPATIzvpLdK9+i5qPd4Lx70es66TkBPljSg4wN3Qnc6c4h2n+WbUrUynQ3fanjHw=="],
+
+    "stylelint-use-logical": ["stylelint-use-logical@2.1.2", "", { "peerDependencies": { "stylelint": ">= 11 < 17" } }, "sha512-4ffvPNk/swH4KS3izExWuzQOuzLmi0gb0uOhvxWJ20vDA5W5xKCjcHHtLoAj1kKvTIX6eGIN5xGtaVin9PD0wg=="],
 
     "supports-color": ["supports-color@7.2.0", "", { "dependencies": { "has-flag": "^4.0.0" } }, "sha512-qpCAvRl9stuOHveKsn7HncJRvv501qIacKzQlO/+Lwxc9+0q2wLyv4Dfvt80/DPn2pqOBsJdDiogXGR9+OvwRw=="],
 

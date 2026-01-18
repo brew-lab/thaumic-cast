@@ -125,14 +125,14 @@
 
 .favicon {
   flex-shrink: 0;
-  width: 16px;
-  height: 16px;
+  inline-size: 16px;
+  block-size: 16px;
   border-radius: 2px;
 }
 
 .info {
   flex: 1;
-  min-width: 0;
+  min-inline-size: 0;
   overflow: visible;
 }
 

@@ -122,7 +122,7 @@
 
 .remove-button:hover {
   background: var(--color-error);
-  color: white;
+  color: oklch(100% 0 0);
 }
 
 .remove-button:focus-visible {

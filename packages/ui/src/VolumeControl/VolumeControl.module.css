@@ -67,6 +67,6 @@
   flex-shrink: 0;
   font-size: 0.65rem;
   color: var(--color-text-muted);
-  min-width: 1.5rem;
+  min-inline-size: 1.5rem;
   text-align: end;
 }
