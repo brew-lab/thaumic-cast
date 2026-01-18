@@ -1,5 +1,11 @@
 # @thaumic-cast/desktop
 
+## 0.10.3
+
+### Patch Changes
+
+- [#47](https://github.com/brew-lab/thaumic-cast/pull/47) [`b8b75b1`](https://github.com/brew-lab/thaumic-cast/commit/b8b75b1c21c8b462238c8df6b7e3a27cab0b4310) Thanks [@skezo](https://github.com/skezo)! - Update Chrome Web Store link in onboarding to point to the published extension listing.
+
 ## 0.10.2
 
 ## 0.10.1
