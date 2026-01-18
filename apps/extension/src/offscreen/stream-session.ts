@@ -19,6 +19,7 @@ import { createAudioRingBuffer, HEADER_SIZE } from './ring-buffer';
 import type { EncoderConfig, StreamMetadata } from '@thaumic-cast/protocol';
 import { isSupportedSampleRate } from '@thaumic-cast/protocol';
 import { noop } from '../lib/noop';
+import type { WorkerOutboundMessage } from './worker-messages';
 
 const log = createLogger('Offscreen');
 
@@ -107,6 +108,7 @@ export class StreamSession {
   private totalCatchUpDrops = 0;
   private totalConsumerDrops = 0;
   private totalUnderflows = 0;
+  private totalFrameQueueDrops = 0;
 
   /** Last time we logged diagnostics (for rate-limiting when healthy). */
   private lastDiagLogTime = 0;
@@ -381,7 +383,7 @@ export class StreamSession {
     });
 
     // Handle messages from the Worker
-    this.consumerWorker.onmessage = (event) => {
+    this.consumerWorker.onmessage = (event: MessageEvent<WorkerOutboundMessage>) => {
       const msg = event.data;
 
       switch (msg.type) {
@@ -446,6 +448,7 @@ export class StreamSession {
           this.totalCatchUpDrops += msg.catchUpDroppedSamples ?? 0;
           this.totalConsumerDrops += msg.consumerDroppedFrames ?? 0;
           this.totalUnderflows += msg.underflows ?? 0;
+          this.totalFrameQueueDrops += msg.frameQueueOverflowDrops ?? 0;
 
           if (msg.producerDroppedSamples > 0) {
             log.warn(
@@ -464,13 +467,20 @@ export class StreamSession {
               `${msg.underflows} underflow(s) detected - audio source may be stalled or throttled`,
             );
           }
+          // Frame queue overflow indicates prolonged WebSocket backpressure in quality mode
+          if (msg.frameQueueOverflowDrops > 0) {
+            log.warn(
+              `Frame queue overflow: dropped ${msg.frameQueueOverflowDrops} frame(s) - network too slow`,
+            );
+          }
 
           // Rate-limit diagnostic logs: log immediately on issues, otherwise every 30s
           const hasIssues =
             msg.underflows > 0 ||
             msg.producerDroppedSamples > 0 ||
             msg.catchUpDroppedSamples > 0 ||
-            msg.consumerDroppedFrames > 0;
+            msg.consumerDroppedFrames > 0 ||
+            msg.frameQueueOverflowDrops > 0;
           const now = performance.now();
           const timeSinceLastLog = now - this.lastDiagLogTime;
 
@@ -478,8 +488,10 @@ export class StreamSession {
             log.info(
               `[DIAG] wakeups=${msg.wakeups} avgSamples=${msg.avgSamplesPerWake.toFixed(0)} ` +
                 `encodeQueue=${msg.encodeQueueSize} wsBuffer=${msg.wsBufferedAmount} ` +
+                `frameQueue=${msg.frameQueueSize ?? 0}/${((msg.frameQueueBytes ?? 0) / 1024).toFixed(0)}KB ` +
                 `underflows=${msg.underflows} producerDrops=${msg.producerDroppedSamples} ` +
-                `catchUpDrops=${msg.catchUpDroppedSamples} consumerDrops=${msg.consumerDroppedFrames}`,
+                `catchUpDrops=${msg.catchUpDroppedSamples} consumerDrops=${msg.consumerDroppedFrames} ` +
+                `frameQueueDrops=${msg.frameQueueOverflowDrops ?? 0}`,
             );
             this.lastDiagLogTime = now;
           }
