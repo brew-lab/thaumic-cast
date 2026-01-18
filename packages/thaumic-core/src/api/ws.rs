@@ -227,7 +227,9 @@ struct WsMutePayload {
 impl WsOutgoing {
     /// Serializes the message to a WebSocket text message.
     fn to_message(&self) -> Option<Message> {
-        serde_json::to_string(self).ok().map(Message::Text)
+        serde_json::to_string(self)
+            .ok()
+            .map(|s| Message::Text(s.into()))
     }
 }
 
@@ -476,10 +478,10 @@ fn handle_metadata_update(state: &AppState, stream_id: &str, metadata: StreamMet
 ///
 /// Returns `true` if this was the first frame (stream just became ready),
 /// `false` otherwise.
-fn handle_binary_data(state: &AppState, stream_id: &str, data: Vec<u8>) -> bool {
+fn handle_binary_data(state: &AppState, stream_id: &str, data: Bytes) -> bool {
     state
         .stream_coordinator
-        .push_frame(stream_id, Bytes::from(data))
+        .push_frame(stream_id, data)
         .unwrap_or(false)
 }
 
@@ -716,7 +718,7 @@ async fn handle_ws(socket: WebSocket, state: AppState) {
             // Handle broadcasted events (GENA, etc.)
             Ok(event) = broadcast_rx.recv() => {
                 if let Ok(json) = serde_json::to_string(&event) {
-                    if sender.send(Message::Text(json)).await.is_err() {
+                    if sender.send(Message::Text(json.into())).await.is_err() {
                         break;
                     }
                 }
