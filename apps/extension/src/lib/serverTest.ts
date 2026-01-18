@@ -61,7 +61,7 @@ export async function testServerConnection(
     }
 
     const data = await res.json();
-    if (data.service !== 'thaumic-cast-desktop') {
+    if (data.service !== 'thaumic-cast') {
       return { success: false, error: 'wrong_server' };
     }
 
