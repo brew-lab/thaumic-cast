@@ -52,7 +52,7 @@ export function DesktopConnectionStep({
 
   const handleDownload = () => {
     // Open releases page in new tab
-    chrome.tabs.create({ url: 'https://github.com/thaumic-cast/releases' });
+    chrome.tabs.create({ url: 'https://github.com/brew-lab/thaumic-cast/releases/latest' });
   };
 
   /**
