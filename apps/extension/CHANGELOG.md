@@ -1,5 +1,14 @@
 # @thaumic-cast/extension
 
+## 0.10.1
+
+### Patch Changes
+
+- [#43](https://github.com/brew-lab/thaumic-cast/pull/43) [`67708d1`](https://github.com/brew-lab/thaumic-cast/commit/67708d130418f63b69e64ca6ed2d6c5d37af09ba) Thanks [@skezo](https://github.com/skezo)! - Migrate extension settings from sync to local storage and add privacy policy
+  - Switch from `chrome.storage.sync` to `chrome.storage.local` for all extension settings
+  - Add one-time migration to preserve existing user settings
+  - Add PRIVACY.md documenting data handling practices
+
 ## 0.10.0
 
 ### Minor Changes
