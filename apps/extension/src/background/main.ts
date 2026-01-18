@@ -15,6 +15,7 @@
 
 import { createLogger } from '@thaumic-cast/shared';
 import type { BackgroundInboundMessage } from '../lib/messages';
+import { ExtensionSettingsSchema } from '../lib/settings';
 
 // State management modules (these register themselves with persistenceManager on import)
 import { removeFromCache } from './metadata-cache';
@@ -157,8 +158,11 @@ initPromise.then(() => {
 chrome.storage.local.onChanged.addListener(async (changes) => {
   if (!changes['extensionSettings']) return;
 
-  const oldSettings = changes['extensionSettings'].oldValue;
-  const newSettings = changes['extensionSettings'].newValue;
+  const oldParsed = ExtensionSettingsSchema.safeParse(changes['extensionSettings'].oldValue);
+  const newParsed = ExtensionSettingsSchema.safeParse(changes['extensionSettings'].newValue);
+
+  const oldSettings = oldParsed.success ? oldParsed.data : undefined;
+  const newSettings = newParsed.success ? newParsed.data : undefined;
 
   // Check if server-related settings changed
   const serverUrlChanged = oldSettings?.serverUrl !== newSettings?.serverUrl;
