@@ -1,5 +1,11 @@
 # @thaumic-cast/extension
 
+## 0.10.2
+
+### Patch Changes
+
+- [#45](https://github.com/brew-lab/thaumic-cast/pull/45) [`5f08652`](https://github.com/brew-lab/thaumic-cast/commit/5f08652d8d7641ca7a51e2419e9d2867742a2a21) Thanks [@skezo](https://github.com/skezo)! - Fix desktop app download URL in onboarding to point to the correct GitHub releases page.
+
 ## 0.10.1
 
 ### Patch Changes

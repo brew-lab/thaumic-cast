@@ -1,6 +1,6 @@
 [package]
 name = "thaumic-cast-desktop"
-version = "0.10.1"
+version = "0.10.2"
 description = "Thaumic Cast Desktop"
 license = "AGPL-3.0"
 authors = ["Thaumic Cast"]
