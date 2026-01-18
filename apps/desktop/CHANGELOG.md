@@ -1,5 +1,7 @@
 # @thaumic-cast/desktop
 
+## 0.10.4
+
 ## 0.10.3
 
 ### Patch Changes
