@@ -16,31 +16,31 @@ async-trait = "0.1"
 async-stream = "0.3"
 
 # Web framework
-axum = { version = "0.7", features = ["ws"] }
-tower-http = { version = "0.5", features = ["cors", "trace"] }
+axum = { version = "0.8", features = ["ws"] }
+tower-http = { version = "0.6", features = ["cors", "trace"] }
 
 # HTTP client
-reqwest = { version = "0.11", features = ["json"] }
+reqwest = { version = "0.12", features = ["json"] }
 
 # Serialization
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 
 # XML for UPnP/SOAP
-quick-xml = { version = "0.38.4", features = ["serialize"] }
+quick-xml = { version = "0.39.0", features = ["serialize"] }
 html-escape = "0.2.13"
 
 # Networking
-local-ip-address = "0.5"
-socket2 = { version = "0.5", features = ["all"] }
+local-ip-address = "0.6"
+socket2 = { version = "0.6", features = ["all"] }
 mdns-sd = "0.17"
 
 # Concurrency
-dashmap = "5"
+dashmap = "6"
 parking_lot = "0.12"
 
 # Error handling
-thiserror = "1"
+thiserror = "2"
 
 # Logging
 tracing = "0.1"
@@ -54,7 +54,7 @@ hostname = "0.4"
 
 # Platform-specific dependencies for process priority
 [target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.59", features = [
+windows-sys = { version = "0.61", features = [
     "Win32_System_Threading",
     "Win32_Foundation",
 ] }
