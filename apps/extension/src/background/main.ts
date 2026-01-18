@@ -154,7 +154,7 @@ initPromise.then(() => {
  * This handles the case where user changes server URL or auto-discover mode
  * after the extension has already connected.
  */
-chrome.storage.sync.onChanged.addListener(async (changes) => {
+chrome.storage.local.onChanged.addListener(async (changes) => {
   if (!changes['extensionSettings']) return;
 
   const oldSettings = changes['extensionSettings'].oldValue;

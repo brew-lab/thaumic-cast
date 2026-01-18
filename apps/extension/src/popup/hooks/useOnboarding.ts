@@ -25,7 +25,7 @@ interface UseOnboardingResult {
 
 /**
  * Hook for managing extension onboarding state.
- * Handles loading, step completion, and persistence to chrome.storage.sync.
+ * Handles loading, step completion, and persistence to chrome.storage.local.
  *
  * @returns Onboarding state and actions
  */

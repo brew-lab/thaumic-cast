@@ -19,6 +19,90 @@ import { createLogger } from '@thaumic-cast/shared';
 const log = createLogger('Settings');
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Storage Migration Utilities
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Key used to track whether sync-to-local migration has been performed. */
+const MIGRATION_COMPLETE_KEY = 'syncToLocalMigrationComplete';
+
+/**
+ * Migrates a value from chrome.storage.sync to chrome.storage.local.
+ * Validates the legacy data against the provided schema before migration.
+ * Cleans up the legacy sync data after successful migration.
+ *
+ * @param key - The storage key to migrate
+ * @param schema - Zod schema to validate the legacy data
+ * @param label - Human-readable label for logging
+ * @returns The migrated data if successful, null otherwise
+ */
+async function migrateFromSyncStorage<T>(
+  key: string,
+  schema: z.ZodType<T>,
+  label: string,
+): Promise<T | null> {
+  try {
+    const legacy = await chrome.storage.sync.get(key);
+    const legacyData = legacy[key];
+
+    if (!legacyData) return null;
+
+    const parsed = schema.safeParse(legacyData);
+    if (!parsed.success) {
+      log.warn(`Invalid legacy synced ${label}, skipping migration`);
+      return null;
+    }
+
+    // Migrate to local storage and clean up sync storage
+    await chrome.storage.local.set({ [key]: parsed.data });
+    await chrome.storage.sync.remove(key);
+    log.info(`Migrated ${label} from sync to local storage`);
+
+    return parsed.data;
+  } catch (err) {
+    log.error(`Failed to migrate ${label} from sync storage:`, err);
+    return null;
+  }
+}
+
+/**
+ * Checks if the sync-to-local migration has already been completed.
+ * @returns True if migration is complete
+ */
+async function isMigrationComplete(): Promise<boolean> {
+  const result = await chrome.storage.local.get(MIGRATION_COMPLETE_KEY);
+  return result[MIGRATION_COMPLETE_KEY] === true;
+}
+
+/**
+ * Marks the sync-to-local migration as complete.
+ */
+async function markMigrationComplete(): Promise<void> {
+  await chrome.storage.local.set({ [MIGRATION_COMPLETE_KEY]: true });
+}
+
+/**
+ * Performs one-time migration of all settings from sync to local storage.
+ * Safe to call multiple times - will only migrate once.
+ */
+async function ensureMigrationComplete(): Promise<void> {
+  if (await isMigrationComplete()) return;
+
+  // Migrate both settings and onboarding state
+  await migrateFromSyncStorage(
+    EXTENSION_SETTINGS_KEY,
+    ExtensionSettingsSchema,
+    'extension settings',
+  );
+  await migrateFromSyncStorage(
+    ONBOARDING_STORAGE_KEY,
+    ExtensionOnboardingSchema,
+    'onboarding state',
+  );
+
+  await markMigrationComplete();
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Extension Settings (global settings for the extension)
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -133,13 +217,17 @@ const DEFAULT_EXTENSION_SETTINGS: ExtensionSettings = {
 };
 
 /**
- * Loads extension settings from chrome.storage.sync.
+ * Loads extension settings from chrome.storage.local.
+ * Performs one-time migration from sync storage if needed.
  * Falls back to defaults if not set or invalid.
  * @returns The extension settings
  */
 export async function loadExtensionSettings(): Promise<ExtensionSettings> {
   try {
-    const result = await chrome.storage.sync.get(EXTENSION_SETTINGS_KEY);
+    // Ensure migration from sync storage has been performed
+    await ensureMigrationComplete();
+
+    const result = await chrome.storage.local.get(EXTENSION_SETTINGS_KEY);
     const data = result[EXTENSION_SETTINGS_KEY];
 
     if (!data) return { ...DEFAULT_EXTENSION_SETTINGS };
@@ -158,7 +246,7 @@ export async function loadExtensionSettings(): Promise<ExtensionSettings> {
 }
 
 /**
- * Saves extension settings to chrome.storage.sync.
+ * Saves extension settings to chrome.storage.local.
  * Merges partial settings with current, validates through Zod, and returns the result.
  * @param settings - The settings to save (can be partial)
  * @returns The fully merged and validated settings (with Zod defaults applied)
@@ -189,7 +277,7 @@ export async function saveExtensionSettings(
 
     // Validate and apply Zod defaults
     const parsed = ExtensionSettingsSchema.parse(merged);
-    await chrome.storage.sync.set({ [EXTENSION_SETTINGS_KEY]: parsed });
+    await chrome.storage.local.set({ [EXTENSION_SETTINGS_KEY]: parsed });
     return parsed;
   } catch (err) {
     log.error('Failed to save extension settings:', err);
@@ -258,13 +346,17 @@ const DEFAULT_ONBOARDING: ExtensionOnboarding = {
 };
 
 /**
- * Loads onboarding state from chrome.storage.sync.
+ * Loads onboarding state from chrome.storage.local.
+ * Performs one-time migration from sync storage if needed.
  * Falls back to defaults if not set or invalid.
  * @returns The onboarding state
  */
 export async function loadOnboardingState(): Promise<ExtensionOnboarding> {
   try {
-    const result = await chrome.storage.sync.get(ONBOARDING_STORAGE_KEY);
+    // Ensure migration from sync storage has been performed
+    await ensureMigrationComplete();
+
+    const result = await chrome.storage.local.get(ONBOARDING_STORAGE_KEY);
     const data = result[ONBOARDING_STORAGE_KEY];
 
     if (!data) return { ...DEFAULT_ONBOARDING };
@@ -283,7 +375,7 @@ export async function loadOnboardingState(): Promise<ExtensionOnboarding> {
 }
 
 /**
- * Saves onboarding state to chrome.storage.sync.
+ * Saves onboarding state to chrome.storage.local.
  * @param state - Partial state to merge with existing
  */
 export async function saveOnboardingState(state: Partial<ExtensionOnboarding>): Promise<void> {
@@ -297,7 +389,7 @@ export async function saveOnboardingState(state: Partial<ExtensionOnboarding>): 
         ...state.stepsCompleted,
       },
     };
-    await chrome.storage.sync.set({ [ONBOARDING_STORAGE_KEY]: merged });
+    await chrome.storage.local.set({ [ONBOARDING_STORAGE_KEY]: merged });
   } catch (err) {
     log.error('Failed to save onboarding state:', err);
   }
