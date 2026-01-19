@@ -6,6 +6,8 @@
   "permissions": [
     "core:app:default",
     "core:event:default",
+    "core:tray:default",
+    "core:window:default",
     "autostart:allow-enable",
     "autostart:allow-disable",
     "autostart:allow-is-enabled"
