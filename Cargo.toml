@@ -7,6 +7,9 @@ members = [
     "apps/server",
 ]
 
+[profile.dev]
+incremental = true
+
 [profile.release]
 codegen-units = 1
 lto = true
