@@ -101,7 +101,7 @@ export function Settings() {
       <h2 className={styles.pageTitle}>{t('nav.settings')}</h2>
 
       {/* Startup Section */}
-      <Card title={t('settings.startup')} titleLevel="h3" className={styles.section}>
+      <Card id="startup" title={t('settings.startup')} titleLevel="h3" className={styles.section}>
         <div className={styles.sectionContent}>
           <label className={styles.toggle}>
             <div className={styles.toggleInfo}>
@@ -120,7 +120,7 @@ export function Settings() {
       </Card>
 
       {/* Language Section */}
-      <Card title={t('settings.language')} titleLevel="h3" className={styles.section}>
+      <Card id="language" title={t('settings.language')} titleLevel="h3" className={styles.section}>
         <div className={styles.sectionContent}>
           <div className={styles.field}>
             <label className={styles.fieldLabel}>{t('settings.display_language')}</label>
@@ -140,7 +140,12 @@ export function Settings() {
       </Card>
 
       {/* Appearance Section */}
-      <Card title={t('settings.appearance')} titleLevel="h3" className={styles.section}>
+      <Card
+        id="appearance"
+        title={t('settings.appearance')}
+        titleLevel="h3"
+        className={styles.section}
+      >
         <div className={styles.sectionContent}>
           <div className={styles.field}>
             <label className={styles.fieldLabel}>{t('settings.theme')}</label>
@@ -161,7 +166,7 @@ export function Settings() {
       </Card>
 
       {/* Speakers Section */}
-      <Card title={t('settings.speakers')} titleLevel="h3" className={styles.section}>
+      <Card id="speakers" title={t('settings.speakers')} titleLevel="h3" className={styles.section}>
         <div className={styles.sectionContent}>
           {manualIps.length > 0 && (
             <div className={styles.field}>
