@@ -12,7 +12,7 @@
       THEME_STORAGE_KEY in src/lib/theme.ts
     -->
     <script>
-      (function() {
+      (function () {
         var theme = localStorage.getItem('thaumic-cast-theme') || 'auto';
         document.documentElement.dataset.theme = theme;
         if (theme === 'light') {
@@ -24,16 +24,19 @@
     </script>
     <style>
       /* Fallback theme styles - applied before main CSS loads */
-      :root { color-scheme: light dark; }
-      :root[data-theme='light'] { color-scheme: light; }
-      :root[data-theme='dark'] { color-scheme: dark; }
+      :root {
+        color-scheme: light dark;
+      }
+      :root[data-theme='light'] {
+        color-scheme: light;
+      }
+      :root[data-theme='dark'] {
+        color-scheme: dark;
+      }
       body {
         margin: 0;
         /* Uses same OKLCH values as theme.css --gray-1 and --gray-15 */
-        background-color: light-dark(
-          oklch(95% 0.02 280),
-          oklch(10% 0.02 280)
-        );
+        background-color: light-dark(oklch(95% 0.02 280), oklch(10% 0.02 280));
       }
     </style>
   </head>
