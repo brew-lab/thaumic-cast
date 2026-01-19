@@ -31,11 +31,6 @@
   align-items: center;
 }
 
-.footer-end {
-  display: flex;
-  gap: var(--space-sm);
-}
-
 .footer-button {
   inline-size: auto;
   min-inline-size: 6rem;

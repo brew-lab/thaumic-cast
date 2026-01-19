@@ -1,0 +1,35 @@
+.group {
+  display: flex;
+}
+
+.gap-xs {
+  gap: var(--space-xs);
+}
+
+.gap-sm {
+  gap: var(--space-sm);
+}
+
+.gap-md {
+  gap: var(--space-md);
+}
+
+.wrap {
+  flex-wrap: wrap;
+}
+
+.grow > * {
+  flex: 1 0 auto;
+}
+
+.align-start {
+  justify-content: flex-start;
+}
+
+.align-center {
+  justify-content: center;
+}
+
+.align-end {
+  justify-content: flex-end;
+}

@@ -1,6 +1,7 @@
 import type { ComponentChildren } from 'preact';
 import { ChevronLeft } from 'lucide-preact';
 import { Button } from '../Button';
+import { ButtonGroup } from '../ButtonGroup';
 import { IconButton } from '../IconButton';
 import { StepIndicator } from './StepIndicator';
 import styles from './Wizard.module.css';
@@ -110,7 +111,7 @@ export function Wizard({
               </button>
             )}
           </div>
-          <div className={styles.footerEnd}>
+          <ButtonGroup>
             <Button
               variant="primary"
               onClick={onNext}
@@ -119,7 +120,7 @@ export function Wizard({
             >
               {nextLabel}
             </Button>
-          </div>
+          </ButtonGroup>
         </div>
       </div>
     );
@@ -145,7 +146,7 @@ export function Wizard({
           )}
         </div>
 
-        <div className={styles.footerEnd}>
+        <ButtonGroup>
           {!isFirstStep && onBack && (
             <Button variant="secondary" onClick={onBack} className={styles.footerButton}>
               {back}
@@ -159,7 +160,7 @@ export function Wizard({
           >
             {nextLabel}
           </Button>
-        </div>
+        </ButtonGroup>
       </div>
     </div>
   );
