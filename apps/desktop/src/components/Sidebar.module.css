@@ -130,8 +130,8 @@
 .version {
   margin-block-start: auto;
   padding-block: var(--space-sm);
-  padding-inline: var(--space-sm);
   font-size: 0.8rem;
+  font-variant-numeric: tabular-nums;
   color: var(--color-text-muted);
   white-space: nowrap;
   overflow: clip;
@@ -140,6 +140,7 @@
 
 @container sidebar (inline-size >= 8rem) {
   .version {
+    padding-inline: var(--space-sm);
     text-align: start;
   }
 }
