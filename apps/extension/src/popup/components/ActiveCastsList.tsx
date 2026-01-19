@@ -21,6 +21,8 @@ interface ActiveCastsListProps {
   onStopCast: (tabId: number) => void;
   /** Callback when playback control is triggered */
   onControl?: (tabId: number, action: MediaAction) => void;
+  /** Callback when a speaker is removed from a cast */
+  onRemoveSpeaker?: (tabId: number, speakerIp: string) => void;
   /** Whether to show bottom divider (when CurrentTabCard is visible below) */
   showDivider?: boolean;
   /** Whether video sync controls should be shown (from global settings) */
@@ -38,6 +40,7 @@ interface ActiveCastsListProps {
  * @param props.onMuteToggle
  * @param props.onStopCast
  * @param props.onControl
+ * @param props.onRemoveSpeaker
  * @param props.showDivider
  * @param props.videoSyncEnabled
  * @returns The rendered ActiveCastsList component or null if empty
@@ -51,6 +54,7 @@ export function ActiveCastsList({
   onMuteToggle,
   onStopCast,
   onControl,
+  onRemoveSpeaker,
   showDivider = false,
   videoSyncEnabled = false,
 }: ActiveCastsListProps): JSX.Element | null {
@@ -75,6 +79,9 @@ export function ActiveCastsList({
               onMuteToggle={onMuteToggle}
               onStop={() => onStopCast(cast.tabId)}
               onControl={onControl ? (action) => onControl(cast.tabId, action) : undefined}
+              onRemoveSpeaker={
+                onRemoveSpeaker ? (speakerIp) => onRemoveSpeaker(cast.tabId, speakerIp) : undefined
+              }
               videoSyncEnabled={videoSyncEnabled}
             />
           </li>

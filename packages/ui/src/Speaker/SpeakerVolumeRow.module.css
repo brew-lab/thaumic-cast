@@ -17,3 +17,13 @@
   overflow: hidden;
   text-overflow: ellipsis;
 }
+
+.remove-btn {
+  opacity: 0;
+  transition: var(--transition-opacity);
+}
+
+.row:hover .remove-btn,
+.row:focus-within .remove-btn {
+  opacity: 1;
+}

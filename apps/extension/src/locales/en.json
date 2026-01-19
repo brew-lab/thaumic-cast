@@ -36,6 +36,7 @@
   "auto_stop_stream_ended": "The stream has concluded its journey",
   "auto_stop_playback_stopped": "Playback has decided to take a break",
   "auto_stop_speaker_stopped": "The speaker has wandered off mid-sentence",
+  "auto_stop_user_removed": "The last speaker was dismissed from the ritual",
 
   "loading_speakers": "Seeking speakers...",
   "no_speakers_found": "The network was searched. The speakers were not forthcoming.",
@@ -49,6 +50,7 @@
   "mute_speaker": "Mute {{name}}",
   "unmute": "Unmute",
   "unmute_speaker": "Unmute {{name}}",
+  "remove_speaker": "Remove {{name}}",
   "play": "Play",
   "pause": "Pause",
   "previous_track": "Previous track",

@@ -1,4 +1,6 @@
 import type { JSX } from 'preact';
+import { X } from 'lucide-preact';
+import { IconButton } from '../IconButton';
 import { VolumeControl } from '../VolumeControl';
 import styles from './SpeakerVolumeRow.module.css';
 
@@ -23,6 +25,10 @@ interface SpeakerVolumeRowProps {
   volumeLabel: string;
   /** Optional status indicator element */
   statusIndicator?: JSX.Element;
+  /** Callback when remove button is clicked. If absent, no remove button shown. */
+  onRemove?: () => void;
+  /** Accessible label for remove button */
+  removeLabel?: string;
   /** Additional CSS class */
   className?: string;
 }
@@ -40,6 +46,8 @@ interface SpeakerVolumeRowProps {
  * @param props.unmuteLabel - Accessible label for unmute button (include speaker name)
  * @param props.volumeLabel - Accessible label for volume slider (include speaker name)
  * @param props.statusIndicator - Optional status indicator element
+ * @param props.onRemove - Optional callback when remove button is clicked
+ * @param props.removeLabel - Accessible label for remove button
  * @param props.className - Additional CSS class
  * @returns The rendered SpeakerVolumeRow component
  */
@@ -54,6 +62,8 @@ export function SpeakerVolumeRow({
   unmuteLabel,
   volumeLabel,
   statusIndicator,
+  onRemove,
+  removeLabel,
   className,
 }: SpeakerVolumeRowProps): JSX.Element {
   return (
@@ -66,6 +76,17 @@ export function SpeakerVolumeRow({
       <div className={styles.header}>
         <span className={styles.name}>{speakerName}</span>
         {statusIndicator}
+        {onRemove && (
+          <IconButton
+            size="sm"
+            className={styles.removeBtn}
+            onClick={onRemove}
+            aria-label={removeLabel}
+            title={removeLabel}
+          >
+            <X size={10} />
+          </IconButton>
+        )}
       </div>
       <VolumeControl
         volume={volume}

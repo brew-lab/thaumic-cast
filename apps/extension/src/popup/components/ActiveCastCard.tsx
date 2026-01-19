@@ -32,6 +32,8 @@ interface ActiveCastCardProps {
   onStop: () => void;
   /** Callback when playback control is triggered */
   onControl?: (action: MediaAction) => void;
+  /** Callback when a speaker remove button is clicked */
+  onRemoveSpeaker?: (speakerIp: string) => void;
   /** Whether video sync controls should be shown (from global settings) */
   videoSyncEnabled?: boolean;
 }
@@ -47,6 +49,7 @@ interface ActiveCastCardProps {
  * @param props.onMuteToggle
  * @param props.onStop
  * @param props.onControl
+ * @param props.onRemoveSpeaker
  * @param props.videoSyncEnabled
  * @returns The rendered ActiveCastCard component
  */
@@ -59,6 +62,7 @@ export function ActiveCastCard({
   onMuteToggle,
   onStop,
   onControl,
+  onRemoveSpeaker,
   videoSyncEnabled: showVideoSync = false,
 }: ActiveCastCardProps): JSX.Element {
   const { t } = useTranslation();
@@ -257,6 +261,12 @@ export function ActiveCastCard({
                 statusIndicator={
                   transportState ? <TransportIcon state={transportState} size={10} /> : undefined
                 }
+                onRemove={
+                  cast.speakerIps.length > 1 && onRemoveSpeaker
+                    ? () => onRemoveSpeaker(ip)
+                    : undefined
+                }
+                removeLabel={t('remove_speaker', { name })}
               />
             );
           })}

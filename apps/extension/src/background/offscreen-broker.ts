@@ -98,6 +98,21 @@ class OffscreenBroker {
     });
   }
 
+  /**
+   * Stops playback on a single speaker (partial removal from multi-group cast).
+   * @param streamId - The stream ID
+   * @param speakerIp - The speaker IP to stop
+   * @returns Whether the command was sent successfully
+   */
+  async stopPlaybackSpeaker(streamId: string, speakerIp: string): Promise<boolean> {
+    const response = await sendToOffscreen<{ success: boolean }>({
+      type: 'STOP_PLAYBACK_SPEAKER',
+      streamId,
+      speakerIp,
+    });
+    return response?.success ?? false;
+  }
+
   // ─────────────────────────────────────────────────────────────────────────────
   // WebSocket Connection
   // ─────────────────────────────────────────────────────────────────────────────

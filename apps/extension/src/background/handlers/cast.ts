@@ -16,14 +16,26 @@
 
 import { createLogger } from '@thaumic-cast/shared';
 import type { StreamMetadata } from '@thaumic-cast/protocol';
-import type { StartCastMessage, StopCastMessage, ExtensionResponse } from '../../lib/messages';
+import type {
+  StartCastMessage,
+  StopCastMessage,
+  RemoveSpeakerMessage,
+  ExtensionResponse,
+} from '../../lib/messages';
 import { getSourceFromUrl } from '../../lib/url-utils';
 import { getActiveTab, getActiveTabId } from '../../lib/tab-utils';
 import { loadExtensionSettings } from '../../lib/settings';
 import { getCachedCodecSupport } from '../../lib/codec-cache';
 import { resolveAudioMode, describeEncoderConfig } from '../../lib/presets';
 import { getCachedState, updateCache } from '../metadata-cache';
-import { registerSession, hasSession, getSessionCount } from '../session-manager';
+import {
+  registerSession,
+  hasSession,
+  getSession,
+  getSessionCount,
+  markPendingUserRemoval,
+  clearPendingUserRemoval,
+} from '../session-manager';
 import { getSpeakerGroups } from '../sonos-state';
 import { getConnectionState, clearConnectionState } from '../connection-state';
 import { stopCastForTab } from '../sonos-event-handlers';
@@ -38,21 +50,11 @@ const log = createLogger('Background');
  * Logic for starting a new cast session.
  *
  * @param msg - The start cast message.
- * @param sendResponse - Callback to send results back to the caller.
+ * @returns Response indicating success or failure.
  */
-export async function handleStartCast(
-  msg: StartCastMessage,
-  sendResponse: (res: ExtensionResponse) => void,
-): Promise<void> {
-  let finished = false;
+export async function handleStartCast(msg: StartCastMessage): Promise<ExtensionResponse> {
   let disabledAutoDiscard = false;
   let tab: chrome.tabs.Tab | null | undefined;
-  const safeSendResponse = (res: ExtensionResponse) => {
-    if (!finished) {
-      sendResponse(res);
-      finished = true;
-    }
-  };
 
   try {
     const { speakerIps } = msg.payload;
@@ -188,11 +190,11 @@ export async function handleStartCast(
       // Register the session with successful speakers only
       registerSession(tab.id, response.streamId, successfulIps, successfulNames, encoderConfig);
 
-      safeSendResponse({ success: true });
+      return { success: true };
     } else {
       // Offscreen capture failed - re-enable auto-discard since we won't register a session
       chrome.tabs.update(tabId, { autoDiscardable: true }).catch(() => {});
-      safeSendResponse(response);
+      return response;
     }
   } catch (err) {
     // Re-enable auto-discard if we disabled it but failed before registering session
@@ -201,7 +203,7 @@ export async function handleStartCast(
     }
     const message = err instanceof Error ? err.message : String(err);
     log.error(`Cast failed: ${message}`);
-    safeSendResponse({ success: false, error: message });
+    return { success: false, error: message };
   }
 }
 
@@ -209,12 +211,9 @@ export async function handleStartCast(
  * Logic for stopping the active cast session.
  *
  * @param msg - The stop cast message.
- * @param sendResponse - Callback to send results back to the caller.
+ * @returns Response indicating success or failure.
  */
-export async function handleStopCast(
-  msg: StopCastMessage,
-  sendResponse: (res: ExtensionResponse) => void,
-): Promise<void> {
+export async function handleStopCast(msg: StopCastMessage): Promise<ExtensionResponse> {
   try {
     // Prefer explicitly provided tabId if available
     let tabId = msg.payload?.tabId;
@@ -226,27 +225,58 @@ export async function handleStopCast(
     if (tabId && hasSession(tabId)) {
       await stopCastForTab(tabId);
     }
-    sendResponse({ success: true });
+    return { success: true };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     log.error(`Stop cast failed: ${message}`);
-    sendResponse({ success: false, error: message });
+    return { success: false, error: message };
   }
 }
 
 /**
  * Returns the cast status for the current tab.
  *
- * @param sendResponse - Callback to send status back to the caller.
+ * @returns Response with cast status.
  */
-export async function handleGetStatus(
-  sendResponse: (res: ExtensionResponse) => void,
-): Promise<void> {
+export async function handleGetStatus(): Promise<ExtensionResponse> {
   try {
     const tabId = await getActiveTabId();
     const isActive = !!(tabId && hasSession(tabId));
-    sendResponse({ success: true, isActive });
+    return { success: true, isActive };
   } catch {
-    sendResponse({ success: false, isActive: false });
+    return { success: false, isActive: false };
   }
+}
+
+/**
+ * Removes a single speaker from an active cast session.
+ * Sends the command to desktop - event flow handles session cleanup.
+ *
+ * @param msg - The remove speaker message.
+ * @returns Response indicating success or failure.
+ */
+export async function handleRemoveSpeaker(msg: RemoveSpeakerMessage): Promise<ExtensionResponse> {
+  const { tabId, speakerIp } = msg.payload;
+  const session = getSession(tabId);
+
+  if (!session) {
+    return { success: false, error: 'No active session' };
+  }
+
+  if (!session.speakerIps.includes(speakerIp)) {
+    return { success: false, error: 'Speaker not in session' };
+  }
+
+  // Mark as user-initiated before sending command
+  // The event handler will check this to set the correct removal reason
+  markPendingUserRemoval(speakerIp);
+
+  const success = await offscreenBroker.stopPlaybackSpeaker(session.streamId, speakerIp);
+  if (!success) {
+    // Clear the marker since the command failed - no event will arrive
+    clearPendingUserRemoval(speakerIp);
+    return { success: false, error: 'Failed to send command' };
+  }
+
+  return { success: true };
 }

@@ -73,6 +73,14 @@ interface ActiveCastSession {
 const sessions = new Map<number, ActiveCastSession>();
 
 /**
+ * Tracks speakers that are being removed by user action.
+ * Used to distinguish user-initiated removal from system events.
+ * Entries are consumed when the corresponding PlaybackStopped event arrives,
+ * or cleared immediately if the command fails.
+ */
+const pendingUserRemovals = new Set<string>();
+
+/**
  * Debounced storage for session persistence, registered with manager.
  * Uses immediate persist() calls (not schedule()) since session data is critical
  * and changes are infrequent.
@@ -159,7 +167,16 @@ export function registerSession(
  * @param tabId - The Chrome tab ID to remove
  */
 export function removeSession(tabId: number): void {
-  if (sessions.delete(tabId)) {
+  const session = sessions.get(tabId);
+  if (session) {
+    // Clear any pending user removal markers for this session's speakers
+    // (prevents stale markers if session removed before PlaybackStopped events arrive)
+    for (const speakerIp of session.speakerIps) {
+      pendingUserRemovals.delete(speakerIp);
+    }
+
+    sessions.delete(tabId);
+
     // Release keep-awake when no sessions remain
     if (sessions.size === 0) {
       releaseKeepAwake();
@@ -180,6 +197,7 @@ export function clearAllSessions(): void {
 
   log.info(`Clearing all ${sessions.size} session(s) - desktop unreachable`);
   sessions.clear();
+  pendingUserRemovals.clear();
   releaseKeepAwake();
   persistSessions();
   notifySessionsChanged();
@@ -358,4 +376,43 @@ export function onMetadataUpdate(tabId: number): void {
  */
 function persistSessions(): void {
   storage.persist();
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Pending User Removals
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Marks a speaker as being removed by user action.
+ * Call this before sending the STOP_PLAYBACK_SPEAKER command.
+ * @param speakerIp - The speaker IP being removed
+ */
+export function markPendingUserRemoval(speakerIp: string): void {
+  pendingUserRemovals.add(speakerIp);
+  log.info(`Marked pending user removal for speaker ${speakerIp}`);
+}
+
+/**
+ * Clears a pending user removal marker.
+ * Call this if the STOP_PLAYBACK_SPEAKER command fails.
+ * @param speakerIp - The speaker IP to clear
+ */
+export function clearPendingUserRemoval(speakerIp: string): void {
+  if (pendingUserRemovals.delete(speakerIp)) {
+    log.info(`Cleared pending user removal for speaker ${speakerIp} (command failed)`);
+  }
+}
+
+/**
+ * Checks and consumes a pending user removal marker.
+ * Call this when handling PlaybackStopped events.
+ * @param speakerIp - The speaker IP to check
+ * @returns True if the removal was user-initiated, false otherwise
+ */
+export function consumePendingUserRemoval(speakerIp: string): boolean {
+  const wasUserInitiated = pendingUserRemovals.delete(speakerIp);
+  if (wasUserInitiated) {
+    log.info(`Consumed pending user removal for speaker ${speakerIp}`);
+  }
+  return wasUserInitiated;
 }

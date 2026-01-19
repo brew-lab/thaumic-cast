@@ -333,6 +333,11 @@ enum MonitorCommand {
         stream_id: String,
         speaker_ip: String,
     },
+    /// Stop monitoring for a single speaker.
+    StopSpeaker {
+        stream_id: String,
+        speaker_ip: String,
+    },
     /// Stop all monitoring for a stream.
     StopStream { stream_id: String },
 }
@@ -431,6 +436,19 @@ impl LatencyMonitor {
             .await;
     }
 
+    /// Stops monitoring for a single speaker.
+    ///
+    /// Call this when a speaker is removed from a multi-group cast.
+    pub async fn stop_speaker(&self, stream_id: &str, speaker_ip: &str) {
+        let _ = self
+            .command_tx
+            .send(MonitorCommand::StopSpeaker {
+                stream_id: stream_id.to_string(),
+                speaker_ip: speaker_ip.to_string(),
+            })
+            .await;
+    }
+
     /// Background task that performs the actual monitoring.
     async fn run_monitor(
         sonos: Arc<dyn SonosPlayback>,
@@ -465,6 +483,15 @@ impl LatencyMonitor {
                                     stream_id, speaker_ip
                                 );
                                 sessions.insert(key, LatencySession::new());
+                            }
+                        }
+                        MonitorCommand::StopSpeaker { stream_id, speaker_ip } => {
+                            let key = (stream_id.clone(), speaker_ip.clone());
+                            if sessions.remove(&key).is_some() {
+                                log::info!(
+                                    "[LatencyMonitor] Stopped monitoring: stream={}, speaker={}",
+                                    stream_id, speaker_ip
+                                );
                             }
                         }
                         MonitorCommand::StopStream { stream_id } => {

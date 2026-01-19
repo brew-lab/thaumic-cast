@@ -27,6 +27,8 @@ export {
   type StartCastMessage,
   StopCastMessageSchema,
   type StopCastMessage,
+  RemoveSpeakerMessageSchema,
+  type RemoveSpeakerMessage,
   StartCaptureMessageSchema,
   type StartCaptureMessage,
   StopCaptureMessageSchema,
@@ -139,6 +141,8 @@ export {
   type SetVolumeMessage,
   SetMuteMessageSchema,
   type SetMuteMessage,
+  StopPlaybackSpeakerMessageSchema,
+  type StopPlaybackSpeakerMessage,
   ControlMediaMessageSchema,
   type ControlMediaMessage,
   ContentControlMediaMessageSchema,
@@ -173,6 +177,7 @@ export {
 import type {
   StartCastMessage,
   StopCastMessage,
+  RemoveSpeakerMessage,
   GetSonosStateMessage,
   GetActiveCastsMessage,
   EnsureConnectionMessage,
@@ -211,6 +216,7 @@ import type {
   GetWsStatusMessage,
   SyncSonosStateMessage,
   DetectCodecsMessage,
+  StopPlaybackSpeakerMessage,
   WsConnectedMessage,
   WsDisconnectedMessage,
   WsPermanentlyDisconnectedMessage,
@@ -229,6 +235,7 @@ import type {
 export type PopupToBackgroundType =
   | 'START_CAST'
   | 'STOP_CAST'
+  | 'REMOVE_SPEAKER'
   | 'GET_CAST_STATUS'
   | 'GET_SONOS_STATE'
   | 'GET_CONNECTION_STATUS'
@@ -287,7 +294,8 @@ export type BackgroundToOffscreenType =
   | 'SYNC_SONOS_STATE'
   | 'DETECT_CODECS'
   | 'SET_VOLUME'
-  | 'SET_MUTE';
+  | 'SET_MUTE'
+  | 'STOP_PLAYBACK_SPEAKER';
 
 /** Message types: Offscreen → Background */
 export type OffscreenToBackgroundType =
@@ -314,6 +322,7 @@ export type ContentBroadcastType = 'VIDEO_SYNC_STATE_CHANGED';
 export type PopupToBackgroundMessage =
   | StartCastMessage
   | StopCastMessage
+  | RemoveSpeakerMessage
   | { type: 'GET_CAST_STATUS' }
   | GetSonosStateMessage
   | { type: 'GET_CONNECTION_STATUS' }
@@ -386,7 +395,8 @@ export type BackgroundToOffscreenMessage =
   | SyncSonosStateMessage
   | DetectCodecsMessage
   | SetVolumeMessage
-  | SetMuteMessage;
+  | SetMuteMessage
+  | StopPlaybackSpeakerMessage;
 
 /**
  * Messages sent from offscreen document to background.

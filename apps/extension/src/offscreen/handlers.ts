@@ -16,19 +16,18 @@
 import { createLogger } from '@thaumic-cast/shared';
 import { detectSupportedCodecs } from '@thaumic-cast/protocol';
 import type { OffscreenInboundMessage } from '../lib/messages';
-import type {
-  StartCaptureMessage,
-  StopCaptureMessage,
-  StartPlaybackMessage,
-  StartPlaybackResponse,
-  OffscreenMetadataMessage,
-} from '../lib/messages';
 import {
   WsConnectMessageSchema,
   WsReconnectMessageSchema,
   SyncSonosStateMessageSchema,
   SetVolumeMessageSchema,
   SetMuteMessageSchema,
+  StopPlaybackSpeakerMessageSchema,
+  StartCaptureMessageSchema,
+  StopCaptureMessageSchema,
+  StartPlaybackMessageSchema,
+  OffscreenMetadataMessageSchema,
+  type StartPlaybackResponse,
 } from '../lib/message-schemas';
 import {
   connectControlWebSocket,
@@ -156,6 +155,21 @@ export function setupMessageHandlers(): void {
       return true;
     }
 
+    if (msg.type === 'STOP_PLAYBACK_SPEAKER') {
+      try {
+        const validated = StopPlaybackSpeakerMessageSchema.parse(msg);
+        const success = sendControlCommand({
+          type: 'STOP_PLAYBACK_SPEAKER',
+          payload: { streamId: validated.streamId, ip: validated.speakerIp },
+        });
+        sendResponse({ success });
+      } catch (err) {
+        log.error('STOP_PLAYBACK_SPEAKER validation failed:', err);
+        sendResponse({ success: false, error: String(err) });
+      }
+      return true;
+    }
+
     // ─────────────────────────────────────────────────────────────────────────
     // Codec Detection (AudioEncoder only available in window contexts)
     // ─────────────────────────────────────────────────────────────────────────
@@ -180,120 +194,146 @@ export function setupMessageHandlers(): void {
     // ─────────────────────────────────────────────────────────────────────────
 
     if (msg.type === 'START_CAPTURE') {
-      const { tabId, mediaStreamId, encoderConfig, baseUrl, keepTabAudible } =
-        msg.payload as StartCaptureMessage['payload'];
+      try {
+        const validated = StartCaptureMessageSchema.parse(msg);
+        const { tabId, mediaStreamId, encoderConfig, baseUrl, keepTabAudible } = validated.payload;
 
-      // Prevent duplicate sessions for the same tab
-      const existing = activeSessions.get(tabId);
-      if (existing) {
-        log.info(`Stopping existing session for tab ${tabId} before restart`);
-        existing.stop();
-        activeSessions.delete(tabId);
-      }
+        // Prevent duplicate sessions for the same tab
+        const existing = activeSessions.get(tabId);
+        if (existing) {
+          log.info(`Stopping existing session for tab ${tabId} before restart`);
+          existing.stop();
+          activeSessions.delete(tabId);
+        }
 
-      // Enforce global offscreen limit
-      if (activeSessions.size >= MAX_OFFSCREEN_SESSIONS) {
-        sendResponse({ success: false, error: 'error_max_sessions' });
-        return true;
-      }
+        // Enforce global offscreen limit
+        if (activeSessions.size >= MAX_OFFSCREEN_SESSIONS) {
+          sendResponse({ success: false, error: 'error_max_sessions' });
+          return true;
+        }
 
-      const constraints: ChromeTabCaptureConstraints = {
-        audio: {
-          mandatory: {
-            chromeMediaSource: 'tab',
-            chromeMediaSourceId: mediaStreamId,
+        const constraints: ChromeTabCaptureConstraints = {
+          audio: {
+            mandatory: {
+              chromeMediaSource: 'tab',
+              chromeMediaSourceId: mediaStreamId,
+            },
           },
-        },
-        video: false,
-      };
+          video: false,
+        };
 
-      // Chrome's getUserMedia accepts these non-standard constraints for tab capture
-      navigator.mediaDevices
-        .getUserMedia(constraints as MediaStreamConstraints)
-        .then(async (stream) => {
-          // Callback when worker WebSocket disconnects unexpectedly
-          const onDisconnected = () => {
-            activeSessions.delete(tabId);
-            // Notify background that session was lost
-            chrome.runtime.sendMessage({ type: 'SESSION_DISCONNECTED', tabId }).catch(noop);
-          };
+        // Chrome's getUserMedia accepts these non-standard constraints for tab capture
+        navigator.mediaDevices
+          .getUserMedia(constraints as MediaStreamConstraints)
+          .then(async (stream) => {
+            // Callback when worker WebSocket disconnects unexpectedly
+            const onDisconnected = () => {
+              activeSessions.delete(tabId);
+              // Notify background that session was lost
+              chrome.runtime.sendMessage({ type: 'SESSION_DISCONNECTED', tabId }).catch(noop);
+            };
 
-          const session = new StreamSession(stream, encoderConfig, baseUrl, onDisconnected, {
-            keepTabAudible,
-          });
-          try {
-            await session.init();
-            activeSessions.set(tabId, session);
-            sendResponse({ success: true, streamId: session.streamId });
-          } catch (err) {
+            const session = new StreamSession(stream, encoderConfig, baseUrl, onDisconnected, {
+              keepTabAudible,
+            });
+            try {
+              await session.init();
+              activeSessions.set(tabId, session);
+              sendResponse({ success: true, streamId: session.streamId });
+            } catch (err) {
+              const message = err instanceof Error ? err.message : String(err);
+              sendResponse({ success: false, error: message });
+            }
+          })
+          .catch((err) => {
             const message = err instanceof Error ? err.message : String(err);
+            log.error(`Capture failed: ${message}`);
             sendResponse({ success: false, error: message });
-          }
-        })
-        .catch((err) => {
-          const message = err instanceof Error ? err.message : String(err);
-          log.error(`Capture failed: ${message}`);
-          sendResponse({ success: false, error: message });
-        });
+          });
+      } catch (err) {
+        log.error('START_CAPTURE validation failed:', err);
+        sendResponse({ success: false, error: String(err) });
+      }
       return true;
     }
 
     if (msg.type === 'STOP_CAPTURE') {
-      const tabId = (msg as StopCaptureMessage).payload.tabId;
-      const session = activeSessions.get(tabId);
-      if (session) {
-        session.stop();
-        activeSessions.delete(tabId);
+      try {
+        const validated = StopCaptureMessageSchema.parse(msg);
+        const session = activeSessions.get(validated.payload.tabId);
+        if (session) {
+          session.stop();
+          activeSessions.delete(validated.payload.tabId);
+        }
+        sendResponse({ success: true });
+      } catch (err) {
+        log.error('STOP_CAPTURE validation failed:', err);
+        sendResponse({ success: false, error: String(err) });
       }
-      sendResponse({ success: true });
       return true;
     }
 
     if (msg.type === 'START_PLAYBACK') {
-      const { tabId, speakerIps, metadata } = (msg as StartPlaybackMessage).payload;
-      const session = activeSessions.get(tabId);
+      try {
+        const validated = StartPlaybackMessageSchema.parse(msg);
+        const { tabId, speakerIps, metadata } = validated.payload;
+        const session = activeSessions.get(tabId);
 
-      if (!session) {
-        const response: StartPlaybackResponse = {
-          success: false,
-          results: [],
-          error: `No active session for tab ${tabId}`,
-        };
-        sendResponse(response);
-        return true;
-      }
-
-      // Wait for stream to be ready, then start playback with initial metadata
-      session
-        .waitForReady()
-        .then(() => session.startPlayback(speakerIps, metadata))
-        .then((results) => {
-          // Consider success if at least one speaker started
-          const anySuccess = results.some((r) => r.success);
-          const response: StartPlaybackResponse = {
-            success: anySuccess,
-            results,
-          };
-          sendResponse(response);
-        })
-        .catch((err) => {
+        if (!session) {
           const response: StartPlaybackResponse = {
             success: false,
             results: [],
-            error: err instanceof Error ? err.message : String(err),
+            error: `No active session for tab ${tabId}`,
           };
           sendResponse(response);
-        });
+          return true;
+        }
+
+        // Wait for stream to be ready, then start playback with initial metadata
+        session
+          .waitForReady()
+          .then(() => session.startPlayback(speakerIps, metadata))
+          .then((results) => {
+            // Consider success if at least one speaker started
+            const anySuccess = results.some((r) => r.success);
+            const response: StartPlaybackResponse = {
+              success: anySuccess,
+              results,
+            };
+            sendResponse(response);
+          })
+          .catch((err) => {
+            const response: StartPlaybackResponse = {
+              success: false,
+              results: [],
+              error: err instanceof Error ? err.message : String(err),
+            };
+            sendResponse(response);
+          });
+      } catch (err) {
+        log.error('START_PLAYBACK validation failed:', err);
+        const response: StartPlaybackResponse = {
+          success: false,
+          results: [],
+          error: String(err),
+        };
+        sendResponse(response);
+      }
       return true;
     }
 
     if (msg.type === 'OFFSCREEN_METADATA_UPDATE') {
-      const { tabId, metadata } = (msg as OffscreenMetadataMessage).payload;
-      const session = activeSessions.get(tabId);
-      if (session) {
-        session.updateMetadata(metadata);
+      try {
+        const validated = OffscreenMetadataMessageSchema.parse(msg);
+        const session = activeSessions.get(validated.payload.tabId);
+        if (session) {
+          session.updateMetadata(validated.payload.metadata);
+        }
+        sendResponse({ success: true });
+      } catch (err) {
+        log.error('OFFSCREEN_METADATA_UPDATE validation failed:', err);
+        sendResponse({ success: false, error: String(err) });
       }
-      sendResponse({ success: true });
       return true;
     }
 

@@ -14,6 +14,8 @@ interface ActiveCastsResult {
   loading: boolean;
   /** Function to stop a specific cast by tab ID */
   stopCast: (tabId: number) => Promise<void>;
+  /** Function to remove a speaker from a cast */
+  removeSpeaker: (tabId: number, speakerIp: string) => Promise<void>;
 }
 
 /**
@@ -51,5 +53,14 @@ export function useActiveCasts(): ActiveCastsResult {
     await chrome.runtime.sendMessage({ type: 'STOP_CAST', payload: { tabId } });
   }, []);
 
-  return { casts, loading, stopCast };
+  /**
+   * Removes a single speaker from a cast session.
+   * @param tabId - The tab ID of the cast
+   * @param speakerIp - The speaker IP to remove
+   */
+  const removeSpeaker = useCallback(async (tabId: number, speakerIp: string) => {
+    await chrome.runtime.sendMessage({ type: 'REMOVE_SPEAKER', payload: { tabId, speakerIp } });
+  }, []);
+
+  return { casts, loading, stopCast, removeSpeaker };
 }
