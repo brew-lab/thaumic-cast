@@ -50,7 +50,7 @@
       "stylelint --fix",
       "prettier --write"
     ],
-    "*.{json,md,yml,yaml}": [
+    "*.{json,md,yml,yaml,html}": [
       "prettier --write"
     ],
     "*.rs": [
