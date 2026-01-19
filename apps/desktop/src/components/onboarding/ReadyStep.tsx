@@ -36,6 +36,12 @@ export function ReadyStep(): preact.JSX.Element {
       subtitle={t('onboarding.ready.subtitle')}
       icon={Zap}
     >
+      <p className={styles.introText}>
+        {t('onboarding.ready.intro', {
+          maxStreams: stats.value?.maxStreams ?? DEFAULT_MAX_CONCURRENT_STREAMS,
+        })}
+      </p>
+
       <div className={styles.summaryBox}>
         <div className={styles.summaryItem}>
           <Check size={16} className={styles.checkIcon} />
@@ -55,17 +61,6 @@ export function ReadyStep(): preact.JSX.Element {
         </div>
       </div>
 
-      <p className={styles.introText}>
-        {t('onboarding.ready.intro', {
-          maxStreams: stats.value?.maxStreams ?? DEFAULT_MAX_CONCURRENT_STREAMS,
-        })}
-      </p>
-
-      <h3 className={styles.sectionTitle}>{t('onboarding.ready.performance_title')}</h3>
-      <p className={styles.sectionBody}>{t('onboarding.ready.performance_body')}</p>
-
-      <Alert variant="warning">{t('onboarding.ready.battery_warning')}</Alert>
-
       <label className={styles.autostartToggle}>
         <input type="checkbox" checked={autostartEnabled} onChange={handleAutostartChange} />
         <div className={styles.autostartContent}>
@@ -75,6 +70,11 @@ export function ReadyStep(): preact.JSX.Element {
           </span>
         </div>
       </label>
+
+      <h3 className={styles.sectionTitle}>{t('onboarding.ready.performance_title')}</h3>
+      <p className={styles.sectionBody}>{t('onboarding.ready.performance_body')}</p>
+
+      <Alert variant="warning">{t('onboarding.ready.battery_warning')}</Alert>
     </WizardStep>
   );
 }

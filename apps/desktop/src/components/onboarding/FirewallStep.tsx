@@ -29,15 +29,13 @@ export function FirewallStep(): preact.JSX.Element {
       subtitle={t(`onboarding.firewall.subtitle_${platformKey}`)}
       icon={Shield}
     >
-      <Alert variant="warning">{t(`onboarding.firewall.warning_text_${platformKey}`)}</Alert>
+      <Alert variant="info">{t(`onboarding.firewall.prompt_${platformKey}`)}</Alert>
 
       <ul className={styles.reasonList}>
         <li>{t('onboarding.firewall.reason_1')}</li>
         <li>{t('onboarding.firewall.reason_2')}</li>
         <li>{t('onboarding.firewall.reason_3')}</li>
       </ul>
-
-      <p className={styles.reassurance}>{t(`onboarding.firewall.reassurance_${platformKey}`)}</p>
     </WizardStep>
   );
 }

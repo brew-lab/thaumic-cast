@@ -3,8 +3,10 @@
   line-height: 1.6;
 }
 
-.store-button {
-  /* Button styling handled by component */
+.button-group {
+  display: flex;
+  gap: var(--space-sm);
+  flex-wrap: wrap;
 }
 
 .skip-hint {
