@@ -8,6 +8,7 @@
   "speakers.summary": "{{speakers}} speakers, {{streams}} streaming",
   "speakers.none": "No Sonos speakers have made themselves known",
   "speakers.scan_hint": "Ensure you're on the same network as your speakers, then give it a go.",
+  "speakers.manual_add_hint": "You can also <0>add a speaker manually</0> if discovery isn't cooperating.",
   "speakers.scan": "Scan",
   "speakers.scanning": "Listening...",
   "speakers.stop_all": "Dispel All",

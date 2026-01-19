@@ -154,6 +154,14 @@
       oklch(70% var(--chroma-vibrant) var(--hue-primary))
     );
 
+    /* Links */
+    --color-link: var(--color-primary);
+    --color-link-hover: var(--color-primary-hover);
+    --color-link-visited: light-dark(
+      oklch(45% var(--chroma-muted) var(--hue-primary)),
+      oklch(60% var(--chroma-muted) var(--hue-primary))
+    );
+
     /*
      * ═══════════════════════════════════════════════════════════════════════════
      * TIER 3: COMPONENT TOKENS - Scoped to UI components
@@ -406,6 +414,26 @@
 
   :where(p) {
     text-wrap: pretty;
+  }
+
+  :where(a) {
+    color: var(--color-link);
+    text-decoration: underline;
+    text-underline-offset: 2px;
+    transition: var(--transition-color);
+  }
+
+  :where(a:hover) {
+    color: var(--color-link-hover);
+  }
+
+  :where(a:visited) {
+    color: var(--color-link-visited);
+  }
+
+  :where(a:focus-visible) {
+    outline: 2px solid var(--color-focus);
+    outline-offset: 2px;
   }
 
   :where(

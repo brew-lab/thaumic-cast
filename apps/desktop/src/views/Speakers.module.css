@@ -64,6 +64,10 @@
   text-wrap: pretty;
 }
 
+.empty-description + .empty-description {
+  margin-block-start: var(--space-xs);
+}
+
 .network-alert {
   margin-block-end: var(--space-md);
 }

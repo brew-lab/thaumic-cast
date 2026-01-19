@@ -1,5 +1,7 @@
 import { useEffect } from 'preact/hooks';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
+import { Link } from 'wouter-preact';
+import { Trans, useTranslation } from 'react-i18next';
 import {
   groups,
   transportStates,
@@ -19,7 +21,6 @@ import { type NetworkHealthPayload, type TransportStatePayload } from '../lib/ev
 import { DeviceCard } from '../components/DeviceCard';
 import { ActionButton, Alert } from '@thaumic-cast/ui';
 import { RefreshCw, Square } from 'lucide-preact';
-import { useTranslation } from 'react-i18next';
 import styles from './Speakers.module.css';
 
 /**
@@ -135,6 +136,12 @@ export function Speakers() {
         <div className={styles.emptyState}>
           <p className={styles.emptyTitle}>{t('speakers.none')}</p>
           <p className={styles.emptyDescription}>{t('speakers.scan_hint')}</p>
+          <p className={styles.emptyDescription}>
+            <Trans
+              i18nKey="speakers.manual_add_hint"
+              components={[<Link key={0} href="/settings#speakers" />]}
+            />
+          </p>
         </div>
       ) : (
         <div className={styles.grid}>
