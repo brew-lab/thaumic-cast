@@ -267,6 +267,6 @@ mod tests {
     fn http_client_has_timeout() {
         let client = create_http_client();
         // We can't directly test timeout, but verify client is created
-        assert!(client.get("http://example.com").build().is_ok());
+        assert!(client.get("https://example.com").build().is_ok());
     }
 }
