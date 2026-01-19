@@ -28,16 +28,6 @@
   text-wrap: pretty;
 }
 
-.controls {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-sm);
-}
-
-.control-button {
-  flex: 1 0 auto;
-}
-
 .grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(19rem, 1fr));

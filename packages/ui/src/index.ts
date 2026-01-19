@@ -1,6 +1,7 @@
 export * from './theme.css';
 export * from './Alert';
 export * from './Button';
+export * from './ButtonGroup';
 export * from './ActionButton';
 export * from './hooks/useButtonAction';
 export * from './Card';
