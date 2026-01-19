@@ -4,6 +4,38 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Thaumic Cast</title>
+    <!--
+      Early theme initialization to prevent flash of wrong theme.
+      This runs synchronously before any content renders.
+
+      IMPORTANT: The localStorage key 'thaumic-cast-theme' must match
+      THEME_STORAGE_KEY in src/lib/theme.ts
+    -->
+    <script>
+      (function() {
+        var theme = localStorage.getItem('thaumic-cast-theme') || 'auto';
+        document.documentElement.dataset.theme = theme;
+        if (theme === 'light') {
+          document.documentElement.style.colorScheme = 'light';
+        } else if (theme === 'dark') {
+          document.documentElement.style.colorScheme = 'dark';
+        }
+      })();
+    </script>
+    <style>
+      /* Fallback theme styles - applied before main CSS loads */
+      :root { color-scheme: light dark; }
+      :root[data-theme='light'] { color-scheme: light; }
+      :root[data-theme='dark'] { color-scheme: dark; }
+      body {
+        margin: 0;
+        /* Uses same OKLCH values as theme.css --gray-1 and --gray-15 */
+        background-color: light-dark(
+          oklch(95% 0.02 280),
+          oklch(10% 0.02 280)
+        );
+      }
+    </style>
   </head>
   <body>
     <div id="app"></div>

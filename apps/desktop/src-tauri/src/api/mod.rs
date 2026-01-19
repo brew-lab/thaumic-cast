@@ -35,6 +35,12 @@ pub struct AppState {
     app_handle: Arc<RwLock<Option<AppHandle>>>,
     /// Whether network services have been started.
     services_started: Arc<AtomicBool>,
+    /// Whether the app was started with --minimized flag.
+    ///
+    /// When true, the window should remain hidden on startup (tray-only mode).
+    /// The frontend checks this via `show_main_window` command to decide
+    /// whether to show the window after initialization.
+    started_minimized: bool,
     /// Cached artwork source, resolved once at startup.
     ///
     /// Caches the `ArtworkSource` (not the final URL) to avoid repeated disk I/O
@@ -50,11 +56,16 @@ impl AppState {
     /// Note: Services are not started automatically. Call `start_services()`
     /// after the user acknowledges the firewall warning or skips onboarding.
     ///
+    /// # Arguments
+    ///
+    /// * `started_minimized` - Whether the app was started with --minimized flag.
+    ///   When true, the window remains hidden on startup (tray-only mode).
+    ///
     /// # Panics
     ///
     /// Panics if the streaming runtime fails to initialize. This is intentional
     /// as the application cannot function without the streaming runtime.
-    pub fn new() -> Self {
+    pub fn new(started_minimized: bool) -> Self {
         let config = Config::default();
         // Note: handle() initializes the global runtime. If you need to use
         // tauri::async_runtime::set() for a custom runtime, call it before this.
@@ -74,8 +85,14 @@ impl AppState {
             tauri_emitter,
             app_handle: Arc::new(RwLock::new(None)),
             services_started: Arc::new(AtomicBool::new(false)),
+            started_minimized,
             cached_artwork_source: Arc::new(RwLock::new(None)),
         }
+    }
+
+    /// Returns whether the app was started in minimized/tray-only mode.
+    pub fn is_started_minimized(&self) -> bool {
+        self.started_minimized
     }
 
     /// Returns the artwork URL to use in Sonos DIDL-Lite metadata.
@@ -248,6 +265,6 @@ impl AppState {
 
 impl Default for AppState {
     fn default() -> Self {
-        Self::new()
+        Self::new(false)
     }
 }

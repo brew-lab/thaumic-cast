@@ -3,7 +3,7 @@
 //! These commands delegate to the service layer - no business logic here.
 
 use serde::Serialize;
-use tauri::Manager;
+use tauri::{Manager, WebviewWindow};
 use thaumic_core::{
     probe_speaker_by_ip, validate_speaker_ip, ErrorCode, ManualSpeakerConfig, NetworkHealth,
     PlaybackSession, Speaker, ZoneGroup,
@@ -396,6 +396,31 @@ pub fn get_manual_speaker_ips(app: tauri::AppHandle) -> Result<Vec<String>, Comm
 
     let config = ManualSpeakerConfig::load(&app_data_dir);
     Ok(config.speaker_ips)
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Window Visibility Commands
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Shows the main window after frontend initialization.
+///
+/// This command is called by the frontend after theme and i18n are initialized.
+/// It only shows the window if the app was NOT started with --minimized flag.
+/// When started minimized, the window remains hidden (tray-only mode) until
+/// the user explicitly clicks the tray icon.
+///
+/// This approach prevents the flash of unstyled content that would occur if
+/// the window was visible before the theme CSS loads.
+#[tauri::command]
+pub fn show_main_window(window: WebviewWindow, state: tauri::State<'_, AppState>) {
+    if state.is_started_minimized() {
+        log::debug!("Started minimized, keeping window hidden");
+        return;
+    }
+
+    if let Err(e) = window.show() {
+        log::warn!("Failed to show main window: {}", e);
+    }
 }
 
 #[cfg(test)]
