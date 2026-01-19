@@ -1,5 +1,5 @@
 import type { JSX } from 'preact';
-import { useState, useCallback } from 'preact/hooks';
+import { useState, useCallback, useEffect } from 'preact/hooks';
 import { useTranslation } from 'react-i18next';
 import { Card, Button } from '@thaumic-cast/ui';
 import type { ExtensionSettings } from '../../lib/settings';
@@ -28,6 +28,11 @@ export function ServerSection({ settings, onUpdate }: ServerSectionProps): JSX.E
   const [urlInput, setUrlInput] = useState(settings.serverUrl ?? '');
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState<ServerTestResult | null>(null);
+
+  // Sync urlInput with settings.serverUrl when settings change externally
+  useEffect(() => {
+    setUrlInput(settings.serverUrl ?? '');
+  }, [settings.serverUrl]);
 
   /**
    * Tests connection to the specified server URL.
@@ -68,15 +73,39 @@ export function ServerSection({ settings, onUpdate }: ServerSectionProps): JSX.E
   }, []);
 
   /**
-   * Saves the URL and triggers a test.
+   * Saves the URL if changed and optionally tests the connection.
+   * @param forceTest - If true, tests even if URL hasn't changed
    */
-  const handleSaveUrl = useCallback(async () => {
-    const url = urlInput.trim();
-    if (!url) return;
+  const saveAndTest = useCallback(
+    async (forceTest = false) => {
+      const url = urlInput.trim() || null;
+      const urlChanged = url !== settings.serverUrl;
 
-    await onUpdate({ serverUrl: url, useAutoDiscover: false });
-    await handleTestConnection(url);
-  }, [urlInput, onUpdate, handleTestConnection]);
+      if (urlChanged) {
+        await onUpdate({ serverUrl: url });
+      }
+
+      if (url && (urlChanged || forceTest)) {
+        await handleTestConnection(url);
+      }
+    },
+    [urlInput, settings.serverUrl, onUpdate, handleTestConnection],
+  );
+
+  const handleUrlBlur = useCallback(
+    (e: FocusEvent) => {
+      // Don't save on blur if focus moved to the test button
+      const relatedTarget = e.relatedTarget as HTMLElement | null;
+      if (relatedTarget?.dataset.serverTest) return;
+
+      void saveAndTest(false);
+    },
+    [saveAndTest],
+  );
+
+  const handleSaveAndTest = useCallback(() => {
+    void saveAndTest(true);
+  }, [saveAndTest]);
 
   return (
     <Card title={t('server_section_title')}>
@@ -125,13 +154,15 @@ export function ServerSection({ settings, onUpdate }: ServerSectionProps): JSX.E
                 placeholder={t('server_url_placeholder')}
                 value={urlInput}
                 onInput={handleUrlChange}
+                onBlur={handleUrlBlur}
                 autoComplete="url"
               />
               <Button
                 variant="secondary"
-                onClick={handleSaveUrl}
+                onClick={handleSaveAndTest}
                 disabled={testing || !urlInput.trim()}
                 aria-busy={testing}
+                data-server-test="true"
               >
                 {testing ? t('server_testing') : t('server_test_connection')}
               </Button>
