@@ -77,6 +77,13 @@ export const StreamEventSchema = z.discriminatedUnion('type', [
     speakerIp: z.string(),
     timestamp: z.number(),
   }),
+  z.object({
+    type: z.literal('playbackStopFailed'),
+    streamId: z.string(),
+    speakerIp: z.string(),
+    error: z.string(),
+    timestamp: z.number(),
+  }),
 ]);
 export type StreamEvent = z.infer<typeof StreamEventSchema>;
 

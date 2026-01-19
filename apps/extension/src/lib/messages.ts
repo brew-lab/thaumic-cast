@@ -119,6 +119,8 @@ export {
   type CastAutoStoppedMessage,
   SpeakerRemovedMessageSchema,
   type SpeakerRemovedMessage,
+  SpeakerStopFailedMessageSchema,
+  type SpeakerStopFailedMessage,
   WsConnectionLostMessageSchema,
   type WsConnectionLostMessage,
   NetworkHealthStatusSchema,
@@ -195,6 +197,7 @@ import type {
   ActiveCastsChangedMessage,
   CastAutoStoppedMessage,
   SpeakerRemovedMessage,
+  SpeakerStopFailedMessage,
   WsStateChangedMessage,
   VolumeUpdateMessage,
   MuteUpdateMessage,
@@ -259,6 +262,7 @@ export type BackgroundToPopupType =
   | 'ACTIVE_CASTS_CHANGED'
   | 'CAST_AUTO_STOPPED'
   | 'SPEAKER_REMOVED'
+  | 'SPEAKER_STOP_FAILED'
   | 'WS_STATE_CHANGED'
   | 'VOLUME_UPDATE'
   | 'MUTE_UPDATE'
@@ -349,6 +353,7 @@ export type BackgroundToPopupMessage =
   | ActiveCastsChangedMessage
   | CastAutoStoppedMessage
   | SpeakerRemovedMessage
+  | SpeakerStopFailedMessage
   | WsStateChangedMessage
   | VolumeUpdateMessage
   | MuteUpdateMessage

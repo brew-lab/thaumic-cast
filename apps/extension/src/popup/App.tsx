@@ -6,7 +6,12 @@ import { getSpeakerAvailability } from '@thaumic-cast/protocol';
 import { Radio, Settings } from 'lucide-preact';
 import { Alert, IconButton } from '@thaumic-cast/ui';
 import styles from './App.module.css';
-import { ExtensionResponse, StartCastMessage } from '../lib/messages';
+import type {
+  ExtensionResponse,
+  StartCastMessage,
+  SpeakerStopFailedMessage,
+} from '../lib/messages';
+import { useChromeMessage } from './hooks/useChromeMessage';
 import type { SpeakerGroup } from '../domain/speaker';
 import { CurrentTabCard } from './components/CurrentTabCard';
 import { ActiveCastsList } from './components/ActiveCastsList';
@@ -110,6 +115,16 @@ function MainPopup(): JSX.Element {
       setError(autoStopMessage);
     }
   }, [autoStopNotification, autoStopMessage]);
+
+  // Handle speaker stop failure notifications
+  useChromeMessage((message) => {
+    const msg = message as { type: string };
+    if (msg.type === 'SPEAKER_STOP_FAILED') {
+      const failedMsg = message as SpeakerStopFailedMessage;
+      const name = speakerGroups.getGroupName(failedMsg.speakerIp) || failedMsg.speakerIp;
+      setError(t('error_speaker_stop_failed', { name }));
+    }
+  });
 
   /**
    * Opens the extension settings page.

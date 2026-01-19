@@ -699,16 +699,17 @@ async fn handle_ws(socket: WebSocket, state: AppState) {
                                 }
                             }
                             Ok(WsIncoming::StopPlaybackSpeaker { payload }) => {
-                                // Best-effort: stop playback and latency monitoring for speaker
-                                state
+                                // Stop playback; only stop latency monitoring if successful
+                                let stopped = state
                                     .stream_coordinator
                                     .stop_playback_speaker(&payload.stream_id, &payload.ip)
-                                    .await
-                                    .ok();
-                                state
-                                    .latency_monitor
-                                    .stop_speaker(&payload.stream_id, &payload.ip)
                                     .await;
+                                if stopped {
+                                    state
+                                        .latency_monitor
+                                        .stop_speaker(&payload.stream_id, &payload.ip)
+                                        .await;
+                                }
                             }
                             Err(_) => {} // Unknown message type, ignore
                         }

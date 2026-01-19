@@ -538,34 +538,59 @@ impl StreamCoordinator {
 
     /// Stops playback on a specific speaker for a specific stream.
     ///
-    /// Removes the session and broadcasts a `StreamEvent::PlaybackStopped` event.
+    /// On success: removes the session, broadcasts `StreamEvent::PlaybackStopped`, returns `true`.
+    /// On failure (stop command fails or session not found): keeps session intact (if any),
+    /// broadcasts `StreamEvent::PlaybackStopFailed`, returns `false`.
     /// Used for partial speaker removal in multi-group scenarios.
     ///
     /// # Arguments
     /// * `stream_id` - The stream ID
     /// * `speaker_ip` - IP address of the speaker to stop
-    pub async fn stop_playback_speaker(
-        &self,
-        stream_id: &str,
-        speaker_ip: &str,
-    ) -> ThaumicResult<()> {
+    ///
+    /// # Returns
+    /// `true` if playback was stopped successfully, `false` if stop failed (session kept intact).
+    pub async fn stop_playback_speaker(&self, stream_id: &str, speaker_ip: &str) -> bool {
         let key = PlaybackSessionKey::new(stream_id, speaker_ip);
 
-        if self.playback_sessions.remove(&key).is_some() {
-            // Best-effort stop - ignore errors (speaker might already be stopped)
-            if let Err(e) = self.sonos.stop(speaker_ip).await {
-                log::warn!("Failed to stop playback on {}: {}", speaker_ip, e);
-            }
-
-            // Broadcast playback stopped event
-            self.emit_event(StreamEvent::PlaybackStopped {
+        if !self.playback_sessions.contains_key(&key) {
+            // Session not found - emit failure so client can clear pending state
+            log::warn!(
+                "Stop requested for unknown session: stream={}, speaker={}",
+                stream_id,
+                speaker_ip
+            );
+            self.emit_event(StreamEvent::PlaybackStopFailed {
                 stream_id: stream_id.to_string(),
                 speaker_ip: speaker_ip.to_string(),
+                error: "Session not found".to_string(),
                 timestamp: now_millis(),
             });
+            return false;
         }
 
-        Ok(())
+        match self.sonos.stop(speaker_ip).await {
+            Ok(()) => {
+                // Success: remove session and emit PlaybackStopped
+                self.playback_sessions.remove(&key);
+                self.emit_event(StreamEvent::PlaybackStopped {
+                    stream_id: stream_id.to_string(),
+                    speaker_ip: speaker_ip.to_string(),
+                    timestamp: now_millis(),
+                });
+                true
+            }
+            Err(e) => {
+                // Failure: keep session intact, emit PlaybackStopFailed
+                log::warn!("Failed to stop playback on {}: {}", speaker_ip, e);
+                self.emit_event(StreamEvent::PlaybackStopFailed {
+                    stream_id: stream_id.to_string(),
+                    speaker_ip: speaker_ip.to_string(),
+                    error: e.to_string(),
+                    timestamp: now_millis(),
+                });
+                false
+            }
+        }
     }
 
     /// Stops playback on a speaker (by speaker IP only, for backward compatibility).

@@ -400,6 +400,14 @@ export const SpeakerRemovedMessageSchema = z.object({
 });
 export type SpeakerRemovedMessage = z.infer<typeof SpeakerRemovedMessageSchema>;
 
+export const SpeakerStopFailedMessageSchema = z.object({
+  type: z.literal('SPEAKER_STOP_FAILED'),
+  tabId: TabIdSchema,
+  speakerIp: SpeakerIpSchema,
+  error: z.string(),
+});
+export type SpeakerStopFailedMessage = z.infer<typeof SpeakerStopFailedMessageSchema>;
+
 export const WsConnectionLostMessageSchema = z.object({
   type: z.literal('WS_CONNECTION_LOST'),
   reason: z.string(),

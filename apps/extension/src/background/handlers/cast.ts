@@ -271,12 +271,17 @@ export async function handleRemoveSpeaker(msg: RemoveSpeakerMessage): Promise<Ex
   // The event handler will check this to set the correct removal reason
   markPendingUserRemoval(speakerIp);
 
-  const success = await offscreenBroker.stopPlaybackSpeaker(session.streamId, speakerIp);
-  if (!success) {
-    // Clear the marker since the command failed - no event will arrive
+  try {
+    const success = await offscreenBroker.stopPlaybackSpeaker(session.streamId, speakerIp);
+    if (!success) {
+      // Clear the marker since the command failed - no event will arrive
+      clearPendingUserRemoval(speakerIp);
+      return { success: false, error: 'Failed to send command' };
+    }
+    return { success: true };
+  } catch {
+    // Clear the marker on any error (e.g., offscreen doc missing)
     clearPendingUserRemoval(speakerIp);
     return { success: false, error: 'Failed to send command' };
   }
-
-  return { success: true };
 }
