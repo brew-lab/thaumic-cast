@@ -17,6 +17,7 @@
         "height": 560,
         "minWidth": 480,
         "minHeight": 360,
+        "visible": false,
         "acceptFirstMouse": true,
         "tabbingIdentifier": null,
         "zoomHotkeysEnabled": false

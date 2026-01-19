@@ -25,7 +25,7 @@ use crate::api::commands::{
     get_groups, get_manual_speaker_ips, get_network_health, get_platform, get_playback_sessions,
     get_server_port, get_speakers, get_stats, get_transport_states, probe_speaker_ip,
     refresh_topology, remove_manual_speaker_ip, restart_server, set_autostart_enabled,
-    start_network_services, start_playback,
+    show_main_window, start_network_services, start_playback,
 };
 use crate::api::AppState;
 
@@ -75,7 +75,8 @@ pub fn run() {
             probe_speaker_ip,
             add_manual_speaker_ip,
             remove_manual_speaker_ip,
-            get_manual_speaker_ips
+            get_manual_speaker_ips,
+            show_main_window
         ])
         .setup(|app| {
             // Detect and set system locale for i18n
@@ -86,24 +87,23 @@ pub fn run() {
                 log::debug!("Locale set to: {} (detected: {})", base_locale, locale);
             }
 
-            // Check if started with --minimized flag (auto-start mode)
-            // If so, hide the window to start in system tray only
+            // Check if started with --minimized flag (auto-start mode).
+            // Window starts hidden (visible: false in tauri.conf.json) and is shown
+            // by the frontend via show_main_window command after initialization.
+            // When minimized, window stays hidden (tray-only mode).
             let start_minimized = std::env::args().any(|arg| arg == "--minimized");
             if start_minimized {
                 log::info!("Starting minimized to system tray (auto-start mode)");
-                if let Some(window) = app.get_webview_window("main") {
-                    let _ = window.hide();
 
-                    // On macOS, hide the dock icon when starting minimized
-                    #[cfg(target_os = "macos")]
-                    {
-                        use tauri::ActivationPolicy;
-                        let _ = app.set_activation_policy(ActivationPolicy::Accessory);
-                    }
+                // On macOS, hide the dock icon when starting minimized
+                #[cfg(target_os = "macos")]
+                {
+                    use tauri::ActivationPolicy;
+                    let _ = app.set_activation_policy(ActivationPolicy::Accessory);
                 }
             }
 
-            let state = Arc::new(AppState::new());
+            let state = Arc::new(AppState::new(start_minimized));
 
             // Store app handle for restart functionality
             state.set_app_handle(app.handle().clone());

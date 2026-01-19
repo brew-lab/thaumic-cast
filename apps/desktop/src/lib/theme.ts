@@ -1,6 +1,12 @@
 /** Theme mode options */
 export type ThemeMode = 'auto' | 'light' | 'dark';
 
+/**
+ * LocalStorage key for persisting theme preference.
+ *
+ * IMPORTANT: This key is also used in index.html inline script for early
+ * theme initialization. If you change this value, update index.html as well.
+ */
 const THEME_STORAGE_KEY = 'thaumic-cast-theme';
 
 /**
