@@ -1,9 +1,14 @@
 import { useEffect, useRef } from 'preact/hooks';
+import { open } from '@tauri-apps/plugin-shell';
 import { WizardStep, Alert, Button } from '@thaumic-cast/ui';
-import { Puzzle, ExternalLink } from 'lucide-preact';
+import { Puzzle, ExternalLink, Download } from 'lucide-preact';
 import { useTranslation } from 'react-i18next';
 import { stats, fetchStats } from '../../state/store';
 import styles from './ExtensionStep.module.css';
+
+const CHROME_STORE_URL =
+  'https://chromewebstore.google.com/detail/hpemmkbecklfacogdidaoncjmfadgedm';
+const GITHUB_RELEASES_URL = 'https://github.com/brew-lab/thaumic-cast/releases/latest';
 
 /**
  * Extension installation guide step.
@@ -35,12 +40,11 @@ export function ExtensionStep(): preact.JSX.Element {
   }, []);
 
   const handleOpenStore = () => {
-    // Open Chrome Web Store in default browser
-    // In Tauri, this would use shell.open
-    window.open(
-      'https://chromewebstore.google.com/detail/hpemmkbecklfacogdidaoncjmfadgedm',
-      '_blank',
-    );
+    open(CHROME_STORE_URL);
+  };
+
+  const handleOpenGithub = () => {
+    open(GITHUB_RELEASES_URL);
   };
 
   return (
@@ -55,10 +59,17 @@ export function ExtensionStep(): preact.JSX.Element {
 
       <p className={styles.body}>{t('onboarding.extension.body')}</p>
 
-      <Button variant="primary" onClick={handleOpenStore} className={styles.storeButton}>
-        <ExternalLink size={16} />
-        {t('onboarding.extension.chrome_link')}
-      </Button>
+      <div className={styles.buttonGroup}>
+        <Button variant="primary" onClick={handleOpenStore}>
+          <ExternalLink size={16} />
+          {t('onboarding.extension.chrome_link')}
+        </Button>
+
+        <Button variant="secondary" onClick={handleOpenGithub}>
+          <Download size={16} />
+          {t('onboarding.extension.github_link')}
+        </Button>
+      </div>
 
       <p className={styles.skipHint}>{t('onboarding.extension.skip_hint')}</p>
     </WizardStep>

@@ -160,7 +160,7 @@ export function SpeakerStep({ onSpeakersFound }: SpeakerStepProps): preact.JSX.E
           label={t('onboarding.speakers.manual_toggle')}
           hint={t('onboarding.speakers.manual_hint')}
         >
-          <ManualSpeakerForm buttonVariant="primary" />
+          <ManualSpeakerForm buttonVariant="secondary" />
         </Disclosure>
       )}
 

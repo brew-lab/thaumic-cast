@@ -8,12 +8,3 @@
 .reason-list li {
   margin-block-end: var(--space-sm);
 }
-
-.reassurance {
-  margin-block: var(--space-lg) 0;
-  padding: var(--space-md);
-  background: var(--color-surface-hover);
-  border-radius: var(--radius-md);
-  font-style: italic;
-  color: var(--color-text-muted);
-}
