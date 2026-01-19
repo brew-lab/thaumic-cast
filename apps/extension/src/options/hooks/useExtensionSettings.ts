@@ -31,7 +31,15 @@ export function useExtensionSettings(): {
     /** Loads settings from storage. */
     async function load() {
       try {
-        const loaded = await loadExtensionSettings();
+        let loaded = await loadExtensionSettings();
+
+        // Normalize UI state on initial load only: if manual mode has no URL,
+        // show auto-discover (reflects actual backend fallback behavior).
+        // Not applied during editing or via storage listener.
+        if (!loaded.useAutoDiscover && !loaded.serverUrl) {
+          loaded = { ...loaded, useAutoDiscover: true };
+        }
+
         if (mountedRef.current) {
           setSettings(loaded);
           setLoading(false);
