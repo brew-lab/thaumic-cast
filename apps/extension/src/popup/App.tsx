@@ -68,7 +68,7 @@ function MainPopup(): JSX.Element {
 
   // Media metadata hooks
   const { state: currentTabState } = useCurrentTabState();
-  const { casts: activeCasts, stopCast } = useActiveCasts();
+  const { casts: activeCasts, stopCast, removeSpeaker } = useActiveCasts();
 
   // Derive isCasting from activeCasts - automatically updates when sessions change
   const isCasting = currentTabState
@@ -245,6 +245,7 @@ function MainPopup(): JSX.Element {
         onMuteToggle={handleMuteToggle}
         onStopCast={stopCast}
         onControl={handleControl}
+        onRemoveSpeaker={removeSpeaker}
         showDivider={!!currentTabState && !isCasting}
         videoSyncEnabled={videoSyncEnabled}
       />

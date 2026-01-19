@@ -82,6 +82,15 @@ export const StopCastMessageSchema = z.object({
 });
 export type StopCastMessage = z.infer<typeof StopCastMessageSchema>;
 
+export const RemoveSpeakerMessageSchema = z.object({
+  type: z.literal('REMOVE_SPEAKER'),
+  payload: z.object({
+    tabId: TabIdSchema,
+    speakerIp: SpeakerIpSchema,
+  }),
+});
+export type RemoveSpeakerMessage = z.infer<typeof RemoveSpeakerMessageSchema>;
+
 export const StartCaptureMessageSchema = z.object({
   type: z.literal('START_CAPTURE'),
   payload: z.object({
@@ -348,13 +357,15 @@ export type TransportStateUpdateMessage = z.infer<typeof TransportStateUpdateMes
 /**
  * Reasons for removing a speaker from an active cast session.
  * - `source_changed`: User switched Sonos to another source (Spotify, AirPlay, etc.)
- * - `playback_stopped`: Playback stopped on the speaker
+ * - `playback_stopped`: Playback stopped on the speaker (system/network issue)
  * - `speaker_stopped`: Speaker stopped unexpectedly (e.g., stream killed due to underflow)
+ * - `user_removed`: User explicitly removed the speaker via UI
  */
 export const SpeakerRemovalReasonSchema = z.enum([
   'source_changed',
   'playback_stopped',
   'speaker_stopped',
+  'user_removed',
 ]);
 export type SpeakerRemovalReason = z.infer<typeof SpeakerRemovalReasonSchema>;
 
@@ -362,12 +373,14 @@ export type SpeakerRemovalReason = z.infer<typeof SpeakerRemovalReasonSchema>;
  * Reasons for auto-stopping an entire cast session.
  * Includes all speaker removal reasons plus stream-level events.
  * - `stream_ended`: The stream ended on the server side
+ * - `user_removed`: User removed the last speaker via UI
  */
 export const CastAutoStopReasonSchema = z.enum([
   'source_changed',
   'playback_stopped',
   'speaker_stopped',
   'stream_ended',
+  'user_removed',
 ]);
 export type CastAutoStopReason = z.infer<typeof CastAutoStopReasonSchema>;
 
@@ -471,6 +484,13 @@ export const SetMuteMessageSchema = z.object({
   muted: z.boolean(),
 });
 export type SetMuteMessage = z.infer<typeof SetMuteMessageSchema>;
+
+export const StopPlaybackSpeakerMessageSchema = z.object({
+  type: z.literal('STOP_PLAYBACK_SPEAKER'),
+  streamId: z.string(),
+  speakerIp: SpeakerIpSchema,
+});
+export type StopPlaybackSpeakerMessage = z.infer<typeof StopPlaybackSpeakerMessageSchema>;
 
 export const ControlMediaMessageSchema = z.object({
   type: z.literal('CONTROL_MEDIA'),

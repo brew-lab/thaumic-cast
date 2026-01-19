@@ -34,6 +34,7 @@ import {
   removeSession,
   removeSpeakerFromSession,
   hasSession,
+  consumePendingUserRemoval,
 } from './session-manager';
 import { notifyPopup } from './notification-service';
 import { offscreenBroker } from './offscreen-broker';
@@ -426,12 +427,20 @@ async function handlePlaybackStopped(streamId: string, speakerIp: string): Promi
   // Use streamId to find the correct session (avoids race conditions during recast)
   const session = getSessionByStreamId(streamId);
   if (!session || !session.speakerIps.includes(speakerIp)) {
+    // Clear any pending marker to prevent misclassification in future sessions
+    // (e.g., user clicked Remove then Stop Cast before event arrived)
+    consumePendingUserRemoval(speakerIp);
     log.debug(`PlaybackStopped: stream ${streamId} / speaker ${speakerIp} not found, ignoring`);
     return;
   }
 
+  // Check if this was a user-initiated removal (vs system/network issue)
+  const reason: SpeakerRemovalReason = consumePendingUserRemoval(speakerIp)
+    ? 'user_removed'
+    : 'playback_stopped';
+
   // Delegate to shared removal logic with pre-resolved session
-  await handleSpeakerRemoval(speakerIp, 'playback_stopped', session);
+  await handleSpeakerRemoval(speakerIp, reason, session);
 }
 
 /**

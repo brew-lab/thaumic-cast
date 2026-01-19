@@ -228,5 +228,12 @@ export const WsControlCommandSchema = z.discriminatedUnion('type', [
     type: z.literal('GET_MUTE'),
     payload: z.object({ ip: z.string() }),
   }),
+  z.object({
+    type: z.literal('STOP_PLAYBACK_SPEAKER'),
+    payload: z.object({
+      streamId: z.string(),
+      ip: z.string(),
+    }),
+  }),
 ]);
 export type WsControlCommand = z.infer<typeof WsControlCommandSchema>;

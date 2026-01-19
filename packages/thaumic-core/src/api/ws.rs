@@ -69,6 +69,7 @@ enum WsIncoming {
     GetVolume { payload: WsSpeakerRequest },
     GetMute { payload: WsSpeakerRequest },
     StartPlayback { payload: StartPlaybackRequest },
+    StopPlaybackSpeaker { payload: StopPlaybackSpeakerPayload },
 }
 
 /// Request payload for starting playback via WebSocket.
@@ -121,6 +122,14 @@ struct WsMuteRequest {
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct WsSpeakerRequest {
+    ip: String,
+}
+
+/// Request payload for stopping playback on a single speaker.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct StopPlaybackSpeakerPayload {
+    stream_id: String,
     ip: String,
 }
 
@@ -688,6 +697,18 @@ async fn handle_ws(socket: WebSocket, state: AppState) {
                                         let _ = sender.send(msg).await;
                                     }
                                 }
+                            }
+                            Ok(WsIncoming::StopPlaybackSpeaker { payload }) => {
+                                // Best-effort: stop playback and latency monitoring for speaker
+                                state
+                                    .stream_coordinator
+                                    .stop_playback_speaker(&payload.stream_id, &payload.ip)
+                                    .await
+                                    .ok();
+                                state
+                                    .latency_monitor
+                                    .stop_speaker(&payload.stream_id, &payload.ip)
+                                    .await;
                             }
                             Err(_) => {} // Unknown message type, ignore
                         }
