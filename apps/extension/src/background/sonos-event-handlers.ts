@@ -92,6 +92,14 @@ export async function handleSonosEvent(event: BroadcastEvent): Promise<void> {
       case 'playbackStopped':
         await handlePlaybackStopped(eventData.streamId as string, eventData.speakerIp as string);
         break;
+
+      case 'playbackStopFailed':
+        handlePlaybackStopFailed(
+          eventData.streamId as string,
+          eventData.speakerIp as string,
+          eventData.error as string,
+        );
+        break;
     }
   } else if (event.category === 'latency') {
     await handleLatencyEvent(event as LatencyBroadcastEvent);
@@ -441,6 +449,35 @@ async function handlePlaybackStopped(streamId: string, speakerIp: string): Promi
 
   // Delegate to shared removal logic with pre-resolved session
   await handleSpeakerRemoval(speakerIp, reason, session);
+}
+
+/**
+ * Handles playback stop failure events.
+ * Clears the pending user removal marker and notifies popup so user can retry.
+ * @param streamId - The stream ID that failed to stop
+ * @param speakerIp - The speaker IP where stop failed
+ * @param error - The error message from the server
+ */
+function handlePlaybackStopFailed(streamId: string, speakerIp: string, error: string): void {
+  // Clear the pending marker so it doesn't get misclassified on retry
+  consumePendingUserRemoval(speakerIp);
+
+  // Find session to get tabId
+  const session = getSessionByStreamId(streamId);
+  if (!session) {
+    log.debug(`PlaybackStopFailed: stream ${streamId} not found, ignoring`);
+    return;
+  }
+
+  log.warn(`Failed to stop playback on ${speakerIp}: ${error}`);
+
+  // Notify popup so it can show error toast (speaker remains in session for retry)
+  notifyPopup({
+    type: 'SPEAKER_STOP_FAILED',
+    tabId: session.tabId,
+    speakerIp,
+    error,
+  });
 }
 
 /**

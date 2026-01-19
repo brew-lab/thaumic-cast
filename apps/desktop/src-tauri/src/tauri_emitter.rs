@@ -127,6 +127,28 @@ impl EventEmitter for TauriEventEmitter {
                     },
                 );
             }
+            StreamEvent::PlaybackStopFailed {
+                stream_id,
+                speaker_ip,
+                error,
+                ..
+            } => {
+                #[derive(serde::Serialize, Clone)]
+                #[serde(rename_all = "camelCase")]
+                struct PlaybackStopFailedPayload {
+                    stream_id: String,
+                    speaker_ip: String,
+                    error: String,
+                }
+                self.emit_to_tauri(
+                    "playback-stop-failed",
+                    PlaybackStopFailedPayload {
+                        stream_id: stream_id.clone(),
+                        speaker_ip: speaker_ip.clone(),
+                        error: error.clone(),
+                    },
+                );
+            }
         }
     }
 

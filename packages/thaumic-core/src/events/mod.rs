@@ -86,6 +86,19 @@ pub enum StreamEvent {
         /// Unix timestamp in milliseconds.
         timestamp: u64,
     },
+    /// Failed to stop playback on a speaker.
+    PlaybackStopFailed {
+        /// The stream ID that failed to stop.
+        #[serde(rename = "streamId")]
+        stream_id: String,
+        /// The speaker IP address that failed to stop.
+        #[serde(rename = "speakerIp")]
+        speaker_ip: String,
+        /// Error message describing the failure.
+        error: String,
+        /// Unix timestamp in milliseconds.
+        timestamp: u64,
+    },
 }
 
 /// Network health status.
