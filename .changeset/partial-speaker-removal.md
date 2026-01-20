@@ -1,5 +1,6 @@
 ---
 '@thaumic-cast/extension': minor
+'@thaumic-cast/desktop': patch
 '@thaumic-cast/ui': minor
 '@thaumic-cast/protocol': minor
 ---
@@ -11,3 +12,4 @@ Add partial speaker removal for multi-group casts
 - Track user-initiated vs system removals for accurate analytics (user_removed reason)
 - Stop latency monitoring when a speaker is removed
 - Add translations for user_removed auto-stop reason
+- Sort speakers alphabetically for consistent UI ordering (extension and desktop)
