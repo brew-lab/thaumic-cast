@@ -174,10 +174,11 @@ export async function handleStartCast(msg: StartCastMessage): Promise<ExtensionR
         }
       }
 
-      // Build arrays of successful speakers using domain model
+      // Build arrays of successful speakers using domain model (sorted by name for consistent UI)
       const speakerGroups = getSpeakerGroups();
-      const successfulIps = successfulResults.map((r) => r.speakerIp);
-      const successfulNames = successfulResults.map((r) => speakerGroups.getGroupName(r.speakerIp));
+      const sortedResults = speakerGroups.sortByGroupName(successfulResults, (r) => r.speakerIp);
+      const successfulIps = sortedResults.map((r) => r.speakerIp);
+      const successfulNames = sortedResults.map((r) => speakerGroups.getGroupName(r.speakerIp));
 
       // Derive source from tab URL for cache
       const source = getSourceFromUrl(tab.url);
