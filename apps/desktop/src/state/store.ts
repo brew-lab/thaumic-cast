@@ -148,7 +148,8 @@ export const fetchGroups = async (): Promise<void> => {
       invoke<PlaybackSession[]>('get_playback_sessions'),
       invoke<NetworkHealth>('get_network_health'),
     ]);
-    groups.value = fetchedGroups;
+    // Sort groups alphabetically by name for consistent UI ordering
+    groups.value = [...fetchedGroups].sort((a, b) => a.name.localeCompare(b.name));
     transportStates.value = states;
     castingSpeakers.value = new Set(sessions.map((s) => s.speakerIp));
 
