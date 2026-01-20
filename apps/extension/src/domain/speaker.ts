@@ -247,6 +247,19 @@ export class SpeakerGroupCollection {
   }
 
   /**
+   * Sorts items by their associated group name.
+   * Used to ensure consistent alphabetical ordering in UI.
+   * @param items - Array to sort
+   * @param getIp - Function to extract speaker IP from each item
+   * @returns Sorted copy of the array
+   */
+  sortByGroupName<T>(items: T[], getIp: (item: T) => string): T[] {
+    return [...items].sort((a, b) =>
+      this.getGroupName(getIp(a)).localeCompare(this.getGroupName(getIp(b))),
+    );
+  }
+
+  /**
    * Iterates over all groups.
    * @returns An iterator over all speaker groups
    */
