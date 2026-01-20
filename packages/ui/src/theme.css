@@ -199,6 +199,9 @@
     /* Button: Disabled */
     --button-disabled-opacity: 0.5;
 
+    /* State: Muted (audio silenced but still interactive) */
+    --state-muted-opacity: 0.5;
+
     /* Icon Button: Outline */
     --icon-button-outline-border: var(--color-border);
     --icon-button-outline-border-hover: var(--color-primary);
@@ -234,6 +237,8 @@
     --slider-track: var(--color-border);
     --slider-fill: var(--color-primary);
     --slider-thumb: var(--color-primary);
+    --slider-thumb-size: 12px;
+    --slider-track-height: 4px;
 
     /* Status indicators */
     --status-connected: var(--color-success);
@@ -307,6 +312,9 @@
     --space-md: 1rem;
     --space-lg: 1.5rem;
     --space-xl: 2rem;
+
+    /* Touch target - minimum recommended size for accessibility (WCAG 2.5.5) */
+    --touch-target-size: 48px;
 
     /* Radii */
     --radius-sm: 0.25rem;
@@ -385,6 +393,9 @@
   html {
     scroll-behavior: smooth;
     caret-color: var(--color-primary);
+
+    /* Enable smooth transitions to/from auto sizes (e.g., block-size: auto) */
+    interpolate-size: allow-keywords;
   }
 
   @media (prefers-reduced-motion: reduce) {

@@ -10,7 +10,7 @@
 }
 
 .icon-btn:disabled {
-  opacity: 0.5;
+  opacity: var(--button-disabled-opacity);
   cursor: not-allowed;
   filter: grayscale(30%);
 }

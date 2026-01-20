@@ -13,3 +13,11 @@ Add partial speaker removal for multi-group casts
 - Stop latency monitoring when a speaker is removed
 - Add translations for user_removed auto-stop reason
 - Sort speakers alphabetically for consistent UI ordering (extension and desktop)
+
+UX improvements:
+
+- Add 48px touch target to volume slider for better accessibility (WCAG 2.5.5)
+- Add CSS tokens for slider dimensions, touch target size, and muted state opacity
+- Disable text selection on interactive controls (volume, speaker rows, popup header/footer)
+- Allow text selection only on track info sections (title, subtitle)
+- Use semantic CSS tokens for disabled/muted opacity states
