@@ -24,6 +24,7 @@ struct EventProcessorDeps {
     sonos_state: Arc<SonosState>,
     emitter: Arc<dyn EventEmitter>,
     refresh_notify: Arc<Notify>,
+    stream_coordinator: Arc<StreamCoordinator>,
 }
 
 /// Processes GENA events and updates application state.
@@ -49,11 +50,12 @@ impl GenaEventProcessor {
     ) -> Self {
         Self {
             gena_manager,
-            stream_coordinator,
+            stream_coordinator: Arc::clone(&stream_coordinator),
             deps: EventProcessorDeps {
                 sonos_state,
                 emitter,
                 refresh_notify,
+                stream_coordinator,
             },
             gena_event_rx: Arc::new(Mutex::new(Some(gena_event_rx))),
             spawner,
@@ -143,7 +145,8 @@ impl GenaEventProcessor {
                     current_uri,
                     expected_uri
                 );
-                // Source change events are informational - just broadcast to clients
+                // Clean up playback session - speaker is no longer playing our stream
+                deps.stream_coordinator.handle_source_changed(speaker_ip);
             }
             SonosEvent::SubscriptionLost {
                 speaker_ip,
