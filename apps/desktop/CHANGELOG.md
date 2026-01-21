@@ -1,5 +1,48 @@
 # @thaumic-cast/desktop
 
+## 0.11.0
+
+### Patch Changes
+
+- [#63](https://github.com/brew-lab/thaumic-cast/pull/63) [`e0420a4`](https://github.com/brew-lab/thaumic-cast/commit/e0420a4c97101f2d0e641a48b24382a1c1804cc7) Thanks [@skezo](https://github.com/skezo)! - fix(desktop): prevent theme flash on app startup
+  - Start window hidden and show after frontend initialization
+  - Add inline theme initialization in HTML to apply correct theme before CSS loads
+  - Respect --minimized flag for tray-only startup mode
+
+- [#51](https://github.com/brew-lab/thaumic-cast/pull/51) [`0a194c2`](https://github.com/brew-lab/thaumic-cast/commit/0a194c21329e7b4acdbb517133d82a21340d5bf3) Thanks [@skezo](https://github.com/skezo)! - Bump JavaScript and Rust dependencies
+
+- [#55](https://github.com/brew-lab/thaumic-cast/pull/55) [`0a65014`](https://github.com/brew-lab/thaumic-cast/commit/0a65014003695131bca25c432bc051e8015ea75a) Thanks [@skezo](https://github.com/skezo)! - Optimize Tauri build configuration and security settings
+  - Use selective tokio features instead of "full" for smaller binaries
+  - Enable `removeUnusedCommands` to strip unused IPC commands
+  - Set default window size to 840×560 with 480×360 minimum
+  - Add `acceptFirstMouse` and disable `tabbingIdentifier` for macOS
+  - Disable browser zoom hotkeys (OS-level zoom still available)
+  - Enable CSP for XSS protection
+  - Add missing `core:tray:default` and `core:window:default` capabilities
+
+- [#64](https://github.com/brew-lab/thaumic-cast/pull/64) [`36b0c9f`](https://github.com/brew-lab/thaumic-cast/commit/36b0c9fe5af688a692756eb3f066b494d0ae8441) Thanks [@skezo](https://github.com/skezo)! - Add partial speaker removal for multi-group casts
+  - Add per-speaker remove button (X) to ActiveCastCard, shown only when 2+ speakers
+  - Send STOP_PLAYBACK_SPEAKER command to remove individual speakers without stopping entire cast
+  - Track user-initiated vs system removals for accurate analytics (user_removed reason)
+  - Stop latency monitoring when a speaker is removed
+  - Add translations for user_removed auto-stop reason
+  - Sort speakers alphabetically for consistent UI ordering (extension and desktop)
+
+  UX improvements:
+  - Add 48px touch target to volume slider for better accessibility (WCAG 2.5.5)
+  - Add CSS tokens for slider dimensions, touch target size, and muted state opacity
+  - Disable text selection on interactive controls (volume, speaker rows, popup header/footer)
+  - Allow text selection only on track info sections (title, subtitle)
+  - Use semantic CSS tokens for disabled/muted opacity states
+
+- [#55](https://github.com/brew-lab/thaumic-cast/pull/55) [`3a12f9a`](https://github.com/brew-lab/thaumic-cast/commit/3a12f9aea098aeda38ee956827bb837ce7304e07) Thanks [@skezo](https://github.com/skezo)! - Add hash-based scroll navigation for linking to settings sections
+
+- [#58](https://github.com/brew-lab/thaumic-cast/pull/58) [`d95b5ed`](https://github.com/brew-lab/thaumic-cast/commit/d95b5ed0561656c328a01d40eaf2467ee392089f) Thanks [@skezo](https://github.com/skezo)! - Streamline onboarding flow: add GitHub download link, simplify firewall messaging, reorder ReadyStep layout
+
+- Updated dependencies [[`94102c1`](https://github.com/brew-lab/thaumic-cast/commit/94102c1444f01b81c23e43ae4c56c731d71579c3), [`36b0c9f`](https://github.com/brew-lab/thaumic-cast/commit/36b0c9fe5af688a692756eb3f066b494d0ae8441), [`3a12f9a`](https://github.com/brew-lab/thaumic-cast/commit/3a12f9aea098aeda38ee956827bb837ce7304e07)]:
+  - @thaumic-cast/ui@2.0.0
+  - @thaumic-cast/protocol@0.3.0
+
 ## 0.10.4
 
 ## 0.10.3
