@@ -22,8 +22,8 @@
     "bun": ">=1.0.0"
   },
   "scripts": {
-    "dev:desktop": "bun run --filter @thaumic-cast/desktop tauri dev",
-    "dev:extension": "bun run --filter @thaumic-cast/extension dev",
+    "dev:desktop": "bun run --filter @thaumic-cast/desktop --elide-lines=0 tauri dev",
+    "dev:extension": "bun run --filter @thaumic-cast/extension --elide-lines=0 dev",
     "build": "bun run --filter '*' build",
     "build:extension": "bun run --filter @thaumic-cast/extension build",
     "build:desktop": "bun run --filter @thaumic-cast/desktop tauri build",
