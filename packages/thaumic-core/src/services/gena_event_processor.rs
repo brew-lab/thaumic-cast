@@ -90,12 +90,15 @@ impl GenaEventProcessor {
             SonosEvent::TransportState {
                 speaker_ip,
                 state: transport_state,
+                current_uri,
                 ..
             } => {
-                log::info!(
-                    "[GenaEventProcessor] Transport state change: {} -> {:?}",
+                // Enhanced logging for pause/resume investigation
+                log::warn!(
+                    "[GenaEventProcessor] TRANSPORT STATE: speaker={}, state={:?}, uri={:?}",
                     speaker_ip,
-                    transport_state
+                    transport_state,
+                    current_uri.as_deref().unwrap_or("(none)")
                 );
                 deps.sonos_state
                     .transport_states
