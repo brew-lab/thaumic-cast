@@ -10,7 +10,7 @@
     "48": "icons/icon-48.png",
     "128": "icons/icon-128.png"
   },
-  "permissions": ["tabCapture", "offscreen", "storage", "tabs", "power"],
+  "permissions": ["tabCapture", "offscreen", "storage", "activeTab", "power"],
   "host_permissions": ["http://localhost/*"],
   "background": {
     "service_worker": "src/background/main.ts",
