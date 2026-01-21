@@ -1,5 +1,40 @@
 # @thaumic-cast/extension
 
+## 0.11.0
+
+### Minor Changes
+
+- [#64](https://github.com/brew-lab/thaumic-cast/pull/64) [`36b0c9f`](https://github.com/brew-lab/thaumic-cast/commit/36b0c9fe5af688a692756eb3f066b494d0ae8441) Thanks [@skezo](https://github.com/skezo)! - Add partial speaker removal for multi-group casts
+  - Add per-speaker remove button (X) to ActiveCastCard, shown only when 2+ speakers
+  - Send STOP_PLAYBACK_SPEAKER command to remove individual speakers without stopping entire cast
+  - Track user-initiated vs system removals for accurate analytics (user_removed reason)
+  - Stop latency monitoring when a speaker is removed
+  - Add translations for user_removed auto-stop reason
+  - Sort speakers alphabetically for consistent UI ordering (extension and desktop)
+
+  UX improvements:
+  - Add 48px touch target to volume slider for better accessibility (WCAG 2.5.5)
+  - Add CSS tokens for slider dimensions, touch target size, and muted state opacity
+  - Disable text selection on interactive controls (volume, speaker rows, popup header/footer)
+  - Allow text selection only on track info sections (title, subtitle)
+  - Use semantic CSS tokens for disabled/muted opacity states
+
+### Patch Changes
+
+- [#59](https://github.com/brew-lab/thaumic-cast/pull/59) [`6ab489e`](https://github.com/brew-lab/thaumic-cast/commit/6ab489e2b6857ce5b22618bd07509dd6a2ecb06b) Thanks [@skezo](https://github.com/skezo)! - fix(extension): improve server URL settings behavior
+  - Sync URL input with settings when changed externally
+  - Auto-save and test server URL on blur (skip if clicking test button)
+  - Allow clearing server URL by emptying the input
+  - Normalize UI state on load: if manual mode has no URL, show auto-discover (not persisted to avoid storage listener triggers during editing)
+
+- [#51](https://github.com/brew-lab/thaumic-cast/pull/51) [`0a194c2`](https://github.com/brew-lab/thaumic-cast/commit/0a194c21329e7b4acdbb517133d82a21340d5bf3) Thanks [@skezo](https://github.com/skezo)! - Bump JavaScript and Rust dependencies
+
+- [#65](https://github.com/brew-lab/thaumic-cast/pull/65) [`5532946`](https://github.com/brew-lab/thaumic-cast/commit/553294669c6a086a134546e888eba9475469f32a) Thanks [@skezo](https://github.com/skezo)! - Replace `tabs` permission with `activeTab` for minimal permission footprint
+
+- Updated dependencies [[`94102c1`](https://github.com/brew-lab/thaumic-cast/commit/94102c1444f01b81c23e43ae4c56c731d71579c3), [`36b0c9f`](https://github.com/brew-lab/thaumic-cast/commit/36b0c9fe5af688a692756eb3f066b494d0ae8441), [`3a12f9a`](https://github.com/brew-lab/thaumic-cast/commit/3a12f9aea098aeda38ee956827bb837ce7304e07)]:
+  - @thaumic-cast/ui@2.0.0
+  - @thaumic-cast/protocol@0.3.0
+
 ## 0.10.4
 
 ### Patch Changes
