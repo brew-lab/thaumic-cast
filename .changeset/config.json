@@ -2,7 +2,7 @@
   "$schema": "https://unpkg.com/@changesets/config@3.1.2/schema.json",
   "changelog": ["@changesets/changelog-github", { "repo": "brew-lab/thaumic-cast" }],
   "commit": false,
-  "fixed": [["@thaumic-cast/desktop", "@thaumic-cast/extension"]],
+  "fixed": [["@thaumic-cast/desktop", "@thaumic-cast/extension", "@thaumic-cast/server"]],
   "linked": [],
   "access": "public",
   "baseBranch": "main",
