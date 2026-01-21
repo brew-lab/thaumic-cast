@@ -684,4 +684,76 @@ impl StreamCoordinator {
     pub fn stream_manager(&self) -> Arc<StreamManager> {
         Arc::clone(&self.stream_manager)
     }
+
+    /// Handles a source change event for a speaker.
+    ///
+    /// When a speaker switches to another source (Spotify, AirPlay, etc.),
+    /// this cleans up the playback session and emits `PlaybackStopped`.
+    /// If this was the last speaker for the stream, the stream is also ended.
+    ///
+    /// Unlike `stop_playback_speaker`, this does NOT send a SOAP stop command
+    /// since the speaker has already stopped playing our stream.
+    ///
+    /// # Arguments
+    /// * `speaker_ip` - IP address of the speaker that changed source
+    ///
+    /// # Returns
+    /// `true` if a session was found and removed, `false` otherwise.
+    pub fn handle_source_changed(&self, speaker_ip: &str) -> bool {
+        // Find the session for this speaker
+        let key = self
+            .playback_sessions
+            .iter()
+            .find(|r| r.key().speaker_ip == speaker_ip)
+            .map(|r| r.key().clone());
+
+        let Some(key) = key else {
+            log::debug!(
+                "Source changed on {} but no active playback session found",
+                speaker_ip
+            );
+            return false;
+        };
+
+        let stream_id = key.stream_id.clone();
+
+        // Remove the session (no SOAP command needed - speaker already stopped)
+        self.playback_sessions.remove(&key);
+
+        log::info!(
+            "Removed playback session for {} due to source change (stream: {})",
+            speaker_ip,
+            stream_id
+        );
+
+        // Emit PlaybackStopped with source_changed reason
+        self.emit_event(StreamEvent::PlaybackStopped {
+            stream_id: stream_id.clone(),
+            speaker_ip: speaker_ip.to_string(),
+            reason: Some(SpeakerRemovalReason::SourceChanged),
+            timestamp: now_millis(),
+        });
+
+        // Check if any sessions remain for this stream
+        let has_remaining_sessions = self
+            .playback_sessions
+            .iter()
+            .any(|r| r.key().stream_id == stream_id);
+
+        if !has_remaining_sessions {
+            // Last speaker removed - end the stream
+            // Use sync remove_stream since speaker already stopped (no SOAP needed)
+            log::info!(
+                "Last speaker removed from stream {} due to source change, ending stream",
+                stream_id
+            );
+            self.stream_manager.remove_stream(&stream_id);
+            self.emit_event(StreamEvent::Ended {
+                stream_id,
+                timestamp: now_millis(),
+            });
+        }
+
+        true
+    }
 }
