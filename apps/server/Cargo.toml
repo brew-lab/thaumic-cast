@@ -1,6 +1,6 @@
 [package]
 name = "thaumic-server"
-version = "0.1.0"
+version = "0.10.4"
 edition = "2021"
 description = "Standalone headless server for Thaumic Cast"
 license = "AGPL-3.0"

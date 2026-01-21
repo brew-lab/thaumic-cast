@@ -4,6 +4,8 @@
  * This script ensures that version numbers stay consistent across:
  * - Desktop: package.json -> tauri.conf.json, Cargo.toml
  * - Extension: package.json -> manifest.json
+ * - Server: package.json -> Cargo.toml
+ * - Core: package.json -> Cargo.toml
  *
  * @module sync-versions
  */
@@ -113,11 +115,10 @@ function syncExtensionVersion(): void {
 }
 
 /**
- * Syncs the thaumic-core version from desktop's package.json to Cargo.toml.
- * This ensures the core library version stays in sync with the product version.
+ * Syncs the thaumic-core version from package.json to Cargo.toml.
  */
 function syncCoreVersion(): void {
-  const pkgPath = join(ROOT, 'apps/desktop/package.json');
+  const pkgPath = join(ROOT, 'packages/thaumic-core/package.json');
   const cargoPath = join(ROOT, 'packages/thaumic-core/Cargo.toml');
 
   const pkg = readJson<PackageJson>(pkgPath);
@@ -138,9 +139,36 @@ function syncCoreVersion(): void {
   }
 }
 
+/**
+ * Syncs the server version from package.json to Cargo.toml.
+ * This ensures the server binary version stays in sync with the product version.
+ */
+function syncServerVersion(): void {
+  const pkgPath = join(ROOT, 'apps/server/package.json');
+  const cargoPath = join(ROOT, 'apps/server/Cargo.toml');
+
+  const pkg = readJson<PackageJson>(pkgPath);
+  const cargoContent = readFileSync(cargoPath, 'utf-8');
+  const cargoMatch = cargoContent.match(CARGO_VERSION_REGEX);
+
+  if (cargoMatch) {
+    const currentVersion = cargoMatch[2];
+    if (currentVersion !== pkg.version) {
+      console.log(`server (Cargo.toml): ${currentVersion} -> ${pkg.version}`);
+      const updatedCargo = cargoContent.replace(CARGO_VERSION_REGEX, `$1${pkg.version}$3`);
+      writeFileSync(cargoPath, updatedCargo);
+    } else {
+      console.log(`server (Cargo.toml): ${pkg.version} (no change)`);
+    }
+  } else {
+    console.warn('server (Cargo.toml): version not found');
+  }
+}
+
 // Main execution
 console.log('Syncing versions...');
 syncDesktopVersion();
 syncExtensionVersion();
+syncServerVersion();
 syncCoreVersion();
 console.log('Done.');
