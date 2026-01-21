@@ -11,6 +11,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use crate::api::AppState;
+use crate::events::SpeakerRemovalReason;
 use crate::protocol_constants::{
     DEFAULT_STREAMING_BUFFER_MS, MAX_FRAME_DURATION_MS, MAX_STREAMING_BUFFER_MS,
     MIN_FRAME_DURATION_MS, MIN_STREAMING_BUFFER_MS, SILENCE_FRAME_DURATION_MS,
@@ -131,6 +132,9 @@ struct WsSpeakerRequest {
 struct StopPlaybackSpeakerPayload {
     stream_id: String,
     ip: String,
+    /// Reason for stopping (optional for backward compat).
+    #[serde(default)]
+    reason: Option<SpeakerRemovalReason>,
 }
 
 /// Encoder configuration from extension.
@@ -702,7 +706,11 @@ async fn handle_ws(socket: WebSocket, state: AppState) {
                                 // Stop playback; only stop latency monitoring if successful
                                 let stopped = state
                                     .stream_coordinator
-                                    .stop_playback_speaker(&payload.stream_id, &payload.ip)
+                                    .stop_playback_speaker(
+                                        &payload.stream_id,
+                                        &payload.ip,
+                                        payload.reason,
+                                    )
                                     .await;
                                 if stopped {
                                     state

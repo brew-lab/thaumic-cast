@@ -57,7 +57,8 @@ pub use context::{IpDetector, LocalIpDetector, NetworkContext, NetworkError, Url
 pub use error::{DiscoveryResult, ErrorCode, GenaResult, SoapResult, ThaumicError, ThaumicResult};
 pub use events::{
     BroadcastEvent, BroadcastEventBridge, EventEmitter, LatencyEvent, LoggingEventEmitter,
-    NetworkEvent, NetworkHealth, NoopEventEmitter, SonosEvent, StreamEvent, TopologyEvent,
+    NetworkEvent, NetworkHealth, NoopEventEmitter, SonosEvent, SpeakerRemovalReason, StreamEvent,
+    TopologyEvent,
 };
 pub use lifecycle::{Lifecycle, NoopLifecycle, ServerLifecycle};
 pub use runtime::{TaskSpawner, TokioSpawner};

@@ -16,7 +16,22 @@ pub use emitter::{EventEmitter, LoggingEventEmitter, NoopEventEmitter};
 // Re-export SonosEvent from sonos::gena for convenience
 pub use crate::sonos::gena::SonosEvent;
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
+
+/// Reasons for removing a speaker from an active cast session.
+///
+/// - `SourceChanged`: User switched Sonos to another source (Spotify, AirPlay, etc.)
+/// - `PlaybackStopped`: Playback stopped on the speaker (system/network issue)
+/// - `SpeakerStopped`: Speaker stopped unexpectedly (e.g., stream killed due to underflow)
+/// - `UserRemoved`: User explicitly removed the speaker via UI
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SpeakerRemovalReason {
+    SourceChanged,
+    PlaybackStopped,
+    SpeakerStopped,
+    UserRemoved,
+}
 
 /// Events broadcast to clients.
 ///
@@ -83,6 +98,9 @@ pub enum StreamEvent {
         /// The speaker IP address that stopped playback.
         #[serde(rename = "speakerIp")]
         speaker_ip: String,
+        /// Reason for stopping (optional for backward compat).
+        #[serde(skip_serializing_if = "Option::is_none")]
+        reason: Option<SpeakerRemovalReason>,
         /// Unix timestamp in milliseconds.
         timestamp: u64,
     },
@@ -96,6 +114,9 @@ pub enum StreamEvent {
         speaker_ip: String,
         /// Error message describing the failure.
         error: String,
+        /// Reason for the attempted stop (optional for backward compat).
+        #[serde(skip_serializing_if = "Option::is_none")]
+        reason: Option<SpeakerRemovalReason>,
         /// Unix timestamp in milliseconds.
         timestamp: u64,
     },

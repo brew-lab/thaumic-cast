@@ -3,6 +3,21 @@ import { z } from 'zod';
 import { TransportStateSchema, ZoneGroupSchema } from './sonos.js';
 
 /**
+ * Reasons for removing a speaker from an active cast session.
+ * - `source_changed`: User switched Sonos to another source (Spotify, AirPlay, etc.)
+ * - `playback_stopped`: Playback stopped on the speaker (system/network issue)
+ * - `speaker_stopped`: Speaker stopped unexpectedly (e.g., stream killed due to underflow)
+ * - `user_removed`: User explicitly removed the speaker via UI
+ */
+export const SpeakerRemovalReasonSchema = z.enum([
+  'source_changed',
+  'playback_stopped',
+  'speaker_stopped',
+  'user_removed',
+]);
+export type SpeakerRemovalReason = z.infer<typeof SpeakerRemovalReasonSchema>;
+
+/**
  * Sonos event types broadcast by desktop app.
  */
 export const SonosEventSchema = z.discriminatedUnion('type', [
@@ -75,6 +90,8 @@ export const StreamEventSchema = z.discriminatedUnion('type', [
     type: z.literal('playbackStopped'),
     streamId: z.string(),
     speakerIp: z.string(),
+    /** Reason for stopping (optional for backward compat) */
+    reason: SpeakerRemovalReasonSchema.optional(),
     timestamp: z.number(),
   }),
   z.object({
@@ -82,6 +99,8 @@ export const StreamEventSchema = z.discriminatedUnion('type', [
     streamId: z.string(),
     speakerIp: z.string(),
     error: z.string(),
+    /** Reason for the attempted stop (optional for backward compat) */
+    reason: SpeakerRemovalReasonSchema.optional(),
     timestamp: z.number(),
   }),
 ]);

@@ -14,6 +14,7 @@
 import type {
   EncoderConfig,
   SonosStateSnapshot,
+  SpeakerRemovalReason,
   StreamMetadata,
   SupportedCodecsResult,
 } from '@thaumic-cast/protocol';
@@ -102,13 +103,19 @@ class OffscreenBroker {
    * Stops playback on a single speaker (partial removal from multi-group cast).
    * @param streamId - The stream ID
    * @param speakerIp - The speaker IP to stop
+   * @param reason - Optional reason for stopping (propagated to server events)
    * @returns Whether the command was sent successfully
    */
-  async stopPlaybackSpeaker(streamId: string, speakerIp: string): Promise<boolean> {
+  async stopPlaybackSpeaker(
+    streamId: string,
+    speakerIp: string,
+    reason?: SpeakerRemovalReason,
+  ): Promise<boolean> {
     const response = await sendToOffscreen<{ success: boolean }>({
       type: 'STOP_PLAYBACK_SPEAKER',
       streamId,
       speakerIp,
+      reason,
     });
     return response?.success ?? false;
   }

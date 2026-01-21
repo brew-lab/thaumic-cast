@@ -160,7 +160,11 @@ export function setupMessageHandlers(): void {
         const validated = StopPlaybackSpeakerMessageSchema.parse(msg);
         const success = sendControlCommand({
           type: 'STOP_PLAYBACK_SPEAKER',
-          payload: { streamId: validated.streamId, ip: validated.speakerIp },
+          payload: {
+            streamId: validated.streamId,
+            ip: validated.speakerIp,
+            reason: validated.reason,
+          },
         });
         sendResponse({ success });
       } catch (err) {

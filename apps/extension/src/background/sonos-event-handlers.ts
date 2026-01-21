@@ -34,12 +34,11 @@ import {
   removeSession,
   removeSpeakerFromSession,
   hasSession,
-  consumePendingUserRemoval,
 } from './session-manager';
 import { notifyPopup } from './notification-service';
 import { offscreenBroker } from './offscreen-broker';
 import { noop } from '../lib/noop';
-import type { SpeakerRemovalReason } from '../lib/messages';
+import type { SpeakerRemovalReason } from '@thaumic-cast/protocol';
 
 const log = createLogger('SonosEvents');
 
@@ -90,7 +89,11 @@ export async function handleSonosEvent(event: BroadcastEvent): Promise<void> {
         break;
 
       case 'playbackStopped':
-        await handlePlaybackStopped(eventData.streamId as string, eventData.speakerIp as string);
+        await handlePlaybackStopped(
+          eventData.streamId as string,
+          eventData.speakerIp as string,
+          eventData.reason as SpeakerRemovalReason | undefined,
+        );
         break;
 
       case 'playbackStopFailed':
@@ -430,38 +433,35 @@ async function handleStreamEnded(streamId: string): Promise<void> {
  *
  * @param streamId - The stream ID that was stopped
  * @param speakerIp - The speaker IP where playback stopped
+ * @param reason - Optional reason from server (defaults to 'playback_stopped' for backward compat)
  */
-async function handlePlaybackStopped(streamId: string, speakerIp: string): Promise<void> {
+async function handlePlaybackStopped(
+  streamId: string,
+  speakerIp: string,
+  reason?: SpeakerRemovalReason,
+): Promise<void> {
   // Use streamId to find the correct session (avoids race conditions during recast)
   const session = getSessionByStreamId(streamId);
   if (!session || !session.speakerIps.includes(speakerIp)) {
-    // Clear any pending marker to prevent misclassification in future sessions
-    // (e.g., user clicked Remove then Stop Cast before event arrived)
-    consumePendingUserRemoval(speakerIp);
     log.debug(`PlaybackStopped: stream ${streamId} / speaker ${speakerIp} not found, ignoring`);
     return;
   }
 
-  // Check if this was a user-initiated removal (vs system/network issue)
-  const reason: SpeakerRemovalReason = consumePendingUserRemoval(speakerIp)
-    ? 'user_removed'
-    : 'playback_stopped';
+  // Use reason from server event, default to 'playback_stopped' for backward compat
+  const finalReason: SpeakerRemovalReason = reason ?? 'playback_stopped';
 
   // Delegate to shared removal logic with pre-resolved session
-  await handleSpeakerRemoval(speakerIp, reason, session);
+  await handleSpeakerRemoval(speakerIp, finalReason, session);
 }
 
 /**
  * Handles playback stop failure events.
- * Clears the pending user removal marker and notifies popup so user can retry.
+ * Notifies popup so user can retry.
  * @param streamId - The stream ID that failed to stop
  * @param speakerIp - The speaker IP where stop failed
  * @param error - The error message from the server
  */
 function handlePlaybackStopFailed(streamId: string, speakerIp: string, error: string): void {
-  // Clear the pending marker so it doesn't get misclassified on retry
-  consumePendingUserRemoval(speakerIp);
-
   // Find session to get tabId
   const session = getSessionByStreamId(streamId);
   if (!session) {
