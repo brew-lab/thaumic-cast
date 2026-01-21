@@ -1,6 +1,7 @@
 import { z } from 'zod';
 
 import { EncoderConfigSchema } from './encoder.js';
+import { SpeakerRemovalReasonSchema } from './events.js';
 import { InitialStatePayloadSchema } from './sonos.js';
 import { StreamMetadataSchema } from './stream.js';
 
@@ -233,6 +234,8 @@ export const WsControlCommandSchema = z.discriminatedUnion('type', [
     payload: z.object({
       streamId: z.string(),
       ip: z.string(),
+      /** Reason for stopping (optional for backward compat) */
+      reason: SpeakerRemovalReasonSchema.optional(),
     }),
   }),
 ]);

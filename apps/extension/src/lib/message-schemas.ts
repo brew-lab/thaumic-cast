@@ -18,7 +18,12 @@ import {
   TransportStateSchema,
   PlaybackResultSchema,
   LatencyBroadcastEvent,
+  SpeakerRemovalReasonSchema,
 } from '@thaumic-cast/protocol';
+
+// Re-export SpeakerRemovalReason from protocol for convenience
+export { SpeakerRemovalReasonSchema };
+export type { SpeakerRemovalReason } from '@thaumic-cast/protocol';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Primitive Schemas
@@ -355,21 +360,6 @@ export const TransportStateUpdateMessageSchema = z.object({
 export type TransportStateUpdateMessage = z.infer<typeof TransportStateUpdateMessageSchema>;
 
 /**
- * Reasons for removing a speaker from an active cast session.
- * - `source_changed`: User switched Sonos to another source (Spotify, AirPlay, etc.)
- * - `playback_stopped`: Playback stopped on the speaker (system/network issue)
- * - `speaker_stopped`: Speaker stopped unexpectedly (e.g., stream killed due to underflow)
- * - `user_removed`: User explicitly removed the speaker via UI
- */
-export const SpeakerRemovalReasonSchema = z.enum([
-  'source_changed',
-  'playback_stopped',
-  'speaker_stopped',
-  'user_removed',
-]);
-export type SpeakerRemovalReason = z.infer<typeof SpeakerRemovalReasonSchema>;
-
-/**
  * Reasons for auto-stopping an entire cast session.
  * Includes all speaker removal reasons plus stream-level events.
  * - `stream_ended`: The stream ended on the server side
@@ -497,6 +487,8 @@ export const StopPlaybackSpeakerMessageSchema = z.object({
   type: z.literal('STOP_PLAYBACK_SPEAKER'),
   streamId: z.string(),
   speakerIp: SpeakerIpSchema,
+  /** Reason for stopping (optional for backward compat). */
+  reason: SpeakerRemovalReasonSchema.optional(),
 });
 export type StopPlaybackSpeakerMessage = z.infer<typeof StopPlaybackSpeakerMessageSchema>;
 

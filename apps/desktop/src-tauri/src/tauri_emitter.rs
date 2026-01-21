@@ -111,6 +111,7 @@ impl EventEmitter for TauriEventEmitter {
             StreamEvent::PlaybackStopped {
                 stream_id,
                 speaker_ip,
+                reason,
                 ..
             } => {
                 #[derive(serde::Serialize, Clone)]
@@ -118,12 +119,15 @@ impl EventEmitter for TauriEventEmitter {
                 struct PlaybackStoppedPayload {
                     stream_id: String,
                     speaker_ip: String,
+                    #[serde(skip_serializing_if = "Option::is_none")]
+                    reason: Option<thaumic_core::SpeakerRemovalReason>,
                 }
                 self.emit_to_tauri(
                     "playback-stopped",
                     PlaybackStoppedPayload {
                         stream_id: stream_id.clone(),
                         speaker_ip: speaker_ip.clone(),
+                        reason: *reason,
                     },
                 );
             }
@@ -131,6 +135,7 @@ impl EventEmitter for TauriEventEmitter {
                 stream_id,
                 speaker_ip,
                 error,
+                reason,
                 ..
             } => {
                 #[derive(serde::Serialize, Clone)]
@@ -139,6 +144,8 @@ impl EventEmitter for TauriEventEmitter {
                     stream_id: String,
                     speaker_ip: String,
                     error: String,
+                    #[serde(skip_serializing_if = "Option::is_none")]
+                    reason: Option<thaumic_core::SpeakerRemovalReason>,
                 }
                 self.emit_to_tauri(
                     "playback-stop-failed",
@@ -146,6 +153,7 @@ impl EventEmitter for TauriEventEmitter {
                         stream_id: stream_id.clone(),
                         speaker_ip: speaker_ip.clone(),
                         error: error.clone(),
+                        reason: *reason,
                     },
                 );
             }

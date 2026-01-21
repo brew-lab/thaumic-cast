@@ -28,14 +28,7 @@ import { loadExtensionSettings } from '../../lib/settings';
 import { getCachedCodecSupport } from '../../lib/codec-cache';
 import { resolveAudioMode, describeEncoderConfig } from '../../lib/presets';
 import { getCachedState, updateCache } from '../metadata-cache';
-import {
-  registerSession,
-  hasSession,
-  getSession,
-  getSessionCount,
-  markPendingUserRemoval,
-  clearPendingUserRemoval,
-} from '../session-manager';
+import { registerSession, hasSession, getSession, getSessionCount } from '../session-manager';
 import { getSpeakerGroups } from '../sonos-state';
 import { getConnectionState, clearConnectionState } from '../connection-state';
 import { stopCastForTab } from '../sonos-event-handlers';
@@ -268,21 +261,18 @@ export async function handleRemoveSpeaker(msg: RemoveSpeakerMessage): Promise<Ex
     return { success: false, error: 'Speaker not in session' };
   }
 
-  // Mark as user-initiated before sending command
-  // The event handler will check this to set the correct removal reason
-  markPendingUserRemoval(speakerIp);
-
   try {
-    const success = await offscreenBroker.stopPlaybackSpeaker(session.streamId, speakerIp);
+    // Pass 'user_removed' reason - server will propagate it in the PlaybackStopped event
+    const success = await offscreenBroker.stopPlaybackSpeaker(
+      session.streamId,
+      speakerIp,
+      'user_removed',
+    );
     if (!success) {
-      // Clear the marker since the command failed - no event will arrive
-      clearPendingUserRemoval(speakerIp);
       return { success: false, error: 'Failed to send command' };
     }
     return { success: true };
   } catch {
-    // Clear the marker on any error (e.g., offscreen doc missing)
-    clearPendingUserRemoval(speakerIp);
     return { success: false, error: 'Failed to send command' };
   }
 }

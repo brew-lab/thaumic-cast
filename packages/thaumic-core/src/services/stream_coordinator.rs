@@ -14,7 +14,7 @@ use dashmap::DashMap;
 
 use crate::context::NetworkContext;
 use crate::error::ThaumicResult;
-use crate::events::{EventEmitter, StreamEvent};
+use crate::events::{EventEmitter, SpeakerRemovalReason, StreamEvent};
 use crate::sonos::utils::build_sonos_stream_uri;
 use crate::sonos::SonosPlayback;
 use crate::state::{SonosState, StreamingConfig};
@@ -437,9 +437,11 @@ impl StreamCoordinator {
             }
 
             // Emit PlaybackStopped for the old stream so extension cleans up correctly
+            // Reason is None here - extension will default to 'playback_stopped'
             self.emit_event(StreamEvent::PlaybackStopped {
                 stream_id: old_stream_id,
                 speaker_ip: speaker_ip.to_string(),
+                reason: None,
                 timestamp: now_millis(),
             });
         }
@@ -546,10 +548,16 @@ impl StreamCoordinator {
     /// # Arguments
     /// * `stream_id` - The stream ID
     /// * `speaker_ip` - IP address of the speaker to stop
+    /// * `reason` - Optional reason for stopping (propagated to events)
     ///
     /// # Returns
     /// `true` if playback was stopped successfully, `false` if stop failed (session kept intact).
-    pub async fn stop_playback_speaker(&self, stream_id: &str, speaker_ip: &str) -> bool {
+    pub async fn stop_playback_speaker(
+        &self,
+        stream_id: &str,
+        speaker_ip: &str,
+        reason: Option<SpeakerRemovalReason>,
+    ) -> bool {
         let key = PlaybackSessionKey::new(stream_id, speaker_ip);
 
         if !self.playback_sessions.contains_key(&key) {
@@ -563,6 +571,7 @@ impl StreamCoordinator {
                 stream_id: stream_id.to_string(),
                 speaker_ip: speaker_ip.to_string(),
                 error: "Session not found".to_string(),
+                reason,
                 timestamp: now_millis(),
             });
             return false;
@@ -575,6 +584,7 @@ impl StreamCoordinator {
                 self.emit_event(StreamEvent::PlaybackStopped {
                     stream_id: stream_id.to_string(),
                     speaker_ip: speaker_ip.to_string(),
+                    reason,
                     timestamp: now_millis(),
                 });
                 true
@@ -586,6 +596,7 @@ impl StreamCoordinator {
                     stream_id: stream_id.to_string(),
                     speaker_ip: speaker_ip.to_string(),
                     error: e.to_string(),
+                    reason,
                     timestamp: now_millis(),
                 });
                 false
@@ -621,6 +632,7 @@ impl StreamCoordinator {
             self.emit_event(StreamEvent::PlaybackStopped {
                 stream_id,
                 speaker_ip: speaker_ip.to_string(),
+                reason: None,
                 timestamp: now_millis(),
             });
         }

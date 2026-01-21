@@ -1,6 +1,10 @@
 import { useState, useCallback, useRef, useEffect } from 'preact/hooks';
 import { useTranslation } from 'react-i18next';
-import type { CastAutoStoppedMessage, CastAutoStopReason } from '../../lib/messages';
+import type {
+  CastAutoStoppedMessage,
+  CastAutoStopReason,
+  SpeakerRemovedMessage,
+} from '../../lib/messages';
 import { useChromeMessage } from './useChromeMessage';
 
 /**
@@ -31,8 +35,13 @@ interface AutoStopNotificationResult {
 const AUTO_DISMISS_MS = 5000;
 
 /**
- * Hook to handle auto-stop notifications.
- * Shows when a cast was automatically stopped (e.g., user switched Sonos source).
+ * Hook to handle speaker removal notifications.
+ * Shows notifications when:
+ * - A cast was automatically stopped (last speaker removed)
+ * - A speaker was removed from a multi-speaker cast (partial removal)
+ *
+ * Does NOT show notifications for user-initiated removals.
+ *
  * @returns Notification state, localized message, and dismiss function
  */
 export function useAutoStopNotification(): AutoStopNotificationResult {
@@ -49,26 +58,46 @@ export function useAutoStopNotification(): AutoStopNotificationResult {
     };
   }, []);
 
-  useChromeMessage((message) => {
-    const msg = message as { type: string };
-    if (msg.type === 'CAST_AUTO_STOPPED') {
-      const stopMsg = message as CastAutoStoppedMessage;
-
+  /**
+   * Shows a notification and starts the auto-dismiss timer.
+   */
+  const showNotification = useCallback(
+    (tabId: number, speakerIp: string, reason: CastAutoStopReason) => {
       // Cancel previous timer before setting new notification
       if (timerRef.current) {
         clearTimeout(timerRef.current);
       }
 
-      setNotification({
-        tabId: stopMsg.tabId,
-        speakerIp: stopMsg.speakerIp,
-        reason: stopMsg.reason,
-      });
+      setNotification({ tabId, speakerIp, reason });
 
       timerRef.current = setTimeout(() => {
         setNotification(null);
         timerRef.current = null;
       }, AUTO_DISMISS_MS);
+    },
+    [],
+  );
+
+  useChromeMessage((message) => {
+    const msg = message as { type: string };
+
+    // Handle full cast auto-stop (last speaker removed)
+    // Only show notification for system-initiated removals, not user-initiated
+    if (msg.type === 'CAST_AUTO_STOPPED') {
+      const stopMsg = message as CastAutoStoppedMessage;
+      if (stopMsg.reason !== 'user_removed') {
+        showNotification(stopMsg.tabId, stopMsg.speakerIp, stopMsg.reason);
+      }
+      return;
+    }
+
+    // Handle partial speaker removal (other speakers remain)
+    // Only show notification for system-initiated removals, not user-initiated
+    if (msg.type === 'SPEAKER_REMOVED') {
+      const removedMsg = message as SpeakerRemovedMessage;
+      if (removedMsg.reason !== 'user_removed') {
+        showNotification(removedMsg.tabId, removedMsg.speakerIp, removedMsg.reason);
+      }
     }
   });
 
