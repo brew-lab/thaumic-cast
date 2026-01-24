@@ -24,7 +24,7 @@ use futures::stream::{Stream, StreamExt};
 use serde::Deserialize;
 use serde_json::json;
 use tokio::sync::broadcast;
-use tokio::time::{interval_at, Instant as TokioInstant, MissedTickBehavior};
+use tokio::time::{interval, Instant as TokioInstant, MissedTickBehavior};
 use tokio_stream::wrappers::errors::BroadcastStreamRecvError;
 use tokio_stream::wrappers::BroadcastStream;
 
@@ -87,14 +87,21 @@ fn create_wav_stream_with_cadence(
     queue_size: usize,
     frame_duration_ms: u32,
     audio_format: AudioFormat,
+    prefill_frames: Vec<Bytes>,
 ) -> impl Stream<Item = Result<TaggedFrame, std::io::Error>> {
     stream! {
         let cadence_duration = Duration::from_millis(frame_duration_ms as u64);
 
-        let mut queue: VecDeque<Bytes> = VecDeque::with_capacity(queue_size);
-        // Start first tick after one cadence period, giving frames time to queue up.
-        // This avoids the "first tick is instant" behavior of interval().
-        let mut metronome = interval_at(TokioInstant::now() + cadence_duration, cadence_duration);
+        // Pre-populate queue with prefill frames to eliminate handoff gap.
+        // This ensures the first tick immediately yields audio.
+        let mut queue: VecDeque<Bytes> = VecDeque::with_capacity(queue_size.max(prefill_frames.len()));
+        for frame in prefill_frames {
+            queue.push_back(frame);
+        }
+
+        // Fire first tick immediately to get audio flowing before Sonos times out.
+        // On resume, Sonos closes the connection within milliseconds if no audio arrives.
+        let mut metronome = interval(cadence_duration);
         metronome.set_missed_tick_behavior(MissedTickBehavior::Burst);
 
         let mut rx_closed = false;
@@ -901,17 +908,29 @@ async fn stream_audio(
         );
     }
 
+    // Detect resume: epoch >= 1 means there was a previous HTTP connection.
+    let is_resume = stream_state.timing.epoch_count() >= 1;
+
     // Upfront buffering delay for PCM streams BEFORE subscribing.
     // This lets the ring buffer accumulate more frames. Subscribing after
     // ensures the broadcast receiver doesn't fill up during the delay.
     // Delay matches streaming_buffer_ms so cadence queue starts full.
+    //
+    // SKIP on resume: Sonos closes the connection within milliseconds if we delay.
+    // The buffer already has frames from before the pause, so no delay is needed.
     let prefill_delay_ms = stream_state.streaming_buffer_ms;
-    if stream_state.codec == AudioCodec::Pcm && prefill_delay_ms > 0 {
+    if stream_state.codec == AudioCodec::Pcm && prefill_delay_ms > 0 && !is_resume {
         log::debug!(
             "[Stream] Applying {}ms prefill delay for PCM stream",
             prefill_delay_ms
         );
         tokio::time::sleep(Duration::from_millis(prefill_delay_ms)).await;
+    } else if is_resume && stream_state.codec == AudioCodec::Pcm {
+        log::info!(
+            "[Stream] Skipping {}ms prefill delay on resume (epoch={})",
+            prefill_delay_ms,
+            stream_state.timing.epoch_count()
+        );
     }
 
     // Capture connected_at AFTER prefill delay so latency metrics
@@ -931,18 +950,11 @@ async fn stream_audio(
     // Type alias for tagged frame stream
     type TaggedStream = Pin<Box<dyn Stream<Item = Result<TaggedFrame, std::io::Error>> + Send>>;
 
-    // Create streams for prefill and live data - all prefill frames are real audio
-    let prefill_stream = futures::stream::iter(
-        prefill_frames
-            .into_iter()
-            .map(|b| Ok(TaggedFrame::Audio(b))),
-    );
-
     // Create logging guard early so we can pass it to the cadence stream for drop tracking.
     // Uses Arc so it can be shared between cadence stream, silence tracking, and final frame recording.
     let guard = Arc::new(LoggingStreamGuard::new(id.to_string(), remote_ip));
 
-    // Build live stream - PCM gets cadence-based streaming, compressed codecs don't.
+    // Build combined stream - PCM gets cadence-based streaming, compressed codecs don't.
     //
     // Why PCM-only: Sonos treats PCM/WAV as a "file" requiring continuous data flow.
     // CPU spikes that delay delivery cause Sonos to close the connection.
@@ -951,8 +963,9 @@ async fn stream_audio(
     // Compressed codecs (AAC, MP3, FLAC) have their own framing and silence
     // representation - raw zeros would corrupt the stream. These codecs also
     // tend to be more resilient to jitter due to their buffering behavior.
-    let live_stream: TaggedStream = if stream_state.codec == AudioCodec::Pcm {
-        // PCM: fixed-cadence streaming with queue buffer and silence injection
+    let combined_stream: TaggedStream = if stream_state.codec == AudioCodec::Pcm {
+        // PCM: fixed-cadence streaming with queue buffer and silence injection.
+        // Prefill frames are pre-populated in the queue to eliminate handoff gap.
         let frame_duration_ms = stream_state.frame_duration_ms;
         let silence_frame = stream_state.audio_format.silence_frame(frame_duration_ms);
 
@@ -970,17 +983,21 @@ async fn stream_audio(
             queue_size,
             frame_duration_ms,
             stream_state.audio_format,
+            prefill_frames,
         ))
     } else {
-        // Compressed codecs: no silence injection, all frames are real audio
-        Box::pin(BroadcastStream::new(rx).map(|res| match res {
+        // Compressed codecs: no silence injection, chain prefill before live
+        let prefill_stream = futures::stream::iter(
+            prefill_frames
+                .into_iter()
+                .map(|b| Ok(TaggedFrame::Audio(b))),
+        );
+        let live_stream = BroadcastStream::new(rx).map(|res| match res {
             Ok(frame) => Ok(TaggedFrame::Audio(frame)),
             Err(BroadcastStreamRecvError::Lagged(n)) => Err(lagged_error(n)),
-        }))
+        });
+        Box::pin(futures::StreamExt::chain(prefill_stream, live_stream))
     };
-
-    // Chain prefill frames before live stream
-    let combined_stream = futures::StreamExt::chain(prefill_stream, live_stream);
 
     // === Epoch Hook ===
     // This embeds epoch lifecycle management in the HTTP layer. While this might seem
