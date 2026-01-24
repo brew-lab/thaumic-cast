@@ -138,14 +138,6 @@ impl StreamTiming {
         self.first_frame_at.get().copied()
     }
 
-    /// Returns the current epoch count.
-    ///
-    /// Used to detect resume: epoch >= 1 means there was a previous HTTP connection,
-    /// so this connection is a resume rather than initial play.
-    pub fn epoch_count(&self) -> u64 {
-        self.epoch_counter.load(Ordering::Relaxed)
-    }
-
     /// Maximum number of epochs to keep (prevents unbounded HashMap growth).
     const MAX_EPOCHS: usize = 20;
 
