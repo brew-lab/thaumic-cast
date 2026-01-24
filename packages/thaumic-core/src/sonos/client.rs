@@ -406,6 +406,31 @@ pub async fn play_uri(
     Ok(())
 }
 
+/// Sends a Play command to resume playback on a Sonos speaker.
+///
+/// Unlike `play_uri`, this does NOT set the URI - it assumes the transport is
+/// already configured. Use this to resume a paused stream.
+///
+/// # Arguments
+/// * `client` - The HTTP client to use for the request
+/// * `ip` - IP address of the Sonos speaker (coordinator for grouped speakers)
+pub async fn play(client: &Client, ip: &str) -> SoapResult<()> {
+    log::info!("[Sonos] Sending Play command to {}", ip);
+
+    with_retry("Play", || {
+        SoapRequestBuilder::new(client, ip)
+            .service(SonosService::AVTransport)
+            .action("Play")
+            .instance_id()
+            .arg("Speed", "1")
+            .send()
+    })
+    .await?;
+
+    log::info!("[Sonos] Play command succeeded for {}", ip);
+    Ok(())
+}
+
 /// Stops playback on a Sonos speaker.
 ///
 /// # Arguments
@@ -702,6 +727,10 @@ impl SonosPlayback for SonosClientImpl {
             artwork_url,
         )
         .await
+    }
+
+    async fn play(&self, ip: &str) -> SoapResult<()> {
+        play(&self.client, ip).await
     }
 
     async fn stop(&self, ip: &str) -> SoapResult<()> {

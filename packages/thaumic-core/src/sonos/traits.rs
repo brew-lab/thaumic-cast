@@ -34,6 +34,15 @@ pub trait SonosPlayback: Send + Sync {
         artwork_url: &str,
     ) -> SoapResult<()>;
 
+    /// Sends a Play command to resume playback on a Sonos speaker.
+    ///
+    /// Unlike `play_uri`, this does NOT set the URI - it assumes the transport is
+    /// already configured. Use this to resume a paused stream.
+    ///
+    /// # Arguments
+    /// * `ip` - IP address of the Sonos speaker (coordinator for grouped speakers)
+    async fn play(&self, ip: &str) -> SoapResult<()>;
+
     /// Stops playback on a Sonos speaker.
     ///
     /// # Arguments
