@@ -918,8 +918,7 @@ async fn stream_audio(
     //
     // SKIP on resume: Sonos closes the connection within milliseconds if we delay.
     // The buffer already has frames from before the pause, so no delay is needed.
-    // TEST: Disable prefill delay to see if SOAP latency provides natural buffering
-    let prefill_delay_ms = 0; // was: stream_state.streaming_buffer_ms
+    let prefill_delay_ms = stream_state.streaming_buffer_ms;
     if stream_state.codec == AudioCodec::Pcm && prefill_delay_ms > 0 && !is_resume {
         log::debug!(
             "[Stream] Applying {}ms prefill delay for PCM stream",
