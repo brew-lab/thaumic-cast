@@ -90,7 +90,6 @@ impl GenaEventProcessor {
             SonosEvent::TransportState {
                 speaker_ip,
                 state: transport_state,
-                current_uri,
                 ..
             } => {
                 log::info!(

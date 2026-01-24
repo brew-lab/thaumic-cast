@@ -896,8 +896,10 @@ async fn stream_audio(
         );
     }
 
-    // Detect resume: epoch >= 1 means there was a previous HTTP connection.
-    let is_resume = stream_state.timing.epoch_count() >= 1;
+    // Detect resume: this specific IP had a previous HTTP connection.
+    // Uses per-IP epoch tracking (not global counter) to avoid misclassifying
+    // new speakers as resumes after the first speaker connects.
+    let is_resume = stream_state.timing.current_epoch_for(remote_ip).is_some();
 
     // Upfront buffering delay for PCM streams BEFORE subscribing.
     // This lets the ring buffer accumulate more frames. Subscribing after
@@ -915,9 +917,9 @@ async fn stream_audio(
         tokio::time::sleep(Duration::from_millis(prefill_delay_ms)).await;
     } else if is_resume && stream_state.codec == AudioCodec::Pcm {
         log::info!(
-            "[Stream] Skipping {}ms prefill delay on resume (epoch={})",
+            "[Stream] Skipping {}ms prefill delay on resume for {}",
             prefill_delay_ms,
-            stream_state.timing.epoch_count()
+            remote_ip
         );
 
         // Delegate playback control to coordinator (SoC: HTTP serves audio, coordinator controls playback).
