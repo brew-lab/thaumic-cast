@@ -407,17 +407,17 @@ impl StreamCoordinator {
             // Session exists - check if Sonos is paused and needs a Play command.
             // This enables bi-directional control: user can resume from extension
             // after pausing from Sonos app.
-            let uuid = self.sonos_state.get_coordinator_uuid_by_ip(speaker_ip);
-            let transport_state = uuid
-                .as_ref()
-                .and_then(|u| self.sonos_state.transport_states.get(u))
+            // Note: transport_states are keyed by speaker IP, not UUID.
+            let transport_state = self
+                .sonos_state
+                .transport_states
+                .get(speaker_ip)
                 .map(|s| *s);
 
             log::debug!(
-                "[Resume] Session exists for {} / {}, uuid={:?}, transport_state={:?}",
+                "[Resume] Session exists for {} / {}, transport_state={:?}",
                 speaker_ip,
                 stream_id,
-                uuid,
                 transport_state
             );
 
