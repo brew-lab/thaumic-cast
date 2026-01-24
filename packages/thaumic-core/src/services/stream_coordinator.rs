@@ -813,19 +813,28 @@ impl StreamCoordinator {
     /// # Returns
     /// `true` if a Play command was sent, `false` otherwise.
     pub async fn on_http_resume(&self, speaker_ip: &str) -> bool {
-        // Only send Play if speaker is still paused.
+        // Send Play unless speaker is definitively already playing.
         // This handles Sonos-app resume where Sonos connects before transitioning to PLAYING.
-        // Skip if already PLAYING (extension-initiated resume already sent Play, or Sonos did).
+        //
+        // We use != Playing rather than == Paused because:
+        // - If state is None (cache miss, service restart): Play is safe, avoids stuck silence
+        // - If state is Paused: Play is needed
+        // - If state is Stopped/Transitioning: Play is safe
+        // - If state is Playing: skip to avoid duplicate command
+        //
+        // Sending Play to an already-playing speaker is harmless (Sonos no-ops it),
+        // but NOT sending Play to a paused speaker causes stuck silence.
         let transport_state = self
             .sonos_state
             .transport_states
             .get(speaker_ip)
             .map(|s| *s);
 
-        if transport_state == Some(TransportState::Paused) {
+        if transport_state != Some(TransportState::Playing) {
             log::info!(
-                "[Resume] Speaker {} still paused on HTTP resume, sending Play command",
-                speaker_ip
+                "[Resume] Speaker {} transport_state={:?} on HTTP resume, sending Play command",
+                speaker_ip,
+                transport_state
             );
             if let Err(e) = self.sonos.play(speaker_ip).await {
                 log::warn!(
@@ -837,9 +846,8 @@ impl StreamCoordinator {
             true
         } else {
             log::debug!(
-                "[Resume] Speaker {} transport_state={:?} on HTTP resume, skipping Play",
-                speaker_ip,
-                transport_state
+                "[Resume] Speaker {} already playing on HTTP resume, skipping Play",
+                speaker_ip
             );
             false
         }
