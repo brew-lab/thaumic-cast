@@ -15,6 +15,7 @@ use dashmap::DashMap;
 use crate::context::NetworkContext;
 use crate::error::ThaumicResult;
 use crate::events::{EventEmitter, SpeakerRemovalReason, StreamEvent};
+use crate::sonos::types::TransportState;
 use crate::sonos::utils::build_sonos_stream_uri;
 use crate::sonos::SonosPlayback;
 use crate::state::{SonosState, StreamingConfig};
@@ -395,13 +396,41 @@ impl StreamCoordinator {
 
         let key = PlaybackSessionKey::new(stream_id, speaker_ip);
 
-        // Check if this exact (stream, speaker) pair already exists (no-op)
+        // Check if this exact (stream, speaker) pair already exists
         if self.playback_sessions.contains_key(&key) {
-            log::debug!(
-                "Speaker {} already playing stream {}, skipping",
-                speaker_ip,
-                stream_id
-            );
+            // Session exists - check if Sonos is paused and needs a Play command.
+            // This enables bi-directional control: user can resume from extension
+            // after pausing from Sonos app.
+            let is_paused = self
+                .sonos_state
+                .get_coordinator_uuid_by_ip(speaker_ip)
+                .and_then(|uuid| self.sonos_state.transport_states.get(&uuid))
+                .map(|state| *state == TransportState::Paused)
+                .unwrap_or(false);
+
+            if is_paused {
+                log::info!(
+                    "Speaker {} paused, sending Play command to resume stream {}",
+                    speaker_ip,
+                    stream_id
+                );
+                if let Err(e) = self.sonos.play(speaker_ip).await {
+                    log::warn!("Failed to resume playback on {}: {}", speaker_ip, e);
+                    return PlaybackResult {
+                        speaker_ip: speaker_ip.to_string(),
+                        success: false,
+                        stream_url: None,
+                        error: Some(format!("Failed to resume: {}", e)),
+                    };
+                }
+            } else {
+                log::debug!(
+                    "Speaker {} already playing stream {}, skipping",
+                    speaker_ip,
+                    stream_id
+                );
+            }
+
             return PlaybackResult {
                 speaker_ip: speaker_ip.to_string(),
                 success: true,
