@@ -800,4 +800,48 @@ impl StreamCoordinator {
 
         true
     }
+
+    /// Handles HTTP resume event from a speaker.
+    ///
+    /// Called by the HTTP layer when a speaker reconnects to an existing stream.
+    /// This is the only place that sends Play commands on HTTP resume, maintaining
+    /// separation of concerns (HTTP layer serves audio, coordinator controls playback).
+    ///
+    /// # Arguments
+    /// * `speaker_ip` - IP address of the speaker that resumed HTTP connection
+    ///
+    /// # Returns
+    /// `true` if a Play command was sent, `false` otherwise.
+    pub async fn on_http_resume(&self, speaker_ip: &str) -> bool {
+        // Only send Play if speaker is still paused.
+        // This handles Sonos-app resume where Sonos connects before transitioning to PLAYING.
+        // Skip if already PLAYING (extension-initiated resume already sent Play, or Sonos did).
+        let transport_state = self
+            .sonos_state
+            .transport_states
+            .get(speaker_ip)
+            .map(|s| *s);
+
+        if transport_state == Some(TransportState::Paused) {
+            log::info!(
+                "[Resume] Speaker {} still paused on HTTP resume, sending Play command",
+                speaker_ip
+            );
+            if let Err(e) = self.sonos.play(speaker_ip).await {
+                log::warn!(
+                    "[Resume] Play command on HTTP resume failed for {}: {}",
+                    speaker_ip,
+                    e
+                );
+            }
+            true
+        } else {
+            log::debug!(
+                "[Resume] Speaker {} transport_state={:?} on HTTP resume, skipping Play",
+                speaker_ip,
+                transport_state
+            );
+            false
+        }
+    }
 }
