@@ -67,10 +67,11 @@ jobs:
           # Get version from desktop package (packages use fixed versioning)
           DESKTOP_VERSION=$(jq -r '.version' apps/desktop/package.json)
           EXTENSION_VERSION=$(jq -r '.version' apps/extension/package.json)
+          SERVER_VERSION=$(jq -r '.version' apps/server/package.json)
 
           # Verify versions are in sync (they should be with fixed config)
-          if [ "$DESKTOP_VERSION" != "$EXTENSION_VERSION" ]; then
-            echo "::error::Version mismatch! Desktop: $DESKTOP_VERSION, Extension: $EXTENSION_VERSION"
+          if [ "$DESKTOP_VERSION" != "$EXTENSION_VERSION" ] || [ "$DESKTOP_VERSION" != "$SERVER_VERSION" ]; then
+            echo "::error::Version mismatch! Desktop: $DESKTOP_VERSION, Extension: $EXTENSION_VERSION, Server: $SERVER_VERSION"
             exit 1
           fi
 

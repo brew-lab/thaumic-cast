@@ -71,7 +71,7 @@
     },
     "apps/server": {
       "name": "@thaumic-cast/server",
-      "version": "0.2.0",
+      "version": "0.10.4",
     },
     "packages/protocol": {
       "name": "@thaumic-cast/protocol",
@@ -89,6 +89,10 @@
       "devDependencies": {
         "typescript": "^5.0.0",
       },
+    },
+    "packages/thaumic-core": {
+      "name": "@thaumic-cast/core",
+      "version": "0.10.4",
     },
     "packages/ui": {
       "name": "@thaumic-cast/ui",
@@ -446,6 +450,8 @@
     "@tauri-apps/plugin-log": ["@tauri-apps/plugin-log@2.7.1", "", { "dependencies": { "@tauri-apps/api": "^2.8.0" } }, "sha512-jdb+o0wxQc8PjnLktgGpOs9Dh1YupaOGDXzO+Y8peA1UZ1ep3eXv4E1oiJ7nIQVN0XUFDDhnn3aBszl8ijhR+A=="],
 
     "@tauri-apps/plugin-shell": ["@tauri-apps/plugin-shell@2.3.3", "", { "dependencies": { "@tauri-apps/api": "^2.8.0" } }, "sha512-Xod+pRcFxmOWFWEnqH5yZcA7qwAMuaaDkMR1Sply+F8VfBj++CGnj2xf5UoialmjZ2Cvd8qrvSCbU+7GgNVsKQ=="],
+
+    "@thaumic-cast/core": ["@thaumic-cast/core@workspace:packages/thaumic-core"],
 
     "@thaumic-cast/desktop": ["@thaumic-cast/desktop@workspace:apps/desktop"],
 
