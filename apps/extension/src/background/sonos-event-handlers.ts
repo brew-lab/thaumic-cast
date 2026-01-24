@@ -29,6 +29,7 @@ import {
   getSonosState,
 } from './sonos-state';
 import {
+  getSession,
   getSessionBySpeakerIp,
   getSessionByStreamId,
   removeSession,
@@ -218,6 +219,32 @@ async function handleTransportMediaControl(
     if (areAllSessionSpeakersPlaying(session)) {
       await sendMediaControlToTab(tabId, 'play', speakerIp);
     }
+  }
+}
+
+/**
+ * Called when the source (MediaSession) playback state transitions to 'playing'.
+ * If any Sonos speaker in the session is paused, sends START_PLAYBACK to resume.
+ *
+ * This enables bi-directional control: source play → Sonos resume.
+ * Complements handleTransportMediaControl which handles Sonos → source.
+ *
+ * @param tabId - The tab ID that started playing
+ */
+export async function onSourcePlaybackStarted(tabId: number): Promise<void> {
+  const session = getSession(tabId);
+  if (!session) return;
+
+  const sonosState = getSonosState();
+  const pausedSpeakers = session.speakerIps.filter(
+    (ip) => sonosState.transportStates[ip] === 'PAUSED_PLAYBACK',
+  );
+
+  if (pausedSpeakers.length > 0) {
+    log.info(
+      `Source started playing, resuming ${pausedSpeakers.length} paused speaker(s) for tab ${tabId}`,
+    );
+    await offscreenBroker.startPlayback(tabId, session.speakerIps);
   }
 }
 
