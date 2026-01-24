@@ -7,6 +7,7 @@
  * - Forward volume/mute commands to offscreen
  * - Forward media controls to content scripts
  * - Forward video sync commands to content scripts
+ * - Notify server of play actions for bi-directional Sonos control
  *
  * Non-responsibilities:
  * - WebSocket communication (handled by offscreen)
@@ -21,6 +22,7 @@ import type {
 } from '../../lib/messages';
 import { offscreenBroker } from '../offscreen-broker';
 import { notifyPopup } from '../notification-service';
+import { getSession } from '../session-manager';
 
 /**
  * Handles SET_VOLUME message from popup.
@@ -49,11 +51,26 @@ export async function handleSetMute(
 /**
  * Handles CONTROL_MEDIA message from popup.
  * Forwards to content script for media session control.
+ *
+ * On 'play' action, also notifies server via START_PLAYBACK. The server
+ * handles bi-directional control: if Sonos is paused, it sends a Play
+ * command to resume playback.
+ *
  * @param msg - The control message
  */
 export async function handleControlMedia(msg: ControlMediaMessage): Promise<void> {
   const { tabId, action } = msg.payload;
+
+  // Forward to content script for source media control
   await chrome.tabs.sendMessage(tabId, { type: 'CONTROL_MEDIA', action });
+
+  // On 'play' action, notify server so it can resume Sonos if needed
+  if (action === 'play') {
+    const session = getSession(tabId);
+    if (session) {
+      await offscreenBroker.startPlayback(tabId, session.speakerIps);
+    }
+  }
 }
 
 /**
