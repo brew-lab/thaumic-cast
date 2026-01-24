@@ -932,16 +932,12 @@ async fn stream_audio(
             stream_state.timing.epoch_count()
         );
 
-        // Send Play command to Sonos on resume.
-        // When user resumes from Sonos app, Sonos makes a new HTTP request but stays
-        // in "paused" transport state. The Play command tells Sonos to start playback.
-        // Fire-and-forget: we spawn this so it doesn't block the HTTP response.
-        let sonos = Arc::clone(&state.sonos);
+        // Delegate playback control to coordinator (SoC: HTTP serves audio, coordinator controls playback).
+        // Fire-and-forget: spawn so we don't block the HTTP response.
+        let coordinator = Arc::clone(&state.stream_coordinator);
         let ip = remote_ip.to_string();
         tokio::spawn(async move {
-            if let Err(e) = sonos.play(&ip).await {
-                log::warn!("[Stream] Play command on resume failed for {}: {}", ip, e);
-            }
+            coordinator.on_http_resume(&ip).await;
         });
     }
 
