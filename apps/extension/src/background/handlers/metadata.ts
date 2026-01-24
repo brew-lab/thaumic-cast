@@ -29,6 +29,7 @@ import { getCachedState, updateCache, updateTabInfo } from '../metadata-cache';
 import { hasSession, onMetadataUpdate } from '../session-manager';
 import { notifyPopup } from '../notification-service';
 import { offscreenBroker } from '../offscreen-broker';
+import { onSourcePlaybackStarted } from '../sonos-event-handlers';
 
 /**
  * Extracts and validates supported actions from raw payload.
@@ -178,6 +179,14 @@ export async function handleTabMetadataUpdate(
     onMetadataUpdate(tabId);
     // Enrich metadata with source for Sonos display
     forwardMetadataToOffscreen(tabId, { ...msg.payload, source });
+
+    // Bi-directional control: when source transitions to 'playing',
+    // resume Sonos if paused (handles YouTube clicks, keyboard shortcuts, etc.)
+    const wasPlaying = existing?.playbackState === 'playing';
+    const nowPlaying = playbackState === 'playing';
+    if (!wasPlaying && nowPlaying) {
+      onSourcePlaybackStarted(tabId);
+    }
   }
 }
 
