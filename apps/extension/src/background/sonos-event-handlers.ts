@@ -224,10 +224,14 @@ async function handleTransportMediaControl(
 
 /**
  * Called when the source (MediaSession) playback state transitions to 'playing'.
- * If any Sonos speaker in the session is paused, sends START_PLAYBACK to resume.
+ * Sends START_PLAYBACK to the server, which resumes any paused speakers.
  *
  * This enables bi-directional control: source play → Sonos resume.
  * Complements handleTransportMediaControl which handles Sonos → source.
+ *
+ * Note: The server checks transport state and only sends Play to paused speakers,
+ * so we don't need to filter here. This keeps the extension stateless for playback
+ * decisions and avoids stale state issues.
  *
  * @param tabId - The tab ID that started playing
  */
@@ -235,17 +239,8 @@ export async function onSourcePlaybackStarted(tabId: number): Promise<void> {
   const session = getSession(tabId);
   if (!session) return;
 
-  const sonosState = getSonosState();
-  const pausedSpeakers = session.speakerIps.filter(
-    (ip) => sonosState.transportStates[ip] === 'PAUSED_PLAYBACK',
-  );
-
-  if (pausedSpeakers.length > 0) {
-    log.info(
-      `Source started playing, resuming ${pausedSpeakers.length} paused speaker(s) for tab ${tabId}`,
-    );
-    await offscreenBroker.startPlayback(tabId, session.speakerIps);
-  }
+  log.info(`Source started playing for tab ${tabId}, notifying server`);
+  await offscreenBroker.startPlayback(tabId, session.speakerIps);
 }
 
 /**
