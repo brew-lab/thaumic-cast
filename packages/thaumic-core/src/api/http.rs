@@ -931,6 +931,18 @@ async fn stream_audio(
             prefill_delay_ms,
             stream_state.timing.epoch_count()
         );
+
+        // Send Play command to Sonos on resume.
+        // When user resumes from Sonos app, Sonos makes a new HTTP request but stays
+        // in "paused" transport state. The Play command tells Sonos to start playback.
+        // Fire-and-forget: we spawn this so it doesn't block the HTTP response.
+        let sonos = Arc::clone(&state.sonos);
+        let ip = remote_ip.to_string();
+        tokio::spawn(async move {
+            if let Err(e) = sonos.play(&ip).await {
+                log::warn!("[Stream] Play command on resume failed for {}: {}", ip, e);
+            }
+        });
     }
 
     // Capture connected_at AFTER prefill delay so latency metrics
