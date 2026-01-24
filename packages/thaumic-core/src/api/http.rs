@@ -874,31 +874,19 @@ async fn stream_audio(
 
     let remote_ip = remote_addr.ip();
 
-    // === Range Header Logging (empirical testing) ===
-    // Captures what Sonos sends on pause/resume to inform our handling strategy.
     let range_header = headers
         .get(header::RANGE)
         .and_then(|v| v.to_str().ok())
         .map(|s| s.to_string());
 
     if let Some(ref range) = range_header {
-        log::warn!(
-            "[Stream] RANGE REQUEST: client={}, stream={}, codec={:?}, range='{}'",
+        log::debug!(
+            "[Stream] Range request: client={}, stream={}, codec={:?}, range='{}'",
             remote_ip,
             id,
             stream_state.codec,
             range
         );
-        // Log other potentially relevant headers for context
-        if let Some(if_range) = headers.get("if-range").and_then(|v| v.to_str().ok()) {
-            log::warn!("[Stream]   If-Range: {}", if_range);
-        }
-        if let Some(user_agent) = headers
-            .get(header::USER_AGENT)
-            .and_then(|v| v.to_str().ok())
-        {
-            log::warn!("[Stream]   User-Agent: {}", user_agent);
-        }
     } else {
         log::info!(
             "[Stream] New connection: client={}, stream={}, codec={:?}",

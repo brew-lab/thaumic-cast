@@ -93,12 +93,10 @@ impl GenaEventProcessor {
                 current_uri,
                 ..
             } => {
-                // Enhanced logging for pause/resume investigation
-                log::warn!(
-                    "[GenaEventProcessor] TRANSPORT STATE: speaker={}, state={:?}, uri={:?}",
+                log::info!(
+                    "[GenaEventProcessor] Transport state: {} -> {:?}",
                     speaker_ip,
-                    transport_state,
-                    current_uri.as_deref().unwrap_or("(none)")
+                    transport_state
                 );
                 deps.sonos_state
                     .transport_states
