@@ -414,19 +414,18 @@ impl StreamCoordinator {
                 .get(speaker_ip)
                 .map(|s| *s);
 
-            log::debug!(
-                "[Resume] Session exists for {} / {}, transport_state={:?}",
-                speaker_ip,
-                stream_id,
-                transport_state
-            );
+            // Send Play unless speaker is definitively already playing.
+            // Use != Playing (not == Paused) to handle cache misses safely:
+            // - If state is None: Play is safe, avoids stuck silence
+            // - If state is Paused: Play is needed
+            // - If state is Playing: skip to avoid duplicate command
+            let already_playing = transport_state == Some(TransportState::Playing);
 
-            let is_paused = transport_state == Some(TransportState::Paused);
-
-            if is_paused {
+            if !already_playing {
                 log::info!(
-                    "Speaker {} paused, sending Play command to resume stream {}",
+                    "Speaker {} transport_state={:?}, sending Play command to resume stream {}",
                     speaker_ip,
+                    transport_state,
                     stream_id
                 );
                 if let Err(e) = self.sonos.play(speaker_ip).await {
@@ -440,7 +439,7 @@ impl StreamCoordinator {
                 }
             } else {
                 log::debug!(
-                    "Speaker {} already playing stream {}, skipping",
+                    "Speaker {} already playing stream {}, skipping Play",
                     speaker_ip,
                     stream_id
                 );
