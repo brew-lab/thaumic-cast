@@ -404,6 +404,15 @@ export const WsConnectionLostMessageSchema = z.object({
 });
 export type WsConnectionLostMessage = z.infer<typeof WsConnectionLostMessageSchema>;
 
+export const ConnectionAttemptFailedMessageSchema = z.object({
+  type: z.literal('CONNECTION_ATTEMPT_FAILED'),
+  /** The error key (for i18n lookup) or raw error message */
+  error: z.string(),
+  /** Whether manual retry is appropriate for this error type */
+  canRetry: z.boolean(),
+});
+export type ConnectionAttemptFailedMessage = z.infer<typeof ConnectionAttemptFailedMessageSchema>;
+
 export const NetworkHealthStatusSchema = z.enum(['ok', 'degraded']);
 export type NetworkHealthStatus = z.infer<typeof NetworkHealthStatusSchema>;
 

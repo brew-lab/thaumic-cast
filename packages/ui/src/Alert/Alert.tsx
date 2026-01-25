@@ -15,6 +15,10 @@ interface AlertProps {
   className?: string;
   /** Callback when dismiss button is clicked. If provided, shows a dismiss button. */
   onDismiss?: () => void;
+  /** Action button label. If provided along with onAction, shows an inline action button. */
+  action?: string;
+  /** Callback when action button is clicked */
+  onAction?: () => void;
 }
 
 const VARIANT_CLASSES: Record<AlertVariant, string> = {
@@ -38,16 +42,32 @@ const VARIANT_ICONS: Record<AlertVariant, FunctionComponent<LucideProps>> = {
  * @param props.variant - Visual variant (default: warning)
  * @param props.className - Additional CSS class
  * @param props.onDismiss - Callback when dismiss button is clicked
+ * @param props.action - Action button label
+ * @param props.onAction - Callback when action button is clicked
  * @returns The rendered Alert component
  */
-export function Alert({ children, variant = 'warning', className, onDismiss }: AlertProps) {
+export function Alert({
+  children,
+  variant = 'warning',
+  className,
+  onDismiss,
+  action,
+  onAction,
+}: AlertProps) {
   const variantClass = VARIANT_CLASSES[variant];
   const Icon = VARIANT_ICONS[variant];
 
   return (
     <div className={[styles.alert, variantClass, className].filter(Boolean).join(' ')} role="alert">
       <Icon size={16} className={styles.icon} aria-hidden="true" />
-      <div className={styles.content}>{children}</div>
+      <div className={styles.content}>
+        {children}
+        {action && onAction && (
+          <button type="button" className={styles.action} onClick={onAction}>
+            {action}
+          </button>
+        )}
+      </div>
       {onDismiss && (
         <IconButton size="sm" className={styles.dismiss} onClick={onDismiss} aria-label="Dismiss">
           <X size={14} aria-hidden="true" />

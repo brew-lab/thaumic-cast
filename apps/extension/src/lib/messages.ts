@@ -123,6 +123,8 @@ export {
   type SpeakerStopFailedMessage,
   WsConnectionLostMessageSchema,
   type WsConnectionLostMessage,
+  ConnectionAttemptFailedMessageSchema,
+  type ConnectionAttemptFailedMessage,
   NetworkHealthStatusSchema,
   type NetworkHealthStatus,
   NetworkEventMessageSchema,
@@ -203,6 +205,7 @@ import type {
   MuteUpdateMessage,
   TransportStateUpdateMessage,
   WsConnectionLostMessage,
+  ConnectionAttemptFailedMessage,
   NetworkHealthChangedMessage,
   LatencyUpdateMessage,
   LatencyStaleMessage,
@@ -268,6 +271,7 @@ export type BackgroundToPopupType =
   | 'MUTE_UPDATE'
   | 'TRANSPORT_STATE_UPDATE'
   | 'WS_CONNECTION_LOST'
+  | 'CONNECTION_ATTEMPT_FAILED'
   | 'NETWORK_HEALTH_CHANGED'
   | 'LATENCY_UPDATE'
   | 'LATENCY_STALE';
@@ -359,6 +363,7 @@ export type BackgroundToPopupMessage =
   | MuteUpdateMessage
   | TransportStateUpdateMessage
   | WsConnectionLostMessage
+  | ConnectionAttemptFailedMessage
   | NetworkHealthChangedMessage
   | LatencyUpdateMessage
   | LatencyStaleMessage

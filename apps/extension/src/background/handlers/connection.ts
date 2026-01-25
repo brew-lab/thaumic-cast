@@ -110,8 +110,11 @@ export function handleWsConnected(state: SonosStateSnapshot): void {
     setNetworkHealth(stateWithHealth.networkHealth, stateWithHealth.networkHealthReason ?? null);
   }
 
-  // Notify popup of state
-  notifyPopup({ type: 'WS_STATE_CHANGED', state });
+  // Notify popup of Sonos state update
+  notifyPopup({
+    type: 'WS_STATE_CHANGED',
+    state,
+  });
 }
 
 /**
@@ -148,7 +151,10 @@ export async function ensureConnection(): Promise<EnsureConnectionResponse> {
   // Already connected - notify popup and return current state
   if (connState.connected) {
     // Send state update in case popup missed the original WS_STATE_CHANGED
-    notifyPopup({ type: 'WS_STATE_CHANGED', state: getStoredSonosState() });
+    notifyPopup({
+      type: 'WS_STATE_CHANGED',
+      state: getStoredSonosState(),
+    });
     return {
       connected: true,
       desktopAppUrl: connState.desktopAppUrl,
@@ -180,6 +186,11 @@ export async function ensureConnection(): Promise<EnsureConnectionResponse> {
     const app = await discoverAndCache();
     if (!app) {
       clearConnectionState();
+      notifyPopup({
+        type: 'CONNECTION_ATTEMPT_FAILED',
+        error: 'error_desktop_not_found',
+        canRetry: true, // No auto-retry for discovery, user can retry manually
+      });
       return {
         connected: false,
         desktopAppUrl: null,
@@ -201,6 +212,11 @@ export async function ensureConnection(): Promise<EnsureConnectionResponse> {
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     log.error('Discovery/connection failed:', message);
+    notifyPopup({
+      type: 'CONNECTION_ATTEMPT_FAILED',
+      error: message,
+      canRetry: true, // Network errors may be transient
+    });
     return {
       connected: false,
       desktopAppUrl: null,
