@@ -1,5 +1,19 @@
 # @thaumic-cast/protocol
 
+## 0.4.0
+
+### Minor Changes
+
+- [#71](https://github.com/brew-lab/thaumic-cast/pull/71) [`a01a1c4`](https://github.com/brew-lab/thaumic-cast/commit/a01a1c4bd61ff52bddb5d244ca8361fd0a127351) Thanks [@skezo](https://github.com/skezo)! - Add fixed volume detection for Sonos speakers with line-level output
+
+  Sonos devices like CONNECT and Port have fixed line-level output where volume cannot be adjusted via API. This change detects and handles these speakers:
+  - Parse `OutputFixed` from GENA GroupRenderingControl notifications
+  - Propagate `fixed` state through the event system alongside volume updates
+  - Disable volume controls in the UI for fixed-output speakers
+  - Add `disabled` prop to `VolumeControl` and `SpeakerVolumeRow` components
+
+  When a speaker has fixed volume, the volume slider and mute button are visually disabled and non-interactive.
+
 ## 0.3.0
 
 ### Minor Changes
