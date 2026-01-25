@@ -27,7 +27,7 @@
     "@thaumic-cast/ui": "workspace:*",
     "clsx": "^2.1.1",
     "i18next": "^25.7.3",
-    "lucide-preact": "^0.562.0",
+    "lucide-preact": "^0.563.0",
     "preact": "^10.0.0",
     "react-i18next": "^16.5.0",
     "wouter-preact": "^3.9.0"
