@@ -20,12 +20,12 @@
   },
   "peerDependencies": {
     "@thaumic-cast/protocol": "workspace:*",
-    "lucide-preact": "^0.562.0",
+    "lucide-preact": "^0.563.0",
     "preact": "^10.0.0"
   },
   "devDependencies": {
     "@thaumic-cast/protocol": "workspace:*",
-    "lucide-preact": "^0.562.0",
+    "lucide-preact": "^0.563.0",
     "preact": "^10.0.0",
     "typescript": "^5.0.0"
   }
