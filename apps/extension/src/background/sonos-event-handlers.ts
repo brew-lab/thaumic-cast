@@ -25,6 +25,7 @@ import {
   updateGroups,
   updateVolume,
   updateMute,
+  updateVolumeFixed,
   updateTransportState,
   getSonosState,
 } from './sonos-state';
@@ -72,7 +73,11 @@ export async function handleSonosEvent(event: BroadcastEvent): Promise<void> {
         break;
 
       case 'groupVolume':
-        handleGroupVolume(eventData.speakerIp as string, eventData.volume as number);
+        handleGroupVolume(
+          eventData.speakerIp as string,
+          eventData.volume as number,
+          eventData.fixed as boolean | undefined,
+        );
         break;
 
       case 'groupMute':
@@ -293,14 +298,20 @@ async function handleSourceChanged(speakerIp: string, currentUri: string): Promi
  * Handles volume change events.
  * @param speakerIp - The speaker IP address
  * @param volume - The new volume (0-100)
+ * @param fixed - Whether volume is fixed (line-level output)
  */
-function handleGroupVolume(speakerIp: string, volume: number): void {
+function handleGroupVolume(speakerIp: string, volume: number, fixed?: boolean): void {
   updateVolume(speakerIp, volume);
+
+  if (fixed !== undefined) {
+    updateVolumeFixed(speakerIp, fixed);
+  }
 
   notifyPopup({
     type: 'VOLUME_UPDATE',
     speakerIp,
     volume,
+    fixed,
   });
 }
 

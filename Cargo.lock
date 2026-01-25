@@ -5060,7 +5060,7 @@ dependencies = [
 
 [[package]]
 name = "thaumic-cast-desktop"
-version = "0.10.4"
+version = "0.11.0"
 dependencies = [
  "async-stream",
  "async-trait",
@@ -5135,7 +5135,7 @@ dependencies = [
 
 [[package]]
 name = "thaumic-server"
-version = "0.1.0"
+version = "0.11.0"
 dependencies = [
  "anyhow",
  "clap",

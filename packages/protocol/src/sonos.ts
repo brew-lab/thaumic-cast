@@ -73,6 +73,7 @@ export const SonosStateSnapshotSchema = z.object({
   transportStates: z.record(z.string(), TransportStateSchema),
   groupVolumes: z.record(z.string(), z.number()),
   groupMutes: z.record(z.string(), z.boolean()),
+  groupVolumeFixed: z.record(z.string(), z.boolean()),
   sessions: z.array(PlaybackSessionSchema).optional(),
 });
 export type SonosStateSnapshot = z.infer<typeof SonosStateSnapshotSchema>;
@@ -87,6 +88,7 @@ export function createEmptySonosState(): SonosStateSnapshot {
     groups: [],
     groupVolumes: {},
     groupMutes: {},
+    groupVolumeFixed: {},
     transportStates: {},
   };
 }
@@ -100,6 +102,7 @@ export const InitialStatePayloadSchema = z.object({
   transportStates: z.record(z.string(), TransportStateSchema),
   groupVolumes: z.record(z.string(), z.number()),
   groupMutes: z.record(z.string(), z.boolean()),
+  groupVolumeFixed: z.record(z.string(), z.boolean()),
   sessions: z.array(PlaybackSessionSchema).optional(),
 });
 export type InitialStatePayload = z.infer<typeof InitialStatePayloadSchema>;

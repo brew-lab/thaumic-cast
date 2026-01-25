@@ -13,6 +13,11 @@
   opacity: var(--state-muted-opacity);
 }
 
+.disabled {
+  opacity: var(--input-disabled-opacity);
+  cursor: not-allowed;
+}
+
 .slider {
   --volume: 0%;
   --touch-offset: calc((var(--touch-target-size) - var(--slider-track-height)) / 2);
@@ -63,6 +68,10 @@
   box-shadow:
     0 0 0 2px var(--color-bg),
     0 0 0 4px var(--color-focus);
+}
+
+.disabled .slider {
+  pointer-events: none;
 }
 
 .value {

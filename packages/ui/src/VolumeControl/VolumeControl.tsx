@@ -26,6 +26,8 @@ interface VolumeControlProps {
   onVolumeChange: (volume: number) => void;
   /** Callback when mute is toggled */
   onMuteToggle: () => void;
+  /** Whether controls are disabled (e.g., fixed line-level output) */
+  disabled?: boolean;
   /** Label for mute button when unmuted */
   muteLabel?: string;
   /** Label for mute button when muted */
@@ -43,6 +45,7 @@ interface VolumeControlProps {
  * @param props.muted - Whether muted
  * @param props.onVolumeChange - Volume change handler
  * @param props.onMuteToggle - Mute toggle handler
+ * @param props.disabled
  * @param props.muteLabel - Label for mute action
  * @param props.unmuteLabel - Label for unmute action
  * @param props.volumeLabel - Accessible label for the volume slider
@@ -54,6 +57,7 @@ export function VolumeControl({
   muted,
   onVolumeChange,
   onMuteToggle,
+  disabled = false,
   muteLabel = 'Mute',
   unmuteLabel = 'Unmute',
   volumeLabel = 'Volume',
@@ -189,11 +193,16 @@ export function VolumeControl({
   }, [endInteraction]);
 
   return (
-    <div className={[styles.volumeControl, className].filter(Boolean).join(' ')}>
+    <div
+      className={[styles.volumeControl, disabled && styles.disabled, className]
+        .filter(Boolean)
+        .join(' ')}
+    >
       <IconButton
         size="sm"
         className={[styles.muteBtn, muted ? styles.muted : ''].filter(Boolean).join(' ')}
         onClick={handleMuteToggle}
+        disabled={disabled}
         title={muted ? unmuteLabel : muteLabel}
         aria-label={muted ? unmuteLabel : muteLabel}
       >
@@ -208,6 +217,7 @@ export function VolumeControl({
         onPointerDown={handlePointerDown}
         onPointerUp={handlePointerUp}
         onPointerCancel={handlePointerUp}
+        disabled={disabled}
         className={styles.slider}
         style={{ '--volume': `${localVolume}%` } as CSSProperties}
         aria-label={volumeLabel}

@@ -197,6 +197,9 @@ pub struct SonosState {
     pub group_volumes: DashMap<String, u8>,
     /// Map of coordinator IP to their group mute status.
     pub group_mutes: DashMap<String, bool>,
+    /// Map of coordinator IP to their fixed volume status.
+    /// True indicates volume cannot be adjusted (line-level output).
+    pub group_volume_fixed: DashMap<String, bool>,
 }
 
 impl SonosState {
@@ -209,6 +212,7 @@ impl SonosState {
             "transportStates": dashmap_to_json(&self.transport_states),
             "groupVolumes": dashmap_to_json(&self.group_volumes),
             "groupMutes": dashmap_to_json(&self.group_mutes),
+            "groupVolumeFixed": dashmap_to_json(&self.group_volume_fixed),
         })
     }
 
@@ -229,10 +233,12 @@ impl SonosState {
         self.transport_states
             .retain(|ip, _| valid_speaker_ips.contains(ip));
 
-        // Volume and mute are per-coordinator (only coordinators control group volume)
+        // Volume, mute, and fixed are per-coordinator (only coordinators control group volume)
         self.group_volumes
             .retain(|ip, _| valid_coordinator_ips.contains(ip));
         self.group_mutes
+            .retain(|ip, _| valid_coordinator_ips.contains(ip));
+        self.group_volume_fixed
             .retain(|ip, _| valid_coordinator_ips.contains(ip));
     }
 

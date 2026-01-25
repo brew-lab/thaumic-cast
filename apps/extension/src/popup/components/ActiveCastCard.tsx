@@ -24,6 +24,8 @@ interface ActiveCastCardProps {
   getVolume: (speakerIp: string) => number;
   /** Function to check if a speaker is muted */
   isMuted: (speakerIp: string) => boolean;
+  /** Function to check if a speaker has fixed volume (line-level output) */
+  getVolumeFixed?: (speakerIp: string) => boolean;
   /** Callback when volume changes for a speaker */
   onVolumeChange: (speakerIp: string, volume: number) => void;
   /** Callback when mute is toggled for a speaker */
@@ -45,6 +47,7 @@ interface ActiveCastCardProps {
  * @param props.getTransportState
  * @param props.getVolume
  * @param props.isMuted
+ * @param props.getVolumeFixed
  * @param props.onVolumeChange
  * @param props.onMuteToggle
  * @param props.onStop
@@ -58,6 +61,7 @@ export function ActiveCastCard({
   getTransportState,
   getVolume,
   isMuted,
+  getVolumeFixed,
   onVolumeChange,
   onMuteToggle,
   onStop,
@@ -253,6 +257,7 @@ export function ActiveCastCard({
                 speakerIp={ip}
                 volume={getVolume(ip)}
                 muted={isMuted(ip)}
+                disabled={getVolumeFixed?.(ip)}
                 onVolumeChange={(vol) => onVolumeChange(ip, vol)}
                 onMuteToggle={() => onMuteToggle(ip)}
                 muteLabel={t('mute_speaker', { name })}

@@ -98,6 +98,7 @@ function MainPopup(): JSX.Element {
     loading: sonosLoading,
     getVolume,
     getMuted: isMuted,
+    getVolumeFixed,
     getTransportState,
     setVolume: handleVolumeChange,
     setMuted,
@@ -272,6 +273,7 @@ function MainPopup(): JSX.Element {
         getTransportState={getTransportState}
         getVolume={getVolume}
         isMuted={isMuted}
+        getVolumeFixed={getVolumeFixed}
         onVolumeChange={handleVolumeChange}
         onMuteToggle={handleMuteToggle}
         onStopCast={stopCast}

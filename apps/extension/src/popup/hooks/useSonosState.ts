@@ -26,6 +26,8 @@ interface SonosStateResult {
   getVolume: (speakerIp: string) => number;
   /** Get mute state for a speaker */
   getMuted: (speakerIp: string) => boolean;
+  /** Get whether volume is fixed (line-level output) for a speaker */
+  getVolumeFixed: (speakerIp: string) => boolean;
   /** Get transport state for a speaker */
   getTransportState: (speakerIp: string) => TransportState | undefined;
   /** Set volume for a speaker */
@@ -64,10 +66,13 @@ export function useSonosState(): SonosStateResult {
         break;
       }
       case 'VOLUME_UPDATE': {
-        const { speakerIp, volume } = message as VolumeUpdateMessage;
+        const { speakerIp, volume, fixed } = message as VolumeUpdateMessage;
         setState((prev) => ({
           ...prev,
           groupVolumes: { ...prev.groupVolumes, [speakerIp]: volume },
+          ...(fixed !== undefined && {
+            groupVolumeFixed: { ...prev.groupVolumeFixed, [speakerIp]: fixed },
+          }),
         }));
         break;
       }
@@ -98,6 +103,11 @@ export function useSonosState(): SonosStateResult {
   const getMuted = useCallback(
     (speakerIp: string): boolean => state.groupMutes[speakerIp] ?? false,
     [state.groupMutes],
+  );
+
+  const getVolumeFixed = useCallback(
+    (speakerIp: string): boolean => state.groupVolumeFixed[speakerIp] ?? false,
+    [state.groupVolumeFixed],
   );
 
   const getTransportState = useCallback(
@@ -135,6 +145,7 @@ export function useSonosState(): SonosStateResult {
     loading,
     getVolume,
     getMuted,
+    getVolumeFixed,
     getTransportState,
     setVolume,
     setMuted,

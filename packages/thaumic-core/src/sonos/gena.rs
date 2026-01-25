@@ -64,6 +64,9 @@ pub enum SonosEvent {
         #[serde(rename = "speakerIp")]
         speaker_ip: String,
         volume: u8,
+        /// Whether the output is fixed (line-level, cannot be adjusted).
+        #[serde(skip_serializing_if = "Option::is_none")]
+        fixed: Option<bool>,
         timestamp: u64,
     },
     /// Group mute state changed (from coordinator).
