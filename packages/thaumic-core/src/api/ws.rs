@@ -703,8 +703,9 @@ async fn handle_ws(socket: WebSocket, state: AppState) {
                                 }
                             }
                             Ok(WsIncoming::StopPlaybackSpeaker { payload }) => {
-                                // Stop playback; only stop latency monitoring if successful
-                                let stopped = state
+                                // Stop playback; stop latency monitoring for all stopped speakers
+                                // (when stopping a coordinator, this includes all its slaves)
+                                let stopped_ips = state
                                     .stream_coordinator
                                     .stop_playback_speaker(
                                         &payload.stream_id,
@@ -712,10 +713,10 @@ async fn handle_ws(socket: WebSocket, state: AppState) {
                                         payload.reason,
                                     )
                                     .await;
-                                if stopped {
+                                for ip in stopped_ips {
                                     state
                                         .latency_monitor
-                                        .stop_speaker(&payload.stream_id, &payload.ip)
+                                        .stop_speaker(&payload.stream_id, &ip)
                                         .await;
                                 }
                             }

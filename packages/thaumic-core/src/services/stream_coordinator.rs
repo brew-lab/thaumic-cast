@@ -52,6 +52,34 @@ struct SinglePlaybackParams<'a> {
     metadata: Option<&'a StreamMetadata>,
 }
 
+/// Parameters for starting playback on multiple speakers (legacy sequential mode).
+struct MultiPlaybackParams<'a> {
+    speaker_ips: &'a [String],
+    stream_id: &'a str,
+    stream_url: &'a str,
+    codec: AudioCodec,
+    audio_format: &'a AudioFormat,
+    artwork_url: &'a str,
+    metadata: Option<&'a StreamMetadata>,
+}
+
+/// Role of a speaker in synchronized group playback.
+///
+/// When multiple speakers play the same stream, one becomes the coordinator
+/// (receives actual stream URL) and others become slaves (sync to coordinator
+/// via x-rincon protocol).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum GroupRole {
+    /// Coordinator receives the actual stream URL and controls playback timing.
+    /// All slaves sync their playback to the coordinator.
+    #[default]
+    Coordinator,
+    /// Slave joins the coordinator via x-rincon protocol for synchronized playback.
+    /// Does not fetch the stream directly - follows coordinator's timing.
+    Slave,
+}
+
 /// Tracks an active playback session linking a stream to a speaker.
 #[derive(Debug, Clone, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -61,9 +89,27 @@ pub struct PlaybackSession {
     /// The speaker IP address receiving the stream.
     pub speaker_ip: String,
     /// The full URL the speaker is fetching audio from.
+    /// For coordinators: the actual stream URL.
+    /// For slaves: the x-rincon:{uuid} URI.
     pub stream_url: String,
     /// The codec being used (for Sonos URI formatting).
     pub codec: AudioCodec,
+    /// Role in synchronized group playback.
+    pub role: GroupRole,
+    /// For slaves: the coordinator's IP address.
+    /// For coordinators: None.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub coordinator_ip: Option<String>,
+    /// The coordinator's UUID (for cleanup operations).
+    /// Set for both coordinators (self UUID) and slaves (coordinator UUID).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub coordinator_uuid: Option<String>,
+    /// Original group coordinator UUID before joining the streaming group.
+    /// For slaves: the UUID of the coordinator they were grouped with before streaming.
+    /// None if the speaker was already standalone or is a coordinator.
+    /// Used to restore group membership after streaming ends.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub original_coordinator_uuid: Option<String>,
 }
 
 /// Result of starting playback on a single speaker.
@@ -135,6 +181,7 @@ impl StreamCoordinator {
     /// Returns the stream URL in the format Sonos will report:
     /// - WAV/FLAC: `http://.../.wav` or `http://.../.flac`
     /// - MP3/AAC: `x-rincon-mp3radio://...`
+    /// - Slaves: `x-rincon:{uuid}` (already in final form)
     ///
     /// Note: A speaker can only play one stream at a time, so we find the first
     /// session matching the speaker IP.
@@ -143,7 +190,15 @@ impl StreamCoordinator {
         self.playback_sessions
             .iter()
             .find(|r| r.key().speaker_ip == speaker_ip)
-            .map(|r| build_sonos_stream_uri(&r.value().stream_url, r.value().codec))
+            .map(|r| {
+                let url = &r.value().stream_url;
+                // x-rincon URIs are already in final form (for slaves)
+                if url.starts_with("x-rincon:") {
+                    url.clone()
+                } else {
+                    build_sonos_stream_uri(url, r.value().codec)
+                }
+            })
     }
 
     /// Gets all playback sessions for a specific stream.
@@ -239,7 +294,8 @@ impl StreamCoordinator {
     ///
     /// **PCM:**
     /// 1. Close HTTP first (Sonos blocks on reads, SOAP would timeout)
-    /// 2. Send SOAP stop commands
+    /// 2. Send SOAP stop commands (with group-aware ordering)
+    /// 3. Clear sessions
     ///
     /// **Compressed codecs (AAC/MP3/FLAC):**
     /// 1. Send SOAP stop commands first (stops playback immediately)
@@ -247,14 +303,14 @@ impl StreamCoordinator {
     ///
     /// Speaker stop/switch failures are logged but don't prevent cleanup.
     pub async fn remove_stream_async(&self, stream_id: &str) {
-        // Get codec and speaker IPs before removing the stream
+        // Get codec before removing the stream
         let stream_state = self.get_stream(stream_id);
         let is_pcm = stream_state
             .as_ref()
             .map(|s| s.codec == AudioCodec::Pcm)
             .unwrap_or(false);
 
-        // Collect speaker IPs before removal
+        // Collect speaker IPs before any removal
         let speaker_ips: Vec<String> = self
             .playback_sessions
             .iter()
@@ -265,8 +321,16 @@ impl StreamCoordinator {
         if is_pcm {
             // PCM: Close HTTP first to unblock Sonos, then send SOAP commands.
             // Sonos blocks on HTTP reads for PCM streams, causing SOAP timeouts.
-            self.remove_stream(stream_id);
+            //
+            // IMPORTANT: We must close HTTP before SOAP, but keep sessions intact
+            // so stop_speakers can determine role ordering (unjoin slaves first).
+            self.stream_manager.remove_stream(stream_id);
+
+            // Now stop speakers with group-aware ordering (sessions still intact)
             self.stop_speakers(&speaker_ips).await;
+
+            // Finally clear sessions and emit stream ended event
+            self.clear_sessions_and_emit_ended(stream_id);
         } else {
             // Compressed: Send SOAP stop first, then close HTTP.
             // Compressed codecs buffer in Sonos's decoder; stopping first prevents
@@ -276,23 +340,102 @@ impl StreamCoordinator {
         }
     }
 
+    /// Clears playback sessions for a stream and emits the Ended event.
+    ///
+    /// Used by PCM cleanup path where HTTP must close before SOAP commands,
+    /// but sessions must remain intact for role-based stop ordering.
+    fn clear_sessions_and_emit_ended(&self, stream_id: &str) {
+        let keys_to_remove: Vec<PlaybackSessionKey> = self
+            .playback_sessions
+            .iter()
+            .filter(|r| r.key().stream_id == stream_id)
+            .map(|r| r.key().clone())
+            .collect();
+
+        for key in keys_to_remove {
+            self.playback_sessions.remove(&key);
+        }
+
+        self.emit_event(StreamEvent::Ended {
+            stream_id: stream_id.to_string(),
+            timestamp: now_millis(),
+        });
+    }
+
     /// Sends stop commands to a list of speakers (best-effort).
     ///
-    /// Sends `Stop` first to immediately halt playback (like the Sonos app),
-    /// then `switch_to_queue` to clear the stale stream source from Sonos UI.
+    /// Stops playback on multiple speakers with group-aware cleanup.
     ///
-    /// The order matters: sending `switch_to_queue` first would cause Sonos to
-    /// buffer/transition between sources, allowing buffered audio to continue.
+    /// For grouped playback, the order matters:
+    /// 1. Unjoin slaves first (make them standalone)
+    /// 2. Restore slaves to their original groups (best-effort)
+    /// 3. Stop coordinators
+    /// 4. Switch coordinators to queue (cleanup)
+    ///
+    /// This prevents slaves from showing errors when coordinator stops first.
     async fn stop_speakers(&self, speaker_ips: &[String]) {
+        // Separate speakers into coordinators and slaves based on their sessions
+        // Also track which speakers need restoration to their original groups
+        let mut coordinators: Vec<(String, Option<String>)> = Vec::new(); // (ip, original_coordinator_uuid)
+        let mut slaves = Vec::new();
+        // Track slaves that need restoration: (speaker_ip, original_coordinator_uuid)
+        let mut slave_restoration_info: Vec<(String, String)> = Vec::new();
+
         for ip in speaker_ips {
-            // Send Stop FIRST - this immediately halts playback (like the Sonos app).
-            // Sending switch_to_queue first would cause Sonos to buffer/transition
-            // between sources, allowing buffered audio to continue playing.
+            // Find session for this speaker
+            if let Some(session) = self
+                .playback_sessions
+                .iter()
+                .find(|r| r.key().speaker_ip == *ip)
+            {
+                match session.value().role {
+                    GroupRole::Coordinator => {
+                        coordinators.push((
+                            ip.clone(),
+                            session.value().original_coordinator_uuid.clone(),
+                        ));
+                    }
+                    GroupRole::Slave => {
+                        slaves.push(ip.clone());
+                        // Capture restoration info before session removal
+                        if let Some(ref orig_uuid) = session.value().original_coordinator_uuid {
+                            slave_restoration_info.push((ip.clone(), orig_uuid.clone()));
+                        }
+                    }
+                }
+            } else {
+                // No session found - treat as coordinator (direct stop, no restoration)
+                coordinators.push((ip.clone(), None));
+            }
+        }
+
+        log::debug!(
+            "[GroupSync] stop_speakers: {} coordinators, {} slaves, {} slaves to restore",
+            coordinators.len(),
+            slaves.len(),
+            slave_restoration_info.len()
+        );
+
+        // Step 1: Unjoin slaves first (making them standalone temporarily)
+        for ip in &slaves {
+            if let Err(e) = self.sonos.leave_group(ip).await {
+                log::warn!("[GroupSync] Failed to unjoin slave {}: {}", ip, e);
+            }
+        }
+
+        // Step 2: Restore slaves to their original groups (best-effort)
+        for (speaker_ip, original_coordinator_uuid) in slave_restoration_info {
+            self.restore_original_group(&speaker_ip, &original_coordinator_uuid)
+                .await;
+        }
+
+        // Step 3: Stop coordinators and restore any that were originally slaves
+        for (ip, original_coordinator_uuid) in &coordinators {
             if let Err(e) = self.sonos.stop(ip).await {
                 log::warn!("[StreamCoordinator] Failed to stop {}: {}", ip, e);
             }
 
-            // Then switch to queue as cleanup (clears stale stream source in Sonos UI)
+            // Switch to queue as cleanup (clears stale stream source in Sonos UI)
             if let Some(uuid) = self.sonos_state.get_coordinator_uuid_by_ip(ip) {
                 if let Err(e) = self.sonos.switch_to_queue(ip, &uuid).await {
                     log::warn!(
@@ -302,6 +445,96 @@ impl StreamCoordinator {
                     );
                 }
             }
+
+            // Restore coordinator to original group if it was a slave before streaming
+            // (edge case: fallback coordinator selection picked a speaker from an existing group)
+            if let Some(orig_uuid) = original_coordinator_uuid {
+                self.restore_original_group(ip, orig_uuid).await;
+            }
+        }
+    }
+
+    /// Attempts to restore a speaker to its original Sonos group.
+    ///
+    /// This is a best-effort operation - if restoration fails, the speaker
+    /// is left standalone (which is the current behavior). Restoration will
+    /// fail silently in these cases:
+    /// - Original coordinator is gone/unreachable
+    /// - Original coordinator is now in a different state
+    ///
+    /// # Arguments
+    /// * `speaker_ip` - IP of the speaker to restore
+    /// * `original_coordinator_uuid` - UUID of the original group's coordinator
+    async fn restore_original_group(&self, speaker_ip: &str, original_coordinator_uuid: &str) {
+        log::info!(
+            "[GroupSync] Restoring {} to original group (coordinator: {})",
+            speaker_ip,
+            original_coordinator_uuid
+        );
+
+        // Verify the original coordinator still exists in the current topology
+        let coordinator_still_exists = self
+            .sonos_state
+            .groups
+            .read()
+            .iter()
+            .any(|g| g.coordinator_uuid == original_coordinator_uuid);
+
+        if !coordinator_still_exists {
+            log::warn!(
+                "[GroupSync] Original coordinator {} no longer exists, leaving {} standalone",
+                original_coordinator_uuid,
+                speaker_ip
+            );
+            return;
+        }
+
+        // Attempt to rejoin the original group
+        match self
+            .sonos
+            .join_group(speaker_ip, original_coordinator_uuid)
+            .await
+        {
+            Ok(()) => {
+                log::info!(
+                    "[GroupSync] Successfully restored {} to original group {}",
+                    speaker_ip,
+                    original_coordinator_uuid
+                );
+            }
+            Err(e) => {
+                log::warn!(
+                    "[GroupSync] Failed to restore {} to original group: {} (leaving standalone)",
+                    speaker_ip,
+                    e
+                );
+            }
+        }
+    }
+
+    /// Cleans up a stream if no playback sessions remain.
+    ///
+    /// Checks if any sessions exist for the given stream. If none remain,
+    /// removes the stream from StreamManager and emits `StreamEvent::Ended`.
+    ///
+    /// This should be called after removing a session to ensure streams don't
+    /// linger with zero listeners.
+    fn cleanup_stream_if_no_sessions(&self, stream_id: &str) {
+        let has_remaining_sessions = self
+            .playback_sessions
+            .iter()
+            .any(|r| r.key().stream_id == stream_id);
+
+        if !has_remaining_sessions {
+            log::info!(
+                "[StreamCoordinator] Last speaker removed from stream {}, ending stream",
+                stream_id
+            );
+            self.stream_manager.remove_stream(stream_id);
+            self.emit_event(StreamEvent::Ended {
+                stream_id: stream_id.to_string(),
+                timestamp: now_millis(),
+            });
         }
     }
 
@@ -328,13 +561,220 @@ impl StreamCoordinator {
         }
     }
 
-    /// Starts playback of a stream on multiple Sonos speakers (multi-group support).
+    /// Selects the optimal coordinator from a list of speaker IPs.
+    ///
+    /// Selection strategy (in order of preference):
+    /// 1. Speaker that is already a Sonos group coordinator (can handle grouping)
+    /// 2. First speaker in the list (deterministic fallback)
+    ///
+    /// # Arguments
+    /// * `speaker_ips` - IPs of speakers to choose from
+    ///
+    /// # Returns
+    /// Tuple of (coordinator_ip, coordinator_uuid, remaining_slave_ips), or None if
+    /// no valid coordinator can be determined (no UUIDs available).
+    fn select_coordinator(&self, speaker_ips: &[String]) -> Option<(String, String, Vec<String>)> {
+        // Try to find a speaker that's already a Sonos group coordinator
+        for ip in speaker_ips {
+            if let Some(uuid) = self.sonos_state.get_coordinator_uuid_by_ip(ip) {
+                let slaves: Vec<_> = speaker_ips.iter().filter(|s| *s != ip).cloned().collect();
+                log::info!(
+                    "[GroupSync] Selected coordinator {} (uuid={}) - existing Sonos coordinator",
+                    ip,
+                    uuid
+                );
+                return Some((ip.clone(), uuid, slaves));
+            }
+        }
+
+        // Fallback: use first speaker if we can get its UUID from member lookup
+        let first = speaker_ips.first()?;
+        let uuid = self.sonos_state.get_member_uuid_by_ip(first)?;
+        let slaves: Vec<_> = speaker_ips.iter().skip(1).cloned().collect();
+        log::info!(
+            "[GroupSync] Selected coordinator {} (uuid={}) - first speaker fallback",
+            first,
+            uuid
+        );
+        Some((first.clone(), uuid, slaves))
+    }
+
+    /// Joins a slave speaker to an active coordinator for synchronized playback.
+    ///
+    /// This creates a playback session with `GroupRole::Slave` and uses the x-rincon
+    /// protocol to sync the slave's playback timing to the coordinator.
+    ///
+    /// # Arguments
+    /// * `slave_ip` - IP address of the speaker to join as slave
+    /// * `coordinator_ip` - IP address of the coordinator speaker
+    /// * `coordinator_uuid` - UUID of the coordinator (RINCON_xxx format)
+    /// * `stream_id` - The stream ID being played
+    /// * `codec` - Audio codec (for session tracking)
+    async fn join_slave_to_coordinator(
+        &self,
+        slave_ip: &str,
+        coordinator_ip: &str,
+        coordinator_uuid: &str,
+        stream_id: &str,
+        codec: AudioCodec,
+    ) -> PlaybackResult {
+        log::debug!(
+            "[GroupSync] Joining slave {} to coordinator {} (uuid={})",
+            slave_ip,
+            coordinator_ip,
+            coordinator_uuid
+        );
+
+        let key = PlaybackSessionKey::new(stream_id, slave_ip);
+
+        // Check for existing sessions on this speaker and handle appropriately
+        if let Some(existing) = self.playback_sessions.get(&key) {
+            // Session exists for same (stream, speaker) - check if already correctly configured
+            let dominated_correctly = existing.role == GroupRole::Slave
+                && existing.coordinator_uuid.as_deref() == Some(coordinator_uuid);
+
+            if dominated_correctly {
+                log::debug!(
+                    "[GroupSync] Slave {} already joined to coordinator {}, skipping",
+                    slave_ip,
+                    coordinator_uuid
+                );
+                return PlaybackResult {
+                    speaker_ip: slave_ip.to_string(),
+                    success: true,
+                    stream_url: Some(format!("x-rincon:{}", coordinator_uuid)),
+                    error: None,
+                };
+            }
+
+            // Coordinator changed or role changed (was Coordinator, now Slave) - need to re-join
+            log::info!(
+                "[GroupSync] Slave {} re-routing: role {:?} -> Slave, coordinator {:?} -> {}",
+                slave_ip,
+                existing.role,
+                existing.coordinator_uuid,
+                coordinator_uuid
+            );
+            drop(existing); // Release DashMap ref before mutation
+            self.playback_sessions.remove(&key);
+
+            // Leave current group/stop before re-joining
+            if let Err(e) = self.sonos.leave_group(slave_ip).await {
+                log::warn!(
+                    "[GroupSync] Failed to unjoin {} before re-route: {}",
+                    slave_ip,
+                    e
+                );
+            }
+            // No PlaybackStopped event - same stream continues with new coordinator
+        } else {
+            // Check if this speaker is playing a different stream - clean up first
+            let existing_other_stream = self
+                .playback_sessions
+                .iter()
+                .find(|r| r.key().speaker_ip == slave_ip)
+                .map(|r| (r.key().clone(), r.value().stream_id.clone()));
+
+            if let Some((old_key, old_stream_id)) = existing_other_stream {
+                log::info!(
+                    "[GroupSync] Slave {} switching from stream {} to {} - stopping old playback",
+                    slave_ip,
+                    old_stream_id,
+                    stream_id
+                );
+
+                self.playback_sessions.remove(&old_key);
+
+                // Best-effort unjoin/stop - ignore errors
+                if let Err(e) = self.sonos.leave_group(slave_ip).await {
+                    log::warn!("[GroupSync] Failed to unjoin slave {}: {}", slave_ip, e);
+                }
+
+                self.emit_event(StreamEvent::PlaybackStopped {
+                    stream_id: old_stream_id,
+                    speaker_ip: slave_ip.to_string(),
+                    reason: None,
+                    timestamp: now_millis(),
+                });
+            }
+        }
+
+        // Capture original group membership before joining the streaming group.
+        // This allows us to restore the speaker to its original group after streaming ends.
+        let original_coordinator_uuid = self
+            .sonos_state
+            .get_original_coordinator_for_slave(slave_ip);
+
+        // Join the slave to the coordinator
+        match self.sonos.join_group(slave_ip, coordinator_uuid).await {
+            Ok(()) => {
+                let rincon_uri = format!("x-rincon:{}", coordinator_uuid);
+
+                self.playback_sessions.insert(
+                    key,
+                    PlaybackSession {
+                        stream_id: stream_id.to_string(),
+                        speaker_ip: slave_ip.to_string(),
+                        stream_url: rincon_uri.clone(),
+                        codec,
+                        role: GroupRole::Slave,
+                        coordinator_ip: Some(coordinator_ip.to_string()),
+                        coordinator_uuid: Some(coordinator_uuid.to_string()),
+                        original_coordinator_uuid,
+                    },
+                );
+
+                self.emit_event(StreamEvent::PlaybackStarted {
+                    stream_id: stream_id.to_string(),
+                    speaker_ip: slave_ip.to_string(),
+                    stream_url: rincon_uri.clone(),
+                    timestamp: now_millis(),
+                });
+
+                log::info!(
+                    "[GroupSync] Slave {} joined coordinator {} successfully",
+                    slave_ip,
+                    coordinator_ip
+                );
+
+                PlaybackResult {
+                    speaker_ip: slave_ip.to_string(),
+                    success: true,
+                    stream_url: Some(rincon_uri),
+                    error: None,
+                }
+            }
+            Err(e) => {
+                log::warn!(
+                    "[GroupSync] Failed to join slave {} to coordinator {}: {}",
+                    slave_ip,
+                    coordinator_ip,
+                    e
+                );
+                PlaybackResult {
+                    speaker_ip: slave_ip.to_string(),
+                    success: false,
+                    stream_url: None,
+                    error: Some(format!("Failed to join group: {}", e)),
+                }
+            }
+        }
+    }
+
+    /// Starts playback of a stream on multiple Sonos speakers with synchronized audio.
+    ///
+    /// For multiple speakers, uses Sonos's native group coordination:
+    /// - One speaker becomes the "coordinator" and receives the actual stream URL
+    /// - Other speakers become "slaves" that sync to the coordinator via x-rincon protocol
+    /// - This ensures all speakers play audio in perfect sync
+    ///
+    /// For single speakers, plays directly without grouping.
     ///
     /// Returns results for each speaker (best-effort: continues on individual failures).
     /// Each successful speaker gets a `StreamEvent::PlaybackStarted` event.
     ///
     /// # Arguments
-    /// * `speaker_ips` - IP addresses of the Sonos speakers (coordinators)
+    /// * `speaker_ips` - IP addresses of the Sonos speakers
     /// * `stream_id` - The stream ID to play
     /// * `metadata` - Optional initial metadata to display on Sonos
     /// * `artwork_url` - URL for album artwork in Sonos DIDL-Lite metadata
@@ -345,10 +785,14 @@ impl StreamCoordinator {
         metadata: Option<&StreamMetadata>,
         artwork_url: &str,
     ) -> Vec<PlaybackResult> {
+        // Handle empty case
+        if speaker_ips.is_empty() {
+            return vec![];
+        }
+
         // Get stream state for codec and audio format
         let stream_state = self.get_stream(stream_id);
 
-        // Get codec and audio format from stream state
         let codec = stream_state
             .as_ref()
             .map(|s| s.codec)
@@ -362,6 +806,129 @@ impl StreamCoordinator {
         let url_builder = self.network.url_builder();
         let stream_url = url_builder.stream_url(stream_id);
 
+        // Single speaker: no grouping needed, use direct playback
+        if speaker_ips.len() == 1 {
+            let result = self
+                .start_single_playback(SinglePlaybackParams {
+                    speaker_ip: &speaker_ips[0],
+                    stream_id,
+                    stream_url: &stream_url,
+                    codec,
+                    audio_format: &audio_format,
+                    artwork_url,
+                    metadata,
+                })
+                .await;
+            return vec![result];
+        }
+
+        // Multiple speakers: use synchronized group playback
+        // Try to select a coordinator for group sync
+        let Some((coordinator_ip, coordinator_uuid, slave_ips)) =
+            self.select_coordinator(speaker_ips)
+        else {
+            // Fallback: can't determine UUIDs, use legacy sequential approach
+            log::warn!(
+                "[GroupSync] Cannot determine coordinator UUID, falling back to sequential playback"
+            );
+            return self
+                .start_playback_multi_legacy(MultiPlaybackParams {
+                    speaker_ips,
+                    stream_id,
+                    stream_url: &stream_url,
+                    codec,
+                    audio_format: &audio_format,
+                    artwork_url,
+                    metadata,
+                })
+                .await;
+        };
+
+        log::info!(
+            "[GroupSync] Starting synchronized playback: coordinator={}, slaves={:?}, stream={}",
+            coordinator_ip,
+            slave_ips,
+            stream_id
+        );
+
+        let mut results = Vec::with_capacity(speaker_ips.len());
+
+        // Step 1: Start the coordinator with the actual stream URL
+        let coordinator_result = self
+            .start_single_playback(SinglePlaybackParams {
+                speaker_ip: &coordinator_ip,
+                stream_id,
+                stream_url: &stream_url,
+                codec,
+                audio_format: &audio_format,
+                artwork_url,
+                metadata,
+            })
+            .await;
+
+        if !coordinator_result.success {
+            // Coordinator failed - can't proceed with group sync
+            log::error!(
+                "[GroupSync] Coordinator {} failed to start, aborting group sync",
+                coordinator_ip
+            );
+            results.push(coordinator_result);
+
+            // Return failure results for all slaves too
+            for slave_ip in &slave_ips {
+                results.push(PlaybackResult {
+                    speaker_ip: slave_ip.clone(),
+                    success: false,
+                    stream_url: None,
+                    error: Some("Coordinator failed to start".to_string()),
+                });
+            }
+            return results;
+        }
+
+        results.push(coordinator_result);
+
+        // Step 2: Join all slaves to the coordinator
+        for slave_ip in slave_ips {
+            let result = self
+                .join_slave_to_coordinator(
+                    &slave_ip,
+                    &coordinator_ip,
+                    &coordinator_uuid,
+                    stream_id,
+                    codec,
+                )
+                .await;
+            results.push(result);
+        }
+
+        log::info!(
+            "[GroupSync] Synchronized playback started: {} speakers, stream={}",
+            results.iter().filter(|r| r.success).count(),
+            stream_id
+        );
+
+        results
+    }
+
+    /// Legacy playback method: sends stream URL to each speaker independently.
+    ///
+    /// Used as fallback when group coordination is not possible (e.g., UUID lookup fails).
+    /// Note: This may result in audio sync drift between speakers.
+    async fn start_playback_multi_legacy(
+        &self,
+        params: MultiPlaybackParams<'_>,
+    ) -> Vec<PlaybackResult> {
+        let MultiPlaybackParams {
+            speaker_ips,
+            stream_id,
+            stream_url,
+            codec,
+            audio_format,
+            artwork_url,
+            metadata,
+        } = params;
+
         let mut results = Vec::with_capacity(speaker_ips.len());
 
         for speaker_ip in speaker_ips {
@@ -369,9 +936,9 @@ impl StreamCoordinator {
                 .start_single_playback(SinglePlaybackParams {
                     speaker_ip,
                     stream_id,
-                    stream_url: &stream_url,
+                    stream_url,
                     codec,
-                    audio_format: &audio_format,
+                    audio_format,
                     artwork_url,
                     metadata,
                 })
@@ -403,54 +970,87 @@ impl StreamCoordinator {
         let key = PlaybackSessionKey::new(stream_id, speaker_ip);
 
         // Check if this exact (stream, speaker) pair already exists
-        if self.playback_sessions.contains_key(&key) {
-            // Session exists - check if Sonos is paused and needs a Play command.
-            // This enables bi-directional control: user can resume from extension
-            // after pausing from Sonos app.
-            // Note: transport_states are keyed by speaker IP, not UUID.
-            let transport_state = self
-                .sonos_state
-                .transport_states
-                .get(speaker_ip)
-                .map(|s| *s);
+        if let Some(existing) = self.playback_sessions.get(&key) {
+            // If this is a Slave session, we need to reconfigure the transport.
+            // A Slave's stream_url is x-rincon:... pointing to the coordinator.
+            // To make this speaker an independent coordinator, we must:
+            // 1. Detach from the current group
+            // 2. Set the transport URI to the actual stream
+            if existing.role == GroupRole::Slave {
+                let old_coordinator = existing.coordinator_ip.clone();
+                drop(existing); // Release DashMap borrow before mutation
 
-            // Send Play unless speaker is definitively already playing.
-            // Use != Playing (not == Paused) to handle cache misses safely:
-            // - If state is None: Play is safe, avoids stuck silence
-            // - If state is Paused: Play is needed
-            // - If state is Playing: skip to avoid duplicate command
-            let already_playing = transport_state == Some(TransportState::Playing);
-
-            if !already_playing {
                 log::info!(
-                    "Speaker {} transport_state={:?}, sending Play command to resume stream {}",
+                    "[GroupSync] Promoting slave {} to coordinator for stream {} (was following {})",
                     speaker_ip,
-                    transport_state,
-                    stream_id
+                    stream_id,
+                    old_coordinator.as_deref().unwrap_or("unknown")
                 );
-                if let Err(e) = self.sonos.play(speaker_ip).await {
-                    log::warn!("Failed to resume playback on {}: {}", speaker_ip, e);
-                    return PlaybackResult {
-                        speaker_ip: speaker_ip.to_string(),
-                        success: false,
-                        stream_url: None,
-                        error: Some(format!("Failed to resume: {}", e)),
-                    };
-                }
-            } else {
-                log::debug!(
-                    "Speaker {} already playing stream {}, skipping Play",
-                    speaker_ip,
-                    stream_id
-                );
-            }
 
-            return PlaybackResult {
-                speaker_ip: speaker_ip.to_string(),
-                success: true,
-                stream_url: Some(stream_url.to_string()),
-                error: None,
-            };
+                // Best-effort leave_group - detach from coordinator
+                if let Err(e) = self.sonos.leave_group(speaker_ip).await {
+                    log::warn!(
+                        "[GroupSync] Failed to detach slave {} from group: {}",
+                        speaker_ip,
+                        e
+                    );
+                }
+
+                // Remove old slave session - coordinator session created below
+                self.playback_sessions.remove(&key);
+
+                // Fall through to play_uri setup below
+            } else {
+                // Coordinator session exists - check if Sonos is paused and needs a Play command.
+                // This enables bi-directional control: user can resume from extension
+                // after pausing from Sonos app.
+                drop(existing); // Release DashMap borrow
+
+                // Note: transport_states are keyed by speaker IP, not UUID.
+                let transport_state = self
+                    .sonos_state
+                    .transport_states
+                    .get(speaker_ip)
+                    .map(|s| *s);
+
+                // Send Play unless speaker is definitively already playing.
+                // Use != Playing (not == Paused) to handle cache misses safely:
+                // - If state is None: Play is safe, avoids stuck silence
+                // - If state is Paused: Play is needed
+                // - If state is Playing: skip to avoid duplicate command
+                let already_playing = transport_state == Some(TransportState::Playing);
+
+                if !already_playing {
+                    log::info!(
+                        "Speaker {} transport_state={:?}, sending Play command to resume stream {}",
+                        speaker_ip,
+                        transport_state,
+                        stream_id
+                    );
+                    if let Err(e) = self.sonos.play(speaker_ip).await {
+                        log::warn!("Failed to resume playback on {}: {}", speaker_ip, e);
+                        return PlaybackResult {
+                            speaker_ip: speaker_ip.to_string(),
+                            success: false,
+                            stream_url: None,
+                            error: Some(format!("Failed to resume: {}", e)),
+                        };
+                    }
+                } else {
+                    log::debug!(
+                        "Speaker {} already playing stream {}, skipping Play",
+                        speaker_ip,
+                        stream_id
+                    );
+                }
+
+                return PlaybackResult {
+                    speaker_ip: speaker_ip.to_string(),
+                    success: true,
+                    stream_url: Some(stream_url.to_string()),
+                    error: None,
+                };
+            }
         }
 
         // Check if this speaker is already playing a DIFFERENT stream.
@@ -504,6 +1104,16 @@ impl StreamCoordinator {
             .await
         {
             Ok(()) => {
+                // Look up speaker's UUID for cleanup operations
+                let coordinator_uuid = self.sonos_state.get_member_uuid_by_ip(speaker_ip);
+
+                // Capture original group membership for restoration after streaming ends.
+                // This handles the edge case where a speaker that was a slave in an existing
+                // Sonos group gets selected as the streaming coordinator (via fallback path).
+                let original_coordinator_uuid = self
+                    .sonos_state
+                    .get_original_coordinator_for_slave(speaker_ip);
+
                 // Record the playback session
                 self.playback_sessions.insert(
                     key,
@@ -512,6 +1122,10 @@ impl StreamCoordinator {
                         speaker_ip: speaker_ip.to_string(),
                         stream_url: stream_url.to_string(),
                         codec,
+                        role: GroupRole::Coordinator,
+                        coordinator_ip: None,
+                        coordinator_uuid,
+                        original_coordinator_uuid,
                     },
                 );
 
@@ -583,9 +1197,10 @@ impl StreamCoordinator {
 
     /// Stops playback on a specific speaker for a specific stream.
     ///
-    /// On success: removes the session, broadcasts `StreamEvent::PlaybackStopped`, returns `true`.
+    /// On success: removes the session(s), broadcasts `StreamEvent::PlaybackStopped` for each,
+    /// returns the list of stopped speaker IPs.
     /// On failure (stop command fails or session not found): keeps session intact (if any),
-    /// broadcasts `StreamEvent::PlaybackStopFailed`, returns `false`.
+    /// broadcasts `StreamEvent::PlaybackStopFailed`, returns empty list.
     /// Used for partial speaker removal in multi-group scenarios.
     ///
     /// # Arguments
@@ -594,47 +1209,101 @@ impl StreamCoordinator {
     /// * `reason` - Optional reason for stopping (propagated to events)
     ///
     /// # Returns
-    /// `true` if playback was stopped successfully, `false` if stop failed (session kept intact).
+    /// List of speaker IPs that were stopped. When stopping a coordinator, this includes
+    /// all slaves that were also stopped. Empty if stop failed or session not found.
     pub async fn stop_playback_speaker(
         &self,
         stream_id: &str,
         speaker_ip: &str,
         reason: Option<SpeakerRemovalReason>,
-    ) -> bool {
+    ) -> Vec<String> {
         let key = PlaybackSessionKey::new(stream_id, speaker_ip);
 
-        if !self.playback_sessions.contains_key(&key) {
-            // Session not found - emit failure so client can clear pending state
-            log::warn!(
-                "Stop requested for unknown session: stream={}, speaker={}",
-                stream_id,
-                speaker_ip
-            );
-            self.emit_event(StreamEvent::PlaybackStopFailed {
-                stream_id: stream_id.to_string(),
-                speaker_ip: speaker_ip.to_string(),
-                error: "Session not found".to_string(),
-                reason,
-                timestamp: now_millis(),
-            });
-            return false;
-        }
+        // Get session to check role
+        let session = match self.playback_sessions.get(&key) {
+            Some(s) => s.clone(),
+            None => {
+                // Session not found - emit failure so client can clear pending state
+                log::warn!(
+                    "Stop requested for unknown session: stream={}, speaker={}",
+                    stream_id,
+                    speaker_ip
+                );
+                self.emit_event(StreamEvent::PlaybackStopFailed {
+                    stream_id: stream_id.to_string(),
+                    speaker_ip: speaker_ip.to_string(),
+                    error: "Session not found".to_string(),
+                    reason,
+                    timestamp: now_millis(),
+                });
+                return Vec::new();
+            }
+        };
 
-        match self.sonos.stop(speaker_ip).await {
+        match session.role {
+            GroupRole::Slave => {
+                // Slave: just unjoin this speaker, others continue playing
+                self.stop_slave_speaker(stream_id, speaker_ip, reason).await
+            }
+            GroupRole::Coordinator => {
+                // Coordinator: must unjoin all slaves first, then stop
+                self.stop_coordinator_and_slaves(stream_id, speaker_ip, reason)
+                    .await
+            }
+        }
+    }
+
+    /// Stops a slave speaker by unjoining it from the group.
+    ///
+    /// Only affects this speaker - the coordinator and other slaves continue playing.
+    /// After unjoining, attempts to restore the speaker to its original Sonos group.
+    ///
+    /// # Returns
+    /// List containing the stopped speaker IP on success, empty on failure.
+    async fn stop_slave_speaker(
+        &self,
+        stream_id: &str,
+        speaker_ip: &str,
+        reason: Option<SpeakerRemovalReason>,
+    ) -> Vec<String> {
+        log::info!(
+            "[GroupSync] Stopping slave speaker {} from stream {}",
+            speaker_ip,
+            stream_id
+        );
+
+        let key = PlaybackSessionKey::new(stream_id, speaker_ip);
+
+        // Get restoration info before removing session
+        let original_coordinator = self
+            .playback_sessions
+            .get(&key)
+            .and_then(|s| s.original_coordinator_uuid.clone());
+
+        // Unjoin the slave from the group
+        match self.sonos.leave_group(speaker_ip).await {
             Ok(()) => {
-                // Success: remove session and emit PlaybackStopped
                 self.playback_sessions.remove(&key);
+
+                // Attempt to restore to original group (best-effort)
+                if let Some(orig_uuid) = original_coordinator {
+                    self.restore_original_group(speaker_ip, &orig_uuid).await;
+                }
+
                 self.emit_event(StreamEvent::PlaybackStopped {
                     stream_id: stream_id.to_string(),
                     speaker_ip: speaker_ip.to_string(),
                     reason,
                     timestamp: now_millis(),
                 });
-                true
+
+                // Clean up stream if this was the last session
+                self.cleanup_stream_if_no_sessions(stream_id);
+
+                vec![speaker_ip.to_string()]
             }
             Err(e) => {
-                // Failure: keep session intact, emit PlaybackStopFailed
-                log::warn!("Failed to stop playback on {}: {}", speaker_ip, e);
+                log::warn!("[GroupSync] Failed to unjoin slave {}: {}", speaker_ip, e);
                 self.emit_event(StreamEvent::PlaybackStopFailed {
                     stream_id: stream_id.to_string(),
                     speaker_ip: speaker_ip.to_string(),
@@ -642,7 +1311,159 @@ impl StreamCoordinator {
                     reason,
                     timestamp: now_millis(),
                 });
-                false
+                Vec::new()
+            }
+        }
+    }
+
+    /// Stops a coordinator speaker and all its associated slaves.
+    ///
+    /// This is a cascade operation:
+    /// 1. Find all slaves joined to this coordinator
+    /// 2. Unjoin each slave (make them standalone)
+    /// 3. Restore each slave to their original Sonos group (best-effort)
+    /// 4. Stop the coordinator
+    ///
+    /// # Returns
+    /// List of stopped speaker IPs. On full success, includes slaves + coordinator.
+    /// On partial failure (coordinator fails), includes only successfully stopped slaves.
+    /// Empty only if no speakers were stopped.
+    async fn stop_coordinator_and_slaves(
+        &self,
+        stream_id: &str,
+        coordinator_ip: &str,
+        reason: Option<SpeakerRemovalReason>,
+    ) -> Vec<String> {
+        log::info!(
+            "[GroupSync] Stopping coordinator {} and its slaves from stream {}",
+            coordinator_ip,
+            stream_id
+        );
+
+        // Collect all stopped speaker IPs to return
+        let mut stopped_ips: Vec<String> = Vec::new();
+
+        // Find all slaves joined to this coordinator for this stream
+        // Include original_coordinator_uuid for restoration after unjoining
+        let slave_info: Vec<(PlaybackSessionKey, Option<String>)> = self
+            .playback_sessions
+            .iter()
+            .filter(|r| {
+                r.key().stream_id == stream_id
+                    && r.value().role == GroupRole::Slave
+                    && r.value().coordinator_ip.as_deref() == Some(coordinator_ip)
+            })
+            .map(|r| (r.key().clone(), r.value().original_coordinator_uuid.clone()))
+            .collect();
+
+        // Unjoin all slaves first, then restore to original groups
+        for (slave_key, original_coordinator) in slave_info {
+            log::debug!(
+                "[GroupSync] Unjoining slave {} before stopping coordinator",
+                slave_key.speaker_ip
+            );
+
+            // Best-effort unjoin - log but continue on failure
+            if let Err(e) = self.sonos.leave_group(&slave_key.speaker_ip).await {
+                log::warn!(
+                    "[GroupSync] Failed to unjoin slave {} during coordinator stop: {}",
+                    slave_key.speaker_ip,
+                    e
+                );
+            }
+
+            // Attempt to restore to original group (best-effort)
+            if let Some(orig_uuid) = original_coordinator {
+                self.restore_original_group(&slave_key.speaker_ip, &orig_uuid)
+                    .await;
+            }
+
+            // Remove session and emit event regardless of SOAP result
+            self.playback_sessions.remove(&slave_key);
+            self.emit_event(StreamEvent::PlaybackStopped {
+                stream_id: stream_id.to_string(),
+                speaker_ip: slave_key.speaker_ip.clone(),
+                reason,
+                timestamp: now_millis(),
+            });
+
+            // Track this slave as stopped
+            stopped_ips.push(slave_key.speaker_ip);
+        }
+
+        // Now stop the coordinator
+        let coord_key = PlaybackSessionKey::new(stream_id, coordinator_ip);
+
+        // Get session info before removing (needed for switch_to_queue and restoration)
+        // Try session first, fallback to live topology if session didn't have coordinator_uuid
+        let (coordinator_uuid, original_coordinator_uuid) = self
+            .playback_sessions
+            .get(&coord_key)
+            .map(|s| {
+                (
+                    s.coordinator_uuid.clone(),
+                    s.original_coordinator_uuid.clone(),
+                )
+            })
+            .unwrap_or((None, None));
+
+        let coordinator_uuid = coordinator_uuid
+            .or_else(|| self.sonos_state.get_coordinator_uuid_by_ip(coordinator_ip));
+
+        match self.sonos.stop(coordinator_ip).await {
+            Ok(()) => {
+                self.playback_sessions.remove(&coord_key);
+
+                // Switch to queue as cleanup (clears stale stream source in Sonos UI)
+                // This prevents unexpected resume when user interacts with Sonos app
+                if let Some(uuid) = coordinator_uuid {
+                    if let Err(e) = self.sonos.switch_to_queue(coordinator_ip, &uuid).await {
+                        log::warn!(
+                            "[GroupSync] Failed to switch coordinator {} to queue: {}",
+                            coordinator_ip,
+                            e
+                        );
+                    }
+                }
+
+                // Restore coordinator to original group if it was a slave before streaming
+                // (edge case: fallback coordinator selection picked a speaker from an existing group)
+                if let Some(orig_uuid) = original_coordinator_uuid {
+                    self.restore_original_group(coordinator_ip, &orig_uuid)
+                        .await;
+                }
+
+                self.emit_event(StreamEvent::PlaybackStopped {
+                    stream_id: stream_id.to_string(),
+                    speaker_ip: coordinator_ip.to_string(),
+                    reason,
+                    timestamp: now_millis(),
+                });
+
+                // Clean up stream if this was the last session
+                self.cleanup_stream_if_no_sessions(stream_id);
+
+                // Track coordinator as stopped
+                stopped_ips.push(coordinator_ip.to_string());
+                stopped_ips
+            }
+            Err(e) => {
+                log::warn!(
+                    "[GroupSync] Failed to stop coordinator {}: {}",
+                    coordinator_ip,
+                    e
+                );
+                self.emit_event(StreamEvent::PlaybackStopFailed {
+                    stream_id: stream_id.to_string(),
+                    speaker_ip: coordinator_ip.to_string(),
+                    error: e.to_string(),
+                    reason,
+                    timestamp: now_millis(),
+                });
+                // Return slaves that were successfully stopped (sessions removed, events
+                // emitted). Caller needs this to clean up latency monitors. Coordinator
+                // is NOT included since it failed to stop.
+                stopped_ips
             }
         }
     }
@@ -777,25 +1598,8 @@ impl StreamCoordinator {
             timestamp: now_millis(),
         });
 
-        // Check if any sessions remain for this stream
-        let has_remaining_sessions = self
-            .playback_sessions
-            .iter()
-            .any(|r| r.key().stream_id == stream_id);
-
-        if !has_remaining_sessions {
-            // Last speaker removed - end the stream
-            // Use sync remove_stream since speaker already stopped (no SOAP needed)
-            log::info!(
-                "Last speaker removed from stream {} due to source change, ending stream",
-                stream_id
-            );
-            self.stream_manager.remove_stream(&stream_id);
-            self.emit_event(StreamEvent::Ended {
-                stream_id,
-                timestamp: now_millis(),
-            });
-        }
+        // Clean up stream if this was the last session
+        self.cleanup_stream_if_no_sessions(&stream_id);
 
         true
     }
@@ -850,5 +1654,252 @@ impl StreamCoordinator {
             );
             false
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // GroupRole Tests
+    // ─────────────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn group_role_default_is_coordinator() {
+        assert_eq!(GroupRole::default(), GroupRole::Coordinator);
+    }
+
+    #[test]
+    fn group_role_equality() {
+        assert_eq!(GroupRole::Coordinator, GroupRole::Coordinator);
+        assert_eq!(GroupRole::Slave, GroupRole::Slave);
+        assert_ne!(GroupRole::Coordinator, GroupRole::Slave);
+    }
+
+    #[test]
+    fn group_role_serializes_to_snake_case() {
+        assert_eq!(
+            serde_json::to_string(&GroupRole::Coordinator).unwrap(),
+            "\"coordinator\""
+        );
+        assert_eq!(
+            serde_json::to_string(&GroupRole::Slave).unwrap(),
+            "\"slave\""
+        );
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // PlaybackSessionKey Tests
+    // ─────────────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn playback_session_key_equality() {
+        let key1 = PlaybackSessionKey::new("stream1", "192.168.1.100");
+        let key2 = PlaybackSessionKey::new("stream1", "192.168.1.100");
+        let key3 = PlaybackSessionKey::new("stream1", "192.168.1.101");
+        let key4 = PlaybackSessionKey::new("stream2", "192.168.1.100");
+
+        assert_eq!(key1, key2);
+        assert_ne!(key1, key3); // different speaker
+        assert_ne!(key1, key4); // different stream
+    }
+
+    #[test]
+    fn playback_session_key_hash_consistent() {
+        use std::collections::HashMap;
+
+        let mut map = HashMap::new();
+        let key1 = PlaybackSessionKey::new("stream1", "192.168.1.100");
+        map.insert(key1.clone(), "value1");
+
+        let key2 = PlaybackSessionKey::new("stream1", "192.168.1.100");
+        assert_eq!(map.get(&key2), Some(&"value1"));
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // PlaybackSession Tests
+    // ─────────────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn playback_session_coordinator_has_no_coordinator_ip() {
+        let session = PlaybackSession {
+            stream_id: "stream1".to_string(),
+            speaker_ip: "192.168.1.100".to_string(),
+            stream_url: "http://server:8080/stream/abc".to_string(),
+            codec: AudioCodec::Aac,
+            role: GroupRole::Coordinator,
+            coordinator_ip: None,
+            coordinator_uuid: Some("RINCON_XXX".to_string()),
+            original_coordinator_uuid: None,
+        };
+
+        assert_eq!(session.role, GroupRole::Coordinator);
+        assert!(session.coordinator_ip.is_none());
+        assert!(session.original_coordinator_uuid.is_none());
+    }
+
+    #[test]
+    fn playback_session_slave_has_coordinator_info() {
+        let session = PlaybackSession {
+            stream_id: "stream1".to_string(),
+            speaker_ip: "192.168.1.101".to_string(),
+            stream_url: "x-rincon:RINCON_XXX".to_string(),
+            codec: AudioCodec::Aac,
+            role: GroupRole::Slave,
+            coordinator_ip: Some("192.168.1.100".to_string()),
+            coordinator_uuid: Some("RINCON_XXX".to_string()),
+            original_coordinator_uuid: None,
+        };
+
+        assert_eq!(session.role, GroupRole::Slave);
+        assert_eq!(session.coordinator_ip, Some("192.168.1.100".to_string()));
+        assert!(session.stream_url.starts_with("x-rincon:"));
+    }
+
+    #[test]
+    fn playback_session_slave_stores_original_coordinator() {
+        let session = PlaybackSession {
+            stream_id: "stream1".to_string(),
+            speaker_ip: "192.168.1.101".to_string(),
+            stream_url: "x-rincon:RINCON_STREAMING".to_string(),
+            codec: AudioCodec::Aac,
+            role: GroupRole::Slave,
+            coordinator_ip: Some("192.168.1.100".to_string()),
+            coordinator_uuid: Some("RINCON_STREAMING".to_string()),
+            original_coordinator_uuid: Some("RINCON_ORIGINAL".to_string()),
+        };
+
+        assert_eq!(session.role, GroupRole::Slave);
+        assert_eq!(
+            session.original_coordinator_uuid,
+            Some("RINCON_ORIGINAL".to_string())
+        );
+    }
+
+    #[test]
+    fn playback_session_coordinator_can_have_original_group() {
+        // Edge case: fallback coordinator selection picks a speaker that was
+        // a slave in an existing Sonos group. It becomes the streaming coordinator
+        // but should be restored to its original group after streaming ends.
+        let session = PlaybackSession {
+            stream_id: "stream1".to_string(),
+            speaker_ip: "192.168.1.101".to_string(),
+            stream_url: "http://server:8080/stream/abc".to_string(),
+            codec: AudioCodec::Aac,
+            role: GroupRole::Coordinator,
+            coordinator_ip: None,
+            coordinator_uuid: Some("RINCON_KITCHEN".to_string()),
+            original_coordinator_uuid: Some("RINCON_LIVING".to_string()), // Was slave of Living Room
+        };
+
+        assert_eq!(session.role, GroupRole::Coordinator);
+        assert_eq!(
+            session.original_coordinator_uuid,
+            Some("RINCON_LIVING".to_string())
+        );
+    }
+
+    #[test]
+    fn playback_session_serializes_correctly() {
+        let session = PlaybackSession {
+            stream_id: "stream1".to_string(),
+            speaker_ip: "192.168.1.100".to_string(),
+            stream_url: "http://server:8080/stream".to_string(),
+            codec: AudioCodec::Aac,
+            role: GroupRole::Coordinator,
+            coordinator_ip: None,
+            coordinator_uuid: Some("RINCON_XXX".to_string()),
+            original_coordinator_uuid: None,
+        };
+
+        let json = serde_json::to_value(&session).unwrap();
+        assert_eq!(json["role"], "coordinator");
+        assert_eq!(json["streamId"], "stream1");
+        assert_eq!(json["speakerIp"], "192.168.1.100");
+        // coordinator_ip should be omitted when None (skip_serializing_if)
+        assert!(json.get("coordinatorIp").is_none());
+        // original_coordinator_uuid should be omitted when None (skip_serializing_if)
+        assert!(json.get("originalCoordinatorUuid").is_none());
+    }
+
+    #[test]
+    fn playback_session_slave_serializes_with_coordinator_ip() {
+        let session = PlaybackSession {
+            stream_id: "stream1".to_string(),
+            speaker_ip: "192.168.1.101".to_string(),
+            stream_url: "x-rincon:RINCON_XXX".to_string(),
+            codec: AudioCodec::Aac,
+            role: GroupRole::Slave,
+            coordinator_ip: Some("192.168.1.100".to_string()),
+            coordinator_uuid: Some("RINCON_XXX".to_string()),
+            original_coordinator_uuid: Some("RINCON_ORIGINAL".to_string()),
+        };
+
+        let json = serde_json::to_value(&session).unwrap();
+        assert_eq!(json["role"], "slave");
+        assert_eq!(json["coordinatorIp"], "192.168.1.100");
+        assert_eq!(json["originalCoordinatorUuid"], "RINCON_ORIGINAL");
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // x-rincon URI Handling Tests
+    // ─────────────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn x_rincon_uri_detection() {
+        assert!("x-rincon:RINCON_XXX".starts_with("x-rincon:"));
+        assert!("x-rincon:RINCON_542A1BD0029202400".starts_with("x-rincon:"));
+        assert!(!"http://server:8080/stream".starts_with("x-rincon:"));
+        assert!(!"x-rincon-mp3radio://server:8080/stream".starts_with("x-rincon:"));
+        assert!(!"x-rincon-queue:RINCON_XXX#0".starts_with("x-rincon:"));
+    }
+
+    #[test]
+    fn x_rincon_uri_not_transformed_for_pcm() {
+        // This tests the fix for the bug where x-rincon URIs were incorrectly
+        // transformed by build_sonos_stream_uri for PCM/FLAC codecs
+        let rincon_uri = "x-rincon:RINCON_542A1BD0029202400";
+
+        // The x-rincon URI should NOT be passed to build_sonos_stream_uri
+        // because it would produce incorrect results like "x-rincon:RINCON_XXX.wav"
+        // Instead, get_expected_stream should return it unchanged
+
+        // Simulate the correct logic from get_expected_stream
+        let result = if rincon_uri.starts_with("x-rincon:") {
+            rincon_uri.to_string()
+        } else {
+            build_sonos_stream_uri(rincon_uri, AudioCodec::Pcm)
+        };
+
+        assert_eq!(result, "x-rincon:RINCON_542A1BD0029202400");
+        assert!(!result.ends_with(".wav")); // Should NOT have .wav extension
+    }
+
+    #[test]
+    fn regular_stream_url_transformed_for_pcm() {
+        let stream_url = "http://192.168.1.50:8080/stream/abc123";
+
+        let result = if stream_url.starts_with("x-rincon:") {
+            stream_url.to_string()
+        } else {
+            build_sonos_stream_uri(stream_url, AudioCodec::Pcm)
+        };
+
+        assert!(result.ends_with(".wav"));
+        assert_eq!(result, "http://192.168.1.50:8080/stream/abc123.wav");
+    }
+
+    #[test]
+    fn regular_stream_url_transformed_for_aac() {
+        let stream_url = "http://192.168.1.50:8080/stream/abc123";
+
+        let result = if stream_url.starts_with("x-rincon:") {
+            stream_url.to_string()
+        } else {
+            build_sonos_stream_uri(stream_url, AudioCodec::Aac)
+        };
+
+        assert!(result.starts_with("x-rincon-mp3radio://"));
     }
 }
