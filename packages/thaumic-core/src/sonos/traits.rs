@@ -71,6 +71,26 @@ pub trait SonosPlayback: Send + Sync {
     /// # Returns
     /// Position information including track number, duration, URI, and elapsed time.
     async fn get_position_info(&self, ip: &str) -> SoapResult<PositionInfo>;
+
+    /// Joins a speaker to a coordinator for synchronized playback.
+    ///
+    /// This sets the speaker's AVTransport URI to point to the coordinator using
+    /// the x-rincon protocol. The speaker becomes a "slave" that syncs its playback
+    /// timing to the coordinator, enabling synchronized multi-room audio.
+    ///
+    /// # Arguments
+    /// * `ip` - IP address of the speaker to join (will become a slave)
+    /// * `coordinator_uuid` - UUID of the coordinator speaker (RINCON_xxx format)
+    async fn join_group(&self, ip: &str, coordinator_uuid: &str) -> SoapResult<()>;
+
+    /// Makes a speaker leave its current group and become standalone.
+    ///
+    /// Uses the BecomeCoordinatorOfStandaloneGroup action to cleanly unjoin
+    /// the speaker from any group it's currently part of.
+    ///
+    /// # Arguments
+    /// * `ip` - IP address of the speaker to unjoin
+    async fn leave_group(&self, ip: &str) -> SoapResult<()>;
 }
 
 /// Trait for Sonos topology operations.

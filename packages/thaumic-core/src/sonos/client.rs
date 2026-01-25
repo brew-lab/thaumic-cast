@@ -496,6 +496,77 @@ pub async fn switch_to_queue(client: &Client, ip: &str, coordinator_uuid: &str) 
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Group Coordination
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Joins a speaker to a coordinator for synchronized playback.
+///
+/// This sets the speaker's AVTransport URI to point to the coordinator using
+/// the x-rincon protocol. The speaker becomes a "slave" that syncs its playback
+/// timing to the coordinator, enabling synchronized multi-room audio.
+///
+/// # Arguments
+/// * `client` - The HTTP client to use for the request
+/// * `ip` - IP address of the speaker to join (will become a slave)
+/// * `coordinator_uuid` - UUID of the coordinator speaker (RINCON_xxx format)
+///
+/// # Note
+/// The coordinator must already be playing audio for sync to work properly.
+/// This creates a temporary group for streaming purposes and does not modify
+/// the user's permanent Sonos group configuration.
+pub async fn join_group(client: &Client, ip: &str, coordinator_uuid: &str) -> SoapResult<()> {
+    let group_uri = format!("x-rincon:{}", coordinator_uuid);
+
+    log::info!(
+        "[Sonos] Joining {} to coordinator {} (uri: {})",
+        ip,
+        coordinator_uuid,
+        group_uri
+    );
+
+    SoapRequestBuilder::new(client, ip)
+        .service(SonosService::AVTransport)
+        .action("SetAVTransportURI")
+        .instance_id()
+        .arg("CurrentURI", &group_uri)
+        .arg("CurrentURIMetaData", "")
+        .send()
+        .await?;
+
+    log::debug!("[Sonos] Join group succeeded for {}", ip);
+
+    Ok(())
+}
+
+/// Makes a speaker leave its current group and become standalone.
+///
+/// Uses the BecomeCoordinatorOfStandaloneGroup action to cleanly unjoin
+/// the speaker from any group it's currently part of. After this call,
+/// the speaker will be its own coordinator with no slaves.
+///
+/// # Arguments
+/// * `client` - The HTTP client to use for the request
+/// * `ip` - IP address of the speaker to unjoin
+///
+/// # Note
+/// This is safe to call on speakers that are already standalone - the
+/// action is idempotent.
+pub async fn leave_group(client: &Client, ip: &str) -> SoapResult<()> {
+    log::info!("[Sonos] Speaker {} leaving group (becoming standalone)", ip);
+
+    SoapRequestBuilder::new(client, ip)
+        .service(SonosService::AVTransport)
+        .action("BecomeCoordinatorOfStandaloneGroup")
+        .instance_id()
+        .send()
+        .await?;
+
+    log::debug!("[Sonos] Leave group succeeded for {}", ip);
+
+    Ok(())
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Volume Control
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -743,6 +814,14 @@ impl SonosPlayback for SonosClientImpl {
 
     async fn get_position_info(&self, ip: &str) -> SoapResult<PositionInfo> {
         get_position_info(&self.client, ip).await
+    }
+
+    async fn join_group(&self, ip: &str, coordinator_uuid: &str) -> SoapResult<()> {
+        join_group(&self.client, ip, coordinator_uuid).await
+    }
+
+    async fn leave_group(&self, ip: &str) -> SoapResult<()> {
+        leave_group(&self.client, ip).await
     }
 }
 

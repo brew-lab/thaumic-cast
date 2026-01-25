@@ -253,6 +253,44 @@ impl SonosState {
             .find(|g| g.coordinator_ip == ip)
             .map(|g| g.coordinator_uuid.clone())
     }
+
+    /// Looks up any speaker's UUID by their IP address.
+    ///
+    /// Searches all members across all groups, not just coordinators.
+    /// Returns the RINCON_xxx UUID if found, None if no matching member.
+    #[must_use]
+    pub fn get_member_uuid_by_ip(&self, ip: &str) -> Option<String> {
+        self.groups
+            .read()
+            .iter()
+            .flat_map(|g| g.members.iter())
+            .find(|m| m.ip == ip)
+            .map(|m| m.uuid.clone())
+    }
+
+    /// Returns the coordinator UUID if the speaker is a slave in an existing group.
+    ///
+    /// This is used to capture original group membership before joining a streaming group,
+    /// allowing restoration after streaming ends.
+    ///
+    /// Returns:
+    /// - `Some(coordinator_uuid)` if the speaker is a slave in an existing group
+    /// - `None` if the speaker is already a coordinator or not found in any group
+    #[must_use]
+    pub fn get_original_coordinator_for_slave(&self, speaker_ip: &str) -> Option<String> {
+        let groups = self.groups.read();
+        for group in groups.iter() {
+            if group.members.iter().any(|m| m.ip == speaker_ip) {
+                if group.coordinator_ip == speaker_ip {
+                    // Speaker is already a coordinator - no restoration needed
+                    return None;
+                }
+                // Speaker is a slave in this group - return the original coordinator
+                return Some(group.coordinator_uuid.clone());
+            }
+        }
+        None
+    }
 }
 
 /// Converts a DashMap to a JSON object map.
@@ -389,5 +427,80 @@ mod tests {
         assert_eq!(config.preferred_port, 0);
         assert!(config.discovery_ssdp_multicast);
         assert!(config.discovery_mdns);
+    }
+
+    #[test]
+    fn get_original_coordinator_returns_uuid_for_slave() {
+        use crate::sonos::types::{ZoneGroup, ZoneGroupMember};
+
+        let state = SonosState::default();
+        {
+            let mut groups = state.groups.write();
+            *groups = vec![ZoneGroup {
+                id: "group1".to_string(),
+                name: "Living Room".to_string(),
+                coordinator_uuid: "RINCON_LIVING".to_string(),
+                coordinator_ip: "192.168.1.100".to_string(),
+                members: vec![
+                    ZoneGroupMember {
+                        uuid: "RINCON_LIVING".to_string(),
+                        ip: "192.168.1.100".to_string(),
+                        zone_name: "Living Room".to_string(),
+                        model: "One".to_string(),
+                    },
+                    ZoneGroupMember {
+                        uuid: "RINCON_KITCHEN".to_string(),
+                        ip: "192.168.1.101".to_string(),
+                        zone_name: "Kitchen".to_string(),
+                        model: "One".to_string(),
+                    },
+                ],
+            }];
+        }
+
+        // Kitchen is a slave - should return Living Room's UUID
+        assert_eq!(
+            state.get_original_coordinator_for_slave("192.168.1.101"),
+            Some("RINCON_LIVING".to_string())
+        );
+    }
+
+    #[test]
+    fn get_original_coordinator_returns_none_for_coordinator() {
+        use crate::sonos::types::{ZoneGroup, ZoneGroupMember};
+
+        let state = SonosState::default();
+        {
+            let mut groups = state.groups.write();
+            *groups = vec![ZoneGroup {
+                id: "group1".to_string(),
+                name: "Living Room".to_string(),
+                coordinator_uuid: "RINCON_LIVING".to_string(),
+                coordinator_ip: "192.168.1.100".to_string(),
+                members: vec![ZoneGroupMember {
+                    uuid: "RINCON_LIVING".to_string(),
+                    ip: "192.168.1.100".to_string(),
+                    zone_name: "Living Room".to_string(),
+                    model: "One".to_string(),
+                }],
+            }];
+        }
+
+        // Living Room is coordinator - should return None
+        assert_eq!(
+            state.get_original_coordinator_for_slave("192.168.1.100"),
+            None
+        );
+    }
+
+    #[test]
+    fn get_original_coordinator_returns_none_for_unknown() {
+        let state = SonosState::default();
+
+        // Unknown IP - should return None
+        assert_eq!(
+            state.get_original_coordinator_for_slave("192.168.1.200"),
+            None
+        );
     }
 }
