@@ -63,13 +63,18 @@ function MainPopup(): JSX.Element {
 
   // Connection status with instant cached display
   const {
-    connected: wsConnected,
-    checking: connectionChecking,
+    phase: connectionPhase,
     error: connectionError,
+    canRetry: connectionCanRetry,
     desktopAppUrl: baseUrl,
     networkHealth,
     networkHealthReason,
+    retry: handleRetryConnection,
   } = useConnectionStatus();
+
+  // Derived states for convenience
+  const wsConnected = connectionPhase === 'connected';
+  const isSeeking = connectionPhase === 'checking' || connectionPhase === 'reconnecting';
 
   // Media metadata hooks
   const { state: currentTabState } = useCurrentTabState();
@@ -189,10 +194,10 @@ function MainPopup(): JSX.Element {
    * @returns The appropriate CSS class name
    */
   const getStatusClass = useCallback(() => {
-    if (connectionChecking) return styles.statusChecking;
-    if (connectionError || !wsConnected) return styles.statusDisconnected;
+    if (isSeeking) return styles.statusChecking;
+    if (connectionPhase === 'error' || !wsConnected) return styles.statusDisconnected;
     return styles.statusConnected;
-  }, [connectionChecking, connectionError, wsConnected]);
+  }, [isSeeking, connectionPhase, wsConnected]);
 
   /**
    * Gets display name for a group with availability status.
@@ -230,13 +235,24 @@ function MainPopup(): JSX.Element {
         </Alert>
       )}
 
-      {!connectionChecking && !wsConnected && (
-        <Alert variant="error" className={styles.alert}>
-          {connectionError || t('error_desktop_not_found')}
+      {connectionPhase === 'reconnecting' && (
+        <Alert variant="warning" className={styles.alert}>
+          {t('warning_reconnecting')}
         </Alert>
       )}
 
-      {!connectionChecking && wsConnected && !sonosLoading && speakerGroups.isEmpty && (
+      {connectionPhase === 'error' && connectionError && (
+        <Alert
+          variant="error"
+          className={styles.alert}
+          action={connectionCanRetry ? t('retry_connection') : undefined}
+          onAction={connectionCanRetry ? handleRetryConnection : undefined}
+        >
+          {t(connectionError, { defaultValue: connectionError })}
+        </Alert>
+      )}
+
+      {wsConnected && !sonosLoading && speakerGroups.isEmpty && (
         <Alert variant="warning" className={styles.alert}>
           {t('no_speakers_found')}
         </Alert>
@@ -273,8 +289,8 @@ function MainPopup(): JSX.Element {
           selectedIps={selectedIps}
           onSelectSpeakers={setSelectedIps}
           onStartCast={handleStart}
-          disabled={connectionChecking || sonosLoading || !baseUrl}
-          speakersLoading={sonosLoading || connectionChecking}
+          disabled={isSeeking || sonosLoading || !baseUrl}
+          speakersLoading={sonosLoading || isSeeking}
           getVolume={getVolume}
           isMuted={isMuted}
           onVolumeChange={handleVolumeChange}
@@ -289,11 +305,9 @@ function MainPopup(): JSX.Element {
       <p className={styles.footer}>
         {t('desktop_app_status')}:{' '}
         <span className={`${styles.status} ${getStatusClass()}`}>
-          {connectionChecking
-            ? t('status_checking')
-            : wsConnected
-              ? t('status_connected')
-              : t('status_disconnected')}
+          {isSeeking && t('status_checking')}
+          {connectionPhase === 'connected' && t('status_connected')}
+          {connectionPhase === 'error' && t('status_disconnected')}
         </span>
       </p>
     </div>

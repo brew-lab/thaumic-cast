@@ -148,7 +148,10 @@ export async function recoverOffscreenState(): Promise<void> {
 
           // Notify popup of recovered state (it may already be open)
           if (status.connected) {
-            notifyPopup({ type: 'WS_STATE_CHANGED', state: status.state });
+            notifyPopup({
+              type: 'WS_STATE_CHANGED',
+              state: status.state,
+            });
           }
         }
 

@@ -29,22 +29,16 @@ export function DesktopConnectionStep({
   onConnectionChange,
 }: DesktopConnectionStepProps): preact.JSX.Element {
   const { t } = useTranslation();
-  const { connected, checking } = useConnectionStatus();
-  const [isRetrying, setIsRetrying] = useState(false);
+  const { phase, retry: handleRetry } = useConnectionStatus();
+
+  // Derived states
+  const connected = phase === 'connected';
+  const isSeeking = phase === 'checking' || phase === 'reconnecting';
 
   // Manual configuration state
   const [urlInput, setUrlInput] = useState('');
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState<ServerTestResult | null>(null);
-
-  const handleRetry = useCallback(async () => {
-    setIsRetrying(true);
-    try {
-      await chrome.runtime.sendMessage({ type: 'ENSURE_CONNECTION' });
-    } finally {
-      setIsRetrying(false);
-    }
-  }, []);
 
   useEffect(() => {
     onConnectionChange(connected);
@@ -91,15 +85,13 @@ export function DesktopConnectionStep({
     setTesting(false);
   }, [urlInput]);
 
-  const isChecking = checking || isRetrying;
-
   return (
     <WizardStep
       title={t('onboarding.desktop.title')}
       subtitle={t('onboarding.desktop.subtitle')}
       icon={Monitor}
     >
-      {isChecking ? (
+      {isSeeking ? (
         <Alert variant="info">{t('onboarding.desktop.checking')}</Alert>
       ) : connected ? (
         <Alert variant="success">{t('onboarding.desktop.found')}</Alert>
@@ -117,7 +109,7 @@ export function DesktopConnectionStep({
               {t('onboarding.desktop.download_button')}
             </Button>
 
-            <Button variant="secondary" onClick={handleRetry} disabled={isRetrying}>
+            <Button variant="secondary" onClick={handleRetry} disabled={isSeeking}>
               <RefreshCw size={16} />
               {t('onboarding.desktop.retry_button')}
             </Button>

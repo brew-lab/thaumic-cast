@@ -21,6 +21,23 @@
   user-select: text;
 }
 
+.action {
+  display: inline;
+  margin-inline-start: 0.5em;
+  padding: 0;
+  background: none;
+  border: none;
+  color: inherit;
+  font: inherit;
+  text-decoration: underline;
+  cursor: pointer;
+  opacity: 0.9;
+}
+
+.action:hover {
+  opacity: 1;
+}
+
 .dismiss {
   flex-shrink: 0;
   margin-inline-start: var(--space-xs);
