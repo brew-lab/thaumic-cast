@@ -10,6 +10,13 @@ const VOLUME_DEBOUNCE_MS = 100;
 /** Debounce delay for mute toggle in milliseconds */
 const MUTE_DEBOUNCE_MS = 200;
 
+/**
+ * Cooldown period after user interaction ends before accepting external updates.
+ * This prevents stale server responses from causing the slider to jump.
+ * Should be long enough for the server round-trip to complete.
+ */
+const INTERACTION_COOLDOWN_MS = 500;
+
 interface VolumeControlProps {
   /** Current volume level (0-100) */
   volume: number;
@@ -56,14 +63,38 @@ export function VolumeControl({
   const [localVolume, setLocalVolume] = useState(volume);
   const volumeDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const muteDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const cooldownRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isMuteDebouncing = useRef(false);
+  // Track if user is actively interacting with the slider (or in cooldown period)
+  const isInteracting = useRef(false);
+  // Track external volume updates that arrive during interaction to apply after cooldown
+  const pendingExternalVolume = useRef<number | null>(null);
 
-  // Sync local state when prop changes (e.g., from external update)
+  /**
+   * Ends the interaction period and applies any pending external volume update.
+   * Used as the callback for cooldown timers in both pointer and change handlers.
+   */
+  const endInteraction = useCallback(() => {
+    isInteracting.current = false;
+    cooldownRef.current = null;
+    if (pendingExternalVolume.current !== null) {
+      setLocalVolume(pendingExternalVolume.current);
+      pendingExternalVolume.current = null;
+    }
+  }, []);
+
+  // Sync local state when prop changes, but only if user is not actively dragging
   useEffect(() => {
-    setLocalVolume(volume);
+    if (!isInteracting.current) {
+      setLocalVolume(volume);
+      pendingExternalVolume.current = null;
+    } else {
+      // Store external update to apply after cooldown ends
+      pendingExternalVolume.current = volume;
+    }
   }, [volume]);
 
-  // Cleanup debounce timers on unmount
+  // Cleanup timers on unmount
   useEffect(() => {
     return () => {
       if (volumeDebounceRef.current) {
@@ -71,6 +102,9 @@ export function VolumeControl({
       }
       if (muteDebounceRef.current) {
         clearTimeout(muteDebounceRef.current);
+      }
+      if (cooldownRef.current) {
+        clearTimeout(cooldownRef.current);
       }
     };
   }, []);
@@ -99,6 +133,10 @@ export function VolumeControl({
       // Update local state immediately for smooth UI
       setLocalVolume(newVolume);
 
+      // Mark as interacting to prevent external updates from overwriting
+      // This covers both pointer and keyboard interactions
+      isInteracting.current = true;
+
       // Unmute immediately if muted (bypass debounce for this)
       if (muted) onMuteToggle();
 
@@ -109,9 +147,46 @@ export function VolumeControl({
       volumeDebounceRef.current = setTimeout(() => {
         onVolumeChange(newVolume);
       }, VOLUME_DEBOUNCE_MS);
+
+      // Reset the cooldown timer - this keeps isInteracting=true until
+      // INTERACTION_COOLDOWN_MS after the last user input, giving time for
+      // the server round-trip to complete before accepting external updates
+      if (cooldownRef.current) {
+        clearTimeout(cooldownRef.current);
+      }
+      cooldownRef.current = setTimeout(
+        endInteraction,
+        VOLUME_DEBOUNCE_MS + INTERACTION_COOLDOWN_MS,
+      );
     },
-    [muted, onMuteToggle, onVolumeChange],
+    [endInteraction, muted, onMuteToggle, onVolumeChange],
   );
+
+  /**
+   * Marks the start of user interaction with the slider.
+   * This ensures external updates are blocked even before the first onChange fires.
+   */
+  const handlePointerDown = useCallback(() => {
+    isInteracting.current = true;
+    // Clear any existing cooldown timer - we're starting a new interaction
+    if (cooldownRef.current) {
+      clearTimeout(cooldownRef.current);
+      cooldownRef.current = null;
+    }
+  }, []);
+
+  /**
+   * Handles pointer release or cancellation on the slider.
+   * Sets a fallback cooldown timer if the user released without changing the value
+   * (onChange would never fire, leaving isInteracting stuck at true).
+   * Also handles pointercancel (system gesture override, incoming call, etc.).
+   */
+  const handlePointerUp = useCallback(() => {
+    // Only set fallback timer if onChange didn't already set one
+    if (cooldownRef.current === null) {
+      cooldownRef.current = setTimeout(endInteraction, INTERACTION_COOLDOWN_MS);
+    }
+  }, [endInteraction]);
 
   return (
     <div className={[styles.volumeControl, className].filter(Boolean).join(' ')}>
@@ -130,6 +205,9 @@ export function VolumeControl({
         max="100"
         value={localVolume}
         onChange={handleSliderChange}
+        onPointerDown={handlePointerDown}
+        onPointerUp={handlePointerUp}
+        onPointerCancel={handlePointerUp}
         className={styles.slider}
         style={{ '--volume': `${localVolume}%` } as CSSProperties}
         aria-label={volumeLabel}
