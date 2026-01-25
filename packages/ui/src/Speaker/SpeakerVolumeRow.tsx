@@ -13,6 +13,8 @@ interface SpeakerVolumeRowProps {
   volume: number;
   /** Whether speaker is muted */
   muted: boolean;
+  /** Whether volume controls are disabled (e.g., fixed line-level output) */
+  disabled?: boolean;
   /** Callback when volume changes */
   onVolumeChange: (volume: number) => void;
   /** Callback when mute is toggled */
@@ -40,6 +42,7 @@ interface SpeakerVolumeRowProps {
  * @param props.speakerIp - Speaker coordinator IP
  * @param props.volume - Current volume level
  * @param props.muted - Whether muted
+ * @param props.disabled
  * @param props.onVolumeChange - Volume change callback
  * @param props.onMuteToggle - Mute toggle callback
  * @param props.muteLabel - Accessible label for mute button (include speaker name)
@@ -56,6 +59,7 @@ export function SpeakerVolumeRow({
   speakerIp,
   volume,
   muted,
+  disabled,
   onVolumeChange,
   onMuteToggle,
   muteLabel,
@@ -91,6 +95,7 @@ export function SpeakerVolumeRow({
       <VolumeControl
         volume={volume}
         muted={muted}
+        disabled={disabled}
         onVolumeChange={onVolumeChange}
         onMuteToggle={onMuteToggle}
         muteLabel={muteLabel}

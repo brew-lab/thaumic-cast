@@ -32,6 +32,7 @@ export const SonosEventSchema = z.discriminatedUnion('type', [
     type: z.literal('groupVolume'),
     speakerIp: z.string(),
     volume: z.number(),
+    fixed: z.boolean().optional(),
     timestamp: z.number(),
   }),
   z.object({

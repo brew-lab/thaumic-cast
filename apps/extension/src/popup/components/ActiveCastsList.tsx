@@ -13,6 +13,8 @@ interface ActiveCastsListProps {
   getVolume: (speakerIp: string) => number;
   /** Function to check if a speaker is muted */
   isMuted: (speakerIp: string) => boolean;
+  /** Function to check if a speaker has fixed volume (line-level output) */
+  getVolumeFixed?: (speakerIp: string) => boolean;
   /** Callback when volume changes for a speaker */
   onVolumeChange: (speakerIp: string, volume: number) => void;
   /** Callback when mute is toggled for a speaker */
@@ -36,6 +38,7 @@ interface ActiveCastsListProps {
  * @param props.getTransportState
  * @param props.getVolume
  * @param props.isMuted
+ * @param props.getVolumeFixed
  * @param props.onVolumeChange
  * @param props.onMuteToggle
  * @param props.onStopCast
@@ -50,6 +53,7 @@ export function ActiveCastsList({
   getTransportState,
   getVolume,
   isMuted,
+  getVolumeFixed,
   onVolumeChange,
   onMuteToggle,
   onStopCast,
@@ -75,6 +79,7 @@ export function ActiveCastsList({
               getTransportState={getTransportState}
               getVolume={getVolume}
               isMuted={isMuted}
+              getVolumeFixed={getVolumeFixed}
               onVolumeChange={onVolumeChange}
               onMuteToggle={onMuteToggle}
               onStop={() => onStopCast(cast.tabId)}

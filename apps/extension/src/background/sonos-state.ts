@@ -125,3 +125,18 @@ export function updateTransportState(
   storage.schedule();
   return state;
 }
+
+/**
+ * Updates fixed volume state for a specific speaker.
+ * @param speakerIp - The speaker IP address
+ * @param fixed - Whether volume is fixed (line-level output)
+ * @returns The updated state
+ */
+export function updateVolumeFixed(speakerIp: string, fixed: boolean): SonosStateSnapshot {
+  state = {
+    ...state,
+    groupVolumeFixed: { ...state.groupVolumeFixed, [speakerIp]: fixed },
+  };
+  storage.schedule();
+  return state;
+}

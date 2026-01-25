@@ -342,6 +342,7 @@ export const VolumeUpdateMessageSchema = z.object({
   type: z.literal('VOLUME_UPDATE'),
   speakerIp: SpeakerIpSchema,
   volume: VolumeSchema,
+  fixed: z.boolean().optional(),
 });
 export type VolumeUpdateMessage = z.infer<typeof VolumeUpdateMessageSchema>;
 

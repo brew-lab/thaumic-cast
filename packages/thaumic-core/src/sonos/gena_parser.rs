@@ -23,6 +23,8 @@ pub struct GroupRenderingData {
     pub volume: Option<u8>,
     /// Group mute state.
     pub muted: Option<bool>,
+    /// Whether the output is fixed (line-level, cannot be adjusted).
+    pub output_fixed: Option<bool>,
 }
 
 /// Parses an AVTransport NOTIFY event body.
@@ -71,6 +73,10 @@ pub fn parse_group_rendering_control(body: &str) -> GroupRenderingData {
 
     if let Some(mute_str) = extract_xml_text(body, "GroupMute") {
         data.muted = Some(mute_str == "1");
+    }
+
+    if let Some(fixed_str) = extract_xml_text(body, "OutputFixed") {
+        data.output_fixed = Some(fixed_str == "1");
     }
 
     data

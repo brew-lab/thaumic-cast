@@ -81,6 +81,7 @@ pub fn build_group_rendering_events(ip: &str, body: &str) -> Vec<SonosEvent> {
         events.push(SonosEvent::GroupVolume {
             speaker_ip: ip.to_string(),
             volume,
+            fixed: data.output_fixed,
             timestamp,
         });
     }

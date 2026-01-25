@@ -102,16 +102,25 @@ impl GenaEventProcessor {
                     .insert(speaker_ip.clone(), *transport_state);
             }
             SonosEvent::GroupVolume {
-                speaker_ip, volume, ..
+                speaker_ip,
+                volume,
+                fixed,
+                ..
             } => {
                 log::info!(
-                    "[GenaEventProcessor] Group volume change: {} -> {}",
+                    "[GenaEventProcessor] Group volume change: {} -> {} (fixed: {:?})",
                     speaker_ip,
-                    volume
+                    volume,
+                    fixed
                 );
                 deps.sonos_state
                     .group_volumes
                     .insert(speaker_ip.clone(), *volume);
+                if let Some(is_fixed) = fixed {
+                    deps.sonos_state
+                        .group_volume_fixed
+                        .insert(speaker_ip.clone(), *is_fixed);
+                }
             }
             SonosEvent::GroupMute {
                 speaker_ip, muted, ..
