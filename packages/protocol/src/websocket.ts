@@ -206,6 +206,34 @@ export const WsOriginalGroupVolumeResultSchema = z.object({
 export type WsOriginalGroupVolumeResult = z.infer<typeof WsOriginalGroupVolumeResultSchema>;
 
 /**
+ * Result of setting mute on an original speaker group.
+ * Sent by desktop in response to SET_ORIGINAL_GROUP_MUTE.
+ *
+ * Note: This is a fire-and-forget acknowledgment for debugging/logging only.
+ * The extension logs this but takes no UI action. Failures are handled via
+ * ERROR messages (when all speakers fail), so this message only indicates
+ * success or partial success.
+ */
+export const WsOriginalGroupMuteResultSchema = z.object({
+  type: z.literal('ORIGINAL_GROUP_MUTE_RESULT'),
+  payload: z.object({
+    /** Stream ID for disambiguation when multiple streams exist. */
+    streamId: z.string(),
+    /** Coordinator UUID of the original group. */
+    coordinatorUuid: z.string(),
+    /** Mute state that was set. */
+    mute: z.boolean(),
+    /** Number of speakers that successfully had mute set. */
+    success: z.number(),
+    /** Total number of speakers attempted. */
+    total: z.number(),
+    /** List of [ip, error] tuples for failures. */
+    failures: z.array(z.tuple([z.string(), z.string()])),
+  }),
+});
+export type WsOriginalGroupMuteResult = z.infer<typeof WsOriginalGroupMuteResultSchema>;
+
+/**
  * Discriminated union for all WebSocket messages with typed payloads.
  */
 export const WsMessageSchema = z.discriminatedUnion('type', [
@@ -222,8 +250,9 @@ export const WsMessageSchema = z.discriminatedUnion('type', [
   WsPlaybackStartedMessageSchema,
   WsPlaybackResultsMessageSchema,
   WsPlaybackErrorMessageSchema,
-  // Volume control responses
+  // Audio control responses
   WsOriginalGroupVolumeResultSchema,
+  WsOriginalGroupMuteResultSchema,
 ]);
 export type WsMessage = z.infer<typeof WsMessageSchema>;
 
@@ -276,6 +305,14 @@ export const WsControlCommandSchema = z.discriminatedUnion('type', [
       streamId: z.string(),
       coordinatorUuid: z.string(),
       volume: z.number().int().min(0).max(100),
+    }),
+  }),
+  z.object({
+    type: z.literal('SET_ORIGINAL_GROUP_MUTE'),
+    payload: z.object({
+      streamId: z.string(),
+      coordinatorUuid: z.string(),
+      mute: z.boolean(),
     }),
   }),
 ]);

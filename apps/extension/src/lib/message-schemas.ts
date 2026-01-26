@@ -506,6 +506,14 @@ export const SetMuteMessageSchema = z.object({
 });
 export type SetMuteMessage = z.infer<typeof SetMuteMessageSchema>;
 
+export const SetOriginalGroupMuteMessageSchema = z.object({
+  type: z.literal('SET_ORIGINAL_GROUP_MUTE'),
+  streamId: z.string(),
+  coordinatorUuid: z.string(),
+  muted: z.boolean(),
+});
+export type SetOriginalGroupMuteMessage = z.infer<typeof SetOriginalGroupMuteMessageSchema>;
+
 export const StopPlaybackSpeakerMessageSchema = z.object({
   type: z.literal('STOP_PLAYBACK_SPEAKER'),
   streamId: z.string(),

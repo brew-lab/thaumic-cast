@@ -61,13 +61,10 @@ export async function handleSetVolume(
 
 /**
  * Handles SET_MUTE message from popup.
- * Forwards to offscreen for WebSocket transmission.
  *
- * TODO: Unlike handleSetVolume, this does NOT have sync-session awareness.
- * In sync sessions, mute commands to non-coordinator speaker IPs will fail
- * because they're joined as slaves. To fix, we'd need SET_ORIGINAL_GROUP_MUTE
- * similar to SET_ORIGINAL_GROUP_VOLUME, using per-speaker RenderingControl.SetMute
- * instead of GroupRenderingControl.SetGroupMute.
+ * For sync sessions with original groups, routes to SET_ORIGINAL_GROUP_MUTE
+ * which uses RenderingControl (per-speaker) instead of GroupRenderingControl.
+ * This ensures mute works correctly when multiple groups are joined.
  *
  * @param msg - The mute message
  * @returns The offscreen response
@@ -75,6 +72,21 @@ export async function handleSetVolume(
 export async function handleSetMute(
   msg: SetMuteMessage,
 ): Promise<{ success: boolean } | undefined> {
+  // Check if this speaker is in a sync session with original groups
+  const session = getSessionBySpeakerIp(msg.speakerIp);
+
+  if (session?.syncSpeakers) {
+    const coordinatorUuid = getOriginalGroupForSpeaker(session.tabId, msg.speakerIp);
+    if (coordinatorUuid) {
+      // Route through SET_ORIGINAL_GROUP_MUTE for per-group mute control
+      log.debug(
+        `Using SET_ORIGINAL_GROUP_MUTE for sync session (speaker=${msg.speakerIp}, group=${coordinatorUuid})`,
+      );
+      return offscreenBroker.setOriginalGroupMute(session.streamId, coordinatorUuid, msg.muted);
+    }
+  }
+
+  // Default: use group mute control
   return offscreenBroker.setMute(msg.speakerIp, msg.muted);
 }
 
