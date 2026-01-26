@@ -14,4 +14,7 @@ pub use discovery_service::DiscoveryService;
 pub use latency_monitor::LatencyMonitor;
 pub use stream_coordinator::{OriginalGroup, PlaybackResult, PlaybackSession, StreamCoordinator};
 pub use topology_monitor::{TopologyMonitor, TopologyMonitorConfig};
-pub use volume::{set_multi_speaker_volume, MultiSpeakerVolumeResult};
+pub use volume::{
+    set_multi_speaker_mute, set_multi_speaker_volume, MultiSpeakerMuteResult,
+    MultiSpeakerVolumeResult,
+};

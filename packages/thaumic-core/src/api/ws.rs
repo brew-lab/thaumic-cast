@@ -17,7 +17,10 @@ use crate::protocol_constants::{
     MIN_FRAME_DURATION_MS, MIN_STREAMING_BUFFER_MS, SILENCE_FRAME_DURATION_MS,
     WS_HEARTBEAT_CHECK_INTERVAL_SECS, WS_HEARTBEAT_TIMEOUT_SECS,
 };
-use crate::services::{set_multi_speaker_volume, OriginalGroup, PlaybackResult, StreamCoordinator};
+use crate::services::{
+    set_multi_speaker_mute, set_multi_speaker_volume, OriginalGroup, PlaybackResult,
+    StreamCoordinator,
+};
 use crate::stream::{AudioCodec, AudioFormat, Passthrough, StreamMetadata, Transcoder};
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -89,6 +92,9 @@ enum WsIncoming {
     },
     SetOriginalGroupVolume {
         payload: SetOriginalGroupVolumeRequest,
+    },
+    SetOriginalGroupMute {
+        payload: SetOriginalGroupMuteRequest,
     },
 }
 
@@ -169,6 +175,15 @@ struct SetOriginalGroupVolumeRequest {
     volume: u8,
 }
 
+/// Request payload for setting mute on an original speaker group.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SetOriginalGroupMuteRequest {
+    stream_id: String,
+    coordinator_uuid: String,
+    mute: bool,
+}
+
 /// Encoder configuration from extension.
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -233,6 +248,10 @@ enum WsOutgoing {
     OriginalGroupVolumeResult {
         payload: OriginalGroupVolumeResultPayload,
     },
+    /// Result of setting mute on an original speaker group.
+    OriginalGroupMuteResult {
+        payload: OriginalGroupMuteResultPayload,
+    },
 }
 
 /// Payload for stream ready notification.
@@ -288,6 +307,24 @@ struct OriginalGroupVolumeResultPayload {
     /// Volume level that was set.
     volume: u8,
     /// Number of speakers that successfully had volume set.
+    success: usize,
+    /// Total number of speakers attempted.
+    total: usize,
+    /// List of (ip, error) tuples for failures.
+    failures: Vec<(String, String)>,
+}
+
+/// Payload for original group mute result responses.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct OriginalGroupMuteResultPayload {
+    /// Stream ID for disambiguation when multiple streams exist.
+    stream_id: String,
+    /// Coordinator UUID of the original group.
+    coordinator_uuid: String,
+    /// Mute state that was set.
+    mute: bool,
+    /// Number of speakers that successfully had mute set.
     success: usize,
     /// Total number of speakers attempted.
     total: usize,
@@ -621,6 +658,67 @@ async fn handle_set_original_group_volume(
     }
 }
 
+/// Handles SET_ORIGINAL_GROUP_MUTE command.
+///
+/// Looks up the original group by coordinator UUID and sets mute on all
+/// speakers in that group using RenderingControl (per-speaker) instead of
+/// GroupRenderingControl.
+async fn handle_set_original_group_mute(
+    state: &AppState,
+    payload: SetOriginalGroupMuteRequest,
+) -> WsOutgoing {
+    let group = state
+        .stream_coordinator
+        .get_original_group(&payload.stream_id, &payload.coordinator_uuid);
+
+    match group {
+        Some(group) if !group.speaker_ips.is_empty() => {
+            match set_multi_speaker_mute(Arc::clone(&state.sonos), &group.speaker_ips, payload.mute)
+                .await
+            {
+                Ok(result) => WsOutgoing::OriginalGroupMuteResult {
+                    payload: OriginalGroupMuteResultPayload {
+                        stream_id: payload.stream_id,
+                        coordinator_uuid: payload.coordinator_uuid,
+                        mute: payload.mute,
+                        success: result.success,
+                        total: result.total,
+                        failures: result.failures,
+                    },
+                },
+                Err(e) => WsOutgoing::Error {
+                    message: e.to_string(),
+                },
+            }
+        }
+        Some(group) => {
+            log::warn!(
+                "[WS] SET_ORIGINAL_GROUP_MUTE: group {} has empty speaker_ips",
+                group.coordinator_uuid
+            );
+            WsOutgoing::Error {
+                message: format!(
+                    "Original group {} has no speakers",
+                    payload.coordinator_uuid
+                ),
+            }
+        }
+        None => {
+            log::warn!(
+                "[WS] SET_ORIGINAL_GROUP_MUTE: group {} not found in stream {}",
+                payload.coordinator_uuid,
+                payload.stream_id
+            );
+            WsOutgoing::Error {
+                message: format!(
+                    "Original group {} not found in stream {}",
+                    payload.coordinator_uuid, payload.stream_id
+                ),
+            }
+        }
+    }
+}
+
 /// WebSocket upgrade handler.
 pub async fn ws_handler(ws: WebSocketUpgrade, State(state): State<AppState>) -> impl IntoResponse {
     ws.on_upgrade(move |socket| handle_ws(socket, state))
@@ -867,6 +965,13 @@ async fn handle_ws(socket: WebSocket, state: AppState) {
                             Ok(WsIncoming::SetOriginalGroupVolume { payload }) => {
                                 let response =
                                     handle_set_original_group_volume(&state, payload).await;
+                                if let Some(msg) = response.to_message() {
+                                    let _ = sender.send(msg).await;
+                                }
+                            }
+                            Ok(WsIncoming::SetOriginalGroupMute { payload }) => {
+                                let response =
+                                    handle_set_original_group_mute(&state, payload).await;
                                 if let Some(msg) = response.to_message() {
                                     let _ = sender.send(msg).await;
                                 }

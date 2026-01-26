@@ -726,6 +726,51 @@ pub async fn set_speaker_volume(client: &Client, speaker_ip: &str, volume: u8) -
     Ok(())
 }
 
+/// Gets the mute state from an individual speaker.
+///
+/// Uses the RenderingControl service to query a single speaker's mute state,
+/// independent of its group membership.
+///
+/// # Arguments
+/// * `client` - The HTTP client to use for the request
+/// * `speaker_ip` - IP address of the speaker
+pub async fn get_speaker_mute(client: &Client, speaker_ip: &str) -> SoapResult<bool> {
+    let response = SoapRequestBuilder::new(client, speaker_ip)
+        .service(SonosService::RenderingControl)
+        .action("GetMute")
+        .instance_id()
+        .arg("Channel", "Master")
+        .send()
+        .await?;
+
+    let mute_str = extract_xml_text(&response, "CurrentMute").ok_or_else(|| SoapError::Parse)?;
+
+    Ok(mute_str == "1")
+}
+
+/// Sets the mute state on an individual speaker.
+///
+/// Uses the RenderingControl service to control a single speaker's mute state,
+/// independent of its group membership. This enables per-original-group
+/// mute control during multi-group streaming.
+///
+/// # Arguments
+/// * `client` - The HTTP client to use for the request
+/// * `speaker_ip` - IP address of the speaker
+/// * `mute` - `true` to mute, `false` to unmute
+pub async fn set_speaker_mute(client: &Client, speaker_ip: &str, mute: bool) -> SoapResult<()> {
+    SoapRequestBuilder::new(client, speaker_ip)
+        .service(SonosService::RenderingControl)
+        .action("SetMute")
+        .instance_id()
+        .arg("Channel", "Master")
+        .arg("DesiredMute", if mute { "1" } else { "0" })
+        .send()
+        .await?;
+
+    Ok(())
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Position Info (for Latency Monitoring)
 // ─────────────────────────────────────────────────────────────────────────────
@@ -926,6 +971,14 @@ impl SonosVolumeControl for SonosClientImpl {
 
     async fn set_speaker_volume(&self, speaker_ip: &str, volume: u8) -> SoapResult<()> {
         set_speaker_volume(&self.client, speaker_ip, volume).await
+    }
+
+    async fn get_speaker_mute(&self, speaker_ip: &str) -> SoapResult<bool> {
+        get_speaker_mute(&self.client, speaker_ip).await
+    }
+
+    async fn set_speaker_mute(&self, speaker_ip: &str, mute: bool) -> SoapResult<()> {
+        set_speaker_mute(&self.client, speaker_ip, mute).await
     }
 }
 

@@ -147,6 +147,8 @@ export {
   type SetOriginalGroupVolumeMessage,
   SetMuteMessageSchema,
   type SetMuteMessage,
+  SetOriginalGroupMuteMessageSchema,
+  type SetOriginalGroupMuteMessage,
   StopPlaybackSpeakerMessageSchema,
   type StopPlaybackSpeakerMessage,
   ControlMediaMessageSchema,
@@ -190,6 +192,7 @@ import type {
   SetVolumeMessage,
   SetOriginalGroupVolumeMessage,
   SetMuteMessage,
+  SetOriginalGroupMuteMessage,
   ControlMediaMessage,
   SetVideoSyncEnabledMessage,
   SetVideoSyncTrimMessage,
@@ -411,6 +414,7 @@ export type BackgroundToOffscreenMessage =
   | SetVolumeMessage
   | SetMuteMessage
   | SetOriginalGroupVolumeMessage
+  | SetOriginalGroupMuteMessage
   | StopPlaybackSpeakerMessage;
 
 /**

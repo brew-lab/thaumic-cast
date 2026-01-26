@@ -28,6 +28,7 @@ import {
   StartPlaybackMessageSchema,
   OffscreenMetadataMessageSchema,
   SetOriginalGroupVolumeMessageSchema,
+  SetOriginalGroupMuteMessageSchema,
   type StartPlaybackResponse,
 } from '../lib/message-schemas';
 import {
@@ -189,6 +190,25 @@ export function setupMessageHandlers(): void {
         sendResponse({ success });
       } catch (err) {
         log.error('SET_ORIGINAL_GROUP_VOLUME validation failed:', err);
+        sendResponse({ success: false, error: String(err) });
+      }
+      return true;
+    }
+
+    if (msg.type === 'SET_ORIGINAL_GROUP_MUTE') {
+      try {
+        const validated = SetOriginalGroupMuteMessageSchema.parse(msg);
+        const success = sendControlCommand({
+          type: 'SET_ORIGINAL_GROUP_MUTE',
+          payload: {
+            streamId: validated.streamId,
+            coordinatorUuid: validated.coordinatorUuid,
+            mute: validated.muted,
+          },
+        });
+        sendResponse({ success });
+      } catch (err) {
+        log.error('SET_ORIGINAL_GROUP_MUTE validation failed:', err);
         sendResponse({ success: false, error: String(err) });
       }
       return true;

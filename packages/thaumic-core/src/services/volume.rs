@@ -1,6 +1,6 @@
-//! Multi-speaker volume orchestration service.
+//! Multi-speaker audio control orchestration service.
 //!
-//! Provides shared logic for setting volume on multiple speakers concurrently.
+//! Provides shared logic for setting volume and mute on multiple speakers concurrently.
 //! Used by both HTTP and WebSocket handlers.
 
 use std::collections::HashSet;
@@ -91,6 +91,87 @@ pub async fn set_multi_speaker_volume(
     }
 
     Ok(MultiSpeakerVolumeResult {
+        success: success_count,
+        total: unique_ips.len(),
+        failures: failure_details,
+    })
+}
+
+/// Result of setting mute on multiple speakers.
+///
+/// Field names match existing HTTP response shape for consistency.
+#[derive(Debug, Clone, Serialize)]
+pub struct MultiSpeakerMuteResult {
+    /// Number of speakers that successfully had mute set.
+    pub success: usize,
+    /// Total number of speakers attempted.
+    pub total: usize,
+    /// List of (ip, error) tuples for failures.
+    pub failures: Vec<(String, String)>,
+}
+
+/// Sets mute state on multiple speakers concurrently.
+///
+/// - Deduplicates IPs using HashSet
+/// - Returns success/failure counts
+/// - Returns ThaumicError if speaker_ips is empty
+///
+/// # Arguments
+/// * `sonos` - The Sonos client (implements SonosVolumeControl)
+/// * `speaker_ips` - List of speaker IP addresses to set mute on
+/// * `mute` - `true` to mute, `false` to unmute
+///
+/// # Returns
+/// Result containing success/failure counts and any error details
+pub async fn set_multi_speaker_mute(
+    sonos: Arc<dyn SonosClient>,
+    speaker_ips: &[String],
+    mute: bool,
+) -> Result<MultiSpeakerMuteResult, ThaumicError> {
+    // Dedupe using HashSet, then collect for iteration
+    let unique_ips: Vec<_> = speaker_ips
+        .iter()
+        .cloned()
+        .collect::<HashSet<_>>()
+        .into_iter()
+        .collect();
+
+    if unique_ips.is_empty() {
+        return Err(ThaumicError::InvalidRequest(
+            "speaker_ips cannot be empty".into(),
+        ));
+    }
+
+    // Spawn concurrent mute set operations
+    let futures: Vec<_> = unique_ips
+        .iter()
+        .map(|ip| {
+            let sonos = Arc::clone(&sonos);
+            let ip = ip.clone();
+            async move {
+                sonos
+                    .set_speaker_mute(&ip, mute)
+                    .await
+                    .map_err(|e| (ip, e.to_string()))
+            }
+        })
+        .collect();
+
+    let results = join_all(futures).await;
+    let (successes, failures): (Vec<_>, Vec<_>) = results.into_iter().partition(Result::is_ok);
+
+    let success_count = successes.len();
+    let failure_details: Vec<_> = failures.into_iter().filter_map(|r| r.err()).collect();
+
+    // Return error if all speakers failed - ensures consistent handling by callers
+    if success_count == 0 && !failure_details.is_empty() {
+        return Err(ThaumicError::Internal(format!(
+            "All mute commands failed: {:?}",
+            failure_details
+        )));
+    }
+
+    Ok(MultiSpeakerMuteResult {
         success: success_count,
         total: unique_ips.len(),
         failures: failure_details,
@@ -213,6 +294,17 @@ mod tests {
                 return Err(SoapError::Fault("simulated failure".to_string()));
             }
             self.last_volume.store(volume, Ordering::SeqCst);
+            Ok(())
+        }
+
+        async fn get_speaker_mute(&self, _speaker_ip: &str) -> SoapResult<bool> {
+            Ok(false)
+        }
+
+        async fn set_speaker_mute(&self, _speaker_ip: &str, _mute: bool) -> SoapResult<()> {
+            if self.should_fail {
+                return Err(SoapError::Fault("simulated failure".to_string()));
+            }
             Ok(())
         }
     }
@@ -371,11 +463,182 @@ mod tests {
                     Ok(())
                 }
             }
+            async fn get_speaker_mute(&self, _speaker_ip: &str) -> SoapResult<bool> {
+                Ok(false)
+            }
+            async fn set_speaker_mute(&self, speaker_ip: &str, _mute: bool) -> SoapResult<()> {
+                // Fail for .101, succeed for .100
+                if speaker_ip.ends_with(".101") {
+                    Err(SoapError::Fault("simulated failure".to_string()))
+                } else {
+                    Ok(())
+                }
+            }
         }
 
         let sonos = Arc::new(PartialFailClient);
         let ips = vec!["192.168.1.100".to_string(), "192.168.1.101".to_string()];
         let result = set_multi_speaker_volume(sonos, &ips, 50).await.unwrap();
+
+        assert_eq!(result.success, 1);
+        assert_eq!(result.total, 2);
+        assert_eq!(result.failures.len(), 1);
+        assert_eq!(result.failures[0].0, "192.168.1.101");
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────────
+    // Mute Tests
+    // ─────────────────────────────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn mute_empty_ips_returns_error() {
+        let sonos = Arc::new(MockSonosClient::new(false));
+        let result = set_multi_speaker_mute(sonos, &[], true).await;
+        assert!(result.is_err());
+        match result {
+            Err(ThaumicError::InvalidRequest(msg)) => {
+                assert!(msg.contains("cannot be empty"));
+            }
+            _ => panic!("Expected InvalidRequest error"),
+        }
+    }
+
+    #[tokio::test]
+    async fn mute_single_speaker_success() {
+        let sonos = Arc::new(MockSonosClient::new(false));
+        let ips = vec!["192.168.1.100".to_string()];
+        let result = set_multi_speaker_mute(sonos, &ips, true).await.unwrap();
+
+        assert_eq!(result.success, 1);
+        assert_eq!(result.total, 1);
+        assert!(result.failures.is_empty());
+    }
+
+    #[tokio::test]
+    async fn mute_deduplicates_ips() {
+        let sonos = Arc::new(MockSonosClient::new(false));
+        let ips = vec![
+            "192.168.1.100".to_string(),
+            "192.168.1.100".to_string(), // Duplicate
+            "192.168.1.101".to_string(),
+        ];
+        let result = set_multi_speaker_mute(sonos, &ips, true).await.unwrap();
+
+        // Should only process 2 unique IPs
+        assert_eq!(result.total, 2);
+        assert_eq!(result.success, 2);
+    }
+
+    #[tokio::test]
+    async fn mute_all_failures_returns_error() {
+        let sonos = Arc::new(MockSonosClient::new(true));
+        let ips = vec!["192.168.1.100".to_string()];
+        let result = set_multi_speaker_mute(sonos, &ips, true).await;
+
+        assert!(result.is_err());
+        match result {
+            Err(ThaumicError::Internal(msg)) => {
+                assert!(msg.contains("All mute commands failed"));
+                assert!(msg.contains("192.168.1.100"));
+            }
+            _ => panic!("Expected Internal error"),
+        }
+    }
+
+    #[tokio::test]
+    async fn mute_partial_failure_returns_ok() {
+        // Reuse PartialFailClient which fails for .101, succeeds for .100
+        struct MutePartialFailClient;
+
+        #[async_trait]
+        impl SonosDiscovery for MutePartialFailClient {
+            async fn discover_speakers(&self) -> DiscoveryResult<Vec<Speaker>> {
+                Ok(vec![])
+            }
+        }
+
+        #[async_trait]
+        impl SonosPlayback for MutePartialFailClient {
+            async fn play_uri(
+                &self,
+                _ip: &str,
+                _uri: &str,
+                _codec: AudioCodec,
+                _audio_format: &AudioFormat,
+                _metadata: Option<&StreamMetadata>,
+                _artwork_url: &str,
+            ) -> SoapResult<()> {
+                Ok(())
+            }
+            async fn play(&self, _ip: &str) -> SoapResult<()> {
+                Ok(())
+            }
+            async fn stop(&self, _ip: &str) -> SoapResult<()> {
+                Ok(())
+            }
+            async fn switch_to_queue(&self, _ip: &str, _coordinator_uuid: &str) -> SoapResult<()> {
+                Ok(())
+            }
+            async fn get_position_info(&self, _ip: &str) -> SoapResult<PositionInfo> {
+                Ok(PositionInfo {
+                    track: 1,
+                    track_duration: "00:00:00".to_string(),
+                    track_uri: "".to_string(),
+                    rel_time: "00:00:00".to_string(),
+                    rel_time_ms: 0,
+                })
+            }
+            async fn join_group(&self, _ip: &str, _coordinator_uuid: &str) -> SoapResult<()> {
+                Ok(())
+            }
+            async fn leave_group(&self, _ip: &str) -> SoapResult<()> {
+                Ok(())
+            }
+        }
+
+        #[async_trait]
+        impl SonosTopology for MutePartialFailClient {
+            async fn get_zone_groups(&self, _ip: &str) -> SoapResult<Vec<ZoneGroup>> {
+                Ok(vec![])
+            }
+        }
+
+        #[async_trait]
+        impl SonosVolumeControl for MutePartialFailClient {
+            async fn get_group_volume(&self, _coordinator_ip: &str) -> SoapResult<u8> {
+                Ok(50)
+            }
+            async fn set_group_volume(&self, _coordinator_ip: &str, _volume: u8) -> SoapResult<()> {
+                Ok(())
+            }
+            async fn get_group_mute(&self, _coordinator_ip: &str) -> SoapResult<bool> {
+                Ok(false)
+            }
+            async fn set_group_mute(&self, _coordinator_ip: &str, _mute: bool) -> SoapResult<()> {
+                Ok(())
+            }
+            async fn get_speaker_volume(&self, _speaker_ip: &str) -> SoapResult<u8> {
+                Ok(50)
+            }
+            async fn set_speaker_volume(&self, _speaker_ip: &str, _volume: u8) -> SoapResult<()> {
+                Ok(())
+            }
+            async fn get_speaker_mute(&self, _speaker_ip: &str) -> SoapResult<bool> {
+                Ok(false)
+            }
+            async fn set_speaker_mute(&self, speaker_ip: &str, _mute: bool) -> SoapResult<()> {
+                // Fail for .101, succeed for .100
+                if speaker_ip.ends_with(".101") {
+                    Err(SoapError::Fault("simulated failure".to_string()))
+                } else {
+                    Ok(())
+                }
+            }
+        }
+
+        let sonos = Arc::new(MutePartialFailClient);
+        let ips = vec!["192.168.1.100".to_string(), "192.168.1.101".to_string()];
+        let result = set_multi_speaker_mute(sonos, &ips, true).await.unwrap();
 
         assert_eq!(result.success, 1);
         assert_eq!(result.total, 2);

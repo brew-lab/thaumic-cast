@@ -893,6 +893,14 @@ function handleWsMessage(event: MessageEvent): void {
         );
         break;
 
+      case 'ORIGINAL_GROUP_MUTE_RESULT':
+        // Fire-and-forget acknowledgment - log for debugging, no UI action needed.
+        // Errors are sent as ERROR messages (all-failed case), so this only fires on success.
+        log.debug(
+          `Original group mute set: ${message.payload.success}/${message.payload.total} speakers`,
+        );
+        break;
+
       default:
         // Ignore other message types
         break;
