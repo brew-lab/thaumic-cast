@@ -319,6 +319,20 @@ impl StreamCoordinator {
         result
     }
 
+    /// Gets a specific original group by coordinator UUID.
+    ///
+    /// Convenience method that combines `get_original_groups` with a find by UUID.
+    /// Returns `None` if the stream doesn't exist or the group isn't found.
+    pub fn get_original_group(
+        &self,
+        stream_id: &str,
+        coordinator_uuid: &str,
+    ) -> Option<OriginalGroup> {
+        self.get_original_groups(stream_id)
+            .into_iter()
+            .find(|g| g.coordinator_uuid == coordinator_uuid)
+    }
+
     /// Creates a new audio stream with the specified output codec and transcoder.
     ///
     /// # Arguments

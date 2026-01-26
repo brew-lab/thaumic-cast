@@ -19,6 +19,7 @@ import {
   PlaybackResultSchema,
   LatencyBroadcastEvent,
   SpeakerRemovalReasonSchema,
+  OriginalGroupSchema,
 } from '@thaumic-cast/protocol';
 
 // Re-export SpeakerRemovalReason from protocol for convenience
@@ -138,6 +139,8 @@ export const StartPlaybackResponseSchema = z.object({
   results: z.array(PlaybackResultSchema),
   /** Overall error (if all speakers failed). */
   error: z.string().optional(),
+  /** Original speaker groups when syncSpeakers is enabled. */
+  originalGroups: z.array(OriginalGroupSchema).optional(),
 });
 export type StartPlaybackResponse = z.infer<typeof StartPlaybackResponseSchema>;
 
@@ -487,6 +490,14 @@ export const SetVolumeMessageSchema = z.object({
   volume: VolumeSchema,
 });
 export type SetVolumeMessage = z.infer<typeof SetVolumeMessageSchema>;
+
+export const SetOriginalGroupVolumeMessageSchema = z.object({
+  type: z.literal('SET_ORIGINAL_GROUP_VOLUME'),
+  streamId: z.string(),
+  coordinatorUuid: z.string(),
+  volume: VolumeSchema,
+});
+export type SetOriginalGroupVolumeMessage = z.infer<typeof SetOriginalGroupVolumeMessageSchema>;
 
 export const SetMuteMessageSchema = z.object({
   type: z.literal('SET_MUTE'),

@@ -182,6 +182,27 @@ class OffscreenBroker {
   }
 
   /**
+   * Sets volume for an original speaker group during synchronized multi-group streaming.
+   * Uses RenderingControl (per-speaker) instead of GroupRenderingControl.
+   * @param streamId - The stream ID
+   * @param coordinatorUuid - UUID of the original group's coordinator
+   * @param volume - The volume level (0-100)
+   * @returns Success response
+   */
+  async setOriginalGroupVolume(
+    streamId: string,
+    coordinatorUuid: string,
+    volume: number,
+  ): Promise<{ success: boolean } | undefined> {
+    return sendToOffscreen<{ success: boolean }>({
+      type: 'SET_ORIGINAL_GROUP_VOLUME',
+      streamId,
+      coordinatorUuid,
+      volume,
+    });
+  }
+
+  /**
    * Syncs Sonos state to offscreen document.
    * Fire-and-forget: errors are silently ignored.
    * @param state - The Sonos state snapshot to sync

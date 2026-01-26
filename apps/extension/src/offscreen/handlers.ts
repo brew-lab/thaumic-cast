@@ -27,6 +27,7 @@ import {
   StopCaptureMessageSchema,
   StartPlaybackMessageSchema,
   OffscreenMetadataMessageSchema,
+  SetOriginalGroupVolumeMessageSchema,
   type StartPlaybackResponse,
 } from '../lib/message-schemas';
 import {
@@ -174,6 +175,25 @@ export function setupMessageHandlers(): void {
       return true;
     }
 
+    if (msg.type === 'SET_ORIGINAL_GROUP_VOLUME') {
+      try {
+        const validated = SetOriginalGroupVolumeMessageSchema.parse(msg);
+        const success = sendControlCommand({
+          type: 'SET_ORIGINAL_GROUP_VOLUME',
+          payload: {
+            streamId: validated.streamId,
+            coordinatorUuid: validated.coordinatorUuid,
+            volume: validated.volume,
+          },
+        });
+        sendResponse({ success });
+      } catch (err) {
+        log.error('SET_ORIGINAL_GROUP_VOLUME validation failed:', err);
+        sendResponse({ success: false, error: String(err) });
+      }
+      return true;
+    }
+
     // ─────────────────────────────────────────────────────────────────────────
     // Codec Detection (AudioEncoder only available in window contexts)
     // ─────────────────────────────────────────────────────────────────────────
@@ -297,12 +317,13 @@ export function setupMessageHandlers(): void {
         session
           .waitForReady()
           .then(() => session.startPlayback(speakerIps, metadata, syncSpeakers))
-          .then((results) => {
+          .then(({ results, originalGroups }) => {
             // Consider success if at least one speaker started
             const anySuccess = results.some((r) => r.success);
             const response: StartPlaybackResponse = {
               success: anySuccess,
               results,
+              originalGroups,
             };
             sendResponse(response);
           })
