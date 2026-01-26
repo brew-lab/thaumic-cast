@@ -246,7 +246,7 @@ export async function onSourcePlaybackStarted(tabId: number): Promise<void> {
 
   log.info(`Source started playing for tab ${tabId}, notifying server`);
   try {
-    await offscreenBroker.startPlayback(tabId, session.speakerIps);
+    await offscreenBroker.startPlayback(tabId, session.speakerIps, undefined, session.syncSpeakers);
   } catch (err) {
     // Expected when WS is disconnected; server will catch up on reconnect
     log.debug(`Failed to notify server of source playback: ${err}`);

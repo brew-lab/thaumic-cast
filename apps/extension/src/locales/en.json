@@ -183,6 +183,8 @@
   "video_sync_description": "For when the lips move but the words arrive fashionably late",
   "keep_tab_audible_enable": "Keep the tab awake",
   "keep_tab_audible_description": "A whisper of sound to keep Chrome from getting ideas about throttling",
+  "sync_speakers_enable": "Synchronize speakers",
+  "sync_speakers_description": "When casting to multiple speakers, group them for perfectly synchronized playback. May temporarily rearrange your Sonos speaker groupings.",
   "video_sync": "Video Sync",
   "video_sync_toggle": "Sync video to audio",
   "video_sync_status_waiting": "Waiting",

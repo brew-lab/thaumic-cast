@@ -88,6 +88,10 @@ struct StartPlaybackRequest {
     /// If not provided, Sonos will show default "Browser Audio".
     #[serde(default)]
     metadata: Option<StreamMetadata>,
+    /// Whether to use synchronized group playback (default: false).
+    /// When true, uses x-rincon protocol to sync multiple speakers.
+    #[serde(default)]
+    sync_speakers: bool,
 }
 
 impl StartPlaybackRequest {
@@ -670,6 +674,7 @@ async fn handle_ws(socket: WebSocket, state: AppState) {
                                             &stream_id,
                                             payload.metadata.as_ref(),
                                             &artwork_url,
+                                            payload.sync_speakers,
                                         )
                                         .await;
 
