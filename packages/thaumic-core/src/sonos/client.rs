@@ -674,6 +674,59 @@ pub async fn set_group_mute(client: &Client, coordinator_ip: &str, mute: bool) -
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Per-Speaker Volume Control
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Gets the current volume from an individual speaker (0-100).
+///
+/// Uses the RenderingControl service to query a single speaker's volume,
+/// independent of its group membership. This enables per-original-group
+/// volume control during multi-group streaming.
+///
+/// # Arguments
+/// * `client` - The HTTP client to use for the request
+/// * `speaker_ip` - IP address of the speaker
+pub async fn get_speaker_volume(client: &Client, speaker_ip: &str) -> SoapResult<u8> {
+    let response = SoapRequestBuilder::new(client, speaker_ip)
+        .service(SonosService::RenderingControl)
+        .action("GetVolume")
+        .instance_id()
+        .arg("Channel", "Master")
+        .send()
+        .await?;
+
+    let volume_str =
+        extract_xml_text(&response, "CurrentVolume").ok_or_else(|| SoapError::Parse)?;
+
+    volume_str.parse().map_err(|_| SoapError::Parse)
+}
+
+/// Sets the volume on an individual speaker (0-100).
+///
+/// Uses the RenderingControl service to control a single speaker's volume,
+/// independent of its group membership. This enables per-original-group
+/// volume control during multi-group streaming.
+///
+/// # Arguments
+/// * `client` - The HTTP client to use for the request
+/// * `speaker_ip` - IP address of the speaker
+/// * `volume` - Desired volume level (0-100, values > 100 are clamped)
+pub async fn set_speaker_volume(client: &Client, speaker_ip: &str, volume: u8) -> SoapResult<()> {
+    let clamped = volume.min(100);
+
+    SoapRequestBuilder::new(client, speaker_ip)
+        .service(SonosService::RenderingControl)
+        .action("SetVolume")
+        .instance_id()
+        .arg("Channel", "Master")
+        .arg("DesiredVolume", clamped.to_string())
+        .send()
+        .await?;
+
+    Ok(())
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Position Info (for Latency Monitoring)
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -865,6 +918,14 @@ impl SonosVolumeControl for SonosClientImpl {
 
     async fn set_group_mute(&self, coordinator_ip: &str, mute: bool) -> SoapResult<()> {
         set_group_mute(&self.client, coordinator_ip, mute).await
+    }
+
+    async fn get_speaker_volume(&self, speaker_ip: &str) -> SoapResult<u8> {
+        get_speaker_volume(&self.client, speaker_ip).await
+    }
+
+    async fn set_speaker_volume(&self, speaker_ip: &str, volume: u8) -> SoapResult<()> {
+        set_speaker_volume(&self.client, speaker_ip, volume).await
     }
 }
 
