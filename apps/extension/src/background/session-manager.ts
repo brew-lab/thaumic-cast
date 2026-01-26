@@ -13,12 +13,7 @@
  * - metadata-cache: for media states
  */
 
-import type {
-  ActiveCast,
-  EncoderConfig,
-  OriginalGroup,
-  TabMediaState,
-} from '@thaumic-cast/protocol';
+import type { ActiveCast, EncoderConfig, TabMediaState } from '@thaumic-cast/protocol';
 import { createLogger } from '@thaumic-cast/shared';
 import { getCachedState } from './metadata-cache';
 import { notifyPopup } from './notification-service';
@@ -74,53 +69,27 @@ interface ActiveCastSession {
   startedAt: number;
   /** Whether synchronized multi-speaker playback is enabled */
   syncSpeakers: boolean;
-  /** Original speaker groups when syncSpeakers is enabled */
-  originalGroups?: OriginalGroup[];
-  /** Cached IP → coordinatorUuid lookup for O(1) mapping */
-  ipToOriginalGroup?: Map<string, string>;
 }
 
 /** In-memory storage of active sessions by tab ID */
 const sessions = new Map<number, ActiveCastSession>();
 
 /**
- * Builds a lookup table mapping speaker IPs to their original group coordinator UUID.
- * Enables O(1) lookup when setting volume on a speaker during sync playback.
- * @param groups - The original groups from PLAYBACK_RESULTS
- * @returns A Map of speakerIp → coordinatorUuid
- */
-function buildIpToGroupLookup(groups: OriginalGroup[]): Map<string, string> {
-  const map = new Map<string, string>();
-  for (const group of groups) {
-    for (const ip of group.speakerIps) {
-      map.set(ip, group.coordinatorUuid);
-    }
-  }
-  return map;
-}
-
-/**
  * Debounced storage for session persistence, registered with manager.
  * Uses immediate persist() calls (not schedule()) since session data is critical
  * and changes are infrequent.
  */
-/** Session data as stored (excludes non-serializable Map cache) */
-type StoredSession = Omit<ActiveCastSession, 'ipToOriginalGroup'>;
-
-const storage = persistenceManager.register<[number, StoredSession][]>(
+const storage = persistenceManager.register<[number, ActiveCastSession][]>(
   {
     storageKey: 'activeSessions',
     debounceMs: 0, // Not used - we call persist() directly for immediate writes
     loggerName: 'SessionManager',
-    serialize: () =>
-      // Note: ipToOriginalGroup (Map) serializes to {} but is rebuilt from
-      // originalGroups on restore, so we don't need to explicitly exclude it
-      Array.from(sessions.entries()) as [number, StoredSession][],
+    serialize: () => Array.from(sessions.entries()),
     restore: (stored) => {
       if (!Array.isArray(stored)) return undefined;
 
       // Migrate old session formats
-      const migrated = (stored as [number, StoredSession][]).map(([tabId, session]) => {
+      const migrated = (stored as [number, ActiveCastSession][]).map(([tabId, session]) => {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const legacy = session as any;
         // Migrate single-speaker format to multi-speaker arrays
@@ -135,7 +104,7 @@ const storage = persistenceManager.register<[number, StoredSession][]>(
         if (session.syncSpeakers === undefined) {
           session.syncSpeakers = false;
         }
-        return [tabId, session] as [number, StoredSession];
+        return [tabId, session] as [number, ActiveCastSession];
       });
 
       return migrated;
@@ -144,16 +113,7 @@ const storage = persistenceManager.register<[number, StoredSession][]>(
   (data) => {
     if (data && data.length > 0) {
       sessions.clear();
-      for (const [tabId, storedSession] of data) {
-        // Rebuild ipToOriginalGroup cache from originalGroups
-        // (Maps don't survive JSON serialization)
-        const session: ActiveCastSession = {
-          ...storedSession,
-          ipToOriginalGroup:
-            storedSession.originalGroups && storedSession.originalGroups.length > 0
-              ? buildIpToGroupLookup(storedSession.originalGroups)
-              : undefined,
-        };
+      for (const [tabId, session] of data) {
         sessions.set(tabId, session);
       }
       log.info(`Restored ${sessions.size} sessions`);
@@ -291,27 +251,6 @@ export function removeSpeakerFromSession(tabId: number, speakerIp: string): bool
   session.speakerIps.splice(index, 1);
   session.speakerNames.splice(index, 1);
 
-  // Clean up originalGroups and ipToOriginalGroup cache
-  if (session.originalGroups) {
-    for (const group of session.originalGroups) {
-      const ipIndex = group.speakerIps.indexOf(speakerIp);
-      if (ipIndex !== -1) {
-        group.speakerIps.splice(ipIndex, 1);
-      }
-    }
-    // Remove empty groups
-    session.originalGroups = session.originalGroups.filter((g) => g.speakerIps.length > 0);
-    if (session.originalGroups.length === 0) {
-      session.originalGroups = undefined;
-    }
-  }
-  if (session.ipToOriginalGroup) {
-    session.ipToOriginalGroup.delete(speakerIp);
-    if (session.ipToOriginalGroup.size === 0) {
-      session.ipToOriginalGroup = undefined;
-    }
-  }
-
   // If no speakers left, remove the entire session
   if (session.speakerIps.length === 0) {
     removeSession(tabId);
@@ -340,37 +279,6 @@ export function getSessionByStreamId(streamId: string): ActiveCastSession | unde
     }
   }
   return undefined;
-}
-
-/**
- * Updates a session with original groups data.
- * Called after receiving PLAYBACK_RESULTS with originalGroups when syncSpeakers is enabled.
- * Builds the IP → coordinatorUuid lookup table for efficient volume routing.
- * @param tabId - The tab ID of the session
- * @param originalGroups - The original groups from PLAYBACK_RESULTS
- */
-export function setSessionOriginalGroups(tabId: number, originalGroups: OriginalGroup[]): void {
-  const session = sessions.get(tabId);
-  if (!session) return;
-
-  session.originalGroups = originalGroups;
-  session.ipToOriginalGroup = buildIpToGroupLookup(originalGroups);
-  persistSessions();
-  log.info(
-    `Set original groups for tab ${tabId}: ${originalGroups.length} group(s), ${session.ipToOriginalGroup.size} IP(s) mapped`,
-  );
-}
-
-/**
- * Gets the original group coordinator UUID for a speaker IP within a session.
- * Returns undefined if not in a sync session or speaker not found.
- * @param tabId - The tab ID of the session
- * @param speakerIp - The speaker IP to look up
- * @returns The coordinator UUID or undefined
- */
-export function getOriginalGroupForSpeaker(tabId: number, speakerIp: string): string | undefined {
-  const session = sessions.get(tabId);
-  return session?.ipToOriginalGroup?.get(speakerIp);
 }
 
 /**

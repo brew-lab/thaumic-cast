@@ -378,10 +378,6 @@ impl GenaSubscriptionManager {
             SonosService::GroupRenderingControl => {
                 gena_event_builder::build_group_rendering_events(&ip, body)
             }
-            SonosService::RenderingControl => {
-                // Not subscribed - RenderingControl is only used for SOAP control requests
-                vec![]
-            }
             SonosService::ZoneGroupTopology => gena_event_builder::build_zone_topology_events(body),
         }
     }

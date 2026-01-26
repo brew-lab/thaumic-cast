@@ -66,23 +66,6 @@ export const PlaybackSessionSchema = z.object({
 export type PlaybackSession = z.infer<typeof PlaybackSessionSchema>;
 
 /**
- * Represents an original Sonos group during multi-group streaming.
- *
- * When multiple groups are joined for synchronized streaming, this identifies
- * which speakers belonged to the same original group, enabling per-group
- * volume control.
- */
-export const OriginalGroupSchema = z.object({
-  /** UUID of the original group's coordinator (RINCON_xxx format). */
-  coordinatorUuid: z.string(),
-  /** Human-readable name of the original group (if available from topology). */
-  name: z.string().optional(),
-  /** IP addresses of all speakers in this original group (sorted). */
-  speakerIps: z.array(z.string()),
-});
-export type OriginalGroup = z.infer<typeof OriginalGroupSchema>;
-
-/**
  * Complete Sonos state snapshot sent on WebSocket connect.
  */
 export const SonosStateSnapshotSchema = z.object({

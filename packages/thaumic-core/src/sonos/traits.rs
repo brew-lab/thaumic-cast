@@ -144,46 +144,6 @@ pub trait SonosVolumeControl: Send + Sync {
     /// * `coordinator_ip` - IP address of the group coordinator
     /// * `mute` - `true` to mute, `false` to unmute
     async fn set_group_mute(&self, coordinator_ip: &str, mute: bool) -> SoapResult<()>;
-
-    /// Gets the current volume from an individual speaker (0-100).
-    ///
-    /// Uses the RenderingControl service to query a single speaker's volume,
-    /// independent of its group membership.
-    ///
-    /// # Arguments
-    /// * `speaker_ip` - IP address of the speaker
-    async fn get_speaker_volume(&self, speaker_ip: &str) -> SoapResult<u8>;
-
-    /// Sets the volume on an individual speaker (0-100).
-    ///
-    /// Uses the RenderingControl service to control a single speaker's volume,
-    /// independent of its group membership. This enables per-original-group
-    /// volume control during multi-group streaming.
-    ///
-    /// # Arguments
-    /// * `speaker_ip` - IP address of the speaker
-    /// * `volume` - Desired volume level (0-100, values > 100 are clamped)
-    async fn set_speaker_volume(&self, speaker_ip: &str, volume: u8) -> SoapResult<()>;
-
-    /// Gets the mute state from an individual speaker.
-    ///
-    /// Uses the RenderingControl service to query a single speaker's mute state,
-    /// independent of its group membership.
-    ///
-    /// # Arguments
-    /// * `speaker_ip` - IP address of the speaker
-    async fn get_speaker_mute(&self, speaker_ip: &str) -> SoapResult<bool>;
-
-    /// Sets the mute state on an individual speaker.
-    ///
-    /// Uses the RenderingControl service to control a single speaker's mute state,
-    /// independent of its group membership. This enables per-original-group
-    /// mute control during multi-group streaming.
-    ///
-    /// # Arguments
-    /// * `speaker_ip` - IP address of the speaker
-    /// * `mute` - `true` to mute, `false` to unmute
-    async fn set_speaker_mute(&self, speaker_ip: &str, mute: bool) -> SoapResult<()>;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
