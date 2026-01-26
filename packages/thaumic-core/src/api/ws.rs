@@ -17,10 +17,7 @@ use crate::protocol_constants::{
     MIN_FRAME_DURATION_MS, MIN_STREAMING_BUFFER_MS, SILENCE_FRAME_DURATION_MS,
     WS_HEARTBEAT_CHECK_INTERVAL_SECS, WS_HEARTBEAT_TIMEOUT_SECS,
 };
-use crate::services::{
-    set_multi_speaker_mute, set_multi_speaker_volume, OriginalGroup, PlaybackResult,
-    StreamCoordinator,
-};
+use crate::services::StreamCoordinator;
 use crate::stream::{AudioCodec, AudioFormat, Passthrough, StreamMetadata, Transcoder};
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -65,37 +62,15 @@ impl Drop for StreamGuard {
 #[derive(Deserialize)]
 #[serde(tag = "type", rename_all = "SCREAMING_SNAKE_CASE")]
 enum WsIncoming {
-    Handshake {
-        payload: HandshakeRequest,
-    },
+    Handshake { payload: HandshakeRequest },
     Heartbeat,
-    MetadataUpdate {
-        payload: StreamMetadata,
-    },
-    SetVolume {
-        payload: WsVolumeRequest,
-    },
-    SetMute {
-        payload: WsMuteRequest,
-    },
-    GetVolume {
-        payload: WsSpeakerRequest,
-    },
-    GetMute {
-        payload: WsSpeakerRequest,
-    },
-    StartPlayback {
-        payload: StartPlaybackRequest,
-    },
-    StopPlaybackSpeaker {
-        payload: StopPlaybackSpeakerPayload,
-    },
-    SetOriginalGroupVolume {
-        payload: SetOriginalGroupVolumeRequest,
-    },
-    SetOriginalGroupMute {
-        payload: SetOriginalGroupMuteRequest,
-    },
+    MetadataUpdate { payload: StreamMetadata },
+    SetVolume { payload: WsVolumeRequest },
+    SetMute { payload: WsMuteRequest },
+    GetVolume { payload: WsSpeakerRequest },
+    GetMute { payload: WsSpeakerRequest },
+    StartPlayback { payload: StartPlaybackRequest },
+    StopPlaybackSpeaker { payload: StopPlaybackSpeakerPayload },
 }
 
 /// Request payload for starting playback via WebSocket.
@@ -166,24 +141,6 @@ struct StopPlaybackSpeakerPayload {
     reason: Option<SpeakerRemovalReason>,
 }
 
-/// Request payload for setting volume on an original speaker group.
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct SetOriginalGroupVolumeRequest {
-    stream_id: String,
-    coordinator_uuid: String,
-    volume: u8,
-}
-
-/// Request payload for setting mute on an original speaker group.
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct SetOriginalGroupMuteRequest {
-    stream_id: String,
-    coordinator_uuid: String,
-    mute: bool,
-}
-
 /// Encoder configuration from extension.
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -244,14 +201,6 @@ enum WsOutgoing {
     PlaybackResults {
         payload: PlaybackResultsPayload,
     },
-    /// Result of setting volume on an original speaker group.
-    OriginalGroupVolumeResult {
-        payload: OriginalGroupVolumeResultPayload,
-    },
-    /// Result of setting mute on an original speaker group.
-    OriginalGroupMuteResult {
-        payload: OriginalGroupMuteResultPayload,
-    },
 }
 
 /// Payload for stream ready notification.
@@ -273,11 +222,7 @@ struct PlaybackErrorPayload {
 #[serde(rename_all = "camelCase")]
 struct PlaybackResultsPayload {
     /// Per-speaker results (success/failure for each).
-    results: Vec<PlaybackResult>,
-    /// Original speaker groups when sync_speakers is enabled.
-    /// Allows per-original-group volume control in the extension.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    original_groups: Option<Vec<OriginalGroup>>,
+    results: Vec<crate::services::stream_coordinator::PlaybackResult>,
 }
 
 /// Payload for volume state responses.
@@ -294,42 +239,6 @@ struct WsVolumePayload {
 struct WsMutePayload {
     ip: String,
     mute: bool,
-}
-
-/// Payload for original group volume result responses.
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-struct OriginalGroupVolumeResultPayload {
-    /// Stream ID for disambiguation when multiple streams exist.
-    stream_id: String,
-    /// Coordinator UUID of the original group.
-    coordinator_uuid: String,
-    /// Volume level that was set.
-    volume: u8,
-    /// Number of speakers that successfully had volume set.
-    success: usize,
-    /// Total number of speakers attempted.
-    total: usize,
-    /// List of (ip, error) tuples for failures.
-    failures: Vec<(String, String)>,
-}
-
-/// Payload for original group mute result responses.
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-struct OriginalGroupMuteResultPayload {
-    /// Stream ID for disambiguation when multiple streams exist.
-    stream_id: String,
-    /// Coordinator UUID of the original group.
-    coordinator_uuid: String,
-    /// Mute state that was set.
-    mute: bool,
-    /// Number of speakers that successfully had mute set.
-    success: usize,
-    /// Total number of speakers attempted.
-    total: usize,
-    /// List of (ip, error) tuples for failures.
-    failures: Vec<(String, String)>,
 }
 
 impl WsOutgoing {
@@ -593,132 +502,6 @@ fn handle_binary_data(state: &AppState, stream_id: &str, data: Bytes) -> bool {
         .unwrap_or(false)
 }
 
-/// Handles SET_ORIGINAL_GROUP_VOLUME command.
-///
-/// Looks up the original group by coordinator UUID and sets volume on all
-/// speakers in that group using RenderingControl (per-speaker) instead of
-/// GroupRenderingControl.
-async fn handle_set_original_group_volume(
-    state: &AppState,
-    payload: SetOriginalGroupVolumeRequest,
-) -> WsOutgoing {
-    let group = state
-        .stream_coordinator
-        .get_original_group(&payload.stream_id, &payload.coordinator_uuid);
-
-    match group {
-        Some(group) if !group.speaker_ips.is_empty() => {
-            match set_multi_speaker_volume(
-                Arc::clone(&state.sonos),
-                &group.speaker_ips,
-                payload.volume,
-            )
-            .await
-            {
-                Ok(result) => WsOutgoing::OriginalGroupVolumeResult {
-                    payload: OriginalGroupVolumeResultPayload {
-                        stream_id: payload.stream_id,
-                        coordinator_uuid: payload.coordinator_uuid,
-                        volume: payload.volume,
-                        success: result.success,
-                        total: result.total,
-                        failures: result.failures,
-                    },
-                },
-                Err(e) => WsOutgoing::Error {
-                    message: e.to_string(),
-                },
-            }
-        }
-        Some(group) => {
-            log::warn!(
-                "[WS] SET_ORIGINAL_GROUP_VOLUME: group {} has empty speaker_ips",
-                group.coordinator_uuid
-            );
-            WsOutgoing::Error {
-                message: format!(
-                    "Original group {} has no speakers",
-                    payload.coordinator_uuid
-                ),
-            }
-        }
-        None => {
-            log::warn!(
-                "[WS] SET_ORIGINAL_GROUP_VOLUME: group {} not found in stream {}",
-                payload.coordinator_uuid,
-                payload.stream_id
-            );
-            WsOutgoing::Error {
-                message: format!(
-                    "Original group {} not found in stream {}",
-                    payload.coordinator_uuid, payload.stream_id
-                ),
-            }
-        }
-    }
-}
-
-/// Handles SET_ORIGINAL_GROUP_MUTE command.
-///
-/// Looks up the original group by coordinator UUID and sets mute on all
-/// speakers in that group using RenderingControl (per-speaker) instead of
-/// GroupRenderingControl.
-async fn handle_set_original_group_mute(
-    state: &AppState,
-    payload: SetOriginalGroupMuteRequest,
-) -> WsOutgoing {
-    let group = state
-        .stream_coordinator
-        .get_original_group(&payload.stream_id, &payload.coordinator_uuid);
-
-    match group {
-        Some(group) if !group.speaker_ips.is_empty() => {
-            match set_multi_speaker_mute(Arc::clone(&state.sonos), &group.speaker_ips, payload.mute)
-                .await
-            {
-                Ok(result) => WsOutgoing::OriginalGroupMuteResult {
-                    payload: OriginalGroupMuteResultPayload {
-                        stream_id: payload.stream_id,
-                        coordinator_uuid: payload.coordinator_uuid,
-                        mute: payload.mute,
-                        success: result.success,
-                        total: result.total,
-                        failures: result.failures,
-                    },
-                },
-                Err(e) => WsOutgoing::Error {
-                    message: e.to_string(),
-                },
-            }
-        }
-        Some(group) => {
-            log::warn!(
-                "[WS] SET_ORIGINAL_GROUP_MUTE: group {} has empty speaker_ips",
-                group.coordinator_uuid
-            );
-            WsOutgoing::Error {
-                message: format!(
-                    "Original group {} has no speakers",
-                    payload.coordinator_uuid
-                ),
-            }
-        }
-        None => {
-            log::warn!(
-                "[WS] SET_ORIGINAL_GROUP_MUTE: group {} not found in stream {}",
-                payload.coordinator_uuid,
-                payload.stream_id
-            );
-            WsOutgoing::Error {
-                message: format!(
-                    "Original group {} not found in stream {}",
-                    payload.coordinator_uuid, payload.stream_id
-                ),
-            }
-        }
-    }
-}
-
 /// WebSocket upgrade handler.
 pub async fn ws_handler(ws: WebSocketUpgrade, State(state): State<AppState>) -> impl IntoResponse {
     ws.on_upgrade(move |socket| handle_ws(socket, state))
@@ -905,29 +688,9 @@ async fn handle_ws(socket: WebSocket, state: AppState) {
                                         }
                                     }
 
-                                    // IMPORTANT: Fetch original groups AFTER start_playback_multi
-                                    // because get_original_groups reads from playback_sessions which
-                                    // are inserted during start_playback_multi. Calling before would
-                                    // return empty.
-                                    let original_groups =
-                                        if payload.sync_speakers && results.iter().any(|r| r.success) {
-                                            let groups =
-                                                state.stream_coordinator.get_original_groups(&stream_id);
-                                            if groups.is_empty() {
-                                                None
-                                            } else {
-                                                Some(groups)
-                                            }
-                                        } else {
-                                            None
-                                        };
-
                                     // Send PLAYBACK_RESULTS with per-speaker outcomes
                                     let msg = WsOutgoing::PlaybackResults {
-                                        payload: PlaybackResultsPayload {
-                                            results,
-                                            original_groups,
-                                        },
+                                        payload: PlaybackResultsPayload { results },
                                     };
                                     if let Some(msg) = msg.to_message() {
                                         let _ = sender.send(msg).await;
@@ -960,20 +723,6 @@ async fn handle_ws(socket: WebSocket, state: AppState) {
                                         .latency_monitor
                                         .stop_speaker(&payload.stream_id, &ip)
                                         .await;
-                                }
-                            }
-                            Ok(WsIncoming::SetOriginalGroupVolume { payload }) => {
-                                let response =
-                                    handle_set_original_group_volume(&state, payload).await;
-                                if let Some(msg) = response.to_message() {
-                                    let _ = sender.send(msg).await;
-                                }
-                            }
-                            Ok(WsIncoming::SetOriginalGroupMute { payload }) => {
-                                let response =
-                                    handle_set_original_group_mute(&state, payload).await;
-                                if let Some(msg) = response.to_message() {
-                                    let _ = sender.send(msg).await;
                                 }
                             }
                             Err(_) => {} // Unknown message type, ignore

@@ -8,7 +8,7 @@
  * Outbound messages flow from Worker to StreamSession.
  */
 
-import type { EncoderConfig, OriginalGroup, StreamMetadata } from '@thaumic-cast/protocol';
+import type { EncoderConfig, StreamMetadata } from '@thaumic-cast/protocol';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Inbound Messages (StreamSession → Worker)
@@ -102,8 +102,6 @@ export interface WorkerPlaybackResultsMessage {
     streamUrl?: string;
     error?: string;
   }>;
-  /** Original speaker groups when syncSpeakers is enabled. */
-  originalGroups?: OriginalGroup[];
 }
 
 /** Playback error occurred. */

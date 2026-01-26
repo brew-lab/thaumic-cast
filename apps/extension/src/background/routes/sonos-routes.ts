@@ -2,21 +2,15 @@
  * Sonos Control Routes
  *
  * Handles message routing for Sonos state and controls:
- * - GET_SONOS_STATE, SET_VOLUME, SET_MUTE, SET_ORIGINAL_GROUP_VOLUME, CONTROL_MEDIA
+ * - GET_SONOS_STATE, SET_VOLUME, SET_MUTE, CONTROL_MEDIA
  */
 
 import { registerRoute, registerValidatedRoute } from '../router';
 import { getSonosState } from '../handlers/connection';
-import {
-  handleSetVolume,
-  handleSetMute,
-  handleSetOriginalGroupVolume,
-  handleControlMedia,
-} from '../handlers/media-control';
+import { handleSetVolume, handleSetMute, handleControlMedia } from '../handlers/media-control';
 import {
   SetVolumeMessageSchema,
   SetMuteMessageSchema,
-  SetOriginalGroupVolumeMessageSchema,
   ControlMediaMessageSchema,
 } from '../../lib/message-schemas';
 
@@ -31,12 +25,6 @@ export function registerSonosRoutes(): void {
   registerValidatedRoute('SET_VOLUME', SetVolumeMessageSchema, handleSetVolume);
 
   registerValidatedRoute('SET_MUTE', SetMuteMessageSchema, handleSetMute);
-
-  registerValidatedRoute(
-    'SET_ORIGINAL_GROUP_VOLUME',
-    SetOriginalGroupVolumeMessageSchema,
-    handleSetOriginalGroupVolume,
-  );
 
   registerValidatedRoute('CONTROL_MEDIA', ControlMediaMessageSchema, async (msg) => {
     await handleControlMedia(msg);

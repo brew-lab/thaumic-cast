@@ -28,13 +28,7 @@ import { loadExtensionSettings } from '../../lib/settings';
 import { getCachedCodecSupport } from '../../lib/codec-cache';
 import { resolveAudioMode, describeEncoderConfig } from '../../lib/presets';
 import { getCachedState, updateCache } from '../metadata-cache';
-import {
-  registerSession,
-  hasSession,
-  getSession,
-  getSessionCount,
-  setSessionOriginalGroups,
-} from '../session-manager';
+import { registerSession, hasSession, getSession, getSessionCount } from '../session-manager';
 import { getSpeakerGroups } from '../sonos-state';
 import { getConnectionState, clearConnectionState } from '../connection-state';
 import { stopCastForTab } from '../sonos-event-handlers';
@@ -197,11 +191,6 @@ export async function handleStartCast(msg: StartCastMessage): Promise<ExtensionR
         encoderConfig,
         settings.syncSpeakers,
       );
-
-      // Store original groups for per-group volume control in sync sessions
-      if (playbackResponse.originalGroups && playbackResponse.originalGroups.length > 0) {
-        setSessionOriginalGroups(tab.id, playbackResponse.originalGroups);
-      }
 
       return { success: true };
     } else {

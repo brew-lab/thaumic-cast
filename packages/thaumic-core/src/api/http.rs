@@ -36,7 +36,6 @@ use crate::protocol_constants::{
     APP_NAME, ICY_METAINT, MAX_CADENCE_QUEUE_SIZE, MAX_GENA_BODY_SIZE, SERVICE_ID,
     WAV_STREAM_SIZE_MAX,
 };
-use crate::services::{set_multi_speaker_mute, set_multi_speaker_volume};
 use crate::sonos::discovery::probe_speaker_by_ip;
 use crate::state::ManualSpeakerConfig;
 use crate::stream::{
@@ -495,36 +494,6 @@ struct MuteRequest {
 }
 
 #[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct OriginalGroupVolumeRequest {
-    speaker_ips: Vec<String>,
-    volume: u8,
-}
-
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct StreamGroupVolumeRequest {
-    stream_id: String,
-    coordinator_uuid: String,
-    volume: u8,
-}
-
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct OriginalGroupMuteRequest {
-    speaker_ips: Vec<String>,
-    mute: bool,
-}
-
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct StreamGroupMuteRequest {
-    stream_id: String,
-    coordinator_uuid: String,
-    mute: bool,
-}
-
-#[derive(Deserialize)]
 struct ManualSpeakerRequest {
     ip: String,
 }
@@ -548,17 +517,6 @@ pub fn create_router(state: AppState) -> Router {
             get(get_volume).post(set_volume),
         )
         .route("/api/speakers/{ip}/mute", get(get_mute).post(set_mute))
-        .route(
-            "/api/streams/{id}/original-groups",
-            get(get_original_groups),
-        )
-        .route(
-            "/api/volume/original-group",
-            post(set_original_group_volume),
-        )
-        .route("/api/volume/stream-group", post(set_stream_group_volume))
-        .route("/api/mute/original-group", post(set_original_group_mute))
-        .route("/api/mute/stream-group", post(set_stream_group_mute))
         .route("/api/speakers/manual/probe", post(probe_manual_speaker))
         .route(
             "/api/speakers/manual",
@@ -856,95 +814,6 @@ async fn set_mute(
 ) -> ThaumicResult<impl IntoResponse> {
     state.sonos.set_group_mute(&ip, payload.mute).await?;
     Ok(api_success(json!({ "ip": ip, "mute": payload.mute })))
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Original Group Volume/Mute Control
-// ─────────────────────────────────────────────────────────────────────────────
-
-/// Gets the original groups for an active stream.
-///
-/// Returns which speakers belonged to which original Sonos group before
-/// they were joined for streaming. Useful for building a volume control UI.
-async fn get_original_groups(
-    Path(stream_id): Path<String>,
-    State(state): State<AppState>,
-) -> impl IntoResponse {
-    let groups = state.stream_coordinator.get_original_groups(&stream_id);
-    api_success(json!({ "groups": groups }))
-}
-
-/// Converts multi-speaker operation result to HTTP response.
-/// Used by both volume and mute handlers.
-/// Note: "all failed" case is handled by service functions (returns Err).
-fn multi_speaker_result_to_response(
-    success: usize,
-    total: usize,
-    failures: Vec<(String, String)>,
-) -> ThaumicResult<Response> {
-    Ok(api_success(json!({
-        "success": success,
-        "total": total,
-        "failures": failures
-    }))
-    .into_response())
-}
-
-/// Sets volume for speakers by IP list (low-level).
-async fn set_original_group_volume(
-    State(state): State<AppState>,
-    Json(payload): Json<OriginalGroupVolumeRequest>,
-) -> ThaumicResult<impl IntoResponse> {
-    let result =
-        set_multi_speaker_volume(state.sonos, &payload.speaker_ips, payload.volume).await?;
-    multi_speaker_result_to_response(result.success, result.total, result.failures)
-}
-
-/// Convenience: Sets volume by stream_id + coordinator_uuid (looks up IPs server-side).
-async fn set_stream_group_volume(
-    State(state): State<AppState>,
-    Json(payload): Json<StreamGroupVolumeRequest>,
-) -> ThaumicResult<impl IntoResponse> {
-    let group = state
-        .stream_coordinator
-        .get_original_group(&payload.stream_id, &payload.coordinator_uuid)
-        .ok_or_else(|| {
-            ThaumicError::InvalidRequest(format!(
-                "No original group with coordinator_uuid {} in stream {}",
-                payload.coordinator_uuid, payload.stream_id
-            ))
-        })?;
-
-    let result = set_multi_speaker_volume(state.sonos, &group.speaker_ips, payload.volume).await?;
-    multi_speaker_result_to_response(result.success, result.total, result.failures)
-}
-
-/// Sets mute for speakers by IP list (low-level).
-async fn set_original_group_mute(
-    State(state): State<AppState>,
-    Json(payload): Json<OriginalGroupMuteRequest>,
-) -> ThaumicResult<impl IntoResponse> {
-    let result = set_multi_speaker_mute(state.sonos, &payload.speaker_ips, payload.mute).await?;
-    multi_speaker_result_to_response(result.success, result.total, result.failures)
-}
-
-/// Convenience: Sets mute by stream_id + coordinator_uuid (looks up IPs server-side).
-async fn set_stream_group_mute(
-    State(state): State<AppState>,
-    Json(payload): Json<StreamGroupMuteRequest>,
-) -> ThaumicResult<impl IntoResponse> {
-    let group = state
-        .stream_coordinator
-        .get_original_group(&payload.stream_id, &payload.coordinator_uuid)
-        .ok_or_else(|| {
-            ThaumicError::InvalidRequest(format!(
-                "No original group with coordinator_uuid {} in stream {}",
-                payload.coordinator_uuid, payload.stream_id
-            ))
-        })?;
-
-    let result = set_multi_speaker_mute(state.sonos, &group.speaker_ips, payload.mute).await?;
-    multi_speaker_result_to_response(result.success, result.total, result.failures)
 }
 
 async fn handle_gena_notify(

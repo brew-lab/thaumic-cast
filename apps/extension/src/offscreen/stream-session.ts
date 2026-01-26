@@ -16,7 +16,7 @@
 
 import { createLogger } from '@thaumic-cast/shared';
 import { createAudioRingBuffer, HEADER_SIZE } from './ring-buffer';
-import type { EncoderConfig, OriginalGroup, StreamMetadata } from '@thaumic-cast/protocol';
+import type { EncoderConfig, StreamMetadata } from '@thaumic-cast/protocol';
 import { isSupportedSampleRate } from '@thaumic-cast/protocol';
 import { noop } from '../lib/noop';
 import type { WorkerOutboundMessage } from './worker-messages';
@@ -92,15 +92,14 @@ export class StreamSession {
 
   /** Pending playback request resolver for multi-group results. */
   private playbackResultsResolver: {
-    resolve: (result: {
+    resolve: (
       results: Array<{
         speakerIp: string;
         success: boolean;
         streamUrl?: string;
         error?: string;
-      }>;
-      originalGroups?: OriginalGroup[];
-    }) => void;
+      }>,
+    ) => void;
     reject: (error: Error) => void;
   } | null = null;
 
@@ -416,17 +415,15 @@ export class StreamSession {
           break;
 
         case 'PLAYBACK_STARTED':
-          // Legacy single-speaker response - convert to new format
+          // Legacy single-speaker response - convert to array format
           log.info(`Playback started on ${msg.speakerIp}`);
-          this.playbackResultsResolver?.resolve({
-            results: [
-              {
-                speakerIp: msg.speakerIp,
-                success: true,
-                streamUrl: msg.streamUrl,
-              },
-            ],
-          });
+          this.playbackResultsResolver?.resolve([
+            {
+              speakerIp: msg.speakerIp,
+              success: true,
+              streamUrl: msg.streamUrl,
+            },
+          ]);
           this.playbackResultsResolver = null;
           break;
 
@@ -435,10 +432,7 @@ export class StreamSession {
           log.info(
             `Playback results: ${msg.results.filter((r: { success: boolean }) => r.success).length}/${msg.results.length} speakers started`,
           );
-          this.playbackResultsResolver?.resolve({
-            results: msg.results,
-            originalGroups: msg.originalGroups,
-          });
+          this.playbackResultsResolver?.resolve(msg.results);
           this.playbackResultsResolver = null;
           break;
 
@@ -602,15 +596,14 @@ export class StreamSession {
     metadata?: StreamMetadata,
     syncSpeakers: boolean = false,
     timeoutMs = 15000,
-  ): Promise<{
-    results: Array<{
+  ): Promise<
+    Array<{
       speakerIp: string;
       success: boolean;
       streamUrl?: string;
       error?: string;
-    }>;
-    originalGroups?: OriginalGroup[];
-  }> {
+    }>
+  > {
     if (!this.consumerWorker) {
       throw new Error('Worker not running');
     }
@@ -619,15 +612,14 @@ export class StreamSession {
       throw new Error('Stream not ready - call waitForReady() first');
     }
 
-    const responsePromise = new Promise<{
-      results: Array<{
+    const responsePromise = new Promise<
+      Array<{
         speakerIp: string;
         success: boolean;
         streamUrl?: string;
         error?: string;
-      }>;
-      originalGroups?: OriginalGroup[];
-    }>((resolve, reject) => {
+      }>
+    >((resolve, reject) => {
       this.playbackResultsResolver = { resolve, reject };
     });
 

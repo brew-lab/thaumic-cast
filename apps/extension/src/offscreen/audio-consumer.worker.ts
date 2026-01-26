@@ -858,13 +858,12 @@ function handleWsMessage(event: MessageEvent): void {
         break;
 
       case 'PLAYBACK_RESULTS': {
-        const { results, originalGroups } = message.payload;
+        const results = message.payload.results;
         const successful = results.filter((r) => r.success).length;
         log.info(`Playback results: ${successful}/${results.length} speakers started`);
         postToMain({
           type: 'PLAYBACK_RESULTS',
           results,
-          originalGroups,
         });
         break;
       }
@@ -883,22 +882,6 @@ function handleWsMessage(event: MessageEvent): void {
           type: 'ERROR',
           message: message.payload.message,
         });
-        break;
-
-      case 'ORIGINAL_GROUP_VOLUME_RESULT':
-        // Fire-and-forget acknowledgment - log for debugging, no UI action needed.
-        // Errors are sent as ERROR messages (all-failed case), so this only fires on success.
-        log.debug(
-          `Original group volume set: ${message.payload.success}/${message.payload.total} speakers`,
-        );
-        break;
-
-      case 'ORIGINAL_GROUP_MUTE_RESULT':
-        // Fire-and-forget acknowledgment - log for debugging, no UI action needed.
-        // Errors are sent as ERROR messages (all-failed case), so this only fires on success.
-        log.debug(
-          `Original group mute set: ${message.payload.success}/${message.payload.total} speakers`,
-        );
         break;
 
       default:

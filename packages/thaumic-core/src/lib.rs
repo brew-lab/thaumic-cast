@@ -71,7 +71,7 @@ pub use sonos::types::{TransportState, ZoneGroup};
 pub use sonos::{SonosClient, SonosClientImpl, SonosPlayback, SonosService, SonosTopologyClient};
 
 // Re-export service types
-pub use services::stream_coordinator::{OriginalGroup, PlaybackSession};
+pub use services::stream_coordinator::PlaybackSession;
 
 // Re-export stream types
 pub use stream::{AudioCodec, AudioFormat, StreamMetadata, TaggedFrame};

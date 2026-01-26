@@ -2,7 +2,7 @@ import { z } from 'zod';
 
 import { EncoderConfigSchema } from './encoder.js';
 import { SpeakerRemovalReasonSchema } from './events.js';
-import { InitialStatePayloadSchema, OriginalGroupSchema } from './sonos.js';
+import { InitialStatePayloadSchema } from './sonos.js';
 import { StreamMetadataSchema } from './stream.js';
 
 /**
@@ -155,7 +155,7 @@ export type WsPlaybackErrorMessage = z.infer<typeof WsPlaybackErrorMessageSchema
 
 /**
  * Payload for multi-group playback results message.
- * Contains per-speaker success/failure information and original groups for sync sessions.
+ * Contains per-speaker success/failure information.
  */
 export const WsPlaybackResultsPayloadSchema = z.object({
   results: z.array(
@@ -166,8 +166,6 @@ export const WsPlaybackResultsPayloadSchema = z.object({
       error: z.string().optional(),
     }),
   ),
-  /** Original speaker groups when syncSpeakers is enabled. */
-  originalGroups: z.array(OriginalGroupSchema).optional(),
 });
 export type WsPlaybackResultsPayload = z.infer<typeof WsPlaybackResultsPayloadSchema>;
 
@@ -176,62 +174,6 @@ export const WsPlaybackResultsMessageSchema = z.object({
   payload: WsPlaybackResultsPayloadSchema,
 });
 export type WsPlaybackResultsMessage = z.infer<typeof WsPlaybackResultsMessageSchema>;
-
-/**
- * Result of setting volume on an original speaker group.
- * Sent by desktop in response to SET_ORIGINAL_GROUP_VOLUME.
- *
- * Note: This is a fire-and-forget acknowledgment for debugging/logging only.
- * The extension logs this but takes no UI action. Failures are handled via
- * ERROR messages (when all speakers fail), so this message only indicates
- * success or partial success.
- */
-export const WsOriginalGroupVolumeResultSchema = z.object({
-  type: z.literal('ORIGINAL_GROUP_VOLUME_RESULT'),
-  payload: z.object({
-    /** Stream ID for disambiguation when multiple streams exist. */
-    streamId: z.string(),
-    /** Coordinator UUID of the original group. */
-    coordinatorUuid: z.string(),
-    /** Volume level that was set. */
-    volume: z.number(),
-    /** Number of speakers that successfully had volume set. */
-    success: z.number(),
-    /** Total number of speakers attempted. */
-    total: z.number(),
-    /** List of [ip, error] tuples for failures. */
-    failures: z.array(z.tuple([z.string(), z.string()])),
-  }),
-});
-export type WsOriginalGroupVolumeResult = z.infer<typeof WsOriginalGroupVolumeResultSchema>;
-
-/**
- * Result of setting mute on an original speaker group.
- * Sent by desktop in response to SET_ORIGINAL_GROUP_MUTE.
- *
- * Note: This is a fire-and-forget acknowledgment for debugging/logging only.
- * The extension logs this but takes no UI action. Failures are handled via
- * ERROR messages (when all speakers fail), so this message only indicates
- * success or partial success.
- */
-export const WsOriginalGroupMuteResultSchema = z.object({
-  type: z.literal('ORIGINAL_GROUP_MUTE_RESULT'),
-  payload: z.object({
-    /** Stream ID for disambiguation when multiple streams exist. */
-    streamId: z.string(),
-    /** Coordinator UUID of the original group. */
-    coordinatorUuid: z.string(),
-    /** Mute state that was set. */
-    mute: z.boolean(),
-    /** Number of speakers that successfully had mute set. */
-    success: z.number(),
-    /** Total number of speakers attempted. */
-    total: z.number(),
-    /** List of [ip, error] tuples for failures. */
-    failures: z.array(z.tuple([z.string(), z.string()])),
-  }),
-});
-export type WsOriginalGroupMuteResult = z.infer<typeof WsOriginalGroupMuteResultSchema>;
 
 /**
  * Discriminated union for all WebSocket messages with typed payloads.
@@ -250,9 +192,6 @@ export const WsMessageSchema = z.discriminatedUnion('type', [
   WsPlaybackStartedMessageSchema,
   WsPlaybackResultsMessageSchema,
   WsPlaybackErrorMessageSchema,
-  // Audio control responses
-  WsOriginalGroupVolumeResultSchema,
-  WsOriginalGroupMuteResultSchema,
 ]);
 export type WsMessage = z.infer<typeof WsMessageSchema>;
 
@@ -297,22 +236,6 @@ export const WsControlCommandSchema = z.discriminatedUnion('type', [
       ip: z.string(),
       /** Reason for stopping (optional for backward compat) */
       reason: SpeakerRemovalReasonSchema.optional(),
-    }),
-  }),
-  z.object({
-    type: z.literal('SET_ORIGINAL_GROUP_VOLUME'),
-    payload: z.object({
-      streamId: z.string(),
-      coordinatorUuid: z.string(),
-      volume: z.number().int().min(0).max(100),
-    }),
-  }),
-  z.object({
-    type: z.literal('SET_ORIGINAL_GROUP_MUTE'),
-    payload: z.object({
-      streamId: z.string(),
-      coordinatorUuid: z.string(),
-      mute: z.boolean(),
     }),
   }),
 ]);
