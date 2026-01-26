@@ -761,14 +761,18 @@ impl StreamCoordinator {
         }
     }
 
-    /// Starts playback of a stream on multiple Sonos speakers with synchronized audio.
+    /// Starts playback of a stream on multiple Sonos speakers.
     ///
-    /// For multiple speakers, uses Sonos's native group coordination:
+    /// When `sync_speakers` is true and multiple speakers are selected, uses Sonos's
+    /// native group coordination:
     /// - One speaker becomes the "coordinator" and receives the actual stream URL
     /// - Other speakers become "slaves" that sync to the coordinator via x-rincon protocol
     /// - This ensures all speakers play audio in perfect sync
     ///
-    /// For single speakers, plays directly without grouping.
+    /// When `sync_speakers` is false, each speaker receives independent streams
+    /// (may have slight audio drift between speakers).
+    ///
+    /// For single speakers, plays directly without grouping regardless of sync setting.
     ///
     /// Returns results for each speaker (best-effort: continues on individual failures).
     /// Each successful speaker gets a `StreamEvent::PlaybackStarted` event.
@@ -778,12 +782,14 @@ impl StreamCoordinator {
     /// * `stream_id` - The stream ID to play
     /// * `metadata` - Optional initial metadata to display on Sonos
     /// * `artwork_url` - URL for album artwork in Sonos DIDL-Lite metadata
+    /// * `sync_speakers` - Whether to synchronize multi-speaker playback
     pub async fn start_playback_multi(
         &self,
         speaker_ips: &[String],
         stream_id: &str,
         metadata: Option<&StreamMetadata>,
         artwork_url: &str,
+        sync_speakers: bool,
     ) -> Vec<PlaybackResult> {
         // Handle empty case
         if speaker_ips.is_empty() {
@@ -822,7 +828,26 @@ impl StreamCoordinator {
             return vec![result];
         }
 
-        // Multiple speakers: use synchronized group playback
+        // Multiple speakers: check sync preference
+        if !sync_speakers {
+            log::info!(
+                "[GroupSync] Sync disabled, using independent streams for {} speakers",
+                speaker_ips.len()
+            );
+            return self
+                .start_playback_multi_legacy(MultiPlaybackParams {
+                    speaker_ips,
+                    stream_id,
+                    stream_url: &stream_url,
+                    codec,
+                    audio_format: &audio_format,
+                    artwork_url,
+                    metadata,
+                })
+                .await;
+        }
+
+        // Sync enabled: use synchronized group playback
         // Try to select a coordinator for group sync
         let Some((coordinator_ip, coordinator_uuid, slave_ips)) =
             self.select_coordinator(speaker_ips)
@@ -1174,7 +1199,13 @@ impl StreamCoordinator {
         artwork_url: &str,
     ) -> ThaumicResult<()> {
         let results = self
-            .start_playback_multi(&[speaker_ip.to_string()], stream_id, metadata, artwork_url)
+            .start_playback_multi(
+                &[speaker_ip.to_string()],
+                stream_id,
+                metadata,
+                artwork_url,
+                false,
+            )
             .await;
 
         if let Some(result) = results.first() {

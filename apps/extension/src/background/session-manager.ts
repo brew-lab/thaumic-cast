@@ -67,6 +67,8 @@ interface ActiveCastSession {
   encoderConfig: EncoderConfig;
   /** Timestamp when cast started */
   startedAt: number;
+  /** Whether synchronized multi-speaker playback is enabled */
+  syncSpeakers: boolean;
 }
 
 /** In-memory storage of active sessions by tab ID */
@@ -86,16 +88,21 @@ const storage = persistenceManager.register<[number, ActiveCastSession][]>(
     restore: (stored) => {
       if (!Array.isArray(stored)) return undefined;
 
-      // Migrate old single-speaker format to multi-speaker arrays
+      // Migrate old session formats
       const migrated = (stored as [number, ActiveCastSession][]).map(([tabId, session]) => {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const legacy = session as any;
+        // Migrate single-speaker format to multi-speaker arrays
         if (legacy.speakerIp && !legacy.speakerIps) {
           session.speakerIps = [legacy.speakerIp];
           session.speakerNames = [legacy.speakerName || legacy.speakerIp];
           delete legacy.speakerIp;
           delete legacy.speakerName;
           log.info(`Migrated session for tab ${tabId} from single to multi-speaker format`);
+        }
+        // Default syncSpeakers to false for sessions created before this field existed
+        if (session.syncSpeakers === undefined) {
+          session.syncSpeakers = false;
         }
         return [tabId, session] as [number, ActiveCastSession];
       });
@@ -123,6 +130,7 @@ const storage = persistenceManager.register<[number, ActiveCastSession][]>(
  * @param speakerIps - Target speaker IP addresses (multi-group support)
  * @param speakerNames - Speaker display names (parallel array)
  * @param encoderConfig - Encoder configuration used
+ * @param syncSpeakers - Whether synchronized multi-speaker playback is enabled
  */
 export function registerSession(
   tabId: number,
@@ -130,6 +138,7 @@ export function registerSession(
   speakerIps: string[],
   speakerNames: string[],
   encoderConfig: EncoderConfig,
+  syncSpeakers: boolean,
 ): void {
   const wasEmpty = sessions.size === 0;
 
@@ -140,6 +149,7 @@ export function registerSession(
     speakerNames,
     encoderConfig,
     startedAt: Date.now(),
+    syncSpeakers,
   });
 
   // Request keep-awake on first session to prevent system throttling

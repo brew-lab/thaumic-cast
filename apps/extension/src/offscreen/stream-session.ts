@@ -586,6 +586,7 @@ export class StreamSession {
    *
    * @param speakerIps - IP addresses of the Sonos speakers
    * @param metadata - Optional initial metadata to display on Sonos
+   * @param syncSpeakers
    * @param timeoutMs - Timeout in milliseconds
    * @returns Promise resolving with per-speaker playback results
    * @throws Error if all playback attempts fail or timeout
@@ -593,6 +594,7 @@ export class StreamSession {
   public async startPlayback(
     speakerIps: string[],
     metadata?: StreamMetadata,
+    syncSpeakers: boolean = false,
     timeoutMs = 15000,
   ): Promise<
     Array<{
@@ -625,6 +627,7 @@ export class StreamSession {
       type: 'START_PLAYBACK',
       speakerIps,
       metadata,
+      syncSpeakers,
     });
 
     const timeoutPromise = new Promise<never>((_, reject) => {

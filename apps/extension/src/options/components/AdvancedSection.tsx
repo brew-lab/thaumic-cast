@@ -29,6 +29,10 @@ export function AdvancedSection({ settings, onUpdate }: AdvancedSectionProps): J
     await onUpdate({ keepTabAudible: !settings.keepTabAudible });
   }, [settings.keepTabAudible, onUpdate]);
 
+  const handleSyncSpeakersToggle = useCallback(async () => {
+    await onUpdate({ syncSpeakers: !settings.syncSpeakers });
+  }, [settings.syncSpeakers, onUpdate]);
+
   return (
     <Card title={t('advanced_section_title')}>
       <div className={styles.cardContent}>
@@ -60,6 +64,22 @@ export function AdvancedSection({ settings, onUpdate }: AdvancedSectionProps): J
             <span className={styles.radioLabel}>{t('keep_tab_audible_enable')}</span>
             <span id="keep-tab-audible-desc" className={styles.radioDesc}>
               {t('keep_tab_audible_description')}
+            </span>
+          </div>
+        </label>
+
+        <label className={styles.radioOption}>
+          <input
+            type="checkbox"
+            className={styles.radioInput}
+            checked={settings.syncSpeakers}
+            onChange={handleSyncSpeakersToggle}
+            aria-describedby="sync-speakers-desc"
+          />
+          <div className={styles.radioContent}>
+            <span className={styles.radioLabel}>{t('sync_speakers_enable')}</span>
+            <span id="sync-speakers-desc" className={styles.radioDesc}>
+              {t('sync_speakers_description')}
             </span>
           </div>
         </label>

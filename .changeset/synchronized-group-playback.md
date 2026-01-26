@@ -28,5 +28,5 @@ When streaming to multiple Sonos speakers, audio now plays in perfect sync by us
 
 - Single speaker: unchanged (no grouping)
 - Multiple speakers: synchronized via x-rincon protocol
-- Fallback: legacy sequential playback if UUID lookup fails
+- Fallback: independent playback if UUID lookup fails
 - User's existing Sonos groups are restored after streaming ends (best-effort)
