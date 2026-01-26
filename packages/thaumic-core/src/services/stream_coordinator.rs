@@ -110,6 +110,12 @@ pub struct PlaybackSession {
     /// Used to restore group membership after streaming ends.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub original_coordinator_uuid: Option<String>,
+    /// The speaker's own UUID (RINCON_xxx format).
+    /// Captured at session creation for original group reconstruction.
+    /// For coordinators: same as coordinator_uuid.
+    /// For slaves: the slave speaker's own UUID (distinct from coordinator_uuid).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub speaker_uuid: Option<String>,
 }
 
 /// Result of starting playback on a single speaker.
@@ -127,6 +133,24 @@ pub struct PlaybackResult {
     /// Error message (on failure).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+}
+
+/// Represents an original Sonos group during multi-group streaming.
+///
+/// When multiple groups are joined for synchronized streaming, this struct
+/// identifies which speakers belonged to the same original group, enabling
+/// per-group volume control.
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OriginalGroup {
+    /// UUID of the original group's coordinator (RINCON_xxx format).
+    /// For speakers that were coordinators, this is their own UUID.
+    pub coordinator_uuid: String,
+    /// Human-readable name of the original group (if available from topology).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    /// IP addresses of all speakers in this original group (sorted).
+    pub speaker_ips: Vec<String>,
 }
 
 /// Service responsible for stream lifecycle and playback orchestration.
@@ -212,6 +236,87 @@ impl StreamCoordinator {
             .filter(|r| r.key().stream_id == stream_id)
             .map(|r| r.value().clone())
             .collect()
+    }
+
+    /// Reconstructs original Sonos groups from active playback sessions.
+    ///
+    /// During multi-group streaming, all speakers are joined into a single
+    /// streaming group. This method reconstructs which speakers belonged to
+    /// the same original Sonos group, enabling per-group volume control.
+    ///
+    /// Returns groups sorted by coordinator_uuid for deterministic ordering.
+    /// Speaker IPs within each group are also sorted.
+    ///
+    /// # Arguments
+    /// * `stream_id` - The stream ID to get original groups for
+    ///
+    /// # Returns
+    /// A vector of `OriginalGroup` structs, each containing speakers from the
+    /// same original Sonos group. Returns empty if stream not found.
+    #[must_use]
+    pub fn get_original_groups(&self, stream_id: &str) -> Vec<OriginalGroup> {
+        use std::collections::HashMap;
+
+        let sessions: Vec<_> = self
+            .playback_sessions
+            .iter()
+            .filter(|r| r.key().stream_id == stream_id)
+            .map(|r| r.value().clone())
+            .collect();
+
+        if sessions.is_empty() {
+            return Vec::new();
+        }
+
+        let mut groups: HashMap<String, Vec<String>> = HashMap::new();
+
+        for session in &sessions {
+            // Determine original group UUID:
+            // - If speaker was a slave before streaming: use original_coordinator_uuid
+            // - Otherwise: use speaker's own UUID (captured at session creation)
+            let uuid = session
+                .original_coordinator_uuid
+                .clone()
+                .or_else(|| session.speaker_uuid.clone());
+
+            match uuid {
+                Some(uuid) => {
+                    groups
+                        .entry(uuid)
+                        .or_default()
+                        .push(session.speaker_ip.clone());
+                }
+                None => {
+                    // Can't resolve UUID - log and exclude from grouping
+                    log::warn!(
+                        "[GroupSync] Cannot resolve original group for speaker {}, excluding from volume control",
+                        session.speaker_ip
+                    );
+                }
+            }
+        }
+
+        // Build sorted results for deterministic output
+        let topology = self.sonos_state.groups.read();
+        let mut result: Vec<_> = groups
+            .into_iter()
+            .filter(|(_, ips)| !ips.is_empty()) // Skip empty groups
+            .map(|(uuid, mut ips)| {
+                ips.sort(); // Sort IPs within group
+                let name = topology
+                    .iter()
+                    .find(|g| g.coordinator_uuid == uuid)
+                    .map(|g| g.name.clone());
+                OriginalGroup {
+                    coordinator_uuid: uuid,
+                    name,
+                    speaker_ips: ips,
+                }
+            })
+            .collect();
+
+        result.sort_by(|a, b| a.coordinator_uuid.cmp(&b.coordinator_uuid)); // Sort groups
+        result
     }
 
     /// Creates a new audio stream with the specified output codec and transcoder.
@@ -699,8 +804,10 @@ impl StreamCoordinator {
             }
         }
 
-        // Capture original group membership before joining the streaming group.
-        // This allows us to restore the speaker to its original group after streaming ends.
+        // Capture speaker's UUID and original group membership before joining the streaming group.
+        // speaker_uuid: needed for original group reconstruction in get_original_groups
+        // original_coordinator_uuid: needed to restore group membership after streaming ends
+        let speaker_uuid = self.sonos_state.get_member_uuid_by_ip(slave_ip);
         let original_coordinator_uuid = self
             .sonos_state
             .get_original_coordinator_for_slave(slave_ip);
@@ -721,6 +828,7 @@ impl StreamCoordinator {
                         coordinator_ip: Some(coordinator_ip.to_string()),
                         coordinator_uuid: Some(coordinator_uuid.to_string()),
                         original_coordinator_uuid,
+                        speaker_uuid,
                     },
                 );
 
@@ -1129,8 +1237,9 @@ impl StreamCoordinator {
             .await
         {
             Ok(()) => {
-                // Look up speaker's UUID for cleanup operations
-                let coordinator_uuid = self.sonos_state.get_member_uuid_by_ip(speaker_ip);
+                // Look up speaker's UUID for cleanup and original group reconstruction.
+                // For coordinators, speaker_uuid == coordinator_uuid.
+                let speaker_uuid = self.sonos_state.get_member_uuid_by_ip(speaker_ip);
 
                 // Capture original group membership for restoration after streaming ends.
                 // This handles the edge case where a speaker that was a slave in an existing
@@ -1149,8 +1258,9 @@ impl StreamCoordinator {
                         codec,
                         role: GroupRole::Coordinator,
                         coordinator_ip: None,
-                        coordinator_uuid,
+                        coordinator_uuid: speaker_uuid.clone(),
                         original_coordinator_uuid,
+                        speaker_uuid,
                     },
                 );
 
@@ -1763,6 +1873,7 @@ mod tests {
             coordinator_ip: None,
             coordinator_uuid: Some("RINCON_XXX".to_string()),
             original_coordinator_uuid: None,
+            speaker_uuid: Some("RINCON_XXX".to_string()),
         };
 
         assert_eq!(session.role, GroupRole::Coordinator);
@@ -1781,6 +1892,7 @@ mod tests {
             coordinator_ip: Some("192.168.1.100".to_string()),
             coordinator_uuid: Some("RINCON_XXX".to_string()),
             original_coordinator_uuid: None,
+            speaker_uuid: Some("RINCON_SLAVE".to_string()),
         };
 
         assert_eq!(session.role, GroupRole::Slave);
@@ -1799,6 +1911,7 @@ mod tests {
             coordinator_ip: Some("192.168.1.100".to_string()),
             coordinator_uuid: Some("RINCON_STREAMING".to_string()),
             original_coordinator_uuid: Some("RINCON_ORIGINAL".to_string()),
+            speaker_uuid: Some("RINCON_SLAVE".to_string()),
         };
 
         assert_eq!(session.role, GroupRole::Slave);
@@ -1822,6 +1935,7 @@ mod tests {
             coordinator_ip: None,
             coordinator_uuid: Some("RINCON_KITCHEN".to_string()),
             original_coordinator_uuid: Some("RINCON_LIVING".to_string()), // Was slave of Living Room
+            speaker_uuid: Some("RINCON_KITCHEN".to_string()),
         };
 
         assert_eq!(session.role, GroupRole::Coordinator);
@@ -1842,6 +1956,7 @@ mod tests {
             coordinator_ip: None,
             coordinator_uuid: Some("RINCON_XXX".to_string()),
             original_coordinator_uuid: None,
+            speaker_uuid: Some("RINCON_XXX".to_string()),
         };
 
         let json = serde_json::to_value(&session).unwrap();
@@ -1865,6 +1980,7 @@ mod tests {
             coordinator_ip: Some("192.168.1.100".to_string()),
             coordinator_uuid: Some("RINCON_XXX".to_string()),
             original_coordinator_uuid: Some("RINCON_ORIGINAL".to_string()),
+            speaker_uuid: Some("RINCON_SLAVE".to_string()),
         };
 
         let json = serde_json::to_value(&session).unwrap();
@@ -1932,5 +2048,476 @@ mod tests {
         };
 
         assert!(result.starts_with("x-rincon-mp3radio://"));
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // OriginalGroup Tests
+    // ─────────────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn original_group_serializes_correctly() {
+        let group = OriginalGroup {
+            coordinator_uuid: "RINCON_KITCHEN".to_string(),
+            name: Some("Kitchen".to_string()),
+            speaker_ips: vec!["192.168.1.100".to_string(), "192.168.1.101".to_string()],
+        };
+
+        let json = serde_json::to_value(&group).unwrap();
+        assert_eq!(json["coordinatorUuid"], "RINCON_KITCHEN");
+        assert_eq!(json["name"], "Kitchen");
+        assert_eq!(json["speakerIps"].as_array().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn original_group_omits_none_name() {
+        let group = OriginalGroup {
+            coordinator_uuid: "RINCON_KITCHEN".to_string(),
+            name: None,
+            speaker_ips: vec!["192.168.1.100".to_string()],
+        };
+
+        let json = serde_json::to_value(&group).unwrap();
+        assert!(json.get("name").is_none());
+    }
+
+    #[test]
+    fn original_group_equality() {
+        let group1 = OriginalGroup {
+            coordinator_uuid: "RINCON_A".to_string(),
+            name: Some("Room A".to_string()),
+            speaker_ips: vec!["192.168.1.100".to_string()],
+        };
+
+        let group2 = group1.clone();
+        assert_eq!(group1.coordinator_uuid, group2.coordinator_uuid);
+        assert_eq!(group1.name, group2.name);
+        assert_eq!(group1.speaker_ips, group2.speaker_ips);
+    }
+
+    #[test]
+    fn original_group_speaker_ips_sorted() {
+        // Verify that when constructing an OriginalGroup, IPs should be sorted
+        // (this is handled by get_original_groups, not the struct itself)
+        let mut ips = vec![
+            "192.168.1.103".to_string(),
+            "192.168.1.101".to_string(),
+            "192.168.1.102".to_string(),
+        ];
+        ips.sort();
+
+        let group = OriginalGroup {
+            coordinator_uuid: "RINCON_A".to_string(),
+            name: None,
+            speaker_ips: ips,
+        };
+
+        assert_eq!(group.speaker_ips[0], "192.168.1.101");
+        assert_eq!(group.speaker_ips[1], "192.168.1.102");
+        assert_eq!(group.speaker_ips[2], "192.168.1.103");
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // get_original_groups Integration Tests
+    // ─────────────────────────────────────────────────────────────────────────
+
+    use crate::context::NetworkContext;
+    use crate::events::NoopEventEmitter;
+    use crate::sonos::types::{ZoneGroup, ZoneGroupMember};
+    use crate::state::{SonosState, StreamingConfig};
+
+    /// Mock SonosPlayback that panics if called (not used by get_original_groups).
+    struct MockSonosPlayback;
+
+    #[async_trait::async_trait]
+    impl SonosPlayback for MockSonosPlayback {
+        async fn play_uri(
+            &self,
+            _ip: &str,
+            _uri: &str,
+            _codec: AudioCodec,
+            _audio_format: &crate::stream::AudioFormat,
+            _metadata: Option<&crate::stream::StreamMetadata>,
+            _artwork_url: &str,
+        ) -> crate::error::SoapResult<()> {
+            panic!("MockSonosPlayback::play_uri should not be called in get_original_groups tests");
+        }
+        async fn play(&self, _ip: &str) -> crate::error::SoapResult<()> {
+            panic!("MockSonosPlayback::play should not be called");
+        }
+        async fn stop(&self, _ip: &str) -> crate::error::SoapResult<()> {
+            panic!("MockSonosPlayback::stop should not be called");
+        }
+        async fn switch_to_queue(&self, _ip: &str, _uuid: &str) -> crate::error::SoapResult<()> {
+            panic!("MockSonosPlayback::switch_to_queue should not be called");
+        }
+        async fn get_position_info(
+            &self,
+            _ip: &str,
+        ) -> crate::error::SoapResult<crate::sonos::types::PositionInfo> {
+            panic!("MockSonosPlayback::get_position_info should not be called");
+        }
+        async fn join_group(
+            &self,
+            _ip: &str,
+            _coordinator_uuid: &str,
+        ) -> crate::error::SoapResult<()> {
+            panic!("MockSonosPlayback::join_group should not be called");
+        }
+        async fn leave_group(&self, _ip: &str) -> crate::error::SoapResult<()> {
+            panic!("MockSonosPlayback::leave_group should not be called");
+        }
+    }
+
+    /// Creates a test StreamCoordinator with the given topology.
+    fn create_test_coordinator(groups: Vec<ZoneGroup>) -> StreamCoordinator {
+        let sonos_state = Arc::new(SonosState::default());
+        *sonos_state.groups.write() = groups;
+
+        StreamCoordinator {
+            sonos: Arc::new(MockSonosPlayback),
+            sonos_state,
+            stream_manager: Arc::new(crate::stream::StreamManager::new(StreamingConfig::default())),
+            network: NetworkContext::for_test(),
+            playback_sessions: DashMap::new(),
+            emitter: Arc::new(NoopEventEmitter),
+        }
+    }
+
+    /// Helper to create a ZoneGroup with members.
+    fn make_zone_group(
+        name: &str,
+        coordinator_uuid: &str,
+        coordinator_ip: &str,
+        member_ips_uuids: &[(&str, &str)],
+    ) -> ZoneGroup {
+        let members = member_ips_uuids
+            .iter()
+            .map(|(ip, uuid)| ZoneGroupMember {
+                uuid: uuid.to_string(),
+                ip: ip.to_string(),
+                zone_name: name.to_string(),
+                model: "One".to_string(),
+            })
+            .collect();
+
+        ZoneGroup {
+            id: format!("RINCON_{}", coordinator_uuid),
+            name: name.to_string(),
+            coordinator_uuid: coordinator_uuid.to_string(),
+            coordinator_ip: coordinator_ip.to_string(),
+            members,
+        }
+    }
+
+    #[test]
+    fn get_original_groups_empty_stream() {
+        let coordinator = create_test_coordinator(vec![]);
+
+        let groups = coordinator.get_original_groups("nonexistent-stream");
+
+        assert!(groups.is_empty());
+    }
+
+    #[test]
+    fn get_original_groups_single_coordinator() {
+        // Setup: One speaker that was a coordinator, now streaming
+        let topology = vec![make_zone_group(
+            "Kitchen",
+            "RINCON_KITCHEN",
+            "192.168.1.100",
+            &[("192.168.1.100", "RINCON_KITCHEN")],
+        )];
+        let coordinator = create_test_coordinator(topology);
+
+        // Add a playback session for the coordinator
+        coordinator.playback_sessions.insert(
+            PlaybackSessionKey::new("stream1", "192.168.1.100"),
+            PlaybackSession {
+                stream_id: "stream1".to_string(),
+                speaker_ip: "192.168.1.100".to_string(),
+                stream_url: "http://server/stream".to_string(),
+                codec: AudioCodec::Aac,
+                role: GroupRole::Coordinator,
+                coordinator_ip: None,
+                coordinator_uuid: Some("RINCON_KITCHEN".to_string()),
+                original_coordinator_uuid: None, // Was already a coordinator
+                speaker_uuid: Some("RINCON_KITCHEN".to_string()),
+            },
+        );
+
+        let groups = coordinator.get_original_groups("stream1");
+
+        assert_eq!(groups.len(), 1);
+        assert_eq!(groups[0].coordinator_uuid, "RINCON_KITCHEN");
+        assert_eq!(groups[0].name, Some("Kitchen".to_string()));
+        assert_eq!(groups[0].speaker_ips, vec!["192.168.1.100"]);
+    }
+
+    #[test]
+    fn get_original_groups_coordinator_with_slaves() {
+        // Setup: Room A has 3 speakers (A1 coordinator, A2/A3 slaves)
+        // All joined into streaming group with A1 as streaming coordinator
+        let topology = vec![make_zone_group(
+            "Living Room",
+            "RINCON_A1",
+            "192.168.1.100",
+            &[
+                ("192.168.1.100", "RINCON_A1"),
+                ("192.168.1.101", "RINCON_A2"),
+                ("192.168.1.102", "RINCON_A3"),
+            ],
+        )];
+        let coordinator = create_test_coordinator(topology);
+
+        // A1 is the streaming coordinator
+        coordinator.playback_sessions.insert(
+            PlaybackSessionKey::new("stream1", "192.168.1.100"),
+            PlaybackSession {
+                stream_id: "stream1".to_string(),
+                speaker_ip: "192.168.1.100".to_string(),
+                stream_url: "http://server/stream".to_string(),
+                codec: AudioCodec::Aac,
+                role: GroupRole::Coordinator,
+                coordinator_ip: None,
+                coordinator_uuid: Some("RINCON_A1".to_string()),
+                original_coordinator_uuid: None,
+                speaker_uuid: Some("RINCON_A1".to_string()),
+            },
+        );
+
+        // A2 and A3 are slaves with original_coordinator_uuid pointing to A1
+        for (ip, uuid) in [
+            ("192.168.1.101", "RINCON_A2"),
+            ("192.168.1.102", "RINCON_A3"),
+        ] {
+            coordinator.playback_sessions.insert(
+                PlaybackSessionKey::new("stream1", ip),
+                PlaybackSession {
+                    stream_id: "stream1".to_string(),
+                    speaker_ip: ip.to_string(),
+                    stream_url: "x-rincon:RINCON_A1".to_string(),
+                    codec: AudioCodec::Aac,
+                    role: GroupRole::Slave,
+                    coordinator_ip: Some("192.168.1.100".to_string()),
+                    coordinator_uuid: Some("RINCON_A1".to_string()),
+                    original_coordinator_uuid: Some("RINCON_A1".to_string()),
+                    speaker_uuid: Some(uuid.to_string()),
+                },
+            );
+        }
+
+        let groups = coordinator.get_original_groups("stream1");
+
+        assert_eq!(groups.len(), 1);
+        assert_eq!(groups[0].coordinator_uuid, "RINCON_A1");
+        assert_eq!(groups[0].speaker_ips.len(), 3);
+        // IPs should be sorted
+        assert_eq!(groups[0].speaker_ips[0], "192.168.1.100");
+        assert_eq!(groups[0].speaker_ips[1], "192.168.1.101");
+        assert_eq!(groups[0].speaker_ips[2], "192.168.1.102");
+    }
+
+    #[test]
+    fn get_original_groups_multiple_original_groups() {
+        // Setup: Room A (2 speakers) and Room B (2 speakers)
+        // All joined into streaming group with A1 as streaming coordinator
+        let topology = vec![
+            make_zone_group(
+                "Kitchen",
+                "RINCON_A1",
+                "192.168.1.100",
+                &[
+                    ("192.168.1.100", "RINCON_A1"),
+                    ("192.168.1.101", "RINCON_A2"),
+                ],
+            ),
+            make_zone_group(
+                "Bedroom",
+                "RINCON_B1",
+                "192.168.1.200",
+                &[
+                    ("192.168.1.200", "RINCON_B1"),
+                    ("192.168.1.201", "RINCON_B2"),
+                ],
+            ),
+        ];
+        let coordinator = create_test_coordinator(topology);
+
+        // A1 is streaming coordinator
+        coordinator.playback_sessions.insert(
+            PlaybackSessionKey::new("stream1", "192.168.1.100"),
+            PlaybackSession {
+                stream_id: "stream1".to_string(),
+                speaker_ip: "192.168.1.100".to_string(),
+                stream_url: "http://server/stream".to_string(),
+                codec: AudioCodec::Aac,
+                role: GroupRole::Coordinator,
+                coordinator_ip: None,
+                coordinator_uuid: Some("RINCON_A1".to_string()),
+                original_coordinator_uuid: None,
+                speaker_uuid: Some("RINCON_A1".to_string()),
+            },
+        );
+
+        // A2 is slave, originally from Room A
+        coordinator.playback_sessions.insert(
+            PlaybackSessionKey::new("stream1", "192.168.1.101"),
+            PlaybackSession {
+                stream_id: "stream1".to_string(),
+                speaker_ip: "192.168.1.101".to_string(),
+                stream_url: "x-rincon:RINCON_A1".to_string(),
+                codec: AudioCodec::Aac,
+                role: GroupRole::Slave,
+                coordinator_ip: Some("192.168.1.100".to_string()),
+                coordinator_uuid: Some("RINCON_A1".to_string()),
+                original_coordinator_uuid: Some("RINCON_A1".to_string()),
+                speaker_uuid: Some("RINCON_A2".to_string()),
+            },
+        );
+
+        // B1 was a coordinator, now slave - speaker_uuid enables grouping without topology lookup
+        coordinator.playback_sessions.insert(
+            PlaybackSessionKey::new("stream1", "192.168.1.200"),
+            PlaybackSession {
+                stream_id: "stream1".to_string(),
+                speaker_ip: "192.168.1.200".to_string(),
+                stream_url: "x-rincon:RINCON_A1".to_string(),
+                codec: AudioCodec::Aac,
+                role: GroupRole::Slave,
+                coordinator_ip: Some("192.168.1.100".to_string()),
+                coordinator_uuid: Some("RINCON_A1".to_string()),
+                // B1 was a coordinator before streaming, so original_coordinator_uuid is None
+                // speaker_uuid is used for grouping (no topology lookup needed)
+                original_coordinator_uuid: None,
+                speaker_uuid: Some("RINCON_B1".to_string()),
+            },
+        );
+
+        // B2 was slave of B1, now slave of streaming coordinator
+        coordinator.playback_sessions.insert(
+            PlaybackSessionKey::new("stream1", "192.168.1.201"),
+            PlaybackSession {
+                stream_id: "stream1".to_string(),
+                speaker_ip: "192.168.1.201".to_string(),
+                stream_url: "x-rincon:RINCON_A1".to_string(),
+                codec: AudioCodec::Aac,
+                role: GroupRole::Slave,
+                coordinator_ip: Some("192.168.1.100".to_string()),
+                coordinator_uuid: Some("RINCON_A1".to_string()),
+                original_coordinator_uuid: Some("RINCON_B1".to_string()),
+                speaker_uuid: Some("RINCON_B2".to_string()),
+            },
+        );
+
+        let groups = coordinator.get_original_groups("stream1");
+
+        // Should have 2 groups: Room A (RINCON_A1) and Room B (RINCON_B1)
+        assert_eq!(groups.len(), 2);
+
+        // Groups are sorted by coordinator_uuid
+        let room_a = groups
+            .iter()
+            .find(|g| g.coordinator_uuid == "RINCON_A1")
+            .unwrap();
+        let room_b = groups
+            .iter()
+            .find(|g| g.coordinator_uuid == "RINCON_B1")
+            .unwrap();
+
+        assert_eq!(room_a.name, Some("Kitchen".to_string()));
+        assert_eq!(room_a.speaker_ips, vec!["192.168.1.100", "192.168.1.101"]);
+
+        assert_eq!(room_b.name, Some("Bedroom".to_string()));
+        assert_eq!(room_b.speaker_ips, vec!["192.168.1.200", "192.168.1.201"]);
+    }
+
+    #[test]
+    fn get_original_groups_deterministic_ordering() {
+        // Verify groups and IPs are sorted deterministically
+        let topology = vec![
+            make_zone_group(
+                "Z-Room",
+                "RINCON_Z",
+                "192.168.1.30",
+                &[("192.168.1.30", "RINCON_Z")],
+            ),
+            make_zone_group(
+                "A-Room",
+                "RINCON_A",
+                "192.168.1.10",
+                &[("192.168.1.10", "RINCON_A")],
+            ),
+            make_zone_group(
+                "M-Room",
+                "RINCON_M",
+                "192.168.1.20",
+                &[("192.168.1.20", "RINCON_M")],
+            ),
+        ];
+        let coordinator = create_test_coordinator(topology);
+
+        // Add sessions in random order
+        for (ip, uuid) in [
+            ("192.168.1.30", "RINCON_Z"),
+            ("192.168.1.10", "RINCON_A"),
+            ("192.168.1.20", "RINCON_M"),
+        ] {
+            coordinator.playback_sessions.insert(
+                PlaybackSessionKey::new("stream1", ip),
+                PlaybackSession {
+                    stream_id: "stream1".to_string(),
+                    speaker_ip: ip.to_string(),
+                    stream_url: "http://server/stream".to_string(),
+                    codec: AudioCodec::Aac,
+                    role: GroupRole::Coordinator,
+                    coordinator_ip: None,
+                    coordinator_uuid: Some(uuid.to_string()),
+                    original_coordinator_uuid: None,
+                    speaker_uuid: Some(uuid.to_string()),
+                },
+            );
+        }
+
+        let groups = coordinator.get_original_groups("stream1");
+
+        // Groups should be sorted by coordinator_uuid (alphabetically)
+        assert_eq!(groups.len(), 3);
+        assert_eq!(groups[0].coordinator_uuid, "RINCON_A");
+        assert_eq!(groups[1].coordinator_uuid, "RINCON_M");
+        assert_eq!(groups[2].coordinator_uuid, "RINCON_Z");
+    }
+
+    #[test]
+    fn get_original_groups_works_without_topology() {
+        // Regression test: get_original_groups should work even when topology is empty
+        // because speaker_uuid is captured at session creation time.
+        // This prevents speakers from being silently dropped during transient topology updates.
+        let coordinator = create_test_coordinator(vec![]); // Empty topology!
+
+        // B1 was a coordinator before streaming, now a slave
+        // Without speaker_uuid, this would fail to resolve and be dropped
+        coordinator.playback_sessions.insert(
+            PlaybackSessionKey::new("stream1", "192.168.1.200"),
+            PlaybackSession {
+                stream_id: "stream1".to_string(),
+                speaker_ip: "192.168.1.200".to_string(),
+                stream_url: "x-rincon:RINCON_A1".to_string(),
+                codec: AudioCodec::Aac,
+                role: GroupRole::Slave,
+                coordinator_ip: Some("192.168.1.100".to_string()),
+                coordinator_uuid: Some("RINCON_A1".to_string()),
+                original_coordinator_uuid: None, // Was a coordinator, no original group
+                speaker_uuid: Some("RINCON_B1".to_string()), // Captured at session creation
+            },
+        );
+
+        let groups = coordinator.get_original_groups("stream1");
+
+        // Should still work - uses speaker_uuid, not topology lookup
+        assert_eq!(groups.len(), 1);
+        assert_eq!(groups[0].coordinator_uuid, "RINCON_B1");
+        assert_eq!(groups[0].speaker_ips, vec!["192.168.1.200"]);
+        // Name will be None since topology is empty
+        assert!(groups[0].name.is_none());
     }
 }
