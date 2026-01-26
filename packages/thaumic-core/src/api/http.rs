@@ -36,8 +36,8 @@ use crate::protocol_constants::{
     APP_NAME, ICY_METAINT, MAX_CADENCE_QUEUE_SIZE, MAX_GENA_BODY_SIZE, SERVICE_ID,
     WAV_STREAM_SIZE_MAX,
 };
+use crate::services::set_multi_speaker_volume;
 use crate::sonos::discovery::probe_speaker_by_ip;
-use crate::sonos::traits::SonosClient;
 use crate::state::ManualSpeakerConfig;
 use crate::stream::{
     apply_fade_in, create_fade_out_frame, create_wav_header, crossfade_samples,
@@ -857,64 +857,15 @@ async fn get_original_groups(
     api_success(json!({ "groups": groups }))
 }
 
-/// Sets volume on multiple speakers concurrently.
-///
-/// Deduplicates IPs and returns success/failure counts. Volume clamping is handled
-/// by the underlying `set_speaker_volume` client function.
-async fn set_speakers_volume_impl(
-    sonos: Arc<dyn SonosClient>,
-    speaker_ips: Vec<String>,
-    volume: u8,
+/// Converts a MultiSpeakerVolumeResult to an HTTP response.
+/// Note: "all failed" case is handled by set_multi_speaker_volume (returns Err).
+fn volume_result_to_response(
+    result: crate::services::MultiSpeakerVolumeResult,
 ) -> ThaumicResult<Response> {
-    use futures::future::join_all;
-    use std::collections::HashSet;
-
-    // Validate and dedupe
-    let unique_ips: Vec<_> = speaker_ips
-        .iter()
-        .collect::<HashSet<_>>()
-        .into_iter()
-        .cloned()
-        .collect();
-
-    if unique_ips.is_empty() {
-        return Err(ThaumicError::InvalidRequest(
-            "speaker_ips cannot be empty".into(),
-        ));
-    }
-
-    let futures: Vec<_> = unique_ips
-        .iter()
-        .map(|ip| {
-            let sonos = Arc::clone(&sonos);
-            let ip = ip.clone();
-            async move {
-                sonos
-                    .set_speaker_volume(&ip, volume)
-                    .await
-                    .map_err(|e| (ip, e.to_string()))
-            }
-        })
-        .collect();
-
-    let results = join_all(futures).await;
-    let (successes, failures): (Vec<_>, Vec<_>) = results.into_iter().partition(Result::is_ok);
-
-    let success_count = successes.len();
-    let failure_details: Vec<_> = failures.into_iter().filter_map(|r| r.err()).collect();
-
-    // If all failed, return error
-    if success_count == 0 && !failure_details.is_empty() {
-        return Err(ThaumicError::Internal(format!(
-            "All volume commands failed: {:?}",
-            failure_details
-        )));
-    }
-
     Ok(api_success(json!({
-        "success": success_count,
-        "total": unique_ips.len(),
-        "failures": failure_details
+        "success": result.success,
+        "total": result.total,
+        "failures": result.failures
     }))
     .into_response())
 }
@@ -924,7 +875,9 @@ async fn set_original_group_volume(
     State(state): State<AppState>,
     Json(payload): Json<OriginalGroupVolumeRequest>,
 ) -> ThaumicResult<impl IntoResponse> {
-    set_speakers_volume_impl(state.sonos, payload.speaker_ips, payload.volume).await
+    let result =
+        set_multi_speaker_volume(state.sonos, &payload.speaker_ips, payload.volume).await?;
+    volume_result_to_response(result)
 }
 
 /// Convenience: Sets volume by stream_id + coordinator_uuid (looks up IPs server-side).
@@ -932,13 +885,9 @@ async fn set_stream_group_volume(
     State(state): State<AppState>,
     Json(payload): Json<StreamGroupVolumeRequest>,
 ) -> ThaumicResult<impl IntoResponse> {
-    // Look up speaker IPs for this original group
-    let groups = state
+    let group = state
         .stream_coordinator
-        .get_original_groups(&payload.stream_id);
-    let group = groups
-        .iter()
-        .find(|g| g.coordinator_uuid == payload.coordinator_uuid)
+        .get_original_group(&payload.stream_id, &payload.coordinator_uuid)
         .ok_or_else(|| {
             ThaumicError::InvalidRequest(format!(
                 "No original group with coordinator_uuid {} in stream {}",
@@ -946,7 +895,8 @@ async fn set_stream_group_volume(
             ))
         })?;
 
-    set_speakers_volume_impl(state.sonos, group.speaker_ips.clone(), payload.volume).await
+    let result = set_multi_speaker_volume(state.sonos, &group.speaker_ips, payload.volume).await?;
+    volume_result_to_response(result)
 }
 
 async fn handle_gena_notify(

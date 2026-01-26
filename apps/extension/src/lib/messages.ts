@@ -143,6 +143,8 @@ export {
   // Control commands
   SetVolumeMessageSchema,
   type SetVolumeMessage,
+  SetOriginalGroupVolumeMessageSchema,
+  type SetOriginalGroupVolumeMessage,
   SetMuteMessageSchema,
   type SetMuteMessage,
   StopPlaybackSpeakerMessageSchema,
@@ -186,6 +188,7 @@ import type {
   GetActiveCastsMessage,
   EnsureConnectionMessage,
   SetVolumeMessage,
+  SetOriginalGroupVolumeMessage,
   SetMuteMessage,
   ControlMediaMessage,
   SetVideoSyncEnabledMessage,
@@ -338,6 +341,7 @@ export type PopupToBackgroundMessage =
   | GetActiveCastsMessage
   | EnsureConnectionMessage
   | SetVolumeMessage
+  | SetOriginalGroupVolumeMessage
   | SetMuteMessage
   | ControlMediaMessage
   | SetVideoSyncEnabledMessage
@@ -406,6 +410,7 @@ export type BackgroundToOffscreenMessage =
   | DetectCodecsMessage
   | SetVolumeMessage
   | SetMuteMessage
+  | SetOriginalGroupVolumeMessage
   | StopPlaybackSpeakerMessage;
 
 /**

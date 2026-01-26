@@ -17,27 +17,58 @@
 import type {
   SetVolumeMessage,
   SetMuteMessage,
+  SetOriginalGroupVolumeMessage,
   ControlMediaMessage,
   VideoSyncStateChangedMessage,
 } from '../../lib/messages';
+import { createLogger } from '@thaumic-cast/shared';
 import { offscreenBroker } from '../offscreen-broker';
 import { notifyPopup } from '../notification-service';
+import { getSessionBySpeakerIp, getOriginalGroupForSpeaker } from '../session-manager';
+
+const log = createLogger('MediaControl');
 
 /**
  * Handles SET_VOLUME message from popup.
- * Forwards to offscreen for WebSocket transmission.
+ *
+ * For sync sessions with original groups, routes to SET_ORIGINAL_GROUP_VOLUME
+ * which uses RenderingControl (per-speaker) instead of GroupRenderingControl.
+ * This ensures all sliders work correctly when multiple groups are joined.
+ *
  * @param msg - The volume message
  * @returns The offscreen response
  */
 export async function handleSetVolume(
   msg: SetVolumeMessage,
 ): Promise<{ success: boolean } | undefined> {
+  // Check if this speaker is in a sync session with original groups
+  const session = getSessionBySpeakerIp(msg.speakerIp);
+
+  if (session?.syncSpeakers) {
+    const coordinatorUuid = getOriginalGroupForSpeaker(session.tabId, msg.speakerIp);
+    if (coordinatorUuid) {
+      // Route through SET_ORIGINAL_GROUP_VOLUME for per-group volume control
+      log.debug(
+        `Using SET_ORIGINAL_GROUP_VOLUME for sync session (speaker=${msg.speakerIp}, group=${coordinatorUuid})`,
+      );
+      return offscreenBroker.setOriginalGroupVolume(session.streamId, coordinatorUuid, msg.volume);
+    }
+  }
+
+  // Default: use group volume control
   return offscreenBroker.setVolume(msg.speakerIp, msg.volume);
 }
 
 /**
  * Handles SET_MUTE message from popup.
  * Forwards to offscreen for WebSocket transmission.
+ *
+ * TODO: Unlike handleSetVolume, this does NOT have sync-session awareness.
+ * In sync sessions, mute commands to non-coordinator speaker IPs will fail
+ * because they're joined as slaves. To fix, we'd need SET_ORIGINAL_GROUP_MUTE
+ * similar to SET_ORIGINAL_GROUP_VOLUME, using per-speaker RenderingControl.SetMute
+ * instead of GroupRenderingControl.SetGroupMute.
+ *
  * @param msg - The mute message
  * @returns The offscreen response
  */
@@ -45,6 +76,19 @@ export async function handleSetMute(
   msg: SetMuteMessage,
 ): Promise<{ success: boolean } | undefined> {
   return offscreenBroker.setMute(msg.speakerIp, msg.muted);
+}
+
+/**
+ * Handles SET_ORIGINAL_GROUP_VOLUME message from popup.
+ * Forwards to offscreen for WebSocket transmission to desktop.
+ * Used for per-original-group volume control during synchronized multi-group streaming.
+ * @param msg - The original group volume message
+ * @returns The offscreen response
+ */
+export async function handleSetOriginalGroupVolume(
+  msg: SetOriginalGroupVolumeMessage,
+): Promise<{ success: boolean } | undefined> {
+  return offscreenBroker.setOriginalGroupVolume(msg.streamId, msg.coordinatorUuid, msg.volume);
 }
 
 /**
