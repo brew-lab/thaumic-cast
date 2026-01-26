@@ -502,8 +502,9 @@ pub async fn switch_to_queue(client: &Client, ip: &str, coordinator_uuid: &str) 
 /// Joins a speaker to a coordinator for synchronized playback.
 ///
 /// This sets the speaker's AVTransport URI to point to the coordinator using
-/// the x-rincon protocol. The speaker becomes a "slave" that syncs its playback
-/// timing to the coordinator, enabling synchronized multi-room audio.
+/// the x-rincon protocol, then sends a Play command to start playback. The
+/// speaker becomes a "slave" that syncs its playback timing to the coordinator,
+/// enabling synchronized multi-room audio.
 ///
 /// # Arguments
 /// * `client` - The HTTP client to use for the request
@@ -511,7 +512,6 @@ pub async fn switch_to_queue(client: &Client, ip: &str, coordinator_uuid: &str) 
 /// * `coordinator_uuid` - UUID of the coordinator speaker (RINCON_xxx format)
 ///
 /// # Note
-/// The coordinator must already be playing audio for sync to work properly.
 /// This creates a temporary group for streaming purposes and does not modify
 /// the user's permanent Sonos group configuration.
 pub async fn join_group(client: &Client, ip: &str, coordinator_uuid: &str) -> SoapResult<()> {
@@ -524,14 +524,31 @@ pub async fn join_group(client: &Client, ip: &str, coordinator_uuid: &str) -> So
         group_uri
     );
 
-    SoapRequestBuilder::new(client, ip)
-        .service(SonosService::AVTransport)
-        .action("SetAVTransportURI")
-        .instance_id()
-        .arg("CurrentURI", &group_uri)
-        .arg("CurrentURIMetaData", "")
-        .send()
-        .await?;
+    with_retry("SetAVTransportURI", || {
+        SoapRequestBuilder::new(client, ip)
+            .service(SonosService::AVTransport)
+            .action("SetAVTransportURI")
+            .instance_id()
+            .arg("CurrentURI", &group_uri)
+            .arg("CurrentURIMetaData", "")
+            .send()
+    })
+    .await?;
+
+    log::debug!(
+        "[Sonos] SetAVTransportURI succeeded for {}, sending Play",
+        ip
+    );
+
+    with_retry("Play", || {
+        SoapRequestBuilder::new(client, ip)
+            .service(SonosService::AVTransport)
+            .action("Play")
+            .instance_id()
+            .arg("Speed", "1")
+            .send()
+    })
+    .await?;
 
     log::debug!("[Sonos] Join group succeeded for {}", ip);
 
