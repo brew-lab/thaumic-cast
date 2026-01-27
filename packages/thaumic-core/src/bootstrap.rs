@@ -21,6 +21,7 @@ use crate::events::{BroadcastEvent, BroadcastEventBridge, EventEmitter};
 use crate::protocol_constants::{EVENT_CHANNEL_CAPACITY, SOAP_TIMEOUT_SECS};
 use crate::runtime::TokioSpawner;
 use crate::services::{DiscoveryService, LatencyMonitor, StreamCoordinator};
+use crate::sonos::gena::GenaSubscriptionManager;
 use crate::sonos::{SonosClient, SonosClientImpl, SonosPlayback, SonosTopologyClient};
 use crate::state::{Config, SonosState};
 use crate::streaming_runtime::StreamingRuntime;
@@ -209,13 +210,18 @@ pub fn bootstrap_services_with_network(
         .validate()
         .expect("Invalid streaming configuration");
 
-    // Wire up stream coordinator with its dependencies
+    // Create gena_manager first (shared between StreamCoordinator and DiscoveryService)
+    let (gena_manager, gena_event_rx) = GenaSubscriptionManager::new(http_client.clone());
+    let gena_manager = Arc::new(gena_manager);
+
+    // Wire up stream coordinator with its dependencies (needs gena_manager for RenderingControl subscriptions)
     let stream_coordinator = Arc::new(StreamCoordinator::new(
         Arc::clone(&sonos_impl) as Arc<dyn SonosPlayback>,
         Arc::clone(&sonos_state),
         network.clone(),
         Arc::clone(&event_bridge) as Arc<dyn EventEmitter>,
         config.streaming.clone(),
+        Arc::clone(&gena_manager),
     ));
 
     // Wire up latency monitor with its dependencies
@@ -227,7 +233,7 @@ pub fn bootstrap_services_with_network(
         spawner.clone(),
     ));
 
-    // Wire up discovery service with its dependencies
+    // Wire up discovery service with its dependencies (gena_manager is passed in, not created internally)
     let discovery_service = Arc::new(DiscoveryService::new(
         Arc::clone(&sonos_impl) as Arc<dyn SonosTopologyClient>,
         Arc::clone(&stream_coordinator),
@@ -237,6 +243,8 @@ pub fn bootstrap_services_with_network(
         http_client.clone(),
         config.topology_refresh_interval,
         spawner.clone(),
+        gena_manager,
+        gena_event_rx,
     ));
 
     // Coerce to the general SonosClient trait for storage

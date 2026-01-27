@@ -209,6 +209,12 @@ impl GenaSubscriptionStore {
             .collect()
     }
 
+    /// Gets the SID for a specific (ip, service) pair.
+    pub fn get_sid_by_ip_and_service(&self, ip: &str, service: SonosService) -> Option<String> {
+        let key = SubscriptionKey::new(ip, service);
+        self.subscription_keys.read().get(&key).cloned()
+    }
+
     /// Gets all SIDs in the store.
     pub fn get_all_sids(&self) -> Vec<String> {
         self.subscriptions.read().keys().cloned().collect()

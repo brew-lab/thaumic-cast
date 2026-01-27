@@ -107,6 +107,65 @@ pub fn extract_empty_val_attrs(xml: &str, element_names: &[&str]) -> HashMap<Str
     result
 }
 
+/// Extracts `val` attributes from empty XML elements that have `channel="Master"`.
+///
+/// RenderingControl events include per-channel values (Master, LF, RF, etc.).
+/// This function extracts only the Master channel values, which represent
+/// the overall speaker volume/mute state.
+///
+/// # Arguments
+/// * `xml` - The XML string to parse
+/// * `element_names` - Element names to look for (local names, without namespace prefix)
+///
+/// # Returns
+/// A map from element name to its `val` attribute value, only for elements
+/// with `channel="Master"`.
+///
+/// # Example
+/// ```ignore
+/// let xml = r#"<Event>
+///   <Volume channel="Master" val="60"/>
+///   <Volume channel="LF" val="50"/>
+///   <Mute channel="Master" val="0"/>
+/// </Event>"#;
+/// let attrs = extract_master_channel_attrs(xml, &["Volume", "Mute"]);
+/// assert_eq!(attrs.get("Volume"), Some(&"60".to_string())); // Master, not LF
+/// assert_eq!(attrs.get("Mute"), Some(&"0".to_string()));
+/// ```
+pub fn extract_master_channel_attrs(xml: &str, element_names: &[&str]) -> HashMap<String, String> {
+    let mut result = HashMap::new();
+    let mut reader = Reader::from_str(xml);
+    let mut buf = Vec::new();
+
+    // Convert to bytes for comparison
+    let targets: Vec<&[u8]> = element_names.iter().map(|s| s.as_bytes()).collect();
+
+    loop {
+        match reader.read_event_into(&mut buf) {
+            Ok(Event::Empty(ref e)) => {
+                let local = e.local_name();
+                let local_ref = local.as_ref();
+                if let Some(&name) = targets.iter().find(|&&t| t == local_ref) {
+                    // Only process if channel="Master"
+                    if get_xml_attr(e, b"channel").as_deref() == Some("Master") {
+                        if let Some(val) = get_xml_attr(e, b"val") {
+                            // Safe: name came from element_names which are &str
+                            let key = std::str::from_utf8(name).unwrap_or_default();
+                            result.insert(key.to_string(), val);
+                        }
+                    }
+                }
+            }
+            Ok(Event::Eof) => break,
+            Err(_) => break,
+            _ => {}
+        }
+        buf.clear();
+    }
+
+    result
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Zone Group Parsing Helpers
 // ─────────────────────────────────────────────────────────────────────────────
