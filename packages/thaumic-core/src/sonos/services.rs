@@ -13,6 +13,9 @@ pub enum SonosService {
     AVTransport,
     /// Group volume and mute control (for coordinator speakers).
     GroupRenderingControl,
+    /// Individual speaker volume and mute control.
+    /// Used for per-room control during synchronized multi-room playback.
+    RenderingControl,
     /// Zone group topology and membership information.
     ZoneGroupTopology,
 }
@@ -24,6 +27,7 @@ impl SonosService {
         match self {
             Self::AVTransport => "urn:schemas-upnp-org:service:AVTransport:1",
             Self::GroupRenderingControl => "urn:schemas-upnp-org:service:GroupRenderingControl:1",
+            Self::RenderingControl => "urn:schemas-upnp-org:service:RenderingControl:1",
             Self::ZoneGroupTopology => "urn:schemas-upnp-org:service:ZoneGroupTopology:1",
         }
     }
@@ -34,6 +38,7 @@ impl SonosService {
         match self {
             Self::AVTransport => "/MediaRenderer/AVTransport/Control",
             Self::GroupRenderingControl => "/MediaRenderer/GroupRenderingControl/Control",
+            Self::RenderingControl => "/MediaRenderer/RenderingControl/Control",
             Self::ZoneGroupTopology => "/ZoneGroupTopology/Control",
         }
     }
@@ -44,6 +49,7 @@ impl SonosService {
         match self {
             Self::AVTransport => "/MediaRenderer/AVTransport/Event",
             Self::GroupRenderingControl => "/MediaRenderer/GroupRenderingControl/Event",
+            Self::RenderingControl => "/MediaRenderer/RenderingControl/Event",
             Self::ZoneGroupTopology => "/ZoneGroupTopology/Event",
         }
     }
@@ -54,6 +60,7 @@ impl SonosService {
         match self {
             Self::AVTransport => "AVTransport",
             Self::GroupRenderingControl => "GroupRenderingControl",
+            Self::RenderingControl => "RenderingControl",
             Self::ZoneGroupTopology => "ZoneGroupTopology",
         }
     }
