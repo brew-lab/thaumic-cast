@@ -36,6 +36,8 @@ export interface WorkerStartPlaybackMessage {
   type: 'START_PLAYBACK';
   speakerIps: string[];
   metadata?: StreamMetadata;
+  /** Whether to synchronize multi-speaker playback (default: false). */
+  syncSpeakers?: boolean;
 }
 
 /** Updates stream metadata on all connected speakers. */

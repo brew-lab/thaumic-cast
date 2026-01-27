@@ -280,7 +280,7 @@ export function setupMessageHandlers(): void {
     if (msg.type === 'START_PLAYBACK') {
       try {
         const validated = StartPlaybackMessageSchema.parse(msg);
-        const { tabId, speakerIps, metadata } = validated.payload;
+        const { tabId, speakerIps, metadata, syncSpeakers = false } = validated.payload;
         const session = activeSessions.get(tabId);
 
         if (!session) {
@@ -296,7 +296,7 @@ export function setupMessageHandlers(): void {
         // Wait for stream to be ready, then start playback with initial metadata
         session
           .waitForReady()
-          .then(() => session.startPlayback(speakerIps, metadata))
+          .then(() => session.startPlayback(speakerIps, metadata, syncSpeakers))
           .then((results) => {
             // Consider success if at least one speaker started
             const anySuccess = results.some((r) => r.success);

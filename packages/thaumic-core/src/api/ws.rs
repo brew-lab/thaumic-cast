@@ -88,6 +88,10 @@ struct StartPlaybackRequest {
     /// If not provided, Sonos will show default "Browser Audio".
     #[serde(default)]
     metadata: Option<StreamMetadata>,
+    /// Whether to use synchronized group playback (default: false).
+    /// When true, uses x-rincon protocol to sync multiple speakers.
+    #[serde(default)]
+    sync_speakers: bool,
 }
 
 impl StartPlaybackRequest {
@@ -583,9 +587,12 @@ async fn handle_ws(socket: WebSocket, state: AppState) {
                             Ok(WsIncoming::SetVolume { payload }) => {
                                 let ip = payload.ip.clone();
                                 let volume = payload.volume;
+
                                 send_command_response(
                                     &mut sender,
-                                    state.sonos.set_group_volume(&payload.ip, volume),
+                                    state
+                                        .stream_coordinator
+                                        .set_volume_routed(&*state.sonos, &payload.ip, volume),
                                     |()| WsOutgoing::VolumeState {
                                         payload: WsVolumePayload { ip, volume },
                                     },
@@ -595,9 +602,12 @@ async fn handle_ws(socket: WebSocket, state: AppState) {
                             Ok(WsIncoming::SetMute { payload }) => {
                                 let ip = payload.ip.clone();
                                 let mute = payload.mute;
+
                                 send_command_response(
                                     &mut sender,
-                                    state.sonos.set_group_mute(&payload.ip, mute),
+                                    state
+                                        .stream_coordinator
+                                        .set_mute_routed(&*state.sonos, &payload.ip, mute),
                                     |()| WsOutgoing::MuteState {
                                         payload: WsMutePayload { ip, mute },
                                     },
@@ -608,7 +618,9 @@ async fn handle_ws(socket: WebSocket, state: AppState) {
                                 let ip = payload.ip.clone();
                                 send_command_response(
                                     &mut sender,
-                                    state.sonos.get_group_volume(&payload.ip),
+                                    state
+                                        .stream_coordinator
+                                        .get_volume_routed(&*state.sonos, &payload.ip),
                                     |volume| WsOutgoing::VolumeState {
                                         payload: WsVolumePayload { ip, volume },
                                     },
@@ -619,7 +631,9 @@ async fn handle_ws(socket: WebSocket, state: AppState) {
                                 let ip = payload.ip.clone();
                                 send_command_response(
                                     &mut sender,
-                                    state.sonos.get_group_mute(&payload.ip),
+                                    state
+                                        .stream_coordinator
+                                        .get_mute_routed(&*state.sonos, &payload.ip),
                                     |mute| WsOutgoing::MuteState {
                                         payload: WsMutePayload { ip, mute },
                                     },
@@ -670,6 +684,7 @@ async fn handle_ws(socket: WebSocket, state: AppState) {
                                             &stream_id,
                                             payload.metadata.as_ref(),
                                             &artwork_url,
+                                            payload.sync_speakers,
                                         )
                                         .await;
 
@@ -703,8 +718,9 @@ async fn handle_ws(socket: WebSocket, state: AppState) {
                                 }
                             }
                             Ok(WsIncoming::StopPlaybackSpeaker { payload }) => {
-                                // Stop playback; only stop latency monitoring if successful
-                                let stopped = state
+                                // Stop playback; stop latency monitoring for all stopped speakers
+                                // (when stopping a coordinator, this includes all its slaves)
+                                let stopped_ips = state
                                     .stream_coordinator
                                     .stop_playback_speaker(
                                         &payload.stream_id,
@@ -712,10 +728,10 @@ async fn handle_ws(socket: WebSocket, state: AppState) {
                                         payload.reason,
                                     )
                                     .await;
-                                if stopped {
+                                for ip in stopped_ips {
                                     state
                                         .latency_monitor
-                                        .stop_speaker(&payload.stream_id, &payload.ip)
+                                        .stop_speaker(&payload.stream_id, &ip)
                                         .await;
                                 }
                             }

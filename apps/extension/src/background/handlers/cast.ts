@@ -146,6 +146,7 @@ export async function handleStartCast(msg: StartCastMessage): Promise<ExtensionR
         tab.id,
         speakerIps,
         initialMetadata,
+        settings.syncSpeakers,
       );
       if (!playbackResponse) throw new Error('error_offscreen_unavailable');
 
@@ -182,7 +183,14 @@ export async function handleStartCast(msg: StartCastMessage): Promise<ExtensionR
       }
 
       // Register the session with successful speakers only
-      registerSession(tab.id, response.streamId, successfulIps, successfulNames, encoderConfig);
+      registerSession(
+        tab.id,
+        response.streamId,
+        successfulIps,
+        successfulNames,
+        encoderConfig,
+        settings.syncSpeakers,
+      );
 
       return { success: true };
     } else {

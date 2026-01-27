@@ -1371,10 +1371,10 @@ self.onmessage = async (event: MessageEvent<WorkerInboundMessage>) => {
   }
 
   if (msg.type === 'START_PLAYBACK') {
-    const { speakerIps, metadata } = msg;
+    const { speakerIps, metadata, syncSpeakers = false } = msg;
     sendWsMessage({
       type: 'START_PLAYBACK',
-      payload: { speakerIps, metadata },
+      payload: { speakerIps, metadata, syncSpeakers },
     });
   }
 

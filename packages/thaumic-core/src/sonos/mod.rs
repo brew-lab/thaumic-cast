@@ -31,6 +31,9 @@ pub mod traits;
 pub mod types;
 pub mod utils;
 
+#[cfg(test)]
+pub(crate) mod test_fixtures;
+
 // Re-export domain types
 pub use services::SonosService;
 

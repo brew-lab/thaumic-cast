@@ -252,4 +252,76 @@ impl<'a> SoapRequestBuilder<'a> {
         )
         .await
     }
+
+    /// Returns the request parts without sending (for testing).
+    ///
+    /// # Returns
+    /// Tuple of (service, action, args) if both service and action are set.
+    #[cfg(test)]
+    pub fn into_parts(self) -> Option<(SonosService, &'a str, Vec<(&'a str, String)>)> {
+        let service = self.service?;
+        let action = self.action?;
+        Some((service, action, self.args))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn test_client() -> Client {
+        Client::new()
+    }
+
+    #[test]
+    fn builder_captures_service_and_action() {
+        let client = test_client();
+        let parts = SoapRequestBuilder::new(&client, "192.168.1.100")
+            .service(SonosService::RenderingControl)
+            .action("GetVolume")
+            .into_parts();
+
+        let (service, action, args) = parts.expect("should have parts");
+        assert_eq!(service, SonosService::RenderingControl);
+        assert_eq!(action, "GetVolume");
+        assert!(args.is_empty());
+    }
+
+    #[test]
+    fn builder_captures_args_in_order() {
+        let client = test_client();
+        let parts = SoapRequestBuilder::new(&client, "192.168.1.100")
+            .service(SonosService::RenderingControl)
+            .action("SetVolume")
+            .instance_id()
+            .arg("Channel", "Master")
+            .arg("DesiredVolume", "75")
+            .into_parts();
+
+        let (_, _, args) = parts.expect("should have parts");
+        assert_eq!(args.len(), 3);
+        assert_eq!(args[0], ("InstanceID", "0".to_string()));
+        assert_eq!(args[1], ("Channel", "Master".to_string()));
+        assert_eq!(args[2], ("DesiredVolume", "75".to_string()));
+    }
+
+    #[test]
+    fn into_parts_returns_none_without_service() {
+        let client = test_client();
+        let parts = SoapRequestBuilder::new(&client, "192.168.1.100")
+            .action("GetVolume")
+            .into_parts();
+
+        assert!(parts.is_none());
+    }
+
+    #[test]
+    fn into_parts_returns_none_without_action() {
+        let client = test_client();
+        let parts = SoapRequestBuilder::new(&client, "192.168.1.100")
+            .service(SonosService::RenderingControl)
+            .into_parts();
+
+        assert!(parts.is_none());
+    }
 }
