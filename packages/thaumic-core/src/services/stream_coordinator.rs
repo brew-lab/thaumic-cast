@@ -220,7 +220,22 @@ impl StreamCoordinator {
             .map(|r| r.key().speaker_ip.clone())
             .collect();
 
-        for ip in speaker_ips {
+        log::info!(
+            "[GroupSync] Switching {} speakers to RenderingControl for sync session (stream={})",
+            speaker_ips.len(),
+            stream_id
+        );
+
+        for ip in &speaker_ips {
+            // First, unsubscribe from GroupRenderingControl to avoid dual subscriptions.
+            // Both services emit the same event types (GroupVolume/GroupMute), so having
+            // both active causes race conditions where events overwrite each other.
+            // RenderingControl provides per-speaker volume which is what we want for sync.
+            self.gena_manager
+                .unsubscribe_by_ip_and_service(ip, SonosService::GroupRenderingControl)
+                .await;
+
+            // Now subscribe to RenderingControl for per-speaker volume/mute events
             if let Err(e) = self
                 .gena_manager
                 .subscribe(
@@ -237,7 +252,7 @@ impl StreamCoordinator {
                 );
                 // Continue - degraded experience but functional
             } else {
-                log::debug!(
+                log::info!(
                     "[GroupSync] Subscribed to RenderingControl for {} (sync session)",
                     ip
                 );

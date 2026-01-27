@@ -407,7 +407,13 @@ impl GenaSubscriptionManager {
             // RenderingControl is used for per-speaker volume during sync playback.
             // We subscribe to these events when sync sessions are active.
             SonosService::RenderingControl => {
-                gena_event_builder::build_rendering_control_events(&ip, body)
+                let events = gena_event_builder::build_rendering_control_events(&ip, body);
+                log::info!(
+                    "[GENA] RenderingControl NOTIFY from {}: {} event(s)",
+                    ip,
+                    events.len()
+                );
+                events
             }
         }
     }
