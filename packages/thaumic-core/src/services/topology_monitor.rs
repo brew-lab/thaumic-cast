@@ -654,6 +654,10 @@ impl TopologyMonitor {
     ///
     /// This handles both disappeared speakers and demoted coordinators (satellites).
     /// Since we only subscribe to coordinators, we compare against coordinator IPs.
+    ///
+    /// Only unsubscribes from services managed by TopologyMonitor (AVTransport and
+    /// GroupRenderingControl). RenderingControl subscriptions are managed by
+    /// StreamCoordinator for sync sessions and must not be removed here.
     async fn cleanup_stale_subscriptions(&self, coordinator_ips: &HashSet<String>) {
         let subscribed_av_ips: HashSet<String> = self
             .gena_manager
@@ -668,10 +672,18 @@ impl TopologyMonitor {
 
         for ip in stale {
             log::info!(
-                "[TopologyMonitor] Speaker {} is no longer a coordinator, unsubscribing",
+                "[TopologyMonitor] Speaker {} is no longer a coordinator, unsubscribing AVTransport and GroupRenderingControl",
                 ip
             );
-            self.gena_manager.unsubscribe_by_ip(&ip).await;
+            // Only unsubscribe from services managed by TopologyMonitor.
+            // Do NOT use unsubscribe_by_ip() as that would also remove RenderingControl
+            // subscriptions managed by StreamCoordinator for sync sessions.
+            self.gena_manager
+                .unsubscribe_by_ip_and_service(&ip, SonosService::AVTransport)
+                .await;
+            self.gena_manager
+                .unsubscribe_by_ip_and_service(&ip, SonosService::GroupRenderingControl)
+                .await;
         }
     }
 }
