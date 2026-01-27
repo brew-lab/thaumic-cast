@@ -592,6 +592,22 @@ impl TopologyMonitor {
         I: Iterator<Item = &'a str>,
     {
         for ip in ips {
+            // Final check: skip GroupRenderingControl if RenderingControl is active.
+            // This closes the TOCTOU race window between when the caller filtered the list
+            // and when we actually subscribe. StreamCoordinator uses RenderingControl for
+            // sync sessions and having both subscriptions causes volume event races.
+            if service == SonosService::GroupRenderingControl
+                && self
+                    .gena_manager
+                    .is_subscribed(ip, SonosService::RenderingControl)
+            {
+                log::debug!(
+                    "[TopologyMonitor] Skipping GroupRenderingControl for {} (RenderingControl active)",
+                    ip
+                );
+                continue;
+            }
+
             if !self.gena_manager.is_subscribed(ip, service) {
                 match self
                     .gena_manager
@@ -618,6 +634,10 @@ impl TopologyMonitor {
     ///
     /// Only coordinators support AVTransport subscriptions. Satellites (Sub, surrounds)
     /// and bridges (Boost) return 503 errors when subscription is attempted.
+    ///
+    /// GroupRenderingControl is skipped for speakers that have RenderingControl subscriptions,
+    /// indicating they're in an active sync session managed by StreamCoordinator. This prevents
+    /// dual subscriptions that cause volume event race conditions.
     async fn sync_coordinator_subscriptions(
         &self,
         coordinator_ips: &HashSet<String>,
@@ -641,9 +661,34 @@ impl TopologyMonitor {
         )
         .await;
 
-        // Subscribe to GroupRenderingControl (volume/mute) on coordinators
+        // Subscribe to GroupRenderingControl (volume/mute) on coordinators,
+        // but skip speakers that have RenderingControl subscriptions (sync session active).
+        // StreamCoordinator manages volume events for sync sessions via RenderingControl,
+        // and having both subscriptions causes race conditions (both emit GroupVolume/GroupMute).
+        let mut ips_for_group_rendering: Vec<String> = Vec::new();
+        for ip in coordinator_ips {
+            let has_rendering = self
+                .gena_manager
+                .is_subscribed(ip, SonosService::RenderingControl);
+            if has_rendering {
+                // If a RenderingControl subscription exists, proactively remove any
+                // existing GroupRenderingControl subscription to eliminate dual feeds.
+                // This also cleans up races where GRC was re-added between unsubscribe
+                // and RC subscribe (or by a later ensure_subscriptions run).
+                self.gena_manager
+                    .unsubscribe_by_ip_and_service(ip, SonosService::GroupRenderingControl)
+                    .await;
+                log::debug!(
+                    "[TopologyMonitor] Skipping GroupRenderingControl for {} (sync session active)",
+                    ip
+                );
+            } else {
+                ips_for_group_rendering.push(ip.clone());
+            }
+        }
+
         self.ensure_subscriptions(
-            coordinator_ips.iter().map(String::as_str),
+            ips_for_group_rendering.iter().map(String::as_str),
             SonosService::GroupRenderingControl,
             callback_url,
         )

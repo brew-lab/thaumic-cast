@@ -256,6 +256,13 @@ impl StreamCoordinator {
                     "[GroupSync] Subscribed to RenderingControl for {} (sync session)",
                     ip
                 );
+
+                // Unsubscribe from GroupRenderingControl again to close race window.
+                // TopologyMonitor runs periodically and may have re-subscribed between
+                // our initial unsubscribe and the RenderingControl subscribe completing.
+                self.gena_manager
+                    .unsubscribe_by_ip_and_service(ip, SonosService::GroupRenderingControl)
+                    .await;
             }
         }
     }
