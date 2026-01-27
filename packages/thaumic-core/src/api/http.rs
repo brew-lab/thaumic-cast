@@ -778,41 +778,66 @@ async fn list_manual_speakers(State(state): State<AppState>) -> Response {
 // Volume/Mute Handlers
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// Gets the current group volume for a speaker.
+/// Gets the current volume for a speaker.
+///
+/// For speakers in sync sessions (x-rincon joined), returns per-speaker volume.
+/// Otherwise returns group volume.
 async fn get_volume(
     Path(ip): Path<String>,
     State(state): State<AppState>,
 ) -> ThaumicResult<impl IntoResponse> {
-    let volume = state.sonos.get_group_volume(&ip).await?;
+    let volume = state
+        .stream_coordinator
+        .get_volume_routed(&*state.sonos, &ip)
+        .await?;
     Ok(api_success(json!({ "ip": ip, "volume": volume })))
 }
 
-/// Sets the group volume for a speaker.
+/// Sets the volume for a speaker.
+///
+/// For speakers in sync sessions (x-rincon joined), uses per-speaker volume
+/// to allow independent room control. Otherwise uses group volume which
+/// preserves stereo pair/sub proportional behavior.
 async fn set_volume(
     Path(ip): Path<String>,
     State(state): State<AppState>,
     Json(payload): Json<VolumeRequest>,
 ) -> ThaumicResult<impl IntoResponse> {
-    state.sonos.set_group_volume(&ip, payload.volume).await?;
+    state
+        .stream_coordinator
+        .set_volume_routed(&*state.sonos, &ip, payload.volume)
+        .await?;
     Ok(api_success(json!({ "ip": ip, "volume": payload.volume })))
 }
 
-/// Gets the current group mute state for a speaker.
+/// Gets the current mute state for a speaker.
+///
+/// For speakers in sync sessions (x-rincon joined), returns per-speaker mute state.
+/// Otherwise returns group mute state.
 async fn get_mute(
     Path(ip): Path<String>,
     State(state): State<AppState>,
 ) -> ThaumicResult<impl IntoResponse> {
-    let mute = state.sonos.get_group_mute(&ip).await?;
+    let mute = state
+        .stream_coordinator
+        .get_mute_routed(&*state.sonos, &ip)
+        .await?;
     Ok(api_success(json!({ "ip": ip, "mute": mute })))
 }
 
-/// Sets the group mute state for a speaker.
+/// Sets the mute state for a speaker.
+///
+/// For speakers in sync sessions (x-rincon joined), uses per-speaker mute
+/// to allow independent room control. Otherwise uses group mute.
 async fn set_mute(
     Path(ip): Path<String>,
     State(state): State<AppState>,
     Json(payload): Json<MuteRequest>,
 ) -> ThaumicResult<impl IntoResponse> {
-    state.sonos.set_group_mute(&ip, payload.mute).await?;
+    state
+        .stream_coordinator
+        .set_mute_routed(&*state.sonos, &ip, payload.mute)
+        .await?;
     Ok(api_success(json!({ "ip": ip, "mute": payload.mute })))
 }
 

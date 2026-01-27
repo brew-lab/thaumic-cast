@@ -587,9 +587,12 @@ async fn handle_ws(socket: WebSocket, state: AppState) {
                             Ok(WsIncoming::SetVolume { payload }) => {
                                 let ip = payload.ip.clone();
                                 let volume = payload.volume;
+
                                 send_command_response(
                                     &mut sender,
-                                    state.sonos.set_group_volume(&payload.ip, volume),
+                                    state
+                                        .stream_coordinator
+                                        .set_volume_routed(&*state.sonos, &payload.ip, volume),
                                     |()| WsOutgoing::VolumeState {
                                         payload: WsVolumePayload { ip, volume },
                                     },
@@ -599,9 +602,12 @@ async fn handle_ws(socket: WebSocket, state: AppState) {
                             Ok(WsIncoming::SetMute { payload }) => {
                                 let ip = payload.ip.clone();
                                 let mute = payload.mute;
+
                                 send_command_response(
                                     &mut sender,
-                                    state.sonos.set_group_mute(&payload.ip, mute),
+                                    state
+                                        .stream_coordinator
+                                        .set_mute_routed(&*state.sonos, &payload.ip, mute),
                                     |()| WsOutgoing::MuteState {
                                         payload: WsMutePayload { ip, mute },
                                     },
@@ -612,7 +618,9 @@ async fn handle_ws(socket: WebSocket, state: AppState) {
                                 let ip = payload.ip.clone();
                                 send_command_response(
                                     &mut sender,
-                                    state.sonos.get_group_volume(&payload.ip),
+                                    state
+                                        .stream_coordinator
+                                        .get_volume_routed(&*state.sonos, &payload.ip),
                                     |volume| WsOutgoing::VolumeState {
                                         payload: WsVolumePayload { ip, volume },
                                     },
@@ -623,7 +631,9 @@ async fn handle_ws(socket: WebSocket, state: AppState) {
                                 let ip = payload.ip.clone();
                                 send_command_response(
                                     &mut sender,
-                                    state.sonos.get_group_mute(&payload.ip),
+                                    state
+                                        .stream_coordinator
+                                        .get_mute_routed(&*state.sonos, &payload.ip),
                                     |mute| WsOutgoing::MuteState {
                                         payload: WsMutePayload { ip, mute },
                                     },

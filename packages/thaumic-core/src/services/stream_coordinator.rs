@@ -145,6 +145,23 @@ pub struct StreamCoordinator {
     emitter: Arc<dyn EventEmitter>,
 }
 
+/// Standalone function to check sync session status.
+///
+/// Extracted so both `StreamCoordinator::is_speaker_in_sync_session` and tests
+/// can use the same logic without duplication.
+#[must_use]
+fn is_speaker_in_sync_session_impl(
+    sessions: &DashMap<PlaybackSessionKey, PlaybackSession>,
+    speaker_ip: &str,
+) -> Option<bool> {
+    let session = sessions.iter().find(|r| r.key().speaker_ip == speaker_ip)?;
+    let stream_id = &session.key().stream_id;
+    let has_slaves = sessions
+        .iter()
+        .any(|r| r.key().stream_id == *stream_id && r.value().role == GroupRole::Slave);
+    Some(has_slaves)
+}
+
 impl StreamCoordinator {
     /// Creates a new StreamCoordinator.
     ///
@@ -212,6 +229,114 @@ impl StreamCoordinator {
             .filter(|r| r.key().stream_id == stream_id)
             .map(|r| r.value().clone())
             .collect()
+    }
+
+    /// Checks if a speaker IP is part of a synchronized multi-room playback session.
+    ///
+    /// A session is considered "synced" if multiple speakers are playing the same
+    /// stream with x-rincon joining (at least one speaker has `GroupRole::Slave`).
+    ///
+    /// # Arguments
+    /// * `speaker_ip` - IP address of the speaker to check
+    ///
+    /// # Returns
+    /// - `Some(true)` if speaker is in a sync session
+    /// - `Some(false)` if speaker is in a non-sync session
+    /// - `None` if speaker is not in any active session
+    #[must_use]
+    pub fn is_speaker_in_sync_session(&self, speaker_ip: &str) -> Option<bool> {
+        is_speaker_in_sync_session_impl(&self.playback_sessions, speaker_ip)
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────────
+    // Volume/Mute Routing (sync-aware)
+    // ─────────────────────────────────────────────────────────────────────────────
+
+    /// Returns whether to use per-speaker control for volume/mute operations.
+    ///
+    /// Returns `true` for speakers in sync sessions (use RenderingControl),
+    /// `false` otherwise (use GroupRenderingControl for stereo pair/sub behavior).
+    #[inline]
+    fn should_use_speaker_control(&self, speaker_ip: &str) -> bool {
+        self.is_speaker_in_sync_session(speaker_ip).unwrap_or(false)
+    }
+
+    /// Gets volume with automatic routing based on sync session state.
+    ///
+    /// For speakers in sync sessions (x-rincon joined), uses per-speaker volume
+    /// (RenderingControl). Otherwise uses group volume (GroupRenderingControl).
+    pub async fn get_volume_routed(
+        &self,
+        sonos: &dyn crate::sonos::traits::SonosVolumeControl,
+        speaker_ip: &str,
+    ) -> crate::error::SoapResult<u8> {
+        if self.should_use_speaker_control(speaker_ip) {
+            sonos.get_speaker_volume(speaker_ip).await
+        } else {
+            sonos.get_group_volume(speaker_ip).await
+        }
+    }
+
+    /// Sets volume with automatic routing based on sync session state.
+    ///
+    /// For speakers in sync sessions (x-rincon joined), uses per-speaker volume
+    /// (RenderingControl) to allow independent room control. Otherwise uses group
+    /// volume (GroupRenderingControl) which preserves stereo pair/sub behavior.
+    pub async fn set_volume_routed(
+        &self,
+        sonos: &dyn crate::sonos::traits::SonosVolumeControl,
+        speaker_ip: &str,
+        volume: u8,
+    ) -> crate::error::SoapResult<()> {
+        if self.should_use_speaker_control(speaker_ip) {
+            sonos.set_speaker_volume(speaker_ip, volume).await
+        } else {
+            sonos.set_group_volume(speaker_ip, volume).await
+        }
+    }
+
+    /// Gets mute state with automatic routing based on sync session state.
+    ///
+    /// For speakers in sync sessions (x-rincon joined), uses per-speaker mute
+    /// (RenderingControl). Otherwise uses group mute (GroupRenderingControl).
+    pub async fn get_mute_routed(
+        &self,
+        sonos: &dyn crate::sonos::traits::SonosVolumeControl,
+        speaker_ip: &str,
+    ) -> crate::error::SoapResult<bool> {
+        if self.should_use_speaker_control(speaker_ip) {
+            sonos.get_speaker_mute(speaker_ip).await
+        } else {
+            sonos.get_group_mute(speaker_ip).await
+        }
+    }
+
+    /// Sets mute state with automatic routing based on sync session state.
+    ///
+    /// For speakers in sync sessions (x-rincon joined), uses per-speaker mute
+    /// (RenderingControl) to allow independent room control. Otherwise uses group
+    /// mute (GroupRenderingControl).
+    pub async fn set_mute_routed(
+        &self,
+        sonos: &dyn crate::sonos::traits::SonosVolumeControl,
+        speaker_ip: &str,
+        mute: bool,
+    ) -> crate::error::SoapResult<()> {
+        if self.should_use_speaker_control(speaker_ip) {
+            sonos.set_speaker_mute(speaker_ip, mute).await
+        } else {
+            sonos.set_group_mute(speaker_ip, mute).await
+        }
+    }
+
+    /// Inserts a playback session for testing purposes.
+    ///
+    /// This allows tests to set up coordinator state without going through
+    /// the full playback start flow, enabling isolated testing of routing logic.
+    #[cfg(test)]
+    pub(crate) fn insert_test_session(&self, session: PlaybackSession) {
+        let key = PlaybackSessionKey::new(&session.stream_id, &session.speaker_ip);
+        self.playback_sessions.insert(key, session);
     }
 
     /// Creates a new audio stream with the specified output codec and transcoder.
@@ -1932,5 +2057,438 @@ mod tests {
         };
 
         assert!(result.starts_with("x-rincon-mp3radio://"));
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Volume/Mute Routing Tests
+    // ─────────────────────────────────────────────────────────────────────────
+
+    mod volume_routing {
+        use super::*;
+        use crate::error::SoapResult;
+        use crate::sonos::traits::SonosVolumeControl;
+        use async_trait::async_trait;
+        use std::sync::atomic::{AtomicBool, Ordering};
+
+        /// Mock volume control that tracks which methods are called.
+        struct MockVolumeControl {
+            get_speaker_volume_called: AtomicBool,
+            get_group_volume_called: AtomicBool,
+            set_speaker_volume_called: AtomicBool,
+            set_group_volume_called: AtomicBool,
+            get_speaker_mute_called: AtomicBool,
+            get_group_mute_called: AtomicBool,
+            set_speaker_mute_called: AtomicBool,
+            set_group_mute_called: AtomicBool,
+        }
+
+        impl MockVolumeControl {
+            fn new() -> Self {
+                Self {
+                    get_speaker_volume_called: AtomicBool::new(false),
+                    get_group_volume_called: AtomicBool::new(false),
+                    set_speaker_volume_called: AtomicBool::new(false),
+                    set_group_volume_called: AtomicBool::new(false),
+                    get_speaker_mute_called: AtomicBool::new(false),
+                    get_group_mute_called: AtomicBool::new(false),
+                    set_speaker_mute_called: AtomicBool::new(false),
+                    set_group_mute_called: AtomicBool::new(false),
+                }
+            }
+        }
+
+        #[async_trait]
+        impl SonosVolumeControl for MockVolumeControl {
+            async fn get_group_volume(&self, _: &str) -> SoapResult<u8> {
+                self.get_group_volume_called.store(true, Ordering::SeqCst);
+                Ok(50)
+            }
+            async fn set_group_volume(&self, _: &str, _: u8) -> SoapResult<()> {
+                self.set_group_volume_called.store(true, Ordering::SeqCst);
+                Ok(())
+            }
+            async fn get_group_mute(&self, _: &str) -> SoapResult<bool> {
+                self.get_group_mute_called.store(true, Ordering::SeqCst);
+                Ok(false)
+            }
+            async fn set_group_mute(&self, _: &str, _: bool) -> SoapResult<()> {
+                self.set_group_mute_called.store(true, Ordering::SeqCst);
+                Ok(())
+            }
+            async fn get_speaker_volume(&self, _: &str) -> SoapResult<u8> {
+                self.get_speaker_volume_called.store(true, Ordering::SeqCst);
+                Ok(75)
+            }
+            async fn set_speaker_volume(&self, _: &str, _: u8) -> SoapResult<()> {
+                self.set_speaker_volume_called.store(true, Ordering::SeqCst);
+                Ok(())
+            }
+            async fn get_speaker_mute(&self, _: &str) -> SoapResult<bool> {
+                self.get_speaker_mute_called.store(true, Ordering::SeqCst);
+                Ok(true)
+            }
+            async fn set_speaker_mute(&self, _: &str, _: bool) -> SoapResult<()> {
+                self.set_speaker_mute_called.store(true, Ordering::SeqCst);
+                Ok(())
+            }
+        }
+
+        /// Creates a coordinator with a DashMap we can populate for testing.
+        fn create_test_sessions() -> DashMap<PlaybackSessionKey, PlaybackSession> {
+            DashMap::new()
+        }
+
+        /// Creates a PlaybackSession for testing with sensible defaults.
+        ///
+        /// - Coordinators get HTTP stream URLs
+        /// - Slaves get x-rincon URLs and coordinator_ip set to "192.168.1.100"
+        fn create_test_session(
+            stream_id: &str,
+            speaker_ip: &str,
+            role: GroupRole,
+        ) -> PlaybackSession {
+            PlaybackSession {
+                stream_id: stream_id.to_string(),
+                speaker_ip: speaker_ip.to_string(),
+                stream_url: match role {
+                    GroupRole::Coordinator => "http://server/stream".to_string(),
+                    GroupRole::Slave => "x-rincon:RINCON_100".to_string(),
+                },
+                codec: AudioCodec::Aac,
+                role,
+                coordinator_ip: match role {
+                    GroupRole::Coordinator => None,
+                    GroupRole::Slave => Some("192.168.1.100".to_string()),
+                },
+                coordinator_uuid: Some("RINCON_100".to_string()),
+                original_coordinator_uuid: None,
+            }
+        }
+
+        // ───────────────────────────────────────────────────────────────────
+        // Tests for is_speaker_in_sync_session logic
+        // ───────────────────────────────────────────────────────────────────
+
+        #[test]
+        fn sync_detection_returns_none_for_unknown_speaker() {
+            let sessions = create_test_sessions();
+            assert_eq!(
+                is_speaker_in_sync_session_impl(&sessions, "192.168.1.100"),
+                None
+            );
+        }
+
+        #[test]
+        fn sync_detection_returns_false_for_solo_coordinator() {
+            let sessions = create_test_sessions();
+            sessions.insert(
+                PlaybackSessionKey::new("stream1", "192.168.1.100"),
+                create_test_session("stream1", "192.168.1.100", GroupRole::Coordinator),
+            );
+
+            // Single coordinator = not a sync session
+            assert_eq!(
+                is_speaker_in_sync_session_impl(&sessions, "192.168.1.100"),
+                Some(false)
+            );
+        }
+
+        #[test]
+        fn sync_detection_returns_true_when_slaves_exist() {
+            let sessions = create_test_sessions();
+
+            // Coordinator
+            sessions.insert(
+                PlaybackSessionKey::new("stream1", "192.168.1.100"),
+                create_test_session("stream1", "192.168.1.100", GroupRole::Coordinator),
+            );
+
+            // Slave joined to coordinator
+            sessions.insert(
+                PlaybackSessionKey::new("stream1", "192.168.1.101"),
+                create_test_session("stream1", "192.168.1.101", GroupRole::Slave),
+            );
+
+            // Both coordinator and slave are in sync session
+            assert_eq!(
+                is_speaker_in_sync_session_impl(&sessions, "192.168.1.100"),
+                Some(true)
+            );
+            assert_eq!(
+                is_speaker_in_sync_session_impl(&sessions, "192.168.1.101"),
+                Some(true)
+            );
+        }
+
+        // ───────────────────────────────────────────────────────────────────
+        // Tests for volume/mute routing via StreamCoordinator
+        // ───────────────────────────────────────────────────────────────────
+        //
+        // These tests exercise the actual StreamCoordinator::*_routed methods
+        // to verify routing decisions are wired correctly end-to-end.
+
+        use crate::context::NetworkContext;
+        use crate::events::NoopEventEmitter;
+        use crate::sonos::traits::SonosPlayback;
+        use crate::sonos::types::PositionInfo;
+        use crate::state::{SonosState, StreamingConfig};
+
+        /// Mock SonosPlayback for constructing StreamCoordinator in tests.
+        struct MockSonosPlayback;
+
+        #[async_trait]
+        impl SonosPlayback for MockSonosPlayback {
+            async fn play_uri(
+                &self,
+                _: &str,
+                _: &str,
+                _: AudioCodec,
+                _: &AudioFormat,
+                _: Option<&StreamMetadata>,
+                _: &str,
+            ) -> SoapResult<()> {
+                Ok(())
+            }
+            async fn play(&self, _: &str) -> SoapResult<()> {
+                Ok(())
+            }
+            async fn stop(&self, _: &str) -> SoapResult<()> {
+                Ok(())
+            }
+            async fn switch_to_queue(&self, _: &str, _: &str) -> SoapResult<()> {
+                Ok(())
+            }
+            async fn get_position_info(&self, _: &str) -> SoapResult<PositionInfo> {
+                Ok(PositionInfo {
+                    track: 1,
+                    track_duration: "0:00:00".to_string(),
+                    track_uri: String::new(),
+                    rel_time: "0:00:00".to_string(),
+                    rel_time_ms: 0,
+                })
+            }
+            async fn join_group(&self, _: &str, _: &str) -> SoapResult<()> {
+                Ok(())
+            }
+            async fn leave_group(&self, _: &str) -> SoapResult<()> {
+                Ok(())
+            }
+        }
+
+        /// Creates a StreamCoordinator with test dependencies.
+        fn create_test_coordinator() -> StreamCoordinator {
+            StreamCoordinator::new(
+                Arc::new(MockSonosPlayback),
+                Arc::new(SonosState::default()),
+                NetworkContext::for_test(),
+                Arc::new(NoopEventEmitter),
+                StreamingConfig::default(),
+            )
+        }
+
+        #[tokio::test]
+        async fn set_volume_routed_uses_speaker_control_in_sync_session() {
+            let coordinator = create_test_coordinator();
+            let mock = MockVolumeControl::new();
+
+            // Set up sync session (coordinator + slave)
+            coordinator.insert_test_session(create_test_session(
+                "stream1",
+                "192.168.1.100",
+                GroupRole::Coordinator,
+            ));
+            coordinator.insert_test_session(create_test_session(
+                "stream1",
+                "192.168.1.101",
+                GroupRole::Slave,
+            ));
+
+            // Call the actual routing method
+            coordinator
+                .set_volume_routed(&mock, "192.168.1.100", 75)
+                .await
+                .unwrap();
+
+            assert!(mock.set_speaker_volume_called.load(Ordering::SeqCst));
+            assert!(!mock.set_group_volume_called.load(Ordering::SeqCst));
+        }
+
+        #[tokio::test]
+        async fn set_volume_routed_uses_group_control_for_solo_speaker() {
+            let coordinator = create_test_coordinator();
+            let mock = MockVolumeControl::new();
+
+            // Solo coordinator (no slaves)
+            coordinator.insert_test_session(create_test_session(
+                "stream1",
+                "192.168.1.100",
+                GroupRole::Coordinator,
+            ));
+
+            coordinator
+                .set_volume_routed(&mock, "192.168.1.100", 75)
+                .await
+                .unwrap();
+
+            assert!(!mock.set_speaker_volume_called.load(Ordering::SeqCst));
+            assert!(mock.set_group_volume_called.load(Ordering::SeqCst));
+        }
+
+        #[tokio::test]
+        async fn set_volume_routed_uses_group_control_for_unknown_speaker() {
+            let coordinator = create_test_coordinator();
+            let mock = MockVolumeControl::new();
+            // No sessions - speaker not in any session
+
+            coordinator
+                .set_volume_routed(&mock, "192.168.1.100", 75)
+                .await
+                .unwrap();
+
+            // Unknown speaker defaults to group control
+            assert!(!mock.set_speaker_volume_called.load(Ordering::SeqCst));
+            assert!(mock.set_group_volume_called.load(Ordering::SeqCst));
+        }
+
+        #[tokio::test]
+        async fn get_volume_routed_uses_speaker_control_in_sync_session() {
+            let coordinator = create_test_coordinator();
+            let mock = MockVolumeControl::new();
+
+            // Set up sync session
+            coordinator.insert_test_session(create_test_session(
+                "stream1",
+                "192.168.1.100",
+                GroupRole::Coordinator,
+            ));
+            coordinator.insert_test_session(create_test_session(
+                "stream1",
+                "192.168.1.101",
+                GroupRole::Slave,
+            ));
+
+            let _ = coordinator
+                .get_volume_routed(&mock, "192.168.1.100")
+                .await
+                .unwrap();
+
+            assert!(mock.get_speaker_volume_called.load(Ordering::SeqCst));
+            assert!(!mock.get_group_volume_called.load(Ordering::SeqCst));
+        }
+
+        #[tokio::test]
+        async fn get_volume_routed_uses_group_control_for_solo_speaker() {
+            let coordinator = create_test_coordinator();
+            let mock = MockVolumeControl::new();
+
+            // Solo coordinator
+            coordinator.insert_test_session(create_test_session(
+                "stream1",
+                "192.168.1.100",
+                GroupRole::Coordinator,
+            ));
+
+            let _ = coordinator
+                .get_volume_routed(&mock, "192.168.1.100")
+                .await
+                .unwrap();
+
+            assert!(!mock.get_speaker_volume_called.load(Ordering::SeqCst));
+            assert!(mock.get_group_volume_called.load(Ordering::SeqCst));
+        }
+
+        #[tokio::test]
+        async fn set_mute_routed_uses_speaker_control_in_sync_session() {
+            let coordinator = create_test_coordinator();
+            let mock = MockVolumeControl::new();
+
+            // Set up sync session
+            coordinator.insert_test_session(create_test_session(
+                "stream1",
+                "192.168.1.100",
+                GroupRole::Coordinator,
+            ));
+            coordinator.insert_test_session(create_test_session(
+                "stream1",
+                "192.168.1.101",
+                GroupRole::Slave,
+            ));
+
+            coordinator
+                .set_mute_routed(&mock, "192.168.1.100", true)
+                .await
+                .unwrap();
+
+            assert!(mock.set_speaker_mute_called.load(Ordering::SeqCst));
+            assert!(!mock.set_group_mute_called.load(Ordering::SeqCst));
+        }
+
+        #[tokio::test]
+        async fn set_mute_routed_uses_group_control_for_solo_speaker() {
+            let coordinator = create_test_coordinator();
+            let mock = MockVolumeControl::new();
+
+            // Solo coordinator
+            coordinator.insert_test_session(create_test_session(
+                "stream1",
+                "192.168.1.100",
+                GroupRole::Coordinator,
+            ));
+
+            coordinator
+                .set_mute_routed(&mock, "192.168.1.100", true)
+                .await
+                .unwrap();
+
+            assert!(!mock.set_speaker_mute_called.load(Ordering::SeqCst));
+            assert!(mock.set_group_mute_called.load(Ordering::SeqCst));
+        }
+
+        #[tokio::test]
+        async fn get_mute_routed_uses_speaker_control_in_sync_session() {
+            let coordinator = create_test_coordinator();
+            let mock = MockVolumeControl::new();
+
+            // Set up sync session
+            coordinator.insert_test_session(create_test_session(
+                "stream1",
+                "192.168.1.100",
+                GroupRole::Coordinator,
+            ));
+            coordinator.insert_test_session(create_test_session(
+                "stream1",
+                "192.168.1.101",
+                GroupRole::Slave,
+            ));
+
+            let _ = coordinator
+                .get_mute_routed(&mock, "192.168.1.100")
+                .await
+                .unwrap();
+
+            assert!(mock.get_speaker_mute_called.load(Ordering::SeqCst));
+            assert!(!mock.get_group_mute_called.load(Ordering::SeqCst));
+        }
+
+        #[tokio::test]
+        async fn get_mute_routed_uses_group_control_for_solo_speaker() {
+            let coordinator = create_test_coordinator();
+            let mock = MockVolumeControl::new();
+
+            // Solo coordinator
+            coordinator.insert_test_session(create_test_session(
+                "stream1",
+                "192.168.1.100",
+                GroupRole::Coordinator,
+            ));
+
+            let _ = coordinator
+                .get_mute_routed(&mock, "192.168.1.100")
+                .await
+                .unwrap();
+
+            assert!(!mock.get_speaker_mute_called.load(Ordering::SeqCst));
+            assert!(mock.get_group_mute_called.load(Ordering::SeqCst));
+        }
     }
 }

@@ -379,6 +379,9 @@ impl GenaSubscriptionManager {
                 gena_event_builder::build_group_rendering_events(&ip, body)
             }
             SonosService::ZoneGroupTopology => gena_event_builder::build_zone_topology_events(body),
+            // RenderingControl is used for per-speaker volume commands during sync playback,
+            // but we don't subscribe to its events (GroupRenderingControl handles volume updates)
+            SonosService::RenderingControl => vec![],
         }
     }
 
