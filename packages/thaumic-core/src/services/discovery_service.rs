@@ -7,7 +7,7 @@
 use std::sync::Arc;
 
 use reqwest::Client;
-use tokio::sync::Notify;
+use tokio::sync::{mpsc, Notify};
 
 use crate::context::NetworkContext;
 use crate::events::EventEmitter;
@@ -43,6 +43,8 @@ impl DiscoveryService {
     /// * `http_client` - HTTP client for GENA requests
     /// * `topology_refresh_interval_secs` - Interval between automatic topology refreshes
     /// * `spawner` - Task spawner for background tasks
+    /// * `gena_manager` - Pre-created GENA subscription manager (shared with StreamCoordinator)
+    /// * `gena_event_rx` - Receiver for GENA events
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         sonos: Arc<dyn SonosTopologyClient>,
@@ -53,9 +55,9 @@ impl DiscoveryService {
         http_client: Client,
         topology_refresh_interval_secs: u64,
         spawner: TokioSpawner,
+        gena_manager: Arc<GenaSubscriptionManager>,
+        gena_event_rx: mpsc::Receiver<SonosEvent>,
     ) -> Self {
-        let (gena_manager, gena_event_rx) = GenaSubscriptionManager::new(http_client.clone());
-        let gena_manager = Arc::new(gena_manager);
         let refresh_notify = Arc::new(Notify::new());
 
         let topology_monitor = Arc::new(TopologyMonitor::new(

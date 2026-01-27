@@ -15,6 +15,8 @@ use dashmap::DashMap;
 use crate::context::NetworkContext;
 use crate::error::ThaumicResult;
 use crate::events::{EventEmitter, SpeakerRemovalReason, StreamEvent};
+use crate::sonos::gena::GenaSubscriptionManager;
+use crate::sonos::services::SonosService;
 use crate::sonos::types::TransportState;
 use crate::sonos::utils::build_sonos_stream_uri;
 use crate::sonos::SonosPlayback;
@@ -143,6 +145,8 @@ pub struct StreamCoordinator {
     playback_sessions: DashMap<PlaybackSessionKey, PlaybackSession>,
     /// Event emitter for stream lifecycle events.
     emitter: Arc<dyn EventEmitter>,
+    /// GENA subscription manager for RenderingControl subscriptions during sync sessions.
+    gena_manager: Arc<GenaSubscriptionManager>,
 }
 
 /// Standalone function to check sync session status.
@@ -171,12 +175,14 @@ impl StreamCoordinator {
     /// * `network` - Network configuration (port, local IP)
     /// * `emitter` - Event emitter for broadcasting stream events
     /// * `streaming_config` - Streaming configuration (concurrency, buffering, channel capacity)
+    /// * `gena_manager` - GENA subscription manager for RenderingControl subscriptions
     pub fn new(
         sonos: Arc<dyn SonosPlayback>,
         sonos_state: Arc<SonosState>,
         network: NetworkContext,
         emitter: Arc<dyn EventEmitter>,
         streaming_config: StreamingConfig,
+        gena_manager: Arc<GenaSubscriptionManager>,
     ) -> Self {
         Self {
             sonos,
@@ -185,12 +191,68 @@ impl StreamCoordinator {
             network,
             playback_sessions: DashMap::new(),
             emitter,
+            gena_manager,
         }
     }
 
     /// Emits a stream event to all listeners.
     fn emit_event(&self, event: StreamEvent) {
         self.emitter.emit_stream(event);
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────────
+    // RenderingControl Subscription Management (for sync sessions)
+    // ─────────────────────────────────────────────────────────────────────────────
+
+    /// Subscribes to RenderingControl for all speakers in a sync session.
+    ///
+    /// This enables volume/mute events from individual speakers during synchronized
+    /// multi-room playback. Called when a slave joins a coordinator.
+    ///
+    /// # Arguments
+    /// * `stream_id` - The stream ID to find all speakers for
+    async fn subscribe_rendering_control_for_sync_session(&self, stream_id: &str) {
+        let callback_url = self.network.gena_callback_url();
+        let speaker_ips: Vec<String> = self
+            .playback_sessions
+            .iter()
+            .filter(|r| r.key().stream_id == stream_id)
+            .map(|r| r.key().speaker_ip.clone())
+            .collect();
+
+        for ip in speaker_ips {
+            if let Err(e) = self
+                .gena_manager
+                .subscribe(
+                    ip.clone(),
+                    SonosService::RenderingControl,
+                    callback_url.clone(),
+                )
+                .await
+            {
+                log::warn!(
+                    "[GroupSync] Failed to subscribe RenderingControl for {}: {}",
+                    ip,
+                    e
+                );
+                // Continue - degraded experience but functional
+            } else {
+                log::debug!(
+                    "[GroupSync] Subscribed to RenderingControl for {} (sync session)",
+                    ip
+                );
+            }
+        }
+    }
+
+    /// Unsubscribes from RenderingControl for a speaker.
+    ///
+    /// Called when a speaker leaves a sync session. The GenaSubscriptionManager
+    /// handles logging for success/failure/not-found cases.
+    async fn unsubscribe_rendering_control(&self, speaker_ip: &str) {
+        self.gena_manager
+            .unsubscribe_by_ip_and_service(speaker_ip, SonosService::RenderingControl)
+            .await;
     }
 
     /// Gets the expected stream URL for a speaker (normalized for Sonos comparison).
@@ -862,6 +924,11 @@ impl StreamCoordinator {
                     coordinator_ip
                 );
 
+                // Subscribe to RenderingControl for all speakers in this sync session
+                // This enables per-speaker volume/mute events from the Sonos app
+                self.subscribe_rendering_control_for_sync_session(stream_id)
+                    .await;
+
                 PlaybackResult {
                     speaker_ip: slave_ip.to_string(),
                     success: true,
@@ -1441,6 +1508,30 @@ impl StreamCoordinator {
             Ok(()) => {
                 self.playback_sessions.remove(&key);
 
+                // Unsubscribe from RenderingControl for this slave
+                self.unsubscribe_rendering_control(speaker_ip).await;
+
+                // Check if any slaves remain - if not, unsubscribe coordinator too
+                let remaining_slaves = self
+                    .playback_sessions
+                    .iter()
+                    .any(|r| r.key().stream_id == stream_id && r.value().role == GroupRole::Slave);
+
+                if !remaining_slaves {
+                    // Find and unsubscribe the coordinator
+                    if let Some(coord_ip) = self
+                        .playback_sessions
+                        .iter()
+                        .find(|r| {
+                            r.key().stream_id == stream_id
+                                && r.value().role == GroupRole::Coordinator
+                        })
+                        .map(|r| r.key().speaker_ip.clone())
+                    {
+                        self.unsubscribe_rendering_control(&coord_ip).await;
+                    }
+                }
+
                 // Attempt to restore to original group (best-effort)
                 if let Some(orig_uuid) = original_coordinator {
                     self.restore_original_group(speaker_ip, &orig_uuid).await;
@@ -1536,6 +1627,11 @@ impl StreamCoordinator {
 
             // Remove session and emit event regardless of SOAP result
             self.playback_sessions.remove(&slave_key);
+
+            // Unsubscribe from RenderingControl for this slave
+            self.unsubscribe_rendering_control(&slave_key.speaker_ip)
+                .await;
+
             self.emit_event(StreamEvent::PlaybackStopped {
                 stream_id: stream_id.to_string(),
                 speaker_ip: slave_key.speaker_ip.clone(),
@@ -1569,6 +1665,9 @@ impl StreamCoordinator {
         match self.sonos.stop(coordinator_ip).await {
             Ok(()) => {
                 self.playback_sessions.remove(&coord_key);
+
+                // Unsubscribe from RenderingControl for the coordinator
+                self.unsubscribe_rendering_control(coordinator_ip).await;
 
                 // Switch to queue as cleanup (clears stale stream source in Sonos UI)
                 // This prevents unexpected resume when user interacts with Sonos app
@@ -2229,6 +2328,7 @@ mod tests {
 
         use crate::context::NetworkContext;
         use crate::events::NoopEventEmitter;
+        use crate::sonos::gena::GenaSubscriptionManager;
         use crate::sonos::traits::SonosPlayback;
         use crate::sonos::types::PositionInfo;
         use crate::state::{SonosState, StreamingConfig};
@@ -2277,12 +2377,15 @@ mod tests {
 
         /// Creates a StreamCoordinator with test dependencies.
         fn create_test_coordinator() -> StreamCoordinator {
+            // Create a real GenaSubscriptionManager for tests (receiver is dropped)
+            let (gena_manager, _rx) = GenaSubscriptionManager::new(reqwest::Client::new());
             StreamCoordinator::new(
                 Arc::new(MockSonosPlayback),
                 Arc::new(SonosState::default()),
                 NetworkContext::for_test(),
                 Arc::new(NoopEventEmitter),
                 StreamingConfig::default(),
+                Arc::new(gena_manager),
             )
         }
 

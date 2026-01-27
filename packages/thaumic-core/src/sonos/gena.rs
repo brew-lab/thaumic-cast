@@ -323,6 +323,31 @@ impl GenaSubscriptionManager {
         }
     }
 
+    /// Unsubscribes from a specific service on a specific speaker IP.
+    pub async fn unsubscribe_by_ip_and_service(&self, ip: &str, service: SonosService) {
+        if let Some(sid) = self.store.get_sid_by_ip_and_service(ip, service) {
+            if let Err(e) = self.unsubscribe(&sid).await {
+                log::error!(
+                    "[GENA] Failed to unsubscribe {} from {} on {}: {}",
+                    sid,
+                    service.name(),
+                    ip,
+                    e
+                );
+            }
+        } else {
+            // No subscription found - this can happen if:
+            // 1. Speaker was never subscribed (normal for speakers not in sync sessions)
+            // 2. Subscription was already removed (race condition or speaker reboot)
+            // 3. State desync between store and actual subscriptions
+            log::debug!(
+                "[GENA] No {} subscription found for {} (may already be unsubscribed)",
+                service.name(),
+                ip
+            );
+        }
+    }
+
     /// Unsubscribes from all active subscriptions.
     pub async fn unsubscribe_all(&self) {
         let sids = self.store.get_all_sids();
@@ -379,9 +404,11 @@ impl GenaSubscriptionManager {
                 gena_event_builder::build_group_rendering_events(&ip, body)
             }
             SonosService::ZoneGroupTopology => gena_event_builder::build_zone_topology_events(body),
-            // RenderingControl is used for per-speaker volume commands during sync playback,
-            // but we don't subscribe to its events (GroupRenderingControl handles volume updates)
-            SonosService::RenderingControl => vec![],
+            // RenderingControl is used for per-speaker volume during sync playback.
+            // We subscribe to these events when sync sessions are active.
+            SonosService::RenderingControl => {
+                gena_event_builder::build_rendering_control_events(&ip, body)
+            }
         }
     }
 
