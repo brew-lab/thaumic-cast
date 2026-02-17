@@ -855,6 +855,8 @@ impl SyncGroupManager {
 
         let repoint_futures: Vec<_> = remaining_slaves
             .iter()
+            // No `move` — promoted_ip/promoted_uuid are owned Strings that outlive join_all,
+            // so borrowing avoids cloning them into each future.
             .map(|(slave_key, slave_session)| async {
                 log::debug!(
                     "[GroupSync] Re-pointing slave {} to new coordinator {}",
