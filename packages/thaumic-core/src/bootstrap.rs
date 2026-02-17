@@ -22,6 +22,7 @@ use crate::protocol_constants::{EVENT_CHANNEL_CAPACITY, SOAP_TIMEOUT_SECS};
 use crate::runtime::TokioSpawner;
 use crate::services::{DiscoveryService, LatencyMonitor, StreamCoordinator};
 use crate::sonos::gena::GenaSubscriptionManager;
+use crate::sonos::subscription_arbiter::SubscriptionArbiter;
 use crate::sonos::{SonosClient, SonosClientImpl, SonosPlayback, SonosTopologyClient};
 use crate::state::{Config, SonosState};
 use crate::streaming_runtime::StreamingRuntime;
@@ -218,14 +219,17 @@ pub fn bootstrap_services_with_network(
     // and TopologyMonitor. Any party can signal it to trigger an immediate topology fetch.
     let refresh_notify = Arc::new(tokio::sync::Notify::new());
 
-    // Wire up stream coordinator with its dependencies (needs gena_manager for RenderingControl subscriptions)
+    // Create subscription arbiter (shared between StreamCoordinator and TopologyMonitor)
+    let arbiter = Arc::new(SubscriptionArbiter::new(Arc::clone(&gena_manager)));
+
+    // Wire up stream coordinator with its dependencies
     let mut stream_coordinator = StreamCoordinator::new(
         Arc::clone(&sonos_impl) as Arc<dyn SonosPlayback>,
         Arc::clone(&sonos_state),
         network.clone(),
         Arc::clone(&event_bridge) as Arc<dyn EventEmitter>,
         config.streaming.clone(),
-        Arc::clone(&gena_manager),
+        Arc::clone(&arbiter),
     );
     stream_coordinator.set_topology_refresh(Arc::clone(&refresh_notify));
     let stream_coordinator = Arc::new(stream_coordinator);
@@ -252,6 +256,7 @@ pub fn bootstrap_services_with_network(
         gena_manager,
         gena_event_rx,
         refresh_notify,
+        arbiter,
     ));
 
     // Coerce to the general SonosClient trait for storage

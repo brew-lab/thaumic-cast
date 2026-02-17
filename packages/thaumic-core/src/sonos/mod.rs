@@ -27,6 +27,7 @@ pub mod gena_parser;
 pub mod gena_store;
 pub mod services;
 pub mod soap;
+pub mod subscription_arbiter;
 pub mod traits;
 pub mod types;
 pub mod utils;
