@@ -132,16 +132,34 @@ pub fn parse_zone_group_xml(xml: &str) -> Vec<ZoneGroup> {
                     (current_coordinator_uuid.take(), coordinator_ip.take())
                 {
                     if !current_members.is_empty() {
-                        // Use coordinator's zone name, or build from unique member names
-                        let group_name = coordinator_zone_name.take().unwrap_or_else(|| {
-                            let mut unique_names: Vec<&str> = Vec::new();
-                            for m in &current_members {
-                                if !unique_names.contains(&m.zone_name.as_str()) {
-                                    unique_names.push(&m.zone_name);
+                        // Build group name from member zone names:
+                        // - Single room / stereo pair / HT: use coordinator's name
+                        // - Multi-room (x-rincon join): combine unique zone names
+                        let group_name = coordinator_zone_name.take().map_or_else(
+                            || {
+                                let mut unique_names: Vec<&str> = Vec::new();
+                                for m in &current_members {
+                                    if !unique_names.contains(&m.zone_name.as_str()) {
+                                        unique_names.push(&m.zone_name);
+                                    }
                                 }
-                            }
-                            unique_names.join(" + ")
-                        });
+                                unique_names.join(", ")
+                            },
+                            |coord_name| {
+                                let mut other_names: Vec<&str> = Vec::new();
+                                for m in &current_members {
+                                    let name = m.zone_name.as_str();
+                                    if name != coord_name.as_str() && !other_names.contains(&name) {
+                                        other_names.push(name);
+                                    }
+                                }
+                                if other_names.is_empty() {
+                                    coord_name
+                                } else {
+                                    format!("{}, {}", coord_name, other_names.join(", "))
+                                }
+                            },
+                        );
 
                         groups.push(ZoneGroup {
                             id: current_group_id.clone(),
@@ -1129,6 +1147,134 @@ mod tests {
 
             let (_, _, args) = parts.expect("should build request");
             assert_eq!(args[2], ("DesiredMute", "0".to_string()));
+        }
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Zone Group XML Parsing Tests
+    // ─────────────────────────────────────────────────────────────────────────
+
+    mod zone_group_parsing {
+        use super::super::parse_zone_group_xml;
+
+        /// Helper to build a ZoneGroupMember XML element.
+        fn member_xml(uuid: &str, ip: &str, zone_name: &str) -> String {
+            format!(
+                r#"<ZoneGroupMember UUID="{uuid}" Location="http://{ip}:1400/xml/device_description.xml" ZoneName="{zone_name}" Icon="x-rincon-roomicon:living" />"#
+            )
+        }
+
+        /// Helper to wrap members into a ZoneGroup XML element.
+        fn group_xml(id: &str, coordinator_uuid: &str, members: &[String]) -> String {
+            format!(
+                r#"<ZoneGroup Coordinator="{coordinator_uuid}" ID="{id}">{}</ZoneGroup>"#,
+                members.join("")
+            )
+        }
+
+        /// Helper to wrap groups into a ZoneGroups root element.
+        fn zone_groups_xml(groups: &[String]) -> String {
+            format!("<ZoneGroups>{}</ZoneGroups>", groups.join(""))
+        }
+
+        #[test]
+        fn single_speaker_uses_zone_name() {
+            let xml = zone_groups_xml(&[group_xml(
+                "G1",
+                "RINCON_KITCHEN",
+                &[member_xml("RINCON_KITCHEN", "192.168.1.10", "Kitchen")],
+            )]);
+
+            let groups = parse_zone_group_xml(&xml);
+            assert_eq!(groups.len(), 1);
+            assert_eq!(groups[0].name, "Kitchen");
+        }
+
+        #[test]
+        fn stereo_pair_uses_coordinator_name() {
+            // Stereo pair: two speakers, same zone name
+            let xml = zone_groups_xml(&[group_xml(
+                "G1",
+                "RINCON_LEFT",
+                &[
+                    member_xml("RINCON_LEFT", "192.168.1.10", "Living Room"),
+                    member_xml("RINCON_RIGHT", "192.168.1.11", "Living Room"),
+                ],
+            )]);
+
+            let groups = parse_zone_group_xml(&xml);
+            assert_eq!(groups.len(), 1);
+            assert_eq!(groups[0].name, "Living Room");
+        }
+
+        #[test]
+        fn multi_room_join_combines_zone_names() {
+            // x-rincon join: two speakers from different rooms
+            let xml = zone_groups_xml(&[group_xml(
+                "G1",
+                "RINCON_KITCHEN",
+                &[
+                    member_xml("RINCON_KITCHEN", "192.168.1.10", "Kitchen"),
+                    member_xml("RINCON_OFFICE", "192.168.1.20", "Office"),
+                ],
+            )]);
+
+            let groups = parse_zone_group_xml(&xml);
+            assert_eq!(groups.len(), 1);
+            assert_eq!(groups[0].name, "Kitchen, Office");
+        }
+
+        #[test]
+        fn multi_room_join_coordinator_name_first() {
+            // Coordinator name should come first even if not first in XML
+            let xml = zone_groups_xml(&[group_xml(
+                "G1",
+                "RINCON_OFFICE",
+                &[
+                    member_xml("RINCON_KITCHEN", "192.168.1.10", "Kitchen"),
+                    member_xml("RINCON_OFFICE", "192.168.1.20", "Office"),
+                ],
+            )]);
+
+            let groups = parse_zone_group_xml(&xml);
+            assert_eq!(groups.len(), 1);
+            assert_eq!(groups[0].name, "Office, Kitchen");
+        }
+
+        #[test]
+        fn three_room_join_combines_all_names() {
+            let xml = zone_groups_xml(&[group_xml(
+                "G1",
+                "RINCON_KITCHEN",
+                &[
+                    member_xml("RINCON_KITCHEN", "192.168.1.10", "Kitchen"),
+                    member_xml("RINCON_OFFICE", "192.168.1.20", "Office"),
+                    member_xml("RINCON_BEDROOM", "192.168.1.30", "Bedroom"),
+                ],
+            )]);
+
+            let groups = parse_zone_group_xml(&xml);
+            assert_eq!(groups.len(), 1);
+            assert_eq!(groups[0].name, "Kitchen, Office, Bedroom");
+        }
+
+        #[test]
+        fn home_theater_same_zone_names_not_duplicated() {
+            // Home theater: soundbar + sub + surrounds, all same zone name
+            let xml = zone_groups_xml(&[group_xml(
+                "G1",
+                "RINCON_BAR",
+                &[
+                    member_xml("RINCON_BAR", "192.168.1.10", "Living Room"),
+                    member_xml("RINCON_SUB", "192.168.1.11", "Living Room"),
+                    member_xml("RINCON_LEFT", "192.168.1.12", "Living Room"),
+                    member_xml("RINCON_RIGHT", "192.168.1.13", "Living Room"),
+                ],
+            )]);
+
+            let groups = parse_zone_group_xml(&xml);
+            assert_eq!(groups.len(), 1);
+            assert_eq!(groups[0].name, "Living Room");
         }
     }
 }
