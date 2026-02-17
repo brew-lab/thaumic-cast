@@ -40,8 +40,7 @@ pub(crate) fn format_didl_lite(
     metadata: Option<&StreamMetadata>,
     artwork_url: &str,
 ) -> String {
-    // [DIAG] Log incoming metadata for debugging
-    log::info!(
+    log::debug!(
         "[DIDL] Incoming metadata: {:?}, codec={}, format={:?}",
         metadata.map(|m| format!(
             "title={:?}, artist={:?}, album={:?}, source={:?}",
@@ -71,8 +70,7 @@ pub(crate) fn format_didl_lite(
 
     let mime_type = codec.mime_type();
 
-    // [DIAG] Log what we're sending to Sonos
-    log::info!(
+    log::debug!(
         "[DIDL] Sending to Sonos: title={:?}, artist={:?}, album={:?}, mime={}, icon={:?}",
         title,
         artist,
