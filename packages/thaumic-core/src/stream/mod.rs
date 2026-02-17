@@ -1,8 +1,10 @@
+pub mod cadence;
 pub mod icy;
 pub mod manager;
 pub mod transcoder;
 pub mod wav;
 
+pub use cadence::{create_wav_stream_with_cadence, lagged_error, LoggingStreamGuard};
 pub use icy::{IcyMetadataInjector, ICY_METAINT};
 pub use manager::{
     AudioCodec, PlaybackEpoch, StreamManager, StreamMetadata, StreamState, StreamTiming,
