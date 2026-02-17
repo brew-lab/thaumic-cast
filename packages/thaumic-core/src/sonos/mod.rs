@@ -31,16 +31,17 @@ pub mod gena_client;
 pub mod gena_event_builder;
 pub mod gena_parser;
 pub mod gena_store;
-pub mod grouping;
-pub mod playback;
+pub(crate) mod grouping;
+pub(crate) mod playback;
+pub(crate) mod retry;
 pub mod services;
 pub mod soap;
 pub mod subscription_arbiter;
 pub mod traits;
 pub mod types;
 pub mod utils;
-pub mod volume;
-pub mod zone_groups;
+pub(crate) mod volume;
+pub(crate) mod zone_groups;
 
 #[cfg(test)]
 pub(crate) mod test_fixtures;

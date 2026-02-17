@@ -4,60 +4,15 @@
 //! including retry logic for transient SOAP errors.
 
 use reqwest::Client;
-use std::time::Duration;
 
 use crate::error::SoapResult;
 use crate::sonos::didl::format_didl_lite;
+use crate::sonos::retry::with_retry;
 use crate::sonos::services::SonosService;
 use crate::sonos::soap::{SoapError, SoapRequestBuilder};
 use crate::sonos::types::PositionInfo;
 use crate::sonos::utils::{build_sonos_stream_uri, extract_xml_text};
 use crate::stream::{AudioCodec, AudioFormat, StreamMetadata};
-
-/// Retry delays for transient SOAP errors (exponential backoff).
-const RETRY_DELAYS_MS: [u64; 3] = [200, 500, 1000];
-
-/// Executes a SOAP request with retry logic for transient errors.
-///
-/// Retries on transient SOAP faults (701, 714, 716) and timeouts with
-/// exponential backoff (200ms, 500ms, 1000ms).
-///
-/// # Arguments
-/// * `action` - Action name for logging
-/// * `operation` - Closure that performs the SOAP request
-async fn with_retry<F, Fut>(action: &str, mut operation: F) -> SoapResult<String>
-where
-    F: FnMut() -> Fut,
-    Fut: std::future::Future<Output = SoapResult<String>>,
-{
-    let mut last_error = None;
-    for (attempt, &delay_ms) in std::iter::once(&0)
-        .chain(RETRY_DELAYS_MS.iter())
-        .enumerate()
-    {
-        if attempt > 0 {
-            log::info!(
-                "[Sonos] Retrying {} (attempt {}/{}) after {}ms",
-                action,
-                attempt + 1,
-                RETRY_DELAYS_MS.len() + 1,
-                delay_ms
-            );
-            tokio::time::sleep(Duration::from_millis(delay_ms)).await;
-        }
-
-        match operation().await {
-            Ok(r) => return Ok(r),
-            Err(e) if e.is_transient() => {
-                log::warn!("[Sonos] {} transient error: {}", action, e);
-                last_error = Some(e);
-            }
-            Err(e) => return Err(e),
-        }
-    }
-
-    Err(last_error.expect("retry loop should have set last_error"))
-}
 
 /// Commands a Sonos speaker to play a specific audio URI.
 ///
@@ -149,6 +104,9 @@ pub async fn play(client: &Client, ip: &str) -> SoapResult<()> {
 /// # Note
 /// This function handles the "already stopped" case gracefully by ignoring
 /// SOAP faults with error code 701.
+///
+/// Unlike `play_uri`/`play`, this intentionally skips `with_retry` — stop is
+/// best-effort cleanup, and retrying would delay teardown for unresponsive speakers.
 pub async fn stop(client: &Client, ip: &str) -> SoapResult<()> {
     let result = SoapRequestBuilder::new(client, ip)
         .service(SonosService::AVTransport)
@@ -181,6 +139,10 @@ pub async fn stop(client: &Client, ip: &str) -> SoapResult<()> {
 /// * `client` - The HTTP client to use for the request
 /// * `ip` - IP address of the Sonos speaker (coordinator for grouped speakers)
 /// * `coordinator_uuid` - The speaker's RINCON_xxx UUID for building the queue URI
+///
+/// # Note
+/// Like `stop`, this intentionally skips `with_retry` — it's a post-stop cleanup
+/// step and retrying would delay teardown for unresponsive speakers.
 pub async fn switch_to_queue(client: &Client, ip: &str, coordinator_uuid: &str) -> SoapResult<()> {
     let queue_uri = format!("x-rincon-queue:{}#0", coordinator_uuid);
 
