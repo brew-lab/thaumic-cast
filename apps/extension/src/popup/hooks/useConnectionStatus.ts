@@ -73,8 +73,9 @@ const initialState: ConnectionState = {
 
 /**
  * Derives connection phase from connection flags.
- * @param connected
- * @param hasError
+ * @param connected - Whether the connection is established
+ * @param hasError - Whether an error has occurred
+ * @returns The current connection phase
  */
 function derivePhase(connected: boolean, hasError: boolean): ConnectionPhase {
   if (connected) return 'connected';
@@ -85,8 +86,9 @@ function derivePhase(connected: boolean, hasError: boolean): ConnectionPhase {
 /**
  * Reducer for connection state transitions.
  * Centralizes all state update logic for easier testing and reasoning.
- * @param state
- * @param action
+ * @param state - Current connection state
+ * @param action - The dispatched action
+ * @returns Updated connection state
  */
 function connectionReducer(state: ConnectionState, action: ConnectionAction): ConnectionState {
   switch (action.type) {
@@ -177,9 +179,7 @@ export function useConnectionStatus(): ConnectionStatus {
 
   // Initialize connection on mount
   useEffect(() => {
-    /**
-     *
-     */
+    /** Initializes connection by fetching cached state and setting up listeners. */
     async function init() {
       try {
         // Fetch cached state for instant display
