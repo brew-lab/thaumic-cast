@@ -69,42 +69,48 @@ impl SubscriptionArbiter {
             self.sync_ips.insert(ip.clone());
         }
 
-        for ip in ips {
-            // Unsubscribe from GRC to avoid dual subscriptions
-            self.gena
-                .unsubscribe_by_ip_and_service(ip, SonosService::GroupRenderingControl)
-                .await;
-
-            // Subscribe to RC for per-speaker volume/mute events
-            if let Err(e) = self
-                .gena
-                .subscribe(
-                    ip.clone(),
-                    SonosService::RenderingControl,
-                    callback_url.to_string(),
-                )
-                .await
-            {
-                log::warn!(
-                    "[SubscriptionArbiter] Failed to subscribe RenderingControl for {}: {}",
-                    ip,
-                    e
-                );
-                // Continue - degraded experience but functional
-            } else {
-                log::info!(
-                    "[SubscriptionArbiter] Subscribed to RenderingControl for {} (sync session)",
-                    ip
-                );
-
-                // Unsubscribe from GRC again to close race window.
-                // TopologyMonitor may have re-subscribed between our initial
-                // unsubscribe and the RC subscribe completing.
+        // Parallelize per-IP GENA operations (per-IP sequence is preserved within each future)
+        let futures: Vec<_> = ips
+            .iter()
+            .map(|ip| async move {
+                // Unsubscribe from GRC to avoid dual subscriptions
                 self.gena
                     .unsubscribe_by_ip_and_service(ip, SonosService::GroupRenderingControl)
                     .await;
-            }
-        }
+
+                // Subscribe to RC for per-speaker volume/mute events
+                if let Err(e) = self
+                    .gena
+                    .subscribe(
+                        ip.clone(),
+                        SonosService::RenderingControl,
+                        callback_url.to_string(),
+                    )
+                    .await
+                {
+                    log::warn!(
+                        "[SubscriptionArbiter] Failed to subscribe RenderingControl for {}: {}",
+                        ip,
+                        e
+                    );
+                    // Continue - degraded experience but functional
+                } else {
+                    log::info!(
+                        "[SubscriptionArbiter] Subscribed to RenderingControl for {} (sync session)",
+                        ip
+                    );
+
+                    // Unsubscribe from GRC again to close race window.
+                    // TopologyMonitor may have re-subscribed between our initial
+                    // unsubscribe and the RC subscribe completing.
+                    self.gena
+                        .unsubscribe_by_ip_and_service(ip, SonosService::GroupRenderingControl)
+                        .await;
+                }
+            })
+            .collect();
+
+        futures::future::join_all(futures).await;
     }
 
     /// Leaves a sync session for a single speaker IP.
@@ -147,14 +153,18 @@ impl SubscriptionArbiter {
         }
     }
 
-    /// Leaves sync sessions for all currently tracked speaker IPs.
+    /// Leaves sync sessions for all currently tracked speaker IPs concurrently.
     ///
     /// Called during IP changes when all subscriptions are being torn down.
     pub async fn leave_all_sync_sessions(&self, callback_url: &str) {
         let ips: Vec<String> = self.sync_ips.iter().map(|r| r.clone()).collect();
-        for ip in ips {
-            self.leave_sync_session(&ip, callback_url).await;
-        }
+
+        let futures: Vec<_> = ips
+            .iter()
+            .map(|ip| self.leave_sync_session(ip, callback_url))
+            .collect();
+
+        futures::future::join_all(futures).await;
     }
 
     /// Ensures GroupRenderingControl is subscribed for a coordinator IP.

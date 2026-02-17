@@ -295,9 +295,6 @@ impl SyncGroupManager {
                     coordinator_ip
                 );
 
-                // Subscribe to RenderingControl for all speakers in this sync session
-                self.enter_sync_session(stream_id).await;
-
                 PlaybackResult {
                     speaker_ip: slave_ip.to_string(),
                     success: true,
@@ -320,6 +317,41 @@ impl SyncGroupManager {
                 }
             }
         }
+    }
+
+    /// Joins multiple slaves to a coordinator concurrently.
+    ///
+    /// Parallelizes the individual `join_slave_to_coordinator` calls via `join_all`,
+    /// then enters a sync session once if any joins succeeded.
+    pub(crate) async fn join_slaves_to_coordinator(
+        &self,
+        slave_ips: &[String],
+        coordinator_ip: &str,
+        coordinator_uuid: &str,
+        stream_id: &str,
+        codec: AudioCodec,
+    ) -> Vec<PlaybackResult> {
+        let futures: Vec<_> = slave_ips
+            .iter()
+            .map(|slave_ip| {
+                self.join_slave_to_coordinator(
+                    slave_ip,
+                    coordinator_ip,
+                    coordinator_uuid,
+                    stream_id,
+                    codec,
+                )
+            })
+            .collect();
+
+        let results = futures::future::join_all(futures).await;
+
+        let any_succeeded = results.iter().any(|r| r.success);
+        if any_succeeded {
+            self.enter_sync_session(stream_id).await;
+        }
+
+        results
     }
 
     // ─────────────────────────────────────────────────────────────────────────────
@@ -363,47 +395,56 @@ impl SyncGroupManager {
             slave_restoration_info.len()
         );
 
-        // Step 1: Unjoin slaves first
-        for ip in &slaves {
-            if let Err(e) = self.sonos.leave_group(ip).await {
-                log::warn!("[GroupSync] Failed to unjoin slave {}: {}", ip, e);
-            }
+        // Block 1 (parallel across slaves): leave_group → restore → leave_sync_session
+        {
+            let futures: Vec<_> = slaves
+                .iter()
+                .map(|ip| {
+                    let restoration = slave_restoration_info
+                        .iter()
+                        .find(|(s, _)| s == ip)
+                        .map(|(_, uuid)| uuid.clone());
+
+                    async move {
+                        if let Err(e) = self.sonos.leave_group(ip).await {
+                            log::warn!("[GroupSync] Failed to unjoin slave {}: {}", ip, e);
+                        }
+                        if let Some(orig_uuid) = restoration {
+                            self.restore_original_group(ip, &orig_uuid).await;
+                        }
+                        self.leave_sync_session(ip).await;
+                    }
+                })
+                .collect();
+
+            futures::future::join_all(futures).await;
         }
 
-        // Step 2: Restore slaves to their original groups
-        for (speaker_ip, original_coordinator_uuid) in slave_restoration_info {
-            self.restore_original_group(&speaker_ip, &original_coordinator_uuid)
-                .await;
-        }
+        // Block 2 (parallel across coordinators, AFTER block 1):
+        // stop → switch_to_queue → restore → leave_sync_session
+        {
+            let futures: Vec<_> = coordinators
+                .iter()
+                .map(|(ip, original_coordinator_uuid)| async move {
+                    if let Err(e) = self.sonos.stop(ip).await {
+                        log::warn!("[GroupSync] Failed to stop {}: {}", ip, e);
+                    }
 
-        // Step 3: Stop coordinators and restore any that were originally slaves
-        for (ip, original_coordinator_uuid) in &coordinators {
-            if let Err(e) = self.sonos.stop(ip).await {
-                log::warn!("[GroupSync] Failed to stop {}: {}", ip, e);
-            }
+                    if let Some(uuid) = self.sonos_state.get_coordinator_uuid_by_ip(ip) {
+                        if let Err(e) = self.sonos.switch_to_queue(ip, &uuid).await {
+                            log::warn!("[GroupSync] Failed to switch {} to queue: {}", ip, e);
+                        }
+                    }
 
-            if let Some(uuid) = self.sonos_state.get_coordinator_uuid_by_ip(ip) {
-                if let Err(e) = self.sonos.switch_to_queue(ip, &uuid).await {
-                    log::warn!("[GroupSync] Failed to switch {} to queue: {}", ip, e);
-                }
-            }
+                    if let Some(orig_uuid) = original_coordinator_uuid {
+                        self.restore_original_group(ip, orig_uuid).await;
+                    }
 
-            if let Some(orig_uuid) = original_coordinator_uuid {
-                self.restore_original_group(ip, orig_uuid).await;
-            }
-        }
+                    self.leave_sync_session(ip).await;
+                })
+                .collect();
 
-        // Step 4: Leave sync sessions so the arbiter clears sync_ips and
-        // restores GroupRenderingControl subscriptions for all speakers.
-        // Without this, sync_ips retains stale entries indefinitely (no GENA
-        // expiry), causing TopologyMonitor to permanently skip GRC subscriptions.
-        if !slaves.is_empty() || !coordinators.is_empty() {
-            for ip in &slaves {
-                self.leave_sync_session(ip).await;
-            }
-            for (ip, _) in &coordinators {
-                self.leave_sync_session(ip).await;
-            }
+            futures::future::join_all(futures).await;
         }
 
         if !slaves.is_empty() {
@@ -556,40 +597,46 @@ impl SyncGroupManager {
             .map(|(key, session)| (key, session.original_coordinator_uuid))
             .collect();
 
-        // Unjoin all slaves first, then restore to original groups
-        for (slave_key, original_coordinator) in slave_info {
-            log::debug!(
-                "[GroupSync] Unjoining slave {} before stopping coordinator",
-                slave_key.speaker_ip
-            );
-
-            if let Err(e) = self.sonos.leave_group(&slave_key.speaker_ip).await {
-                log::warn!(
-                    "[GroupSync] Failed to unjoin slave {} during coordinator stop: {}",
-                    slave_key.speaker_ip,
-                    e
+        // Unjoin all slaves concurrently, then restore to original groups
+        let slave_futures: Vec<_> = slave_info
+            .into_iter()
+            .map(|(slave_key, original_coordinator)| async move {
+                log::debug!(
+                    "[GroupSync] Unjoining slave {} before stopping coordinator",
+                    slave_key.speaker_ip
                 );
-            }
 
-            if let Some(orig_uuid) = original_coordinator {
-                self.restore_original_group(&slave_key.speaker_ip, &orig_uuid)
-                    .await;
-            }
+                if let Err(e) = self.sonos.leave_group(&slave_key.speaker_ip).await {
+                    log::warn!(
+                        "[GroupSync] Failed to unjoin slave {} during coordinator stop: {}",
+                        slave_key.speaker_ip,
+                        e
+                    );
+                }
 
-            self.sessions
-                .remove(&slave_key.stream_id, &slave_key.speaker_ip);
+                if let Some(orig_uuid) = original_coordinator {
+                    self.restore_original_group(&slave_key.speaker_ip, &orig_uuid)
+                        .await;
+                }
 
-            self.leave_sync_session(&slave_key.speaker_ip).await;
+                self.sessions
+                    .remove(&slave_key.stream_id, &slave_key.speaker_ip);
 
-            self.emit_event(StreamEvent::PlaybackStopped {
-                stream_id: stream_id.to_string(),
-                speaker_ip: slave_key.speaker_ip.clone(),
-                reason,
-                timestamp: now_millis(),
-            });
+                self.leave_sync_session(&slave_key.speaker_ip).await;
 
-            stopped_ips.push(slave_key.speaker_ip);
-        }
+                self.emit_event(StreamEvent::PlaybackStopped {
+                    stream_id: stream_id.to_string(),
+                    speaker_ip: slave_key.speaker_ip.clone(),
+                    reason,
+                    timestamp: now_millis(),
+                });
+
+                slave_key.speaker_ip
+            })
+            .collect();
+
+        let slave_ips = futures::future::join_all(slave_futures).await;
+        stopped_ips.extend(slave_ips);
 
         // Get session info before removing
         let (coordinator_uuid, original_coordinator_uuid) = self
@@ -801,49 +848,54 @@ impl SyncGroupManager {
             .filter(|(key, _)| key.speaker_ip != promoted_ip)
             .collect();
 
-        for (slave_key, slave_session) in &remaining_slaves {
-            log::debug!(
-                "[GroupSync] Re-pointing slave {} to new coordinator {}",
-                slave_key.speaker_ip,
-                promoted_ip
-            );
-
-            if let Err(e) = self.sonos.leave_group(&slave_key.speaker_ip).await {
-                log::warn!(
-                    "[GroupSync] Failed to unjoin slave {} during re-point: {}",
+        let repoint_futures: Vec<_> = remaining_slaves
+            .iter()
+            .map(|(slave_key, slave_session)| async {
+                log::debug!(
+                    "[GroupSync] Re-pointing slave {} to new coordinator {}",
                     slave_key.speaker_ip,
-                    e
+                    promoted_ip
                 );
-                continue;
-            }
 
-            if let Err(e) = self
-                .sonos
-                .join_group(&slave_key.speaker_ip, &promoted_uuid)
-                .await
-            {
-                log::warn!(
-                    "[GroupSync] Failed to re-point slave {} to new coordinator {}: {}",
-                    slave_key.speaker_ip,
-                    promoted_ip,
-                    e
-                );
-                continue;
-            }
+                if let Err(e) = self.sonos.leave_group(&slave_key.speaker_ip).await {
+                    log::warn!(
+                        "[GroupSync] Failed to unjoin slave {} during re-point: {}",
+                        slave_key.speaker_ip,
+                        e
+                    );
+                    return;
+                }
 
-            // Update session to point to new coordinator
-            let rincon_uri = format!("x-rincon:{}", promoted_uuid);
-            self.sessions.insert(PlaybackSession {
-                stream_id: stream_id.to_string(),
-                speaker_ip: slave_key.speaker_ip.clone(),
-                stream_url: rincon_uri,
-                codec,
-                role: GroupRole::Slave,
-                coordinator_ip: Some(promoted_ip.clone()),
-                coordinator_uuid: Some(promoted_uuid.clone()),
-                original_coordinator_uuid: slave_session.original_coordinator_uuid.clone(),
-            });
-        }
+                if let Err(e) = self
+                    .sonos
+                    .join_group(&slave_key.speaker_ip, &promoted_uuid)
+                    .await
+                {
+                    log::warn!(
+                        "[GroupSync] Failed to re-point slave {} to new coordinator {}: {}",
+                        slave_key.speaker_ip,
+                        promoted_ip,
+                        e
+                    );
+                    return;
+                }
+
+                // Update session to point to new coordinator
+                let rincon_uri = format!("x-rincon:{}", promoted_uuid);
+                self.sessions.insert(PlaybackSession {
+                    stream_id: stream_id.to_string(),
+                    speaker_ip: slave_key.speaker_ip.clone(),
+                    stream_url: rincon_uri,
+                    codec,
+                    role: GroupRole::Slave,
+                    coordinator_ip: Some(promoted_ip.clone()),
+                    coordinator_uuid: Some(promoted_uuid.clone()),
+                    original_coordinator_uuid: slave_session.original_coordinator_uuid.clone(),
+                });
+            })
+            .collect();
+
+        futures::future::join_all(repoint_futures).await;
 
         // 8. Cleanup stream if no sessions remain (edge case)
         self.cleanup_stream_if_no_sessions(stream_id);

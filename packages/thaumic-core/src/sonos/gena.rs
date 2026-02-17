@@ -348,15 +348,20 @@ impl GenaSubscriptionManager {
         }
     }
 
-    /// Unsubscribes from all active subscriptions.
+    /// Unsubscribes from all active subscriptions concurrently.
     pub async fn unsubscribe_all(&self) {
         let sids = self.store.get_all_sids();
 
-        for sid in sids {
-            if let Err(e) = self.unsubscribe(&sid).await {
-                log::error!("[GENA] Failed to unsubscribe {}: {}", sid, e);
-            }
-        }
+        let futures: Vec<_> = sids
+            .iter()
+            .map(|sid| async move {
+                if let Err(e) = self.unsubscribe(sid).await {
+                    log::error!("[GENA] Failed to unsubscribe {}: {}", sid, e);
+                }
+            })
+            .collect();
+
+        futures::future::join_all(futures).await;
     }
 
     /// Stops background tasks and unsubscribes from all active subscriptions (for graceful shutdown).
