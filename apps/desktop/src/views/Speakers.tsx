@@ -33,7 +33,7 @@ function getCoordinator(group: ZoneGroup): Speaker | undefined {
   if (!member) return undefined;
   return {
     uuid: member.uuid,
-    name: member.zoneName,
+    name: group.name,
     model: member.model,
     ip: member.ip,
   };
