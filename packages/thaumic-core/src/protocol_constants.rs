@@ -112,17 +112,6 @@ pub const MIN_FRAME_DURATION_MS: u32 = 5;
 pub const MAX_FRAME_DURATION_MS: u32 = 150;
 
 /// Frame size constraints (samples per channel).
-/// Used to derive exact frame duration without floating-point rounding.
-///
-/// SYNC REQUIRED: These must match the TypeScript constants in:
-///   packages/protocol/src/audio.ts
-///   - FRAME_SIZE_SAMPLES_MIN
-///   - FRAME_SIZE_SAMPLES_MAX
-#[allow(dead_code)]
-pub const MIN_FRAME_SIZE_SAMPLES: u32 = 64;
-#[allow(dead_code)]
-pub const MAX_FRAME_SIZE_SAMPLES: u32 = 8192;
-
 /// Minimum streaming buffer size (ms).
 pub const MIN_STREAMING_BUFFER_MS: u64 = 100;
 

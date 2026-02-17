@@ -141,15 +141,6 @@ impl StreamCoordinator {
         })
     }
 
-    /// Gets all playback sessions for a specific stream.
-    ///
-    /// Reserved for future use (debugging, partial speaker removal).
-    #[must_use]
-    #[allow(dead_code)]
-    pub fn get_sessions_for_stream(&self, stream_id: &str) -> Vec<PlaybackSession> {
-        self.sessions.get_all_for_stream(stream_id)
-    }
-
     /// Checks if a speaker IP is part of a synchronized multi-room playback session.
     ///
     /// A session is considered "synced" if multiple speakers are playing the same
@@ -977,38 +968,6 @@ impl StreamCoordinator {
         }
 
         stopped
-    }
-
-    /// Stops playback on a speaker (by speaker IP only, for backward compatibility).
-    ///
-    /// Finds the session by speaker IP and removes it.
-    /// Broadcasts a `StreamEvent::PlaybackStopped` event.
-    ///
-    /// Reserved for future use (partial speaker removal from extension).
-    #[allow(dead_code)]
-    pub async fn stop_playback(&self, speaker_ip: &str) -> ThaumicResult<()> {
-        // Find the session key for this speaker
-        let key = self.sessions.get_key_by_speaker_ip(speaker_ip);
-
-        let stream_id = key.as_ref().map(|k| k.stream_id.clone());
-
-        if let Some(ref key) = key {
-            self.sessions.remove(&key.stream_id, &key.speaker_ip);
-        }
-
-        self.sonos.stop(speaker_ip).await?;
-
-        // Broadcast playback stopped event (only if we had a session)
-        if let Some(stream_id) = stream_id {
-            self.emit_event(StreamEvent::PlaybackStopped {
-                stream_id,
-                speaker_ip: speaker_ip.to_string(),
-                reason: None,
-                timestamp: now_millis(),
-            });
-        }
-
-        Ok(())
     }
 
     /// Gets all active playback sessions.

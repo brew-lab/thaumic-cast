@@ -161,15 +161,6 @@ impl PlaybackSessionStore {
         self.ip_index.get(speaker_ip).map(|r| r.value().clone())
     }
 
-    /// Gets all sessions for a specific stream.
-    pub fn get_all_for_stream(&self, stream_id: &str) -> Vec<PlaybackSession> {
-        self.sessions
-            .iter()
-            .filter(|r| r.key().stream_id == stream_id)
-            .map(|r| r.value().clone())
-            .collect()
-    }
-
     /// Gets all speaker IPs for a specific stream.
     pub fn get_ips_for_stream(&self, stream_id: &str) -> Vec<String> {
         self.sessions
@@ -645,17 +636,6 @@ mod tests {
         let mut ips = store.get_ips_for_stream("s1");
         ips.sort();
         assert_eq!(ips, vec!["192.168.1.100", "192.168.1.101"]);
-    }
-
-    #[test]
-    fn get_all_for_stream() {
-        let store = PlaybackSessionStore::new();
-        store.insert(make_session("s1", "192.168.1.100", GroupRole::Coordinator));
-        store.insert(make_session("s1", "192.168.1.101", GroupRole::Slave));
-        store.insert(make_session("s2", "192.168.1.102", GroupRole::Coordinator));
-
-        let sessions = store.get_all_for_stream("s1");
-        assert_eq!(sessions.len(), 2);
     }
 
     #[test]
