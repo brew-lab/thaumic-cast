@@ -18,14 +18,9 @@ use crate::sonos::types::{TransportState, ZoneGroup};
 
 /// Core application state - Tauri-independent.
 ///
-/// Contains service references and configuration that are shared across
-/// the application. This struct is designed to be wrapped by platform-specific
-/// state types (e.g., `DesktopState` for Tauri).
-///
-/// # Note
-///
-/// The `services` field is currently a placeholder. It will be populated
-/// with `BootstrappedServices` in Phase 5 when the bootstrap function is created.
+/// Contains configuration and network context shared across the application.
+/// Platform-specific state types (e.g., `DesktopState`) wrap this alongside
+/// [`BootstrappedServices`](crate::BootstrappedServices) to provide runtime services.
 pub struct CoreState {
     /// Application configuration.
     pub config: Arc<RwLock<Config>>,
