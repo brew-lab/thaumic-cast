@@ -9,8 +9,11 @@
 
 use std::sync::Arc;
 
+use std::time::Duration;
+
 use bytes::Bytes;
 use dashmap::DashMap;
+use tokio::sync::Notify;
 
 use crate::context::NetworkContext;
 use crate::error::ThaumicResult;
@@ -147,6 +150,8 @@ pub struct StreamCoordinator {
     emitter: Arc<dyn EventEmitter>,
     /// GENA subscription manager for RenderingControl subscriptions during sync sessions.
     gena_manager: Arc<GenaSubscriptionManager>,
+    /// Topology refresh notifier, shared with TopologyMonitor.
+    topology_refresh: Option<Arc<Notify>>,
 }
 
 /// Standalone function to check sync session status.
@@ -192,6 +197,28 @@ impl StreamCoordinator {
             playback_sessions: DashMap::new(),
             emitter,
             gena_manager,
+            topology_refresh: None,
+        }
+    }
+
+    /// Sets the topology refresh notifier.
+    pub fn set_topology_refresh(&mut self, notify: Arc<Notify>) {
+        self.topology_refresh = Some(notify);
+    }
+
+    /// Schedules a delayed topology refresh.
+    ///
+    /// Sonos needs time to propagate zone group changes internally after
+    /// accepting a join/unjoin command. A direct SOAP query immediately after
+    /// would return stale data. This spawns a short delayed task so the
+    /// TopologyMonitor's quick refresh path gets fresh data.
+    fn schedule_topology_refresh(&self) {
+        if let Some(ref notify) = self.topology_refresh {
+            let notify = Arc::clone(notify);
+            tokio::spawn(async move {
+                tokio::time::sleep(Duration::from_millis(500)).await;
+                notify.notify_one();
+            });
         }
     }
 
@@ -1203,6 +1230,10 @@ impl StreamCoordinator {
             stream_id
         );
 
+        if joined_count > 1 {
+            self.schedule_topology_refresh();
+        }
+
         results
     }
 
@@ -1541,6 +1572,12 @@ impl StreamCoordinator {
             }
         };
 
+        let is_sync = session.role == GroupRole::Slave
+            || self
+                .playback_sessions
+                .iter()
+                .any(|r| r.key().stream_id == stream_id && r.value().role == GroupRole::Slave);
+
         let stopped = match session.role {
             GroupRole::Slave => {
                 // Slave: just unjoin this speaker, others continue playing
@@ -1552,6 +1589,10 @@ impl StreamCoordinator {
                     .await
             }
         };
+
+        if is_sync && !stopped.is_empty() {
+            self.schedule_topology_refresh();
+        }
 
         stopped
     }
