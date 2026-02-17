@@ -3,11 +3,11 @@
 //! This module contains pure parsing functions for GENA NOTIFY payloads.
 //! It separates XML parsing concerns from subscription lifecycle management.
 
-use crate::sonos::client::parse_zone_group_xml;
 use crate::sonos::types::{TransportState, ZoneGroup};
 use crate::sonos::utils::{
     extract_empty_val_attrs, extract_master_channel_attrs, extract_xml_text,
 };
+use crate::sonos::zone_groups::parse_zone_group_xml;
 
 /// Parsed data from an AVTransport NOTIFY event.
 #[derive(Debug, Default)]
