@@ -92,6 +92,10 @@ struct StartPlaybackRequest {
     /// When true, uses x-rincon protocol to sync multiple speakers.
     #[serde(default)]
     sync_speakers: bool,
+    /// Whether the client has video sync enabled (gates latency monitoring).
+    /// Only `Some(true)` activates monitoring; `None` means "don't change".
+    #[serde(default)]
+    video_sync_enabled: Option<bool>,
 }
 
 impl StartPlaybackRequest {
@@ -535,6 +539,7 @@ async fn handle_ws(socket: WebSocket, state: AppState) {
     let mut stream_guard: Option<StreamGuard> = None;
     let mut broadcast_rx = state.broadcast_tx.subscribe();
     let mut last_activity = Instant::now();
+    let mut latency_monitoring = false;
 
     // Register connection for tracking and force-close capability
     let conn_guard = state.ws_manager.register();
@@ -678,6 +683,11 @@ async fn handle_ws(socket: WebSocket, state: AppState) {
                                     ))
                                 );
 
+                                // Sticky: once enabled, stays for the connection lifetime
+                                if payload.video_sync_enabled == Some(true) {
+                                    latency_monitoring = true;
+                                }
+
                                 if let Some(ref guard) = stream_guard {
                                     let stream_id = guard.id().to_string();
                                     let speaker_ips = payload.get_speaker_ips();
@@ -716,13 +726,15 @@ async fn handle_ws(socket: WebSocket, state: AppState) {
                                         )
                                         .await;
 
-                                    // Start latency monitoring for each successful speaker
-                                    for result in &results {
-                                        if result.success {
-                                            state
-                                                .latency_monitor
-                                                .start_monitoring(&stream_id, &result.speaker_ip)
-                                                .await;
+                                    // Only start latency monitoring if video sync is enabled
+                                    if latency_monitoring {
+                                        for result in &results {
+                                            if result.success {
+                                                state
+                                                    .latency_monitor
+                                                    .start_monitoring(&stream_id, &result.speaker_ip)
+                                                    .await;
+                                            }
                                         }
                                     }
 

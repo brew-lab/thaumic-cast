@@ -87,6 +87,7 @@ class OffscreenBroker {
    * @param speakerIps - Target speaker IP addresses
    * @param metadata - Optional initial metadata to display
    * @param syncSpeakers - Whether to synchronize multi-speaker playback (default: false)
+   * @param videoSyncEnabled - Whether client has video sync enabled (gates server-side latency monitoring)
    * @returns The playback response with per-speaker results
    */
   async startPlayback(
@@ -94,10 +95,11 @@ class OffscreenBroker {
     speakerIps: string[],
     metadata?: StreamMetadata,
     syncSpeakers: boolean = false,
+    videoSyncEnabled?: boolean,
   ): Promise<StartPlaybackResponse | undefined> {
     return sendToOffscreen<StartPlaybackResponse>({
       type: 'START_PLAYBACK',
-      payload: { tabId, speakerIps, metadata, syncSpeakers },
+      payload: { tabId, speakerIps, metadata, syncSpeakers, videoSyncEnabled },
     });
   }
 

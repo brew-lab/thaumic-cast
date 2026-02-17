@@ -38,6 +38,8 @@ export interface WorkerStartPlaybackMessage {
   metadata?: StreamMetadata;
   /** Whether to synchronize multi-speaker playback (default: false). */
   syncSpeakers?: boolean;
+  /** Whether the client has video sync enabled (gates server-side latency monitoring). */
+  videoSyncEnabled?: boolean;
 }
 
 /** Updates stream metadata on all connected speakers. */
