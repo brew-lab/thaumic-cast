@@ -13,6 +13,7 @@ use crate::context::NetworkContext;
 use crate::events::EventEmitter;
 use crate::runtime::TokioSpawner;
 use crate::sonos::gena::{GenaSubscriptionManager, SonosEvent};
+use crate::sonos::subscription_arbiter::SubscriptionArbiter;
 use crate::sonos::SonosTopologyClient;
 use crate::state::SonosState;
 
@@ -45,6 +46,7 @@ impl DiscoveryService {
     /// * `spawner` - Task spawner for background tasks
     /// * `gena_manager` - Pre-created GENA subscription manager (shared with StreamCoordinator)
     /// * `gena_event_rx` - Receiver for GENA events
+    /// * `arbiter` - Subscription arbiter for RenderingControl/GroupRenderingControl conflict resolution
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         sonos: Arc<dyn SonosTopologyClient>,
@@ -58,6 +60,7 @@ impl DiscoveryService {
         gena_manager: Arc<GenaSubscriptionManager>,
         gena_event_rx: mpsc::Receiver<SonosEvent>,
         refresh_notify: Arc<Notify>,
+        arbiter: Arc<SubscriptionArbiter>,
     ) -> Self {
         let topology_monitor = Arc::new(TopologyMonitor::new(
             sonos,
@@ -71,6 +74,7 @@ impl DiscoveryService {
                 http_client,
                 spawner: spawner.clone(),
             },
+            arbiter,
         ));
 
         let event_processor = Arc::new(GenaEventProcessor::new(

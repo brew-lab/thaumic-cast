@@ -230,7 +230,7 @@ struct PlaybackErrorPayload {
 #[serde(rename_all = "camelCase")]
 struct PlaybackResultsPayload {
     /// Per-speaker results (success/failure for each).
-    results: Vec<crate::services::stream_coordinator::PlaybackResult>,
+    results: Vec<crate::services::PlaybackResult>,
 }
 
 /// Payload for volume state responses.
