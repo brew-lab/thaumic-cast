@@ -147,6 +147,7 @@ export async function handleStartCast(msg: StartCastMessage): Promise<ExtensionR
         speakerIps,
         initialMetadata,
         settings.syncSpeakers,
+        settings.videoSyncEnabled,
       );
       if (!playbackResponse) throw new Error('error_offscreen_unavailable');
 
