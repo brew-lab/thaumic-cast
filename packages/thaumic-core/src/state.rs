@@ -219,27 +219,26 @@ impl SonosState {
     /// Removes stale entries from state maps based on current topology.
     ///
     /// Called after topology changes to garbage-collect orphaned entries for
-    /// speakers that are no longer coordinators or have disappeared.
+    /// speakers that have disappeared from the network entirely.
     ///
     /// # Arguments
-    /// * `valid_coordinator_ips` - Set of IPs that are currently group coordinators
     /// * `valid_speaker_ips` - Set of IPs for all currently discovered speakers
-    pub fn cleanup_stale_entries(
-        &self,
-        valid_coordinator_ips: &HashSet<String>,
-        valid_speaker_ips: &HashSet<String>,
-    ) {
-        // Transport states are per-speaker (any speaker can report transport state)
+    pub fn cleanup_stale_entries(&self, valid_speaker_ips: &HashSet<String>) {
         self.transport_states
             .retain(|ip, _| valid_speaker_ips.contains(ip));
 
-        // Volume, mute, and fixed are per-coordinator (only coordinators control group volume)
+        // Retain volume/mute data for any speaker still in the topology, not just
+        // coordinators. During sync sessions, RenderingControl events populate
+        // per-speaker entries for slaves. If we only kept coordinator entries,
+        // periodic topology refreshes would discard slave volume data, creating a
+        // gap when the sync session tears down (RC unsubscribed, GRC not yet
+        // re-subscribed) that causes the UI to fall back to default values.
         self.group_volumes
-            .retain(|ip, _| valid_coordinator_ips.contains(ip));
+            .retain(|ip, _| valid_speaker_ips.contains(ip));
         self.group_mutes
-            .retain(|ip, _| valid_coordinator_ips.contains(ip));
+            .retain(|ip, _| valid_speaker_ips.contains(ip));
         self.group_volume_fixed
-            .retain(|ip, _| valid_coordinator_ips.contains(ip));
+            .retain(|ip, _| valid_speaker_ips.contains(ip));
     }
 
     /// Looks up a coordinator's UUID by their IP address.
