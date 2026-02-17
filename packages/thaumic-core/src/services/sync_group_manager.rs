@@ -42,7 +42,6 @@ pub(crate) struct SyncGroupManager {
 
 impl SyncGroupManager {
     /// Creates a new SyncGroupManager.
-    #[allow(clippy::too_many_arguments)]
     pub fn new(
         sessions: Arc<PlaybackSessionStore>,
         sonos: Arc<dyn SonosPlayback>,
@@ -116,7 +115,7 @@ impl SyncGroupManager {
 
         if !has_remaining_sessions {
             log::info!(
-                "[StreamCoordinator] Last speaker removed from stream {}, ending stream",
+                "[SyncGroupManager] Last speaker removed from stream {}, ending stream",
                 stream_id
             );
             self.stream_manager.remove_stream(stream_id);
@@ -380,16 +379,12 @@ impl SyncGroupManager {
         // Step 3: Stop coordinators and restore any that were originally slaves
         for (ip, original_coordinator_uuid) in &coordinators {
             if let Err(e) = self.sonos.stop(ip).await {
-                log::warn!("[StreamCoordinator] Failed to stop {}: {}", ip, e);
+                log::warn!("[GroupSync] Failed to stop {}: {}", ip, e);
             }
 
             if let Some(uuid) = self.sonos_state.get_coordinator_uuid_by_ip(ip) {
                 if let Err(e) = self.sonos.switch_to_queue(ip, &uuid).await {
-                    log::warn!(
-                        "[StreamCoordinator] Failed to switch {} to queue: {}",
-                        ip,
-                        e
-                    );
+                    log::warn!("[GroupSync] Failed to switch {} to queue: {}", ip, e);
                 }
             }
 

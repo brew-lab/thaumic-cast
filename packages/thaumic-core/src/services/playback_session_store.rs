@@ -113,8 +113,14 @@ impl PlaybackSessionStore {
 
     /// Inserts a playback session.
     ///
-    /// Maintains the ip_index. If a session with the same key already existed,
-    /// returns the old session.
+    /// Maintains the ip_index — always points to the latest session for a given IP.
+    /// If a session with the same composite key already existed, returns the old session.
+    ///
+    /// **Invariant:** Callers must `remove()` any existing session for this speaker on
+    /// a *different* stream before inserting. Otherwise the old primary entry becomes a
+    /// phantom (reachable by composite key, invisible to `get_by_speaker_ip` and iterators
+    /// that rely on the ip_index). This is safe today because a speaker can only play one
+    /// stream at a time, and all call sites clean up before re-assigning.
     pub fn insert(&self, session: PlaybackSession) -> Option<PlaybackSession> {
         let key = PlaybackSessionKey::new(&session.stream_id, &session.speaker_ip);
         self.ip_index

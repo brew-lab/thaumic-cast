@@ -10,7 +10,7 @@ pub mod playback_session_store;
 pub mod stream_coordinator;
 pub(crate) mod sync_group_manager;
 pub mod topology_monitor;
-pub mod volume_router;
+pub(crate) mod volume_router;
 
 pub use discovery_service::DiscoveryService;
 pub use latency_monitor::LatencyMonitor;
