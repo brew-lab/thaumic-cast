@@ -142,6 +142,26 @@ impl SyncGroupManager {
         &self,
         speaker_ips: &[String],
     ) -> Option<(String, String, Vec<String>)> {
+        // [DIAG] Log available groups for sync debugging
+        let groups = self.sonos_state.groups.read();
+        log::info!(
+            "[GroupSync] select_coordinator: looking up {} speakers in {} known groups",
+            speaker_ips.len(),
+            groups.len()
+        );
+        for g in groups.iter() {
+            log::debug!(
+                "[GroupSync]   group: coordinator_ip={}, uuid={}, members={:?}",
+                g.coordinator_ip,
+                g.coordinator_uuid,
+                g.members
+                    .iter()
+                    .map(|m| format!("{}({})", m.ip, m.uuid))
+                    .collect::<Vec<_>>()
+            );
+        }
+        drop(groups);
+
         // Try to find a speaker that's already a Sonos group coordinator
         for ip in speaker_ips {
             if let Some(uuid) = self.sonos_state.get_coordinator_uuid_by_ip(ip) {
@@ -390,6 +410,19 @@ impl SyncGroupManager {
 
             if let Some(orig_uuid) = original_coordinator_uuid {
                 self.restore_original_group(ip, orig_uuid).await;
+            }
+        }
+
+        // Step 4: Leave sync sessions so the arbiter clears sync_ips and
+        // restores GroupRenderingControl subscriptions for all speakers.
+        // Without this, sync_ips retains stale entries indefinitely (no GENA
+        // expiry), causing TopologyMonitor to permanently skip GRC subscriptions.
+        if !slaves.is_empty() || !coordinators.is_empty() {
+            for ip in &slaves {
+                self.leave_sync_session(ip).await;
+            }
+            for (ip, _) in &coordinators {
+                self.leave_sync_session(ip).await;
             }
         }
 
