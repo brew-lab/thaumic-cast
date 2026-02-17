@@ -135,12 +135,15 @@ impl GenaEventProcessor {
                     .insert(speaker_ip.clone(), *muted);
             }
             SonosEvent::ZoneGroupsUpdated { groups, .. } => {
+                // GENA notification bodies can carry stale topology data
+                // (e.g., still showing combined groups after an unjoin).
+                // Instead of directly overwriting state with potentially stale
+                // data, signal the topology monitor to do a fresh SOAP fetch.
                 log::info!(
-                    "[GenaEventProcessor] Zone groups updated: {} groups",
+                    "[GenaEventProcessor] Zone groups changed ({} groups), requesting topology refresh",
                     groups.len()
                 );
-                let mut state_groups = deps.sonos_state.groups.write();
-                *state_groups = groups.clone();
+                deps.refresh_notify.notify_one();
             }
             SonosEvent::SourceChanged {
                 speaker_ip,
