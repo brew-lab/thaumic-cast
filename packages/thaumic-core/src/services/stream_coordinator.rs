@@ -1926,8 +1926,9 @@ impl StreamCoordinator {
             return Err("No slaves found to promote".to_string());
         }
 
-        // 3. Pick first slave to promote
+        // 3. Pick first slave to promote — preserve its original group info
         let promoted_ip = slave_sessions[0].0.speaker_ip.clone();
+        let promoted_original_coordinator = slave_sessions[0].1.original_coordinator_uuid.clone();
         let promoted_uuid = self
             .sonos_state
             .get_member_uuid_by_ip(&promoted_ip)
@@ -2021,9 +2022,7 @@ impl StreamCoordinator {
                 role: GroupRole::Coordinator,
                 coordinator_ip: None,
                 coordinator_uuid: Some(promoted_uuid.clone()),
-                original_coordinator_uuid: self
-                    .sonos_state
-                    .get_original_coordinator_for_slave(&promoted_ip),
+                original_coordinator_uuid: promoted_original_coordinator,
             },
         );
 
@@ -3555,6 +3554,101 @@ mod tests {
             assert!(stopped.contains(&"192.168.1.100".to_string()));
             assert!(stopped.contains(&"192.168.1.101".to_string()));
             assert!(coord.get_all_sessions().is_empty());
+        }
+
+        #[tokio::test]
+        async fn promoted_session_preserves_original_group_from_slave_session() {
+            // Regression: promoted session must use the slave's stored
+            // original_coordinator_uuid, NOT re-query the Sonos topology.
+            // The topology reflects the *streaming* group (slave of Kitchen),
+            // but the slave session correctly stored None (was standalone before).
+            // Re-querying would return Kitchen's UUID, causing recombination on stop.
+
+            let sonos = Arc::new(TrackingSonosPlayback::new());
+            // Topology shows Office as slave of Kitchen (the streaming group)
+            let sonos_state = Arc::new(SonosState::default());
+            {
+                let mut groups = sonos_state.groups.write();
+                *groups = vec![ZoneGroup {
+                    id: "streaming_group".to_string(),
+                    name: "Kitchen".to_string(),
+                    coordinator_uuid: "RINCON_KITCHEN".to_string(),
+                    coordinator_ip: "192.168.1.100".to_string(),
+                    members: vec![
+                        ZoneGroupMember {
+                            uuid: "RINCON_KITCHEN".to_string(),
+                            ip: "192.168.1.100".to_string(),
+                            zone_name: "Kitchen".to_string(),
+                            model: "One".to_string(),
+                        },
+                        ZoneGroupMember {
+                            uuid: "RINCON_OFFICE".to_string(),
+                            ip: "192.168.1.101".to_string(),
+                            zone_name: "Office".to_string(),
+                            model: "One".to_string(),
+                        },
+                    ],
+                }];
+            }
+
+            let emitter = Arc::new(CollectingEventEmitter::new());
+            let coord = create_coordinator_with(
+                Arc::clone(&sonos) as Arc<dyn SonosPlayback>,
+                Arc::clone(&sonos_state),
+                Arc::clone(&emitter) as Arc<dyn EventEmitter>,
+            );
+
+            let stream_id = coord
+                .create_stream(
+                    AudioCodec::Aac,
+                    AudioFormat::default(),
+                    Arc::new(Passthrough),
+                    200,
+                    20,
+                )
+                .unwrap();
+
+            // Slave session has original_coordinator_uuid: None (was standalone before streaming)
+            coord.insert_test_session(PlaybackSession {
+                stream_id: stream_id.clone(),
+                speaker_ip: "192.168.1.100".to_string(),
+                stream_url: "http://127.0.0.1:0/stream/test/live".to_string(),
+                codec: AudioCodec::Aac,
+                role: GroupRole::Coordinator,
+                coordinator_ip: None,
+                coordinator_uuid: Some("RINCON_KITCHEN".to_string()),
+                original_coordinator_uuid: None,
+            });
+            coord.insert_test_session(PlaybackSession {
+                stream_id: stream_id.clone(),
+                speaker_ip: "192.168.1.101".to_string(),
+                stream_url: "x-rincon:RINCON_KITCHEN".to_string(),
+                codec: AudioCodec::Aac,
+                role: GroupRole::Slave,
+                coordinator_ip: Some("192.168.1.100".to_string()),
+                coordinator_uuid: Some("RINCON_KITCHEN".to_string()),
+                // Key: Office was standalone before streaming, so no original group
+                original_coordinator_uuid: None,
+            });
+
+            // Remove Kitchen (coordinator) → Office promoted
+            coord
+                .stop_playback_speaker(&stream_id, "192.168.1.100", None)
+                .await;
+
+            // The promoted session must have original_coordinator_uuid: None
+            // (from the slave session), NOT Some("RINCON_KITCHEN") (from topology)
+            let promoted = coord
+                .get_all_sessions()
+                .into_iter()
+                .find(|s| s.speaker_ip == "192.168.1.101")
+                .expect("promoted session should exist");
+            assert_eq!(promoted.role, GroupRole::Coordinator);
+            assert_eq!(
+                promoted.original_coordinator_uuid, None,
+                "Promoted session should preserve slave's original_coordinator_uuid (None), \
+                 not re-query topology which would return Kitchen's UUID"
+            );
         }
     }
 }
