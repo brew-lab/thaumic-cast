@@ -139,8 +139,20 @@ impl GenaEventProcessor {
                     "[GenaEventProcessor] Zone groups updated: {} groups",
                     groups.len()
                 );
-                let mut state_groups = deps.sonos_state.groups.write();
-                *state_groups = groups.clone();
+                {
+                    let mut state_groups = deps.sonos_state.groups.write();
+                    *state_groups = groups.clone();
+                }
+                // Notify frontend so the UI updates immediately
+                let timestamp = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_millis() as u64;
+                deps.emitter
+                    .emit_topology(crate::events::TopologyEvent::GroupsDiscovered {
+                        groups: groups.clone(),
+                        timestamp,
+                    });
             }
             SonosEvent::SourceChanged {
                 speaker_ip,
