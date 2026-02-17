@@ -57,9 +57,8 @@ impl DiscoveryService {
         spawner: TokioSpawner,
         gena_manager: Arc<GenaSubscriptionManager>,
         gena_event_rx: mpsc::Receiver<SonosEvent>,
+        refresh_notify: Arc<Notify>,
     ) -> Self {
-        let refresh_notify = Arc::new(Notify::new());
-
         let topology_monitor = Arc::new(TopologyMonitor::new(
             sonos,
             Arc::clone(&gena_manager),

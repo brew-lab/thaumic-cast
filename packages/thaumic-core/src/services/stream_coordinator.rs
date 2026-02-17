@@ -11,6 +11,7 @@ use std::sync::Arc;
 
 use bytes::Bytes;
 use dashmap::DashMap;
+use tokio::sync::Notify;
 
 use crate::context::NetworkContext;
 use crate::error::ThaumicResult;
@@ -147,6 +148,9 @@ pub struct StreamCoordinator {
     emitter: Arc<dyn EventEmitter>,
     /// GENA subscription manager for RenderingControl subscriptions during sync sessions.
     gena_manager: Arc<GenaSubscriptionManager>,
+    /// Topology refresh notifier, shared with TopologyMonitor.
+    /// Signaled after sync session teardown to prompt a fresh topology fetch.
+    topology_refresh: Option<Arc<Notify>>,
 }
 
 /// Standalone function to check sync session status.
@@ -192,7 +196,17 @@ impl StreamCoordinator {
             playback_sessions: DashMap::new(),
             emitter,
             gena_manager,
+            topology_refresh: None,
         }
+    }
+
+    /// Sets the topology refresh notifier.
+    ///
+    /// When set, the coordinator signals this after sync session teardown
+    /// so the topology monitor can fetch fresh zone groups immediately
+    /// instead of waiting for the next poll cycle.
+    pub fn set_topology_refresh(&mut self, notify: Arc<Notify>) {
+        self.topology_refresh = Some(notify);
     }
 
     /// Emits a stream event to all listeners.
@@ -1485,7 +1499,13 @@ impl StreamCoordinator {
             }
         };
 
-        match session.role {
+        let is_sync = session.role == GroupRole::Slave
+            || self
+                .playback_sessions
+                .iter()
+                .any(|r| r.key().stream_id == stream_id && r.value().role == GroupRole::Slave);
+
+        let stopped = match session.role {
             GroupRole::Slave => {
                 // Slave: just unjoin this speaker, others continue playing
                 self.stop_slave_speaker(stream_id, speaker_ip, reason).await
@@ -1495,7 +1515,18 @@ impl StreamCoordinator {
                 self.stop_coordinator_and_slaves(stream_id, speaker_ip, reason)
                     .await
             }
+        };
+
+        // After sync session teardown, signal the topology monitor to fetch
+        // fresh zone groups. GENA notifications may lag behind the SOAP calls
+        // that unjoined speakers, so an explicit refresh avoids the delay.
+        if is_sync && !stopped.is_empty() {
+            if let Some(ref notify) = self.topology_refresh {
+                notify.notify_one();
+            }
         }
+
+        stopped
     }
 
     /// Stops a slave speaker by unjoining it from the group.
