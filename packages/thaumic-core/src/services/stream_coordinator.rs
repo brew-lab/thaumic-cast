@@ -1209,11 +1209,21 @@ impl StreamCoordinator {
             results.push(result);
         }
 
+        let joined_count = results.iter().filter(|r| r.success).count();
+
         log::info!(
             "[GroupSync] Synchronized playback started: {} speakers, stream={}",
-            results.iter().filter(|r| r.success).count(),
+            joined_count,
             stream_id
         );
+
+        // Signal topology refresh so the UI picks up the new combined group name
+        // immediately instead of waiting for the next poll cycle.
+        if joined_count > 1 {
+            if let Some(ref notify) = self.topology_refresh {
+                notify.notify_one();
+            }
+        }
 
         results
     }
