@@ -608,6 +608,12 @@ impl StreamCoordinator {
             .map(|r| r.key().speaker_ip.clone())
             .collect();
 
+        // Check if this was a sync session before sessions are cleared
+        let is_sync = self
+            .playback_sessions
+            .iter()
+            .any(|r| r.key().stream_id == stream_id && r.value().role == GroupRole::Slave);
+
         if is_pcm {
             // PCM: Close HTTP first to unblock Sonos, then send SOAP commands.
             // Sonos blocks on HTTP reads for PCM streams, causing SOAP timeouts.
@@ -627,6 +633,10 @@ impl StreamCoordinator {
             // playback of buffered audio after the stream is removed.
             self.stop_speakers(&speaker_ips).await;
             self.remove_stream(stream_id);
+        }
+
+        if is_sync {
+            self.schedule_topology_refresh();
         }
     }
 
