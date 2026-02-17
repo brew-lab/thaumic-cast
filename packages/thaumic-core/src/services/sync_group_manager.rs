@@ -142,26 +142,6 @@ impl SyncGroupManager {
         &self,
         speaker_ips: &[String],
     ) -> Option<(String, String, Vec<String>)> {
-        // [DIAG] Log available groups for sync debugging
-        let groups = self.sonos_state.groups.read();
-        log::info!(
-            "[GroupSync] select_coordinator: looking up {} speakers in {} known groups",
-            speaker_ips.len(),
-            groups.len()
-        );
-        for g in groups.iter() {
-            log::debug!(
-                "[GroupSync]   group: coordinator_ip={}, uuid={}, members={:?}",
-                g.coordinator_ip,
-                g.coordinator_uuid,
-                g.members
-                    .iter()
-                    .map(|m| format!("{}({})", m.ip, m.uuid))
-                    .collect::<Vec<_>>()
-            );
-        }
-        drop(groups);
-
         // Try to find a speaker that's already a Sonos group coordinator
         for ip in speaker_ips {
             if let Some(uuid) = self.sonos_state.get_coordinator_uuid_by_ip(ip) {

@@ -457,14 +457,6 @@ impl StreamCoordinator {
         artwork_url: &str,
         sync_speakers: bool,
     ) -> Vec<PlaybackResult> {
-        // [DIAG] Log all inputs for sync debugging
-        log::info!(
-            "[Playback] start_playback_multi: speakers={:?}, stream={}, sync_speakers={}",
-            speaker_ips,
-            stream_id,
-            sync_speakers
-        );
-
         // Handle empty case
         if speaker_ips.is_empty() {
             return vec![];
