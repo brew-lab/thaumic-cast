@@ -113,7 +113,7 @@ export const WsStartPlaybackPayloadSchema = z.object({
   /** IP address of the Sonos speaker/coordinator. */
   speakerIp: z.string(),
   /** Whether the client has video sync enabled (gates server-side latency monitoring). */
-  videoSyncEnabled: z.boolean().optional(),
+  videoSyncEnabled: z.boolean().default(false),
 });
 export type WsStartPlaybackPayload = z.infer<typeof WsStartPlaybackPayloadSchema>;
 

@@ -93,9 +93,8 @@ struct StartPlaybackRequest {
     #[serde(default)]
     sync_speakers: bool,
     /// Whether the client has video sync enabled (gates latency monitoring).
-    /// Only `Some(true)` activates monitoring; `None` means "don't change".
     #[serde(default)]
-    video_sync_enabled: Option<bool>,
+    video_sync_enabled: bool,
 }
 
 impl StartPlaybackRequest {
@@ -684,7 +683,7 @@ async fn handle_ws(socket: WebSocket, state: AppState) {
                                 );
 
                                 // Sticky: once enabled, stays for the connection lifetime
-                                if payload.video_sync_enabled == Some(true) {
+                                if payload.video_sync_enabled {
                                     latency_monitoring = true;
                                 }
 

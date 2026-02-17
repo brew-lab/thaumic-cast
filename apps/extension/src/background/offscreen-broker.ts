@@ -95,7 +95,7 @@ class OffscreenBroker {
     speakerIps: string[],
     metadata?: StreamMetadata,
     syncSpeakers: boolean = false,
-    videoSyncEnabled?: boolean,
+    videoSyncEnabled: boolean = false,
   ): Promise<StartPlaybackResponse | undefined> {
     return sendToOffscreen<StartPlaybackResponse>({
       type: 'START_PLAYBACK',

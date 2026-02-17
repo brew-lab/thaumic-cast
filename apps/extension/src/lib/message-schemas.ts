@@ -128,7 +128,7 @@ export const StartPlaybackMessageSchema = z.object({
     /** Whether to synchronize multi-speaker playback (default: false). */
     syncSpeakers: z.boolean().default(false),
     /** Whether the client has video sync enabled (gates server-side latency monitoring). */
-    videoSyncEnabled: z.boolean().optional(),
+    videoSyncEnabled: z.boolean().default(false),
   }),
 });
 export type StartPlaybackMessage = z.infer<typeof StartPlaybackMessageSchema>;
