@@ -596,7 +596,7 @@ export class StreamSession {
     speakerIps: string[],
     metadata?: StreamMetadata,
     syncSpeakers: boolean = false,
-    videoSyncEnabled?: boolean,
+    videoSyncEnabled: boolean = false,
     timeoutMs = 15000,
   ): Promise<
     Array<{
