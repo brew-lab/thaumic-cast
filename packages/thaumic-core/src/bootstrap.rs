@@ -214,15 +214,21 @@ pub fn bootstrap_services_with_network(
     let (gena_manager, gena_event_rx) = GenaSubscriptionManager::new(http_client.clone());
     let gena_manager = Arc::new(gena_manager);
 
+    // Topology refresh notifier — shared between StreamCoordinator, GenaEventProcessor,
+    // and TopologyMonitor. Any party can signal it to trigger an immediate topology fetch.
+    let refresh_notify = Arc::new(tokio::sync::Notify::new());
+
     // Wire up stream coordinator with its dependencies (needs gena_manager for RenderingControl subscriptions)
-    let stream_coordinator = Arc::new(StreamCoordinator::new(
+    let mut stream_coordinator = StreamCoordinator::new(
         Arc::clone(&sonos_impl) as Arc<dyn SonosPlayback>,
         Arc::clone(&sonos_state),
         network.clone(),
         Arc::clone(&event_bridge) as Arc<dyn EventEmitter>,
         config.streaming.clone(),
         Arc::clone(&gena_manager),
-    ));
+    );
+    stream_coordinator.set_topology_refresh(Arc::clone(&refresh_notify));
+    let stream_coordinator = Arc::new(stream_coordinator);
 
     // Wire up latency monitor with its dependencies
     let latency_monitor = Arc::new(LatencyMonitor::new(
@@ -245,6 +251,7 @@ pub fn bootstrap_services_with_network(
         spawner.clone(),
         gena_manager,
         gena_event_rx,
+        refresh_notify,
     ));
 
     // Coerce to the general SonosClient trait for storage
