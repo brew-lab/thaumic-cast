@@ -260,6 +260,24 @@ impl TopologyMonitor {
                     }
                 }
 
+                // Manual refreshes (from sync session join/unjoin) use the quick path
+                // that skips SSDP discovery (~5s) and goes straight to SOAP (~300ms).
+                // Falls back to full refresh if quick path fails (no known speakers, etc).
+                if is_manual_refresh {
+                    match self.quick_refresh_zone_groups().await {
+                        Ok(()) => {
+                            log::info!("[TopologyMonitor] Quick refresh succeeded");
+                            continue;
+                        }
+                        Err(e) => {
+                            log::warn!(
+                                "[TopologyMonitor] Quick refresh failed ({}), falling back to full refresh",
+                                e
+                            );
+                        }
+                    }
+                }
+
                 if let Err(e) = self.refresh_topology(&callback_url).await {
                     match &e {
                         ThaumicError::SpeakerNotFound(_) => {
@@ -272,6 +290,55 @@ impl TopologyMonitor {
                 }
             }
         });
+    }
+
+    /// Performs a lightweight zone group refresh using a known speaker IP.
+    ///
+    /// Skips SSDP discovery and goes straight to the SOAP `GetZoneGroupState` call,
+    /// reducing refresh time from ~5s to ~300ms. Used for manual refresh triggers
+    /// (e.g., after sync session join/unjoin) where we know speakers are already on
+    /// the network and just need updated group topology.
+    async fn quick_refresh_zone_groups(&self) -> ThaumicResult<()> {
+        // Pick a coordinator IP from current state
+        let coordinator_ip = {
+            let groups = self.sonos_state.groups.read();
+            groups.first().map(|g| g.coordinator_ip.clone())
+        };
+
+        let ip = coordinator_ip.ok_or_else(|| {
+            ThaumicError::SpeakerNotFound("no known speakers for quick refresh".to_string())
+        })?;
+
+        log::info!(
+            "[TopologyMonitor] Quick refresh: fetching zone groups from {} (SOAP only)",
+            ip
+        );
+
+        let groups = self
+            .sonos
+            .get_zone_groups(&ip)
+            .await
+            .map_err(|e| ThaumicError::Soap(format!("quick refresh SOAP failed: {}", e)))?;
+
+        log::info!(
+            "[TopologyMonitor] Quick refresh: {} groups found",
+            groups.len()
+        );
+
+        // Update state and emit event
+        {
+            let mut state = self.sonos_state.groups.write();
+            *state = groups.clone();
+        }
+
+        let timestamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as u64;
+        self.emitter
+            .emit_topology(TopologyEvent::GroupsDiscovered { groups, timestamp });
+
+        Ok(())
     }
 
     /// Performs a single topology refresh cycle.
