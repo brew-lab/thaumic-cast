@@ -579,20 +579,18 @@ impl StreamCoordinator {
 
         results.push(coordinator_result);
 
-        // Step 2: Join all slaves to the coordinator
-        for slave_ip in slave_ips {
-            let result = self
-                .sync_group
-                .join_slave_to_coordinator(
-                    &slave_ip,
-                    &coordinator_ip,
-                    &coordinator_uuid,
-                    stream_id,
-                    codec,
-                )
-                .await;
-            results.push(result);
-        }
+        // Step 2: Join all slaves to the coordinator concurrently
+        let slave_results = self
+            .sync_group
+            .join_slaves_to_coordinator(
+                &slave_ips,
+                &coordinator_ip,
+                &coordinator_uuid,
+                stream_id,
+                codec,
+            )
+            .await;
+        results.extend(slave_results);
 
         let joined_count = results.iter().filter(|r| r.success).count();
 
@@ -627,11 +625,10 @@ impl StreamCoordinator {
             metadata,
         } = params;
 
-        let mut results = Vec::with_capacity(speaker_ips.len());
-
-        for speaker_ip in speaker_ips {
-            let result = self
-                .start_single_playback(SinglePlaybackParams {
+        let futures: Vec<_> = speaker_ips
+            .iter()
+            .map(|speaker_ip| {
+                self.start_single_playback(SinglePlaybackParams {
                     speaker_ip,
                     stream_id,
                     stream_url,
@@ -640,11 +637,10 @@ impl StreamCoordinator {
                     artwork_url,
                     metadata,
                 })
-                .await;
-            results.push(result);
-        }
+            })
+            .collect();
 
-        results
+        futures::future::join_all(futures).await
     }
 
     /// Starts playback on a single speaker.
@@ -1030,9 +1026,12 @@ impl StreamCoordinator {
         let stream_ids = self.stream_manager.list_stream_ids();
         let count = stream_ids.len();
 
-        for stream_id in stream_ids {
-            self.remove_stream_async(&stream_id).await;
-        }
+        let futures: Vec<_> = stream_ids
+            .iter()
+            .map(|stream_id| self.remove_stream_async(stream_id))
+            .collect();
+
+        futures::future::join_all(futures).await;
 
         log::info!(
             "[StreamCoordinator] Cleared all: {} stream(s) removed",
