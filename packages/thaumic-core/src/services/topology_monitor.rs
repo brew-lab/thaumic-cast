@@ -418,9 +418,8 @@ impl TopologyMonitor {
         let coordinator_ips: HashSet<String> =
             groups.iter().map(|g| g.coordinator_ip.clone()).collect();
 
-        // Clean up stale state entries for disappeared/regrouped speakers
-        self.sonos_state
-            .cleanup_stale_entries(&coordinator_ips, &current_speaker_ips);
+        // Clean up stale state entries for speakers that left the network
+        self.sonos_state.cleanup_stale_entries(&current_speaker_ips);
 
         // Sync subscriptions with current topology
         self.ensure_topology_subscription(&speakers, &current_speaker_ips, callback_url)
