@@ -394,22 +394,21 @@ mod tests {
         let counter = Arc::new(AtomicU32::new(0));
         let (tx, rx) = mpsc::channel::<()>();
 
-        // Spawn 10 tasks, the last one signals completion
-        for i in 0..10 {
+        // Spawn 10 tasks, each signals completion
+        for _ in 0..10 {
             let counter_clone = Arc::clone(&counter);
             let tx = tx.clone();
-            let is_last = i == 9;
             runtime.spawn(async move {
                 counter_clone.fetch_add(1, Ordering::SeqCst);
-                if is_last {
-                    let _ = tx.send(());
-                }
+                let _ = tx.send(());
             });
         }
 
-        // Wait for final task with timeout to prevent CI hangs
-        rx.recv_timeout(TEST_TIMEOUT)
-            .expect("Tasks did not complete in time");
+        // Wait for all 10 tasks to complete
+        for _ in 0..10 {
+            rx.recv_timeout(TEST_TIMEOUT)
+                .expect("Tasks did not complete in time");
+        }
 
         assert_eq!(counter.load(Ordering::SeqCst), 10);
 
