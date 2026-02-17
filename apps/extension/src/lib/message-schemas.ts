@@ -485,6 +485,8 @@ export const SetVolumeMessageSchema = z.object({
   type: z.literal('SET_VOLUME'),
   speakerIp: SpeakerIpSchema,
   volume: VolumeSchema,
+  /** When true, sets volume for the entire sync group via the coordinator. */
+  group: z.boolean().optional(),
 });
 export type SetVolumeMessage = z.infer<typeof SetVolumeMessageSchema>;
 
@@ -492,6 +494,8 @@ export const SetMuteMessageSchema = z.object({
   type: z.literal('SET_MUTE'),
   speakerIp: SpeakerIpSchema,
   muted: z.boolean(),
+  /** When true, sets mute for the entire sync group via the coordinator. */
+  group: z.boolean().optional(),
 });
 export type SetMuteMessage = z.infer<typeof SetMuteMessageSchema>;
 

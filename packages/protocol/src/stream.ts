@@ -82,5 +82,7 @@ export const ActiveCastSchema = z.object({
   encoderConfig: EncoderConfigSchema,
   /** Timestamp when cast started */
   startedAt: z.number(),
+  /** Whether synchronized multi-speaker playback is active */
+  syncSpeakers: z.boolean().default(false),
 });
 export type ActiveCast = z.infer<typeof ActiveCastSchema>;

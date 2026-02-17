@@ -34,6 +34,10 @@ interface SonosStateResult {
   setVolume: (speakerIp: string, volume: number) => Promise<void>;
   /** Set mute state for a speaker */
   setMuted: (speakerIp: string, muted: boolean) => Promise<void>;
+  /** Set group volume for all speakers in a sync session */
+  setSyncGroupVolume: (speakerIp: string, volume: number) => Promise<void>;
+  /** Set group mute for all speakers in a sync session */
+  setSyncGroupMuted: (speakerIp: string, muted: boolean, allSpeakerIps: string[]) => Promise<void>;
 }
 
 /**
@@ -133,6 +137,29 @@ export function useSonosState(): SonosStateResult {
     await chrome.runtime.sendMessage({ type: 'SET_MUTE', speakerIp, muted });
   }, []);
 
+  const setSyncGroupVolume = useCallback(async (speakerIp: string, volume: number) => {
+    // No optimistic update: Sonos adjusts speakers proportionally (preserving
+    // relative offsets), so we can't predict individual volumes. The group slider
+    // stays responsive via VolumeControl's local drag state, and per-speaker
+    // sliders update when RenderingControl GENA events arrive.
+    await chrome.runtime.sendMessage({ type: 'SET_VOLUME', speakerIp, volume, group: true });
+  }, []);
+
+  const setSyncGroupMuted = useCallback(
+    async (speakerIp: string, muted: boolean, allSpeakerIps: string[]) => {
+      // Optimistic update: set all speakers in the cast to this mute state
+      setState((prev) => {
+        const updated = { ...prev.groupMutes };
+        for (const ip of allSpeakerIps) {
+          updated[ip] = muted;
+        }
+        return { ...prev, groupMutes: updated };
+      });
+      await chrome.runtime.sendMessage({ type: 'SET_MUTE', speakerIp, muted, group: true });
+    },
+    [],
+  );
+
   // Memoize speaker groups collection for stable reference
   const speakerGroups = useMemo(
     () => SpeakerGroupCollection.fromZoneGroups(state.groups),
@@ -149,5 +176,7 @@ export function useSonosState(): SonosStateResult {
     getTransportState,
     setVolume,
     setMuted,
+    setSyncGroupVolume,
+    setSyncGroupMuted,
   };
 }

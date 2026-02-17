@@ -113,6 +113,10 @@ impl StartPlaybackRequest {
 struct WsVolumeRequest {
     ip: String,
     volume: u8,
+    /// When true, sets volume for the entire sync group via GroupRenderingControl
+    /// on the coordinator. When false (default), uses sync-aware per-speaker routing.
+    #[serde(default)]
+    group: bool,
 }
 
 /// Request payload for mute control via WebSocket.
@@ -121,6 +125,10 @@ struct WsVolumeRequest {
 struct WsMuteRequest {
     ip: String,
     mute: bool,
+    /// When true, sets mute for the entire sync group via GroupRenderingControl
+    /// on the coordinator. When false (default), uses sync-aware per-speaker routing.
+    #[serde(default)]
+    group: bool,
 }
 
 /// Request payload for speaker queries via WebSocket.
@@ -257,19 +265,18 @@ struct HandshakePayload {
     stream_id: String,
 }
 
-/// Executes an async command and sends the appropriate response.
+/// Sends a response based on an already-resolved result.
 ///
 /// On success, sends the provided response message. On error, sends an error message.
-async fn send_command_response<F, T, E, R>(
+async fn send_result<T, E, R>(
     sender: &mut futures::stream::SplitSink<WebSocket, Message>,
-    fut: F,
+    result: Result<T, E>,
     response_fn: R,
 ) where
-    F: std::future::Future<Output = Result<T, E>>,
     E: std::fmt::Display,
     R: FnOnce(T) -> WsOutgoing,
 {
-    match fut.await {
+    match result {
         Ok(value) => {
             if let Some(msg) = response_fn(value).to_message() {
                 let _ = sender.send(msg).await;
@@ -284,6 +291,21 @@ async fn send_command_response<F, T, E, R>(
             }
         }
     }
+}
+
+/// Executes an async command and sends the appropriate response.
+///
+/// On success, sends the provided response message. On error, sends an error message.
+async fn send_command_response<F, T, E, R>(
+    sender: &mut futures::stream::SplitSink<WebSocket, Message>,
+    fut: F,
+    response_fn: R,
+) where
+    F: std::future::Future<Output = Result<T, E>>,
+    E: std::fmt::Display,
+    R: FnOnce(T) -> WsOutgoing,
+{
+    send_result(sender, fut.await, response_fn).await;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -587,31 +609,37 @@ async fn handle_ws(socket: WebSocket, state: AppState) {
                             Ok(WsIncoming::SetVolume { payload }) => {
                                 let ip = payload.ip.clone();
                                 let volume = payload.volume;
+                                let sc = &state.stream_coordinator;
 
-                                send_command_response(
-                                    &mut sender,
-                                    state
-                                        .stream_coordinator
-                                        .set_volume_routed(&*state.sonos, &payload.ip, volume),
-                                    |()| WsOutgoing::VolumeState {
+                                let result = if payload.group {
+                                    sc.set_sync_group_volume(&*state.sonos, &ip, volume)
+                                        .await
+                                } else {
+                                    sc.set_volume_routed(&*state.sonos, &ip, volume).await
+                                };
+                                send_result(&mut sender, result, |()| {
+                                    WsOutgoing::VolumeState {
                                         payload: WsVolumePayload { ip, volume },
-                                    },
-                                )
+                                    }
+                                })
                                 .await;
                             }
                             Ok(WsIncoming::SetMute { payload }) => {
                                 let ip = payload.ip.clone();
                                 let mute = payload.mute;
+                                let sc = &state.stream_coordinator;
 
-                                send_command_response(
-                                    &mut sender,
-                                    state
-                                        .stream_coordinator
-                                        .set_mute_routed(&*state.sonos, &payload.ip, mute),
-                                    |()| WsOutgoing::MuteState {
+                                let result = if payload.group {
+                                    sc.set_sync_group_mute(&*state.sonos, &ip, mute)
+                                        .await
+                                } else {
+                                    sc.set_mute_routed(&*state.sonos, &ip, mute).await
+                                };
+                                send_result(&mut sender, result, |()| {
+                                    WsOutgoing::MuteState {
                                         payload: WsMutePayload { ip, mute },
-                                    },
-                                )
+                                    }
+                                })
                                 .await;
                             }
                             Ok(WsIncoming::GetVolume { payload }) => {

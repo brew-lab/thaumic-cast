@@ -102,6 +102,8 @@ function MainPopup(): JSX.Element {
     getTransportState,
     setVolume: handleVolumeChange,
     setMuted,
+    setSyncGroupVolume,
+    setSyncGroupMuted,
   } = useSonosState();
 
   // Speaker selection with auto-select behavior
@@ -176,6 +178,29 @@ function MainPopup(): JSX.Element {
       await setMuted(speakerIp, !currentMuted);
     },
     [isMuted, setMuted],
+  );
+
+  /**
+   * Handles sync group volume change for all speakers in a cast.
+   * @param speakerIps - All speaker IPs in the sync group
+   * @param volume - The volume level (0-100)
+   */
+  const handleSyncGroupVolumeChange = useCallback(
+    async (speakerIps: string[], volume: number) => {
+      await setSyncGroupVolume(speakerIps[0], volume);
+    },
+    [setSyncGroupVolume],
+  );
+
+  /**
+   * Handles sync group mute toggle for all speakers in a cast.
+   * @param speakerIps - All speaker IPs in the sync group
+   */
+  const handleSyncGroupMuteToggle = useCallback(
+    async (speakerIps: string[], muted: boolean) => {
+      await setSyncGroupMuted(speakerIps[0], muted, speakerIps);
+    },
+    [setSyncGroupMuted],
   );
 
   /**
@@ -281,6 +306,8 @@ function MainPopup(): JSX.Element {
         onRemoveSpeaker={removeSpeaker}
         showDivider={!!currentTabState && !isCasting}
         videoSyncEnabled={videoSyncEnabled}
+        onSyncGroupVolumeChange={handleSyncGroupVolumeChange}
+        onSyncGroupMuteToggle={handleSyncGroupMuteToggle}
       />
 
       {/* Current Tab Media Info with Cast Controls - hidden when already casting */}

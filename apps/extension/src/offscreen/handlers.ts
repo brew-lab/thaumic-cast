@@ -126,10 +126,10 @@ export function setupMessageHandlers(): void {
     if (msg.type === 'SET_VOLUME') {
       try {
         const validated = SetVolumeMessageSchema.parse(msg);
-        // Desktop expects: { type: "SET_VOLUME", payload: { ip, volume } }
+        // Desktop expects: { type: "SET_VOLUME", payload: { ip, volume, group? } }
         const success = sendControlCommand({
           type: 'SET_VOLUME',
-          payload: { ip: validated.speakerIp, volume: validated.volume },
+          payload: { ip: validated.speakerIp, volume: validated.volume, group: validated.group },
         });
         sendResponse({ success });
       } catch (err) {
@@ -142,10 +142,10 @@ export function setupMessageHandlers(): void {
     if (msg.type === 'SET_MUTE') {
       try {
         const validated = SetMuteMessageSchema.parse(msg);
-        // Desktop expects: { type: "SET_MUTE", payload: { ip, mute } }
+        // Desktop expects: { type: "SET_MUTE", payload: { ip, mute, group? } }
         const success = sendControlCommand({
           type: 'SET_MUTE',
-          payload: { ip: validated.speakerIp, mute: validated.muted },
+          payload: { ip: validated.speakerIp, mute: validated.muted, group: validated.group },
         });
         sendResponse({ success });
       } catch (err) {

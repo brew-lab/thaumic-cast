@@ -427,6 +427,60 @@ impl StreamCoordinator {
         }
     }
 
+    // ─────────────────────────────────────────────────────────────────────────────
+    // Sync Group Volume/Mute (all speakers in sync session)
+    // ─────────────────────────────────────────────────────────────────────────────
+
+    /// Resolves the sync session coordinator IP for a given speaker.
+    ///
+    /// - If the speaker is a coordinator → returns `speaker_ip`
+    /// - If the speaker is a slave → returns its `coordinator_ip`
+    /// - If not in any session → returns `None`
+    pub fn resolve_sync_coordinator_ip(&self, speaker_ip: &str) -> Option<String> {
+        let session = self
+            .playback_sessions
+            .iter()
+            .find(|r| r.key().speaker_ip == speaker_ip)?;
+        match session.role {
+            GroupRole::Coordinator => Some(speaker_ip.to_string()),
+            GroupRole::Slave => session.coordinator_ip.clone(),
+        }
+    }
+
+    /// Sets group volume for the entire sync session containing `speaker_ip`.
+    ///
+    /// Resolves the coordinator IP, then calls `set_group_volume` on it so Sonos
+    /// adjusts all members proportionally. If the speaker is not in a sync session,
+    /// falls back to `set_group_volume` directly (same as non-sync behavior).
+    pub async fn set_sync_group_volume(
+        &self,
+        sonos: &dyn crate::sonos::traits::SonosVolumeControl,
+        speaker_ip: &str,
+        volume: u8,
+    ) -> crate::error::SoapResult<()> {
+        let target_ip = self
+            .resolve_sync_coordinator_ip(speaker_ip)
+            .unwrap_or_else(|| speaker_ip.to_string());
+        sonos.set_group_volume(&target_ip, volume).await
+    }
+
+    /// Sets group mute for the entire sync session containing `speaker_ip`.
+    ///
+    /// Resolves the coordinator IP, then calls `set_group_mute` on it so Sonos
+    /// mutes/unmutes all members. If the speaker is not in a sync session,
+    /// falls back to `set_group_mute` directly (same as non-sync behavior).
+    pub async fn set_sync_group_mute(
+        &self,
+        sonos: &dyn crate::sonos::traits::SonosVolumeControl,
+        speaker_ip: &str,
+        mute: bool,
+    ) -> crate::error::SoapResult<()> {
+        let target_ip = self
+            .resolve_sync_coordinator_ip(speaker_ip)
+            .unwrap_or_else(|| speaker_ip.to_string());
+        sonos.set_group_mute(&target_ip, mute).await
+    }
+
     /// Inserts a playback session for testing purposes.
     ///
     /// This allows tests to set up coordinator state without going through
@@ -2645,6 +2699,125 @@ mod tests {
 
             assert!(!mock.get_speaker_mute_called.load(Ordering::SeqCst));
             assert!(mock.get_group_mute_called.load(Ordering::SeqCst));
+        }
+
+        // ───────────────────────────────────────────────────────────────────
+        // Tests for resolve_sync_coordinator_ip
+        // ───────────────────────────────────────────────────────────────────
+
+        #[test]
+        fn resolve_sync_coordinator_returns_self_for_coordinator() {
+            let coordinator = create_test_coordinator();
+            coordinator.insert_test_session(create_test_session(
+                "stream1",
+                "192.168.1.100",
+                GroupRole::Coordinator,
+            ));
+
+            assert_eq!(
+                coordinator.resolve_sync_coordinator_ip("192.168.1.100"),
+                Some("192.168.1.100".to_string())
+            );
+        }
+
+        #[test]
+        fn resolve_sync_coordinator_returns_coordinator_ip_for_slave() {
+            let coordinator = create_test_coordinator();
+            coordinator.insert_test_session(create_test_session(
+                "stream1",
+                "192.168.1.100",
+                GroupRole::Coordinator,
+            ));
+            coordinator.insert_test_session(create_test_session(
+                "stream1",
+                "192.168.1.101",
+                GroupRole::Slave,
+            ));
+
+            // Slave's coordinator_ip is "192.168.1.100" (from create_test_session)
+            assert_eq!(
+                coordinator.resolve_sync_coordinator_ip("192.168.1.101"),
+                Some("192.168.1.100".to_string())
+            );
+        }
+
+        #[test]
+        fn resolve_sync_coordinator_returns_none_for_unknown_speaker() {
+            let coordinator = create_test_coordinator();
+            assert_eq!(
+                coordinator.resolve_sync_coordinator_ip("192.168.1.200"),
+                None
+            );
+        }
+
+        // ───────────────────────────────────────────────────────────────────
+        // Tests for set_sync_group_volume / set_sync_group_mute
+        // ───────────────────────────────────────────────────────────────────
+
+        #[tokio::test]
+        async fn set_sync_group_volume_calls_group_volume_on_coordinator() {
+            let coordinator = create_test_coordinator();
+            let mock = MockVolumeControl::new();
+
+            coordinator.insert_test_session(create_test_session(
+                "stream1",
+                "192.168.1.100",
+                GroupRole::Coordinator,
+            ));
+            coordinator.insert_test_session(create_test_session(
+                "stream1",
+                "192.168.1.101",
+                GroupRole::Slave,
+            ));
+
+            // Call from slave → should resolve to coordinator and use group volume
+            coordinator
+                .set_sync_group_volume(&mock, "192.168.1.101", 60)
+                .await
+                .unwrap();
+
+            assert!(mock.set_group_volume_called.load(Ordering::SeqCst));
+            assert!(!mock.set_speaker_volume_called.load(Ordering::SeqCst));
+        }
+
+        #[tokio::test]
+        async fn set_sync_group_volume_falls_back_for_unknown_speaker() {
+            let coordinator = create_test_coordinator();
+            let mock = MockVolumeControl::new();
+
+            // No sessions — falls back to calling set_group_volume directly
+            coordinator
+                .set_sync_group_volume(&mock, "192.168.1.200", 50)
+                .await
+                .unwrap();
+
+            assert!(mock.set_group_volume_called.load(Ordering::SeqCst));
+        }
+
+        #[tokio::test]
+        async fn set_sync_group_mute_calls_group_mute_on_coordinator() {
+            let coordinator = create_test_coordinator();
+            let mock = MockVolumeControl::new();
+
+            coordinator.insert_test_session(create_test_session(
+                "stream1",
+                "192.168.1.100",
+                GroupRole::Coordinator,
+            ));
+            coordinator.insert_test_session(create_test_session(
+                "stream1",
+                "192.168.1.101",
+                GroupRole::Slave,
+            ));
+
+            // Call from coordinator directly
+            coordinator
+                .set_sync_group_mute(&mock, "192.168.1.100", true)
+                .await
+                .unwrap();
+
+            assert!(mock.set_group_mute_called.load(Ordering::SeqCst));
+            assert!(!mock.set_speaker_mute_called.load(Ordering::SeqCst));
         }
     }
 }

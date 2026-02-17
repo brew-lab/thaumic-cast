@@ -32,7 +32,7 @@ import { notifyPopup } from '../notification-service';
 export async function handleSetVolume(
   msg: SetVolumeMessage,
 ): Promise<{ success: boolean } | undefined> {
-  return offscreenBroker.setVolume(msg.speakerIp, msg.volume);
+  return offscreenBroker.setVolume(msg.speakerIp, msg.volume, msg.group);
 }
 
 /**
@@ -44,7 +44,7 @@ export async function handleSetVolume(
 export async function handleSetMute(
   msg: SetMuteMessage,
 ): Promise<{ success: boolean } | undefined> {
-  return offscreenBroker.setMute(msg.speakerIp, msg.muted);
+  return offscreenBroker.setMute(msg.speakerIp, msg.muted, msg.group);
 }
 
 /**

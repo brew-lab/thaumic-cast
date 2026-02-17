@@ -331,6 +331,7 @@ function toActiveCast(session: ActiveCastSession): ActiveCast {
     speakerNames: session.speakerNames,
     encoderConfig: session.encoderConfig,
     startedAt: session.startedAt,
+    syncSpeakers: session.syncSpeakers,
   };
 }
 

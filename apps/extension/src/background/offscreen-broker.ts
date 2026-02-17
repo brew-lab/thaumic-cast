@@ -165,20 +165,30 @@ class OffscreenBroker {
    * Sets volume for a speaker.
    * @param speakerIp - The speaker IP address
    * @param volume - The volume level (0-100)
+   * @param group - When true, sets volume for the entire sync group
    * @returns Success response
    */
-  async setVolume(speakerIp: string, volume: number): Promise<{ success: boolean } | undefined> {
-    return sendToOffscreen<{ success: boolean }>({ type: 'SET_VOLUME', speakerIp, volume });
+  async setVolume(
+    speakerIp: string,
+    volume: number,
+    group?: boolean,
+  ): Promise<{ success: boolean } | undefined> {
+    return sendToOffscreen<{ success: boolean }>({ type: 'SET_VOLUME', speakerIp, volume, group });
   }
 
   /**
    * Sets mute state for a speaker.
    * @param speakerIp - The speaker IP address
    * @param muted - The mute state
+   * @param group - When true, sets mute for the entire sync group
    * @returns Success response
    */
-  async setMute(speakerIp: string, muted: boolean): Promise<{ success: boolean } | undefined> {
-    return sendToOffscreen<{ success: boolean }>({ type: 'SET_MUTE', speakerIp, muted });
+  async setMute(
+    speakerIp: string,
+    muted: boolean,
+    group?: boolean,
+  ): Promise<{ success: boolean } | undefined> {
+    return sendToOffscreen<{ success: boolean }>({ type: 'SET_MUTE', speakerIp, muted, group });
   }
 
   /**
