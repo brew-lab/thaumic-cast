@@ -395,6 +395,11 @@ impl SyncGroupManager {
             slave_restoration_info.len()
         );
 
+        // Both blocks end with leave_sync_session so the arbiter clears sync_ips
+        // and restores GroupRenderingControl subscriptions for each speaker.
+        // Without this, sync_ips retains stale entries indefinitely (no GENA
+        // expiry), causing TopologyMonitor to permanently skip GRC subscriptions.
+
         // Block 1 (parallel across slaves): leave_group → restore → leave_sync_session
         {
             let futures: Vec<_> = slaves
