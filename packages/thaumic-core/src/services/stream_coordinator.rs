@@ -1589,9 +1589,33 @@ impl StreamCoordinator {
                 self.stop_slave_speaker(stream_id, speaker_ip, reason).await
             }
             GroupRole::Coordinator => {
-                // Coordinator: must unjoin all slaves first, then stop
-                self.stop_coordinator_and_slaves(stream_id, speaker_ip, reason)
-                    .await
+                // Check if there are slaves that can be promoted to coordinator
+                let has_slaves = self.playback_sessions.iter().any(|r| {
+                    r.key().stream_id == stream_id
+                        && r.value().role == GroupRole::Slave
+                        && r.value().coordinator_ip.as_deref() == Some(speaker_ip)
+                });
+
+                if has_slaves {
+                    match self
+                        .promote_slave_to_coordinator(stream_id, speaker_ip, reason)
+                        .await
+                    {
+                        Ok(stopped) => stopped,
+                        Err(e) => {
+                            log::warn!(
+                                "[GroupSync] Promotion failed ({}), falling back to teardown",
+                                e
+                            );
+                            self.stop_coordinator_and_slaves(stream_id, speaker_ip, reason)
+                                .await
+                        }
+                    }
+                } else {
+                    // No slaves: just stop the coordinator
+                    self.stop_coordinator_and_slaves(stream_id, speaker_ip, reason)
+                        .await
+                }
             }
         };
 
@@ -1847,6 +1871,226 @@ impl StreamCoordinator {
                 stopped_ips
             }
         }
+    }
+
+    /// Promotes a slave to coordinator when the current coordinator is removed.
+    ///
+    /// Instead of tearing down the entire group when a coordinator is removed,
+    /// this picks a slave to become the new coordinator and re-points the remaining
+    /// slaves to it. The old coordinator is stopped and cleaned up.
+    ///
+    /// # Flow
+    /// 1. Gather session info from the old coordinator
+    /// 2. Pick the first slave as the new coordinator
+    /// 3. Stop and clean up the old coordinator
+    /// 4. Promote the chosen slave (leave group, play stream URI directly)
+    /// 5. Re-point remaining slaves to the new coordinator
+    ///
+    /// # Returns
+    /// List of stopped speaker IPs (only the old coordinator).
+    /// On failure, returns `Err` so the caller can fall back to full teardown.
+    async fn promote_slave_to_coordinator(
+        &self,
+        stream_id: &str,
+        coordinator_ip: &str,
+        reason: Option<SpeakerRemovalReason>,
+    ) -> Result<Vec<String>, String> {
+        let coord_key = PlaybackSessionKey::new(stream_id, coordinator_ip);
+
+        // 1. Gather info from coordinator session
+        let coord_session = self
+            .playback_sessions
+            .get(&coord_key)
+            .map(|s| s.clone())
+            .ok_or("Coordinator session not found")?;
+
+        let stream_url = coord_session.stream_url.clone();
+        let codec = coord_session.codec;
+        let coordinator_uuid = coord_session.coordinator_uuid.clone();
+        let original_coordinator_uuid = coord_session.original_coordinator_uuid.clone();
+        drop(coord_session);
+
+        // 2. Gather slave sessions
+        let slave_sessions: Vec<(PlaybackSessionKey, PlaybackSession)> = self
+            .playback_sessions
+            .iter()
+            .filter(|r| {
+                r.key().stream_id == stream_id
+                    && r.value().role == GroupRole::Slave
+                    && r.value().coordinator_ip.as_deref() == Some(coordinator_ip)
+            })
+            .map(|r| (r.key().clone(), r.value().clone()))
+            .collect();
+
+        if slave_sessions.is_empty() {
+            return Err("No slaves found to promote".to_string());
+        }
+
+        // 3. Pick first slave to promote
+        let promoted_ip = slave_sessions[0].0.speaker_ip.clone();
+        let promoted_uuid = self
+            .sonos_state
+            .get_member_uuid_by_ip(&promoted_ip)
+            .ok_or_else(|| format!("No UUID for promoted slave {}", promoted_ip))?;
+
+        // 4. Get stream state for audio_format, metadata, artwork_url
+        let stream_state = self.get_stream(stream_id).ok_or("Stream state not found")?;
+        let audio_format = stream_state.audio_format;
+        let metadata = stream_state.metadata.read().clone();
+        let artwork_url = self.network.url_builder().artwork_url();
+
+        log::info!(
+            "[GroupSync] Promoting slave {} (uuid={}) to coordinator, replacing {} (stream={})",
+            promoted_ip,
+            promoted_uuid,
+            coordinator_ip,
+            stream_id
+        );
+
+        // 5. Stop old coordinator
+        if let Err(e) = self.sonos.stop(coordinator_ip).await {
+            log::warn!(
+                "[GroupSync] Failed to stop old coordinator {}: {}",
+                coordinator_ip,
+                e
+            );
+            // Continue - the speaker may already be stopped
+        }
+
+        self.playback_sessions.remove(&coord_key);
+        self.unsubscribe_rendering_control(coordinator_ip).await;
+
+        if let Some(ref uuid) = coordinator_uuid {
+            if let Err(e) = self.sonos.switch_to_queue(coordinator_ip, uuid).await {
+                log::warn!(
+                    "[GroupSync] Failed to switch old coordinator {} to queue: {}",
+                    coordinator_ip,
+                    e
+                );
+            }
+        }
+
+        if let Some(orig_uuid) = original_coordinator_uuid {
+            self.restore_original_group(coordinator_ip, &orig_uuid)
+                .await;
+        }
+
+        self.emit_event(StreamEvent::PlaybackStopped {
+            stream_id: stream_id.to_string(),
+            speaker_ip: coordinator_ip.to_string(),
+            reason,
+            timestamp: now_millis(),
+        });
+
+        // 6. Promote the chosen slave
+        if let Err(e) = self.sonos.leave_group(&promoted_ip).await {
+            log::warn!(
+                "[GroupSync] Failed to unjoin promoted slave {}: {}",
+                promoted_ip,
+                e
+            );
+            // Continue - may already be detached if coordinator stopped
+        }
+
+        self.sonos
+            .play_uri(
+                &promoted_ip,
+                &stream_url,
+                codec,
+                &audio_format,
+                Some(&metadata),
+                &artwork_url,
+            )
+            .await
+            .map_err(|e| {
+                format!(
+                    "Failed to start stream on promoted slave {}: {}",
+                    promoted_ip, e
+                )
+            })?;
+
+        // Update promoted slave's session to coordinator role
+        let promoted_key = PlaybackSessionKey::new(stream_id, &promoted_ip);
+        self.playback_sessions.insert(
+            promoted_key,
+            PlaybackSession {
+                stream_id: stream_id.to_string(),
+                speaker_ip: promoted_ip.clone(),
+                stream_url: stream_url.clone(),
+                codec,
+                role: GroupRole::Coordinator,
+                coordinator_ip: None,
+                coordinator_uuid: Some(promoted_uuid.clone()),
+                original_coordinator_uuid: self
+                    .sonos_state
+                    .get_original_coordinator_for_slave(&promoted_ip),
+            },
+        );
+
+        log::info!(
+            "[GroupSync] Promoted {} to coordinator successfully",
+            promoted_ip
+        );
+
+        // 7. Re-point remaining slaves to new coordinator
+        let remaining_slaves: Vec<(PlaybackSessionKey, PlaybackSession)> = slave_sessions
+            .into_iter()
+            .filter(|(key, _)| key.speaker_ip != promoted_ip)
+            .collect();
+
+        for (slave_key, slave_session) in &remaining_slaves {
+            log::debug!(
+                "[GroupSync] Re-pointing slave {} to new coordinator {}",
+                slave_key.speaker_ip,
+                promoted_ip
+            );
+
+            if let Err(e) = self.sonos.leave_group(&slave_key.speaker_ip).await {
+                log::warn!(
+                    "[GroupSync] Failed to unjoin slave {} during re-point: {}",
+                    slave_key.speaker_ip,
+                    e
+                );
+                // Best-effort: continue with others
+                continue;
+            }
+
+            if let Err(e) = self
+                .sonos
+                .join_group(&slave_key.speaker_ip, &promoted_uuid)
+                .await
+            {
+                log::warn!(
+                    "[GroupSync] Failed to re-point slave {} to new coordinator {}: {}",
+                    slave_key.speaker_ip,
+                    promoted_ip,
+                    e
+                );
+                // Best-effort: continue with others
+                continue;
+            }
+
+            // Update session to point to new coordinator
+            let rincon_uri = format!("x-rincon:{}", promoted_uuid);
+            self.playback_sessions.insert(
+                slave_key.clone(),
+                PlaybackSession {
+                    stream_id: stream_id.to_string(),
+                    speaker_ip: slave_key.speaker_ip.clone(),
+                    stream_url: rincon_uri,
+                    codec,
+                    role: GroupRole::Slave,
+                    coordinator_ip: Some(promoted_ip.clone()),
+                    coordinator_uuid: Some(promoted_uuid.clone()),
+                    original_coordinator_uuid: slave_session.original_coordinator_uuid.clone(),
+                },
+            );
+        }
+
+        // 8. Cleanup stream if no sessions remain (edge case)
+        self.cleanup_stream_if_no_sessions(stream_id);
+
+        Ok(vec![coordinator_ip.to_string()])
     }
 
     /// Stops playback on a speaker (by speaker IP only, for backward compatibility).
@@ -2837,6 +3081,480 @@ mod tests {
 
             assert!(mock.set_group_mute_called.load(Ordering::SeqCst));
             assert!(!mock.set_speaker_mute_called.load(Ordering::SeqCst));
+        }
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Coordinator Promotion Tests
+    // ─────────────────────────────────────────────────────────────────────────
+
+    mod coordinator_promotion {
+        use super::*;
+        use crate::context::NetworkContext;
+        use crate::error::SoapResult;
+        use crate::events::{EventEmitter, NetworkEvent, SonosEvent, StreamEvent, TopologyEvent};
+        use crate::sonos::gena::GenaSubscriptionManager;
+        use crate::sonos::traits::SonosPlayback;
+        use crate::sonos::types::{PositionInfo, ZoneGroup, ZoneGroupMember};
+        use crate::state::{SonosState, StreamingConfig};
+        use crate::stream::{AudioCodec, AudioFormat, Passthrough};
+        use async_trait::async_trait;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::sync::{Arc, Mutex};
+
+        /// Event emitter that collects events for assertion.
+        struct CollectingEventEmitter {
+            events: Mutex<Vec<StreamEvent>>,
+        }
+
+        impl CollectingEventEmitter {
+            fn new() -> Self {
+                Self {
+                    events: Mutex::new(Vec::new()),
+                }
+            }
+
+            fn playback_stopped_ips(&self) -> Vec<String> {
+                self.events
+                    .lock()
+                    .unwrap()
+                    .iter()
+                    .filter_map(|e| match e {
+                        StreamEvent::PlaybackStopped { speaker_ip, .. } => Some(speaker_ip.clone()),
+                        _ => None,
+                    })
+                    .collect()
+            }
+        }
+
+        impl EventEmitter for CollectingEventEmitter {
+            fn emit_stream(&self, event: StreamEvent) {
+                self.events.lock().unwrap().push(event);
+            }
+            fn emit_sonos(&self, _: SonosEvent) {}
+            fn emit_latency(&self, _: crate::events::LatencyEvent) {}
+            fn emit_network(&self, _: NetworkEvent) {}
+            fn emit_topology(&self, _: TopologyEvent) {}
+        }
+
+        /// Mock SonosPlayback that tracks call counts per method.
+        struct TrackingSonosPlayback {
+            play_uri_count: AtomicUsize,
+            stop_count: AtomicUsize,
+            leave_group_count: AtomicUsize,
+            join_group_count: AtomicUsize,
+            switch_to_queue_count: AtomicUsize,
+            /// If set, play_uri returns this error.
+            play_uri_fail: Mutex<Option<String>>,
+        }
+
+        impl TrackingSonosPlayback {
+            fn new() -> Self {
+                Self {
+                    play_uri_count: AtomicUsize::new(0),
+                    stop_count: AtomicUsize::new(0),
+                    leave_group_count: AtomicUsize::new(0),
+                    join_group_count: AtomicUsize::new(0),
+                    switch_to_queue_count: AtomicUsize::new(0),
+                    play_uri_fail: Mutex::new(None),
+                }
+            }
+
+            fn with_play_uri_fail(self, msg: &str) -> Self {
+                *self.play_uri_fail.lock().unwrap() = Some(msg.to_string());
+                self
+            }
+        }
+
+        #[async_trait]
+        impl SonosPlayback for TrackingSonosPlayback {
+            async fn play_uri(
+                &self,
+                _: &str,
+                _: &str,
+                _: AudioCodec,
+                _: &AudioFormat,
+                _: Option<&StreamMetadata>,
+                _: &str,
+            ) -> SoapResult<()> {
+                self.play_uri_count.fetch_add(1, Ordering::SeqCst);
+                if let Some(msg) = self.play_uri_fail.lock().unwrap().as_ref() {
+                    return Err(crate::sonos::soap::SoapError::Fault(msg.clone()));
+                }
+                Ok(())
+            }
+            async fn play(&self, _: &str) -> SoapResult<()> {
+                Ok(())
+            }
+            async fn stop(&self, _: &str) -> SoapResult<()> {
+                self.stop_count.fetch_add(1, Ordering::SeqCst);
+                Ok(())
+            }
+            async fn switch_to_queue(&self, _: &str, _: &str) -> SoapResult<()> {
+                self.switch_to_queue_count.fetch_add(1, Ordering::SeqCst);
+                Ok(())
+            }
+            async fn get_position_info(&self, _: &str) -> SoapResult<PositionInfo> {
+                Ok(PositionInfo {
+                    track: 1,
+                    track_duration: "0:00:00".to_string(),
+                    track_uri: String::new(),
+                    rel_time: "0:00:00".to_string(),
+                    rel_time_ms: 0,
+                })
+            }
+            async fn join_group(&self, _: &str, _: &str) -> SoapResult<()> {
+                self.join_group_count.fetch_add(1, Ordering::SeqCst);
+                Ok(())
+            }
+            async fn leave_group(&self, _: &str) -> SoapResult<()> {
+                self.leave_group_count.fetch_add(1, Ordering::SeqCst);
+                Ok(())
+            }
+        }
+
+        /// Creates a SonosState with members for UUID lookup.
+        fn create_sonos_state_with_members(members: &[(&str, &str)]) -> Arc<SonosState> {
+            let state = Arc::new(SonosState::default());
+            let groups = members
+                .iter()
+                .map(|(ip, uuid)| ZoneGroup {
+                    id: uuid.to_string(),
+                    name: format!("Room {}", ip),
+                    coordinator_uuid: uuid.to_string(),
+                    coordinator_ip: ip.to_string(),
+                    members: vec![ZoneGroupMember {
+                        uuid: uuid.to_string(),
+                        ip: ip.to_string(),
+                        zone_name: format!("Room {}", ip),
+                        model: "One".to_string(),
+                    }],
+                })
+                .collect();
+            *state.groups.write() = groups;
+            state
+        }
+
+        /// Creates a StreamCoordinator with custom sonos mock and event emitter.
+        fn create_coordinator_with(
+            sonos: Arc<dyn SonosPlayback>,
+            sonos_state: Arc<SonosState>,
+            emitter: Arc<dyn EventEmitter>,
+        ) -> StreamCoordinator {
+            let (gena_manager, _rx) = GenaSubscriptionManager::new(reqwest::Client::new());
+            StreamCoordinator::new(
+                sonos,
+                sonos_state,
+                NetworkContext::for_test(),
+                emitter,
+                StreamingConfig::default(),
+                Arc::new(gena_manager),
+            )
+        }
+
+        #[tokio::test]
+        async fn promote_slave_when_coordinator_removed_with_slaves() {
+            let sonos = Arc::new(TrackingSonosPlayback::new());
+            let sonos_state = create_sonos_state_with_members(&[
+                ("192.168.1.100", "RINCON_COORD"),
+                ("192.168.1.101", "RINCON_SLAVE1"),
+                ("192.168.1.102", "RINCON_SLAVE2"),
+            ]);
+            let emitter = Arc::new(CollectingEventEmitter::new());
+            let coord = create_coordinator_with(
+                Arc::clone(&sonos) as Arc<dyn SonosPlayback>,
+                Arc::clone(&sonos_state),
+                Arc::clone(&emitter) as Arc<dyn EventEmitter>,
+            );
+
+            // Create stream so get_stream() works
+            let stream_id = coord
+                .create_stream(
+                    AudioCodec::Aac,
+                    AudioFormat::default(),
+                    Arc::new(Passthrough),
+                    200,
+                    20,
+                )
+                .unwrap();
+
+            // Set up sessions with matching stream_id
+            coord.insert_test_session(PlaybackSession {
+                stream_id: stream_id.clone(),
+                speaker_ip: "192.168.1.100".to_string(),
+                stream_url: "http://127.0.0.1:0/stream/test/live".to_string(),
+                codec: AudioCodec::Aac,
+                role: GroupRole::Coordinator,
+                coordinator_ip: None,
+                coordinator_uuid: Some("RINCON_COORD".to_string()),
+                original_coordinator_uuid: None,
+            });
+            coord.insert_test_session(PlaybackSession {
+                stream_id: stream_id.clone(),
+                speaker_ip: "192.168.1.101".to_string(),
+                stream_url: "x-rincon:RINCON_COORD".to_string(),
+                codec: AudioCodec::Aac,
+                role: GroupRole::Slave,
+                coordinator_ip: Some("192.168.1.100".to_string()),
+                coordinator_uuid: Some("RINCON_COORD".to_string()),
+                original_coordinator_uuid: None,
+            });
+            coord.insert_test_session(PlaybackSession {
+                stream_id: stream_id.clone(),
+                speaker_ip: "192.168.1.102".to_string(),
+                stream_url: "x-rincon:RINCON_COORD".to_string(),
+                codec: AudioCodec::Aac,
+                role: GroupRole::Slave,
+                coordinator_ip: Some("192.168.1.100".to_string()),
+                coordinator_uuid: Some("RINCON_COORD".to_string()),
+                original_coordinator_uuid: None,
+            });
+
+            // Remove the coordinator
+            let stopped = coord
+                .stop_playback_speaker(&stream_id, "192.168.1.100", None)
+                .await;
+
+            // Only the old coordinator should be "stopped"
+            assert_eq!(stopped, vec!["192.168.1.100"]);
+
+            // Only one PlaybackStopped event (for the old coordinator)
+            // (plus the StreamEvent::Created from create_stream)
+            assert_eq!(emitter.playback_stopped_ips(), vec!["192.168.1.100"]);
+
+            // One slave should be promoted to coordinator (DashMap order is nondeterministic)
+            let sessions = coord.get_all_sessions();
+            let promoted = sessions
+                .iter()
+                .find(|s| s.role == GroupRole::Coordinator)
+                .expect("one session should be promoted to coordinator");
+            assert!(promoted.coordinator_ip.is_none());
+            assert!(!promoted.stream_url.starts_with("x-rincon:"));
+            // Promoted speaker should have its own UUID as coordinator_uuid
+            assert!(promoted.coordinator_uuid.is_some());
+
+            // Remaining slave should be re-pointed to the promoted coordinator
+            let remaining = sessions
+                .iter()
+                .find(|s| s.role == GroupRole::Slave)
+                .expect("one session should remain as slave");
+            assert_eq!(
+                remaining.coordinator_ip.as_deref(),
+                Some(promoted.speaker_ip.as_str())
+            );
+            assert_eq!(remaining.coordinator_uuid, promoted.coordinator_uuid);
+            assert_eq!(
+                remaining.stream_url,
+                format!("x-rincon:{}", promoted.coordinator_uuid.as_ref().unwrap())
+            );
+
+            // Old coordinator session should be gone
+            assert!(coord
+                .get_all_sessions()
+                .iter()
+                .all(|s| s.speaker_ip != "192.168.1.100"));
+
+            // Verify SOAP calls: stop(old), leave_group(promoted), play_uri(promoted),
+            // leave_group(remaining), join_group(remaining)
+            assert_eq!(sonos.stop_count.load(Ordering::SeqCst), 1);
+            assert_eq!(sonos.play_uri_count.load(Ordering::SeqCst), 1);
+            assert_eq!(sonos.leave_group_count.load(Ordering::SeqCst), 2);
+            assert_eq!(sonos.join_group_count.load(Ordering::SeqCst), 1);
+        }
+
+        #[tokio::test]
+        async fn promote_with_single_slave_becomes_standalone() {
+            let sonos = Arc::new(TrackingSonosPlayback::new());
+            let sonos_state = create_sonos_state_with_members(&[
+                ("192.168.1.100", "RINCON_COORD"),
+                ("192.168.1.101", "RINCON_SLAVE1"),
+            ]);
+            let emitter = Arc::new(CollectingEventEmitter::new());
+            let coord = create_coordinator_with(
+                Arc::clone(&sonos) as Arc<dyn SonosPlayback>,
+                Arc::clone(&sonos_state),
+                Arc::clone(&emitter) as Arc<dyn EventEmitter>,
+            );
+
+            let stream_id = coord
+                .create_stream(
+                    AudioCodec::Aac,
+                    AudioFormat::default(),
+                    Arc::new(Passthrough),
+                    200,
+                    20,
+                )
+                .unwrap();
+
+            coord.insert_test_session(PlaybackSession {
+                stream_id: stream_id.clone(),
+                speaker_ip: "192.168.1.100".to_string(),
+                stream_url: "http://127.0.0.1:0/stream/test/live".to_string(),
+                codec: AudioCodec::Aac,
+                role: GroupRole::Coordinator,
+                coordinator_ip: None,
+                coordinator_uuid: Some("RINCON_COORD".to_string()),
+                original_coordinator_uuid: None,
+            });
+            coord.insert_test_session(PlaybackSession {
+                stream_id: stream_id.clone(),
+                speaker_ip: "192.168.1.101".to_string(),
+                stream_url: "x-rincon:RINCON_COORD".to_string(),
+                codec: AudioCodec::Aac,
+                role: GroupRole::Slave,
+                coordinator_ip: Some("192.168.1.100".to_string()),
+                coordinator_uuid: Some("RINCON_COORD".to_string()),
+                original_coordinator_uuid: None,
+            });
+
+            let stopped = coord
+                .stop_playback_speaker(&stream_id, "192.168.1.100", None)
+                .await;
+
+            assert_eq!(stopped, vec!["192.168.1.100"]);
+
+            // Only 1 session remaining: the promoted slave
+            let sessions = coord.get_all_sessions();
+            assert_eq!(sessions.len(), 1);
+            assert_eq!(sessions[0].speaker_ip, "192.168.1.101");
+            assert_eq!(sessions[0].role, GroupRole::Coordinator);
+
+            // No join_group calls since there are no remaining slaves to re-point
+            assert_eq!(sonos.join_group_count.load(Ordering::SeqCst), 0);
+        }
+
+        #[tokio::test]
+        async fn promotion_falls_back_to_teardown_on_play_uri_failure() {
+            let sonos = Arc::new(TrackingSonosPlayback::new().with_play_uri_fail("SOAP fault"));
+            let sonos_state = create_sonos_state_with_members(&[
+                ("192.168.1.100", "RINCON_COORD"),
+                ("192.168.1.101", "RINCON_SLAVE1"),
+            ]);
+            let emitter = Arc::new(CollectingEventEmitter::new());
+            let coord = create_coordinator_with(
+                Arc::clone(&sonos) as Arc<dyn SonosPlayback>,
+                Arc::clone(&sonos_state),
+                Arc::clone(&emitter) as Arc<dyn EventEmitter>,
+            );
+
+            let stream_id = coord
+                .create_stream(
+                    AudioCodec::Aac,
+                    AudioFormat::default(),
+                    Arc::new(Passthrough),
+                    200,
+                    20,
+                )
+                .unwrap();
+
+            coord.insert_test_session(PlaybackSession {
+                stream_id: stream_id.clone(),
+                speaker_ip: "192.168.1.100".to_string(),
+                stream_url: "http://127.0.0.1:0/stream/test/live".to_string(),
+                codec: AudioCodec::Aac,
+                role: GroupRole::Coordinator,
+                coordinator_ip: None,
+                coordinator_uuid: Some("RINCON_COORD".to_string()),
+                original_coordinator_uuid: None,
+            });
+            coord.insert_test_session(PlaybackSession {
+                stream_id: stream_id.clone(),
+                speaker_ip: "192.168.1.101".to_string(),
+                stream_url: "x-rincon:RINCON_COORD".to_string(),
+                codec: AudioCodec::Aac,
+                role: GroupRole::Slave,
+                coordinator_ip: Some("192.168.1.100".to_string()),
+                coordinator_uuid: Some("RINCON_COORD".to_string()),
+                original_coordinator_uuid: None,
+            });
+
+            let stopped = coord
+                .stop_playback_speaker(&stream_id, "192.168.1.100", None)
+                .await;
+
+            // Fallback teardown: both speakers should be stopped
+            assert!(stopped.contains(&"192.168.1.100".to_string()));
+            assert!(stopped.contains(&"192.168.1.101".to_string()));
+
+            // All sessions should be cleaned up
+            assert!(coord.get_all_sessions().is_empty());
+        }
+
+        #[tokio::test]
+        async fn no_promotion_when_coordinator_has_no_slaves() {
+            let sonos = Arc::new(TrackingSonosPlayback::new());
+            let sonos_state = create_sonos_state_with_members(&[("192.168.1.100", "RINCON_COORD")]);
+            let emitter = Arc::new(CollectingEventEmitter::new());
+            let coord = create_coordinator_with(
+                Arc::clone(&sonos) as Arc<dyn SonosPlayback>,
+                Arc::clone(&sonos_state),
+                Arc::clone(&emitter) as Arc<dyn EventEmitter>,
+            );
+
+            coord.insert_test_session(PlaybackSession {
+                stream_id: "stream1".to_string(),
+                speaker_ip: "192.168.1.100".to_string(),
+                stream_url: "http://127.0.0.1:0/stream/test/live".to_string(),
+                codec: AudioCodec::Aac,
+                role: GroupRole::Coordinator,
+                coordinator_ip: None,
+                coordinator_uuid: Some("RINCON_COORD".to_string()),
+                original_coordinator_uuid: None,
+            });
+
+            let stopped = coord
+                .stop_playback_speaker("stream1", "192.168.1.100", None)
+                .await;
+
+            // Direct teardown, no promotion attempted
+            assert_eq!(stopped, vec!["192.168.1.100"]);
+            assert!(coord.get_all_sessions().is_empty());
+
+            // No play_uri called (no promotion)
+            assert_eq!(sonos.play_uri_count.load(Ordering::SeqCst), 0);
+        }
+
+        #[tokio::test]
+        async fn promotion_falls_back_when_uuid_lookup_fails() {
+            // SonosState has no members → UUID lookup fails → promotion fails → teardown
+            let sonos = Arc::new(TrackingSonosPlayback::new());
+            let sonos_state = Arc::new(SonosState::default()); // Empty - no UUID lookups work
+            let emitter = Arc::new(CollectingEventEmitter::new());
+            let coord = create_coordinator_with(
+                Arc::clone(&sonos) as Arc<dyn SonosPlayback>,
+                sonos_state,
+                Arc::clone(&emitter) as Arc<dyn EventEmitter>,
+            );
+
+            coord.insert_test_session(PlaybackSession {
+                stream_id: "stream1".to_string(),
+                speaker_ip: "192.168.1.100".to_string(),
+                stream_url: "http://127.0.0.1:0/stream/test/live".to_string(),
+                codec: AudioCodec::Aac,
+                role: GroupRole::Coordinator,
+                coordinator_ip: None,
+                coordinator_uuid: Some("RINCON_COORD".to_string()),
+                original_coordinator_uuid: None,
+            });
+            coord.insert_test_session(PlaybackSession {
+                stream_id: "stream1".to_string(),
+                speaker_ip: "192.168.1.101".to_string(),
+                stream_url: "x-rincon:RINCON_COORD".to_string(),
+                codec: AudioCodec::Aac,
+                role: GroupRole::Slave,
+                coordinator_ip: Some("192.168.1.100".to_string()),
+                coordinator_uuid: Some("RINCON_COORD".to_string()),
+                original_coordinator_uuid: None,
+            });
+
+            let stopped = coord
+                .stop_playback_speaker("stream1", "192.168.1.100", None)
+                .await;
+
+            // Fallback teardown: both should be stopped
+            assert!(stopped.contains(&"192.168.1.100".to_string()));
+            assert!(stopped.contains(&"192.168.1.101".to_string()));
+            assert!(coord.get_all_sessions().is_empty());
         }
     }
 }
