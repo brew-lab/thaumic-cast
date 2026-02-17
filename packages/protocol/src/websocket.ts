@@ -215,11 +215,21 @@ export type WsInitialStateMessage = z.infer<typeof WsInitialStateMessageSchema>;
 export const WsControlCommandSchema = z.discriminatedUnion('type', [
   z.object({
     type: z.literal('SET_VOLUME'),
-    payload: z.object({ ip: z.string(), volume: z.number().int().min(0).max(100) }),
+    payload: z.object({
+      ip: z.string(),
+      volume: z.number().int().min(0).max(100),
+      /** When true, sets volume for the entire sync group via the coordinator. */
+      group: z.boolean().optional(),
+    }),
   }),
   z.object({
     type: z.literal('SET_MUTE'),
-    payload: z.object({ ip: z.string(), mute: z.boolean() }),
+    payload: z.object({
+      ip: z.string(),
+      mute: z.boolean(),
+      /** When true, sets mute for the entire sync group via the coordinator. */
+      group: z.boolean().optional(),
+    }),
   }),
   z.object({
     type: z.literal('GET_VOLUME'),

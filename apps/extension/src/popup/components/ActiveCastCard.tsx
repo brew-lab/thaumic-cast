@@ -1,6 +1,6 @@
 import { type JSX, type CSSProperties } from 'preact';
 import { flushSync } from 'preact/compat';
-import { useCallback, useState, useRef, useEffect } from 'preact/hooks';
+import { useCallback, useState, useRef, useEffect, useMemo } from 'preact/hooks';
 import { useTranslation } from 'react-i18next';
 import type { ActiveCast, TransportState, MediaAction } from '@thaumic-cast/protocol';
 import { getDisplayTitle, getDisplayImage, getDisplaySubtitle } from '@thaumic-cast/protocol';
@@ -38,6 +38,10 @@ interface ActiveCastCardProps {
   onRemoveSpeaker?: (speakerIp: string) => void;
   /** Whether video sync controls should be shown (from global settings) */
   videoSyncEnabled?: boolean;
+  /** Callback when sync group volume changes (all speakers at once) */
+  onSyncGroupVolumeChange: (speakerIps: string[], volume: number) => void;
+  /** Callback when sync group mute is toggled (all speakers at once) */
+  onSyncGroupMuteToggle: (speakerIps: string[], muted: boolean) => void;
 }
 
 /**
@@ -54,6 +58,8 @@ interface ActiveCastCardProps {
  * @param props.onControl
  * @param props.onRemoveSpeaker
  * @param props.videoSyncEnabled
+ * @param props.onSyncGroupVolumeChange
+ * @param props.onSyncGroupMuteToggle
  * @returns The rendered ActiveCastCard component
  */
 export function ActiveCastCard({
@@ -68,6 +74,8 @@ export function ActiveCastCard({
   onControl,
   onRemoveSpeaker,
   videoSyncEnabled: showVideoSync = false,
+  onSyncGroupVolumeChange,
+  onSyncGroupMuteToggle,
 }: ActiveCastCardProps): JSX.Element {
   const { t } = useTranslation();
 
@@ -114,6 +122,19 @@ export function ActiveCastCard({
 
   // Video sync state and controls
   const videoSync = useVideoSyncState(showVideoSync ? cast.tabId : undefined);
+
+  // Sync group volume: show group control when sync is active with multiple speakers
+  const showGroupVolume = cast.syncSpeakers && cast.speakerIps.length > 1;
+  const groupVolume = useMemo(() => {
+    if (!showGroupVolume) return 0;
+    const sum = cast.speakerIps.reduce((acc, ip) => acc + getVolume(ip), 0);
+    return Math.round(sum / cast.speakerIps.length);
+  }, [showGroupVolume, cast.speakerIps, getVolume]);
+  const groupMuted = useMemo(() => {
+    if (!showGroupVolume) return false;
+    return cast.speakerIps.every((ip) => isMuted(ip));
+  }, [showGroupVolume, cast.speakerIps, isMuted]);
+  const groupName = cast.speakerNames.join(' + ');
 
   /**
    * Navigates to the tab associated with this cast session.
@@ -244,6 +265,23 @@ export function ActiveCastCard({
             </IconButton>
           )}
         </div>
+
+        {/* Sync group volume control (all speakers at once) */}
+        {showGroupVolume && (
+          <div className={styles.speakerRows}>
+            <SpeakerVolumeRow
+              speakerName={groupName}
+              speakerIp={cast.speakerIps[0]}
+              volume={groupVolume}
+              muted={groupMuted}
+              onVolumeChange={(vol) => onSyncGroupVolumeChange(cast.speakerIps, vol)}
+              onMuteToggle={() => onSyncGroupMuteToggle(cast.speakerIps, !groupMuted)}
+              muteLabel={t('mute_speaker', { name: groupName })}
+              unmuteLabel={t('unmute_speaker', { name: groupName })}
+              volumeLabel={t('volume_speaker', { name: groupName })}
+            />
+          </div>
+        )}
 
         {/* Per-speaker volume controls */}
         <div className={styles.speakerRows}>
