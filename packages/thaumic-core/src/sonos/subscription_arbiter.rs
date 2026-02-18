@@ -222,8 +222,15 @@ mod tests {
     use super::*;
 
     /// Creates a test arbiter with a real (but unused) GenaSubscriptionManager.
+    ///
+    /// Uses a 1ms timeout so GENA subscribe attempts against nonexistent
+    /// speakers fail immediately instead of blocking on TCP SYN retries (~30s).
     fn create_test_arbiter() -> SubscriptionArbiter {
-        let (gena_manager, _rx) = GenaSubscriptionManager::new(reqwest::Client::new());
+        let client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_millis(1))
+            .build()
+            .unwrap();
+        let (gena_manager, _rx) = GenaSubscriptionManager::new(client);
         SubscriptionArbiter::new(Arc::new(gena_manager))
     }
 
