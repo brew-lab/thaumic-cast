@@ -4,7 +4,7 @@
 //! codec-specific pipeline construction, prefill delays, epoch
 //! tracking, ICY metadata injection, and WAV header generation.
 
-use std::net::SocketAddr;
+use std::net::{IpAddr, SocketAddr};
 use std::pin::Pin;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -27,11 +27,14 @@ use crate::protocol_constants::{
 };
 use crate::stream::{
     create_wav_header, create_wav_stream_with_cadence, lagged_error, AudioCodec,
-    IcyMetadataInjector, LoggingStreamGuard, TaggedFrame,
+    IcyMetadataInjector, LoggingStreamGuard, StreamState, TaggedFrame,
 };
 
 /// Boxed stream type for audio data with ICY metadata support.
 type AudioStream = Pin<Box<dyn Stream<Item = Result<Bytes, std::io::Error>> + Send>>;
+
+/// Boxed stream type for tagged audio frames (before unwrapping to raw bytes).
+type TaggedStream = Pin<Box<dyn Stream<Item = Result<TaggedFrame, std::io::Error>> + Send>>;
 
 pub(super) async fn stream_audio(
     Path(id): Path<String>,
@@ -117,9 +120,6 @@ pub(super) async fn stream_audio(
         prefill_frames.len()
     );
 
-    // Type alias for tagged frame stream
-    type TaggedStream = Pin<Box<dyn Stream<Item = Result<TaggedFrame, std::io::Error>> + Send>>;
-
     // Create logging guard early so we can pass it to the cadence stream for internal tracking.
     // Uses Arc so it can be shared between cadence stream and final frame recording.
     let guard = Arc::new(LoggingStreamGuard::new(id.to_string(), remote_ip));
@@ -169,48 +169,12 @@ pub(super) async fn stream_audio(
         Box::pin(futures::StreamExt::chain(prefill_stream, live_stream))
     };
 
-    // === Epoch Hook ===
-    // This embeds epoch lifecycle management in the HTTP layer. While this might seem
-    // like a separation of concerns violation, it's intentional because:
-    //
-    // 1. Requires ConnectInfo<SocketAddr> - only available via Axum extractors
-    // 2. Must detect actual audio consumption - the stream poll is the only reliable signal
-    // 3. HTTP connection lifecycle defines epoch boundary - Sonos reconnects = new epoch
-    //
-    // The epoch establishes T0 for latency measurement: the timestamp of the oldest
-    // audio frame being served when Sonos first polls data from this connection.
-    let hook_state = Some((
+    let tracked_stream = with_epoch_tracking(
+        combined_stream,
         Arc::clone(&stream_state),
         epoch_candidate,
         connected_at,
         remote_ip,
-    ));
-
-    let tracked_stream = combined_stream.scan(
-        hook_state,
-        |state, item: Result<TaggedFrame, std::io::Error>| {
-            if let Some((stream_state, epoch_candidate, connected_at, remote_ip)) = state.take() {
-                // Only fire epoch on REAL, NON-EMPTY audio (not silence or empty buffers)
-                if let Ok(ref frame) = item {
-                    if frame.is_real_audio() && !frame.as_bytes().is_empty() {
-                        let first_audio_polled_at = Instant::now();
-                        stream_state.timing.start_new_epoch(
-                            epoch_candidate,
-                            connected_at,
-                            first_audio_polled_at,
-                            remote_ip,
-                        );
-                    } else {
-                        // Silence or empty frame - don't burn the hook, wait for real audio
-                        *state = Some((stream_state, epoch_candidate, connected_at, remote_ip));
-                    }
-                } else {
-                    // Error - don't burn the hook
-                    *state = Some((stream_state, epoch_candidate, connected_at, remote_ip));
-                }
-            }
-            futures::future::ready(Some(item))
-        },
     );
 
     // Content-Type based on output codec
@@ -274,15 +238,61 @@ pub(super) async fn stream_audio(
     // Wrap stream with logging guard to track delivery timing and errors.
     // The guard logs summary stats on drop when the stream ends.
     let guard_for_frames = Arc::clone(&guard);
-    let final_stream: AudioStream = Box::pin(inner_stream.map(move |res| {
-        match &res {
-            Ok(_) => guard_for_frames.record_frame(),
-            Err(e) => guard_for_frames.record_error(&e.to_string()),
-        }
-        res
-    }));
+    let final_stream: AudioStream =
+        Box::pin(inner_stream.map(move |res: Result<Bytes, std::io::Error>| {
+            match &res {
+                Ok(_) => guard_for_frames.record_frame(),
+                Err(e) => guard_for_frames.record_error(&e.to_string()),
+            }
+            res
+        }));
 
     builder
         .body(Body::from_stream(final_stream))
         .map_err(|e| ThaumicError::Internal(e.to_string()))
+}
+
+/// Wraps a tagged-frame stream with one-shot epoch tracking.
+///
+/// Fires [`StreamState::timing::start_new_epoch`] on the first real, non-empty
+/// audio frame polled by the consumer. Silence and error frames are passed
+/// through without burning the hook.
+///
+/// This lives in the HTTP layer intentionally — epoch boundaries are defined by
+/// HTTP connection lifecycle (Sonos reconnect = new epoch), and the actual poll
+/// is the only reliable signal that audio is being consumed.
+fn with_epoch_tracking(
+    stream: TaggedStream,
+    stream_state: Arc<StreamState>,
+    epoch_candidate: Option<Instant>,
+    connected_at: Instant,
+    remote_ip: IpAddr,
+) -> TaggedStream {
+    let hook_state = Some((stream_state, epoch_candidate, connected_at, remote_ip));
+
+    Box::pin(stream.scan(
+        hook_state,
+        |state, item: Result<TaggedFrame, std::io::Error>| {
+            if let Some((stream_state, epoch_candidate, connected_at, remote_ip)) = state.take() {
+                if let Ok(ref frame) = item {
+                    if frame.is_real_audio() && !frame.as_bytes().is_empty() {
+                        let first_audio_polled_at = Instant::now();
+                        stream_state.timing.start_new_epoch(
+                            epoch_candidate,
+                            connected_at,
+                            first_audio_polled_at,
+                            remote_ip,
+                        );
+                    } else {
+                        // Silence or empty frame — don't burn the hook, wait for real audio
+                        *state = Some((stream_state, epoch_candidate, connected_at, remote_ip));
+                    }
+                } else {
+                    // Error — don't burn the hook
+                    *state = Some((stream_state, epoch_candidate, connected_at, remote_ip));
+                }
+            }
+            futures::future::ready(Some(item))
+        },
+    ))
 }
