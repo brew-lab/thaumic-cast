@@ -227,12 +227,6 @@ impl UrlBuilder {
         format!("{}/sonos/gena", self.base_url())
     }
 
-    /// Returns the WebSocket URL for real-time communication.
-    #[must_use]
-    pub fn websocket_url(&self) -> String {
-        format!("ws://{}:{}/ws", self.ip, self.port)
-    }
-
     /// Returns the artwork URL for Sonos metadata display.
     #[must_use]
     pub fn artwork_url(&self) -> String {
@@ -289,6 +283,5 @@ mod tests {
             builder.gena_callback_url(),
             "http://192.168.1.100:8080/sonos/gena"
         );
-        assert_eq!(builder.websocket_url(), "ws://192.168.1.100:8080/ws");
     }
 }
