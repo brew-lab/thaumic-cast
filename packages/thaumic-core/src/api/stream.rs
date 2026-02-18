@@ -3,6 +3,10 @@
 //! Separated from REST handlers due to its distinct concerns:
 //! codec-specific pipeline construction, prefill delays, epoch
 //! tracking, ICY metadata injection, and WAV header generation.
+//!
+//! Runtime context: In the desktop app, this handler (and its cadence metronome)
+//! runs on the dedicated `StreamingRuntime` high-priority threads — inherited
+//! via `streaming_runtime.spawn()` in the Tauri API layer.
 
 use std::net::{IpAddr, SocketAddr};
 use std::pin::Pin;
