@@ -91,17 +91,9 @@ pub enum ThaumicError {
     #[error("Invalid IP: {0}")]
     InvalidIp(String),
 
-    /// Network-related error (IP detection, connection issues).
-    #[error("Network error: {0}")]
-    Network(String),
-
     /// Internal server error.
     #[error("Internal error: {0}")]
     Internal(String),
-
-    /// Server configuration error (missing required settings).
-    #[error("Configuration error: {0}")]
-    Configuration(String),
 
     /// Data directory not configured (required for persistence).
     ///
@@ -120,9 +112,7 @@ impl ThaumicError {
             Self::StreamNotFound(_) => "stream_not_found",
             Self::InvalidRequest(_) => "invalid_request",
             Self::InvalidIp(_) => "invalid_ip",
-            Self::Network(_) => "network_error",
             Self::Internal(_) => "internal_error",
-            Self::Configuration(_) => "configuration_error",
             Self::DataDirNotConfigured(_) => "data_dir_not_configured",
         }
     }
@@ -132,9 +122,7 @@ impl ThaumicError {
         match self {
             Self::SpeakerNotFound(_) | Self::StreamNotFound(_) => StatusCode::NOT_FOUND,
             Self::InvalidRequest(_) | Self::InvalidIp(_) => StatusCode::BAD_REQUEST,
-            Self::Configuration(_) | Self::DataDirNotConfigured(_) => {
-                StatusCode::SERVICE_UNAVAILABLE
-            }
+            Self::DataDirNotConfigured(_) => StatusCode::SERVICE_UNAVAILABLE,
             _ => StatusCode::INTERNAL_SERVER_ERROR,
         }
     }
