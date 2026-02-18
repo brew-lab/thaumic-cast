@@ -1335,12 +1335,19 @@ mod tests {
         }
 
         /// Creates a StreamCoordinator with custom sonos mock and event emitter.
+        ///
+        /// Uses a 1ms timeout so GENA subscribe attempts against nonexistent
+        /// speakers fail immediately instead of blocking on TCP SYN retries (~30s).
         fn create_coordinator_with(
             sonos: Arc<dyn SonosPlayback>,
             sonos_state: Arc<SonosState>,
             emitter: Arc<dyn EventEmitter>,
         ) -> StreamCoordinator {
-            let (gena_manager, _rx) = GenaSubscriptionManager::new(reqwest::Client::new());
+            let client = reqwest::Client::builder()
+                .timeout(std::time::Duration::from_millis(1))
+                .build()
+                .unwrap();
+            let (gena_manager, _rx) = GenaSubscriptionManager::new(client);
             let arbiter = Arc::new(SubscriptionArbiter::new(Arc::new(gena_manager)));
             StreamCoordinator::new(
                 sonos,
