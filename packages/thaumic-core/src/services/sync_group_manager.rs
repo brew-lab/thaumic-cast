@@ -17,7 +17,7 @@ use crate::events::{EventEmitter, SpeakerRemovalReason, StreamEvent};
 use crate::sonos::subscription_arbiter::SubscriptionArbiter;
 use crate::sonos::SonosPlayback;
 use crate::state::SonosState;
-use crate::stream::{AudioCodec, StreamManager};
+use crate::stream::{AudioCodec, StreamRegistry};
 use crate::utils::now_millis;
 
 use super::playback_session_store::{
@@ -35,7 +35,7 @@ pub(crate) struct SyncGroupManager {
     sonos_state: Arc<SonosState>,
     emitter: Arc<dyn EventEmitter>,
     arbiter: Arc<SubscriptionArbiter>,
-    stream_manager: Arc<StreamManager>,
+    stream_registry: Arc<StreamRegistry>,
     network: NetworkContext,
     topology_refresh: Option<Arc<Notify>>,
 }
@@ -48,7 +48,7 @@ impl SyncGroupManager {
         sonos_state: Arc<SonosState>,
         emitter: Arc<dyn EventEmitter>,
         arbiter: Arc<SubscriptionArbiter>,
-        stream_manager: Arc<StreamManager>,
+        stream_registry: Arc<StreamRegistry>,
         network: NetworkContext,
     ) -> Self {
         Self {
@@ -57,7 +57,7 @@ impl SyncGroupManager {
             sonos_state,
             emitter,
             arbiter,
-            stream_manager,
+            stream_registry,
             network,
             topology_refresh: None,
         }
@@ -118,7 +118,7 @@ impl SyncGroupManager {
                 "[SyncGroupManager] Last speaker removed from stream {}, ending stream",
                 stream_id
             );
-            self.stream_manager.remove_stream(stream_id);
+            self.stream_registry.remove_stream(stream_id);
             self.emit_event(StreamEvent::Ended {
                 stream_id: stream_id.to_string(),
                 timestamp: now_millis(),
@@ -753,7 +753,7 @@ impl SyncGroupManager {
 
         // 4. Get stream state for audio_format, metadata, artwork_url
         let stream_state = self
-            .stream_manager
+            .stream_registry
             .get_stream(stream_id)
             .ok_or("Stream state not found")?;
         let audio_format = stream_state.audio_format;

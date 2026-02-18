@@ -375,15 +375,19 @@ impl Drop for StreamState {
     }
 }
 
-/// Manages all active audio streams in the application.
-pub struct StreamManager {
+/// Thread-safe registry of active audio streams.
+///
+/// Provides keyed storage and concurrency-limited creation of [`StreamState`]
+/// instances. This is a low-level data structure — high-level orchestration
+/// (playback, speaker control, events) lives in [`StreamCoordinator`].
+pub struct StreamRegistry {
     streams: DashMap<String, Arc<StreamState>>,
     /// Streaming configuration (concurrency, buffering, channel capacity).
     config: StreamingConfig,
 }
 
-impl StreamManager {
-    /// Creates a new StreamManager instance.
+impl StreamRegistry {
+    /// Creates a new StreamRegistry instance.
     ///
     /// # Arguments
     /// * `config` - Streaming configuration (concurrency, buffering, channel capacity)
