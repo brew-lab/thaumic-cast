@@ -30,7 +30,6 @@ struct EventProcessorDeps {
 /// Processes GENA events and updates application state.
 pub struct GenaEventProcessor {
     gena_manager: Arc<GenaSubscriptionManager>,
-    stream_coordinator: Arc<StreamCoordinator>,
     deps: EventProcessorDeps,
     gena_event_rx: Arc<Mutex<Option<mpsc::Receiver<SonosEvent>>>>,
     /// Task spawner for background tasks.
@@ -50,7 +49,6 @@ impl GenaEventProcessor {
     ) -> Self {
         Self {
             gena_manager,
-            stream_coordinator: Arc::clone(&stream_coordinator),
             deps: EventProcessorDeps {
                 sonos_state,
                 emitter,
@@ -66,7 +64,7 @@ impl GenaEventProcessor {
     ///
     /// Parses the notification, updates internal state, and broadcasts to WebSocket clients.
     pub fn handle_gena_notify(&self, sid: &str, body: &str) -> Vec<SonosEvent> {
-        let stream_coordinator = Arc::clone(&self.stream_coordinator);
+        let stream_coordinator = Arc::clone(&self.deps.stream_coordinator);
         let get_expected = move |ip: &str| stream_coordinator.get_expected_stream(ip);
         let events = self
             .gena_manager
