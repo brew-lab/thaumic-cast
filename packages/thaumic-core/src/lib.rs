@@ -53,9 +53,8 @@ pub use artwork::{ArtworkConfig, ArtworkSource};
 pub use context::{IpDetector, LocalIpDetector, NetworkContext, NetworkError, UrlBuilder};
 pub use error::{DiscoveryResult, ErrorCode, GenaResult, SoapResult, ThaumicError, ThaumicResult};
 pub use events::{
-    BroadcastEvent, BroadcastEventBridge, EventEmitter, LatencyEvent, LoggingEventEmitter,
-    NetworkEvent, NetworkHealth, NoopEventEmitter, SonosEvent, SpeakerRemovalReason, StreamEvent,
-    TopologyEvent,
+    BroadcastEvent, BroadcastEventBridge, EventEmitter, LatencyEvent, NetworkEvent, NetworkHealth,
+    SonosEvent, SpeakerRemovalReason, StreamEvent, TopologyEvent,
 };
 pub use runtime::{TaskSpawner, TokioSpawner};
 pub use state::{Config, ManualSpeakerConfig, SonosState, StreamingConfig};

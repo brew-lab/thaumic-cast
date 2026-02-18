@@ -40,63 +40,6 @@ pub trait EventEmitter: Send + Sync {
     fn emit_latency(&self, event: LatencyEvent);
 }
 
-/// No-op emitter for headless server or testing.
-///
-/// Events are silently discarded. In a standalone server, events are typically
-/// delivered only via WebSocket to connected clients, so this no-op emitter
-/// is used when there's no need to emit to a separate UI frontend.
-pub struct NoopEventEmitter;
-
-impl EventEmitter for NoopEventEmitter {
-    fn emit_stream(&self, _event: StreamEvent) {
-        // No-op: events go via WebSocket only in server mode
-    }
-
-    fn emit_sonos(&self, _event: SonosEvent) {
-        // No-op
-    }
-
-    fn emit_network(&self, _event: NetworkEvent) {
-        // No-op
-    }
-
-    fn emit_topology(&self, _event: TopologyEvent) {
-        // No-op
-    }
-
-    fn emit_latency(&self, _event: LatencyEvent) {
-        // No-op
-    }
-}
-
-/// Logging emitter for debugging and development.
-///
-/// Logs all events at debug level. Useful for debugging event flow
-/// or in development environments.
-pub struct LoggingEventEmitter;
-
-impl EventEmitter for LoggingEventEmitter {
-    fn emit_stream(&self, event: StreamEvent) {
-        tracing::debug!(?event, "stream_event");
-    }
-
-    fn emit_sonos(&self, event: SonosEvent) {
-        tracing::debug!(?event, "sonos_event");
-    }
-
-    fn emit_network(&self, event: NetworkEvent) {
-        tracing::debug!(?event, "network_event");
-    }
-
-    fn emit_topology(&self, event: TopologyEvent) {
-        tracing::debug!(?event, "topology_event");
-    }
-
-    fn emit_latency(&self, event: LatencyEvent) {
-        tracing::debug!(?event, "latency_event");
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
