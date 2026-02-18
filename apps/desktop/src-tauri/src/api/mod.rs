@@ -215,15 +215,7 @@ impl AppState {
     /// Builds the core AppState for the HTTP server.
     fn build_core_app_state(&self) -> CoreAppState {
         AppStateBuilder::new()
-            .sonos(Arc::clone(&self.services.sonos))
-            .stream_coordinator(Arc::clone(&self.services.stream_coordinator))
-            .discovery_service(Arc::clone(&self.services.discovery_service))
-            .sonos_state(Arc::clone(&self.services.sonos_state))
-            .broadcast_tx(self.services.broadcast_tx.clone())
-            .event_bridge(Arc::clone(&self.services.event_bridge))
-            .network(self.services.network.clone())
-            .ws_manager(Arc::clone(&self.services.ws_manager))
-            .latency_monitor(Arc::clone(&self.services.latency_monitor))
+            .from_services(&self.services)
             .config(Arc::clone(&self.config))
             .artwork_config(self.artwork_config())
             .build()
