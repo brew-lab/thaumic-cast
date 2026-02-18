@@ -26,15 +26,6 @@ pub struct ServerConfig {
     /// Override: `THAUMIC_TOPOLOGY_REFRESH_INTERVAL`
     pub topology_refresh_interval: u64,
 
-    /// Enable SSDP multicast discovery.
-    pub discovery_ssdp_multicast: bool,
-
-    /// Enable SSDP broadcast discovery.
-    pub discovery_ssdp_broadcast: bool,
-
-    /// Enable mDNS/Bonjour discovery.
-    pub discovery_mdns: bool,
-
     /// Directory for persistent data (manual speakers config).
     /// Override: `THAUMIC_DATA_DIR`
     pub data_dir: Option<PathBuf>,
@@ -52,9 +43,6 @@ impl Default for ServerConfig {
             bind_port: 49400,
             advertise_ip: None,
             topology_refresh_interval: 30,
-            discovery_ssdp_multicast: true,
-            discovery_ssdp_broadcast: true,
-            discovery_mdns: true,
             data_dir: None,
             artwork_url: None,
         }
@@ -111,9 +99,6 @@ impl ServerConfig {
         thaumic_core::Config {
             preferred_port: self.bind_port,
             topology_refresh_interval: self.topology_refresh_interval,
-            discovery_ssdp_multicast: self.discovery_ssdp_multicast,
-            discovery_ssdp_broadcast: self.discovery_ssdp_broadcast,
-            discovery_mdns: self.discovery_mdns,
             ..Default::default()
         }
     }

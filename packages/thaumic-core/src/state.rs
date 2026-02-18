@@ -91,38 +91,10 @@ pub struct Config {
     /// Interval for refreshing the Sonos topology (seconds).
     pub topology_refresh_interval: u64,
 
-    /// Number of M-SEARCH packets to send during discovery.
-    pub ssdp_send_count: u64,
-
-    /// Delay between M-SEARCH packet retries (milliseconds).
-    pub ssdp_retry_delay_ms: u64,
-
-    /// Enable SSDP multicast discovery.
-    pub discovery_ssdp_multicast: bool,
-
-    /// Enable SSDP broadcast discovery.
-    pub discovery_ssdp_broadcast: bool,
-
-    /// Enable mDNS/Bonjour discovery.
-    pub discovery_mdns: bool,
-
-    /// mDNS browse timeout (milliseconds).
-    pub mdns_browse_timeout_ms: u64,
-
     // Streaming
     /// Streaming configuration.
     #[serde(default)]
     pub streaming: StreamingConfig,
-
-    // WebSocket
-    /// WebSocket heartbeat timeout (seconds).
-    pub ws_heartbeat_timeout_secs: u64,
-
-    /// Interval between WebSocket heartbeat checks (seconds).
-    pub ws_heartbeat_check_interval_secs: u64,
-
-    /// Capacity of the event broadcast channel.
-    pub event_channel_capacity: usize,
 }
 
 impl Default for Config {
@@ -130,16 +102,7 @@ impl Default for Config {
         Self {
             preferred_port: 0,
             topology_refresh_interval: 30,
-            ssdp_send_count: 3,
-            ssdp_retry_delay_ms: 800,
-            discovery_ssdp_multicast: true,
-            discovery_ssdp_broadcast: true,
-            discovery_mdns: true,
-            mdns_browse_timeout_ms: 2000,
             streaming: StreamingConfig::default(),
-            ws_heartbeat_timeout_secs: 30,
-            ws_heartbeat_check_interval_secs: 1,
-            event_channel_capacity: 100,
         }
     }
 }
@@ -395,8 +358,7 @@ mod tests {
     fn config_default_is_sensible() {
         let config = Config::default();
         assert_eq!(config.preferred_port, 0);
-        assert!(config.discovery_ssdp_multicast);
-        assert!(config.discovery_mdns);
+        assert_eq!(config.topology_refresh_interval, 30);
     }
 
     #[test]

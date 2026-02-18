@@ -83,8 +83,6 @@ Key configuration options:
 | --------------------------- | -------- | ----------------------------------- |
 | `preferred_port`            | 0 (auto) | HTTP server port                    |
 | `topology_refresh_interval` | 30s      | How often to refresh Sonos topology |
-| `discovery_ssdp_multicast`  | true     | Enable SSDP multicast discovery     |
-| `discovery_mdns`            | true     | Enable mDNS/Bonjour discovery       |
 
 ## License
 

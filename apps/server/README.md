@@ -62,11 +62,6 @@ advertise_ip: '192.168.1.100'
 # Topology refresh interval in seconds
 topology_refresh_interval: 30
 
-# Discovery methods
-discovery_ssdp_multicast: true
-discovery_ssdp_broadcast: true
-discovery_mdns: true
-
 # Directory for persistent data (manual speakers, etc.)
 # data_dir: '/var/lib/thaumic-server'
 

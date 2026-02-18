@@ -16,11 +16,6 @@ advertise_ip: '192.168.1.100'
 # Environment: THAUMIC_TOPOLOGY_REFRESH_INTERVAL
 topology_refresh_interval: 30
 
-# Discovery methods (all enabled by default)
-discovery_ssdp_multicast: true
-discovery_ssdp_broadcast: true
-discovery_mdns: true
-
 # Directory for persistent data (manual speakers, etc.)
 # If not set, manual speaker configuration won't persist across restarts.
 # Environment: THAUMIC_DATA_DIR
