@@ -20,6 +20,7 @@ use crate::state::{Config, SonosState};
 
 pub mod http;
 pub mod response;
+mod stream;
 pub mod ws;
 pub mod ws_connection;
 
