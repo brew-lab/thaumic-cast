@@ -20,9 +20,7 @@ use crate::sonos::types::TransportState;
 use crate::sonos::utils::build_sonos_stream_uri;
 use crate::sonos::SonosPlayback;
 use crate::state::{SonosState, StreamingConfig};
-use crate::stream::{
-    AudioCodec, AudioFormat, StreamManager, StreamMetadata, StreamState, Transcoder,
-};
+use crate::stream::{AudioCodec, AudioFormat, StreamManager, StreamMetadata, StreamState};
 use crate::utils::now_millis;
 
 use super::playback_session_store::{
@@ -251,12 +249,11 @@ impl StreamCoordinator {
         self.sessions.insert(session);
     }
 
-    /// Creates a new audio stream with the specified output codec and transcoder.
+    /// Creates a new audio stream with the specified output codec.
     ///
     /// # Arguments
     /// * `codec` - Output codec for HTTP Content-Type (what Sonos receives)
     /// * `audio_format` - Audio format configuration (sample rate, channels, bit depth)
-    /// * `transcoder` - Transcoder for converting input to output format
     /// * `streaming_buffer_ms` - Streaming buffer size in milliseconds (100-1000)
     /// * `frame_duration_ms` - Frame duration in milliseconds for cadence timing
     ///
@@ -265,14 +262,12 @@ impl StreamCoordinator {
         &self,
         codec: AudioCodec,
         audio_format: AudioFormat,
-        transcoder: Arc<dyn Transcoder>,
         streaming_buffer_ms: u64,
         frame_duration_ms: u32,
     ) -> Result<String, String> {
         let stream_id = self.stream_manager.create_stream(
             codec,
             audio_format,
-            transcoder,
             streaming_buffer_ms,
             frame_duration_ms,
         )?;
@@ -1196,7 +1191,7 @@ mod tests {
         use crate::sonos::traits::SonosPlayback;
         use crate::sonos::types::{PositionInfo, ZoneGroup, ZoneGroupMember};
         use crate::state::{SonosState, StreamingConfig};
-        use crate::stream::{AudioCodec, AudioFormat, Passthrough};
+        use crate::stream::{AudioCodec, AudioFormat};
         use async_trait::async_trait;
         use std::sync::atomic::{AtomicUsize, Ordering};
         use std::sync::{Arc, Mutex};
@@ -1376,13 +1371,7 @@ mod tests {
 
             // Create stream so get_stream() works
             let stream_id = coord
-                .create_stream(
-                    AudioCodec::Aac,
-                    AudioFormat::default(),
-                    Arc::new(Passthrough),
-                    200,
-                    20,
-                )
+                .create_stream(AudioCodec::Aac, AudioFormat::default(), 200, 20)
                 .unwrap();
 
             // Set up sessions with matching stream_id
@@ -1484,13 +1473,7 @@ mod tests {
             );
 
             let stream_id = coord
-                .create_stream(
-                    AudioCodec::Aac,
-                    AudioFormat::default(),
-                    Arc::new(Passthrough),
-                    200,
-                    20,
-                )
+                .create_stream(AudioCodec::Aac, AudioFormat::default(), 200, 20)
                 .unwrap();
 
             coord.insert_test_session(PlaybackSession {
@@ -1545,13 +1528,7 @@ mod tests {
             );
 
             let stream_id = coord
-                .create_stream(
-                    AudioCodec::Aac,
-                    AudioFormat::default(),
-                    Arc::new(Passthrough),
-                    200,
-                    20,
-                )
+                .create_stream(AudioCodec::Aac, AudioFormat::default(), 200, 20)
                 .unwrap();
 
             coord.insert_test_session(PlaybackSession {
@@ -1707,13 +1684,7 @@ mod tests {
             );
 
             let stream_id = coord
-                .create_stream(
-                    AudioCodec::Aac,
-                    AudioFormat::default(),
-                    Arc::new(Passthrough),
-                    200,
-                    20,
-                )
+                .create_stream(AudioCodec::Aac, AudioFormat::default(), 200, 20)
                 .unwrap();
 
             // Slave session has original_coordinator_uuid: None (was standalone before streaming)
