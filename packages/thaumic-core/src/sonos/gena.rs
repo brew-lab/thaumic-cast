@@ -18,7 +18,7 @@ use crate::protocol_constants::{
 use crate::runtime::TokioSpawner;
 
 use super::gena_client::GenaClient;
-use super::gena_event_builder;
+use super::gena_parser;
 use super::gena_store::GenaSubscriptionStore;
 use super::services::SonosService;
 use super::types::{TransportState, ZoneGroup};
@@ -403,16 +403,16 @@ impl GenaSubscriptionManager {
 
         match service {
             SonosService::AVTransport => {
-                gena_event_builder::build_av_transport_events(&ip, body, get_expected_stream)
+                gena_parser::parse_av_transport_events(&ip, body, get_expected_stream)
             }
             SonosService::GroupRenderingControl => {
-                gena_event_builder::build_group_rendering_events(&ip, body)
+                gena_parser::parse_group_rendering_events(&ip, body)
             }
-            SonosService::ZoneGroupTopology => gena_event_builder::build_zone_topology_events(body),
+            SonosService::ZoneGroupTopology => gena_parser::parse_zone_topology_events(body),
             // RenderingControl is used for per-speaker volume during sync playback.
             // We subscribe to these events when sync sessions are active.
             SonosService::RenderingControl => {
-                let events = gena_event_builder::build_rendering_control_events(&ip, body);
+                let events = gena_parser::parse_rendering_control_events(&ip, body);
                 log::info!(
                     "[GENA] RenderingControl NOTIFY from {}: {} event(s)",
                     ip,

@@ -18,8 +18,7 @@
 //! - `gena` - UPnP GENA event subscription lifecycle (coordinator)
 //! - `gena_client` - GENA HTTP operations
 //! - `gena_store` - GENA subscription state management
-//! - `gena_event_builder` - GENA notification event construction
-//! - `gena_parser` - GENA XML notification parsing
+//! - `gena_parser` - GENA notification parsing and event construction
 //! - `soap` - Low-level SOAP protocol implementation
 //! - `utils` - Shared utility functions
 
@@ -28,7 +27,6 @@ pub(crate) mod didl;
 pub mod discovery;
 pub mod gena;
 pub mod gena_client;
-pub mod gena_event_builder;
 pub mod gena_parser;
 pub mod gena_store;
 pub(crate) mod grouping;
