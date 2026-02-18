@@ -9,7 +9,6 @@
 //! The crate is organized into several modules:
 //!
 //! - [`runtime`]: Task spawning abstraction for async runtime independence
-//! - [`lifecycle`]: Application lifecycle control (restart, shutdown)
 //! - [`events`]: Event system for real-time client communication
 //! - [`context`]: Network configuration and URL building
 //! - [`state`]: Core application state and configuration
@@ -24,7 +23,6 @@
 //!
 //! - [`TaskSpawner`](runtime::TaskSpawner): Spawning background tasks
 //! - [`EventEmitter`](events::EventEmitter): Emitting domain events
-//! - [`Lifecycle`](lifecycle::Lifecycle): Application lifecycle control
 //! - [`IpDetector`](context::IpDetector): Local IP detection
 //!
 //! Each trait has default implementations suitable for the standalone server.
@@ -40,7 +38,6 @@ pub mod bootstrap;
 pub mod context;
 pub mod error;
 pub mod events;
-pub mod lifecycle;
 mod mdns_advertise;
 pub mod protocol_constants;
 pub mod runtime;
@@ -60,7 +57,6 @@ pub use events::{
     NetworkEvent, NetworkHealth, NoopEventEmitter, SonosEvent, SpeakerRemovalReason, StreamEvent,
     TopologyEvent,
 };
-pub use lifecycle::{Lifecycle, NoopLifecycle, ServerLifecycle};
 pub use runtime::{TaskSpawner, TokioSpawner};
 pub use state::{Config, ManualSpeakerConfig, SonosState, StreamingConfig};
 pub use utils::{now_millis, validate_speaker_ip, IpValidationError};
