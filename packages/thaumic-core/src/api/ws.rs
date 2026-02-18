@@ -531,7 +531,7 @@ pub async fn ws_handler(ws: WebSocketUpgrade, State(state): State<AppState>) -> 
 async fn handle_ws(socket: WebSocket, state: AppState) {
     let (mut sender, mut receiver) = socket.split();
     let mut stream_guard: Option<StreamGuard> = None;
-    let mut broadcast_rx = state.broadcast_tx.subscribe();
+    let mut broadcast_rx = state.event_bridge.subscribe();
     let mut last_activity = Instant::now();
     let mut latency_monitoring = false;
 

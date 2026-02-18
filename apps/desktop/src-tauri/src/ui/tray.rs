@@ -414,7 +414,7 @@ fn start_status_listener(app: AppHandle) {
         return;
     };
 
-    let mut rx = app_state.services.broadcast_tx.subscribe();
+    let mut rx = app_state.services.event_bridge.subscribe();
     let app_state = app_state.inner().clone();
 
     tauri::async_runtime::spawn(async move {
