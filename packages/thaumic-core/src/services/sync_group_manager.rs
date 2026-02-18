@@ -110,7 +110,7 @@ impl SyncGroupManager {
     }
 
     /// Cleans up a stream if no playback sessions remain.
-    fn cleanup_stream_if_no_sessions(&self, stream_id: &str) {
+    pub(crate) fn cleanup_stream_if_no_sessions(&self, stream_id: &str) {
         let has_remaining_sessions = self.sessions.has_sessions_for_stream(stream_id);
 
         if !has_remaining_sessions {

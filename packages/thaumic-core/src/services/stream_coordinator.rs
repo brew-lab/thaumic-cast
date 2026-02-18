@@ -367,29 +367,6 @@ impl StreamCoordinator {
         });
     }
 
-    /// Cleans up a stream if no playback sessions remain.
-    ///
-    /// Checks if any sessions exist for the given stream. If none remain,
-    /// removes the stream from StreamManager and emits `StreamEvent::Ended`.
-    ///
-    /// This should be called after removing a session to ensure streams don't
-    /// linger with zero listeners.
-    fn cleanup_stream_if_no_sessions(&self, stream_id: &str) {
-        let has_remaining_sessions = self.sessions.has_sessions_for_stream(stream_id);
-
-        if !has_remaining_sessions {
-            log::info!(
-                "[StreamCoordinator] Last speaker removed from stream {}, ending stream",
-                stream_id
-            );
-            self.stream_manager.remove_stream(stream_id);
-            self.emit_event(StreamEvent::Ended {
-                stream_id: stream_id.to_string(),
-                timestamp: now_millis(),
-            });
-        }
-    }
-
     /// Gets a stream by ID.
     pub fn get_stream(&self, id: &str) -> Option<Arc<StreamState>> {
         self.stream_manager.get_stream(id)
@@ -1054,7 +1031,7 @@ impl StreamCoordinator {
         });
 
         // Clean up stream if this was the last session
-        self.cleanup_stream_if_no_sessions(&stream_id);
+        self.sync_group.cleanup_stream_if_no_sessions(&stream_id);
 
         true
     }
