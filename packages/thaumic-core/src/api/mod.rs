@@ -9,11 +9,10 @@ use std::sync::Arc;
 
 use parking_lot::RwLock;
 use thiserror::Error;
-use tokio::sync::broadcast;
 
 use crate::artwork::{ArtworkConfig, ArtworkSource};
 use crate::context::NetworkContext;
-use crate::events::{BroadcastEvent, BroadcastEventBridge};
+use crate::events::BroadcastEventBridge;
 use crate::mdns_advertise::MdnsAdvertiser;
 use crate::services::{DiscoveryService, LatencyMonitor, StreamCoordinator};
 use crate::sonos::SonosClient;
@@ -52,8 +51,6 @@ pub struct AppState {
     pub discovery_service: Arc<DiscoveryService>,
     /// Runtime state for discovered Sonos groups.
     pub sonos_state: Arc<SonosState>,
-    /// Broadcast channel sender for real-time events.
-    pub broadcast_tx: broadcast::Sender<BroadcastEvent>,
     /// Event bridge for emitting events to WebSocket and Tauri frontend.
     pub event_bridge: Arc<BroadcastEventBridge>,
     /// Network configuration (port, local IP).
@@ -82,7 +79,6 @@ pub struct AppStateBuilder {
     stream_coordinator: Option<Arc<StreamCoordinator>>,
     discovery_service: Option<Arc<DiscoveryService>>,
     sonos_state: Option<Arc<SonosState>>,
-    broadcast_tx: Option<broadcast::Sender<BroadcastEvent>>,
     event_bridge: Option<Arc<BroadcastEventBridge>>,
     network: Option<NetworkContext>,
     ws_manager: Option<Arc<WsConnectionManager>>,
@@ -99,14 +95,13 @@ impl AppStateBuilder {
 
     /// Populates all shared service fields from a `BootstrappedServices` container.
     ///
-    /// This sets the 9 fields that overlap between `BootstrappedServices` and `AppState`,
+    /// This sets the 8 fields that overlap between `BootstrappedServices` and `AppState`,
     /// leaving only app-specific fields (`config`, `artwork_config`) to be set individually.
     pub fn from_services(mut self, services: &crate::BootstrappedServices) -> Self {
         self.sonos = Some(Arc::clone(&services.sonos));
         self.stream_coordinator = Some(Arc::clone(&services.stream_coordinator));
         self.discovery_service = Some(Arc::clone(&services.discovery_service));
         self.sonos_state = Some(Arc::clone(&services.sonos_state));
-        self.broadcast_tx = Some(services.broadcast_tx.clone());
         self.event_bridge = Some(Arc::clone(&services.event_bridge));
         self.network = Some(services.network.clone());
         self.ws_manager = Some(Arc::clone(&services.ws_manager));
@@ -135,12 +130,6 @@ impl AppStateBuilder {
     /// Sets the Sonos state.
     pub fn sonos_state(mut self, state: Arc<SonosState>) -> Self {
         self.sonos_state = Some(state);
-        self
-    }
-
-    /// Sets the broadcast sender.
-    pub fn broadcast_tx(mut self, tx: broadcast::Sender<BroadcastEvent>) -> Self {
-        self.broadcast_tx = Some(tx);
         self
     }
 
@@ -201,7 +190,6 @@ impl AppStateBuilder {
                 .discovery_service
                 .expect("discovery_service is required"),
             sonos_state: self.sonos_state.expect("sonos_state is required"),
-            broadcast_tx: self.broadcast_tx.expect("broadcast_tx is required"),
             event_bridge: self.event_bridge.expect("event_bridge is required"),
             network: self.network.expect("network is required"),
             ws_manager: self.ws_manager.expect("ws_manager is required"),
