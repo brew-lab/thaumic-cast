@@ -119,13 +119,6 @@ impl StreamingRuntime {
             thread: Some(thread),
         })
     }
-
-    /// Returns a handle for spawning tasks on the streaming runtime.
-    #[allow(dead_code)]
-    pub fn handle(&self) -> &Handle {
-        &self.handle
-    }
-
     /// Spawns a future on the streaming runtime.
     ///
     /// Use this for latency-sensitive operations like HTTP streaming.
