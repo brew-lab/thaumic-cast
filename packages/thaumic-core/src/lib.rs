@@ -62,7 +62,7 @@ pub use events::{
 };
 pub use lifecycle::{Lifecycle, NoopLifecycle, ServerLifecycle};
 pub use runtime::{TaskSpawner, TokioSpawner};
-pub use state::{Config, CoreState, ManualSpeakerConfig, SonosState, StreamingConfig};
+pub use state::{Config, ManualSpeakerConfig, SonosState, StreamingConfig};
 pub use utils::{now_millis, validate_speaker_ip, IpValidationError};
 
 // Re-export Sonos types
