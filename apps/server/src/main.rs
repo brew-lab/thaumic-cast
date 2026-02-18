@@ -117,15 +117,7 @@ async fn main() -> Result<()> {
 
     // Build app state for the HTTP server
     let app_state = AppStateBuilder::new()
-        .sonos(Arc::clone(&services.sonos))
-        .stream_coordinator(Arc::clone(&services.stream_coordinator))
-        .discovery_service(Arc::clone(&services.discovery_service))
-        .sonos_state(Arc::clone(&services.sonos_state))
-        .broadcast_tx(services.broadcast_tx.clone())
-        .event_bridge(Arc::clone(&services.event_bridge))
-        .network(services.network.clone())
-        .ws_manager(Arc::clone(&services.ws_manager))
-        .latency_monitor(Arc::clone(&services.latency_monitor))
+        .from_services(&services)
         .config(Arc::new(RwLock::new(core_config)))
         .artwork_config(config.to_artwork_config())
         .build();

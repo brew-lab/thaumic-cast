@@ -97,6 +97,23 @@ impl AppStateBuilder {
         Self::default()
     }
 
+    /// Populates all shared service fields from a `BootstrappedServices` container.
+    ///
+    /// This sets the 9 fields that overlap between `BootstrappedServices` and `AppState`,
+    /// leaving only app-specific fields (`config`, `artwork_config`) to be set individually.
+    pub fn from_services(mut self, services: &crate::BootstrappedServices) -> Self {
+        self.sonos = Some(Arc::clone(&services.sonos));
+        self.stream_coordinator = Some(Arc::clone(&services.stream_coordinator));
+        self.discovery_service = Some(Arc::clone(&services.discovery_service));
+        self.sonos_state = Some(Arc::clone(&services.sonos_state));
+        self.broadcast_tx = Some(services.broadcast_tx.clone());
+        self.event_bridge = Some(Arc::clone(&services.event_bridge));
+        self.network = Some(services.network.clone());
+        self.ws_manager = Some(Arc::clone(&services.ws_manager));
+        self.latency_monitor = Some(Arc::clone(&services.latency_monitor));
+        self
+    }
+
     /// Sets the Sonos client.
     pub fn sonos(mut self, sonos: Arc<dyn SonosClient>) -> Self {
         self.sonos = Some(sonos);
