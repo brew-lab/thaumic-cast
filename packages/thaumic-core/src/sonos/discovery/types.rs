@@ -276,11 +276,7 @@ pub struct DeviceInfo {
     /// Friendly name for display.
     pub friendly_name: String,
     /// Model name (e.g., "Sonos Arc").
-    #[allow(dead_code)]
     pub model_name: Option<String>,
-    /// Model number.
-    #[allow(dead_code)]
-    pub model_number: Option<String>,
 }
 
 /// Virtual interface prefixes to filter out during discovery.

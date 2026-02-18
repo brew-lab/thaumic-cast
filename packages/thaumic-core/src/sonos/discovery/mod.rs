@@ -417,7 +417,6 @@ fn parse_device_description(xml: &str) -> Option<DeviceInfo> {
     let mut uuid = None;
     let mut friendly_name = None;
     let mut model_name = None;
-    let mut model_number = None;
 
     loop {
         match reader.read_event_into(&mut buf) {
@@ -434,9 +433,6 @@ fn parse_device_description(xml: &str) -> Option<DeviceInfo> {
                     }
                     b"modelName" => {
                         model_name = reader.read_text(e.name()).ok().map(|t| t.to_string());
-                    }
-                    b"modelNumber" => {
-                        model_number = reader.read_text(e.name()).ok().map(|t| t.to_string());
                     }
                     _ => {}
                 }
@@ -457,7 +453,6 @@ fn parse_device_description(xml: &str) -> Option<DeviceInfo> {
             uuid,
             friendly_name,
             model_name,
-            model_number,
         }),
         _ => None,
     }
@@ -606,7 +601,6 @@ mod tests {
         assert_eq!(info.uuid, "uuid:RINCON_ABC123456789");
         assert_eq!(info.friendly_name, "Living Room");
         assert_eq!(info.model_name, Some("Sonos Arc".to_string()));
-        assert_eq!(info.model_number, Some("S19".to_string()));
     }
 
     #[test]
