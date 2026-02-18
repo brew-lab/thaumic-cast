@@ -35,7 +35,7 @@ use tokio_util::sync::CancellationToken;
 use crate::events::{EventEmitter, LatencyEvent};
 use crate::runtime::TokioSpawner;
 use crate::sonos::traits::SonosPlayback;
-use crate::stream::{PlaybackEpoch, StreamManager, StreamTiming};
+use crate::stream::{PlaybackEpoch, StreamRegistry, StreamTiming};
 use crate::utils::now_millis;
 
 /// Polling interval for position queries.
@@ -355,7 +355,7 @@ pub struct LatencyMonitor {
     command_rx: parking_lot::Mutex<Option<mpsc::Receiver<MonitorCommand>>>,
     /// Dependencies for the background task.
     sonos: Arc<dyn SonosPlayback>,
-    stream_manager: Arc<StreamManager>,
+    stream_registry: Arc<StreamRegistry>,
     emitter: Arc<dyn EventEmitter>,
     cancel: CancellationToken,
     /// Task spawner for background tasks.
@@ -370,13 +370,13 @@ impl LatencyMonitor {
     ///
     /// # Arguments
     /// * `sonos` - Sonos client for position queries
-    /// * `stream_manager` - Stream manager for timing information
+    /// * `stream_registry` - Stream registry for timing information
     /// * `emitter` - Event emitter for latency updates
     /// * `cancel` - Cancellation token for graceful shutdown
     /// * `spawner` - Task spawner for background tasks
     pub fn new(
         sonos: Arc<dyn SonosPlayback>,
-        stream_manager: Arc<StreamManager>,
+        stream_registry: Arc<StreamRegistry>,
         emitter: Arc<dyn EventEmitter>,
         cancel: CancellationToken,
         spawner: TokioSpawner,
@@ -387,7 +387,7 @@ impl LatencyMonitor {
             command_tx,
             command_rx: parking_lot::Mutex::new(Some(command_rx)),
             sonos,
-            stream_manager,
+            stream_registry,
             emitter,
             cancel,
             spawner,
@@ -402,11 +402,11 @@ impl LatencyMonitor {
         let command_rx = self.command_rx.lock().take();
         if let Some(rx) = command_rx {
             let sonos = Arc::clone(&self.sonos);
-            let stream_manager = Arc::clone(&self.stream_manager);
+            let stream_registry = Arc::clone(&self.stream_registry);
             let emitter = Arc::clone(&self.emitter);
             let cancel = self.cancel.clone();
             self.spawner.spawn(async move {
-                Self::run_monitor(sonos, stream_manager, emitter, rx, cancel).await;
+                Self::run_monitor(sonos, stream_registry, emitter, rx, cancel).await;
             });
         }
     }
@@ -452,7 +452,7 @@ impl LatencyMonitor {
     /// Background task that performs the actual monitoring.
     async fn run_monitor(
         sonos: Arc<dyn SonosPlayback>,
-        stream_manager: Arc<StreamManager>,
+        stream_registry: Arc<StreamRegistry>,
         emitter: Arc<dyn EventEmitter>,
         mut command_rx: mpsc::Receiver<MonitorCommand>,
         cancel: CancellationToken,
@@ -517,7 +517,7 @@ impl LatencyMonitor {
                         let session = entry.value_mut();
 
                         // Get stream for timing info
-                        let stream = match stream_manager.get_stream(&stream_id) {
+                        let stream = match stream_registry.get_stream(&stream_id) {
                             Some(s) => s,
                             None => {
                                 // Stream no longer exists - mark session for removal

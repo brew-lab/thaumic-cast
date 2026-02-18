@@ -237,7 +237,7 @@ pub fn bootstrap_services_with_network(
     // Wire up latency monitor with its dependencies
     let latency_monitor = Arc::new(LatencyMonitor::new(
         Arc::clone(&sonos_impl) as Arc<dyn SonosPlayback>,
-        stream_coordinator.stream_manager(),
+        stream_coordinator.stream_registry(),
         Arc::clone(&event_bridge) as Arc<dyn EventEmitter>,
         cancel_token.clone(),
         spawner.clone(),

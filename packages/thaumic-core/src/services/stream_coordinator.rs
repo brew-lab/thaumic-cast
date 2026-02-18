@@ -1,7 +1,7 @@
 //! Stream lifecycle and playback orchestration service.
 //!
 //! Responsibilities:
-//! - Create/remove audio streams (wraps StreamManager)
+//! - Create/remove audio streams (wraps StreamRegistry)
 //! - Start/stop playback on Sonos speakers (supports multi-group)
 //! - Track which streams are playing on which speakers
 //! - Track expected stream URLs for source change detection
@@ -20,7 +20,7 @@ use crate::sonos::types::TransportState;
 use crate::sonos::utils::build_sonos_stream_uri;
 use crate::sonos::SonosPlayback;
 use crate::state::{SonosState, StreamingConfig};
-use crate::stream::{AudioCodec, AudioFormat, StreamManager, StreamMetadata, StreamState};
+use crate::stream::{AudioCodec, AudioFormat, StreamMetadata, StreamRegistry, StreamState};
 use crate::utils::now_millis;
 
 use super::playback_session_store::{
@@ -57,7 +57,7 @@ pub struct StreamCoordinator {
     sonos: Arc<dyn SonosPlayback>,
     /// Sonos state for UUID lookups.
     sonos_state: Arc<SonosState>,
-    stream_manager: Arc<StreamManager>,
+    stream_registry: Arc<StreamRegistry>,
     /// Network configuration (port, local IP).
     network: NetworkContext,
     /// Active playback sessions with indexed lookups.
@@ -87,20 +87,20 @@ impl StreamCoordinator {
         arbiter: Arc<SubscriptionArbiter>,
     ) -> Self {
         let sessions = Arc::new(PlaybackSessionStore::new());
-        let stream_manager = Arc::new(StreamManager::new(streaming_config));
+        let stream_registry = Arc::new(StreamRegistry::new(streaming_config));
         let sync_group = SyncGroupManager::new(
             Arc::clone(&sessions),
             Arc::clone(&sonos),
             Arc::clone(&sonos_state),
             Arc::clone(&emitter),
             arbiter,
-            Arc::clone(&stream_manager),
+            Arc::clone(&stream_registry),
             network.clone(),
         );
         Self {
             sonos,
             sonos_state,
-            stream_manager,
+            stream_registry,
             network,
             sessions,
             emitter,
@@ -265,7 +265,7 @@ impl StreamCoordinator {
         streaming_buffer_ms: u64,
         frame_duration_ms: u32,
     ) -> Result<String, String> {
-        let stream_id = self.stream_manager.create_stream(
+        let stream_id = self.stream_registry.create_stream(
             codec,
             audio_format,
             streaming_buffer_ms,
@@ -295,7 +295,7 @@ impl StreamCoordinator {
         let removed = self.sessions.remove_all_for_stream(stream_id);
         let speaker_ips: Vec<String> = removed.iter().map(|s| s.speaker_ip.clone()).collect();
 
-        self.stream_manager.remove_stream(stream_id);
+        self.stream_registry.remove_stream(stream_id);
 
         // Broadcast stream ended event
         self.emit_event(StreamEvent::Ended {
@@ -338,7 +338,7 @@ impl StreamCoordinator {
             //
             // IMPORTANT: We must close HTTP before SOAP, but keep sessions intact
             // so stop_speakers can determine role ordering (unjoin slaves first).
-            self.stream_manager.remove_stream(stream_id);
+            self.stream_registry.remove_stream(stream_id);
 
             // Now stop speakers with group-aware ordering (sessions still intact)
             self.sync_group.stop_speakers(&speaker_ips).await;
@@ -369,7 +369,7 @@ impl StreamCoordinator {
 
     /// Gets a stream by ID.
     pub fn get_stream(&self, id: &str) -> Option<Arc<StreamState>> {
-        self.stream_manager.get_stream(id)
+        self.stream_registry.get_stream(id)
     }
 
     /// Pushes an audio frame to a stream.
@@ -378,14 +378,14 @@ impl StreamCoordinator {
     /// `Some(false)` if the stream exists but this wasn't the first frame,
     /// `None` if the stream was not found.
     pub fn push_frame(&self, stream_id: &str, data: Bytes) -> Option<bool> {
-        self.stream_manager
+        self.stream_registry
             .get_stream(stream_id)
             .map(|stream| stream.push_frame(data))
     }
 
     /// Updates metadata for a stream.
     pub fn update_metadata(&self, stream_id: &str, metadata: StreamMetadata) {
-        if let Some(stream) = self.stream_manager.get_stream(stream_id) {
+        if let Some(stream) = self.stream_registry.get_stream(stream_id) {
             stream.update_metadata(metadata);
         }
     }
@@ -954,7 +954,7 @@ impl StreamCoordinator {
     ///
     /// Returns the number of streams that were cleared.
     pub async fn clear_all(&self) -> usize {
-        let stream_ids = self.stream_manager.list_stream_ids();
+        let stream_ids = self.stream_registry.list_stream_ids();
         let count = stream_ids.len();
 
         let futures: Vec<_> = stream_ids
@@ -975,16 +975,16 @@ impl StreamCoordinator {
     /// Returns the number of active streams.
     #[must_use]
     pub fn stream_count(&self) -> usize {
-        self.stream_manager.stream_count()
+        self.stream_registry.stream_count()
     }
 
-    /// Returns a reference to the stream manager.
+    /// Returns a reference to the stream registry.
     ///
     /// Used by services that need access to stream timing information
     /// (e.g., LatencyMonitor).
     #[must_use]
-    pub fn stream_manager(&self) -> Arc<StreamManager> {
-        Arc::clone(&self.stream_manager)
+    pub fn stream_registry(&self) -> Arc<StreamRegistry> {
+        Arc::clone(&self.stream_registry)
     }
 
     /// Handles a source change event for a speaker.
