@@ -185,10 +185,6 @@ pub enum NetworkError {
     /// No IP detector configured (explicit mode).
     #[error("No IP detector configured (using explicit mode)")]
     NoDetector,
-
-    /// Network interface error.
-    #[error("Network interface error: {0}")]
-    Interface(String),
 }
 
 /// Builder for constructing URLs for the streaming server.
