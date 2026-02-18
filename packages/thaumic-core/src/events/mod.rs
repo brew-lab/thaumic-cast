@@ -11,7 +11,7 @@ mod bridge;
 mod emitter;
 
 pub use bridge::BroadcastEventBridge;
-pub use emitter::{EventEmitter, LoggingEventEmitter, NoopEventEmitter};
+pub use emitter::EventEmitter;
 
 // Re-export SonosEvent from sonos::gena for convenience
 pub use crate::sonos::gena::SonosEvent;
