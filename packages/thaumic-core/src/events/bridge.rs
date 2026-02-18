@@ -61,11 +61,6 @@ impl BroadcastEventBridge {
         *self.external_emitter.write() = Some(emitter);
     }
 
-    /// Clears the external emitter.
-    pub fn clear_external_emitter(&self) {
-        *self.external_emitter.write() = None;
-    }
-
     /// Returns a new receiver for the broadcast channel.
     ///
     /// WebSocket handlers use this to subscribe to events.
