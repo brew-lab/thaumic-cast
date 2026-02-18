@@ -204,7 +204,6 @@ impl TopologyMonitor {
     /// - Responds to manual refresh requests
     /// - Stops gracefully when the cancellation token is triggered
     pub fn start_monitoring(self: Arc<Self>) {
-        use crate::runtime::TaskSpawner;
         let cancel_token = self.cancel_token.clone();
         let spawner = self.spawner.clone();
         spawner.spawn(async move {
