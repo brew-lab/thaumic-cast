@@ -8,7 +8,7 @@
 //!
 //! The crate is organized into several modules:
 //!
-//! - [`runtime`]: Task spawning abstraction for async runtime independence
+//! - [`runtime`]: Tokio-based task spawning
 //! - [`events`]: Event system for real-time client communication
 //! - [`context`]: Network configuration and URL building
 //! - [`state`]: Core application state and configuration
@@ -21,7 +21,6 @@
 //! The crate defines several traits to decouple core logic from platform-specific
 //! implementations:
 //!
-//! - [`TaskSpawner`](runtime::TaskSpawner): Spawning background tasks
 //! - [`EventEmitter`](events::EventEmitter): Emitting domain events
 //! - [`IpDetector`](context::IpDetector): Local IP detection
 //!
@@ -56,7 +55,7 @@ pub use events::{
     BroadcastEvent, BroadcastEventBridge, EventEmitter, LatencyEvent, NetworkEvent, NetworkHealth,
     SonosEvent, SpeakerRemovalReason, StreamEvent, TopologyEvent,
 };
-pub use runtime::{TaskSpawner, TokioSpawner};
+pub use runtime::TokioSpawner;
 pub use state::{Config, ManualSpeakerConfig, SonosState, StreamingConfig};
 pub use utils::{now_millis, validate_speaker_ip, IpValidationError};
 

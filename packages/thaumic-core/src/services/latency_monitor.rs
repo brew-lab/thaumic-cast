@@ -33,7 +33,7 @@ use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
 use crate::events::{EventEmitter, LatencyEvent};
-use crate::runtime::{TaskSpawner, TokioSpawner};
+use crate::runtime::TokioSpawner;
 use crate::sonos::traits::SonosPlayback;
 use crate::stream::{PlaybackEpoch, StreamManager, StreamTiming};
 use crate::utils::now_millis;

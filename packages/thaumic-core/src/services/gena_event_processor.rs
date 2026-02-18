@@ -11,7 +11,7 @@ use parking_lot::Mutex;
 use tokio::sync::{mpsc, Notify};
 
 use crate::events::EventEmitter;
-use crate::runtime::{TaskSpawner, TokioSpawner};
+use crate::runtime::TokioSpawner;
 use crate::services::stream_coordinator::StreamCoordinator;
 use crate::sonos::gena::{GenaSubscriptionManager, SonosEvent};
 use crate::state::SonosState;

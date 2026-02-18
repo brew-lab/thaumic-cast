@@ -1,48 +1,10 @@
-//! Task spawning abstraction for runtime independence.
-//!
-//! This module provides a [`TaskSpawner`] trait that allows the core library
-//! to spawn background tasks without being tied to a specific async runtime.
-//! This enables the desktop app to use Tauri's runtime while the standalone
-//! server uses Tokio directly.
+//! Tokio-based task spawning.
 
 use std::future::Future;
 
-/// Abstraction for spawning background tasks.
+/// Spawns background tasks on a Tokio runtime.
 ///
-/// Allows core services to spawn asynchronous work without knowing the
-/// underlying runtime. Implementations should ensure tasks are properly
-/// tracked and can complete even if the spawner is dropped.
-///
-/// # Example
-///
-/// ```ignore
-/// struct MyService {
-///     spawner: Arc<dyn TaskSpawner>,
-/// }
-///
-/// impl MyService {
-///     fn start_background_work(&self) {
-///         self.spawner.spawn(async {
-///             // Background work here
-///         });
-///     }
-/// }
-/// ```
-pub trait TaskSpawner: Send + Sync {
-    /// Spawns a future as a background task.
-    ///
-    /// The task runs independently of the caller and will continue until
-    /// completion. The spawner does not provide a way to cancel or join
-    /// the spawned task.
-    fn spawn<F>(&self, future: F)
-    where
-        F: Future<Output = ()> + Send + 'static;
-}
-
-/// Tokio-based spawner for standalone server and general use.
-///
-/// Uses a Tokio runtime handle to spawn tasks. This is the default
-/// implementation for non-Tauri environments.
+/// Wraps a Tokio runtime handle to spawn fire-and-forget async tasks.
 #[derive(Clone)]
 pub struct TokioSpawner {
     handle: tokio::runtime::Handle,
@@ -54,10 +16,12 @@ impl TokioSpawner {
     pub fn new(handle: tokio::runtime::Handle) -> Self {
         Self { handle }
     }
-}
 
-impl TaskSpawner for TokioSpawner {
-    fn spawn<F>(&self, future: F)
+    /// Spawns a future as a background task.
+    ///
+    /// The task runs independently of the caller and will continue until
+    /// completion.
+    pub fn spawn<F>(&self, future: F)
     where
         F: Future<Output = ()> + Send + 'static,
     {

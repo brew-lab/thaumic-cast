@@ -15,7 +15,7 @@ use tokio_util::sync::CancellationToken;
 use crate::protocol_constants::{
     GENA_EVENT_CHANNEL_CAPACITY, GENA_RENEWAL_BUFFER_SECS, GENA_RENEWAL_CHECK_SECS,
 };
-use crate::runtime::{TaskSpawner, TokioSpawner};
+use crate::runtime::TokioSpawner;
 
 use super::gena_client::GenaClient;
 use super::gena_event_builder;
