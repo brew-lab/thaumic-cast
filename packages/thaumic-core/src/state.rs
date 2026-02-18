@@ -1,42 +1,18 @@
 //! Core application state types.
 //!
-//! This module provides [`CoreState`] which holds all shared state for the
-//! application, including configuration and runtime services. The desktop
-//! app wraps this in its own state type that adds Tauri-specific state.
+//! Provides configuration ([`Config`], [`StreamingConfig`]), Sonos runtime
+//! state ([`SonosState`]), and manual speaker persistence ([`ManualSpeakerConfig`]).
 
 use std::collections::HashSet;
 use std::hash::Hash;
-use std::sync::{Arc, OnceLock};
+use std::sync::OnceLock;
 
 use dashmap::DashMap;
 use parking_lot::{Mutex, RwLock};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
-use crate::context::NetworkContext;
 use crate::sonos::types::{TransportState, ZoneGroup};
-
-/// Core application state - Tauri-independent.
-///
-/// Contains configuration and network context shared across the application.
-/// Platform-specific state types (e.g., `DesktopState`) wrap this alongside
-/// [`BootstrappedServices`](crate::BootstrappedServices) to provide runtime services.
-pub struct CoreState {
-    /// Application configuration.
-    pub config: Arc<RwLock<Config>>,
-    /// Network context for URL building and IP detection.
-    pub network_ctx: NetworkContext,
-}
-
-impl CoreState {
-    /// Creates a new `CoreState` with the given configuration and network context.
-    pub fn new(config: Config, network_ctx: NetworkContext) -> Self {
-        Self {
-            config: Arc::new(RwLock::new(config)),
-            network_ctx,
-        }
-    }
-}
 
 /// Configuration for audio streaming behavior.
 ///
