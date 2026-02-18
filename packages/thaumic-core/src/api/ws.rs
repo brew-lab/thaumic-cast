@@ -522,6 +522,96 @@ fn handle_binary_data(state: &AppState, stream_id: &str, data: Bytes) -> bool {
         .unwrap_or(false)
 }
 
+/// Handles a START_PLAYBACK message: starts playback on the requested speakers.
+async fn handle_start_playback(
+    state: &AppState,
+    sender: &mut futures::stream::SplitSink<WebSocket, Message>,
+    stream_guard: &Option<StreamGuard>,
+    latency_monitoring: bool,
+    payload: StartPlaybackRequest,
+) {
+    // [DIAG] Log START_PLAYBACK request with initial metadata
+    log::info!(
+        "[WS] START_PLAYBACK: metadata={:?}",
+        payload.metadata.as_ref().map(|m| format!(
+            "title={:?}, artist={:?}, source={:?}",
+            m.title, m.artist, m.source
+        ))
+    );
+
+    let guard = match stream_guard {
+        Some(g) => g,
+        None => {
+            let msg = WsOutgoing::PlaybackError {
+                payload: PlaybackErrorPayload {
+                    message: "No active stream on this connection".into(),
+                },
+            };
+            if let Some(msg) = msg.to_message() {
+                let _ = sender.send(msg).await;
+            }
+            return;
+        }
+    };
+
+    let stream_id = guard.id().to_string();
+    let speaker_ips = payload.get_speaker_ips();
+
+    if speaker_ips.is_empty() {
+        let msg = WsOutgoing::PlaybackError {
+            payload: PlaybackErrorPayload {
+                message: "No speaker IPs provided".into(),
+            },
+        };
+        if let Some(msg) = msg.to_message() {
+            let _ = sender.send(msg).await;
+        }
+        return;
+    }
+
+    // Update stream's stored metadata BEFORE starting playback
+    // This ensures ICY metadata is available immediately,
+    // not just when METADATA_UPDATE arrives later
+    if let Some(ref metadata) = payload.metadata {
+        state
+            .stream_coordinator
+            .update_metadata(&stream_id, metadata.clone());
+    }
+
+    // Start playback on all speakers (multi-group support)
+    let artwork_url = state.artwork_metadata_url();
+    let results = state
+        .stream_coordinator
+        .start_playback_multi(
+            &speaker_ips,
+            &stream_id,
+            payload.metadata.as_ref(),
+            &artwork_url,
+            payload.sync_speakers,
+        )
+        .await;
+
+    // Only start latency monitoring if video sync is enabled
+    if latency_monitoring {
+        for result in &results {
+            if result.success {
+                state
+                    .latency_monitor
+                    .start_monitoring(&stream_id, &result.speaker_ip)
+                    .await;
+            }
+        }
+    }
+
+    // Send PLAYBACK_RESULTS with per-speaker outcomes
+    let msg = WsOutgoing::PlaybackResults {
+        payload: PlaybackResultsPayload { results },
+    };
+    if let Some(msg) = msg.to_message() {
+        let _ = sender.send(msg).await;
+    }
+}
+
 /// WebSocket upgrade handler.
 pub async fn ws_handler(ws: WebSocketUpgrade, State(state): State<AppState>) -> impl IntoResponse {
     ws.on_upgrade(move |socket| handle_ws(socket, state))
@@ -668,88 +758,13 @@ async fn handle_ws(socket: WebSocket, state: AppState) {
                                 .await;
                             }
                             Ok(WsIncoming::StartPlayback { payload }) => {
-                                // [DIAG] Log START_PLAYBACK request with initial metadata
-                                log::info!(
-                                    "[WS] START_PLAYBACK: metadata={:?}",
-                                    payload.metadata.as_ref().map(|m| format!(
-                                        "title={:?}, artist={:?}, source={:?}",
-                                        m.title, m.artist, m.source
-                                    ))
-                                );
-
                                 // Sticky: once enabled, stays for the connection lifetime
                                 if payload.video_sync_enabled {
                                     latency_monitoring = true;
                                 }
-
-                                if let Some(ref guard) = stream_guard {
-                                    let stream_id = guard.id().to_string();
-                                    let speaker_ips = payload.get_speaker_ips();
-
-                                    if speaker_ips.is_empty() {
-                                        let msg = WsOutgoing::PlaybackError {
-                                            payload: PlaybackErrorPayload {
-                                                message: "No speaker IPs provided".into(),
-                                            },
-                                        };
-                                        if let Some(msg) = msg.to_message() {
-                                            let _ = sender.send(msg).await;
-                                        }
-                                        continue;
-                                    }
-
-                                    // Update stream's stored metadata BEFORE starting playback
-                                    // This ensures ICY metadata is available immediately,
-                                    // not just when METADATA_UPDATE arrives later
-                                    if let Some(ref metadata) = payload.metadata {
-                                        state
-                                            .stream_coordinator
-                                            .update_metadata(&stream_id, metadata.clone());
-                                    }
-
-                                    // Start playback on all speakers (multi-group support)
-                                    let artwork_url = state.artwork_metadata_url();
-                                    let results = state
-                                        .stream_coordinator
-                                        .start_playback_multi(
-                                            &speaker_ips,
-                                            &stream_id,
-                                            payload.metadata.as_ref(),
-                                            &artwork_url,
-                                            payload.sync_speakers,
-                                        )
-                                        .await;
-
-                                    // Only start latency monitoring if video sync is enabled
-                                    if latency_monitoring {
-                                        for result in &results {
-                                            if result.success {
-                                                state
-                                                    .latency_monitor
-                                                    .start_monitoring(&stream_id, &result.speaker_ip)
-                                                    .await;
-                                            }
-                                        }
-                                    }
-
-                                    // Send PLAYBACK_RESULTS with per-speaker outcomes
-                                    let msg = WsOutgoing::PlaybackResults {
-                                        payload: PlaybackResultsPayload { results },
-                                    };
-                                    if let Some(msg) = msg.to_message() {
-                                        let _ = sender.send(msg).await;
-                                    }
-                                } else {
-                                    // No active stream for this connection
-                                    let msg = WsOutgoing::PlaybackError {
-                                        payload: PlaybackErrorPayload {
-                                            message: "No active stream on this connection".into(),
-                                        },
-                                    };
-                                    if let Some(msg) = msg.to_message() {
-                                        let _ = sender.send(msg).await;
-                                    }
-                                }
+                                handle_start_playback(
+                                    &state, &mut sender, &stream_guard, latency_monitoring, payload,
+                                ).await;
                             }
                             Ok(WsIncoming::StopPlaybackSpeaker { payload }) => {
                                 // Stop playback; stop latency monitoring for all stopped speakers
