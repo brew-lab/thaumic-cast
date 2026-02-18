@@ -38,28 +38,6 @@ impl ErrorCode for DiscoveryError {
     }
 }
 
-impl ErrorCode for SoapError {
-    fn code(&self) -> &'static str {
-        match self {
-            Self::Http(_) => "http_request_failed",
-            Self::HttpStatus(_, _) => "http_error_status",
-            Self::Fault(_) => "soap_fault",
-            Self::Parse => "soap_parse_error",
-        }
-    }
-}
-
-impl ErrorCode for GenaError {
-    fn code(&self) -> &'static str {
-        match self {
-            Self::Http(_) => "http_request_failed",
-            Self::SubscriptionFailed(_) => "gena_subscription_failed",
-            Self::RenewalFailed(_) => "gena_renewal_failed",
-            Self::MissingSid => "gena_missing_sid",
-        }
-    }
-}
-
 /// Application-wide error type for the Thaumic Cast server.
 #[derive(Debug, Error, Serialize)]
 #[serde(tag = "type", content = "details")]
