@@ -10,7 +10,6 @@ use tokio::sync::broadcast;
 use uuid::Uuid;
 
 use crate::state::StreamingConfig;
-use crate::stream::transcoder::Transcoder;
 use crate::stream::AudioFormat;
 
 /// Supported audio codecs for the stream.
@@ -89,11 +88,11 @@ pub struct PlaybackEpoch {
     pub remote_ip: IpAddr,
 }
 
-/// A frame with its capture timestamp (before transcoding).
+/// A frame with its capture timestamp.
 pub struct TimestampedFrame {
-    /// When the frame was received from browser (pre-transcode).
+    /// When the frame was received from the browser.
     pub captured_at: Instant,
-    /// The transcoded audio data.
+    /// The audio data.
     pub data: Bytes,
 }
 
@@ -225,16 +224,11 @@ pub struct StreamState {
     /// Broadcast channel for distributing audio frames to HTTP clients
     pub tx: broadcast::Sender<Bytes>,
     /// Recent frames buffer with timestamps for epoch calculation.
-    /// Stores transcoded frames with their pre-transcode capture time.
     buffer: Arc<parking_lot::RwLock<VecDeque<TimestampedFrame>>>,
     /// Maximum frames to keep in buffer (ring buffer limit).
     buffer_frames: usize,
     /// Whether the stream has received its first frame (for STREAM_READY signaling)
     has_frames: AtomicBool,
-    /// Transcoder for converting input format to output format.
-    /// For PCM, this passes through raw data (WAV header added by HTTP handler).
-    /// For pre-encoded formats (AAC, FLAC), this is also a passthrough.
-    transcoder: Arc<dyn Transcoder>,
     /// Timing information for latency measurement.
     pub timing: StreamTiming,
     /// Streaming buffer size in milliseconds (100-1000, default 200).
@@ -246,23 +240,20 @@ pub struct StreamState {
 }
 
 impl StreamState {
-    /// Creates a new StreamState instance with a custom transcoder.
+    /// Creates a new StreamState instance.
     ///
     /// # Arguments
     /// * `id` - Unique stream identifier
     /// * `codec` - Output codec for HTTP Content-Type (what Sonos receives)
     /// * `audio_format` - Audio format configuration (sample rate, channels, bit depth)
-    /// * `transcoder` - Transcoder for converting input to output format
     /// * `buffer_frames` - Maximum frames to buffer for late-joining clients
     /// * `channel_capacity` - Capacity of the broadcast channel for audio frames
     /// * `streaming_buffer_ms` - Streaming buffer size in milliseconds (100-1000)
     /// * `frame_duration_ms` - Frame duration in milliseconds for cadence timing
-    #[allow(clippy::too_many_arguments)] // Constructor needs all params; grouping wouldn't improve clarity
     pub fn new(
         id: String,
         codec: AudioCodec,
         audio_format: AudioFormat,
-        transcoder: Arc<dyn Transcoder>,
         buffer_frames: usize,
         channel_capacity: usize,
         streaming_buffer_ms: u64,
@@ -270,11 +261,10 @@ impl StreamState {
     ) -> Self {
         let (tx, _) = broadcast::channel(channel_capacity);
         log::debug!(
-            "[Stream] Creating {} with codec {:?}, format {:?}, transcoder: {}, buffer: {}ms, frame: {}ms",
+            "[Stream] Creating {} with codec {:?}, format {:?}, buffer: {}ms, frame: {}ms",
             id,
             codec,
             audio_format,
-            transcoder.description(),
             streaming_buffer_ms,
             frame_duration_ms
         );
@@ -289,7 +279,6 @@ impl StreamState {
             ))),
             buffer_frames,
             has_frames: AtomicBool::new(false),
-            transcoder,
             timing: StreamTiming::new(),
             streaming_buffer_ms,
             frame_duration_ms,
@@ -298,17 +287,12 @@ impl StreamState {
 
     /// Pushes a new audio frame into the stream.
     ///
-    /// The frame is first timestamped (before transcoding), then passed through
-    /// the transcoder and added to the buffer and broadcast to HTTP clients.
+    /// The frame is timestamped, added to the buffer, and broadcast to HTTP clients.
     ///
     /// Returns `true` if this was the first frame (stream just became ready),
     /// `false` otherwise.
     pub fn push_frame(&self, frame: Bytes) -> bool {
-        // Timestamp BEFORE transcoding to capture true content arrival time
         let captured_at = Instant::now();
-
-        // Transcode the frame (PCM → FLAC, or passthrough for pre-encoded)
-        let output_frame = self.transcoder.transcode(frame);
 
         // Add to recent buffer (ring buffer behavior)
         // Clone the Bytes (cheap - just Arc bump) for buffer storage
@@ -319,7 +303,7 @@ impl StreamState {
             }
             buffer.push_back(TimestampedFrame {
                 captured_at,
-                data: output_frame.clone(),
+                data: frame.clone(),
             });
         }
 
@@ -335,7 +319,7 @@ impl StreamState {
         }
 
         // Broadcast to all active HTTP listeners
-        if let Err(e) = self.tx.send(output_frame) {
+        if let Err(e) = self.tx.send(frame) {
             log::trace!("Failed to broadcast frame for stream {}: {}", self.id, e);
         }
 
@@ -410,19 +394,17 @@ impl StreamManager {
         }
     }
 
-    /// Creates a new stream with a custom transcoder and returns its ID.
+    /// Creates a new stream and returns its ID.
     ///
     /// # Arguments
     /// * `codec` - Output codec for HTTP Content-Type (what Sonos receives)
     /// * `audio_format` - Audio format configuration (sample rate, channels, bit depth)
-    /// * `transcoder` - Transcoder for converting input to output format
     /// * `streaming_buffer_ms` - Streaming buffer size in milliseconds (100-1000)
     /// * `frame_duration_ms` - Frame duration in milliseconds for cadence timing
     pub fn create_stream(
         &self,
         codec: AudioCodec,
         audio_format: AudioFormat,
-        transcoder: Arc<dyn Transcoder>,
         streaming_buffer_ms: u64,
         frame_duration_ms: u32,
     ) -> Result<String, String> {
@@ -435,7 +417,6 @@ impl StreamManager {
             id.clone(),
             codec,
             audio_format,
-            transcoder,
             self.config.buffer_frames,
             self.config.channel_capacity,
             streaming_buffer_ms,

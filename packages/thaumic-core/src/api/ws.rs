@@ -18,7 +18,7 @@ use crate::protocol_constants::{
     WS_HEARTBEAT_CHECK_INTERVAL_SECS, WS_HEARTBEAT_TIMEOUT_SECS,
 };
 use crate::services::StreamCoordinator;
-use crate::stream::{AudioCodec, AudioFormat, Passthrough, StreamMetadata, Transcoder};
+use crate::stream::{AudioCodec, AudioFormat, StreamMetadata};
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Stream Guard (RAII cleanup)
@@ -366,27 +366,23 @@ enum HandshakeResult {
     Error(String),
 }
 
-/// Resolves input codec string to output codec and transcoder.
+/// Resolves input codec string to output codec.
 ///
-/// For PCM, returns passthrough (WAV header added by HTTP handler for Sonos).
-/// For pre-encoded formats, returns passthrough transcoder.
-fn resolve_codec(codec_str: Option<&str>) -> (AudioCodec, Arc<dyn Transcoder>) {
+/// Maps extension codec names to the `AudioCodec` enum used for HTTP Content-Type
+/// and Sonos transport configuration.
+fn resolve_codec(codec_str: Option<&str>) -> AudioCodec {
     match codec_str {
-        // PCM: passthrough, WAV header added per-connection by HTTP handler
         Some("pcm") => {
             log::info!("[WS] PCM codec selected");
-            (AudioCodec::Pcm, Arc::new(Passthrough))
+            AudioCodec::Pcm
         }
-        // Pre-encoded formats: passthrough
-        Some("aac") | Some("aac-lc") | Some("he-aac") | Some("he-aac-v2") => {
-            (AudioCodec::Aac, Arc::new(Passthrough))
-        }
-        Some("mp3") => (AudioCodec::Mp3, Arc::new(Passthrough)),
-        Some("flac") => (AudioCodec::Flac, Arc::new(Passthrough)),
-        Some("wav") => (AudioCodec::Pcm, Arc::new(Passthrough)), // Legacy alias
+        Some("aac") | Some("aac-lc") | Some("he-aac") | Some("he-aac-v2") => AudioCodec::Aac,
+        Some("mp3") => AudioCodec::Mp3,
+        Some("flac") => AudioCodec::Flac,
+        Some("wav") => AudioCodec::Pcm, // Legacy alias
         _ => {
             log::warn!("[WS] Unknown codec {:?}, defaulting to PCM", codec_str);
-            (AudioCodec::Pcm, Arc::new(Passthrough))
+            AudioCodec::Pcm
         }
     }
 }
@@ -400,7 +396,7 @@ fn handle_handshake(state: &AppState, payload: HandshakeRequest) -> HandshakeRes
         .map(|c| c.codec.as_str())
         .or(payload.codec.as_deref());
 
-    let (output_codec, transcoder) = resolve_codec(codec_str);
+    let output_codec = resolve_codec(codec_str);
 
     // Extract audio format from encoder config
     let sample_rate = payload
@@ -492,7 +488,6 @@ fn handle_handshake(state: &AppState, payload: HandshakeRequest) -> HandshakeRes
     match state.stream_coordinator.create_stream(
         output_codec,
         audio_format,
-        transcoder,
         streaming_buffer_ms,
         frame_duration_ms,
     ) {
