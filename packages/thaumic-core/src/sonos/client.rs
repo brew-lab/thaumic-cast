@@ -70,21 +70,6 @@ impl SonosClientImpl {
         }
     }
 
-    /// Creates a new SonosClientImpl with custom discovery configuration.
-    ///
-    /// # Arguments
-    /// * `client` - The HTTP client to use for all Sonos communication
-    /// * `discovery_config` - Configuration for discovery methods
-    #[must_use]
-    #[allow(dead_code)]
-    pub fn with_discovery_config(client: Client, discovery_config: DiscoveryConfig) -> Self {
-        Self {
-            client,
-            discovery_coordinator: OnceLock::new(),
-            discovery_config,
-        }
-    }
-
     /// Gets or creates the discovery coordinator.
     fn get_discovery_coordinator(&self) -> &Arc<DiscoveryCoordinator> {
         self.discovery_coordinator
