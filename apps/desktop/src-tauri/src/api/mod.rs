@@ -9,7 +9,7 @@ use std::sync::Arc;
 use parking_lot::RwLock;
 use tauri::{AppHandle, Manager};
 use thaumic_core::{
-    bootstrap_services, AppState as CoreAppState, AppStateBuilder, ArtworkConfig, ArtworkSource,
+    bootstrap_services, AppState as CoreAppState, ArtworkConfig, ArtworkSource,
     BootstrappedServices, Config,
 };
 
@@ -214,11 +214,11 @@ impl AppState {
 
     /// Builds the core AppState for the HTTP server.
     fn build_core_app_state(&self) -> CoreAppState {
-        AppStateBuilder::new()
-            .from_services(&self.services)
-            .config(Arc::clone(&self.config))
-            .artwork_config(self.artwork_config())
-            .build()
+        CoreAppState::new(
+            &self.services,
+            Arc::clone(&self.config),
+            self.artwork_config(),
+        )
     }
 
     /// Graceful shutdown - cleans up all streams and subscriptions.

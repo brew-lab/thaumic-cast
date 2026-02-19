@@ -73,140 +73,32 @@ pub struct AppState {
     mdns_advertiser: Arc<RwLock<Option<MdnsAdvertiser>>>,
 }
 
-/// Builder for constructing an `AppState`.
-#[derive(Default)]
-pub struct AppStateBuilder {
-    sonos: Option<Arc<dyn SonosClient>>,
-    stream_coordinator: Option<Arc<StreamCoordinator>>,
-    discovery_service: Option<Arc<DiscoveryService>>,
-    sonos_state: Option<Arc<SonosState>>,
-    event_bridge: Option<Arc<BroadcastEventBridge>>,
-    network: Option<NetworkContext>,
-    ws_manager: Option<Arc<WsConnectionManager>>,
-    latency_monitor: Option<Arc<LatencyMonitor>>,
-    config: Option<Arc<RwLock<Config>>>,
-    artwork_config: Option<ArtworkConfig>,
-}
-
-impl AppStateBuilder {
-    /// Creates a new builder.
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    /// Populates all shared service fields from a `BootstrappedServices` container.
+impl AppState {
+    /// Creates a new `AppState` from bootstrapped services, config, and artwork settings.
     ///
-    /// This sets the 8 fields that overlap between `BootstrappedServices` and `AppState`,
-    /// leaving only app-specific fields (`config`, `artwork_config`) to be set individually.
-    pub fn from_services(mut self, services: &crate::BootstrappedServices) -> Self {
-        self.sonos = Some(Arc::clone(&services.sonos));
-        self.stream_coordinator = Some(Arc::clone(&services.stream_coordinator));
-        self.discovery_service = Some(Arc::clone(&services.discovery_service));
-        self.sonos_state = Some(Arc::clone(&services.sonos_state));
-        self.event_bridge = Some(Arc::clone(&services.event_bridge));
-        self.network = Some(services.network.clone());
-        self.ws_manager = Some(Arc::clone(&services.ws_manager));
-        self.latency_monitor = Some(Arc::clone(&services.latency_monitor));
-        self
-    }
-
-    /// Sets the Sonos client.
-    pub fn sonos(mut self, sonos: Arc<dyn SonosClient>) -> Self {
-        self.sonos = Some(sonos);
-        self
-    }
-
-    /// Sets the stream coordinator.
-    pub fn stream_coordinator(mut self, coordinator: Arc<StreamCoordinator>) -> Self {
-        self.stream_coordinator = Some(coordinator);
-        self
-    }
-
-    /// Sets the discovery service.
-    pub fn discovery_service(mut self, service: Arc<DiscoveryService>) -> Self {
-        self.discovery_service = Some(service);
-        self
-    }
-
-    /// Sets the Sonos state.
-    pub fn sonos_state(mut self, state: Arc<SonosState>) -> Self {
-        self.sonos_state = Some(state);
-        self
-    }
-
-    /// Sets the event bridge.
-    pub fn event_bridge(mut self, bridge: Arc<BroadcastEventBridge>) -> Self {
-        self.event_bridge = Some(bridge);
-        self
-    }
-
-    /// Sets the network context.
-    pub fn network(mut self, network: NetworkContext) -> Self {
-        self.network = Some(network);
-        self
-    }
-
-    /// Sets the WebSocket connection manager.
-    pub fn ws_manager(mut self, manager: Arc<WsConnectionManager>) -> Self {
-        self.ws_manager = Some(manager);
-        self
-    }
-
-    /// Sets the latency monitor.
-    pub fn latency_monitor(mut self, monitor: Arc<LatencyMonitor>) -> Self {
-        self.latency_monitor = Some(monitor);
-        self
-    }
-
-    /// Sets the configuration.
-    pub fn config(mut self, config: Arc<RwLock<Config>>) -> Self {
-        self.config = Some(config);
-        self
-    }
-
-    /// Sets the artwork configuration.
-    ///
-    /// The configuration will be resolved during `build()` using the precedence chain:
+    /// Resolves the artwork configuration using the precedence chain:
     /// 1. `url` (hosted) → `ArtworkSource::Url`
     /// 2. `data_dir/artwork.jpg` (local file) → `ArtworkSource::Bytes`
     /// 3. Embedded `DEFAULT_ARTWORK` → `ArtworkSource::Bytes`
-    pub fn artwork_config(mut self, config: ArtworkConfig) -> Self {
-        self.artwork_config = Some(config);
-        self
-    }
-
-    /// Builds the `AppState`, panicking if required fields are missing.
-    ///
-    /// Resolves the artwork configuration using the precedence chain.
-    pub fn build(self) -> AppState {
-        // Resolve artwork config, defaulting to embedded artwork if not specified
-        let artwork = self.artwork_config.unwrap_or_default().resolve();
-
-        AppState {
-            sonos: self.sonos.expect("sonos is required"),
-            stream_coordinator: self
-                .stream_coordinator
-                .expect("stream_coordinator is required"),
-            discovery_service: self
-                .discovery_service
-                .expect("discovery_service is required"),
-            sonos_state: self.sonos_state.expect("sonos_state is required"),
-            event_bridge: self.event_bridge.expect("event_bridge is required"),
-            network: self.network.expect("network is required"),
-            ws_manager: self.ws_manager.expect("ws_manager is required"),
-            latency_monitor: self.latency_monitor.expect("latency_monitor is required"),
-            config: self.config.expect("config is required"),
+    pub fn new(
+        services: &crate::BootstrappedServices,
+        config: Arc<RwLock<Config>>,
+        artwork_config: ArtworkConfig,
+    ) -> Self {
+        Self {
+            sonos: Arc::clone(&services.sonos),
+            stream_coordinator: Arc::clone(&services.stream_coordinator),
+            discovery_service: Arc::clone(&services.discovery_service),
+            sonos_state: Arc::clone(&services.sonos_state),
+            event_bridge: Arc::clone(&services.event_bridge),
+            network: services.network.clone(),
+            ws_manager: Arc::clone(&services.ws_manager),
+            latency_monitor: Arc::clone(&services.latency_monitor),
+            config,
             services_started: Arc::new(AtomicBool::new(false)),
-            artwork,
+            artwork: artwork_config.resolve(),
             mdns_advertiser: Arc::new(RwLock::new(None)),
         }
-    }
-}
-
-impl AppState {
-    /// Creates a new builder for constructing an `AppState`.
-    pub fn builder() -> AppStateBuilder {
-        AppStateBuilder::new()
     }
 
     /// Returns the artwork URL to use in Sonos DIDL-Lite metadata.

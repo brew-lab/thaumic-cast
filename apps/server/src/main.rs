@@ -13,7 +13,7 @@ use anyhow::{Context, Result};
 use clap::Parser;
 use parking_lot::RwLock;
 use thaumic_core::{
-    bootstrap_services_with_network, start_server, AppStateBuilder, LocalIpDetector, NetworkContext,
+    bootstrap_services_with_network, start_server, AppState, LocalIpDetector, NetworkContext,
 };
 use tokio::signal;
 
@@ -116,11 +116,11 @@ async fn main() -> Result<()> {
     log::info!("Background tasks started");
 
     // Build app state for the HTTP server
-    let app_state = AppStateBuilder::new()
-        .from_services(&services)
-        .config(Arc::new(RwLock::new(core_config)))
-        .artwork_config(config.to_artwork_config())
-        .build();
+    let app_state = AppState::new(
+        &services,
+        Arc::new(RwLock::new(core_config)),
+        config.to_artwork_config(),
+    );
 
     // Spawn HTTP server on the main tokio runtime.
     // Unlike the desktop app (which uses a dedicated high-priority streaming runtime
