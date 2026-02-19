@@ -43,6 +43,7 @@ pub fn run() {
                     Target::new(TargetKind::LogDir { file_name: None }),
                     Target::new(TargetKind::Webview),
                 ])
+                .max_file_size(1_000_000) // 1 MB (default 40 KB rotates away pipeline timelines)
                 .level(if cfg!(debug_assertions) {
                     log::LevelFilter::Debug
                 } else {
