@@ -1,5 +1,32 @@
 # @thaumic-cast/desktop
 
+## 0.12.0
+
+### Minor Changes
+
+- [#68](https://github.com/brew-lab/thaumic-cast/pull/68) [`a7d3d23`](https://github.com/brew-lab/thaumic-cast/commit/a7d3d23ea2fe6bc5deae53cb905751a38fc5559e) Thanks [@skezo](https://github.com/skezo)! - Add bi-directional playback control between extension and Sonos
+
+  When casting, playback state now syncs in both directions:
+  - **Sonos → Browser**: Pause/play on Sonos remote or app controls the browser tab
+  - **Browser → Sonos**: Play in browser (YouTube controls, keyboard shortcuts) resumes Sonos
+
+  Technical improvements:
+  - Use per-speaker epoch tracking for accurate resume detection
+  - Delegate playback decisions to server for consistent state handling
+  - Send Play command unless speaker is definitively playing (handles cache misses)
+  - Deduplicate Play commands on PCM resume to prevent audio glitches
+  - Add error handling for broker failures during playback notifications
+
+### Patch Changes
+
+- [#81](https://github.com/brew-lab/thaumic-cast/pull/81) [`327a9f2`](https://github.com/brew-lab/thaumic-cast/commit/327a9f2f683a91d13e188fc09788f05ca65883f3) Thanks [@skezo](https://github.com/skezo)! - Update @tauri-apps/cli to match tauri crate version
+
+  CLI 2.9.6 could not locate the `__TAURI_BUNDLE_TYPE` marker embedded by tauri crate 2.10.2, causing a build warning and breaking the updater plugin's bundle type detection.
+
+- Updated dependencies [[`48c068f`](https://github.com/brew-lab/thaumic-cast/commit/48c068f1fd3751fa6796997229692167913ba68a), [`77a19e2`](https://github.com/brew-lab/thaumic-cast/commit/77a19e21150e6b7cd35af44fb3bd6d47edc4d636), [`a01a1c4`](https://github.com/brew-lab/thaumic-cast/commit/a01a1c4bd61ff52bddb5d244ca8361fd0a127351), [`f958485`](https://github.com/brew-lab/thaumic-cast/commit/f9584852e7e2649435ff231d01352195c65c59d9)]:
+  - @thaumic-cast/ui@3.0.0
+  - @thaumic-cast/protocol@0.4.0
+
 ## 0.11.0
 
 ### Patch Changes

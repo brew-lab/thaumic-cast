@@ -1,5 +1,46 @@
 # @thaumic-cast/ui
 
+## 3.0.0
+
+### Minor Changes
+
+- [#71](https://github.com/brew-lab/thaumic-cast/pull/71) [`a01a1c4`](https://github.com/brew-lab/thaumic-cast/commit/a01a1c4bd61ff52bddb5d244ca8361fd0a127351) Thanks [@skezo](https://github.com/skezo)! - Add fixed volume detection for Sonos speakers with line-level output
+
+  Sonos devices like CONNECT and Port have fixed line-level output where volume cannot be adjusted via API. This change detects and handles these speakers:
+  - Parse `OutputFixed` from GENA GroupRenderingControl notifications
+  - Propagate `fixed` state through the event system alongside volume updates
+  - Disable volume controls in the UI for fixed-output speakers
+  - Add `disabled` prop to `VolumeControl` and `SpeakerVolumeRow` components
+
+  When a speaker has fixed volume, the volume slider and mute button are visually disabled and non-interactive.
+
+### Patch Changes
+
+- [#70](https://github.com/brew-lab/thaumic-cast/pull/70) [`48c068f`](https://github.com/brew-lab/thaumic-cast/commit/48c068f1fd3751fa6796997229692167913ba68a) Thanks [@skezo](https://github.com/skezo)! - Refactor connection status handling for better separation of concerns
+
+  **Extension changes:**
+  - Refactor `useConnectionStatus` hook to use reducer pattern for explicit state transitions
+  - Remove i18n translation from hook; return error keys for component-level translation
+  - Separate `WS_STATE_CHANGED` to only carry Sonos state (not connection metadata)
+  - Add `CONNECTION_ATTEMPT_FAILED` message for explicit connection error handling
+  - Replace `connected`/`checking` booleans with `phase` enum (`checking`, `reconnecting`, `connected`, `error`)
+  - Add `canRetry` flag and `retry()` function to connection status
+  - Add reconnecting state with user feedback when connection is temporarily lost
+  - Fix race condition where WebSocket connects before `ENSURE_CONNECTION` response arrives
+
+  **UI changes:**
+  - Add inline action button support to Alert component (`action` and `onAction` props)
+
+- [#70](https://github.com/brew-lab/thaumic-cast/pull/70) [`f958485`](https://github.com/brew-lab/thaumic-cast/commit/f9584852e7e2649435ff231d01352195c65c59d9) Thanks [@skezo](https://github.com/skezo)! - Fix volume slider jumping from stale server responses
+
+  Add interaction cooldown to the VolumeControl component that blocks external volume updates while the user is actively dragging the slider. Previously, server round-trip responses could override user input mid-drag, causing the slider to jump unexpectedly.
+  - Track interaction state from pointer down through a 500ms cooldown after release
+  - Queue external volume updates during interaction and apply after cooldown expires
+  - Handle edge cases: pointer cancel, keyboard input, release without value change
+
+- Updated dependencies [[`77a19e2`](https://github.com/brew-lab/thaumic-cast/commit/77a19e21150e6b7cd35af44fb3bd6d47edc4d636), [`a01a1c4`](https://github.com/brew-lab/thaumic-cast/commit/a01a1c4bd61ff52bddb5d244ca8361fd0a127351)]:
+  - @thaumic-cast/protocol@0.4.0
+
 ## 2.0.0
 
 ### Minor Changes
