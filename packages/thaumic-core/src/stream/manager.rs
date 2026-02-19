@@ -70,19 +70,14 @@ pub struct StreamMetadata {
 /// Each time a Sonos speaker connects and starts consuming audio, a new epoch
 /// begins. This maps to Sonos's RelTime=0 for that connection.
 #[derive(Clone, Copy, Debug)]
-#[allow(dead_code)] // Telemetry fields for debugging
 pub struct PlaybackEpoch {
     /// Incrementing ID to detect epoch changes.
     pub id: u64,
     /// Timestamp of oldest audio frame being served (content T0).
     /// This is what RelTime=0 corresponds to.
     pub audio_epoch: Instant,
-    /// When the Sonos HTTP request arrived (telemetry).
-    pub connected_at: Instant,
     /// When the first audio chunk was actually polled (telemetry).
     pub first_audio_polled_at: Instant,
-    /// Remote IP that started this epoch.
-    pub remote_ip: IpAddr,
 }
 
 /// A frame with its capture timestamp.
@@ -159,9 +154,7 @@ impl StreamTiming {
         let epoch = PlaybackEpoch {
             id,
             audio_epoch,
-            connected_at,
             first_audio_polled_at,
-            remote_ip,
         };
 
         // Calculate timing gaps for debugging
