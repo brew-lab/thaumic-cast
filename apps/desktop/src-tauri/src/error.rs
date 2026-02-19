@@ -32,7 +32,6 @@ impl From<thaumic_core::sonos::discovery::DiscoveryError> for CommandError {
         use thaumic_core::sonos::discovery::DiscoveryError;
         let code = match &err {
             DiscoveryError::SocketBind(_) => "socket_bind_failed",
-            DiscoveryError::SendSearch(_) => "ssdp_send_failed",
             DiscoveryError::NoInterfaces => "no_network_interfaces",
             DiscoveryError::MdnsDaemon(_) => "mdns_daemon_failed",
             DiscoveryError::AllMethodsFailed(_) => "all_discovery_methods_failed",

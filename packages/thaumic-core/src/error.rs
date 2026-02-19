@@ -28,7 +28,6 @@ impl ErrorCode for DiscoveryError {
     fn code(&self) -> &'static str {
         match self {
             Self::SocketBind(_) => "socket_bind_failed",
-            Self::SendSearch(_) => "ssdp_send_failed",
             Self::NoInterfaces => "no_network_interfaces",
             Self::MdnsDaemon(_) => "mdns_daemon_failed",
             Self::AllMethodsFailed(_) => "all_discovery_methods_failed",

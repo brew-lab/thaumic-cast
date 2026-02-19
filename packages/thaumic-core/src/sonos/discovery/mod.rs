@@ -104,12 +104,6 @@ impl DiscoveryCoordinator {
         }
     }
 
-    /// Creates a new coordinator with default configuration.
-    #[allow(dead_code)]
-    pub fn with_defaults() -> Self {
-        Self::new(DiscoveryConfig::default())
-    }
-
     /// Gets or creates the mDNS daemon.
     fn get_mdns_daemon(&self) -> Result<&Arc<ServiceDaemon>, DiscoveryError> {
         // OnceLock doesn't have get_or_try_init in stable, so we handle errors differently
@@ -469,7 +463,6 @@ fn error_to_kind(error: &DiscoveryError, timeout_ms: u64) -> DiscoveryErrorKind 
                 DiscoveryErrorKind::SocketBind(msg)
             }
         }
-        DiscoveryError::SendSearch(e) => DiscoveryErrorKind::SocketBind(e.to_string()),
         DiscoveryError::NoInterfaces => {
             DiscoveryErrorKind::SocketBind("no usable network interfaces".to_string())
         }

@@ -38,9 +38,6 @@ pub enum DiscoveryErrorKind {
     },
     /// Failed to bind UDP socket.
     SocketBind(String),
-    /// Failed to join multicast group.
-    #[allow(dead_code)]
-    SocketJoin(String),
     /// Permission denied (e.g., firewall).
     Permission(String),
     /// mDNS daemon error.
@@ -54,7 +51,6 @@ impl std::fmt::Display for DiscoveryErrorKind {
                 write!(f, "timed out after {}ms", configured_ms)
             }
             Self::SocketBind(msg) => write!(f, "socket bind failed: {}", msg),
-            Self::SocketJoin(msg) => write!(f, "multicast join failed: {}", msg),
             Self::Permission(msg) => write!(f, "permission denied: {}", msg),
             Self::DaemonError(msg) => write!(f, "mDNS daemon error: {}", msg),
         }
@@ -67,11 +63,6 @@ pub enum DiscoveryError {
     /// Failed to bind UDP socket for discovery.
     #[error("failed to bind UDP socket: {0}")]
     SocketBind(#[source] std::io::Error),
-
-    /// Failed to send SSDP multicast search.
-    #[allow(dead_code)]
-    #[error("failed to send SSDP search: {0}")]
-    SendSearch(#[source] std::io::Error),
 
     /// No usable network interfaces found.
     #[error("no usable network interfaces found")]
