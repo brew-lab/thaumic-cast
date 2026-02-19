@@ -398,7 +398,7 @@ pub fn create_wav_stream_with_cadence(
     mut rx: broadcast::Receiver<Bytes>,
     guard: Arc<LoggingStreamGuard>,
     config: CadenceConfig,
-    stream_state: Option<Arc<StreamState>>,
+    stream_state: Option<std::sync::Weak<StreamState>>,
     epoch_hook: Option<(Arc<StreamState>, Option<Instant>, Instant, IpAddr)>,
 ) -> impl Stream<Item = Result<Bytes, std::io::Error>> {
     stream! {
@@ -536,7 +536,8 @@ pub fn create_wav_stream_with_cadence(
                         let elapsed_ms = guard.reference_time.elapsed().as_millis() as u64;
 
                         // Receive window: snapshot and reset from StreamState
-                        let receive = if let Some(ref ss) = stream_state {
+                        // Uses Weak ref - if StreamState was dropped (channel closing), skip
+                        let receive = if let Some(ss) = stream_state.as_ref().and_then(|w| w.upgrade()) {
                             let rs = ss.snapshot_and_reset_receive_stats();
                             ReceiveWindow {
                                 frames_received: rs.frames_received,
