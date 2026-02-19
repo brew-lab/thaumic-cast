@@ -158,7 +158,7 @@ pub(super) async fn stream_audio(
                 audio_format: stream_state.audio_format,
                 prefill_frames,
             },
-            Some(Arc::clone(&stream_state)),
+            Some(Arc::downgrade(&stream_state)),
             Some((
                 Arc::clone(&stream_state),
                 epoch_candidate,
