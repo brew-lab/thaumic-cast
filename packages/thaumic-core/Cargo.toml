@@ -1,6 +1,6 @@
 [package]
 name = "thaumic-core"
-version = "0.10.4"
+version = "0.11.0"
 description = "Core library for Thaumic Cast - shared between desktop app and standalone server"
 license = "AGPL-3.0"
 edition = "2021"

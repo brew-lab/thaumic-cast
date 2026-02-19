@@ -1,5 +1,70 @@
 # @thaumic-cast/extension
 
+## 0.12.0
+
+### Minor Changes
+
+- [#68](https://github.com/brew-lab/thaumic-cast/pull/68) [`a7d3d23`](https://github.com/brew-lab/thaumic-cast/commit/a7d3d23ea2fe6bc5deae53cb905751a38fc5559e) Thanks [@skezo](https://github.com/skezo)! - Add bi-directional playback control between extension and Sonos
+
+  When casting, playback state now syncs in both directions:
+  - **Sonos → Browser**: Pause/play on Sonos remote or app controls the browser tab
+  - **Browser → Sonos**: Play in browser (YouTube controls, keyboard shortcuts) resumes Sonos
+
+  Technical improvements:
+  - Use per-speaker epoch tracking for accurate resume detection
+  - Delegate playback decisions to server for consistent state handling
+  - Send Play command unless speaker is definitively playing (handles cache misses)
+  - Deduplicate Play commands on PCM resume to prevent audio glitches
+  - Add error handling for broker failures during playback notifications
+
+- [#71](https://github.com/brew-lab/thaumic-cast/pull/71) [`a01a1c4`](https://github.com/brew-lab/thaumic-cast/commit/a01a1c4bd61ff52bddb5d244ca8361fd0a127351) Thanks [@skezo](https://github.com/skezo)! - Add fixed volume detection for Sonos speakers with line-level output
+
+  Sonos devices like CONNECT and Port have fixed line-level output where volume cannot be adjusted via API. This change detects and handles these speakers:
+  - Parse `OutputFixed` from GENA GroupRenderingControl notifications
+  - Propagate `fixed` state through the event system alongside volume updates
+  - Disable volume controls in the UI for fixed-output speakers
+  - Add `disabled` prop to `VolumeControl` and `SpeakerVolumeRow` components
+
+  When a speaker has fixed volume, the volume slider and mute button are visually disabled and non-interactive.
+
+### Patch Changes
+
+- [#70](https://github.com/brew-lab/thaumic-cast/pull/70) [`48c068f`](https://github.com/brew-lab/thaumic-cast/commit/48c068f1fd3751fa6796997229692167913ba68a) Thanks [@skezo](https://github.com/skezo)! - Refactor connection status handling for better separation of concerns
+
+  **Extension changes:**
+  - Refactor `useConnectionStatus` hook to use reducer pattern for explicit state transitions
+  - Remove i18n translation from hook; return error keys for component-level translation
+  - Separate `WS_STATE_CHANGED` to only carry Sonos state (not connection metadata)
+  - Add `CONNECTION_ATTEMPT_FAILED` message for explicit connection error handling
+  - Replace `connected`/`checking` booleans with `phase` enum (`checking`, `reconnecting`, `connected`, `error`)
+  - Add `canRetry` flag and `retry()` function to connection status
+  - Add reconnecting state with user feedback when connection is temporarily lost
+  - Fix race condition where WebSocket connects before `ENSURE_CONNECTION` response arrives
+
+  **UI changes:**
+  - Add inline action button support to Alert component (`action` and `onAction` props)
+
+- [#72](https://github.com/brew-lab/thaumic-cast/pull/72) [`8e409b6`](https://github.com/brew-lab/thaumic-cast/commit/8e409b6ac9a1297cde61a3faee5c2336b10c2437) Thanks [@skezo](https://github.com/skezo)! - Add opt-in setting for synchronized multi-speaker playback
+
+  Synchronized group playback is now controlled by a user setting rather than being automatic. This allows users who prefer independent streams (and are okay with potential audio drift) to keep their existing Sonos speaker groupings unchanged.
+
+  **Changes:**
+  - Add "Synchronize speakers" toggle in Options > Advanced section
+  - Add `syncSpeakers` field to extension settings (default: false)
+  - Thread `syncSpeakers` flag through the message chain from extension to server
+  - Store `syncSpeakers` preference in session for resume/reconnect scenarios
+  - Server uses independent playback when `syncSpeakers` is false
+
+  **Behavior:**
+  - Setting disabled (default): Each speaker receives independent streams
+  - Setting enabled: Speakers are grouped via x-rincon protocol for perfect sync
+  - Single speaker casts are unaffected by this setting
+  - Resume after pause respects the original sync preference from cast start
+
+- Updated dependencies [[`48c068f`](https://github.com/brew-lab/thaumic-cast/commit/48c068f1fd3751fa6796997229692167913ba68a), [`77a19e2`](https://github.com/brew-lab/thaumic-cast/commit/77a19e21150e6b7cd35af44fb3bd6d47edc4d636), [`a01a1c4`](https://github.com/brew-lab/thaumic-cast/commit/a01a1c4bd61ff52bddb5d244ca8361fd0a127351), [`f958485`](https://github.com/brew-lab/thaumic-cast/commit/f9584852e7e2649435ff231d01352195c65c59d9)]:
+  - @thaumic-cast/ui@3.0.0
+  - @thaumic-cast/protocol@0.4.0
+
 ## 0.11.0
 
 ### Minor Changes
