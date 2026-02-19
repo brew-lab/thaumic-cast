@@ -1,5 +1,5 @@
 ---
-'thaumic-core': patch
+'@thaumic-cast/core': patch
 '@thaumic-cast/extension': patch
 ---
 
