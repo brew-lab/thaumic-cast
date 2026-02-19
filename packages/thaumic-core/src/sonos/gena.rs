@@ -18,7 +18,6 @@ use crate::protocol_constants::{
 use crate::runtime::TokioSpawner;
 
 use super::gena_client::GenaClient;
-use super::gena_parser;
 use super::gena_store::GenaSubscriptionStore;
 use super::services::SonosService;
 use super::types::{TransportState, ZoneGroup};
@@ -371,56 +370,17 @@ impl GenaSubscriptionManager {
         self.unsubscribe_all().await;
     }
 
-    /// Handles an incoming NOTIFY request and returns parsed events.
+    /// Resolves a subscription ID to the speaker IP and service type.
     ///
-    /// # Arguments
-    /// * `sid` - The subscription ID from the NOTIFY request
-    /// * `body` - The XML body of the NOTIFY request
-    /// * `get_expected_stream` - Optional callback to get the expected stream URL for source change detection.
-    ///   If None, source change detection is skipped.
-    pub fn handle_notify<F>(
-        &self,
-        sid: &str,
-        body: &str,
-        get_expected_stream: Option<F>,
-    ) -> Vec<SonosEvent>
-    where
-        F: Fn(&str) -> Option<String>,
-    {
-        let Some((ip, service)) = self.store.get(sid) else {
-            // Unknown SID could indicate:
-            // - Race condition (subscription was just removed)
-            // - Stale notification from speaker after unsubscribe
-            // - Misconfigured speaker or network issue
-            // - Potential replay attack (security concern for UPnP)
-            log::warn!(
-                "[GENA] Received NOTIFY for unknown SID: {} (body size: {} bytes)",
-                sid,
-                body.len()
-            );
-            return vec![];
-        };
-
-        match service {
-            SonosService::AVTransport => {
-                gena_parser::parse_av_transport_events(&ip, body, get_expected_stream)
-            }
-            SonosService::GroupRenderingControl => {
-                gena_parser::parse_group_rendering_events(&ip, body)
-            }
-            SonosService::ZoneGroupTopology => gena_parser::parse_zone_topology_events(body),
-            // RenderingControl is used for per-speaker volume during sync playback.
-            // We subscribe to these events when sync sessions are active.
-            SonosService::RenderingControl => {
-                let events = gena_parser::parse_rendering_control_events(&ip, body);
-                log::info!(
-                    "[GENA] RenderingControl NOTIFY from {}: {} event(s)",
-                    ip,
-                    events.len()
-                );
-                events
-            }
+    /// Returns `None` for unknown SIDs (e.g. race after unsubscribe, stale
+    /// notifications, or potential replay attacks).
+    #[must_use]
+    pub fn resolve_sid(&self, sid: &str) -> Option<(String, SonosService)> {
+        let result = self.store.get(sid);
+        if result.is_none() {
+            log::warn!("[GENA] Received NOTIFY for unknown SID: {}", sid,);
         }
+        result
     }
 
     /// Returns the number of active subscriptions.
