@@ -387,46 +387,54 @@ fn resolve_codec(codec_str: Option<&str>) -> AudioCodec {
     }
 }
 
-/// Handles a HANDSHAKE message: creates a stream and returns ack or error.
-fn handle_handshake(state: &AppState, payload: HandshakeRequest) -> HandshakeResult {
-    // Get codec from encoder_config (preferred) or legacy codec field
+/// Parsed and validated stream configuration from a handshake request.
+struct StreamConfig {
+    codec: AudioCodec,
+    audio_format: AudioFormat,
+    streaming_buffer_ms: u64,
+    frame_duration_ms: u32,
+}
+
+/// Parses and validates stream configuration from a handshake request.
+///
+/// Extracts codec, sample rate, channels, bit depth, buffer size, and frame duration
+/// from the encoder config (or legacy fields), applying defaults and validation.
+fn parse_stream_config(payload: &HandshakeRequest) -> Result<StreamConfig, String> {
     let codec_str = payload
         .encoder_config
         .as_ref()
         .map(|c| c.codec.as_str())
         .or(payload.codec.as_deref());
 
-    let output_codec = resolve_codec(codec_str);
+    let codec = resolve_codec(codec_str);
 
-    // Extract audio format from encoder config
     let sample_rate = payload
         .encoder_config
         .as_ref()
         .and_then(|c| c.sample_rate)
         .unwrap_or(48000);
-    // Extract and validate channels (1 or 2 only).
+
+    // Validate channels (1 or 2 only).
     // Multi-channel (>2) is not supported - crossfade utilities assume stereo or mono.
-    let requested_channels = payload
+    let channels = match payload
         .encoder_config
         .as_ref()
         .and_then(|c| c.channels)
-        .unwrap_or(2);
-
-    let channels = match requested_channels {
-        1 | 2 => requested_channels,
+        .unwrap_or(2)
+    {
+        valid @ (1 | 2) => valid,
         other => {
             log::error!(
                 "[WS] Invalid channels {}, must be 1 (mono) or 2 (stereo)",
                 other
             );
-            return HandshakeResult::Error(format!(
+            return Err(format!(
                 "Invalid channels: {}. Must be 1 (mono) or 2 (stereo).",
                 other
             ));
         }
     };
 
-    // Extract streaming buffer with bounds validation
     let streaming_buffer_ms = payload
         .encoder_config
         .as_ref()
@@ -445,51 +453,60 @@ fn handle_handshake(state: &AppState, payload: HandshakeRequest) -> HandshakeRes
         .unwrap_or(SILENCE_FRAME_DURATION_MS)
         .clamp(MIN_FRAME_DURATION_MS, MAX_FRAME_DURATION_MS);
 
-    // Extract and validate bit depth (16 or 24), defaulting to 16.
+    // Validate bit depth (16 or 24), defaulting to 16.
     // 24-bit is only supported for FLAC codec on Sonos S2 speakers.
-    let requested_bits = payload
+    let bits_per_sample = match payload
         .encoder_config
         .as_ref()
         .and_then(|c| c.bits_per_sample)
-        .unwrap_or(16);
-
-    let bits_per_sample = match requested_bits {
-        24 if output_codec == AudioCodec::Flac => 24,
+        .unwrap_or(16)
+    {
+        24 if codec == AudioCodec::Flac => 24,
         24 => {
-            // Valid request, but 24-bit only supported for FLAC - downgrade gracefully
             log::warn!(
                 "[WS] 24-bit audio requested but codec is {:?}, falling back to 16-bit",
-                output_codec
+                codec
             );
             16
         }
         16 => 16,
         other => {
-            // Invalid value indicates a bug in the extension - reject handshake
             log::error!("[WS] Invalid bits_per_sample {}, must be 16 or 24", other);
-            return HandshakeResult::Error(format!(
+            return Err(format!(
                 "Invalid bits_per_sample: {}. Must be 16 or 24.",
                 other
             ));
         }
     };
 
-    let audio_format = AudioFormat::new(sample_rate, channels as u16, bits_per_sample);
+    Ok(StreamConfig {
+        codec,
+        audio_format: AudioFormat::new(sample_rate, channels as u16, bits_per_sample),
+        streaming_buffer_ms,
+        frame_duration_ms,
+    })
+}
+
+/// Handles a HANDSHAKE message: creates a stream and returns ack or error.
+fn handle_handshake(state: &AppState, payload: HandshakeRequest) -> HandshakeResult {
+    let config = match parse_stream_config(&payload) {
+        Ok(c) => c,
+        Err(e) => return HandshakeResult::Error(e),
+    };
 
     log::info!(
-        "[WS] Creating stream: input={:?}, output={:?}, format={:?}, buffer={}ms, frame={}ms",
-        codec_str,
-        output_codec,
-        audio_format,
-        streaming_buffer_ms,
-        frame_duration_ms
+        "[WS] Creating stream: codec={:?}, format={:?}, buffer={}ms, frame={}ms",
+        config.codec,
+        config.audio_format,
+        config.streaming_buffer_ms,
+        config.frame_duration_ms
     );
 
     match state.stream_coordinator.create_stream(
-        output_codec,
-        audio_format,
-        streaming_buffer_ms,
-        frame_duration_ms,
+        config.codec,
+        config.audio_format,
+        config.streaming_buffer_ms,
+        config.frame_duration_ms,
     ) {
         Ok(id) => HandshakeResult::Success(id),
         Err(e) => HandshakeResult::Error(e),
