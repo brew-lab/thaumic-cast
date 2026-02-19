@@ -14,6 +14,8 @@ use crate::events::{EventEmitter, SonosEvent};
 use crate::runtime::TokioSpawner;
 use crate::services::stream_coordinator::StreamCoordinator;
 use crate::sonos::gena::GenaSubscriptionManager;
+use crate::sonos::gena_parser;
+use crate::sonos::services::SonosService;
 use crate::state::SonosState;
 
 /// Dependencies required for event processing.
@@ -62,13 +64,33 @@ impl GenaEventProcessor {
 
     /// Handles a GENA NOTIFY event from an HTTP handler.
     ///
-    /// Parses the notification, updates internal state, and broadcasts to WebSocket clients.
+    /// Resolves the subscription, routes to the appropriate parser by service type,
+    /// updates internal state, and broadcasts to WebSocket clients.
     pub fn handle_gena_notify(&self, sid: &str, body: &str) -> Vec<SonosEvent> {
-        let stream_coordinator = Arc::clone(&self.deps.stream_coordinator);
-        let get_expected = move |ip: &str| stream_coordinator.get_expected_stream(ip);
-        let events = self
-            .gena_manager
-            .handle_notify(sid, body, Some(get_expected));
+        let Some((ip, service)) = self.gena_manager.resolve_sid(sid) else {
+            return vec![];
+        };
+
+        let events = match service {
+            SonosService::AVTransport => {
+                let stream_coordinator = Arc::clone(&self.deps.stream_coordinator);
+                let get_expected = move |ip: &str| stream_coordinator.get_expected_stream(ip);
+                gena_parser::parse_av_transport_events(&ip, body, Some(get_expected))
+            }
+            SonosService::GroupRenderingControl => {
+                gena_parser::parse_group_rendering_events(&ip, body)
+            }
+            SonosService::ZoneGroupTopology => gena_parser::parse_zone_topology_events(body),
+            SonosService::RenderingControl => {
+                let events = gena_parser::parse_rendering_control_events(&ip, body);
+                log::info!(
+                    "[GENA] RenderingControl NOTIFY from {}: {} event(s)",
+                    ip,
+                    events.len()
+                );
+                events
+            }
+        };
 
         for event in &events {
             self.process_event(event);
