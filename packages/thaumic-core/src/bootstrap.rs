@@ -150,7 +150,7 @@ pub fn bootstrap_services(
     runtime_handle: tokio::runtime::Handle,
 ) -> ThaumicResult<BootstrappedServices> {
     let ip_detector = LocalIpDetector::arc();
-    let network = NetworkContext::auto_detect(0, ip_detector)
+    let network = NetworkContext::auto_detect(config.preferred_port, ip_detector)
         .map_err(|e| ThaumicError::Internal(format!("Failed to detect local IP: {}", e)))?;
 
     bootstrap_services_with_network(config, network, runtime_handle)
