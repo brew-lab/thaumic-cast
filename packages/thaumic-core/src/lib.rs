@@ -77,7 +77,7 @@ pub use bootstrap::{bootstrap_services, bootstrap_services_with_network, Bootstr
 pub use streaming_runtime::StreamingRuntime;
 
 // Re-export API types
-pub use api::{start_server, AppState, AppStateBuilder, ServerError, WsConnectionManager};
+pub use api::{start_server, AppState, ServerError, WsConnectionManager};
 
 /// Default artwork for Sonos album art display.
 ///

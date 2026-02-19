@@ -53,13 +53,9 @@ let services = bootstrap_services_with_network(&Config::default(), network, hand
 ### Starting the Server
 
 ```rust
-use thaumic_core::{AppStateBuilder, start_server};
+use thaumic_core::{AppState, ArtworkConfig, start_server};
 
-let app_state = AppStateBuilder::new()
-    .sonos(services.sonos.clone())
-    .stream_coordinator(services.stream_coordinator.clone())
-    // ... other fields
-    .build();
+let app_state = AppState::new(&services, config, ArtworkConfig::default());
 
 start_server(app_state).await?;
 ```
