@@ -40,17 +40,6 @@ struct SinglePlaybackParams<'a> {
     metadata: Option<&'a StreamMetadata>,
 }
 
-/// Parameters for starting playback on multiple speakers (legacy sequential mode).
-struct MultiPlaybackParams<'a> {
-    speaker_ips: &'a [String],
-    stream_id: &'a str,
-    stream_url: &'a str,
-    codec: AudioCodec,
-    audio_format: &'a AudioFormat,
-    artwork_url: &'a str,
-    metadata: Option<&'a StreamMetadata>,
-}
-
 /// Service responsible for stream lifecycle and playback orchestration.
 pub struct StreamCoordinator {
     /// Sonos client for playback control.
@@ -480,45 +469,43 @@ impl StreamCoordinator {
             return vec![result];
         }
 
-        // Multiple speakers: check sync preference
-        if !sync_speakers {
-            log::info!(
-                "[GroupSync] Sync disabled, using independent streams for {} speakers",
-                speaker_ips.len()
-            );
-            return self
-                .start_playback_multi_legacy(MultiPlaybackParams {
-                    speaker_ips,
-                    stream_id,
-                    stream_url: &stream_url,
-                    codec,
-                    audio_format: &audio_format,
-                    artwork_url,
-                    metadata,
-                })
-                .await;
-        }
-
-        // Sync enabled: use synchronized group playback
-        // Try to select a coordinator for group sync
-        let Some((coordinator_ip, coordinator_uuid, slave_ips)) =
+        // Multiple speakers: attempt sync if requested
+        let sync_info = if sync_speakers {
             self.sync_group.select_coordinator(speaker_ips)
-        else {
-            // Fallback: can't determine UUIDs, use legacy sequential approach
-            log::warn!(
-                "[GroupSync] Cannot determine coordinator UUID, falling back to sequential playback"
-            );
-            return self
-                .start_playback_multi_legacy(MultiPlaybackParams {
-                    speaker_ips,
-                    stream_id,
-                    stream_url: &stream_url,
-                    codec,
-                    audio_format: &audio_format,
-                    artwork_url,
-                    metadata,
+        } else {
+            None
+        };
+
+        let Some((coordinator_ip, coordinator_uuid, slave_ips)) = sync_info else {
+            // Independent playback: each speaker gets its own stream
+            if sync_speakers {
+                log::warn!(
+                    "[GroupSync] Cannot determine coordinator UUID, using independent streams for {} speakers",
+                    speaker_ips.len()
+                );
+            } else {
+                log::info!(
+                    "[GroupSync] Sync disabled, using independent streams for {} speakers",
+                    speaker_ips.len()
+                );
+            }
+
+            let futures: Vec<_> = speaker_ips
+                .iter()
+                .map(|speaker_ip| {
+                    self.start_single_playback(SinglePlaybackParams {
+                        speaker_ip,
+                        stream_id,
+                        stream_url: &stream_url,
+                        codec,
+                        audio_format: &audio_format,
+                        artwork_url,
+                        metadata,
+                    })
                 })
-                .await;
+                .collect();
+
+            return futures::future::join_all(futures).await;
         };
 
         log::info!(
@@ -591,42 +578,6 @@ impl StreamCoordinator {
         }
 
         results
-    }
-
-    /// Legacy playback method: sends stream URL to each speaker independently.
-    ///
-    /// Used as fallback when group coordination is not possible (e.g., UUID lookup fails).
-    /// Note: This may result in audio sync drift between speakers.
-    async fn start_playback_multi_legacy(
-        &self,
-        params: MultiPlaybackParams<'_>,
-    ) -> Vec<PlaybackResult> {
-        let MultiPlaybackParams {
-            speaker_ips,
-            stream_id,
-            stream_url,
-            codec,
-            audio_format,
-            artwork_url,
-            metadata,
-        } = params;
-
-        let futures: Vec<_> = speaker_ips
-            .iter()
-            .map(|speaker_ip| {
-                self.start_single_playback(SinglePlaybackParams {
-                    speaker_ip,
-                    stream_id,
-                    stream_url,
-                    codec,
-                    audio_format,
-                    artwork_url,
-                    metadata,
-                })
-            })
-            .collect();
-
-        futures::future::join_all(futures).await
     }
 
     /// Starts playback on a single speaker.
