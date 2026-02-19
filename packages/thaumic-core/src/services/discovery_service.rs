@@ -10,9 +10,9 @@ use reqwest::Client;
 use tokio::sync::{mpsc, Notify};
 
 use crate::context::NetworkContext;
-use crate::events::EventEmitter;
+use crate::events::{EventEmitter, SonosEvent};
 use crate::runtime::TokioSpawner;
-use crate::sonos::gena::{GenaSubscriptionManager, SonosEvent};
+use crate::sonos::gena::GenaSubscriptionManager;
 use crate::sonos::subscription_arbiter::SubscriptionArbiter;
 use crate::sonos::SonosTopologyClient;
 use crate::state::SonosState;

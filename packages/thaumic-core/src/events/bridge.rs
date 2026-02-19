@@ -10,8 +10,7 @@ use parking_lot::RwLock;
 use tokio::sync::broadcast;
 
 use super::emitter::EventEmitter;
-use super::{BroadcastEvent, LatencyEvent, NetworkEvent, StreamEvent, TopologyEvent};
-use crate::sonos::gena::SonosEvent;
+use super::{BroadcastEvent, LatencyEvent, NetworkEvent, SonosEvent, StreamEvent, TopologyEvent};
 
 /// Bridges domain events to the WebSocket broadcast channel.
 ///

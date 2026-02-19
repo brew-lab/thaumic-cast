@@ -10,10 +10,10 @@ use std::sync::Arc;
 use parking_lot::Mutex;
 use tokio::sync::{mpsc, Notify};
 
-use crate::events::EventEmitter;
+use crate::events::{EventEmitter, SonosEvent};
 use crate::runtime::TokioSpawner;
 use crate::services::stream_coordinator::StreamCoordinator;
-use crate::sonos::gena::{GenaSubscriptionManager, SonosEvent};
+use crate::sonos::gena::GenaSubscriptionManager;
 use crate::state::SonosState;
 
 /// Dependencies required for event processing.
