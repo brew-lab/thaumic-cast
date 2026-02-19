@@ -76,8 +76,6 @@ pub struct PlaybackEpoch {
     /// Timestamp of oldest audio frame being served (content T0).
     /// This is what RelTime=0 corresponds to.
     pub audio_epoch: Instant,
-    /// When the first audio chunk was actually polled (telemetry).
-    pub first_audio_polled_at: Instant,
 }
 
 /// A frame with its capture timestamp.
@@ -141,9 +139,10 @@ impl StreamTiming {
         &self,
         audio_epoch: Option<Instant>,
         connected_at: Instant,
-        first_audio_polled_at: Instant,
         remote_ip: IpAddr,
     ) {
+        let now = Instant::now();
+
         // Fallback: if no prefill timestamp, use first_frame_at or connected_at
         let audio_epoch = audio_epoch
             .or_else(|| self.first_frame_at())
@@ -151,25 +150,21 @@ impl StreamTiming {
 
         let id = self.epoch_counter.fetch_add(1, Ordering::Relaxed) + 1;
 
-        let epoch = PlaybackEpoch {
-            id,
-            audio_epoch,
-            first_audio_polled_at,
-        };
+        let epoch = PlaybackEpoch { id, audio_epoch };
 
         // Calculate timing gaps for debugging
         let buffer_age = connected_at.duration_since(audio_epoch);
-        let poll_delay = first_audio_polled_at.duration_since(connected_at);
-        let audio_age_at_poll = first_audio_polled_at.duration_since(audio_epoch);
+        let poll_delay = now.duration_since(connected_at);
+        let audio_age_at_poll = now.duration_since(audio_epoch);
 
         let mut epochs = self.current_epoch_by_ip.lock();
 
         // TTL cleanup: remove stale epochs if we have too many
         if epochs.len() >= Self::MAX_EPOCHS {
-            // Find and remove the oldest epoch by first_audio_polled_at
+            // Evict the epoch serving the oldest content
             if let Some(oldest_ip) = epochs
                 .iter()
-                .min_by_key(|(_, e)| e.first_audio_polled_at)
+                .min_by_key(|(_, e)| e.audio_epoch)
                 .map(|(ip, _)| *ip)
             {
                 epochs.remove(&oldest_ip);
