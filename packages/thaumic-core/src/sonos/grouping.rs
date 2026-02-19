@@ -8,7 +8,7 @@ use reqwest::Client;
 use crate::error::SoapResult;
 use crate::sonos::retry::with_retry;
 use crate::sonos::services::SonosService;
-use crate::sonos::soap::SoapRequestBuilder;
+use crate::sonos::soap::soap_request;
 
 /// Joins a speaker to a coordinator for synchronized playback.
 ///
@@ -35,14 +35,19 @@ pub async fn join_group(client: &Client, ip: &str, coordinator_uuid: &str) -> So
         group_uri
     );
 
+    let set_uri_args = [
+        ("InstanceID", "0"),
+        ("CurrentURI", group_uri.as_str()),
+        ("CurrentURIMetaData", ""),
+    ];
     with_retry("SetAVTransportURI", || {
-        SoapRequestBuilder::new(client, ip)
-            .service(SonosService::AVTransport)
-            .action("SetAVTransportURI")
-            .instance_id()
-            .arg("CurrentURI", &group_uri)
-            .arg("CurrentURIMetaData", "")
-            .send()
+        soap_request(
+            client,
+            ip,
+            SonosService::AVTransport,
+            "SetAVTransportURI",
+            &set_uri_args,
+        )
     })
     .await?;
 
@@ -51,13 +56,9 @@ pub async fn join_group(client: &Client, ip: &str, coordinator_uuid: &str) -> So
         ip
     );
 
+    let play_args = [("InstanceID", "0"), ("Speed", "1")];
     with_retry("Play", || {
-        SoapRequestBuilder::new(client, ip)
-            .service(SonosService::AVTransport)
-            .action("Play")
-            .instance_id()
-            .arg("Speed", "1")
-            .send()
+        soap_request(client, ip, SonosService::AVTransport, "Play", &play_args)
     })
     .await?;
 
@@ -82,12 +83,14 @@ pub async fn join_group(client: &Client, ip: &str, coordinator_uuid: &str) -> So
 pub async fn leave_group(client: &Client, ip: &str) -> SoapResult<()> {
     log::info!("[Sonos] Speaker {} leaving group (becoming standalone)", ip);
 
-    SoapRequestBuilder::new(client, ip)
-        .service(SonosService::AVTransport)
-        .action("BecomeCoordinatorOfStandaloneGroup")
-        .instance_id()
-        .send()
-        .await?;
+    soap_request(
+        client,
+        ip,
+        SonosService::AVTransport,
+        "BecomeCoordinatorOfStandaloneGroup",
+        &[("InstanceID", "0")],
+    )
+    .await?;
 
     log::debug!("[Sonos] Leave group succeeded for {}", ip);
 

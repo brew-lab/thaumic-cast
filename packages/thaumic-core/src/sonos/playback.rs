@@ -9,7 +9,7 @@ use crate::error::SoapResult;
 use crate::sonos::didl::format_didl_lite;
 use crate::sonos::retry::with_retry;
 use crate::sonos::services::SonosService;
-use crate::sonos::soap::{SoapError, SoapRequestBuilder};
+use crate::sonos::soap::{soap_request, SoapError};
 use crate::sonos::types::PositionInfo;
 use crate::sonos::utils::{build_sonos_stream_uri, extract_xml_text};
 use crate::stream::{AudioCodec, AudioFormat, StreamMetadata};
@@ -42,26 +42,27 @@ pub async fn play_uri(
 
     log::info!("[Sonos] SetAVTransportURI: ip={}, uri={}", ip, sonos_uri);
 
+    let set_uri_args = [
+        ("InstanceID", "0"),
+        ("CurrentURI", sonos_uri.as_str()),
+        ("CurrentURIMetaData", didl_metadata.as_str()),
+    ];
     with_retry("SetAVTransportURI", || {
-        SoapRequestBuilder::new(client, ip)
-            .service(SonosService::AVTransport)
-            .action("SetAVTransportURI")
-            .instance_id()
-            .arg("CurrentURI", &sonos_uri)
-            .arg("CurrentURIMetaData", &didl_metadata)
-            .send()
+        soap_request(
+            client,
+            ip,
+            SonosService::AVTransport,
+            "SetAVTransportURI",
+            &set_uri_args,
+        )
     })
     .await?;
 
     log::info!("[Sonos] SetAVTransportURI succeeded, sending Play command");
 
+    let play_args = [("InstanceID", "0"), ("Speed", "1")];
     with_retry("Play", || {
-        SoapRequestBuilder::new(client, ip)
-            .service(SonosService::AVTransport)
-            .action("Play")
-            .instance_id()
-            .arg("Speed", "1")
-            .send()
+        soap_request(client, ip, SonosService::AVTransport, "Play", &play_args)
     })
     .await?;
 
@@ -81,13 +82,9 @@ pub async fn play_uri(
 pub async fn play(client: &Client, ip: &str) -> SoapResult<()> {
     log::info!("[Sonos] Sending Play command to {}", ip);
 
+    let play_args = [("InstanceID", "0"), ("Speed", "1")];
     with_retry("Play", || {
-        SoapRequestBuilder::new(client, ip)
-            .service(SonosService::AVTransport)
-            .action("Play")
-            .instance_id()
-            .arg("Speed", "1")
-            .send()
+        soap_request(client, ip, SonosService::AVTransport, "Play", &play_args)
     })
     .await?;
 
@@ -108,12 +105,14 @@ pub async fn play(client: &Client, ip: &str) -> SoapResult<()> {
 /// Unlike `play_uri`/`play`, this intentionally skips `with_retry` — stop is
 /// best-effort cleanup, and retrying would delay teardown for unresponsive speakers.
 pub async fn stop(client: &Client, ip: &str) -> SoapResult<()> {
-    let result = SoapRequestBuilder::new(client, ip)
-        .service(SonosService::AVTransport)
-        .action("Stop")
-        .instance_id()
-        .send()
-        .await;
+    let result = soap_request(
+        client,
+        ip,
+        SonosService::AVTransport,
+        "Stop",
+        &[("InstanceID", "0")],
+    )
+    .await;
 
     match result {
         Ok(_) => Ok(()),
@@ -152,14 +151,18 @@ pub async fn switch_to_queue(client: &Client, ip: &str, coordinator_uuid: &str) 
         coordinator_uuid
     );
 
-    SoapRequestBuilder::new(client, ip)
-        .service(SonosService::AVTransport)
-        .action("SetAVTransportURI")
-        .instance_id()
-        .arg("CurrentURI", &queue_uri)
-        .arg("CurrentURIMetaData", "")
-        .send()
-        .await?;
+    soap_request(
+        client,
+        ip,
+        SonosService::AVTransport,
+        "SetAVTransportURI",
+        &[
+            ("InstanceID", "0"),
+            ("CurrentURI", &queue_uri),
+            ("CurrentURIMetaData", ""),
+        ],
+    )
+    .await?;
 
     log::debug!("[Sonos] Switched to queue successfully");
 
@@ -183,12 +186,14 @@ pub async fn switch_to_queue(client: &Client, ip: &str, coordinator_uuid: &str) 
 /// The `RelTime` field is in "H:MM:SS" format with second precision. For streams,
 /// this represents elapsed playback time since the stream started.
 pub async fn get_position_info(client: &Client, ip: &str) -> SoapResult<PositionInfo> {
-    let response = SoapRequestBuilder::new(client, ip)
-        .service(SonosService::AVTransport)
-        .action("GetPositionInfo")
-        .instance_id()
-        .send()
-        .await?;
+    let response = soap_request(
+        client,
+        ip,
+        SonosService::AVTransport,
+        "GetPositionInfo",
+        &[("InstanceID", "0")],
+    )
+    .await?;
 
     // Extract fields from response
     let track_uri = extract_xml_text(&response, "TrackURI").unwrap_or_default();
