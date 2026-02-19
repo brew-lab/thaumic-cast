@@ -315,7 +315,6 @@ pub fn create_wav_stream_with_cadence(
                             stream_state.timing.start_new_epoch(
                                 epoch_candidate,
                                 connected_at,
-                                Instant::now(),
                                 remote_ip,
                             );
                         }

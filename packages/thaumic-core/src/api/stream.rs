@@ -187,7 +187,6 @@ pub(super) async fn stream_audio(
                             stream_state.timing.start_new_epoch(
                                 epoch_candidate,
                                 connected_at,
-                                Instant::now(),
                                 remote_ip,
                             );
                         } else {
