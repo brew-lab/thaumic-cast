@@ -7,7 +7,7 @@
 use std::collections::VecDeque;
 use std::net::IpAddr;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
 
 use async_stream::stream;
@@ -40,30 +40,34 @@ pub fn lagged_error(frames: u64) -> std::io::Error {
     std::io::Error::other(format!("lagged by {} frames", frames))
 }
 
-/// Tracks frame delivery timing statistics.
-struct DeliveryStats {
-    last_delivery: Option<Instant>,
-    max_gap_ms: u64,
-    gaps_over_threshold: u64,
-    /// Number of times silence mode was entered
-    silence_events: u64,
-    /// Total silence frames injected
-    silence_frames: u64,
-    /// Frames dropped due to cadence queue overflow
-    frames_dropped: u64,
+/// Statistics from the cadence stream, written once when the stream ends.
+pub(crate) struct CadenceStats {
+    /// Number of times silence mode was entered.
+    pub silence_events: u64,
+    /// Total silence frames injected.
+    pub silence_frames: u64,
+    /// Frames dropped due to cadence queue overflow.
+    pub frames_dropped: u64,
 }
 
 /// Wrapper that logs HTTP audio stream lifecycle and tracks delivery timing.
 ///
-/// Logs when the stream starts and ends, and tracks gaps in frame delivery
-/// to help diagnose issues where Sonos stops receiving audio unexpectedly.
+/// Delivery gap tracking uses lock-free atomics on the hot path.
+/// Cadence-specific statistics (silence, drops) are tracked locally in
+/// the cadence stream and written here once at stream end.
 pub struct LoggingStreamGuard {
     stream_id: String,
     client_ip: IpAddr,
+    /// Monotonic reference for computing delivery timestamps.
+    reference_time: Instant,
     frames_sent: AtomicU64,
+    /// Elapsed nanos since `reference_time` of the last delivered frame (0 = none).
+    last_delivery_nanos: AtomicU64,
+    max_gap_ms: AtomicU64,
+    gaps_over_threshold: AtomicU64,
     first_error: parking_lot::Mutex<Option<String>>,
-    /// Tracks delivery timing to detect gaps
-    delivery_stats: parking_lot::Mutex<DeliveryStats>,
+    /// Cadence-specific stats, set once when the cadence stream ends.
+    cadence_stats: OnceLock<CadenceStats>,
 }
 
 impl LoggingStreamGuard {
@@ -77,50 +81,30 @@ impl LoggingStreamGuard {
         Self {
             stream_id,
             client_ip,
+            reference_time: Instant::now(),
             frames_sent: AtomicU64::new(0),
+            last_delivery_nanos: AtomicU64::new(0),
+            max_gap_ms: AtomicU64::new(0),
+            gaps_over_threshold: AtomicU64::new(0),
             first_error: parking_lot::Mutex::new(None),
-            delivery_stats: parking_lot::Mutex::new(DeliveryStats {
-                last_delivery: None,
-                max_gap_ms: 0,
-                gaps_over_threshold: 0,
-                silence_events: 0,
-                silence_frames: 0,
-                frames_dropped: 0,
-            }),
+            cadence_stats: OnceLock::new(),
         }
     }
 
-    /// Records that silence mode was entered.
-    pub fn record_silence_event(&self) {
-        self.delivery_stats.lock().silence_events += 1;
-    }
-
-    /// Records a silence frame being sent.
-    pub fn record_silence_frame(&self) {
-        self.delivery_stats.lock().silence_frames += 1;
-    }
-
-    /// Records a frame being dropped due to queue overflow.
-    pub fn record_frame_dropped(&self) {
-        self.delivery_stats.lock().frames_dropped += 1;
-    }
-
-    /// Records a frame being delivered to the client.
+    /// Records a frame being delivered to the client (lock-free).
     pub fn record_frame(&self) {
         self.frames_sent.fetch_add(1, Ordering::Relaxed);
 
-        let now = Instant::now();
-        let mut stats = self.delivery_stats.lock();
+        let now_nanos = self.reference_time.elapsed().as_nanos() as u64;
+        let prev_nanos = self.last_delivery_nanos.swap(now_nanos, Ordering::Relaxed);
 
-        if let Some(last) = stats.last_delivery {
-            let gap_ms = now.duration_since(last).as_millis() as u64;
+        if prev_nanos > 0 {
+            let gap_ms = now_nanos.saturating_sub(prev_nanos) / 1_000_000;
 
-            if gap_ms > stats.max_gap_ms {
-                stats.max_gap_ms = gap_ms;
-            }
+            self.max_gap_ms.fetch_max(gap_ms, Ordering::Relaxed);
 
             if gap_ms > DELIVERY_GAP_THRESHOLD_MS {
-                stats.gaps_over_threshold += 1;
+                self.gaps_over_threshold.fetch_add(1, Ordering::Relaxed);
                 // Only log significant gaps to avoid spam; summary captures total count
                 if gap_ms > DELIVERY_GAP_LOG_THRESHOLD_MS {
                     log::warn!(
@@ -132,8 +116,6 @@ impl LoggingStreamGuard {
                 }
             }
         }
-
-        stats.last_delivery = Some(now);
     }
 
     /// Records the first error encountered during streaming.
@@ -143,41 +125,52 @@ impl LoggingStreamGuard {
             *first = Some(err.to_string());
         }
     }
+
+    /// Stores cadence stream statistics. Called once when the cadence stream ends.
+    pub(crate) fn set_cadence_stats(&self, stats: CadenceStats) {
+        let _ = self.cadence_stats.set(stats);
+    }
 }
 
 impl Drop for LoggingStreamGuard {
     fn drop(&mut self) {
         let frames = self.frames_sent.load(Ordering::Relaxed);
         let first_error = self.first_error.get_mut();
-        let stats = self.delivery_stats.get_mut();
+        let max_gap_ms = self.max_gap_ms.load(Ordering::Relaxed);
+        let gaps_over_threshold = self.gaps_over_threshold.load(Ordering::Relaxed);
 
         // Calculate time since last frame delivery
-        let final_gap_ms = stats
-            .last_delivery
-            .map(|t| t.elapsed().as_millis() as u64)
-            .unwrap_or(0);
+        let last_nanos = self.last_delivery_nanos.load(Ordering::Relaxed);
+        let final_gap_ms = if last_nanos > 0 {
+            let now_nanos = self.reference_time.elapsed().as_nanos() as u64;
+            now_nanos.saturating_sub(last_nanos) / 1_000_000
+        } else {
+            0
+        };
         let stalled_suffix = if final_gap_ms > DELIVERY_GAP_LOG_THRESHOLD_MS {
             " (stalled)"
         } else {
             ""
         };
 
+        let cadence = self.cadence_stats.get();
+
         // Build silence stats string if any silence was injected
-        let silence_info = if stats.silence_events > 0 {
-            format!(
-                ", silence_events={}, silence_frames={}",
-                stats.silence_events, stats.silence_frames
-            )
-        } else {
-            String::new()
-        };
+        let silence_info = cadence
+            .filter(|s| s.silence_events > 0)
+            .map(|s| {
+                format!(
+                    ", silence_events={}, silence_frames={}",
+                    s.silence_events, s.silence_frames
+                )
+            })
+            .unwrap_or_default();
 
         // Build dropped frames string if any frames were dropped
-        let dropped_info = if stats.frames_dropped > 0 {
-            format!(", frames_dropped={}", stats.frames_dropped)
-        } else {
-            String::new()
-        };
+        let dropped_info = cadence
+            .filter(|s| s.frames_dropped > 0)
+            .map(|s| format!(", frames_dropped={}", s.frames_dropped))
+            .unwrap_or_default();
 
         if let Some(ref err) = *first_error {
             log::warn!(
@@ -187,9 +180,9 @@ impl Drop for LoggingStreamGuard {
                 self.stream_id,
                 self.client_ip,
                 frames,
-                stats.max_gap_ms,
+                max_gap_ms,
                 DELIVERY_GAP_THRESHOLD_MS,
-                stats.gaps_over_threshold,
+                gaps_over_threshold,
                 final_gap_ms,
                 silence_info,
                 dropped_info,
@@ -203,9 +196,9 @@ impl Drop for LoggingStreamGuard {
                 self.stream_id,
                 self.client_ip,
                 frames,
-                stats.max_gap_ms,
+                max_gap_ms,
                 DELIVERY_GAP_THRESHOLD_MS,
-                stats.gaps_over_threshold,
+                gaps_over_threshold,
                 final_gap_ms,
                 silence_info,
                 dropped_info
@@ -225,9 +218,8 @@ impl Drop for LoggingStreamGuard {
 /// - When entering silence: emits a fade-out frame from the last audio sample to zero
 /// - When exiting silence: applies fade-in to the first audio frame
 ///
-/// Silence tracking is handled internally: the guard's `record_silence_event()`
-/// and `record_silence_frame()` are called at the points where silence state
-/// transitions and frames are already known.
+/// Silence and overflow statistics are tracked locally and written to the
+/// guard once at stream end via `set_cadence_stats()`.
 ///
 /// Epoch tracking (optional): when `epoch_hook` is `Some`, the stream fires
 /// `start_new_epoch` on the first real audio frame, then discards the hook.
@@ -262,6 +254,11 @@ pub fn create_wav_stream_with_cadence(
         let mut rx_closed = false;
         let mut in_silence = false;
         let mut silence_start: Option<TokioInstant> = None;
+
+        // Cadence-specific counters (written to guard at stream end)
+        let mut silence_events: u64 = 0;
+        let mut silence_frames: u64 = 0;
+        let mut frames_dropped: u64 = 0;
 
         // Crossfade is only supported for 16-bit PCM. The handshake enforces this
         // for PCM streams, but we guard here defensively in case the invariant breaks.
@@ -338,7 +335,7 @@ pub fn create_wav_stream_with_cadence(
                             log::info!("[Stream] Entering silence (cadence) - queue empty");
                             in_silence = true;
                             silence_start = Some(TokioInstant::now());
-                            guard.record_silence_event();
+                            silence_events += 1;
 
                             // Generate fade-out frame if crossfade is enabled and we have last sample values
                             if crossfade_enabled {
@@ -350,18 +347,18 @@ pub fn create_wav_stream_with_cadence(
                                         fade_samples,
                                         samples_per_frame,
                                     );
-                                    guard.record_silence_frame();
+                                    silence_frames += 1;
                                     yield Ok(fade_out);
                                 } else {
-                                    guard.record_silence_frame();
+                                    silence_frames += 1;
                                     yield Ok(silence_frame.clone());
                                 }
                             } else {
-                                guard.record_silence_frame();
+                                silence_frames += 1;
                                 yield Ok(silence_frame.clone());
                             }
                         } else {
-                            guard.record_silence_frame();
+                            silence_frames += 1;
                             yield Ok(silence_frame.clone());
                         }
                     }
@@ -377,7 +374,7 @@ pub fn create_wav_stream_with_cadence(
                                 Ok(frame) => {
                                     if queue.len() >= queue_size {
                                         queue.pop_front();
-                                        guard.record_frame_dropped();
+                                        frames_dropped += 1;
                                     }
                                     queue.push_back(frame);
                                 }
@@ -407,7 +404,7 @@ pub fn create_wav_stream_with_cadence(
                             if queue.len() >= queue_size {
                                 // Queue full - drop oldest to maintain bounded latency
                                 queue.pop_front();
-                                guard.record_frame_dropped();
+                                frames_dropped += 1;
                                 log::trace!("[Stream] Queue full, dropped oldest frame");
                             }
                             queue.push_back(frame);
@@ -428,6 +425,12 @@ pub fn create_wav_stream_with_cadence(
                 }
             }
         }
+
+        guard.set_cadence_stats(CadenceStats {
+            silence_events,
+            silence_frames,
+            frames_dropped,
+        });
     }
 }
 
@@ -487,6 +490,27 @@ mod tests {
         .await;
 
         time::advance(duration).await;
+    }
+
+    /// Drains a cadence stream to completion by advancing time and polling.
+    ///
+    /// The channel must be closed (tx dropped) before calling this, so the
+    /// stream can detect closure and terminate.
+    async fn drain_to_end<S>(stream: &mut Pin<&mut S>)
+    where
+        S: Stream + ?Sized,
+    {
+        for _ in 0..50 {
+            time::advance(Duration::from_millis(SILENCE_FRAME_DURATION_MS as u64)).await;
+            let done = poll_fn(|cx| match stream.as_mut().poll_next(cx) {
+                Poll::Ready(None) => Poll::Ready(true),
+                _ => Poll::Ready(false),
+            })
+            .await;
+            if done {
+                break;
+            }
+        }
     }
 
     #[tokio::test(start_paused = true)]
@@ -678,15 +702,20 @@ mod tests {
             .await;
         }
 
+        // Close channel and drain to completion (writes cadence stats)
+        drop(tx);
+        drain_to_end(&mut stream.as_mut()).await;
+
         // Verify that exactly 2 frames were dropped
-        let stats = guard_for_check.delivery_stats.lock();
+        let stats = guard_for_check
+            .cadence_stats
+            .get()
+            .expect("cadence stats should be set after stream ends");
         assert_eq!(
             stats.frames_dropped, 2,
             "should have dropped 2 oldest frames, dropped {}",
             stats.frames_dropped
         );
-
-        drop(tx);
     }
 
     #[tokio::test(start_paused = true)]
@@ -724,15 +753,20 @@ mod tests {
         // Consume a frame to ensure internal processing has happened
         let _ = stream.next().await;
 
-        // Check the guard counter - should have recorded dropped frames
-        let stats = guard_for_check.delivery_stats.lock();
+        // Close channel and drain to completion (writes cadence stats)
+        drop(tx);
+        drain_to_end(&mut stream.as_mut()).await;
+
+        // Check the cadence stats - should have recorded dropped frames
+        let stats = guard_for_check
+            .cadence_stats
+            .get()
+            .expect("cadence stats should be set after stream ends");
         assert_eq!(
             stats.frames_dropped, overflow_count as u64,
             "guard should track {} dropped frames",
             overflow_count
         );
-
-        drop(tx);
     }
 
     #[tokio::test(start_paused = true)]
