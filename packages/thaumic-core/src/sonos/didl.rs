@@ -43,8 +43,8 @@ pub(crate) fn format_didl_lite(
     log::debug!(
         "[DIDL] Incoming metadata: {:?}, codec={}, format={:?}",
         metadata.map(|m| format!(
-            "title={:?}, artist={:?}, album={:?}, source={:?}",
-            m.title, m.artist, m.album, m.source
+            "title={:?}, artist={:?}, source={:?}",
+            m.title, m.artist, m.source
         )),
         codec.as_str(),
         audio_format

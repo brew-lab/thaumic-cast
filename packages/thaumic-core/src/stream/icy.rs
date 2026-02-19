@@ -202,8 +202,6 @@ mod tests {
         let metadata = StreamMetadata {
             title: Some("Test Song".to_string()),
             artist: None,
-            album: None,
-            artwork: None,
             source: None,
         };
         let result = IcyFormatter::format_metadata(&metadata);
@@ -216,8 +214,6 @@ mod tests {
         let metadata = StreamMetadata {
             title: Some("Song".to_string()),
             artist: Some("Artist".to_string()),
-            album: None,
-            artwork: None,
             source: None,
         };
         let result = IcyFormatter::format_metadata(&metadata);
@@ -230,8 +226,6 @@ mod tests {
         let metadata = StreamMetadata {
             title: Some("It's a Test".to_string()), // ASCII apostrophe U+0027
             artist: None,
-            album: None,
-            artwork: None,
             source: None,
         };
         let result = IcyFormatter::format_metadata(&metadata);
@@ -291,8 +285,6 @@ mod tests {
         let metadata1 = StreamMetadata {
             title: Some("Song A".to_string()),
             artist: Some("Artist".to_string()),
-            album: None,
-            artwork: None,
             source: None,
         };
 
@@ -313,8 +305,6 @@ mod tests {
         let metadata2 = StreamMetadata {
             title: Some("Song B".to_string()),
             artist: Some("Artist".to_string()),
-            album: None,
-            artwork: None,
             source: None,
         };
 

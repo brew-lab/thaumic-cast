@@ -133,7 +133,8 @@ export async function handleStartCast(msg: StartCastMessage): Promise<ExtensionR
       // Construct StreamMetadata with source for proper Sonos album display
       const initialMetadata: StreamMetadata | undefined = cachedState?.metadata
         ? {
-            ...cachedState.metadata,
+            title: cachedState.metadata.title,
+            artist: cachedState.metadata.artist,
             source: cachedState.source,
           }
         : cachedState?.source

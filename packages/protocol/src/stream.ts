@@ -9,8 +9,6 @@ import { TabMediaStateSchema } from './media.js';
 export const StreamMetadataSchema = z.object({
   title: z.string().optional(),
   artist: z.string().optional(),
-  album: z.string().optional(),
-  artwork: z.string().optional(),
   /** Source name derived from tab URL (e.g., "YouTube", "Spotify") */
   source: z.string().optional(),
 });

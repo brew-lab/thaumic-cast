@@ -54,15 +54,12 @@ impl AudioCodec {
 
 /// Metadata for the current track.
 ///
-/// Note: `album` and `artwork` from MediaSession are not used in DIDL-Lite
-/// formatting because they get stuck (ICY metadata doesn't support updates
-/// for these fields). Instead, we use static branding based on `source`.
+/// DIDL-Lite uses static branding based on `source` (not per-track album/artwork
+/// from MediaSession, which can't be updated via ICY metadata).
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct StreamMetadata {
     pub title: Option<String>,
     pub artist: Option<String>,
-    pub album: Option<String>,
-    pub artwork: Option<String>,
     /// Source name derived from tab URL (e.g., "YouTube", "Spotify").
     /// Used to format album as "{source} • {APP_NAME}" in DIDL-Lite.
     pub source: Option<String>,

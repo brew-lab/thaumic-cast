@@ -178,7 +178,12 @@ export async function handleTabMetadataUpdate(
   if (hasSession(tabId)) {
     onMetadataUpdate(tabId);
     // Enrich metadata with source for Sonos display
-    forwardMetadataToOffscreen(tabId, { ...msg.payload, source });
+    const streamMeta: StreamMetadata = {
+      title: metadata?.title,
+      artist: metadata?.artist,
+      source,
+    };
+    forwardMetadataToOffscreen(tabId, streamMeta);
 
     // Bi-directional control: when source transitions to 'playing',
     // resume Sonos if paused (handles YouTube clicks, keyboard shortcuts, etc.)
@@ -236,8 +241,8 @@ export function handleTabOgImage(
  * @param tabId - The tab ID
  * @param metadata - The stream metadata to forward
  */
-function forwardMetadataToOffscreen(tabId: number, metadata: unknown): void {
-  offscreenBroker.updateMetadata(tabId, metadata as StreamMetadata);
+function forwardMetadataToOffscreen(tabId: number, metadata: StreamMetadata): void {
+  offscreenBroker.updateMetadata(tabId, metadata);
 }
 
 /**
