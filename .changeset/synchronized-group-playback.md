@@ -1,5 +1,5 @@
 ---
-'thaumic-core': minor
+'@thaumic-cast/core': minor
 ---
 
 Add synchronized multi-speaker playback using Sonos x-rincon protocol
