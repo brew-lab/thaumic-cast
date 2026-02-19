@@ -505,6 +505,29 @@ impl SyncGroupManager {
         }
     }
 
+    /// Tears down a speaker from a stream: removes its session, leaves
+    /// the sync session, restores its original Sonos group, and emits
+    /// a `PlaybackStopped` event.
+    async fn teardown_speaker(
+        &self,
+        stream_id: &str,
+        speaker_ip: &str,
+        original_coordinator_uuid: Option<&str>,
+        reason: Option<SpeakerRemovalReason>,
+    ) {
+        self.sessions.remove(stream_id, speaker_ip);
+        self.leave_sync_session(speaker_ip).await;
+        if let Some(orig_uuid) = original_coordinator_uuid {
+            self.restore_original_group(speaker_ip, orig_uuid).await;
+        }
+        self.emit_event(StreamEvent::PlaybackStopped {
+            stream_id: stream_id.to_string(),
+            speaker_ip: speaker_ip.to_string(),
+            reason,
+            timestamp: now_millis(),
+        });
+    }
+
     /// Stops a slave speaker by unjoining it from the group.
     ///
     /// Only affects this speaker - the coordinator and other slaves continue playing.
@@ -530,9 +553,13 @@ impl SyncGroupManager {
 
         match self.sonos.leave_group(speaker_ip).await {
             Ok(()) => {
-                self.sessions.remove(stream_id, speaker_ip);
-
-                self.leave_sync_session(speaker_ip).await;
+                self.teardown_speaker(
+                    stream_id,
+                    speaker_ip,
+                    original_coordinator.as_deref(),
+                    reason,
+                )
+                .await;
 
                 let remaining_slaves = self.sessions.has_slaves_for_stream(stream_id);
 
@@ -542,17 +569,6 @@ impl SyncGroupManager {
                         self.leave_sync_session(&coord_ip).await;
                     }
                 }
-
-                if let Some(orig_uuid) = original_coordinator {
-                    self.restore_original_group(speaker_ip, &orig_uuid).await;
-                }
-
-                self.emit_event(StreamEvent::PlaybackStopped {
-                    stream_id: stream_id.to_string(),
-                    speaker_ip: speaker_ip.to_string(),
-                    reason,
-                    timestamp: now_millis(),
-                });
 
                 self.cleanup_stream_if_no_sessions(stream_id);
 
@@ -619,22 +635,13 @@ impl SyncGroupManager {
                     );
                 }
 
-                if let Some(orig_uuid) = original_coordinator {
-                    self.restore_original_group(&slave_key.speaker_ip, &orig_uuid)
-                        .await;
-                }
-
-                self.sessions
-                    .remove(&slave_key.stream_id, &slave_key.speaker_ip);
-
-                self.leave_sync_session(&slave_key.speaker_ip).await;
-
-                self.emit_event(StreamEvent::PlaybackStopped {
-                    stream_id: stream_id.to_string(),
-                    speaker_ip: slave_key.speaker_ip.clone(),
+                self.teardown_speaker(
+                    stream_id,
+                    &slave_key.speaker_ip,
+                    original_coordinator.as_deref(),
                     reason,
-                    timestamp: now_millis(),
-                });
+                )
+                .await;
 
                 slave_key.speaker_ip
             })
@@ -655,10 +662,6 @@ impl SyncGroupManager {
 
         match self.sonos.stop(coordinator_ip).await {
             Ok(()) => {
-                self.sessions.remove(stream_id, coordinator_ip);
-
-                self.leave_sync_session(coordinator_ip).await;
-
                 if let Some(uuid) = coordinator_uuid {
                     if let Err(e) = self.sonos.switch_to_queue(coordinator_ip, &uuid).await {
                         log::warn!(
@@ -669,17 +672,13 @@ impl SyncGroupManager {
                     }
                 }
 
-                if let Some(orig_uuid) = original_coordinator_uuid {
-                    self.restore_original_group(coordinator_ip, &orig_uuid)
-                        .await;
-                }
-
-                self.emit_event(StreamEvent::PlaybackStopped {
-                    stream_id: stream_id.to_string(),
-                    speaker_ip: coordinator_ip.to_string(),
+                self.teardown_speaker(
+                    stream_id,
+                    coordinator_ip,
+                    original_coordinator_uuid.as_deref(),
                     reason,
-                    timestamp: now_millis(),
-                });
+                )
+                .await;
 
                 self.cleanup_stream_if_no_sessions(stream_id);
 
@@ -778,9 +777,6 @@ impl SyncGroupManager {
             // Continue - the speaker may already be stopped
         }
 
-        self.sessions.remove(stream_id, coordinator_ip);
-        self.leave_sync_session(coordinator_ip).await;
-
         if let Some(ref uuid) = coordinator_uuid {
             if let Err(e) = self.sonos.switch_to_queue(coordinator_ip, uuid).await {
                 log::warn!(
@@ -791,17 +787,13 @@ impl SyncGroupManager {
             }
         }
 
-        if let Some(orig_uuid) = original_coordinator_uuid {
-            self.restore_original_group(coordinator_ip, &orig_uuid)
-                .await;
-        }
-
-        self.emit_event(StreamEvent::PlaybackStopped {
-            stream_id: stream_id.to_string(),
-            speaker_ip: coordinator_ip.to_string(),
+        self.teardown_speaker(
+            stream_id,
+            coordinator_ip,
+            original_coordinator_uuid.as_deref(),
             reason,
-            timestamp: now_millis(),
-        });
+        )
+        .await;
 
         // 6. Promote the chosen slave
         if let Err(e) = self.sonos.leave_group(&promoted_ip).await {
