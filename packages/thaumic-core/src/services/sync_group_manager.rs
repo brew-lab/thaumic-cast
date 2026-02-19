@@ -528,6 +528,70 @@ impl SyncGroupManager {
         });
     }
 
+    /// Stops a specific speaker for a stream, choosing the appropriate strategy
+    /// based on the speaker's role.
+    ///
+    /// - **Slave**: unjoins just this speaker; coordinator and other slaves continue.
+    /// - **Coordinator with slaves**: attempts to promote a slave to coordinator;
+    ///   falls back to full teardown if promotion fails.
+    /// - **Coordinator without slaves**: tears down the coordinator.
+    ///
+    /// Triggers a topology refresh when sync-group membership changes.
+    ///
+    /// # Returns
+    /// List of speaker IPs that were stopped. Empty if the session was not found
+    /// or the stop command failed.
+    pub async fn stop_speaker_for_stream(
+        &self,
+        stream_id: &str,
+        speaker_ip: &str,
+        reason: Option<SpeakerRemovalReason>,
+    ) -> Vec<String> {
+        let session = match self.sessions.get(stream_id, speaker_ip) {
+            Some(s) => s,
+            None => return Vec::new(),
+        };
+
+        let is_sync =
+            session.role == GroupRole::Slave || self.sessions.has_slaves_for_stream(stream_id);
+
+        let stopped = match session.role {
+            GroupRole::Slave => self.stop_slave_speaker(stream_id, speaker_ip, reason).await,
+            GroupRole::Coordinator => {
+                let has_slaves = !self
+                    .sessions
+                    .get_slaves_for_coordinator(stream_id, speaker_ip)
+                    .is_empty();
+
+                if has_slaves {
+                    match self
+                        .promote_slave_to_coordinator(stream_id, speaker_ip, reason)
+                        .await
+                    {
+                        Ok(stopped) => stopped,
+                        Err(e) => {
+                            log::warn!(
+                                "[GroupSync] Promotion failed ({}), falling back to teardown",
+                                e
+                            );
+                            self.stop_coordinator_and_slaves(stream_id, speaker_ip, reason)
+                                .await
+                        }
+                    }
+                } else {
+                    self.stop_coordinator_and_slaves(stream_id, speaker_ip, reason)
+                        .await
+                }
+            }
+        };
+
+        if is_sync && !stopped.is_empty() {
+            self.schedule_topology_refresh();
+        }
+
+        stopped
+    }
+
     /// Stops a slave speaker by unjoining it from the group.
     ///
     /// Only affects this speaker - the coordinator and other slaves continue playing.

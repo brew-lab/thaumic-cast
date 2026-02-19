@@ -816,75 +816,26 @@ impl StreamCoordinator {
         speaker_ip: &str,
         reason: Option<SpeakerRemovalReason>,
     ) -> Vec<String> {
-        // Get session to check role
-        let session = match self.sessions.get(stream_id, speaker_ip) {
-            Some(s) => s,
-            None => {
-                // Session not found - emit failure so client can clear pending state
-                log::warn!(
-                    "Stop requested for unknown session: stream={}, speaker={}",
-                    stream_id,
-                    speaker_ip
-                );
-                self.emit_event(StreamEvent::PlaybackStopFailed {
-                    stream_id: stream_id.to_string(),
-                    speaker_ip: speaker_ip.to_string(),
-                    error: "Session not found".to_string(),
-                    reason,
-                    timestamp: now_millis(),
-                });
-                return Vec::new();
-            }
-        };
-
-        let is_sync =
-            session.role == GroupRole::Slave || self.sessions.has_slaves_for_stream(stream_id);
-
-        let stopped = match session.role {
-            GroupRole::Slave => {
-                // Slave: just unjoin this speaker, others continue playing
-                self.sync_group
-                    .stop_slave_speaker(stream_id, speaker_ip, reason)
-                    .await
-            }
-            GroupRole::Coordinator => {
-                // Check if there are slaves that can be promoted to coordinator
-                let has_slaves = !self
-                    .sessions
-                    .get_slaves_for_coordinator(stream_id, speaker_ip)
-                    .is_empty();
-
-                if has_slaves {
-                    match self
-                        .sync_group
-                        .promote_slave_to_coordinator(stream_id, speaker_ip, reason)
-                        .await
-                    {
-                        Ok(stopped) => stopped,
-                        Err(e) => {
-                            log::warn!(
-                                "[GroupSync] Promotion failed ({}), falling back to teardown",
-                                e
-                            );
-                            self.sync_group
-                                .stop_coordinator_and_slaves(stream_id, speaker_ip, reason)
-                                .await
-                        }
-                    }
-                } else {
-                    // No slaves: just stop the coordinator
-                    self.sync_group
-                        .stop_coordinator_and_slaves(stream_id, speaker_ip, reason)
-                        .await
-                }
-            }
-        };
-
-        if is_sync && !stopped.is_empty() {
-            self.sync_group.schedule_topology_refresh();
+        // Guard: session must exist, otherwise emit failure so client can clear pending state
+        if self.sessions.get(stream_id, speaker_ip).is_none() {
+            log::warn!(
+                "Stop requested for unknown session: stream={}, speaker={}",
+                stream_id,
+                speaker_ip
+            );
+            self.emit_event(StreamEvent::PlaybackStopFailed {
+                stream_id: stream_id.to_string(),
+                speaker_ip: speaker_ip.to_string(),
+                error: "Session not found".to_string(),
+                reason,
+                timestamp: now_millis(),
+            });
+            return Vec::new();
         }
 
-        stopped
+        self.sync_group
+            .stop_speaker_for_stream(stream_id, speaker_ip, reason)
+            .await
     }
 
     /// Gets all active playback sessions.
