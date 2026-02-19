@@ -18,7 +18,7 @@ use tokio::time::{interval, Instant as TokioInstant, MissedTickBehavior};
 
 use super::{
     apply_fade_in, create_fade_out_frame, crossfade_samples, extract_last_sample_pair,
-    is_crossfade_compatible, AudioFormat, TaggedFrame,
+    is_crossfade_compatible, AudioFormat, StreamState,
 };
 
 /// Threshold for counting delivery gaps (100ms).
@@ -227,8 +227,10 @@ impl Drop for LoggingStreamGuard {
 ///
 /// Silence tracking is handled internally: the guard's `record_silence_event()`
 /// and `record_silence_frame()` are called at the points where silence state
-/// transitions and frames are already known, eliminating the need for external
-/// post-hoc inspection of `TaggedFrame` tags.
+/// transitions and frames are already known.
+///
+/// Epoch tracking (optional): when `epoch_hook` is `Some`, the stream fires
+/// `start_new_epoch` on the first real audio frame, then discards the hook.
 ///
 /// This ensures Sonos always receives continuous data with smooth transitions,
 /// eliminating pops from abrupt audio/silence boundaries.
@@ -240,7 +242,8 @@ pub fn create_wav_stream_with_cadence(
     frame_duration_ms: u32,
     audio_format: AudioFormat,
     prefill_frames: Vec<Bytes>,
-) -> impl Stream<Item = Result<TaggedFrame, std::io::Error>> {
+    epoch_hook: Option<(Arc<StreamState>, Option<Instant>, Instant, IpAddr)>,
+) -> impl Stream<Item = Result<Bytes, std::io::Error>> {
     stream! {
         let cadence_duration = Duration::from_millis(frame_duration_ms as u64);
 
@@ -278,6 +281,9 @@ pub fn create_wav_stream_with_cadence(
         // Rate-limit lagged warnings (max once per second)
         let mut last_lagged_log: Option<TokioInstant> = None;
 
+        // One-shot epoch hook: fires on the first real audio frame, then consumed
+        let mut epoch_hook = epoch_hook;
+
         loop {
             // Exit when channel closed AND queue drained
             if rx_closed && queue.is_empty() {
@@ -307,13 +313,23 @@ pub fn create_wav_stream_with_cadence(
                             last_sample_pair = extract_last_sample_pair(&frame, audio_format.channels);
                         }
 
+                        // Fire epoch hook on first real audio frame
+                        if let Some((stream_state, epoch_candidate, connected_at, remote_ip)) = epoch_hook.take() {
+                            stream_state.timing.start_new_epoch(
+                                epoch_candidate,
+                                connected_at,
+                                Instant::now(),
+                                remote_ip,
+                            );
+                        }
+
                         // Apply fade-in if we just exited silence (and crossfade is enabled)
                         if was_in_silence && crossfade_enabled {
                             let mut faded = frame.to_vec();
                             apply_fade_in(&mut faded, audio_format.channels, fade_samples);
-                            yield Ok(TaggedFrame::Audio(Bytes::from(faded)));
+                            yield Ok(Bytes::from(faded));
                         } else {
-                            yield Ok(TaggedFrame::Audio(frame));
+                            yield Ok(frame);
                         }
                     } else if !rx_closed {
                         // No frame available, emit silence
@@ -335,18 +351,18 @@ pub fn create_wav_stream_with_cadence(
                                         samples_per_frame,
                                     );
                                     guard.record_silence_frame();
-                                    yield Ok(TaggedFrame::Silence(fade_out));
+                                    yield Ok(fade_out);
                                 } else {
                                     guard.record_silence_frame();
-                                    yield Ok(TaggedFrame::Silence(silence_frame.clone()));
+                                    yield Ok(silence_frame.clone());
                                 }
                             } else {
                                 guard.record_silence_frame();
-                                yield Ok(TaggedFrame::Silence(silence_frame.clone()));
+                                yield Ok(silence_frame.clone());
                             }
                         } else {
                             guard.record_silence_frame();
-                            yield Ok(TaggedFrame::Silence(silence_frame.clone()));
+                            yield Ok(silence_frame.clone());
                         }
                     }
                     // If rx_closed and queue empty, don't yield - loop will break
@@ -488,6 +504,7 @@ mod tests {
             SILENCE_FRAME_DURATION_MS,
             test_audio_format(),
             vec![],
+            None,
         ));
 
         // Queue some frames before the first tick
@@ -501,11 +518,11 @@ mod tests {
         )
         .await;
 
-        // Should get first audio frame
-        let frame = stream.next().await.expect("stream should yield");
+        // Should get first audio frame (may have fade-in applied)
+        let frame = stream.next().await.expect("stream should yield").unwrap();
         assert!(
-            matches!(frame.unwrap(), TaggedFrame::Audio(_)),
-            "expected first Audio frame at cadence tick"
+            !frame.iter().all(|&b| b == 0),
+            "expected audio frame at cadence tick"
         );
 
         // Advance another tick
@@ -516,11 +533,8 @@ mod tests {
         .await;
 
         // Should get second audio frame
-        let frame = stream.next().await.expect("stream should yield");
-        assert!(
-            matches!(frame.unwrap(), TaggedFrame::Audio(_)),
-            "expected second Audio frame at cadence tick"
-        );
+        let frame = stream.next().await.expect("stream should yield").unwrap();
+        assert_eq!(frame, audio, "expected second audio frame at cadence tick");
 
         drop(tx);
     }
@@ -539,6 +553,7 @@ mod tests {
             SILENCE_FRAME_DURATION_MS,
             test_audio_format(),
             vec![],
+            None,
         ));
 
         // Don't send any frames - queue will be empty
@@ -551,10 +566,10 @@ mod tests {
         .await;
 
         // Should get silence frame since queue is empty
-        let frame = stream.next().await.expect("stream should yield");
+        let frame = stream.next().await.expect("stream should yield").unwrap();
         assert!(
-            matches!(frame.unwrap(), TaggedFrame::Silence(_)),
-            "expected Silence frame when queue is empty"
+            frame.iter().all(|&b| b == 0),
+            "expected silence frame when queue is empty"
         );
 
         // Another tick should also yield silence
@@ -564,10 +579,10 @@ mod tests {
         )
         .await;
 
-        let frame = stream.next().await.expect("stream should yield");
+        let frame = stream.next().await.expect("stream should yield").unwrap();
         assert!(
-            matches!(frame.unwrap(), TaggedFrame::Silence(_)),
-            "expected Silence frame on continued empty queue"
+            frame.iter().all(|&b| b == 0),
+            "expected silence frame on continued empty queue"
         );
 
         drop(tx);
@@ -587,6 +602,7 @@ mod tests {
             SILENCE_FRAME_DURATION_MS,
             test_audio_format(),
             vec![],
+            None,
         ));
 
         // Queue 3 frames as a burst
@@ -604,15 +620,11 @@ mod tests {
             .await;
 
             let frame = stream.next().await.expect("stream should yield");
-            let frame = frame.expect("should be Ok");
-            if let TaggedFrame::Audio(bytes) = frame {
-                assert_eq!(
-                    bytes[0], expected_byte,
-                    "frames should drain in order at cadence"
-                );
-            } else {
-                panic!("expected Audio frame, got Silence");
-            }
+            let bytes = frame.expect("should be Ok");
+            assert_eq!(
+                bytes[0], expected_byte,
+                "frames should drain in order at cadence"
+            );
         }
 
         // Queue is now empty, next tick should yield silence
@@ -622,10 +634,11 @@ mod tests {
         )
         .await;
 
-        let frame = stream.next().await.expect("stream should yield");
+        // Queue empty → silence/keepalive (may be a crossfade fade-out frame)
+        let frame = stream.next().await.expect("stream should yield").unwrap();
         assert!(
-            matches!(frame.unwrap(), TaggedFrame::Silence(_)),
-            "expected Silence after queue drained"
+            !frame.is_empty(),
+            "expected non-empty frame after queue drained"
         );
 
         drop(tx);
@@ -646,6 +659,7 @@ mod tests {
             SILENCE_FRAME_DURATION_MS,
             test_audio_format(),
             vec![],
+            None,
         ));
 
         // Send 12 frames (queue_size + 2), should drop 2 oldest
@@ -690,6 +704,7 @@ mod tests {
             SILENCE_FRAME_DURATION_MS,
             test_audio_format(),
             vec![],
+            None,
         ));
 
         // Overflow queue by TEST_QUEUE_SIZE + 3 frames
@@ -734,6 +749,7 @@ mod tests {
             SILENCE_FRAME_DURATION_MS,
             test_audio_format(),
             vec![],
+            None,
         ));
 
         // Queue some frames
@@ -765,12 +781,8 @@ mod tests {
             .next()
             .await
             .expect("stream should yield queued frame");
-        let frame = frame.expect("should be Ok");
-        if let TaggedFrame::Audio(bytes) = frame {
-            assert_eq!(bytes[0], 2, "should drain remaining queued frame");
-        } else {
-            panic!("expected Audio frame from queue");
-        }
+        let bytes = frame.expect("should be Ok");
+        assert_eq!(bytes[0], 2, "should drain remaining queued frame");
 
         // Now stream should end (channel closed AND queue empty)
         poll_and_advance(
@@ -801,6 +813,7 @@ mod tests {
             SILENCE_FRAME_DURATION_MS,
             test_audio_format(),
             vec![],
+            None,
         ));
 
         // First tick with empty queue -> silence
@@ -810,10 +823,10 @@ mod tests {
         )
         .await;
 
-        let frame = stream.next().await.expect("stream should yield");
+        let frame = stream.next().await.expect("stream should yield").unwrap();
         assert!(
-            matches!(frame.unwrap(), TaggedFrame::Silence(_)),
-            "expected Silence when queue empty"
+            frame.iter().all(|&b| b == 0),
+            "expected silence when queue empty"
         );
 
         // Queue a frame
@@ -826,10 +839,10 @@ mod tests {
         )
         .await;
 
-        let frame = stream.next().await.expect("stream should yield");
+        let frame = stream.next().await.expect("stream should yield").unwrap();
         assert!(
-            matches!(frame.unwrap(), TaggedFrame::Audio(_)),
-            "expected Audio when frame queued after silence"
+            !frame.iter().all(|&b| b == 0),
+            "expected audio when frame queued after silence"
         );
 
         drop(tx);

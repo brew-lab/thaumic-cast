@@ -68,7 +68,7 @@ pub use sonos::{SonosClient, SonosClientImpl, SonosPlayback, SonosService, Sonos
 pub use services::playback_session_store::PlaybackSession;
 
 // Re-export stream types
-pub use stream::{AudioCodec, AudioFormat, StreamMetadata, TaggedFrame};
+pub use stream::{AudioCodec, AudioFormat, StreamMetadata};
 
 // Re-export bootstrap types
 pub use bootstrap::{bootstrap_services, bootstrap_services_with_network, BootstrappedServices};

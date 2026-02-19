@@ -134,42 +134,6 @@ impl Default for AudioFormat {
     }
 }
 
-/// Tagged audio frame distinguishing real audio from injected silence.
-///
-/// Used in the HTTP stream pipeline to ensure epoch tracking only fires
-/// on actual audio data, not keepalive silence frames.
-#[derive(Clone)]
-pub enum TaggedFrame {
-    /// Real audio data from the broadcast channel
-    Audio(Bytes),
-    /// Injected silence to keep connection alive during delivery gaps
-    Silence(Bytes),
-}
-
-impl TaggedFrame {
-    /// Returns the underlying bytes regardless of frame type.
-    #[inline]
-    pub fn into_bytes(self) -> Bytes {
-        match self {
-            TaggedFrame::Audio(b) | TaggedFrame::Silence(b) => b,
-        }
-    }
-
-    /// Returns a reference to the underlying bytes.
-    #[inline]
-    pub fn as_bytes(&self) -> &Bytes {
-        match self {
-            TaggedFrame::Audio(b) | TaggedFrame::Silence(b) => b,
-        }
-    }
-
-    /// Returns true if this is real audio (not injected silence).
-    #[inline]
-    pub fn is_real_audio(&self) -> bool {
-        matches!(self, TaggedFrame::Audio(_))
-    }
-}
-
 // ─────────────────────────────────────────────────────────────────────────────
 // PCM Crossfade Utilities (16-bit only)
 // ─────────────────────────────────────────────────────────────────────────────
@@ -431,43 +395,6 @@ mod tests {
             assert_eq!(format.sample_rate, 48000);
             assert_eq!(format.channels, 2);
             assert_eq!(format.bits_per_sample, 16);
-        }
-    }
-
-    mod tagged_frame {
-        use super::*;
-
-        #[test]
-        fn audio_frame_is_real_audio() {
-            let frame = TaggedFrame::Audio(Bytes::from_static(b"audio"));
-            assert!(frame.is_real_audio());
-        }
-
-        #[test]
-        fn silence_frame_is_not_real_audio() {
-            let frame = TaggedFrame::Silence(Bytes::from_static(b"\0\0\0\0"));
-            assert!(!frame.is_real_audio());
-        }
-
-        #[test]
-        fn into_bytes_extracts_audio_content() {
-            let data = Bytes::from_static(b"audio data");
-            let frame = TaggedFrame::Audio(data.clone());
-            assert_eq!(frame.into_bytes(), data);
-        }
-
-        #[test]
-        fn into_bytes_extracts_silence_content() {
-            let data = Bytes::from_static(b"\0\0\0\0");
-            let frame = TaggedFrame::Silence(data.clone());
-            assert_eq!(frame.into_bytes(), data);
-        }
-
-        #[test]
-        fn as_bytes_returns_reference() {
-            let data = Bytes::from_static(b"test");
-            let frame = TaggedFrame::Audio(data.clone());
-            assert_eq!(frame.as_bytes(), &data);
         }
     }
 
