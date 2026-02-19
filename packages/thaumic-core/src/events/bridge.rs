@@ -73,64 +73,25 @@ impl BroadcastEventBridge {
     }
 }
 
+/// Generates an [`EventEmitter`] method that forwards to the external emitter
+/// (if set) and then sends to the broadcast channel.
+macro_rules! impl_emit {
+    ($method:ident, $event_ty:ty, $variant:ident) => {
+        fn $method(&self, event: $event_ty) {
+            if let Some(ref emitter) = *self.external_emitter.read() {
+                emitter.$method(event.clone());
+            }
+            if let Err(e) = self.tx.send(BroadcastEvent::$variant(event)) {
+                log::trace!("[EventBridge] No broadcast receivers: {}", e);
+            }
+        }
+    };
+}
+
 impl EventEmitter for BroadcastEventBridge {
-    fn emit_stream(&self, event: StreamEvent) {
-        // Forward to external emitter if configured
-        if let Some(ref emitter) = *self.external_emitter.read() {
-            emitter.emit_stream(event.clone());
-        }
-
-        // Emit to WebSocket broadcast channel
-        if let Err(e) = self.tx.send(BroadcastEvent::Stream(event)) {
-            log::trace!("[EventBridge] No broadcast receivers: {}", e);
-        }
-    }
-
-    fn emit_sonos(&self, event: SonosEvent) {
-        // Forward to external emitter if configured
-        if let Some(ref emitter) = *self.external_emitter.read() {
-            emitter.emit_sonos(event.clone());
-        }
-
-        // Emit to WebSocket broadcast channel
-        if let Err(e) = self.tx.send(BroadcastEvent::Sonos(event)) {
-            log::trace!("[EventBridge] No broadcast receivers: {}", e);
-        }
-    }
-
-    fn emit_network(&self, event: NetworkEvent) {
-        // Forward to external emitter if configured
-        if let Some(ref emitter) = *self.external_emitter.read() {
-            emitter.emit_network(event.clone());
-        }
-
-        // Emit to WebSocket broadcast channel
-        if let Err(e) = self.tx.send(BroadcastEvent::Network(event)) {
-            log::trace!("[EventBridge] No broadcast receivers: {}", e);
-        }
-    }
-
-    fn emit_topology(&self, event: TopologyEvent) {
-        // Forward to external emitter if configured
-        if let Some(ref emitter) = *self.external_emitter.read() {
-            emitter.emit_topology(event.clone());
-        }
-
-        // Emit to WebSocket broadcast channel
-        if let Err(e) = self.tx.send(BroadcastEvent::Topology(event)) {
-            log::trace!("[EventBridge] No broadcast receivers: {}", e);
-        }
-    }
-
-    fn emit_latency(&self, event: LatencyEvent) {
-        // Forward to external emitter if configured
-        if let Some(ref emitter) = *self.external_emitter.read() {
-            emitter.emit_latency(event.clone());
-        }
-
-        // Emit to WebSocket broadcast channel
-        if let Err(e) = self.tx.send(BroadcastEvent::Latency(event)) {
-            log::trace!("[EventBridge] No broadcast receivers: {}", e);
-        }
-    }
+    impl_emit!(emit_stream, StreamEvent, Stream);
+    impl_emit!(emit_sonos, SonosEvent, Sonos);
+    impl_emit!(emit_network, NetworkEvent, Network);
+    impl_emit!(emit_topology, TopologyEvent, Topology);
+    impl_emit!(emit_latency, LatencyEvent, Latency);
 }
