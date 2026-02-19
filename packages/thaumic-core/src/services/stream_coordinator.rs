@@ -1267,10 +1267,7 @@ mod tests {
             }
             async fn get_position_info(&self, _: &str) -> SoapResult<PositionInfo> {
                 Ok(PositionInfo {
-                    track: 1,
-                    track_duration: "0:00:00".to_string(),
                     track_uri: String::new(),
-                    rel_time: "0:00:00".to_string(),
                     rel_time_ms: 0,
                 })
             }

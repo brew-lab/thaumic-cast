@@ -191,22 +191,12 @@ pub async fn get_position_info(client: &Client, ip: &str) -> SoapResult<Position
         .await?;
 
     // Extract fields from response
-    let track = extract_xml_text(&response, "Track")
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(0);
-
-    let track_duration = extract_xml_text(&response, "TrackDuration").unwrap_or_default();
     let track_uri = extract_xml_text(&response, "TrackURI").unwrap_or_default();
     let rel_time = extract_xml_text(&response, "RelTime").unwrap_or_else(|| "0:00:00".to_string());
-
-    // Parse RelTime to milliseconds
     let rel_time_ms = PositionInfo::parse_time_to_ms(&rel_time);
 
     Ok(PositionInfo {
-        track,
-        track_duration,
         track_uri,
-        rel_time,
         rel_time_ms,
     })
 }

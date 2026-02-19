@@ -112,19 +112,11 @@ pub struct ZoneGroup {
 #[derive(Debug, Clone, Serialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct PositionInfo {
-    /// Current track number in the queue (1-based, 0 if no track).
-    pub track: u32,
-    /// Duration of the current track in "HH:MM:SS" format.
-    pub track_duration: String,
     /// URI of the currently playing track.
     pub track_uri: String,
-    /// Relative playback position in "HH:MM:SS" format.
-    ///
-    /// This is the elapsed time within the current track.
-    pub rel_time: String,
     /// Relative playback position in milliseconds.
     ///
-    /// Parsed from `rel_time` for easier calculations.
+    /// Parsed from the SOAP `RelTime` field for easier calculations.
     pub rel_time_ms: u64,
 }
 
