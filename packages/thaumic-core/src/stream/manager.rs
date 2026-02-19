@@ -106,6 +106,36 @@ pub struct PlaybackEpoch {
     pub audio_epoch: Instant,
 }
 
+/// Receive jitter statistics, accumulated per reporting window.
+///
+/// Tracks inter-frame arrival timing to detect WebSocket delivery
+/// irregularities from the browser extension.
+#[derive(Clone)]
+pub struct ReceiveStats {
+    /// Number of frames received in this window.
+    pub frames_received: u64,
+    /// Minimum inter-frame gap in milliseconds (u64::MAX if no gaps recorded).
+    pub min_gap_ms: u64,
+    /// Maximum inter-frame gap in milliseconds.
+    pub max_gap_ms: u64,
+    /// Number of gaps exceeding 2× frame_duration_ms.
+    pub gaps_over_threshold: u64,
+    /// When this measurement window started.
+    pub window_start: Instant,
+}
+
+impl ReceiveStats {
+    fn new() -> Self {
+        Self {
+            frames_received: 0,
+            min_gap_ms: u64::MAX,
+            max_gap_ms: 0,
+            gaps_over_threshold: 0,
+            window_start: Instant::now(),
+        }
+    }
+}
+
 /// A frame with its capture timestamp.
 pub struct TimestampedFrame {
     /// When the frame was received from the browser.
@@ -250,6 +280,10 @@ pub struct StreamState {
     /// Frame duration in milliseconds for cadence timing.
     /// Determines silence frame duration and cadence tick interval.
     pub frame_duration_ms: u32,
+    /// Timestamp of last push_frame call (for inter-frame jitter tracking).
+    last_push_at: parking_lot::Mutex<Option<Instant>>,
+    /// Receive jitter stats, reset periodically by the cadence pipeline.
+    receive_stats: parking_lot::Mutex<ReceiveStats>,
 }
 
 impl StreamState {
@@ -295,6 +329,8 @@ impl StreamState {
             timing: StreamTiming::new(),
             streaming_buffer_ms,
             frame_duration_ms,
+            last_push_at: parking_lot::Mutex::new(None),
+            receive_stats: parking_lot::Mutex::new(ReceiveStats::new()),
         }
     }
 
@@ -306,6 +342,21 @@ impl StreamState {
     /// `false` otherwise.
     pub fn push_frame(&self, frame: Bytes) -> bool {
         let captured_at = Instant::now();
+
+        // Track inter-frame arrival jitter
+        {
+            let mut stats = self.receive_stats.lock();
+            stats.frames_received += 1;
+
+            if let Some(prev) = self.last_push_at.lock().replace(captured_at) {
+                let gap_ms = captured_at.duration_since(prev).as_millis() as u64;
+                stats.min_gap_ms = stats.min_gap_ms.min(gap_ms);
+                stats.max_gap_ms = stats.max_gap_ms.max(gap_ms);
+                if gap_ms > (self.frame_duration_ms as u64) * 2 {
+                    stats.gaps_over_threshold += 1;
+                }
+            }
+        }
 
         // Add to recent buffer (ring buffer behavior)
         // Clone the Bytes (cheap - just Arc bump) for buffer storage
@@ -337,6 +388,17 @@ impl StreamState {
         }
 
         is_first_frame
+    }
+
+    /// Snapshots and resets receive jitter stats for the current window.
+    ///
+    /// Called periodically by the cadence pipeline to capture per-interval
+    /// receive statistics without accumulating unbounded state.
+    pub fn snapshot_and_reset_receive_stats(&self) -> ReceiveStats {
+        let mut stats = self.receive_stats.lock();
+        let snapshot = stats.clone();
+        *stats = ReceiveStats::new();
+        snapshot
     }
 
     /// Updates the metadata for the stream.

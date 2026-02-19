@@ -21,7 +21,11 @@ import {
 } from './ring-buffer';
 import { createEncoder, type AudioEncoder } from './encoders';
 import type { AudioCodec, EncoderConfig, WsMessage } from '@thaumic-cast/protocol';
-import type { WorkerInboundMessage, WorkerOutboundMessage } from './worker-messages';
+import type {
+  WorkerInboundMessage,
+  WorkerOutboundMessage,
+  MetricSnapshot,
+} from './worker-messages';
 import {
   WsMessageSchema,
   getStreamingPolicy,
@@ -168,6 +172,22 @@ let totalSamplesRead = 0;
 let lastStatsTime = 0;
 /** Last reported value of CTRL_DROPPED_SAMPLES for computing delta. */
 let lastProducerDroppedSamples = 0;
+
+// ─── Pipeline Metrics Timeline ──────────────────────────────────────────────
+/** Maximum metric snapshots to keep (300 entries × 2s = 10 minutes). */
+const MAX_TIMELINE_ENTRIES = 300;
+/** Timestamped snapshots for post-session analysis. */
+let metricTimeline: MetricSnapshot[] = [];
+/** performance.now() at stream start, for elapsed calculation. */
+let streamStartTime = 0;
+/** Frames encoded this stats interval (for MetricSnapshot). */
+let framesEncodedThisInterval = 0;
+/** Frames sent over WebSocket this stats interval (for MetricSnapshot). */
+let framesSentThisInterval = 0;
+/** Cumulative encode() time this stats interval in ms. */
+let encodeTotalMs = 0;
+/** Number of encode() calls this stats interval. */
+let encodeCallCount = 0;
 
 // Bounded latency catch-up tracking
 /** Samples dropped by consumer catch-up logic this stats interval. */
@@ -391,6 +411,7 @@ function flushFrameQueue(): number {
 
     const frame = frameQueue[sentCount]!;
     socket.send(frame);
+    framesSentThisInterval++;
     sentBytes += frame.byteLength;
     sentCount++;
   }
@@ -602,6 +623,7 @@ function handleUnderflowRamp(): void {
   const encoded = encoder.encode(frameBuffer);
   if (encoded) {
     socket.send(encoded);
+    framesSentThisInterval++;
   }
 
   // Reset for next frame
@@ -650,8 +672,12 @@ function flushFrameIfReady(): void {
     log.debug('Applied fade-in ramp after discontinuity');
   }
 
-  // Encode the frame
+  // Encode the frame (timed for instrumentation)
+  const t0 = performance.now();
   const encoded = encoder.encode(frameBuffer);
+  encodeTotalMs += performance.now() - t0;
+  encodeCallCount++;
+  framesEncodedThisInterval++;
 
   // Reset frame buffer for next accumulation
   frameOffset = 0;
@@ -674,6 +700,7 @@ function flushFrameIfReady(): void {
 
   // No backpressure: send directly
   socket.send(encoded);
+  framesSentThisInterval++;
 }
 
 /**
@@ -692,6 +719,11 @@ function maybePostStats(): void {
 
   const avgSamplesPerWake = wakeupCount > 0 ? totalSamplesRead / wakeupCount : 0;
 
+  // Compute ring buffer fill for snapshot
+  const write = Atomics.load(control, CTRL_WRITE_IDX);
+  const read = Atomics.load(control, CTRL_READ_IDX);
+  const ringFillFraction = bufferSize > 0 ? ((write - read) >>> 0) / bufferSize : 0;
+
   postToMain({
     type: 'STATS',
     underflows: underflowCount,
@@ -708,6 +740,22 @@ function maybePostStats(): void {
     frameQueueOverflowDrops,
   });
 
+  // Push pipeline metric snapshot (before resetting counters)
+  metricTimeline.push({
+    elapsedMs: now - streamStartTime,
+    ringFillFraction,
+    overflowSamples: producerDroppedSamples,
+    underflowCount,
+    framesEncoded: framesEncodedThisInterval,
+    avgEncodeMs: encodeCallCount > 0 ? encodeTotalMs / encodeCallCount : 0,
+    encodeQueueSize: encoder?.encodeQueueSize ?? 0,
+    framesSent: framesSentThisInterval,
+    wsPressurePct: socket && policy ? (socket.bufferedAmount / policy.wsBufferHighWater) * 100 : 0,
+    droppedFrames: droppedFrameCount,
+    frameQueueBytes,
+  });
+  if (metricTimeline.length > MAX_TIMELINE_ENTRIES) metricTimeline.shift();
+
   // Reset interval counters
   underflowCount = 0;
   droppedFrameCount = 0;
@@ -716,6 +764,10 @@ function maybePostStats(): void {
   frameQueueOverflowDrops = 0;
   wakeupCount = 0;
   totalSamplesRead = 0;
+  framesEncodedThisInterval = 0;
+  framesSentThisInterval = 0;
+  encodeTotalMs = 0;
+  encodeCallCount = 0;
   lastStatsTime = now;
 }
 
@@ -1228,6 +1280,11 @@ function cleanup(): void {
 
   flushRemaining();
 
+  // Dump pipeline metrics timeline to main thread for structured logging
+  if (metricTimeline.length > 0) {
+    postToMain({ type: 'METRICS_DUMP', timeline: metricTimeline });
+  }
+
   stopHeartbeat();
 
   if (encoder) {
@@ -1333,6 +1390,14 @@ self.onmessage = async (event: MessageEvent<WorkerInboundMessage>) => {
       wakeupCount = 0;
       totalSamplesRead = 0;
       lastProducerDroppedSamples = 0;
+
+      // Reset metrics timeline
+      metricTimeline = [];
+      streamStartTime = performance.now();
+      framesEncodedThisInterval = 0;
+      framesSentThisInterval = 0;
+      encodeTotalMs = 0;
+      encodeCallCount = 0;
 
       resetFrameQueueState();
 
