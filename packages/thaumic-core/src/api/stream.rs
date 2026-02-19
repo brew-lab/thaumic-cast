@@ -30,7 +30,7 @@ use crate::protocol_constants::{
     APP_NAME, ICY_METAINT, MAX_CADENCE_QUEUE_SIZE, WAV_STREAM_SIZE_MAX,
 };
 use crate::stream::{
-    create_wav_header, create_wav_stream_with_cadence, lagged_error, AudioCodec,
+    create_wav_header, create_wav_stream_with_cadence, lagged_error, AudioCodec, CadenceConfig,
     IcyMetadataInjector, LoggingStreamGuard,
 };
 
@@ -149,12 +149,14 @@ pub(super) async fn stream_audio(
 
         Box::pin(create_wav_stream_with_cadence(
             rx,
-            silence_frame,
             Arc::clone(&guard),
-            queue_size,
-            frame_duration_ms,
-            stream_state.audio_format,
-            prefill_frames,
+            CadenceConfig {
+                silence_frame,
+                queue_size,
+                frame_duration_ms,
+                audio_format: stream_state.audio_format,
+                prefill_frames,
+            },
             Some((
                 Arc::clone(&stream_state),
                 epoch_candidate,

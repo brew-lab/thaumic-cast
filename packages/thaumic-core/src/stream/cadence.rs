@@ -284,6 +284,20 @@ impl CrossfadeState {
     }
 }
 
+/// Configuration for the cadence streaming pipeline.
+pub struct CadenceConfig {
+    /// Silence frame emitted when no audio is queued.
+    pub silence_frame: Bytes,
+    /// Maximum number of frames to buffer.
+    pub queue_size: usize,
+    /// Duration of each output frame in milliseconds.
+    pub frame_duration_ms: u32,
+    /// Audio format (sample rate, channels, bit depth).
+    pub audio_format: AudioFormat,
+    /// Initial frames pre-populated in the queue to eliminate handoff gap.
+    pub prefill_frames: Vec<Bytes>,
+}
+
 /// Creates a WAV audio stream with fixed-cadence output and crossfade on silence transitions.
 ///
 /// Maintains real-time cadence regardless of input timing:
@@ -305,15 +319,18 @@ impl CrossfadeState {
 /// eliminating pops from abrupt audio/silence boundaries.
 pub fn create_wav_stream_with_cadence(
     mut rx: broadcast::Receiver<Bytes>,
-    silence_frame: Bytes,
     guard: Arc<LoggingStreamGuard>,
-    queue_size: usize,
-    frame_duration_ms: u32,
-    audio_format: AudioFormat,
-    prefill_frames: Vec<Bytes>,
+    config: CadenceConfig,
     epoch_hook: Option<(Arc<StreamState>, Option<Instant>, Instant, IpAddr)>,
 ) -> impl Stream<Item = Result<Bytes, std::io::Error>> {
     stream! {
+        let CadenceConfig {
+            silence_frame,
+            queue_size,
+            frame_duration_ms,
+            audio_format,
+            prefill_frames,
+        } = config;
         let cadence_duration = Duration::from_millis(frame_duration_ms as u64);
 
         // Pre-populate queue with prefill frames to eliminate handoff gap.
@@ -495,6 +512,17 @@ mod tests {
         ))
     }
 
+    /// Creates a default CadenceConfig for tests.
+    fn test_config() -> CadenceConfig {
+        CadenceConfig {
+            silence_frame: test_silence_frame(),
+            queue_size: TEST_QUEUE_SIZE,
+            frame_duration_ms: SILENCE_FRAME_DURATION_MS,
+            audio_format: test_audio_format(),
+            prefill_frames: vec![],
+        }
+    }
+
     /// Creates a test audio format for cadence stream tests.
     fn test_audio_format() -> AudioFormat {
         AudioFormat::new(48000, 2, 16)
@@ -543,18 +571,13 @@ mod tests {
     #[tokio::test(start_paused = true)]
     async fn emits_frames_at_cadence() {
         let (tx, rx) = broadcast::channel::<Bytes>(16);
-        let silence = test_silence_frame();
         let audio = test_audio_frame();
         let guard = test_guard();
 
         let mut stream = Box::pin(create_wav_stream_with_cadence(
             rx,
-            silence.clone(),
             guard,
-            TEST_QUEUE_SIZE,
-            SILENCE_FRAME_DURATION_MS,
-            test_audio_format(),
-            vec![],
+            test_config(),
             None,
         ));
 
@@ -593,17 +616,12 @@ mod tests {
     #[tokio::test(start_paused = true)]
     async fn fills_gaps_with_silence() {
         let (tx, rx) = broadcast::channel::<Bytes>(16);
-        let silence = test_silence_frame();
         let guard = test_guard();
 
         let mut stream = Box::pin(create_wav_stream_with_cadence(
             rx,
-            silence.clone(),
             guard,
-            TEST_QUEUE_SIZE,
-            SILENCE_FRAME_DURATION_MS,
-            test_audio_format(),
-            vec![],
+            test_config(),
             None,
         ));
 
@@ -642,17 +660,12 @@ mod tests {
     #[tokio::test(start_paused = true)]
     async fn queue_drains_at_cadence() {
         let (tx, rx) = broadcast::channel::<Bytes>(16);
-        let silence = test_silence_frame();
         let guard = test_guard();
 
         let mut stream = Box::pin(create_wav_stream_with_cadence(
             rx,
-            silence.clone(),
             guard,
-            TEST_QUEUE_SIZE,
-            SILENCE_FRAME_DURATION_MS,
-            test_audio_format(),
-            vec![],
+            test_config(),
             None,
         ));
 
@@ -698,18 +711,13 @@ mod tests {
     #[tokio::test(start_paused = true)]
     async fn drops_oldest_on_overflow() {
         let (tx, rx) = broadcast::channel::<Bytes>(32);
-        let silence = test_silence_frame();
         let guard = test_guard();
         let guard_for_check = Arc::clone(&guard);
 
         let mut stream = Box::pin(create_wav_stream_with_cadence(
             rx,
-            silence.clone(),
             guard,
-            TEST_QUEUE_SIZE,
-            SILENCE_FRAME_DURATION_MS,
-            test_audio_format(),
-            vec![],
+            test_config(),
             None,
         ));
 
@@ -748,18 +756,13 @@ mod tests {
     #[tokio::test(start_paused = true)]
     async fn tracks_dropped_frames() {
         let (tx, rx) = broadcast::channel::<Bytes>(32);
-        let silence = test_silence_frame();
         let guard = test_guard();
         let guard_for_check = Arc::clone(&guard);
 
         let mut stream = Box::pin(create_wav_stream_with_cadence(
             rx,
-            silence.clone(),
             guard,
-            TEST_QUEUE_SIZE,
-            SILENCE_FRAME_DURATION_MS,
-            test_audio_format(),
-            vec![],
+            test_config(),
             None,
         ));
 
@@ -799,17 +802,12 @@ mod tests {
     #[tokio::test(start_paused = true)]
     async fn drains_queue_on_channel_close() {
         let (tx, rx) = broadcast::channel::<Bytes>(16);
-        let silence = test_silence_frame();
         let guard = test_guard();
 
         let mut stream = Box::pin(create_wav_stream_with_cadence(
             rx,
-            silence.clone(),
             guard,
-            TEST_QUEUE_SIZE,
-            SILENCE_FRAME_DURATION_MS,
-            test_audio_format(),
-            vec![],
+            test_config(),
             None,
         ));
 
@@ -862,18 +860,13 @@ mod tests {
     #[tokio::test(start_paused = true)]
     async fn exits_silence_when_frames_arrive() {
         let (tx, rx) = broadcast::channel::<Bytes>(16);
-        let silence = test_silence_frame();
         let audio = test_audio_frame();
         let guard = test_guard();
 
         let mut stream = Box::pin(create_wav_stream_with_cadence(
             rx,
-            silence.clone(),
             guard,
-            TEST_QUEUE_SIZE,
-            SILENCE_FRAME_DURATION_MS,
-            test_audio_format(),
-            vec![],
+            test_config(),
             None,
         ));
 
