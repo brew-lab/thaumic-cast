@@ -156,6 +156,29 @@ impl StreamCoordinator {
         self.sessions.is_in_sync_session(speaker_ip)
     }
 
+    /// Sends a Play command if the speaker isn't already in the Playing state.
+    ///
+    /// Returns `Ok(true)` if Play was sent, `Ok(false)` if already playing.
+    async fn ensure_playing(&self, speaker_ip: &str) -> crate::error::SoapResult<bool> {
+        let transport_state = self
+            .sonos_state
+            .transport_states
+            .get(speaker_ip)
+            .map(|s| *s);
+
+        if transport_state == Some(TransportState::Playing) {
+            return Ok(false);
+        }
+
+        log::info!(
+            "Speaker {} transport_state={:?}, sending Play command",
+            speaker_ip,
+            transport_state
+        );
+        self.sonos.play(speaker_ip).await?;
+        Ok(true)
+    }
+
     // ─────────────────────────────────────────────────────────────────────────────
     // Volume/Mute Routing (delegated to VolumeRouter)
     // ─────────────────────────────────────────────────────────────────────────────
@@ -656,43 +679,14 @@ impl StreamCoordinator {
                 // Coordinator session exists - check if Sonos is paused and needs a Play command.
                 // This enables bi-directional control: user can resume from extension
                 // after pausing from Sonos app.
-
-                // Note: transport_states are keyed by speaker IP, not UUID.
-                let transport_state = self
-                    .sonos_state
-                    .transport_states
-                    .get(speaker_ip)
-                    .map(|s| *s);
-
-                // Send Play unless speaker is definitively already playing.
-                // Use != Playing (not == Paused) to handle cache misses safely:
-                // - If state is None: Play is safe, avoids stuck silence
-                // - If state is Paused: Play is needed
-                // - If state is Playing: skip to avoid duplicate command
-                let already_playing = transport_state == Some(TransportState::Playing);
-
-                if !already_playing {
-                    log::info!(
-                        "Speaker {} transport_state={:?}, sending Play command to resume stream {}",
-                        speaker_ip,
-                        transport_state,
-                        stream_id
-                    );
-                    if let Err(e) = self.sonos.play(speaker_ip).await {
-                        log::warn!("Failed to resume playback on {}: {}", speaker_ip, e);
-                        return PlaybackResult {
-                            speaker_ip: speaker_ip.to_string(),
-                            success: false,
-                            stream_url: None,
-                            error: Some(format!("Failed to resume: {}", e)),
-                        };
-                    }
-                } else {
-                    log::debug!(
-                        "Speaker {} already playing stream {}, skipping Play",
-                        speaker_ip,
-                        stream_id
-                    );
+                if let Err(e) = self.ensure_playing(speaker_ip).await {
+                    log::warn!("Failed to resume playback on {}: {}", speaker_ip, e);
+                    return PlaybackResult {
+                        speaker_ip: speaker_ip.to_string(),
+                        success: false,
+                        stream_url: None,
+                        error: Some(format!("Failed to resume: {}", e)),
+                    };
                 }
 
                 return PlaybackResult {
@@ -1048,43 +1042,16 @@ impl StreamCoordinator {
     /// # Returns
     /// `true` if a Play command was sent, `false` otherwise.
     pub async fn on_http_resume(&self, speaker_ip: &str) -> bool {
-        // Send Play unless speaker is definitively already playing.
-        // This handles Sonos-app resume where Sonos connects before transitioning to PLAYING.
-        //
-        // We use != Playing rather than == Paused because:
-        // - If state is None (cache miss, service restart): Play is safe, avoids stuck silence
-        // - If state is Paused: Play is needed
-        // - If state is Stopped/Transitioning: Play is safe
-        // - If state is Playing: skip to avoid duplicate command
-        //
-        // Sending Play to an already-playing speaker is harmless (Sonos no-ops it),
-        // but NOT sending Play to a paused speaker causes stuck silence.
-        let transport_state = self
-            .sonos_state
-            .transport_states
-            .get(speaker_ip)
-            .map(|s| *s);
-
-        if transport_state != Some(TransportState::Playing) {
-            log::info!(
-                "[Resume] Speaker {} transport_state={:?} on HTTP resume, sending Play command",
-                speaker_ip,
-                transport_state
-            );
-            if let Err(e) = self.sonos.play(speaker_ip).await {
+        match self.ensure_playing(speaker_ip).await {
+            Ok(sent_play) => sent_play,
+            Err(e) => {
                 log::warn!(
                     "[Resume] Play command on HTTP resume failed for {}: {}",
                     speaker_ip,
                     e
                 );
+                true // Play was attempted even though it failed
             }
-            true
-        } else {
-            log::debug!(
-                "[Resume] Speaker {} already playing on HTTP resume, skipping Play",
-                speaker_ip
-            );
-            false
         }
     }
 }
