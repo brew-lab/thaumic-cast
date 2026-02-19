@@ -153,175 +153,37 @@ fn extract_fault_string(xml: &str) -> Option<String> {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// SOAP Request Builder
+// Service-aware SOAP Request
 // ─────────────────────────────────────────────────────────────────────────────
 
 use super::services::SonosService;
 
-/// Builder for constructing and sending SOAP requests to Sonos speakers.
+/// Sends a SOAP request using a `SonosService` for endpoint/URN resolution.
 ///
-/// Provides a fluent API that reduces boilerplate when making SOAP calls.
+/// This is the primary entry point for all Sonos SOAP calls. It resolves the
+/// service's control path and URN automatically, then delegates to the
+/// low-level `send_soap_request`.
 ///
-/// # Example
-/// ```ignore
-/// let response = SoapRequestBuilder::new(&client, "192.168.1.100")
-///     .service(SonosService::AVTransport)
-///     .action("Play")
-///     .arg("InstanceID", "0")
-///     .arg("Speed", "1")
-///     .send()
-///     .await?;
-/// ```
-pub struct SoapRequestBuilder<'a> {
-    client: &'a Client,
-    ip: &'a str,
-    service: Option<SonosService>,
-    action: Option<&'a str>,
-    args: Vec<(&'a str, String)>,
-}
-
-impl<'a> SoapRequestBuilder<'a> {
-    /// Creates a new SOAP request builder.
-    ///
-    /// # Arguments
-    /// * `client` - The HTTP client to use for the request
-    /// * `ip` - IP address of the Sonos speaker
-    #[must_use]
-    pub fn new(client: &'a Client, ip: &'a str) -> Self {
-        Self {
-            client,
-            ip,
-            service: None,
-            action: None,
-            args: Vec::new(),
-        }
-    }
-
-    /// Sets the Sonos service for this request.
-    #[must_use]
-    pub fn service(mut self, service: SonosService) -> Self {
-        self.service = Some(service);
-        self
-    }
-
-    /// Sets the SOAP action name.
-    #[must_use]
-    pub fn action(mut self, action: &'a str) -> Self {
-        self.action = Some(action);
-        self
-    }
-
-    /// Adds an argument to the SOAP request.
-    ///
-    /// Arguments are included in the SOAP body in the order they are added.
-    #[must_use]
-    pub fn arg(mut self, key: &'a str, value: impl Into<String>) -> Self {
-        self.args.push((key, value.into()));
-        self
-    }
-
-    /// Adds the standard InstanceID="0" argument used by most Sonos actions.
-    #[must_use]
-    pub fn instance_id(self) -> Self {
-        self.arg("InstanceID", "0")
-    }
-
-    /// Sends the SOAP request and returns the response body.
-    ///
-    /// # Errors
-    /// Returns `SoapError` if the service or action is not set, or if the
-    /// request fails.
-    pub async fn send(self) -> SoapResult<String> {
-        let service = self
-            .service
-            .ok_or_else(|| SoapError::Fault("SoapRequestBuilder: service not set".into()))?;
-        let action = self
-            .action
-            .ok_or_else(|| SoapError::Fault("SoapRequestBuilder: action not set".into()))?;
-
-        // Convert to slice of (&str, &str) - preserves insertion order
-        let args: Vec<(&str, &str)> = self.args.iter().map(|(k, v)| (*k, v.as_str())).collect();
-
-        send_soap_request(
-            self.client,
-            self.ip,
-            service.control_path(),
-            service.urn(),
-            action,
-            &args,
-        )
-        .await
-    }
-
-    /// Returns the request parts without sending (for testing).
-    ///
-    /// # Returns
-    /// Tuple of (service, action, args) if both service and action are set.
-    #[cfg(test)]
-    pub fn into_parts(self) -> Option<(SonosService, &'a str, Vec<(&'a str, String)>)> {
-        let service = self.service?;
-        let action = self.action?;
-        Some((service, action, self.args))
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn test_client() -> Client {
-        Client::new()
-    }
-
-    #[test]
-    fn builder_captures_service_and_action() {
-        let client = test_client();
-        let parts = SoapRequestBuilder::new(&client, "192.168.1.100")
-            .service(SonosService::RenderingControl)
-            .action("GetVolume")
-            .into_parts();
-
-        let (service, action, args) = parts.expect("should have parts");
-        assert_eq!(service, SonosService::RenderingControl);
-        assert_eq!(action, "GetVolume");
-        assert!(args.is_empty());
-    }
-
-    #[test]
-    fn builder_captures_args_in_order() {
-        let client = test_client();
-        let parts = SoapRequestBuilder::new(&client, "192.168.1.100")
-            .service(SonosService::RenderingControl)
-            .action("SetVolume")
-            .instance_id()
-            .arg("Channel", "Master")
-            .arg("DesiredVolume", "75")
-            .into_parts();
-
-        let (_, _, args) = parts.expect("should have parts");
-        assert_eq!(args.len(), 3);
-        assert_eq!(args[0], ("InstanceID", "0".to_string()));
-        assert_eq!(args[1], ("Channel", "Master".to_string()));
-        assert_eq!(args[2], ("DesiredVolume", "75".to_string()));
-    }
-
-    #[test]
-    fn into_parts_returns_none_without_service() {
-        let client = test_client();
-        let parts = SoapRequestBuilder::new(&client, "192.168.1.100")
-            .action("GetVolume")
-            .into_parts();
-
-        assert!(parts.is_none());
-    }
-
-    #[test]
-    fn into_parts_returns_none_without_action() {
-        let client = test_client();
-        let parts = SoapRequestBuilder::new(&client, "192.168.1.100")
-            .service(SonosService::RenderingControl)
-            .into_parts();
-
-        assert!(parts.is_none());
-    }
+/// # Arguments
+/// * `client` - The HTTP client to use for the request
+/// * `ip` - IP address of the Sonos speaker
+/// * `service` - The Sonos service to target
+/// * `action` - The SOAP action name (e.g., "Play", "Stop", "GetVolume")
+/// * `args` - Key-value pairs for action arguments (order is preserved)
+pub async fn soap_request(
+    client: &Client,
+    ip: &str,
+    service: SonosService,
+    action: &str,
+    args: &[(&str, &str)],
+) -> SoapResult<String> {
+    send_soap_request(
+        client,
+        ip,
+        service.control_path(),
+        service.urn(),
+        action,
+        args,
+    )
+    .await
 }

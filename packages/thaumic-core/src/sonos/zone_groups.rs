@@ -9,7 +9,7 @@ use reqwest::Client;
 
 use crate::error::SoapResult;
 use crate::sonos::services::SonosService;
-use crate::sonos::soap::SoapRequestBuilder;
+use crate::sonos::soap::soap_request;
 use crate::sonos::types::{ZoneGroup, ZoneGroupMember};
 use crate::sonos::utils::{
     extract_ip_from_location, extract_model_from_icon, extract_xml_text, get_channel_role,
@@ -182,11 +182,14 @@ pub fn parse_zone_group_xml(xml: &str) -> Vec<ZoneGroup> {
 /// # Returns
 /// A vector of `ZoneGroup` representing the current topology
 pub async fn get_zone_groups(client: &Client, ip: &str) -> SoapResult<Vec<ZoneGroup>> {
-    let response = SoapRequestBuilder::new(client, ip)
-        .service(SonosService::ZoneGroupTopology)
-        .action("GetZoneGroupState")
-        .send()
-        .await?;
+    let response = soap_request(
+        client,
+        ip,
+        SonosService::ZoneGroupTopology,
+        "GetZoneGroupState",
+        &[],
+    )
+    .await?;
 
     // Extract and decode ZoneGroupState from SOAP response
     let Some(decoded_xml) = extract_xml_text(&response, "ZoneGroupState") else {
