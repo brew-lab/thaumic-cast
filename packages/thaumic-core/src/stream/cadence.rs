@@ -121,8 +121,10 @@ pub struct LoggingStreamGuard {
     pub(crate) bytes_sent: AtomicU64,
     /// Per-interval max delivery gap in ms (swapped to 0 on each snapshot).
     interval_max_gap_ms: AtomicU64,
-    /// Pipeline timeline, set once when the cadence stream ends.
-    pipeline_timeline: OnceLock<VecDeque<PipelineSnapshot>>,
+    /// Pipeline timeline, updated periodically by the cadence stream.
+    /// Uses Mutex (not OnceLock) because the cadence stream may be dropped
+    /// mid-loop when Sonos closes HTTP, before it can write a final value.
+    pipeline_timeline: parking_lot::Mutex<VecDeque<PipelineSnapshot>>,
 }
 
 impl LoggingStreamGuard {
@@ -145,7 +147,7 @@ impl LoggingStreamGuard {
             cadence_stats: OnceLock::new(),
             bytes_sent: AtomicU64::new(0),
             interval_max_gap_ms: AtomicU64::new(0),
-            pipeline_timeline: OnceLock::new(),
+            pipeline_timeline: parking_lot::Mutex::new(VecDeque::new()),
         }
     }
 
@@ -191,9 +193,13 @@ impl LoggingStreamGuard {
         let _ = self.cadence_stats.set(stats);
     }
 
-    /// Stores the pipeline health timeline. Called once when the cadence stream ends.
-    fn set_pipeline_timeline(&self, timeline: VecDeque<PipelineSnapshot>) {
-        let _ = self.pipeline_timeline.set(timeline);
+    /// Appends a snapshot to the pipeline timeline (called every ~1s from cadence stream).
+    fn push_pipeline_snapshot(&self, snapshot: PipelineSnapshot) {
+        let mut timeline = self.pipeline_timeline.lock();
+        timeline.push_back(snapshot);
+        if timeline.len() > MAX_PIPELINE_SNAPSHOTS {
+            timeline.pop_front();
+        }
     }
 }
 
@@ -237,12 +243,13 @@ impl Drop for LoggingStreamGuard {
             .map(|s| format!(", frames_dropped={}", s.frames_dropped))
             .unwrap_or_default();
 
-        let timeline_json = self
-            .pipeline_timeline
-            .get()
-            .filter(|t| !t.is_empty())
-            .map(|t| serde_json::to_string(t).unwrap_or_default())
-            .unwrap_or_default();
+        let timeline = self.pipeline_timeline.lock();
+        let timeline_json = if timeline.is_empty() {
+            String::new()
+        } else {
+            serde_json::to_string(&*timeline).unwrap_or_default()
+        };
+        drop(timeline);
         let timeline_info = if timeline_json.is_empty() {
             String::new()
         } else {
@@ -435,7 +442,6 @@ pub fn create_wav_stream_with_cadence(
 
         // Pipeline snapshot state
         let mut tick_count: u64 = 0;
-        let mut pipeline_snapshots: VecDeque<PipelineSnapshot> = VecDeque::new();
         let mut prev_delivery_frames: u64 = 0;
         let mut prev_delivery_bytes: u64 = 0;
         let mut prev_delivery_gaps: u64 = 0;
@@ -572,15 +578,12 @@ pub fn create_wav_stream_with_cadence(
                         prev_delivery_gaps = cur_gaps;
                         prev_snapshot_ms = elapsed_ms;
 
-                        pipeline_snapshots.push_back(PipelineSnapshot {
+                        guard.push_pipeline_snapshot(PipelineSnapshot {
                             elapsed_ms,
                             receive,
                             cadence: cadence_window,
                             delivery,
                         });
-                        if pipeline_snapshots.len() > MAX_PIPELINE_SNAPSHOTS {
-                            pipeline_snapshots.pop_front();
-                        }
                     }
                 }
 
@@ -613,7 +616,6 @@ pub fn create_wav_stream_with_cadence(
             silence_frames,
             frames_dropped,
         });
-        guard.set_pipeline_timeline(pipeline_snapshots);
     }
 }
 

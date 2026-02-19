@@ -113,6 +113,9 @@ export class StreamSession {
   /** Last time we logged diagnostics (for rate-limiting when healthy). */
   private lastDiagLogTime = 0;
 
+  /** Pending worker terminate timer (deferred to allow METRICS_DUMP delivery). */
+  private workerTerminateTimer: ReturnType<typeof setTimeout> | null = null;
+
   /** Callback when worker disconnects (for cleanup coordination). */
   private onDisconnected?: () => void;
 
@@ -444,6 +447,7 @@ export class StreamSession {
 
         case 'METRICS_DUMP':
           log.info('Pipeline metrics timeline', { timeline: JSON.stringify(msg.timeline) });
+          this.terminateWorkerNow();
           break;
 
         case 'STATS': {
@@ -534,8 +538,10 @@ export class StreamSession {
 
     if (this.consumerWorker) {
       this.consumerWorker.postMessage({ type: 'STOP' });
-      this.consumerWorker.terminate();
-      this.consumerWorker = null;
+      // Defer terminate to allow the worker to post METRICS_DUMP back.
+      // The METRICS_DUMP handler calls terminateWorkerNow(); this timer
+      // is a fallback in case the worker never responds.
+      this.workerTerminateTimer = setTimeout(() => this.terminateWorkerNow(), 500);
     }
 
     // Remove event listeners before disconnecting
@@ -555,6 +561,21 @@ export class StreamSession {
     this.outputGainNode?.disconnect();
     this.audioContext?.close().catch(noop);
     this.mediaStream.getTracks().forEach((t) => t.stop());
+  }
+
+  /**
+   * Terminates the worker immediately and clears the deferred-terminate timer.
+   * Called by the METRICS_DUMP handler (happy path) or the fallback timeout.
+   */
+  private terminateWorkerNow(): void {
+    if (this.workerTerminateTimer) {
+      clearTimeout(this.workerTerminateTimer);
+      this.workerTerminateTimer = null;
+    }
+    if (this.consumerWorker) {
+      this.consumerWorker.terminate();
+      this.consumerWorker = null;
+    }
   }
 
   /**
