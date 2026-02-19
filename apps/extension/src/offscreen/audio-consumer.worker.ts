@@ -97,14 +97,6 @@ function frameSizeToMs(frameSizeSamples: number, sampleRate: number): number {
 // Constants
 // ─────────────────────────────────────────────────────────────────────────────
 
-/**
- * Time budget for processing frames per wake cycle (ms).
- * Stay under typical browser timer quantum (~4ms) to avoid timer coalescing issues.
- * Per web.dev/articles/audio-scheduling: setTimeout can be skewed by 10ms+ from
- * layout, rendering, and GC, so we busy-poll within budget instead.
- */
-const PROCESS_BUDGET_MS = 4;
-
 /** Initial backpressure backoff delay (ms). */
 const BACKPRESSURE_BACKOFF_INITIAL_MS = 5;
 
@@ -692,8 +684,11 @@ function flushFrameIfReady(): void {
       // Realtime mode: drop the encoded frame
       droppedFrameCount++;
     } else {
-      // Quality mode: queue the frame instead of blocking ring buffer drain
-      enqueueFrame(encoded);
+      // Quality mode: queue the frame instead of blocking ring buffer drain.
+      // Defensive copy required: PcmEncoder reuses its internal buffer across
+      // encode() calls, so the returned Uint8Array would be overwritten by the
+      // next encode. The copy ensures queued frames retain their data.
+      enqueueFrame(new Uint8Array(encoded));
     }
     return;
   }
@@ -1056,8 +1051,16 @@ function yieldMacrotask(ms: number): Promise<void> {
 }
 
 /**
- * Drains frames from the ring buffer within a time budget.
- * Uses busy-polling to avoid timer coalescing issues with setTimeout.
+ * Drains all available frames from the ring buffer in a single burst.
+ *
+ * Processes every sample the producer has written without imposing a time budget.
+ * This maximizes work done per scheduling slot, which is critical on
+ * background-throttled contexts where Chrome may delay rescheduling by
+ * 100-280ms after each yield point.
+ *
+ * The loop breaks only when:
+ * - The ring buffer is empty (readFromRingBuffer returns 0)
+ * - Backpressure is detected (encoder or WebSocket, mode-dependent)
  *
  * Backpressure handling differs by mode:
  * - Quality mode: only check encoder backpressure (WebSocket handled by frame queue)
@@ -1065,11 +1068,10 @@ function yieldMacrotask(ms: number): Promise<void> {
  *
  * @returns Number of complete frames drained
  */
-function drainWithTimeBudget(): number {
+function drainAvailable(): number {
   let framesProcessed = 0;
-  const budgetStart = performance.now();
 
-  while (performance.now() - budgetStart < PROCESS_BUDGET_MS) {
+  while (true) {
     // Check backpressure before processing each frame
     // Quality mode: only block on encoder (WebSocket handled by frame queue)
     // Realtime mode: block on both encoder and WebSocket
@@ -1102,9 +1104,12 @@ function drainWithTimeBudget(): number {
 /**
  * Main consumption loop with time-based pacing and backpressure-aware flow control.
  *
- * Uses performance.now() for rate control to pace frame production at ~20ms intervals,
- * preventing burst processing and smoothing encoder/network load. Avoids setTimeout
- * timer coalescing issues by busy-polling within a ~4ms time budget per wake cycle.
+ * Uses performance.now() for rate control to pace frame production at codec-native
+ * intervals, preventing burst processing and smoothing encoder/network load.
+ *
+ * Each scheduling slot drains ALL available data from the ring buffer in a single
+ * burst via drainAvailable(), maximizing throughput when Chrome background-throttles
+ * the worker (scheduling gaps of 100-280ms on low-end devices).
  *
  * Flow control varies by streaming policy:
  * - Quality mode: pause encoding on backpressure (no drops), resume with hysteresis
@@ -1112,12 +1117,13 @@ function drainWithTimeBudget(): number {
  *
  * Common flow:
  * - If ahead of schedule: yield until next frame is due
- * - If data available: drain within time budget, update frame timing, yield thread
+ * - If data available: drain all available frames, update frame timing, yield thread
  * - If buffer empty: wait on write index via Atomics.waitAsync
  *
  * Drift handling:
  * - Allows burst catch-up of ~6 frames when recovering from stalls
- * - Clamps drift to prevent unbounded catch-up after long pauses
+ * - Backward clamp prevents unbounded catch-up after long pauses
+ * - Forward clamp prevents false-ahead pacing after draining a large backlog
  */
 async function consumeLoop(): Promise<void> {
   if (!control) return;
@@ -1184,8 +1190,8 @@ async function consumeLoop(): Promise<void> {
       }
     }
 
-    // Drain frames within time budget, checking backpressure between frames
-    const framesThisWake = drainWithTimeBudget();
+    // Drain all available frames, checking backpressure between frames
+    const framesThisWake = drainAvailable();
 
     if (framesThisWake > 0) {
       wakeupCount++;
@@ -1203,6 +1209,15 @@ async function consumeLoop(): Promise<void> {
       if (nextFrameDueTime < nowAfterDrain - maxDriftMs) {
         nextFrameDueTime = nowAfterDrain - maxDriftMs;
       }
+
+      // Clamp: don't let due time jump more than one frame period ahead of wall clock
+      // After draining a large backlog (e.g., 20 frames of 10ms = 200ms of audio time
+      // processed in ~6ms of wall time), nextFrameDueTime would be ~194ms ahead.
+      // Without this clamp, the pacing logic above would yield for that entire duration,
+      // defeating the purpose of burst processing in throttled scheduling contexts.
+      if (nextFrameDueTime > nowAfterDrain + framePeriodMs) {
+        nextFrameDueTime = nowAfterDrain + framePeriodMs;
+      }
     }
 
     maybePostStats();
@@ -1213,8 +1228,8 @@ async function consumeLoop(): Promise<void> {
     const available = (write - read) >>> 0;
 
     if (available > 0) {
-      // Data available but we've exhausted our time budget
-      // Just yield the thread (setTimeout(0)), time-based pacing handles the wait
+      // Data still available (backpressure limited the drain)
+      // Just yield the thread briefly, time-based pacing handles the wait
       await yieldMacrotask(0);
       continue;
     }
