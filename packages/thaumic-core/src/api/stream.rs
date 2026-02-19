@@ -8,7 +8,7 @@
 //! runs on the dedicated `StreamingRuntime` high-priority threads — inherited
 //! via `streaming_runtime.spawn()` in the Tauri API layer.
 
-use std::net::{IpAddr, SocketAddr};
+use std::net::SocketAddr;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -31,14 +31,11 @@ use crate::protocol_constants::{
 };
 use crate::stream::{
     create_wav_header, create_wav_stream_with_cadence, lagged_error, AudioCodec,
-    IcyMetadataInjector, LoggingStreamGuard, StreamState, TaggedFrame,
+    IcyMetadataInjector, LoggingStreamGuard,
 };
 
-/// Boxed stream type for audio data with ICY metadata support.
+/// Boxed stream type for audio data.
 type AudioStream = Pin<Box<dyn Stream<Item = Result<Bytes, std::io::Error>> + Send>>;
-
-/// Boxed stream type for tagged audio frames (before unwrapping to raw bytes).
-type TaggedStream = Pin<Box<dyn Stream<Item = Result<TaggedFrame, std::io::Error>> + Send>>;
 
 pub(super) async fn stream_audio(
     Path(id): Path<String>,
@@ -137,7 +134,7 @@ pub(super) async fn stream_audio(
     // Compressed codecs (AAC, MP3, FLAC) have their own framing and silence
     // representation - raw zeros would corrupt the stream. These codecs also
     // tend to be more resilient to jitter due to their buffering behavior.
-    let combined_stream: TaggedStream = if stream_state.codec == AudioCodec::Pcm {
+    let combined_stream: AudioStream = if stream_state.codec == AudioCodec::Pcm {
         // PCM: fixed-cadence streaming with queue buffer and silence injection.
         // Prefill frames are pre-populated in the queue to eliminate handoff gap.
         let frame_duration_ms = stream_state.frame_duration_ms;
@@ -158,28 +155,52 @@ pub(super) async fn stream_audio(
             frame_duration_ms,
             stream_state.audio_format,
             prefill_frames,
+            Some((
+                Arc::clone(&stream_state),
+                epoch_candidate,
+                connected_at,
+                remote_ip,
+            )),
         ))
     } else {
         // Compressed codecs: no silence injection, chain prefill before live
-        let prefill_stream = futures::stream::iter(
-            prefill_frames
-                .into_iter()
-                .map(|b| Ok(TaggedFrame::Audio(b))),
-        );
+        let prefill_stream = futures::stream::iter(prefill_frames.into_iter().map(Ok));
         let live_stream = BroadcastStream::new(rx).map(|res| match res {
-            Ok(frame) => Ok(TaggedFrame::Audio(frame)),
+            Ok(frame) => Ok(frame),
             Err(BroadcastStreamRecvError::Lagged(n)) => Err(lagged_error(n)),
         });
-        Box::pin(futures::StreamExt::chain(prefill_stream, live_stream))
-    };
+        let raw_stream = futures::StreamExt::chain(prefill_stream, live_stream);
 
-    let tracked_stream = with_epoch_tracking(
-        combined_stream,
-        Arc::clone(&stream_state),
-        epoch_candidate,
-        connected_at,
-        remote_ip,
-    );
+        // Fire epoch on first non-empty frame (compressed codecs never inject silence)
+        let epoch_hook = Some((
+            Arc::clone(&stream_state),
+            epoch_candidate,
+            connected_at,
+            remote_ip,
+        ));
+        Box::pin(
+            raw_stream.scan(epoch_hook, |hook, item: Result<Bytes, std::io::Error>| {
+                if let Some((stream_state, epoch_candidate, connected_at, remote_ip)) = hook.take()
+                {
+                    if let Ok(ref frame) = item {
+                        if !frame.is_empty() {
+                            stream_state.timing.start_new_epoch(
+                                epoch_candidate,
+                                connected_at,
+                                Instant::now(),
+                                remote_ip,
+                            );
+                        } else {
+                            *hook = Some((stream_state, epoch_candidate, connected_at, remote_ip));
+                        }
+                    } else {
+                        *hook = Some((stream_state, epoch_candidate, connected_at, remote_ip));
+                    }
+                }
+                futures::future::ready(Some(item))
+            }),
+        )
+    };
 
     // Content-Type based on output codec
     let content_type = stream_state.codec.mime_type();
@@ -210,15 +231,12 @@ pub(super) async fn stream_audio(
         builder = builder.header(header::CONTENT_LENGTH, WAV_STREAM_SIZE_MAX.to_string());
     }
 
-    // Unwrap TaggedFrame to Bytes (silence tracking handled inside cadence stream)
-    let unwrapped_stream = tracked_stream.map(|res| res.map(TaggedFrame::into_bytes));
-
-    // Apply ICY injection or PCM/WAV header to the unwrapped stream
+    // Apply ICY injection or PCM/WAV header
     let inner_stream: AudioStream = if wants_icy {
         let stream_ref = Arc::clone(&stream_state);
         let mut injector = IcyMetadataInjector::new();
 
-        Box::pin(unwrapped_stream.map(move |res| {
+        Box::pin(combined_stream.map(move |res| {
             let chunk = res?;
             let metadata = stream_ref.metadata.read();
             Ok::<Bytes, std::io::Error>(injector.inject(chunk.as_ref(), &metadata))
@@ -233,10 +251,10 @@ pub(super) async fn stream_audio(
         );
         Box::pin(futures::StreamExt::chain(
             futures::stream::once(async move { Ok(wav_header) }),
-            unwrapped_stream,
+            combined_stream,
         ))
     } else {
-        Box::pin(unwrapped_stream)
+        Box::pin(combined_stream)
     };
 
     // Wrap stream with logging guard to track delivery timing and errors.
@@ -254,49 +272,4 @@ pub(super) async fn stream_audio(
     builder
         .body(Body::from_stream(final_stream))
         .map_err(|e| ThaumicError::Internal(e.to_string()))
-}
-
-/// Wraps a tagged-frame stream with one-shot epoch tracking.
-///
-/// Fires [`StreamState::timing::start_new_epoch`] on the first real, non-empty
-/// audio frame polled by the consumer. Silence and error frames are passed
-/// through without burning the hook.
-///
-/// This lives in the HTTP layer intentionally — epoch boundaries are defined by
-/// HTTP connection lifecycle (Sonos reconnect = new epoch), and the actual poll
-/// is the only reliable signal that audio is being consumed.
-fn with_epoch_tracking(
-    stream: TaggedStream,
-    stream_state: Arc<StreamState>,
-    epoch_candidate: Option<Instant>,
-    connected_at: Instant,
-    remote_ip: IpAddr,
-) -> TaggedStream {
-    let hook_state = Some((stream_state, epoch_candidate, connected_at, remote_ip));
-
-    Box::pin(stream.scan(
-        hook_state,
-        |state, item: Result<TaggedFrame, std::io::Error>| {
-            if let Some((stream_state, epoch_candidate, connected_at, remote_ip)) = state.take() {
-                if let Ok(ref frame) = item {
-                    if frame.is_real_audio() && !frame.as_bytes().is_empty() {
-                        let first_audio_polled_at = Instant::now();
-                        stream_state.timing.start_new_epoch(
-                            epoch_candidate,
-                            connected_at,
-                            first_audio_polled_at,
-                            remote_ip,
-                        );
-                    } else {
-                        // Silence or empty frame — don't burn the hook, wait for real audio
-                        *state = Some((stream_state, epoch_candidate, connected_at, remote_ip));
-                    }
-                } else {
-                    // Error — don't burn the hook
-                    *state = Some((stream_state, epoch_candidate, connected_at, remote_ip));
-                }
-            }
-            futures::future::ready(Some(item))
-        },
-    ))
 }
