@@ -10,6 +10,7 @@
 
 use std::net::SocketAddr;
 use std::pin::Pin;
+use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -157,6 +158,7 @@ pub(super) async fn stream_audio(
                 audio_format: stream_state.audio_format,
                 prefill_frames,
             },
+            Some(Arc::clone(&stream_state)),
             Some((
                 Arc::clone(&stream_state),
                 epoch_candidate,
@@ -264,7 +266,12 @@ pub(super) async fn stream_audio(
     let final_stream: AudioStream =
         Box::pin(inner_stream.map(move |res: Result<Bytes, std::io::Error>| {
             match &res {
-                Ok(_) => guard_for_frames.record_frame(),
+                Ok(bytes) => {
+                    guard_for_frames.record_frame();
+                    guard_for_frames
+                        .bytes_sent
+                        .fetch_add(bytes.len() as u64, Ordering::Relaxed);
+                }
                 Err(e) => guard_for_frames.record_error(&e.to_string()),
             }
             res

@@ -13,6 +13,7 @@ use std::time::{Duration, Instant};
 use async_stream::stream;
 use bytes::Bytes;
 use futures::Stream;
+use serde::Serialize;
 use tokio::sync::broadcast;
 use tokio::time::{interval, Instant as TokioInstant, MissedTickBehavior};
 
@@ -59,6 +60,45 @@ pub(crate) struct CadenceStats {
     pub frames_dropped: u64,
 }
 
+/// Maximum pipeline snapshots to keep (300 entries × ~1s = ~5 minutes).
+const MAX_PIPELINE_SNAPSHOTS: usize = 300;
+
+/// Receive jitter window for a pipeline snapshot.
+#[derive(Serialize)]
+struct ReceiveWindow {
+    frames_received: u64,
+    min_gap_ms: u64,
+    max_gap_ms: u64,
+    gaps_over_threshold: u64,
+}
+
+/// Cadence buffer window for a pipeline snapshot.
+#[derive(Serialize)]
+struct CadenceWindow {
+    queue_len: usize,
+    silence_events: u64,
+    silence_frames: u64,
+    drops: u64,
+}
+
+/// HTTP delivery window for a pipeline snapshot.
+#[derive(Serialize)]
+struct DeliveryWindow {
+    frames_sent: u64,
+    bytes_per_second: u64,
+    max_gap_ms: u64,
+    gaps_over_threshold: u64,
+}
+
+/// Timestamped pipeline health snapshot, captured every ~1s in the cadence loop.
+#[derive(Serialize)]
+struct PipelineSnapshot {
+    elapsed_ms: u64,
+    receive: ReceiveWindow,
+    cadence: CadenceWindow,
+    delivery: DeliveryWindow,
+}
+
 /// Wrapper that logs HTTP audio stream lifecycle and tracks delivery timing.
 ///
 /// Delivery gap tracking uses lock-free atomics on the hot path.
@@ -77,6 +117,12 @@ pub struct LoggingStreamGuard {
     first_error: parking_lot::Mutex<Option<String>>,
     /// Cadence-specific stats, set once when the cadence stream ends.
     cadence_stats: OnceLock<CadenceStats>,
+    /// Total bytes delivered to HTTP client (for throughput calculation).
+    pub(crate) bytes_sent: AtomicU64,
+    /// Per-interval max delivery gap in ms (swapped to 0 on each snapshot).
+    interval_max_gap_ms: AtomicU64,
+    /// Pipeline timeline, set once when the cadence stream ends.
+    pipeline_timeline: OnceLock<VecDeque<PipelineSnapshot>>,
 }
 
 impl LoggingStreamGuard {
@@ -97,6 +143,9 @@ impl LoggingStreamGuard {
             gaps_over_threshold: AtomicU64::new(0),
             first_error: parking_lot::Mutex::new(None),
             cadence_stats: OnceLock::new(),
+            bytes_sent: AtomicU64::new(0),
+            interval_max_gap_ms: AtomicU64::new(0),
+            pipeline_timeline: OnceLock::new(),
         }
     }
 
@@ -111,6 +160,8 @@ impl LoggingStreamGuard {
             let gap_ms = now_nanos.saturating_sub(prev_nanos) / 1_000_000;
 
             self.max_gap_ms.fetch_max(gap_ms, Ordering::Relaxed);
+            self.interval_max_gap_ms
+                .fetch_max(gap_ms, Ordering::Relaxed);
 
             if gap_ms > DELIVERY_GAP_THRESHOLD_MS {
                 self.gaps_over_threshold.fetch_add(1, Ordering::Relaxed);
@@ -138,6 +189,11 @@ impl LoggingStreamGuard {
     /// Stores cadence stream statistics. Called once when the cadence stream ends.
     pub(crate) fn set_cadence_stats(&self, stats: CadenceStats) {
         let _ = self.cadence_stats.set(stats);
+    }
+
+    /// Stores the pipeline health timeline. Called once when the cadence stream ends.
+    fn set_pipeline_timeline(&self, timeline: VecDeque<PipelineSnapshot>) {
+        let _ = self.pipeline_timeline.set(timeline);
     }
 }
 
@@ -181,10 +237,22 @@ impl Drop for LoggingStreamGuard {
             .map(|s| format!(", frames_dropped={}", s.frames_dropped))
             .unwrap_or_default();
 
+        let timeline_json = self
+            .pipeline_timeline
+            .get()
+            .filter(|t| !t.is_empty())
+            .map(|t| serde_json::to_string(t).unwrap_or_default())
+            .unwrap_or_default();
+        let timeline_info = if timeline_json.is_empty() {
+            String::new()
+        } else {
+            format!(", pipeline_timeline={}", timeline_json)
+        };
+
         if let Some(ref err) = *first_error {
             log::warn!(
                 "[Stream] HTTP stream ended with error{}: stream={}, client={}, frames_sent={}, \
-                 max_gap={}ms, gaps_over_{}ms={}, final_gap={}ms{}{}, error={}",
+                 max_gap={}ms, gaps_over_{}ms={}, final_gap={}ms{}{}{}, error={}",
                 stalled_suffix,
                 self.stream_id,
                 self.client_ip,
@@ -195,12 +263,13 @@ impl Drop for LoggingStreamGuard {
                 final_gap_ms,
                 silence_info,
                 dropped_info,
+                timeline_info,
                 err
             );
         } else {
             log::info!(
                 "[Stream] HTTP stream ended normally{}: stream={}, client={}, frames_sent={}, \
-                 max_gap={}ms, gaps_over_{}ms={}, final_gap={}ms{}{}",
+                 max_gap={}ms, gaps_over_{}ms={}, final_gap={}ms{}{}{}",
                 stalled_suffix,
                 self.stream_id,
                 self.client_ip,
@@ -210,7 +279,8 @@ impl Drop for LoggingStreamGuard {
                 gaps_over_threshold,
                 final_gap_ms,
                 silence_info,
-                dropped_info
+                dropped_info,
+                timeline_info
             );
         }
     }
@@ -321,6 +391,7 @@ pub fn create_wav_stream_with_cadence(
     mut rx: broadcast::Receiver<Bytes>,
     guard: Arc<LoggingStreamGuard>,
     config: CadenceConfig,
+    stream_state: Option<Arc<StreamState>>,
     epoch_hook: Option<(Arc<StreamState>, Option<Instant>, Instant, IpAddr)>,
 ) -> impl Stream<Item = Result<Bytes, std::io::Error>> {
     stream! {
@@ -361,6 +432,14 @@ pub fn create_wav_stream_with_cadence(
 
         // One-shot epoch hook: fires on the first real audio frame, then consumed
         let mut epoch_hook = epoch_hook;
+
+        // Pipeline snapshot state
+        let mut tick_count: u64 = 0;
+        let mut pipeline_snapshots: VecDeque<PipelineSnapshot> = VecDeque::new();
+        let mut prev_delivery_frames: u64 = 0;
+        let mut prev_delivery_bytes: u64 = 0;
+        let mut prev_delivery_gaps: u64 = 0;
+        let mut prev_snapshot_ms: u64 = 0;
 
         loop {
             // Exit when channel closed AND queue drained
@@ -444,6 +523,65 @@ pub fn create_wav_stream_with_cadence(
                             }
                         }
                     }
+
+                    // Pipeline snapshot every ~50 ticks (~1s at 20ms cadence)
+                    tick_count += 1;
+                    if tick_count % 50 == 0 {
+                        let elapsed_ms = guard.reference_time.elapsed().as_millis() as u64;
+
+                        // Receive window: snapshot and reset from StreamState
+                        let receive = if let Some(ref ss) = stream_state {
+                            let rs = ss.snapshot_and_reset_receive_stats();
+                            ReceiveWindow {
+                                frames_received: rs.frames_received,
+                                min_gap_ms: if rs.min_gap_ms == u64::MAX { 0 } else { rs.min_gap_ms },
+                                max_gap_ms: rs.max_gap_ms,
+                                gaps_over_threshold: rs.gaps_over_threshold,
+                            }
+                        } else {
+                            ReceiveWindow { frames_received: 0, min_gap_ms: 0, max_gap_ms: 0, gaps_over_threshold: 0 }
+                        };
+
+                        // Cadence window: current counters (cumulative, not reset)
+                        let cadence_window = CadenceWindow {
+                            queue_len: queue.len(),
+                            silence_events,
+                            silence_frames,
+                            drops: frames_dropped,
+                        };
+
+                        // Delivery window: deltas from guard atomics
+                        let cur_frames = guard.frames_sent.load(Ordering::Relaxed);
+                        let cur_bytes = guard.bytes_sent.load(Ordering::Relaxed);
+                        let cur_gaps = guard.gaps_over_threshold.load(Ordering::Relaxed);
+                        let interval_max = guard.interval_max_gap_ms.swap(0, Ordering::Relaxed);
+
+                        let delta_bytes = cur_bytes.saturating_sub(prev_delivery_bytes);
+                        let interval_ms = elapsed_ms.saturating_sub(prev_snapshot_ms);
+                        let bytes_per_second = if interval_ms > 0 { delta_bytes * 1000 / interval_ms } else { 0 };
+
+                        let delivery = DeliveryWindow {
+                            frames_sent: cur_frames.saturating_sub(prev_delivery_frames),
+                            bytes_per_second,
+                            max_gap_ms: interval_max,
+                            gaps_over_threshold: cur_gaps.saturating_sub(prev_delivery_gaps),
+                        };
+
+                        prev_delivery_frames = cur_frames;
+                        prev_delivery_bytes = cur_bytes;
+                        prev_delivery_gaps = cur_gaps;
+                        prev_snapshot_ms = elapsed_ms;
+
+                        pipeline_snapshots.push_back(PipelineSnapshot {
+                            elapsed_ms,
+                            receive,
+                            cadence: cadence_window,
+                            delivery,
+                        });
+                        if pipeline_snapshots.len() > MAX_PIPELINE_SNAPSHOTS {
+                            pipeline_snapshots.pop_front();
+                        }
+                    }
                 }
 
                 // PRIORITY 2: Receive frames into queue (when channel open and tick not ready)
@@ -475,6 +613,7 @@ pub fn create_wav_stream_with_cadence(
             silence_frames,
             frames_dropped,
         });
+        guard.set_pipeline_timeline(pipeline_snapshots);
     }
 }
 
@@ -579,6 +718,7 @@ mod tests {
             guard,
             test_config(),
             None,
+            None,
         ));
 
         // Queue some frames before the first tick
@@ -623,6 +763,7 @@ mod tests {
             guard,
             test_config(),
             None,
+            None,
         ));
 
         // Don't send any frames - queue will be empty
@@ -666,6 +807,7 @@ mod tests {
             rx,
             guard,
             test_config(),
+            None,
             None,
         ));
 
@@ -719,6 +861,7 @@ mod tests {
             guard,
             test_config(),
             None,
+            None,
         ));
 
         // Send 12 frames (queue_size + 2), should drop 2 oldest
@@ -764,6 +907,7 @@ mod tests {
             guard,
             test_config(),
             None,
+            None,
         ));
 
         // Overflow queue by TEST_QUEUE_SIZE + 3 frames
@@ -808,6 +952,7 @@ mod tests {
             rx,
             guard,
             test_config(),
+            None,
             None,
         ));
 
@@ -867,6 +1012,7 @@ mod tests {
             rx,
             guard,
             test_config(),
+            None,
             None,
         ));
 

@@ -555,6 +555,10 @@ export class StreamSession {
           this.stop();
           break;
 
+        case 'METRICS_DUMP':
+          log.info('Pipeline metrics timeline', { timeline: JSON.stringify(msg.timeline) });
+          break;
+
         case 'STATS': {
           // Accumulate drops for session health reporting
           this.totalProducerDrops += msg.producerDroppedSamples ?? 0;
