@@ -40,6 +40,15 @@ pub fn lagged_error(frames: u64) -> std::io::Error {
     std::io::Error::other(format!("lagged by {} frames", frames))
 }
 
+/// Logs a rate-limited warning when the broadcast receiver lags.
+fn log_lagged(n: u64, last_log: &mut Option<TokioInstant>, context: &str) {
+    let now = TokioInstant::now();
+    if last_log.map_or(true, |t| now.duration_since(t).as_secs() >= 1) {
+        log::warn!("[Stream] Lagged by {n} frames{context}");
+        *last_log = Some(now);
+    }
+}
+
 /// Statistics from the cadence stream, written once when the stream ends.
 pub(crate) struct CadenceStats {
     /// Number of times silence mode was entered.
@@ -207,6 +216,74 @@ impl Drop for LoggingStreamGuard {
     }
 }
 
+/// Manages crossfade state for smooth audio/silence transitions.
+///
+/// Tracks the last audio sample pair so that entering silence produces a
+/// fade-out frame instead of an abrupt cut, and exiting silence applies a
+/// fade-in to the first audio frame.
+struct CrossfadeState {
+    enabled: bool,
+    fade_samples: usize,
+    samples_per_frame: usize,
+    channels: u16,
+    last_sample_pair: Option<(i16, i16)>,
+}
+
+impl CrossfadeState {
+    fn new(audio_format: &AudioFormat, frame_duration_ms: u32) -> Self {
+        let enabled = is_crossfade_compatible(audio_format);
+        if !enabled {
+            log::warn!(
+                "[Stream] Crossfade disabled: requires 16-bit PCM, got {}-bit",
+                audio_format.bits_per_sample
+            );
+        }
+        Self {
+            enabled,
+            fade_samples: crossfade_samples(audio_format.sample_rate),
+            samples_per_frame: audio_format.frame_samples(frame_duration_ms),
+            channels: audio_format.channels,
+            last_sample_pair: None,
+        }
+    }
+
+    /// Updates tracking with the last sample pair from a real audio frame.
+    fn track_frame(&mut self, frame: &Bytes) {
+        if self.enabled {
+            self.last_sample_pair = extract_last_sample_pair(frame, self.channels);
+        }
+    }
+
+    /// Applies fade-in to a frame following silence. Returns the frame
+    /// unchanged when crossfade is disabled.
+    fn maybe_fade_in(&self, frame: Bytes) -> Bytes {
+        if self.enabled {
+            let mut faded = frame.to_vec();
+            apply_fade_in(&mut faded, self.channels, self.fade_samples);
+            Bytes::from(faded)
+        } else {
+            frame
+        }
+    }
+
+    /// Generates the first silence frame: a fade-out when last samples are
+    /// available, otherwise plain silence.
+    fn enter_silence(&mut self, silence_frame: &Bytes) -> Bytes {
+        if self.enabled {
+            if let Some((left, right)) = self.last_sample_pair.take() {
+                return create_fade_out_frame(
+                    left,
+                    right,
+                    self.channels,
+                    self.fade_samples,
+                    self.samples_per_frame,
+                );
+            }
+        }
+        silence_frame.clone()
+    }
+}
+
 /// Creates a WAV audio stream with fixed-cadence output and crossfade on silence transitions.
 ///
 /// Maintains real-time cadence regardless of input timing:
@@ -260,20 +337,7 @@ pub fn create_wav_stream_with_cadence(
         let mut silence_frames: u64 = 0;
         let mut frames_dropped: u64 = 0;
 
-        // Crossfade is only supported for 16-bit PCM. The handshake enforces this
-        // for PCM streams, but we guard here defensively in case the invariant breaks.
-        let crossfade_enabled = is_crossfade_compatible(&audio_format);
-        if !crossfade_enabled {
-            log::warn!(
-                "[Stream] Crossfade disabled: requires 16-bit PCM, got {}-bit",
-                audio_format.bits_per_sample
-            );
-        }
-
-        // Crossfade state: track last sample pair for fade-out generation
-        let fade_samples = crossfade_samples(audio_format.sample_rate);
-        let samples_per_frame = audio_format.frame_samples(frame_duration_ms);
-        let mut last_sample_pair: Option<(i16, i16)> = None;
+        let mut crossfade = CrossfadeState::new(&audio_format, frame_duration_ms);
 
         // Rate-limit lagged warnings (max once per second)
         let mut last_lagged_log: Option<TokioInstant> = None;
@@ -305,10 +369,7 @@ pub fn create_wav_stream_with_cadence(
                             in_silence = false;
                         }
 
-                        // Track last sample pair for potential future fade-out
-                        if crossfade_enabled {
-                            last_sample_pair = extract_last_sample_pair(&frame, audio_format.channels);
-                        }
+                        crossfade.track_frame(&frame);
 
                         // Fire epoch hook on first real audio frame
                         if let Some((stream_state, epoch_candidate, connected_at, remote_ip)) = epoch_hook.take() {
@@ -319,43 +380,20 @@ pub fn create_wav_stream_with_cadence(
                             );
                         }
 
-                        // Apply fade-in if we just exited silence (and crossfade is enabled)
-                        if was_in_silence && crossfade_enabled {
-                            let mut faded = frame.to_vec();
-                            apply_fade_in(&mut faded, audio_format.channels, fade_samples);
-                            yield Ok(Bytes::from(faded));
+                        if was_in_silence {
+                            yield Ok(crossfade.maybe_fade_in(frame));
                         } else {
                             yield Ok(frame);
                         }
                     } else if !rx_closed {
                         // No frame available, emit silence
-                        let entering_silence = !in_silence;
-                        if entering_silence {
+                        if !in_silence {
                             log::info!("[Stream] Entering silence (cadence) - queue empty");
                             in_silence = true;
                             silence_start = Some(TokioInstant::now());
                             silence_events += 1;
-
-                            // Generate fade-out frame if crossfade is enabled and we have last sample values
-                            if crossfade_enabled {
-                                if let Some((left, right)) = last_sample_pair.take() {
-                                    let fade_out = create_fade_out_frame(
-                                        left,
-                                        right,
-                                        audio_format.channels,
-                                        fade_samples,
-                                        samples_per_frame,
-                                    );
-                                    silence_frames += 1;
-                                    yield Ok(fade_out);
-                                } else {
-                                    silence_frames += 1;
-                                    yield Ok(silence_frame.clone());
-                                }
-                            } else {
-                                silence_frames += 1;
-                                yield Ok(silence_frame.clone());
-                            }
+                            silence_frames += 1;
+                            yield Ok(crossfade.enter_silence(&silence_frame));
                         } else {
                             silence_frames += 1;
                             yield Ok(silence_frame.clone());
@@ -379,12 +417,7 @@ pub fn create_wav_stream_with_cadence(
                                 }
                                 Err(broadcast::error::TryRecvError::Empty) => break,
                                 Err(broadcast::error::TryRecvError::Lagged(n)) => {
-                                    let now = TokioInstant::now();
-                                    if last_lagged_log.map_or(true, |t| now.duration_since(t).as_secs() >= 1) {
-                                        log::warn!("[Stream] Lagged by {n} frames (during drain)");
-                                        last_lagged_log = Some(now);
-                                    }
-                                    // Continue draining - next try_recv will get latest
+                                    log_lagged(n, &mut last_lagged_log, " (during drain)");
                                 }
                                 Err(broadcast::error::TryRecvError::Closed) => {
                                     rx_closed = true;
@@ -409,12 +442,7 @@ pub fn create_wav_stream_with_cadence(
                             queue.push_back(frame);
                         }
                         Err(broadcast::error::RecvError::Lagged(n)) => {
-                            let now = TokioInstant::now();
-                            if last_lagged_log.map_or(true, |t| now.duration_since(t).as_secs() >= 1) {
-                                log::warn!("[Stream] Lagged by {n} frames");
-                                last_lagged_log = Some(now);
-                            }
-                            // Continue - next recv will get latest
+                            log_lagged(n, &mut last_lagged_log, "");
                         }
                         Err(broadcast::error::RecvError::Closed) => {
                             rx_closed = true;
