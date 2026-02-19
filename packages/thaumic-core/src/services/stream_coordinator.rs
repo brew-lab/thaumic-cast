@@ -20,7 +20,9 @@ use crate::sonos::types::TransportState;
 use crate::sonos::utils::build_sonos_stream_uri;
 use crate::sonos::SonosPlayback;
 use crate::state::{SonosState, StreamingConfig};
-use crate::stream::{AudioCodec, AudioFormat, StreamMetadata, StreamRegistry, StreamState};
+use crate::stream::{
+    AudioCodec, AudioFormat, CleanupOrder, StreamMetadata, StreamRegistry, StreamState,
+};
 use crate::utils::now_millis;
 
 use super::playback_session_store::{
@@ -320,63 +322,37 @@ impl StreamCoordinator {
 
     /// Removes a stream with graceful speaker cleanup.
     ///
-    /// This is the preferred method for stream removal. The cleanup order depends
-    /// on the codec:
-    ///
-    /// **PCM:**
-    /// 1. Close HTTP first (Sonos blocks on reads, SOAP would timeout)
-    /// 2. Send SOAP stop commands (with group-aware ordering)
-    /// 3. Clear sessions
-    ///
-    /// **Compressed codecs (AAC/MP3/FLAC):**
-    /// 1. Send SOAP stop commands first (stops playback immediately)
-    /// 2. Then close HTTP (Sonos has internal buffer that would otherwise drain)
+    /// This is the preferred method for stream removal. The codec determines
+    /// cleanup ordering via [`CleanupOrder`] — see [`AudioCodec::cleanup_order`]
+    /// for the rationale behind each variant.
     ///
     /// Speaker stop/switch failures are logged but don't prevent cleanup.
     pub async fn remove_stream_async(&self, stream_id: &str) {
-        // Get codec before removing the stream
-        let stream_state = self.get_stream(stream_id);
-        let is_pcm = stream_state
-            .as_ref()
-            .map(|s| s.codec == AudioCodec::Pcm)
-            .unwrap_or(false);
+        let cleanup_order = self
+            .get_stream(stream_id)
+            .map(|s| s.codec.cleanup_order())
+            .unwrap_or(CleanupOrder::HttpFirst);
 
         // Collect speaker IPs before any removal
         let speaker_ips = self.sessions.get_ips_for_stream(stream_id);
 
-        if is_pcm {
-            // PCM: Close HTTP first to unblock Sonos, then send SOAP commands.
-            // Sonos blocks on HTTP reads for PCM streams, causing SOAP timeouts.
-            //
-            // IMPORTANT: We must close HTTP before SOAP, but keep sessions intact
-            // so stop_speakers can determine role ordering (unjoin slaves first).
-            self.stream_registry.remove_stream(stream_id);
-
-            // Now stop speakers with group-aware ordering (sessions still intact)
-            self.sync_group.stop_speakers(&speaker_ips).await;
-
-            // Finally clear sessions and emit stream ended event
-            self.clear_sessions_and_emit_ended(stream_id);
-        } else {
-            // Compressed: Send SOAP stop first, then close HTTP.
-            // Compressed codecs buffer in Sonos's decoder; stopping first prevents
-            // playback of buffered audio after the stream is removed.
-            self.sync_group.stop_speakers(&speaker_ips).await;
-            self.remove_stream(stream_id);
+        match cleanup_order {
+            CleanupOrder::HttpFirst => {
+                // Close HTTP first, but keep sessions intact so stop_speakers
+                // can determine role ordering (unjoin slaves before coordinators).
+                self.stream_registry.remove_stream(stream_id);
+                self.sync_group.stop_speakers(&speaker_ips).await;
+                self.sessions.remove_all_for_stream(stream_id);
+                self.emit_event(StreamEvent::Ended {
+                    stream_id: stream_id.to_string(),
+                    timestamp: now_millis(),
+                });
+            }
+            CleanupOrder::SoapFirst => {
+                self.sync_group.stop_speakers(&speaker_ips).await;
+                self.remove_stream(stream_id);
+            }
         }
-    }
-
-    /// Clears playback sessions for a stream and emits the Ended event.
-    ///
-    /// Used by PCM cleanup path where HTTP must close before SOAP commands,
-    /// but sessions must remain intact for role-based stop ordering.
-    fn clear_sessions_and_emit_ended(&self, stream_id: &str) {
-        self.sessions.remove_all_for_stream(stream_id);
-
-        self.emit_event(StreamEvent::Ended {
-            stream_id: stream_id.to_string(),
-            timestamp: now_millis(),
-        });
     }
 
     /// Gets a stream by ID.
