@@ -81,11 +81,10 @@ pub(super) async fn stream_audio(
     // Upfront buffering delay for PCM streams BEFORE subscribing.
     // This lets the ring buffer accumulate more frames. Subscribing after
     // ensures the broadcast receiver doesn't fill up during the delay.
-    // Delay matches streaming_buffer_ms so cadence queue starts full.
     //
     // SKIP on resume: Sonos closes the connection within milliseconds if we delay.
     // The buffer already has frames from before the pause, so no delay is needed.
-    let prefill_delay_ms = stream_state.streaming_buffer_ms;
+    let prefill_delay_ms = stream_state.queue_capacity_ms;
     if stream_state.codec == AudioCodec::Pcm && prefill_delay_ms > 0 && !is_resume {
         log::debug!(
             "[Stream] Applying {}ms prefill delay for PCM stream",
@@ -141,10 +140,10 @@ pub(super) async fn stream_audio(
         let frame_duration_ms = stream_state.frame_duration_ms;
         let silence_frame = stream_state.audio_format.silence_frame(frame_duration_ms);
 
-        // Calculate queue size from streaming buffer (ceil division)
-        // queue_size = ceil(buffer_ms / frame_ms), clamped to [1, MAX_CADENCE_QUEUE_SIZE]
+        // Calculate queue size from queue capacity (ceil division)
+        // queue_size = ceil(capacity_ms / frame_ms), clamped to [1, MAX_CADENCE_QUEUE_SIZE]
         let queue_size = stream_state
-            .streaming_buffer_ms
+            .queue_capacity_ms
             .div_ceil(frame_duration_ms as u64) as usize;
         let queue_size = queue_size.clamp(1, MAX_CADENCE_QUEUE_SIZE);
 

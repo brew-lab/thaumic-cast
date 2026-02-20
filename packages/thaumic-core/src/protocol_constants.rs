@@ -112,17 +112,17 @@ pub const MIN_FRAME_DURATION_MS: u32 = 5;
 pub const MAX_FRAME_DURATION_MS: u32 = 150;
 
 /// Frame size constraints (samples per channel).
-/// Minimum streaming buffer size (ms).
-pub const MIN_STREAMING_BUFFER_MS: u64 = 100;
+/// Minimum queue capacity (ms). 0 means direct pass-through (clamps to 1 frame).
+pub const MIN_QUEUE_CAPACITY_MS: u64 = 0;
 
-/// Maximum streaming buffer size (ms).
-pub const MAX_STREAMING_BUFFER_MS: u64 = 1000;
+/// Maximum queue capacity (ms).
+pub const MAX_QUEUE_CAPACITY_MS: u64 = 1000;
 
-/// Default streaming buffer size (ms).
-pub const DEFAULT_STREAMING_BUFFER_MS: u64 = 200;
+/// Default queue capacity (ms). 0 = direct pass-through (1 frame).
+pub const DEFAULT_QUEUE_CAPACITY_MS: u64 = 0;
 
 /// Maximum cadence queue size (frames).
-/// Calculated using MIN_FRAME_DURATION_MS to ensure buffer can hold enough frames
+/// Calculated using MIN_FRAME_DURATION_MS to ensure queue can hold enough frames
 /// at the smallest possible frame duration.
 pub const MAX_CADENCE_QUEUE_SIZE: usize =
-    (MAX_STREAMING_BUFFER_MS / MIN_FRAME_DURATION_MS as u64) as usize;
+    (MAX_QUEUE_CAPACITY_MS / MIN_FRAME_DURATION_MS as u64) as usize;

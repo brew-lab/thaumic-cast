@@ -274,9 +274,9 @@ pub struct StreamState {
     has_frames: AtomicBool,
     /// Timing information for latency measurement.
     pub timing: StreamTiming,
-    /// Streaming buffer size in milliseconds (100-1000, default 200).
+    /// Queue capacity in milliseconds (100-1000, default 200).
     /// Used to calculate cadence queue size for PCM streams.
-    pub streaming_buffer_ms: u64,
+    pub queue_capacity_ms: u64,
     /// Frame duration in milliseconds for cadence timing.
     /// Determines silence frame duration and cadence tick interval.
     pub frame_duration_ms: u32,
@@ -295,7 +295,7 @@ impl StreamState {
     /// * `audio_format` - Audio format configuration (sample rate, channels, bit depth)
     /// * `buffer_frames` - Maximum frames to buffer for late-joining clients
     /// * `channel_capacity` - Capacity of the broadcast channel for audio frames
-    /// * `streaming_buffer_ms` - Streaming buffer size in milliseconds (100-1000)
+    /// * `queue_capacity_ms` - Queue capacity in milliseconds (100-1000)
     /// * `frame_duration_ms` - Frame duration in milliseconds for cadence timing
     pub fn new(
         id: String,
@@ -303,16 +303,16 @@ impl StreamState {
         audio_format: AudioFormat,
         buffer_frames: usize,
         channel_capacity: usize,
-        streaming_buffer_ms: u64,
+        queue_capacity_ms: u64,
         frame_duration_ms: u32,
     ) -> Self {
         let (tx, _) = broadcast::channel(channel_capacity);
         log::debug!(
-            "[Stream] Creating {} with codec {:?}, format {:?}, buffer: {}ms, frame: {}ms",
+            "[Stream] Creating {} with codec {:?}, format {:?}, queue_cap: {}ms, frame: {}ms",
             id,
             codec,
             audio_format,
-            streaming_buffer_ms,
+            queue_capacity_ms,
             frame_duration_ms
         );
         Self {
@@ -327,7 +327,7 @@ impl StreamState {
             buffer_frames,
             has_frames: AtomicBool::new(false),
             timing: StreamTiming::new(),
-            streaming_buffer_ms,
+            queue_capacity_ms,
             frame_duration_ms,
             last_push_at: parking_lot::Mutex::new(None),
             receive_stats: parking_lot::Mutex::new(ReceiveStats::new()),
@@ -478,13 +478,13 @@ impl StreamRegistry {
     /// # Arguments
     /// * `codec` - Output codec for HTTP Content-Type (what Sonos receives)
     /// * `audio_format` - Audio format configuration (sample rate, channels, bit depth)
-    /// * `streaming_buffer_ms` - Streaming buffer size in milliseconds (100-1000)
+    /// * `queue_capacity_ms` - Queue capacity in milliseconds (100-1000)
     /// * `frame_duration_ms` - Frame duration in milliseconds for cadence timing
     pub fn create_stream(
         &self,
         codec: AudioCodec,
         audio_format: AudioFormat,
-        streaming_buffer_ms: u64,
+        queue_capacity_ms: u64,
         frame_duration_ms: u32,
     ) -> Result<String, String> {
         if self.streams.len() >= self.config.max_concurrent_streams {
@@ -498,7 +498,7 @@ impl StreamRegistry {
             audio_format,
             self.config.buffer_frames,
             self.config.channel_capacity,
-            streaming_buffer_ms,
+            queue_capacity_ms,
             frame_duration_ms,
         ));
         self.streams.insert(id.clone(), state);
