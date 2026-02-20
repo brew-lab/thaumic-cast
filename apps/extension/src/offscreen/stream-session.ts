@@ -15,11 +15,11 @@
  */
 
 import { createLogger } from '@thaumic-cast/shared';
-import { createAudioRingBuffer, HEADER_SIZE } from './ring-buffer';
+import { createAudioRingBuffer, createEncodedRingBuffer, HEADER_SIZE } from './ring-buffer';
 import type { EncoderConfig, StreamMetadata } from '@thaumic-cast/protocol';
-import { isSupportedSampleRate } from '@thaumic-cast/protocol';
+import { FRAME_DURATION_MS_DEFAULT, isSupportedSampleRate } from '@thaumic-cast/protocol';
 import { noop } from '../lib/noop';
-import type { WorkerOutboundMessage } from './worker-messages';
+import type { WorkerInitMessage, WorkerOutboundMessage } from './worker-messages';
 
 const log = createLogger('Offscreen');
 
@@ -59,6 +59,9 @@ export class StreamSession {
   private sourceNode: MediaStreamAudioSourceNode | null = null;
   private workletNode: AudioWorkletNode | null = null;
   private outputGainNode: GainNode | null = null;
+
+  /** Number of interleaved samples per frame (PCM encode path only). */
+  private frameSizeInterleaved?: number;
 
   /** Last time we received a heartbeat from the worklet. */
   private lastWorkletHeartbeat = 0;
@@ -198,15 +201,35 @@ export class StreamSession {
       }
     }
 
-    // Create ring buffer now that we know the actual sample rate
-    const ringBufferConfig = createAudioRingBuffer(
-      this.encoderConfig.sampleRate,
-      this.encoderConfig.channels,
-      this.encoderConfig.latencyMode,
-    );
-    this.ringBuffer = ringBufferConfig.sab;
-    this.bufferSize = ringBufferConfig.size;
-    this.bufferMask = ringBufferConfig.mask;
+    // Create ring buffer now that we know the actual sample rate.
+    // PCM codec uses the encode-in-worklet path (Int16 SAB + relay worker).
+    // Compressed codecs use the existing passthrough path (Float32 SAB + consumer worker).
+    if (this.encoderConfig.codec === 'pcm') {
+      const frameDurationMs = this.encoderConfig.frameDurationMs ?? FRAME_DURATION_MS_DEFAULT;
+      const perChannelSamples = Math.round(
+        this.encoderConfig.sampleRate * (frameDurationMs / 1000),
+      );
+      this.frameSizeInterleaved = perChannelSamples * this.encoderConfig.channels;
+
+      const ringBufferConfig = createEncodedRingBuffer(
+        this.encoderConfig.sampleRate,
+        this.encoderConfig.channels,
+        this.encoderConfig.latencyMode,
+        this.frameSizeInterleaved,
+      );
+      this.ringBuffer = ringBufferConfig.sab;
+      this.bufferSize = ringBufferConfig.size;
+      this.bufferMask = ringBufferConfig.mask;
+    } else {
+      const ringBufferConfig = createAudioRingBuffer(
+        this.encoderConfig.sampleRate,
+        this.encoderConfig.channels,
+        this.encoderConfig.latencyMode,
+      );
+      this.ringBuffer = ringBufferConfig.sab;
+      this.bufferSize = ringBufferConfig.size;
+      this.bufferMask = ringBufferConfig.mask;
+    }
 
     const workletUrl = chrome.runtime.getURL('pcm-processor.js');
     await this.audioContext.audioWorklet.addModule(workletUrl);
@@ -229,6 +252,8 @@ export class StreamSession {
       headerSize: HEADER_SIZE,
       sampleRate: this.encoderConfig.sampleRate,
       channels: this.encoderConfig.channels,
+      mode: this.encoderConfig.codec === 'pcm' ? 'encode' : 'passthrough',
+      frameSizeInterleaved: this.frameSizeInterleaved,
     });
 
     // Listen for heartbeat messages from the worklet
@@ -376,9 +401,15 @@ export class StreamSession {
   private async startWorker(): Promise<void> {
     const wsUrl = this.baseUrl.replace(/^http/, 'ws') + '/ws';
 
-    this.consumerWorker = new Worker(new URL('./audio-consumer.worker.ts', import.meta.url), {
-      type: 'module',
-    });
+    if (this.encoderConfig.codec === 'pcm') {
+      this.consumerWorker = new Worker(new URL('./audio-relay.worker.ts', import.meta.url), {
+        type: 'module',
+      });
+    } else {
+      this.consumerWorker = new Worker(new URL('./audio-consumer.worker.ts', import.meta.url), {
+        type: 'module',
+      });
+    }
 
     // Create promise for connection
     const connectionPromise = new Promise<string>((resolve, reject) => {
@@ -524,7 +555,9 @@ export class StreamSession {
       sampleRate: this.encoderConfig.sampleRate,
       encoderConfig: this.encoderConfig,
       wsUrl,
-    });
+      mode: this.encoderConfig.codec === 'pcm' ? 'encode' : 'passthrough',
+      frameSizeInterleaved: this.frameSizeInterleaved,
+    } satisfies WorkerInitMessage);
 
     // Wait for connection
     await connectionPromise;

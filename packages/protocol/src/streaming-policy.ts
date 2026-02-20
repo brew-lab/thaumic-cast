@@ -52,7 +52,7 @@ const QUALITY_POLICY: StreamingPolicy = {
   catchUpMaxMs: null, // Never catch up - let buffer grow
   catchUpTargetMs: 200, // Unused when catchUpMaxMs is null
   maxEncodeQueue: 16, // More lenient queue
-  wsBufferHighWater: 512_000, // 512KB before pausing
+  wsBufferHighWater: 2_097_152, // 2 MiB before pausing
   dropOnBackpressure: false, // Queue frames instead of drop
   streamingBufferMs: 500, // Larger server buffer for jitter tolerance
 };
