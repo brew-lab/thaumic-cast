@@ -10,6 +10,8 @@ use std::sync::Arc;
 use parking_lot::RwLock;
 use thiserror::Error;
 
+use axum::serve::ListenerExt;
+
 use crate::artwork::{ArtworkConfig, ArtworkSource};
 use crate::context::NetworkContext;
 use crate::events::BroadcastEventBridge;
@@ -168,6 +170,15 @@ pub async fn start_server(state: AppState) -> Result<(), ServerError> {
 
     log::info!("Server listening on http://0.0.0.0:{}", port);
     let app = http::create_router(state);
+
+    // TCP_NODELAY: Disable Nagle's algorithm on every accepted connection.
+    // Without this, TCP buffers small writes (1920-byte PCM frames) and sends them
+    // in batches, causing uneven delivery timing to Sonos speakers.
+    let listener = listener.tap_io(|tcp_stream| {
+        if let Err(err) = tcp_stream.set_nodelay(true) {
+            log::warn!("Failed to set TCP_NODELAY on incoming connection: {err:#}");
+        }
+    });
 
     // Use into_make_service_with_connect_info to enable ConnectInfo<SocketAddr> extraction
     axum::serve(
