@@ -123,7 +123,7 @@ pub fn get_interfaces() -> Vec<InterfaceInfo> {
                 return None;
             }
             match addr {
-                IpAddr::V4(ipv4) if !ipv4.is_loopback() => {
+                IpAddr::V4(ipv4) if !ipv4.is_loopback() && !ipv4.is_link_local() => {
                     log::debug!("Using interface {} ({})", name, ipv4);
                     // Compute broadcast address (assume /24 if we can't determine)
                     // This is a simplification - ideally we'd get the actual netmask

@@ -271,8 +271,25 @@ pub struct DeviceInfo {
 }
 
 /// Virtual interface prefixes to filter out during discovery.
+///
+/// Covers Linux containers/VMs, Windows virtual switches, and VPN overlays.
 pub const VIRTUAL_INTERFACE_PREFIXES: &[&str] = &[
-    "lo", "docker", "veth", "br-", "virbr", "vmnet", "vbox", "tun", "tap",
+    // Linux: loopback, containers, bridges, VMs
+    "lo",
+    "docker",
+    "veth",
+    "br-",
+    "virbr",
+    "vmnet",
+    "vbox",
+    "tun",
+    "tap",
+    // Windows: Hyper-V / WSL virtual switches
+    "vethernet",
+    // VPN / overlay networks (can't reach local Sonos speakers)
+    "wg",
+    "tailscale",
+    "zt",
 ];
 
 /// Checks if an interface name belongs to a virtual/container interface.
@@ -337,13 +354,33 @@ mod tests {
 
     #[test]
     fn test_is_virtual_interface() {
+        // Linux: containers, bridges, VMs
         assert!(is_virtual_interface("lo"));
         assert!(is_virtual_interface("docker0"));
         assert!(is_virtual_interface("veth1234"));
         assert!(is_virtual_interface("br-abc"));
+        assert!(is_virtual_interface("virbr0"));
+        assert!(is_virtual_interface("vmnet8"));
+        assert!(is_virtual_interface("vbox0"));
+        assert!(is_virtual_interface("tun0"));
+        assert!(is_virtual_interface("tap0"));
+
+        // Windows: Hyper-V / WSL (case-insensitive)
+        assert!(is_virtual_interface("vEthernet (WSL)"));
+        assert!(is_virtual_interface("vEthernet (Default Switch)"));
+
+        // VPN / overlay networks
+        assert!(is_virtual_interface("wg0"));
+        assert!(is_virtual_interface("tailscale0"));
+        assert!(is_virtual_interface("zt1234abcd"));
+
+        // Real interfaces should pass through
         assert!(!is_virtual_interface("eth0"));
         assert!(!is_virtual_interface("en0"));
         assert!(!is_virtual_interface("wlan0"));
+        assert!(!is_virtual_interface("Wi-Fi"));
+        assert!(!is_virtual_interface("Ethernet"));
+        assert!(!is_virtual_interface("Bluetooth Network Connection"));
     }
 
     #[test]
