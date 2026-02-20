@@ -39,8 +39,8 @@ export interface StreamingPolicy {
   /** Backpressure: whether to drop frames (true) or pause (false). */
   dropOnBackpressure: boolean;
 
-  /** Server-side streaming buffer size (ms). Sent in handshake. */
-  streamingBufferMs: number;
+  /** Max frames the server cadence queue can hold, expressed in ms. Sent in handshake. */
+  queueCapacityMs: number;
 }
 
 /**
@@ -54,7 +54,7 @@ const QUALITY_POLICY: StreamingPolicy = {
   maxEncodeQueue: 16, // More lenient queue
   wsBufferHighWater: 2_097_152, // 2 MiB before pausing
   dropOnBackpressure: false, // Queue frames instead of drop
-  streamingBufferMs: 500, // Larger server buffer for jitter tolerance
+  queueCapacityMs: 0,
 };
 
 /**
@@ -68,7 +68,7 @@ const REALTIME_POLICY: StreamingPolicy = {
   maxEncodeQueue: 8, // Tight queue
   wsBufferHighWater: 256_000, // 256KB before dropping
   dropOnBackpressure: true, // Drop to maintain timing
-  streamingBufferMs: 200, // Tighter server buffer for lower latency
+  queueCapacityMs: 0,
 };
 
 /**

@@ -198,14 +198,14 @@ export function AudioSection({
   );
 
   /**
-   * Handles streaming buffer change (PCM only).
+   * Handles queue capacity change (PCM only).
    */
-  const handleStreamingBufferChange = useCallback(
-    async (streamingBufferMs: number) => {
+  const handleQueueCapacityChange = useCallback(
+    async (queueCapacityMs: number) => {
       await onUpdate({
         customAudioSettings: {
           ...settings.customAudioSettings,
-          streamingBufferMs,
+          queueCapacityMs,
         },
       });
     },
@@ -304,8 +304,8 @@ export function AudioSection({
     if (resolvedConfig.codec === 'pcm') {
       rows.push({
         key: 'streaming-buffer',
-        label: t('audio_streaming_buffer'),
-        value: `${resolvedConfig.streamingBufferMs}ms`,
+        label: t('audio_queue_capacity'),
+        value: `${resolvedConfig.queueCapacityMs}ms`,
       });
       rows.push({
         key: 'frame-duration',
@@ -506,26 +506,27 @@ export function AudioSection({
                     <span className={styles.hint}>{t('audio_bit_depth_hint')}</span>
                   </div>
 
-                  {/* Streaming Buffer - only show for PCM codec */}
+                  {/* Queue Capacity - only show for PCM codec */}
                   {settings.customAudioSettings.codec === 'pcm' && (
                     <div className={styles.field}>
-                      <label htmlFor="audio-streaming-buffer" className={styles.label}>
-                        {t('audio_streaming_buffer')}
+                      <label htmlFor="audio-queue-capacity" className={styles.label}>
+                        {t('audio_queue_capacity')}
                       </label>
                       <select
-                        id="audio-streaming-buffer"
+                        id="audio-queue-capacity"
                         className={styles.select}
-                        value={settings.customAudioSettings.streamingBufferMs}
+                        value={settings.customAudioSettings.queueCapacityMs}
                         onChange={(e) =>
-                          handleStreamingBufferChange(Number((e.target as HTMLSelectElement).value))
+                          handleQueueCapacityChange(Number((e.target as HTMLSelectElement).value))
                         }
                       >
-                        <option value={100}>{t('audio_buffer_low')} (100ms)</option>
-                        <option value={200}>{t('audio_buffer_balanced')} (200ms)</option>
-                        <option value={500}>{t('audio_buffer_stable')} (500ms)</option>
-                        <option value={1000}>{t('audio_buffer_max')} (1000ms)</option>
+                        <option value={0}>{t('audio_queue_none')} (0ms)</option>
+                        <option value={100}>{t('audio_queue_low')} (100ms)</option>
+                        <option value={200}>{t('audio_queue_balanced')} (200ms)</option>
+                        <option value={500}>{t('audio_queue_large')} (500ms)</option>
+                        <option value={1000}>{t('audio_queue_max')} (1000ms)</option>
                       </select>
-                      <span className={styles.hint}>{t('audio_buffer_hint')}</span>
+                      <span className={styles.hint}>{t('audio_queue_hint')}</span>
                     </div>
                   )}
 

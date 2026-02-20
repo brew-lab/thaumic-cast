@@ -32,7 +32,7 @@ const log = createLogger('Presets');
 
 /**
  * Builds an encoder config from custom audio settings.
- * Applies defaults for optional fields (bitsPerSample, streamingBufferMs, frameDurationMs).
+ * Applies defaults for optional fields (bitsPerSample, queueCapacityMs, frameDurationMs).
  * @param customSettings - The custom audio settings from user preferences
  * @returns A complete encoder config
  */
@@ -46,7 +46,7 @@ function buildConfigFromCustomSettings(customSettings: CustomAudioSettings): Enc
     sampleRate: customSettings.sampleRate,
     bitsPerSample: customSettings.bitsPerSample ?? DEFAULT_BITS_PER_SAMPLE,
     latencyMode: customSettings.latencyMode,
-    streamingBufferMs: customSettings.streamingBufferMs ?? policy.streamingBufferMs,
+    queueCapacityMs: customSettings.queueCapacityMs ?? policy.queueCapacityMs,
     frameDurationMs: customSettings.frameDurationMs ?? FRAME_DURATION_MS_DEFAULT,
     // frameSizeSamples is computed by the audio worker based on codec-optimal frame size
   };
@@ -75,7 +75,7 @@ function getFallbackConfig(codecSupport: SupportedCodecsResult): EncoderConfig |
     channels: 2,
     bitsPerSample: DEFAULT_BITS_PER_SAMPLE,
     latencyMode: 'quality',
-    streamingBufferMs: policy.streamingBufferMs,
+    queueCapacityMs: policy.queueCapacityMs,
     frameDurationMs: FRAME_DURATION_MS_DEFAULT,
     // frameSizeSamples is computed by the audio worker based on codec-optimal frame size
   };
@@ -137,7 +137,7 @@ function buildConfigFromOption(
   const sampleRate = pickSampleRate(option.codec, codecSupport, tier === 'low');
   // Low tier uses mono for bandwidth savings
   const channels: 1 | 2 = tier === 'low' ? 1 : 2;
-  // Use policy-defined streaming buffer for server-side jitter tolerance
+  // Use policy-defined queue capacity for server-side cadence queue
   const policy = getStreamingPolicy(latencyMode);
 
   return {
@@ -147,7 +147,7 @@ function buildConfigFromOption(
     channels,
     bitsPerSample: DEFAULT_BITS_PER_SAMPLE,
     latencyMode,
-    streamingBufferMs: policy.streamingBufferMs,
+    queueCapacityMs: policy.queueCapacityMs,
     frameDurationMs: FRAME_DURATION_MS_DEFAULT,
     // frameSizeSamples is computed by the audio worker based on codec-optimal frame size
   };

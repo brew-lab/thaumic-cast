@@ -166,12 +166,14 @@ export function tpdfDither(): number {
 }
 
 /**
- * Streaming buffer size constraints and default (in milliseconds).
- * Used for PCM streaming to balance latency vs. reliability.
+ * Queue capacity constraints and default (in milliseconds).
+ * Caps the maximum number of frames the cadence queue can hold.
+ * Does NOT control actual buffer depth — in steady state the queue
+ * sits at 1-2 frames regardless of capacity.
  */
-export const STREAMING_BUFFER_MS_MIN = 100;
-export const STREAMING_BUFFER_MS_MAX = 1000;
-export const STREAMING_BUFFER_MS_DEFAULT = 200;
+export const QUEUE_CAPACITY_MS_MIN = 0;
+export const QUEUE_CAPACITY_MS_MAX = 1000;
+export const QUEUE_CAPACITY_MS_DEFAULT = 0;
 
 /**
  * Frame duration options (in milliseconds).
