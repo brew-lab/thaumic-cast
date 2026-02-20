@@ -56,6 +56,18 @@ export interface RingBufferConfig {
   mask: number;
 }
 
+/** Result of creating an encoded (Int16) ring buffer for the encode-in-worklet path. */
+export interface EncodedRingBufferConfig {
+  /** The SharedArrayBuffer containing the ring buffer. */
+  sab: SharedArrayBuffer;
+  /** Power-of-two buffer size in interleaved Int16 samples. */
+  size: number;
+  /** Bitmask for efficient index wrapping (size - 1). */
+  mask: number;
+  /** Number of interleaved Int16 samples per encoded frame. */
+  frameSizeInterleaved: number;
+}
+
 /**
  * Calculates the power-of-two buffer size for a given audio configuration.
  * Buffer duration varies by latency mode:
@@ -114,4 +126,48 @@ export function createAudioRingBuffer(
   }
 
   return { sab, size, mask };
+}
+
+/**
+ * Creates a SharedArrayBuffer for encoded Int16 audio data, sized for the given
+ * audio configuration. Used by the encode-in-worklet path where the AudioWorklet
+ * writes complete Int16-encoded frames and the Worker relays them via WebSocket.
+ *
+ * The buffer is a standard power-of-two ring buffer. Frame alignment is NOT required
+ * because both the worklet (writeFrameToSAB) and relay worker (readOneFrame) handle
+ * wrap-around with split writes/reads when a frame straddles the buffer boundary.
+ *
+ * @param sampleRate - Audio sample rate in Hz
+ * @param channels - Number of audio channels
+ * @param latencyMode - The latency mode (affects buffer sizing)
+ * @param frameSizeInterleaved - Number of interleaved Int16 samples per encoded frame
+ * @returns Encoded ring buffer configuration with SharedArrayBuffer, size, mask, and frame size
+ */
+export function createEncodedRingBuffer(
+  sampleRate: number,
+  channels: number,
+  latencyMode: LatencyMode = 'quality',
+  frameSizeInterleaved: number,
+): EncodedRingBufferConfig {
+  const size = calculateBufferSize(sampleRate, channels, latencyMode);
+  const mask = size - 1;
+
+  // Verify power-of-two (should always pass given calculateBufferSize implementation)
+  if ((size & (size - 1)) !== 0) {
+    throw new Error('Buffer size must be a power of two for bitmask wrapping');
+  }
+
+  // Allocate: header uses Int32, data uses Int16
+  const byteLength = DATA_BYTE_OFFSET + size * Int16Array.BYTES_PER_ELEMENT;
+  const sab = new SharedArrayBuffer(byteLength);
+
+  // Verify the Int16Array view has the expected size
+  const dataView = new Int16Array(sab, DATA_BYTE_OFFSET);
+  if (dataView.length !== size) {
+    throw new Error(
+      `Encoded ring buffer data view length mismatch: expected ${size}, got ${dataView.length}`,
+    );
+  }
+
+  return { sab, size, mask, frameSizeInterleaved };
 }

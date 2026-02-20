@@ -14,7 +14,14 @@ import type { EncoderConfig, StreamMetadata } from '@thaumic-cast/protocol';
 // Inbound Messages (StreamSession → Worker)
 // ─────────────────────────────────────────────────────────────────────────────
 
-/** Initializes the worker with buffer and encoder configuration. */
+/**
+ * Initializes the worker with buffer and encoder configuration.
+ *
+ * - `'passthrough'` mode (default): The worker drains Float32 samples from the SAB,
+ *   encodes them, and sends encoded frames via WebSocket. Used for compressed codecs.
+ * - `'encode'` mode: The AudioWorklet has already encoded PCM to Int16 in the SAB.
+ *   The worker reads complete Int16 frames and relays them directly via WebSocket.
+ */
 export interface WorkerInitMessage {
   type: 'INIT';
   sab: SharedArrayBuffer;
@@ -24,6 +31,10 @@ export interface WorkerInitMessage {
   sampleRate: number;
   encoderConfig: EncoderConfig;
   wsUrl: string;
+  /** Pipeline mode. Defaults to 'passthrough' for backward compatibility. */
+  mode?: 'encode' | 'passthrough';
+  /** Number of interleaved Int16 samples per frame. Required when mode is 'encode'. */
+  frameSizeInterleaved?: number;
 }
 
 /** Stops the worker and cleans up resources. */

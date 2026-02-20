@@ -1,6 +1,13 @@
 /**
  * AudioWorkletProcessor for extracting raw PCM samples using zero-copy shared memory.
  *
+ * Supports two modes:
+ * - `passthrough` (default): Writes clamped Float32 samples to a Float32 SAB ring buffer.
+ *   Encoding happens downstream in the Worker thread.
+ * - `encode`: Performs Float32→Int16 quantization with TPDF dither and frame accumulation
+ *   directly on Chrome's high-priority audio rendering thread, then writes complete Int16
+ *   frames to an Int16 SAB ring buffer. The Worker becomes a thin relay.
+ *
  * Uses monotonic (ever-increasing) indices with unsigned math for correct
  * wrap-around handling over long sessions (>12 hours).
  *
@@ -20,6 +27,25 @@ const HEARTBEAT_INTERVAL_SEC = 1.0;
 
 /** Samples per block (Web Audio render quantum). */
 const BLOCK_SIZE = 128;
+
+/** Maximum Int16 value, used for Float32→Int16 scaling. */
+const INT16_MAX = 32767;
+
+// ─────────────────────────────────────────────────────────────────────────────
+// TPDF Dither Table (inlined — AudioWorkletGlobalScope cannot resolve imports)
+//
+// Pre-computed triangular probability density function noise. Using a lookup
+// table is ~10-20x faster than calling Math.random() per sample. 4096 entries
+// is large enough to avoid audible periodicity while remaining cache-friendly.
+//
+// Same algorithm as protocol/src/audio.ts:145-147.
+// ─────────────────────────────────────────────────────────────────────────────
+const DITHER_TABLE_SIZE = 4096;
+const DITHER_TABLE_MASK = DITHER_TABLE_SIZE - 1;
+const DITHER_TABLE = new Float32Array(DITHER_TABLE_SIZE);
+for (let i = 0; i < DITHER_TABLE_SIZE; i++) {
+  DITHER_TABLE[i] = Math.random() - 0.5 + (Math.random() - 0.5);
+}
 
 /**
  * Base class for audio worklet processors.
@@ -56,18 +82,19 @@ declare const sampleRate: number;
 // See protocol/audio.ts clampSample for the canonical (non-NaN-safe) version.
 
 /**
- * AudioWorkletProcessor for writing Float32 audio to shared memory.
+ * AudioWorkletProcessor for writing audio to shared memory ring buffers.
+ *
+ * In passthrough mode: writes Float32 samples to a Float32 SAB ring buffer.
+ * In encode mode: quantizes Float32→Int16 with TPDF dither, accumulates into
+ * frames, and writes complete Int16 frames to an Int16 SAB ring buffer.
  *
  * Uses monotonic indices that wrap at 32-bit boundary with unsigned interpretation.
  * Checks available space once per block and drops entire blocks when full.
  * Uses bulk TypedArray.set() for efficient writes with wrap handling.
  * Only notifies consumer on empty→non-empty transition.
- *
- * Float32 samples are preserved throughout the pipeline until final quantization
- * at the encoder level, enabling 24-bit FLAC encoding without precision loss.
  */
 class PCMProcessor extends AudioWorkletProcessor {
-  private sharedBuffer: Float32Array | null = null;
+  // ── Shared state (both modes) ──────────────────────────────────────────
   private control: Int32Array | null = null;
   /** Bitmask for efficient buffer offset calculation (power-of-two optimization). */
   private bufferMask = 0;
@@ -81,6 +108,26 @@ class PCMProcessor extends AudioWorkletProcessor {
   private blockCount = 0;
   /** Number of blocks between heartbeats (computed from sampleRate). */
   private readonly heartbeatIntervalBlocks: number;
+
+  // ── Passthrough mode ───────────────────────────────────────────────────
+  /** Float32 view of the SAB data region. Null when in encode mode or uninitialized. */
+  private sharedFloat32: Float32Array | null = null;
+
+  // ── Encode mode ────────────────────────────────────────────────────────
+  /** Boolean flag for fast branching in process() (no string comparison). */
+  private encodeMode = false;
+  /** Int16 view of the SAB data region. Null when in passthrough mode or uninitialized. */
+  private sharedInt16: Int16Array | null = null;
+  /** Pre-allocated buffer for one quantum of encoded Int16 samples (128 * 2 channels max). */
+  private encodeBuffer: Int16Array | null = null;
+  /** Pre-allocated frame accumulation buffer (one complete frame). */
+  private frameAccum: Int16Array | null = null;
+  /** Current write position in frameAccum. */
+  private frameAccumOffset = 0;
+  /** Number of interleaved Int16 samples per frame. */
+  private frameSizeInterleaved = 0;
+  /** Current index into the TPDF dither table. */
+  private ditherIndex = 0;
 
   /**
    * Creates a new PCM processor instance.
@@ -99,24 +146,71 @@ class PCMProcessor extends AudioWorkletProcessor {
 
     this.port.onmessage = (event) => {
       if (event.data.type === 'INIT_BUFFER') {
-        const { buffer: sab, bufferMask, headerSize, channels } = event.data;
-        this.sharedBuffer = new Float32Array(sab, headerSize * 4);
+        const {
+          buffer: sab,
+          bufferMask,
+          headerSize,
+          channels,
+          mode,
+          frameSizeInterleaved,
+        } = event.data;
         this.control = new Int32Array(sab, 0, headerSize);
         this.bufferMask = bufferMask;
         this.capacity = bufferMask + 1; // Power of two: mask + 1 = size
         this.channels = channels;
+
+        if (mode === 'encode') {
+          // Encode mode: Int16 SAB, frame accumulation, TPDF dither
+          this.encodeMode = true;
+          this.sharedInt16 = new Int16Array(sab, headerSize * Int32Array.BYTES_PER_ELEMENT);
+          this.sharedFloat32 = null;
+
+          // Pre-allocate encode buffers (ZERO allocations allowed in process())
+          this.encodeBuffer = new Int16Array(BLOCK_SIZE * 2); // 256 max (128 samples * 2 channels)
+          this.frameSizeInterleaved = frameSizeInterleaved;
+          this.frameAccum = new Int16Array(frameSizeInterleaved);
+          this.frameAccumOffset = 0;
+          this.ditherIndex = 0;
+        } else {
+          // Passthrough mode (default): Float32 SAB, per-quantum writes
+          this.encodeMode = false;
+          this.sharedFloat32 = new Float32Array(sab, headerSize * Int32Array.BYTES_PER_ELEMENT);
+          this.sharedInt16 = null;
+          this.encodeBuffer = null;
+          this.frameAccum = null;
+        }
       }
     };
   }
 
   /**
    * Processes audio frames and writes to shared memory ring buffer.
-   * Uses bulk conversion and TypedArray.set() for efficient writes.
+   *
+   * In passthrough mode: clamps Float32 samples and writes per-quantum to Float32 SAB.
+   * In encode mode: clamps, quantizes with TPDF dither, accumulates into frames,
+   * and writes complete Int16 frames to Int16 SAB.
+   *
    * @param inputs - Input audio data from the graph
    * @returns Always true to keep the processor alive
    */
   process(inputs: Float32Array[][]): boolean {
-    if (!this.sharedBuffer || !this.control) return true;
+    if (!this.control) return true;
+
+    // Fast branch on boolean flag (no string comparison in hot path)
+    if (this.encodeMode) {
+      return this.processEncode(inputs);
+    }
+    return this.processPassthrough(inputs);
+  }
+
+  /**
+   * Passthrough mode: clamp Float32 samples and write per-quantum to Float32 SAB.
+   * This is the original process() behavior, unchanged.
+   * @param inputs - Input audio data from the graph
+   * @returns Always true to keep the processor alive
+   */
+  private processPassthrough(inputs: Float32Array[][]): boolean {
+    if (!this.sharedFloat32 || !this.control) return true;
 
     const input = inputs[0];
     if (!input?.[0]) return true;
@@ -151,6 +245,164 @@ class PCMProcessor extends AudioWorkletProcessor {
     //
     // Loop is unrolled by 4 for better instruction-level parallelism.
     // frameCount is typically 128 (render quantum), always divisible by 4.
+    this.clampToConversionBuffer(input, channel0, channel1, frameCount);
+
+    // Write to ring buffer with wrap handling
+    const startOffset = write & this.bufferMask;
+    const endOffset = startOffset + samplesToWrite;
+
+    if (endOffset <= this.capacity) {
+      // No wrap - single set
+      this.sharedFloat32.set(this.conversionBuffer.subarray(0, samplesToWrite), startOffset);
+    } else {
+      // Wrap - two sets
+      const firstPart = this.capacity - startOffset;
+      this.sharedFloat32.set(this.conversionBuffer.subarray(0, firstPart), startOffset);
+      this.sharedFloat32.set(this.conversionBuffer.subarray(firstPart, samplesToWrite), 0);
+    }
+
+    // Single atomic commit
+    Atomics.store(this.control, CTRL_WRITE_IDX, (write + samplesToWrite) | 0);
+
+    // Only notify on empty→non-empty transition
+    if (wasEmpty) {
+      Atomics.notify(this.control, CTRL_WRITE_IDX, 1);
+    }
+
+    this.tickHeartbeat();
+
+    return true;
+  }
+
+  /**
+   * Encode mode: clamp, quantize Float32→Int16 with TPDF dither, accumulate into
+   * frames, and write complete Int16 frames to the SAB ring buffer.
+   *
+   * Frame accumulation uses the split-write strategy (Design Doc Section 4.3,
+   * Approach B) to handle the non-integer quanta-per-frame ratio cleanly.
+   *
+   * @param inputs - Input audio data from the graph
+   * @returns Always true to keep the processor alive
+   */
+  private processEncode(inputs: Float32Array[][]): boolean {
+    const control = this.control!;
+    const sharedInt16 = this.sharedInt16!;
+    const encodeBuffer = this.encodeBuffer!;
+    const frameAccum = this.frameAccum!;
+
+    const input = inputs[0];
+    if (!input?.[0]) return true;
+
+    const channel0 = input[0];
+    const channel1 = input[1] || channel0;
+    const frameCount = channel0.length;
+    const samplesToWrite = frameCount * this.channels;
+
+    // Step (a): Clamp and interleave into conversionBuffer (same as passthrough)
+    this.clampToConversionBuffer(input, channel0, channel1, frameCount);
+
+    // Step (b): Quantize Float32→Int16 with TPDF dither into encodeBuffer
+    let ditherIdx = this.ditherIndex;
+    for (let i = 0; i < samplesToWrite; i++) {
+      const s = this.conversionBuffer[i]!;
+      // conversionBuffer is already clamped to [-1, 1] with NaN→0
+      const dithered = s * INT16_MAX + DITHER_TABLE[ditherIdx]!;
+      ditherIdx = (ditherIdx + 1) & DITHER_TABLE_MASK;
+      const rounded = Math.round(dithered);
+      encodeBuffer[i] = rounded < -32768 ? -32768 : rounded > 32767 ? 32767 : rounded;
+    }
+    this.ditherIndex = ditherIdx;
+
+    // Step (c): Append encoded samples to frame accumulation buffer using split-write.
+    // At most 2 iterations per quantum (one frame boundary crossing per quantum at most).
+    let encodedOffset = 0;
+    while (encodedOffset < samplesToWrite) {
+      const spaceInFrame = this.frameSizeInterleaved - this.frameAccumOffset;
+      const toCopy =
+        samplesToWrite - encodedOffset < spaceInFrame
+          ? samplesToWrite - encodedOffset
+          : spaceInFrame;
+
+      frameAccum.set(
+        encodeBuffer.subarray(encodedOffset, encodedOffset + toCopy),
+        this.frameAccumOffset,
+      );
+      this.frameAccumOffset += toCopy;
+      encodedOffset += toCopy;
+
+      // Step (d): When frame is complete, write to SAB
+      if (this.frameAccumOffset >= this.frameSizeInterleaved) {
+        this.writeFrameToSAB(control, sharedInt16, frameAccum);
+        this.frameAccumOffset = 0;
+      }
+    }
+
+    this.tickHeartbeat();
+
+    return true;
+  }
+
+  /**
+   * Writes a complete Int16 frame to the SAB ring buffer.
+   * Drops the frame if the buffer is full. Uses two-part copy for wrap handling.
+   * @param control - Int32Array control region
+   * @param sharedInt16 - Int16Array data region of the SAB
+   * @param frame - Complete Int16 frame to write
+   */
+  private writeFrameToSAB(control: Int32Array, sharedInt16: Int16Array, frame: Int16Array): void {
+    const frameSize = this.frameSizeInterleaved;
+
+    // Check available space
+    const write = Atomics.load(control, CTRL_WRITE_IDX);
+    const read = Atomics.load(control, CTRL_READ_IDX);
+    const used = (write - read) >>> 0;
+    const available = this.capacity - used;
+
+    if (available < frameSize) {
+      // Drop frame, track samples dropped
+      Atomics.add(control, CTRL_DROPPED_SAMPLES, frameSize);
+      return;
+    }
+
+    const wasEmpty = write === read;
+
+    // Write to ring buffer with wrap handling
+    const startOffset = write & this.bufferMask;
+    const endOffset = startOffset + frameSize;
+
+    if (endOffset <= this.capacity) {
+      // No wrap - single set
+      sharedInt16.set(frame, startOffset);
+    } else {
+      // Wrap - two sets
+      const firstPart = this.capacity - startOffset;
+      sharedInt16.set(frame.subarray(0, firstPart), startOffset);
+      sharedInt16.set(frame.subarray(firstPart), 0);
+    }
+
+    // Single atomic commit
+    Atomics.store(control, CTRL_WRITE_IDX, (write + frameSize) | 0);
+
+    // Only notify on empty→non-empty transition
+    if (wasEmpty) {
+      Atomics.notify(control, CTRL_WRITE_IDX, 1);
+    }
+  }
+
+  /**
+   * Clamps and interleaves input audio into the pre-allocated conversionBuffer.
+   * Handles mono downmix and stereo interleaving with unrolled loops.
+   * @param input - Raw input channel array from process()
+   * @param channel0 - Left/mono channel
+   * @param channel1 - Right channel (or same as channel0 for mono input)
+   * @param frameCount - Number of frames in this quantum
+   */
+  private clampToConversionBuffer(
+    input: Float32Array[],
+    channel0: Float32Array,
+    channel1: Float32Array,
+    frameCount: number,
+  ): void {
     const len4 = frameCount & ~3;
 
     if (this.channels === 1) {
@@ -214,37 +466,17 @@ class PCMProcessor extends AudioWorkletProcessor {
         this.conversionBuffer[i * 2 + 1] = Math.max(-1, Math.min(1, channel1[i]! || 0));
       }
     }
+  }
 
-    // Write to ring buffer with wrap handling
-    const startOffset = write & this.bufferMask;
-    const endOffset = startOffset + samplesToWrite;
-
-    if (endOffset <= this.capacity) {
-      // No wrap - single set
-      this.sharedBuffer.set(this.conversionBuffer.subarray(0, samplesToWrite), startOffset);
-    } else {
-      // Wrap - two sets
-      const firstPart = this.capacity - startOffset;
-      this.sharedBuffer.set(this.conversionBuffer.subarray(0, firstPart), startOffset);
-      this.sharedBuffer.set(this.conversionBuffer.subarray(firstPart, samplesToWrite), 0);
-    }
-
-    // Single atomic commit
-    Atomics.store(this.control, CTRL_WRITE_IDX, (write + samplesToWrite) | 0);
-
-    // Only notify on empty→non-empty transition
-    if (wasEmpty) {
-      Atomics.notify(this.control, CTRL_WRITE_IDX, 1);
-    }
-
-    // Send periodic heartbeat to main thread
+  /**
+   * Sends periodic heartbeat to main thread. Called at the end of both process paths.
+   */
+  private tickHeartbeat(): void {
     this.blockCount++;
     if (this.blockCount >= this.heartbeatIntervalBlocks) {
       this.blockCount = 0;
       this.port.postMessage({ type: 'HEARTBEAT' });
     }
-
-    return true;
   }
 }
 
