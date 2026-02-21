@@ -190,7 +190,7 @@ export const ExtensionSettingsSchema = z.object({
 
   // Keep tab audible: plays audio at very low volume to prevent Chrome throttling
   // When enabled, Chrome sees the tab as "playing audio" and won't throttle it
-  keepTabAudible: z.boolean().default(false),
+  keepTabAudible: z.boolean().default(true),
 
   // Sync speakers: groups multiple speakers for synchronized playback (default: false)
   syncSpeakers: z.boolean().default(false),
@@ -216,7 +216,7 @@ const DEFAULT_EXTENSION_SETTINGS: ExtensionSettings = {
     frameDurationMs: FRAME_DURATION_MS_DEFAULT,
   },
   videoSyncEnabled: false,
-  keepTabAudible: false,
+  keepTabAudible: true,
   syncSpeakers: false,
 };
 

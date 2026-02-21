@@ -87,8 +87,8 @@ export async function ensureOffscreen(): Promise<void> {
   offscreenCreationPromise = chrome.offscreen
     .createDocument({
       url: 'src/offscreen/offscreen.html',
-      reasons: [chrome.offscreen.Reason.USER_MEDIA],
-      justification: 'Capture and encode tab audio for streaming to Sonos',
+      reasons: [chrome.offscreen.Reason.USER_MEDIA, chrome.offscreen.Reason.AUDIO_PLAYBACK],
+      justification: 'Capture tab audio and maintain audio processing to prevent throttling',
     })
     .then(() => {
       offscreenCreationPromise = null;
