@@ -6,9 +6,12 @@
 use std::net::IpAddr;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::time::Duration;
 
 use parking_lot::RwLock;
 use thiserror::Error;
+
+use axum::serve::ListenerExt;
 
 use crate::artwork::{ArtworkConfig, ArtworkSource};
 use crate::context::NetworkContext;
@@ -168,6 +171,29 @@ pub async fn start_server(state: AppState) -> Result<(), ServerError> {
 
     log::info!("Server listening on http://0.0.0.0:{}", port);
     let app = http::create_router(state);
+
+    // TCP_NODELAY: Disable Nagle's algorithm on every accepted connection.
+    // Without this, TCP buffers small writes (1920-byte PCM frames) and sends them
+    // in batches, causing uneven delivery timing to Sonos speakers.
+    //
+    // TCP keepalive: Detect dead connections within ~25s (10s idle + 3 × 5s probes)
+    // instead of the default ~2 hours. Critical for streaming connections where a
+    // stalled Sonos speaker would otherwise hold the async task alive indefinitely.
+    let listener = listener.tap_io(|tcp_stream| {
+        if let Err(err) = tcp_stream.set_nodelay(true) {
+            log::warn!("Failed to set TCP_NODELAY on incoming connection: {err:#}");
+        }
+
+        let sock_ref = socket2::SockRef::from(&*tcp_stream);
+        let keepalive = socket2::TcpKeepalive::new()
+            .with_time(Duration::from_secs(10))
+            .with_interval(Duration::from_secs(5));
+        #[cfg(target_os = "linux")]
+        let keepalive = keepalive.with_retries(3);
+        if let Err(err) = sock_ref.set_tcp_keepalive(&keepalive) {
+            log::warn!("Failed to set TCP keepalive: {err:#}");
+        }
+    });
 
     // Use into_make_service_with_connect_info to enable ConnectInfo<SocketAddr> extraction
     axum::serve(

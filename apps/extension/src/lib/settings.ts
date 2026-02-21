@@ -6,9 +6,9 @@ import {
   LatencyModeSchema,
   BitDepthSchema,
   DEFAULT_BITS_PER_SAMPLE,
-  STREAMING_BUFFER_MS_MIN,
-  STREAMING_BUFFER_MS_MAX,
-  STREAMING_BUFFER_MS_DEFAULT,
+  QUEUE_CAPACITY_MS_MIN,
+  QUEUE_CAPACITY_MS_MAX,
+  QUEUE_CAPACITY_MS_DEFAULT,
   FRAME_DURATION_MS_DEFAULT,
   FrameDurationMsSchema,
   isValidBitrateForCodec,
@@ -144,12 +144,12 @@ export const CustomAudioSettingsSchema = z.object({
   latencyMode: LatencyModeSchema.default('quality'),
   /** Bit depth (16 or 24). Supported depths depend on the codec. */
   bitsPerSample: BitDepthSchema.default(DEFAULT_BITS_PER_SAMPLE),
-  /** Buffer size for PCM streaming in milliseconds. */
-  streamingBufferMs: z
+  /** Max cadence queue capacity in milliseconds. */
+  queueCapacityMs: z
     .number()
-    .min(STREAMING_BUFFER_MS_MIN)
-    .max(STREAMING_BUFFER_MS_MAX)
-    .default(STREAMING_BUFFER_MS_DEFAULT),
+    .min(QUEUE_CAPACITY_MS_MIN)
+    .max(QUEUE_CAPACITY_MS_MAX)
+    .default(QUEUE_CAPACITY_MS_DEFAULT),
   /** Frame duration in milliseconds. Currently only used when codec is 'pcm'. */
   frameDurationMs: FrameDurationMsSchema.default(FRAME_DURATION_MS_DEFAULT),
 });
@@ -181,7 +181,7 @@ export const ExtensionSettingsSchema = z.object({
     sampleRate: 48000,
     latencyMode: 'quality',
     bitsPerSample: DEFAULT_BITS_PER_SAMPLE,
-    streamingBufferMs: STREAMING_BUFFER_MS_DEFAULT,
+    queueCapacityMs: QUEUE_CAPACITY_MS_DEFAULT,
     frameDurationMs: FRAME_DURATION_MS_DEFAULT,
   }),
 
@@ -212,7 +212,7 @@ const DEFAULT_EXTENSION_SETTINGS: ExtensionSettings = {
     sampleRate: 48000,
     latencyMode: 'quality',
     bitsPerSample: DEFAULT_BITS_PER_SAMPLE,
-    streamingBufferMs: STREAMING_BUFFER_MS_DEFAULT,
+    queueCapacityMs: QUEUE_CAPACITY_MS_DEFAULT,
     frameDurationMs: FRAME_DURATION_MS_DEFAULT,
   },
   videoSyncEnabled: false,

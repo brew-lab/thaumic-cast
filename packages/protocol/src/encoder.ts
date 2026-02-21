@@ -15,9 +15,9 @@ import {
   type LatencyMode,
   LatencyModeSchema,
   SampleRateSchema,
-  STREAMING_BUFFER_MS_DEFAULT,
-  STREAMING_BUFFER_MS_MAX,
-  STREAMING_BUFFER_MS_MIN,
+  QUEUE_CAPACITY_MS_DEFAULT,
+  QUEUE_CAPACITY_MS_MAX,
+  QUEUE_CAPACITY_MS_MIN,
   type SupportedSampleRate,
 } from './audio.js';
 
@@ -189,12 +189,12 @@ export const EncoderConfigSchema = z
      */
     bitsPerSample: BitDepthSchema.default(16),
     latencyMode: LatencyModeSchema.default('quality'),
-    /** Buffer size for PCM streaming in milliseconds. */
-    streamingBufferMs: z
+    /** Max cadence queue capacity in milliseconds. */
+    queueCapacityMs: z
       .number()
-      .min(STREAMING_BUFFER_MS_MIN)
-      .max(STREAMING_BUFFER_MS_MAX)
-      .default(STREAMING_BUFFER_MS_DEFAULT),
+      .min(QUEUE_CAPACITY_MS_MIN)
+      .max(QUEUE_CAPACITY_MS_MAX)
+      .default(QUEUE_CAPACITY_MS_DEFAULT),
     /**
      * Frame duration in milliseconds for codecs that support configurable frame sizes.
      * Currently only used for PCM. Other codecs have fixed frame sizes.
@@ -231,8 +231,8 @@ export interface CreateEncoderConfigOptions {
   /** Bit depth (16 or 24). 24-bit only supported for FLAC. */
   bitsPerSample?: BitDepth;
   latencyMode?: LatencyMode;
-  /** Buffer size for PCM streaming in milliseconds (100-1000). */
-  streamingBufferMs?: number;
+  /** Max cadence queue capacity in milliseconds (100-1000). */
+  queueCapacityMs?: number;
   /** Frame duration in milliseconds (10, 20, or 40). Currently only used for PCM codec. */
   frameDurationMs?: FrameDurationMs;
   /** Frame size in samples per channel. Set by audio worker. */
@@ -252,7 +252,7 @@ export function createEncoderConfig(options: CreateEncoderConfigOptions): Encode
     channels = 2,
     bitsPerSample = 16,
     latencyMode = 'quality',
-    streamingBufferMs = STREAMING_BUFFER_MS_DEFAULT,
+    queueCapacityMs = QUEUE_CAPACITY_MS_DEFAULT,
     frameDurationMs = FRAME_DURATION_MS_DEFAULT,
     frameSizeSamples,
   } = options;
@@ -269,7 +269,7 @@ export function createEncoderConfig(options: CreateEncoderConfigOptions): Encode
     channels,
     bitsPerSample: effectiveBitsPerSample,
     latencyMode,
-    streamingBufferMs,
+    queueCapacityMs,
     frameDurationMs,
     frameSizeSamples,
   };

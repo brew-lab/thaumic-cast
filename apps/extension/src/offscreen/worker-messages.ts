@@ -14,7 +14,14 @@ import type { EncoderConfig, StreamMetadata } from '@thaumic-cast/protocol';
 // Inbound Messages (StreamSession → Worker)
 // ─────────────────────────────────────────────────────────────────────────────
 
-/** Initializes the worker with buffer and encoder configuration. */
+/**
+ * Initializes the worker with buffer and encoder configuration.
+ *
+ * - `'passthrough'` mode (default): The worker drains Float32 samples from the SAB,
+ *   encodes them, and sends encoded frames via WebSocket. Used for compressed codecs.
+ * - `'encode'` mode: The AudioWorklet has already encoded PCM to Int16 in the SAB.
+ *   The worker reads complete Int16 frames and relays them directly via WebSocket.
+ */
 export interface WorkerInitMessage {
   type: 'INIT';
   sab: SharedArrayBuffer;
@@ -24,6 +31,10 @@ export interface WorkerInitMessage {
   sampleRate: number;
   encoderConfig: EncoderConfig;
   wsUrl: string;
+  /** Pipeline mode. Defaults to 'passthrough' for backward compatibility. */
+  mode?: 'encode' | 'passthrough';
+  /** Number of interleaved Int16 samples per frame. Required when mode is 'encode'. */
+  frameSizeInterleaved?: number;
 }
 
 /** Stops the worker and cleans up resources. */
@@ -141,6 +152,41 @@ export interface WorkerStatsMessage {
   frameQueueOverflowDrops: number;
 }
 
+/** Timestamped snapshot of pipeline health metrics, captured every stats interval. */
+export interface MetricSnapshot {
+  /** Milliseconds since stream start. */
+  elapsedMs: number;
+  // Ring buffer (Metric 1)
+  /** Ring buffer fill level (0.0 = empty, 1.0 = full). */
+  ringFillFraction: number;
+  /** Samples dropped by producer overflow this interval. */
+  overflowSamples: number;
+  /** Underflow events this interval. */
+  underflowCount: number;
+  // Encoder (Metric 2)
+  /** Frames encoded this interval. */
+  framesEncoded: number;
+  /** Average encode() time in ms this interval. */
+  avgEncodeMs: number;
+  /** Instantaneous encoder queue depth. */
+  encodeQueueSize: number;
+  // WebSocket (Metric 3)
+  /** Frames sent over WebSocket this interval. */
+  framesSent: number;
+  /** WebSocket bufferedAmount as % of high-water mark. */
+  wsPressurePct: number;
+  /** Frames dropped (backpressure) this interval. */
+  droppedFrames: number;
+  /** Quality mode frame queue bytes (instantaneous). */
+  frameQueueBytes: number;
+}
+
+/** Full pipeline metrics timeline, posted on stream end. */
+export interface WorkerMetricsDumpMessage {
+  type: 'METRICS_DUMP';
+  timeline: MetricSnapshot[];
+}
+
 /** Union of all messages that can be sent from the worker. */
 export type WorkerOutboundMessage =
   | WorkerReadyMessage
@@ -151,4 +197,5 @@ export type WorkerOutboundMessage =
   | WorkerPlaybackStartedMessage
   | WorkerPlaybackResultsMessage
   | WorkerPlaybackErrorMessage
-  | WorkerStatsMessage;
+  | WorkerStatsMessage
+  | WorkerMetricsDumpMessage;
