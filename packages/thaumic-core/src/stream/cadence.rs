@@ -7,7 +7,7 @@
 use std::collections::VecDeque;
 use std::net::IpAddr;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, OnceLock};
+use std::sync::{Arc, OnceLock, Weak};
 use std::time::{Duration, Instant};
 
 use async_stream::stream;
@@ -16,6 +16,8 @@ use futures::Stream;
 use serde::Serialize;
 use tokio::sync::broadcast;
 use tokio::time::{interval, Instant as TokioInstant, MissedTickBehavior};
+
+use crate::protocol_constants::REBUFFER_TIMEOUT_MULTIPLIER;
 
 use super::{
     apply_fade_in, create_fade_out_frame, crossfade_samples, extract_last_sample_pair,
@@ -33,7 +35,7 @@ const DELIVERY_GAP_LOG_THRESHOLD_MS: u64 = 500;
 ///
 /// Logs a warning and returns a formatted error. Centralizes the handling
 /// of `BroadcastStreamRecvError::Lagged` to avoid duplication.
-pub fn lagged_error(frames: u64) -> std::io::Error {
+pub fn create_lagged_io_error(frames: u64) -> std::io::Error {
     log::warn!(
         "[Stream] Broadcast receiver lagged by {} frames - possible CPU contention",
         frames
@@ -50,7 +52,9 @@ fn log_lagged(n: u64, last_log: &mut Option<TokioInstant>, context: &str) {
     }
 }
 
-/// Statistics from the cadence stream, written once when the stream ends.
+/// Cadence stream statistics: tracked mutably during the loop,
+/// then written once to the logging guard when the stream ends.
+#[derive(Clone, Copy)]
 pub(crate) struct CadenceStats {
     /// Number of times silence mode was entered.
     pub silence_events: u64,
@@ -58,6 +62,21 @@ pub(crate) struct CadenceStats {
     pub silence_frames: u64,
     /// Frames dropped due to cadence queue overflow.
     pub frames_dropped: u64,
+}
+
+/// Commits cadence counters to the logging guard on drop.
+///
+/// Ensures silence/overflow statistics are recorded even when the async
+/// stream is cancelled mid-loop (e.g., Sonos closes the HTTP connection).
+struct StatsRecorder {
+    guard: Arc<LoggingStreamGuard>,
+    counters: CadenceStats,
+}
+
+impl Drop for StatsRecorder {
+    fn drop(&mut self) {
+        self.guard.set_cadence_stats(self.counters);
+    }
 }
 
 /// Maximum pipeline snapshots to keep (300 entries × ~1s = ~5 minutes).
@@ -76,6 +95,7 @@ struct ReceiveWindow {
 #[derive(Serialize)]
 struct CadenceWindow {
     queue_len: usize,
+    target_depth: usize,
     silence_events: u64,
     silence_frames: u64,
     drops: u64,
@@ -203,14 +223,53 @@ impl LoggingStreamGuard {
     }
 }
 
+/// Summary of a completed stream for end-of-stream logging.
+struct StreamSummary {
+    stream_id: String,
+    client_ip: IpAddr,
+    frames_sent: u64,
+    max_gap_ms: u64,
+    gaps_over_threshold: u64,
+    final_gap_ms: u64,
+    stalled: bool,
+    silence_events: u64,
+    silence_frames: u64,
+    frames_dropped: u64,
+    pipeline_timeline_json: String,
+}
+
+impl std::fmt::Display for StreamSummary {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "stream={}, client={}, frames_sent={}, max_gap={}ms, gaps_over_{}ms={}, final_gap={}ms",
+            self.stream_id,
+            self.client_ip,
+            self.frames_sent,
+            self.max_gap_ms,
+            DELIVERY_GAP_THRESHOLD_MS,
+            self.gaps_over_threshold,
+            self.final_gap_ms,
+        )?;
+        if self.silence_events > 0 {
+            write!(
+                f,
+                ", silence_events={}, silence_frames={}",
+                self.silence_events, self.silence_frames
+            )?;
+        }
+        if self.frames_dropped > 0 {
+            write!(f, ", frames_dropped={}", self.frames_dropped)?;
+        }
+        if !self.pipeline_timeline_json.is_empty() {
+            write!(f, ", pipeline_timeline={}", self.pipeline_timeline_json)?;
+        }
+        Ok(())
+    }
+}
+
 impl Drop for LoggingStreamGuard {
     fn drop(&mut self) {
-        let frames = self.frames_sent.load(Ordering::Relaxed);
-        let first_error = self.first_error.get_mut();
-        let max_gap_ms = self.max_gap_ms.load(Ordering::Relaxed);
-        let gaps_over_threshold = self.gaps_over_threshold.load(Ordering::Relaxed);
-
-        // Calculate time since last frame delivery
         let last_nanos = self.last_delivery_nanos.load(Ordering::Relaxed);
         let final_gap_ms = if last_nanos > 0 {
             let now_nanos = self.reference_time.elapsed().as_nanos() as u64;
@@ -218,31 +277,8 @@ impl Drop for LoggingStreamGuard {
         } else {
             0
         };
-        let stalled_suffix = if final_gap_ms > DELIVERY_GAP_LOG_THRESHOLD_MS {
-            " (stalled)"
-        } else {
-            ""
-        };
 
         let cadence = self.cadence_stats.get();
-
-        // Build silence stats string if any silence was injected
-        let silence_info = cadence
-            .filter(|s| s.silence_events > 0)
-            .map(|s| {
-                format!(
-                    ", silence_events={}, silence_frames={}",
-                    s.silence_events, s.silence_frames
-                )
-            })
-            .unwrap_or_default();
-
-        // Build dropped frames string if any frames were dropped
-        let dropped_info = cadence
-            .filter(|s| s.frames_dropped > 0)
-            .map(|s| format!(", frames_dropped={}", s.frames_dropped))
-            .unwrap_or_default();
-
         let timeline = self.pipeline_timeline.lock();
         let timeline_json = if timeline.is_empty() {
             String::new()
@@ -250,45 +286,29 @@ impl Drop for LoggingStreamGuard {
             serde_json::to_string(&*timeline).unwrap_or_default()
         };
         drop(timeline);
-        let timeline_info = if timeline_json.is_empty() {
-            String::new()
-        } else {
-            format!(", pipeline_timeline={}", timeline_json)
+
+        let summary = StreamSummary {
+            stream_id: self.stream_id.clone(),
+            client_ip: self.client_ip,
+            frames_sent: self.frames_sent.load(Ordering::Relaxed),
+            max_gap_ms: self.max_gap_ms.load(Ordering::Relaxed),
+            gaps_over_threshold: self.gaps_over_threshold.load(Ordering::Relaxed),
+            final_gap_ms,
+            stalled: final_gap_ms > DELIVERY_GAP_LOG_THRESHOLD_MS,
+            silence_events: cadence.map_or(0, |s| s.silence_events),
+            silence_frames: cadence.map_or(0, |s| s.silence_frames),
+            frames_dropped: cadence.map_or(0, |s| s.frames_dropped),
+            pipeline_timeline_json: timeline_json,
         };
 
-        if let Some(ref err) = *first_error {
+        let stalled_tag = if summary.stalled { " (stalled)" } else { "" };
+
+        if let Some(ref err) = *self.first_error.get_mut() {
             log::warn!(
-                "[Stream] HTTP stream ended with error{}: stream={}, client={}, frames_sent={}, \
-                 max_gap={}ms, gaps_over_{}ms={}, final_gap={}ms{}{}{}, error={}",
-                stalled_suffix,
-                self.stream_id,
-                self.client_ip,
-                frames,
-                max_gap_ms,
-                DELIVERY_GAP_THRESHOLD_MS,
-                gaps_over_threshold,
-                final_gap_ms,
-                silence_info,
-                dropped_info,
-                timeline_info,
-                err
+                "[Stream] HTTP stream ended with error{stalled_tag}: {summary}, error={err}"
             );
         } else {
-            log::info!(
-                "[Stream] HTTP stream ended normally{}: stream={}, client={}, frames_sent={}, \
-                 max_gap={}ms, gaps_over_{}ms={}, final_gap={}ms{}{}{}",
-                stalled_suffix,
-                self.stream_id,
-                self.client_ip,
-                frames,
-                max_gap_ms,
-                DELIVERY_GAP_THRESHOLD_MS,
-                gaps_over_threshold,
-                final_gap_ms,
-                silence_info,
-                dropped_info,
-                timeline_info
-            );
+            log::info!("[Stream] HTTP stream ended normally{stalled_tag}: {summary}");
         }
     }
 }
@@ -331,10 +351,12 @@ impl CrossfadeState {
         }
     }
 
-    /// Applies fade-in to a frame following silence. Returns the frame
-    /// unchanged when crossfade is disabled.
-    fn maybe_fade_in(&self, frame: Bytes) -> Bytes {
-        if self.enabled {
+    /// Tracks the frame's last sample pair and applies fade-in when
+    /// `after_silence` is true. Single entry point for all audio yields,
+    /// replacing separate `track_frame` + `maybe_fade_in` calls.
+    fn prepare_audio(&mut self, frame: Bytes, after_silence: bool) -> Bytes {
+        self.track_frame(&frame);
+        if after_silence && self.enabled {
             let mut faded = frame.to_vec();
             apply_fade_in(&mut faded, self.channels, self.fade_samples);
             Bytes::from(faded)
@@ -361,12 +383,162 @@ impl CrossfadeState {
     }
 }
 
+/// Jitter buffer state machine. Collapses `in_silence`, `rebuffer_hold`,
+/// `rebuffer_deadline`, and `silence_start` into explicit states.
+///
+/// Transitions:
+/// ```text
+///   Playing ──queue empty──► Silence
+///   Playing ──depth ≤ low_watermark──► Rebuffering
+///   Silence ──frame arrives──► Playing (with fade-in)
+///   Silence ──queue empty + rx_closed──► (loop breaks)
+///   Rebuffering ──depth ≥ target | timeout | rx_closed──► Playing (with fade-in)
+/// ```
+enum BufferState {
+    /// Normal: popping frames from the queue.
+    Playing,
+    /// Queue underrun: emitting silence, will resume as soon as a frame arrives.
+    Silence { since: TokioInstant },
+    /// Proactive rebuffer: depth dropped to low_watermark, holding silence
+    /// until queue recovers to target_depth (or deadline/channel close).
+    Rebuffering {
+        since: TokioInstant,
+        deadline: TokioInstant,
+    },
+}
+
+impl BufferState {
+    /// Returns `Some(start)` when in any silence-emitting state.
+    fn silence_start(&self) -> Option<TokioInstant> {
+        match self {
+            Self::Playing => None,
+            Self::Silence { since } | Self::Rebuffering { since, .. } => Some(*since),
+        }
+    }
+}
+
+/// Tracks pipeline snapshot state and computes deltas between intervals.
+/// Extracted to keep per-tick bookkeeping out of the main cadence loop.
+struct SnapshotTracker {
+    tick_count: u64,
+    tick_interval: u64,
+    prev_delivery_frames: u64,
+    prev_delivery_bytes: u64,
+    prev_delivery_gaps: u64,
+    prev_snapshot_ms: u64,
+}
+
+impl SnapshotTracker {
+    fn new(frame_duration_ms: u32) -> Self {
+        use crate::protocol_constants::SNAPSHOT_INTERVAL_MS;
+        Self {
+            tick_count: 0,
+            tick_interval: (SNAPSHOT_INTERVAL_MS / frame_duration_ms as u64).max(1),
+            prev_delivery_frames: 0,
+            prev_delivery_bytes: 0,
+            prev_delivery_gaps: 0,
+            prev_snapshot_ms: 0,
+        }
+    }
+
+    /// Increment tick count and return true every `tick_interval` ticks.
+    fn tick(&mut self) -> bool {
+        self.tick_count += 1;
+        self.tick_count % self.tick_interval == 0
+    }
+
+    /// Capture a pipeline snapshot from the guard and stream state.
+    fn capture(
+        &mut self,
+        guard: &LoggingStreamGuard,
+        stream_state: Option<&Weak<StreamState>>,
+        queue_len: usize,
+        target_depth: usize,
+        counters: &CadenceStats,
+    ) {
+        let elapsed_ms = guard.reference_time.elapsed().as_millis() as u64;
+
+        let receive = if let Some(ss) = stream_state.and_then(|w| w.upgrade()) {
+            let rs = ss.snapshot_and_reset_receive_stats();
+            ReceiveWindow {
+                frames_received: rs.frames_received,
+                min_gap_ms: if rs.min_gap_ms == u64::MAX {
+                    0
+                } else {
+                    rs.min_gap_ms
+                },
+                max_gap_ms: rs.max_gap_ms,
+                gaps_over_threshold: rs.gaps_over_threshold,
+            }
+        } else {
+            ReceiveWindow {
+                frames_received: 0,
+                min_gap_ms: 0,
+                max_gap_ms: 0,
+                gaps_over_threshold: 0,
+            }
+        };
+
+        let cadence_window = CadenceWindow {
+            queue_len,
+            target_depth,
+            silence_events: counters.silence_events,
+            silence_frames: counters.silence_frames,
+            drops: counters.frames_dropped,
+        };
+
+        let cur_frames = guard.frames_sent.load(Ordering::Relaxed);
+        let cur_bytes = guard.bytes_sent.load(Ordering::Relaxed);
+        let cur_gaps = guard.gaps_over_threshold.load(Ordering::Relaxed);
+        let interval_max = guard.interval_max_gap_ms.swap(0, Ordering::Relaxed);
+
+        let delta_bytes = cur_bytes.saturating_sub(self.prev_delivery_bytes);
+        let interval_ms = elapsed_ms.saturating_sub(self.prev_snapshot_ms);
+        let bytes_per_second = if interval_ms > 0 {
+            delta_bytes * 1000 / interval_ms
+        } else {
+            0
+        };
+
+        let delivery = DeliveryWindow {
+            frames_sent: cur_frames.saturating_sub(self.prev_delivery_frames),
+            bytes_per_second,
+            max_gap_ms: interval_max,
+            gaps_over_threshold: cur_gaps.saturating_sub(self.prev_delivery_gaps),
+        };
+
+        self.prev_delivery_frames = cur_frames;
+        self.prev_delivery_bytes = cur_bytes;
+        self.prev_delivery_gaps = cur_gaps;
+        self.prev_snapshot_ms = elapsed_ms;
+
+        guard.push_pipeline_snapshot(PipelineSnapshot {
+            elapsed_ms,
+            receive,
+            cadence: cadence_window,
+            delivery,
+        });
+    }
+}
+
 /// Configuration for the cadence streaming pipeline.
 pub struct CadenceConfig {
     /// Silence frame emitted when no audio is queued.
     pub silence_frame: Bytes,
-    /// Maximum number of frames to buffer.
-    pub queue_size: usize,
+    /// Target queue depth (frames) for fill gate and rebuffer exit.
+    /// When 0, everything is pass-through (no fill gate, no rebuffer).
+    pub target_depth: usize,
+    /// Overflow drop cap: when the queue exceeds this size, oldest frames are
+    /// discarded.
+    pub overflow_cap: usize,
+    /// Low-watermark (frames): when queue drops to this level or below,
+    /// proactive rebuffering is triggered (enter silence until target_depth reached).
+    /// Only active when target_depth > 0.
+    /// **Invariant**: must be strictly less than `target_depth` (or both zero)
+    /// to provide hysteresis between enter and exit thresholds.
+    pub low_watermark: usize,
+    /// Skip the fill gate on resume (already have audio flowing).
+    pub skip_fill_gate: bool,
     /// Duration of each output frame in milliseconds.
     pub frame_duration_ms: u32,
     /// Audio format (sample rate, channels, bit depth).
@@ -375,12 +547,81 @@ pub struct CadenceConfig {
     pub prefill_frames: Vec<Bytes>,
 }
 
-/// Creates a WAV audio stream with fixed-cadence output and crossfade on silence transitions.
+impl CadenceConfig {
+    /// Build a `CadenceConfig` from stream-level parameters.
+    ///
+    /// Derives `target_depth`, `overflow_cap`, and `low_watermark` from
+    /// `jitter_buffer_ms` and `frame_duration_ms`. When `jitter_buffer_ms`
+    /// is 0, all three are set for pass-through mode (no fill gate, no rebuffer).
+    pub fn new(
+        jitter_buffer_ms: u64,
+        frame_duration_ms: u32,
+        audio_format: AudioFormat,
+        silence_frame: Bytes,
+        prefill_frames: Vec<Bytes>,
+        skip_fill_gate: bool,
+    ) -> Self {
+        use crate::protocol_constants::{
+            jitter_low_watermark, JITTER_OVERFLOW_MULTIPLIER, MAX_CADENCE_QUEUE_SIZE,
+            MIN_OVERFLOW_CAP,
+        };
+
+        let target_depth = if jitter_buffer_ms > 0 {
+            jitter_buffer_ms.div_ceil(frame_duration_ms as u64) as usize
+        } else {
+            0
+        };
+        let overflow_cap = (target_depth * JITTER_OVERFLOW_MULTIPLIER)
+            .clamp(MIN_OVERFLOW_CAP, MAX_CADENCE_QUEUE_SIZE);
+        let low_watermark = jitter_low_watermark(target_depth);
+
+        Self {
+            silence_frame,
+            target_depth,
+            overflow_cap,
+            low_watermark,
+            skip_fill_gate,
+            frame_duration_ms,
+            audio_format,
+            prefill_frames,
+        }
+    }
+}
+
+/// Trim prefill to `target_depth` (keep newest frames) and advance
+/// `epoch_candidate` by the trimmed duration so latency metrics reflect
+/// the oldest frame actually served, not the oldest in the ring buffer.
+pub fn trim_prefill(
+    prefill_frames: Vec<Bytes>,
+    epoch_candidate: Option<Instant>,
+    target_depth: usize,
+    frame_duration_ms: u32,
+) -> (Vec<Bytes>, Option<Instant>) {
+    if target_depth > 0 && prefill_frames.len() > target_depth {
+        let skip = prefill_frames.len() - target_depth;
+        let trimmed = prefill_frames.into_iter().skip(skip).collect();
+        let adjusted = epoch_candidate
+            .map(|t| t + Duration::from_millis(skip as u64 * frame_duration_ms as u64));
+        (trimmed, adjusted)
+    } else {
+        (prefill_frames, epoch_candidate)
+    }
+}
+
+/// Creates a WAV audio stream with fixed-cadence output, optional jitter buffer,
+/// and crossfade on silence transitions.
 ///
 /// Maintains real-time cadence regardless of input timing:
-/// - Incoming frames are queued (bounded to `queue_size`)
+/// - Incoming frames are queued (overflow-capped at `overflow_cap`, oldest dropped)
 /// - Metronome ticks every `frame_duration_ms`
 /// - On each tick: send queued frame if available, else send silence
+///
+/// Jitter buffer (when `target_depth` > 0):
+/// - **Fill gate**: waits for queue to reach `target_depth` before starting the
+///   metronome. Times out after 2x target duration to avoid infinite stalls.
+/// - **Low-watermark rebuffer**: when queue drops to `low_watermark` or below,
+///   enters silence and waits for queue to refill to `target_depth` (with timeout).
+/// - **Pass-through** (target_depth = 0): no fill gate, no rebuffer (current behavior).
 ///
 /// Crossfade on silence transitions:
 /// - When entering silence: emits a fade-out frame from the last audio sample to zero
@@ -389,33 +630,156 @@ pub struct CadenceConfig {
 /// Silence and overflow statistics are tracked locally and written to the
 /// guard once at stream end via `set_cadence_stats()`.
 ///
+/// One-shot epoch hook: fires `start_new_epoch` on the first real audio frame,
+/// then is consumed. Used to record when audio actually starts flowing to a client.
+pub struct EpochHook {
+    pub stream_state: Arc<StreamState>,
+    pub epoch_candidate: Option<Instant>,
+    pub connected_at: Instant,
+    pub remote_ip: IpAddr,
+}
+
 /// Epoch tracking (optional): when `epoch_hook` is `Some`, the stream fires
 /// `start_new_epoch` on the first real audio frame, then discards the hook.
-///
-/// This ensures Sonos always receives continuous data with smooth transitions,
-/// eliminating pops from abrupt audio/silence boundaries.
 pub fn create_wav_stream_with_cadence(
     mut rx: broadcast::Receiver<Bytes>,
     guard: Arc<LoggingStreamGuard>,
     config: CadenceConfig,
-    stream_state: Option<std::sync::Weak<StreamState>>,
-    epoch_hook: Option<(Arc<StreamState>, Option<Instant>, Instant, IpAddr)>,
+    stream_state: Option<Weak<StreamState>>,
+    epoch_hook: Option<EpochHook>,
 ) -> impl Stream<Item = Result<Bytes, std::io::Error>> {
     stream! {
         let CadenceConfig {
             silence_frame,
-            queue_size,
+            target_depth,
+            overflow_cap,
+            low_watermark,
+            skip_fill_gate,
             frame_duration_ms,
             audio_format,
             prefill_frames,
         } = config;
+
+        // ── Defensive invariant clamps ───────────────────────────────────
+        // These protect against manually-constructed CadenceConfigs.
+        // CadenceConfig::new enforces proper bounds via protocol_constants,
+        // but direct field construction could violate these.
+
+        // Invariant: frame_duration_ms >= 1 (prevents zero-duration timer
+        // busy-loop and division-by-zero in SnapshotTracker).
+        let frame_duration_ms = if frame_duration_ms == 0 {
+            log::warn!(
+                "[Stream] frame_duration_ms is 0, clamping to 1",
+            );
+            1
+        } else {
+            frame_duration_ms
+        };
+
+        // Invariant: overflow_cap >= max(1, target_depth) so the fill gate
+        // can be satisfied and at least one frame can be queued.
+        let min_cap = if target_depth > 0 { target_depth } else { 1 };
+        let overflow_cap = if overflow_cap < min_cap {
+            log::warn!(
+                "[Stream] overflow_cap ({}) < minimum ({}), clamping to {}",
+                overflow_cap, min_cap, min_cap,
+            );
+            min_cap
+        } else {
+            overflow_cap
+        };
+
+        // Invariant: low_watermark < target_depth for hysteresis between
+        // rebuffer enter (low_watermark) and exit (target_depth) thresholds.
+        let low_watermark = if target_depth > 0 && low_watermark >= target_depth {
+            let clamped = target_depth.saturating_sub(1);
+            log::warn!(
+                "[Stream] low_watermark ({}) >= target_depth ({}), clamping to {}",
+                low_watermark, target_depth, clamped,
+            );
+            clamped
+        } else {
+            low_watermark
+        };
+
         let cadence_duration = Duration::from_millis(frame_duration_ms as u64);
+        let rebuffer_timeout = Duration::from_millis(
+            (target_depth as u64) * (frame_duration_ms as u64) * REBUFFER_TIMEOUT_MULTIPLIER,
+        );
 
         // Pre-populate queue with prefill frames to eliminate handoff gap.
         // This ensures the first tick immediately yields audio.
-        let mut queue: VecDeque<Bytes> = VecDeque::with_capacity(queue_size.max(prefill_frames.len()));
+        let mut queue: VecDeque<Bytes> = VecDeque::with_capacity(overflow_cap.max(prefill_frames.len()));
         for frame in prefill_frames {
             queue.push_back(frame);
+        }
+
+        let mut rx_closed = false;
+
+        // Cadence-specific counters, committed to guard on drop (even if
+        // the stream is cancelled mid-loop by an HTTP disconnect).
+        let mut stats = StatsRecorder {
+            guard: Arc::clone(&guard),
+            counters: CadenceStats {
+                silence_events: 0,
+                silence_frames: 0,
+                frames_dropped: 0,
+            },
+        };
+
+        // ── Fill gate ──────────────────────────────────────────────────────
+        // When target_depth > 0 and not resuming, wait for the queue to
+        // accumulate target_depth frames before starting the metronome.
+        // Timeout: 2× the target duration in ms to avoid infinite stalls.
+        if target_depth > 0 && !skip_fill_gate && queue.len() < target_depth {
+            let deadline = TokioInstant::now() + rebuffer_timeout;
+            log::info!(
+                "[Stream] Fill gate: waiting for {} frames (timeout {}ms, have {})",
+                target_depth,
+                rebuffer_timeout.as_millis(),
+                queue.len()
+            );
+            let mut gate_lagged_log: Option<TokioInstant> = None;
+            loop {
+                if queue.len() >= target_depth {
+                    log::info!(
+                        "[Stream] Fill gate satisfied: {} frames queued",
+                        queue.len()
+                    );
+                    break;
+                }
+                tokio::select! {
+                    biased;
+                    _ = tokio::time::sleep_until(deadline) => {
+                        log::warn!(
+                            "[Stream] Fill gate timeout after {}ms with {} frames (target {})",
+                            rebuffer_timeout.as_millis(),
+                            queue.len(),
+                            target_depth
+                        );
+                        break;
+                    }
+                    result = rx.recv() => {
+                        match result {
+                            Ok(frame) => {
+                                if queue.len() >= overflow_cap {
+                                    queue.pop_front();
+                                    stats.counters.frames_dropped += 1;
+                                }
+                                queue.push_back(frame);
+                            }
+                            Err(broadcast::error::RecvError::Lagged(n)) => {
+                                log_lagged(n, &mut gate_lagged_log, " (fill gate)");
+                            }
+                            Err(broadcast::error::RecvError::Closed) => {
+                                log::debug!("[Stream] Channel closed during fill gate");
+                                rx_closed = true;
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
         }
 
         // Fire first tick immediately to get audio flowing before Sonos times out.
@@ -423,14 +787,7 @@ pub fn create_wav_stream_with_cadence(
         let mut metronome = interval(cadence_duration);
         metronome.set_missed_tick_behavior(MissedTickBehavior::Burst);
 
-        let mut rx_closed = false;
-        let mut in_silence = false;
-        let mut silence_start: Option<TokioInstant> = None;
-
-        // Cadence-specific counters (written to guard at stream end)
-        let mut silence_events: u64 = 0;
-        let mut silence_frames: u64 = 0;
-        let mut frames_dropped: u64 = 0;
+        let mut state = BufferState::Playing;
 
         let mut crossfade = CrossfadeState::new(&audio_format, frame_duration_ms);
 
@@ -440,12 +797,7 @@ pub fn create_wav_stream_with_cadence(
         // One-shot epoch hook: fires on the first real audio frame, then consumed
         let mut epoch_hook = epoch_hook;
 
-        // Pipeline snapshot state
-        let mut tick_count: u64 = 0;
-        let mut prev_delivery_frames: u64 = 0;
-        let mut prev_delivery_bytes: u64 = 0;
-        let mut prev_delivery_gaps: u64 = 0;
-        let mut prev_snapshot_ms: u64 = 0;
+        let mut snapshots = SnapshotTracker::new(frame_duration_ms);
 
         loop {
             // Exit when channel closed AND queue drained
@@ -458,50 +810,107 @@ pub fn create_wav_stream_with_cadence(
 
                 // PRIORITY 1: Metronome tick - MUST emit something every frame_duration_ms
                 _ = metronome.tick() => {
-                    if let Some(frame) = queue.pop_front() {
-                        // Real audio available
-                        let was_in_silence = in_silence;
-                        if in_silence {
-                            if let Some(start) = silence_start.take() {
+                    // ── State transitions (mutually exclusive per tick) ─────
+                    //
+                    // All transitions are resolved here before any frame is emitted.
+                    // The emission block below is a pure function of the resulting state.
+                    //
+                    //   Playing    → Rebuffering : depth ≤ low_watermark (jitter buffer active)
+                    //   Playing    → Silence     : queue empty, channel open
+                    //   Rebuffering → Playing    : target reached / timeout / channel closed
+                    //   Silence    → Playing     : frame available
+                    //
+                    // Captured before transitions so the emission block applies fade-in
+                    // when resuming audio after Silence→Playing or Rebuffering→Playing.
+                    let was_silent = state.silence_start().is_some();
+                    let entering_silence;
+
+                    match state {
+                        // Playing → Rebuffering or Playing → Silence
+                        BufferState::Playing => {
+                            if target_depth > 0 && !rx_closed && queue.len() <= low_watermark {
+                                // Low-watermark rebuffer
+                                log::info!(
+                                    "[Stream] Low watermark rebuffer: queue {} <= watermark {}, holding for {}",
+                                    queue.len(), low_watermark, target_depth
+                                );
+                                let now = TokioInstant::now();
+                                state = BufferState::Rebuffering {
+                                    since: now,
+                                    deadline: now + rebuffer_timeout,
+                                };
+                                stats.counters.silence_events += 1;
+                                entering_silence = true;
+                            } else if queue.is_empty() && !rx_closed {
+                                // Queue depleted — enter silence
+                                log::info!("[Stream] Entering silence (cadence) - queue empty");
+                                state = BufferState::Silence { since: TokioInstant::now() };
+                                stats.counters.silence_events += 1;
+                                entering_silence = true;
+                            } else {
+                                entering_silence = false;
+                            }
+                        }
+                        // Rebuffering → Playing
+                        BufferState::Rebuffering { deadline, .. } => {
+                            let now = TokioInstant::now();
+                            let timed_out = now >= deadline;
+                            if queue.len() >= target_depth || rx_closed || timed_out {
+                                if timed_out && queue.len() < target_depth {
+                                    log::warn!(
+                                        "[Stream] Rebuffer timeout, resuming with {} frames (target {})",
+                                        queue.len(), target_depth
+                                    );
+                                }
+                                state = BufferState::Playing;
+                            }
+                            entering_silence = false;
+                        }
+                        // Silence → Playing
+                        BufferState::Silence { since } => {
+                            if !queue.is_empty() {
                                 log::info!(
                                     "[Stream] Exiting silence (cadence) after {:.1}s",
-                                    start.elapsed().as_secs_f32()
+                                    since.elapsed().as_secs_f32()
                                 );
+                                state = BufferState::Playing;
                             }
-                            in_silence = false;
-                        }
-
-                        crossfade.track_frame(&frame);
-
-                        // Fire epoch hook on first real audio frame
-                        if let Some((stream_state, epoch_candidate, connected_at, remote_ip)) = epoch_hook.take() {
-                            stream_state.timing.start_new_epoch(
-                                epoch_candidate,
-                                connected_at,
-                                remote_ip,
-                            );
-                        }
-
-                        if was_in_silence {
-                            yield Ok(crossfade.maybe_fade_in(frame));
-                        } else {
-                            yield Ok(frame);
-                        }
-                    } else if !rx_closed {
-                        // No frame available, emit silence
-                        if !in_silence {
-                            log::info!("[Stream] Entering silence (cadence) - queue empty");
-                            in_silence = true;
-                            silence_start = Some(TokioInstant::now());
-                            silence_events += 1;
-                            silence_frames += 1;
-                            yield Ok(crossfade.enter_silence(&silence_frame));
-                        } else {
-                            silence_frames += 1;
-                            yield Ok(silence_frame.clone());
+                            entering_silence = false;
                         }
                     }
-                    // If rx_closed and queue empty, don't yield - loop will break
+
+                    // ── Emit frame based on resolved state ───────────────────
+                    let mut yielded_audio = false;
+                    match state {
+                        BufferState::Rebuffering { .. } | BufferState::Silence { .. } => {
+                            stats.counters.silence_frames += 1;
+                            if entering_silence {
+                                yield Ok(crossfade.enter_silence(&silence_frame));
+                            } else {
+                                yield Ok(silence_frame.clone());
+                            }
+                        }
+                        BufferState::Playing if !queue.is_empty() => {
+                            let frame = queue.pop_front().unwrap();
+                            let after_silence = was_silent;
+                            yielded_audio = true;
+                            yield Ok(crossfade.prepare_audio(frame, after_silence));
+                        }
+                        BufferState::Playing => {
+                            // rx_closed and queue empty — don't yield, loop will break
+                        }
+                    }
+
+                    // Fire epoch hook once on first real audio frame
+                    if yielded_audio {
+                        if let Some(hook) = epoch_hook.take() {
+                            hook.stream_state.timing.start_new_epoch(
+                                hook.epoch_candidate,
+                                hook.connected_at,
+                                hook.remote_ip,
+                            );
+                        }
+                    }
 
                     // Drain any pending frames from rx into queue after emitting.
                     // This prevents starvation: with biased select, ticks always win,
@@ -511,9 +920,9 @@ pub fn create_wav_stream_with_cadence(
                         loop {
                             match rx.try_recv() {
                                 Ok(frame) => {
-                                    if queue.len() >= queue_size {
+                                    if queue.len() >= overflow_cap {
                                         queue.pop_front();
-                                        frames_dropped += 1;
+                                        stats.counters.frames_dropped += 1;
                                     }
                                     queue.push_back(frame);
                                 }
@@ -530,61 +939,11 @@ pub fn create_wav_stream_with_cadence(
                         }
                     }
 
-                    // Pipeline snapshot every ~50 ticks (~1s at 20ms cadence)
-                    tick_count += 1;
-                    if tick_count % 50 == 0 {
-                        let elapsed_ms = guard.reference_time.elapsed().as_millis() as u64;
-
-                        // Receive window: snapshot and reset from StreamState
-                        // Uses Weak ref - if StreamState was dropped (channel closing), skip
-                        let receive = if let Some(ss) = stream_state.as_ref().and_then(|w| w.upgrade()) {
-                            let rs = ss.snapshot_and_reset_receive_stats();
-                            ReceiveWindow {
-                                frames_received: rs.frames_received,
-                                min_gap_ms: if rs.min_gap_ms == u64::MAX { 0 } else { rs.min_gap_ms },
-                                max_gap_ms: rs.max_gap_ms,
-                                gaps_over_threshold: rs.gaps_over_threshold,
-                            }
-                        } else {
-                            ReceiveWindow { frames_received: 0, min_gap_ms: 0, max_gap_ms: 0, gaps_over_threshold: 0 }
-                        };
-
-                        // Cadence window: current counters (cumulative, not reset)
-                        let cadence_window = CadenceWindow {
-                            queue_len: queue.len(),
-                            silence_events,
-                            silence_frames,
-                            drops: frames_dropped,
-                        };
-
-                        // Delivery window: deltas from guard atomics
-                        let cur_frames = guard.frames_sent.load(Ordering::Relaxed);
-                        let cur_bytes = guard.bytes_sent.load(Ordering::Relaxed);
-                        let cur_gaps = guard.gaps_over_threshold.load(Ordering::Relaxed);
-                        let interval_max = guard.interval_max_gap_ms.swap(0, Ordering::Relaxed);
-
-                        let delta_bytes = cur_bytes.saturating_sub(prev_delivery_bytes);
-                        let interval_ms = elapsed_ms.saturating_sub(prev_snapshot_ms);
-                        let bytes_per_second = if interval_ms > 0 { delta_bytes * 1000 / interval_ms } else { 0 };
-
-                        let delivery = DeliveryWindow {
-                            frames_sent: cur_frames.saturating_sub(prev_delivery_frames),
-                            bytes_per_second,
-                            max_gap_ms: interval_max,
-                            gaps_over_threshold: cur_gaps.saturating_sub(prev_delivery_gaps),
-                        };
-
-                        prev_delivery_frames = cur_frames;
-                        prev_delivery_bytes = cur_bytes;
-                        prev_delivery_gaps = cur_gaps;
-                        prev_snapshot_ms = elapsed_ms;
-
-                        guard.push_pipeline_snapshot(PipelineSnapshot {
-                            elapsed_ms,
-                            receive,
-                            cadence: cadence_window,
-                            delivery,
-                        });
+                    if snapshots.tick() {
+                        snapshots.capture(
+                            &guard, stream_state.as_ref(), queue.len(), target_depth,
+                            &stats.counters,
+                        );
                     }
                 }
 
@@ -592,10 +951,10 @@ pub fn create_wav_stream_with_cadence(
                 result = rx.recv(), if !rx_closed => {
                     match result {
                         Ok(frame) => {
-                            if queue.len() >= queue_size {
-                                // Queue full - drop oldest to maintain bounded latency
+                            if queue.len() >= overflow_cap {
+                                // Queue overflow - drop oldest to prevent unbounded growth
                                 queue.pop_front();
-                                frames_dropped += 1;
+                                stats.counters.frames_dropped += 1;
                                 log::trace!("[Stream] Queue full, dropped oldest frame");
                             }
                             queue.push_back(frame);
@@ -612,11 +971,9 @@ pub fn create_wav_stream_with_cadence(
             }
         }
 
-        guard.set_cadence_stats(CadenceStats {
-            silence_events,
-            silence_frames,
-            frames_dropped,
-        });
+        // Stats are committed by StatsRecorder::drop, which runs whether
+        // the stream completes normally or is cancelled by an HTTP disconnect.
+        drop(stats);
     }
 }
 
@@ -633,8 +990,8 @@ mod tests {
 
     use crate::protocol_constants::SILENCE_FRAME_DURATION_MS;
 
-    /// Default queue size for tests (10 frames = 200ms at 20ms/frame).
-    const TEST_QUEUE_SIZE: usize = 10;
+    /// Default overflow cap for pass-through tests (10 frames).
+    const TEST_OVERFLOW_CAP: usize = 10;
 
     /// Test silence frame for assertions.
     fn test_silence_frame() -> Bytes {
@@ -654,11 +1011,14 @@ mod tests {
         ))
     }
 
-    /// Creates a default CadenceConfig for tests.
+    /// Creates a default CadenceConfig for tests (pass-through mode).
     fn test_config() -> CadenceConfig {
         CadenceConfig {
             silence_frame: test_silence_frame(),
-            queue_size: TEST_QUEUE_SIZE,
+            target_depth: 0,
+            overflow_cap: TEST_OVERFLOW_CAP,
+            low_watermark: 0,
+            skip_fill_gate: false,
             frame_duration_ms: SILENCE_FRAME_DURATION_MS,
             audio_format: test_audio_format(),
             prefill_frames: vec![],
@@ -867,7 +1227,7 @@ mod tests {
             None,
         ));
 
-        // Send 12 frames (queue_size + 2), should drop 2 oldest
+        // Send 12 frames (overflow_cap + 2), should drop 2 oldest
         for i in 0..12u8 {
             tx.send(Bytes::from(vec![i; 64]))
                 .expect("send should succeed");
@@ -913,9 +1273,9 @@ mod tests {
             None,
         ));
 
-        // Overflow queue by TEST_QUEUE_SIZE + 3 frames
+        // Overflow queue by TEST_OVERFLOW_CAP + 3 frames
         let overflow_count = 3;
-        for i in 0..(TEST_QUEUE_SIZE + overflow_count) as u8 {
+        for i in 0..(TEST_OVERFLOW_CAP + overflow_count) as u8 {
             tx.send(Bytes::from(vec![i; 64]))
                 .expect("send should succeed");
         }
@@ -1049,5 +1409,749 @@ mod tests {
         );
 
         drop(tx);
+    }
+
+    // ─────────────────────────────────────────────────────────────────────
+    // Jitter buffer tests
+    // ─────────────────────────────────────────────────────────────────────
+
+    /// Target depth for jitter buffer tests (5 frames = 50ms at 10ms/frame).
+    const JITTER_TARGET: usize = 5;
+
+    /// Creates a CadenceConfig with jitter buffer enabled.
+    fn jitter_config() -> CadenceConfig {
+        CadenceConfig {
+            silence_frame: test_silence_frame(),
+            target_depth: JITTER_TARGET,
+            overflow_cap: JITTER_TARGET * 3,
+            low_watermark: JITTER_TARGET * 2 / 3, // 3
+            skip_fill_gate: false,
+            frame_duration_ms: SILENCE_FRAME_DURATION_MS,
+            audio_format: test_audio_format(),
+            prefill_frames: vec![],
+        }
+    }
+
+    /// Test harness that encapsulates the broadcast channel, guard, pinned stream,
+    /// and tick duration. Reduces boilerplate in jitter buffer tests.
+    struct JitterHarness {
+        tx: broadcast::Sender<Bytes>,
+        guard: Arc<LoggingStreamGuard>,
+        stream: Pin<Box<dyn Stream<Item = Result<Bytes, std::io::Error>> + Send>>,
+        tick_ms: u64,
+    }
+
+    impl JitterHarness {
+        /// Build a harness from a (possibly customised) `CadenceConfig`.
+        fn new(config: CadenceConfig) -> Self {
+            let (tx, rx) = broadcast::channel::<Bytes>(32);
+            let guard = test_guard();
+            let tick_ms = config.frame_duration_ms as u64;
+            let stream = Box::pin(create_wav_stream_with_cadence(
+                rx,
+                Arc::clone(&guard),
+                config,
+                None,
+                None,
+            ));
+            Self {
+                tx,
+                guard,
+                stream,
+                tick_ms,
+            }
+        }
+
+        /// Build a harness with the default jitter config.
+        fn with_jitter() -> Self {
+            Self::new(jitter_config())
+        }
+
+        /// Send `n` audio frames into the channel.
+        fn send_audio(&self, n: usize) {
+            for _ in 0..n {
+                self.tx.send(test_audio_frame()).unwrap();
+            }
+        }
+
+        /// Advance time by one tick and poll the stream to register timers.
+        async fn advance_tick(&mut self) {
+            poll_and_advance(
+                &mut self.stream.as_mut(),
+                Duration::from_millis(self.tick_ms),
+            )
+            .await;
+        }
+
+        /// Advance by `n` ticks, consuming and discarding each yielded frame.
+        async fn advance_ticks(&mut self, n: usize) {
+            for _ in 0..n {
+                self.advance_tick().await;
+                let _ = self.stream.next().await;
+            }
+        }
+
+        /// Advance one tick and return the next yielded frame.
+        async fn next_frame(&mut self) -> Bytes {
+            self.advance_tick().await;
+            self.stream
+                .next()
+                .await
+                .expect("stream should yield")
+                .unwrap()
+        }
+
+        /// Assert the next frame is audio (not all-zero).
+        async fn expect_audio(&mut self, msg: &str) {
+            let frame = self.next_frame().await;
+            assert!(!frame.iter().all(|&b| b == 0), "{}", msg);
+        }
+
+        /// Assert the next frame is silence (all-zero).
+        #[allow(dead_code)]
+        async fn expect_silence(&mut self, msg: &str) {
+            let frame = self.next_frame().await;
+            assert!(frame.iter().all(|&b| b == 0), "{}", msg);
+        }
+
+        /// Close the channel and drain the stream to completion.
+        /// Returns the cadence stats recorded by the guard.
+        async fn finish(mut self) -> CadenceStats {
+            drop(self.tx);
+            drain_to_end(&mut self.stream.as_mut()).await;
+            // Clone stats out before guard is dropped
+            *self
+                .guard
+                .cadence_stats
+                .get()
+                .expect("cadence stats should be set")
+        }
+
+        /// Close the channel without draining. The receiver will see `Closed`
+        /// on the next recv. Useful for tests that verify termination behavior.
+        fn close_channel(&mut self) {
+            let (replacement, _) = broadcast::channel::<Bytes>(1);
+            drop(std::mem::replace(&mut self.tx, replacement));
+        }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn fill_gate_waits_for_target_depth() {
+        let mut h = JitterHarness::with_jitter();
+
+        // Send fewer than target_depth frames
+        h.send_audio(3);
+
+        // Poll once to let fill gate receive frames, then advance a small amount
+        poll_fn(|cx| {
+            let _ = h.stream.as_mut().poll_next(cx);
+            Poll::Ready(())
+        })
+        .await;
+        tokio::time::advance(Duration::from_millis(1)).await;
+
+        // Stream should not yield yet (fill gate not satisfied)
+        let yielded_early = poll_fn(|cx| match h.stream.as_mut().poll_next(cx) {
+            Poll::Ready(Some(_)) => Poll::Ready(true),
+            Poll::Pending => Poll::Ready(false),
+            Poll::Ready(None) => Poll::Ready(false),
+        })
+        .await;
+        assert!(
+            !yielded_early,
+            "fill gate should block until target_depth is reached"
+        );
+
+        // Send remaining frames to satisfy gate
+        h.send_audio(2);
+
+        // Advance enough for fill gate to complete and first tick
+        tokio::time::advance(Duration::from_millis(h.tick_ms * 2)).await;
+
+        // Should now yield audio
+        let frame = h
+            .stream
+            .next()
+            .await
+            .expect("stream should yield after fill gate")
+            .unwrap();
+        assert!(
+            !frame.iter().all(|&b| b == 0),
+            "expected audio frame after fill gate satisfied"
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn fill_gate_times_out() {
+        let mut h = JitterHarness::with_jitter();
+
+        // Send only 2 frames (less than target 5)
+        // target_depth = 5, frame_duration = 10ms, timeout = 5 * 10 * 2 = 100ms
+        h.send_audio(2);
+
+        // Advance past the fill gate timeout (100ms) + one tick
+        h.advance_ticks(15).await;
+
+        // Should yield something (audio or silence) after timeout
+        let frame = h
+            .stream
+            .next()
+            .await
+            .expect("stream should yield after timeout")
+            .unwrap();
+        assert!(
+            !frame.is_empty(),
+            "expected non-empty frame after fill gate timeout"
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn fill_gate_skipped_on_resume() {
+        let mut config = jitter_config();
+        config.skip_fill_gate = true;
+        // Pre-fill with enough frames to stay above low_watermark after consumption.
+        // low_watermark = 3, so we need > 3 + 2 (for the two ticks consumed by
+        // poll_and_advance + next()) = 5+ frames.
+        config.prefill_frames = (0..JITTER_TARGET + 1).map(|_| test_audio_frame()).collect();
+
+        let mut h = JitterHarness::new(config);
+        h.expect_audio("expected audio frame immediately when fill gate skipped")
+            .await;
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn fill_gate_skipped_when_target_zero() {
+        // target_depth = 0 means pass-through
+        let config = test_config();
+        assert_eq!(config.target_depth, 0);
+
+        let mut h = JitterHarness::new(config);
+        h.send_audio(1);
+        h.expect_audio("expected audio with target_depth=0 (no fill gate)")
+            .await;
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn jitter_absorbs_gap_without_silence() {
+        let mut config = jitter_config();
+        config.skip_fill_gate = true;
+        // Disable low-watermark rebuffer for this test so we can cleanly
+        // verify that the buffer absorbs a gap by yielding audio-only frames.
+        config.low_watermark = 0;
+        // Pre-fill with target_depth frames. The first poll_and_advance consumes
+        // one at t=0, so we have target_depth-1 left for the loop.
+        // We'll drain 3 frames (target_depth-2 to be safe) and verify all are audio.
+        let drain_count = JITTER_TARGET - 2; // 3
+        let total_prefill = drain_count + 1; // +1 for the poll_and_advance consumption
+        config.prefill_frames = (0..total_prefill)
+            .map(|i| Bytes::from(vec![i as u8 + 1; 64]))
+            .collect();
+
+        let mut h = JitterHarness::new(config);
+
+        // Drain frames without sending new ones
+        let mut audio_count = 0;
+        for _ in 0..drain_count {
+            let frame = h.next_frame().await;
+            if !frame.iter().all(|&b| b == 0) {
+                audio_count += 1;
+            }
+        }
+
+        assert_eq!(
+            audio_count, drain_count,
+            "jitter buffer should absorb gap without silence, got {} audio of {} expected",
+            audio_count, drain_count
+        );
+
+        let stats = h.finish().await;
+        assert_eq!(
+            stats.silence_events, 0,
+            "should have zero silence events when buffer absorbs gap (before tx drop)"
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn low_watermark_triggers_rebuffer() {
+        let mut config = jitter_config();
+        config.skip_fill_gate = true;
+        // low_watermark = 3, target_depth = 5
+        // Pre-fill with exactly low_watermark frames (at boundary)
+        config.prefill_frames = (0..config.low_watermark)
+            .map(|i| Bytes::from(vec![i as u8 + 1; 64]))
+            .collect();
+
+        let mut h = JitterHarness::new(config);
+
+        // Drain queue to trigger low watermark
+        h.advance_ticks(4).await;
+
+        // Now send target_depth frames to exit rebuffer
+        h.send_audio(JITTER_TARGET);
+
+        // Advance a few ticks for rebuffer to resolve
+        h.advance_ticks(3).await;
+
+        // Eventually should get audio again
+        h.send_audio(1);
+        h.expect_audio("should get audio after rebuffer completes")
+            .await;
+
+        let stats = h.finish().await;
+        assert!(
+            stats.silence_events > 0,
+            "low watermark should have triggered at least one silence event"
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn rebuffer_timeout_resumes_with_available() {
+        let mut config = jitter_config();
+        config.skip_fill_gate = true;
+        // Start with 1 frame (will trigger low watermark immediately after drain)
+        config.prefill_frames = vec![test_audio_frame()];
+
+        let mut h = JitterHarness::new(config);
+
+        // Consume the prefill frame to trigger rebuffer
+        h.advance_ticks(1).await;
+
+        // Send only 2 frames (less than target_depth=5)
+        h.send_audio(2);
+
+        // Advance past rebuffer timeout (2 * 5 * 10 = 100ms)
+        h.advance_ticks(15).await;
+
+        // After timeout, should yield audio even though < target_depth
+        let mut got_audio = false;
+        for _ in 0..5 {
+            let frame = h.next_frame().await;
+            if !frame.iter().all(|&b| b == 0) {
+                got_audio = true;
+                break;
+            }
+        }
+        assert!(
+            got_audio,
+            "should resume with available frames after rebuffer timeout"
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn overflow_uses_overflow_cap() {
+        let mut config = jitter_config();
+        config.skip_fill_gate = true;
+        let overflow_cap = config.overflow_cap; // 15 (5 * 3)
+
+        let mut h = JitterHarness::new(config);
+
+        // Send overflow_cap + 3 frames
+        let extra = 3;
+        for i in 0..(overflow_cap + extra) as u8 {
+            h.tx.send(Bytes::from(vec![i; 64])).unwrap();
+        }
+
+        // Process frames
+        h.advance_ticks(20).await;
+
+        let stats = h.finish().await;
+        assert_eq!(
+            stats.frames_dropped, extra as u64,
+            "should drop {} frames when exceeding overflow_cap {}",
+            extra, overflow_cap
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn prefill_trimmed_to_target_depth() {
+        // Verify that trimming prefill to target_depth keeps newest frames.
+        // We provide 10 frames (0..10), target_depth=5, so after trim: [5,6,7,8,9].
+        // Disable low_watermark to prevent rebuffer during drain.
+        let mut config = jitter_config();
+        config.skip_fill_gate = true;
+        config.low_watermark = 0; // no rebuffer
+                                  // 10 prefill frames, target_depth = 5
+        config.prefill_frames = (0..10u8).map(|i| Bytes::from(vec![i; 64])).collect();
+        let (trimmed, _) = super::trim_prefill(
+            config.prefill_frames,
+            None,
+            config.target_depth,
+            config.frame_duration_ms,
+        );
+        config.prefill_frames = trimmed;
+        // After trim: [5, 6, 7, 8, 9]
+
+        let mut h = JitterHarness::new(config);
+
+        // Collect all audio frames from the prefill
+        let mut yielded = Vec::new();
+        for _ in 0..3 {
+            let frame = h.next_frame().await;
+            if !frame.iter().all(|&b| b == 0) {
+                yielded.push(frame[0]);
+            }
+        }
+
+        // All yielded frames should be from the trimmed set (>= 5)
+        assert!(
+            !yielded.is_empty(),
+            "should yield at least some prefill frames"
+        );
+        assert!(
+            yielded.iter().all(|&b| b >= 5),
+            "all yielded frames should be from trimmed set (>= 5), got {:?}",
+            yielded
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn no_rebuffer_when_target_zero() {
+        // Pass-through mode (target_depth=0, low_watermark=0)
+        let mut config = test_config();
+        config.prefill_frames = vec![test_audio_frame()];
+
+        let mut h = JitterHarness::new(config);
+
+        // First tick (t=0) yields prefill frame
+        h.expect_audio("first frame should be audio from prefill")
+            .await;
+
+        // No more frames - next tick should yield silence immediately (no rebuffer hold)
+        // In pass-through mode, crossfade produces a fade-out frame (may not be all zeros)
+        // but should not be a real audio frame either. The important thing is it enters
+        // silence mode. We verify via stats below.
+        h.advance_ticks(1).await;
+
+        // Send another frame - should exit silence immediately (no rebuffer hold)
+        h.send_audio(1);
+        h.expect_audio("should exit silence immediately in pass-through mode")
+            .await;
+
+        let stats = h.finish().await;
+        assert_eq!(
+            stats.silence_events, 1,
+            "pass-through should have exactly 1 silence event (no rebuffer)"
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn rebuffer_exits_on_channel_close() {
+        let mut config = jitter_config();
+        config.skip_fill_gate = true;
+        config.prefill_frames = vec![test_audio_frame()];
+
+        let mut h = JitterHarness::new(config);
+
+        // Consume prefill to trigger rebuffer
+        h.advance_ticks(1).await;
+
+        // Close channel while in rebuffer
+        h.close_channel();
+
+        // Should drain and terminate without hanging
+        let mut terminated = false;
+        for _ in 0..20 {
+            tokio::time::advance(Duration::from_millis(h.tick_ms)).await;
+            let done = poll_fn(|cx| match h.stream.as_mut().poll_next(cx) {
+                Poll::Ready(None) => Poll::Ready(true),
+                _ => Poll::Ready(false),
+            })
+            .await;
+            if done {
+                terminated = true;
+                break;
+            }
+        }
+        assert!(
+            terminated,
+            "stream should terminate after channel close during rebuffer"
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn fill_gate_exits_on_channel_close() {
+        let mut config = jitter_config();
+        // No prefill, no skip — fill gate will block waiting for target_depth frames
+        config.prefill_frames = vec![];
+        config.skip_fill_gate = false;
+
+        let (tx, rx) = broadcast::channel::<Bytes>(32);
+        let guard = test_guard();
+        let mut stream = Box::pin(create_wav_stream_with_cadence(
+            rx,
+            Arc::clone(&guard),
+            config,
+            None,
+            None,
+        ));
+
+        // Send 1 frame (less than target_depth=5), then close
+        tx.send(test_audio_frame()).unwrap();
+        drop(tx);
+
+        // Stream should exit fill gate on close, drain the 1 frame, then terminate
+        let mut terminated = false;
+        for _ in 0..30 {
+            tokio::time::advance(Duration::from_millis(SILENCE_FRAME_DURATION_MS as u64)).await;
+            let done = poll_fn(|cx| match stream.as_mut().poll_next(cx) {
+                Poll::Ready(None) => Poll::Ready(true),
+                _ => Poll::Ready(false),
+            })
+            .await;
+            if done {
+                terminated = true;
+                break;
+            }
+        }
+        assert!(
+            terminated,
+            "stream should terminate after channel close during fill gate"
+        );
+    }
+
+    // ─────────────────────────────────────────────────────────────────────
+    // trim_prefill tests
+    // ─────────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn trim_prefill_keeps_newest_and_adjusts_epoch() {
+        let epoch = Instant::now();
+        let frames: Vec<Bytes> = (0..10).map(|i| Bytes::from(vec![i; 64])).collect();
+        let frame_duration_ms = 20;
+        let target_depth = 5;
+
+        let (trimmed, adjusted_epoch) =
+            trim_prefill(frames.clone(), Some(epoch), target_depth, frame_duration_ms);
+
+        // Should keep the last 5 frames (indices 5..10)
+        assert_eq!(trimmed.len(), 5);
+        assert_eq!(trimmed[0][0], 5);
+        assert_eq!(trimmed[4][0], 9);
+
+        // Epoch should advance by 5 skipped frames × 20ms = 100ms
+        let adjusted = adjusted_epoch.expect("epoch should be present");
+        let offset = adjusted.duration_since(epoch);
+        assert_eq!(offset, Duration::from_millis(100));
+    }
+
+    #[test]
+    fn trim_prefill_no_trim_when_at_target() {
+        let epoch = Instant::now();
+        let frames: Vec<Bytes> = (0..5).map(|i| Bytes::from(vec![i; 64])).collect();
+
+        let (trimmed, adjusted_epoch) = trim_prefill(frames, Some(epoch), 5, 20);
+
+        assert_eq!(trimmed.len(), 5);
+        // Epoch unchanged — no trim occurred
+        let adjusted = adjusted_epoch.unwrap();
+        assert_eq!(adjusted.duration_since(epoch), Duration::ZERO);
+    }
+
+    #[test]
+    fn trim_prefill_no_trim_when_below_target() {
+        let epoch = Instant::now();
+        let frames: Vec<Bytes> = (0..3).map(|i| Bytes::from(vec![i; 64])).collect();
+
+        let (trimmed, adjusted_epoch) = trim_prefill(frames, Some(epoch), 5, 20);
+
+        assert_eq!(trimmed.len(), 3);
+        assert_eq!(
+            adjusted_epoch.unwrap().duration_since(epoch),
+            Duration::ZERO
+        );
+    }
+
+    #[test]
+    fn trim_prefill_passthrough_when_target_zero() {
+        let epoch = Instant::now();
+        let frames: Vec<Bytes> = (0..10).map(|i| Bytes::from(vec![i; 64])).collect();
+
+        // target_depth = 0 means pass-through, no trimming regardless of count
+        let (trimmed, adjusted_epoch) = trim_prefill(frames, Some(epoch), 0, 20);
+
+        assert_eq!(trimmed.len(), 10);
+        assert_eq!(
+            adjusted_epoch.unwrap().duration_since(epoch),
+            Duration::ZERO
+        );
+    }
+
+    #[test]
+    fn trim_prefill_handles_none_epoch() {
+        let frames: Vec<Bytes> = (0..10).map(|i| Bytes::from(vec![i; 64])).collect();
+
+        let (trimmed, adjusted_epoch) = trim_prefill(frames, None, 5, 20);
+
+        assert_eq!(trimmed.len(), 5);
+        assert!(
+            adjusted_epoch.is_none(),
+            "None epoch should remain None after trim"
+        );
+    }
+
+    #[test]
+    fn trim_prefill_epoch_scales_with_frame_duration() {
+        let epoch = Instant::now();
+        let frames: Vec<Bytes> = (0..8).map(|i| Bytes::from(vec![i; 64])).collect();
+
+        // 40ms frames, target 3 → skip 5 → epoch advances 5 × 40ms = 200ms
+        let (trimmed, adjusted_epoch) = trim_prefill(frames, Some(epoch), 3, 40);
+
+        assert_eq!(trimmed.len(), 3);
+        assert_eq!(
+            adjusted_epoch.unwrap().duration_since(epoch),
+            Duration::from_millis(200)
+        );
+    }
+
+    // ─────────────────────────────────────────────────────────────────────
+    // Invariant clamp and early-drop regression tests
+    // ─────────────────────────────────────────────────────────────────────
+
+    #[tokio::test(start_paused = true)]
+    async fn early_drop_commits_cadence_stats() {
+        let (tx, rx) = broadcast::channel::<Bytes>(16);
+        let guard = test_guard();
+        let guard_ref = Arc::clone(&guard);
+
+        let mut stream = Box::pin(create_wav_stream_with_cadence(
+            rx,
+            guard,
+            test_config(),
+            None,
+            None,
+        ));
+
+        // Send a frame and consume one tick so the stream is running
+        tx.send(test_audio_frame()).unwrap();
+        poll_and_advance(
+            &mut stream.as_mut(),
+            Duration::from_millis(SILENCE_FRAME_DURATION_MS as u64),
+        )
+        .await;
+        let _ = stream.next().await;
+
+        // Advance into silence so counters are non-zero
+        poll_and_advance(
+            &mut stream.as_mut(),
+            Duration::from_millis(SILENCE_FRAME_DURATION_MS as u64),
+        )
+        .await;
+        let _ = stream.next().await;
+
+        // Drop the stream mid-loop without draining (simulates HTTP disconnect)
+        drop(stream);
+        drop(tx);
+
+        // Stats should still be committed via StatsRecorder::drop
+        let stats = guard_ref
+            .cadence_stats
+            .get()
+            .expect("cadence stats should be set even after early drop");
+        assert!(
+            stats.silence_events > 0,
+            "silence events should be recorded after early drop"
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn zero_frame_duration_clamped_no_panic() {
+        let config = CadenceConfig {
+            silence_frame: test_silence_frame(),
+            target_depth: 0,
+            overflow_cap: TEST_OVERFLOW_CAP,
+            low_watermark: 0,
+            skip_fill_gate: false,
+            frame_duration_ms: 0, // Invalid: should be clamped to 1
+            audio_format: test_audio_format(),
+            prefill_frames: vec![],
+        };
+
+        let (tx, rx) = broadcast::channel::<Bytes>(16);
+        let guard = test_guard();
+
+        let mut stream = Box::pin(create_wav_stream_with_cadence(
+            rx, guard, config, None, None,
+        ));
+
+        tx.send(test_audio_frame()).unwrap();
+
+        // Advance enough for the clamped 1ms timer to fire
+        poll_and_advance(&mut stream.as_mut(), Duration::from_millis(5)).await;
+
+        // Should yield a frame without panicking
+        let frame = stream.next().await.expect("stream should yield").unwrap();
+        assert!(
+            !frame.is_empty(),
+            "should emit a non-empty frame with clamped duration"
+        );
+
+        drop(tx);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn overflow_cap_clamped_to_target_depth() {
+        // overflow_cap (2) < target_depth (5): should be clamped to 5
+        // so the fill gate can be satisfied without artificial drops.
+        let config = CadenceConfig {
+            silence_frame: test_silence_frame(),
+            target_depth: JITTER_TARGET, // 5
+            overflow_cap: 2,             // Invalid: < target_depth, clamped to 5
+            low_watermark: 0,
+            skip_fill_gate: false,
+            frame_duration_ms: SILENCE_FRAME_DURATION_MS,
+            audio_format: test_audio_format(),
+            prefill_frames: vec![],
+        };
+
+        let (tx, rx) = broadcast::channel::<Bytes>(32);
+        let guard = test_guard();
+        let guard_ref = Arc::clone(&guard);
+
+        let mut stream = Box::pin(create_wav_stream_with_cadence(
+            rx, guard, config, None, None,
+        ));
+
+        // Send exactly target_depth frames before polling so the fill gate
+        // can receive all of them in a single pass (all buffered in broadcast).
+        for _ in 0..JITTER_TARGET {
+            tx.send(test_audio_frame()).unwrap();
+        }
+
+        // Poll once: fill gate receives all 5 frames (broadcast has them
+        // buffered), sees queue >= target_depth, and breaks. The metronome
+        // isn't ready yet (time is paused), so poll returns Pending.
+        poll_fn(|cx| {
+            let _ = stream.as_mut().poll_next(cx);
+            Poll::Ready(())
+        })
+        .await;
+
+        // Advance one tick so the metronome fires
+        time::advance(Duration::from_millis(SILENCE_FRAME_DURATION_MS as u64)).await;
+
+        // Should yield audio (fill gate was satisfied because overflow_cap was clamped)
+        let frame = stream
+            .next()
+            .await
+            .expect("stream should yield after fill gate")
+            .unwrap();
+        assert!(
+            !frame.iter().all(|&b| b == 0),
+            "expected audio after fill gate with clamped overflow_cap"
+        );
+
+        // Close and drain to commit stats
+        drop(tx);
+        drain_to_end(&mut stream.as_mut()).await;
+
+        let stats = guard_ref
+            .cadence_stats
+            .get()
+            .expect("cadence stats should be set");
+        assert_eq!(
+            stats.frames_dropped, 0,
+            "no frames should be dropped when overflow_cap is clamped to target_depth"
+        );
     }
 }

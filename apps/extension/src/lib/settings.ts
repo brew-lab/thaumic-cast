@@ -6,9 +6,7 @@ import {
   LatencyModeSchema,
   BitDepthSchema,
   DEFAULT_BITS_PER_SAMPLE,
-  QUEUE_CAPACITY_MS_MIN,
-  QUEUE_CAPACITY_MS_MAX,
-  QUEUE_CAPACITY_MS_DEFAULT,
+  JITTER_BUFFER_MS_DEFAULT,
   FRAME_DURATION_MS_DEFAULT,
   FrameDurationMsSchema,
   isValidBitrateForCodec,
@@ -134,6 +132,14 @@ export const ThemeModeSchema = z.enum(['auto', 'light', 'dark']);
 export type ThemeMode = z.infer<typeof ThemeModeSchema>;
 
 /**
+ * Allowed jitter buffer values for the extension UI dropdown.
+ * The server accepts any value in [0, 1000]; these are the discrete options
+ * exposed to users. Single source of truth for both Zod schema and UI.
+ */
+export const JITTER_BUFFER_OPTIONS = [0, 50, 100, 200, 500] as const;
+export type JitterBufferOption = (typeof JITTER_BUFFER_OPTIONS)[number];
+
+/**
  * Custom audio settings when mode is 'custom'.
  */
 export const CustomAudioSettingsSchema = z.object({
@@ -144,12 +150,17 @@ export const CustomAudioSettingsSchema = z.object({
   latencyMode: LatencyModeSchema.default('quality'),
   /** Bit depth (16 or 24). Supported depths depend on the codec. */
   bitsPerSample: BitDepthSchema.default(DEFAULT_BITS_PER_SAMPLE),
-  /** Max cadence queue capacity in milliseconds. */
-  queueCapacityMs: z
-    .number()
-    .min(QUEUE_CAPACITY_MS_MIN)
-    .max(QUEUE_CAPACITY_MS_MAX)
-    .default(QUEUE_CAPACITY_MS_DEFAULT),
+  /** Jitter buffer size in milliseconds.
+   *  Also used as the prefill delay for initial PCM connections. */
+  jitterBufferMs: z
+    .union(
+      JITTER_BUFFER_OPTIONS.map((v) => z.literal(v)) as unknown as [
+        z.ZodLiteral<0>,
+        z.ZodLiteral<50>,
+        ...z.ZodLiteral<JitterBufferOption>[],
+      ],
+    )
+    .default(JITTER_BUFFER_MS_DEFAULT),
   /** Frame duration in milliseconds. Currently only used when codec is 'pcm'. */
   frameDurationMs: FrameDurationMsSchema.default(FRAME_DURATION_MS_DEFAULT),
 });
@@ -181,7 +192,7 @@ export const ExtensionSettingsSchema = z.object({
     sampleRate: 48000,
     latencyMode: 'quality',
     bitsPerSample: DEFAULT_BITS_PER_SAMPLE,
-    queueCapacityMs: QUEUE_CAPACITY_MS_DEFAULT,
+    jitterBufferMs: JITTER_BUFFER_MS_DEFAULT,
     frameDurationMs: FRAME_DURATION_MS_DEFAULT,
   }),
 
@@ -212,7 +223,7 @@ const DEFAULT_EXTENSION_SETTINGS: ExtensionSettings = {
     sampleRate: 48000,
     latencyMode: 'quality',
     bitsPerSample: DEFAULT_BITS_PER_SAMPLE,
-    queueCapacityMs: QUEUE_CAPACITY_MS_DEFAULT,
+    jitterBufferMs: JITTER_BUFFER_MS_DEFAULT,
     frameDurationMs: FRAME_DURATION_MS_DEFAULT,
   },
   videoSyncEnabled: false,

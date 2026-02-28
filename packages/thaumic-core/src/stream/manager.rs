@@ -268,15 +268,17 @@ pub struct StreamState {
     pub tx: broadcast::Sender<Bytes>,
     /// Recent frames buffer with timestamps for epoch calculation.
     buffer: Arc<parking_lot::RwLock<VecDeque<TimestampedFrame>>>,
-    /// Maximum frames to keep in buffer (ring buffer limit).
-    buffer_frames: usize,
+    /// Ring buffer capacity (max frames kept for late-joining clients).
+    buffer_capacity: usize,
     /// Whether the stream has received its first frame (for STREAM_READY signaling)
     has_frames: AtomicBool,
     /// Timing information for latency measurement.
     pub timing: StreamTiming,
-    /// Queue capacity in milliseconds (100-1000, default 200).
-    /// Used to calculate cadence queue size for PCM streams.
-    pub queue_capacity_ms: u64,
+    /// Jitter buffer depth in milliseconds (0-1000, default 0).
+    /// When > 0, enables fill gate (wait for target_depth before emitting)
+    /// and low-watermark proactive rebuffering. When 0, pass-through mode
+    /// (current behavior, no fill gate, no rebuffer).
+    pub jitter_buffer_ms: u64,
     /// Frame duration in milliseconds for cadence timing.
     /// Determines silence frame duration and cadence tick interval.
     pub frame_duration_ms: u32,
@@ -293,26 +295,26 @@ impl StreamState {
     /// * `id` - Unique stream identifier
     /// * `codec` - Output codec for HTTP Content-Type (what Sonos receives)
     /// * `audio_format` - Audio format configuration (sample rate, channels, bit depth)
-    /// * `buffer_frames` - Maximum frames to buffer for late-joining clients
+    /// * `buffer_capacity` - Ring buffer capacity (max frames for late-joining clients)
     /// * `channel_capacity` - Capacity of the broadcast channel for audio frames
-    /// * `queue_capacity_ms` - Queue capacity in milliseconds (100-1000)
+    /// * `jitter_buffer_ms` - Jitter buffer depth in milliseconds (0-1000)
     /// * `frame_duration_ms` - Frame duration in milliseconds for cadence timing
     pub fn new(
         id: String,
         codec: AudioCodec,
         audio_format: AudioFormat,
-        buffer_frames: usize,
+        buffer_capacity: usize,
         channel_capacity: usize,
-        queue_capacity_ms: u64,
+        jitter_buffer_ms: u64,
         frame_duration_ms: u32,
     ) -> Self {
         let (tx, _) = broadcast::channel(channel_capacity);
         log::debug!(
-            "[Stream] Creating {} with codec {:?}, format {:?}, queue_cap: {}ms, frame: {}ms",
+            "[Stream] Creating {} with codec {:?}, format {:?}, jitter_buffer: {}ms, frame: {}ms",
             id,
             codec,
             audio_format,
-            queue_capacity_ms,
+            jitter_buffer_ms,
             frame_duration_ms
         );
         Self {
@@ -322,16 +324,22 @@ impl StreamState {
             metadata: Arc::new(parking_lot::RwLock::new(StreamMetadata::default())),
             tx,
             buffer: Arc::new(parking_lot::RwLock::new(VecDeque::with_capacity(
-                buffer_frames,
+                buffer_capacity,
             ))),
-            buffer_frames,
+            buffer_capacity,
             has_frames: AtomicBool::new(false),
             timing: StreamTiming::new(),
-            queue_capacity_ms,
+            jitter_buffer_ms,
             frame_duration_ms,
             last_push_at: parking_lot::Mutex::new(None),
             receive_stats: parking_lot::Mutex::new(ReceiveStats::new()),
         }
+    }
+
+    /// Returns the ring buffer capacity in frames.
+    #[must_use]
+    pub fn buffer_capacity(&self) -> usize {
+        self.buffer_capacity
     }
 
     /// Pushes a new audio frame into the stream.
@@ -362,7 +370,7 @@ impl StreamState {
         // Clone the Bytes (cheap - just Arc bump) for buffer storage
         {
             let mut buffer = self.buffer.write();
-            if buffer.len() >= self.buffer_frames {
+            if buffer.len() >= self.buffer_capacity {
                 buffer.pop_front();
             }
             buffer.push_back(TimestampedFrame {
@@ -478,13 +486,13 @@ impl StreamRegistry {
     /// # Arguments
     /// * `codec` - Output codec for HTTP Content-Type (what Sonos receives)
     /// * `audio_format` - Audio format configuration (sample rate, channels, bit depth)
-    /// * `queue_capacity_ms` - Queue capacity in milliseconds (100-1000)
+    /// * `jitter_buffer_ms` - Jitter buffer depth in milliseconds (0-1000)
     /// * `frame_duration_ms` - Frame duration in milliseconds for cadence timing
     pub fn create_stream(
         &self,
         codec: AudioCodec,
         audio_format: AudioFormat,
-        queue_capacity_ms: u64,
+        jitter_buffer_ms: u64,
         frame_duration_ms: u32,
     ) -> Result<String, String> {
         if self.streams.len() >= self.config.max_concurrent_streams {
@@ -498,7 +506,7 @@ impl StreamRegistry {
             audio_format,
             self.config.buffer_frames,
             self.config.channel_capacity,
-            queue_capacity_ms,
+            jitter_buffer_ms,
             frame_duration_ms,
         ));
         self.streams.insert(id.clone(), state);

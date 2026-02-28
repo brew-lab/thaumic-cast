@@ -27,12 +27,10 @@ use tokio_stream::wrappers::BroadcastStream;
 
 use crate::api::AppState;
 use crate::error::{ThaumicError, ThaumicResult};
-use crate::protocol_constants::{
-    APP_NAME, ICY_METAINT, MAX_CADENCE_QUEUE_SIZE, WAV_STREAM_SIZE_MAX,
-};
+use crate::protocol_constants::{APP_NAME, ICY_METAINT, MAX_PREFILL_DELAY_MS, WAV_STREAM_SIZE_MAX};
 use crate::stream::{
-    create_wav_header, create_wav_stream_with_cadence, lagged_error, AudioCodec, CadenceConfig,
-    IcyMetadataInjector, LoggingStreamGuard,
+    create_lagged_io_error, create_wav_header, create_wav_stream_with_cadence, trim_prefill,
+    AudioCodec, CadenceConfig, EpochHook, IcyMetadataInjector, LoggingStreamGuard,
 };
 
 /// Boxed stream type for audio data.
@@ -78,13 +76,23 @@ pub(super) async fn stream_audio(
     // new speakers as resumes after the first speaker connects.
     let is_resume = stream_state.timing.current_epoch_for(remote_ip).is_some();
 
-    // Upfront buffering delay for PCM streams BEFORE subscribing.
-    // This lets the ring buffer accumulate more frames. Subscribing after
-    // ensures the broadcast receiver doesn't fill up during the delay.
+    // Upfront delay for PCM streams BEFORE subscribing.
+    // Lets the ring buffer accumulate frames so the prefill snapshot is larger.
+    // The delay is capped at the ring buffer duration and 500ms to avoid
+    // excessive startup latency.
     //
     // SKIP on resume: Sonos closes the connection within milliseconds if we delay.
     // The buffer already has frames from before the pause, so no delay is needed.
-    let prefill_delay_ms = stream_state.queue_capacity_ms;
+    let prefill_delay_ms = if stream_state.jitter_buffer_ms > 0 {
+        let ring_buffer_ms =
+            stream_state.buffer_capacity() as u64 * stream_state.frame_duration_ms as u64;
+        stream_state
+            .jitter_buffer_ms
+            .min(ring_buffer_ms)
+            .min(MAX_PREFILL_DELAY_MS)
+    } else {
+        0
+    };
     if stream_state.codec == AudioCodec::Pcm && prefill_delay_ms > 0 && !is_resume {
         log::debug!(
             "[Stream] Applying {}ms prefill delay for PCM stream",
@@ -135,68 +143,75 @@ pub(super) async fn stream_audio(
     // representation - raw zeros would corrupt the stream. These codecs also
     // tend to be more resilient to jitter due to their buffering behavior.
     let combined_stream: AudioStream = if stream_state.codec == AudioCodec::Pcm {
-        // PCM: fixed-cadence streaming with queue buffer and silence injection.
+        // PCM: fixed-cadence streaming with jitter buffer and silence injection.
         // Prefill frames are pre-populated in the queue to eliminate handoff gap.
         let frame_duration_ms = stream_state.frame_duration_ms;
         let silence_frame = stream_state.audio_format.silence_frame(frame_duration_ms);
 
-        // Calculate queue size from queue capacity (ceil division)
-        // queue_size = ceil(capacity_ms / frame_ms), clamped to [1, MAX_CADENCE_QUEUE_SIZE]
-        let queue_size = stream_state
-            .queue_capacity_ms
-            .div_ceil(frame_duration_ms as u64) as usize;
-        let queue_size = queue_size.clamp(1, MAX_CADENCE_QUEUE_SIZE);
+        let config = CadenceConfig::new(
+            stream_state.jitter_buffer_ms,
+            frame_duration_ms,
+            stream_state.audio_format,
+            silence_frame,
+            prefill_frames,
+            is_resume,
+        );
+
+        let (prefill_frames, epoch_candidate) = trim_prefill(
+            config.prefill_frames,
+            epoch_candidate,
+            config.target_depth,
+            frame_duration_ms,
+        );
+
+        let config = CadenceConfig {
+            prefill_frames,
+            ..config
+        };
 
         Box::pin(create_wav_stream_with_cadence(
             rx,
             Arc::clone(&guard),
-            CadenceConfig {
-                silence_frame,
-                queue_size,
-                frame_duration_ms,
-                audio_format: stream_state.audio_format,
-                prefill_frames,
-            },
+            config,
             Some(Arc::downgrade(&stream_state)),
-            Some((
-                Arc::clone(&stream_state),
+            Some(EpochHook {
+                stream_state: Arc::clone(&stream_state),
                 epoch_candidate,
                 connected_at,
                 remote_ip,
-            )),
+            }),
         ))
     } else {
         // Compressed codecs: no silence injection, chain prefill before live
         let prefill_stream = futures::stream::iter(prefill_frames.into_iter().map(Ok));
         let live_stream = BroadcastStream::new(rx).map(|res| match res {
             Ok(frame) => Ok(frame),
-            Err(BroadcastStreamRecvError::Lagged(n)) => Err(lagged_error(n)),
+            Err(BroadcastStreamRecvError::Lagged(n)) => Err(create_lagged_io_error(n)),
         });
         let raw_stream = futures::StreamExt::chain(prefill_stream, live_stream);
 
         // Fire epoch on first non-empty frame (compressed codecs never inject silence)
-        let epoch_hook = Some((
-            Arc::clone(&stream_state),
+        let epoch_hook = Some(EpochHook {
+            stream_state: Arc::clone(&stream_state),
             epoch_candidate,
             connected_at,
             remote_ip,
-        ));
+        });
         Box::pin(
             raw_stream.scan(epoch_hook, |hook, item: Result<Bytes, std::io::Error>| {
-                if let Some((stream_state, epoch_candidate, connected_at, remote_ip)) = hook.take()
-                {
+                if let Some(h) = hook.take() {
                     if let Ok(ref frame) = item {
                         if !frame.is_empty() {
-                            stream_state.timing.start_new_epoch(
-                                epoch_candidate,
-                                connected_at,
-                                remote_ip,
+                            h.stream_state.timing.start_new_epoch(
+                                h.epoch_candidate,
+                                h.connected_at,
+                                h.remote_ip,
                             );
                         } else {
-                            *hook = Some((stream_state, epoch_candidate, connected_at, remote_ip));
+                            *hook = Some(h);
                         }
                     } else {
-                        *hook = Some((stream_state, epoch_candidate, connected_at, remote_ip));
+                        *hook = Some(h);
                     }
                 }
                 futures::future::ready(Some(item))

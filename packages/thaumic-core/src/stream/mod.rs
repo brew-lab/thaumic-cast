@@ -4,7 +4,8 @@ pub mod manager;
 pub mod wav;
 
 pub use cadence::{
-    create_wav_stream_with_cadence, lagged_error, CadenceConfig, LoggingStreamGuard,
+    create_lagged_io_error, create_wav_stream_with_cadence, trim_prefill, CadenceConfig, EpochHook,
+    LoggingStreamGuard,
 };
 pub use icy::{IcyMetadataInjector, ICY_METAINT};
 pub use manager::{

@@ -13,8 +13,8 @@ use std::time::{Duration, Instant};
 use crate::api::AppState;
 use crate::events::SpeakerRemovalReason;
 use crate::protocol_constants::{
-    DEFAULT_QUEUE_CAPACITY_MS, MAX_FRAME_DURATION_MS, MAX_QUEUE_CAPACITY_MS, MIN_FRAME_DURATION_MS,
-    MIN_QUEUE_CAPACITY_MS, SILENCE_FRAME_DURATION_MS, WS_HEARTBEAT_CHECK_INTERVAL_SECS,
+    DEFAULT_JITTER_BUFFER_MS, MAX_FRAME_DURATION_MS, MAX_JITTER_BUFFER_MS, MIN_FRAME_DURATION_MS,
+    MIN_JITTER_BUFFER_MS, SILENCE_FRAME_DURATION_MS, WS_HEARTBEAT_CHECK_INTERVAL_SECS,
     WS_HEARTBEAT_TIMEOUT_SECS,
 };
 use crate::services::StreamCoordinator;
@@ -163,8 +163,8 @@ struct EncoderConfig {
     channels: Option<u8>,
     /// Bit depth for audio encoding (16 or 24). Only 24-bit is supported for FLAC.
     bits_per_sample: Option<u16>,
-    /// Queue capacity in milliseconds (100-1000). Only affects PCM codec.
-    queue_capacity_ms: Option<u64>,
+    /// Jitter buffer depth in milliseconds (0-1000). Only affects PCM codec.
+    jitter_buffer_ms: Option<u64>,
     /// Frame size in samples per channel.
     /// Server derives exact duration: duration_ms = samples * 1000 / sample_rate
     frame_size_samples: Option<u32>,
@@ -391,13 +391,13 @@ fn resolve_codec(codec_str: Option<&str>) -> AudioCodec {
 struct StreamConfig {
     codec: AudioCodec,
     audio_format: AudioFormat,
-    queue_capacity_ms: u64,
+    jitter_buffer_ms: u64,
     frame_duration_ms: u32,
 }
 
 /// Parses and validates stream configuration from a handshake request.
 ///
-/// Extracts codec, sample rate, channels, bit depth, queue capacity, and frame duration
+/// Extracts codec, sample rate, channels, bit depth, jitter buffer, and frame duration
 /// from the encoder config (or legacy fields), applying defaults and validation.
 fn parse_stream_config(payload: &HandshakeRequest) -> Result<StreamConfig, String> {
     let codec_str = payload
@@ -435,12 +435,12 @@ fn parse_stream_config(payload: &HandshakeRequest) -> Result<StreamConfig, Strin
         }
     };
 
-    let queue_capacity_ms = payload
+    let jitter_buffer_ms = payload
         .encoder_config
         .as_ref()
-        .and_then(|c| c.queue_capacity_ms)
-        .unwrap_or(DEFAULT_QUEUE_CAPACITY_MS)
-        .clamp(MIN_QUEUE_CAPACITY_MS, MAX_QUEUE_CAPACITY_MS);
+        .and_then(|c| c.jitter_buffer_ms)
+        .unwrap_or(DEFAULT_JITTER_BUFFER_MS)
+        .clamp(MIN_JITTER_BUFFER_MS, MAX_JITTER_BUFFER_MS);
 
     // Derive frame duration from frame_size_samples.
     // Using samples avoids floating-point rounding errors in the extension.
@@ -482,7 +482,7 @@ fn parse_stream_config(payload: &HandshakeRequest) -> Result<StreamConfig, Strin
     Ok(StreamConfig {
         codec,
         audio_format: AudioFormat::new(sample_rate, channels as u16, bits_per_sample),
-        queue_capacity_ms,
+        jitter_buffer_ms,
         frame_duration_ms,
     })
 }
@@ -495,17 +495,17 @@ fn handle_handshake(state: &AppState, payload: HandshakeRequest) -> HandshakeRes
     };
 
     log::info!(
-        "[WS] Creating stream: codec={:?}, format={:?}, queue_cap={}ms, frame={}ms",
+        "[WS] Creating stream: codec={:?}, format={:?}, jitter_buffer={}ms, frame={}ms",
         config.codec,
         config.audio_format,
-        config.queue_capacity_ms,
+        config.jitter_buffer_ms,
         config.frame_duration_ms
     );
 
     match state.stream_coordinator.create_stream(
         config.codec,
         config.audio_format,
-        config.queue_capacity_ms,
+        config.jitter_buffer_ms,
         config.frame_duration_ms,
     ) {
         Ok(id) => HandshakeResult::Success(id),
@@ -858,4 +858,70 @@ async fn handle_ws(socket: WebSocket, state: AppState) {
     }
 
     // StreamGuard and ConnectionGuard Drop impls handle any remaining cleanup
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn encoder_config_accepts_jitter_buffer_ms() {
+        let json = r#"{"codec":"pcm","jitterBufferMs":200}"#;
+        let config: EncoderConfig = serde_json::from_str(json).unwrap();
+        assert_eq!(config.jitter_buffer_ms, Some(200));
+    }
+
+    #[test]
+    fn parse_stream_config_uses_jitter_buffer_ms() {
+        let payload = HandshakeRequest {
+            codec: None,
+            encoder_config: Some(EncoderConfig {
+                codec: "pcm".to_string(),
+                bitrate: None,
+                sample_rate: Some(48000),
+                channels: Some(2),
+                bits_per_sample: None,
+                jitter_buffer_ms: Some(300),
+                frame_size_samples: Some(480),
+            }),
+        };
+        let config = parse_stream_config(&payload).unwrap();
+        assert_eq!(config.jitter_buffer_ms, 300);
+    }
+
+    #[test]
+    fn parse_stream_config_clamps_jitter_buffer() {
+        let payload = HandshakeRequest {
+            codec: None,
+            encoder_config: Some(EncoderConfig {
+                codec: "pcm".to_string(),
+                bitrate: None,
+                sample_rate: Some(48000),
+                channels: Some(2),
+                bits_per_sample: None,
+                jitter_buffer_ms: Some(5000), // above MAX
+                frame_size_samples: None,
+            }),
+        };
+        let config = parse_stream_config(&payload).unwrap();
+        assert_eq!(config.jitter_buffer_ms, MAX_JITTER_BUFFER_MS);
+    }
+
+    #[test]
+    fn parse_stream_config_defaults_jitter_buffer() {
+        let payload = HandshakeRequest {
+            codec: None,
+            encoder_config: Some(EncoderConfig {
+                codec: "pcm".to_string(),
+                bitrate: None,
+                sample_rate: None,
+                channels: None,
+                bits_per_sample: None,
+                jitter_buffer_ms: None,
+                frame_size_samples: None,
+            }),
+        };
+        let config = parse_stream_config(&payload).unwrap();
+        assert_eq!(config.jitter_buffer_ms, DEFAULT_JITTER_BUFFER_MS);
+    }
 }

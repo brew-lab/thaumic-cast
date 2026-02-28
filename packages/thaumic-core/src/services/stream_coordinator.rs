@@ -268,7 +268,7 @@ impl StreamCoordinator {
     /// # Arguments
     /// * `codec` - Output codec for HTTP Content-Type (what Sonos receives)
     /// * `audio_format` - Audio format configuration (sample rate, channels, bit depth)
-    /// * `queue_capacity_ms` - Queue capacity in milliseconds (100-1000)
+    /// * `jitter_buffer_ms` - Jitter buffer depth in milliseconds (0-1000)
     /// * `frame_duration_ms` - Frame duration in milliseconds for cadence timing
     ///
     /// Returns the stream ID on success. Broadcasts a `StreamEvent::Created` event.
@@ -276,13 +276,13 @@ impl StreamCoordinator {
         &self,
         codec: AudioCodec,
         audio_format: AudioFormat,
-        queue_capacity_ms: u64,
+        jitter_buffer_ms: u64,
         frame_duration_ms: u32,
     ) -> Result<String, String> {
         let stream_id = self.stream_registry.create_stream(
             codec,
             audio_format,
-            queue_capacity_ms,
+            jitter_buffer_ms,
             frame_duration_ms,
         )?;
 
