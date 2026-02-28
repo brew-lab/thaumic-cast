@@ -166,14 +166,17 @@ export function tpdfDither(): number {
 }
 
 /**
- * Queue capacity constraints and default (in milliseconds).
- * Caps the maximum number of frames the cadence queue can hold.
- * Does NOT control actual buffer depth — in steady state the queue
- * sits at 1-2 frames regardless of capacity.
+ * Jitter buffer constraints and default (in milliseconds).
+ * Controls the target queue depth maintained by the cadence loop.
+ * A fill gate delays playback until the buffer reaches target depth,
+ * and low-watermark rebuffering re-enters silence when depth drops,
+ * resuming only after the target is restored. Set to 0 to disable.
  */
-export const QUEUE_CAPACITY_MS_MIN = 0;
-export const QUEUE_CAPACITY_MS_MAX = 1000;
-export const QUEUE_CAPACITY_MS_DEFAULT = 0;
+export const JITTER_BUFFER_MS_MIN = 0;
+export const JITTER_BUFFER_MS_MAX = 1000;
+/** Schema-level default (pass-through). Streaming policies override this:
+ *  quality=200ms, realtime=50ms. Only applies to raw EncoderConfig without a policy. */
+export const JITTER_BUFFER_MS_DEFAULT = 0;
 
 /**
  * Frame duration options (in milliseconds).

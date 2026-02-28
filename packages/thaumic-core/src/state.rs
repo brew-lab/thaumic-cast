@@ -23,8 +23,8 @@ pub struct StreamingConfig {
     /// Maximum number of concurrent audio streams.
     pub max_concurrent_streams: usize,
 
-    /// Maximum frames to buffer for late-joining clients.
-    /// Extension sends 20ms frames, so 50 frames ≈ 1 second of audio.
+    /// Maximum frames to buffer for late-joining clients (ring buffer).
+    /// At 10ms frame duration, 50 frames = 500ms of audio.
     pub buffer_frames: usize,
 
     /// Capacity of the broadcast channel for audio frames.

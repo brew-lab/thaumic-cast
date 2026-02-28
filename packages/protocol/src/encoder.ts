@@ -15,9 +15,9 @@ import {
   type LatencyMode,
   LatencyModeSchema,
   SampleRateSchema,
-  QUEUE_CAPACITY_MS_DEFAULT,
-  QUEUE_CAPACITY_MS_MAX,
-  QUEUE_CAPACITY_MS_MIN,
+  JITTER_BUFFER_MS_DEFAULT,
+  JITTER_BUFFER_MS_MAX,
+  JITTER_BUFFER_MS_MIN,
   type SupportedSampleRate,
 } from './audio.js';
 
@@ -189,12 +189,15 @@ export const EncoderConfigSchema = z
      */
     bitsPerSample: BitDepthSchema.default(16),
     latencyMode: LatencyModeSchema.default('quality'),
-    /** Max cadence queue capacity in milliseconds. */
-    queueCapacityMs: z
+    /** Jitter buffer size in milliseconds.
+     *  Also used as prefill delay for initial PCM connections.
+     *  The server accepts any value in [0, 1000] and clamps to range.
+     *  The extension UI restricts to discrete values (0, 50, 100, 200, 500). */
+    jitterBufferMs: z
       .number()
-      .min(QUEUE_CAPACITY_MS_MIN)
-      .max(QUEUE_CAPACITY_MS_MAX)
-      .default(QUEUE_CAPACITY_MS_DEFAULT),
+      .min(JITTER_BUFFER_MS_MIN)
+      .max(JITTER_BUFFER_MS_MAX)
+      .default(JITTER_BUFFER_MS_DEFAULT),
     /**
      * Frame duration in milliseconds for codecs that support configurable frame sizes.
      * Currently only used for PCM. Other codecs have fixed frame sizes.
@@ -231,8 +234,8 @@ export interface CreateEncoderConfigOptions {
   /** Bit depth (16 or 24). 24-bit only supported for FLAC. */
   bitsPerSample?: BitDepth;
   latencyMode?: LatencyMode;
-  /** Max cadence queue capacity in milliseconds (100-1000). */
-  queueCapacityMs?: number;
+  /** Jitter buffer size in milliseconds (0-1000). 0 disables. */
+  jitterBufferMs?: number;
   /** Frame duration in milliseconds (10, 20, or 40). Currently only used for PCM codec. */
   frameDurationMs?: FrameDurationMs;
   /** Frame size in samples per channel. Set by audio worker. */
@@ -252,7 +255,7 @@ export function createEncoderConfig(options: CreateEncoderConfigOptions): Encode
     channels = 2,
     bitsPerSample = 16,
     latencyMode = 'quality',
-    queueCapacityMs = QUEUE_CAPACITY_MS_DEFAULT,
+    jitterBufferMs = JITTER_BUFFER_MS_DEFAULT,
     frameDurationMs = FRAME_DURATION_MS_DEFAULT,
     frameSizeSamples,
   } = options;
@@ -269,7 +272,7 @@ export function createEncoderConfig(options: CreateEncoderConfigOptions): Encode
     channels,
     bitsPerSample: effectiveBitsPerSample,
     latencyMode,
-    queueCapacityMs,
+    jitterBufferMs,
     frameDurationMs,
     frameSizeSamples,
   };

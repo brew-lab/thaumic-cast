@@ -111,18 +111,47 @@ pub const MIN_FRAME_DURATION_MS: u32 = 5;
 /// 150ms provides margin for all cases.
 pub const MAX_FRAME_DURATION_MS: u32 = 150;
 
-/// Frame size constraints (samples per channel).
-/// Minimum queue capacity (ms). 0 means direct pass-through (clamps to 1 frame).
-pub const MIN_QUEUE_CAPACITY_MS: u64 = 0;
+/// Minimum jitter buffer depth (ms). 0 means pass-through (no fill gate, no rebuffer).
+pub const MIN_JITTER_BUFFER_MS: u64 = 0;
 
-/// Maximum queue capacity (ms).
-pub const MAX_QUEUE_CAPACITY_MS: u64 = 1000;
+/// Maximum jitter buffer depth (ms).
+pub const MAX_JITTER_BUFFER_MS: u64 = 1000;
 
-/// Default queue capacity (ms). 0 = direct pass-through (1 frame).
-pub const DEFAULT_QUEUE_CAPACITY_MS: u64 = 0;
+/// Default jitter buffer depth (ms). 0 = pass-through (current behavior).
+pub const DEFAULT_JITTER_BUFFER_MS: u64 = 0;
+
+/// Overflow cap multiplier: overflow_cap = target_depth × this factor.
+pub const JITTER_OVERFLOW_MULTIPLIER: usize = 3;
+
+/// Minimum overflow cap (frames). Ensures at least 1 frame can be queued
+/// even when target_depth is 0 (pass-through mode).
+pub const MIN_OVERFLOW_CAP: usize = 1;
+
+/// Compute the low-watermark for a given target depth (2/3 of target).
+/// Returns 0 when `target_depth` is 0 (pass-through) or 1 (no room for hysteresis).
+pub const fn jitter_low_watermark(target_depth: usize) -> usize {
+    if target_depth == 0 {
+        0
+    } else {
+        target_depth * 2 / 3
+    }
+}
+
+/// Maximum prefill delay (ms) before subscribing to the ring buffer.
+/// Caps startup latency even when the jitter buffer or ring buffer are large.
+pub const MAX_PREFILL_DELAY_MS: u64 = 500;
+
+/// Timeout multiplier for fill gate and rebuffer hold.
+/// Timeout = target_depth × frame_duration_ms × this factor.
+pub const REBUFFER_TIMEOUT_MULTIPLIER: u64 = 2;
+
+/// Target interval between pipeline snapshots, in milliseconds.
+/// The cadence loop fires a snapshot every `SNAPSHOT_INTERVAL_MS / frame_duration_ms` ticks.
+pub const SNAPSHOT_INTERVAL_MS: u64 = 1000;
 
 /// Maximum cadence queue size (frames).
-/// Calculated using MIN_FRAME_DURATION_MS to ensure queue can hold enough frames
-/// at the smallest possible frame duration.
+/// Upper bound for the overflow drop cap. Calculated using MIN_FRAME_DURATION_MS
+/// to ensure the cap can accommodate the configured capacity at the smallest
+/// possible frame duration.
 pub const MAX_CADENCE_QUEUE_SIZE: usize =
-    (MAX_QUEUE_CAPACITY_MS / MIN_FRAME_DURATION_MS as u64) as usize;
+    (MAX_JITTER_BUFFER_MS / MIN_FRAME_DURATION_MS as u64) as usize * JITTER_OVERFLOW_MULTIPLIER;

@@ -39,8 +39,10 @@ export interface StreamingPolicy {
   /** Backpressure: whether to drop frames (true) or pause (false). */
   dropOnBackpressure: boolean;
 
-  /** Max frames the server cadence queue can hold, expressed in ms. Sent in handshake. */
-  queueCapacityMs: number;
+  /** Jitter buffer size in ms. Frames are held for this duration before being
+   *  sent to the Sonos speaker, smoothing out network and scheduling jitter.
+   *  Also used as the prefill delay for initial PCM connections. Sent in handshake. */
+  jitterBufferMs: number;
 }
 
 /**
@@ -54,7 +56,7 @@ const QUALITY_POLICY: StreamingPolicy = {
   maxEncodeQueue: 16, // More lenient queue
   wsBufferHighWater: 2_097_152, // 2 MiB before pausing
   dropOnBackpressure: false, // Queue frames instead of drop
-  queueCapacityMs: 0,
+  jitterBufferMs: 200,
 };
 
 /**
@@ -68,7 +70,7 @@ const REALTIME_POLICY: StreamingPolicy = {
   maxEncodeQueue: 8, // Tight queue
   wsBufferHighWater: 256_000, // 256KB before dropping
   dropOnBackpressure: true, // Drop to maintain timing
-  queueCapacityMs: 0,
+  jitterBufferMs: 50,
 };
 
 /**

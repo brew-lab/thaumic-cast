@@ -19,9 +19,24 @@ import {
   getSupportedBitDepths,
   isValidBitDepthForCodec,
 } from '@thaumic-cast/protocol';
-import type { ExtensionSettings, AudioMode } from '../../lib/settings';
+import {
+  JITTER_BUFFER_OPTIONS,
+  type JitterBufferOption,
+  type ExtensionSettings,
+  type AudioMode,
+  type CustomAudioSettings,
+} from '../../lib/settings';
 import { getResolvedConfigForDisplay, getDynamicPresets } from '../../lib/presets';
 import styles from '../Options.module.css';
+
+/** Maps each jitter buffer option to its locale key. */
+const JITTER_BUFFER_LABELS: Record<JitterBufferOption, string> = {
+  0: 'audio_jitter_off',
+  50: 'audio_jitter_minimal',
+  100: 'audio_jitter_low',
+  200: 'audio_jitter_balanced',
+  500: 'audio_jitter_large',
+};
 
 interface AudioSectionProps {
   settings: ExtensionSettings;
@@ -198,14 +213,14 @@ export function AudioSection({
   );
 
   /**
-   * Handles queue capacity change (PCM only).
+   * Handles jitter buffer change (PCM only).
    */
-  const handleQueueCapacityChange = useCallback(
-    async (queueCapacityMs: number) => {
+  const handleJitterBufferChange = useCallback(
+    async (jitterBufferMs: CustomAudioSettings['jitterBufferMs']) => {
       await onUpdate({
         customAudioSettings: {
           ...settings.customAudioSettings,
-          queueCapacityMs,
+          jitterBufferMs,
         },
       });
     },
@@ -304,8 +319,8 @@ export function AudioSection({
     if (resolvedConfig.codec === 'pcm') {
       rows.push({
         key: 'streaming-buffer',
-        label: t('audio_queue_capacity'),
-        value: `${resolvedConfig.queueCapacityMs}ms`,
+        label: t('audio_jitter_buffer'),
+        value: `${resolvedConfig.jitterBufferMs}ms`,
       });
       rows.push({
         key: 'frame-duration',
@@ -506,27 +521,31 @@ export function AudioSection({
                     <span className={styles.hint}>{t('audio_bit_depth_hint')}</span>
                   </div>
 
-                  {/* Queue Capacity - only show for PCM codec */}
+                  {/* Jitter Buffer - only show for PCM codec */}
                   {settings.customAudioSettings.codec === 'pcm' && (
                     <div className={styles.field}>
-                      <label htmlFor="audio-queue-capacity" className={styles.label}>
-                        {t('audio_queue_capacity')}
+                      <label htmlFor="audio-jitter-buffer" className={styles.label}>
+                        {t('audio_jitter_buffer')}
                       </label>
                       <select
-                        id="audio-queue-capacity"
+                        id="audio-jitter-buffer"
                         className={styles.select}
-                        value={settings.customAudioSettings.queueCapacityMs}
+                        value={settings.customAudioSettings.jitterBufferMs}
                         onChange={(e) =>
-                          handleQueueCapacityChange(Number((e.target as HTMLSelectElement).value))
+                          handleJitterBufferChange(
+                            Number(
+                              (e.target as HTMLSelectElement).value,
+                            ) as CustomAudioSettings['jitterBufferMs'],
+                          )
                         }
                       >
-                        <option value={0}>{t('audio_queue_none')} (0ms)</option>
-                        <option value={100}>{t('audio_queue_low')} (100ms)</option>
-                        <option value={200}>{t('audio_queue_balanced')} (200ms)</option>
-                        <option value={500}>{t('audio_queue_large')} (500ms)</option>
-                        <option value={1000}>{t('audio_queue_max')} (1000ms)</option>
+                        {JITTER_BUFFER_OPTIONS.map((ms) => (
+                          <option key={ms} value={ms}>
+                            {t(JITTER_BUFFER_LABELS[ms])} ({ms}ms)
+                          </option>
+                        ))}
                       </select>
-                      <span className={styles.hint}>{t('audio_queue_hint')}</span>
+                      <span className={styles.hint}>{t('audio_jitter_hint')}</span>
                     </div>
                   )}
 
