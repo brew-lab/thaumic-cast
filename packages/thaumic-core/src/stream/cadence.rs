@@ -758,7 +758,7 @@ pub fn create_wav_stream_with_cadence(
         // Fire first tick immediately to get audio flowing before Sonos times out.
         // On resume, Sonos closes the connection within milliseconds if no audio arrives.
         let mut metronome = interval(cadence_duration);
-        metronome.set_missed_tick_behavior(MissedTickBehavior::Burst);
+        metronome.set_missed_tick_behavior(MissedTickBehavior::Skip);
 
         let mut state = BufferState::Playing;
 
