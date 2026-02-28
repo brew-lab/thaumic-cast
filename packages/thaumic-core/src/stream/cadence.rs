@@ -17,7 +17,7 @@ use serde::Serialize;
 use tokio::sync::broadcast;
 use tokio::time::{interval, Instant as TokioInstant, MissedTickBehavior};
 
-use crate::protocol_constants::REBUFFER_TIMEOUT_MULTIPLIER;
+use crate::protocol_constants::FILL_GATE_TIMEOUT_MULTIPLIER;
 
 use super::{
     apply_fade_in, create_fade_out_frame, crossfade_samples, extract_last_sample_pair,
@@ -383,37 +383,30 @@ impl CrossfadeState {
     }
 }
 
-/// Jitter buffer state machine. Collapses `in_silence`, `rebuffer_hold`,
-/// `rebuffer_deadline`, and `silence_start` into explicit states.
+/// Jitter buffer state machine.
 ///
 /// Transitions:
 /// ```text
-///   Playing ──queue empty──► Silence
-///   Playing ──depth ≤ low_watermark──► Rebuffering
-///   Silence ──frame arrives──► Playing (with fade-in)
-///   Silence ──queue empty + rx_closed──► (loop breaks)
-///   Rebuffering ──depth ≥ target | timeout | rx_closed──► Playing (with fade-in)
+///   Playing ──queue empty──► Silence (with refill deadline when target_depth > 0)
+///   Silence ──refilled to target / timeout / rx_closed──► Playing (with fade-in)
 /// ```
 enum BufferState {
     /// Normal: popping frames from the queue.
     Playing,
-    /// Queue underrun: emitting silence, will resume as soon as a frame arrives.
-    Silence { since: TokioInstant },
-    /// Proactive rebuffer: depth dropped to low_watermark, holding silence
-    /// until queue recovers to target_depth (or deadline/channel close).
-    Rebuffering {
+    /// Queue underrun: emitting silence while the buffer refills.
+    /// When `target_depth > 0`, waits for queue to reach `target_depth` before
+    /// resuming (with timeout via `deadline`). In pass-through mode (`target_depth = 0`),
+    /// resumes as soon as any frame arrives (`deadline` is `None`).
+    Silence {
         since: TokioInstant,
-        deadline: TokioInstant,
+        deadline: Option<TokioInstant>,
     },
 }
 
 impl BufferState {
-    /// Returns `Some(start)` when in any silence-emitting state.
-    fn silence_start(&self) -> Option<TokioInstant> {
-        match self {
-            Self::Playing => None,
-            Self::Silence { since } | Self::Rebuffering { since, .. } => Some(*since),
-        }
+    /// Returns `true` when in a silence-emitting state.
+    fn is_silent(&self) -> bool {
+        matches!(self, Self::Silence { .. })
     }
 }
 
@@ -525,18 +518,12 @@ impl SnapshotTracker {
 pub struct CadenceConfig {
     /// Silence frame emitted when no audio is queued.
     pub silence_frame: Bytes,
-    /// Target queue depth (frames) for fill gate and rebuffer exit.
-    /// When 0, everything is pass-through (no fill gate, no rebuffer).
+    /// Target queue depth (frames) for fill gate exit.
+    /// When 0, everything is pass-through (no fill gate).
     pub target_depth: usize,
     /// Overflow drop cap: when the queue exceeds this size, oldest frames are
     /// discarded.
     pub overflow_cap: usize,
-    /// Low-watermark (frames): when queue drops to this level or below,
-    /// proactive rebuffering is triggered (enter silence until target_depth reached).
-    /// Only active when target_depth > 0.
-    /// **Invariant**: must be strictly less than `target_depth` (or both zero)
-    /// to provide hysteresis between enter and exit thresholds.
-    pub low_watermark: usize,
     /// Skip the fill gate on resume (already have audio flowing).
     pub skip_fill_gate: bool,
     /// Duration of each output frame in milliseconds.
@@ -550,9 +537,9 @@ pub struct CadenceConfig {
 impl CadenceConfig {
     /// Build a `CadenceConfig` from stream-level parameters.
     ///
-    /// Derives `target_depth`, `overflow_cap`, and `low_watermark` from
-    /// `jitter_buffer_ms` and `frame_duration_ms`. When `jitter_buffer_ms`
-    /// is 0, all three are set for pass-through mode (no fill gate, no rebuffer).
+    /// Derives `target_depth` and `overflow_cap` from `jitter_buffer_ms` and
+    /// `frame_duration_ms`. When `jitter_buffer_ms` is 0, pass-through mode
+    /// is used (no fill gate).
     pub fn new(
         jitter_buffer_ms: u64,
         frame_duration_ms: u32,
@@ -562,8 +549,7 @@ impl CadenceConfig {
         skip_fill_gate: bool,
     ) -> Self {
         use crate::protocol_constants::{
-            jitter_low_watermark, JITTER_OVERFLOW_MULTIPLIER, MAX_CADENCE_QUEUE_SIZE,
-            MIN_OVERFLOW_CAP,
+            JITTER_OVERFLOW_MULTIPLIER, MAX_CADENCE_QUEUE_SIZE, MIN_OVERFLOW_CAP,
         };
 
         let target_depth = if jitter_buffer_ms > 0 {
@@ -573,13 +559,11 @@ impl CadenceConfig {
         };
         let overflow_cap = (target_depth * JITTER_OVERFLOW_MULTIPLIER)
             .clamp(MIN_OVERFLOW_CAP, MAX_CADENCE_QUEUE_SIZE);
-        let low_watermark = jitter_low_watermark(target_depth);
 
         Self {
             silence_frame,
             target_depth,
             overflow_cap,
-            low_watermark,
             skip_fill_gate,
             frame_duration_ms,
             audio_format,
@@ -619,9 +603,12 @@ pub fn trim_prefill(
 /// Jitter buffer (when `target_depth` > 0):
 /// - **Fill gate**: waits for queue to reach `target_depth` before starting the
 ///   metronome. Times out after 2x target duration to avoid infinite stalls.
-/// - **Low-watermark rebuffer**: when queue drops to `low_watermark` or below,
-///   enters silence and waits for queue to refill to `target_depth` (with timeout).
-/// - **Pass-through** (target_depth = 0): no fill gate, no rebuffer (current behavior).
+/// - **Pass-through** (target_depth = 0): no fill gate (current behavior).
+///
+/// The buffer depth naturally absorbs delivery jitter. When the queue empties,
+/// silence is emitted while the buffer refills to `target_depth` before resuming
+/// playback (with timeout to prevent infinite stalls). In pass-through mode,
+/// playback resumes as soon as any frame arrives.
 ///
 /// Crossfade on silence transitions:
 /// - When entering silence: emits a fade-out frame from the last audio sample to zero
@@ -653,7 +640,6 @@ pub fn create_wav_stream_with_cadence(
             silence_frame,
             target_depth,
             overflow_cap,
-            low_watermark,
             skip_fill_gate,
             frame_duration_ms,
             audio_format,
@@ -689,22 +675,9 @@ pub fn create_wav_stream_with_cadence(
             overflow_cap
         };
 
-        // Invariant: low_watermark < target_depth for hysteresis between
-        // rebuffer enter (low_watermark) and exit (target_depth) thresholds.
-        let low_watermark = if target_depth > 0 && low_watermark >= target_depth {
-            let clamped = target_depth.saturating_sub(1);
-            log::warn!(
-                "[Stream] low_watermark ({}) >= target_depth ({}), clamping to {}",
-                low_watermark, target_depth, clamped,
-            );
-            clamped
-        } else {
-            low_watermark
-        };
-
         let cadence_duration = Duration::from_millis(frame_duration_ms as u64);
-        let rebuffer_timeout = Duration::from_millis(
-            (target_depth as u64) * (frame_duration_ms as u64) * REBUFFER_TIMEOUT_MULTIPLIER,
+        let fill_gate_timeout = Duration::from_millis(
+            (target_depth as u64) * (frame_duration_ms as u64) * FILL_GATE_TIMEOUT_MULTIPLIER,
         );
 
         // Pre-populate queue with prefill frames to eliminate handoff gap.
@@ -732,11 +705,11 @@ pub fn create_wav_stream_with_cadence(
         // accumulate target_depth frames before starting the metronome.
         // Timeout: 2× the target duration in ms to avoid infinite stalls.
         if target_depth > 0 && !skip_fill_gate && queue.len() < target_depth {
-            let deadline = TokioInstant::now() + rebuffer_timeout;
+            let deadline = TokioInstant::now() + fill_gate_timeout;
             log::info!(
                 "[Stream] Fill gate: waiting for {} frames (timeout {}ms, have {})",
                 target_depth,
-                rebuffer_timeout.as_millis(),
+                fill_gate_timeout.as_millis(),
                 queue.len()
             );
             let mut gate_lagged_log: Option<TokioInstant> = None;
@@ -753,7 +726,7 @@ pub fn create_wav_stream_with_cadence(
                     _ = tokio::time::sleep_until(deadline) => {
                         log::warn!(
                             "[Stream] Fill gate timeout after {}ms with {} frames (target {})",
-                            rebuffer_timeout.as_millis(),
+                            fill_gate_timeout.as_millis(),
                             queue.len(),
                             target_depth
                         );
@@ -810,69 +783,64 @@ pub fn create_wav_stream_with_cadence(
 
                 // PRIORITY 1: Metronome tick - MUST emit something every frame_duration_ms
                 _ = metronome.tick() => {
-                    // ── State transitions (mutually exclusive per tick) ─────
+                    // ── State transitions ─────────────────────────────────
                     //
-                    // All transitions are resolved here before any frame is emitted.
-                    // The emission block below is a pure function of the resulting state.
+                    //   Playing → Silence  : queue empty, channel open
+                    //   Silence → Playing  : queue refilled to target_depth
+                    //                        (or any frame in pass-through mode)
+                    //                        (or timeout / channel closed)
                     //
-                    //   Playing    → Rebuffering : depth ≤ low_watermark (jitter buffer active)
-                    //   Playing    → Silence     : queue empty, channel open
-                    //   Rebuffering → Playing    : target reached / timeout / channel closed
-                    //   Silence    → Playing     : frame available
-                    //
-                    // Captured before transitions so the emission block applies fade-in
-                    // when resuming audio after Silence→Playing or Rebuffering→Playing.
-                    let was_silent = state.silence_start().is_some();
+                    let was_silent = state.is_silent();
                     let entering_silence;
 
                     match state {
-                        // Playing → Rebuffering or Playing → Silence
                         BufferState::Playing => {
-                            if target_depth > 0 && !rx_closed && queue.len() <= low_watermark {
-                                // Low-watermark rebuffer
-                                log::info!(
-                                    "[Stream] Low watermark rebuffer: queue {} <= watermark {}, holding for {}",
-                                    queue.len(), low_watermark, target_depth
-                                );
+                            if queue.is_empty() && !rx_closed {
                                 let now = TokioInstant::now();
-                                state = BufferState::Rebuffering {
-                                    since: now,
-                                    deadline: now + rebuffer_timeout,
-                                };
-                                stats.counters.silence_events += 1;
-                                entering_silence = true;
-                            } else if queue.is_empty() && !rx_closed {
-                                // Queue depleted — enter silence
-                                log::info!("[Stream] Entering silence (cadence) - queue empty");
-                                state = BufferState::Silence { since: TokioInstant::now() };
+                                if target_depth > 0 {
+                                    log::info!(
+                                        "[Stream] Buffer underrun, refilling to {} frames (timeout {}ms)",
+                                        target_depth, fill_gate_timeout.as_millis()
+                                    );
+                                    state = BufferState::Silence {
+                                        since: now,
+                                        deadline: Some(now + fill_gate_timeout),
+                                    };
+                                } else {
+                                    log::info!("[Stream] Entering silence (cadence) - queue empty");
+                                    state = BufferState::Silence {
+                                        since: now,
+                                        deadline: None,
+                                    };
+                                }
                                 stats.counters.silence_events += 1;
                                 entering_silence = true;
                             } else {
                                 entering_silence = false;
                             }
                         }
-                        // Rebuffering → Playing
-                        BufferState::Rebuffering { deadline, .. } => {
-                            let now = TokioInstant::now();
-                            let timed_out = now >= deadline;
-                            if queue.len() >= target_depth || rx_closed || timed_out {
-                                if timed_out && queue.len() < target_depth {
+                        BufferState::Silence { since, deadline } => {
+                            // Pass-through (target_depth=0): resume on any frame
+                            // Jitter buffer: resume when refilled to target_depth,
+                            // or on timeout / channel close
+                            let refilled = if target_depth == 0 {
+                                !queue.is_empty()
+                            } else {
+                                queue.len() >= target_depth
+                            };
+                            let timed_out = deadline.map_or(false, |d| TokioInstant::now() >= d);
+                            if refilled || rx_closed || timed_out {
+                                if timed_out && !refilled {
                                     log::warn!(
-                                        "[Stream] Rebuffer timeout, resuming with {} frames (target {})",
-                                        queue.len(), target_depth
+                                        "[Stream] Refill timeout after {:.1}s, resuming with {} frames (target {})",
+                                        since.elapsed().as_secs_f32(), queue.len(), target_depth
+                                    );
+                                } else if !queue.is_empty() {
+                                    log::info!(
+                                        "[Stream] Exiting silence after {:.1}s ({} frames queued)",
+                                        since.elapsed().as_secs_f32(), queue.len()
                                     );
                                 }
-                                state = BufferState::Playing;
-                            }
-                            entering_silence = false;
-                        }
-                        // Silence → Playing
-                        BufferState::Silence { since } => {
-                            if !queue.is_empty() {
-                                log::info!(
-                                    "[Stream] Exiting silence (cadence) after {:.1}s",
-                                    since.elapsed().as_secs_f32()
-                                );
                                 state = BufferState::Playing;
                             }
                             entering_silence = false;
@@ -882,7 +850,7 @@ pub fn create_wav_stream_with_cadence(
                     // ── Emit frame based on resolved state ───────────────────
                     let mut yielded_audio = false;
                     match state {
-                        BufferState::Rebuffering { .. } | BufferState::Silence { .. } => {
+                        BufferState::Silence { .. } => {
                             stats.counters.silence_frames += 1;
                             if entering_silence {
                                 yield Ok(crossfade.enter_silence(&silence_frame));
@@ -1017,7 +985,6 @@ mod tests {
             silence_frame: test_silence_frame(),
             target_depth: 0,
             overflow_cap: TEST_OVERFLOW_CAP,
-            low_watermark: 0,
             skip_fill_gate: false,
             frame_duration_ms: SILENCE_FRAME_DURATION_MS,
             audio_format: test_audio_format(),
@@ -1424,7 +1391,6 @@ mod tests {
             silence_frame: test_silence_frame(),
             target_depth: JITTER_TARGET,
             overflow_cap: JITTER_TARGET * 3,
-            low_watermark: JITTER_TARGET * 2 / 3, // 3
             skip_fill_gate: false,
             frame_duration_ms: SILENCE_FRAME_DURATION_MS,
             audio_format: test_audio_format(),
@@ -1609,9 +1575,6 @@ mod tests {
     async fn fill_gate_skipped_on_resume() {
         let mut config = jitter_config();
         config.skip_fill_gate = true;
-        // Pre-fill with enough frames to stay above low_watermark after consumption.
-        // low_watermark = 3, so we need > 3 + 2 (for the two ticks consumed by
-        // poll_and_advance + next()) = 5+ frames.
         config.prefill_frames = (0..JITTER_TARGET + 1).map(|_| test_audio_frame()).collect();
 
         let mut h = JitterHarness::new(config);
@@ -1635,9 +1598,6 @@ mod tests {
     async fn jitter_absorbs_gap_without_silence() {
         let mut config = jitter_config();
         config.skip_fill_gate = true;
-        // Disable low-watermark rebuffer for this test so we can cleanly
-        // verify that the buffer absorbs a gap by yielding audio-only frames.
-        config.low_watermark = 0;
         // Pre-fill with target_depth frames. The first poll_and_advance consumes
         // one at t=0, so we have target_depth-1 left for the loop.
         // We'll drain 3 frames (target_depth-2 to be safe) and verify all are audio.
@@ -1672,72 +1632,6 @@ mod tests {
     }
 
     #[tokio::test(start_paused = true)]
-    async fn low_watermark_triggers_rebuffer() {
-        let mut config = jitter_config();
-        config.skip_fill_gate = true;
-        // low_watermark = 3, target_depth = 5
-        // Pre-fill with exactly low_watermark frames (at boundary)
-        config.prefill_frames = (0..config.low_watermark)
-            .map(|i| Bytes::from(vec![i as u8 + 1; 64]))
-            .collect();
-
-        let mut h = JitterHarness::new(config);
-
-        // Drain queue to trigger low watermark
-        h.advance_ticks(4).await;
-
-        // Now send target_depth frames to exit rebuffer
-        h.send_audio(JITTER_TARGET);
-
-        // Advance a few ticks for rebuffer to resolve
-        h.advance_ticks(3).await;
-
-        // Eventually should get audio again
-        h.send_audio(1);
-        h.expect_audio("should get audio after rebuffer completes")
-            .await;
-
-        let stats = h.finish().await;
-        assert!(
-            stats.silence_events > 0,
-            "low watermark should have triggered at least one silence event"
-        );
-    }
-
-    #[tokio::test(start_paused = true)]
-    async fn rebuffer_timeout_resumes_with_available() {
-        let mut config = jitter_config();
-        config.skip_fill_gate = true;
-        // Start with 1 frame (will trigger low watermark immediately after drain)
-        config.prefill_frames = vec![test_audio_frame()];
-
-        let mut h = JitterHarness::new(config);
-
-        // Consume the prefill frame to trigger rebuffer
-        h.advance_ticks(1).await;
-
-        // Send only 2 frames (less than target_depth=5)
-        h.send_audio(2);
-
-        // Advance past rebuffer timeout (2 * 5 * 10 = 100ms)
-        h.advance_ticks(15).await;
-
-        // After timeout, should yield audio even though < target_depth
-        let mut got_audio = false;
-        for _ in 0..5 {
-            let frame = h.next_frame().await;
-            if !frame.iter().all(|&b| b == 0) {
-                got_audio = true;
-                break;
-            }
-        }
-        assert!(
-            got_audio,
-            "should resume with available frames after rebuffer timeout"
-        );
-    }
-
-    #[tokio::test(start_paused = true)]
     async fn overflow_uses_overflow_cap() {
         let mut config = jitter_config();
         config.skip_fill_gate = true;
@@ -1766,11 +1660,9 @@ mod tests {
     async fn prefill_trimmed_to_target_depth() {
         // Verify that trimming prefill to target_depth keeps newest frames.
         // We provide 10 frames (0..10), target_depth=5, so after trim: [5,6,7,8,9].
-        // Disable low_watermark to prevent rebuffer during drain.
         let mut config = jitter_config();
         config.skip_fill_gate = true;
-        config.low_watermark = 0; // no rebuffer
-                                  // 10 prefill frames, target_depth = 5
+        // 10 prefill frames, target_depth = 5
         config.prefill_frames = (0..10u8).map(|i| Bytes::from(vec![i; 64])).collect();
         let (trimmed, _) = super::trim_prefill(
             config.prefill_frames,
@@ -1806,7 +1698,7 @@ mod tests {
 
     #[tokio::test(start_paused = true)]
     async fn no_rebuffer_when_target_zero() {
-        // Pass-through mode (target_depth=0, low_watermark=0)
+        // Pass-through mode (target_depth=0)
         let mut config = test_config();
         config.prefill_frames = vec![test_audio_frame()];
 
@@ -1835,17 +1727,17 @@ mod tests {
     }
 
     #[tokio::test(start_paused = true)]
-    async fn rebuffer_exits_on_channel_close() {
+    async fn silence_exits_on_channel_close() {
         let mut config = jitter_config();
         config.skip_fill_gate = true;
         config.prefill_frames = vec![test_audio_frame()];
 
         let mut h = JitterHarness::new(config);
 
-        // Consume prefill to trigger rebuffer
+        // Consume prefill to enter silence
         h.advance_ticks(1).await;
 
-        // Close channel while in rebuffer
+        // Close channel while in silence
         h.close_channel();
 
         // Should drain and terminate without hanging
@@ -1864,7 +1756,7 @@ mod tests {
         }
         assert!(
             terminated,
-            "stream should terminate after channel close during rebuffer"
+            "stream should terminate after channel close during silence"
         );
     }
 
@@ -2060,7 +1952,6 @@ mod tests {
             silence_frame: test_silence_frame(),
             target_depth: 0,
             overflow_cap: TEST_OVERFLOW_CAP,
-            low_watermark: 0,
             skip_fill_gate: false,
             frame_duration_ms: 0, // Invalid: should be clamped to 1
             audio_format: test_audio_format(),
@@ -2097,7 +1988,6 @@ mod tests {
             silence_frame: test_silence_frame(),
             target_depth: JITTER_TARGET, // 5
             overflow_cap: 2,             // Invalid: < target_depth, clamped to 5
-            low_watermark: 0,
             skip_fill_gate: false,
             frame_duration_ms: SILENCE_FRAME_DURATION_MS,
             audio_format: test_audio_format(),

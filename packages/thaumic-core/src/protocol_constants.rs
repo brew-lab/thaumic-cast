@@ -127,23 +127,13 @@ pub const JITTER_OVERFLOW_MULTIPLIER: usize = 3;
 /// even when target_depth is 0 (pass-through mode).
 pub const MIN_OVERFLOW_CAP: usize = 1;
 
-/// Compute the low-watermark for a given target depth (2/3 of target).
-/// Returns 0 when `target_depth` is 0 (pass-through) or 1 (no room for hysteresis).
-pub const fn jitter_low_watermark(target_depth: usize) -> usize {
-    if target_depth == 0 {
-        0
-    } else {
-        target_depth * 2 / 3
-    }
-}
-
 /// Maximum prefill delay (ms) before subscribing to the ring buffer.
 /// Caps startup latency even when the jitter buffer or ring buffer are large.
 pub const MAX_PREFILL_DELAY_MS: u64 = 500;
 
-/// Timeout multiplier for fill gate and rebuffer hold.
+/// Timeout multiplier for the fill gate.
 /// Timeout = target_depth × frame_duration_ms × this factor.
-pub const REBUFFER_TIMEOUT_MULTIPLIER: u64 = 2;
+pub const FILL_GATE_TIMEOUT_MULTIPLIER: u64 = 2;
 
 /// Target interval between pipeline snapshots, in milliseconds.
 /// The cadence loop fires a snapshot every `SNAPSHOT_INTERVAL_MS / frame_duration_ms` ticks.

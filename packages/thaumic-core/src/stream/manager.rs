@@ -275,9 +275,8 @@ pub struct StreamState {
     /// Timing information for latency measurement.
     pub timing: StreamTiming,
     /// Jitter buffer depth in milliseconds (0-1000, default 0).
-    /// When > 0, enables fill gate (wait for target_depth before emitting)
-    /// and low-watermark proactive rebuffering. When 0, pass-through mode
-    /// (current behavior, no fill gate, no rebuffer).
+    /// When > 0, enables fill gate (wait for target_depth before emitting).
+    /// When 0, pass-through mode (no fill gate).
     pub jitter_buffer_ms: u64,
     /// Frame duration in milliseconds for cadence timing.
     /// Determines silence frame duration and cadence tick interval.
