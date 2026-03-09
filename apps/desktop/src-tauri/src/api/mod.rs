@@ -12,10 +12,54 @@ use thaumic_core::{
     bootstrap_services, AppState as CoreAppState, ArtworkConfig, ArtworkSource,
     BootstrappedServices, Config,
 };
+#[cfg(windows)]
+use thaumic_core::{AudioSource, CaptureError, CaptureSourceFactory};
 
 use crate::tauri_emitter::TauriEventEmitter;
 
 pub mod commands;
+
+// ─────────────────────────────────────────────────────────────────────────────
+// CaptureSourceFactory implementation (Windows only)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Factory that creates WASAPI process-loopback capture sources.
+///
+/// Delegates to `thaumic_capture` for PID discovery and `WasapiSource` creation.
+/// This lives in the desktop app to avoid a cyclic dependency between
+/// `thaumic-core` and `thaumic-capture`.
+#[cfg(windows)]
+struct WasapiCaptureFactory;
+
+#[cfg(windows)]
+impl CaptureSourceFactory for WasapiCaptureFactory {
+    fn available(&self) -> bool {
+        thaumic_capture::wasapi_available()
+    }
+
+    fn create_source(
+        &self,
+        browser_name: Option<&str>,
+    ) -> Result<Arc<dyn AudioSource>, CaptureError> {
+        let pid = match browser_name {
+            Some(name) => thaumic_capture::find_browser_pid_by_name(name)?,
+            None => {
+                let browsers = thaumic_capture::find_browser_pids();
+                browsers
+                    .first()
+                    .map(|b| {
+                        log::info!("[Capture] Auto-detected browser: {} (PID {})", b.name, b.pid);
+                        b.pid
+                    })
+                    .ok_or_else(|| {
+                        CaptureError::Platform("No running browser detected".into())
+                    })?
+            }
+        };
+
+        Ok(Arc::new(thaumic_capture::WasapiSource::new(pid)))
+    }
+}
 
 /// Desktop-specific application state.
 ///
@@ -214,11 +258,19 @@ impl AppState {
 
     /// Builds the core AppState for the HTTP server.
     fn build_core_app_state(&self) -> CoreAppState {
-        CoreAppState::new(
+        #[allow(unused_mut)]
+        let mut core_state = CoreAppState::new(
             &self.services,
             Arc::clone(&self.config),
             self.artwork_config(),
-        )
+        );
+
+        #[cfg(windows)]
+        {
+            core_state.capture_factory = Some(Arc::new(WasapiCaptureFactory));
+        }
+
+        core_state
     }
 
     /// Graceful shutdown - cleans up all streams and subscriptions.

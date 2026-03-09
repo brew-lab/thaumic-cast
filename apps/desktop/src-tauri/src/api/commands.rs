@@ -229,6 +229,22 @@ pub fn get_network_health(state: tauri::State<'_, AppState>) -> NetworkHealthRes
     }
 }
 
+/// Capture capability information for the frontend.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CaptureCapabilities {
+    /// Whether WASAPI process loopback capture is available.
+    pub wasapi_available: bool,
+}
+
+/// Returns capture capabilities for this platform.
+#[tauri::command]
+pub fn get_capture_capabilities() -> CaptureCapabilities {
+    CaptureCapabilities {
+        wasapi_available: thaumic_capture::wasapi_available(),
+    }
+}
+
 /// Returns the current platform (windows, macos, linux).
 #[tauri::command]
 pub fn get_platform() -> &'static str {

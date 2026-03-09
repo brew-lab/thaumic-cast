@@ -69,7 +69,9 @@ pub use sonos::{SonosClient, SonosClientImpl, SonosPlayback, SonosService, Sonos
 pub use services::playback_session_store::PlaybackSession;
 
 // Re-export capture types
-pub use capture::{AudioSink, AudioSource, BufferFlags, CaptureError, CaptureHandle};
+pub use capture::{
+    AudioSink, AudioSource, BufferFlags, CaptureError, CaptureHandle, CaptureSourceFactory,
+};
 
 // Re-export stream types
 pub use stream::{AudioCodec, AudioFormat, StreamMetadata};

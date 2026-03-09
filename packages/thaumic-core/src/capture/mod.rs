@@ -133,3 +133,22 @@ pub enum CaptureError {
     #[error("Thread spawn failed: {0}")]
     ThreadSpawn(String),
 }
+
+/// Factory trait for creating browser capture sources.
+///
+/// Implemented by the desktop app using `thaumic-capture` to avoid a cyclic
+/// dependency between `thaumic-core` and `thaumic-capture`. The factory is
+/// stored in `AppState` and called by the WebSocket handler when
+/// `START_BROWSER_CAPTURE` is received.
+pub trait CaptureSourceFactory: Send + Sync {
+    /// Check whether browser capture is available on this platform.
+    fn available(&self) -> bool;
+
+    /// Create a capture source for the given browser.
+    ///
+    /// If `browser_name` is `None`, auto-detects the first running browser.
+    fn create_source(
+        &self,
+        browser_name: Option<&str>,
+    ) -> Result<Arc<dyn AudioSource>, CaptureError>;
+}

@@ -22,10 +22,10 @@ use tauri_plugin_log::{Target, TargetKind};
 
 use crate::api::commands::{
     add_manual_speaker_ip, clear_all_connections, clear_all_streams, get_autostart_enabled,
-    get_groups, get_manual_speaker_ips, get_network_health, get_platform, get_playback_sessions,
-    get_server_port, get_speakers, get_stats, get_transport_states, probe_speaker_ip,
-    refresh_topology, remove_manual_speaker_ip, restart_server, set_autostart_enabled,
-    show_main_window, start_network_services, start_playback,
+    get_capture_capabilities, get_groups, get_manual_speaker_ips, get_network_health, get_platform,
+    get_playback_sessions, get_server_port, get_speakers, get_stats, get_transport_states,
+    probe_speaker_ip, refresh_topology, remove_manual_speaker_ip, restart_server,
+    set_autostart_enabled, show_main_window, start_network_services, start_playback,
 };
 use crate::api::AppState;
 
@@ -76,7 +76,8 @@ pub fn run() {
             add_manual_speaker_ip,
             remove_manual_speaker_ip,
             get_manual_speaker_ips,
-            show_main_window
+            show_main_window,
+            get_capture_capabilities
         ])
         .setup(|app| {
             // Detect and set system locale for i18n

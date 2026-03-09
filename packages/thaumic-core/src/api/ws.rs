@@ -71,6 +71,10 @@ enum WsIncoming {
     GetMute { payload: WsSpeakerRequest },
     StartPlayback { payload: StartPlaybackRequest },
     StopPlaybackSpeaker { payload: StopPlaybackSpeakerPayload },
+    StartBrowserCapture {
+        payload: StartBrowserCaptureRequest,
+    },
+    StopBrowserCapture,
 }
 
 /// Request payload for starting playback via WebSocket.
@@ -108,6 +112,14 @@ impl StartPlaybackRequest {
             vec![]
         }
     }
+}
+
+/// Request payload for starting browser-wide WASAPI capture.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct StartBrowserCaptureRequest {
+    /// Browser executable name (e.g., "chrome.exe"). Auto-detects if omitted.
+    browser_name: Option<String>,
 }
 
 /// Request payload for volume control via WebSocket.
@@ -212,6 +224,18 @@ enum WsOutgoing {
     PlaybackResults {
         payload: PlaybackResultsPayload,
     },
+    /// Browser capture error (process exit, device change, etc.).
+    BrowserCaptureError {
+        payload: BrowserCaptureErrorPayload,
+    },
+}
+
+/// Payload for browser capture error notification.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct BrowserCaptureErrorPayload {
+    stream_id: String,
+    error: String,
 }
 
 /// Payload for stream ready notification.
@@ -539,6 +563,148 @@ fn handle_binary_data(state: &AppState, stream_id: &str, data: Bytes) -> bool {
         .unwrap_or(false)
 }
 
+/// Handles a START_BROWSER_CAPTURE message: starts capture and creates a stream.
+///
+/// Uses the `CaptureSourceFactory` from `AppState` to create a platform-specific
+/// capture source. The capture thread pushes Float32 audio through the
+/// `StreamSinkBridge`, which converts to PCM16 and calls `push_frame()`.
+/// When the first frame arrives, `ready_notify` fires and we send `STREAM_READY`.
+async fn handle_start_browser_capture(
+    state: &AppState,
+    sender: &mut futures::stream::SplitSink<WebSocket, Message>,
+    stream_guard: &mut Option<StreamGuard>,
+    capture_session: &mut Option<crate::services::CaptureStreamSession>,
+    payload: StartBrowserCaptureRequest,
+) {
+    // Reject if already capturing
+    if capture_session.is_some() {
+        let msg = WsOutgoing::Error {
+            message: "Browser capture already active on this connection".into(),
+        };
+        if let Some(msg) = msg.to_message() {
+            let _ = sender.send(msg).await;
+        }
+        return;
+    }
+
+    // Check that a capture factory is available
+    let factory = match &state.capture_factory {
+        Some(f) if f.available() => f,
+        _ => {
+            let msg = WsOutgoing::Error {
+                message: "Browser capture is not available on this platform".into(),
+            };
+            if let Some(msg) = msg.to_message() {
+                let _ = sender.send(msg).await;
+            }
+            return;
+        }
+    };
+
+    // Create capture source via factory
+    let source = match factory.create_source(payload.browser_name.as_deref()) {
+        Ok(s) => s,
+        Err(e) => {
+            let msg = WsOutgoing::Error {
+                message: format!("Failed to create capture source: {}", e),
+            };
+            if let Some(msg) = msg.to_message() {
+                let _ = sender.send(msg).await;
+            }
+            return;
+        }
+    };
+
+    let metadata = StreamMetadata {
+        title: Some("Browser Audio".into()),
+        source: payload.browser_name.clone(),
+        ..Default::default()
+    };
+
+    match state
+        .stream_coordinator
+        .start_capture_stream(source, Some(metadata))
+    {
+        Ok(session) => {
+            let stream_id = session.stream_id.clone();
+            let ready = Arc::clone(&session.ready_notify);
+
+            // Create stream guard for RAII cleanup
+            let guard = StreamGuard::new(
+                stream_id.clone(),
+                Arc::clone(&state.stream_coordinator),
+            );
+
+            // Send handshake ack with the stream ID
+            let ack = WsOutgoing::HandshakeAck {
+                payload: HandshakePayload {
+                    stream_id: stream_id.clone(),
+                },
+            };
+            if let Some(msg) = ack.to_message() {
+                let _ = sender.send(msg).await;
+            }
+
+            *stream_guard = Some(guard);
+            *capture_session = Some(session);
+
+            // Wait for first audio frame (with timeout)
+            let ready_result = tokio::time::timeout(
+                Duration::from_secs(5),
+                ready.notified(),
+            ).await;
+
+            if ready_result.is_ok() {
+                if let Some(stream) = state.stream_coordinator.get_stream(&stream_id) {
+                    let msg = WsOutgoing::StreamReady {
+                        payload: StreamReadyPayload {
+                            buffer_size: stream.buffer_len(),
+                        },
+                    };
+                    if let Some(msg) = msg.to_message() {
+                        let _ = sender.send(msg).await;
+                    }
+                }
+            } else {
+                log::warn!("[WS] Browser capture: timeout waiting for first audio frame");
+                let msg = WsOutgoing::Error {
+                    message: "Timeout waiting for audio from browser. Is audio playing?".into(),
+                };
+                if let Some(msg) = msg.to_message() {
+                    let _ = sender.send(msg).await;
+                }
+            }
+        }
+        Err(e) => {
+            let msg = WsOutgoing::Error { message: e };
+            if let Some(msg) = msg.to_message() {
+                let _ = sender.send(msg).await;
+            }
+        }
+    }
+}
+
+/// Handles a STOP_BROWSER_CAPTURE message: stops the capture and cleans up.
+async fn handle_stop_browser_capture(
+    sender: &mut futures::stream::SplitSink<WebSocket, Message>,
+    stream_guard: &mut Option<StreamGuard>,
+    capture_session: &mut Option<crate::services::CaptureStreamSession>,
+) {
+    if let Some(session) = capture_session.take() {
+        log::info!("[WS] Stopping browser capture for stream {}", session.stream_id);
+        session.handle.stop_and_wait();
+        // StreamGuard drop will clean up the stream
+        stream_guard.take();
+    } else {
+        let msg = WsOutgoing::Error {
+            message: "No active browser capture to stop".into(),
+        };
+        if let Some(msg) = msg.to_message() {
+            let _ = sender.send(msg).await;
+        }
+    }
+}
+
 /// Handles a START_PLAYBACK message: starts playback on the requested speakers.
 async fn handle_start_playback(
     state: &AppState,
@@ -638,6 +804,7 @@ pub async fn ws_handler(ws: WebSocketUpgrade, State(state): State<AppState>) -> 
 async fn handle_ws(socket: WebSocket, state: AppState) {
     let (mut sender, mut receiver) = socket.split();
     let mut stream_guard: Option<StreamGuard> = None;
+    let mut capture_session: Option<crate::services::CaptureStreamSession> = None;
     let mut broadcast_rx = state.event_bridge.subscribe();
     let mut last_activity = Instant::now();
     let mut latency_monitoring = false;
@@ -801,6 +968,22 @@ async fn handle_ws(socket: WebSocket, state: AppState) {
                                         .await;
                                 }
                             }
+                            Ok(WsIncoming::StartBrowserCapture { payload }) => {
+                                handle_start_browser_capture(
+                                    &state,
+                                    &mut sender,
+                                    &mut stream_guard,
+                                    &mut capture_session,
+                                    payload,
+                                ).await;
+                            }
+                            Ok(WsIncoming::StopBrowserCapture) => {
+                                handle_stop_browser_capture(
+                                    &mut sender,
+                                    &mut stream_guard,
+                                    &mut capture_session,
+                                ).await;
+                            }
                             Err(_) => {} // Unknown message type, ignore
                         }
                     }
@@ -843,6 +1026,11 @@ async fn handle_ws(socket: WebSocket, state: AppState) {
                 }
             }
         }
+    }
+
+    // Stop capture source if active (before stream removal)
+    if let Some(session) = capture_session.take() {
+        session.handle.stop_and_wait();
     }
 
     // Graceful cleanup: stop speakers before stream removal.

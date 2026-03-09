@@ -16,6 +16,7 @@ tauri-build = { version = "2", features = [] }
 
 [dependencies]
 thaumic-core = { path = "../../../packages/thaumic-core" }
+thaumic-capture = { path = "../../../packages/thaumic-capture" }
 tauri = { version = "2", features = ["tray-icon", "image-png"] }
 tauri-plugin-shell = "2"
 tauri-plugin-log = "2"

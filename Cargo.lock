@@ -5151,6 +5151,7 @@ dependencies = [
  "tauri-plugin-autostart",
  "tauri-plugin-log",
  "tauri-plugin-shell",
+ "thaumic-capture",
  "thaumic-core",
  "thiserror 2.0.18",
  "tokio",
