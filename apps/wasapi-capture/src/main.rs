@@ -375,21 +375,6 @@ mod wasapi {
 
     // ─── Process loopback activation ─────────────────────────────────────────
 
-    /// Raw PROPVARIANT layout for manual construction.
-    /// `windows_core::PROPVARIANT` is opaque in 0.58, so we build the raw
-    /// COM struct ourselves and cast the pointer.
-    #[repr(C)]
-    struct RawPropVariant {
-        vt: u16,
-        reserved1: u16,
-        reserved2: u16,
-        reserved3: u16,
-        blob_cb_size: u32,
-        blob_data: *const u8,
-        // Pad to match full PROPVARIANT size (24 bytes total)
-        _pad: u32,
-    }
-
     fn activate_process_loopback(pid: u32) -> windows::core::Result<IAudioClient> {
         unsafe {
             let event = CreateEventW(None, false, false, None)?;
@@ -410,23 +395,45 @@ mod wasapi {
                 },
             };
 
-            // Build PROPVARIANT with VT_BLOB manually since the type is opaque
-            let raw_prop = RawPropVariant {
-                vt: VT_BLOB,
-                reserved1: 0,
-                reserved2: 0,
-                reserved3: 0,
-                blob_cb_size: std::mem::size_of::<AUDIOCLIENT_ACTIVATION_PARAMS>() as u32,
-                blob_data: &params as *const _ as *const u8,
-                _pad: 0,
-            };
+            let params_size = std::mem::size_of::<AUDIOCLIENT_ACTIVATION_PARAMS>();
+            let params_ptr = &params as *const _ as *const u8;
+
+            // Build PROPVARIANT via raw byte writes at known offsets.
+            // PROPVARIANT layout on x64 (24 bytes):
+            //   offset  0: vt       (u16)  = VT_BLOB (65)
+            //   offset  2: reserved (3 × u16, zeroed)
+            //   offset  8: BLOB.cbSize   (u32)
+            //   offset 12: padding       (4 bytes)
+            //   offset 16: BLOB.pBlobData (*mut u8, 8 bytes)
+            let mut prop_bytes = [0u8; 24];
+            ptr::copy_nonoverlapping(
+                &VT_BLOB as *const u16 as *const u8,
+                prop_bytes.as_mut_ptr(),
+                2,
+            );
+            ptr::copy_nonoverlapping(
+                &(params_size as u32) as *const u32 as *const u8,
+                prop_bytes.as_mut_ptr().add(8),
+                4,
+            );
+            ptr::copy_nonoverlapping(
+                &params_ptr as *const *const u8 as *const u8,
+                prop_bytes.as_mut_ptr().add(16),
+                std::mem::size_of::<*const u8>(),
+            );
+
+            eprintln!(
+                "  Activation: params_size={}, PROPVARIANT bytes={:02X?}",
+                params_size,
+                &prop_bytes[..24]
+            );
 
             let device_id: Vec<u16> = VIRTUAL_AUDIO_DEVICE_PROCESS_LOOPBACK
                 .encode_utf16()
                 .chain(std::iter::once(0))
                 .collect();
 
-            let prop_ptr = &raw_prop as *const RawPropVariant as *const windows_core::PROPVARIANT;
+            let prop_ptr = prop_bytes.as_ptr() as *const windows_core::PROPVARIANT;
 
             let _async_op: IActivateAudioInterfaceAsyncOperation = ActivateAudioInterfaceAsync(
                 PCWSTR(device_id.as_ptr()),
