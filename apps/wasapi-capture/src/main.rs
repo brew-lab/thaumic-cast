@@ -112,21 +112,26 @@ mod wasapi {
             &self,
             activate_operation: Option<&IActivateAudioInterfaceAsyncOperation>,
         ) -> windows::core::Result<()> {
-            let op = activate_operation.ok_or_else(|| windows::core::Error::from(HRESULT(-1)))?;
+            // Must ALWAYS signal the event, even on error — otherwise the main
+            // thread waits forever. Store success or failure in self.result.
+            let client_result = (|| -> windows::core::Result<IAudioClient> {
+                let op =
+                    activate_operation.ok_or_else(|| windows::core::Error::from(HRESULT(-1)))?;
 
-            let mut hr = HRESULT(0);
-            let mut activated: Option<IUnknown> = None;
+                let mut hr = HRESULT(0);
+                let mut activated: Option<IUnknown> = None;
 
-            unsafe { op.GetActivateResult(&mut hr, &mut activated)? };
-            hr.ok()?;
+                unsafe { op.GetActivateResult(&mut hr, &mut activated)? };
+                hr.ok()?;
 
-            let client_result = match activated {
-                Some(unk) => unk.cast::<IAudioClient>(),
-                None => Err(windows::core::Error::from(HRESULT(-1))),
-            };
+                match activated {
+                    Some(unk) => unk.cast::<IAudioClient>(),
+                    None => Err(windows::core::Error::from(HRESULT(-1))),
+                }
+            })();
 
             *self.result.lock().unwrap() = Some(client_result);
-            unsafe { SetEvent(self.event)? };
+            let _ = unsafe { SetEvent(self.event) };
             Ok(())
         }
     }
@@ -164,8 +169,19 @@ mod wasapi {
             .expect("Failed to initialize COM");
 
         // ── Activate audio client via process loopback ───────────────────────
-        let audio_client =
-            activate_process_loopback(cli.pid).expect("Failed to activate process loopback");
+        let audio_client = match activate_process_loopback(cli.pid) {
+            Ok(client) => client,
+            Err(e) => {
+                eprintln!("Error: Failed to activate process loopback: {}", e);
+                eprintln!("  HRESULT: 0x{:08X}", e.code().0 as u32);
+                eprintln!("  Hints:");
+                eprintln!("    - Try the main browser process PID (highest memory)");
+                eprintln!("    - Ensure the process is running and producing audio");
+                eprintln!("    - Process-specific loopback requires Windows 10 2004+");
+                unsafe { CoUninitialize() };
+                std::process::exit(1);
+            }
+        };
 
         // ── Query mix format ─────────────────────────────────────────────────
         let (sample_rate, channels, mix_format_ptr) = query_mix_format(&audio_client);
