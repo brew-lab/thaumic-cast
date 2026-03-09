@@ -15,5 +15,5 @@ pub(crate) mod volume_router;
 pub use discovery_service::DiscoveryService;
 pub use latency_monitor::LatencyMonitor;
 pub use playback_session_store::{GroupRole, PlaybackResult, PlaybackSession};
-pub use stream_coordinator::StreamCoordinator;
+pub use stream_coordinator::{CaptureStreamSession, StreamCoordinator};
 pub use topology_monitor::{TopologyMonitor, TopologyMonitorConfig};

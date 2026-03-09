@@ -7,10 +7,14 @@
 //! - Track expected stream URLs for source change detection
 //! - Broadcast stream lifecycle events to WebSocket clients
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use bytes::Bytes;
+use parking_lot::Mutex;
 use tokio::sync::Notify;
+
+use crate::capture::{AudioSink, AudioSource, BufferFlags, CaptureHandle};
 
 use crate::context::NetworkContext;
 use crate::error::ThaumicResult;
@@ -30,6 +34,77 @@ use super::playback_session_store::{
 };
 use super::sync_group_manager::SyncGroupManager;
 use super::volume_router::VolumeRouter;
+
+// ─────────────────────────────────────────────────────────────────────────────
+// StreamSinkBridge — Float32 → PCM16 conversion for capture sources
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Bridges an [`AudioSource`] into the streaming pipeline by converting
+/// Float32 audio to PCM16 and pushing frames via [`StreamCoordinator::push_frame`].
+///
+/// The conversion buffer is pre-allocated and reused across callbacks to avoid
+/// allocation jitter on the MMCSS-elevated capture thread. Only
+/// `Bytes::copy_from_slice` allocates (~1920 bytes per 10ms callback), which is
+/// unavoidable since the data must be owned for the broadcast channel.
+struct StreamSinkBridge {
+    stream_id: String,
+    coordinator: Arc<StreamCoordinator>,
+    /// Reusable PCM16 conversion buffer — avoids allocation on capture thread.
+    buf: Mutex<Vec<u8>>,
+    /// Ensures STREAM_READY notification is sent exactly once.
+    ready_notified: AtomicBool,
+    /// Notify handle to wake the WebSocket handler when first frame arrives.
+    ready_notify: Arc<Notify>,
+}
+
+impl StreamSinkBridge {
+    fn new(
+        stream_id: String,
+        coordinator: Arc<StreamCoordinator>,
+        ready_notify: Arc<Notify>,
+    ) -> Self {
+        Self {
+            stream_id,
+            coordinator,
+            // Pre-allocate for typical 10ms buffer: 480 frames × 2ch × 2 bytes = 1920
+            buf: Mutex::new(Vec::with_capacity(1920)),
+            ready_notified: AtomicBool::new(false),
+            ready_notify,
+        }
+    }
+}
+
+impl AudioSink for StreamSinkBridge {
+    fn push_audio(&self, data: &[f32], _frames: u32, _channels: u16, _flags: BufferFlags) {
+        // Convert Float32 [-1.0, 1.0] → PCM16 [-32768, 32767]
+        let mut buf = self.buf.lock(); // uncontended — single capture thread, ~25ns
+        buf.clear();
+        buf.reserve(data.len() * 2);
+        for &sample in data {
+            let clamped = (sample.clamp(-1.0, 1.0) * 32767.0) as i16;
+            buf.extend_from_slice(&clamped.to_le_bytes());
+        }
+
+        let is_first = self
+            .coordinator
+            .push_frame(&self.stream_id, Bytes::copy_from_slice(&buf))
+            .unwrap_or(false);
+
+        if is_first && !self.ready_notified.swap(true, Ordering::SeqCst) {
+            self.ready_notify.notify_one();
+        }
+    }
+}
+
+/// Active browser capture session returned by [`StreamCoordinator::start_capture_stream`].
+pub struct CaptureStreamSession {
+    /// The stream ID in the registry.
+    pub stream_id: String,
+    /// Handle to the capture thread — call `stop_and_wait()` for graceful shutdown.
+    pub handle: CaptureHandle,
+    /// Notified when the first audio frame arrives (for STREAM_READY signal).
+    pub ready_notify: Arc<Notify>,
+}
 
 /// Parameters for starting playback on a single speaker.
 struct SinglePlaybackParams<'a> {
@@ -293,6 +368,69 @@ impl StreamCoordinator {
         });
 
         Ok(stream_id)
+    }
+
+    /// Start a capture-sourced stream. The source pushes frames directly
+    /// via the [`StreamSinkBridge`], which converts Float32 → PCM16 and
+    /// calls [`push_frame`].
+    ///
+    /// Stream parameters are fixed for WASAPI capture:
+    /// - Codec: PCM (raw WAV)
+    /// - Sample rate: 48kHz
+    /// - Channels: 2 (stereo)
+    /// - Bit depth: 16 (after Float32→PCM16 conversion)
+    /// - Frame duration: 10ms (matches WASAPI buffer cadence)
+    /// - Jitter buffer: 0ms (local capture has minimal jitter)
+    ///
+    /// Returns a [`CaptureStreamSession`] with the stream ID, capture handle,
+    /// and a `Notify` that fires when the first audio frame arrives.
+    pub fn start_capture_stream(
+        self: &Arc<Self>,
+        source: Arc<dyn AudioSource>,
+        metadata: Option<StreamMetadata>,
+    ) -> Result<CaptureStreamSession, String> {
+        use crate::protocol_constants::{DEFAULT_SAMPLE_RATE, DEFAULT_CHANNELS};
+
+        let audio_format = AudioFormat::new(DEFAULT_SAMPLE_RATE, DEFAULT_CHANNELS, 16);
+        let streaming_buffer_ms = 200; // default
+        let frame_duration_ms = 10; // matches WASAPI ~10ms buffer cadence
+
+        let stream_id = self.create_stream(
+            AudioCodec::Pcm,
+            audio_format,
+            streaming_buffer_ms,
+            frame_duration_ms,
+        )?;
+
+        if let Some(meta) = metadata {
+            self.update_metadata(&stream_id, meta);
+        }
+
+        let ready_notify = Arc::new(Notify::new());
+        let bridge = Arc::new(StreamSinkBridge::new(
+            stream_id.clone(),
+            Arc::clone(self),
+            Arc::clone(&ready_notify),
+        ));
+
+        let handle = source.start(bridge).map_err(|e| {
+            // Clean up the stream we just created
+            self.remove_stream(&stream_id);
+            format!("Failed to start capture: {}", e)
+        })?;
+
+        log::info!(
+            "[Capture] Started {} for stream {} ({:?})",
+            source.name(),
+            stream_id,
+            source.format(),
+        );
+
+        Ok(CaptureStreamSession {
+            stream_id,
+            handle,
+            ready_notify,
+        })
     }
 
     /// Removes a stream and cleans up all associated playback sessions.

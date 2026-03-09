@@ -11,6 +11,7 @@ use parking_lot::RwLock;
 use thiserror::Error;
 
 use crate::artwork::{ArtworkConfig, ArtworkSource};
+use crate::capture::CaptureSourceFactory;
 use crate::context::NetworkContext;
 use crate::events::BroadcastEventBridge;
 use crate::mdns_advertise::MdnsAdvertiser;
@@ -71,6 +72,9 @@ pub struct AppState {
     /// Created after server binds to get the actual port.
     #[allow(dead_code)]
     mdns_advertiser: Arc<RwLock<Option<MdnsAdvertiser>>>,
+    /// Optional factory for creating browser capture sources (Windows only).
+    /// Set by the desktop app; `None` on the headless server.
+    pub capture_factory: Option<Arc<dyn CaptureSourceFactory>>,
 }
 
 impl AppState {
@@ -98,6 +102,7 @@ impl AppState {
             services_started: Arc::new(AtomicBool::new(false)),
             artwork: artwork_config.resolve(),
             mdns_advertiser: Arc::new(RwLock::new(None)),
+            capture_factory: None,
         }
     }
 
