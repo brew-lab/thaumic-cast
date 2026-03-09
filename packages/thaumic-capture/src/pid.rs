@@ -7,7 +7,7 @@ use std::collections::HashMap;
 
 use thaumic_core::capture::CaptureError;
 use windows::Win32::Foundation::CloseHandle;
-use windows::Win32::System::Threading::{
+use windows::Win32::System::Diagnostics::ToolHelp::{
     CreateToolhelp32Snapshot, Process32FirstW, Process32NextW, PROCESSENTRY32W,
     TH32CS_SNAPPROCESS,
 };
