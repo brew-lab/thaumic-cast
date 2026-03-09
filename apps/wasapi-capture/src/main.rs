@@ -96,13 +96,9 @@ mod wasapi {
 
     const WAVE_FORMAT_IEEE_FLOAT: u16 = 0x0003;
 
-    /// AUDCLNT_STREAMFLAGS_AUTOCONVERTPCM — tells Windows to convert to our
-    /// requested format automatically.
-    const AUDCLNT_STREAMFLAGS_AUTOCONVERTPCM: u32 = 0x80000000;
-
     /// Hard-coded capture format: Float32, 48 kHz, stereo.
     /// Process loopback clients return E_NOTIMPL from GetMixFormat(),
-    /// so we specify the format ourselves and use AUTOCONVERTPCM.
+    /// so we specify the format ourselves.
     const CAPTURE_SAMPLE_RATE: u32 = 48000;
     const CAPTURE_CHANNELS: u16 = 2;
     const CAPTURE_BITS_PER_SAMPLE: u16 = 32;
@@ -216,7 +212,7 @@ mod wasapi {
             audio_client
                 .Initialize(
                     AUDCLNT_SHAREMODE_SHARED,
-                    AUDCLNT_STREAMFLAGS_AUTOCONVERTPCM,
+                    0,
                     buffer_duration,
                     0,
                     &format,
