@@ -26,7 +26,7 @@ mod cli {
 
     use clap::Parser;
     use serde::Serialize;
-    use thaumic_core::capture::{AudioSink, BufferFlags};
+    use thaumic_core::capture::{AudioSink, AudioSource, BufferFlags};
 
     const WAVE_FORMAT_IEEE_FLOAT: u16 = 0x0003;
 
@@ -110,9 +110,8 @@ mod cli {
             {
                 let mut timing = self.timing.lock().unwrap();
                 let now = Instant::now();
-                timing
-                    .deltas
-                    .push((now - timing.last_callback).as_secs_f32() * 1000.0);
+                let delta = (now - timing.last_callback).as_secs_f32() * 1000.0;
+                timing.deltas.push(delta);
                 timing.last_callback = now;
                 timing.callbacks += 1;
                 timing.total_frames += frames as u64;
