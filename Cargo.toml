@@ -3,8 +3,10 @@ resolver = "2"
 
 members = [
     "packages/thaumic-core",
+    "packages/thaumic-capture",
     "apps/desktop/src-tauri",
     "apps/server",
+    "apps/wasapi-capture",
 ]
 
 [profile.dev]

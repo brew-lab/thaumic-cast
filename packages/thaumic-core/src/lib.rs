@@ -34,6 +34,7 @@
 pub mod api;
 pub mod artwork;
 pub mod bootstrap;
+pub mod capture;
 pub mod context;
 pub mod error;
 pub mod events;
@@ -66,6 +67,9 @@ pub use sonos::{SonosClient, SonosClientImpl, SonosPlayback, SonosService, Sonos
 
 // Re-export service types
 pub use services::playback_session_store::PlaybackSession;
+
+// Re-export capture types
+pub use capture::{AudioSink, AudioSource, BufferFlags, CaptureError, CaptureHandle};
 
 // Re-export stream types
 pub use stream::{AudioCodec, AudioFormat, StreamMetadata};
