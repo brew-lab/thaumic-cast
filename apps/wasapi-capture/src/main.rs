@@ -405,27 +405,29 @@ mod wasapi {
             //   offset  8: BLOB.cbSize   (u32)
             //   offset 12: padding       (4 bytes)
             //   offset 16: BLOB.pBlobData (*mut u8, 8 bytes)
-            let mut prop_bytes = [0u8; 24];
-            ptr::copy_nonoverlapping(
-                &VT_BLOB as *const u16 as *const u8,
-                prop_bytes.as_mut_ptr(),
-                2,
-            );
+            // Must be 8-byte aligned (contains pointers).
+            #[repr(C, align(8))]
+            struct AlignedPropVariant([u8; 24]);
+
+            let mut prop = AlignedPropVariant([0u8; 24]);
+            let p = prop.0.as_mut_ptr();
+            ptr::copy_nonoverlapping(&VT_BLOB as *const u16 as *const u8, p, 2);
             ptr::copy_nonoverlapping(
                 &(params_size as u32) as *const u32 as *const u8,
-                prop_bytes.as_mut_ptr().add(8),
+                p.add(8),
                 4,
             );
             ptr::copy_nonoverlapping(
                 &params_ptr as *const *const u8 as *const u8,
-                prop_bytes.as_mut_ptr().add(16),
+                p.add(16),
                 std::mem::size_of::<*const u8>(),
             );
 
             eprintln!(
-                "  Activation: params_size={}, PROPVARIANT bytes={:02X?}",
+                "  Activation: params_size={}, prop_align={}, PROPVARIANT bytes={:02X?}",
                 params_size,
-                &prop_bytes[..24]
+                (p as usize) % 8,
+                &prop.0[..24]
             );
 
             let device_id: Vec<u16> = VIRTUAL_AUDIO_DEVICE_PROCESS_LOOPBACK
@@ -433,7 +435,7 @@ mod wasapi {
                 .chain(std::iter::once(0))
                 .collect();
 
-            let prop_ptr = prop_bytes.as_ptr() as *const windows_core::PROPVARIANT;
+            let prop_ptr = prop.0.as_ptr() as *const windows_core::PROPVARIANT;
 
             let _async_op: IActivateAudioInterfaceAsyncOperation = ActivateAudioInterfaceAsync(
                 PCWSTR(device_id.as_ptr()),
