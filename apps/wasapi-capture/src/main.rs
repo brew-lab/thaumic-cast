@@ -35,10 +35,11 @@ mod wasapi {
         ActivateAudioInterfaceAsync, IActivateAudioInterfaceAsyncOperation,
         IActivateAudioInterfaceCompletionHandler, IActivateAudioInterfaceCompletionHandler_Impl,
         IAudioCaptureClient, IAudioClient, AUDCLNT_BUFFERFLAGS_DATA_DISCONTINUITY,
-        AUDCLNT_BUFFERFLAGS_SILENT, AUDCLNT_SHAREMODE_SHARED, AUDIOCLIENT_ACTIVATION_PARAMS,
+        AUDCLNT_BUFFERFLAGS_SILENT, AUDCLNT_SHAREMODE_SHARED, AUDCLNT_STREAMFLAGS_EVENTCALLBACK,
+        AUDCLNT_STREAMFLAGS_LOOPBACK, AUDIOCLIENT_ACTIVATION_PARAMS,
         AUDIOCLIENT_ACTIVATION_PARAMS_0, AUDIOCLIENT_ACTIVATION_TYPE_PROCESS_LOOPBACK,
         AUDIOCLIENT_PROCESS_LOOPBACK_PARAMS, PROCESS_LOOPBACK_MODE_INCLUDE_TARGET_PROCESS_TREE,
-        VIRTUAL_AUDIO_DEVICE_PROCESS_LOOPBACK, WAVEFORMATEX,
+        VIRTUAL_AUDIO_DEVICE_PROCESS_LOOPBACK,
     };
     use windows::Win32::System::Com::StructuredStorage::{
         PROPVARIANT, PROPVARIANT_0, PROPVARIANT_0_0, PROPVARIANT_0_0_0,
@@ -95,13 +96,6 @@ mod wasapi {
     }
 
     const WAVE_FORMAT_IEEE_FLOAT: u16 = 0x0003;
-
-    /// Hard-coded capture format: Float32, 48 kHz, stereo.
-    /// Process loopback clients return E_NOTIMPL from GetMixFormat(),
-    /// so we specify the format ourselves.
-    const CAPTURE_SAMPLE_RATE: u32 = 48000;
-    const CAPTURE_CHANNELS: u16 = 2;
-    const CAPTURE_BITS_PER_SAMPLE: u16 = 32;
 
     // ─── COM Completion Handler ──────────────────────────────────────────────
 
@@ -161,14 +155,10 @@ mod wasapi {
             .stats_file
             .unwrap_or_else(|| parent.join(format!("{}-stats.json", stem)));
 
-        let sample_rate = CAPTURE_SAMPLE_RATE;
-        let channels = CAPTURE_CHANNELS;
-
         eprintln!("WASAPI Capture");
         eprintln!("  PID:       {}", cli.pid);
         eprintln!("  Duration:  {:.1}s", cli.duration);
         eprintln!("  Buffer:    {}ms", cli.buffer_ms);
-        eprintln!("  Format:    {}Hz, {}ch, Float32", sample_rate, channels);
         eprintln!("  Output:    {}", output_path.display());
 
         // ── COM init ─────────────────────────────────────────────────────────
@@ -191,34 +181,57 @@ mod wasapi {
             }
         };
 
-        // ── Build capture format ───────────────────────────────────────────
-        let block_align = channels * (CAPTURE_BITS_PER_SAMPLE / 8);
-        let avg_bytes_per_sec = sample_rate * block_align as u32;
-
-        let format = WAVEFORMATEX {
-            wFormatTag: WAVE_FORMAT_IEEE_FLOAT,
-            nChannels: channels,
-            nSamplesPerSec: sample_rate,
-            nAvgBytesPerSec: avg_bytes_per_sec,
-            nBlockAlign: block_align,
-            wBitsPerSample: CAPTURE_BITS_PER_SAMPLE,
-            cbSize: 0,
+        // ── Query mix format ───────────────────────────────────────────────
+        let (actual_sample_rate, actual_channels, mix_format_ptr) = unsafe {
+            match audio_client.GetMixFormat() {
+                Ok(fmt_ptr) => {
+                    let sr = (*fmt_ptr).nSamplesPerSec;
+                    let ch = (*fmt_ptr).nChannels;
+                    let bps = (*fmt_ptr).wBitsPerSample;
+                    let tag = (*fmt_ptr).wFormatTag;
+                    eprintln!(
+                        "  MixFormat: {}Hz, {}ch, {}bit, tag=0x{:04X}",
+                        sr, ch, bps, tag
+                    );
+                    (sr, ch, fmt_ptr)
+                }
+                Err(e) => {
+                    eprintln!(
+                        "Error: GetMixFormat failed: {} (0x{:08X})",
+                        e,
+                        e.code().0 as u32
+                    );
+                    eprintln!("Cannot determine capture format.");
+                    CoUninitialize();
+                    std::process::exit(1);
+                }
+            }
         };
+
+        let sample_rate = actual_sample_rate;
+        let channels = actual_channels;
 
         // ── Initialize audio client ──────────────────────────────────────────
         let buffer_duration = (cli.buffer_ms as i64) * 10_000; // 100ns units
+        let capture_event = unsafe {
+            CreateEventW(None, false, false, None).expect("Failed to create capture event")
+        };
 
         unsafe {
             audio_client
                 .Initialize(
                     AUDCLNT_SHAREMODE_SHARED,
-                    0,
+                    AUDCLNT_STREAMFLAGS_LOOPBACK | AUDCLNT_STREAMFLAGS_EVENTCALLBACK,
                     buffer_duration,
                     0,
-                    &format,
+                    mix_format_ptr,
                     None,
                 )
                 .expect("IAudioClient::Initialize failed");
+
+            audio_client
+                .SetEventHandle(capture_event)
+                .expect("SetEventHandle failed");
         }
 
         let capture_client: IAudioCaptureClient = unsafe {
@@ -256,16 +269,17 @@ mod wasapi {
         let mut callback_count: u32 = 0;
         let mut total_frames: u64 = 0;
 
-        // ── Capture loop (polling — process loopback doesn't support event-driven) ─
-        let poll_interval = std::time::Duration::from_millis((cli.buffer_ms / 2).max(1) as u64);
-
+        // ── Capture loop ─────────────────────────────────────────────────────
         while running.load(Ordering::SeqCst) {
             let elapsed = start_time.elapsed().as_secs_f64();
             if elapsed >= cli.duration {
                 break;
             }
 
-            std::thread::sleep(poll_interval);
+            let wait_result = unsafe { WaitForSingleObject(capture_event, 200) };
+            if wait_result != WAIT_OBJECT_0 {
+                continue;
+            }
 
             let now = Instant::now();
             timing_deltas.push((now - last_callback).as_secs_f32() * 1000.0);
