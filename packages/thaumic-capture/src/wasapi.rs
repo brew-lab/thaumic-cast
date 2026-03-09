@@ -177,16 +177,16 @@ fn capture_thread_inner(
     buffer_ms: u32,
     sink: Arc<dyn AudioSink>,
     cancel: &CancellationToken,
-    error_tx: &tokio::sync::mpsc::Sender<CaptureError>,
+    _error_tx: &tokio::sync::mpsc::Sender<CaptureError>,
 ) -> Result<(), CaptureError> {
     // 2. Activate process loopback
-    let mut audio_client = activate_process_loopback(pid)
+    let audio_client = activate_process_loopback(pid)
         .map_err(|e| CaptureError::Platform(format!("Loopback activation failed: {}", e)))?;
 
     // 3. Initialize with format/flag trial
     let buffer_duration = (buffer_ms as i64) * 10_000; // 100ns units
-    let (use_event, channels, sample_rate) =
-        initialize_audio_client(&audio_client, buffer_duration, pid, &mut audio_client)?;
+    let (audio_client, use_event, channels, sample_rate) =
+        initialize_audio_client(audio_client, buffer_duration, pid)?;
 
     log::info!(
         "WASAPI capture initialized: {}Hz, {}ch, buffer={}ms, event={}",
@@ -317,15 +317,15 @@ fn capture_thread_inner(
 
 // ─── Audio Client Initialization ────────────────────────────────────────────
 
-/// Try multiple format + flag combinations. Returns (use_event, channels, sample_rate).
+/// Try multiple format + flag combinations.
+/// Returns (initialized_client, use_event, channels, sample_rate).
 ///
 /// On `AUDCLNT_E_ALREADY_INITIALIZED`, re-activates a fresh `IAudioClient` and retries.
 fn initialize_audio_client(
-    client: &IAudioClient,
+    client: IAudioClient,
     buffer_duration: i64,
     pid: u32,
-    client_out: &mut IAudioClient,
-) -> Result<(bool, u16, u32), CaptureError> {
+) -> Result<(IAudioClient, bool, u16, u32), CaptureError> {
     let fmt_float32_48k = make_waveformat(WAVE_FORMAT_IEEE_FLOAT, 2, 48000, 32);
     let fmt_float32_44k = make_waveformat(WAVE_FORMAT_IEEE_FLOAT, 2, 44100, 32);
     let fmt_pcm16_48k = make_waveformat(WAVE_FORMAT_PCM, 2, 48000, 16);
@@ -348,7 +348,7 @@ fn initialize_audio_client(
         (&fmt_pcm16_44k, 2, 44100, 16),
     ];
 
-    let mut current_client = client.clone();
+    let mut current_client = client;
     let mut need_reactivate = false;
 
     for &(fmt, channels, sample_rate, _bits) in formats {
@@ -374,8 +374,7 @@ fn initialize_audio_client(
                 Ok(()) => {
                     let use_event = (flags & AUDCLNT_STREAMFLAGS_EVENTCALLBACK) != 0;
                     log::info!("WASAPI initialized with flags={}", flag_desc);
-                    *client_out = current_client;
-                    return Ok((use_event, channels, sample_rate));
+                    return Ok((current_client, use_event, channels, sample_rate));
                 }
                 Err(e) => {
                     let code = e.code().0 as u32;
