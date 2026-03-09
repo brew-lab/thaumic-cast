@@ -1,9 +1,9 @@
 //! WASAPI process-specific loopback capture CLI.
 //!
-//! Captures audio from a specific process (Chrome) via WASAPI loopback,
+//! Captures audio from a specific process (Chrome/Brave) via WASAPI loopback,
 //! writes Float32 WAV output compatible with `tools/capture-analysis/`.
 //!
-//! Requires Windows 10 version 2004 (build 19041) or later.
+//! Requires Windows 10 build 20348 or later.
 
 #[cfg(not(target_os = "windows"))]
 fn main() {
@@ -19,7 +19,9 @@ fn main() {
 #[cfg(target_os = "windows")]
 mod wasapi {
     use std::io::{BufWriter, Write};
+    use std::mem::ManuallyDrop;
     use std::path::PathBuf;
+    use std::pin::Pin;
     use std::ptr;
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::{Arc, Mutex};
@@ -34,23 +36,27 @@ mod wasapi {
         IActivateAudioInterfaceCompletionHandler, IActivateAudioInterfaceCompletionHandler_Impl,
         IAudioCaptureClient, IAudioClient, AUDCLNT_BUFFERFLAGS_DATA_DISCONTINUITY,
         AUDCLNT_BUFFERFLAGS_SILENT, AUDCLNT_SHAREMODE_SHARED, AUDCLNT_STREAMFLAGS_EVENTCALLBACK,
-        AUDCLNT_STREAMFLAGS_LOOPBACK, AUDIOCLIENT_ACTIVATION_PARAMS,
-        AUDIOCLIENT_ACTIVATION_PARAMS_0, AUDIOCLIENT_ACTIVATION_TYPE_PROCESS_LOOPBACK,
-        AUDIOCLIENT_PROCESS_LOOPBACK_PARAMS, PROCESS_LOOPBACK_MODE_INCLUDE_TARGET_PROCESS_TREE,
-        WAVEFORMATEX, WAVEFORMATEXTENSIBLE,
+        AUDIOCLIENT_ACTIVATION_PARAMS, AUDIOCLIENT_ACTIVATION_PARAMS_0,
+        AUDIOCLIENT_ACTIVATION_TYPE_PROCESS_LOOPBACK, AUDIOCLIENT_PROCESS_LOOPBACK_PARAMS,
+        PROCESS_LOOPBACK_MODE_INCLUDE_TARGET_PROCESS_TREE, VIRTUAL_AUDIO_DEVICE_PROCESS_LOOPBACK,
+        WAVEFORMATEX,
     };
-    use windows::Win32::System::Com::{CoInitializeEx, CoUninitialize, COINIT_MULTITHREADED};
+    use windows::Win32::System::Com::StructuredStorage::{
+        PROPVARIANT, PROPVARIANT_0, PROPVARIANT_0_0, PROPVARIANT_0_0_0,
+    };
+    use windows::Win32::System::Com::{CoInitializeEx, CoUninitialize, BLOB, COINIT_MULTITHREADED};
     use windows::Win32::System::Threading::{
         AvRevertMmThreadCharacteristics, AvSetMmThreadCharacteristicsW, AvSetMmThreadPriority,
         CreateEventW, SetEvent, WaitForSingleObject, AVRT_PRIORITY_HIGH,
     };
+    use windows::Win32::System::Variant::VT_BLOB;
     use windows_core::AsImpl;
 
     /// WASAPI process-specific loopback capture for validating frame-drop-free audio.
     #[derive(Parser)]
     #[command(name = "wasapi-capture")]
     struct Cli {
-        /// Target process ID (Chrome)
+        /// Target process ID (Chrome/Brave)
         #[arg(long)]
         pid: u32,
 
@@ -89,15 +95,18 @@ mod wasapi {
         timing_max_ms: f32,
     }
 
-    /// VIRTUAL_AUDIO_DEVICE_PROCESS_LOOPBACK GUID — may not be exported by the crate.
-    const VIRTUAL_AUDIO_DEVICE_PROCESS_LOOPBACK: &str = "{2C28ACD5-E1F2-4ABC-8272-B1290E3E2B50}";
-
-    const KSDATAFORMAT_SUBTYPE_IEEE_FLOAT: windows::core::GUID =
-        windows::core::GUID::from_u128(0x00000003_0000_0010_8000_00aa00389b71);
-
-    const WAVE_FORMAT_EXTENSIBLE: u16 = 0xFFFE;
     const WAVE_FORMAT_IEEE_FLOAT: u16 = 0x0003;
-    const VT_BLOB: u16 = 65;
+
+    /// AUDCLNT_STREAMFLAGS_AUTOCONVERTPCM — tells Windows to convert to our
+    /// requested format automatically.
+    const AUDCLNT_STREAMFLAGS_AUTOCONVERTPCM: u32 = 0x80000000;
+
+    /// Hard-coded capture format: Float32, 48 kHz, stereo.
+    /// Process loopback clients return E_NOTIMPL from GetMixFormat(),
+    /// so we specify the format ourselves and use AUTOCONVERTPCM.
+    const CAPTURE_SAMPLE_RATE: u32 = 48000;
+    const CAPTURE_CHANNELS: u16 = 2;
+    const CAPTURE_BITS_PER_SAMPLE: u16 = 32;
 
     // ─── COM Completion Handler ──────────────────────────────────────────────
 
@@ -110,18 +119,18 @@ mod wasapi {
     impl IActivateAudioInterfaceCompletionHandler_Impl for CompletionHandler_Impl {
         fn ActivateCompleted(
             &self,
-            activate_operation: Option<&IActivateAudioInterfaceAsyncOperation>,
+            activate_operation: windows_core::Ref<IActivateAudioInterfaceAsyncOperation>,
         ) -> windows::core::Result<()> {
-            // Must ALWAYS signal the event, even on error — otherwise the main
-            // thread waits forever. Store success or failure in self.result.
             let client_result = (|| -> windows::core::Result<IAudioClient> {
-                let op =
-                    activate_operation.ok_or_else(|| windows::core::Error::from(HRESULT(-1)))?;
-
                 let mut hr = HRESULT(0);
                 let mut activated: Option<IUnknown> = None;
 
-                unsafe { op.GetActivateResult(&mut hr, &mut activated)? };
+                unsafe {
+                    activate_operation
+                        .as_ref()
+                        .ok_or_else(|| windows::core::Error::from(HRESULT(-1)))?
+                        .GetActivateResult(&mut hr, &mut activated)?
+                };
                 hr.ok()?;
 
                 match activated {
@@ -157,10 +166,14 @@ mod wasapi {
             .stats_file
             .unwrap_or_else(|| parent.join(format!("{}-stats.json", stem)));
 
+        let sample_rate = CAPTURE_SAMPLE_RATE;
+        let channels = CAPTURE_CHANNELS;
+
         eprintln!("WASAPI Capture");
         eprintln!("  PID:       {}", cli.pid);
         eprintln!("  Duration:  {:.1}s", cli.duration);
         eprintln!("  Buffer:    {}ms", cli.buffer_ms);
+        eprintln!("  Format:    {}Hz, {}ch, Float32", sample_rate, channels);
         eprintln!("  Output:    {}", output_path.display());
 
         // ── COM init ─────────────────────────────────────────────────────────
@@ -177,14 +190,25 @@ mod wasapi {
                 eprintln!("  Hints:");
                 eprintln!("    - Try the main browser process PID (highest memory)");
                 eprintln!("    - Ensure the process is running and producing audio");
-                eprintln!("    - Process-specific loopback requires Windows 10 2004+");
+                eprintln!("    - Process-specific loopback requires Windows 10 build 20348+");
                 unsafe { CoUninitialize() };
                 std::process::exit(1);
             }
         };
 
-        // ── Query mix format ─────────────────────────────────────────────────
-        let (sample_rate, channels, mix_format_ptr) = query_mix_format(&audio_client);
+        // ── Build capture format ───────────────────────────────────────────
+        let block_align = channels * (CAPTURE_BITS_PER_SAMPLE / 8);
+        let avg_bytes_per_sec = sample_rate * block_align as u32;
+
+        let format = WAVEFORMATEX {
+            wFormatTag: WAVE_FORMAT_IEEE_FLOAT,
+            nChannels: channels,
+            nSamplesPerSec: sample_rate,
+            nAvgBytesPerSec: avg_bytes_per_sec,
+            nBlockAlign: block_align,
+            wBitsPerSample: CAPTURE_BITS_PER_SAMPLE,
+            cbSize: 0,
+        };
 
         // ── Initialize audio client ──────────────────────────────────────────
         let buffer_duration = (cli.buffer_ms as i64) * 10_000; // 100ns units
@@ -196,10 +220,10 @@ mod wasapi {
             audio_client
                 .Initialize(
                     AUDCLNT_SHAREMODE_SHARED,
-                    AUDCLNT_STREAMFLAGS_LOOPBACK | AUDCLNT_STREAMFLAGS_EVENTCALLBACK,
+                    AUDCLNT_STREAMFLAGS_EVENTCALLBACK | AUDCLNT_STREAMFLAGS_AUTOCONVERTPCM,
                     buffer_duration,
                     0,
-                    mix_format_ptr,
+                    &format,
                     None,
                 )
                 .expect("IAudioClient::Initialize failed");
@@ -385,7 +409,7 @@ mod wasapi {
             }
             .into();
 
-            let params = AUDIOCLIENT_ACTIVATION_PARAMS {
+            let mut params = AUDIOCLIENT_ACTIVATION_PARAMS {
                 ActivationType: AUDIOCLIENT_ACTIVATION_TYPE_PROCESS_LOOPBACK,
                 Anonymous: AUDIOCLIENT_ACTIVATION_PARAMS_0 {
                     ProcessLoopbackParams: AUDIOCLIENT_PROCESS_LOOPBACK_PARAMS {
@@ -395,56 +419,32 @@ mod wasapi {
                 },
             };
 
-            let params_size = std::mem::size_of::<AUDIOCLIENT_ACTIVATION_PARAMS>();
-            let params_ptr = &params as *const _ as *mut u8;
+            let pinned_params = Pin::new(&mut params);
 
-            // Use a real PROPVARIANT from the crate to ensure correct type layout.
-            // ManuallyDrop prevents Drop from calling PropVariantClear on our
-            // stack pointer.
-            let mut prop = std::mem::ManuallyDrop::new(windows_core::PROPVARIANT::default());
-            let prop_raw = &mut *prop as *mut windows_core::PROPVARIANT as *mut u8;
+            // Build PROPVARIANT with VT_BLOB pointing to our activation params.
+            let prop = PROPVARIANT {
+                Anonymous: PROPVARIANT_0 {
+                    Anonymous: ManuallyDrop::new(PROPVARIANT_0_0 {
+                        vt: VT_BLOB,
+                        wReserved1: 0,
+                        wReserved2: 0,
+                        wReserved3: 0,
+                        Anonymous: PROPVARIANT_0_0_0 {
+                            blob: BLOB {
+                                cbSize: std::mem::size_of::<AUDIOCLIENT_ACTIVATION_PARAMS>() as u32,
+                                pBlobData: &*pinned_params as *const _ as *mut u8,
+                            },
+                        },
+                    }),
+                },
+            };
 
-            // Write fields at known C PROPVARIANT offsets
-            *(prop_raw as *mut u16) = VT_BLOB; // offset 0: vt
-            *(prop_raw.add(8) as *mut u32) = params_size as u32; // offset 8: blob.cbSize
-            *(prop_raw.add(16) as *mut *mut u8) = params_ptr; // offset 16: blob.pBlobData
-
-            let params_bytes = std::slice::from_raw_parts(params_ptr, params_size);
-            let prop_bytes = std::slice::from_raw_parts(prop_raw, 24);
-            eprintln!("  Activation debug:");
-            eprintln!(
-                "    PROPVARIANT size (crate): {}",
-                std::mem::size_of::<windows_core::PROPVARIANT>()
-            );
-            eprintln!(
-                "    PROPVARIANT align (crate): {}",
-                std::mem::align_of::<windows_core::PROPVARIANT>()
-            );
-            eprintln!(
-                "    ActivationType value: {:?}",
-                AUDIOCLIENT_ACTIVATION_TYPE_PROCESS_LOOPBACK.0
-            );
-            eprintln!(
-                "    LoopbackMode value:   {:?}",
-                PROCESS_LOOPBACK_MODE_INCLUDE_TARGET_PROCESS_TREE.0
-            );
-            eprintln!("    IAudioClient IID:     {:?}", IAudioClient::IID);
-            eprintln!("    params_size:          {}", params_size);
-            eprintln!("    params bytes:         {:02X?}", params_bytes);
-            eprintln!("    PROPVARIANT bytes:    {:02X?}", prop_bytes);
-            eprintln!("    prop_addr align:      {}", (prop_raw as usize) % 8);
-
-            let device_id: Vec<u16> = VIRTUAL_AUDIO_DEVICE_PROCESS_LOOPBACK
-                .encode_utf16()
-                .chain(std::iter::once(0))
-                .collect();
-
-            let prop_ptr = &*prop as *const windows_core::PROPVARIANT;
+            let activation_prop = ManuallyDrop::new(prop);
 
             let _async_op: IActivateAudioInterfaceAsyncOperation = ActivateAudioInterfaceAsync(
-                PCWSTR(device_id.as_ptr()),
+                VIRTUAL_AUDIO_DEVICE_PROCESS_LOOPBACK,
                 &IAudioClient::IID,
-                Some(prop_ptr),
+                Some(&*activation_prop),
                 &handler,
             )?;
 
@@ -461,48 +461,6 @@ mod wasapi {
                 Some(Err(e)) => Err(e.clone()),
                 None => Err(windows::core::Error::from(HRESULT(-1))),
             }
-        }
-    }
-
-    // ─── Mix format query ────────────────────────────────────────────────────
-
-    /// Returns (sample_rate, channels, format_ptr).
-    /// The format_ptr must be kept alive for Initialize().
-    fn query_mix_format(audio_client: &IAudioClient) -> (u32, u16, *const WAVEFORMATEX) {
-        unsafe {
-            let format_ptr = audio_client.GetMixFormat().expect("GetMixFormat failed");
-
-            let fmt = &*format_ptr;
-            let tag = fmt.wFormatTag;
-            let mut actual_tag = tag;
-            let sr = fmt.nSamplesPerSec;
-            let ch = fmt.nChannels;
-            let bps = fmt.wBitsPerSample;
-
-            // Handle WAVEFORMATEXTENSIBLE
-            if tag == WAVE_FORMAT_EXTENSIBLE {
-                let ext = &*(format_ptr as *const WAVEFORMATEXTENSIBLE);
-                let sub = ext.SubFormat;
-                if sub == KSDATAFORMAT_SUBTYPE_IEEE_FLOAT {
-                    actual_tag = WAVE_FORMAT_IEEE_FLOAT;
-                }
-            }
-
-            eprintln!(
-                "  Format:    {}Hz, {}ch, {}bit, tag=0x{:04X}",
-                sr, ch, bps, actual_tag
-            );
-
-            if actual_tag != WAVE_FORMAT_IEEE_FLOAT || bps != 32 {
-                eprintln!(
-                    "Error: Expected Float32 (tag 0x0003), got tag=0x{:04X} bps={}",
-                    actual_tag, bps
-                );
-                CoUninitialize();
-                std::process::exit(1);
-            }
-
-            (sr, ch, format_ptr)
         }
     }
 
@@ -564,10 +522,10 @@ mod wasapi {
                     .and_then(|l| l.split_whitespace().last())
                 {
                     if let Ok(build) = build_str.parse::<u32>() {
-                        if build < 19041 {
+                        if build < 20348 {
                             eprintln!(
                                 "Error: Process-specific loopback requires Windows 10 \
-                                 version 2004 (build 19041+). Current build: {}.",
+                                 build 20348+. Current build: {}.",
                                 build
                             );
                             std::process::exit(1);
