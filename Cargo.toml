@@ -5,6 +5,7 @@ members = [
     "packages/thaumic-core",
     "apps/desktop/src-tauri",
     "apps/server",
+    "apps/wasapi-capture",
 ]
 
 [profile.dev]
