@@ -35,11 +35,10 @@ mod wasapi {
         ActivateAudioInterfaceAsync, IActivateAudioInterfaceAsyncOperation,
         IActivateAudioInterfaceCompletionHandler, IActivateAudioInterfaceCompletionHandler_Impl,
         IAudioCaptureClient, IAudioClient, AUDCLNT_BUFFERFLAGS_DATA_DISCONTINUITY,
-        AUDCLNT_BUFFERFLAGS_SILENT, AUDCLNT_SHAREMODE_SHARED, AUDCLNT_STREAMFLAGS_EVENTCALLBACK,
-        AUDIOCLIENT_ACTIVATION_PARAMS, AUDIOCLIENT_ACTIVATION_PARAMS_0,
-        AUDIOCLIENT_ACTIVATION_TYPE_PROCESS_LOOPBACK, AUDIOCLIENT_PROCESS_LOOPBACK_PARAMS,
-        PROCESS_LOOPBACK_MODE_INCLUDE_TARGET_PROCESS_TREE, VIRTUAL_AUDIO_DEVICE_PROCESS_LOOPBACK,
-        WAVEFORMATEX,
+        AUDCLNT_BUFFERFLAGS_SILENT, AUDCLNT_SHAREMODE_SHARED, AUDIOCLIENT_ACTIVATION_PARAMS,
+        AUDIOCLIENT_ACTIVATION_PARAMS_0, AUDIOCLIENT_ACTIVATION_TYPE_PROCESS_LOOPBACK,
+        AUDIOCLIENT_PROCESS_LOOPBACK_PARAMS, PROCESS_LOOPBACK_MODE_INCLUDE_TARGET_PROCESS_TREE,
+        VIRTUAL_AUDIO_DEVICE_PROCESS_LOOPBACK, WAVEFORMATEX,
     };
     use windows::Win32::System::Com::StructuredStorage::{
         PROPVARIANT, PROPVARIANT_0, PROPVARIANT_0_0, PROPVARIANT_0_0_0,
@@ -212,25 +211,18 @@ mod wasapi {
 
         // ── Initialize audio client ──────────────────────────────────────────
         let buffer_duration = (cli.buffer_ms as i64) * 10_000; // 100ns units
-        let capture_event = unsafe {
-            CreateEventW(None, false, false, None).expect("Failed to create capture event")
-        };
 
         unsafe {
             audio_client
                 .Initialize(
                     AUDCLNT_SHAREMODE_SHARED,
-                    AUDCLNT_STREAMFLAGS_EVENTCALLBACK | AUDCLNT_STREAMFLAGS_AUTOCONVERTPCM,
+                    AUDCLNT_STREAMFLAGS_AUTOCONVERTPCM,
                     buffer_duration,
                     0,
                     &format,
                     None,
                 )
                 .expect("IAudioClient::Initialize failed");
-
-            audio_client
-                .SetEventHandle(capture_event)
-                .expect("SetEventHandle failed");
         }
 
         let capture_client: IAudioCaptureClient = unsafe {
@@ -268,17 +260,16 @@ mod wasapi {
         let mut callback_count: u32 = 0;
         let mut total_frames: u64 = 0;
 
-        // ── Capture loop ─────────────────────────────────────────────────────
+        // ── Capture loop (polling — process loopback doesn't support event-driven) ─
+        let poll_interval = std::time::Duration::from_millis((cli.buffer_ms / 2).max(1) as u64);
+
         while running.load(Ordering::SeqCst) {
             let elapsed = start_time.elapsed().as_secs_f64();
             if elapsed >= cli.duration {
                 break;
             }
 
-            let wait_result = unsafe { WaitForSingleObject(capture_event, 200) };
-            if wait_result != WAIT_OBJECT_0 {
-                continue;
-            }
+            std::thread::sleep(poll_interval);
 
             let now = Instant::now();
             timing_deltas.push((now - last_callback).as_secs_f32() * 1000.0);
