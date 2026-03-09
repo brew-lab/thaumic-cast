@@ -39,7 +39,7 @@ mod wasapi {
         AUDCLNT_STREAMFLAGS_LOOPBACK, AUDIOCLIENT_ACTIVATION_PARAMS,
         AUDIOCLIENT_ACTIVATION_PARAMS_0, AUDIOCLIENT_ACTIVATION_TYPE_PROCESS_LOOPBACK,
         AUDIOCLIENT_PROCESS_LOOPBACK_PARAMS, PROCESS_LOOPBACK_MODE_INCLUDE_TARGET_PROCESS_TREE,
-        VIRTUAL_AUDIO_DEVICE_PROCESS_LOOPBACK,
+        VIRTUAL_AUDIO_DEVICE_PROCESS_LOOPBACK, WAVEFORMATEX,
     };
     use windows::Win32::System::Com::StructuredStorage::{
         PROPVARIANT, PROPVARIANT_0, PROPVARIANT_0_0, PROPVARIANT_0_0_0,
@@ -96,6 +96,7 @@ mod wasapi {
     }
 
     const WAVE_FORMAT_IEEE_FLOAT: u16 = 0x0003;
+    const WAVE_FORMAT_PCM: u16 = 0x0001;
 
     // ─── COM Completion Handler ──────────────────────────────────────────────
 
@@ -181,58 +182,107 @@ mod wasapi {
             }
         };
 
-        // ── Query mix format ───────────────────────────────────────────────
-        let (actual_sample_rate, actual_channels, mix_format_ptr) = unsafe {
-            match audio_client.GetMixFormat() {
-                Ok(fmt_ptr) => {
-                    let sr = (*fmt_ptr).nSamplesPerSec;
-                    let ch = (*fmt_ptr).nChannels;
-                    let bps = (*fmt_ptr).wBitsPerSample;
-                    let tag = (*fmt_ptr).wFormatTag;
-                    eprintln!(
-                        "  MixFormat: {}Hz, {}ch, {}bit, tag=0x{:04X}",
-                        sr, ch, bps, tag
-                    );
-                    (sr, ch, fmt_ptr)
-                }
-                Err(e) => {
-                    eprintln!(
-                        "Error: GetMixFormat failed: {} (0x{:08X})",
-                        e,
-                        e.code().0 as u32
-                    );
-                    eprintln!("Cannot determine capture format.");
-                    CoUninitialize();
-                    std::process::exit(1);
+        // ── Initialize audio client ──────────────────────────────────────────
+        // Process loopback clients return E_NOTIMPL from GetMixFormat().
+        // Try multiple format + flag combinations until one succeeds.
+        let buffer_duration = (cli.buffer_ms as i64) * 10_000; // 100ns units
+
+        // Candidate formats to try
+        let fmt_float32_48k = make_waveformat(WAVE_FORMAT_IEEE_FLOAT, 2, 48000, 32);
+        let fmt_float32_44k = make_waveformat(WAVE_FORMAT_IEEE_FLOAT, 2, 44100, 32);
+        let fmt_pcm16_48k = make_waveformat(WAVE_FORMAT_PCM, 2, 48000, 16);
+        let fmt_pcm16_44k = make_waveformat(WAVE_FORMAT_PCM, 2, 44100, 16);
+
+        // Flag combinations to try
+        let flag_combos: &[(u32, &str)] = &[
+            (
+                AUDCLNT_STREAMFLAGS_LOOPBACK | AUDCLNT_STREAMFLAGS_EVENTCALLBACK,
+                "LOOPBACK|EVENTCALLBACK",
+            ),
+            (AUDCLNT_STREAMFLAGS_LOOPBACK, "LOOPBACK"),
+            (AUDCLNT_STREAMFLAGS_EVENTCALLBACK, "EVENTCALLBACK"),
+            (0, "none"),
+        ];
+
+        let formats: &[(&WAVEFORMATEX, &str)] = &[
+            (&fmt_float32_48k, "Float32 48kHz 2ch"),
+            (&fmt_float32_44k, "Float32 44.1kHz 2ch"),
+            (&fmt_pcm16_48k, "PCM16 48kHz 2ch"),
+            (&fmt_pcm16_44k, "PCM16 44.1kHz 2ch"),
+        ];
+
+        let mut init_ok = false;
+        let mut use_event = false;
+        let mut chosen_fmt_desc = "";
+
+        eprintln!("  Trying Initialize combinations...");
+        'outer: for (fmt, fmt_desc) in formats {
+            for (flags, flag_desc) in flag_combos {
+                let hr = unsafe {
+                    audio_client.Initialize(
+                        AUDCLNT_SHAREMODE_SHARED,
+                        *flags,
+                        buffer_duration,
+                        0,
+                        *fmt,
+                        None,
+                    )
+                };
+                match hr {
+                    Ok(()) => {
+                        eprintln!("    OK: {} + flags={}", fmt_desc, flag_desc);
+                        init_ok = true;
+                        use_event = (*flags & AUDCLNT_STREAMFLAGS_EVENTCALLBACK) != 0;
+                        chosen_fmt_desc = fmt_desc;
+                        break 'outer;
+                    }
+                    Err(e) => {
+                        eprintln!(
+                            "    FAIL: {} + flags={} → 0x{:08X}",
+                            fmt_desc,
+                            flag_desc,
+                            e.code().0 as u32
+                        );
+                        // AUDCLNT_E_ALREADY_INITIALIZED — need a new client
+                        if e.code().0 as u32 == 0x88890002 {
+                            eprintln!("    (client already initialized, cannot try more combos)");
+                            break 'outer;
+                        }
+                    }
                 }
             }
-        };
-
-        let sample_rate = actual_sample_rate;
-        let channels = actual_channels;
-
-        // ── Initialize audio client ──────────────────────────────────────────
-        let buffer_duration = (cli.buffer_ms as i64) * 10_000; // 100ns units
-        let capture_event = unsafe {
-            CreateEventW(None, false, false, None).expect("Failed to create capture event")
-        };
-
-        unsafe {
-            audio_client
-                .Initialize(
-                    AUDCLNT_SHAREMODE_SHARED,
-                    AUDCLNT_STREAMFLAGS_LOOPBACK | AUDCLNT_STREAMFLAGS_EVENTCALLBACK,
-                    buffer_duration,
-                    0,
-                    mix_format_ptr,
-                    None,
-                )
-                .expect("IAudioClient::Initialize failed");
-
-            audio_client
-                .SetEventHandle(capture_event)
-                .expect("SetEventHandle failed");
         }
+
+        if !init_ok {
+            eprintln!("Error: All Initialize combinations failed.");
+            unsafe { CoUninitialize() };
+            std::process::exit(1);
+        }
+
+        let (sample_rate, channels) = if chosen_fmt_desc.contains("48kHz") {
+            (48000u32, 2u16)
+        } else {
+            (44100u32, 2u16)
+        };
+
+        eprintln!(
+            "  Format:    {}Hz, {}ch, {}",
+            sample_rate, channels, chosen_fmt_desc
+        );
+
+        let capture_event = if use_event {
+            let evt = unsafe {
+                CreateEventW(None, false, false, None).expect("Failed to create capture event")
+            };
+            unsafe {
+                audio_client
+                    .SetEventHandle(evt)
+                    .expect("SetEventHandle failed");
+            }
+            Some(evt)
+        } else {
+            None
+        };
 
         let capture_client: IAudioCaptureClient = unsafe {
             audio_client
@@ -270,15 +320,21 @@ mod wasapi {
         let mut total_frames: u64 = 0;
 
         // ── Capture loop ─────────────────────────────────────────────────────
+        let poll_interval = std::time::Duration::from_millis((cli.buffer_ms / 2).max(1) as u64);
+
         while running.load(Ordering::SeqCst) {
             let elapsed = start_time.elapsed().as_secs_f64();
             if elapsed >= cli.duration {
                 break;
             }
 
-            let wait_result = unsafe { WaitForSingleObject(capture_event, 200) };
-            if wait_result != WAIT_OBJECT_0 {
-                continue;
+            if let Some(evt) = capture_event {
+                let wait_result = unsafe { WaitForSingleObject(evt, 200) };
+                if wait_result != WAIT_OBJECT_0 {
+                    continue;
+                }
+            } else {
+                std::thread::sleep(poll_interval);
             }
 
             let now = Instant::now();
@@ -503,6 +559,19 @@ mod wasapi {
     }
 
     // ─── Helpers ─────────────────────────────────────────────────────────────
+
+    fn make_waveformat(tag: u16, channels: u16, sample_rate: u32, bits: u16) -> WAVEFORMATEX {
+        let block_align = channels * (bits / 8);
+        WAVEFORMATEX {
+            wFormatTag: tag,
+            nChannels: channels,
+            nSamplesPerSec: sample_rate,
+            nAvgBytesPerSec: sample_rate * block_align as u32,
+            nBlockAlign: block_align,
+            wBitsPerSample: bits,
+            cbSize: 0,
+        }
+    }
 
     fn check_windows_version() {
         let output = std::process::Command::new("reg")
