@@ -423,12 +423,22 @@ mod wasapi {
                 std::mem::size_of::<*const u8>(),
             );
 
+            // Dump all values for debugging
+            let params_bytes = std::slice::from_raw_parts(params_ptr, params_size);
+            eprintln!("  Activation debug:");
             eprintln!(
-                "  Activation: params_size={}, prop_align={}, PROPVARIANT bytes={:02X?}",
-                params_size,
-                (p as usize) % 8,
-                &prop.0[..24]
+                "    ActivationType value: {:?}",
+                AUDIOCLIENT_ACTIVATION_TYPE_PROCESS_LOOPBACK.0
             );
+            eprintln!(
+                "    LoopbackMode value:   {:?}",
+                PROCESS_LOOPBACK_MODE_INCLUDE_TARGET_PROCESS_TREE.0
+            );
+            eprintln!("    IAudioClient IID:     {:?}", IAudioClient::IID);
+            eprintln!("    params_size:          {}", params_size);
+            eprintln!("    params bytes:         {:02X?}", params_bytes);
+            eprintln!("    PROPVARIANT bytes:    {:02X?}", &prop.0[..24]);
+            eprintln!("    prop_align:           {}", (p as usize) % 8);
 
             let device_id: Vec<u16> = VIRTUAL_AUDIO_DEVICE_PROCESS_LOOPBACK
                 .encode_utf16()
