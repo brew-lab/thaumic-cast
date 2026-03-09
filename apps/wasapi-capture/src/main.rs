@@ -396,36 +396,30 @@ mod wasapi {
             };
 
             let params_size = std::mem::size_of::<AUDIOCLIENT_ACTIVATION_PARAMS>();
-            let params_ptr = &params as *const _ as *const u8;
+            let params_ptr = &params as *const _ as *mut u8;
 
-            // Build PROPVARIANT via raw byte writes at known offsets.
-            // PROPVARIANT layout on x64 (24 bytes):
-            //   offset  0: vt       (u16)  = VT_BLOB (65)
-            //   offset  2: reserved (3 × u16, zeroed)
-            //   offset  8: BLOB.cbSize   (u32)
-            //   offset 12: padding       (4 bytes)
-            //   offset 16: BLOB.pBlobData (*mut u8, 8 bytes)
-            // Must be 8-byte aligned (contains pointers).
-            #[repr(C, align(8))]
-            struct AlignedPropVariant([u8; 24]);
+            // Use a real PROPVARIANT from the crate to ensure correct type layout.
+            // ManuallyDrop prevents Drop from calling PropVariantClear on our
+            // stack pointer.
+            let mut prop = std::mem::ManuallyDrop::new(windows_core::PROPVARIANT::default());
+            let prop_raw = &mut *prop as *mut windows_core::PROPVARIANT as *mut u8;
 
-            let mut prop = AlignedPropVariant([0u8; 24]);
-            let p = prop.0.as_mut_ptr();
-            ptr::copy_nonoverlapping(&VT_BLOB as *const u16 as *const u8, p, 2);
-            ptr::copy_nonoverlapping(
-                &(params_size as u32) as *const u32 as *const u8,
-                p.add(8),
-                4,
-            );
-            ptr::copy_nonoverlapping(
-                &params_ptr as *const *const u8 as *const u8,
-                p.add(16),
-                std::mem::size_of::<*const u8>(),
-            );
+            // Write fields at known C PROPVARIANT offsets
+            *(prop_raw as *mut u16) = VT_BLOB; // offset 0: vt
+            *(prop_raw.add(8) as *mut u32) = params_size as u32; // offset 8: blob.cbSize
+            *(prop_raw.add(16) as *mut *mut u8) = params_ptr; // offset 16: blob.pBlobData
 
-            // Dump all values for debugging
             let params_bytes = std::slice::from_raw_parts(params_ptr, params_size);
+            let prop_bytes = std::slice::from_raw_parts(prop_raw, 24);
             eprintln!("  Activation debug:");
+            eprintln!(
+                "    PROPVARIANT size (crate): {}",
+                std::mem::size_of::<windows_core::PROPVARIANT>()
+            );
+            eprintln!(
+                "    PROPVARIANT align (crate): {}",
+                std::mem::align_of::<windows_core::PROPVARIANT>()
+            );
             eprintln!(
                 "    ActivationType value: {:?}",
                 AUDIOCLIENT_ACTIVATION_TYPE_PROCESS_LOOPBACK.0
@@ -437,15 +431,15 @@ mod wasapi {
             eprintln!("    IAudioClient IID:     {:?}", IAudioClient::IID);
             eprintln!("    params_size:          {}", params_size);
             eprintln!("    params bytes:         {:02X?}", params_bytes);
-            eprintln!("    PROPVARIANT bytes:    {:02X?}", &prop.0[..24]);
-            eprintln!("    prop_align:           {}", (p as usize) % 8);
+            eprintln!("    PROPVARIANT bytes:    {:02X?}", prop_bytes);
+            eprintln!("    prop_addr align:      {}", (prop_raw as usize) % 8);
 
             let device_id: Vec<u16> = VIRTUAL_AUDIO_DEVICE_PROCESS_LOOPBACK
                 .encode_utf16()
                 .chain(std::iter::once(0))
                 .collect();
 
-            let prop_ptr = prop.0.as_ptr() as *const windows_core::PROPVARIANT;
+            let prop_ptr = &*prop as *const windows_core::PROPVARIANT;
 
             let _async_op: IActivateAudioInterfaceAsyncOperation = ActivateAudioInterfaceAsync(
                 PCWSTR(device_id.as_ptr()),
