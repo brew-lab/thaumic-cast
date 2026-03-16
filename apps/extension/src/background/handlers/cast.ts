@@ -28,7 +28,14 @@ import { loadExtensionSettings } from '../../lib/settings';
 import { getCachedCodecSupport } from '../../lib/codec-cache';
 import { resolveAudioMode, describeEncoderConfig } from '../../lib/presets';
 import { getCachedState, updateCache } from '../metadata-cache';
-import { registerSession, hasSession, getSession, getSessionCount } from '../session-manager';
+import {
+  registerSession,
+  hasSession,
+  getSession,
+  getSessionCount,
+  hasTabCaptureSessions,
+  hasBrowserCaptureSessions,
+} from '../session-manager';
 import { getSpeakerGroups } from '../sonos-state';
 import { getConnectionState, clearConnectionState } from '../connection-state';
 import { stopCastForTab } from '../sonos-event-handlers';
@@ -98,39 +105,64 @@ export async function handleStartCast(msg: StartCastMessage): Promise<ExtensionR
       `Encoder config (${settings.audioMode} mode): ${describeEncoderConfig(encoderConfig)}`,
     );
 
-    // 5. Capture Tab
-    const mediaStreamId = await new Promise<string>((resolve, reject) => {
-      chrome.tabCapture.getMediaStreamId({ targetTabId: tabId }, (id) => {
-        if (id) resolve(id);
-        else reject(new Error('error_capture_denied'));
-      });
-    });
-
-    // Prevent Chrome from discarding the captured tab (Memory Saver exemption)
-    // This helps maintain stream quality when the tab is backgrounded
-    await chrome.tabs.update(tabId, { autoDiscardable: false });
-    disabledAutoDiscard = true;
-
-    // 6. Connect control WebSocket if not already connected
-    if (!getConnectionState().connected) {
-      await connectWebSocket(app.url);
+    // 5. Prevent mixing capture modes (tab + browser capture cannot coexist)
+    if (settings.captureMode === 'browser' && hasTabCaptureSessions()) {
+      throw new Error('error_stop_tab_capture_first');
+    }
+    if (settings.captureMode === 'tab' && hasBrowserCaptureSessions()) {
+      throw new Error('error_stop_browser_capture_first');
     }
 
-    // 7. Start Offscreen Session
-    const response = await offscreenBroker.startCapture(
-      tab.id,
-      mediaStreamId,
-      encoderConfig,
-      app.url,
-      { keepTabAudible: settings.keepTabAudible },
-    );
-    if (!response) throw new Error('error_offscreen_unavailable');
+    // 6. Branch on capture mode
+    let captureResponse: { success: boolean; streamId?: string; error?: string };
+    let captureMode: 'tab' | 'browser';
+    const cleanupCapture = (id: number): Promise<void> =>
+      offscreenBroker.stopSession(id).then(() => {});
 
-    if (response.success && response.streamId) {
-      // Get cached state to build initial metadata for Sonos display
-      const cachedState = getCachedState(tab.id);
+    if (settings.captureMode === 'browser') {
+      // ─── Browser-wide capture path (WASAPI) ─────────────────────────────
+      captureMode = 'browser';
 
-      // Construct StreamMetadata with source for proper Sonos album display
+      if (!getConnectionState().connected) {
+        await connectWebSocket(app.url);
+      }
+
+      const response = await offscreenBroker.startBrowserCapture(tabId, app.url, encoderConfig);
+      if (!response) throw new Error('error_offscreen_unavailable');
+      captureResponse = response;
+    } else {
+      // ─── Tab capture path (default) ──────────────────────────────────────
+      captureMode = 'tab';
+
+      const mediaStreamId = await new Promise<string>((resolve, reject) => {
+        chrome.tabCapture.getMediaStreamId({ targetTabId: tabId }, (id) => {
+          if (id) resolve(id);
+          else reject(new Error('error_capture_denied'));
+        });
+      });
+
+      await chrome.tabs.update(tabId, { autoDiscardable: false });
+      disabledAutoDiscard = true;
+
+      if (!getConnectionState().connected) {
+        await connectWebSocket(app.url);
+      }
+
+      const response = await offscreenBroker.startCapture(
+        tabId,
+        mediaStreamId,
+        encoderConfig,
+        app.url,
+        { keepTabAudible: settings.keepTabAudible },
+      );
+      if (!response) throw new Error('error_offscreen_unavailable');
+      captureResponse = response;
+    }
+
+    // ─── Shared post-capture flow (playback, session registration) ─────────
+
+    if (captureResponse.success && captureResponse.streamId) {
+      const cachedState = getCachedState(tabId);
       const initialMetadata: StreamMetadata | undefined = cachedState?.metadata
         ? {
             title: cachedState.metadata.title,
@@ -141,10 +173,8 @@ export async function handleStartCast(msg: StartCastMessage): Promise<ExtensionR
           ? { source: cachedState.source }
           : undefined;
 
-      // 8. Start playback via WebSocket (waits for STREAM_READY internally)
-      // Include initial metadata so Sonos displays correct info immediately
       const playbackResponse = await offscreenBroker.startPlayback(
-        tab.id,
+        tabId,
         speakerIps,
         initialMetadata,
         settings.syncSpeakers,
@@ -152,53 +182,43 @@ export async function handleStartCast(msg: StartCastMessage): Promise<ExtensionR
       );
       if (!playbackResponse) throw new Error('error_offscreen_unavailable');
 
-      // Filter successful results for session registration
       const successfulResults = playbackResponse.results.filter((r) => r.success);
-
       if (successfulResults.length === 0) {
-        // All speakers failed - clean up the capture
         log.error('All playback attempts failed, cleaning up capture');
-        await offscreenBroker.stopCapture(tab.id);
+        await cleanupCapture(tabId);
         throw new Error('error_playback_failed');
       }
 
-      // Log partial failures
-      const failedResults = playbackResponse.results.filter((r) => !r.success);
-      if (failedResults.length > 0) {
-        for (const failed of failedResults) {
-          log.warn(`Playback failed on ${failed.speakerIp}: ${failed.error}`);
-        }
+      for (const failed of playbackResponse.results.filter((r) => !r.success)) {
+        log.warn(`Playback failed on ${failed.speakerIp}: ${failed.error}`);
       }
 
-      // Build arrays of successful speakers using domain model (sorted by name for consistent UI)
       const speakerGroups = getSpeakerGroups();
       const sortedResults = speakerGroups.sortByGroupName(successfulResults, (r) => r.speakerIp);
       const successfulIps = sortedResults.map((r) => r.speakerIp);
       const successfulNames = sortedResults.map((r) => speakerGroups.getGroupName(r.speakerIp));
 
-      // Derive source from tab URL for cache
       const source = getSourceFromUrl(tab.url);
-
-      // Ensure cache has tab info for ActiveCast display (even without MediaSession metadata)
-      if (!getCachedState(tab.id)) {
-        updateCache(tab.id, { title: tab.title, favIconUrl: tab.favIconUrl, source }, null);
+      if (!getCachedState(tabId)) {
+        updateCache(tabId, { title: tab.title, favIconUrl: tab.favIconUrl, source }, null);
       }
 
-      // Register the session with successful speakers only
       registerSession(
-        tab.id,
-        response.streamId,
+        tabId,
+        captureResponse.streamId,
         successfulIps,
         successfulNames,
         encoderConfig,
         settings.syncSpeakers,
+        captureMode,
       );
 
       return { success: true };
     } else {
-      // Offscreen capture failed - re-enable auto-discard since we won't register a session
-      chrome.tabs.update(tabId, { autoDiscardable: true }).catch(() => {});
-      return response;
+      if (disabledAutoDiscard) {
+        chrome.tabs.update(tabId, { autoDiscardable: true }).catch(() => {});
+      }
+      return captureResponse;
     }
   } catch (err) {
     // Re-enable auto-discard if we disabled it but failed before registering session

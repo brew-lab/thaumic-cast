@@ -1,11 +1,18 @@
 /**
  * Stream Session Module
  *
- * Manages audio capture sessions from browser tabs.
+ * Manages audio capture sessions for both tab capture and browser-wide WASAPI capture.
+ *
+ * Tab capture mode:
+ *   AudioWorklet → SharedArrayBuffer → Worker (drain + encode + WebSocket send)
+ *
+ * Browser capture mode:
+ *   Worker manages WS lifecycle only — server captures audio via WASAPI.
+ *   No AudioContext, AudioWorklet, or SharedArrayBuffer.
  *
  * Responsibilities:
- * - Audio pipeline setup (AudioContext, Worklet)
- * - Worker lifecycle for encoding/streaming
+ * - Audio pipeline setup (tab capture only)
+ * - Worker lifecycle for encoding/streaming or WS-only control
  * - Session health tracking
  * - Playback coordination with Sonos
  *
@@ -23,6 +30,9 @@ import type { WorkerOutboundMessage } from './worker-messages';
 
 const log = createLogger('Offscreen');
 
+/** Maximum time for session initialization before timeout (ms). */
+const INIT_TIMEOUT_MS = 15_000;
+
 /** Interval for checking worklet heartbeat (ms). */
 const WORKLET_HEARTBEAT_CHECK_INTERVAL = 2000;
 
@@ -39,13 +49,16 @@ const HEALTHY_STATS_LOG_INTERVAL = 30000;
 const KEEP_AUDIBLE_GAIN = 0.0001;
 
 /**
- * Manages an active capture session from a browser tab.
+ * Manages an active capture session.
  *
- * The real-time audio path runs entirely in a Worker:
+ * In tab capture mode, the real-time audio path runs entirely in a Worker:
  *   AudioWorklet → SharedArrayBuffer → Worker (drain + encode + WebSocket send)
  *
+ * In browser capture mode, the Worker only manages WS lifecycle:
+ *   Worker (WebSocket control only) — server captures via WASAPI.
+ *
  * Main thread only handles:
- *   - Audio pipeline setup (AudioContext, Worklet)
+ *   - Audio pipeline setup (tab capture only)
  *   - Worker lifecycle management
  *   - Receiving status updates from Worker
  */
@@ -116,27 +129,110 @@ export class StreamSession {
   /** Callback when worker disconnects (for cleanup coordination). */
   private onDisconnected?: () => void;
 
+  /** Callback when server reports a capture error (browser capture mode only). */
+  private onError?: (error: string, reason?: string) => void;
+
   /** Whether to play audio at low volume to prevent Chrome throttling. */
   private keepTabAudible: boolean;
 
+  /** Capture mode: 'tab' for tab audio, 'browser' for WASAPI browser-wide capture. */
+  private captureMode: 'tab' | 'browser';
+
+  /** Media stream for tab capture (null in browser capture mode). */
+  private mediaStream: MediaStream | null;
+
+  /** Encoder config passed to the Worker. */
+  private encoderConfig: EncoderConfig;
+
+  /** Desktop app base URL. */
+  private baseUrl: string;
+
+  /** Browser executable name for PID lookup (browser capture mode only). */
+  private browserName?: string;
+
   /**
-   * Creates a new StreamSession.
-   * @param mediaStream - The captured media stream
+   * Creates a StreamSession for tab audio capture.
+   * @param mediaStream - The captured media stream from chrome.tabCapture
    * @param encoderConfig - Audio encoder configuration
    * @param baseUrl - Desktop app base URL
    * @param onDisconnected - Optional callback when worker WebSocket disconnects
    * @param options - Additional session options
    * @param options.keepTabAudible - Play audio at low volume to prevent Chrome throttling
    */
-  constructor(
-    private mediaStream: MediaStream,
-    private encoderConfig: EncoderConfig,
-    private baseUrl: string,
+  static forTabCapture(
+    mediaStream: MediaStream,
+    encoderConfig: EncoderConfig,
+    baseUrl: string,
     onDisconnected?: () => void,
     options?: { keepTabAudible?: boolean },
-  ) {
-    this.onDisconnected = onDisconnected;
-    this.keepTabAudible = options?.keepTabAudible ?? false;
+  ): StreamSession {
+    return new StreamSession({
+      captureMode: 'tab',
+      mediaStream,
+      encoderConfig,
+      baseUrl,
+      onDisconnected,
+      keepTabAudible: options?.keepTabAudible,
+    });
+  }
+
+  /**
+   * Creates a StreamSession for browser-wide WASAPI capture.
+   * The Worker manages WS lifecycle only — no local audio pipeline.
+   * @param encoderConfig - Audio encoder configuration
+   * @param baseUrl - Desktop app base URL
+   * @param onDisconnected - Optional callback when worker WebSocket disconnects
+   * @param onError - Optional callback when server reports a capture error
+   * @param browserName - Optional browser executable name for PID lookup
+   */
+  static forBrowserCapture(
+    encoderConfig: EncoderConfig,
+    baseUrl: string,
+    onDisconnected?: () => void,
+    onError?: (error: string, reason?: string) => void,
+    browserName?: string,
+  ): StreamSession {
+    return new StreamSession({
+      captureMode: 'browser',
+      mediaStream: null,
+      encoderConfig,
+      baseUrl,
+      onDisconnected,
+      onError,
+      browserName,
+    });
+  }
+
+  /**
+   *
+   * @param config
+   * @param config.captureMode
+   * @param config.mediaStream
+   * @param config.encoderConfig
+   * @param config.baseUrl
+   * @param config.onDisconnected
+   * @param config.onError
+   * @param config.keepTabAudible
+   * @param config.browserName
+   */
+  private constructor(config: {
+    captureMode: 'tab' | 'browser';
+    mediaStream: MediaStream | null;
+    encoderConfig: EncoderConfig;
+    baseUrl: string;
+    onDisconnected?: () => void;
+    onError?: (error: string, reason?: string) => void;
+    keepTabAudible?: boolean;
+    browserName?: string;
+  }) {
+    this.captureMode = config.captureMode;
+    this.mediaStream = config.mediaStream;
+    this.encoderConfig = config.encoderConfig;
+    this.baseUrl = config.baseUrl;
+    this.onDisconnected = config.onDisconnected;
+    this.onError = config.onError;
+    this.keepTabAudible = config.keepTabAudible ?? false;
+    this.browserName = config.browserName;
 
     this.streamReadyPromise = new Promise<void>((resolve) => {
       this.streamReadyResolve = resolve;
@@ -144,12 +240,22 @@ export class StreamSession {
   }
 
   /**
-   * Initializes the session: sets up audio pipeline and starts the Worker.
+   * Initializes the session: sets up audio pipeline (tab only) and starts the Worker.
    */
   async init(): Promise<void> {
-    try {
-      await this.setupAudioPipeline();
+    const initWork = async (): Promise<void> => {
+      if (this.captureMode === 'tab') {
+        await this.setupAudioPipeline();
+      }
       await this.startWorker();
+    };
+
+    const timeoutPromise = new Promise<never>((_, reject) => {
+      setTimeout(() => reject(new Error('Session init timed out')), INIT_TIMEOUT_MS);
+    });
+
+    try {
+      await Promise.race([initWork(), timeoutPromise]);
     } catch (err) {
       log.error('Failed to initialize session', err);
       this.stop();
@@ -208,7 +314,7 @@ export class StreamSession {
     const workletUrl = chrome.runtime.getURL('pcm-processor.js');
     await this.audioContext.audioWorklet.addModule(workletUrl);
 
-    this.sourceNode = this.audioContext.createMediaStreamSource(this.mediaStream);
+    this.sourceNode = this.audioContext.createMediaStreamSource(this.mediaStream!);
     // Always receive stereo input - the processor handles mono downmixing.
     // Using channelCount: 1 with 'discrete' interpretation would drop the right
     // channel before it reaches the processor, resulting in left-only output.
@@ -287,7 +393,7 @@ export class StreamSession {
     log.info(`AudioContext state: ${this.audioContext.state}`);
 
     // Set up MediaStream track monitoring
-    const audioTracks = this.mediaStream.getAudioTracks();
+    const audioTracks = this.mediaStream!.getAudioTracks();
     log.info(`MediaStream has ${audioTracks.length} audio track(s)`);
 
     for (const track of audioTracks) {
@@ -369,6 +475,7 @@ export class StreamSession {
 
   /**
    * Starts the consumer Worker which handles encoding and WebSocket communication.
+   * In browser capture mode, the Worker only manages WS lifecycle (no audio encoding).
    */
   private async startWorker(): Promise<void> {
     const wsUrl = this.baseUrl.replace(/^http/, 'ws') + '/ws';
@@ -442,6 +549,12 @@ export class StreamSession {
           this.playbackResultsResolver = null;
           break;
 
+        case 'BROWSER_CAPTURE_ERROR':
+          log.error(`Browser capture error: ${msg.error} (${msg.reason})`);
+          this.onError?.(msg.error, msg.reason);
+          this.stop();
+          break;
+
         case 'STATS': {
           // Accumulate drops for session health reporting
           this.totalProducerDrops += msg.producerDroppedSamples ?? 0;
@@ -506,17 +619,26 @@ export class StreamSession {
       this.connectionResolver = null;
     };
 
-    // Initialize the Worker with all config
-    this.consumerWorker.postMessage({
-      type: 'INIT',
-      sab: this.ringBuffer,
-      bufferSize: this.bufferSize,
-      bufferMask: this.bufferMask,
-      headerSize: HEADER_SIZE,
-      sampleRate: this.encoderConfig.sampleRate,
-      encoderConfig: this.encoderConfig,
-      wsUrl,
-    });
+    // Initialize the Worker based on capture mode
+    if (this.captureMode === 'browser') {
+      this.consumerWorker.postMessage({
+        type: 'INIT_BROWSER_CAPTURE',
+        wsUrl,
+        encoderConfig: this.encoderConfig,
+        browserName: this.browserName,
+      });
+    } else {
+      this.consumerWorker.postMessage({
+        type: 'INIT',
+        sab: this.ringBuffer,
+        bufferSize: this.bufferSize,
+        bufferMask: this.bufferMask,
+        headerSize: HEADER_SIZE,
+        sampleRate: this.encoderConfig.sampleRate,
+        encoderConfig: this.encoderConfig,
+        wsUrl,
+      });
+    }
 
     // Wait for connection
     await connectionPromise;
@@ -534,23 +656,26 @@ export class StreamSession {
       this.consumerWorker = null;
     }
 
-    // Remove event listeners before disconnecting
-    if (this.audioContext) {
-      this.audioContext.onstatechange = null;
-    }
+    // Audio pipeline cleanup (tab capture only)
+    if (this.captureMode === 'tab' && this.mediaStream) {
+      // Remove event listeners before disconnecting
+      if (this.audioContext) {
+        this.audioContext.onstatechange = null;
+      }
 
-    // Remove track event listeners
-    for (const track of this.mediaStream.getAudioTracks()) {
-      track.onmute = null;
-      track.onunmute = null;
-      track.onended = null;
-    }
+      // Remove track event listeners
+      for (const track of this.mediaStream.getAudioTracks()) {
+        track.onmute = null;
+        track.onunmute = null;
+        track.onended = null;
+      }
 
-    this.sourceNode?.disconnect();
-    this.workletNode?.disconnect();
-    this.outputGainNode?.disconnect();
-    this.audioContext?.close().catch(noop);
-    this.mediaStream.getTracks().forEach((t) => t.stop());
+      this.sourceNode?.disconnect();
+      this.workletNode?.disconnect();
+      this.outputGainNode?.disconnect();
+      this.audioContext?.close().catch(noop);
+      this.mediaStream.getTracks().forEach((t) => t.stop());
+    }
   }
 
   /**

@@ -71,9 +71,7 @@ enum WsIncoming {
     GetMute { payload: WsSpeakerRequest },
     StartPlayback { payload: StartPlaybackRequest },
     StopPlaybackSpeaker { payload: StopPlaybackSpeakerPayload },
-    StartBrowserCapture {
-        payload: StartBrowserCaptureRequest,
-    },
+    StartBrowserCapture { payload: StartBrowserCaptureRequest },
     StopBrowserCapture,
 }
 
@@ -120,6 +118,8 @@ impl StartPlaybackRequest {
 struct StartBrowserCaptureRequest {
     /// Browser executable name (e.g., "chrome.exe"). Auto-detects if omitted.
     browser_name: Option<String>,
+    /// Encoder config from extension (sample rate, channels, bit depth, etc.).
+    encoder_config: Option<EncoderConfig>,
 }
 
 /// Request payload for volume control via WebSocket.
@@ -236,6 +236,17 @@ enum WsOutgoing {
 struct BrowserCaptureErrorPayload {
     stream_id: String,
     error: String,
+    /// Structured error code for extension dispatch (avoids string matching).
+    reason: CaptureErrorReason,
+}
+
+/// Structured error reason sent to the extension for dispatch.
+#[derive(Serialize)]
+#[serde(rename_all = "snake_case")]
+enum CaptureErrorReason {
+    ProcessExited,
+    DeviceDisconnected,
+    CaptureError,
 }
 
 /// Payload for stream ready notification.
@@ -563,6 +574,21 @@ fn handle_binary_data(state: &AppState, stream_id: &str, data: Bytes) -> bool {
         .unwrap_or(false)
 }
 
+/// Browser capture state grouped together — these always travel as a unit.
+struct BrowserCaptureState {
+    session: Option<crate::services::CaptureStreamSession>,
+    error_rx: Option<tokio::sync::mpsc::Receiver<crate::capture::CaptureError>>,
+}
+
+impl BrowserCaptureState {
+    fn new() -> Self {
+        Self {
+            session: None,
+            error_rx: None,
+        }
+    }
+}
+
 /// Handles a START_BROWSER_CAPTURE message: starts capture and creates a stream.
 ///
 /// Uses the `CaptureSourceFactory` from `AppState` to create a platform-specific
@@ -573,11 +599,11 @@ async fn handle_start_browser_capture(
     state: &AppState,
     sender: &mut futures::stream::SplitSink<WebSocket, Message>,
     stream_guard: &mut Option<StreamGuard>,
-    capture_session: &mut Option<crate::services::CaptureStreamSession>,
+    capture: &mut BrowserCaptureState,
     payload: StartBrowserCaptureRequest,
 ) {
     // Reject if already capturing
-    if capture_session.is_some() {
+    if capture.session.is_some() {
         let msg = WsOutgoing::Error {
             message: "Browser capture already active on this connection".into(),
         };
@@ -615,25 +641,43 @@ async fn handle_start_browser_capture(
         }
     };
 
+    // Parse stream config from encoder config (same validation as tab capture handshake)
+    let stream_config = match parse_stream_config(&HandshakeRequest {
+        codec: None,
+        encoder_config: payload.encoder_config,
+    }) {
+        Ok(c) => c,
+        Err(e) => {
+            let msg = WsOutgoing::Error {
+                message: format!("Invalid encoder config: {}", e),
+            };
+            if let Some(msg) = msg.to_message() {
+                let _ = sender.send(msg).await;
+            }
+            return;
+        }
+    };
+
     let metadata = StreamMetadata {
         title: Some("Browser Audio".into()),
         source: payload.browser_name.clone(),
         ..Default::default()
     };
 
-    match state
-        .stream_coordinator
-        .start_capture_stream(source, Some(metadata))
-    {
-        Ok(session) => {
+    match state.stream_coordinator.start_capture_stream(
+        source,
+        stream_config.codec,
+        stream_config.audio_format,
+        stream_config.streaming_buffer_ms,
+        stream_config.frame_duration_ms,
+        Some(metadata),
+    ) {
+        Ok(mut session) => {
             let stream_id = session.stream_id.clone();
             let ready = Arc::clone(&session.ready_notify);
 
             // Create stream guard for RAII cleanup
-            let guard = StreamGuard::new(
-                stream_id.clone(),
-                Arc::clone(&state.stream_coordinator),
-            );
+            let guard = StreamGuard::new(stream_id.clone(), Arc::clone(&state.stream_coordinator));
 
             // Send handshake ack with the stream ID
             let ack = WsOutgoing::HandshakeAck {
@@ -646,13 +690,13 @@ async fn handle_start_browser_capture(
             }
 
             *stream_guard = Some(guard);
-            *capture_session = Some(session);
+
+            // Extract the error receiver for monitoring in the select loop
+            capture.error_rx = session.handle.errors.take();
+            capture.session = Some(session);
 
             // Wait for first audio frame (with timeout)
-            let ready_result = tokio::time::timeout(
-                Duration::from_secs(5),
-                ready.notified(),
-            ).await;
+            let ready_result = tokio::time::timeout(Duration::from_secs(5), ready.notified()).await;
 
             if ready_result.is_ok() {
                 if let Some(stream) = state.stream_coordinator.get_stream(&stream_id) {
@@ -688,10 +732,14 @@ async fn handle_start_browser_capture(
 async fn handle_stop_browser_capture(
     sender: &mut futures::stream::SplitSink<WebSocket, Message>,
     stream_guard: &mut Option<StreamGuard>,
-    capture_session: &mut Option<crate::services::CaptureStreamSession>,
+    capture: &mut BrowserCaptureState,
 ) {
-    if let Some(session) = capture_session.take() {
-        log::info!("[WS] Stopping browser capture for stream {}", session.stream_id);
+    if let Some(session) = capture.session.take() {
+        log::info!(
+            "[WS] Stopping browser capture for stream {}",
+            session.stream_id
+        );
+        capture.error_rx = None;
         session.handle.stop_and_wait();
         // StreamGuard drop will clean up the stream
         stream_guard.take();
@@ -804,7 +852,7 @@ pub async fn ws_handler(ws: WebSocketUpgrade, State(state): State<AppState>) -> 
 async fn handle_ws(socket: WebSocket, state: AppState) {
     let (mut sender, mut receiver) = socket.split();
     let mut stream_guard: Option<StreamGuard> = None;
-    let mut capture_session: Option<crate::services::CaptureStreamSession> = None;
+    let mut capture = BrowserCaptureState::new();
     let mut broadcast_rx = state.event_bridge.subscribe();
     let mut last_activity = Instant::now();
     let mut latency_monitoring = false;
@@ -973,7 +1021,7 @@ async fn handle_ws(socket: WebSocket, state: AppState) {
                                     &state,
                                     &mut sender,
                                     &mut stream_guard,
-                                    &mut capture_session,
+                                    &mut capture,
                                     payload,
                                 ).await;
                             }
@@ -981,7 +1029,7 @@ async fn handle_ws(socket: WebSocket, state: AppState) {
                                 handle_stop_browser_capture(
                                     &mut sender,
                                     &mut stream_guard,
-                                    &mut capture_session,
+                                    &mut capture,
                                 ).await;
                             }
                             Err(_) => {} // Unknown message type, ignore
@@ -1018,6 +1066,41 @@ async fn handle_ws(socket: WebSocket, state: AppState) {
                     }
                 }
             }
+            // Monitor browser capture errors (process exit, device disconnected, etc.)
+            capture_err = async {
+                match capture.error_rx.as_mut() {
+                    Some(rx) => rx.recv().await,
+                    None => std::future::pending().await,
+                }
+            } => {
+                if let Some(err) = capture_err {
+                    log::warn!("[WS] Browser capture error: {}", err);
+                    let reason = match &err {
+                        crate::capture::CaptureError::ProcessExited => CaptureErrorReason::ProcessExited,
+                        crate::capture::CaptureError::DeviceDisconnected => CaptureErrorReason::DeviceDisconnected,
+                        _ => CaptureErrorReason::CaptureError,
+                    };
+                    if let Some(ref guard) = stream_guard {
+                        let msg = WsOutgoing::BrowserCaptureError {
+                            payload: BrowserCaptureErrorPayload {
+                                stream_id: guard.id().to_string(),
+                                error: err.to_string(),
+                                reason,
+                            },
+                        };
+                        if let Some(msg) = msg.to_message() {
+                            let _ = sender.send(msg).await;
+                        }
+                    }
+                    // Break to post-loop code for graceful async cleanup
+                    // (latency_monitor.stop_stream + remove_stream_async)
+                    capture.error_rx = None;
+                    if let Some(session) = capture.session.take() {
+                        session.handle.stop_and_wait();
+                    }
+                    break;
+                }
+            }
             // Heartbeat timeout check
             _ = heartbeat_interval.tick() => {
                 if last_activity.elapsed() > Duration::from_secs(WS_HEARTBEAT_TIMEOUT_SECS) {
@@ -1029,7 +1112,7 @@ async fn handle_ws(socket: WebSocket, state: AppState) {
     }
 
     // Stop capture source if active (before stream removal)
-    if let Some(session) = capture_session.take() {
+    if let Some(session) = capture.session.take() {
         session.handle.stop_and_wait();
     }
 

@@ -19,10 +19,10 @@ use windows::Win32::Media::Audio::{
     IActivateAudioInterfaceCompletionHandler, IActivateAudioInterfaceCompletionHandler_Impl,
     IAudioCaptureClient, IAudioClient, AUDCLNT_BUFFERFLAGS_DATA_DISCONTINUITY,
     AUDCLNT_BUFFERFLAGS_SILENT, AUDCLNT_SHAREMODE_SHARED, AUDCLNT_STREAMFLAGS_EVENTCALLBACK,
-    AUDCLNT_STREAMFLAGS_LOOPBACK, AUDIOCLIENT_ACTIVATION_PARAMS,
-    AUDIOCLIENT_ACTIVATION_PARAMS_0, AUDIOCLIENT_ACTIVATION_TYPE_PROCESS_LOOPBACK,
-    AUDIOCLIENT_PROCESS_LOOPBACK_PARAMS, PROCESS_LOOPBACK_MODE_INCLUDE_TARGET_PROCESS_TREE,
-    VIRTUAL_AUDIO_DEVICE_PROCESS_LOOPBACK, WAVEFORMATEX,
+    AUDCLNT_STREAMFLAGS_LOOPBACK, AUDIOCLIENT_ACTIVATION_PARAMS, AUDIOCLIENT_ACTIVATION_PARAMS_0,
+    AUDIOCLIENT_ACTIVATION_TYPE_PROCESS_LOOPBACK, AUDIOCLIENT_PROCESS_LOOPBACK_PARAMS,
+    PROCESS_LOOPBACK_MODE_INCLUDE_TARGET_PROCESS_TREE, VIRTUAL_AUDIO_DEVICE_PROCESS_LOOPBACK,
+    WAVEFORMATEX,
 };
 use windows::Win32::System::Com::StructuredStorage::{
     PROPVARIANT, PROPVARIANT_0, PROPVARIANT_0_0, PROPVARIANT_0_0_0,
@@ -30,7 +30,8 @@ use windows::Win32::System::Com::StructuredStorage::{
 use windows::Win32::System::Com::{CoInitializeEx, CoUninitialize, BLOB, COINIT_MULTITHREADED};
 use windows::Win32::System::Threading::{
     AvRevertMmThreadCharacteristics, AvSetMmThreadCharacteristicsW, AvSetMmThreadPriority,
-    CreateEventW, SetEvent, WaitForSingleObject, AVRT_PRIORITY_HIGH,
+    CreateEventW, OpenProcess, SetEvent, WaitForSingleObject, AVRT_PRIORITY_HIGH,
+    PROCESS_SYNCHRONIZE,
 };
 use windows::Win32::System::Variant::VT_BLOB;
 use windows_core::AsImpl;
@@ -76,7 +77,8 @@ impl IActivateAudioInterfaceCompletionHandler_Impl for CompletionHandler_Impl {
             }
         })();
 
-        *self.result.lock().unwrap() = Some(client_result);
+        // Recover from mutex poisoning rather than panicking across COM boundary
+        *self.result.lock().unwrap_or_else(|e| e.into_inner()) = Some(client_result);
         let _ = unsafe { SetEvent(self.event) };
         Ok(())
     }
@@ -185,12 +187,16 @@ fn capture_thread_inner(
 
     // 3. Initialize with format/flag trial
     let buffer_duration = (buffer_ms as i64) * 10_000; // 100ns units
-    let (audio_client, use_event, channels, sample_rate) =
+    let (audio_client, use_event, channels, sample_rate, bits_per_sample) =
         initialize_audio_client(audio_client, buffer_duration, pid)?;
 
     log::info!(
-        "WASAPI capture initialized: {}Hz, {}ch, buffer={}ms, event={}",
-        sample_rate, channels, buffer_ms, use_event
+        "WASAPI capture initialized: {}Hz, {}ch, {}bit, buffer={}ms, event={}",
+        sample_rate,
+        channels,
+        bits_per_sample,
+        buffer_ms,
+        use_event
     );
 
     // Create capture event if using event-driven mode
@@ -230,10 +236,32 @@ fn capture_thread_inner(
 
     log::info!("WASAPI capture started for PID {}", pid);
 
-    // 6. Capture loop
+    // 6. Open process handle for exit detection
+    // WASAPI keeps returning empty buffers after the process exits, so we must
+    // actively monitor the process handle (becomes signaled on termination).
+    let process_handle = unsafe { OpenProcess(PROCESS_SYNCHRONIZE, false, pid) }
+        .map_err(|e| CaptureError::Platform(format!("OpenProcess({}) failed: {}", pid, e)))?;
+
+    // 7. Capture loop
     let poll_interval = std::time::Duration::from_millis((buffer_ms / 2).max(1) as u64);
+    let mut total_frames: u64 = 0;
+    let mut silent_frames: u64 = 0;
+    let mut empty_callbacks: u64 = 0;
+    let mut stats_timer = std::time::Instant::now();
 
     while !cancel.is_cancelled() {
+        // Check if target process has exited (non-blocking)
+        if unsafe { WaitForSingleObject(process_handle, 0) } == WAIT_OBJECT_0 {
+            log::info!("Target process {} exited, stopping capture", pid);
+            let _ = unsafe { CloseHandle(process_handle) };
+            let _ = unsafe { audio_client.Stop() };
+            revert_mmcss(mmcss_handle);
+            if let Some(evt) = capture_event {
+                let _ = unsafe { CloseHandle(evt) };
+            }
+            return Err(CaptureError::ProcessExited);
+        }
+
         if let Some(evt) = capture_event {
             let wait_result = unsafe { WaitForSingleObject(evt, 200) };
             if wait_result != WAIT_OBJECT_0 {
@@ -244,19 +272,14 @@ fn capture_thread_inner(
         }
 
         // Drain all available packets
+        let mut got_data = false;
         loop {
             let mut buffer: *mut u8 = ptr::null_mut();
             let mut frames_available: u32 = 0;
             let mut flags: u32 = 0;
 
             let hr = unsafe {
-                capture_client.GetBuffer(
-                    &mut buffer,
-                    &mut frames_available,
-                    &mut flags,
-                    None,
-                    None,
-                )
+                capture_client.GetBuffer(&mut buffer, &mut frames_available, &mut flags, None, None)
             };
 
             match hr {
@@ -265,7 +288,7 @@ fn capture_thread_inner(
                     let code = e.code().0 as u32;
                     if code == E_DEVICE_INVALIDATED {
                         log::warn!("Audio device invalidated during capture");
-                        // Cleanup before returning
+                        let _ = unsafe { CloseHandle(process_handle) };
                         let _ = unsafe { audio_client.Stop() };
                         revert_mmcss(mmcss_handle);
                         if let Some(evt) = capture_event {
@@ -282,6 +305,9 @@ fn capture_thread_inner(
                 break;
             }
 
+            got_data = true;
+            total_frames += frames_available as u64;
+
             let buf_flags = BufferFlags {
                 discontinuity: flags & AUDCLNT_BUFFERFLAGS_DATA_DISCONTINUITY.0 as u32 != 0,
                 silent: flags & AUDCLNT_BUFFERFLAGS_SILENT.0 as u32 != 0,
@@ -291,20 +317,68 @@ fn capture_thread_inner(
                 log::warn!("WASAPI discontinuity detected");
             }
 
+            if buf_flags.silent {
+                silent_frames += frames_available as u64;
+            }
+
             let sample_count = frames_available as usize * channels as usize;
             if !buffer.is_null() && sample_count > 0 {
-                let src =
-                    unsafe { std::slice::from_raw_parts(buffer as *const f32, sample_count) };
-                sink.push_audio(src, frames_available, channels, buf_flags);
+                if bits_per_sample == 32 {
+                    // Float32 path (most common)
+                    // WASAPI shared-mode buffers should always be f32-aligned,
+                    // but skip gracefully rather than panicking the capture thread.
+                    if buffer as usize % std::mem::align_of::<f32>() != 0 {
+                        log::error!("WASAPI buffer misaligned, skipping frame");
+                        unsafe {
+                            let _ = capture_client.ReleaseBuffer(frames_available);
+                        }
+                        continue;
+                    }
+                    let src =
+                        unsafe { std::slice::from_raw_parts(buffer as *const f32, sample_count) };
+                    sink.push_audio(src, frames_available, channels, buf_flags);
+                } else {
+                    // PCM16 fallback — convert i16 to f32 before pushing to sink
+                    let src =
+                        unsafe { std::slice::from_raw_parts(buffer as *const i16, sample_count) };
+                    let float_samples: Vec<f32> = src.iter().map(|&s| s as f32 / 32768.0).collect();
+                    sink.push_audio(&float_samples, frames_available, channels, buf_flags);
+                }
             }
 
             unsafe {
                 let _ = capture_client.ReleaseBuffer(frames_available);
             }
         }
+
+        if !got_data {
+            empty_callbacks += 1;
+        }
+
+        // Log stats every 5 seconds
+        if stats_timer.elapsed() >= std::time::Duration::from_secs(5) {
+            let silent_pct = if total_frames > 0 {
+                (silent_frames as f64 / total_frames as f64) * 100.0
+            } else {
+                0.0
+            };
+            log::info!(
+                "WASAPI stats (PID {}): total={}f, silent={}f ({:.1}%), empty_callbacks={}",
+                pid,
+                total_frames,
+                silent_frames,
+                silent_pct,
+                empty_callbacks
+            );
+            total_frames = 0;
+            silent_frames = 0;
+            empty_callbacks = 0;
+            stats_timer = std::time::Instant::now();
+        }
     }
 
-    // 7. Cleanup
+    // 8. Cleanup
+    let _ = unsafe { CloseHandle(process_handle) };
     let _ = unsafe { audio_client.Stop() };
     revert_mmcss(mmcss_handle);
     if let Some(evt) = capture_event {
@@ -325,7 +399,7 @@ fn initialize_audio_client(
     client: IAudioClient,
     buffer_duration: i64,
     pid: u32,
-) -> Result<(IAudioClient, bool, u16, u32), CaptureError> {
+) -> Result<(IAudioClient, bool, u16, u32, u16), CaptureError> {
     let fmt_float32_48k = make_waveformat(WAVE_FORMAT_IEEE_FLOAT, 2, 48000, 32);
     let fmt_float32_44k = make_waveformat(WAVE_FORMAT_IEEE_FLOAT, 2, 44100, 32);
     let fmt_pcm16_48k = make_waveformat(WAVE_FORMAT_PCM, 2, 48000, 16);
@@ -351,7 +425,7 @@ fn initialize_audio_client(
     let mut current_client = client;
     let mut need_reactivate = false;
 
-    for &(fmt, channels, sample_rate, _bits) in formats {
+    for &(fmt, channels, sample_rate, bits) in formats {
         for &(flags, flag_desc) in flag_combos {
             if need_reactivate {
                 current_client = activate_process_loopback(pid)
@@ -373,15 +447,12 @@ fn initialize_audio_client(
             match hr {
                 Ok(()) => {
                     let use_event = (flags & AUDCLNT_STREAMFLAGS_EVENTCALLBACK) != 0;
-                    log::info!("WASAPI initialized with flags={}", flag_desc);
-                    return Ok((current_client, use_event, channels, sample_rate));
+                    log::info!("WASAPI initialized: {}bit, flags={}", bits, flag_desc);
+                    return Ok((current_client, use_event, channels, sample_rate, bits));
                 }
                 Err(e) => {
                     let code = e.code().0 as u32;
-                    log::debug!(
-                        "Initialize failed: flags={} → 0x{:08X}",
-                        flag_desc, code
-                    );
+                    log::debug!("Initialize failed: flags={} → 0x{:08X}", flag_desc, code);
                     if code == E_ALREADY_INITIALIZED {
                         // Client is permanently dead, need fresh one
                         need_reactivate = true;
@@ -397,6 +468,7 @@ fn initialize_audio_client(
 // ─── Process Loopback Activation ────────────────────────────────────────────
 
 fn activate_process_loopback(pid: u32) -> windows::core::Result<IAudioClient> {
+    log::info!("Activating process loopback for PID {}", pid);
     unsafe {
         let event = CreateEventW(None, false, false, None)?;
 
@@ -447,7 +519,11 @@ fn activate_process_loopback(pid: u32) -> windows::core::Result<IAudioClient> {
         // Wait for completion (up to 5 seconds)
         let wait_result = WaitForSingleObject(event, 5000);
 
-        // Close activation event handle to prevent leak
+        // Close activation event handle. If the CompletionHandler fires after
+        // timeout, its SetEvent() on the closed handle simply returns an error
+        // (no crash/UB). The COM runtime releases the handler when its ref
+        // count reaches zero. We never access handler fields after the timeout
+        // return, so there is no data race.
         let _ = CloseHandle(event);
 
         if wait_result != WAIT_OBJECT_0 {
@@ -455,7 +531,7 @@ fn activate_process_loopback(pid: u32) -> windows::core::Result<IAudioClient> {
         }
 
         let inner: &CompletionHandler = handler.as_impl();
-        let guard = inner.result.lock().unwrap();
+        let guard = inner.result.lock().unwrap_or_else(|e| e.into_inner());
         match guard.as_ref() {
             Some(Ok(client)) => Ok(client.clone()),
             Some(Err(e)) => Err(e.clone()),
@@ -470,17 +546,13 @@ fn elevate_thread_mmcss() -> Option<HANDLE> {
     let task_name_wide: Vec<u16> = "Pro Audio\0".encode_utf16().collect();
     let mut task_index: u32 = 0;
 
-    let handle = unsafe {
-        AvSetMmThreadCharacteristicsW(PCWSTR(task_name_wide.as_ptr()), &mut task_index)
-    };
+    let handle =
+        unsafe { AvSetMmThreadCharacteristicsW(PCWSTR(task_name_wide.as_ptr()), &mut task_index) };
 
     match handle {
         Ok(h) => {
             if !h.is_invalid() {
-                log::info!(
-                    "MMCSS: registered 'Pro Audio' (task index: {})",
-                    task_index
-                );
+                log::info!("MMCSS: registered 'Pro Audio' (task index: {})", task_index);
                 let _ = unsafe { AvSetMmThreadPriority(h, AVRT_PRIORITY_HIGH) };
                 Some(h)
             } else {

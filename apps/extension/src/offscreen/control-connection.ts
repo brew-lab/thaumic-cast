@@ -151,7 +151,7 @@ function attemptControlReconnect(): void {
 
   if (controlConnection.reconnectAttempts > MAX_RECONNECT_ATTEMPTS) {
     log.error('Control WS max reconnect attempts exceeded');
-    // Stop all active sessions - desktop is unreachable
+    // Stop all active sessions (tab + browser capture) - desktop is unreachable
     stopAllSessions();
     chrome.runtime.sendMessage({ type: 'WS_PERMANENTLY_DISCONNECTED' }).catch(noop);
     controlConnection = null;

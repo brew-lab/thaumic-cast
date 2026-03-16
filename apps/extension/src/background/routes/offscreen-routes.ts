@@ -19,14 +19,18 @@ import {
 } from '../handlers/connection';
 import { handleSonosEvent } from '../sonos-event-handlers';
 import { handleOffscreenReady } from '../offscreen-manager';
-import { removeSession, hasSession } from '../session-manager';
+import { getSession, removeSession, hasSession } from '../session-manager';
 import {
   WsConnectedMessageSchema,
   SonosEventMessageSchema,
   NetworkEventMessageSchema,
   TopologyEventMessageSchema,
   SessionDisconnectedMessageSchema,
+  BrowserCaptureErrorMessageSchema,
 } from '../../lib/message-schemas';
+import { stopCastForTab } from '../sonos-event-handlers';
+import { notifyPopup } from '../notification-service';
+import type { CastAutoStopReason } from '../../lib/message-schemas';
 
 const log = createLogger('OffscreenRoutes');
 
@@ -82,4 +86,33 @@ export function registerOffscreenRoutes(): void {
 
     return { success: true };
   });
+
+  registerValidatedRoute(
+    'BROWSER_CAPTURE_ERROR',
+    BrowserCaptureErrorMessageSchema,
+    async (validated) => {
+      const { tabId, error, reason: serverReason } = validated;
+
+      if (hasSession(tabId)) {
+        log.warn(`Browser capture error for tab ${tabId}: ${error}`);
+
+        // Use structured reason from server, fall back to generic
+        const reason: CastAutoStopReason = serverReason ?? 'capture_error';
+
+        const session = getSession(tabId);
+        const speakerIp = session?.speakerIps[0] ?? '0.0.0.0';
+
+        await stopCastForTab(tabId);
+
+        notifyPopup({
+          type: 'CAST_AUTO_STOPPED',
+          tabId,
+          speakerIp,
+          reason,
+        });
+      }
+
+      return { success: true };
+    },
+  );
 }

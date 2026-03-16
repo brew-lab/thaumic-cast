@@ -58,8 +58,9 @@ pub struct BufferFlags {
 /// Dropping the handle cancels the capture (via `CancellationToken`).
 /// Call `stop_and_wait()` for graceful shutdown with cleanup confirmation.
 pub struct CaptureHandle {
-    /// Receive async errors (disconnections, device changes, process exit, etc.)
-    pub errors: tokio::sync::mpsc::Receiver<CaptureError>,
+    /// Receive async errors (disconnections, device changes, process exit, etc.).
+    /// Can be `.take()`'d to move the receiver into a monitoring task/select branch.
+    pub errors: Option<tokio::sync::mpsc::Receiver<CaptureError>>,
     cancel: CancellationToken,
     join_handle: Option<std::thread::JoinHandle<()>>,
 }
@@ -72,7 +73,7 @@ impl CaptureHandle {
         join_handle: std::thread::JoinHandle<()>,
     ) -> Self {
         Self {
-            errors,
+            errors: Some(errors),
             cancel,
             join_handle: Some(join_handle),
         }
@@ -84,17 +85,6 @@ impl CaptureHandle {
         if let Some(handle) = self.join_handle.take() {
             let _ = handle.join();
         }
-    }
-
-    /// Signal capture to stop without waiting.
-    pub fn stop(self) {
-        self.cancel.cancel();
-        // join_handle dropped — thread finishes in background
-    }
-
-    /// Returns true if the capture has been cancelled.
-    pub fn is_cancelled(&self) -> bool {
-        self.cancel.is_cancelled()
     }
 }
 

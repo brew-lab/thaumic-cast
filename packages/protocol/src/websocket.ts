@@ -39,6 +39,7 @@ export const WsMessageTypeSchema = z.enum([
   'START_PLAYBACK',
   'PLAYBACK_STARTED',
   'PLAYBACK_ERROR',
+  'BROWSER_CAPTURE_ERROR',
 ]);
 export type WsMessageType = z.infer<typeof WsMessageTypeSchema>;
 
@@ -156,6 +157,26 @@ export const WsPlaybackErrorMessageSchema = z.object({
 export type WsPlaybackErrorMessage = z.infer<typeof WsPlaybackErrorMessageSchema>;
 
 /**
+ * Sent by server when a browser capture error occurs (process exit, device disconnect).
+ * Only relevant for browser-wide WASAPI capture sessions.
+ */
+export const WsBrowserCaptureErrorPayloadSchema = z.object({
+  /** The stream ID associated with the failed capture. */
+  streamId: z.string(),
+  /** Human-readable error description. */
+  error: z.string(),
+  /** Structured error reason code (e.g., 'process_exited', 'device_disconnected'). */
+  reason: z.string(),
+});
+export type WsBrowserCaptureErrorPayload = z.infer<typeof WsBrowserCaptureErrorPayloadSchema>;
+
+export const WsBrowserCaptureErrorMessageSchema = z.object({
+  type: z.literal('BROWSER_CAPTURE_ERROR'),
+  payload: WsBrowserCaptureErrorPayloadSchema,
+});
+export type WsBrowserCaptureErrorMessage = z.infer<typeof WsBrowserCaptureErrorMessageSchema>;
+
+/**
  * Payload for multi-group playback results message.
  * Contains per-speaker success/failure information.
  */
@@ -194,6 +215,7 @@ export const WsMessageSchema = z.discriminatedUnion('type', [
   WsPlaybackStartedMessageSchema,
   WsPlaybackResultsMessageSchema,
   WsPlaybackErrorMessageSchema,
+  WsBrowserCaptureErrorMessageSchema,
 ]);
 export type WsMessage = z.infer<typeof WsMessageSchema>;
 

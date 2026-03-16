@@ -31,8 +31,10 @@ export {
   type RemoveSpeakerMessage,
   StartCaptureMessageSchema,
   type StartCaptureMessage,
-  StopCaptureMessageSchema,
-  type StopCaptureMessage,
+  StopSessionMessageSchema,
+  type StopSessionMessage,
+  StartBrowserCaptureMessageSchema,
+  type StartBrowserCaptureMessage,
   StartPlaybackMessageSchema,
   type StartPlaybackMessage,
   StartPlaybackResponseSchema,
@@ -97,6 +99,8 @@ export {
   type OffscreenReadyMessage,
   SessionDisconnectedMessageSchema,
   type SessionDisconnectedMessage,
+  BrowserCaptureErrorMessageSchema,
+  type BrowserCaptureErrorMessage,
 
   // State update messages
   GetSonosStateMessageSchema,
@@ -216,7 +220,8 @@ import type {
   ContentControlMediaMessage,
   LatencyEventMessage,
   StartCaptureMessage,
-  StopCaptureMessage,
+  StopSessionMessage,
+  StartBrowserCaptureMessage,
   StartPlaybackMessage,
   OffscreenMetadataMessage,
   GetWsStatusMessage,
@@ -231,6 +236,7 @@ import type {
   TopologyEventMessage,
   OffscreenReadyMessage,
   SessionDisconnectedMessage,
+  BrowserCaptureErrorMessage,
 } from './message-schemas';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -292,7 +298,8 @@ export type BackgroundToContentType =
 /** Message types: Background → Offscreen */
 export type BackgroundToOffscreenType =
   | 'START_CAPTURE'
-  | 'STOP_CAPTURE'
+  | 'STOP_SESSION'
+  | 'START_BROWSER_CAPTURE'
   | 'START_PLAYBACK'
   | 'OFFSCREEN_METADATA_UPDATE'
   | 'WS_CONNECT'
@@ -314,7 +321,8 @@ export type OffscreenToBackgroundType =
   | 'NETWORK_EVENT'
   | 'TOPOLOGY_EVENT'
   | 'OFFSCREEN_READY'
-  | 'SESSION_DISCONNECTED';
+  | 'SESSION_DISCONNECTED'
+  | 'BROWSER_CAPTURE_ERROR';
 
 /** Message types: Content broadcast */
 export type ContentBroadcastType = 'VIDEO_SYNC_STATE_CHANGED';
@@ -395,7 +403,8 @@ export type BackgroundToContentMessage =
  */
 export type BackgroundToOffscreenMessage =
   | StartCaptureMessage
-  | StopCaptureMessage
+  | StopSessionMessage
+  | StartBrowserCaptureMessage
   | StartPlaybackMessage
   | OffscreenMetadataMessage
   | WsConnectMessage
@@ -420,7 +429,8 @@ export type OffscreenToBackgroundMessage =
   | NetworkEventMessage
   | TopologyEventMessage
   | OffscreenReadyMessage
-  | SessionDisconnectedMessage;
+  | SessionDisconnectedMessage
+  | BrowserCaptureErrorMessage;
 
 /**
  * Messages broadcast from content script (video sync state).

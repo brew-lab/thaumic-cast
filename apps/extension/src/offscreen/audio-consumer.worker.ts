@@ -142,6 +142,9 @@ const HANDSHAKE_TIMEOUT_MS = 5000;
 // Streaming policy (derived from latencyMode)
 let policy: StreamingPolicy | null = null;
 
+// Browser capture mode (no local audio pipeline — server captures via WASAPI)
+let browserCaptureMode = false;
+
 // Ring buffer state
 let control: Int32Array | null = null;
 let buffer: Float32Array | null = null;
@@ -729,7 +732,18 @@ function maybePostStats(): void {
  * @param encoderConfig - The encoder configuration for the stream
  * @returns A promise resolving to the stream ID
  */
-async function connectWebSocket(wsUrl: string, encoderConfig: EncoderConfig): Promise<string> {
+/** Handshake message to send on WS connect. */
+interface HandshakeMessage {
+  type: string;
+  payload: Record<string, unknown>;
+}
+
+/**
+ *
+ * @param wsUrl
+ * @param handshake
+ */
+async function connectWebSocket(wsUrl: string, handshake: HandshakeMessage): Promise<string> {
   return new Promise((resolve, reject) => {
     log.info(`Connecting to WebSocket: ${wsUrl}`);
 
@@ -747,12 +761,7 @@ async function connectWebSocket(wsUrl: string, encoderConfig: EncoderConfig): Pr
       log.info('WebSocket connected, sending handshake...');
 
       // Send handshake
-      ws.send(
-        JSON.stringify({
-          type: 'HANDSHAKE',
-          payload: { encoderConfig },
-        }),
-      );
+      ws.send(JSON.stringify(handshake));
 
       // Wait for handshake response
       const handshakeTimeout = setTimeout(() => {
@@ -881,6 +890,15 @@ function handleWsMessage(event: MessageEvent): void {
         postToMain({
           type: 'ERROR',
           message: message.payload.message,
+        });
+        break;
+
+      case 'BROWSER_CAPTURE_ERROR':
+        log.error(`Browser capture error: ${message.payload.error} (${message.payload.reason})`);
+        postToMain({
+          type: 'BROWSER_CAPTURE_ERROR',
+          error: message.payload.error,
+          reason: message.payload.reason,
         });
         break;
 
@@ -1226,16 +1244,26 @@ function flushRemaining(): void {
 function cleanup(): void {
   running = false;
 
-  flushRemaining();
+  if (!browserCaptureMode) {
+    flushRemaining();
+  }
 
   stopHeartbeat();
 
-  if (encoder) {
+  if (!browserCaptureMode && encoder) {
     encoder.close();
     encoder = null;
   }
 
   if (socket) {
+    // Send stop message before closing in browser capture mode
+    if (browserCaptureMode && socket.readyState === WebSocket.OPEN) {
+      try {
+        socket.send(JSON.stringify({ type: 'STOP_BROWSER_CAPTURE' }));
+      } catch {
+        /* ignore send errors during shutdown */
+      }
+    }
     socket.onopen = null;
     socket.onclose = null;
     socket.onerror = null;
@@ -1247,12 +1275,15 @@ function cleanup(): void {
   streamId = null;
   policy = null;
 
-  // Reset ramp state
-  needsRampIn = false;
-  lastSamples = null;
-  rampSamples = 0;
+  if (!browserCaptureMode) {
+    // Reset audio-specific state
+    needsRampIn = false;
+    lastSamples = null;
+    rampSamples = 0;
+    resetFrameQueueState();
+  }
 
-  resetFrameQueueState();
+  browserCaptureMode = false;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1348,7 +1379,10 @@ self.onmessage = async (event: MessageEvent<WorkerInboundMessage>) => {
       encoder = await createEncoder(configWithFrameSize);
 
       // Connect WebSocket (sends frame size to server in handshake)
-      const id = await connectWebSocket(wsUrl, configWithFrameSize);
+      const id = await connectWebSocket(wsUrl, {
+        type: 'HANDSHAKE',
+        payload: { encoderConfig: configWithFrameSize },
+      });
 
       running = true;
       postToMain({ type: 'CONNECTED', streamId: id });
@@ -1361,6 +1395,29 @@ self.onmessage = async (event: MessageEvent<WorkerInboundMessage>) => {
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       log.error('Initialization failed:', message);
+      postToMain({ type: 'ERROR', message });
+      cleanup();
+    }
+  }
+
+  if (msg.type === 'INIT_BROWSER_CAPTURE') {
+    const { wsUrl, encoderConfig, browserName } = msg;
+    try {
+      browserCaptureMode = true;
+
+      // No ring buffer, no encoder, no consumeLoop —
+      // server captures audio via WASAPI, Worker just manages WS lifecycle
+      const id = await connectWebSocket(wsUrl, {
+        type: 'START_BROWSER_CAPTURE',
+        payload: { browserName: browserName ?? null, encoderConfig },
+      });
+
+      running = true;
+      postToMain({ type: 'CONNECTED', streamId: id });
+      // Worker is now idle — WS message handler + heartbeat do all the work
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      log.error('Browser capture init failed:', message);
       postToMain({ type: 'ERROR', message });
       cleanup();
     }

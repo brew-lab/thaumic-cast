@@ -69,6 +69,8 @@ interface ActiveCastSession {
   startedAt: number;
   /** Whether synchronized multi-speaker playback is enabled */
   syncSpeakers: boolean;
+  /** Capture mode used for this session */
+  captureMode: 'tab' | 'browser';
 }
 
 /** In-memory storage of active sessions by tab ID */
@@ -104,6 +106,10 @@ const storage = persistenceManager.register<[number, ActiveCastSession][]>(
         if (session.syncSpeakers === undefined) {
           session.syncSpeakers = false;
         }
+        // Default captureMode to 'tab' for sessions created before this field existed
+        if (!session.captureMode) {
+          session.captureMode = 'tab';
+        }
         return [tabId, session] as [number, ActiveCastSession];
       });
 
@@ -131,6 +137,7 @@ const storage = persistenceManager.register<[number, ActiveCastSession][]>(
  * @param speakerNames - Speaker display names (parallel array)
  * @param encoderConfig - Encoder configuration used
  * @param syncSpeakers - Whether synchronized multi-speaker playback is enabled
+ * @param captureMode - Whether this session uses tab or browser-wide capture
  */
 export function registerSession(
   tabId: number,
@@ -139,6 +146,7 @@ export function registerSession(
   speakerNames: string[],
   encoderConfig: EncoderConfig,
   syncSpeakers: boolean,
+  captureMode: 'tab' | 'browser' = 'tab',
 ): void {
   const wasEmpty = sessions.size === 0;
 
@@ -150,6 +158,7 @@ export function registerSession(
     encoderConfig,
     startedAt: Date.now(),
     syncSpeakers,
+    captureMode,
   });
 
   // Request keep-awake on first session to prevent system throttling
@@ -279,6 +288,28 @@ export function getSessionByStreamId(streamId: string): ActiveCastSession | unde
     }
   }
   return undefined;
+}
+
+/**
+ * Checks if any active session uses tab capture mode.
+ * @returns True if at least one tab capture session exists
+ */
+export function hasTabCaptureSessions(): boolean {
+  for (const session of sessions.values()) {
+    if (session.captureMode === 'tab') return true;
+  }
+  return false;
+}
+
+/**
+ * Checks if any active session uses browser-wide capture mode.
+ * @returns True if at least one browser capture session exists
+ */
+export function hasBrowserCaptureSessions(): boolean {
+  for (const session of sessions.values()) {
+    if (session.captureMode === 'browser') return true;
+  }
+  return false;
 }
 
 /**

@@ -29,7 +29,8 @@ export type { SpeakerRemovalReason } from '@thaumic-cast/protocol';
 // Primitive Schemas
 // ─────────────────────────────────────────────────────────────────────────────
 
-/** IPv4 address pattern */
+/** IPv4 address pattern — intentionally permissive (accepts e.g. 999.x.x.x).
+ *  Acceptable because these are server-discovered Sonos speaker IPs, not user input. */
 const IPv4Pattern = /^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/;
 
 /** Valid speaker IP address (IPv4 format) */
@@ -109,13 +110,24 @@ export const StartCaptureMessageSchema = z.object({
 });
 export type StartCaptureMessage = z.infer<typeof StartCaptureMessageSchema>;
 
-export const StopCaptureMessageSchema = z.object({
-  type: z.literal('STOP_CAPTURE'),
+export const StopSessionMessageSchema = z.object({
+  type: z.literal('STOP_SESSION'),
   payload: z.object({
     tabId: TabIdSchema,
   }),
 });
-export type StopCaptureMessage = z.infer<typeof StopCaptureMessageSchema>;
+export type StopSessionMessage = z.infer<typeof StopSessionMessageSchema>;
+
+export const StartBrowserCaptureMessageSchema = z.object({
+  type: z.literal('START_BROWSER_CAPTURE'),
+  payload: z.object({
+    tabId: TabIdSchema,
+    baseUrl: z.string().url(),
+    browserName: z.string().optional(),
+    encoderConfig: EncoderConfigSchema,
+  }),
+});
+export type StartBrowserCaptureMessage = z.infer<typeof StartBrowserCaptureMessageSchema>;
 
 export const StartPlaybackMessageSchema = z.object({
   type: z.literal('START_PLAYBACK'),
@@ -322,6 +334,18 @@ export const SessionDisconnectedMessageSchema = z.object({
 });
 export type SessionDisconnectedMessage = z.infer<typeof SessionDisconnectedMessageSchema>;
 
+/** Capture error reasons that are valid CastAutoStopReason values. */
+const CaptureErrorReasons = ['capture_error', 'process_exited', 'device_disconnected'] as const;
+
+export const BrowserCaptureErrorMessageSchema = z.object({
+  type: z.literal('BROWSER_CAPTURE_ERROR'),
+  tabId: TabIdSchema,
+  error: z.string(),
+  /** Structured error reason from server (avoids string matching). */
+  reason: z.enum(CaptureErrorReasons).optional(),
+});
+export type BrowserCaptureErrorMessage = z.infer<typeof BrowserCaptureErrorMessageSchema>;
+
 // ─────────────────────────────────────────────────────────────────────────────
 // State Update Messages (background → popup)
 // ─────────────────────────────────────────────────────────────────────────────
@@ -376,6 +400,7 @@ export const CastAutoStopReasonSchema = z.enum([
   'speaker_stopped',
   'stream_ended',
   'user_removed',
+  ...CaptureErrorReasons,
 ]);
 export type CastAutoStopReason = z.infer<typeof CastAutoStopReasonSchema>;
 

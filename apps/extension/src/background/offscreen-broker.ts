@@ -70,11 +70,35 @@ class OffscreenBroker {
   }
 
   /**
-   * Stops audio capture for a tab.
-   * @param tabId - The tab ID to stop capturing
+   * Stops the capture session for a tab (works for both tab and browser capture).
+   * @param tabId - The tab ID to stop
    */
-  async stopCapture(tabId: number): Promise<void> {
-    await sendToOffscreen({ type: 'STOP_CAPTURE', payload: { tabId } });
+  async stopSession(tabId: number): Promise<void> {
+    await sendToOffscreen({ type: 'STOP_SESSION', payload: { tabId } });
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────────
+  // Browser-wide Capture (WASAPI)
+  // ─────────────────────────────────────────────────────────────────────────────
+
+  /**
+   * Starts browser-wide WASAPI capture via the desktop app.
+   * @param tabId - The originating tab ID (for session association)
+   * @param baseUrl - The desktop app base URL
+   * @param encoderConfig - The encoder configuration (sample rate, channels, etc.)
+   * @param browserName - Optional browser exe name for PID lookup
+   * @returns The capture response with stream ID on success
+   */
+  async startBrowserCapture(
+    tabId: number,
+    baseUrl: string,
+    encoderConfig: EncoderConfig,
+    browserName?: string,
+  ): Promise<ExtensionResponse | undefined> {
+    return sendToOffscreen<ExtensionResponse>({
+      type: 'START_BROWSER_CAPTURE',
+      payload: { tabId, baseUrl, encoderConfig, browserName },
+    });
   }
 
   // ─────────────────────────────────────────────────────────────────────────────

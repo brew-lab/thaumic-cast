@@ -81,14 +81,21 @@ impl AudioSink for StreamSinkBridge {
         buf.clear();
         buf.reserve(data.len() * 2);
         for &sample in data {
+            // Clamp first to avoid i16 overflow, then scale by 32767 (i16::MAX)
             let clamped = (sample.clamp(-1.0, 1.0) * 32767.0) as i16;
             buf.extend_from_slice(&clamped.to_le_bytes());
         }
 
-        let is_first = self
+        let is_first = match self
             .coordinator
             .push_frame(&self.stream_id, Bytes::copy_from_slice(&buf))
-            .unwrap_or(false);
+        {
+            Some(first) => first,
+            None => {
+                log::warn!("push_frame failed for stream {}", self.stream_id);
+                false
+            }
+        };
 
         if is_first && !self.ready_notified.swap(true, Ordering::SeqCst) {
             self.ready_notify.notify_one();
@@ -374,33 +381,22 @@ impl StreamCoordinator {
     /// via the [`StreamSinkBridge`], which converts Float32 → PCM16 and
     /// calls [`push_frame`].
     ///
-    /// Stream parameters are fixed for WASAPI capture:
-    /// - Codec: PCM (raw WAV)
-    /// - Sample rate: 48kHz
-    /// - Channels: 2 (stereo)
-    /// - Bit depth: 16 (after Float32→PCM16 conversion)
-    /// - Frame duration: 10ms (matches WASAPI buffer cadence)
-    /// - Jitter buffer: 0ms (local capture has minimal jitter)
+    /// Stream parameters come from the client's encoder config (same as tab capture),
+    /// with codec forced to PCM (WASAPI delivers raw audio).
     ///
     /// Returns a [`CaptureStreamSession`] with the stream ID, capture handle,
     /// and a `Notify` that fires when the first audio frame arrives.
     pub fn start_capture_stream(
         self: &Arc<Self>,
         source: Arc<dyn AudioSource>,
+        codec: AudioCodec,
+        audio_format: AudioFormat,
+        streaming_buffer_ms: u64,
+        frame_duration_ms: u32,
         metadata: Option<StreamMetadata>,
     ) -> Result<CaptureStreamSession, String> {
-        use crate::protocol_constants::{DEFAULT_SAMPLE_RATE, DEFAULT_CHANNELS};
-
-        let audio_format = AudioFormat::new(DEFAULT_SAMPLE_RATE, DEFAULT_CHANNELS, 16);
-        let streaming_buffer_ms = 200; // default
-        let frame_duration_ms = 10; // matches WASAPI ~10ms buffer cadence
-
-        let stream_id = self.create_stream(
-            AudioCodec::Pcm,
-            audio_format,
-            streaming_buffer_ms,
-            frame_duration_ms,
-        )?;
+        let stream_id =
+            self.create_stream(codec, audio_format, streaming_buffer_ms, frame_duration_ms)?;
 
         if let Some(meta) = metadata {
             self.update_metadata(&stream_id, meta);
