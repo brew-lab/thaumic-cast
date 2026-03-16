@@ -48,9 +48,18 @@ export interface WorkerMetadataUpdateMessage {
   metadata: StreamMetadata;
 }
 
+/** Initializes the worker in browser capture mode (no local audio pipeline). */
+export interface WorkerInitBrowserCaptureMessage {
+  type: 'INIT_BROWSER_CAPTURE';
+  wsUrl: string;
+  encoderConfig: EncoderConfig;
+  browserName?: string;
+}
+
 /** Union of all messages that can be sent to the worker. */
 export type WorkerInboundMessage =
   | WorkerInitMessage
+  | WorkerInitBrowserCaptureMessage
   | WorkerStopMessage
   | WorkerStartPlaybackMessage
   | WorkerMetadataUpdateMessage;
@@ -58,11 +67,6 @@ export type WorkerInboundMessage =
 // ─────────────────────────────────────────────────────────────────────────────
 // Outbound Messages (Worker → StreamSession)
 // ─────────────────────────────────────────────────────────────────────────────
-
-/** Worker is ready to receive configuration. */
-export interface WorkerReadyMessage {
-  type: 'READY';
-}
 
 /** WebSocket connected to desktop app. */
 export interface WorkerConnectedMessage {
@@ -112,6 +116,13 @@ export interface WorkerPlaybackErrorMessage {
   message: string;
 }
 
+/** Server-side browser capture error (process exit, device disconnect). */
+export interface WorkerBrowserCaptureErrorMessage {
+  type: 'BROWSER_CAPTURE_ERROR';
+  error: string;
+  reason: string;
+}
+
 /** Periodic statistics from the worker. */
 export interface WorkerStatsMessage {
   type: 'STATS';
@@ -143,7 +154,6 @@ export interface WorkerStatsMessage {
 
 /** Union of all messages that can be sent from the worker. */
 export type WorkerOutboundMessage =
-  | WorkerReadyMessage
   | WorkerConnectedMessage
   | WorkerDisconnectedMessage
   | WorkerErrorMessage
@@ -151,4 +161,5 @@ export type WorkerOutboundMessage =
   | WorkerPlaybackStartedMessage
   | WorkerPlaybackResultsMessage
   | WorkerPlaybackErrorMessage
+  | WorkerBrowserCaptureErrorMessage
   | WorkerStatsMessage;

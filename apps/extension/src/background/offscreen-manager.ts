@@ -24,6 +24,9 @@ import { noop } from '../lib/noop';
 
 const log = createLogger('Background');
 
+/** Maximum time to wait for an offscreen message response (ms). */
+const OFFSCREEN_MESSAGE_TIMEOUT_MS = 10_000;
+
 /** Promise to track ongoing offscreen creation to avoid duplicates. */
 let offscreenCreationPromise: Promise<void> | null = null;
 
@@ -39,8 +42,15 @@ let offscreenReadyPromise: Promise<void> | null = null;
  * @returns The response from the offscreen document
  */
 export async function sendToOffscreen<T = unknown>(message: object): Promise<T | undefined> {
+  const timeoutPromise = new Promise<never>((_, reject) =>
+    setTimeout(
+      () => reject(new Error('Offscreen message timed out')),
+      OFFSCREEN_MESSAGE_TIMEOUT_MS,
+    ),
+  );
+
   try {
-    return await chrome.runtime.sendMessage(message);
+    return await Promise.race([chrome.runtime.sendMessage(message), timeoutPromise]);
   } catch (err) {
     const errorMessage = err instanceof Error ? err.message : String(err);
     if (

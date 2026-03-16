@@ -194,6 +194,9 @@ export const ExtensionSettingsSchema = z.object({
 
   // Sync speakers: groups multiple speakers for synchronized playback (default: false)
   syncSpeakers: z.boolean().default(false),
+
+  // Capture mode: 'tab' for per-tab capture, 'browser' for browser-wide WASAPI capture
+  captureMode: z.enum(['tab', 'browser']).default('tab'),
 });
 export type ExtensionSettings = z.infer<typeof ExtensionSettingsSchema>;
 
@@ -218,6 +221,7 @@ const DEFAULT_EXTENSION_SETTINGS: ExtensionSettings = {
   videoSyncEnabled: false,
   keepTabAudible: false,
   syncSpeakers: false,
+  captureMode: 'tab' as const,
 };
 
 /**

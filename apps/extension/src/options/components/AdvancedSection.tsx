@@ -18,6 +18,15 @@ interface AdvancedSectionProps {
  * @param props.onUpdate - Callback to update settings
  * @returns The advanced section element
  */
+/** Browser capture requires WASAPI (Windows only). */
+const isWindows = navigator.userAgent.includes('Windows');
+
+/**
+ *
+ * @param root0
+ * @param root0.settings
+ * @param root0.onUpdate
+ */
 export function AdvancedSection({ settings, onUpdate }: AdvancedSectionProps): JSX.Element {
   const { t } = useTranslation();
 
@@ -32,6 +41,10 @@ export function AdvancedSection({ settings, onUpdate }: AdvancedSectionProps): J
   const handleSyncSpeakersToggle = useCallback(async () => {
     await onUpdate({ syncSpeakers: !settings.syncSpeakers });
   }, [settings.syncSpeakers, onUpdate]);
+
+  const handleCaptureModeToggle = useCallback(async () => {
+    await onUpdate({ captureMode: settings.captureMode === 'browser' ? 'tab' : 'browser' });
+  }, [settings.captureMode, onUpdate]);
 
   return (
     <Card title={t('advanced_section_title')}>
@@ -83,6 +96,24 @@ export function AdvancedSection({ settings, onUpdate }: AdvancedSectionProps): J
             </span>
           </div>
         </label>
+
+        {isWindows && (
+          <label className={styles.radioOption}>
+            <input
+              type="checkbox"
+              className={styles.radioInput}
+              checked={settings.captureMode === 'browser'}
+              onChange={handleCaptureModeToggle}
+              aria-describedby="capture-mode-desc"
+            />
+            <div className={styles.radioContent}>
+              <span className={styles.radioLabel}>{t('capture_mode_browser_enable')}</span>
+              <span id="capture-mode-desc" className={styles.radioDesc}>
+                {t('capture_mode_browser_description')}
+              </span>
+            </div>
+          </label>
+        )}
       </div>
     </Card>
   );

@@ -354,20 +354,25 @@ export async function stopCastForTab(tabId: number): Promise<void> {
   // Clear tracked media action state for this tab
   clearTabMediaActionState(tabId);
 
-  // Re-enable auto-discardable now that cast is stopping
-  // (was disabled during cast to prevent Memory Saver from discarding the tab)
-  chrome.tabs.update(tabId, { autoDiscardable: true }).catch(noop);
+  // Look up session before removal to determine capture mode
+  const session = getSession(tabId);
+  const captureMode = session?.captureMode ?? 'tab';
 
-  // Disable video sync before stopping capture
-  chrome.tabs
-    .sendMessage(tabId, {
-      type: 'SET_VIDEO_SYNC_ENABLED',
-      payload: { tabId, enabled: false },
-    })
-    .catch(noop);
+  // Only tab capture needs these — browser capture doesn't touch tab state
+  if (captureMode === 'tab') {
+    // Re-enable auto-discardable (was disabled to prevent Memory Saver)
+    chrome.tabs.update(tabId, { autoDiscardable: true }).catch(noop);
+    // Disable video sync before stopping capture
+    chrome.tabs
+      .sendMessage(tabId, {
+        type: 'SET_VIDEO_SYNC_ENABLED',
+        payload: { tabId, enabled: false },
+      })
+      .catch(noop);
+  }
 
-  // Send stop message to offscreen
-  await offscreenBroker.stopCapture(tabId).catch(noop);
+  // Send stop message to offscreen (unified for both capture modes)
+  await offscreenBroker.stopSession(tabId).catch(noop);
 
   // Remove session from manager
   removeSession(tabId);
@@ -396,6 +401,13 @@ async function handleSpeakerRemoval(
   reason: SpeakerRemovalReason,
   preResolvedSession?: { tabId: number; speakerIps: string[] },
 ): Promise<void> {
+  // Clear any pending transport debounce timer for the removed speaker
+  const pendingTimer = transportDebounceTimers.get(speakerIp);
+  if (pendingTimer) {
+    clearTimeout(pendingTimer);
+    transportDebounceTimers.delete(speakerIp);
+  }
+
   // Dedupe rapid removals from multiple event sources (GENA + stream events)
   const lastRemoval = recentlyRemovedSpeakers.get(speakerIp);
   if (lastRemoval && Date.now() - lastRemoval < REMOVAL_DEDUPE_MS) {

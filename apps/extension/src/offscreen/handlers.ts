@@ -24,7 +24,8 @@ import {
   SetMuteMessageSchema,
   StopPlaybackSpeakerMessageSchema,
   StartCaptureMessageSchema,
-  StopCaptureMessageSchema,
+  StopSessionMessageSchema,
+  StartBrowserCaptureMessageSchema,
   StartPlaybackMessageSchema,
   OffscreenMetadataMessageSchema,
   type StartPlaybackResponse,
@@ -194,6 +195,67 @@ export function setupMessageHandlers(): void {
     }
 
     // ─────────────────────────────────────────────────────────────────────────
+    // Browser-wide Capture Messages (WASAPI)
+    // ─────────────────────────────────────────────────────────────────────────
+
+    if (msg.type === 'START_BROWSER_CAPTURE') {
+      try {
+        const validated = StartBrowserCaptureMessageSchema.parse(msg);
+        const { tabId, baseUrl, browserName, encoderConfig } = validated.payload;
+
+        // Stop existing session for this tab
+        const existing = activeSessions.get(tabId);
+        if (existing) {
+          existing.stop();
+          activeSessions.delete(tabId);
+        }
+
+        // Enforce global offscreen limit
+        if (activeSessions.size >= MAX_OFFSCREEN_SESSIONS) {
+          sendResponse({ success: false, error: 'error_max_sessions' });
+          return true;
+        }
+
+        const onDisconnected = (): void => {
+          activeSessions.delete(tabId);
+          chrome.runtime.sendMessage({ type: 'SESSION_DISCONNECTED', tabId }).catch(noop);
+        };
+
+        const onError = (error: string, reason?: string): void => {
+          activeSessions.delete(tabId);
+          chrome.runtime
+            .sendMessage({ type: 'BROWSER_CAPTURE_ERROR', tabId, error, reason })
+            .catch(noop);
+        };
+
+        const session = StreamSession.forBrowserCapture(
+          encoderConfig,
+          baseUrl,
+          onDisconnected,
+          onError,
+          browserName,
+        );
+
+        session
+          .init()
+          .then(() => {
+            activeSessions.set(tabId, session);
+            sendResponse({ success: true, streamId: session.streamId });
+          })
+          .catch((err) => {
+            sendResponse({
+              success: false,
+              error: err instanceof Error ? err.message : String(err),
+            });
+          });
+      } catch (err) {
+        log.error('START_BROWSER_CAPTURE validation failed:', err);
+        sendResponse({ success: false, error: String(err) });
+      }
+      return true;
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
     // Audio Capture Messages
     // ─────────────────────────────────────────────────────────────────────────
 
@@ -237,9 +299,15 @@ export function setupMessageHandlers(): void {
               chrome.runtime.sendMessage({ type: 'SESSION_DISCONNECTED', tabId }).catch(noop);
             };
 
-            const session = new StreamSession(stream, encoderConfig, baseUrl, onDisconnected, {
-              keepTabAudible,
-            });
+            const session = StreamSession.forTabCapture(
+              stream,
+              encoderConfig,
+              baseUrl,
+              onDisconnected,
+              {
+                keepTabAudible,
+              },
+            );
             try {
               await session.init();
               activeSessions.set(tabId, session);
@@ -261,9 +329,9 @@ export function setupMessageHandlers(): void {
       return true;
     }
 
-    if (msg.type === 'STOP_CAPTURE') {
+    if (msg.type === 'STOP_SESSION') {
       try {
-        const validated = StopCaptureMessageSchema.parse(msg);
+        const validated = StopSessionMessageSchema.parse(msg);
         const session = activeSessions.get(validated.payload.tabId);
         if (session) {
           session.stop();
@@ -271,7 +339,7 @@ export function setupMessageHandlers(): void {
         }
         sendResponse({ success: true });
       } catch (err) {
-        log.error('STOP_CAPTURE validation failed:', err);
+        log.error('STOP_SESSION validation failed:', err);
         sendResponse({ success: false, error: String(err) });
       }
       return true;
@@ -287,8 +355,9 @@ export function setupMessageHandlers(): void {
           syncSpeakers = false,
           videoSyncEnabled,
         } = validated.payload;
-        const session = activeSessions.get(tabId);
 
+        // Resolve session from either registry
+        const session = activeSessions.get(tabId);
         if (!session) {
           const response: StartPlaybackResponse = {
             success: false,
@@ -299,17 +368,12 @@ export function setupMessageHandlers(): void {
           return true;
         }
 
-        // Wait for stream to be ready, then start playback with initial metadata
         session
           .waitForReady()
           .then(() => session.startPlayback(speakerIps, metadata, syncSpeakers, videoSyncEnabled))
           .then((results) => {
-            // Consider success if at least one speaker started
             const anySuccess = results.some((r) => r.success);
-            const response: StartPlaybackResponse = {
-              success: anySuccess,
-              results,
-            };
+            const response: StartPlaybackResponse = { success: anySuccess, results };
             sendResponse(response);
           })
           .catch((err) => {
@@ -335,10 +399,9 @@ export function setupMessageHandlers(): void {
     if (msg.type === 'OFFSCREEN_METADATA_UPDATE') {
       try {
         const validated = OffscreenMetadataMessageSchema.parse(msg);
-        const session = activeSessions.get(validated.payload.tabId);
-        if (session) {
-          session.updateMetadata(validated.payload.metadata);
-        }
+        const { tabId, metadata } = validated.payload;
+        const session = activeSessions.get(tabId);
+        session?.updateMetadata(metadata);
         sendResponse({ success: true });
       } catch (err) {
         log.error('OFFSCREEN_METADATA_UPDATE validation failed:', err);
