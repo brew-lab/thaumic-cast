@@ -48,12 +48,14 @@ impl CaptureSourceFactory for WasapiCaptureFactory {
                 browsers
                     .first()
                     .map(|b| {
-                        log::info!("[Capture] Auto-detected browser: {} (PID {})", b.name, b.pid);
+                        log::info!(
+                            "[Capture] Auto-detected browser: {} (PID {})",
+                            b.name,
+                            b.pid
+                        );
                         b.pid
                     })
-                    .ok_or_else(|| {
-                        CaptureError::Platform("No running browser detected".into())
-                    })?
+                    .ok_or_else(|| CaptureError::Platform("No running browser detected".into()))?
             }
         };
 
