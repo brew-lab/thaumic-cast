@@ -255,10 +255,7 @@ mod cli {
             cli.buffer_ms, buffer_samples
         );
         eprintln!("  Callbacks:        {}", timing.callbacks);
-        eprintln!(
-            "  Frames captured:  {}",
-            format_number(timing.total_frames)
-        );
+        eprintln!("  Frames captured:  {}", format_number(timing.total_frames));
         eprintln!("  Expected frames:  {}", format_number(frames_expected));
         eprintln!("  Discontinuities:  {}", timing.discontinuities);
         eprintln!("  Silent buffers:   {}", timing.silent_buffers);
