@@ -1,5 +1,93 @@
 # @thaumic-cast/protocol
 
+## 0.4.0
+
+### Minor Changes
+
+- [#71](https://github.com/brew-lab/thaumic-cast/pull/71) [`a01a1c4`](https://github.com/brew-lab/thaumic-cast/commit/a01a1c4bd61ff52bddb5d244ca8361fd0a127351) Thanks [@skezo](https://github.com/skezo)! - Add fixed volume detection for Sonos speakers with line-level output
+
+  Sonos devices like CONNECT and Port have fixed line-level output where volume cannot be adjusted via API. This change detects and handles these speakers:
+  - Parse `OutputFixed` from GENA GroupRenderingControl notifications
+  - Propagate `fixed` state through the event system alongside volume updates
+  - Disable volume controls in the UI for fixed-output speakers
+  - Add `disabled` prop to `VolumeControl` and `SpeakerVolumeRow` components
+
+  When a speaker has fixed volume, the volume slider and mute button are visually disabled and non-interactive.
+
+- [#90](https://github.com/brew-lab/thaumic-cast/pull/90) [`facd9e8`](https://github.com/brew-lab/thaumic-cast/commit/facd9e8d5814807947193c2fd8e80b566223bb38) Thanks [@skezo](https://github.com/skezo)! - Add WASAPI process-specific loopback capture for browser-wide audio streaming on Windows
+
+  Instead of capturing audio per-tab via the Chrome `tabCapture` API, this adds an alternative mode that captures all audio from the browser process at the OS level using Windows Audio Session API (WASAPI) process loopback. Requires Windows 10 build 20348+.
+
+  **New packages:**
+  - `thaumic-capture` crate: platform-gated WASAPI capture library with `WasapiSource`, browser PID discovery via `CreateToolhelp32Snapshot`, and COM/MMCSS-elevated capture thread
+  - `wasapi-capture` CLI: diagnostic tool that captures N seconds of audio from a PID, outputs Float32 WAV + timing stats for validation
+
+  **Core (`thaumic-core`):**
+  - `capture` module with platform-agnostic `AudioSource`/`AudioSink`/`CaptureHandle` traits and `CaptureSourceFactory` factory pattern (avoids cyclic dependency with `thaumic-capture`)
+  - `StreamSinkBridge` converts Float32 → PCM16 on the capture thread and pushes into existing `StreamRegistry` pipeline
+  - `StreamCoordinator::start_capture_stream()` wires up the full capture → stream path
+  - WebSocket handler adds `START_BROWSER_CAPTURE`, `STOP_BROWSER_CAPTURE`, and async `BROWSER_CAPTURE_ERROR` monitoring (process exit, device disconnect)
+
+  **Desktop app:**
+  - `WasapiCaptureFactory` bridges `thaumic-capture` into core's factory trait
+  - `get_capture_capabilities` Tauri command exposes platform availability to frontend
+
+  **Extension:**
+  - New `captureMode` setting (`tab` | `browser`) with UI toggle in Advanced Settings
+  - Mode exclusivity enforcement (tab and browser capture cannot coexist)
+  - Browser capture flow: sends `START_BROWSER_CAPTURE` over WebSocket, server handles capture — no offscreen AudioWorklet needed
+  - `StreamSession` refactored to handle both capture modes with appropriate teardown
+  - `BROWSER_CAPTURE_ERROR` handling for graceful recovery on capture failures
+
+  **Protocol:**
+  - `BROWSER_CAPTURE_ERROR` message type with Zod schemas added to WebSocket protocol
+
+### Patch Changes
+
+- [#81](https://github.com/brew-lab/thaumic-cast/pull/81) [`77a19e2`](https://github.com/brew-lab/thaumic-cast/commit/77a19e21150e6b7cd35af44fb3bd6d47edc4d636) Thanks [@skezo](https://github.com/skezo)! - Refactor core internals, remove dead code, and improve multi-speaker performance
+
+  **Refactoring:**
+  - Decompose `StreamCoordinator` into focused modules: `PlaybackSessionStore`, `SyncGroupManager`, `VolumeRouter`
+  - Decompose Sonos client into focused modules: `didl`, `grouping`, `playback`, `retry`, `subscription_arbiter`, `volume`, `zone_groups`
+  - Extract cadence streaming pipeline from `http.rs` into `stream/cadence.rs`
+  - Extract stream_audio handler, StartPlayback handler, and parse_stream_config from WS handshake into focused modules
+  - Extract helpers: `CleanupOrder`, `CrossfadeState`, `with_epoch_tracking` combinator, `teardown_speaker`, `ensure_playing`
+  - Replace `SoapRequestBuilder` with `soap_request` function
+  - Replace `AppStateBuilder` with `AppState::new` constructor
+  - Rename `StreamManager` to `StreamRegistry`
+  - Remove `TaggedFrame` enum, inline epoch tracking
+  - Merge `gena_event_builder` into `gena_parser`
+  - Move NOTIFY service routing from subscription manager to event processor
+  - Deduplicate `BroadcastEventBridge` emit methods with macro
+  - Deduplicate `cleanup_stream_if_no_sessions` into `SyncGroupManager`
+  - Remove redundant `stream_coordinator` field from `GenaEventProcessor`
+  - Remove redundant `broadcast_tx` from `AppState`
+  - Unify sync vs non-sync start path in `StreamCoordinator`
+  - Normalize `SonosEvent` imports to canonical events path
+  - Deduplicate retry logic, tighten module visibility, clean up logs
+
+  **Dead code removal:**
+  - Remove unused traits: `Transcoder`/`Passthrough`, `Lifecycle`, `TaskSpawner`, `CoreState`
+  - Remove unused implementations: `NoopEventEmitter`, `LoggingEventEmitter`
+  - Remove unused methods: `UrlBuilder::websocket_url`, `StreamingRuntime::handle`, `BroadcastEventBridge::clear_external_emitter`, `SonosClientImpl::with_discovery_config`
+  - Remove dead `ErrorCode` impls for `SoapError` and `GenaError`, 3 dead error variants, dead discovery error variants
+  - Remove dead fields: `DeviceInfo.model_number`, `PlaybackEpoch` telemetry and dead fields, `PositionInfo` dead fields, `StreamMetadata` album/artwork fields, 9 dead `Config` fields
+  - Remove dead `raise_process_priority` function
+
+  **Performance:**
+  - Parallelize sequential SOAP calls across multi-room playback
+  - Gate server-side latency monitoring behind client `videoSyncEnabled` opt-in to avoid unnecessary overhead
+  - Make delivery tracking lock-free
+
+  **Fixes:**
+  - Fix stale `sync_ips` cleanup when speakers leave a session
+  - Fix stale log prefixes and correct module visibility
+  - Pass `preferred_port` to `NetworkContext` in `bootstrap_services`
+  - Add 1ms timeout to test HTTP clients to avoid TCP SYN hangs
+
+  **Protocol:**
+  - Add `videoSyncEnabled` boolean field to `WsStartPlaybackPayload` (defaults to `false`, backward compatible)
+
 ## 0.3.0
 
 ### Minor Changes
