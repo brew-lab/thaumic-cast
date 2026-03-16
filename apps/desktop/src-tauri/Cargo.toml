@@ -46,7 +46,7 @@ socket2 = { version = "0.6", features = ["all"] }
 rust-i18n = "3"
 sys-locale = "0.3"
 bytemuck = { version = "1", features = ["derive"] }
-mdns-sd = "0.17"
+mdns-sd = "0.18"
 async-stream = "0.3"
 
 # Platform-specific dependencies for process priority and MMCSS
