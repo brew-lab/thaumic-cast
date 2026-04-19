@@ -111,7 +111,11 @@ export class VorbisEncoder extends BaseAudioEncoder {
    * @param granule - Granule position
    * @returns The complete Ogg page
    */
-  private createOggPage(packets: Uint8Array[], flags: number, granule: bigint): Uint8Array {
+  private createOggPage(
+    packets: Uint8Array[],
+    flags: number,
+    granule: bigint,
+  ): Uint8Array<ArrayBuffer> {
     // Calculate segment table
     const segments: number[] = [];
     let totalDataSize = 0;

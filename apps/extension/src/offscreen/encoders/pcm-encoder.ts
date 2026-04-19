@@ -62,13 +62,14 @@ export class PcmEncoder implements AudioEncoder {
    * @param samples - Interleaved Float32 PCM samples (range [-1.0, 1.0])
    * @returns Raw Int16 bytes to send over WebSocket
    */
-  encode(samples: Float32Array): Uint8Array {
+  encode(samples: Float32Array): Uint8Array<ArrayBuffer> {
     // Advance timestamp for consistency with other encoders
     const frameCount = samples.length / this.config.channels;
     this.timestamp += (frameCount / this.config.sampleRate) * 1_000_000;
 
     // Fresh buffer each call - no reuse means no WebSocket async copy issues
-    const int16 = new Int16Array(samples.length);
+    const buffer = new ArrayBuffer(samples.length * 2);
+    const int16 = new Int16Array(buffer);
 
     // Convert Float32 to Int16 with TPDF dithering
     // Dithering decorrelates quantization error from the signal, converting
@@ -84,7 +85,7 @@ export class PcmEncoder implements AudioEncoder {
     }
 
     // Return view of the fresh buffer - safe since buffer isn't reused
-    return new Uint8Array(int16.buffer);
+    return new Uint8Array(buffer);
   }
 
   /**
@@ -100,7 +101,7 @@ export class PcmEncoder implements AudioEncoder {
    * Returns null since PCM conversion has no buffering.
    * @returns Always null
    */
-  flush(): Uint8Array | null {
+  flush(): Uint8Array<ArrayBuffer> | null {
     return null;
   }
 
@@ -109,7 +110,7 @@ export class PcmEncoder implements AudioEncoder {
    * Latency mode reconfiguration is not applicable to format conversion.
    * @returns Always null
    */
-  reconfigure(): Uint8Array | null {
+  reconfigure(): Uint8Array<ArrayBuffer> | null {
     return null;
   }
 
