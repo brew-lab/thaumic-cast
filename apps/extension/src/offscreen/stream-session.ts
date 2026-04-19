@@ -24,9 +24,9 @@
 import { createLogger } from '@thaumic-cast/shared';
 import { createAudioRingBuffer, HEADER_SIZE } from './ring-buffer';
 import type { EncoderConfig, StreamMetadata } from '@thaumic-cast/protocol';
-import { isSupportedSampleRate } from '@thaumic-cast/protocol';
+import { FRAME_DURATION_MS_DEFAULT, isSupportedSampleRate } from '@thaumic-cast/protocol';
+import type { WorkerInitMessage, WorkerOutboundMessage } from './worker-messages';
 import { noop } from '../lib/noop';
-import type { WorkerOutboundMessage } from './worker-messages';
 
 const log = createLogger('Offscreen');
 
@@ -65,22 +65,30 @@ const KEEP_AUDIBLE_GAIN = 0.0001;
 export class StreamSession {
   private audioContext: AudioContext | null = null;
   private consumerWorker: Worker | null = null;
-  // Ring buffer is created in setupAudioPipeline() after sample rate is verified
-  private ringBuffer!: SharedArrayBuffer;
-  private bufferSize!: number;
-  private bufferMask!: number;
+  // Ring buffer is created in setupAudioContextPipeline() after sample rate is verified
+  private ringBuffer: SharedArrayBuffer | null = null;
+  private bufferSize = 0;
+  private bufferMask = 0;
   private sourceNode: MediaStreamAudioSourceNode | null = null;
   private workletNode: AudioWorkletNode | null = null;
   private outputGainNode: GainNode | null = null;
+
+  // ─── MSTP path (PCM codec) ──────────────────────────────────────
+  private trackProcessor: MediaStreamTrackProcessor | null = null;
+  /** Audio element for keepTabAudible in MSTP mode (avoids AudioContext clock domain crossing). */
+  private audibleAudio: HTMLAudioElement | null = null;
+
+  /** Number of interleaved samples per frame (PCM encode path only). */
+  private frameSizeInterleaved?: number;
+
+  /** Pending worker terminate timer (deferred to allow METRICS_DUMP delivery). */
+  private workerTerminateTimer: ReturnType<typeof setTimeout> | null = null;
 
   /** Last time we received a heartbeat from the worklet. */
   private lastWorkletHeartbeat = 0;
 
   /** Timer for checking worklet heartbeat. */
   private heartbeatCheckTimer: ReturnType<typeof setInterval> | null = null;
-
-  /** Pending worker terminate timer (deferred to allow METRICS_DUMP delivery). */
-  private workerTerminateTimer: ReturnType<typeof setTimeout> | null = null;
 
   /** Time when the current stall started (0 if not stalled). */
   private stallStartTime = 0;
@@ -161,6 +169,7 @@ export class StreamSession {
    * @param onDisconnected - Optional callback when worker WebSocket disconnects
    * @param options - Additional session options
    * @param options.keepTabAudible - Play audio at low volume to prevent Chrome throttling
+   * @returns A new StreamSession configured for tab audio capture
    */
   static forTabCapture(
     mediaStream: MediaStream,
@@ -187,6 +196,7 @@ export class StreamSession {
    * @param onDisconnected - Optional callback when worker WebSocket disconnects
    * @param onError - Optional callback when server reports a capture error
    * @param browserName - Optional browser executable name for PID lookup
+   * @returns A new StreamSession configured for browser-wide WASAPI capture
    */
   static forBrowserCapture(
     encoderConfig: EncoderConfig,
@@ -207,16 +217,17 @@ export class StreamSession {
   }
 
   /**
-   *
-   * @param config
-   * @param config.captureMode
-   * @param config.mediaStream
-   * @param config.encoderConfig
-   * @param config.baseUrl
-   * @param config.onDisconnected
-   * @param config.onError
-   * @param config.keepTabAudible
-   * @param config.browserName
+   * Constructs a StreamSession. Use the static {@link forTabCapture} or
+   * {@link forBrowserCapture} factories instead of calling this directly.
+   * @param config - Session configuration
+   * @param config.captureMode - 'tab' for per-tab capture, 'browser' for WASAPI browser-wide capture
+   * @param config.mediaStream - MediaStream for tab capture (null in browser capture mode)
+   * @param config.encoderConfig - Audio encoder configuration
+   * @param config.baseUrl - Desktop app base URL
+   * @param config.onDisconnected - Optional callback when worker WebSocket disconnects
+   * @param config.onError - Optional callback when server reports a capture error
+   * @param config.keepTabAudible - Play audio at low volume to prevent Chrome throttling (tab capture only)
+   * @param config.browserName - Browser executable name for PID lookup (browser capture only)
    */
   private constructor(config: {
     captureMode: 'tab' | 'browser';
@@ -267,9 +278,103 @@ export class StreamSession {
   }
 
   /**
-   * Sets up the Web Audio graph and loads the AudioWorklet.
+   * Sets up the audio capture pipeline.
+   * Routes to MSTP (PCM codec) or AudioContext (compressed codecs) path.
    */
   private async setupAudioPipeline(): Promise<void> {
+    // Set up MediaStream track monitoring (shared by both paths)
+    this.setupTrackMonitoring();
+
+    if (this.encoderConfig.codec === 'pcm') {
+      this.setupMSTPPipeline();
+    } else {
+      await this.setupAudioContextPipeline();
+    }
+  }
+
+  /**
+   * Sets up MediaStream track event listeners for monitoring mute/unmute/ended states.
+   */
+  private setupTrackMonitoring(): void {
+    const audioTracks = this.mediaStream!.getAudioTracks();
+    log.info(`MediaStream has ${audioTracks.length} audio track(s)`);
+
+    for (const track of audioTracks) {
+      log.info(
+        `Audio track: ${track.label}, enabled=${track.enabled}, muted=${track.muted}, readyState=${track.readyState}`,
+      );
+
+      // Log track settings
+      const settings = track.getSettings();
+      log.info(
+        `Track settings: sampleRate=${settings.sampleRate} channels=${settings.channelCount}`,
+      );
+
+      // Monitor track mute state changes
+      track.onmute = () => {
+        log.warn(`Audio track MUTED: ${track.label || 'unnamed'}`);
+      };
+
+      track.onunmute = () => {
+        log.info(`Audio track UNMUTED: ${track.label || 'unnamed'}`);
+      };
+
+      // Monitor track ending (tab closed, permission revoked, etc.)
+      track.onended = () => {
+        log.warn(`Audio track ENDED: ${track.label || 'unnamed'}, readyState=${track.readyState}`);
+      };
+    }
+  }
+
+  /**
+   * Sets up the MSTP (MediaStreamTrackProcessor) pipeline for PCM codec.
+   * Bypasses AudioContext entirely — reads raw AudioData frames from the track.
+   */
+  private setupMSTPPipeline(): void {
+    const audioTrack = this.mediaStream!.getAudioTracks()[0];
+    if (!audioTrack) throw new Error('No audio track available in MediaStream');
+
+    // Override sample rate to track's native rate (MSTP bypasses AudioContext resampling)
+    const trackSampleRate = audioTrack.getSettings().sampleRate;
+    if (
+      trackSampleRate &&
+      isSupportedSampleRate(trackSampleRate) &&
+      trackSampleRate !== this.encoderConfig.sampleRate
+    ) {
+      log.info(
+        `MSTP: overriding sample rate ${this.encoderConfig.sampleRate}Hz → ${trackSampleRate}Hz (capture native rate)`,
+      );
+      this.encoderConfig = { ...this.encoderConfig, sampleRate: trackSampleRate };
+    }
+
+    // Compute frame size
+    const frameDurationMs = this.encoderConfig.frameDurationMs ?? FRAME_DURATION_MS_DEFAULT;
+    const perChannelSamples = Math.round(this.encoderConfig.sampleRate * (frameDurationMs / 1000));
+    this.frameSizeInterleaved = perChannelSamples * this.encoderConfig.channels;
+
+    // Create MediaStreamTrackProcessor
+    const maxBufferSize = 1000;
+    this.trackProcessor = new MediaStreamTrackProcessor({ track: audioTrack, maxBufferSize });
+    log.info(
+      `MSTP pipeline: maxBufferSize=${maxBufferSize}, frameSizeInterleaved=${this.frameSizeInterleaved}`,
+    );
+
+    // keepTabAudible: use <audio> element at near-zero volume (avoids AudioContext clock domain crossing)
+    if (this.keepTabAudible) {
+      this.audibleAudio = document.createElement('audio');
+      this.audibleAudio.srcObject = this.mediaStream;
+      this.audibleAudio.volume = KEEP_AUDIBLE_GAIN;
+      this.audibleAudio.play().catch((err) => {
+        log.warn('Keep tab audible: audio.play() failed:', err);
+      });
+      log.info('Keep tab audible enabled (MSTP) - audio element at low volume');
+    }
+  }
+
+  /**
+   * Sets up the Web Audio graph and loads the AudioWorklet (compressed codecs path).
+   */
+  private async setupAudioContextPipeline(): Promise<void> {
     // Create AudioContext - browser may give us a different sample rate than requested
     // Use 'interactive' for realtime mode to minimize latency on capable devices
     // Use 'playback' for quality mode to prioritize power efficiency
@@ -329,7 +434,7 @@ export class StreamSession {
 
     this.workletNode.port.postMessage({
       type: 'INIT_BUFFER',
-      buffer: this.ringBuffer,
+      buffer: this.ringBuffer!,
       bufferSize: this.bufferSize,
       bufferMask: this.bufferMask,
       headerSize: HEADER_SIZE,
@@ -395,30 +500,6 @@ export class StreamSession {
     }
     log.info(`AudioContext state: ${this.audioContext.state}`);
 
-    // Set up MediaStream track monitoring
-    const audioTracks = this.mediaStream!.getAudioTracks();
-    log.info(`MediaStream has ${audioTracks.length} audio track(s)`);
-
-    for (const track of audioTracks) {
-      log.info(
-        `Audio track: ${track.label}, enabled=${track.enabled}, muted=${track.muted}, readyState=${track.readyState}`,
-      );
-
-      // Monitor track mute state changes
-      track.onmute = () => {
-        log.warn(`Audio track MUTED: ${track.label || 'unnamed'}`);
-      };
-
-      track.onunmute = () => {
-        log.info(`Audio track UNMUTED: ${track.label || 'unnamed'}`);
-      };
-
-      // Monitor track ending (tab closed, permission revoked, etc.)
-      track.onended = () => {
-        log.warn(`Audio track ENDED: ${track.label || 'unnamed'}, readyState=${track.readyState}`);
-      };
-    }
-
     // Initialize heartbeat tracking and start checker
     this.lastWorkletHeartbeat = performance.now();
     this.startHeartbeatChecker();
@@ -483,9 +564,16 @@ export class StreamSession {
   private async startWorker(): Promise<void> {
     const wsUrl = this.baseUrl.replace(/^http/, 'ws') + '/ws';
 
-    this.consumerWorker = new Worker(new URL('./audio-consumer.worker.ts', import.meta.url), {
-      type: 'module',
-    });
+    // Spawn codec-appropriate worker
+    if (this.encoderConfig.codec === 'pcm') {
+      this.consumerWorker = new Worker(new URL('./audio-relay.worker.ts', import.meta.url), {
+        type: 'module',
+      });
+    } else {
+      this.consumerWorker = new Worker(new URL('./audio-consumer.worker.ts', import.meta.url), {
+        type: 'module',
+      });
+    }
 
     // Create promise for connection
     const connectionPromise = new Promise<string>((resolve, reject) => {
@@ -558,6 +646,11 @@ export class StreamSession {
           this.stop();
           break;
 
+        case 'METRICS_DUMP':
+          log.info('Pipeline metrics timeline', { timeline: JSON.stringify(msg.timeline) });
+          this.terminateWorkerNow();
+          break;
+
         case 'STATS': {
           // Accumulate drops for session health reporting
           this.totalProducerDrops += msg.producerDroppedSamples ?? 0;
@@ -613,11 +706,6 @@ export class StreamSession {
           }
           break;
         }
-
-        case 'METRICS_DUMP':
-          log.info('Pipeline metrics timeline', { timeline: JSON.stringify(msg.timeline) });
-          this.terminateWorkerNow();
-          break;
       }
     };
 
@@ -627,18 +715,36 @@ export class StreamSession {
       this.connectionResolver = null;
     };
 
-    // Initialize the Worker based on capture mode
+    // Initialize the Worker based on capture mode and codec
     if (this.captureMode === 'browser') {
+      // Browser capture path (unchanged — worker manages WS lifecycle only)
       this.consumerWorker.postMessage({
         type: 'INIT_BROWSER_CAPTURE',
         wsUrl,
         encoderConfig: this.encoderConfig,
         browserName: this.browserName,
       });
+    } else if (this.encoderConfig.codec === 'pcm' && this.trackProcessor) {
+      // MSTP path: transfer ReadableStream to worker
+      const readable = this.trackProcessor.readable;
+      const initMsg: WorkerInitMessage = {
+        type: 'INIT',
+        sampleRate: this.encoderConfig.sampleRate,
+        encoderConfig: this.encoderConfig,
+        wsUrl,
+        mode: 'encode',
+        frameSizeInterleaved: this.frameSizeInterleaved,
+        readable,
+        channels: this.encoderConfig.channels,
+      };
+      this.consumerWorker.postMessage(initMsg, {
+        transfer: [readable as unknown as Transferable],
+      });
     } else {
+      // SAB path: compressed codecs
       this.consumerWorker.postMessage({
         type: 'INIT',
-        sab: this.ringBuffer,
+        sab: this.ringBuffer!,
         bufferSize: this.bufferSize,
         bufferMask: this.bufferMask,
         headerSize: HEADER_SIZE,
@@ -678,16 +784,26 @@ export class StreamSession {
         track.onended = null;
       }
 
+      // Tear down AudioContext path (compressed codecs)
       this.sourceNode?.disconnect();
       this.workletNode?.disconnect();
       this.outputGainNode?.disconnect();
       this.audioContext?.close().catch(noop);
+
+      // Tear down MSTP path resources
+      this.trackProcessor = null; // ReadableStream was transferred to worker
+      if (this.audibleAudio) {
+        this.audibleAudio.pause();
+        this.audibleAudio.srcObject = null;
+        this.audibleAudio = null;
+      }
+
       this.mediaStream.getTracks().forEach((t) => t.stop());
     }
   }
 
   /**
-   * Terminates the consumer worker immediately and clears the deferred terminate timer.
+   * Terminates the worker immediately and clears the deferred-terminate timer.
    */
   private terminateWorkerNow(): void {
     if (this.workerTerminateTimer) {
