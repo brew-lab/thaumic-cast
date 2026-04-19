@@ -124,7 +124,7 @@ export class AacEncoder extends BaseAudioEncoder {
    * @param rawAac - The raw AAC frame data
    * @returns ADTS-wrapped frame
    */
-  private wrapWithAdts(rawAac: Uint8Array): Uint8Array {
+  private wrapWithAdts(rawAac: Uint8Array): Uint8Array<ArrayBuffer> {
     const frameLength = rawAac.byteLength + 7;
     const h = this.adtsHeader;
 

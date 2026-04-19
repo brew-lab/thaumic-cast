@@ -53,7 +53,7 @@ let maxFrameSamples = 0;
 // bytes synchronously, so the backing buffer is safe to reuse next frame.
 let accum: Int16Array | null = null;
 let accumOffset = 0;
-let accumView: Uint8Array | null = null;
+let accumView: Uint8Array<ArrayBuffer> | null = null;
 
 // Gaps in AudioData timestamps represent clock reporting jitter, NOT missing
 // audio — the capture device delivers continuous samples.
@@ -164,7 +164,7 @@ function emitFloat32Samples(
  * into the persistent queue when in quality mode and backpressured.
  * @param frameView
  */
-function sendOrQueue(frameView: Uint8Array): void {
+function sendOrQueue(frameView: Uint8Array<ArrayBuffer>): void {
   if (!s.socket || s.socket.readyState !== WebSocket.OPEN || !s.policy) return;
 
   if (isWsBackpressured(s)) {

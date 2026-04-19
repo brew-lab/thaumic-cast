@@ -108,8 +108,8 @@ export interface WorkerState {
   lastStatsTime: number;
 
   // Frame queue (quality mode backpressure decoupling)
-  /** Queue of encoded frames waiting to be sent. */
-  frameQueue: Uint8Array[];
+  /** Queue of encoded frames waiting to be sent. Frames must be ArrayBuffer-backed for WebSocket.send(). */
+  frameQueue: Uint8Array<ArrayBuffer>[];
   /** Total bytes currently in frameQueue. */
   frameQueueBytes: number;
   /** Count of frames dropped from queue due to overflow. */
@@ -285,7 +285,7 @@ function trimFrameQueue(s: WorkerState): void {
  * @param s - Worker state
  * @param frame - Encoded frame data to queue
  */
-export function enqueueFrame(s: WorkerState, frame: Uint8Array): void {
+export function enqueueFrame(s: WorkerState, frame: Uint8Array<ArrayBuffer>): void {
   s.frameQueue.push(frame);
   s.frameQueueBytes += frame.byteLength;
 

@@ -28,7 +28,7 @@ const DEFAULT_BUFFER_CAPACITY = 960;
  */
 export abstract class BaseAudioEncoder implements AudioEncoder {
   protected encoder: globalThis.AudioEncoder;
-  protected outputQueue: Uint8Array[] = [];
+  protected outputQueue: Uint8Array<ArrayBuffer>[] = [];
   protected timestamp = 0;
   protected isClosed = false;
   protected readonly log: Logger;
@@ -147,7 +147,7 @@ export abstract class BaseAudioEncoder implements AudioEncoder {
    * Consolidates output queue into a single buffer.
    * @returns Consolidated output or null if queue is empty
    */
-  protected consolidateOutput(): Uint8Array | null {
+  protected consolidateOutput(): Uint8Array<ArrayBuffer> | null {
     if (this.outputQueue.length === 0) {
       return null;
     }
@@ -236,7 +236,7 @@ export abstract class BaseAudioEncoder implements AudioEncoder {
    * @param samples - Interleaved Float32 samples (mono or stereo, range [-1.0, 1.0])
    * @returns Encoded data or null if unavailable
    */
-  encode(samples: Float32Array): Uint8Array | null {
+  encode(samples: Float32Array): Uint8Array<ArrayBuffer> | null {
     if (this.isClosed) return null;
 
     const { planarData, frameCount } = this.convertToPlanar(samples);
@@ -253,7 +253,7 @@ export abstract class BaseAudioEncoder implements AudioEncoder {
    * Flushes any remaining encoded data.
    * @returns Remaining encoded data or null if empty
    */
-  flush(): Uint8Array | null {
+  flush(): Uint8Array<ArrayBuffer> | null {
     if (this.isClosed) return null;
 
     try {
@@ -285,7 +285,7 @@ export abstract class BaseAudioEncoder implements AudioEncoder {
    * @param options - New configuration options
    * @returns Flushed data from the old encoder, or null if nothing was buffered
    */
-  reconfigure(options: ReconfigureOptions): Uint8Array | null {
+  reconfigure(options: ReconfigureOptions): Uint8Array<ArrayBuffer> | null {
     if (this.isClosed) return null;
 
     // Check if there's actually anything to change
@@ -297,7 +297,7 @@ export abstract class BaseAudioEncoder implements AudioEncoder {
     this.log.info(`Reconfiguring encoder: latencyMode ${this._latencyMode} -> ${newLatencyMode}`);
 
     // Flush and collect any pending output
-    let flushedData: Uint8Array | null = null;
+    let flushedData: Uint8Array<ArrayBuffer> | null = null;
     try {
       // Synchronously trigger flush (async completion handled by output callback)
       this.encoder.flush().catch(() => {

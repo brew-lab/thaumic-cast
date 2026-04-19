@@ -125,7 +125,7 @@ export class FlacEncoder extends BaseAudioEncoder {
    * @param samples - Interleaved Float32 samples (range [-1.0, 1.0])
    * @returns Encoded FLAC data or null if unavailable
    */
-  override encode(samples: Float32Array): Uint8Array | null {
+  override encode(samples: Float32Array): Uint8Array<ArrayBuffer> | null {
     if (this.config.bitsPerSample === 24) {
       return this.encode24Bit(samples);
     }
@@ -138,7 +138,7 @@ export class FlacEncoder extends BaseAudioEncoder {
    * @param samples - Interleaved Float32 samples
    * @returns Encoded FLAC data or null if unavailable
    */
-  private encode24Bit(samples: Float32Array): Uint8Array | null {
+  private encode24Bit(samples: Float32Array): Uint8Array<ArrayBuffer> | null {
     const { planarData, frameCount } = this.convertToInt32Planar(samples);
 
     const data = new AudioData({
@@ -216,12 +216,14 @@ export class FlacEncoder extends BaseAudioEncoder {
     // First chunk should include decoderConfig with the FLAC stream header
     if (!this.headerSent && metadata?.decoderConfig?.description) {
       const description = metadata.decoderConfig.description;
-      // Handle both ArrayBuffer and ArrayBufferView, respecting byteOffset/byteLength
-      const headerData =
+      // Handle both ArrayBuffer and ArrayBufferView, respecting byteOffset/byteLength.
+      // WebCodecs gives us ArrayBuffer-backed data at runtime; cast through ArrayBufferLike
+      // erasure without copying since this is a one-time header emission, not a hot path.
+      const headerData: Uint8Array<ArrayBuffer> =
         description instanceof ArrayBuffer
           ? new Uint8Array(description)
           : new Uint8Array(
-              (description as ArrayBufferView).buffer,
+              (description as ArrayBufferView).buffer as ArrayBuffer,
               (description as ArrayBufferView).byteOffset,
               (description as ArrayBufferView).byteLength,
             );

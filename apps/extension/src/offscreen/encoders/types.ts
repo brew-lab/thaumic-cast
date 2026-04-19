@@ -25,14 +25,14 @@ export interface AudioEncoder {
    * @param samples - Raw PCM samples from AudioWorklet
    * @returns Encoded bytes to send over WebSocket, or null if buffering
    */
-  encode(samples: Float32Array): Uint8Array | null;
+  encode(samples: Float32Array): Uint8Array<ArrayBuffer> | null;
 
   /**
    * Flushes any remaining buffered data.
    * Call before stopping the stream.
    * @returns Final encoded bytes, or null if nothing buffered
    */
-  flush(): Uint8Array | null;
+  flush(): Uint8Array<ArrayBuffer> | null;
 
   /**
    * Releases encoder resources.
@@ -73,5 +73,5 @@ export interface AudioEncoder {
    * @param options - New configuration options
    * @returns Flushed data from the old encoder, or null if nothing was buffered
    */
-  reconfigure(options: ReconfigureOptions): Uint8Array | null;
+  reconfigure(options: ReconfigureOptions): Uint8Array<ArrayBuffer> | null;
 }
