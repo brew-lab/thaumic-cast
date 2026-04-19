@@ -48,9 +48,11 @@ let ch0Temp: Float32Array | null = null;
 let ch1Temp: Float32Array | null = null;
 let maxFrameSamples = 0;
 
-// Int16 accumulator. accumView is a persistent Uint8Array over accum.buffer
-// (refreshed on grow) used for zero-copy sends: WebSocket.send() copies the
-// bytes synchronously, so the backing buffer is safe to reuse next frame.
+// Int16 accumulator. accumView is a persistent Uint8Array over the same
+// backing ArrayBuffer, used for zero-copy sends: WebSocket.send() copies
+// the bytes synchronously, so the backing buffer is safe to reuse next frame.
+// Buffer is owned explicitly so both views share an ArrayBuffer (not SharedArrayBuffer).
+let accumBuffer: ArrayBuffer | null = null;
 let accum: Int16Array | null = null;
 let accumOffset = 0;
 let accumView: Uint8Array<ArrayBuffer> | null = null;
@@ -80,24 +82,21 @@ function ensureTempBuffers(needed: number): void {
   s.log.info(`Grew temp buffers to ${needed} samples/channel`);
 }
 
-/** Rebuilds the persistent Uint8Array view over `accum.buffer` after an allocation change. */
-function refreshAccumView(): void {
-  if (!accum) return;
-  // accum is allocated via `new Int16Array(number)`, so buffer is an ArrayBuffer
-  accumView = new Uint8Array(accum.buffer as ArrayBuffer, accum.byteOffset, accum.byteLength);
-}
-
 /**
- * Doubles the accumulator capacity (or grows to `needed`, whichever is larger) and refreshes the view.
+ * Doubles the accumulator capacity (or grows to `needed`, whichever is larger).
+ * Allocates a fresh ArrayBuffer and rebuilds both the Int16 and Uint8 views
+ * over it so they stay aliased.
  * @param needed
  */
 function growAccum(needed: number): void {
   if (!accum) return;
   const newSize = Math.max(accum.length * 2, needed);
-  const grown = new Int16Array(newSize);
+  const newBuffer = new ArrayBuffer(newSize * Int16Array.BYTES_PER_ELEMENT);
+  const grown = new Int16Array(newBuffer);
   grown.set(accum.subarray(0, accumOffset));
+  accumBuffer = newBuffer;
   accum = grown;
-  refreshAccumView();
+  accumView = new Uint8Array(newBuffer);
   s.log.info(`Grew frame accumulator to ${newSize} samples`);
 }
 
@@ -310,6 +309,7 @@ function cleanup(): void {
 
   ch0Temp = null;
   ch1Temp = null;
+  accumBuffer = null;
   accum = null;
   accumOffset = 0;
   accumView = null;
@@ -364,9 +364,10 @@ self.onmessage = async (event: MessageEvent<WorkerInboundMessage>) => {
       ch1Temp = new Float32Array(maxFrameSamples);
 
       // 4x frame headroom for variable AudioData sizes
-      accum = new Int16Array(frameSizeInterleaved * 4);
+      accumBuffer = new ArrayBuffer(frameSizeInterleaved * 4 * Int16Array.BYTES_PER_ELEMENT);
+      accum = new Int16Array(accumBuffer);
       accumOffset = 0;
-      refreshAccumView();
+      accumView = new Uint8Array(accumBuffer);
 
       audioReader = msg.readable.getReader();
 
