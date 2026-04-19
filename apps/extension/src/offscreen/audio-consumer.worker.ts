@@ -6,8 +6,8 @@
  * off the main thread, eliminating jitter from main thread blocking.
  *
  * Architecture:
- *   AudioWorklet → SharedArrayBuffer → Worker (drain + encode + websocket send)
- *                                         ↓
+ *   AudioWorklet -> SharedArrayBuffer -> Worker (drain + encode + websocket send)
+ *                                         |
  *                              Main thread only for:
  *                              - Stats logging
  *                              - Control messages
@@ -20,19 +20,31 @@ import {
   DATA_BYTE_OFFSET,
 } from './ring-buffer';
 import { createEncoder, type AudioEncoder } from './encoders';
-import type { AudioCodec, EncoderConfig, WsMessage } from '@thaumic-cast/protocol';
-import type { WorkerInboundMessage, WorkerOutboundMessage } from './worker-messages';
-import {
-  WsMessageSchema,
-  getStreamingPolicy,
-  type StreamingPolicy,
-  FRAME_DURATION_MS_DEFAULT,
-  FRAME_QUEUE_HYSTERESIS_RATIO,
-} from '@thaumic-cast/protocol';
-import { createLogger } from '@thaumic-cast/shared';
+import type { AudioCodec, EncoderConfig } from '@thaumic-cast/protocol';
+import type { WorkerInboundMessage } from './worker-messages';
+import { getStreamingPolicy, FRAME_DURATION_MS_DEFAULT } from '@thaumic-cast/protocol';
 import { exponentialBackoff } from '../lib/backoff';
-
-const log = createLogger('AudioWorker');
+import {
+  type WorkerState,
+  type CustomMetrics,
+  createWorkerState,
+  resetFrameQueueState,
+  postToMain,
+  alignDown,
+  yieldMacrotask,
+  isWsBackpressured,
+  enqueueFrame,
+  flushFrameQueue,
+  flushQueuedFrames,
+  maybePostStats,
+  connectWebSocket,
+  handleCommonMessage,
+  cleanupSharedState,
+  BACKPRESSURE_BACKOFF_INITIAL_MS,
+  BACKPRESSURE_BACKOFF_MAX_MS,
+  QUALITY_BACKOFF_MAX_MS,
+  WAIT_TIMEOUT_MS,
+} from './worker-base';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Codec-Aware Frame Sizing
@@ -90,7 +102,7 @@ function frameSizeToMs(frameSizeSamples: number, sampleRate: number): number {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Constants
+// Worker-Specific Constants
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
@@ -100,24 +112,6 @@ function frameSizeToMs(frameSizeSamples: number, sampleRate: number): number {
  * layout, rendering, and GC, so we busy-poll within budget instead.
  */
 const PROCESS_BUDGET_MS = 4;
-
-/** Initial backpressure backoff delay (ms). */
-const BACKPRESSURE_BACKOFF_INITIAL_MS = 5;
-
-/** Maximum backpressure backoff delay for realtime mode (ms). */
-const BACKPRESSURE_BACKOFF_MAX_MS = 40;
-
-/** Maximum backpressure backoff delay for quality mode (ms). */
-const QUALITY_BACKOFF_MAX_MS = 50;
-
-/** Timeout for waiting on producer (ms). Triggers underflow if exceeded. 200ms = 20 frames of headroom. */
-const WAIT_TIMEOUT_MS = 200;
-
-/** Interval for posting diagnostic stats to main thread (ms). */
-const STATS_INTERVAL_MS = 2000;
-
-/** Heartbeat interval for WebSocket (ms). */
-const HEARTBEAT_INTERVAL_MS = 5000;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Underflow Ramp Constants
@@ -129,21 +123,15 @@ const HEARTBEAT_INTERVAL_MS = 5000;
  */
 const RAMP_MS = 3;
 
-/** WebSocket connection timeout (ms). */
-const WS_CONNECT_TIMEOUT_MS = 5000;
-
-/** Handshake timeout (ms). */
-const HANDSHAKE_TIMEOUT_MS = 5000;
-
 // ─────────────────────────────────────────────────────────────────────────────
-// Worker State
+// Shared Worker State
 // ─────────────────────────────────────────────────────────────────────────────
 
-// Streaming policy (derived from latencyMode)
-let policy: StreamingPolicy | null = null;
+const s: WorkerState = createWorkerState('AudioWorker');
 
-// Browser capture mode (no local audio pipeline — server captures via WASAPI)
-let browserCaptureMode = false;
+// ─────────────────────────────────────────────────────────────────────────────
+// Worker-Specific State
+// ─────────────────────────────────────────────────────────────────────────────
 
 // Ring buffer state
 let control: Int32Array | null = null;
@@ -157,20 +145,14 @@ let frameSizeSamples = 0;
 let frameBuffer: Float32Array | null = null;
 let frameOffset = 0;
 
-// Encoder and WebSocket
+// Encoder
 let encoder: AudioEncoder | null = null;
-let socket: WebSocket | null = null;
-let streamId: string | null = null;
-let heartbeatInterval: ReturnType<typeof setInterval> | null = null;
 
-// Diagnostic counters
+// Diagnostic counters (worker-specific, reset per stats interval)
 let underflowCount = 0;
 let droppedFrameCount = 0;
 let wakeupCount = 0;
 let totalSamplesRead = 0;
-let lastStatsTime = 0;
-/** Last reported value of CTRL_DROPPED_SAMPLES for computing delta. */
-let lastProducerDroppedSamples = 0;
 
 // Bounded latency catch-up tracking
 /** Samples dropped by consumer catch-up logic this stats interval. */
@@ -203,53 +185,6 @@ let lastSamples: Float32Array | null = null;
 let rampSamples = 0;
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Frame Queue for Quality Mode Backpressure Decoupling
-// ─────────────────────────────────────────────────────────────────────────────
-
-/**
- * Queue of encoded frames waiting to be sent when WebSocket backpressure eases.
- * Only used in quality mode - realtime mode drops frames instead of queuing.
- */
-let frameQueue: Uint8Array[] = [];
-
-/**
- * Total bytes currently in frameQueue.
- * Tracked separately to avoid O(n) length calculation.
- */
-let frameQueueBytes = 0;
-
-/**
- * Maximum frame queue size in bytes (~30 seconds of audio).
- * At 48kHz/16-bit stereo PCM: ~5.76MB for 30s. With headroom: 8MB.
- */
-const FRAME_QUEUE_MAX_BYTES = 8 * 1024 * 1024;
-
-/**
- * Target frame queue size after overflow trimming.
- * Uses hysteresis ratio from streaming policy to prevent oscillation.
- */
-const FRAME_QUEUE_TARGET_BYTES = Math.floor(FRAME_QUEUE_MAX_BYTES * FRAME_QUEUE_HYSTERESIS_RATIO);
-
-// Producer drop detection
-/** Previous value of CTRL_DROPPED_SAMPLES for detecting new drops. */
-let prevProducerDroppedSamples = 0;
-
-/** Count of frames dropped from queue due to overflow (stats). */
-let frameQueueOverflowDrops = 0;
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Utilities
-// ─────────────────────────────────────────────────────────────────────────────
-
-/**
- * Posts a message to the main thread.
- * @param message
- */
-function postToMain(message: WorkerOutboundMessage): void {
-  self.postMessage(message);
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
 // Underflow Ramp Utilities
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -262,7 +197,7 @@ function postToMain(message: WorkerOutboundMessage): void {
  * @param buffer - Interleaved Float32 samples to modify in-place
  * @param channels - Number of audio channels (1 or 2)
  * @param rampLen - Number of interleaved samples to ramp (clamped to buffer length)
- * @param fadeIn - True for fade-in (0→1), false for fade-out (1→0)
+ * @param fadeIn - True for fade-in (0->1), false for fade-out (1->0)
  * @param startSamples - Per-channel starting values for fade-out (ignored for fade-in)
  */
 function applyRamp(
@@ -281,8 +216,8 @@ function applyRamp(
 
   for (let frame = 0; frame < frames; frame++) {
     // Linear ramp coefficient:
-    // Fade-in: 0→1 (first sample at silence, last at full amplitude)
-    // Fade-out: 1→0 (first sample at full amplitude, last at silence)
+    // Fade-in: 0->1 (first sample at silence, last at full amplitude)
+    // Fade-out: 1->0 (first sample at full amplitude, last at silence)
     const t = fadeIn ? frame / divisor : 1 - frame / divisor;
 
     for (let ch = 0; ch < channels; ch++) {
@@ -322,115 +257,8 @@ function captureLastSamples(
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Frame Queue Management (Quality Mode)
-// ─────────────────────────────────────────────────────────────────────────────
-
-/**
- * Adds an encoded frame to the queue.
- * If queue exceeds bounds, trims oldest frames to target size.
- *
- * @param frame - Encoded frame data to queue
- */
-function enqueueFrame(frame: Uint8Array): void {
-  frameQueue.push(frame);
-  frameQueueBytes += frame.byteLength;
-
-  if (frameQueueBytes > FRAME_QUEUE_MAX_BYTES) {
-    trimFrameQueue();
-  }
-}
-
-/**
- * Trims the frame queue to target size, dropping oldest frames.
- * Uses hysteresis (FRAME_QUEUE_HYSTERESIS_RATIO) to prevent oscillation.
- * Uses splice() once instead of shift() in loop for O(n) vs O(n²) performance.
- */
-function trimFrameQueue(): void {
-  // Count how many frames to drop
-  let droppedBytes = 0;
-  let droppedCount = 0;
-  let bytesToDrop = frameQueueBytes - FRAME_QUEUE_TARGET_BYTES;
-
-  while (droppedCount < frameQueue.length && bytesToDrop > 0) {
-    const frameBytes = frameQueue[droppedCount]!.byteLength;
-    droppedBytes += frameBytes;
-    bytesToDrop -= frameBytes;
-    droppedCount++;
-  }
-
-  if (droppedCount > 0) {
-    // Remove all at once - O(n) instead of O(n²)
-    frameQueue.splice(0, droppedCount);
-    frameQueueBytes -= droppedBytes;
-    frameQueueOverflowDrops += droppedCount;
-    log.warn(
-      `Frame queue overflow: dropped ${droppedCount} frames (${(droppedBytes / 1024).toFixed(1)}KB) ` +
-        `to maintain ~30s bound`,
-    );
-  }
-}
-
-/**
- * Attempts to flush queued frames to WebSocket.
- * Respects WebSocket backpressure - stops when buffer exceeds high water mark.
- * Uses splice() once at end instead of shift() per frame for O(n) vs O(n²) performance.
- *
- * @returns Number of frames sent
- */
-function flushFrameQueue(): number {
-  if (!socket || socket.readyState !== WebSocket.OPEN || !policy) {
-    return 0;
-  }
-
-  let sentCount = 0;
-  let sentBytes = 0;
-
-  // Send frames by index, then remove all at once
-  while (sentCount < frameQueue.length) {
-    // Check WebSocket backpressure before each send
-    if (socket.bufferedAmount >= policy.wsBufferHighWater) {
-      break;
-    }
-
-    const frame = frameQueue[sentCount]!;
-    socket.send(frame);
-    sentBytes += frame.byteLength;
-    sentCount++;
-  }
-
-  // Remove all sent frames at once - O(n) instead of O(n²)
-  if (sentCount > 0) {
-    frameQueue.splice(0, sentCount);
-    frameQueueBytes -= sentBytes;
-  }
-
-  return sentCount;
-}
-
-/**
- * Resets frame queue state to initial values.
- * Used during cleanup and initialization.
- */
-function resetFrameQueueState(): void {
-  frameQueue = [];
-  frameQueueBytes = 0;
-  frameQueueOverflowDrops = 0;
-  prevProducerDroppedSamples = 0;
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
 // Bounded Latency Catch-up
 // ─────────────────────────────────────────────────────────────────────────────
-
-/**
- * Aligns a sample count down to the nearest frame boundary.
- * @param samples - Number of samples
- * @param frameSize - Frame size in samples
- * @returns Aligned sample count
- */
-function alignDown(samples: number, frameSize: number): number {
-  return Math.floor(samples / frameSize) * frameSize;
-}
 
 /**
  * Performs catch-up if the ring buffer has accumulated too much data.
@@ -446,10 +274,10 @@ function alignDown(samples: number, frameSize: number): number {
  * @returns The number of samples dropped, or 0 if no catch-up needed
  */
 function performCatchUpIfNeeded(): number {
-  if (!control || !encoder || !policy) return 0;
+  if (!control || !encoder || !s.policy) return 0;
 
   // Quality mode: catch-up is disabled
-  if (policy.catchUpMaxMs === null) return 0;
+  if (s.policy.catchUpMaxMs === null) return 0;
 
   const writeIdx = Atomics.load(control, CTRL_WRITE_IDX);
   const readIdx = Atomics.load(control, CTRL_READ_IDX);
@@ -484,7 +312,7 @@ function performCatchUpIfNeeded(): number {
 
   // Log the event
   const droppedMs = (totalDroppedSamples / (encoder.config.sampleRate * channels)) * 1000;
-  log.warn(`⏩ CATCH-UP: Dropped ${droppedMs.toFixed(0)}ms of audio to bound latency`);
+  s.log.warn(`CATCH-UP: Dropped ${droppedMs.toFixed(0)}ms of audio to bound latency`);
 
   return totalDroppedSamples;
 }
@@ -561,7 +389,13 @@ function readFromRingBuffer(): number {
  * transitioning to silence rather than abruptly stopping.
  */
 function handleUnderflowRamp(): void {
-  if (!frameBuffer || !encoder || !socket || socket.readyState !== WebSocket.OPEN || !lastSamples) {
+  if (
+    !frameBuffer ||
+    !encoder ||
+    !s.socket ||
+    s.socket.readyState !== WebSocket.OPEN ||
+    !lastSamples
+  ) {
     return;
   }
 
@@ -604,14 +438,14 @@ function handleUnderflowRamp(): void {
   // Encode and send (skip backpressure check for underflow frame)
   const encoded = encoder.encode(frameBuffer);
   if (encoded) {
-    socket.send(encoded);
+    s.socket.send(encoded);
   }
 
   // Reset for next frame
   frameOffset = 0;
   needsRampIn = true;
 
-  log.debug('Flushed underflow frame with ramp-down');
+  s.log.debug('Flushed underflow frame with ramp-down');
 }
 
 /**
@@ -627,15 +461,15 @@ function handleUnderflowRamp(): void {
  */
 function flushFrameIfReady(): void {
   if (!frameBuffer || frameOffset < frameSizeSamples) return;
-  if (!encoder || !socket || socket.readyState !== WebSocket.OPEN || !policy) return;
+  if (!encoder || !s.socket || s.socket.readyState !== WebSocket.OPEN || !s.policy) return;
 
   const channels = encoder.config.channels;
 
   // Encoder backpressure blocks both modes (can't bypass encoder)
-  const encoderBackpressured = encoder.encodeQueueSize >= policy.maxEncodeQueue;
+  const encoderBackpressured = encoder.encodeQueueSize >= s.policy.maxEncodeQueue;
 
   if (encoderBackpressured) {
-    if (policy.dropOnBackpressure) {
+    if (s.policy.dropOnBackpressure) {
       // Realtime mode: drop frame to maintain timing
       droppedFrameCount++;
       encoder.advanceTimestamp(frameSizeSamples / channels);
@@ -650,7 +484,7 @@ function flushFrameIfReady(): void {
   if (needsRampIn && rampSamples >= channels) {
     applyRamp(frameBuffer, channels, rampSamples, true);
     needsRampIn = false;
-    log.debug('Applied fade-in ramp after discontinuity');
+    s.log.debug('Applied fade-in ramp after discontinuity');
   }
 
   // Encode the frame
@@ -662,312 +496,56 @@ function flushFrameIfReady(): void {
   if (!encoded) return;
 
   // WebSocket backpressure handling differs by mode
-  const wsBackpressured = socket.bufferedAmount >= policy.wsBufferHighWater;
+  const wsBackpressured = isWsBackpressured(s);
 
   if (wsBackpressured) {
-    if (policy.dropOnBackpressure) {
+    if (s.policy.dropOnBackpressure) {
       // Realtime mode: drop the encoded frame
       droppedFrameCount++;
     } else {
       // Quality mode: queue the frame instead of blocking ring buffer drain
-      enqueueFrame(encoded);
+      enqueueFrame(s, encoded);
     }
     return;
   }
 
   // No backpressure: send directly
-  socket.send(encoded);
+  s.socket.send(encoded);
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Custom Metrics
+// ─────────────────────────────────────────────────────────────────────────────
+
 /**
- * Posts diagnostic stats to main thread.
+ * Returns worker-specific metrics for stats reporting.
  */
-function maybePostStats(): void {
-  if (!control) return;
-
-  const now = performance.now();
-  if (now - lastStatsTime < STATS_INTERVAL_MS) return;
-
-  // Compute producer dropped samples delta
-  const totalDropped = Atomics.load(control, CTRL_DROPPED_SAMPLES);
-  const producerDroppedSamples = (totalDropped - lastProducerDroppedSamples) >>> 0;
-  lastProducerDroppedSamples = totalDropped;
-
-  const avgSamplesPerWake = wakeupCount > 0 ? totalSamplesRead / wakeupCount : 0;
-
-  postToMain({
-    type: 'STATS',
+function getCustomMetrics(): CustomMetrics {
+  return {
     underflows: underflowCount,
-    producerDroppedSamples,
     consumerDroppedFrames: droppedFrameCount,
     catchUpDroppedSamples,
     backpressureCycles,
     wakeups: wakeupCount,
-    avgSamplesPerWake,
+    avgSamplesPerWake: wakeupCount > 0 ? totalSamplesRead / wakeupCount : 0,
     encodeQueueSize: encoder?.encodeQueueSize ?? 0,
-    wsBufferedAmount: socket?.bufferedAmount ?? 0,
-    frameQueueSize: frameQueue.length,
-    frameQueueBytes,
-    frameQueueOverflowDrops,
-  });
+  };
+}
 
-  // Reset interval counters
+/**
+ * Resets worker-specific interval counters after stats are posted.
+ */
+function resetCustomCounters(): void {
   underflowCount = 0;
   droppedFrameCount = 0;
   catchUpDroppedSamples = 0;
   backpressureCycles = 0;
-  frameQueueOverflowDrops = 0;
   wakeupCount = 0;
   totalSamplesRead = 0;
-  lastStatsTime = now;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// WebSocket Management
-// ─────────────────────────────────────────────────────────────────────────────
-
-/**
- * Connects to the WebSocket and performs handshake.
- * @param wsUrl - The WebSocket URL to connect to
- * @param encoderConfig - The encoder configuration for the stream
- * @returns A promise resolving to the stream ID
- */
-/** Handshake message to send on WS connect. */
-interface HandshakeMessage {
-  type: string;
-  payload: Record<string, unknown>;
-}
-
-/**
- *
- * @param wsUrl
- * @param handshake
- */
-async function connectWebSocket(wsUrl: string, handshake: HandshakeMessage): Promise<string> {
-  return new Promise((resolve, reject) => {
-    log.info(`Connecting to WebSocket: ${wsUrl}`);
-
-    const ws = new WebSocket(wsUrl);
-    ws.binaryType = 'arraybuffer';
-    socket = ws;
-
-    const connectTimeout = setTimeout(() => {
-      ws.close();
-      reject(new Error('WebSocket connection timeout'));
-    }, WS_CONNECT_TIMEOUT_MS);
-
-    ws.onopen = () => {
-      clearTimeout(connectTimeout);
-      log.info('WebSocket connected, sending handshake...');
-
-      // Send handshake
-      ws.send(JSON.stringify(handshake));
-
-      // Wait for handshake response
-      const handshakeTimeout = setTimeout(() => {
-        ws.close();
-        reject(new Error('Handshake timeout'));
-      }, HANDSHAKE_TIMEOUT_MS);
-
-      // Handle clean close during handshake (overwritten by handleWsClose on success)
-      ws.onclose = (event: CloseEvent) => {
-        clearTimeout(handshakeTimeout);
-        reject(
-          new Error(`WebSocket closed during handshake: ${event.reason || `Code ${event.code}`}`),
-        );
-      };
-
-      const handshakeHandler = (event: MessageEvent) => {
-        if (typeof event.data !== 'string') return;
-
-        try {
-          const raw = JSON.parse(event.data);
-
-          // Skip broadcast events
-          if ('category' in raw || raw.type === 'INITIAL_STATE') return;
-
-          const parsed = WsMessageSchema.safeParse(raw);
-          if (!parsed.success) return;
-
-          const message = parsed.data;
-
-          if (message.type === 'HANDSHAKE_ACK') {
-            clearTimeout(handshakeTimeout);
-            ws.removeEventListener('message', handshakeHandler);
-            streamId = message.payload.streamId;
-            log.info(`Handshake complete, streamId: ${streamId}`);
-
-            // Start heartbeat
-            startHeartbeat();
-
-            // Set up persistent message handler
-            ws.onmessage = handleWsMessage;
-            ws.onclose = handleWsClose;
-            ws.onerror = handleWsError;
-
-            resolve(message.payload.streamId);
-          } else if (message.type === 'ERROR') {
-            clearTimeout(handshakeTimeout);
-            ws.removeEventListener('message', handshakeHandler);
-            reject(new Error(message.payload.message));
-          }
-        } catch {
-          // Ignore parse errors during handshake
-        }
-      };
-
-      ws.addEventListener('message', handshakeHandler);
-    };
-
-    ws.onerror = () => {
-      clearTimeout(connectTimeout);
-      reject(new Error('WebSocket connection error'));
-    };
-  });
-}
-
-/**
- * Handles incoming WebSocket messages.
- * @param event
- */
-function handleWsMessage(event: MessageEvent): void {
-  if (typeof event.data !== 'string') return;
-
-  try {
-    const raw = JSON.parse(event.data);
-
-    // Skip broadcast events
-    if ('category' in raw || raw.type === 'INITIAL_STATE') return;
-
-    const parsed = WsMessageSchema.safeParse(raw);
-    if (!parsed.success) return;
-
-    const message: WsMessage = parsed.data;
-
-    switch (message.type) {
-      case 'HEARTBEAT_ACK':
-        // Heartbeat acknowledged, connection is alive
-        break;
-
-      case 'STREAM_READY':
-        log.info(`Stream ready with ${message.payload.bufferSize} frames buffered`);
-        postToMain({
-          type: 'STREAM_READY',
-          bufferSize: message.payload.bufferSize,
-        });
-        break;
-
-      case 'PLAYBACK_STARTED':
-        log.info(`Playback started on ${message.payload.speakerIp}`);
-        postToMain({
-          type: 'PLAYBACK_STARTED',
-          speakerIp: message.payload.speakerIp,
-          streamUrl: message.payload.streamUrl,
-        });
-        break;
-
-      case 'PLAYBACK_RESULTS': {
-        const results = message.payload.results;
-        const successful = results.filter((r) => r.success).length;
-        log.info(`Playback results: ${successful}/${results.length} speakers started`);
-        postToMain({
-          type: 'PLAYBACK_RESULTS',
-          results,
-        });
-        break;
-      }
-
-      case 'PLAYBACK_ERROR':
-        log.error(`Playback error: ${message.payload.message}`);
-        postToMain({
-          type: 'PLAYBACK_ERROR',
-          message: message.payload.message,
-        });
-        break;
-
-      case 'ERROR':
-        log.error(`Server error: ${message.payload.message}`);
-        postToMain({
-          type: 'ERROR',
-          message: message.payload.message,
-        });
-        break;
-
-      case 'BROWSER_CAPTURE_ERROR':
-        log.error(`Browser capture error: ${message.payload.error} (${message.payload.reason})`);
-        postToMain({
-          type: 'BROWSER_CAPTURE_ERROR',
-          error: message.payload.error,
-          reason: message.payload.reason,
-        });
-        break;
-
-      default:
-        // Ignore other message types
-        break;
-    }
-  } catch {
-    // Ignore parse errors
-  }
-}
-
-/**
- * Handles WebSocket close.
- * @param event
- */
-function handleWsClose(event: CloseEvent): void {
-  log.warn(`WebSocket closed: ${event.code} ${event.reason}`);
-  stopHeartbeat();
-  postToMain({
-    type: 'DISCONNECTED',
-    reason: event.reason || `Code ${event.code}`,
-  });
-}
-
-/**
- * Handles WebSocket errors.
- */
-function handleWsError(): void {
-  log.error('WebSocket error');
-}
-
-/**
- * Starts the heartbeat timer.
- */
-function startHeartbeat(): void {
-  stopHeartbeat();
-  heartbeatInterval = setInterval(() => {
-    if (socket?.readyState === WebSocket.OPEN) {
-      socket.send(JSON.stringify({ type: 'HEARTBEAT' }));
-    }
-  }, HEARTBEAT_INTERVAL_MS);
-}
-
-/**
- * Stops the heartbeat timer.
- */
-function stopHeartbeat(): void {
-  if (heartbeatInterval) {
-    clearInterval(heartbeatInterval);
-    heartbeatInterval = null;
-  }
-}
-
-/**
- * Sends a message over WebSocket.
- * @param message - The message object to send
- * @returns True if the message was sent, false otherwise
- */
-function sendWsMessage(message: object): boolean {
-  if (!socket || socket.readyState !== WebSocket.OPEN) {
-    return false;
-  }
-  socket.send(JSON.stringify(message));
-  return true;
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Flow Control Helpers
+// Flow Control
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
@@ -976,10 +554,10 @@ function sendWsMessage(message: object): boolean {
  * @returns True if encoder queue or WebSocket buffer is overloaded
  */
 function isBackpressured(): boolean {
-  if (!policy) return false;
+  if (!s.policy) return false;
   return (
-    (encoder?.encodeQueueSize ?? 0) >= policy.maxEncodeQueue ||
-    (socket?.bufferedAmount ?? 0) >= policy.wsBufferHighWater
+    (encoder?.encodeQueueSize ?? 0) >= s.policy.maxEncodeQueue ||
+    (s.socket?.bufferedAmount ?? 0) >= s.policy.wsBufferHighWater
   );
 }
 
@@ -989,36 +567,7 @@ function isBackpressured(): boolean {
  * @returns True if encoder queue is at or above threshold
  */
 function isEncoderBackpressured(): boolean {
-  return encoder !== null && encoder.encodeQueueSize >= (policy?.maxEncodeQueue ?? 16);
-}
-
-/**
- * Reusable MessageChannel for zero-delay yields.
- * MessageChannel posts directly to the task queue with sub-millisecond latency,
- * unlike setTimeout(0) which has minimum 1-4ms delay due to browser throttling.
- */
-const yieldChannel = new MessageChannel();
-let yieldResolve: (() => void) | null = null;
-yieldChannel.port2.onmessage = () => {
-  yieldResolve?.();
-  yieldResolve = null;
-};
-
-/**
- * Yields to the macrotask queue.
- * Unlike microtasks (Promise.resolve), this actually yields CPU time.
- * @param ms - Milliseconds to wait (use 0 to just yield without delay)
- * @returns A promise that resolves after the delay
- */
-function yieldMacrotask(ms: number): Promise<void> {
-  if (ms === 0) {
-    // Use MessageChannel for zero-delay yield - faster than setTimeout(0)
-    return new Promise((resolve) => {
-      yieldResolve = resolve;
-      yieldChannel.port1.postMessage(null);
-    });
-  }
-  return new Promise((resolve) => setTimeout(resolve, ms));
+  return encoder !== null && encoder.encodeQueueSize >= (s.policy?.maxEncodeQueue ?? 16);
 }
 
 /**
@@ -1039,7 +588,7 @@ function drainWithTimeBudget(): number {
     // Check backpressure before processing each frame
     // Quality mode: only block on encoder (WebSocket handled by frame queue)
     // Realtime mode: block on both encoder and WebSocket
-    if (policy?.dropOnBackpressure) {
+    if (s.policy?.dropOnBackpressure) {
       if (isBackpressured()) break;
     } else {
       // Quality mode: only check encoder backpressure
@@ -1088,8 +637,8 @@ function drainWithTimeBudget(): number {
 async function consumeLoop(): Promise<void> {
   if (!control) return;
 
-  lastStatsTime = performance.now();
-  lastProducerDroppedSamples = Atomics.load(control, CTRL_DROPPED_SAMPLES);
+  s.lastStatsTime = performance.now();
+  s.prevProducerDroppedSamples = Atomics.load(control, CTRL_DROPPED_SAMPLES);
 
   while (running) {
     // BOUNDED LATENCY (realtime mode only): Check if buffer has grown too large
@@ -1099,32 +648,34 @@ async function consumeLoop(): Promise<void> {
     // DETECT PRODUCER DROPS: Check if AudioWorklet dropped samples
     // This happens when ring buffer fills faster than we drain (rare in quality mode with frame queue)
     const currentDropped = Atomics.load(control, CTRL_DROPPED_SAMPLES);
-    if (currentDropped !== prevProducerDroppedSamples) {
-      const dropDelta = (currentDropped - prevProducerDroppedSamples) >>> 0;
+    if (currentDropped !== s.prevProducerDroppedSamples) {
+      const dropDelta = (currentDropped - s.prevProducerDroppedSamples) >>> 0;
       if (dropDelta > 0) {
-        log.warn(`Producer dropped ${dropDelta} samples - marking for ramp-in`);
+        s.log.warn(`Producer dropped ${dropDelta} samples - marking for ramp-in`);
         needsRampIn = true;
       }
-      prevProducerDroppedSamples = currentDropped;
+      s.prevProducerDroppedSamples = currentDropped;
     }
 
     // QUALITY MODE: Flush any queued frames before checking backpressure
-    if (!policy?.dropOnBackpressure && frameQueue.length > 0) {
-      const flushed = flushFrameQueue();
+    if (!s.policy?.dropOnBackpressure && s.frameQueue.length > 0) {
+      const flushed = flushFrameQueue(s);
       if (flushed > 0) {
-        log.debug(`Flushed ${flushed} queued frames`);
+        s.log.debug(`Flushed ${flushed} queued frames`);
       }
     }
 
     // BACKPRESSURE HANDLING: Differs by mode
     // Realtime mode: check encoder + WebSocket backpressure
     // Quality mode: only check encoder (WebSocket handled by frame queue)
-    const shouldBackoff = policy?.dropOnBackpressure ? isBackpressured() : isEncoderBackpressured();
+    const shouldBackoff = s.policy?.dropOnBackpressure
+      ? isBackpressured()
+      : isEncoderBackpressured();
 
     if (shouldBackoff) {
       backpressureCycles++;
       consecutiveBackpressureCycles++;
-      const maxMs = policy?.dropOnBackpressure
+      const maxMs = s.policy?.dropOnBackpressure
         ? BACKPRESSURE_BACKOFF_MAX_MS
         : QUALITY_BACKOFF_MAX_MS;
       const backoffMs = exponentialBackoff(
@@ -1132,7 +683,7 @@ async function consumeLoop(): Promise<void> {
         BACKPRESSURE_BACKOFF_INITIAL_MS,
         maxMs,
       );
-      maybePostStats();
+      maybePostStats(s, control, bufferSize, getCustomMetrics, resetCustomCounters);
       await yieldMacrotask(backoffMs);
       continue;
     }
@@ -1171,7 +722,7 @@ async function consumeLoop(): Promise<void> {
       }
     }
 
-    maybePostStats();
+    maybePostStats(s, control, bufferSize, getCustomMetrics, resetCustomCounters);
 
     // Check if buffer is empty
     const write = Atomics.load(control, CTRL_WRITE_IDX);
@@ -1198,44 +749,38 @@ async function consumeLoop(): Promise<void> {
       }
       // 'ok' = notified, 'not-equal' = value changed before wait
     }
-    // Producer notified us on empty→non-empty transition
+    // Producer notified us on empty->non-empty transition
   }
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Cleanup
+// ─────────────────────────────────────────────────────────────────────────────
 
 /**
  * Flushes any remaining samples, encoder buffer, and queued frames.
  */
 function flushRemaining(): void {
   // Flush partial frame
-  if (frameBuffer && frameOffset > 0 && encoder && socket?.readyState === WebSocket.OPEN) {
+  if (frameBuffer && frameOffset > 0 && encoder && s.socket?.readyState === WebSocket.OPEN) {
     // subarray() returns a view, no copy needed
     const encoded = encoder.encode(frameBuffer.subarray(0, frameOffset));
     if (encoded) {
-      socket.send(encoded);
+      s.socket.send(encoded);
     }
     frameOffset = 0;
   }
 
   // Flush encoder buffer
-  if (encoder && socket?.readyState === WebSocket.OPEN) {
+  if (encoder && s.socket?.readyState === WebSocket.OPEN) {
     const final = encoder.flush();
     if (final) {
-      socket.send(final);
+      s.socket.send(final);
     }
   }
 
   // Flush queued frames (quality mode may have buffered frames during backpressure)
-  if (frameQueue.length > 0 && socket?.readyState === WebSocket.OPEN) {
-    const flushedCount = frameQueue.length;
-    const flushedBytes = frameQueueBytes;
-    // Send all without backpressure check - we're shutting down
-    for (const frame of frameQueue) {
-      socket.send(frame);
-    }
-    log.info(
-      `Flushed ${flushedCount} queued frames (${(flushedBytes / 1024).toFixed(1)}KB) on cleanup`,
-    );
-  }
+  flushQueuedFrames(s);
 }
 
 /**
@@ -1244,46 +789,26 @@ function flushRemaining(): void {
 function cleanup(): void {
   running = false;
 
-  if (!browserCaptureMode) {
+  if (!s.browserCaptureMode) {
     flushRemaining();
   }
 
-  stopHeartbeat();
-
-  if (!browserCaptureMode && encoder) {
+  if (!s.browserCaptureMode && encoder) {
     encoder.close();
     encoder = null;
   }
 
-  if (socket) {
-    // Send stop message before closing in browser capture mode
-    if (browserCaptureMode && socket.readyState === WebSocket.OPEN) {
-      try {
-        socket.send(JSON.stringify({ type: 'STOP_BROWSER_CAPTURE' }));
-      } catch {
-        /* ignore send errors during shutdown */
-      }
-    }
-    socket.onopen = null;
-    socket.onclose = null;
-    socket.onerror = null;
-    socket.onmessage = null;
-    socket.close();
-    socket = null;
-  }
+  cleanupSharedState(s);
 
-  streamId = null;
-  policy = null;
-
-  if (!browserCaptureMode) {
+  if (!s.browserCaptureMode) {
     // Reset audio-specific state
     needsRampIn = false;
     lastSamples = null;
     rampSamples = 0;
-    resetFrameQueueState();
+    resetFrameQueueState(s);
   }
 
-  browserCaptureMode = false;
+  s.browserCaptureMode = false;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1292,6 +817,11 @@ function cleanup(): void {
 
 self.onmessage = async (event: MessageEvent<WorkerInboundMessage>) => {
   const msg = event.data;
+
+  // Delegate common messages (STOP, START_PLAYBACK, METADATA_UPDATE)
+  if (handleCommonMessage(s, msg, cleanup)) {
+    return;
+  }
 
   if (msg.type === 'INIT') {
     const {
@@ -1305,6 +835,11 @@ self.onmessage = async (event: MessageEvent<WorkerInboundMessage>) => {
     } = msg;
 
     try {
+      // Validate SAB fields are present (now optional in WorkerInitMessage for MSTP path)
+      if (!sab || size === undefined || mask === undefined || headerSize === undefined) {
+        throw new Error('SAB path requires sab, bufferSize, bufferMask, and headerSize');
+      }
+
       if ((size & (size - 1)) !== 0 || mask !== size - 1) {
         throw new Error('Invalid ring buffer configuration (size must be power of two)');
       }
@@ -1343,15 +878,15 @@ self.onmessage = async (event: MessageEvent<WorkerInboundMessage>) => {
         frameSizeSamples: optimalFrameSamples,
       };
 
-      log.info(
+      s.log.info(
         `Frame size: ${optimalFrameSamples} samples (${framePeriodMs.toFixed(1)}ms) for ${encoderConfig.codec}`,
       );
 
       // Initialize streaming policy from latency mode
-      policy = getStreamingPolicy(encoderConfig.latencyMode);
-      log.info(
+      s.policy = getStreamingPolicy(encoderConfig.latencyMode);
+      s.log.info(
         `Streaming policy: ${encoderConfig.latencyMode} mode ` +
-          `(catchUp=${policy.catchUpMaxMs ?? 'disabled'}, dropOnBackpressure=${policy.dropOnBackpressure})`,
+          `(catchUp=${s.policy.catchUpMaxMs ?? 'disabled'}, dropOnBackpressure=${s.policy.dropOnBackpressure})`,
       );
 
       // Reset state
@@ -1363,38 +898,41 @@ self.onmessage = async (event: MessageEvent<WorkerInboundMessage>) => {
       nextFrameDueTime = 0;
       wakeupCount = 0;
       totalSamplesRead = 0;
-      lastProducerDroppedSamples = 0;
+      s.prevProducerDroppedSamples = 0;
 
-      resetFrameQueueState();
+      resetFrameQueueState(s);
 
       // Compute catch-up thresholds based on policy and sample rate
       // These define the bounded latency window (only used in realtime mode)
       const samplesPerMs = (sampleRate * encoderConfig.channels) / 1000;
-      catchUpTargetSamples = Math.floor(policy.catchUpTargetMs * samplesPerMs);
+      catchUpTargetSamples = Math.floor(s.policy.catchUpTargetMs * samplesPerMs);
       catchUpMaxSamples =
-        policy.catchUpMaxMs !== null ? Math.floor(policy.catchUpMaxMs * samplesPerMs) : Infinity; // Quality mode: effectively disable catch-up
+        s.policy.catchUpMaxMs !== null
+          ? Math.floor(s.policy.catchUpMaxMs * samplesPerMs)
+          : Infinity; // Quality mode: effectively disable catch-up
 
       // Create encoder
-      log.info(`Creating encoder: ${encoderConfig.codec} @ ${encoderConfig.bitrate}kbps`);
+      s.log.info(`Creating encoder: ${encoderConfig.codec} @ ${encoderConfig.bitrate}kbps`);
       encoder = await createEncoder(configWithFrameSize);
 
       // Connect WebSocket (sends frame size to server in handshake)
-      const id = await connectWebSocket(wsUrl, {
+      const id = await connectWebSocket(s, wsUrl, {
         type: 'HANDSHAKE',
         payload: { encoderConfig: configWithFrameSize },
       });
 
       running = true;
+      s.streamStartTime = performance.now();
       postToMain({ type: 'CONNECTED', streamId: id });
 
       // Start consumption loop
       consumeLoop().catch((err) => {
-        log.error('consumeLoop error:', err);
+        s.log.error('consumeLoop error:', err);
         postToMain({ type: 'ERROR', message: String(err) });
       });
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      log.error('Initialization failed:', message);
+      s.log.error('Initialization failed:', message);
       postToMain({ type: 'ERROR', message });
       cleanup();
     }
@@ -1403,42 +941,24 @@ self.onmessage = async (event: MessageEvent<WorkerInboundMessage>) => {
   if (msg.type === 'INIT_BROWSER_CAPTURE') {
     const { wsUrl, encoderConfig, browserName } = msg;
     try {
-      browserCaptureMode = true;
+      s.browserCaptureMode = true;
 
-      // No ring buffer, no encoder, no consumeLoop —
+      // No ring buffer, no encoder, no consumeLoop --
       // server captures audio via WASAPI, Worker just manages WS lifecycle
-      const id = await connectWebSocket(wsUrl, {
+      const id = await connectWebSocket(s, wsUrl, {
         type: 'START_BROWSER_CAPTURE',
         payload: { browserName: browserName ?? null, encoderConfig },
       });
 
       running = true;
+      s.streamStartTime = performance.now();
       postToMain({ type: 'CONNECTED', streamId: id });
-      // Worker is now idle — WS message handler + heartbeat do all the work
+      // Worker is now idle -- WS message handler + heartbeat do all the work
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      log.error('Browser capture init failed:', message);
+      s.log.error('Browser capture init failed:', message);
       postToMain({ type: 'ERROR', message });
       cleanup();
     }
-  }
-
-  if (msg.type === 'STOP') {
-    cleanup();
-  }
-
-  if (msg.type === 'START_PLAYBACK') {
-    const { speakerIps, metadata, syncSpeakers = false, videoSyncEnabled } = msg;
-    sendWsMessage({
-      type: 'START_PLAYBACK',
-      payload: { speakerIps, metadata, syncSpeakers, videoSyncEnabled },
-    });
-  }
-
-  if (msg.type === 'METADATA_UPDATE') {
-    sendWsMessage({
-      type: 'METADATA_UPDATE',
-      payload: msg.metadata,
-    });
   }
 };
