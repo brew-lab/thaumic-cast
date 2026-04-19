@@ -79,6 +79,9 @@ export class StreamSession {
   /** Timer for checking worklet heartbeat. */
   private heartbeatCheckTimer: ReturnType<typeof setInterval> | null = null;
 
+  /** Pending worker terminate timer (deferred to allow METRICS_DUMP delivery). */
+  private workerTerminateTimer: ReturnType<typeof setTimeout> | null = null;
+
   /** Time when the current stall started (0 if not stalled). */
   private stallStartTime = 0;
 
@@ -610,6 +613,11 @@ export class StreamSession {
           }
           break;
         }
+
+        case 'METRICS_DUMP':
+          log.info('Pipeline metrics timeline', { timeline: JSON.stringify(msg.timeline) });
+          this.terminateWorkerNow();
+          break;
       }
     };
 
@@ -652,8 +660,8 @@ export class StreamSession {
 
     if (this.consumerWorker) {
       this.consumerWorker.postMessage({ type: 'STOP' });
-      this.consumerWorker.terminate();
-      this.consumerWorker = null;
+      // Defer terminate to allow worker to post METRICS_DUMP back
+      this.workerTerminateTimer = setTimeout(() => this.terminateWorkerNow(), 500);
     }
 
     // Audio pipeline cleanup (tab capture only)
@@ -675,6 +683,20 @@ export class StreamSession {
       this.outputGainNode?.disconnect();
       this.audioContext?.close().catch(noop);
       this.mediaStream.getTracks().forEach((t) => t.stop());
+    }
+  }
+
+  /**
+   * Terminates the consumer worker immediately and clears the deferred terminate timer.
+   */
+  private terminateWorkerNow(): void {
+    if (this.workerTerminateTimer) {
+      clearTimeout(this.workerTerminateTimer);
+      this.workerTerminateTimer = null;
+    }
+    if (this.consumerWorker) {
+      this.consumerWorker.terminate();
+      this.consumerWorker = null;
     }
   }
 

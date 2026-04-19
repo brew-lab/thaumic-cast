@@ -14,16 +14,29 @@ import type { EncoderConfig, StreamMetadata } from '@thaumic-cast/protocol';
 // Inbound Messages (StreamSession → Worker)
 // ─────────────────────────────────────────────────────────────────────────────
 
-/** Initializes the worker with buffer and encoder configuration. */
+/**
+ * Initializes the worker with buffer and encoder configuration.
+ *
+ * SAB fields are optional to allow alternative consumer worker implementations
+ * that do not use a SharedArrayBuffer ring buffer.
+ */
 export interface WorkerInitMessage {
   type: 'INIT';
-  sab: SharedArrayBuffer;
-  bufferSize: number;
-  bufferMask: number;
-  headerSize: number;
+  /** SharedArrayBuffer for ring buffer (SAB path only). */
+  sab?: SharedArrayBuffer;
+  /** Ring buffer capacity in samples (SAB path only). */
+  bufferSize?: number;
+  /** Ring buffer index mask (SAB path only). */
+  bufferMask?: number;
+  /** Ring buffer header size in Int32 elements (SAB path only). */
+  headerSize?: number;
   sampleRate: number;
   encoderConfig: EncoderConfig;
   wsUrl: string;
+  /** Pipeline mode. Defaults to 'passthrough' for backward compatibility. */
+  mode?: 'encode' | 'passthrough';
+  /** Number of interleaved Int16 samples per frame. Required when mode is 'encode'. */
+  frameSizeInterleaved?: number;
 }
 
 /** Stops the worker and cleans up resources. */
@@ -152,6 +165,38 @@ export interface WorkerStatsMessage {
   frameQueueOverflowDrops: number;
 }
 
+/** A single metrics snapshot captured during streaming. */
+export interface MetricSnapshot {
+  /** Timestamp relative to stream start (ms). */
+  t: number;
+  /** Ring buffer fill fraction (0–1). */
+  fill: number;
+  /** WebSocket buffered amount (bytes). */
+  wsBuf: number;
+  /** Underflow events in this interval. */
+  uf: number;
+  /** Producer dropped samples in this interval. */
+  pDrop: number;
+  /** Consumer dropped frames in this interval. */
+  cDrop: number;
+  /** Catch-up dropped samples in this interval. */
+  cuDrop: number;
+  /** Backpressure cycles in this interval. */
+  bp: number;
+  /** Frame queue size (frames). */
+  fq: number;
+  /** Frame queue bytes. */
+  fqB: number;
+  /** Frame queue overflow drops. */
+  fqDrop: number;
+}
+
+/** Full pipeline metrics timeline, posted on stream teardown. */
+export interface WorkerMetricsDumpMessage {
+  type: 'METRICS_DUMP';
+  timeline: MetricSnapshot[];
+}
+
 /** Union of all messages that can be sent from the worker. */
 export type WorkerOutboundMessage =
   | WorkerConnectedMessage
@@ -162,4 +207,5 @@ export type WorkerOutboundMessage =
   | WorkerPlaybackResultsMessage
   | WorkerPlaybackErrorMessage
   | WorkerBrowserCaptureErrorMessage
-  | WorkerStatsMessage;
+  | WorkerStatsMessage
+  | WorkerMetricsDumpMessage;
