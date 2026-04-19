@@ -17,8 +17,10 @@ import type { EncoderConfig, StreamMetadata } from '@thaumic-cast/protocol';
 /**
  * Initializes the worker with buffer and encoder configuration.
  *
- * SAB fields are optional to allow alternative consumer worker implementations
- * that do not use a SharedArrayBuffer ring buffer.
+ * Two pipeline modes:
+ * - **SAB path** (compressed codecs): `sab` is provided. Worker reads from SharedArrayBuffer.
+ * - **MSTP path** (PCM codec): `readable` is provided. Worker reads AudioData from
+ *   a transferred ReadableStream, performs Float32→Int16 conversion, sends via WebSocket.
  */
 export interface WorkerInitMessage {
   type: 'INIT';
@@ -37,6 +39,10 @@ export interface WorkerInitMessage {
   mode?: 'encode' | 'passthrough';
   /** Number of interleaved Int16 samples per frame. Required when mode is 'encode'. */
   frameSizeInterleaved?: number;
+  /** Transferred ReadableStream from MediaStreamTrackProcessor (MSTP path only). */
+  readable?: ReadableStream<AudioData>;
+  /** Number of audio channels (MSTP path only, default 2). */
+  channels?: number;
 }
 
 /** Stops the worker and cleans up resources. */
