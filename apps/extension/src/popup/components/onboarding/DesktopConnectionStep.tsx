@@ -2,6 +2,7 @@ import { useEffect, useState, useCallback } from 'preact/hooks';
 import { WizardStep, Alert, Button, Disclosure, Input } from '@thaumic-cast/ui';
 import { Monitor, Download, RefreshCw } from 'lucide-preact';
 import { useTranslation } from 'react-i18next';
+import { GITHUB_RELEASES_URL } from '@thaumic-cast/shared';
 import { useConnectionStatus } from '../../hooks/useConnectionStatus';
 import {
   testServerConnection,
@@ -46,7 +47,7 @@ export function DesktopConnectionStep({
 
   const handleDownload = () => {
     // Open releases page in new tab
-    chrome.tabs.create({ url: 'https://github.com/brew-lab/thaumic-cast/releases/latest' });
+    chrome.tabs.create({ url: GITHUB_RELEASES_URL });
   };
 
   /**

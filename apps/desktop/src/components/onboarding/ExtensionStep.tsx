@@ -3,12 +3,12 @@ import { open } from '@tauri-apps/plugin-shell';
 import { WizardStep, Alert, Button } from '@thaumic-cast/ui';
 import { Puzzle, ExternalLink, Download } from 'lucide-preact';
 import { useTranslation } from 'react-i18next';
+import { GITHUB_RELEASES_URL } from '@thaumic-cast/shared';
 import { stats, fetchStats } from '../../state/store';
 import styles from './ExtensionStep.module.css';
 
 const CHROME_STORE_URL =
   'https://chromewebstore.google.com/detail/hpemmkbecklfacogdidaoncjmfadgedm';
-const GITHUB_RELEASES_URL = 'https://github.com/brew-lab/thaumic-cast/releases/latest';
 
 /**
  * Extension installation guide step.

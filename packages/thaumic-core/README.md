@@ -53,9 +53,14 @@ let services = bootstrap_services_with_network(&Config::default(), network, hand
 ### Starting the Server
 
 ```rust
-use thaumic_core::{AppState, ArtworkConfig, start_server};
+use thaumic_core::{AppInfo, AppState, AppType, ArtworkConfig, start_server};
 
-let app_state = AppState::new(&services, config, ArtworkConfig::default());
+let app_state = AppState::new(
+    &services,
+    config,
+    ArtworkConfig::default(),
+    AppInfo::new(env!("CARGO_PKG_VERSION"), AppType::Server),
+);
 
 start_server(app_state).await?;
 ```

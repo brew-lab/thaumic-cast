@@ -655,6 +655,30 @@ export async function connectWebSocket(
             s.streamId = message.payload.streamId;
             s.log.info(`Handshake complete, streamId: ${s.streamId}`);
 
+            // Persist companion version metadata for the popup/options to display
+            // and to drive the out-of-date warning. Pre-0.4.0 companions omit
+            // these fields; we silently skip persistence so those builds continue
+            // to work without triggering a false-positive warning.
+            //
+            // `appType` is intentionally allowed to be absent — a future companion
+            // variant (e.g. `"cli"`) will be dropped to undefined by the schema's
+            // `.catch(undefined)`, and we still want the About surface and the
+            // warning to work using the version fields we *did* receive.
+            //
+            // Fire-and-forget: the popup's useStorageListener picks up the write
+            // via chrome.storage.local.onChanged on cold open, so a brief gap
+            // before storage lands is self-correcting.
+            const { appVersion, protocolVersion, appType } = message.payload;
+            if (appVersion && protocolVersion) {
+              chrome.storage.local
+                .set({
+                  companionInfo: { appVersion, protocolVersion, appType },
+                })
+                .catch((err: unknown) => {
+                  s.log.warn('Failed to persist companion info', err);
+                });
+            }
+
             startHeartbeat(s);
 
             // Set up persistent message handlers bound to this state

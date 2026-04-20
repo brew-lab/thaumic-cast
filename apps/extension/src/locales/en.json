@@ -142,6 +142,17 @@
   "about_section_title": "About",
   "about_version": "Version {{version}}",
   "about_extension_name": "Thaumic Cast Extension",
+  "about_companion_heading": "Connected Companion",
+  "about_companion_not_connected": "No companion is currently connected",
+  "about_companion_type_desktop": "Desktop App",
+  "about_companion_type_server": "Server",
+  "about_companion_type_generic": "Companion",
+  "about_companion_protocol": "Protocol v{{version}}",
+
+  "version_mismatch_message": "Your {{appTypeLabel}} has fallen behind the extension (currently v{{appVersion}}). Update to restore harmony.",
+  "version_mismatch_action_desktop": "Update Desktop App",
+  "version_mismatch_action_server": "Update Server",
+  "version_mismatch_action_generic": "Update Companion",
 
   "loading_settings": "Loading settings...",
 

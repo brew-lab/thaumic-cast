@@ -13,7 +13,8 @@ use anyhow::{Context, Result};
 use clap::Parser;
 use parking_lot::RwLock;
 use thaumic_core::{
-    bootstrap_services_with_network, start_server, AppState, LocalIpDetector, NetworkContext,
+    bootstrap_services_with_network, start_server, AppInfo, AppState, AppType, LocalIpDetector,
+    NetworkContext,
 };
 use tokio::signal;
 
@@ -120,6 +121,7 @@ async fn main() -> Result<()> {
         &services,
         Arc::new(RwLock::new(core_config)),
         config.to_artwork_config(),
+        AppInfo::new(env!("CARGO_PKG_VERSION"), AppType::Server),
     );
 
     // Spawn HTTP server on the main tokio runtime.

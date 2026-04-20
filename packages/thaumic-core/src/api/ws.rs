@@ -297,10 +297,16 @@ impl WsOutgoing {
 }
 
 /// Handshake acknowledgment payload.
+///
+/// Extension clients parse `protocolVersion`, `appVersion`, and `appType` to
+/// surface version-mismatch warnings and populate their About surfaces.
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct HandshakePayload {
     stream_id: String,
+    protocol_version: &'static str,
+    app_version: String,
+    app_type: crate::api::AppType,
 }
 
 /// Sends a response based on an already-resolved result.
@@ -683,6 +689,9 @@ async fn handle_start_browser_capture(
             let ack = WsOutgoing::HandshakeAck {
                 payload: HandshakePayload {
                     stream_id: stream_id.clone(),
+                    protocol_version: state.app_info.protocol_version(),
+                    app_version: state.app_info.app_version.clone(),
+                    app_type: state.app_info.app_type,
                 },
             };
             if let Some(msg) = ack.to_message() {
@@ -901,7 +910,12 @@ async fn handle_ws(socket: WebSocket, state: AppState) {
                                             Arc::clone(&state.stream_coordinator),
                                         );
                                         let ack = WsOutgoing::HandshakeAck {
-                                            payload: HandshakePayload { stream_id: id },
+                                            payload: HandshakePayload {
+                                                stream_id: id,
+                                                protocol_version: state.app_info.protocol_version(),
+                                                app_version: state.app_info.app_version.clone(),
+                                                app_type: state.app_info.app_type,
+                                            },
                                         };
                                         stream_guard = Some(guard);
                                         if let Some(msg) = ack.to_message() {
