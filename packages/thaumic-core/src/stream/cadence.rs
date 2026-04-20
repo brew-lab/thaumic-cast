@@ -565,7 +565,7 @@ pub fn create_wav_stream_with_cadence(
 
                         let delta_bytes = cur_bytes.saturating_sub(prev_delivery_bytes);
                         let interval_ms = elapsed_ms.saturating_sub(prev_snapshot_ms);
-                        let bytes_per_second = if interval_ms > 0 { delta_bytes * 1000 / interval_ms } else { 0 };
+                        let bytes_per_second = (delta_bytes * 1000).checked_div(interval_ms).unwrap_or(0);
 
                         let delivery = DeliveryWindow {
                             frames_sent: cur_frames.saturating_sub(prev_delivery_frames),
