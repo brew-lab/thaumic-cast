@@ -12,7 +12,7 @@ use std::net::SocketAddr;
 use std::pin::Pin;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use axum::{
     body::Body,
@@ -76,13 +76,30 @@ pub(super) async fn stream_audio(
     // new speakers as resumes after the first speaker connects.
     let is_resume = stream_state.timing.current_epoch_for(remote_ip).is_some();
 
-    // No upfront buffering delay: the cadence stream's jitter-buffer state
-    // machine handles startup buffering via its fill gate, emitting silence
-    // until the queue reaches `target_depth` (or the rebuffer timeout elapses).
-    // This keeps Sonos receiving data immediately while still absorbing startup
-    // jitter, replacing the old blocking `tokio::time::sleep(jitter_buffer_ms)`.
-    if stream_state.codec == AudioCodec::Pcm && is_resume {
-        log::info!("[Stream] PCM resume for {}", remote_ip);
+    // Upfront buffering delay for PCM streams BEFORE subscribing.
+    // Lets the ring buffer accumulate frames so the prefill snapshot returned
+    // by `subscribe()` has real audio — otherwise the cadence stream would
+    // begin emitting silence frames as its first body bytes, which Sonos has
+    // been observed to treat as a stalled stream and respond to with a
+    // transport-state transition to Stopped.
+    //
+    // Delay matches the user-configured `jitter_buffer_ms`, which is already
+    // validated against `MAX_JITTER_BUFFER_MS` at the protocol layer.
+    //
+    // SKIP on resume: Sonos closes the connection within milliseconds if we
+    // delay. The ring buffer already has frames from before the pause.
+    let prefill_delay_ms = stream_state.jitter_buffer_ms;
+    if stream_state.codec == AudioCodec::Pcm && prefill_delay_ms > 0 && !is_resume {
+        log::debug!(
+            "[Stream] Applying {}ms prefill delay for PCM stream",
+            prefill_delay_ms
+        );
+        tokio::time::sleep(Duration::from_millis(prefill_delay_ms)).await;
+    } else if is_resume && stream_state.codec == AudioCodec::Pcm {
+        log::info!(
+            "[Stream] Skipping prefill delay on resume for {}",
+            remote_ip
+        );
 
         // Delegate playback control to coordinator (SoC: HTTP serves audio,
         // coordinator controls playback). Fire-and-forget.
@@ -93,6 +110,8 @@ pub(super) async fn stream_audio(
         });
     }
 
+    // Capture connected_at AFTER the prefill delay so latency metrics reflect
+    // actual transport latency, not intentional startup buffering.
     let connected_at = Instant::now();
 
     // Subscribe AFTER delay to get fresh prefill snapshot and avoid rx backlog
@@ -119,10 +138,10 @@ pub(super) async fn stream_audio(
     // representation - raw zeros would corrupt the stream. These codecs also
     // tend to be more resilient to jitter due to their buffering behavior.
     let combined_stream: AudioStream = if stream_state.codec == AudioCodec::Pcm {
-        // PCM: fixed-cadence streaming with jitter-buffer state machine and silence
-        // injection. Prefill frames are pre-populated in the queue to eliminate the
-        // handoff gap; CadenceConfig::new trims them to at most target_depth so the
-        // initial queue does not exceed the fill-gate target.
+        // PCM: fixed-cadence streaming with silence injection on underrun.
+        // Prefill frames are pre-populated in the queue to eliminate the
+        // handoff gap; `CadenceConfig::new` trims them so the initial queue
+        // does not exceed the intended buffer depth.
         let frame_duration_ms = stream_state.frame_duration_ms;
         let silence_frame = stream_state.audio_format.silence_frame(frame_duration_ms);
 
