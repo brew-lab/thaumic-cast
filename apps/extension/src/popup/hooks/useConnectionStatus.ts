@@ -1,4 +1,5 @@
 import { useReducer, useEffect, useCallback } from 'preact/hooks';
+import type { AppType } from '@thaumic-cast/protocol';
 import type { ConnectionState as BackgroundConnectionState } from '../../background/connection-state';
 import type { EnsureConnectionResponse } from '../../lib/messages';
 import { useChromeMessage } from './useChromeMessage';
@@ -34,6 +35,12 @@ export interface ConnectionStatus {
   networkHealth: NetworkHealthStatus;
   /** Reason for degraded network health (null if healthy) */
   networkHealthReason: string | null;
+  /** Companion type from `/health` (null on pre-0.4.0 builds). */
+  appType: AppType | null;
+  /** Companion app semver from `INITIAL_STATE` (null on pre-0.4.0 builds). */
+  appVersion: string | null;
+  /** Wire-protocol semver from `INITIAL_STATE` (null on pre-0.4.0 builds). */
+  protocolVersion: string | null;
   /** Triggers a connection retry attempt (sets phase to 'checking') */
   retry: () => Promise<void>;
 }
@@ -47,6 +54,9 @@ interface ConnectionState {
   maxStreams: number | null;
   networkHealth: NetworkHealthStatus;
   networkHealthReason: string | null;
+  appType: AppType | null;
+  appVersion: string | null;
+  protocolVersion: string | null;
 }
 
 /** Actions that can update connection state */
@@ -69,6 +79,9 @@ const initialState: ConnectionState = {
   maxStreams: null,
   networkHealth: 'ok',
   networkHealthReason: null,
+  appType: null,
+  appVersion: null,
+  protocolVersion: null,
 };
 
 /**
@@ -103,6 +116,9 @@ function connectionReducer(state: ConnectionState, action: ConnectionAction): Co
         maxStreams,
         networkHealth,
         networkHealthReason,
+        appType,
+        appVersion,
+        protocolVersion,
       } = action.payload;
       if (!desktopAppUrl) return state;
       return {
@@ -114,6 +130,9 @@ function connectionReducer(state: ConnectionState, action: ConnectionAction): Co
         maxStreams,
         networkHealth: networkHealth ?? 'ok',
         networkHealthReason: networkHealthReason ?? null,
+        appType: appType ?? null,
+        appVersion: appVersion ?? null,
+        protocolVersion: protocolVersion ?? null,
       };
     }
 

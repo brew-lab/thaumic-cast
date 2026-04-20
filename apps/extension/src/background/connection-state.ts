@@ -13,6 +13,7 @@
  * - Message passing
  */
 
+import { type AppType } from '@thaumic-cast/protocol';
 import { createLogger } from '@thaumic-cast/shared';
 import { persistenceManager } from './persistence-manager';
 
@@ -23,6 +24,13 @@ export type NetworkHealthStatus = 'ok' | 'degraded';
 
 /**
  * Connection state snapshot.
+ *
+ * Includes companion version metadata (`appType`, `appVersion`,
+ * `protocolVersion`) so the popup and About surface can describe the
+ * connection without a separate storage key. `appType` is populated at
+ * discovery time from `/health`; `appVersion`/`protocolVersion` arrive on
+ * the WebSocket via `INITIAL_STATE`. All three are nullable: pre-0.4.0
+ * companions don't advertise them.
  */
 export interface ConnectionState {
   /** Whether WebSocket is currently connected */
@@ -39,6 +47,12 @@ export interface ConnectionState {
   networkHealth: NetworkHealthStatus;
   /** Reason for degraded network health (null if healthy) */
   networkHealthReason: string | null;
+  /** Which companion is connected (desktop/server). Null on pre-0.4.0 builds. */
+  appType: AppType | null;
+  /** Companion app semver. Null on pre-0.4.0 builds. */
+  appVersion: string | null;
+  /** Wire-protocol semver advertised by the companion. Null on pre-0.4.0 builds. */
+  protocolVersion: string | null;
 }
 
 /** Current connection state */
@@ -50,6 +64,9 @@ let state: ConnectionState = {
   lastError: null,
   networkHealth: 'ok',
   networkHealthReason: null,
+  appType: null,
+  appVersion: null,
+  protocolVersion: null,
 };
 
 /**
@@ -74,6 +91,9 @@ const storage = persistenceManager.register<ConnectionState>(
         lastError: s.lastError ?? null,
         networkHealth: s.networkHealth ?? 'ok',
         networkHealthReason: s.networkHealthReason ?? null,
+        appType: s.appType ?? null,
+        appVersion: s.appVersion ?? null,
+        protocolVersion: s.protocolVersion ?? null,
       };
     },
   },
@@ -113,16 +133,50 @@ export function setConnected(connected: boolean): void {
 
 /**
  * Sets the discovered desktop app info.
+ *
+ * `appType` is supplied when `/health` reports it (≥0.4.0 companions). Older
+ * companions return undefined here; the extension treats that as "unknown"
+ * until `INITIAL_STATE` arrives (it'll likely be unknown there too for
+ * pre-0.4.0 builds).
+ *
  * @param url - The desktop app base URL
  * @param maxStreams - Maximum concurrent streams allowed
+ * @param appType - Companion type from `/health`, or undefined if not reported
  */
-export function setDesktopApp(url: string, maxStreams: number): void {
+export function setDesktopApp(url: string, maxStreams: number, appType?: AppType): void {
   state = {
     ...state,
     desktopAppUrl: url,
     maxStreams,
     lastDiscoveredAt: Date.now(),
     lastError: null,
+    appType: appType ?? state.appType,
+  };
+  storage.schedule();
+}
+
+/**
+ * Records companion version metadata captured from `INITIAL_STATE`.
+ *
+ * Called whenever the WebSocket (re)connects. `appType` is allowed to be
+ * `undefined`/`null` here; we keep any value previously set by `/health` in
+ * that case so we don't regress to "unknown" on a transient disconnect.
+ *
+ * @param metadata - Version fields reported by the companion
+ * @param metadata.appType - Companion type (`desktop` | `server`), or null/undefined when absent
+ * @param metadata.appVersion - Companion app semver, or null when absent (pre-0.4.0)
+ * @param metadata.protocolVersion - Wire-protocol semver, or null when absent (pre-0.4.0)
+ */
+export function setConnectionMetadata(metadata: {
+  appType: AppType | null | undefined;
+  appVersion: string | null;
+  protocolVersion: string | null;
+}): void {
+  state = {
+    ...state,
+    appType: metadata.appType ?? state.appType,
+    appVersion: metadata.appVersion,
+    protocolVersion: metadata.protocolVersion,
   };
   storage.schedule();
 }
@@ -167,6 +221,9 @@ export function clearConnectionState(): void {
     lastError: 'error_desktop_not_found',
     networkHealth: 'ok',
     networkHealthReason: null,
+    appType: null,
+    appVersion: null,
+    protocolVersion: null,
   };
   storage.schedule();
 }

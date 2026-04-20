@@ -5,7 +5,7 @@ import { SPEAKER_AVAILABILITY_LABELS, MediaAction } from '@thaumic-cast/protocol
 import { getSpeakerAvailability } from '@thaumic-cast/protocol';
 import { GITHUB_RELEASES_URL } from '@thaumic-cast/shared';
 import { Radio, Settings } from 'lucide-preact';
-import { Alert, IconButton } from '@thaumic-cast/ui';
+import { Alert, Button, IconButton } from '@thaumic-cast/ui';
 import styles from './App.module.css';
 import type {
   ExtensionResponse,
@@ -65,6 +65,7 @@ function MainPopup(): JSX.Element {
   const { videoSyncEnabled } = useExtensionSettingsListener();
 
   // Connection status with instant cached display
+  const connection = useConnectionStatus();
   const {
     phase: connectionPhase,
     error: connectionError,
@@ -73,7 +74,7 @@ function MainPopup(): JSX.Element {
     networkHealth,
     networkHealthReason,
     retry: handleRetryConnection,
-  } = useConnectionStatus();
+  } = connection;
 
   // Derived states for convenience
   const wsConnected = connectionPhase === 'connected';
@@ -121,7 +122,8 @@ function MainPopup(): JSX.Element {
     useAutoStopNotification();
 
   // Companion version mismatch warning
-  const { companion, showMismatchWarning, dismissMismatchWarning } = useCompanionVersion();
+  const { companion, hasMismatch, showMismatchWarning, dismissMismatchWarning } =
+    useCompanionVersion(connection);
 
   const handleOpenReleases = useCallback(() => {
     chrome.tabs.create({ url: GITHUB_RELEASES_URL });
@@ -288,10 +290,12 @@ function MainPopup(): JSX.Element {
           onAction={handleOpenReleases}
           onDismiss={dismissMismatchWarning}
         >
-          {t('version_mismatch_message', {
-            appTypeLabel: mismatchAppTypeLabel,
-            appVersion: companion.appVersion,
-          })}
+          {companion.appVersion
+            ? t('version_mismatch_message', {
+                appTypeLabel: mismatchAppTypeLabel,
+                appVersion: companion.appVersion,
+              })
+            : t('version_mismatch_unknown_message')}
         </Alert>
       )}
 
@@ -360,12 +364,26 @@ function MainPopup(): JSX.Element {
       )}
 
       <p className={styles.footer}>
-        {t('desktop_app_status')}:{' '}
         <span className={`${styles.status} ${getStatusClass()}`}>
-          {isSeeking && t('status_checking')}
-          {connectionPhase === 'connected' && t('status_connected')}
-          {connectionPhase === 'error' && t('status_disconnected')}
+          {isSeeking && t('connection_status_checking')}
+          {connectionPhase === 'connected' &&
+            t(
+              connection.appType === 'desktop'
+                ? 'connection_status_connected_desktop'
+                : connection.appType === 'server'
+                  ? 'connection_status_connected_server'
+                  : 'connection_status_connected',
+            )}
+          {connectionPhase === 'error' && t('connection_status_disconnected')}
         </span>
+        {hasMismatch && wsConnected && (
+          <>
+            {' · '}
+            <Button variant="link" onClick={handleOpenReleases}>
+              {t('update_available')}
+            </Button>
+          </>
+        )}
       </p>
     </div>
   );

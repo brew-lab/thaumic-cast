@@ -14,7 +14,7 @@
  * - WebSocket lifecycle (handled by offscreen-manager.ts)
  */
 
-import { DEFAULT_MAX_CONCURRENT_STREAMS } from '@thaumic-cast/protocol';
+import { DEFAULT_MAX_CONCURRENT_STREAMS, type AppType } from '@thaumic-cast/protocol';
 import { createLogger } from '@thaumic-cast/shared';
 import { loadExtensionSettings } from '../lib/settings';
 import { getConnectionState, setDesktopApp } from './connection-state';
@@ -34,6 +34,11 @@ export interface DiscoveredApp {
   url: string;
   /** Maximum concurrent streams allowed by the server. */
   maxStreams: number;
+  /**
+   * Which companion the extension is talking to. Absent when the companion
+   * predates `/health` reporting `appType` (pre-0.4.0).
+   */
+  appType?: AppType;
 }
 
 /**
@@ -56,9 +61,12 @@ async function probeUrl(url: string): Promise<DiscoveredApp | null> {
       const data = await response.json();
 
       if (data.service === 'thaumic-cast') {
+        const appType: AppType | undefined =
+          data.appType === 'desktop' || data.appType === 'server' ? data.appType : undefined;
         return {
           url,
           maxStreams: data.limits?.maxStreams || DEFAULT_MAX_CONCURRENT_STREAMS,
+          appType,
         };
       }
     }
@@ -92,7 +100,7 @@ export async function discoverDesktopApp(force = false): Promise<DiscoveredApp |
     const app = await probeUrl(settings.serverUrl);
 
     if (app) {
-      setDesktopApp(app.url, app.maxStreams);
+      setDesktopApp(app.url, app.maxStreams, app.appType);
       return app;
     }
 
@@ -115,6 +123,7 @@ export async function discoverDesktopApp(force = false): Promise<DiscoveredApp |
           return {
             url: connState.desktopAppUrl,
             maxStreams: connState.maxStreams ?? DEFAULT_MAX_CONCURRENT_STREAMS,
+            appType: connState.appType ?? undefined,
           };
         }
       } catch {
@@ -135,7 +144,7 @@ export async function discoverDesktopApp(force = false): Promise<DiscoveredApp |
 
   if (foundApp) {
     log.info(`Desktop App discovered at: ${foundApp.url} (Limit: ${foundApp.maxStreams})`);
-    setDesktopApp(foundApp.url, foundApp.maxStreams);
+    setDesktopApp(foundApp.url, foundApp.maxStreams, foundApp.appType);
     return foundApp;
   }
 

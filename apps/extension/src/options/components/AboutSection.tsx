@@ -1,36 +1,38 @@
 import type { JSX } from 'preact';
-import { useEffect, useState } from 'preact/hooks';
+import { useCallback } from 'preact/hooks';
 import { useTranslation } from 'react-i18next';
-import { Card } from '@thaumic-cast/ui';
-import {
-  COMPANION_INFO_STORAGE_KEY,
-  companionTypeLabelKey,
-  type CompanionInfo,
-  getCompanionInfo,
-} from '../../lib/versionCheck';
-import { useStorageListener } from '../../popup/hooks/useStorageListener';
+import { Button, Card } from '@thaumic-cast/ui';
+import { GITHUB_RELEASES_URL } from '@thaumic-cast/shared';
+import { companionTypeLabelKey, hasVersionMismatch } from '../../lib/versionCheck';
+import { useConnectionStatus } from '../../popup/hooks/useConnectionStatus';
 import styles from '../Options.module.css';
 
 /**
  * About section showing extension information and — when the extension is
  * connected to a desktop app or server — that companion's reported version
- * metadata. Values are read from `chrome.storage.local`, populated by the
- * offscreen worker on each successful handshake; `useStorageListener` keeps
- * the display in sync with live handshake events.
+ * metadata. Reads from `useConnectionStatus` (backed by `connectionState`),
+ * which is populated by `/health` at discovery and `INITIAL_STATE` on
+ * WebSocket connect.
  * @returns The about section element
  */
 export function AboutSection(): JSX.Element {
   const { t } = useTranslation();
   const version = chrome.runtime.getManifest().version;
-  const [companion, setCompanion] = useState<CompanionInfo | null>(null);
+  const connection = useConnectionStatus();
 
-  useEffect(() => {
-    getCompanionInfo()
-      .then(setCompanion)
-      .catch(() => setCompanion(null));
+  const handleOpenReleases = useCallback(() => {
+    chrome.tabs.create({ url: GITHUB_RELEASES_URL });
   }, []);
 
-  useStorageListener<CompanionInfo>(COMPANION_INFO_STORAGE_KEY, setCompanion);
+  const isConnected = connection.phase === 'connected';
+  const companion = isConnected
+    ? {
+        appType: connection.appType,
+        appVersion: connection.appVersion,
+        protocolVersion: connection.protocolVersion,
+      }
+    : null;
+  const mismatch = hasVersionMismatch(companion);
 
   return (
     <Card title={t('about_section_title')}>
@@ -43,15 +45,37 @@ export function AboutSection(): JSX.Element {
         <div>
           <div style={{ fontWeight: 500 }}>{t('about_companion_heading')}</div>
           {companion ? (
-            <>
+            companion.appVersion && companion.protocolVersion ? (
+              <>
+                <div className={styles.hint}>
+                  {t(companionTypeLabelKey(companion.appType))} ·{' '}
+                  {t('about_version', { version: companion.appVersion })}
+                  {mismatch && (
+                    <>
+                      {' · '}
+                      <Button variant="link" onClick={handleOpenReleases}>
+                        {t('update_available')}
+                      </Button>
+                    </>
+                  )}
+                </div>
+                <div className={styles.hint}>
+                  {t('about_companion_protocol', { version: companion.protocolVersion })}
+                </div>
+              </>
+            ) : (
               <div className={styles.hint}>
-                {t(companionTypeLabelKey(companion.appType))} ·{' '}
-                {t('about_version', { version: companion.appVersion })}
+                {t('about_companion_unknown_version')}
+                {mismatch && (
+                  <>
+                    {' · '}
+                    <Button variant="link" onClick={handleOpenReleases}>
+                      {t('update_available')}
+                    </Button>
+                  </>
+                )}
               </div>
-              <div className={styles.hint}>
-                {t('about_companion_protocol', { version: companion.protocolVersion })}
-              </div>
-            </>
+            )
           ) : (
             <div className={styles.hint}>{t('about_companion_not_connected')}</div>
           )}

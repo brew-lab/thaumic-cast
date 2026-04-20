@@ -15,7 +15,7 @@
  */
 
 import { createLogger } from '@thaumic-cast/shared';
-import type { SonosStateSnapshot } from '@thaumic-cast/protocol';
+import type { AppType, SonosStateSnapshot } from '@thaumic-cast/protocol';
 import type {
   EnsureConnectionResponse,
   NetworkEventMessage,
@@ -26,6 +26,7 @@ import {
   getConnectionState,
   setConnected,
   setConnectionError,
+  setConnectionMetadata,
   clearConnectionState,
   setNetworkHealth,
   setDesktopApp,
@@ -90,10 +91,23 @@ export async function discoverAndCache(force = false): Promise<DiscoverResult | 
 
 /**
  * Handles WebSocket connected event from offscreen.
+ *
  * @param state - The initial Sonos state from desktop (may include network health)
+ * @param metadata - Companion version metadata from `INITIAL_STATE`
+ * @param metadata.appType - Companion type (`desktop` | `server`), or null when absent
+ * @param metadata.appVersion - Companion app semver, or null when absent (pre-0.4.0)
+ * @param metadata.protocolVersion - Wire-protocol semver, or null when absent (pre-0.4.0)
  */
-export function handleWsConnected(state: SonosStateSnapshot): void {
+export function handleWsConnected(
+  state: SonosStateSnapshot,
+  metadata: {
+    appType: AppType | null;
+    appVersion: string | null;
+    protocolVersion: string | null;
+  },
+): void {
   setConnected(true);
+  setConnectionMetadata(metadata);
   updateSonosState(state);
   log.info('WebSocket connected');
 

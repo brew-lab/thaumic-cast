@@ -39,7 +39,11 @@ const log = createLogger('OffscreenRoutes');
  */
 export function registerOffscreenRoutes(): void {
   registerValidatedRoute('WS_CONNECTED', WsConnectedMessageSchema, (msg) => {
-    handleWsConnected(msg.state);
+    handleWsConnected(msg.state, {
+      appType: msg.appType ?? null,
+      appVersion: msg.appVersion,
+      protocolVersion: msg.protocolVersion,
+    });
     return { success: true };
   });
 

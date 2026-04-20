@@ -95,7 +95,16 @@ export function createEmptySonosState(): SonosStateSnapshot {
 
 /**
  * Initial state message sent by desktop on WebSocket connect.
- * Includes Sonos state.
+ *
+ * Carries Sonos state plus the same companion version metadata exchanged in
+ * the streaming HANDSHAKE_ACK. The control connection runs on every connect
+ * — even when the user never starts a stream — so this is what lets the
+ * extension surface the out-of-date warning before the first cast.
+ *
+ * The version fields use `.catch(undefined)` for the same reason as the
+ * handshake ACK: a future companion may report values an older extension
+ * doesn't recognise (e.g. an `appType: "cli"`), and we don't want a single
+ * unrecognised field to drop the whole payload.
  */
 export const InitialStatePayloadSchema = z.object({
   groups: z.array(ZoneGroupSchema),
@@ -104,6 +113,16 @@ export const InitialStatePayloadSchema = z.object({
   groupMutes: z.record(z.string(), z.boolean()),
   groupVolumeFixed: z.record(z.string(), z.boolean()),
   sessions: z.array(PlaybackSessionSchema).optional(),
+  /** Wire-protocol semver — absent on companions predating 0.4.0. */
+  protocolVersion: z.string().optional().catch(undefined),
+  /** Companion app semver — absent on companions predating 0.4.0. */
+  appVersion: z.string().optional().catch(undefined),
+  /**
+   * Which companion the extension is talking to — absent on pre-0.4.0
+   * companions, and degraded to `undefined` for any future variant
+   * this extension doesn't recognise (e.g. `"cli"`).
+   */
+  appType: z.enum(['desktop', 'server']).optional().catch(undefined),
 });
 export type InitialStatePayload = z.infer<typeof InitialStatePayloadSchema>;
 
