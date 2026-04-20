@@ -305,8 +305,22 @@ impl WsOutgoing {
 struct HandshakePayload {
     stream_id: String,
     protocol_version: &'static str,
-    app_version: String,
+    app_version: &'static str,
     app_type: crate::api::AppType,
+}
+
+impl HandshakePayload {
+    /// Builds a payload for `stream_id`, filling the version fields from `state`.
+    ///
+    /// Single construction site so additions to the ACK only need one edit.
+    fn from_state(stream_id: String, state: &AppState) -> Self {
+        Self {
+            stream_id,
+            protocol_version: crate::protocol_constants::PROTOCOL_VERSION,
+            app_version: state.app_info.app_version,
+            app_type: state.app_info.app_type,
+        }
+    }
 }
 
 /// Sends a response based on an already-resolved result.
@@ -687,12 +701,7 @@ async fn handle_start_browser_capture(
 
             // Send handshake ack with the stream ID
             let ack = WsOutgoing::HandshakeAck {
-                payload: HandshakePayload {
-                    stream_id: stream_id.clone(),
-                    protocol_version: state.app_info.protocol_version(),
-                    app_version: state.app_info.app_version.clone(),
-                    app_type: state.app_info.app_type,
-                },
+                payload: HandshakePayload::from_state(stream_id.clone(), state),
             };
             if let Some(msg) = ack.to_message() {
                 let _ = sender.send(msg).await;
@@ -910,12 +919,7 @@ async fn handle_ws(socket: WebSocket, state: AppState) {
                                             Arc::clone(&state.stream_coordinator),
                                         );
                                         let ack = WsOutgoing::HandshakeAck {
-                                            payload: HandshakePayload {
-                                                stream_id: id,
-                                                protocol_version: state.app_info.protocol_version(),
-                                                app_version: state.app_info.app_version.clone(),
-                                                app_type: state.app_info.app_type,
-                                            },
+                                            payload: HandshakePayload::from_state(id, &state),
                                         };
                                         stream_guard = Some(guard);
                                         if let Some(msg) = ack.to_message() {

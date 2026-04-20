@@ -150,3 +150,31 @@ export async function setDismissedCompanionVersion(appVersion: string): Promise<
     [DISMISSED_COMPANION_VERSION_STORAGE_KEY]: { appVersion } satisfies DismissedCompanionVersion,
   });
 }
+
+/**
+ * Resolves the i18n key identifying the companion type label
+ * (`about_companion_type_{desktop,server,generic}`). Unknown or absent
+ * `appType` falls through to the generic label so copy still reads naturally
+ * when a newer companion sends an `appType` this extension doesn't recognise.
+ *
+ * @param appType - Reported by the companion, or `undefined` when absent/unknown
+ * @returns i18n key for the companion type display label
+ */
+export function companionTypeLabelKey(appType: AppType | undefined): string {
+  if (appType === 'server') return 'about_companion_type_server';
+  if (appType === 'desktop') return 'about_companion_type_desktop';
+  return 'about_companion_type_generic';
+}
+
+/**
+ * Resolves the i18n key for the Alert action button that prompts the user to
+ * update the companion (`version_mismatch_action_{desktop,server,generic}`).
+ *
+ * @param appType - Reported by the companion, or `undefined` when absent/unknown
+ * @returns i18n key for the action button label
+ */
+export function versionMismatchActionKey(appType: AppType | undefined): string {
+  if (appType === 'server') return 'version_mismatch_action_server';
+  if (appType === 'desktop') return 'version_mismatch_action_desktop';
+  return 'version_mismatch_action_generic';
+}

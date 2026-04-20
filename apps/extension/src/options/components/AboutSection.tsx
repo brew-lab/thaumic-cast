@@ -4,16 +4,19 @@ import { useTranslation } from 'react-i18next';
 import { Card } from '@thaumic-cast/ui';
 import {
   COMPANION_INFO_STORAGE_KEY,
+  companionTypeLabelKey,
   type CompanionInfo,
   getCompanionInfo,
 } from '../../lib/versionCheck';
+import { useStorageListener } from '../../popup/hooks/useStorageListener';
 import styles from '../Options.module.css';
 
 /**
  * About section showing extension information and — when the extension is
  * connected to a desktop app or server — that companion's reported version
  * metadata. Values are read from `chrome.storage.local`, populated by the
- * offscreen worker on each successful handshake.
+ * offscreen worker on each successful handshake; `useStorageListener` keeps
+ * the display in sync with live handshake events.
  * @returns The about section element
  */
 export function AboutSection(): JSX.Element {
@@ -25,24 +28,9 @@ export function AboutSection(): JSX.Element {
     getCompanionInfo()
       .then(setCompanion)
       .catch(() => setCompanion(null));
-
-    const handler = (changes: { [key: string]: chrome.storage.StorageChange }) => {
-      const change = changes[COMPANION_INFO_STORAGE_KEY];
-      if (change?.newValue !== undefined) {
-        setCompanion(change.newValue as CompanionInfo);
-      }
-    };
-    chrome.storage.local.onChanged.addListener(handler);
-    return () => chrome.storage.local.onChanged.removeListener(handler);
   }, []);
 
-  const companionTypeLabel = t(
-    companion?.appType === 'server'
-      ? 'about_companion_type_server'
-      : companion?.appType === 'desktop'
-        ? 'about_companion_type_desktop'
-        : 'about_companion_type_generic',
-  );
+  useStorageListener<CompanionInfo>(COMPANION_INFO_STORAGE_KEY, setCompanion);
 
   return (
     <Card title={t('about_section_title')}>
@@ -57,7 +45,8 @@ export function AboutSection(): JSX.Element {
           {companion ? (
             <>
               <div className={styles.hint}>
-                {companionTypeLabel} · {t('about_version', { version: companion.appVersion })}
+                {t(companionTypeLabelKey(companion.appType))} ·{' '}
+                {t('about_version', { version: companion.appVersion })}
               </div>
               <div className={styles.hint}>
                 {t('about_companion_protocol', { version: companion.protocolVersion })}
