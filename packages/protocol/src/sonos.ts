@@ -73,7 +73,10 @@ export const SonosStateSnapshotSchema = z.object({
   transportStates: z.record(z.string(), TransportStateSchema),
   groupVolumes: z.record(z.string(), z.number()),
   groupMutes: z.record(z.string(), z.boolean()),
-  groupVolumeFixed: z.record(z.string(), z.boolean()),
+  // Added after the initial protocol shipped; older companions omit it.
+  // Default to an empty map so their payloads still validate and the
+  // version-mismatch warning path can run.
+  groupVolumeFixed: z.record(z.string(), z.boolean()).default({}),
   sessions: z.array(PlaybackSessionSchema).optional(),
 });
 export type SonosStateSnapshot = z.infer<typeof SonosStateSnapshotSchema>;
@@ -111,7 +114,10 @@ export const InitialStatePayloadSchema = z.object({
   transportStates: z.record(z.string(), TransportStateSchema),
   groupVolumes: z.record(z.string(), z.number()),
   groupMutes: z.record(z.string(), z.boolean()),
-  groupVolumeFixed: z.record(z.string(), z.boolean()),
+  // Added after the initial protocol shipped; older companions omit it.
+  // Default to an empty map so their payloads still validate and the
+  // version-mismatch warning path can run.
+  groupVolumeFixed: z.record(z.string(), z.boolean()).default({}),
   sessions: z.array(PlaybackSessionSchema).optional(),
   /** Wire-protocol semver — absent on companions predating 0.4.0. */
   protocolVersion: z.string().optional().catch(undefined),
