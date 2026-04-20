@@ -58,3 +58,24 @@
 .danger:not(:disabled):hover {
   background-color: var(--button-danger-bg-hover);
 }
+
+/* Inline text-link variant — for calls to action that sit alongside body
+ * text. Strips the box styling so it reads as a hyperlink. The base .btn
+ * uses flex with gap; we override to inline so the link sits with adjacent
+ * text without breaking onto its own line. */
+.link {
+  background: none;
+  border: none;
+  padding: 0;
+  font: inherit;
+  color: var(--color-link);
+  text-decoration: underline;
+  cursor: pointer;
+  display: inline;
+  inline-size: auto;
+}
+
+.link:not(:disabled):hover {
+  color: var(--color-link-hover);
+  text-decoration: none;
+}
