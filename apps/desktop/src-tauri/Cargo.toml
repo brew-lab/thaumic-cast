@@ -5,7 +5,7 @@ description = "Thaumic Cast Desktop"
 license = "AGPL-3.0"
 authors = ["Thaumic Cast"]
 edition = "2021"
-rust-version = "1.77"
+rust-version = "1.80"
 
 [lib]
 name = "thaumic_cast_lib"
@@ -43,10 +43,10 @@ tokio-stream = { version = "0.1", features = ["sync"] }
 quick-xml = { version = "0.39", features = ["serialize"] }
 html-escape = "0.2.13"
 socket2 = { version = "0.6", features = ["all"] }
-rust-i18n = "3"
+rust-i18n = "4"
 sys-locale = "0.3"
 bytemuck = { version = "1", features = ["derive"] }
-mdns-sd = "0.17"
+mdns-sd = "0.19"
 async-stream = "0.3"
 
 # Platform-specific dependencies for process priority and MMCSS
