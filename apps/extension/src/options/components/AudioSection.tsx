@@ -198,14 +198,14 @@ export function AudioSection({
   );
 
   /**
-   * Handles streaming buffer change (PCM only).
+   * Handles jitter buffer change (PCM only).
    */
-  const handleStreamingBufferChange = useCallback(
-    async (streamingBufferMs: number) => {
+  const handleJitterBufferChange = useCallback(
+    async (jitterBufferMs: number) => {
       await onUpdate({
         customAudioSettings: {
           ...settings.customAudioSettings,
-          streamingBufferMs,
+          jitterBufferMs,
         },
       });
     },
@@ -303,9 +303,9 @@ export function AudioSection({
 
     if (resolvedConfig.codec === 'pcm') {
       rows.push({
-        key: 'streaming-buffer',
-        label: t('audio_streaming_buffer'),
-        value: `${resolvedConfig.streamingBufferMs}ms`,
+        key: 'jitter-buffer',
+        label: t('audio_jitter_buffer'),
+        value: `${resolvedConfig.jitterBufferMs}ms`,
       });
       rows.push({
         key: 'frame-duration',
@@ -506,18 +506,18 @@ export function AudioSection({
                     <span className={styles.hint}>{t('audio_bit_depth_hint')}</span>
                   </div>
 
-                  {/* Streaming Buffer - only show for PCM codec */}
+                  {/* Jitter Buffer - only show for PCM codec */}
                   {settings.customAudioSettings.codec === 'pcm' && (
                     <div className={styles.field}>
-                      <label htmlFor="audio-streaming-buffer" className={styles.label}>
-                        {t('audio_streaming_buffer')}
+                      <label htmlFor="audio-jitter-buffer" className={styles.label}>
+                        {t('audio_jitter_buffer')}
                       </label>
                       <select
-                        id="audio-streaming-buffer"
+                        id="audio-jitter-buffer"
                         className={styles.select}
-                        value={settings.customAudioSettings.streamingBufferMs}
+                        value={settings.customAudioSettings.jitterBufferMs}
                         onChange={(e) =>
-                          handleStreamingBufferChange(Number((e.target as HTMLSelectElement).value))
+                          handleJitterBufferChange(Number((e.target as HTMLSelectElement).value))
                         }
                       >
                         <option value={100}>{t('audio_buffer_low')} (100ms)</option>

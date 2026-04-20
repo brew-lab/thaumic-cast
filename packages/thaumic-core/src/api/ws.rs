@@ -13,9 +13,9 @@ use std::time::{Duration, Instant};
 use crate::api::AppState;
 use crate::events::SpeakerRemovalReason;
 use crate::protocol_constants::{
-    DEFAULT_STREAMING_BUFFER_MS, MAX_FRAME_DURATION_MS, MAX_STREAMING_BUFFER_MS,
-    MIN_FRAME_DURATION_MS, MIN_STREAMING_BUFFER_MS, SILENCE_FRAME_DURATION_MS,
-    WS_HEARTBEAT_CHECK_INTERVAL_SECS, WS_HEARTBEAT_TIMEOUT_SECS,
+    DEFAULT_JITTER_BUFFER_MS, MAX_FRAME_DURATION_MS, MAX_JITTER_BUFFER_MS, MIN_FRAME_DURATION_MS,
+    MIN_JITTER_BUFFER_MS, SILENCE_FRAME_DURATION_MS, WS_HEARTBEAT_CHECK_INTERVAL_SECS,
+    WS_HEARTBEAT_TIMEOUT_SECS,
 };
 use crate::services::StreamCoordinator;
 use crate::stream::{AudioCodec, AudioFormat, StreamMetadata};
@@ -175,8 +175,8 @@ struct EncoderConfig {
     channels: Option<u8>,
     /// Bit depth for audio encoding (16 or 24). Only 24-bit is supported for FLAC.
     bits_per_sample: Option<u16>,
-    /// Streaming buffer size in milliseconds (100-1000). Only affects PCM codec.
-    streaming_buffer_ms: Option<u64>,
+    /// Jitter buffer size in milliseconds (100-1000). Only affects PCM codec.
+    jitter_buffer_ms: Option<u64>,
     /// Frame size in samples per channel.
     /// Server derives exact duration: duration_ms = samples * 1000 / sample_rate
     frame_size_samples: Option<u32>,
@@ -452,7 +452,7 @@ fn resolve_codec(codec_str: Option<&str>) -> AudioCodec {
 struct StreamConfig {
     codec: AudioCodec,
     audio_format: AudioFormat,
-    streaming_buffer_ms: u64,
+    jitter_buffer_ms: u64,
     frame_duration_ms: u32,
 }
 
@@ -496,12 +496,12 @@ fn parse_stream_config(payload: &HandshakeRequest) -> Result<StreamConfig, Strin
         }
     };
 
-    let streaming_buffer_ms = payload
+    let jitter_buffer_ms = payload
         .encoder_config
         .as_ref()
-        .and_then(|c| c.streaming_buffer_ms)
-        .unwrap_or(DEFAULT_STREAMING_BUFFER_MS)
-        .clamp(MIN_STREAMING_BUFFER_MS, MAX_STREAMING_BUFFER_MS);
+        .and_then(|c| c.jitter_buffer_ms)
+        .unwrap_or(DEFAULT_JITTER_BUFFER_MS)
+        .clamp(MIN_JITTER_BUFFER_MS, MAX_JITTER_BUFFER_MS);
 
     // Derive frame duration from frame_size_samples.
     // Using samples avoids floating-point rounding errors in the extension.
@@ -543,7 +543,7 @@ fn parse_stream_config(payload: &HandshakeRequest) -> Result<StreamConfig, Strin
     Ok(StreamConfig {
         codec,
         audio_format: AudioFormat::new(sample_rate, channels as u16, bits_per_sample),
-        streaming_buffer_ms,
+        jitter_buffer_ms,
         frame_duration_ms,
     })
 }
@@ -559,14 +559,14 @@ fn handle_handshake(state: &AppState, payload: HandshakeRequest) -> HandshakeRes
         "[WS] Creating stream: codec={:?}, format={:?}, buffer={}ms, frame={}ms",
         config.codec,
         config.audio_format,
-        config.streaming_buffer_ms,
+        config.jitter_buffer_ms,
         config.frame_duration_ms
     );
 
     match state.stream_coordinator.create_stream(
         config.codec,
         config.audio_format,
-        config.streaming_buffer_ms,
+        config.jitter_buffer_ms,
         config.frame_duration_ms,
     ) {
         Ok(id) => HandshakeResult::Success(id),
@@ -694,7 +694,7 @@ async fn handle_start_browser_capture(
         source,
         stream_config.codec,
         stream_config.audio_format,
-        stream_config.streaming_buffer_ms,
+        stream_config.jitter_buffer_ms,
         stream_config.frame_duration_ms,
         Some(metadata),
     ) {

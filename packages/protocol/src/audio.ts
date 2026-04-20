@@ -166,12 +166,12 @@ export function tpdfDither(): number {
 }
 
 /**
- * Streaming buffer size constraints and default (in milliseconds).
+ * Jitter buffer size constraints and default (in milliseconds).
  * Used for PCM streaming to balance latency vs. reliability.
  */
-export const STREAMING_BUFFER_MS_MIN = 100;
-export const STREAMING_BUFFER_MS_MAX = 1000;
-export const STREAMING_BUFFER_MS_DEFAULT = 200;
+export const JITTER_BUFFER_MS_MIN = 100;
+export const JITTER_BUFFER_MS_MAX = 1000;
+export const JITTER_BUFFER_MS_DEFAULT = 200;
 
 /**
  * Frame duration options (in milliseconds).

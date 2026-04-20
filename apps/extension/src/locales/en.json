@@ -106,7 +106,7 @@
   "audio_latency_mode": "Latency Mode",
   "audio_latency_quality": "Quality",
   "audio_latency_realtime": "Realtime",
-  "audio_streaming_buffer": "Streaming Buffer",
+  "audio_jitter_buffer": "Jitter Buffer",
   "audio_buffer_low": "Low latency",
   "audio_buffer_balanced": "Balanced",
   "audio_buffer_stable": "Stable",
