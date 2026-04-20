@@ -130,8 +130,28 @@ pub const MAX_JITTER_BUFFER_MS: u64 = 1000;
 /// Default jitter buffer size (ms).
 pub const DEFAULT_JITTER_BUFFER_MS: u64 = 200;
 
+/// Overflow cap multiplier: `overflow_cap = target_depth × this factor`.
+/// Allows short bursts past target without immediately dropping frames, while
+/// still bounding memory on pathological input (slow HTTP consumer with fast
+/// WebSocket producer).
+pub const JITTER_OVERFLOW_MULTIPLIER: usize = 3;
+
+/// Minimum overflow cap (frames). Ensures at least one frame can be queued
+/// even when `target_depth` is 0 (pass-through mode).
+pub const MIN_OVERFLOW_CAP: usize = 1;
+
+/// Maximum prefill delay (ms) before subscribing to the ring buffer.
+/// Caps startup latency regardless of how large the jitter buffer is.
+pub const MAX_PREFILL_DELAY_MS: u64 = 500;
+
+/// Timeout multiplier for the fill gate.
+/// Timeout = `target_depth × frame_duration_ms × this factor`.
+/// Prevents the fill gate from waiting indefinitely if frames never arrive.
+pub const REBUFFER_TIMEOUT_MULTIPLIER: u64 = 2;
+
 /// Maximum cadence queue size (frames).
-/// Calculated using MIN_FRAME_DURATION_MS to ensure buffer can hold enough frames
-/// at the smallest possible frame duration.
+/// Upper bound on the overflow cap. Calculated using `MIN_FRAME_DURATION_MS`
+/// to ensure the cap can accommodate the configured capacity at the smallest
+/// possible frame duration.
 pub const MAX_CADENCE_QUEUE_SIZE: usize =
-    (MAX_JITTER_BUFFER_MS / MIN_FRAME_DURATION_MS as u64) as usize;
+    (MAX_JITTER_BUFFER_MS / MIN_FRAME_DURATION_MS as u64) as usize * JITTER_OVERFLOW_MULTIPLIER;

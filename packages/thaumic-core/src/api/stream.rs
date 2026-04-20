@@ -12,7 +12,7 @@ use std::net::SocketAddr;
 use std::pin::Pin;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use axum::{
     body::Body,
@@ -27,9 +27,7 @@ use tokio_stream::wrappers::BroadcastStream;
 
 use crate::api::AppState;
 use crate::error::{ThaumicError, ThaumicResult};
-use crate::protocol_constants::{
-    APP_NAME, ICY_METAINT, MAX_CADENCE_QUEUE_SIZE, WAV_STREAM_SIZE_MAX,
-};
+use crate::protocol_constants::{APP_NAME, ICY_METAINT, WAV_STREAM_SIZE_MAX};
 use crate::stream::{
     create_wav_header, create_wav_stream_with_cadence, lagged_error, AudioCodec, CadenceConfig,
     IcyMetadataInjector, LoggingStreamGuard,
@@ -78,29 +76,16 @@ pub(super) async fn stream_audio(
     // new speakers as resumes after the first speaker connects.
     let is_resume = stream_state.timing.current_epoch_for(remote_ip).is_some();
 
-    // Upfront buffering delay for PCM streams BEFORE subscribing.
-    // This lets the ring buffer accumulate more frames. Subscribing after
-    // ensures the broadcast receiver doesn't fill up during the delay.
-    // Delay matches jitter_buffer_ms so cadence queue starts full.
-    //
-    // SKIP on resume: Sonos closes the connection within milliseconds if we delay.
-    // The buffer already has frames from before the pause, so no delay is needed.
-    let prefill_delay_ms = stream_state.jitter_buffer_ms;
-    if stream_state.codec == AudioCodec::Pcm && prefill_delay_ms > 0 && !is_resume {
-        log::debug!(
-            "[Stream] Applying {}ms prefill delay for PCM stream",
-            prefill_delay_ms
-        );
-        tokio::time::sleep(Duration::from_millis(prefill_delay_ms)).await;
-    } else if is_resume && stream_state.codec == AudioCodec::Pcm {
-        log::info!(
-            "[Stream] Skipping {}ms prefill delay on resume for {}",
-            prefill_delay_ms,
-            remote_ip
-        );
+    // No upfront buffering delay: the cadence stream's jitter-buffer state
+    // machine handles startup buffering via its fill gate, emitting silence
+    // until the queue reaches `target_depth` (or the rebuffer timeout elapses).
+    // This keeps Sonos receiving data immediately while still absorbing startup
+    // jitter, replacing the old blocking `tokio::time::sleep(jitter_buffer_ms)`.
+    if stream_state.codec == AudioCodec::Pcm && is_resume {
+        log::info!("[Stream] PCM resume for {}", remote_ip);
 
-        // Delegate playback control to coordinator (SoC: HTTP serves audio, coordinator controls playback).
-        // Fire-and-forget: spawn so we don't block the HTTP response.
+        // Delegate playback control to coordinator (SoC: HTTP serves audio,
+        // coordinator controls playback). Fire-and-forget.
         let coordinator = Arc::clone(&state.stream_coordinator);
         let ip = remote_ip.to_string();
         tokio::spawn(async move {
@@ -108,8 +93,6 @@ pub(super) async fn stream_audio(
         });
     }
 
-    // Capture connected_at AFTER prefill delay so latency metrics
-    // reflect actual transport latency, not intentional buffering.
     let connected_at = Instant::now();
 
     // Subscribe AFTER delay to get fresh prefill snapshot and avoid rx backlog
@@ -136,28 +119,23 @@ pub(super) async fn stream_audio(
     // representation - raw zeros would corrupt the stream. These codecs also
     // tend to be more resilient to jitter due to their buffering behavior.
     let combined_stream: AudioStream = if stream_state.codec == AudioCodec::Pcm {
-        // PCM: fixed-cadence streaming with queue buffer and silence injection.
-        // Prefill frames are pre-populated in the queue to eliminate handoff gap.
+        // PCM: fixed-cadence streaming with jitter-buffer state machine and silence
+        // injection. Prefill frames are pre-populated in the queue to eliminate the
+        // handoff gap; CadenceConfig::new trims them to at most target_depth so the
+        // initial queue does not exceed the fill-gate target.
         let frame_duration_ms = stream_state.frame_duration_ms;
         let silence_frame = stream_state.audio_format.silence_frame(frame_duration_ms);
-
-        // Calculate queue size from jitter buffer (ceil division)
-        // queue_size = ceil(buffer_ms / frame_ms), clamped to [1, MAX_CADENCE_QUEUE_SIZE]
-        let queue_size = stream_state
-            .jitter_buffer_ms
-            .div_ceil(frame_duration_ms as u64) as usize;
-        let queue_size = queue_size.clamp(1, MAX_CADENCE_QUEUE_SIZE);
 
         Box::pin(create_wav_stream_with_cadence(
             rx,
             Arc::clone(&guard),
-            CadenceConfig {
+            CadenceConfig::new(
                 silence_frame,
-                queue_size,
+                stream_state.jitter_buffer_ms,
                 frame_duration_ms,
-                audio_format: stream_state.audio_format,
+                stream_state.audio_format,
                 prefill_frames,
-            },
+            ),
             Some(Arc::downgrade(&stream_state)),
             Some((
                 Arc::clone(&stream_state),
