@@ -2,8 +2,13 @@ import { h } from 'preact';
 import styles from './Button.module.css';
 
 interface ButtonProps extends h.JSX.HTMLAttributes<HTMLButtonElement> {
-  /** Button style variant */
-  variant?: 'primary' | 'secondary' | 'danger';
+  /**
+   * Button style variant.
+   * - `primary`/`secondary`/`danger`: standard solid buttons.
+   * - `link`: borderless, padding-less, underlined text — for inline calls
+   *   to action that should sit alongside other text without dominating it.
+   */
+  variant?: 'primary' | 'secondary' | 'danger' | 'link';
   /** Whether the button is disabled */
   disabled?: boolean;
   /** Whether the button should take full width of its container */
@@ -32,7 +37,9 @@ export function Button({
       ? styles.primary
       : variant === 'secondary'
         ? styles.secondary
-        : styles.danger;
+        : variant === 'link'
+          ? styles.link
+          : styles.danger;
   const widthClass = fullWidth ? styles.fullWidth : '';
   const combinedClass = [styles.btn, variantClass, widthClass, className].filter(Boolean).join(' ');
 
