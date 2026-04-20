@@ -121,17 +121,17 @@ pub const MIN_FRAME_DURATION_MS: u32 = 5;
 pub const MAX_FRAME_DURATION_MS: u32 = 150;
 
 /// Frame size constraints (samples per channel).
-/// Minimum streaming buffer size (ms).
-pub const MIN_STREAMING_BUFFER_MS: u64 = 100;
+/// Minimum jitter buffer size (ms).
+pub const MIN_JITTER_BUFFER_MS: u64 = 100;
 
-/// Maximum streaming buffer size (ms).
-pub const MAX_STREAMING_BUFFER_MS: u64 = 1000;
+/// Maximum jitter buffer size (ms).
+pub const MAX_JITTER_BUFFER_MS: u64 = 1000;
 
-/// Default streaming buffer size (ms).
-pub const DEFAULT_STREAMING_BUFFER_MS: u64 = 200;
+/// Default jitter buffer size (ms).
+pub const DEFAULT_JITTER_BUFFER_MS: u64 = 200;
 
 /// Maximum cadence queue size (frames).
 /// Calculated using MIN_FRAME_DURATION_MS to ensure buffer can hold enough frames
 /// at the smallest possible frame duration.
 pub const MAX_CADENCE_QUEUE_SIZE: usize =
-    (MAX_STREAMING_BUFFER_MS / MIN_FRAME_DURATION_MS as u64) as usize;
+    (MAX_JITTER_BUFFER_MS / MIN_FRAME_DURATION_MS as u64) as usize;

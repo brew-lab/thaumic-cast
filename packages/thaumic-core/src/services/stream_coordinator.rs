@@ -350,7 +350,7 @@ impl StreamCoordinator {
     /// # Arguments
     /// * `codec` - Output codec for HTTP Content-Type (what Sonos receives)
     /// * `audio_format` - Audio format configuration (sample rate, channels, bit depth)
-    /// * `streaming_buffer_ms` - Streaming buffer size in milliseconds (100-1000)
+    /// * `jitter_buffer_ms` - Jitter buffer size in milliseconds (100-1000)
     /// * `frame_duration_ms` - Frame duration in milliseconds for cadence timing
     ///
     /// Returns the stream ID on success. Broadcasts a `StreamEvent::Created` event.
@@ -358,13 +358,13 @@ impl StreamCoordinator {
         &self,
         codec: AudioCodec,
         audio_format: AudioFormat,
-        streaming_buffer_ms: u64,
+        jitter_buffer_ms: u64,
         frame_duration_ms: u32,
     ) -> Result<String, String> {
         let stream_id = self.stream_registry.create_stream(
             codec,
             audio_format,
-            streaming_buffer_ms,
+            jitter_buffer_ms,
             frame_duration_ms,
         )?;
 
@@ -391,12 +391,12 @@ impl StreamCoordinator {
         source: Arc<dyn AudioSource>,
         codec: AudioCodec,
         audio_format: AudioFormat,
-        streaming_buffer_ms: u64,
+        jitter_buffer_ms: u64,
         frame_duration_ms: u32,
         metadata: Option<StreamMetadata>,
     ) -> Result<CaptureStreamSession, String> {
         let stream_id =
-            self.create_stream(codec, audio_format, streaming_buffer_ms, frame_duration_ms)?;
+            self.create_stream(codec, audio_format, jitter_buffer_ms, frame_duration_ms)?;
 
         if let Some(meta) = metadata {
             self.update_metadata(&stream_id, meta);
