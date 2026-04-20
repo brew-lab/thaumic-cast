@@ -18,7 +18,12 @@ import { StreamMetadataSchema } from './stream.js';
  */
 export const PROTOCOL_VERSION = '0.4.0' as const;
 
-/** Which companion process sent the handshake ACK. */
+/**
+ * Which companion process advertised the connection.
+ *
+ * Reported in `INITIAL_STATE` (sent on every WS connect) so the extension can
+ * tailor update-prompt copy to "desktop" vs. "server".
+ */
 export const AppTypeSchema = z.enum(['desktop', 'server']);
 export type AppType = z.infer<typeof AppTypeSchema>;
 
@@ -32,22 +37,6 @@ export type WsHandshakePayload = z.infer<typeof WsHandshakePayloadSchema>;
 
 export const WsHandshakeAckPayloadSchema = z.object({
   streamId: z.string(),
-  /**
-   * Wire-protocol semver reported by the companion. Absent on companions predating
-   * `@thaumic-cast/protocol` 0.4.0 — the extension should treat absence as "unknown,
-   * assume compatible" rather than erroring. Malformed values degrade to undefined
-   * via `.catch()` so an older extension never drops the whole handshake over a
-   * field it doesn't recognise.
-   */
-  protocolVersion: z.string().optional().catch(undefined),
-  /** Companion app semver, shown in the extension's About surface. */
-  appVersion: z.string().optional().catch(undefined),
-  /**
-   * Which companion the extension is talking to — affects update-prompt copy.
-   * Unknown app types (e.g. a future `"cli"` variant) degrade to undefined so
-   * the handshake still succeeds and playback works.
-   */
-  appType: AppTypeSchema.optional().catch(undefined),
 });
 export type WsHandshakeAckPayload = z.infer<typeof WsHandshakeAckPayloadSchema>;
 

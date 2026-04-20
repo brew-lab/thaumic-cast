@@ -299,9 +299,23 @@ export type SyncSonosStateMessage = z.infer<typeof SyncSonosStateMessageSchema>;
 // WebSocket Status Messages (offscreen → background)
 // ─────────────────────────────────────────────────────────────────────────────
 
+/**
+ * Sent by the offscreen control connection on every WebSocket connect (after
+ * `INITIAL_STATE` arrives). Carries Sonos state plus the companion's reported
+ * version metadata so the background can update everything atomically — no
+ * second message, no ordering races.
+ *
+ * `appType`/`appVersion`/`protocolVersion` are nullable: pre-0.4.0 companions
+ * advertise none of them, but we still want to record "connected to a
+ * companion that doesn't report its version" so the popup can drive the
+ * out-of-date warning.
+ */
 export const WsConnectedMessageSchema = z.object({
   type: z.literal('WS_CONNECTED'),
   state: SonosStateSnapshotSchema,
+  appType: z.enum(['desktop', 'server']).nullable().optional(),
+  appVersion: z.string().nullable(),
+  protocolVersion: z.string().nullable(),
 });
 export type WsConnectedMessage = z.infer<typeof WsConnectedMessageSchema>;
 

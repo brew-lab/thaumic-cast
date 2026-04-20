@@ -1,52 +1,61 @@
 /**
  * Companion version tracking.
  *
- * On every successful WebSocket handshake the offscreen worker persists the
- * companion's reported metadata (`appVersion`, `protocolVersion`, `appType`) to
- * `chrome.storage.local`. The popup reads from the same storage to:
- *   1. Display the connected companion in its About surface.
- *   2. Warn the user when `protocolVersion` is below
- *      `MIN_COMPATIBLE_PROTOCOL_VERSION` and route them to the GitHub releases
- *      page so they can update the desktop app or server.
+ * The companion's metadata (`appType`, `appVersion`, `protocolVersion`) is
+ * carried by `connectionState` (see `background/connection-state.ts`):
+ * `appType` lands at discovery time from `/health`, `appVersion` and
+ * `protocolVersion` arrive on the WebSocket via `INITIAL_STATE`. The popup
+ * and options page read them through `useConnectionStatus`. This module
+ * provides the pure helpers that interpret those fields:
+ *   1. Compare against `MIN_COMPATIBLE_PROTOCOL_VERSION` to drive the
+ *      out-of-date warning.
+ *   2. Resolve i18n keys for companion-type labels and update-prompt copy.
  *
- * The warning dismissal is keyed on the companion's `appVersion`: once the user
- * dismisses for v0.11.0, the warning stays silent — but if they roll forward
- * (or back) to a different build the dismissal no longer matches and the Alert
- * re-appears, so stale dismissals don't mask real mismatches.
+ * Pre-0.4.0 companions advertise none of the version fields. We still want
+ * to alert the user — Chrome may auto-update the extension before they
+ * update the companion — so we treat the absence of a `protocolVersion` as
+ * a mismatch.
+ *
+ * The Alert is dismissible per `appVersion` (`null` is its own bucket): once
+ * dismissed it stays silent for that build, but if the companion rolls
+ * forward — including from "unknown" to a real version — the dismissal no
+ * longer matches and the Alert re-appears. Even when dismissed, the popup
+ * footer keeps a persistent "Update available" link so the user always has
+ * a way back to the releases page.
+ *
+ * The dismissal record stays in `chrome.storage.local` (a user preference
+ * that should survive browser restarts), separate from `connectionState`
+ * (ephemeral, in `chrome.storage.session`).
  */
 
 import type { AppType } from '@thaumic-cast/protocol';
 import { MIN_COMPATIBLE_PROTOCOL_VERSION } from '@thaumic-cast/shared';
 
-/** Key for the currently-connected companion's version metadata. */
-export const COMPANION_INFO_STORAGE_KEY = 'companionInfo';
-
 /** Key for the companion `appVersion` the user last dismissed a warning for. */
 export const DISMISSED_COMPANION_VERSION_STORAGE_KEY = 'dismissedCompanionVersion';
 
 /**
- * Companion metadata captured from the handshake ACK.
+ * Companion metadata as consumed by the version-check helpers below.
  *
- * `appVersion` and `protocolVersion` are required: without them we cannot show
- * meaningful About content or drive the out-of-date warning, and persisting
- * partial data would only pollute the UI. `appType`, by contrast, is allowed
- * to be undefined — a future companion may introduce a new variant (e.g.
- * `"cli"`) that older extensions don't recognise, and `WsHandshakeAckPayloadSchema`
- * degrades unknown values to `undefined`. We want the About surface and the
- * warning to keep working in that case, just with a generic "companion" label.
- *
- * Pre-0.4.0 companions omit all three fields and are treated as "unknown,
- * assume compatible" — nothing is persisted for them.
+ * Sourced from `connectionState` — `appType` is populated at discovery time
+ * from `/health`; `appVersion`/`protocolVersion` arrive via the WebSocket
+ * `INITIAL_STATE`. All three are nullable so we can record "connected to a
+ * companion that doesn't advertise its version" (pre-0.4.0).
  */
 export interface CompanionInfo {
-  appVersion: string;
-  protocolVersion: string;
-  appType?: AppType;
+  appVersion: string | null;
+  protocolVersion: string | null;
+  appType: AppType | null;
 }
 
-/** Persisted "user has already dismissed the warning for this companion build" marker. */
+/**
+ * Persisted dismissal marker. `appVersion` is `null` for pre-0.4.0
+ * companions (so they can be dismissed too) — when the companion later
+ * advertises a real version, that bucket no longer matches and the Alert
+ * re-appears.
+ */
 export interface DismissedCompanionVersion {
-  appVersion: string;
+  appVersion: string | null;
 }
 
 /**
@@ -86,14 +95,30 @@ export function isCompatible(actual: string, min: string): boolean {
 }
 
 /**
- * True when the extension should surface the "update your companion" warning
- * — i.e. the companion reported a `protocolVersion` below
- * `MIN_COMPATIBLE_PROTOCOL_VERSION` and the user has not dismissed the warning
- * for the companion's current `appVersion`.
+ * Raw "is the connected companion out of date?" check, ignoring any dismissal.
+ * Used to drive surfaces that should always reflect mismatch status — e.g. the
+ * popup footer's persistent "Update available" link.
  *
- * Companions that omit `protocolVersion` (pre-0.4.0 builds) are treated as
- * compatible — we don't want to spam users on older companions who haven't
- * yet had a chance to update through the normal channel.
+ * Returns `false` when no companion has connected yet (nothing to warn about).
+ *
+ * @param companion - Most recent companion info, or null if none yet seen
+ * @param minProtocolVersion - Override for the minimum compatible protocol version
+ * @returns `true` when the companion's protocol is missing or below the minimum
+ */
+export function hasVersionMismatch(
+  companion: CompanionInfo | null,
+  minProtocolVersion: string = MIN_COMPATIBLE_PROTOCOL_VERSION,
+): boolean {
+  if (!companion) return false;
+  if (!companion.protocolVersion) return true;
+  return !isCompatible(companion.protocolVersion, minProtocolVersion);
+}
+
+/**
+ * True when the popup should render the out-of-date *Alert*. Same as
+ * `hasVersionMismatch` but suppressed once the user has dismissed it for
+ * this `appVersion` bucket (`null` is its own bucket — see
+ * `DismissedCompanionVersion`).
  *
  * @param companion - Most recent companion info, or null if none yet seen
  * @param dismissed - Last dismissal record persisted in chrome.storage
@@ -105,28 +130,8 @@ export function shouldWarnAboutVersion(
   dismissed: DismissedCompanionVersion | null,
   minProtocolVersion: string = MIN_COMPATIBLE_PROTOCOL_VERSION,
 ): boolean {
-  if (!companion?.protocolVersion) return false;
-  if (isCompatible(companion.protocolVersion, minProtocolVersion)) return false;
-  return dismissed?.appVersion !== companion.appVersion;
-}
-
-/**
- * Persists the companion info captured during handshake.
- * @param info - Companion metadata to persist
- */
-export async function setCompanionInfo(info: CompanionInfo): Promise<void> {
-  await chrome.storage.local.set({ [COMPANION_INFO_STORAGE_KEY]: info });
-}
-
-/**
- * Reads the most recently captured companion info, if any.
- * @returns The persisted companion info, or null if the extension hasn't
- *   completed a handshake since install.
- */
-export async function getCompanionInfo(): Promise<CompanionInfo | null> {
-  const result = await chrome.storage.local.get(COMPANION_INFO_STORAGE_KEY);
-  const value = result[COMPANION_INFO_STORAGE_KEY] as CompanionInfo | undefined;
-  return value ?? null;
+  if (!hasVersionMismatch(companion, minProtocolVersion)) return false;
+  return dismissed?.appVersion !== companion?.appVersion;
 }
 
 /**
@@ -143,9 +148,11 @@ export async function getDismissedCompanionVersion(): Promise<DismissedCompanion
 
 /**
  * Records that the user has dismissed the warning for this companion build.
- * @param appVersion - The companion's current `appVersion` at the moment of dismissal.
+ * `null` is a valid bucket — pre-0.4.0 companions can be dismissed too, and
+ * the dismissal stops matching once the companion reports a real version.
+ * @param appVersion - The companion's current `appVersion` (or `null`) at the moment of dismissal.
  */
-export async function setDismissedCompanionVersion(appVersion: string): Promise<void> {
+export async function setDismissedCompanionVersion(appVersion: string | null): Promise<void> {
   await chrome.storage.local.set({
     [DISMISSED_COMPANION_VERSION_STORAGE_KEY]: { appVersion } satisfies DismissedCompanionVersion,
   });
@@ -157,10 +164,10 @@ export async function setDismissedCompanionVersion(appVersion: string): Promise<
  * `appType` falls through to the generic label so copy still reads naturally
  * when a newer companion sends an `appType` this extension doesn't recognise.
  *
- * @param appType - Reported by the companion, or `undefined` when absent/unknown
+ * @param appType - Reported by the companion, or `null`/`undefined` when absent/unknown
  * @returns i18n key for the companion type display label
  */
-export function companionTypeLabelKey(appType: AppType | undefined): string {
+export function companionTypeLabelKey(appType: AppType | null | undefined): string {
   if (appType === 'server') return 'about_companion_type_server';
   if (appType === 'desktop') return 'about_companion_type_desktop';
   return 'about_companion_type_generic';
@@ -170,10 +177,10 @@ export function companionTypeLabelKey(appType: AppType | undefined): string {
  * Resolves the i18n key for the Alert action button that prompts the user to
  * update the companion (`version_mismatch_action_{desktop,server,generic}`).
  *
- * @param appType - Reported by the companion, or `undefined` when absent/unknown
+ * @param appType - Reported by the companion, or `null`/`undefined` when absent/unknown
  * @returns i18n key for the action button label
  */
-export function versionMismatchActionKey(appType: AppType | undefined): string {
+export function versionMismatchActionKey(appType: AppType | null | undefined): string {
   if (appType === 'server') return 'version_mismatch_action_server';
   if (appType === 'desktop') return 'version_mismatch_action_desktop';
   return 'version_mismatch_action_generic';

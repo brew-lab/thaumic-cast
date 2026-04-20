@@ -298,29 +298,14 @@ impl WsOutgoing {
 
 /// Handshake acknowledgment payload.
 ///
-/// Extension clients parse `protocolVersion`, `appVersion`, and `appType` to
-/// surface version-mismatch warnings and populate their About surfaces.
+/// Carries the assigned `stream_id` only. Companion version metadata
+/// (`protocolVersion`, `appVersion`, `appType`) is reported via
+/// `INITIAL_STATE`, which fires on every WS connect — so the extension's
+/// always-on control connection sees it without waiting for a stream.
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct HandshakePayload {
     stream_id: String,
-    protocol_version: &'static str,
-    app_version: &'static str,
-    app_type: crate::api::AppType,
-}
-
-impl HandshakePayload {
-    /// Builds a payload for `stream_id`, filling the version fields from `state`.
-    ///
-    /// Single construction site so additions to the ACK only need one edit.
-    fn from_state(stream_id: String, state: &AppState) -> Self {
-        Self {
-            stream_id,
-            protocol_version: crate::protocol_constants::PROTOCOL_VERSION,
-            app_version: state.app_info.app_version,
-            app_type: state.app_info.app_type,
-        }
-    }
 }
 
 /// Sends a response based on an already-resolved result.
@@ -372,8 +357,14 @@ async fn send_command_response<F, T, E, R>(
 
 /// Builds the initial state message for WebSocket clients.
 ///
-/// Includes Sonos state (groups, transport, volume, mute), active playback sessions,
-/// and current network health status.
+/// Includes Sonos state (groups, transport, volume, mute), active playback
+/// sessions, current network health status, and the companion's version
+/// metadata (`appVersion`, `protocolVersion`, `appType`).
+///
+/// `INITIAL_STATE` fires on every WebSocket connect — including the always-on
+/// control connection the extension uses purely for state monitoring — so
+/// putting the version fields here means the extension's mismatch warning
+/// fires immediately, without waiting for the user to start a stream.
 fn build_initial_state(state: &AppState) -> Option<Message> {
     let mut payload = state.sonos_state.to_json();
 
@@ -407,6 +398,21 @@ fn build_initial_state(state: &AppState) -> Option<Message> {
                 "networkHealthReason".to_string(),
                 serde_json::Value::String(reason.clone()),
             );
+        }
+
+        // Companion version metadata — same fields as HANDSHAKE_ACK so the
+        // extension's control connection can drive the version-mismatch
+        // warning without waiting for the user to start a stream.
+        map.insert(
+            "protocolVersion".to_string(),
+            serde_json::Value::String(crate::protocol_constants::PROTOCOL_VERSION.to_string()),
+        );
+        map.insert(
+            "appVersion".to_string(),
+            serde_json::Value::String(state.app_info.app_version.to_string()),
+        );
+        if let Ok(app_type_json) = serde_json::to_value(state.app_info.app_type) {
+            map.insert("appType".to_string(), app_type_json);
         }
     }
 
@@ -701,7 +707,9 @@ async fn handle_start_browser_capture(
 
             // Send handshake ack with the stream ID
             let ack = WsOutgoing::HandshakeAck {
-                payload: HandshakePayload::from_state(stream_id.clone(), state),
+                payload: HandshakePayload {
+                    stream_id: stream_id.clone(),
+                },
             };
             if let Some(msg) = ack.to_message() {
                 let _ = sender.send(msg).await;
@@ -919,7 +927,7 @@ async fn handle_ws(socket: WebSocket, state: AppState) {
                                             Arc::clone(&state.stream_coordinator),
                                         );
                                         let ack = WsOutgoing::HandshakeAck {
-                                            payload: HandshakePayload::from_state(id, &state),
+                                            payload: HandshakePayload { stream_id: id },
                                         };
                                         stream_guard = Some(guard);
                                         if let Some(msg) = ack.to_message() {

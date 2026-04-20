@@ -88,10 +88,30 @@ export function connectControlWebSocket(url: string): void {
       // INITIAL_STATE on connect
       if (message.type === 'INITIAL_STATE') {
         cachedSonosState = message.payload as SonosStateSnapshot;
+        // Forward Sonos state + companion version metadata in a single
+        // message. Combining them avoids ordering races at the background:
+        // by the time the popup re-fetches connection state in response to
+        // WS_CONNECTED, the companion fields are already populated.
+        //
+        // Pre-0.4.0 companions omit the version fields; we send nulls in
+        // that case so the popup can tell "old companion that can't report
+        // its version" apart from "never connected".
+        const payload = message.payload as {
+          appVersion?: unknown;
+          protocolVersion?: unknown;
+          appType?: unknown;
+        };
         chrome.runtime
           .sendMessage({
             type: 'WS_CONNECTED',
             state: cachedSonosState,
+            appVersion: typeof payload.appVersion === 'string' ? payload.appVersion : null,
+            protocolVersion:
+              typeof payload.protocolVersion === 'string' ? payload.protocolVersion : null,
+            appType:
+              payload.appType === 'desktop' || payload.appType === 'server'
+                ? payload.appType
+                : null,
           })
           .catch(noop);
       }

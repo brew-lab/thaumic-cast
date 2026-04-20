@@ -141,11 +141,16 @@ pub fn create_router(state: AppState) -> Router {
 ///
 /// Always returns 200 OK if the server is responding. Use `/ready` for
 /// readiness checks that verify the service can handle requests.
+///
+/// `appType` lets the extension tailor update-prompt copy ("Update Desktop
+/// App" vs. "Update Server") immediately at discovery time, without waiting
+/// for the WebSocket `INITIAL_STATE` to arrive.
 async fn health_check(State(state): State<AppState>) -> impl IntoResponse {
     let max_streams = state.config.read().streaming.max_concurrent_streams;
     api_success(json!({
         "status": "ok",
         "service": SERVICE_ID,
+        "appType": state.app_info.app_type,
         "limits": {
             "maxStreams": max_streams
         }
