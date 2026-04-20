@@ -564,8 +564,10 @@ export class StreamSession {
   private async startWorker(): Promise<void> {
     const wsUrl = this.baseUrl.replace(/^http/, 'ws') + '/ws';
 
-    // Spawn codec-appropriate worker
-    if (this.encoderConfig.codec === 'pcm') {
+    // Spawn codec-appropriate worker. The MSTP relay only applies to tab
+    // capture — browser/WASAPI capture has no MediaStream and must use the
+    // audio-consumer worker, which handles INIT_BROWSER_CAPTURE.
+    if (this.captureMode === 'tab' && this.encoderConfig.codec === 'pcm') {
       this.consumerWorker = new Worker(new URL('./audio-relay.worker.ts', import.meta.url), {
         type: 'module',
       });
