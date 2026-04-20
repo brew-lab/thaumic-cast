@@ -41,11 +41,13 @@ export interface UseCompanionVersionResult {
  */
 export function useCompanionVersion(connection: ConnectionStatus): UseCompanionVersionResult {
   const [dismissed, setDismissed] = useState<DismissedCompanionVersion | null>(null);
+  const [dismissedLoaded, setDismissedLoaded] = useState(false);
 
   useEffect(() => {
     getDismissedCompanionVersion()
       .then(setDismissed)
-      .catch(() => setDismissed(null));
+      .catch(() => setDismissed(null))
+      .finally(() => setDismissedLoaded(true));
   }, []);
 
   useStorageListener<DismissedCompanionVersion>(
@@ -53,16 +55,19 @@ export function useCompanionVersion(connection: ConnectionStatus): UseCompanionV
     setDismissed,
   );
 
-  // Build a CompanionInfo only when we have a live connection. Without one,
-  // the version-check helpers should treat the popup as "no companion seen
-  // yet" — the connection-state fields are stale until reconnect.
-  const companion: CompanionInfo | null = connection.desktopAppUrl
-    ? {
-        appType: connection.appType,
-        appVersion: connection.appVersion,
-        protocolVersion: connection.protocolVersion,
-      }
-    : null;
+  // Only build a CompanionInfo once the WebSocket is actually connected.
+  // Between discovery and WS connect, `desktopAppUrl` is populated but
+  // `protocolVersion` is still null (INITIAL_STATE hasn't arrived yet) —
+  // treating that as a mismatch would flash the warning on every fresh
+  // connection.
+  const companion: CompanionInfo | null =
+    connection.phase === 'connected'
+      ? {
+          appType: connection.appType,
+          appVersion: connection.appVersion,
+          protocolVersion: connection.protocolVersion,
+        }
+      : null;
 
   const dismissMismatchWarning = useCallback(() => {
     if (!companion) return;
@@ -76,7 +81,10 @@ export function useCompanionVersion(connection: ConnectionStatus): UseCompanionV
   return {
     companion,
     hasMismatch: hasVersionMismatch(companion),
-    showMismatchWarning: shouldWarnAboutVersion(companion, dismissed),
+    // Suppress the Alert until the dismissal record has loaded from storage,
+    // otherwise a previously-dismissed bucket would flash the Alert on every
+    // popup open before `getDismissedCompanionVersion()` resolves.
+    showMismatchWarning: dismissedLoaded && shouldWarnAboutVersion(companion, dismissed),
     dismissMismatchWarning,
   };
 }

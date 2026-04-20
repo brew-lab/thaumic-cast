@@ -60,7 +60,7 @@
   "settings.about": "About",
   "settings.about_app": "Thaumic Cast Desktop",
   "settings.about_version": "Version {{version}}",
-  "settings.about_protocol": "Protocol v{{version}}",
+  "settings.about_protocol": "Protocol · Version {{version}}",
   "settings.check_for_updates": "Check for updates",
   "settings.check_for_updates_description": "Opens the releases page in your browser",
 
