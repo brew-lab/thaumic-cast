@@ -57,6 +57,12 @@
   "settings.manual_speakers_empty": "No speakers have been added by hand",
   "settings.add_speaker": "Add by IP address",
   "settings.remove_speaker": "Banish",
+  "settings.about": "About",
+  "settings.about_app": "Thaumic Cast Desktop",
+  "settings.about_version": "Version {{version}}",
+  "settings.about_protocol": "Protocol v{{version}}",
+  "settings.check_for_updates": "Check for updates",
+  "settings.check_for_updates_description": "Opens the releases page in your browser",
 
   "error.page_not_found": "This Page Has Wandered Off",
   "error.go_home": "Return Home",

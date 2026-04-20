@@ -3,6 +3,7 @@ import { useState, useEffect, useCallback, useMemo } from 'preact/hooks';
 import { useTranslation } from 'react-i18next';
 import { SPEAKER_AVAILABILITY_LABELS, MediaAction } from '@thaumic-cast/protocol';
 import { getSpeakerAvailability } from '@thaumic-cast/protocol';
+import { GITHUB_RELEASES_URL } from '@thaumic-cast/shared';
 import { Radio, Settings } from 'lucide-preact';
 import { Alert, IconButton } from '@thaumic-cast/ui';
 import styles from './App.module.css';
@@ -23,6 +24,7 @@ import { useConnectionStatus } from './hooks/useConnectionStatus';
 import { useOnboarding } from './hooks/useOnboarding';
 import { useExtensionSettingsListener } from './hooks/useExtensionSettingsListener';
 import { useSpeakerSelection } from './hooks/useSpeakerSelection';
+import { useCompanionVersion } from './hooks/useCompanionVersion';
 import { Onboarding } from './components/Onboarding';
 
 /**
@@ -116,6 +118,28 @@ function MainPopup(): JSX.Element {
   // Auto-stop notification hook
   const { notification: autoStopNotification, message: autoStopMessage } =
     useAutoStopNotification();
+
+  // Companion version mismatch warning
+  const { companion, showMismatchWarning, dismissMismatchWarning } = useCompanionVersion();
+
+  const handleOpenReleases = useCallback(() => {
+    chrome.tabs.create({ url: GITHUB_RELEASES_URL });
+  }, []);
+
+  const mismatchActionKey =
+    companion?.appType === 'server'
+      ? 'version_mismatch_action_server'
+      : companion?.appType === 'desktop'
+        ? 'version_mismatch_action_desktop'
+        : 'version_mismatch_action_generic';
+
+  const mismatchAppTypeLabel = t(
+    companion?.appType === 'server'
+      ? 'about_companion_type_server'
+      : companion?.appType === 'desktop'
+        ? 'about_companion_type_desktop'
+        : 'about_companion_type_generic',
+  );
 
   // Show auto-stop notification as error
   useEffect(() => {
@@ -264,6 +288,21 @@ function MainPopup(): JSX.Element {
       {connectionPhase === 'reconnecting' && (
         <Alert variant="warning" className={styles.alert}>
           {t('warning_reconnecting')}
+        </Alert>
+      )}
+
+      {showMismatchWarning && companion && (
+        <Alert
+          variant="warning"
+          className={styles.alert}
+          action={t(mismatchActionKey)}
+          onAction={handleOpenReleases}
+          onDismiss={dismissMismatchWarning}
+        >
+          {t('version_mismatch_message', {
+            appTypeLabel: mismatchAppTypeLabel,
+            appVersion: companion.appVersion,
+          })}
         </Alert>
       )}
 

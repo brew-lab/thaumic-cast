@@ -16,6 +16,19 @@ import { join } from 'node:path';
 /** Regex to match version in Cargo.toml [package] section. */
 const CARGO_VERSION_REGEX = /^(version\s*=\s*")([^"]+)(")/m;
 
+/**
+ * Regex to match the `PROTOCOL_VERSION` constant exported from
+ * `@thaumic-cast/protocol`. Quote-agnostic: accepts either single or double
+ * quotes so the match keeps working if Prettier config flips quote style. The
+ * second capture group is the opening quote, which we reuse on replace to
+ * preserve the file's existing style.
+ */
+const TS_PROTOCOL_VERSION_REGEX =
+  /^(export const PROTOCOL_VERSION = )(['"])([^'"]+)\2( as const;)/m;
+
+/** Regex to match the `PROTOCOL_VERSION` constant in `thaumic-core`'s `protocol_constants.rs`. */
+const RUST_PROTOCOL_VERSION_REGEX = /^(pub const PROTOCOL_VERSION: &str = ")([^"]+)(";)/m;
+
 const ROOT = join(import.meta.dirname, '..');
 
 /** Minimal package.json structure for version extraction. */
@@ -90,7 +103,10 @@ function syncDesktopVersion(): void {
       console.log(`desktop (Cargo.toml): ${pkg.version} (no change)`);
     }
   } else {
-    console.warn('desktop (Cargo.toml): version not found');
+    throw new Error(
+      'desktop (Cargo.toml): [package] version declaration not found. ' +
+        'If the declaration syntax changed, update CARGO_VERSION_REGEX in scripts/sync-versions.ts.',
+    );
   }
 }
 
@@ -135,7 +151,10 @@ function syncCoreVersion(): void {
       console.log(`thaumic-core (Cargo.toml): ${pkg.version} (no change)`);
     }
   } else {
-    console.warn('thaumic-core (Cargo.toml): version not found');
+    throw new Error(
+      'thaumic-core (Cargo.toml): [package] version declaration not found. ' +
+        'If the declaration syntax changed, update CARGO_VERSION_REGEX in scripts/sync-versions.ts.',
+    );
   }
 }
 
@@ -161,7 +180,72 @@ function syncServerVersion(): void {
       console.log(`server (Cargo.toml): ${pkg.version} (no change)`);
     }
   } else {
-    console.warn('server (Cargo.toml): version not found');
+    throw new Error(
+      'server (Cargo.toml): [package] version declaration not found. ' +
+        'If the declaration syntax changed, update CARGO_VERSION_REGEX in scripts/sync-versions.ts.',
+    );
+  }
+}
+
+/**
+ * Syncs the wire-protocol version from `packages/protocol/package.json` to the
+ * two places it is hard-coded:
+ *
+ * - `packages/protocol/src/websocket.ts` — `PROTOCOL_VERSION` constant the
+ *   extension embeds in its `About` surface and `MIN_COMPATIBLE_PROTOCOL_VERSION`
+ *   comparison.
+ * - `packages/thaumic-core/src/protocol_constants.rs` — `PROTOCOL_VERSION`
+ *   the companion emits in the WebSocket handshake ACK.
+ *
+ * Rust and TS must report the same value; drift would cause the out-of-date
+ * warning to either miss a real mismatch or misfire against a matching build.
+ * See `CONTRIBUTING.md` → Protocol versioning.
+ */
+function syncProtocolVersion(): void {
+  const pkgPath = join(ROOT, 'packages/protocol/package.json');
+  const tsPath = join(ROOT, 'packages/protocol/src/websocket.ts');
+  const rustPath = join(ROOT, 'packages/thaumic-core/src/protocol_constants.rs');
+
+  const pkg = readJson<PackageJson>(pkgPath);
+  const target = pkg.version;
+
+  // Sync TS constant. Capture groups for TS_PROTOCOL_VERSION_REGEX:
+  //   $1 = `export const PROTOCOL_VERSION = `, $2 = opening quote (' or "),
+  //   $3 = current version, $4 = ` as const;`
+  const tsContent = readFileSync(tsPath, 'utf-8');
+  const tsMatch = tsContent.match(TS_PROTOCOL_VERSION_REGEX);
+  if (!tsMatch) {
+    // Release-path failure: refuse to continue rather than ship stale constants.
+    throw new Error(
+      `protocol (websocket.ts): PROTOCOL_VERSION declaration not found. ` +
+        `If the declaration syntax changed, update TS_PROTOCOL_VERSION_REGEX.`,
+    );
+  }
+  const tsCurrent = tsMatch[3];
+  if (tsCurrent !== target) {
+    console.log(`protocol (websocket.ts): ${tsCurrent} -> ${target}`);
+    const updated = tsContent.replace(TS_PROTOCOL_VERSION_REGEX, `$1$2${target}$2$4`);
+    writeFileSync(tsPath, updated);
+  } else {
+    console.log(`protocol (websocket.ts): ${target} (no change)`);
+  }
+
+  // Sync Rust constant
+  const rustContent = readFileSync(rustPath, 'utf-8');
+  const rustMatch = rustContent.match(RUST_PROTOCOL_VERSION_REGEX);
+  if (!rustMatch) {
+    throw new Error(
+      `protocol (protocol_constants.rs): PROTOCOL_VERSION declaration not found. ` +
+        `If the declaration syntax changed, update RUST_PROTOCOL_VERSION_REGEX.`,
+    );
+  }
+  const rustCurrent = rustMatch[2];
+  if (rustCurrent !== target) {
+    console.log(`protocol (protocol_constants.rs): ${rustCurrent} -> ${target}`);
+    const updated = rustContent.replace(RUST_PROTOCOL_VERSION_REGEX, `$1${target}$3`);
+    writeFileSync(rustPath, updated);
+  } else {
+    console.log(`protocol (protocol_constants.rs): ${target} (no change)`);
   }
 }
 
@@ -171,4 +255,5 @@ syncDesktopVersion();
 syncExtensionVersion();
 syncServerVersion();
 syncCoreVersion();
+syncProtocolVersion();
 console.log('Done.');

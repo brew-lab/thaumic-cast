@@ -73,6 +73,69 @@ bun changeset
 
 Follow the prompts to select the package and bump type (major/minor/patch).
 
+### Protocol versioning
+
+The wire format between the extension and the companion (`apps/desktop`,
+`apps/server`) is versioned independently via `@thaumic-cast/protocol`. The
+extension auto-updates through the Chrome Web Store but the companion does not,
+so version drift is common — the extension relies on the `protocolVersion`
+field returned in the WebSocket handshake ACK to detect incompatible companions
+and nudge users to update.
+
+Three places hold the wire version; all three must agree:
+
+- `packages/protocol/package.json` — the package's npm-style semver. This is
+  the source of truth; the other two are kept in sync from here.
+- `packages/protocol/src/websocket.ts` — the exported `PROTOCOL_VERSION`
+  constant the extension embeds.
+- `packages/thaumic-core/src/protocol_constants.rs` — the Rust `PROTOCOL_VERSION`
+  the companion emits in the handshake ACK.
+
+`bun run sync-versions` (invoked automatically by `bun run changeset:version`
+during a release) propagates the `package.json` version into the two
+`PROTOCOL_VERSION` constants. You never edit those two constants by hand; diffs
+against them only appear in release PRs, not feature PRs. If `sync-versions`
+can't locate either constant (e.g. the declaration syntax changed), it exits
+non-zero and fails the release loudly rather than shipping stale values.
+
+`MIN_COMPATIBLE_PROTOCOL_VERSION` in `packages/shared/src/constants.ts` is
+different: it _is_ a hand-edited feature-PR concern, since bumping it is a
+product decision, not a mechanical sync. See step 2 below.
+
+Note: `@thaumic-cast/desktop`, `@thaumic-cast/extension`, and
+`@thaumic-cast/server` are in a `fixed` group (see `.changeset/config.json`),
+so bumping any one of them automatically bumps the others to match. The
+`protocol`, `core`, and `shared` packages are independent and should be
+listed explicitly in the changeset when they change.
+
+When you change the wire format:
+
+1. Run `bun run changeset` to record the change (this creates a changeset file
+   but does _not_ yet modify any `package.json`). Bump `@thaumic-cast/protocol`:
+   - **Minor** for additive, backwards-compatible changes (a new optional
+     field, a new message type older clients can ignore).
+   - **Major** for breaking changes (removing or renaming a field, changing
+     semantics, tightening a previously-permissive field).
+     The release pipeline (`bun run changeset:version`, run at release time,
+     not on the feature branch) applies the bump to `package.json` and then
+     invokes `sync-versions` to propagate the two `PROTOCOL_VERSION` constants.
+2. Decide whether to raise `MIN_COMPATIBLE_PROTOCOL_VERSION` in
+   `packages/shared/src/constants.ts`. Unlike `PROTOCOL_VERSION`, this is
+   edited by hand in the feature PR. `MIN_COMPATIBLE_PROTOCOL_VERSION` is a
+   watermark: once set to `X.Y.Z`, the extension surfaces the out-of-date
+   warning Alert for any companion reporting a `protocolVersion` below
+   `X.Y.Z`. Companions that omit the field entirely (pre-0.4.0 builds) are
+   treated as "unknown, assume compatible" and never warned.
+   - **Always** bump MIN on a major wire change — older companions will
+     actually break playback, so we want to prompt aggressively.
+   - **Optionally** bump MIN on a minor change if you want users to
+     proactively pick up the improvement (e.g. the new field fixes a UX bug
+     that only older extensions paper over).
+   - **Skip** a MIN bump for patch-level changes or when older companions
+     keep working fine.
+3. Describe the change in the changeset body. Include enough detail for a user
+   to understand why they're seeing the update prompt.
+
 ## Code Style
 
 - **Linting:** ESLint + Prettier + Stylelint run automatically on commit.

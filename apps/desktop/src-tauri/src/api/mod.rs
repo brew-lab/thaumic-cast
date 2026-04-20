@@ -9,7 +9,7 @@ use std::sync::Arc;
 use parking_lot::RwLock;
 use tauri::{AppHandle, Manager};
 use thaumic_core::{
-    bootstrap_services, AppState as CoreAppState, ArtworkConfig, ArtworkSource,
+    bootstrap_services, AppInfo, AppState as CoreAppState, AppType, ArtworkConfig, ArtworkSource,
     BootstrappedServices, Config,
 };
 #[cfg(windows)]
@@ -265,6 +265,7 @@ impl AppState {
             &self.services,
             Arc::clone(&self.config),
             self.artwork_config(),
+            AppInfo::new(env!("CARGO_PKG_VERSION"), AppType::Desktop),
         );
 
         #[cfg(windows)]

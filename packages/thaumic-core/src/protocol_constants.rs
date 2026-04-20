@@ -71,6 +71,15 @@ pub const MAX_GENA_BODY_SIZE: usize = 64 * 1024;
 /// where consistency matters more than translation.
 pub const APP_NAME: &str = "Thaumic Cast";
 
+/// Wire-protocol semver advertised to extension clients in the handshake ACK.
+///
+/// Must stay in sync with the `PROTOCOL_VERSION` constant exported from
+/// `@thaumic-cast/protocol` (`packages/protocol/src/websocket.ts`).
+///
+/// Bump on any wire-schema change. For breaking changes, bump the extension's
+/// `MIN_COMPATIBLE_PROTOCOL_VERSION` in the same PR.
+pub const PROTOCOL_VERSION: &str = "0.4.0";
+
 /// Service identifier used for discovery (health endpoint).
 ///
 /// The extension probes /health and expects this exact string to identify

@@ -9,6 +9,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use parking_lot::RwLock;
+use serde::Serialize;
 use thiserror::Error;
 
 use axum::serve::ListenerExt;
@@ -18,6 +19,7 @@ use crate::capture::CaptureSourceFactory;
 use crate::context::NetworkContext;
 use crate::events::BroadcastEventBridge;
 use crate::mdns_advertise::MdnsAdvertiser;
+use crate::protocol_constants::PROTOCOL_VERSION;
 use crate::services::{DiscoveryService, LatencyMonitor, StreamCoordinator};
 use crate::sonos::SonosClient;
 use crate::state::{Config, SonosState};
@@ -29,6 +31,44 @@ pub mod ws;
 pub mod ws_connection;
 
 pub use ws_connection::WsConnectionManager;
+
+/// Identifies which companion process is serving the WebSocket API.
+///
+/// Reported to the extension in the handshake ACK so update-prompt copy
+/// can be tailored ("update desktop app" vs. "update server").
+#[derive(Debug, Clone, Copy, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum AppType {
+    Desktop,
+    Server,
+}
+
+/// Version metadata reported to the extension via the WebSocket handshake.
+///
+/// The desktop app and headless server each construct this from their own
+/// `env!("CARGO_PKG_VERSION")` and pass it to [`AppState::new`].
+#[derive(Debug, Clone)]
+pub struct AppInfo {
+    /// Semver of the companion app (`apps/desktop` or `apps/server`).
+    pub app_version: String,
+    /// Which companion is running.
+    pub app_type: AppType,
+}
+
+impl AppInfo {
+    pub fn new(app_version: impl Into<String>, app_type: AppType) -> Self {
+        Self {
+            app_version: app_version.into(),
+            app_type,
+        }
+    }
+
+    /// The wire-protocol version baked into this crate — kept in sync with
+    /// `@thaumic-cast/protocol`'s exported `PROTOCOL_VERSION`.
+    pub fn protocol_version(&self) -> &'static str {
+        PROTOCOL_VERSION
+    }
+}
 
 /// Errors that can occur when starting or running the server.
 #[derive(Debug, Error)]
@@ -78,6 +118,8 @@ pub struct AppState {
     /// Optional factory for creating browser capture sources (Windows only).
     /// Set by the desktop app; `None` on the headless server.
     pub capture_factory: Option<Arc<dyn CaptureSourceFactory>>,
+    /// Version metadata advertised to the extension on handshake.
+    pub app_info: AppInfo,
 }
 
 impl AppState {
@@ -91,6 +133,7 @@ impl AppState {
         services: &crate::BootstrappedServices,
         config: Arc<RwLock<Config>>,
         artwork_config: ArtworkConfig,
+        app_info: AppInfo,
     ) -> Self {
         Self {
             sonos: Arc::clone(&services.sonos),
@@ -106,6 +149,7 @@ impl AppState {
             artwork: artwork_config.resolve(),
             mdns_advertiser: Arc::new(RwLock::new(None)),
             capture_factory: None,
+            app_info,
         }
     }
 

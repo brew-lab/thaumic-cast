@@ -6,9 +6,12 @@ import {
   removeManualSpeakerIp,
 } from '../state/store';
 import { useTranslation } from 'react-i18next';
-import { X } from 'lucide-preact';
-import { Card } from '@thaumic-cast/ui';
-import { createLogger } from '@thaumic-cast/shared';
+import { ExternalLink, X } from 'lucide-preact';
+import { getVersion } from '@tauri-apps/api/app';
+import { open } from '@tauri-apps/plugin-shell';
+import { Button, Card } from '@thaumic-cast/ui';
+import { PROTOCOL_VERSION } from '@thaumic-cast/protocol';
+import { createLogger, GITHUB_RELEASES_URL } from '@thaumic-cast/shared';
 import i18n, { resources, SupportedLocale } from '../lib/i18n';
 import { type ThemeMode, getTheme, saveTheme, applyTheme } from '../lib/theme';
 import { ManualSpeakerForm } from '../components/ManualSpeakerForm';
@@ -42,6 +45,9 @@ export function Settings() {
   const [manualIps, setManualIps] = useState<string[]>([]);
   const [removingIp, setRemovingIp] = useState<string | null>(null);
 
+  // App version for the About section
+  const [appVersion, setAppVersion] = useState<string>('');
+
   const handleSpeakerAdded = useCallback((ip: string) => {
     // Prevent duplicates in UI (backend also prevents, but avoid UI flicker)
     setManualIps((prev) => (prev.includes(ip) ? prev : [...prev, ip]));
@@ -55,6 +61,14 @@ export function Settings() {
     getManualSpeakerIps()
       .then(setManualIps)
       .catch(() => setManualIps([]));
+
+    getVersion()
+      .then(setAppVersion)
+      .catch(() => setAppVersion(''));
+  }, []);
+
+  const handleCheckForUpdates = useCallback(() => {
+    open(GITHUB_RELEASES_URL);
   }, []);
 
   const handleRemoveSpeaker = useCallback(async (ip: string) => {
@@ -200,6 +214,29 @@ export function Settings() {
               buttonVariant="secondary"
               onSuccess={handleSpeakerAdded}
             />
+          </div>
+        </div>
+      </Card>
+
+      {/* About Section */}
+      <Card id="about" title={t('settings.about')} titleLevel="h3" className={styles.section}>
+        <div className={styles.sectionContent}>
+          <div className={styles.field}>
+            <label className={styles.fieldLabel}>{t('settings.about_app')}</label>
+            <span className={styles.hint}>
+              {appVersion ? t('settings.about_version', { version: appVersion }) : '—'}
+            </span>
+            <span className={styles.hint}>
+              {t('settings.about_protocol', { version: PROTOCOL_VERSION })}
+            </span>
+          </div>
+
+          <div className={styles.field}>
+            <Button variant="secondary" onClick={handleCheckForUpdates}>
+              <ExternalLink size={14} />
+              {t('settings.check_for_updates')}
+            </Button>
+            <span className={styles.hint}>{t('settings.check_for_updates_description')}</span>
           </div>
         </div>
       </Card>
