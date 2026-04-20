@@ -18,16 +18,17 @@
     "@thaumic-cast/protocol": "workspace:*",
     "@thaumic-cast/shared": "workspace:*",
     "@thaumic-cast/ui": "workspace:*",
-    "i18next": "^25.7.3",
-    "lucide-preact": "^0.567.0",
+    "i18next": "^26.0.6",
+    "lucide-preact": "^1.8.0",
     "preact": "^10.0.0",
-    "react-i18next": "^16.5.0",
+    "react-i18next": "^17.0.4",
     "zod": "^4.2.1"
   },
   "devDependencies": {
     "@preact/preset-vite": "^2.0.0",
     "@crxjs/vite-plugin": "^2.0.0",
     "@types/chrome": "^0.1.33",
-    "vite": "^7.3.1"
+    "typescript": "^6.0.3",
+    "vite": "^8.0.8"
   }
 }
