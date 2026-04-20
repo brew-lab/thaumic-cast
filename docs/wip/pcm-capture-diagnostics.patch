@@ -1,0 +1,1788 @@
+diff --git a/apps/extension/src/background/handlers/cast.ts b/apps/extension/src/background/handlers/cast.ts
+index 1c53ca3..2c4e0aa 100644
+--- a/apps/extension/src/background/handlers/cast.ts
++++ b/apps/extension/src/background/handlers/cast.ts
+@@ -153,7 +153,7 @@ export async function handleStartCast(msg: StartCastMessage): Promise<ExtensionR
+         mediaStreamId,
+         encoderConfig,
+         app.url,
+-        { keepTabAudible: settings.keepTabAudible },
++        { keepTabAudible: settings.keepTabAudible, pcmCapture: settings.pcmCapture },
+       );
+       if (!response) throw new Error('error_offscreen_unavailable');
+       captureResponse = response;
+diff --git a/apps/extension/src/background/offscreen-broker.ts b/apps/extension/src/background/offscreen-broker.ts
+index 13a436f..05abcf6 100644
+--- a/apps/extension/src/background/offscreen-broker.ts
++++ b/apps/extension/src/background/offscreen-broker.ts
+@@ -48,6 +48,7 @@ class OffscreenBroker {
+    * @param baseUrl - The desktop app base URL for streaming
+    * @param options - Additional capture options
+    * @param options.keepTabAudible - Play audio at low volume to prevent Chrome throttling
++   * @param options.pcmCapture - Capture 60s of raw PCM at each pipeline stage for diagnostics
+    * @returns The capture response with stream ID on success
+    */
+   async startCapture(
+@@ -55,7 +56,7 @@ class OffscreenBroker {
+     mediaStreamId: string,
+     encoderConfig: EncoderConfig,
+     baseUrl: string,
+-    options?: { keepTabAudible?: boolean },
++    options?: { keepTabAudible?: boolean; pcmCapture?: boolean },
+   ): Promise<ExtensionResponse | undefined> {
+     return sendToOffscreen<ExtensionResponse>({
+       type: 'START_CAPTURE',
+@@ -65,6 +66,7 @@ class OffscreenBroker {
+         encoderConfig,
+         baseUrl,
+         keepTabAudible: options?.keepTabAudible,
++        pcmCapture: options?.pcmCapture,
+       },
+     });
+   }
+diff --git a/apps/extension/src/lib/message-schemas.ts b/apps/extension/src/lib/message-schemas.ts
+index dcdd99f..db3bba1 100644
+--- a/apps/extension/src/lib/message-schemas.ts
++++ b/apps/extension/src/lib/message-schemas.ts
+@@ -106,6 +106,8 @@ export const StartCaptureMessageSchema = z.object({
+     baseUrl: z.string().url(),
+     /** Play audio at very low volume to prevent Chrome throttling */
+     keepTabAudible: z.boolean().optional(),
++    /** Capture 60s of raw PCM at each pipeline stage for diagnostics */
++    pcmCapture: z.boolean().optional(),
+   }),
+ });
+ export type StartCaptureMessage = z.infer<typeof StartCaptureMessageSchema>;
+diff --git a/apps/extension/src/lib/settings.ts b/apps/extension/src/lib/settings.ts
+index b47c7d9..8bba3e7 100644
+--- a/apps/extension/src/lib/settings.ts
++++ b/apps/extension/src/lib/settings.ts
+@@ -208,6 +208,9 @@ export const ExtensionSettingsSchema = z.object({
+ 
+   // Capture mode: 'tab' for per-tab capture, 'browser' for browser-wide WASAPI capture
+   captureMode: z.enum(['tab', 'browser']).default('tab'),
++
++  // PCM pipeline capture: records 60s of raw audio at each pipeline stage for diagnostics
++  pcmCapture: z.boolean().default(false),
+ });
+ export type ExtensionSettings = z.infer<typeof ExtensionSettingsSchema>;
+ 
+@@ -233,6 +236,7 @@ const DEFAULT_EXTENSION_SETTINGS: ExtensionSettings = {
+   keepTabAudible: true,
+   syncSpeakers: false,
+   captureMode: 'tab' as const,
++  pcmCapture: false,
+ };
+ 
+ /**
+diff --git a/apps/extension/src/locales/en.json b/apps/extension/src/locales/en.json
+index bb86b9d..9c4d4be 100644
+--- a/apps/extension/src/locales/en.json
++++ b/apps/extension/src/locales/en.json
+@@ -201,5 +201,8 @@
+   "video_sync_status_lost": "Lost",
+   "video_sync_trim": "Fine-tune",
+   "video_sync_resync": "Try again",
+-  "video_sync_delay_ms": "{{delay}}ms"
++  "video_sync_delay_ms": "{{delay}}ms",
++
++  "pcm_capture_enable": "Capture PCM pipeline",
++  "pcm_capture_description": "Records 60 seconds of raw audio at each pipeline stage for diagnostic comparison"
+ }
+diff --git a/apps/extension/src/offscreen/audio-consumer.worker.ts b/apps/extension/src/offscreen/audio-consumer.worker.ts
+index d8856ce..21c4a4a 100644
+--- a/apps/extension/src/offscreen/audio-consumer.worker.ts
++++ b/apps/extension/src/offscreen/audio-consumer.worker.ts
+@@ -1377,6 +1377,11 @@ self.onmessage = async (event: MessageEvent<WorkerInboundMessage>) => {
+     } = msg;
+ 
+     try {
++      // SAB fields are required for the audio-consumer (compressed codec) path
++      if (!sab || size === undefined || mask === undefined || headerSize === undefined) {
++        throw new Error('SAB fields (sab, bufferSize, bufferMask, headerSize) are required');
++      }
++
+       if ((size & (size - 1)) !== 0 || mask !== size - 1) {
+         throw new Error('Invalid ring buffer configuration (size must be power of two)');
+       }
+diff --git a/apps/extension/src/offscreen/audio-relay.worker.ts b/apps/extension/src/offscreen/audio-relay.worker.ts
+index 225c929..30ace0e 100644
+--- a/apps/extension/src/offscreen/audio-relay.worker.ts
++++ b/apps/extension/src/offscreen/audio-relay.worker.ts
+@@ -1,17 +1,23 @@
+ /**
+  * Audio Relay Worker
+  *
+- * Reads pre-encoded Int16 frames from a SharedArrayBuffer ring buffer and
+- * relays them via WebSocket. The AudioWorklet has already performed the
+- * Float32-to-Int16 conversion — this Worker simply reads complete frames
+- * and sends them to the server.
++ * Two consumption paths for the PCM codec:
+  *
+- * Architecture:
++ * **SAB path** (legacy): Reads pre-encoded Int16 frames from a SharedArrayBuffer
++ * ring buffer and relays them via WebSocket. The AudioWorklet has already
++ * performed the Float32→Int16 conversion.
++ *
++ * **MSTP path** (new): Receives a ReadableStream<AudioData> from a
++ * MediaStreamTrackProcessor, extracts f32-planar channels, interleaves,
++ * applies TPDF dither, quantizes to Int16, and sends via WebSocket.
++ * Eliminates the AudioContext clock domain crossing that caused audio dropouts.
++ *
++ * Architecture (MSTP):
++ *   MediaStreamTrackProcessor → ReadableStream<AudioData> [transferred]
++ *     → Worker (extract f32 → interleave → clamp → dither → Int16 → WebSocket)
++ *
++ * Architecture (SAB):
+  *   AudioWorklet (encode) → SharedArrayBuffer (Int16) → Worker (relay via WebSocket)
+- *                                                          ↓
+- *                                               Main thread only for:
+- *                                               - Stats logging
+- *                                               - Control messages
+  */
+ 
+ import {
+@@ -22,7 +28,7 @@ import {
+ } from './ring-buffer';
+ import type { EncoderConfig } from '@thaumic-cast/protocol';
+ import type { WorkerInboundMessage } from './worker-messages';
+-import { getStreamingPolicy } from '@thaumic-cast/protocol';
++import { getStreamingPolicy, tpdfDither, INT16_MAX } from '@thaumic-cast/protocol';
+ import { exponentialBackoff } from '../lib/backoff';
+ import {
+   type WorkerState,
+@@ -50,20 +56,32 @@ import {
+ const s: WorkerState = createWorkerState('AudioRelayWorker');
+ 
+ // ─────────────────────────────────────────────────────────────────────────────
+-// Worker-Specific State
++// Shared State
+ // ─────────────────────────────────────────────────────────────────────────────
+ 
+-// Ring buffer state
+-let control: Int32Array | null = null;
+-let dataInt16: Int16Array | null = null;
+-let bufferCapacity = 0;
+-let bufferMask = 0;
+ let running = false;
+ 
+-// Frame sizing
+ /** Number of interleaved Int16 samples per frame. */
+ let frameSizeInterleaved = 0;
+ 
++/** Whether we're using the MSTP path (true) or SAB path (false). */
++let mstpMode = false;
++
++/** Frames processed this stats interval. */
++let framesReadThisInterval = 0;
++
++// PCM diagnostic dump state
++let pcmCaptureEnabled = false;
++
++// ─────────────────────────────────────────────────────────────────────────────
++// SAB Path State
++// ─────────────────────────────────────────────────────────────────────────────
++
++let control: Int32Array | null = null;
++let dataInt16: Int16Array | null = null;
++let bufferCapacity = 0;
++let bufferMask = 0;
++
+ // Pre-allocated temp buffer for wrap-around reads
+ let tempInt16: Int16Array | null = null;
+ let tempUint8: Uint8Array | null = null;
+@@ -72,11 +90,290 @@ let tempUint8: Uint8Array | null = null;
+ let catchUpTargetSamples = 0;
+ let catchUpMaxSamples = 0;
+ 
+-/** Frames read from SAB this stats interval. */
+-let framesReadThisInterval = 0;
++// SAB PCM dump state (captures Int16 frames pre-send)
++let pcmDumpFrames: Uint8Array[] = [];
++let pcmDumpMaxFrames = 0;
++
++// ─────────────────────────────────────────────────────────────────────────────
++// MSTP Path State
++// ─────────────────────────────────────────────────────────────────────────────
++
++let audioReader: ReadableStreamDefaultReader<AudioData> | null = null;
++let channels = 2;
++
++// Reusable buffers for AudioData processing (pre-allocated on INIT)
++let ch0Temp: Float32Array | null = null;
++let ch1Temp: Float32Array | null = null;
++let interleaveBuffer: Float32Array | null = null;
++let quantizeBuffer: Int16Array | null = null;
++
++// Frame accumulator (variable AudioData sizes → fixed frame sizes)
++let mstpAccum: Int16Array | null = null;
++let mstpAccumOffset = 0;
++
++// Send buffer for accumulated frames
++let mstpSendBuffer: Uint8Array | null = null;
++
++// MSTP PCM dump state (captures both Float32 and Int16)
++let f32DumpChunks: Float32Array[] = [];
++let i16DumpChunks: Int16Array[] = [];
++let dumpSamplesRemaining = 0;
++
++/** Current allocation size for per-channel temp buffers. */
++let maxFrameSamples = 0;
++
++/** Whether we've logged the first AudioData frame's properties. */
++let loggedFirstFrame = false;
++
++// AudioData timestamp continuity tracking (µs)
++/** Expected start timestamp of the next AudioData frame. -1 = not yet set. */
++let expectedNextTimestamp = -1;
++/** Number of AudioData gaps detected this stats interval. */
++let gapCount = 0;
++/** Total gap duration in µs this stats interval. */
++let gapDurationUs = 0;
++
++
++// ─────────────────────────────────────────────────────────────────────────────
++// MSTP: AudioData Processing
++// ─────────────────────────────────────────────────────────────────────────────
++
++/**
++ * Ensures temp buffers are large enough for the given frame count.
++ * Re-allocates if AudioData delivers more samples than expected.
++ *
++ * @param needed - Number of per-channel samples needed
++ */
++function ensureTempBuffers(needed: number): void {
++  if (needed <= maxFrameSamples) return;
++
++  s.log.warn(`AudioData frame size ${needed} exceeds allocation ${maxFrameSamples}, re-allocating`);
++  maxFrameSamples = needed;
++  ch0Temp = new Float32Array(maxFrameSamples);
++  ch1Temp = new Float32Array(maxFrameSamples);
++  interleaveBuffer = new Float32Array(maxFrameSamples * channels);
++  quantizeBuffer = new Int16Array(maxFrameSamples * channels);
++}
++
++/**
++ * Processes Float32 per-channel samples through the output pipeline:
++ * interleave → PCM capture → TPDF dither → Int16 quantize → accumulate → send.
++ *
++ * Used for both real AudioData samples and LPC-predicted fill samples.
++ *
++ * @param srcCh0 - Source channel 0 Float32 samples
++ * @param srcCh1 - Source channel 1 Float32 samples (null for mono)
++ * @param count - Number of per-channel samples to process
++ */
++function emitFloat32Samples(srcCh0: Float32Array, srcCh1: Float32Array | null, count: number): void {
++  const interleavedCount = count * channels;
++
++  // Interleave and clamp: [L0, R0, L1, R1, ...]
++  for (let i = 0; i < count; i++) {
++    const s0 = srcCh0[i]!;
++    // NaN-safe clamp to [-1, 1]
++    interleaveBuffer![i * channels] = Math.max(-1, Math.min(1, s0 || 0));
++    if (channels >= 2 && srcCh1) {
++      const s1 = srcCh1[i]!;
++      interleaveBuffer![i * channels + 1] = Math.max(-1, Math.min(1, s1 || 0));
++    }
++  }
++
++  // PCM capture: copy Float32 before quantization
++  // Wrapped in try-catch — diagnostic capture must never crash the audio stream.
++  const shouldCapture = pcmCaptureEnabled && dumpSamplesRemaining > 0;
++  let captureSamples = 0;
++  if (shouldCapture) {
++    captureSamples = Math.min(interleavedCount, dumpSamplesRemaining);
++    try {
++      const f32Copy = new Float32Array(captureSamples);
++      f32Copy.set(interleaveBuffer!.subarray(0, captureSamples));
++      f32DumpChunks.push(f32Copy);
++      dumpSamplesRemaining -= captureSamples;
++    } catch (captureErr) {
++      s.log.warn(
++        `PCM F32 capture failed (samples=${captureSamples}, bufLen=${interleaveBuffer?.length}): ${captureErr}`,
++      );
++      captureSamples = 0;
++      pcmCaptureEnabled = false;
++    }
++  }
++
++  // TPDF dither + quantize to Int16
++  for (let i = 0; i < interleavedCount; i++) {
++    const sample = interleaveBuffer![i]!;
++    const dithered = sample * INT16_MAX + tpdfDither();
++    quantizeBuffer![i] = Math.max(-32768, Math.min(32767, Math.round(dithered)));
++  }
++
++  // PCM capture: copy Int16 after quantization
++  if (shouldCapture && captureSamples > 0) {
++    try {
++      const i16Copy = new Int16Array(captureSamples);
++      i16Copy.set(quantizeBuffer!.subarray(0, captureSamples));
++      i16DumpChunks.push(i16Copy);
++    } catch (captureErr) {
++      s.log.warn(`PCM I16 capture failed: ${captureErr}`);
++      pcmCaptureEnabled = false;
++    }
++  }
++
++  // Append quantized samples to frame accumulator
++  if (!mstpAccum) return;
++
++  if (mstpAccumOffset + interleavedCount > mstpAccum.length) {
++    const newSize = Math.max(mstpAccum.length * 2, mstpAccumOffset + interleavedCount);
++    const newAccum = new Int16Array(newSize);
++    newAccum.set(mstpAccum.subarray(0, mstpAccumOffset));
++    mstpAccum = newAccum;
++    mstpSendBuffer = new Uint8Array(frameSizeInterleaved * Int16Array.BYTES_PER_ELEMENT);
++  }
++
++  mstpAccum.set(quantizeBuffer!.subarray(0, interleavedCount), mstpAccumOffset);
++  mstpAccumOffset += interleavedCount;
++
++  // Extract and send complete frames
++  while (mstpAccumOffset >= frameSizeInterleaved) {
++    const frameI16 = mstpAccum.subarray(0, frameSizeInterleaved);
++    mstpSendBuffer!.set(new Uint8Array(frameI16.buffer, frameI16.byteOffset, frameSizeInterleaved * 2));
++
++    sendOrQueue(mstpSendBuffer!);
++    s.totalSamplesRead += frameSizeInterleaved;
++
++    const remaining = mstpAccumOffset - frameSizeInterleaved;
++    if (remaining > 0) {
++      mstpAccum.copyWithin(0, frameSizeInterleaved, mstpAccumOffset);
++    }
++    mstpAccumOffset = remaining;
++  }
++}
++
++/**
++ * Processes a single AudioData frame from the MSTP ReadableStream.
++ *
++ * Extracts f32-planar channels, applies LPC gap concealment if needed,
++ * then pushes through the interleave → dither → quantize → send pipeline.
++ *
++ * @param audioData - The AudioData frame to process
++ */
++function processAudioData(audioData: AudioData): void {
++  try {
++    const numFrames = audioData.numberOfFrames;
++    if (numFrames === 0) return;
++
++    // Log first frame diagnostics
++    if (!loggedFirstFrame) {
++      loggedFirstFrame = true;
++      s.log.info(
++        `First AudioData: format=${audioData.format} frames=${numFrames} ` +
++          `channels=${audioData.numberOfChannels} sampleRate=${audioData.sampleRate} ` +
++          `duration=${audioData.duration}µs timestamp=${audioData.timestamp}`,
++      );
++    }
++
++    // Detect dropped AudioData frames via timestamp continuity.
++    // Chrome's audio renderer occasionally skips producing a frame (~3-5/sec),
++    // each exactly one frame period (9.2ms at 48kHz). These are NOT ReadableStream
++    // drops — the frames simply don't exist.
++    const ts = audioData.timestamp;
++    const dur = audioData.duration;
++    if (expectedNextTimestamp >= 0) {
++      const gap = ts - expectedNextTimestamp;
++      if (gap > 100) {
++        gapCount++;
++        gapDurationUs += gap;
++        s.log.warn(
++          `AudioData gap: ${(gap / 1000).toFixed(1)}ms (expected ts=${expectedNextTimestamp}µs, got ${ts}µs)`,
++        );
++      } else if (gap < -100) {
++        s.log.warn(
++          `AudioData overlap: ${(-gap / 1000).toFixed(1)}ms (expected ts=${expectedNextTimestamp}µs, got ${ts}µs)`,
++        );
++      }
++    }
++    expectedNextTimestamp = ts + dur;
++
++    ensureTempBuffers(numFrames);
++
++    // Extract f32-planar channels
++    audioData.copyTo(ch0Temp!, { planeIndex: 0 });
++    if (channels >= 2) {
++      audioData.copyTo(ch1Temp!, { planeIndex: 1 });
++    }
++
++    // NOTE: AudioData timestamp "gaps" are clock reporting jitter, NOT missing
++    // audio content. The MediaRecorder (Point 0) captures the same MediaStream
++    // with zero gaps, proving the audio is sequential. Do NOT insert fill samples
++    // or modify frames based on timestamp gaps — it causes drift and artifacts.
++
++    // Emit real frame through pipeline (unmodified)
++    emitFloat32Samples(ch0Temp!, channels >= 2 ? ch1Temp! : null, numFrames);
++  } finally {
++    audioData.close();
++  }
++}
+ 
+ // ─────────────────────────────────────────────────────────────────────────────
+-// Bounded Latency Catch-up
++// MSTP: Consumption Loop
++// ─────────────────────────────────────────────────────────────────────────────
++
++/**
++ * MSTP consumption loop. Reads AudioData frames from the transferred
++ * ReadableStream and processes each one.
++ *
++ * Unlike the SAB loop, no Atomics.waitAsync is needed — the ReadableStream
++ * naturally blocks until data arrives from the MediaStreamTrackProcessor.
++ */
++async function consumeLoopMSTP(): Promise<void> {
++  if (!audioReader) return;
++
++  s.lastStatsTime = performance.now();
++
++  while (running) {
++    // QUALITY MODE: Flush any queued frames before processing more
++    if (!s.policy?.dropOnBackpressure && s.frameQueue.length > 0) {
++      const flushed = flushFrameQueue(s);
++      if (flushed > 0) {
++        s.log.debug(`Flushed ${flushed} queued frames`);
++      }
++    }
++
++    // BACKPRESSURE HANDLING
++    const shouldBackoff = s.policy?.dropOnBackpressure
++      ? isWsBackpressured(s)
++      : s.frameQueueBytes >= FRAME_QUEUE_MAX_BYTES;
++
++    if (shouldBackoff) {
++      s.backpressureCycles++;
++      s.consecutiveBackpressureCycles++;
++      const maxMs = s.policy?.dropOnBackpressure
++        ? BACKPRESSURE_BACKOFF_MAX_MS
++        : QUALITY_BACKOFF_MAX_MS;
++      const backoffMs = exponentialBackoff(
++        s.consecutiveBackpressureCycles,
++        BACKPRESSURE_BACKOFF_INITIAL_MS,
++        maxMs,
++      );
++      maybePostStats(s, null, 0, getCustomMetrics, resetCustomCounters);
++      await yieldMacrotask(backoffMs);
++      continue;
++    }
++
++    s.consecutiveBackpressureCycles = 0;
++
++    const { value: audioData, done } = await audioReader.read();
++    if (done || !running) break;
++
++    processAudioData(audioData);
++    framesReadThisInterval++;
++    s.wakeupCount++;
++
++    maybePostStats(s, null, 0, getCustomMetrics, resetCustomCounters);
++  }
++}
++
++// ─────────────────────────────────────────────────────────────────────────────
++// SAB: Bounded Latency Catch-up
+ // ─────────────────────────────────────────────────────────────────────────────
+ 
+ /**
+@@ -120,7 +417,7 @@ function performCatchUpIfNeeded(): number {
+ }
+ 
+ // ─────────────────────────────────────────────────────────────────────────────
+-// Ring Buffer Reading
++// SAB: Ring Buffer Reading
+ // ─────────────────────────────────────────────────────────────────────────────
+ 
+ /**
+@@ -196,8 +493,7 @@ function sendOrQueue(frame: Uint8Array): void {
+       s.droppedFrameCount++;
+     } else {
+       // Quality mode: queue the frame.
+-      // Must copy because frame may be a view into the temp buffer
+-      // that will be overwritten on the next read.
++      // Must copy because frame may be a view into a reusable buffer.
+       enqueueFrame(s, new Uint8Array(frame));
+     }
+     return;
+@@ -208,7 +504,7 @@ function sendOrQueue(frame: Uint8Array): void {
+ }
+ 
+ // ─────────────────────────────────────────────────────────────────────────────
+-// Main Consumption Loop
++// SAB: Main Consumption Loop
+ // ─────────────────────────────────────────────────────────────────────────────
+ 
+ /**
+@@ -288,6 +584,11 @@ async function consumeLoop(): Promise<void> {
+       const frame = readOneFrame();
+       if (frame === null) break;
+ 
++      // Diagnostic dump: copy frame before it gets reused (Point 3: pre-send)
++      if (pcmCaptureEnabled && pcmDumpFrames.length < pcmDumpMaxFrames) {
++        pcmDumpFrames.push(new Uint8Array(frame));
++      }
++
+       framesReadThisInterval++;
+       sendOrQueue(frame);
+       framesDrained++;
+@@ -324,7 +625,8 @@ async function consumeLoop(): Promise<void> {
+ // ─────────────────────────────────────────────────────────────────────────────
+ 
+ /**
+- *
++ * Returns worker-specific metrics for the stats interval.
++ * @returns Custom metrics
+  */
+ function getCustomMetrics() {
+   return {
+@@ -335,10 +637,17 @@ function getCustomMetrics() {
+ }
+ 
+ /**
+- *
++ * Resets worker-specific counters after stats are posted.
+  */
+ function resetCustomCounters(): void {
+   framesReadThisInterval = 0;
++  if (gapCount > 0) {
++    s.log.warn(
++      `AudioData gaps this interval: ${gapCount} gaps, ${(gapDurationUs / 1000).toFixed(1)}ms total`,
++    );
++  }
++  gapCount = 0;
++  gapDurationUs = 0;
+ }
+ 
+ // ─────────────────────────────────────────────────────────────────────────────
+@@ -354,11 +663,63 @@ function cleanup(): void {
+   flushQueuedFrames(s);
+   cleanupSharedState(s);
+ 
+-  // Reset buffer state
++  // Reset SAB state
+   control = null;
+   dataInt16 = null;
+   tempInt16 = null;
+   tempUint8 = null;
++
++  // Reset MSTP state
++  if (audioReader) {
++    audioReader.cancel().catch(() => {});
++    audioReader = null;
++  }
++  ch0Temp = null;
++  ch1Temp = null;
++  interleaveBuffer = null;
++  quantizeBuffer = null;
++  mstpAccum = null;
++  mstpAccumOffset = 0;
++  mstpSendBuffer = null;
++  maxFrameSamples = 0;
++}
++
++// ─────────────────────────────────────────────────────────────────────────────
++// MSTP: PCM Dump Helpers
++// ─────────────────────────────────────────────────────────────────────────────
++
++/**
++ * Posts DUMP_DATA message with concatenated Float32 and Int16 captures.
++ * Uses transferables to avoid copying.
++ */
++function postMSTPDumpData(): void {
++  if (f32DumpChunks.length === 0 && i16DumpChunks.length === 0) return;
++
++  // Concatenate Float32 chunks
++  const f32Total = f32DumpChunks.reduce((sum, c) => sum + c.length, 0);
++  const f32Combined = new Float32Array(f32Total);
++  let f32Offset = 0;
++  for (const chunk of f32DumpChunks) {
++    f32Combined.set(chunk, f32Offset);
++    f32Offset += chunk.length;
++  }
++
++  // Concatenate Int16 chunks
++  const i16Total = i16DumpChunks.reduce((sum, c) => sum + c.length, 0);
++  const i16Combined = new Int16Array(i16Total);
++  let i16Offset = 0;
++  for (const chunk of i16DumpChunks) {
++    i16Combined.set(chunk, i16Offset);
++    i16Offset += chunk.length;
++  }
++
++  self.postMessage(
++    { type: 'DUMP_DATA', f32Buffer: f32Combined.buffer, i16Buffer: i16Combined.buffer },
++    { transfer: [f32Combined.buffer, i16Combined.buffer] },
++  );
++
++  f32DumpChunks = [];
++  i16DumpChunks = [];
+ }
+ 
+ // ─────────────────────────────────────────────────────────────────────────────
+@@ -368,14 +729,27 @@ function cleanup(): void {
+ self.onmessage = async (event: MessageEvent<WorkerInboundMessage>) => {
+   const msg = event.data;
+ 
++  // Post PCM dump before cleanup handles STOP
++  if (msg.type === 'STOP' && pcmCaptureEnabled) {
++    if (mstpMode) {
++      postMSTPDumpData();
++    } else if (pcmDumpFrames.length > 0) {
++      const totalBytes = pcmDumpFrames.reduce((sum, f) => sum + f.byteLength, 0);
++      const combined = new Uint8Array(totalBytes);
++      let offset = 0;
++      for (const f of pcmDumpFrames) {
++        combined.set(f, offset);
++        offset += f.byteLength;
++      }
++      self.postMessage({ type: 'PCM_DUMP', buffer: combined.buffer }, { transfer: [combined.buffer] });
++      pcmDumpFrames = [];
++    }
++  }
++
+   if (handleCommonMessage(s, msg, cleanup)) return;
+ 
+   if (msg.type === 'INIT') {
+     const {
+-      sab,
+-      bufferSize: size,
+-      bufferMask: mask,
+-      headerSize,
+       encoderConfig,
+       wsUrl,
+       frameSizeInterleaved: initFrameSize,
+@@ -390,21 +764,8 @@ self.onmessage = async (event: MessageEvent<WorkerInboundMessage>) => {
+         throw new Error('frameSizeInterleaved is required and must be positive');
+       }
+ 
+-      if ((size & (size - 1)) !== 0 || mask !== size - 1) {
+-        throw new Error('Invalid ring buffer configuration (size must be power of two)');
+-      }
+-
+-      // Initialize ring buffer views
+-      control = new Int32Array(sab, 0, headerSize);
+-      dataInt16 = new Int16Array(sab, DATA_BYTE_OFFSET);
+-      bufferCapacity = size;
+-      bufferMask = mask;
+       frameSizeInterleaved = initFrameSize;
+ 
+-      // Pre-allocate temp buffer for wrap-around reads
+-      tempInt16 = new Int16Array(frameSizeInterleaved);
+-      tempUint8 = new Uint8Array(tempInt16.buffer);
+-
+       // Initialize streaming policy from latency mode
+       s.policy = getStreamingPolicy(encoderConfig.latencyMode);
+       s.log.info(
+@@ -421,32 +782,115 @@ self.onmessage = async (event: MessageEvent<WorkerInboundMessage>) => {
+       resetStatsCounters(s);
+       framesReadThisInterval = 0;
+       resetFrameQueueState(s);
+-
+-      // Compute catch-up thresholds based on policy and sample rate
+-      const samplesPerMs = (encoderConfig.sampleRate * encoderConfig.channels) / 1000;
+-      catchUpTargetSamples = Math.floor(s.policy.catchUpTargetMs * samplesPerMs);
+-      catchUpMaxSamples =
+-        s.policy.catchUpMaxMs !== null
+-          ? Math.floor(s.policy.catchUpMaxMs * samplesPerMs)
+-          : Infinity;
+-
+-      // Set frameSizeSamples for server handshake (per-channel, matching consumer worker behavior).
+-      const configWithFrameSize: EncoderConfig = {
+-        ...encoderConfig,
+-        frameSizeSamples: frameSizeInterleaved / encoderConfig.channels,
+-      };
+-
+-      // Connect WebSocket (sends encoder config to server in handshake)
+-      const id = await connectWebSocket(s, wsUrl, configWithFrameSize);
+-
+-      running = true;
+-      postToMain({ type: 'CONNECTED', streamId: id });
+-
+-      // Start consumption loop
+-      consumeLoop().catch((err) => {
+-        s.log.error('consumeLoop error:', err);
+-        postToMain({ type: 'ERROR', message: String(err) });
+-      });
++      loggedFirstFrame = false;
++      expectedNextTimestamp = -1;
++      gapCount = 0;
++      gapDurationUs = 0;
++
++      // PCM diagnostic capture
++      pcmCaptureEnabled = msg.pcmCapture === true;
++
++      if (msg.readable) {
++        // ─── MSTP Path ───────────────────────────────────────────────
++        mstpMode = true;
++        channels = msg.channels ?? 2;
++
++        // Pre-allocate buffers (Chrome typically delivers ~480 samples at 48kHz)
++        maxFrameSamples = 1024;
++        ch0Temp = new Float32Array(maxFrameSamples);
++        ch1Temp = new Float32Array(maxFrameSamples);
++        interleaveBuffer = new Float32Array(maxFrameSamples * channels);
++        quantizeBuffer = new Int16Array(maxFrameSamples * channels);
++        mstpAccum = new Int16Array(frameSizeInterleaved * 4); // 4 frames headroom
++        mstpAccumOffset = 0;
++        mstpSendBuffer = new Uint8Array(frameSizeInterleaved * Int16Array.BYTES_PER_ELEMENT);
++
++        // PCM dump state
++        f32DumpChunks = [];
++        i16DumpChunks = [];
++        if (pcmCaptureEnabled) {
++          dumpSamplesRemaining = 60 * encoderConfig.sampleRate * channels;
++          s.log.info(`PCM capture enabled (MSTP): ${dumpSamplesRemaining} samples max`);
++        }
++
++        audioReader = msg.readable.getReader();
++        s.log.info(`MSTP path: ReadableStream acquired, channels=${channels}`);
++
++        // Set frameSizeSamples for server handshake
++        const configWithFrameSize: EncoderConfig = {
++          ...encoderConfig,
++          frameSizeSamples: frameSizeInterleaved / channels,
++        };
++
++        // Connect WebSocket
++        const id = await connectWebSocket(s, wsUrl, configWithFrameSize);
++
++        running = true;
++        postToMain({ type: 'CONNECTED', streamId: id });
++
++        // Start MSTP consumption loop
++        consumeLoopMSTP().catch((err) => {
++          s.log.error('consumeLoopMSTP error:', err);
++          postToMain({ type: 'ERROR', message: String(err) });
++        });
++      } else {
++        // ─── SAB Path ────────────────────────────────────────────────
++        const { sab, bufferSize: size, bufferMask: mask, headerSize } = msg;
++        mstpMode = false;
++
++        if (!sab || size === undefined || mask === undefined || headerSize === undefined) {
++          throw new Error('SAB fields (sab, bufferSize, bufferMask, headerSize) are required for SAB path');
++        }
++
++        if ((size & (size - 1)) !== 0 || mask !== size - 1) {
++          throw new Error('Invalid ring buffer configuration (size must be power of two)');
++        }
++
++        // Initialize ring buffer views
++        control = new Int32Array(sab, 0, headerSize);
++        dataInt16 = new Int16Array(sab, DATA_BYTE_OFFSET);
++        bufferCapacity = size;
++        bufferMask = mask;
++
++        // Pre-allocate temp buffer for wrap-around reads
++        tempInt16 = new Int16Array(frameSizeInterleaved);
++        tempUint8 = new Uint8Array(tempInt16.buffer);
++
++        // SAB PCM dump state
++        pcmDumpFrames = [];
++        if (pcmCaptureEnabled) {
++          const samplesPerSecond = encoderConfig.sampleRate * encoderConfig.channels;
++          const framesPerSecond = samplesPerSecond / initFrameSize;
++          pcmDumpMaxFrames = Math.ceil(60 * framesPerSecond);
++          s.log.info(`PCM capture enabled (SAB): max ${pcmDumpMaxFrames} frames`);
++        }
++
++        // Compute catch-up thresholds based on policy and sample rate
++        const samplesPerMs = (encoderConfig.sampleRate * encoderConfig.channels) / 1000;
++        catchUpTargetSamples = Math.floor(s.policy.catchUpTargetMs * samplesPerMs);
++        catchUpMaxSamples =
++          s.policy.catchUpMaxMs !== null
++            ? Math.floor(s.policy.catchUpMaxMs * samplesPerMs)
++            : Infinity;
++
++        // Set frameSizeSamples for server handshake
++        const configWithFrameSize: EncoderConfig = {
++          ...encoderConfig,
++          frameSizeSamples: frameSizeInterleaved / encoderConfig.channels,
++        };
++
++        // Connect WebSocket
++        const id = await connectWebSocket(s, wsUrl, configWithFrameSize);
++
++        running = true;
++        postToMain({ type: 'CONNECTED', streamId: id });
++
++        // Start SAB consumption loop
++        consumeLoop().catch((err) => {
++          s.log.error('consumeLoop error:', err);
++          postToMain({ type: 'ERROR', message: String(err) });
++        });
++      }
+     } catch (err) {
+       const message = err instanceof Error ? err.message : String(err);
+       s.log.error('Initialization failed:', message);
+diff --git a/apps/extension/src/offscreen/handlers.ts b/apps/extension/src/offscreen/handlers.ts
+index 4351b43..4e90cd8 100644
+--- a/apps/extension/src/offscreen/handlers.ts
++++ b/apps/extension/src/offscreen/handlers.ts
+@@ -262,7 +262,7 @@ export function setupMessageHandlers(): void {
+     if (msg.type === 'START_CAPTURE') {
+       try {
+         const validated = StartCaptureMessageSchema.parse(msg);
+-        const { tabId, mediaStreamId, encoderConfig, baseUrl, keepTabAudible } = validated.payload;
++        const { tabId, mediaStreamId, encoderConfig, baseUrl, keepTabAudible, pcmCapture } = validated.payload;
+ 
+         // Prevent duplicate sessions for the same tab
+         const existing = activeSessions.get(tabId);
+@@ -306,6 +306,7 @@ export function setupMessageHandlers(): void {
+               onDisconnected,
+               {
+                 keepTabAudible,
++                pcmCapture,
+               },
+             );
+             try {
+diff --git a/apps/extension/src/offscreen/pcm-processor.ts b/apps/extension/src/offscreen/pcm-processor.ts
+index caeacc2..8f54ff9 100644
+--- a/apps/extension/src/offscreen/pcm-processor.ts
++++ b/apps/extension/src/offscreen/pcm-processor.ts
+@@ -113,6 +113,18 @@ class PCMProcessor extends AudioWorkletProcessor {
+   /** Float32 view of the SAB data region. Null when in encode mode or uninitialized. */
+   private sharedFloat32: Float32Array | null = null;
+ 
++  // ── Diagnostic PCM dump ────────────────────────────────────────────────
++  /** Whether dump accumulation is active. */
++  private dumpActive = false;
++  /** Float32 dump buffer (Point 1: clamped+interleaved, before quantization). */
++  private f32DumpBuffer: Float32Array | null = null;
++  /** Int16 dump buffer (Point 2: quantized, before SAB write). */
++  private i16DumpBuffer: Int16Array | null = null;
++  /** Current write offset into dump buffers (in interleaved samples). */
++  private dumpOffset = 0;
++  /** Maximum number of interleaved samples to capture. */
++  private dumpMaxSamples = 0;
++
+   // ── Encode mode ────────────────────────────────────────────────────────
+   /** Boolean flag for fast branching in process() (no string comparison). */
+   private encodeMode = false;
+@@ -145,6 +157,36 @@ class PCMProcessor extends AudioWorkletProcessor {
+     );
+ 
+     this.port.onmessage = (event) => {
++      if (event.data.type === 'INIT_DUMP') {
++        // Pre-allocate dump buffers for 60 seconds of audio
++        const dumpSamples = 60 * sampleRate * this.channels;
++        this.f32DumpBuffer = new Float32Array(dumpSamples);
++        this.i16DumpBuffer = new Int16Array(dumpSamples);
++        this.dumpOffset = 0;
++        this.dumpMaxSamples = dumpSamples;
++        this.dumpActive = true;
++        return;
++      }
++
++      if (event.data.type === 'STOP_DUMP') {
++        if (this.dumpActive && this.f32DumpBuffer && this.i16DumpBuffer) {
++          this.dumpActive = false;
++          const f32Trimmed = this.f32DumpBuffer.slice(0, this.dumpOffset);
++          const i16Trimmed = this.i16DumpBuffer.slice(0, this.dumpOffset);
++          this.port.postMessage(
++            {
++              type: 'DUMP_DATA',
++              f32Buffer: f32Trimmed.buffer,
++              i16Buffer: i16Trimmed.buffer,
++            },
++            [f32Trimmed.buffer, i16Trimmed.buffer],
++          );
++          this.f32DumpBuffer = null;
++          this.i16DumpBuffer = null;
++        }
++        return;
++      }
++
+       if (event.data.type === 'INIT_BUFFER') {
+         const {
+           buffer: sab,
+@@ -301,6 +343,11 @@ class PCMProcessor extends AudioWorkletProcessor {
+     // Step (a): Clamp and interleave into conversionBuffer (same as passthrough)
+     this.clampToConversionBuffer(input, channel0, channel1, frameCount);
+ 
++    // Diagnostic dump: capture Float32 input (Point 1)
++    if (this.dumpActive && this.dumpOffset + samplesToWrite <= this.dumpMaxSamples) {
++      this.f32DumpBuffer!.set(this.conversionBuffer.subarray(0, samplesToWrite), this.dumpOffset);
++    }
++
+     // Step (b): Quantize Float32→Int16 with TPDF dither into encodeBuffer
+     let ditherIdx = this.ditherIndex;
+     for (let i = 0; i < samplesToWrite; i++) {
+@@ -313,6 +360,12 @@ class PCMProcessor extends AudioWorkletProcessor {
+     }
+     this.ditherIndex = ditherIdx;
+ 
++    // Diagnostic dump: capture Int16 output (Point 2) and advance offset
++    if (this.dumpActive && this.dumpOffset + samplesToWrite <= this.dumpMaxSamples) {
++      this.i16DumpBuffer!.set(encodeBuffer.subarray(0, samplesToWrite), this.dumpOffset);
++      this.dumpOffset += samplesToWrite;
++    }
++
+     // Step (c): Append encoded samples to frame accumulation buffer using split-write.
+     // At most 2 iterations per quantum (one frame boundary crossing per quantum at most).
+     let encodedOffset = 0;
+diff --git a/apps/extension/src/offscreen/stream-session.ts b/apps/extension/src/offscreen/stream-session.ts
+index c5a53e3..55c8657 100644
+--- a/apps/extension/src/offscreen/stream-session.ts
++++ b/apps/extension/src/offscreen/stream-session.ts
+@@ -22,7 +22,7 @@
+  */
+ 
+ import { createLogger } from '@thaumic-cast/shared';
+-import { createAudioRingBuffer, createEncodedRingBuffer, HEADER_SIZE } from './ring-buffer';
++import { createAudioRingBuffer, HEADER_SIZE } from './ring-buffer';
+ import type { EncoderConfig, StreamMetadata } from '@thaumic-cast/protocol';
+ import { FRAME_DURATION_MS_DEFAULT, isSupportedSampleRate } from '@thaumic-cast/protocol';
+ import { noop } from '../lib/noop';
+@@ -51,8 +51,10 @@ const KEEP_AUDIBLE_GAIN = 0.0001;
+ /**
+  * Manages an active capture session.
+  *
+- * In tab capture mode, the real-time audio path runs entirely in a Worker:
+- *   AudioWorklet → SharedArrayBuffer → Worker (drain + encode + WebSocket send)
++ * Two audio pipeline paths:
++ * - **MSTP** (PCM codec): MediaStreamTrackProcessor → ReadableStream → Worker
++ *   Eliminates AudioContext clock domain crossing that caused audio dropouts.
++ * - **AudioContext** (compressed codecs): AudioWorklet → SAB → Worker
+  *
+  * In browser capture mode, the Worker only manages WS lifecycle:
+  *   Worker (WebSocket control only) — server captures via WASAPI.
+@@ -63,16 +65,25 @@ const KEEP_AUDIBLE_GAIN = 0.0001;
+  *   - Receiving status updates from Worker
+  */
+ export class StreamSession {
++  // ─── AudioContext path (compressed codecs) ───────────────────────
+   private audioContext: AudioContext | null = null;
+   private consumerWorker: Worker | null = null;
+-  // Ring buffer is created in setupAudioPipeline() after sample rate is verified
+-  private ringBuffer!: SharedArrayBuffer;
+-  private bufferSize!: number;
+-  private bufferMask!: number;
++  private ringBuffer: SharedArrayBuffer | null = null;
++  private bufferSize = 0;
++  private bufferMask = 0;
+   private sourceNode: MediaStreamAudioSourceNode | null = null;
+   private workletNode: AudioWorkletNode | null = null;
+   private outputGainNode: GainNode | null = null;
+ 
++  // ─── MSTP path (PCM codec) ──────────────────────────────────────
++  private trackProcessor: MediaStreamTrackProcessor | null = null;
++  /** Audio element for keepTabAudible in MSTP mode (avoids AudioContext clock domain crossing). */
++  private audibleAudio: HTMLAudioElement | null = null;
++
++  /** MediaRecorder for Point 0 capture (raw MediaStream, before AudioContext). */
++  private mediaRecorder: MediaRecorder | null = null;
++  private recordedChunks: Blob[] = [];
++
+   /** Number of interleaved samples per frame (PCM encode path only). */
+   private frameSizeInterleaved?: number;
+ 
+@@ -156,6 +167,9 @@ export class StreamSession {
+   /** Browser executable name for PID lookup (browser capture mode only). */
+   private browserName?: string;
+ 
++  /** Whether to capture PCM at each pipeline stage for diagnostics. */
++  private pcmCapture: boolean;
++
+   /**
+    * Creates a StreamSession for tab audio capture.
+    * @param mediaStream - The captured media stream from chrome.tabCapture
+@@ -164,13 +178,14 @@ export class StreamSession {
+    * @param onDisconnected - Optional callback when worker WebSocket disconnects
+    * @param options - Additional session options
+    * @param options.keepTabAudible - Play audio at low volume to prevent Chrome throttling
++   * @param options.pcmCapture - Capture 60s of raw PCM at each pipeline stage for diagnostics
+    */
+   static forTabCapture(
+     mediaStream: MediaStream,
+     encoderConfig: EncoderConfig,
+     baseUrl: string,
+     onDisconnected?: () => void,
+-    options?: { keepTabAudible?: boolean },
++    options?: { keepTabAudible?: boolean; pcmCapture?: boolean },
+   ): StreamSession {
+     return new StreamSession({
+       captureMode: 'tab',
+@@ -179,6 +194,7 @@ export class StreamSession {
+       baseUrl,
+       onDisconnected,
+       keepTabAudible: options?.keepTabAudible,
++      pcmCapture: options?.pcmCapture,
+     });
+   }
+ 
+@@ -210,7 +226,6 @@ export class StreamSession {
+   }
+ 
+   /**
+-   *
+    * @param config
+    * @param config.captureMode
+    * @param config.mediaStream
+@@ -219,6 +234,7 @@ export class StreamSession {
+    * @param config.onDisconnected
+    * @param config.onError
+    * @param config.keepTabAudible
++   * @param config.pcmCapture
+    * @param config.browserName
+    */
+   private constructor(config: {
+@@ -229,6 +245,7 @@ export class StreamSession {
+     onDisconnected?: () => void;
+     onError?: (error: string, reason?: string) => void;
+     keepTabAudible?: boolean;
++    pcmCapture?: boolean;
+     browserName?: string;
+   }) {
+     this.captureMode = config.captureMode;
+@@ -238,6 +255,7 @@ export class StreamSession {
+     this.onDisconnected = config.onDisconnected;
+     this.onError = config.onError;
+     this.keepTabAudible = config.keepTabAudible ?? false;
++    this.pcmCapture = config.pcmCapture ?? false;
+     this.browserName = config.browserName;
+ 
+     this.streamReadyPromise = new Promise<void>((resolve) => {
+@@ -270,18 +288,140 @@ export class StreamSession {
+   }
+ 
+   /**
+-   * Sets up the Web Audio graph and loads the AudioWorklet.
++   * Sets up the audio capture pipeline.
++   * PCM codec uses MSTP (no AudioContext clock domain crossing).
++   * Compressed codecs use AudioContext + AudioWorklet + SAB.
+    */
+   private async setupAudioPipeline(): Promise<void> {
++    // Point 0: Record raw MediaStream before any processing
++    if (this.pcmCapture) {
++      const preferredTypes = ['audio/webm;codecs=pcm', 'audio/webm;codecs=opus', 'audio/webm'];
++      const mimeType = preferredTypes.find((t) => MediaRecorder.isTypeSupported(t)) ?? 'audio/webm';
++      this.mediaRecorder = new MediaRecorder(this.mediaStream, { mimeType });
++      this.mediaRecorder.ondataavailable = (event) => {
++        if (event.data.size > 0) this.recordedChunks.push(event.data);
++      };
++      this.mediaRecorder.start(1000);
++      log.info(`Point 0 MediaRecorder started (${mimeType})`);
++    }
++
++    // Set up MediaStream track monitoring (shared by both paths)
++    this.setupTrackMonitoring();
++
++    if (this.encoderConfig.codec === 'pcm') {
++      this.setupMSTPPipeline();
++    } else {
++      await this.setupAudioContextPipeline();
++    }
++  }
++
++  /**
++   * Sets up MediaStream track monitoring (mute, unmute, ended events).
++   */
++  private setupTrackMonitoring(): void {
++    const audioTracks = this.mediaStream.getAudioTracks();
++    log.info(`MediaStream has ${audioTracks.length} audio track(s)`);
++
++    for (const track of audioTracks) {
++      log.info(
++        `Audio track: ${track.label}, enabled=${track.enabled}, muted=${track.muted}, readyState=${track.readyState}`,
++      );
++
++      // Log track settings to verify audio processing state and sample rate
++      const settings = track.getSettings();
++      log.info(
++        `Track settings: sampleRate=${settings.sampleRate} channels=${settings.channelCount} ` +
++          `echoCancellation=${settings.echoCancellation} noiseSuppression=${settings.noiseSuppression} ` +
++          `autoGainControl=${settings.autoGainControl}`,
++      );
++
++      track.onmute = () => {
++        log.warn(`Audio track MUTED: ${track.label || 'unnamed'}`);
++      };
++
++      track.onunmute = () => {
++        log.info(`Audio track UNMUTED: ${track.label || 'unnamed'}`);
++      };
++
++      track.onended = () => {
++        log.warn(`Audio track ENDED: ${track.label || 'unnamed'}, readyState=${track.readyState}`);
++      };
++    }
++  }
++
++  /**
++   * Sets up the MSTP pipeline for the PCM codec path.
++   *
++   * Uses MediaStreamTrackProcessor to read audio at the MediaStream's own
++   * clock rate, eliminating the AudioContext clock domain crossing that
++   * caused zero-filled audio blocks (crackling artifacts).
++   *
++   * The ReadableStream<AudioData> is transferred to the Worker, which
++   * handles Float32→Int16 conversion and WebSocket relay.
++   */
++  private setupMSTPPipeline(): void {
++    const audioTrack = this.mediaStream.getAudioTracks()[0];
++    if (!audioTrack) {
++      throw new Error('No audio track available in MediaStream');
++    }
++
++    // MSTP bypasses AudioContext so there's no resampling — we get audio at the
++    // capture's native rate (system audio output rate). Use the track's actual
++    // sample rate for frame sizing and server handshake.
++    const trackSampleRate = audioTrack.getSettings().sampleRate;
++    if (trackSampleRate && isSupportedSampleRate(trackSampleRate) && trackSampleRate !== this.encoderConfig.sampleRate) {
++      log.info(
++        `MSTP: overriding sample rate ${this.encoderConfig.sampleRate}Hz → ${trackSampleRate}Hz (capture native rate)`,
++      );
++      this.encoderConfig = { ...this.encoderConfig, sampleRate: trackSampleRate };
++    }
++
++    // Compute frame size using the (possibly overridden) sample rate
++    const frameDurationMs = this.encoderConfig.frameDurationMs ?? FRAME_DURATION_MS_DEFAULT;
++    const perChannelSamples = Math.round(
++      this.encoderConfig.sampleRate * (frameDurationMs / 1000),
++    );
++    this.frameSizeInterleaved = perChannelSamples * this.encoderConfig.channels;
++
++    // Create MediaStreamTrackProcessor
++    // maxBufferSize controls how many AudioData frames to buffer before dropping oldest.
++    // The worker reads frames as fast as they arrive, so the queue is normally near-empty.
++    // A large buffer is insurance against scheduling jitter (GC pauses, event loop delays)
++    // that would otherwise cause single-frame drops → audible pops.
++    // At 441 samples/frame (9.2ms at 48kHz), 200 frames ≈ 1.8s buffer ≈ 350KB memory.
++    const maxBufferSize = 1000;
++    this.trackProcessor = new MediaStreamTrackProcessor({
++      track: audioTrack,
++      maxBufferSize,
++    });
++    log.info(`MSTP pipeline: maxBufferSize=${maxBufferSize}, frameSizeInterleaved=${this.frameSizeInterleaved}`);
++
++    // keepTabAudible: use an <audio> element at near-zero volume to keep
++    // Chrome's audio detection active. Avoids AudioContext.createMediaStreamSource()
++    // which creates a clock domain crossing that can corrupt the MediaStream.
++    if (this.keepTabAudible) {
++      this.audibleAudio = document.createElement('audio');
++      this.audibleAudio.srcObject = this.mediaStream;
++      this.audibleAudio.volume = KEEP_AUDIBLE_GAIN;
++      this.audibleAudio.play().catch((err) => {
++        log.warn('Keep tab audible: audio.play() failed:', err);
++      });
++      log.info('Keep tab audible enabled (MSTP) - audio element at low volume');
++    }
++  }
++
++  /**
++   * Sets up the AudioContext + AudioWorklet pipeline for compressed codecs.
++   * Also used as the legacy PCM path (SAB) if MSTP is not available.
++   */
++  private async setupAudioContextPipeline(): Promise<void> {
+     // Create AudioContext - browser may give us a different sample rate than requested
+-    // Use 'interactive' for realtime mode to minimize latency on capable devices
+-    // Use 'playback' for quality mode to prioritize power efficiency
+     this.audioContext = new AudioContext({
+       sampleRate: this.encoderConfig.sampleRate,
+       latencyHint: this.encoderConfig.latencyMode === 'realtime' ? 'interactive' : 'playback',
+     });
+ 
+-    // Log actual latency for diagnostics - browser may not honor latencyHint
++    // Log actual latency for diagnostics
+     const baseLatencyMs = (this.audioContext.baseLatency * 1000).toFixed(1);
+     const outputLatencyMs = (this.audioContext.outputLatency * 1000).toFixed(1);
+     log.info(
+@@ -292,13 +432,11 @@ export class StreamSession {
+     const actualSampleRate = this.audioContext.sampleRate;
+     if (actualSampleRate !== this.encoderConfig.sampleRate) {
+       if (isSupportedSampleRate(actualSampleRate)) {
+-        // Browser gave us a different but supported rate - adjust config
+         log.warn(
+           `Sample rate: requested ${this.encoderConfig.sampleRate}Hz, got ${actualSampleRate}Hz`,
+         );
+         this.encoderConfig = { ...this.encoderConfig, sampleRate: actualSampleRate };
+       } else {
+-        // Unsupported rate (e.g., 96kHz from pro audio interface) - reject
+         log.error(
+           `Unsupported sample rate: ${actualSampleRate}Hz. ` +
+             `Supported rates: 48000, 44100, 32000, 24000, 22050, 16000, 11025, 8000`,
+@@ -307,35 +445,15 @@ export class StreamSession {
+       }
+     }
+ 
+-    // Create ring buffer now that we know the actual sample rate.
+-    // PCM codec uses the encode-in-worklet path (Int16 SAB + relay worker).
+-    // Compressed codecs use the existing passthrough path (Float32 SAB + consumer worker).
+-    if (this.encoderConfig.codec === 'pcm') {
+-      const frameDurationMs = this.encoderConfig.frameDurationMs ?? FRAME_DURATION_MS_DEFAULT;
+-      const perChannelSamples = Math.round(
+-        this.encoderConfig.sampleRate * (frameDurationMs / 1000),
+-      );
+-      this.frameSizeInterleaved = perChannelSamples * this.encoderConfig.channels;
+-
+-      const ringBufferConfig = createEncodedRingBuffer(
+-        this.encoderConfig.sampleRate,
+-        this.encoderConfig.channels,
+-        this.encoderConfig.latencyMode,
+-        this.frameSizeInterleaved,
+-      );
+-      this.ringBuffer = ringBufferConfig.sab;
+-      this.bufferSize = ringBufferConfig.size;
+-      this.bufferMask = ringBufferConfig.mask;
+-    } else {
+-      const ringBufferConfig = createAudioRingBuffer(
+-        this.encoderConfig.sampleRate,
+-        this.encoderConfig.channels,
+-        this.encoderConfig.latencyMode,
+-      );
+-      this.ringBuffer = ringBufferConfig.sab;
+-      this.bufferSize = ringBufferConfig.size;
+-      this.bufferMask = ringBufferConfig.mask;
+-    }
++    // Create ring buffer for compressed codecs (Float32 SAB + consumer worker)
++    const ringBufferConfig = createAudioRingBuffer(
++      this.encoderConfig.sampleRate,
++      this.encoderConfig.channels,
++      this.encoderConfig.latencyMode,
++    );
++    this.ringBuffer = ringBufferConfig.sab;
++    this.bufferSize = ringBufferConfig.size;
++    this.bufferMask = ringBufferConfig.mask;
+ 
+     const workletUrl = chrome.runtime.getURL('pcm-processor.js');
+     await this.audioContext.audioWorklet.addModule(workletUrl);
+@@ -358,17 +476,16 @@ export class StreamSession {
+       headerSize: HEADER_SIZE,
+       sampleRate: this.encoderConfig.sampleRate,
+       channels: this.encoderConfig.channels,
+-      mode: this.encoderConfig.codec === 'pcm' ? 'encode' : 'passthrough',
++      mode: 'passthrough',
+       frameSizeInterleaved: this.frameSizeInterleaved,
+     });
+ 
+-    // Listen for heartbeat messages from the worklet
++    // Listen for messages from the worklet
+     this.workletNode.port.onmessage = (event) => {
+       if (event.data.type === 'HEARTBEAT') {
+         const now = performance.now();
+         this.lastWorkletHeartbeat = now;
+ 
+-        // Log recovery if we were stalled
+         if (this.stallStartTime > 0) {
+           const stallDuration = (now - this.stallStartTime) / 1000;
+           log.info(`AudioWorklet resumed after ${stallDuration.toFixed(1)}s stall`);
+@@ -376,13 +493,31 @@ export class StreamSession {
+           this.lastStallLogTime = 0;
+         }
+       }
++
++      if (event.data.type === 'DUMP_DATA') {
++        const { f32Buffer, i16Buffer } = event.data as {
++          f32Buffer: ArrayBuffer;
++          i16Buffer: ArrayBuffer;
++        };
++        log.info(
++          `Received worklet PCM dump: Float32=${(f32Buffer.byteLength / 1024).toFixed(0)}KB, ` +
++            `Int16=${(i16Buffer.byteLength / 1024).toFixed(0)}KB`,
++        );
++        downloadWav(
++          createWavHeader(this.encoderConfig.sampleRate, this.encoderConfig.channels, 32, f32Buffer.byteLength, 3),
++          f32Buffer,
++          'pcm-capture-float32-input.wav',
++        );
++        downloadWav(
++          createWavHeader(this.encoderConfig.sampleRate, this.encoderConfig.channels, 16, i16Buffer.byteLength, 1),
++          i16Buffer,
++          'pcm-capture-int16-worklet.wav',
++        );
++      }
+     };
+ 
+     this.sourceNode.connect(this.workletNode);
+ 
+-    // Only connect to destination when keepTabAudible is enabled
+-    // This plays audio at very low volume to prevent Chrome from throttling the tab
+-    // When disabled, the worklet is a dead-end (no output) which is fine for capture-only
+     if (this.keepTabAudible) {
+       this.outputGainNode = this.audioContext.createGain();
+       this.outputGainNode.gain.value = KEEP_AUDIBLE_GAIN;
+@@ -391,9 +526,8 @@ export class StreamSession {
+       log.info('Keep tab audible enabled - playing audio at low volume to prevent throttling');
+     }
+ 
+-    // Monitor AudioContext state changes (suspension, interruption, etc.)
++    // Monitor AudioContext state changes
+     this.audioContext.onstatechange = () => {
+-      // Guard for TypeScript - audioContext is always set when this callback fires
+       if (!this.audioContext) return;
+ 
+       const state = this.audioContext.state;
+@@ -420,30 +554,6 @@ export class StreamSession {
+     }
+     log.info(`AudioContext state: ${this.audioContext.state}`);
+ 
+-    // Set up MediaStream track monitoring
+-    const audioTracks = this.mediaStream!.getAudioTracks();
+-    log.info(`MediaStream has ${audioTracks.length} audio track(s)`);
+-
+-    for (const track of audioTracks) {
+-      log.info(
+-        `Audio track: ${track.label}, enabled=${track.enabled}, muted=${track.muted}, readyState=${track.readyState}`,
+-      );
+-
+-      // Monitor track mute state changes
+-      track.onmute = () => {
+-        log.warn(`Audio track MUTED: ${track.label || 'unnamed'}`);
+-      };
+-
+-      track.onunmute = () => {
+-        log.info(`Audio track UNMUTED: ${track.label || 'unnamed'}`);
+-      };
+-
+-      // Monitor track ending (tab closed, permission revoked, etc.)
+-      track.onended = () => {
+-        log.warn(`Audio track ENDED: ${track.label || 'unnamed'}, readyState=${track.readyState}`);
+-      };
+-    }
+-
+     // Initialize heartbeat tracking and start checker
+     this.lastWorkletHeartbeat = performance.now();
+     this.startHeartbeatChecker();
+@@ -589,6 +699,37 @@ export class StreamSession {
+           this.stop();
+           break;
+ 
++        case 'PCM_DUMP': {
++          const pcmBuffer = msg.buffer;
++          log.info(`Received worker PCM dump (SAB): ${(pcmBuffer.byteLength / 1024).toFixed(0)}KB`);
++          downloadWav(
++            createWavHeader(this.encoderConfig.sampleRate, this.encoderConfig.channels, 16, pcmBuffer.byteLength, 1),
++            pcmBuffer,
++            'pcm-capture-int16-presend.wav',
++          );
++          break;
++        }
++
++        case 'DUMP_DATA': {
++          // MSTP path: worker captured both Float32 and Int16
++          const { f32Buffer, i16Buffer } = msg;
++          log.info(
++            `Received worker PCM dump (MSTP): Float32=${(f32Buffer.byteLength / 1024).toFixed(0)}KB, ` +
++              `Int16=${(i16Buffer.byteLength / 1024).toFixed(0)}KB`,
++          );
++          downloadWav(
++            createWavHeader(this.encoderConfig.sampleRate, this.encoderConfig.channels, 32, f32Buffer.byteLength, 3),
++            f32Buffer,
++            'pcm-capture-float32-input.wav',
++          );
++          downloadWav(
++            createWavHeader(this.encoderConfig.sampleRate, this.encoderConfig.channels, 16, i16Buffer.byteLength, 1),
++            i16Buffer,
++            'pcm-capture-int16-quantized.wav',
++          );
++          break;
++        }
++
+         case 'METRICS_DUMP':
+           log.info('Pipeline metrics timeline', { timeline: JSON.stringify(msg.timeline) });
+           this.terminateWorkerNow();
+@@ -666,17 +807,35 @@ export class StreamSession {
+         encoderConfig: this.encoderConfig,
+         browserName: this.browserName,
+       });
++    } else if (this.encoderConfig.codec === 'pcm' && this.trackProcessor) {
++      // MSTP path: transfer ReadableStream to worker
++      const readable = this.trackProcessor.readable;
++      const initMsg: WorkerInitMessage = {
++        type: 'INIT',
++        sampleRate: this.encoderConfig.sampleRate,
++        encoderConfig: this.encoderConfig,
++        wsUrl,
++        mode: 'encode',
++        frameSizeInterleaved: this.frameSizeInterleaved,
++        readable,
++        channels: this.encoderConfig.channels,
++        pcmCapture: this.pcmCapture,
++      };
++      this.consumerWorker.postMessage(initMsg, { transfer: [readable as unknown as Transferable] });
+     } else {
++      // SAB path: compressed codecs
+       this.consumerWorker.postMessage({
+         type: 'INIT',
+-        sab: this.ringBuffer,
++        sab: this.ringBuffer!,
+         bufferSize: this.bufferSize,
+         bufferMask: this.bufferMask,
+         headerSize: HEADER_SIZE,
+         sampleRate: this.encoderConfig.sampleRate,
+         encoderConfig: this.encoderConfig,
+         wsUrl,
+-      });
++        mode: 'passthrough',
++        frameSizeInterleaved: this.frameSizeInterleaved,
++      } satisfies WorkerInitMessage);
+     }
+ 
+     // Wait for connection
+@@ -689,11 +848,28 @@ export class StreamSession {
+   public stop(): void {
+     this.stopHeartbeatChecker();
+ 
++    // Trigger worklet PCM dump before teardown (compressed codec path only)
++    if (this.pcmCapture && this.workletNode) {
++      this.workletNode.port.postMessage({ type: 'STOP_DUMP' });
++    }
++
++    // Stop Point 0 MediaRecorder and trigger download
++    if (this.mediaRecorder && this.mediaRecorder.state !== 'inactive') {
++      this.mediaRecorder.onstop = () => {
++        const blob = new Blob(this.recordedChunks, { type: this.mediaRecorder!.mimeType });
++        const url = URL.createObjectURL(blob);
++        const a = document.createElement('a');
++        a.href = url;
++        a.download = 'pcm-capture-point0-mediastream.webm';
++        a.click();
++        setTimeout(() => URL.revokeObjectURL(url), 10_000);
++        this.recordedChunks = [];
++      };
++      this.mediaRecorder.stop();
++    }
++
+     if (this.consumerWorker) {
+       this.consumerWorker.postMessage({ type: 'STOP' });
+-      // Defer terminate to allow the worker to post METRICS_DUMP back.
+-      // The METRICS_DUMP handler calls terminateWorkerNow(); this timer
+-      // is a fallback in case the worker never responds.
+       this.workerTerminateTimer = setTimeout(() => this.terminateWorkerNow(), 500);
+     }
+ 
+@@ -711,10 +887,20 @@ export class StreamSession {
+         track.onended = null;
+       }
+ 
++      // Tear down AudioContext path (compressed codecs)
+       this.sourceNode?.disconnect();
+       this.workletNode?.disconnect();
+       this.outputGainNode?.disconnect();
+       this.audioContext?.close().catch(noop);
++
++      // Tear down MSTP path resources
++      this.trackProcessor = null; // ReadableStream was transferred to worker
++      if (this.audibleAudio) {
++        this.audibleAudio.pause();
++        this.audibleAudio.srcObject = null;
++        this.audibleAudio = null;
++      }
++
+       this.mediaStream.getTracks().forEach((t) => t.stop());
+     }
+   }
+@@ -825,6 +1011,77 @@ export class StreamSession {
+   }
+ }
+ 
++// ─────────────────────────────────────────────────────────────────────────────
++// WAV Utilities (PCM diagnostic capture)
++// ─────────────────────────────────────────────────────────────────────────────
++
++/**
++ * Writes an ASCII string into a DataView at the given offset.
++ * @param view - DataView to write into
++ * @param offset - Byte offset
++ * @param str - ASCII string to write
++ */
++function writeString(view: DataView, offset: number, str: string): void {
++  for (let i = 0; i < str.length; i++) {
++    view.setUint8(offset + i, str.charCodeAt(i));
++  }
++}
++
++/**
++ * Creates a 44-byte RIFF/WAV header.
++ * @param sampleRate - Audio sample rate in Hz
++ * @param channels - Number of audio channels
++ * @param bitsPerSample - Bits per sample (16 or 32)
++ * @param dataSize - Size of the PCM data in bytes
++ * @param formatTag - WAV format tag (1 = PCM Int16, 3 = IEEE Float32)
++ * @returns A 44-byte ArrayBuffer containing the WAV header
++ */
++function createWavHeader(
++  sampleRate: number,
++  channels: number,
++  bitsPerSample: number,
++  dataSize: number,
++  formatTag: number,
++): ArrayBuffer {
++  const header = new ArrayBuffer(44);
++  const view = new DataView(header);
++
++  writeString(view, 0, 'RIFF');
++  view.setUint32(4, 36 + dataSize, true);
++  writeString(view, 8, 'WAVE');
++
++  writeString(view, 12, 'fmt ');
++  view.setUint32(16, 16, true);
++  view.setUint16(20, formatTag, true);
++  view.setUint16(22, channels, true);
++  view.setUint32(24, sampleRate, true);
++  view.setUint32(28, sampleRate * channels * (bitsPerSample / 8), true);
++  view.setUint16(32, channels * (bitsPerSample / 8), true);
++  view.setUint16(34, bitsPerSample, true);
++
++  writeString(view, 36, 'data');
++  view.setUint32(40, dataSize, true);
++
++  return header;
++}
++
++/**
++ * Triggers a WAV file download in the offscreen document.
++ * @param header - 44-byte WAV header
++ * @param data - Raw PCM data
++ * @param filename - Download filename
++ */
++function downloadWav(header: ArrayBuffer, data: ArrayBuffer, filename: string): void {
++  const blob = new Blob([header, data], { type: 'audio/wav' });
++  const url = URL.createObjectURL(blob);
++  const a = document.createElement('a');
++  a.href = url;
++  a.download = filename;
++  a.click();
++  // Defer revocation — click() triggers download asynchronously
++  setTimeout(() => URL.revokeObjectURL(url), 10_000);
++}
++
+ /** Maximum number of parallel capture sessions allowed in offscreen. */
+ export const MAX_OFFSCREEN_SESSIONS = 10;
+ 
+diff --git a/apps/extension/src/offscreen/worker-base.ts b/apps/extension/src/offscreen/worker-base.ts
+index 697a1ac..b7f8118 100644
+--- a/apps/extension/src/offscreen/worker-base.ts
++++ b/apps/extension/src/offscreen/worker-base.ts
+@@ -565,14 +565,14 @@ export interface CustomMetrics {
+  * Worker-specific metrics are injected via the getCustomMetrics callback.
+  *
+  * @param s - Worker state
+- * @param control - Ring buffer control array
++ * @param control - Ring buffer control array (null for MSTP mode — no ring buffer)
+  * @param bufferCapacity - Ring buffer capacity in samples
+  * @param getCustomMetrics - Returns worker-specific metric fields
+  * @param resetCustomCounters - Called after posting stats to reset worker-specific counters
+  */
+ export function maybePostStats(
+   s: WorkerState,
+-  control: Int32Array,
++  control: Int32Array | null,
+   bufferCapacity: number,
+   getCustomMetrics: () => CustomMetrics,
+   resetCustomCounters?: () => void,
+@@ -580,17 +580,22 @@ export function maybePostStats(
+   const now = performance.now();
+   if (now - s.lastStatsTime < STATS_INTERVAL_MS) return;
+ 
+-  // Compute producer dropped samples delta
+-  const totalDropped = Atomics.load(control, CTRL_DROPPED_SAMPLES);
+-  const producerDroppedSamples = (totalDropped - s.lastProducerDroppedSamples) >>> 0;
+-  s.lastProducerDroppedSamples = totalDropped;
++  // Compute producer dropped samples delta (SAB path only)
++  let producerDroppedSamples = 0;
++  let ringFillFraction = 0;
+ 
+-  const avgSamplesPerWake = s.wakeupCount > 0 ? s.totalSamplesRead / s.wakeupCount : 0;
++  if (control) {
++    const totalDropped = Atomics.load(control, CTRL_DROPPED_SAMPLES);
++    producerDroppedSamples = (totalDropped - s.lastProducerDroppedSamples) >>> 0;
++    s.lastProducerDroppedSamples = totalDropped;
++
++    // Compute ring buffer fill for snapshot
++    const write = Atomics.load(control, CTRL_WRITE_IDX);
++    const read = Atomics.load(control, CTRL_READ_IDX);
++    ringFillFraction = bufferCapacity > 0 ? ((write - read) >>> 0) / bufferCapacity : 0;
++  }
+ 
+-  // Compute ring buffer fill for snapshot
+-  const write = Atomics.load(control, CTRL_WRITE_IDX);
+-  const read = Atomics.load(control, CTRL_READ_IDX);
+-  const ringFillFraction = bufferCapacity > 0 ? ((write - read) >>> 0) / bufferCapacity : 0;
++  const avgSamplesPerWake = s.wakeupCount > 0 ? s.totalSamplesRead / s.wakeupCount : 0;
+ 
+   const custom = getCustomMetrics();
+ 
+diff --git a/apps/extension/src/offscreen/worker-messages.ts b/apps/extension/src/offscreen/worker-messages.ts
+index ddeb7e5..dc5729f 100644
+--- a/apps/extension/src/offscreen/worker-messages.ts
++++ b/apps/extension/src/offscreen/worker-messages.ts
+@@ -17,17 +17,23 @@ import type { EncoderConfig, StreamMetadata } from '@thaumic-cast/protocol';
+ /**
+  * Initializes the worker with buffer and encoder configuration.
+  *
+- * - `'passthrough'` mode (default): The worker drains Float32 samples from the SAB,
+- *   encodes them, and sends encoded frames via WebSocket. Used for compressed codecs.
+- * - `'encode'` mode: The AudioWorklet has already encoded PCM to Int16 in the SAB.
+- *   The worker reads complete Int16 frames and relays them directly via WebSocket.
++ * Two pipeline modes:
++ * - **SAB path** (compressed codecs): `sab` is provided. Worker reads from SharedArrayBuffer.
++ *   - `'passthrough'` mode: Worker drains Float32, encodes, sends via WebSocket.
++ *   - `'encode'` mode: AudioWorklet encoded Int16 in SAB, worker relays frames.
++ * - **MSTP path** (PCM codec): `readable` is provided. Worker reads AudioData from
++ *   a transferred ReadableStream, performs Float32→Int16 conversion, sends via WebSocket.
+  */
+ export interface WorkerInitMessage {
+   type: 'INIT';
+-  sab: SharedArrayBuffer;
+-  bufferSize: number;
+-  bufferMask: number;
+-  headerSize: number;
++  /** SharedArrayBuffer for ring buffer (SAB path only). */
++  sab?: SharedArrayBuffer;
++  /** Ring buffer capacity in samples (SAB path only). */
++  bufferSize?: number;
++  /** Ring buffer index mask (SAB path only). */
++  bufferMask?: number;
++  /** Ring buffer header size in Int32 elements (SAB path only). */
++  headerSize?: number;
+   sampleRate: number;
+   encoderConfig: EncoderConfig;
+   wsUrl: string;
+@@ -35,6 +41,12 @@ export interface WorkerInitMessage {
+   mode?: 'encode' | 'passthrough';
+   /** Number of interleaved Int16 samples per frame. Required when mode is 'encode'. */
+   frameSizeInterleaved?: number;
++  /** Capture PCM at each pipeline stage for diagnostic comparison. */
++  pcmCapture?: boolean;
++  /** Transferred ReadableStream from MediaStreamTrackProcessor (MSTP path only). */
++  readable?: ReadableStream<AudioData>;
++  /** Number of audio channels (MSTP path only, default 2). */
++  channels?: number;
+ }
+ 
+ /** Stops the worker and cleans up resources. */
+@@ -198,6 +210,22 @@ export interface WorkerMetricsDumpMessage {
+   timeline: MetricSnapshot[];
+ }
+ 
++/** Captured Int16 PCM frames for diagnostic analysis (Point 3: pre-send, SAB path). */
++export interface WorkerPcmDumpMessage {
++  type: 'PCM_DUMP';
++  /** Concatenated Int16 frame bytes. */
++  buffer: ArrayBuffer;
++}
++
++/** Captured Float32 + Int16 PCM for diagnostic analysis (MSTP path). */
++export interface WorkerDumpDataMessage {
++  type: 'DUMP_DATA';
++  /** Concatenated Float32 interleaved samples. */
++  f32Buffer: ArrayBuffer;
++  /** Concatenated Int16 interleaved samples. */
++  i16Buffer: ArrayBuffer;
++}
++
+ /** Union of all messages that can be sent from the worker. */
+ export type WorkerOutboundMessage =
+   | WorkerConnectedMessage
+@@ -209,4 +237,6 @@ export type WorkerOutboundMessage =
+   | WorkerPlaybackErrorMessage
+   | WorkerBrowserCaptureErrorMessage
+   | WorkerStatsMessage
+-  | WorkerMetricsDumpMessage;
++  | WorkerMetricsDumpMessage
++  | WorkerPcmDumpMessage
++  | WorkerDumpDataMessage;
+diff --git a/apps/extension/src/options/components/AdvancedSection.tsx b/apps/extension/src/options/components/AdvancedSection.tsx
+index 68b9b1f..b196531 100644
+--- a/apps/extension/src/options/components/AdvancedSection.tsx
++++ b/apps/extension/src/options/components/AdvancedSection.tsx
+@@ -46,6 +46,10 @@ export function AdvancedSection({ settings, onUpdate }: AdvancedSectionProps): J
+     await onUpdate({ captureMode: settings.captureMode === 'browser' ? 'tab' : 'browser' });
+   }, [settings.captureMode, onUpdate]);
+ 
++  const handlePcmCaptureToggle = useCallback(async () => {
++    await onUpdate({ pcmCapture: !settings.pcmCapture });
++  }, [settings.pcmCapture, onUpdate]);
++
+   return (
+     <Card title={t('advanced_section_title')}>
+       <div className={styles.cardContent}>
+@@ -114,6 +118,22 @@ export function AdvancedSection({ settings, onUpdate }: AdvancedSectionProps): J
+             </div>
+           </label>
+         )}
++
++        <label className={styles.radioOption}>
++          <input
++            type="checkbox"
++            className={styles.radioInput}
++            checked={settings.pcmCapture}
++            onChange={handlePcmCaptureToggle}
++            aria-describedby="pcm-capture-desc"
++          />
++          <div className={styles.radioContent}>
++            <span className={styles.radioLabel}>{t('pcm_capture_enable')}</span>
++            <span id="pcm-capture-desc" className={styles.radioDesc}>
++              {t('pcm_capture_description')}
++            </span>
++          </div>
++        </label>
+       </div>
+     </Card>
+   );
+diff --git a/apps/extension/src/types/web-apis.d.ts b/apps/extension/src/types/web-apis.d.ts
+index fc17043..6a0d853 100644
+--- a/apps/extension/src/types/web-apis.d.ts
++++ b/apps/extension/src/types/web-apis.d.ts
+@@ -53,6 +53,26 @@ interface ViewTransition {
+   skipTransition(): void;
+ }
+ 
++/**
++ * Initialization options for MediaStreamTrackProcessor.
++ * @see https://www.w3.org/TR/mediacapture-transform/#dom-mediastreamtrackprocessorinit
++ */
++interface MediaStreamTrackProcessorInit {
++  track: MediaStreamTrack;
++  /** Maximum number of frames to buffer before dropping oldest. */
++  maxBufferSize?: number;
++}
++
++/**
++ * Breaks a MediaStreamTrack into individual frames exposed as a ReadableStream.
++ * Chrome 94+, unflagged. Works on main thread and offscreen documents.
++ * @see https://www.w3.org/TR/mediacapture-transform/#mediastreamtrackprocessor
++ */
++declare class MediaStreamTrackProcessor {
++  constructor(init: MediaStreamTrackProcessorInit);
++  readonly readable: ReadableStream<AudioData>;
++}
++
+ interface Document {
+   /**
+    * Starts a view transition, capturing the current state and animating to the new state.
+diff --git a/bun.lock b/bun.lock
+index 6bb43e8..09f2162 100644
+--- a/bun.lock
++++ b/bun.lock
+@@ -69,6 +69,19 @@
+         "vite": "^7.3.1",
+       },
+     },
++    "apps/poc-capture": {
++      "name": "@thaumic-cast/poc-capture",
++      "version": "0.1.0",
++      "dependencies": {
++        "preact": "^10.0.0",
++      },
++      "devDependencies": {
++        "@crxjs/vite-plugin": "^2.0.0",
++        "@preact/preset-vite": "^2.0.0",
++        "@types/chrome": "^0.1.33",
++        "vite": "^7.3.1",
++      },
++    },
+     "apps/server": {
+       "name": "@thaumic-cast/server",
+       "version": "0.11.0",
+@@ -455,6 +468,8 @@
+ 
+     "@thaumic-cast/extension": ["@thaumic-cast/extension@workspace:apps/extension"],
+ 
++    "@thaumic-cast/poc-capture": ["@thaumic-cast/poc-capture@workspace:apps/poc-capture"],
++
+     "@thaumic-cast/protocol": ["@thaumic-cast/protocol@workspace:packages/protocol"],
+ 
+     "@thaumic-cast/server": ["@thaumic-cast/server@workspace:apps/server"],
