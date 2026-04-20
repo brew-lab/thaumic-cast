@@ -19,7 +19,6 @@ use crate::capture::CaptureSourceFactory;
 use crate::context::NetworkContext;
 use crate::events::BroadcastEventBridge;
 use crate::mdns_advertise::MdnsAdvertiser;
-use crate::protocol_constants::PROTOCOL_VERSION;
 use crate::services::{DiscoveryService, LatencyMonitor, StreamCoordinator};
 use crate::sonos::SonosClient;
 use crate::state::{Config, SonosState};
@@ -46,27 +45,25 @@ pub enum AppType {
 /// Version metadata reported to the extension via the WebSocket handshake.
 ///
 /// The desktop app and headless server each construct this from their own
-/// `env!("CARGO_PKG_VERSION")` and pass it to [`AppState::new`].
-#[derive(Debug, Clone)]
+/// `env!("CARGO_PKG_VERSION")` — a compile-time `&'static str` — and pass
+/// it to [`AppState::new`], so we hold the version as `&'static str` rather
+/// than `String` to avoid a per-handshake allocation.
+#[derive(Debug, Clone, Copy)]
 pub struct AppInfo {
     /// Semver of the companion app (`apps/desktop` or `apps/server`).
-    pub app_version: String,
+    pub app_version: &'static str,
     /// Which companion is running.
     pub app_type: AppType,
 }
 
 impl AppInfo {
-    pub fn new(app_version: impl Into<String>, app_type: AppType) -> Self {
+    /// Builds the metadata block for a companion at `app_version` of type `app_type`.
+    #[must_use]
+    pub const fn new(app_version: &'static str, app_type: AppType) -> Self {
         Self {
-            app_version: app_version.into(),
+            app_version,
             app_type,
         }
-    }
-
-    /// The wire-protocol version baked into this crate — kept in sync with
-    /// `@thaumic-cast/protocol`'s exported `PROTOCOL_VERSION`.
-    pub fn protocol_version(&self) -> &'static str {
-        PROTOCOL_VERSION
     }
 }
 

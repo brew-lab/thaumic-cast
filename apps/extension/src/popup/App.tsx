@@ -25,6 +25,7 @@ import { useOnboarding } from './hooks/useOnboarding';
 import { useExtensionSettingsListener } from './hooks/useExtensionSettingsListener';
 import { useSpeakerSelection } from './hooks/useSpeakerSelection';
 import { useCompanionVersion } from './hooks/useCompanionVersion';
+import { companionTypeLabelKey, versionMismatchActionKey } from '../lib/versionCheck';
 import { Onboarding } from './components/Onboarding';
 
 /**
@@ -126,20 +127,8 @@ function MainPopup(): JSX.Element {
     chrome.tabs.create({ url: GITHUB_RELEASES_URL });
   }, []);
 
-  const mismatchActionKey =
-    companion?.appType === 'server'
-      ? 'version_mismatch_action_server'
-      : companion?.appType === 'desktop'
-        ? 'version_mismatch_action_desktop'
-        : 'version_mismatch_action_generic';
-
-  const mismatchAppTypeLabel = t(
-    companion?.appType === 'server'
-      ? 'about_companion_type_server'
-      : companion?.appType === 'desktop'
-        ? 'about_companion_type_desktop'
-        : 'about_companion_type_generic',
-  );
+  const mismatchActionKey = versionMismatchActionKey(companion?.appType);
+  const mismatchAppTypeLabel = t(companionTypeLabelKey(companion?.appType));
 
   // Show auto-stop notification as error
   useEffect(() => {

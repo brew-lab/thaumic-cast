@@ -12,11 +12,10 @@ export const GITHUB_RELEASES_URL = 'https://github.com/brew-lab/thaumic-cast/rel
 /**
  * Minimum wire-protocol semver the extension requires from the companion
  * (desktop app or headless server) to stream without known-broken behaviour.
+ * If an older companion reports a version below this, the extension surfaces
+ * a dismissible "update" prompt in the popup.
  *
- * Bump this in lockstep with a breaking change to `@thaumic-cast/protocol`'s
- * exported `PROTOCOL_VERSION`. If an older companion reports a version below
- * this, the extension surfaces a dismissible "update" prompt in the popup.
- *
- * See `CONTRIBUTING.md` for the bump policy.
+ * See `CONTRIBUTING.md` → Protocol versioning for when and how to bump this;
+ * the policy lives there so it can't drift from this comment.
  */
 export const MIN_COMPATIBLE_PROTOCOL_VERSION = '0.4.0';

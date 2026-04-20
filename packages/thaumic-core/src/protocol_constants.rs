@@ -73,11 +73,11 @@ pub const APP_NAME: &str = "Thaumic Cast";
 
 /// Wire-protocol semver advertised to extension clients in the handshake ACK.
 ///
-/// Must stay in sync with the `PROTOCOL_VERSION` constant exported from
-/// `@thaumic-cast/protocol` (`packages/protocol/src/websocket.ts`).
-///
-/// Bump on any wire-schema change. For breaking changes, bump the extension's
-/// `MIN_COMPATIBLE_PROTOCOL_VERSION` in the same PR.
+/// Kept in sync with `@thaumic-cast/protocol`'s exported `PROTOCOL_VERSION`
+/// (`packages/protocol/src/websocket.ts`) by `scripts/sync-versions.ts`,
+/// invoked at release time via `bun run changeset:version`. Do not edit by
+/// hand; see `CONTRIBUTING.md` → Protocol versioning for the bump policy and
+/// its relationship with `MIN_COMPATIBLE_PROTOCOL_VERSION`.
 pub const PROTOCOL_VERSION: &str = "0.4.0";
 
 /// Service identifier used for discovery (health endpoint).

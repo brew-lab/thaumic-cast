@@ -222,21 +222,21 @@ export function Settings() {
       <Card id="about" title={t('settings.about')} titleLevel="h3" className={styles.section}>
         <div className={styles.sectionContent}>
           <div className={styles.field}>
-            <label className={styles.fieldLabel}>{t('settings.about_app')}</label>
-            <span className={styles.hint}>
+            <div className={styles.fieldLabel}>{t('settings.about_app')}</div>
+            <div className={styles.hint}>
               {appVersion ? t('settings.about_version', { version: appVersion }) : '—'}
-            </span>
-            <span className={styles.hint}>
+            </div>
+            <div className={styles.hint}>
               {t('settings.about_protocol', { version: PROTOCOL_VERSION })}
-            </span>
+            </div>
           </div>
 
           <div className={styles.field}>
             <Button variant="secondary" onClick={handleCheckForUpdates}>
-              <ExternalLink size={14} />
+              <ExternalLink size={16} />
               {t('settings.check_for_updates')}
             </Button>
-            <span className={styles.hint}>{t('settings.check_for_updates_description')}</span>
+            <div className={styles.hint}>{t('settings.check_for_updates_description')}</div>
           </div>
         </div>
       </Card>
