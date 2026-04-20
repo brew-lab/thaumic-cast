@@ -1,0 +1,21 @@
+{
+  "name": "@thaumic-cast/poc-capture",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite build --watch --mode development",
+    "build": "vite build",
+    "typecheck": "tsc --noEmit",
+    "clean": "rm -rf dist"
+  },
+  "dependencies": {
+    "preact": "^10.0.0"
+  },
+  "devDependencies": {
+    "@preact/preset-vite": "^2.0.0",
+    "@crxjs/vite-plugin": "^2.0.0",
+    "@types/chrome": "^0.1.33",
+    "vite": "^7.3.1"
+  }
+}

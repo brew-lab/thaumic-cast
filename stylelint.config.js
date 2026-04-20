@@ -1,7 +1,14 @@
 export default {
   extends: ['stylelint-config-standard'],
   plugins: ['stylelint-use-logical'],
-  ignoreFiles: ['**/dist/**', '**/node_modules/**', '**/target/**', '**/old/**'],
+  ignoreFiles: [
+    '**/dist/**',
+    '**/node_modules/**',
+    '**/target/**',
+    '**/old/**',
+    'apps/poc-capture/**',
+    'tools/**',
+  ],
   rules: {
     // Allow OKLCH hue values without deg suffix (both are valid)
     'hue-degree-notation': 'number',

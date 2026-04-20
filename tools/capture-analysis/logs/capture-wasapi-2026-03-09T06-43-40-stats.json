@@ -1,0 +1,16 @@
+{
+  "pid": 1412,
+  "duration_sec": 30.1010968,
+  "sample_rate": 48000,
+  "channels": 2,
+  "format": "Float32",
+  "buffer_ms": 10,
+  "frames_captured": 1442400,
+  "frames_expected": 1444852,
+  "discontinuities": 0,
+  "silent_buffers": 0,
+  "callbacks": 3005,
+  "timing_p50_ms": 9.966599,
+  "timing_p99_ms": 10.838585,
+  "timing_max_ms": 52.9491
+}

@@ -1,0 +1,1424 @@
+[
+  {
+    "type": "gap",
+    "wallClockMs": 6,
+    "frameIndex": 1,
+    "sampleOffset": 441,
+    "durationUs": 45938,
+    "expectedTimestamp": 587127190010,
+    "actualTimestamp": 587127235948
+  },
+  {
+    "type": "gap",
+    "wallClockMs": 902.3999999761581,
+    "frameIndex": 107,
+    "sampleOffset": 47187,
+    "durationUs": 9188,
+    "expectedTimestamp": 587128209823,
+    "actualTimestamp": 587128219011
+  },
+  {
+    "type": "gap",
+    "wallClockMs": 1265.3000000715256,
+    "frameIndex": 145,
+    "sampleOffset": 63945,
+    "durationUs": 9188,
+    "expectedTimestamp": 587128568135,
+    "actualTimestamp": 587128577323
+  },
+  {
+    "type": "gap",
+    "wallClockMs": 1466.8999999761581,
+    "frameIndex": 166,
+    "sampleOffset": 73206,
+    "durationUs": 9188,
+    "expectedTimestamp": 587128770260,
+    "actualTimestamp": 587128779448
+  },
+  {
+    "type": "gap",
+    "wallClockMs": 1836,
+    "frameIndex": 205,
+    "sampleOffset": 90405,
+    "durationUs": 9188,
+    "expectedTimestamp": 587129137760,
+    "actualTimestamp": 587129146948
+  },
+  {
+    "type": "gap",
+    "wallClockMs": 2735.399999976158,
+    "frameIndex": 302,
+    "sampleOffset": 133182,
+    "durationUs": 9188,
+    "expectedTimestamp": 587130038135,
+    "actualTimestamp": 587130047323
+  },
+  {
+    "type": "gap",
+    "wallClockMs": 3378.600000023842,
+    "frameIndex": 371,
+    "sampleOffset": 163611,
+    "durationUs": 9188,
+    "expectedTimestamp": 587130681260,
+    "actualTimestamp": 587130690448
+  },
+  {
+    "type": "gap",
+    "wallClockMs": 3534.3000000715256,
+    "frameIndex": 387,
+    "sampleOffset": 170667,
+    "durationUs": 9188,
+    "expectedTimestamp": 587130837448,
+    "actualTimestamp": 587130846636
+  },
+  {
+    "type": "gap",
+    "wallClockMs": 4434.300000071526,
+    "frameIndex": 484,
+    "sampleOffset": 213444,
+    "durationUs": 9188,
+    "expectedTimestamp": 587131737823,
+    "actualTimestamp": 587131747011
+  },
+  {
+    "type": "gap",
+    "wallClockMs": 5201.200000047684,
+    "frameIndex": 567,
+    "sampleOffset": 250047,
+    "durationUs": 9188,
+    "expectedTimestamp": 587132509573,
+    "actualTimestamp": 587132518761
+  },
+  {
+    "type": "gap",
+    "wallClockMs": 6004.200000047684,
+    "frameIndex": 653,
+    "sampleOffset": 287973,
+    "durationUs": 9188,
+    "expectedTimestamp": 587133308885,
+    "actualTimestamp": 587133318073
+  },
+  {
+    "type": "gap",
+    "wallClockMs": 6235,
+    "frameIndex": 677,
+    "sampleOffset": 298557,
+    "durationUs": 9188,
+    "expectedTimestamp": 587133538573,
+    "actualTimestamp": 587133547761
+  },
+  {
+    "type": "gap",
+    "wallClockMs": 6575.899999976158,
+    "frameIndex": 713,
+    "sampleOffset": 314433,
+    "durationUs": 9188,
+    "expectedTimestamp": 587133878510,
+    "actualTimestamp": 587133887698
+  },
+  {
+    "type": "gap",
+    "wallClockMs": 6780.300000071526,
+    "frameIndex": 734,
+    "sampleOffset": 323694,
+    "durationUs": 9188,
+    "expectedTimestamp": 587134080635,
+    "actualTimestamp": 587134089823
+  },
+  {
+    "type": "gap",
+    "wallClockMs": 7211.100000023842,
+    "frameIndex": 780,
+    "sampleOffset": 343980,
+    "durationUs": 9188,
+    "expectedTimestamp": 587134512448,
+    "actualTimestamp": 587134521636
+  },
+  {
+    "type": "gap",
+    "wallClockMs": 7364.700000047684,
+    "frameIndex": 796,
+    "sampleOffset": 351036,
+    "durationUs": 9188,
+    "expectedTimestamp": 587134668635,
+    "actualTimestamp": 587134677823
+  },
+  {
+    "type": "gap",
+    "wallClockMs": 7660.800000071526,
+    "frameIndex": 827,
+    "sampleOffset": 364707,
+    "durationUs": 9188,
+    "expectedTimestamp": 587134962635,
+    "actualTimestamp": 587134971823
+  },
+  {
+    "type": "gap",
+    "wallClockMs": 8480.700000047684,
+    "frameIndex": 916,
+    "sampleOffset": 403956,
+    "durationUs": 9188,
+    "expectedTimestamp": 587135789510,
+    "actualTimestamp": 587135798698
+  },
+  {
+    "type": "gap",
+    "wallClockMs": 9425.600000023842,
+    "frameIndex": 1017,
+    "sampleOffset": 448497,
+    "durationUs": 9188,
+    "expectedTimestamp": 587136726635,
+    "actualTimestamp": 587136735823
+  },
+  {
+    "type": "gap",
+    "wallClockMs": 9874.899999976158,
+    "frameIndex": 1065,
+    "sampleOffset": 469665,
+    "durationUs": 9188,
+    "expectedTimestamp": 587137176823,
+    "actualTimestamp": 587137186011
+  },
+  {
+    "type": "gap",
+    "wallClockMs": 10856.899999976158,
+    "frameIndex": 1171,
+    "sampleOffset": 516411,
+    "durationUs": 9188,
+    "expectedTimestamp": 587138159885,
+    "actualTimestamp": 587138169073
+  },
+  {
+    "type": "gap",
+    "wallClockMs": 11637.5,
+    "frameIndex": 1255,
+    "sampleOffset": 553455,
+    "durationUs": 9188,
+    "expectedTimestamp": 587138940823,
+    "actualTimestamp": 587138950011
+  },
+  {
+    "type": "gap",
+    "wallClockMs": 11950.399999976158,
+    "frameIndex": 1288,
+    "sampleOffset": 568008,
+    "durationUs": 9188,
+    "expectedTimestamp": 587139253198,
+    "actualTimestamp": 587139262386
+  },
+  {
+    "type": "gap",
+    "wallClockMs": 12022.899999976158,
+    "frameIndex": 1295,
+    "sampleOffset": 571095,
+    "durationUs": 9188,
+    "expectedTimestamp": 587139326698,
+    "actualTimestamp": 587139335886
+  },
+  {
+    "type": "gap",
+    "wallClockMs": 12970.399999976158,
+    "frameIndex": 1397,
+    "sampleOffset": 616077,
+    "durationUs": 9188,
+    "expectedTimestamp": 587140273010,
+    "actualTimestamp": 587140282198
+  },
+  {
+    "type": "gap",
+    "wallClockMs": 13262.100000023842,
+    "frameIndex": 1428,
+    "sampleOffset": 629748,
+    "durationUs": 9188,
+    "expectedTimestamp": 587140567010,
+    "actualTimestamp": 587140576198
+  },
+  {
+    "type": "gap",
+    "wallClockMs": 13337.300000071526,
+    "frameIndex": 1435,
+    "sampleOffset": 632835,
+    "durationUs": 9188,
+    "expectedTimestamp": 587140640510,
+    "actualTimestamp": 587140649698
+  },
+  {
+    "type": "gap",
+    "wallClockMs": 13668.100000023842,
+    "frameIndex": 1470,
+    "sampleOffset": 648270,
+    "durationUs": 9188,
+    "expectedTimestamp": 587140971260,
+    "actualTimestamp": 587140980448
+  },
+  {
+    "type": "gap",
+    "wallClockMs": 14359.5,
+    "frameIndex": 1545,
+    "sampleOffset": 681345,
+    "durationUs": 9188,
+    "expectedTimestamp": 587141669510,
+    "actualTimestamp": 587141678698
+  },
+  {
+    "type": "gap",
+    "wallClockMs": 14551.700000047684,
+    "frameIndex": 1564,
+    "sampleOffset": 689724,
+    "durationUs": 9188,
+    "expectedTimestamp": 587141853260,
+    "actualTimestamp": 587141862448
+  },
+  {
+    "type": "gap",
+    "wallClockMs": 15385.700000047684,
+    "frameIndex": 1654,
+    "sampleOffset": 729414,
+    "durationUs": 9188,
+    "expectedTimestamp": 587142689323,
+    "actualTimestamp": 587142698511
+  },
+  {
+    "type": "gap",
+    "wallClockMs": 15571.100000023842,
+    "frameIndex": 1673,
+    "sampleOffset": 737793,
+    "durationUs": 9188,
+    "expectedTimestamp": 587142873073,
+    "actualTimestamp": 587142882261
+  },
+  {
+    "type": "gap",
+    "wallClockMs": 15809.700000047684,
+    "frameIndex": 1698,
+    "sampleOffset": 748818,
+    "durationUs": 9188,
+    "expectedTimestamp": 587143111948,
+    "actualTimestamp": 587143121136
+  },
+  {
+    "type": "gap",
+    "wallClockMs": 15894.5,
+    "frameIndex": 1706,
+    "sampleOffset": 752346,
+    "durationUs": 9188,
+    "expectedTimestamp": 587143194635,
+    "actualTimestamp": 587143203823
+  },
+  {
+    "type": "gap",
+    "wallClockMs": 16038.5,
+    "frameIndex": 1721,
+    "sampleOffset": 758961,
+    "durationUs": 9188,
+    "expectedTimestamp": 587143341635,
+    "actualTimestamp": 587143350823
+  },
+  {
+    "type": "gap",
+    "wallClockMs": 16929.200000047684,
+    "frameIndex": 1817,
+    "sampleOffset": 801297,
+    "durationUs": 9188,
+    "expectedTimestamp": 587144232823,
+    "actualTimestamp": 587144242011
+  },
+  {
+    "type": "gap",
+    "wallClockMs": 17675.399999976158,
+    "frameIndex": 1897,
+    "sampleOffset": 836577,
+    "durationUs": 9188,
+    "expectedTimestamp": 587144977010,
+    "actualTimestamp": 587144986198
+  },
+  {
+    "type": "gap",
+    "wallClockMs": 18399.899999976158,
+    "frameIndex": 1975,
+    "sampleOffset": 870975,
+    "durationUs": 9188,
+    "expectedTimestamp": 587145702823,
+    "actualTimestamp": 587145712011
+  },
+  {
+    "type": "gap",
+    "wallClockMs": 18757.800000071526,
+    "frameIndex": 2013,
+    "sampleOffset": 887733,
+    "durationUs": 9188,
+    "expectedTimestamp": 587146061135,
+    "actualTimestamp": 587146070323
+  },
+  {
+    "type": "gap",
+    "wallClockMs": 18832.800000071526,
+    "frameIndex": 2020,
+    "sampleOffset": 890820,
+    "durationUs": 9188,
+    "expectedTimestamp": 587146134635,
+    "actualTimestamp": 587146143823
+  },
+  {
+    "type": "gap",
+    "wallClockMs": 19102.899999976158,
+    "frameIndex": 2049,
+    "sampleOffset": 903609,
+    "durationUs": 9188,
+    "expectedTimestamp": 587146410260,
+    "actualTimestamp": 587146419448
+  },
+  {
+    "type": "gap",
+    "wallClockMs": 19529.100000023842,
+    "frameIndex": 2094,
+    "sampleOffset": 923454,
+    "durationUs": 9188,
+    "expectedTimestamp": 587146832885,
+    "actualTimestamp": 587146842073
+  },
+  {
+    "type": "gap",
+    "wallClockMs": 19818.899999976158,
+    "frameIndex": 2125,
+    "sampleOffset": 937125,
+    "durationUs": 9188,
+    "expectedTimestamp": 587147126885,
+    "actualTimestamp": 587147136073
+  },
+  {
+    "type": "gap",
+    "wallClockMs": 20301,
+    "frameIndex": 2176,
+    "sampleOffset": 959616,
+    "durationUs": 9188,
+    "expectedTimestamp": 587147604635,
+    "actualTimestamp": 587147613823
+  },
+  {
+    "type": "gap",
+    "wallClockMs": 20880.899999976158,
+    "frameIndex": 2238,
+    "sampleOffset": 986958,
+    "durationUs": 9188,
+    "expectedTimestamp": 587148183448,
+    "actualTimestamp": 587148192636
+  },
+  {
+    "type": "gap",
+    "wallClockMs": 21028.100000023842,
+    "frameIndex": 2253,
+    "sampleOffset": 993573,
+    "durationUs": 9188,
+    "expectedTimestamp": 587148330448,
+    "actualTimestamp": 587148339636
+  },
+  {
+    "type": "gap",
+    "wallClockMs": 21706.600000023842,
+    "frameIndex": 2326,
+    "sampleOffset": 1025766,
+    "durationUs": 9188,
+    "expectedTimestamp": 587149010323,
+    "actualTimestamp": 587149019511
+  },
+  {
+    "type": "gap",
+    "wallClockMs": 24354.200000047684,
+    "frameIndex": 2613,
+    "sampleOffset": 1152333,
+    "durationUs": 9188,
+    "expectedTimestamp": 587151656323,
+    "actualTimestamp": 587151665511
+  },
+  {
+    "type": "gap",
+    "wallClockMs": 25123.5,
+    "frameIndex": 2696,
+    "sampleOffset": 1188936,
+    "durationUs": 9188,
+    "expectedTimestamp": 587152428073,
+    "actualTimestamp": 587152437261
+  },
+  {
+    "type": "gap",
+    "wallClockMs": 26035.100000023842,
+    "frameIndex": 2794,
+    "sampleOffset": 1232154,
+    "durationUs": 9188,
+    "expectedTimestamp": 587153337635,
+    "actualTimestamp": 587153346823
+  },
+  {
+    "type": "gap",
+    "wallClockMs": 26090.300000071526,
+    "frameIndex": 2799,
+    "sampleOffset": 1234359,
+    "durationUs": 9188,
+    "expectedTimestamp": 587153392760,
+    "actualTimestamp": 587153401948
+  },
+  {
+    "type": "gap",
+    "wallClockMs": 26567.600000023842,
+    "frameIndex": 2850,
+    "sampleOffset": 1256850,
+    "durationUs": 9188,
+    "expectedTimestamp": 587153870510,
+    "actualTimestamp": 587153879698
+  },
+  {
+    "type": "gap",
+    "wallClockMs": 26725.399999976158,
+    "frameIndex": 2866,
+    "sampleOffset": 1263906,
+    "durationUs": 9188,
+    "expectedTimestamp": 587154026698,
+    "actualTimestamp": 587154035886
+  },
+  {
+    "type": "gap",
+    "wallClockMs": 26812.100000023842,
+    "frameIndex": 2875,
+    "sampleOffset": 1267875,
+    "durationUs": 9188,
+    "expectedTimestamp": 587154118573,
+    "actualTimestamp": 587154127761
+  },
+  {
+    "type": "gap",
+    "wallClockMs": 26983.399999976158,
+    "frameIndex": 2892,
+    "sampleOffset": 1275372,
+    "durationUs": 9188,
+    "expectedTimestamp": 587154283948,
+    "actualTimestamp": 587154293136
+  },
+  {
+    "type": "gap",
+    "wallClockMs": 27882.800000071526,
+    "frameIndex": 2989,
+    "sampleOffset": 1318149,
+    "durationUs": 9188,
+    "expectedTimestamp": 587155184323,
+    "actualTimestamp": 587155193511
+  },
+  {
+    "type": "gap",
+    "wallClockMs": 28037.399999976158,
+    "frameIndex": 3005,
+    "sampleOffset": 1325205,
+    "durationUs": 9188,
+    "expectedTimestamp": 587155340510,
+    "actualTimestamp": 587155349698
+  },
+  {
+    "type": "gap",
+    "wallClockMs": 28169.700000047684,
+    "frameIndex": 3018,
+    "sampleOffset": 1330938,
+    "durationUs": 9188,
+    "expectedTimestamp": 587155469135,
+    "actualTimestamp": 587155478323
+  },
+  {
+    "type": "gap",
+    "wallClockMs": 30920.800000071526,
+    "frameIndex": 3317,
+    "sampleOffset": 1462797,
+    "durationUs": 9188,
+    "expectedTimestamp": 587158225385,
+    "actualTimestamp": 587158234573
+  },
+  {
+    "type": "gap",
+    "wallClockMs": 31435.300000071526,
+    "frameIndex": 3372,
+    "sampleOffset": 1487052,
+    "durationUs": 9188,
+    "expectedTimestamp": 587158739885,
+    "actualTimestamp": 587158749073
+  },
+  {
+    "type": "gap",
+    "wallClockMs": 32458,
+    "frameIndex": 3462,
+    "sampleOffset": 1526742,
+    "durationUs": 110250,
+    "expectedTimestamp": 587159575948,
+    "actualTimestamp": 587159686198
+  },
+  {
+    "type": "gap",
+    "wallClockMs": 34202.10000002384,
+    "frameIndex": 3660,
+    "sampleOffset": 1614060,
+    "durationUs": 9188,
+    "expectedTimestamp": 587161505323,
+    "actualTimestamp": 587161514511
+  },
+  {
+    "type": "gap",
+    "wallClockMs": 34268.200000047684,
+    "frameIndex": 3666,
+    "sampleOffset": 1616706,
+    "durationUs": 9188,
+    "expectedTimestamp": 587161569635,
+    "actualTimestamp": 587161578823
+  },
+  {
+    "type": "gap",
+    "wallClockMs": 34854.10000002384,
+    "frameIndex": 3700,
+    "sampleOffset": 1631700,
+    "durationUs": 192938,
+    "expectedTimestamp": 587161891198,
+    "actualTimestamp": 587162084136
+  },
+  {
+    "type": "zero_block",
+    "wallClockMs": 34901.800000071526,
+    "frameIndex": 3714,
+    "sampleOffset": 1637874,
+    "durationUs": 9187,
+    "expectedTimestamp": 587162212761,
+    "actualTimestamp": 587162212761
+  },
+  {
+    "type": "zero_block",
+    "wallClockMs": 34909.89999997616,
+    "frameIndex": 3715,
+    "sampleOffset": 1638315,
+    "durationUs": 9187,
+    "expectedTimestamp": 587162221948,
+    "actualTimestamp": 587162221948
+  },
+  {
+    "type": "zero_block",
+    "wallClockMs": 34917.89999997616,
+    "frameIndex": 3716,
+    "sampleOffset": 1638756,
+    "durationUs": 9187,
+    "expectedTimestamp": 587162231136,
+    "actualTimestamp": 587162231136
+  },
+  {
+    "type": "zero_block",
+    "wallClockMs": 34925,
+    "frameIndex": 3717,
+    "sampleOffset": 1639197,
+    "durationUs": 9187,
+    "expectedTimestamp": 587162240323,
+    "actualTimestamp": 587162240323
+  },
+  {
+    "type": "gap",
+    "wallClockMs": 36586.800000071526,
+    "frameIndex": 3718,
+    "sampleOffset": 1639638,
+    "durationUs": 1561876,
+    "expectedTimestamp": 587162249510,
+    "actualTimestamp": 587163811386
+  },
+  {
+    "type": "zero_block",
+    "wallClockMs": 36586.800000071526,
+    "frameIndex": 3718,
+    "sampleOffset": 1639638,
+    "durationUs": 9187,
+    "expectedTimestamp": 587163811386,
+    "actualTimestamp": 587163811386
+  },
+  {
+    "type": "zero_block",
+    "wallClockMs": 36590.800000071526,
+    "frameIndex": 3719,
+    "sampleOffset": 1640079,
+    "durationUs": 9187,
+    "expectedTimestamp": 587163820573,
+    "actualTimestamp": 587163820573
+  },
+  {
+    "type": "zero_block",
+    "wallClockMs": 36592.39999997616,
+    "frameIndex": 3720,
+    "sampleOffset": 1640520,
+    "durationUs": 9187,
+    "expectedTimestamp": 587163829761,
+    "actualTimestamp": 587163829761
+  },
+  {
+    "type": "gap",
+    "wallClockMs": 36633.200000047684,
+    "frameIndex": 3721,
+    "sampleOffset": 1640961,
+    "durationUs": 18375,
+    "expectedTimestamp": 587163838948,
+    "actualTimestamp": 587163857323
+  },
+  {
+    "type": "zero_block",
+    "wallClockMs": 36633.200000047684,
+    "frameIndex": 3721,
+    "sampleOffset": 1640961,
+    "durationUs": 9187,
+    "expectedTimestamp": 587163857323,
+    "actualTimestamp": 587163857323
+  },
+  {
+    "type": "zero_block",
+    "wallClockMs": 36635.200000047684,
+    "frameIndex": 3722,
+    "sampleOffset": 1641402,
+    "durationUs": 9187,
+    "expectedTimestamp": 587163866511,
+    "actualTimestamp": 587163866511
+  },
+  {
+    "type": "gap",
+    "wallClockMs": 37015.89999997616,
+    "frameIndex": 3723,
+    "sampleOffset": 1641843,
+    "durationUs": 367500,
+    "expectedTimestamp": 587163875698,
+    "actualTimestamp": 587164243198
+  },
+  {
+    "type": "zero_block",
+    "wallClockMs": 37015.89999997616,
+    "frameIndex": 3723,
+    "sampleOffset": 1641843,
+    "durationUs": 9187,
+    "expectedTimestamp": 587164243198,
+    "actualTimestamp": 587164243198
+  },
+  {
+    "type": "zero_block",
+    "wallClockMs": 37018,
+    "frameIndex": 3724,
+    "sampleOffset": 1642284,
+    "durationUs": 9187,
+    "expectedTimestamp": 587164252386,
+    "actualTimestamp": 587164252386
+  },
+  {
+    "type": "gap",
+    "wallClockMs": 37075.300000071526,
+    "frameIndex": 3725,
+    "sampleOffset": 1642725,
+    "durationUs": 36750,
+    "expectedTimestamp": 587164261573,
+    "actualTimestamp": 587164298323
+  },
+  {
+    "type": "zero_block",
+    "wallClockMs": 37075.300000071526,
+    "frameIndex": 3725,
+    "sampleOffset": 1642725,
+    "durationUs": 9187,
+    "expectedTimestamp": 587164298323,
+    "actualTimestamp": 587164298323
+  },
+  {
+    "type": "zero_block",
+    "wallClockMs": 37076.39999997616,
+    "frameIndex": 3726,
+    "sampleOffset": 1643166,
+    "durationUs": 9187,
+    "expectedTimestamp": 587164307511,
+    "actualTimestamp": 587164307511
+  },
+  {
+    "type": "zero_block",
+    "wallClockMs": 37076.5,
+    "frameIndex": 3727,
+    "sampleOffset": 1643607,
+    "durationUs": 9187,
+    "expectedTimestamp": 587164316698,
+    "actualTimestamp": 587164316698
+  },
+  {
+    "type": "zero_block",
+    "wallClockMs": 37076.800000071526,
+    "frameIndex": 3728,
+    "sampleOffset": 1644048,
+    "durationUs": 9187,
+    "expectedTimestamp": 587164325886,
+    "actualTimestamp": 587164325886
+  },
+  {
+    "type": "zero_block",
+    "wallClockMs": 37076.800000071526,
+    "frameIndex": 3729,
+    "sampleOffset": 1644489,
+    "durationUs": 9187,
+    "expectedTimestamp": 587164335073,
+    "actualTimestamp": 587164335073
+  },
+  {
+    "type": "zero_block",
+    "wallClockMs": 37076.89999997616,
+    "frameIndex": 3730,
+    "sampleOffset": 1644930,
+    "durationUs": 9187,
+    "expectedTimestamp": 587164344261,
+    "actualTimestamp": 587164344261
+  },
+  {
+    "type": "zero_block",
+    "wallClockMs": 37077.10000002384,
+    "frameIndex": 3731,
+    "sampleOffset": 1645371,
+    "durationUs": 9187,
+    "expectedTimestamp": 587164353448,
+    "actualTimestamp": 587164353448
+  },
+  {
+    "type": "zero_block",
+    "wallClockMs": 37126.5,
+    "frameIndex": 3732,
+    "sampleOffset": 1645812,
+    "durationUs": 9187,
+    "expectedTimestamp": 587164362636,
+    "actualTimestamp": 587164362636
+  },
+  {
+    "type": "zero_block",
+    "wallClockMs": 37126.700000047684,
+    "frameIndex": 3733,
+    "sampleOffset": 1646253,
+    "durationUs": 9187,
+    "expectedTimestamp": 587164371823,
+    "actualTimestamp": 587164371823
+  },
+  {
+    "type": "zero_block",
+    "wallClockMs": 37126.89999997616,
+    "frameIndex": 3734,
+    "sampleOffset": 1646694,
+    "durationUs": 9187,
+    "expectedTimestamp": 587164381011,
+    "actualTimestamp": 587164381011
+  },
+  {
+    "type": "zero_block",
+    "wallClockMs": 37127,
+    "frameIndex": 3735,
+    "sampleOffset": 1647135,
+    "durationUs": 9187,
+    "expectedTimestamp": 587164390198,
+    "actualTimestamp": 587164390198
+  },
+  {
+    "type": "zero_block",
+    "wallClockMs": 37127.10000002384,
+    "frameIndex": 3736,
+    "sampleOffset": 1647576,
+    "durationUs": 9187,
+    "expectedTimestamp": 587164399386,
+    "actualTimestamp": 587164399386
+  },
+  {
+    "type": "zero_block",
+    "wallClockMs": 37127.200000047684,
+    "frameIndex": 3737,
+    "sampleOffset": 1648017,
+    "durationUs": 9187,
+    "expectedTimestamp": 587164408573,
+    "actualTimestamp": 587164408573
+  },
+  {
+    "type": "zero_block",
+    "wallClockMs": 37127.300000071526,
+    "frameIndex": 3738,
+    "sampleOffset": 1648458,
+    "durationUs": 9187,
+    "expectedTimestamp": 587164417761,
+    "actualTimestamp": 587164417761
+  },
+  {
+    "type": "zero_block",
+    "wallClockMs": 37127.39999997616,
+    "frameIndex": 3739,
+    "sampleOffset": 1648899,
+    "durationUs": 9187,
+    "expectedTimestamp": 587164426948,
+    "actualTimestamp": 587164426948
+  },
+  {
+    "type": "zero_block",
+    "wallClockMs": 37127.60000002384,
+    "frameIndex": 3740,
+    "sampleOffset": 1649340,
+    "durationUs": 9187,
+    "expectedTimestamp": 587164436136,
+    "actualTimestamp": 587164436136
+  },
+  {
+    "type": "zero_block",
+    "wallClockMs": 37127.800000071526,
+    "frameIndex": 3741,
+    "sampleOffset": 1649781,
+    "durationUs": 9187,
+    "expectedTimestamp": 587164445323,
+    "actualTimestamp": 587164445323
+  },
+  {
+    "type": "zero_block",
+    "wallClockMs": 37141.60000002384,
+    "frameIndex": 3742,
+    "sampleOffset": 1650222,
+    "durationUs": 9187,
+    "expectedTimestamp": 587164454511,
+    "actualTimestamp": 587164454511
+  },
+  {
+    "type": "zero_block",
+    "wallClockMs": 37189.300000071526,
+    "frameIndex": 3743,
+    "sampleOffset": 1650663,
+    "durationUs": 9187,
+    "expectedTimestamp": 587164463698,
+    "actualTimestamp": 587164463698
+  },
+  {
+    "type": "zero_block",
+    "wallClockMs": 37189.5,
+    "frameIndex": 3744,
+    "sampleOffset": 1651104,
+    "durationUs": 9187,
+    "expectedTimestamp": 587164472886,
+    "actualTimestamp": 587164472886
+  },
+  {
+    "type": "zero_block",
+    "wallClockMs": 37189.60000002384,
+    "frameIndex": 3745,
+    "sampleOffset": 1651545,
+    "durationUs": 9187,
+    "expectedTimestamp": 587164482073,
+    "actualTimestamp": 587164482073
+  },
+  {
+    "type": "zero_block",
+    "wallClockMs": 37189.89999997616,
+    "frameIndex": 3746,
+    "sampleOffset": 1651986,
+    "durationUs": 9187,
+    "expectedTimestamp": 587164491261,
+    "actualTimestamp": 587164491261
+  },
+  {
+    "type": "zero_block",
+    "wallClockMs": 37190,
+    "frameIndex": 3747,
+    "sampleOffset": 1652427,
+    "durationUs": 9187,
+    "expectedTimestamp": 587164500448,
+    "actualTimestamp": 587164500448
+  },
+  {
+    "type": "zero_block",
+    "wallClockMs": 37191.60000002384,
+    "frameIndex": 3748,
+    "sampleOffset": 1652868,
+    "durationUs": 9187,
+    "expectedTimestamp": 587164509636,
+    "actualTimestamp": 587164509636
+  },
+  {
+    "type": "zero_block",
+    "wallClockMs": 37209.800000071526,
+    "frameIndex": 3749,
+    "sampleOffset": 1653309,
+    "durationUs": 9187,
+    "expectedTimestamp": 587164518823,
+    "actualTimestamp": 587164518823
+  },
+  {
+    "type": "zero_block",
+    "wallClockMs": 37219,
+    "frameIndex": 3750,
+    "sampleOffset": 1653750,
+    "durationUs": 9187,
+    "expectedTimestamp": 587164528011,
+    "actualTimestamp": 587164528011
+  },
+  {
+    "type": "zero_block",
+    "wallClockMs": 37274.60000002384,
+    "frameIndex": 3751,
+    "sampleOffset": 1654191,
+    "durationUs": 9187,
+    "expectedTimestamp": 587164537198,
+    "actualTimestamp": 587164537198
+  },
+  {
+    "type": "zero_block",
+    "wallClockMs": 37274.89999997616,
+    "frameIndex": 3752,
+    "sampleOffset": 1654632,
+    "durationUs": 9187,
+    "expectedTimestamp": 587164546386,
+    "actualTimestamp": 587164546386
+  },
+  {
+    "type": "zero_block",
+    "wallClockMs": 37275.10000002384,
+    "frameIndex": 3753,
+    "sampleOffset": 1655073,
+    "durationUs": 9187,
+    "expectedTimestamp": 587164555573,
+    "actualTimestamp": 587164555573
+  },
+  {
+    "type": "zero_block",
+    "wallClockMs": 37275.5,
+    "frameIndex": 3754,
+    "sampleOffset": 1655514,
+    "durationUs": 9187,
+    "expectedTimestamp": 587164564761,
+    "actualTimestamp": 587164564761
+  },
+  {
+    "type": "zero_block",
+    "wallClockMs": 37276.10000002384,
+    "frameIndex": 3755,
+    "sampleOffset": 1655955,
+    "durationUs": 9187,
+    "expectedTimestamp": 587164573948,
+    "actualTimestamp": 587164573948
+  },
+  {
+    "type": "zero_block",
+    "wallClockMs": 37276.700000047684,
+    "frameIndex": 3756,
+    "sampleOffset": 1656396,
+    "durationUs": 9187,
+    "expectedTimestamp": 587164583136,
+    "actualTimestamp": 587164583136
+  },
+  {
+    "type": "gap",
+    "wallClockMs": 37460.700000047684,
+    "frameIndex": 3757,
+    "sampleOffset": 1656837,
+    "durationUs": 101063,
+    "expectedTimestamp": 587164592323,
+    "actualTimestamp": 587164693386
+  },
+  {
+    "type": "zero_block",
+    "wallClockMs": 37460.700000047684,
+    "frameIndex": 3757,
+    "sampleOffset": 1656837,
+    "durationUs": 9187,
+    "expectedTimestamp": 587164693386,
+    "actualTimestamp": 587164693386
+  },
+  {
+    "type": "gap",
+    "wallClockMs": 37493.700000047684,
+    "frameIndex": 3758,
+    "sampleOffset": 1657278,
+    "durationUs": 18375,
+    "expectedTimestamp": 587164702573,
+    "actualTimestamp": 587164720948
+  },
+  {
+    "type": "zero_block",
+    "wallClockMs": 37493.700000047684,
+    "frameIndex": 3758,
+    "sampleOffset": 1657278,
+    "durationUs": 9187,
+    "expectedTimestamp": 587164720948,
+    "actualTimestamp": 587164720948
+  },
+  {
+    "type": "gap",
+    "wallClockMs": 37607.300000071526,
+    "frameIndex": 3768,
+    "sampleOffset": 1661688,
+    "durationUs": 27563,
+    "expectedTimestamp": 587164812823,
+    "actualTimestamp": 587164840386
+  },
+  {
+    "type": "gap",
+    "wallClockMs": 37650.60000002384,
+    "frameIndex": 3780,
+    "sampleOffset": 1666980,
+    "durationUs": 9188,
+    "expectedTimestamp": 587164950635,
+    "actualTimestamp": 587164959823
+  },
+  {
+    "type": "gap",
+    "wallClockMs": 38198.10000002384,
+    "frameIndex": 3823,
+    "sampleOffset": 1685943,
+    "durationUs": 55126,
+    "expectedTimestamp": 587165354885,
+    "actualTimestamp": 587165410011
+  },
+  {
+    "type": "gap",
+    "wallClockMs": 38204,
+    "frameIndex": 3824,
+    "sampleOffset": 1686384,
+    "durationUs": 9188,
+    "expectedTimestamp": 587165419198,
+    "actualTimestamp": 587165428386
+  },
+  {
+    "type": "gap",
+    "wallClockMs": 38252.5,
+    "frameIndex": 3825,
+    "sampleOffset": 1686825,
+    "durationUs": 36750,
+    "expectedTimestamp": 587165437573,
+    "actualTimestamp": 587165474323
+  },
+  {
+    "type": "gap",
+    "wallClockMs": 38253.300000071526,
+    "frameIndex": 3826,
+    "sampleOffset": 1687266,
+    "durationUs": 9188,
+    "expectedTimestamp": 587165483510,
+    "actualTimestamp": 587165492698
+  },
+  {
+    "type": "gap",
+    "wallClockMs": 38305.200000047684,
+    "frameIndex": 3827,
+    "sampleOffset": 1687707,
+    "durationUs": 27563,
+    "expectedTimestamp": 587165501885,
+    "actualTimestamp": 587165529448
+  },
+  {
+    "type": "gap",
+    "wallClockMs": 38317.60000002384,
+    "frameIndex": 3828,
+    "sampleOffset": 1688148,
+    "durationUs": 9188,
+    "expectedTimestamp": 587165538635,
+    "actualTimestamp": 587165547823
+  },
+  {
+    "type": "gap",
+    "wallClockMs": 38712.700000047684,
+    "frameIndex": 3878,
+    "sampleOffset": 1710198,
+    "durationUs": 18375,
+    "expectedTimestamp": 587166007198,
+    "actualTimestamp": 587166025573
+  },
+  {
+    "type": "gap",
+    "wallClockMs": 41423.200000047684,
+    "frameIndex": 4168,
+    "sampleOffset": 1838088,
+    "durationUs": 9188,
+    "expectedTimestamp": 587168689948,
+    "actualTimestamp": 587168699136
+  },
+  {
+    "type": "gap",
+    "wallClockMs": 41589.5,
+    "frameIndex": 4179,
+    "sampleOffset": 1842939,
+    "durationUs": 9188,
+    "expectedTimestamp": 587168800198,
+    "actualTimestamp": 587168809386
+  },
+  {
+    "type": "gap",
+    "wallClockMs": 41590.60000002384,
+    "frameIndex": 4182,
+    "sampleOffset": 1844262,
+    "durationUs": 9188,
+    "expectedTimestamp": 587168836948,
+    "actualTimestamp": 587168846136
+  },
+  {
+    "type": "gap",
+    "wallClockMs": 42059.5,
+    "frameIndex": 4239,
+    "sampleOffset": 1869399,
+    "durationUs": 9188,
+    "expectedTimestamp": 587169369823,
+    "actualTimestamp": 587169379011
+  },
+  {
+    "type": "gap",
+    "wallClockMs": 42732.60000002384,
+    "frameIndex": 4311,
+    "sampleOffset": 1901151,
+    "durationUs": 9188,
+    "expectedTimestamp": 587170040510,
+    "actualTimestamp": 587170049698
+  },
+  {
+    "type": "gap",
+    "wallClockMs": 43306.60000002384,
+    "frameIndex": 4372,
+    "sampleOffset": 1928052,
+    "durationUs": 9188,
+    "expectedTimestamp": 587170610135,
+    "actualTimestamp": 587170619323
+  },
+  {
+    "type": "gap",
+    "wallClockMs": 43558.10000002384,
+    "frameIndex": 4399,
+    "sampleOffset": 1939959,
+    "durationUs": 9188,
+    "expectedTimestamp": 587170867385,
+    "actualTimestamp": 587170876573
+  },
+  {
+    "type": "gap",
+    "wallClockMs": 44327.39999997616,
+    "frameIndex": 4481,
+    "sampleOffset": 1976121,
+    "durationUs": 9188,
+    "expectedTimestamp": 587171629948,
+    "actualTimestamp": 587171639136
+  },
+  {
+    "type": "gap",
+    "wallClockMs": 46961.800000071526,
+    "frameIndex": 4767,
+    "sampleOffset": 2102247,
+    "durationUs": 9188,
+    "expectedTimestamp": 587174266760,
+    "actualTimestamp": 587174275948
+  },
+  {
+    "type": "gap",
+    "wallClockMs": 47213.89999997616,
+    "frameIndex": 4793,
+    "sampleOffset": 2113713,
+    "durationUs": 9188,
+    "expectedTimestamp": 587174514823,
+    "actualTimestamp": 587174524011
+  },
+  {
+    "type": "gap",
+    "wallClockMs": 47687.39999997616,
+    "frameIndex": 4842,
+    "sampleOffset": 2135322,
+    "durationUs": 9188,
+    "expectedTimestamp": 587174974198,
+    "actualTimestamp": 587174983386
+  },
+  {
+    "type": "gap",
+    "wallClockMs": 47775.60000002384,
+    "frameIndex": 4847,
+    "sampleOffset": 2137527,
+    "durationUs": 9188,
+    "expectedTimestamp": 587175029323,
+    "actualTimestamp": 587175038511
+  },
+  {
+    "type": "gap",
+    "wallClockMs": 48204.39999997616,
+    "frameIndex": 4898,
+    "sampleOffset": 2160018,
+    "durationUs": 9188,
+    "expectedTimestamp": 587175507073,
+    "actualTimestamp": 587175516261
+  },
+  {
+    "type": "gap",
+    "wallClockMs": 48893.200000047684,
+    "frameIndex": 4972,
+    "sampleOffset": 2192652,
+    "durationUs": 9188,
+    "expectedTimestamp": 587176196135,
+    "actualTimestamp": 587176205323
+  },
+  {
+    "type": "gap",
+    "wallClockMs": 49307.300000071526,
+    "frameIndex": 5016,
+    "sampleOffset": 2212056,
+    "durationUs": 9188,
+    "expectedTimestamp": 587176609573,
+    "actualTimestamp": 587176618761
+  },
+  {
+    "type": "gap",
+    "wallClockMs": 49515.89999997616,
+    "frameIndex": 5038,
+    "sampleOffset": 2221758,
+    "durationUs": 9188,
+    "expectedTimestamp": 587176820885,
+    "actualTimestamp": 587176830073
+  },
+  {
+    "type": "gap",
+    "wallClockMs": 49673.60000002384,
+    "frameIndex": 5054,
+    "sampleOffset": 2228814,
+    "durationUs": 9188,
+    "expectedTimestamp": 587176977073,
+    "actualTimestamp": 587176986261
+  },
+  {
+    "type": "gap",
+    "wallClockMs": 50667.700000047684,
+    "frameIndex": 5161,
+    "sampleOffset": 2276001,
+    "durationUs": 9188,
+    "expectedTimestamp": 587177969323,
+    "actualTimestamp": 587177978511
+  },
+  {
+    "type": "gap",
+    "wallClockMs": 51346.700000047684,
+    "frameIndex": 5234,
+    "sampleOffset": 2308194,
+    "durationUs": 9188,
+    "expectedTimestamp": 587178649198,
+    "actualTimestamp": 587178658386
+  },
+  {
+    "type": "gap",
+    "wallClockMs": 51603.5,
+    "frameIndex": 5261,
+    "sampleOffset": 2320101,
+    "durationUs": 9188,
+    "expectedTimestamp": 587178906448,
+    "actualTimestamp": 587178915636
+  },
+  {
+    "type": "gap",
+    "wallClockMs": 52273.89999997616,
+    "frameIndex": 5333,
+    "sampleOffset": 2351853,
+    "durationUs": 9188,
+    "expectedTimestamp": 587179577135,
+    "actualTimestamp": 587179586323
+  },
+  {
+    "type": "gap",
+    "wallClockMs": 52842.200000047684,
+    "frameIndex": 5394,
+    "sampleOffset": 2378754,
+    "durationUs": 9188,
+    "expectedTimestamp": 587180146760,
+    "actualTimestamp": 587180155948
+  },
+  {
+    "type": "gap",
+    "wallClockMs": 53505.5,
+    "frameIndex": 5465,
+    "sampleOffset": 2410065,
+    "durationUs": 9188,
+    "expectedTimestamp": 587180808260,
+    "actualTimestamp": 587180817448
+  },
+  {
+    "type": "gap",
+    "wallClockMs": 53749.300000071526,
+    "frameIndex": 5490,
+    "sampleOffset": 2421090,
+    "durationUs": 9188,
+    "expectedTimestamp": 587181047135,
+    "actualTimestamp": 587181056323
+  },
+  {
+    "type": "gap",
+    "wallClockMs": 54268.200000047684,
+    "frameIndex": 5546,
+    "sampleOffset": 2445786,
+    "durationUs": 9188,
+    "expectedTimestamp": 587181570823,
+    "actualTimestamp": 587181580011
+  },
+  {
+    "type": "gap",
+    "wallClockMs": 54935.39999997616,
+    "frameIndex": 5617,
+    "sampleOffset": 2477097,
+    "durationUs": 9188,
+    "expectedTimestamp": 587182232323,
+    "actualTimestamp": 587182241511
+  },
+  {
+    "type": "gap",
+    "wallClockMs": 56021.300000071526,
+    "frameIndex": 5735,
+    "sampleOffset": 2529135,
+    "durationUs": 9188,
+    "expectedTimestamp": 587183325635,
+    "actualTimestamp": 587183334823
+  },
+  {
+    "type": "gap",
+    "wallClockMs": 56316,
+    "frameIndex": 5766,
+    "sampleOffset": 2542806,
+    "durationUs": 9188,
+    "expectedTimestamp": 587183619635,
+    "actualTimestamp": 587183628823
+  },
+  {
+    "type": "gap",
+    "wallClockMs": 57088.300000071526,
+    "frameIndex": 5849,
+    "sampleOffset": 2579409,
+    "durationUs": 9188,
+    "expectedTimestamp": 587184391385,
+    "actualTimestamp": 587184400573
+  },
+  {
+    "type": "gap",
+    "wallClockMs": 57688.10000002384,
+    "frameIndex": 5914,
+    "sampleOffset": 2608074,
+    "durationUs": 9188,
+    "expectedTimestamp": 587184997760,
+    "actualTimestamp": 587185006948
+  },
+  {
+    "type": "gap",
+    "wallClockMs": 58208.700000047684,
+    "frameIndex": 5969,
+    "sampleOffset": 2632329,
+    "durationUs": 9188,
+    "expectedTimestamp": 587185512260,
+    "actualTimestamp": 587185521448
+  },
+  {
+    "type": "gap",
+    "wallClockMs": 59274.60000002384,
+    "frameIndex": 6084,
+    "sampleOffset": 2683044,
+    "durationUs": 9188,
+    "expectedTimestamp": 587186578010,
+    "actualTimestamp": 587186587198
+  },
+  {
+    "type": "gap",
+    "wallClockMs": 59359,
+    "frameIndex": 6092,
+    "sampleOffset": 2686572,
+    "durationUs": 9188,
+    "expectedTimestamp": 587186660698,
+    "actualTimestamp": 587186669886
+  },
+  {
+    "type": "gap",
+    "wallClockMs": 59701.60000002384,
+    "frameIndex": 6129,
+    "sampleOffset": 2702889,
+    "durationUs": 9188,
+    "expectedTimestamp": 587187009823,
+    "actualTimestamp": 587187019011
+  }
+]
