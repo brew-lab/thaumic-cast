@@ -65,7 +65,6 @@ type ConnectionAction =
   | { type: 'CACHED_STATE_RECEIVED'; payload: BackgroundConnectionState }
   | { type: 'CONNECTION_RESPONSE'; payload: EnsureConnectionResponse }
   | { type: 'RUNTIME_ERROR'; error: string }
-  | { type: 'WS_CONNECTED' }
   | { type: 'WS_RECONNECTING' }
   | { type: 'WS_PERMANENTLY_LOST' }
   | { type: 'CONNECTION_FAILED'; error: string; canRetry: boolean }
@@ -151,9 +150,6 @@ function connectionReducer(state: ConnectionState, action: ConnectionAction): Co
     case 'RUNTIME_ERROR':
       return { ...state, phase: 'error', error: action.error, canRetry: false };
 
-    case 'WS_CONNECTED':
-      return { ...state, phase: 'connected', error: null, canRetry: false };
-
     case 'WS_RECONNECTING':
       return { ...state, phase: 'reconnecting', error: null, canRetry: false };
 
@@ -229,9 +225,12 @@ export function useConnectionStatus(): ConnectionStatus {
     const msg = message as { type: string; [key: string]: unknown };
     switch (msg.type) {
       case 'WS_STATE_CHANGED':
-        dispatch({ type: 'WS_CONNECTED' });
-        // Fetch connection metadata in case ENSURE_CONNECTION response hasn't arrived yet
-        // (race condition: WS connects before response is processed)
+        // Fetch the full connection state and apply it atomically — flipping
+        // phase to 'connected' without the companion metadata (appType,
+        // appVersion, protocolVersion) would briefly make the version-check
+        // helpers see `protocolVersion: null` and flash the mismatch warning.
+        // Also covers the case where ENSURE_CONNECTION's response hasn't
+        // arrived yet (WS connects first).
         chrome.runtime
           .sendMessage({ type: 'GET_CONNECTION_STATUS' })
           .then((status: BackgroundConnectionState) => {

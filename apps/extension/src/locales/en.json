@@ -148,7 +148,7 @@
   "about_companion_type_desktop": "Desktop App",
   "about_companion_type_server": "Server",
   "about_companion_type_generic": "Desktop App or Server",
-  "about_companion_protocol": "Protocol v{{version}}",
+  "about_companion_protocol": "Protocol · Version {{version}}",
   "about_companion_unknown_version": "Unknown version",
 
   "version_mismatch_message": "Your {{appTypeLabel}} has fallen behind the extension (currently v{{appVersion}}). Update to restore harmony.",
