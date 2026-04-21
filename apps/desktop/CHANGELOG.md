@@ -1,5 +1,75 @@
 # @thaumic-cast/desktop
 
+## 0.12.0
+
+### Minor Changes
+
+- [#68](https://github.com/brew-lab/thaumic-cast/pull/68) [`a7d3d23`](https://github.com/brew-lab/thaumic-cast/commit/a7d3d23ea2fe6bc5deae53cb905751a38fc5559e) Thanks [@skezo](https://github.com/skezo)! - Add bi-directional playback control between extension and Sonos
+
+  When casting, playback state now syncs in both directions:
+  - **Sonos → Browser**: Pause/play on Sonos remote or app controls the browser tab
+  - **Browser → Sonos**: Play in browser (YouTube controls, keyboard shortcuts) resumes Sonos
+
+  Technical improvements:
+  - Use per-speaker epoch tracking for accurate resume detection
+  - Delegate playback decisions to server for consistent state handling
+  - Send Play command unless speaker is definitively playing (handles cache misses)
+  - Deduplicate Play commands on PCM resume to prevent audio glitches
+  - Add error handling for broker failures during playback notifications
+
+- [#103](https://github.com/brew-lab/thaumic-cast/pull/103) [`153a447`](https://github.com/brew-lab/thaumic-cast/commit/153a44754061c3d57d101d227d4654a863f201d9) Thanks [@skezo](https://github.com/skezo)! - Exchange companion version metadata over the existing connection so the extension can warn users when their desktop app or server is out of date.
+  - `/health` now reports `appType` alongside the existing service identifier and stream limit. The extension reads it at discovery time so it knows which companion it's talking to before the WebSocket even connects.
+  - The WebSocket `INITIAL_STATE` payload — sent on every connect, including the always-on control connection — now carries `appType`, `appVersion`, and `protocolVersion`. The extension persists these into the existing `connectionState` store; there is no separate companion-info storage.
+  - `thaumic-core` exposes a new `AppInfo` / `AppType` pair passed to `AppState::new`. `apps/desktop` and `apps/server` each thread their own `env!("CARGO_PKG_VERSION")` through.
+  - The extension compares the reported `protocolVersion` against `MIN_COMPATIBLE_PROTOCOL_VERSION` on every connect:
+    - Renders a dismissible warning Alert in the popup with an "Update Desktop App" / "Update Server" / "Update" action button (chosen from `appType`) deep-linking to the GitHub releases page.
+    - Renders a persistent inline "Update available" link in the popup footer and in the options About section, even after the Alert has been dismissed, so the user always has a path to the releases page.
+    - Dismissal is keyed by `appVersion` (or `null` for pre-0.4.0 companions) in `chrome.storage.local`, so rolling forward — including from "unknown" to a real version — re-arms the warning.
+  - The popup footer copy is type-aware: "Connected to Desktop App", "Connected to Server", or just "Connected" when the type is unknown.
+  - Older companions that omit the new fields are treated as out-of-date (not "assume compatible"), since the extension may have been auto-updated by Chrome ahead of the user updating the companion. The Alert and footer link still appear; copy degrades gracefully ("Your app predates this extension and can't report its version").
+  - Shared UI: new `link` variant on `<Button>` for inline text-link CTAs.
+
+  No new remote calls are introduced — the check runs entirely off discovery and the existing WebSocket, preserving the privacy promise in PRIVACY.md.
+
+### Patch Changes
+
+- [#97](https://github.com/brew-lab/thaumic-cast/pull/97) [`4f5bfff`](https://github.com/brew-lab/thaumic-cast/commit/4f5bfff695e70cccb81c0b6601603f63e877c3f7) Thanks [@skezo](https://github.com/skezo)! - Bump Cargo dependencies. `cargo update` for in-range patch/minor bumps across the workspace (tokio 1.49 → 1.52, tauri 2.10.2 → 2.10.3, rustls 0.23.36 → 0.23.38, etc.). Two direct major bumps: `mdns-sd` 0.17 → 0.19 (used by `thaumic-core` for Sonos discovery and `thaumic-cast-desktop` for service advertisement; APIs we use are unchanged) and `rust-i18n` 3 → 4 (used by the desktop tray menu). The `rust-i18n` 4 macro expands to code stable in Rust 1.80, so the desktop crate's `rust-version` is bumped from 1.77 → 1.80.
+
+- [#99](https://github.com/brew-lab/thaumic-cast/pull/99) [`a097322`](https://github.com/brew-lab/thaumic-cast/commit/a0973226e77f104d87544597483c74ef260b3e66) Thanks [@skezo](https://github.com/skezo)! - Harden streaming network path and diagnostic log retention
+
+  Four isolated fixes to the local streaming daemon and desktop app:
+
+  **Core (`thaumic-core`):**
+  - TCP_NODELAY on all accepted connections disables Nagle's algorithm so small PCM frames (1920 bytes) ship immediately instead of being batched, reducing delivery jitter to Sonos.
+  - TCP keepalive on accepted connections (10s idle, 5s interval, 3 retries on Linux) detects stalled speakers within ~25s instead of the default ~2 hours, preventing async tasks from being held alive on dead connections.
+  - SSDP discovery now skips link-local (`169.254.0.0/16`) addresses that cause bind failures on adapters like Bluetooth with no real connectivity, and expands the virtual-interface prefix list (Windows `vEthernet`, WireGuard, Tailscale, ZeroTier) that cannot reach local Sonos speakers.
+
+  **Desktop:**
+  - Raises log max file size to 1 MB so pipeline diagnostic dumps survive across sessions without rotation.
+
+- [#97](https://github.com/brew-lab/thaumic-cast/pull/97) [`963170d`](https://github.com/brew-lab/thaumic-cast/commit/963170df0109686df84f47e998b63a1ffb7de6d8) Thanks [@skezo](https://github.com/skezo)! - Bump dev and production dependencies to current major versions: typescript 6, vite 8, i18next 26, react-i18next 17, lucide-preact 1, @changesets/changelog-github 0.6. Adds an `ImportMeta.env` ambient declaration in `@thaumic-cast/shared` so `logger.ts` continues to typecheck under TypeScript 6, and adds `typescript` as a direct devDependency of `@thaumic-cast/extension` so `tsc` resolves locally now that typescript-eslint pins TS 5 and prevents root hoisting.
+
+- [#107](https://github.com/brew-lab/thaumic-cast/pull/107) [`b73b49e`](https://github.com/brew-lab/thaumic-cast/commit/b73b49ea5b15d115cb016f395074891c7f77cc95) Thanks [@skezo](https://github.com/skezo)! - Polish the companion version-mismatch surface introduced in the previous release, and unblock the path that was supposed to surface it for older companions.
+  - Accept `INITIAL_STATE` payloads that omit `groupVolumeFixed`. That field was added after the initial protocol shipped; older companions don't send it, so the extension's `WS_CONNECTED` route rejected their messages at schema validation — `handleWsConnected` never ran, the popup stayed stuck at "Checking…", and the out-of-date warning (the very UI meant for this scenario) never had a chance to render. The `groupVolumeFixed` field now defaults to an empty map when missing, so older-companion payloads validate and the version-mismatch flow fires as designed.
+  - Prevent the out-of-date warning Alert from briefly flashing on every initial connection. The popup was flipping `phase` to `'connected'` optimistically on `WS_STATE_CHANGED` before the async fetch that carries the companion metadata resolved, so `protocolVersion` was transiently `null` and the mismatch helper would light up the Alert for a single render. The connection-status hook now only transitions to `'connected'` via the metadata-bearing `CACHED_STATE_RECEIVED`, applying phase and metadata atomically. The companion-version hook additionally gates on `phase === 'connected'` so no flash window can open between discovery and WebSocket `INITIAL_STATE`.
+  - Gate the Alert on the persisted dismissal record having loaded, closing a smaller race where a previously-dismissed warning briefly reappeared on popup open before `chrome.storage.local` resolved.
+  - Rename the protocol line in the extension About card and the desktop Settings About card from `Protocol v{{version}}` to `Protocol · Version {{version}}`, matching the adjacent `Desktop App · Version {{version}}` / `Version {{version}}` format.
+
+- [#105](https://github.com/brew-lab/thaumic-cast/pull/105) [`32ae247`](https://github.com/brew-lab/thaumic-cast/commit/32ae2471d81ace318b32080badceb578b8019ae5) Thanks [@skezo](https://github.com/skezo)! - Rename `streamingBufferMs` setting to `jitterBufferMs` across the stack
+
+  Pure rename — no behavior change. Every value, default, clamp range, and UI option stays the same. Identifier updated on the protocol, core, extension, and desktop surfaces, plus docstrings and the one user-facing label ("Streaming Buffer" → "Jitter Buffer"). The setting has always functioned as a jitter buffer (holding PCM frames to smooth WebSocket-to-Sonos delivery variance), so the name now matches the role.
+
+  Sets up a follow-up change that turns this from a passive sizing hint into an active fill-gate / refill-on-underrun state machine.
+
+- [#81](https://github.com/brew-lab/thaumic-cast/pull/81) [`327a9f2`](https://github.com/brew-lab/thaumic-cast/commit/327a9f2f683a91d13e188fc09788f05ca65883f3) Thanks [@skezo](https://github.com/skezo)! - Update @tauri-apps/cli to match tauri crate version
+
+  CLI 2.9.6 could not locate the `__TAURI_BUNDLE_TYPE` marker embedded by tauri crate 2.10.2, causing a build warning and breaking the updater plugin's bundle type detection.
+
+- Updated dependencies [[`48c068f`](https://github.com/brew-lab/thaumic-cast/commit/48c068f1fd3751fa6796997229692167913ba68a), [`77a19e2`](https://github.com/brew-lab/thaumic-cast/commit/77a19e21150e6b7cd35af44fb3bd6d47edc4d636), [`963170d`](https://github.com/brew-lab/thaumic-cast/commit/963170df0109686df84f47e998b63a1ffb7de6d8), [`b73b49e`](https://github.com/brew-lab/thaumic-cast/commit/b73b49ea5b15d115cb016f395074891c7f77cc95), [`a01a1c4`](https://github.com/brew-lab/thaumic-cast/commit/a01a1c4bd61ff52bddb5d244ca8361fd0a127351), [`153a447`](https://github.com/brew-lab/thaumic-cast/commit/153a44754061c3d57d101d227d4654a863f201d9), [`32ae247`](https://github.com/brew-lab/thaumic-cast/commit/32ae2471d81ace318b32080badceb578b8019ae5), [`f958485`](https://github.com/brew-lab/thaumic-cast/commit/f9584852e7e2649435ff231d01352195c65c59d9), [`facd9e8`](https://github.com/brew-lab/thaumic-cast/commit/facd9e8d5814807947193c2fd8e80b566223bb38)]:
+  - @thaumic-cast/ui@3.0.0
+  - @thaumic-cast/protocol@0.5.0
+  - @thaumic-cast/shared@0.1.0
+
 ## 0.11.0
 
 ### Patch Changes

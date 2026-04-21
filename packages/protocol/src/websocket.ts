@@ -16,7 +16,7 @@ import { StreamMetadataSchema } from './stream.js';
  * Protocol versioning for the bump policy and the relationship with
  * `MIN_COMPATIBLE_PROTOCOL_VERSION`.
  */
-export const PROTOCOL_VERSION = '0.4.0' as const;
+export const PROTOCOL_VERSION = '0.5.0' as const;
 
 /**
  * Which companion process advertised the connection.
