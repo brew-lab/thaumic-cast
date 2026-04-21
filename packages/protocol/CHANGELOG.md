@@ -1,5 +1,121 @@
 # @thaumic-cast/protocol
 
+## 0.5.0
+
+### Minor Changes
+
+- [#71](https://github.com/brew-lab/thaumic-cast/pull/71) [`a01a1c4`](https://github.com/brew-lab/thaumic-cast/commit/a01a1c4bd61ff52bddb5d244ca8361fd0a127351) Thanks [@skezo](https://github.com/skezo)! - Add fixed volume detection for Sonos speakers with line-level output
+
+  Sonos devices like CONNECT and Port have fixed line-level output where volume cannot be adjusted via API. This change detects and handles these speakers:
+  - Parse `OutputFixed` from GENA GroupRenderingControl notifications
+  - Propagate `fixed` state through the event system alongside volume updates
+  - Disable volume controls in the UI for fixed-output speakers
+  - Add `disabled` prop to `VolumeControl` and `SpeakerVolumeRow` components
+
+  When a speaker has fixed volume, the volume slider and mute button are visually disabled and non-interactive.
+
+- [#103](https://github.com/brew-lab/thaumic-cast/pull/103) [`153a447`](https://github.com/brew-lab/thaumic-cast/commit/153a44754061c3d57d101d227d4654a863f201d9) Thanks [@skezo](https://github.com/skezo)! - Exchange companion version metadata over the existing connection so the extension can warn users when their desktop app or server is out of date.
+  - `/health` now reports `appType` alongside the existing service identifier and stream limit. The extension reads it at discovery time so it knows which companion it's talking to before the WebSocket even connects.
+  - The WebSocket `INITIAL_STATE` payload — sent on every connect, including the always-on control connection — now carries `appType`, `appVersion`, and `protocolVersion`. The extension persists these into the existing `connectionState` store; there is no separate companion-info storage.
+  - `thaumic-core` exposes a new `AppInfo` / `AppType` pair passed to `AppState::new`. `apps/desktop` and `apps/server` each thread their own `env!("CARGO_PKG_VERSION")` through.
+  - The extension compares the reported `protocolVersion` against `MIN_COMPATIBLE_PROTOCOL_VERSION` on every connect:
+    - Renders a dismissible warning Alert in the popup with an "Update Desktop App" / "Update Server" / "Update" action button (chosen from `appType`) deep-linking to the GitHub releases page.
+    - Renders a persistent inline "Update available" link in the popup footer and in the options About section, even after the Alert has been dismissed, so the user always has a path to the releases page.
+    - Dismissal is keyed by `appVersion` (or `null` for pre-0.4.0 companions) in `chrome.storage.local`, so rolling forward — including from "unknown" to a real version — re-arms the warning.
+  - The popup footer copy is type-aware: "Connected to Desktop App", "Connected to Server", or just "Connected" when the type is unknown.
+  - Older companions that omit the new fields are treated as out-of-date (not "assume compatible"), since the extension may have been auto-updated by Chrome ahead of the user updating the companion. The Alert and footer link still appear; copy degrades gracefully ("Your app predates this extension and can't report its version").
+  - Shared UI: new `link` variant on `<Button>` for inline text-link CTAs.
+
+  No new remote calls are introduced — the check runs entirely off discovery and the existing WebSocket, preserving the privacy promise in PRIVACY.md.
+
+- [#90](https://github.com/brew-lab/thaumic-cast/pull/90) [`facd9e8`](https://github.com/brew-lab/thaumic-cast/commit/facd9e8d5814807947193c2fd8e80b566223bb38) Thanks [@skezo](https://github.com/skezo)! - Add WASAPI process-specific loopback capture for browser-wide audio streaming on Windows
+
+  Instead of capturing audio per-tab via the Chrome `tabCapture` API, this adds an alternative mode that captures all audio from the browser process at the OS level using Windows Audio Session API (WASAPI) process loopback. Requires Windows 10 build 20348+.
+
+  **New packages:**
+  - `thaumic-capture` crate: platform-gated WASAPI capture library with `WasapiSource`, browser PID discovery via `CreateToolhelp32Snapshot`, and COM/MMCSS-elevated capture thread
+  - `wasapi-capture` CLI: diagnostic tool that captures N seconds of audio from a PID, outputs Float32 WAV + timing stats for validation
+
+  **Core (`thaumic-core`):**
+  - `capture` module with platform-agnostic `AudioSource`/`AudioSink`/`CaptureHandle` traits and `CaptureSourceFactory` factory pattern (avoids cyclic dependency with `thaumic-capture`)
+  - `StreamSinkBridge` converts Float32 → PCM16 on the capture thread and pushes into existing `StreamRegistry` pipeline
+  - `StreamCoordinator::start_capture_stream()` wires up the full capture → stream path
+  - WebSocket handler adds `START_BROWSER_CAPTURE`, `STOP_BROWSER_CAPTURE`, and async `BROWSER_CAPTURE_ERROR` monitoring (process exit, device disconnect)
+
+  **Desktop app:**
+  - `WasapiCaptureFactory` bridges `thaumic-capture` into core's factory trait
+  - `get_capture_capabilities` Tauri command exposes platform availability to frontend
+
+  **Extension:**
+  - New `captureMode` setting (`tab` | `browser`) with UI toggle in Advanced Settings
+  - Mode exclusivity enforcement (tab and browser capture cannot coexist)
+  - Browser capture flow: sends `START_BROWSER_CAPTURE` over WebSocket, server handles capture — no offscreen AudioWorklet needed
+  - `StreamSession` refactored to handle both capture modes with appropriate teardown
+  - `BROWSER_CAPTURE_ERROR` handling for graceful recovery on capture failures
+
+  **Protocol:**
+  - `BROWSER_CAPTURE_ERROR` message type with Zod schemas added to WebSocket protocol
+
+### Patch Changes
+
+- [#81](https://github.com/brew-lab/thaumic-cast/pull/81) [`77a19e2`](https://github.com/brew-lab/thaumic-cast/commit/77a19e21150e6b7cd35af44fb3bd6d47edc4d636) Thanks [@skezo](https://github.com/skezo)! - Refactor core internals, remove dead code, and improve multi-speaker performance
+
+  **Refactoring:**
+  - Decompose `StreamCoordinator` into focused modules: `PlaybackSessionStore`, `SyncGroupManager`, `VolumeRouter`
+  - Decompose Sonos client into focused modules: `didl`, `grouping`, `playback`, `retry`, `subscription_arbiter`, `volume`, `zone_groups`
+  - Extract cadence streaming pipeline from `http.rs` into `stream/cadence.rs`
+  - Extract stream_audio handler, StartPlayback handler, and parse_stream_config from WS handshake into focused modules
+  - Extract helpers: `CleanupOrder`, `CrossfadeState`, `with_epoch_tracking` combinator, `teardown_speaker`, `ensure_playing`
+  - Replace `SoapRequestBuilder` with `soap_request` function
+  - Replace `AppStateBuilder` with `AppState::new` constructor
+  - Rename `StreamManager` to `StreamRegistry`
+  - Remove `TaggedFrame` enum, inline epoch tracking
+  - Merge `gena_event_builder` into `gena_parser`
+  - Move NOTIFY service routing from subscription manager to event processor
+  - Deduplicate `BroadcastEventBridge` emit methods with macro
+  - Deduplicate `cleanup_stream_if_no_sessions` into `SyncGroupManager`
+  - Remove redundant `stream_coordinator` field from `GenaEventProcessor`
+  - Remove redundant `broadcast_tx` from `AppState`
+  - Unify sync vs non-sync start path in `StreamCoordinator`
+  - Normalize `SonosEvent` imports to canonical events path
+  - Deduplicate retry logic, tighten module visibility, clean up logs
+
+  **Dead code removal:**
+  - Remove unused traits: `Transcoder`/`Passthrough`, `Lifecycle`, `TaskSpawner`, `CoreState`
+  - Remove unused implementations: `NoopEventEmitter`, `LoggingEventEmitter`
+  - Remove unused methods: `UrlBuilder::websocket_url`, `StreamingRuntime::handle`, `BroadcastEventBridge::clear_external_emitter`, `SonosClientImpl::with_discovery_config`
+  - Remove dead `ErrorCode` impls for `SoapError` and `GenaError`, 3 dead error variants, dead discovery error variants
+  - Remove dead fields: `DeviceInfo.model_number`, `PlaybackEpoch` telemetry and dead fields, `PositionInfo` dead fields, `StreamMetadata` album/artwork fields, 9 dead `Config` fields
+  - Remove dead `raise_process_priority` function
+
+  **Performance:**
+  - Parallelize sequential SOAP calls across multi-room playback
+  - Gate server-side latency monitoring behind client `videoSyncEnabled` opt-in to avoid unnecessary overhead
+  - Make delivery tracking lock-free
+
+  **Fixes:**
+  - Fix stale `sync_ips` cleanup when speakers leave a session
+  - Fix stale log prefixes and correct module visibility
+  - Pass `preferred_port` to `NetworkContext` in `bootstrap_services`
+  - Add 1ms timeout to test HTTP clients to avoid TCP SYN hangs
+
+  **Protocol:**
+  - Add `videoSyncEnabled` boolean field to `WsStartPlaybackPayload` (defaults to `false`, backward compatible)
+
+- [#97](https://github.com/brew-lab/thaumic-cast/pull/97) [`963170d`](https://github.com/brew-lab/thaumic-cast/commit/963170df0109686df84f47e998b63a1ffb7de6d8) Thanks [@skezo](https://github.com/skezo)! - Bump dev and production dependencies to current major versions: typescript 6, vite 8, i18next 26, react-i18next 17, lucide-preact 1, @changesets/changelog-github 0.6. Adds an `ImportMeta.env` ambient declaration in `@thaumic-cast/shared` so `logger.ts` continues to typecheck under TypeScript 6, and adds `typescript` as a direct devDependency of `@thaumic-cast/extension` so `tsc` resolves locally now that typescript-eslint pins TS 5 and prevents root hoisting.
+
+- [#107](https://github.com/brew-lab/thaumic-cast/pull/107) [`b73b49e`](https://github.com/brew-lab/thaumic-cast/commit/b73b49ea5b15d115cb016f395074891c7f77cc95) Thanks [@skezo](https://github.com/skezo)! - Polish the companion version-mismatch surface introduced in the previous release, and unblock the path that was supposed to surface it for older companions.
+  - Accept `INITIAL_STATE` payloads that omit `groupVolumeFixed`. That field was added after the initial protocol shipped; older companions don't send it, so the extension's `WS_CONNECTED` route rejected their messages at schema validation — `handleWsConnected` never ran, the popup stayed stuck at "Checking…", and the out-of-date warning (the very UI meant for this scenario) never had a chance to render. The `groupVolumeFixed` field now defaults to an empty map when missing, so older-companion payloads validate and the version-mismatch flow fires as designed.
+  - Prevent the out-of-date warning Alert from briefly flashing on every initial connection. The popup was flipping `phase` to `'connected'` optimistically on `WS_STATE_CHANGED` before the async fetch that carries the companion metadata resolved, so `protocolVersion` was transiently `null` and the mismatch helper would light up the Alert for a single render. The connection-status hook now only transitions to `'connected'` via the metadata-bearing `CACHED_STATE_RECEIVED`, applying phase and metadata atomically. The companion-version hook additionally gates on `phase === 'connected'` so no flash window can open between discovery and WebSocket `INITIAL_STATE`.
+  - Gate the Alert on the persisted dismissal record having loaded, closing a smaller race where a previously-dismissed warning briefly reappeared on popup open before `chrome.storage.local` resolved.
+  - Rename the protocol line in the extension About card and the desktop Settings About card from `Protocol v{{version}}` to `Protocol · Version {{version}}`, matching the adjacent `Desktop App · Version {{version}}` / `Version {{version}}` format.
+
+- [#105](https://github.com/brew-lab/thaumic-cast/pull/105) [`32ae247`](https://github.com/brew-lab/thaumic-cast/commit/32ae2471d81ace318b32080badceb578b8019ae5) Thanks [@skezo](https://github.com/skezo)! - Rename `streamingBufferMs` setting to `jitterBufferMs` across the stack
+
+  Pure rename — no behavior change. Every value, default, clamp range, and UI option stays the same. Identifier updated on the protocol, core, extension, and desktop surfaces, plus docstrings and the one user-facing label ("Streaming Buffer" → "Jitter Buffer"). The setting has always functioned as a jitter buffer (holding PCM frames to smooth WebSocket-to-Sonos delivery variance), so the name now matches the role.
+
+  Sets up a follow-up change that turns this from a passive sizing hint into an active fill-gate / refill-on-underrun state machine.
+
 ## 0.3.0
 
 ### Minor Changes

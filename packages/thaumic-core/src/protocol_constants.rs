@@ -78,7 +78,7 @@ pub const APP_NAME: &str = "Thaumic Cast";
 /// invoked at release time via `bun run changeset:version`. Do not edit by
 /// hand; see `CONTRIBUTING.md` → Protocol versioning for the bump policy and
 /// its relationship with `MIN_COMPATIBLE_PROTOCOL_VERSION`.
-pub const PROTOCOL_VERSION: &str = "0.4.0";
+pub const PROTOCOL_VERSION: &str = "0.5.0";
 
 /// Service identifier used for discovery (health endpoint).
 ///

@@ -1,5 +1,169 @@
 # @thaumic-cast/extension
 
+## 0.12.0
+
+### Minor Changes
+
+- [#68](https://github.com/brew-lab/thaumic-cast/pull/68) [`a7d3d23`](https://github.com/brew-lab/thaumic-cast/commit/a7d3d23ea2fe6bc5deae53cb905751a38fc5559e) Thanks [@skezo](https://github.com/skezo)! - Add bi-directional playback control between extension and Sonos
+
+  When casting, playback state now syncs in both directions:
+  - **Sonos → Browser**: Pause/play on Sonos remote or app controls the browser tab
+  - **Browser → Sonos**: Play in browser (YouTube controls, keyboard shortcuts) resumes Sonos
+
+  Technical improvements:
+  - Use per-speaker epoch tracking for accurate resume detection
+  - Delegate playback decisions to server for consistent state handling
+  - Send Play command unless speaker is definitively playing (handles cache misses)
+  - Deduplicate Play commands on PCM resume to prevent audio glitches
+  - Add error handling for broker failures during playback notifications
+
+- [#108](https://github.com/brew-lab/thaumic-cast/pull/108) [`94a7134`](https://github.com/brew-lab/thaumic-cast/commit/94a71347f1d3b689568e65339919a932d1955970) Thanks [@skezo](https://github.com/skezo)! - Detect Chrome LoopbackStream frame drops and suggest WASAPI browser capture
+
+  Adds an edge-triggered capture-health detector to `StreamSession` that watches `AudioData` timestamp gaps. On low-core Windows devices Chrome's LoopbackStream drops whole audio frames (~9 ms each), which is audible as stuttering; sustained detection surfaces a dismissible popup alert pointing the user at Advanced settings to enable Browser-wide capture, which bypasses LoopbackStream entirely. Degradation and recovery both flow through a new `CAPTURE_HEALTH_EVENT` → `CAPTURE_HEALTH_CHANGED` broadcast modelled on the existing network-health pipeline.
+
+  Detection is currently limited to the tab-capture + PCM path (the only worker that emits `gapCount`). Parity for Opus/AAC/FLAC/Vorbis is tracked as follow-up work.
+
+- [#71](https://github.com/brew-lab/thaumic-cast/pull/71) [`a01a1c4`](https://github.com/brew-lab/thaumic-cast/commit/a01a1c4bd61ff52bddb5d244ca8361fd0a127351) Thanks [@skezo](https://github.com/skezo)! - Add fixed volume detection for Sonos speakers with line-level output
+
+  Sonos devices like CONNECT and Port have fixed line-level output where volume cannot be adjusted via API. This change detects and handles these speakers:
+  - Parse `OutputFixed` from GENA GroupRenderingControl notifications
+  - Propagate `fixed` state through the event system alongside volume updates
+  - Disable volume controls in the UI for fixed-output speakers
+  - Add `disabled` prop to `VolumeControl` and `SpeakerVolumeRow` components
+
+  When a speaker has fixed volume, the volume slider and mute button are visually disabled and non-interactive.
+
+- [#103](https://github.com/brew-lab/thaumic-cast/pull/103) [`153a447`](https://github.com/brew-lab/thaumic-cast/commit/153a44754061c3d57d101d227d4654a863f201d9) Thanks [@skezo](https://github.com/skezo)! - Exchange companion version metadata over the existing connection so the extension can warn users when their desktop app or server is out of date.
+  - `/health` now reports `appType` alongside the existing service identifier and stream limit. The extension reads it at discovery time so it knows which companion it's talking to before the WebSocket even connects.
+  - The WebSocket `INITIAL_STATE` payload — sent on every connect, including the always-on control connection — now carries `appType`, `appVersion`, and `protocolVersion`. The extension persists these into the existing `connectionState` store; there is no separate companion-info storage.
+  - `thaumic-core` exposes a new `AppInfo` / `AppType` pair passed to `AppState::new`. `apps/desktop` and `apps/server` each thread their own `env!("CARGO_PKG_VERSION")` through.
+  - The extension compares the reported `protocolVersion` against `MIN_COMPATIBLE_PROTOCOL_VERSION` on every connect:
+    - Renders a dismissible warning Alert in the popup with an "Update Desktop App" / "Update Server" / "Update" action button (chosen from `appType`) deep-linking to the GitHub releases page.
+    - Renders a persistent inline "Update available" link in the popup footer and in the options About section, even after the Alert has been dismissed, so the user always has a path to the releases page.
+    - Dismissal is keyed by `appVersion` (or `null` for pre-0.4.0 companions) in `chrome.storage.local`, so rolling forward — including from "unknown" to a real version — re-arms the warning.
+  - The popup footer copy is type-aware: "Connected to Desktop App", "Connected to Server", or just "Connected" when the type is unknown.
+  - Older companions that omit the new fields are treated as out-of-date (not "assume compatible"), since the extension may have been auto-updated by Chrome ahead of the user updating the companion. The Alert and footer link still appear; copy degrades gracefully ("Your app predates this extension and can't report its version").
+  - Shared UI: new `link` variant on `<Button>` for inline text-link CTAs.
+
+  No new remote calls are introduced — the check runs entirely off discovery and the existing WebSocket, preserving the privacy promise in PRIVACY.md.
+
+- [#96](https://github.com/brew-lab/thaumic-cast/pull/96) [`a1d2ac2`](https://github.com/brew-lab/thaumic-cast/commit/a1d2ac261baadded34d964cecd7e4316222ec04b) Thanks [@skezo](https://github.com/skezo)! - Add MSTP audio pipeline for PCM streaming to eliminate crackling artifacts
+
+  The previous PCM path routed captured audio through `AudioContext` + `AudioWorklet` + `SharedArrayBuffer`, which crosses a clock domain between the MediaStream and AudioContext clocks. When the two clocks drifted, the worklet would emit zero-filled audio blocks, producing audible crackling.
+
+  This replaces the PCM path with a `MediaStreamTrackProcessor` (MSTP) pipeline that reads `AudioData` at the MediaStream's native rate — no clock crossing, no zero-fills. Compressed codecs continue to use the existing AudioContext path because their encoders run in the worklet.
+
+  **New:**
+  - `audio-relay.worker.ts`: purpose-built worker that consumes the transferred `ReadableStream<AudioData>`, extracts f32-planar channels, interleaves with TPDF dither, quantizes to Int16, and sends fixed-size frames over WebSocket.
+  - `keepTabAudible` in MSTP mode uses a low-volume `<audio>` element instead of an AudioContext gain node to avoid reintroducing the clock crossing.
+
+  **Supporting refactors:**
+  - Extracted `worker-base.ts` from `audio-consumer.worker.ts` — shared WebSocket lifecycle, frame queue, backpressure handling, stats/metrics timeline, and common message handling are now reusable across consumer worker implementations.
+  - Added `MetricSnapshot` + `WorkerMetricsDumpMessage` for post-session analysis.
+  - Tightened encoder interface and worker frame-queue types to `Uint8Array<ArrayBuffer>` so encoded audio flows to `WebSocket.send()` without casts (required by TypeScript 5.7+).
+  - Audio relay accumulator now owns its backing `ArrayBuffer` explicitly, matching the PCM encoder pattern and eliminating the last inline cast in the hot path.
+
+- [#90](https://github.com/brew-lab/thaumic-cast/pull/90) [`facd9e8`](https://github.com/brew-lab/thaumic-cast/commit/facd9e8d5814807947193c2fd8e80b566223bb38) Thanks [@skezo](https://github.com/skezo)! - Add WASAPI process-specific loopback capture for browser-wide audio streaming on Windows
+
+  Instead of capturing audio per-tab via the Chrome `tabCapture` API, this adds an alternative mode that captures all audio from the browser process at the OS level using Windows Audio Session API (WASAPI) process loopback. Requires Windows 10 build 20348+.
+
+  **New packages:**
+  - `thaumic-capture` crate: platform-gated WASAPI capture library with `WasapiSource`, browser PID discovery via `CreateToolhelp32Snapshot`, and COM/MMCSS-elevated capture thread
+  - `wasapi-capture` CLI: diagnostic tool that captures N seconds of audio from a PID, outputs Float32 WAV + timing stats for validation
+
+  **Core (`thaumic-core`):**
+  - `capture` module with platform-agnostic `AudioSource`/`AudioSink`/`CaptureHandle` traits and `CaptureSourceFactory` factory pattern (avoids cyclic dependency with `thaumic-capture`)
+  - `StreamSinkBridge` converts Float32 → PCM16 on the capture thread and pushes into existing `StreamRegistry` pipeline
+  - `StreamCoordinator::start_capture_stream()` wires up the full capture → stream path
+  - WebSocket handler adds `START_BROWSER_CAPTURE`, `STOP_BROWSER_CAPTURE`, and async `BROWSER_CAPTURE_ERROR` monitoring (process exit, device disconnect)
+
+  **Desktop app:**
+  - `WasapiCaptureFactory` bridges `thaumic-capture` into core's factory trait
+  - `get_capture_capabilities` Tauri command exposes platform availability to frontend
+
+  **Extension:**
+  - New `captureMode` setting (`tab` | `browser`) with UI toggle in Advanced Settings
+  - Mode exclusivity enforcement (tab and browser capture cannot coexist)
+  - Browser capture flow: sends `START_BROWSER_CAPTURE` over WebSocket, server handles capture — no offscreen AudioWorklet needed
+  - `StreamSession` refactored to handle both capture modes with appropriate teardown
+  - `BROWSER_CAPTURE_ERROR` handling for graceful recovery on capture failures
+
+  **Protocol:**
+  - `BROWSER_CAPTURE_ERROR` message type with Zod schemas added to WebSocket protocol
+
+### Patch Changes
+
+- [#70](https://github.com/brew-lab/thaumic-cast/pull/70) [`48c068f`](https://github.com/brew-lab/thaumic-cast/commit/48c068f1fd3751fa6796997229692167913ba68a) Thanks [@skezo](https://github.com/skezo)! - Refactor connection status handling for better separation of concerns
+
+  **Extension changes:**
+  - Refactor `useConnectionStatus` hook to use reducer pattern for explicit state transitions
+  - Remove i18n translation from hook; return error keys for component-level translation
+  - Separate `WS_STATE_CHANGED` to only carry Sonos state (not connection metadata)
+  - Add `CONNECTION_ATTEMPT_FAILED` message for explicit connection error handling
+  - Replace `connected`/`checking` booleans with `phase` enum (`checking`, `reconnecting`, `connected`, `error`)
+  - Add `canRetry` flag and `retry()` function to connection status
+  - Add reconnecting state with user feedback when connection is temporarily lost
+  - Fix race condition where WebSocket connects before `ENSURE_CONNECTION` response arrives
+
+  **UI changes:**
+  - Add inline action button support to Alert component (`action` and `onAction` props)
+
+- [#97](https://github.com/brew-lab/thaumic-cast/pull/97) [`963170d`](https://github.com/brew-lab/thaumic-cast/commit/963170df0109686df84f47e998b63a1ffb7de6d8) Thanks [@skezo](https://github.com/skezo)! - Bump dev and production dependencies to current major versions: typescript 6, vite 8, i18next 26, react-i18next 17, lucide-preact 1, @changesets/changelog-github 0.6. Adds an `ImportMeta.env` ambient declaration in `@thaumic-cast/shared` so `logger.ts` continues to typecheck under TypeScript 6, and adds `typescript` as a direct devDependency of `@thaumic-cast/extension` so `tsc` resolves locally now that typescript-eslint pins TS 5 and prevents root hoisting.
+
+- [#102](https://github.com/brew-lab/thaumic-cast/pull/102) [`6278e96`](https://github.com/brew-lab/thaumic-cast/commit/6278e96b51cefb87a87aeeed3279d72e8ccb1e9c) Thanks [@skezo](https://github.com/skezo)! - Eliminate scheduling bottleneck in the FLAC consumer worker drain loop
+
+  Removes the 4ms `PROCESS_BUDGET_MS` time cap so the consumer drains every available ring-buffer sample per scheduling slot. On thermally-throttled devices where Chrome reschedules the worker with 100-280ms gaps, the old cap caused a compounding throughput deficit (~12% frame loss on 2-core targets). Adds a matching forward clamp on `nextFrameDueTime` so burst-processed audio time does not register as "ahead of schedule" and yield away the benefit.
+
+  Only affects compressed codec paths that still run through `audio-consumer.worker` (FLAC). The PCM-via-MSTP path uses `audio-relay.worker` and is unaffected.
+
+- [#100](https://github.com/brew-lab/thaumic-cast/pull/100) [`cc4c0a2`](https://github.com/brew-lab/thaumic-cast/commit/cc4c0a2561228940f78e6269a399be77ef660b49) Thanks [@skezo](https://github.com/skezo)! - Default `keepTabAudible` on and declare AUDIO_PLAYBACK intent for the offscreen document
+
+  Flips the `keepTabAudible` setting default from `false` to `true` so Chrome treats the offscreen document as an active audio page, preventing AudioContext suspension and aggressive timer throttling on constrained devices. Also adds `chrome.offscreen.Reason.AUDIO_PLAYBACK` alongside `USER_MEDIA` so the offscreen document's lifecycle intent matches what it actually does.
+
+  Users who had previously toggled this setting off manually will keep their preference (only the default changes).
+
+- [#107](https://github.com/brew-lab/thaumic-cast/pull/107) [`b73b49e`](https://github.com/brew-lab/thaumic-cast/commit/b73b49ea5b15d115cb016f395074891c7f77cc95) Thanks [@skezo](https://github.com/skezo)! - Polish the companion version-mismatch surface introduced in the previous release, and unblock the path that was supposed to surface it for older companions.
+  - Accept `INITIAL_STATE` payloads that omit `groupVolumeFixed`. That field was added after the initial protocol shipped; older companions don't send it, so the extension's `WS_CONNECTED` route rejected their messages at schema validation — `handleWsConnected` never ran, the popup stayed stuck at "Checking…", and the out-of-date warning (the very UI meant for this scenario) never had a chance to render. The `groupVolumeFixed` field now defaults to an empty map when missing, so older-companion payloads validate and the version-mismatch flow fires as designed.
+  - Prevent the out-of-date warning Alert from briefly flashing on every initial connection. The popup was flipping `phase` to `'connected'` optimistically on `WS_STATE_CHANGED` before the async fetch that carries the companion metadata resolved, so `protocolVersion` was transiently `null` and the mismatch helper would light up the Alert for a single render. The connection-status hook now only transitions to `'connected'` via the metadata-bearing `CACHED_STATE_RECEIVED`, applying phase and metadata atomically. The companion-version hook additionally gates on `phase === 'connected'` so no flash window can open between discovery and WebSocket `INITIAL_STATE`.
+  - Gate the Alert on the persisted dismissal record having loaded, closing a smaller race where a previously-dismissed warning briefly reappeared on popup open before `chrome.storage.local` resolved.
+  - Rename the protocol line in the extension About card and the desktop Settings About card from `Protocol v{{version}}` to `Protocol · Version {{version}}`, matching the adjacent `Desktop App · Version {{version}}` / `Version {{version}}` format.
+
+- [#104](https://github.com/brew-lab/thaumic-cast/pull/104) [`addbb4a`](https://github.com/brew-lab/thaumic-cast/commit/addbb4af190bec5298156449ddad561c61dd9c35) Thanks [@skezo](https://github.com/skezo)! - Bump `@preact/preset-vite` to 2.10.5 and `@crxjs/vite-plugin` to 2.4.0 to silence Vite 8 deprecation warnings — `vite:preact-jsx`, `crx:content-scripts`, and `crx:web-accessible-resources` no longer set the deprecated `esbuild` option. The `rollupOptions`/`rolldownOptions` conflict from `crx:content-scripts` remains and is tracked upstream as crxjs/chrome-extension-tools#1145.
+
+- [#98](https://github.com/brew-lab/thaumic-cast/pull/98) [`c377372`](https://github.com/brew-lab/thaumic-cast/commit/c377372324dee2ad56d65e406de0b61fffa11692) Thanks [@skezo](https://github.com/skezo)! - Fix "Session init timed out" when casting with WASAPI browser capture and the PCM codec
+
+  After the MSTP PCM pipeline landed, `startWorker()` selected the worker purely by codec: PCM → `audio-relay.worker.ts`, everything else → `audio-consumer.worker.ts`. But `audio-relay.worker.ts` only knows how to consume a transferred `ReadableStream<AudioData>` from `MediaStreamTrackProcessor` — it has no handler for `INIT_BROWSER_CAPTURE`. So when a user enabled WASAPI browser-wide capture with the PCM codec, the offscreen document spawned the MSTP worker, posted `INIT_BROWSER_CAPTURE`, and the message was silently dropped. The WebSocket never opened, the connection promise never resolved, and init timed out.
+
+  Worker selection now mirrors the capture-mode branching already present further down in `startWorker()`: the MSTP relay is used only for `captureMode === 'tab'` + PCM, and `audio-consumer.worker.ts` handles all browser-capture sessions regardless of codec. The latter already implements the WS-lifecycle-only browser-capture path, so no worker logic needs to move.
+
+- [#105](https://github.com/brew-lab/thaumic-cast/pull/105) [`32ae247`](https://github.com/brew-lab/thaumic-cast/commit/32ae2471d81ace318b32080badceb578b8019ae5) Thanks [@skezo](https://github.com/skezo)! - Rename `streamingBufferMs` setting to `jitterBufferMs` across the stack
+
+  Pure rename — no behavior change. Every value, default, clamp range, and UI option stays the same. Identifier updated on the protocol, core, extension, and desktop surfaces, plus docstrings and the one user-facing label ("Streaming Buffer" → "Jitter Buffer"). The setting has always functioned as a jitter buffer (holding PCM frames to smooth WebSocket-to-Sonos delivery variance), so the name now matches the role.
+
+  Sets up a follow-up change that turns this from a passive sizing hint into an active fill-gate / refill-on-underrun state machine.
+
+- [#72](https://github.com/brew-lab/thaumic-cast/pull/72) [`8e409b6`](https://github.com/brew-lab/thaumic-cast/commit/8e409b6ac9a1297cde61a3faee5c2336b10c2437) Thanks [@skezo](https://github.com/skezo)! - Add opt-in setting for synchronized multi-speaker playback
+
+  Synchronized group playback is now controlled by a user setting rather than being automatic. This allows users who prefer independent streams (and are okay with potential audio drift) to keep their existing Sonos speaker groupings unchanged.
+
+  **Changes:**
+  - Add "Synchronize speakers" toggle in Options > Advanced section
+  - Add `syncSpeakers` field to extension settings (default: false)
+  - Thread `syncSpeakers` flag through the message chain from extension to server
+  - Store `syncSpeakers` preference in session for resume/reconnect scenarios
+  - Server uses independent playback when `syncSpeakers` is false
+
+  **Behavior:**
+  - Setting disabled (default): Each speaker receives independent streams
+  - Setting enabled: Speakers are grouped via x-rincon protocol for perfect sync
+  - Single speaker casts are unaffected by this setting
+  - Resume after pause respects the original sync preference from cast start
+
+- Updated dependencies [[`48c068f`](https://github.com/brew-lab/thaumic-cast/commit/48c068f1fd3751fa6796997229692167913ba68a), [`77a19e2`](https://github.com/brew-lab/thaumic-cast/commit/77a19e21150e6b7cd35af44fb3bd6d47edc4d636), [`963170d`](https://github.com/brew-lab/thaumic-cast/commit/963170df0109686df84f47e998b63a1ffb7de6d8), [`b73b49e`](https://github.com/brew-lab/thaumic-cast/commit/b73b49ea5b15d115cb016f395074891c7f77cc95), [`a01a1c4`](https://github.com/brew-lab/thaumic-cast/commit/a01a1c4bd61ff52bddb5d244ca8361fd0a127351), [`153a447`](https://github.com/brew-lab/thaumic-cast/commit/153a44754061c3d57d101d227d4654a863f201d9), [`32ae247`](https://github.com/brew-lab/thaumic-cast/commit/32ae2471d81ace318b32080badceb578b8019ae5), [`f958485`](https://github.com/brew-lab/thaumic-cast/commit/f9584852e7e2649435ff231d01352195c65c59d9), [`facd9e8`](https://github.com/brew-lab/thaumic-cast/commit/facd9e8d5814807947193c2fd8e80b566223bb38)]:
+  - @thaumic-cast/ui@3.0.0
+  - @thaumic-cast/protocol@0.5.0
+  - @thaumic-cast/shared@0.1.0
+
 ## 0.11.0
 
 ### Minor Changes
