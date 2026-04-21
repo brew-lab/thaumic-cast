@@ -5,10 +5,14 @@
  * the cached snapshot from the background on mount and updates on every
  * `CAPTURE_HEALTH_CHANGED` broadcast.
  *
- * Dismissal is keyed on `detectedAt` and persisted in `chrome.storage.local`
- * so popup close/reopen during a sustained degraded session doesn't
- * resurrect the dismissed alert. Each rising edge carries a new `detectedAt`,
- * so re-arming on a fresh event is automatic.
+ * Alerts are sticky: once shown, they only clear on user dismissal or when
+ * the cast session ends (background broadcasts a cleared state). Recoveries
+ * within a session don't auto-hide.
+ *
+ * Dismissal is keyed on `detectedAt` and persisted in `chrome.storage.local`,
+ * so popup close/reopen during an un-dismissed alert keeps the alert visible.
+ * Each rising edge carries a new `detectedAt`, so a fresh detection after
+ * dismissal naturally re-arms.
  */
 
 import { useCallback, useEffect, useRef, useState } from 'preact/hooks';
@@ -90,8 +94,11 @@ export function useCaptureHealth(): UseCaptureHealthResult {
   }, [health.detectedAt]);
 
   // Suppress until dismissedAt has loaded, otherwise a previously-dismissed
-  // event would flash the alert on every popup open.
-  const showAlert = dismissedLoaded && health.degraded && health.detectedAt !== dismissedAt;
+  // event would flash the alert on every popup open. Alert is decoupled from
+  // `health.degraded` — sticky behavior means we show whenever there's an
+  // un-dismissed detection event, regardless of current degraded status.
+  const showAlert =
+    dismissedLoaded && health.detectedAt !== null && health.detectedAt !== dismissedAt;
 
   return { showAlert, dismiss };
 }

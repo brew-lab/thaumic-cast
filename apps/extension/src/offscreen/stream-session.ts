@@ -842,8 +842,10 @@ export class StreamSession {
   }
 
   /**
-   * Fires `onHealthChanged` on two consecutive above-threshold windows (rising)
-   * or a single below-threshold window (falling). Tab-capture + PCM only.
+   * Fires `onHealthChanged` on two consecutive above-threshold windows (rising
+   * edge only). Internal state still flips on recovery so a future rising edge
+   * can re-fire, but alerts are sticky on the popup side and don't auto-clear.
+   * Tab-capture + PCM only.
    * @param gapsThisTick - gap count reported in the latest STATS message
    */
   private evaluateCaptureHealth(gapsThisTick: number): void {
@@ -862,11 +864,10 @@ export class StreamSession {
     const aboveThreshold = windowSum >= GAP_THRESHOLD;
 
     if (this.isDegraded) {
-      // Falling edge: degraded → healthy once the window clears.
-      if (!aboveThreshold) {
-        this.isDegraded = false;
-        this.onHealthChanged?.({ degraded: false, detectedAt: Date.now() });
-      }
+      // Recovery: flip internal state silently so the next rising edge can
+      // fire again. We don't broadcast — alerts are sticky and only clear on
+      // user dismissal or session end.
+      if (!aboveThreshold) this.isDegraded = false;
       return;
     }
 
