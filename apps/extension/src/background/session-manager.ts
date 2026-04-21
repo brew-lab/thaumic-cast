@@ -18,6 +18,7 @@ import { createLogger } from '@thaumic-cast/shared';
 import { getCachedState } from './metadata-cache';
 import { notifyPopup } from './notification-service';
 import { persistenceManager } from './persistence-manager';
+import { captureHealthBroadcast, clearCaptureHealthForTab } from './capture-health-state';
 
 const log = createLogger('SessionManager');
 
@@ -185,6 +186,12 @@ export function removeSession(tabId: number): void {
     // Release keep-awake when no sessions remain
     if (sessions.size === 0) {
       releaseKeepAwake();
+    }
+
+    // Drop any capture-health state tied to this session so the popup's
+    // alert clears as soon as the cast stops.
+    if (clearCaptureHealthForTab(tabId)) {
+      notifyPopup(captureHealthBroadcast());
     }
 
     persistSessions();

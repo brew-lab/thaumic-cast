@@ -208,6 +208,14 @@ export function setupMessageHandlers(): void {
         if (existing) {
           existing.stop();
           activeSessions.delete(tabId);
+          chrome.runtime
+            .sendMessage({
+              type: 'CAPTURE_HEALTH_EVENT',
+              tabId,
+              degraded: false,
+              detectedAt: Date.now(),
+            })
+            .catch(noop);
         }
 
         // Enforce global offscreen limit
@@ -270,6 +278,14 @@ export function setupMessageHandlers(): void {
           log.info(`Stopping existing session for tab ${tabId} before restart`);
           existing.stop();
           activeSessions.delete(tabId);
+          chrome.runtime
+            .sendMessage({
+              type: 'CAPTURE_HEALTH_EVENT',
+              tabId,
+              degraded: false,
+              detectedAt: Date.now(),
+            })
+            .catch(noop);
         }
 
         // Enforce global offscreen limit
@@ -299,6 +315,17 @@ export function setupMessageHandlers(): void {
               chrome.runtime.sendMessage({ type: 'SESSION_DISCONNECTED', tabId }).catch(noop);
             };
 
+            const onHealthChanged = (health: { degraded: boolean; detectedAt: number }) => {
+              chrome.runtime
+                .sendMessage({
+                  type: 'CAPTURE_HEALTH_EVENT',
+                  tabId,
+                  degraded: health.degraded,
+                  detectedAt: health.detectedAt,
+                })
+                .catch(noop);
+            };
+
             const session = StreamSession.forTabCapture(
               stream,
               encoderConfig,
@@ -306,6 +333,7 @@ export function setupMessageHandlers(): void {
               onDisconnected,
               {
                 keepTabAudible,
+                onHealthChanged,
               },
             );
             try {

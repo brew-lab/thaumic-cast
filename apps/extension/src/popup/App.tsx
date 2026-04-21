@@ -25,6 +25,7 @@ import { useOnboarding } from './hooks/useOnboarding';
 import { useExtensionSettingsListener } from './hooks/useExtensionSettingsListener';
 import { useSpeakerSelection } from './hooks/useSpeakerSelection';
 import { useCompanionVersion } from './hooks/useCompanionVersion';
+import { useCaptureHealth } from './hooks/useCaptureHealth';
 import { companionTypeLabelKey, versionMismatchActionKey } from '../lib/versionCheck';
 import { Onboarding } from './components/Onboarding';
 
@@ -124,6 +125,10 @@ function MainPopup(): JSX.Element {
   // Companion version mismatch warning
   const { companion, hasMismatch, showMismatchWarning, dismissMismatchWarning } =
     useCompanionVersion(connection);
+
+  // Capture-health alert (LoopbackStream frame drops on low-core Windows)
+  const { showAlert: showCaptureHealthAlert, dismiss: dismissCaptureHealthAlert } =
+    useCaptureHealth();
 
   const handleOpenReleases = useCallback(() => {
     chrome.tabs.create({ url: GITHUB_RELEASES_URL });
@@ -321,6 +326,18 @@ function MainPopup(): JSX.Element {
           {t(`network.${networkHealthReason}`, {
             defaultValue: t('network.speakers_not_responding'),
           })}
+        </Alert>
+      )}
+
+      {wsConnected && showCaptureHealthAlert && (
+        <Alert
+          variant="warning"
+          className={styles.alert}
+          action={t('capture_health_action_open_settings')}
+          onAction={openSettings}
+          onDismiss={dismissCaptureHealthAlert}
+        >
+          {t('capture_health_frame_drops_message')}
         </Alert>
       )}
 

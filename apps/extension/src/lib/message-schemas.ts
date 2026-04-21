@@ -478,6 +478,40 @@ export const NetworkHealthChangedMessageSchema = z.object({
 });
 export type NetworkHealthChangedMessage = z.infer<typeof NetworkHealthChangedMessageSchema>;
 
+/**
+ * Capture-health event (offscreen → background). Fired when `StreamSession`
+ * detects a transition between healthy and degraded tab-capture, where
+ * degraded = Chrome's LoopbackStream is dropping AudioData frames on a
+ * low-core Windows device. Only emitted on tab-capture + PCM sessions.
+ */
+export const CaptureHealthEventMessageSchema = z.object({
+  type: z.literal('CAPTURE_HEALTH_EVENT'),
+  tabId: TabIdSchema,
+  degraded: z.boolean(),
+  /** `Date.now()` timestamp at which the edge was observed. */
+  detectedAt: z.number(),
+});
+export type CaptureHealthEventMessage = z.infer<typeof CaptureHealthEventMessageSchema>;
+
+/**
+ * Capture-health broadcast (background → popup). Mirrors
+ * NETWORK_HEALTH_CHANGED. `detectedAt` lets the popup treat each rising edge
+ * as a fresh event for dismissal purposes.
+ */
+export const CaptureHealthChangedMessageSchema = z.object({
+  type: z.literal('CAPTURE_HEALTH_CHANGED'),
+  degraded: z.boolean(),
+  tabId: TabIdSchema.nullable(),
+  detectedAt: z.number().nullable(),
+});
+export type CaptureHealthChangedMessage = z.infer<typeof CaptureHealthChangedMessageSchema>;
+
+/** Popup → background query for current capture-health snapshot. */
+export const GetCaptureHealthMessageSchema = z.object({
+  type: z.literal('GET_CAPTURE_HEALTH'),
+});
+export type GetCaptureHealthMessage = z.infer<typeof GetCaptureHealthMessageSchema>;
+
 export const LatencyUpdateMessageSchema = z.object({
   type: z.literal('LATENCY_UPDATE'),
   streamId: z.string(),

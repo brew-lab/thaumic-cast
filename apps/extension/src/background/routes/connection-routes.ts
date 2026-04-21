@@ -7,6 +7,7 @@
 
 import { registerRoute, registerValidatedRoute } from '../router';
 import { getConnectionState } from '../connection-state';
+import { getCaptureHealthState } from '../capture-health-state';
 import { ensureConnection, handleWsConnectRequest } from '../handlers/connection';
 import { offscreenBroker } from '../offscreen-broker';
 import { WsConnectMessageSchema, WsReconnectMessageSchema } from '../../lib/message-schemas';
@@ -17,6 +18,10 @@ import { WsConnectMessageSchema, WsReconnectMessageSchema } from '../../lib/mess
 export function registerConnectionRoutes(): void {
   registerRoute('GET_CONNECTION_STATUS', () => {
     return getConnectionState();
+  });
+
+  registerRoute('GET_CAPTURE_HEALTH', () => {
+    return getCaptureHealthState();
   });
 
   registerRoute('ENSURE_CONNECTION', async () => {

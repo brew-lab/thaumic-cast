@@ -27,9 +27,15 @@ import {
   TopologyEventMessageSchema,
   SessionDisconnectedMessageSchema,
   BrowserCaptureErrorMessageSchema,
+  CaptureHealthEventMessageSchema,
 } from '../../lib/message-schemas';
 import { stopCastForTab } from '../sonos-event-handlers';
 import { notifyPopup } from '../notification-service';
+import {
+  applyCaptureHealthEvent,
+  captureHealthBroadcast,
+  clearCaptureHealthForTab,
+} from '../capture-health-state';
 import type { CastAutoStopReason } from '../../lib/message-schemas';
 
 const log = createLogger('OffscreenRoutes');
@@ -86,8 +92,19 @@ export function registerOffscreenRoutes(): void {
     if (hasSession(tabId)) {
       log.warn(`Session for tab ${tabId} disconnected unexpectedly`);
       removeSession(tabId);
+    } else if (clearCaptureHealthForTab(tabId)) {
+      // Session never reached START_PLAYBACK — removeSession skipped it, so
+      // drop capture-health state directly to avoid a stale degraded alert.
+      notifyPopup(captureHealthBroadcast());
     }
 
+    return { success: true };
+  });
+
+  registerValidatedRoute('CAPTURE_HEALTH_EVENT', CaptureHealthEventMessageSchema, (msg) => {
+    if (applyCaptureHealthEvent(msg.tabId, msg.degraded, msg.detectedAt)) {
+      notifyPopup(captureHealthBroadcast());
+    }
     return { success: true };
   });
 
