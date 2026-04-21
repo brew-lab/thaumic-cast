@@ -207,7 +207,7 @@
   "sync_speakers_description": "When casting to multiple speakers, group them for perfectly synchronized playback. May temporarily rearrange your Sonos speaker groupings.",
   "capture_mode_browser_enable": "Browser-wide capture",
   "capture_mode_browser_description": "Captures all audio from the browser process. Eliminates frame drops but streams all tabs as one source. Requires the desktop app on Windows 10 21H2+.",
-  "capture_health_frame_drops_message": "Audio stuttering detected. Open settings and enable Browser-wide capture under Advanced for smoother playback.",
+  "capture_health_frame_drops_message": "The audio doesn't seem to be having a good day. Browser-wide capture often sorts that out.",
   "capture_health_action_open_settings": "Open settings",
   "video_sync": "Video Sync",
   "video_sync_toggle": "Sync video to audio",
