@@ -39,6 +39,14 @@ export const WAIT_TIMEOUT_MS = 200;
 /** Interval for posting diagnostic stats to main thread (ms). */
 export const STATS_INTERVAL_MS = 2000;
 
+/**
+ * Minimum AudioData-timestamp gap (µs) that counts as a real capture drop.
+ * Chrome's LoopbackStream drops whole AudioData frames (~9188µs at 48kHz) on
+ * low-core Windows devices; healthy hardware emits only sub-ms jitter, so
+ * 5000µs (≈ half a frame) is a comfortable discriminator.
+ */
+export const AUDIO_GAP_THRESHOLD_US = 5000;
+
 /** Heartbeat interval for WebSocket (ms). */
 export const HEARTBEAT_INTERVAL_MS = 5000;
 
@@ -85,6 +93,10 @@ export interface CustomMetrics {
   avgSamplesPerWake: number;
   /** Current encoder queue depth. */
   encodeQueueSize: number;
+  /** AudioData timestamp gaps exceeding AUDIO_GAP_THRESHOLD_US (MSTP path only). */
+  gapCount?: number;
+  /** Total gap duration (µs) for this interval (MSTP path only). */
+  gapDurationUs?: number;
 }
 
 /**
@@ -430,6 +442,8 @@ export function maybePostStats(
     frameQueueSize: s.frameQueue.length,
     frameQueueBytes: s.frameQueueBytes,
     frameQueueOverflowDrops: s.frameQueueOverflowDrops,
+    gapCount: custom.gapCount ?? 0,
+    gapDurationUs: custom.gapDurationUs ?? 0,
   });
 
   // Reset shared interval counters

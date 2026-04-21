@@ -27,6 +27,7 @@ import {
   BACKPRESSURE_BACKOFF_MAX_MS,
   QUALITY_BACKOFF_MAX_MS,
   FRAME_QUEUE_MAX_BYTES,
+  AUDIO_GAP_THRESHOLD_US,
 } from './worker-base';
 import {
   getStreamingPolicy,
@@ -57,8 +58,10 @@ let accum: Int16Array | null = null;
 let accumOffset = 0;
 let accumView: Uint8Array<ArrayBuffer> | null = null;
 
-// Gaps in AudioData timestamps represent clock reporting jitter, NOT missing
-// audio — the capture device delivers continuous samples.
+// Gaps > AUDIO_GAP_THRESHOLD_US in AudioData timestamps indicate real
+// capture drops from Chrome's LoopbackStream on low-core Windows devices
+// (one AudioData frame = ~9188µs at 48kHz). Sub-threshold deltas are
+// clock-reporting jitter and are ignored.
 let expectedNextTimestamp = -1;
 let loggedFirstFrame = false;
 
@@ -199,7 +202,7 @@ function processAudioData(audioData: AudioData): void {
 
     if (expectedNextTimestamp >= 0 && ts > 0) {
       const gap = ts - expectedNextTimestamp;
-      if (Math.abs(gap) > 100) {
+      if (Math.abs(gap) > AUDIO_GAP_THRESHOLD_US) {
         gapCount++;
         gapDurationUs += Math.abs(gap);
       }
@@ -278,14 +281,13 @@ function getCustomMetrics(): CustomMetrics {
     wakeups: wakeupCount,
     avgSamplesPerWake: wakeupCount > 0 ? totalSamplesRead / wakeupCount : 0,
     encodeQueueSize: 0,
+    gapCount,
+    gapDurationUs,
   };
 }
 
-/** Resets per-interval counters after stats are posted; logs a debug line if timestamp gaps occurred. */
+/** Resets per-interval counters after stats are posted. */
 function resetCustomCounters(): void {
-  if (gapCount > 0) {
-    s.log.debug(`AudioData gaps: ${gapCount} gaps, ${(gapDurationUs / 1000).toFixed(1)}ms total`);
-  }
   wakeupCount = 0;
   totalSamplesRead = 0;
   droppedFrameCount = 0;

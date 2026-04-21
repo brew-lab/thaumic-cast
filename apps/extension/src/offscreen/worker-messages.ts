@@ -169,6 +169,10 @@ export interface WorkerStatsMessage {
   frameQueueBytes: number;
   /** Frames dropped due to queue overflow. */
   frameQueueOverflowDrops: number;
+  /** AudioData timestamp gaps this interval (MSTP path only, undefined elsewhere). */
+  gapCount?: number;
+  /** Total gap duration (µs) this interval (MSTP path only, undefined elsewhere). */
+  gapDurationUs?: number;
 }
 
 /** A single metrics snapshot captured during streaming. */

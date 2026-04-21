@@ -48,6 +48,11 @@ const HEALTHY_STATS_LOG_INTERVAL = 30000;
 /** Minimum gain value to keep Chrome's audio detection active without audible sound. */
 const KEEP_AUDIBLE_GAIN = 0.0001;
 
+/** Capture-health detector: ring size in STATS ticks (3 × 2s = 6s window). */
+const GAP_WINDOW_TICKS = 3;
+/** Capture-health detector: drops-in-window threshold for sustained loss. */
+const GAP_THRESHOLD = 3;
+
 /**
  * Manages an active capture session.
  *
@@ -133,6 +138,18 @@ export class StreamSession {
   private totalConsumerDrops = 0;
   private totalUnderflows = 0;
   private totalFrameQueueDrops = 0;
+  // Capture-health detector (tab+PCM only — LoopbackStream frame-drop signal).
+  /** Ring of per-interval gap counts (one entry per STATS tick). */
+  private gapHistory: number[] = [];
+  /** Current degradation state (edge-triggered; only fires on transitions). */
+  private isDegraded = false;
+  /**
+   * Set when an above-threshold window is seen; requires a second consecutive
+   * above-threshold window to confirm and fire. One-tick debounce — suppresses
+   * a spike that lands on the first full window (warm-up) and shifts out on
+   * the next evaluation before anything else above-threshold arrives.
+   */
+  private pendingDegraded = false;
 
   /** Last time we logged diagnostics (for rate-limiting when healthy). */
   private lastDiagLogTime = 0;
@@ -142,6 +159,9 @@ export class StreamSession {
 
   /** Callback when server reports a capture error (browser capture mode only). */
   private onError?: (error: string, reason?: string) => void;
+
+  /** Tab-capture + PCM only — no signal on other codec paths. */
+  private onHealthChanged?: (health: { degraded: boolean; detectedAt: number }) => void;
 
   /** Whether to play audio at low volume to prevent Chrome throttling. */
   private keepTabAudible: boolean;
@@ -169,6 +189,7 @@ export class StreamSession {
    * @param onDisconnected - Optional callback when worker WebSocket disconnects
    * @param options - Additional session options
    * @param options.keepTabAudible - Play audio at low volume to prevent Chrome throttling
+   * @param options.onHealthChanged - Capture-health transition callback (tab+PCM only)
    * @returns A new StreamSession configured for tab audio capture
    */
   static forTabCapture(
@@ -176,7 +197,10 @@ export class StreamSession {
     encoderConfig: EncoderConfig,
     baseUrl: string,
     onDisconnected?: () => void,
-    options?: { keepTabAudible?: boolean },
+    options?: {
+      keepTabAudible?: boolean;
+      onHealthChanged?: (health: { degraded: boolean; detectedAt: number }) => void;
+    },
   ): StreamSession {
     return new StreamSession({
       captureMode: 'tab',
@@ -185,6 +209,7 @@ export class StreamSession {
       baseUrl,
       onDisconnected,
       keepTabAudible: options?.keepTabAudible,
+      onHealthChanged: options?.onHealthChanged,
     });
   }
 
@@ -226,6 +251,7 @@ export class StreamSession {
    * @param config.baseUrl - Desktop app base URL
    * @param config.onDisconnected - Optional callback when worker WebSocket disconnects
    * @param config.onError - Optional callback when server reports a capture error
+   * @param config.onHealthChanged - Capture-health transition callback (tab capture + PCM only)
    * @param config.keepTabAudible - Play audio at low volume to prevent Chrome throttling (tab capture only)
    * @param config.browserName - Browser executable name for PID lookup (browser capture only)
    */
@@ -236,6 +262,7 @@ export class StreamSession {
     baseUrl: string;
     onDisconnected?: () => void;
     onError?: (error: string, reason?: string) => void;
+    onHealthChanged?: (health: { degraded: boolean; detectedAt: number }) => void;
     keepTabAudible?: boolean;
     browserName?: string;
   }) {
@@ -245,6 +272,7 @@ export class StreamSession {
     this.baseUrl = config.baseUrl;
     this.onDisconnected = config.onDisconnected;
     this.onError = config.onError;
+    this.onHealthChanged = config.onHealthChanged;
     this.keepTabAudible = config.keepTabAudible ?? false;
     this.browserName = config.browserName;
 
@@ -661,6 +689,8 @@ export class StreamSession {
           this.totalUnderflows += msg.underflows ?? 0;
           this.totalFrameQueueDrops += msg.frameQueueOverflowDrops ?? 0;
 
+          this.evaluateCaptureHealth(msg.gapCount ?? 0);
+
           if (msg.producerDroppedSamples > 0) {
             log.warn(
               `Audio ring buffer overflow (${msg.producerDroppedSamples} samples)! Encoder or network too slow.`,
@@ -686,12 +716,14 @@ export class StreamSession {
           }
 
           // Rate-limit diagnostic logs: log immediately on issues, otherwise every 30s
+          const gapCount = msg.gapCount ?? 0;
           const hasIssues =
             msg.underflows > 0 ||
             msg.producerDroppedSamples > 0 ||
             msg.catchUpDroppedSamples > 0 ||
             msg.consumerDroppedFrames > 0 ||
-            msg.frameQueueOverflowDrops > 0;
+            msg.frameQueueOverflowDrops > 0 ||
+            gapCount > 0;
           const now = performance.now();
           const timeSinceLastLog = now - this.lastDiagLogTime;
 
@@ -702,7 +734,7 @@ export class StreamSession {
                 `frameQueue=${msg.frameQueueSize ?? 0}/${((msg.frameQueueBytes ?? 0) / 1024).toFixed(0)}KB ` +
                 `underflows=${msg.underflows} producerDrops=${msg.producerDroppedSamples} ` +
                 `catchUpDrops=${msg.catchUpDroppedSamples} consumerDrops=${msg.consumerDroppedFrames} ` +
-                `frameQueueDrops=${msg.frameQueueOverflowDrops ?? 0}`,
+                `frameQueueDrops=${msg.frameQueueOverflowDrops ?? 0} gaps=${gapCount}`,
             );
             this.lastDiagLogTime = now;
           }
@@ -766,6 +798,11 @@ export class StreamSession {
   public stop(): void {
     this.stopHeartbeatChecker();
 
+    // Unwire the health callback before deferring terminate — a late STATS
+    // tick in the 500ms window could otherwise fire a rising-edge event for
+    // a session we're already replacing.
+    this.onHealthChanged = undefined;
+
     if (this.consumerWorker) {
       this.consumerWorker.postMessage({ type: 'STOP' });
       // Defer terminate to allow worker to post METRICS_DUMP back
@@ -801,6 +838,50 @@ export class StreamSession {
       }
 
       this.mediaStream.getTracks().forEach((t) => t.stop());
+    }
+  }
+
+  /**
+   * Fires `onHealthChanged` on two consecutive above-threshold windows (rising)
+   * or a single below-threshold window (falling). Tab-capture + PCM only.
+   * @param gapsThisTick - gap count reported in the latest STATS message
+   */
+  private evaluateCaptureHealth(gapsThisTick: number): void {
+    if (this.captureMode !== 'tab' || this.encoderConfig.codec !== 'pcm') return;
+
+    this.gapHistory.push(gapsThisTick);
+    if (this.gapHistory.length > GAP_WINDOW_TICKS) {
+      this.gapHistory.shift();
+    }
+
+    // Wait until the window is full before evaluating — avoids firing on a
+    // single noisy tick at session start.
+    if (this.gapHistory.length < GAP_WINDOW_TICKS) return;
+
+    const windowSum = this.gapHistory.reduce((a, b) => a + b, 0);
+    const aboveThreshold = windowSum >= GAP_THRESHOLD;
+
+    if (this.isDegraded) {
+      // Falling edge: degraded → healthy once the window clears.
+      if (!aboveThreshold) {
+        this.isDegraded = false;
+        this.onHealthChanged?.({ degraded: false, detectedAt: Date.now() });
+      }
+      return;
+    }
+
+    // Confirmation delay: require two consecutive above-threshold windows
+    // before announcing degradation, so single system hitches don't fire.
+    if (aboveThreshold) {
+      if (this.pendingDegraded) {
+        this.isDegraded = true;
+        this.pendingDegraded = false;
+        this.onHealthChanged?.({ degraded: true, detectedAt: Date.now() });
+      } else {
+        this.pendingDegraded = true;
+      }
+    } else {
+      this.pendingDegraded = false;
     }
   }
 

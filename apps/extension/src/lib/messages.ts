@@ -135,6 +135,12 @@ export {
   type NetworkEventMessage,
   NetworkHealthChangedMessageSchema,
   type NetworkHealthChangedMessage,
+  CaptureHealthEventMessageSchema,
+  type CaptureHealthEventMessage,
+  CaptureHealthChangedMessageSchema,
+  type CaptureHealthChangedMessage,
+  GetCaptureHealthMessageSchema,
+  type GetCaptureHealthMessage,
   LatencyUpdateMessageSchema,
   type LatencyUpdateMessage,
   LatencyStaleMessageSchema,
@@ -211,6 +217,7 @@ import type {
   WsConnectionLostMessage,
   ConnectionAttemptFailedMessage,
   NetworkHealthChangedMessage,
+  CaptureHealthChangedMessage,
   LatencyUpdateMessage,
   LatencyStaleMessage,
   VideoSyncStateChangedMessage,
@@ -233,6 +240,7 @@ import type {
   WsPermanentlyDisconnectedMessage,
   SonosEventMessage,
   NetworkEventMessage,
+  CaptureHealthEventMessage,
   TopologyEventMessage,
   OffscreenReadyMessage,
   SessionDisconnectedMessage,
@@ -251,6 +259,7 @@ export type PopupToBackgroundType =
   | 'GET_CAST_STATUS'
   | 'GET_SONOS_STATE'
   | 'GET_CONNECTION_STATUS'
+  | 'GET_CAPTURE_HEALTH'
   | 'GET_CURRENT_TAB_STATE'
   | 'GET_ACTIVE_CASTS'
   | 'ENSURE_CONNECTION'
@@ -279,6 +288,7 @@ export type BackgroundToPopupType =
   | 'WS_CONNECTION_LOST'
   | 'CONNECTION_ATTEMPT_FAILED'
   | 'NETWORK_HEALTH_CHANGED'
+  | 'CAPTURE_HEALTH_CHANGED'
   | 'LATENCY_UPDATE'
   | 'LATENCY_STALE';
 
@@ -342,6 +352,7 @@ export type PopupToBackgroundMessage =
   | { type: 'GET_CAST_STATUS' }
   | GetSonosStateMessage
   | { type: 'GET_CONNECTION_STATUS' }
+  | { type: 'GET_CAPTURE_HEALTH' }
   | { type: 'GET_CURRENT_TAB_STATE' }
   | GetActiveCastsMessage
   | EnsureConnectionMessage
@@ -373,6 +384,7 @@ export type BackgroundToPopupMessage =
   | WsConnectionLostMessage
   | ConnectionAttemptFailedMessage
   | NetworkHealthChangedMessage
+  | CaptureHealthChangedMessage
   | LatencyUpdateMessage
   | LatencyStaleMessage
   | VideoSyncStateChangedMessage;
@@ -427,6 +439,7 @@ export type OffscreenToBackgroundMessage =
   | WsPermanentlyDisconnectedMessage
   | SonosEventMessage
   | NetworkEventMessage
+  | CaptureHealthEventMessage
   | TopologyEventMessage
   | OffscreenReadyMessage
   | SessionDisconnectedMessage
