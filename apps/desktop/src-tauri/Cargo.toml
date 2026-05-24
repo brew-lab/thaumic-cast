@@ -40,7 +40,7 @@ local-ip-address = "0.6"
 parking_lot = "0.12"
 log = "0.4"
 tokio-stream = { version = "0.1", features = ["sync"] }
-quick-xml = { version = "0.39", features = ["serialize"] }
+quick-xml = { version = "0.40", features = ["serialize"] }
 html-escape = "0.2.13"
 socket2 = { version = "0.6", features = ["all"] }
 rust-i18n = "4"

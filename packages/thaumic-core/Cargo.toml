@@ -27,7 +27,7 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 
 # XML for UPnP/SOAP
-quick-xml = { version = "0.39", features = ["serialize"] }
+quick-xml = { version = "0.40", features = ["serialize"] }
 html-escape = "0.2.13"
 
 # Networking
