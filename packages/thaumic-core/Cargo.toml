@@ -17,7 +17,7 @@ async-stream = "0.3"
 
 # Web framework
 axum = { version = "0.8", features = ["ws"] }
-tower-http = { version = "0.6", features = ["cors", "trace"] }
+tower-http = { version = "0.7", features = ["cors", "trace"] }
 
 # HTTP client
 reqwest = { version = "0.13", features = ["json"] }
@@ -27,13 +27,13 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 
 # XML for UPnP/SOAP
-quick-xml = { version = "0.39", features = ["serialize"] }
+quick-xml = { version = "0.40", features = ["serialize"] }
 html-escape = "0.2.13"
 
 # Networking
 local-ip-address = "0.6"
 socket2 = { version = "0.6", features = ["all"] }
-mdns-sd = "0.19"
+mdns-sd = "0.20"
 
 # Concurrency
 dashmap = "6"
