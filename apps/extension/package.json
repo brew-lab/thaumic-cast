@@ -27,8 +27,8 @@
   "devDependencies": {
     "@preact/preset-vite": "^2.10.5",
     "@crxjs/vite-plugin": "^2.4.0",
-    "@types/chrome": "^0.1.33",
-    "typescript": "^6.0.3",
+    "@types/chrome": "^0.2.2",
+    "typescript": "^7.0.2",
     "vite": "^8.0.8"
   }
 }
