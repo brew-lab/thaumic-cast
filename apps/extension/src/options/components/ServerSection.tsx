@@ -161,6 +161,7 @@ export function ServerSection({ settings, onUpdate }: ServerSectionProps): JSX.E
           />
           <div className={styles.radioContent}>
             <span className={styles.radioLabel}>{t('server_custom_url')}</span>
+            <span className={styles.radioDesc}>{t('server_custom_url_hint')}</span>
           </div>
         </label>
 
