@@ -83,7 +83,7 @@
   "server_url_label": "Server URL",
   "server_url_placeholder": "http://localhost:49400",
   "server_test_connection": "Connect",
-  "server_testing": "Knocking on the door...",
+  "server_testing": "Connecting...",
   "server_status_latency": "{{latency}}ms",
   "server_test_success": "Contact established",
   "server_test_failed": "No response",
