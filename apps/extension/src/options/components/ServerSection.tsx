@@ -161,7 +161,6 @@ export function ServerSection({ settings, onUpdate }: ServerSectionProps): JSX.E
           />
           <div className={styles.radioContent}>
             <span className={styles.radioLabel}>{t('server_custom_url')}</span>
-            <span className={styles.radioDesc}>{t('server_custom_url_hint')}</span>
           </div>
         </label>
 
@@ -193,6 +192,7 @@ export function ServerSection({ settings, onUpdate }: ServerSectionProps): JSX.E
                 {testing ? t('server_testing') : t('server_test_connection')}
               </Button>
             </div>
+            <span className={styles.hint}>{t('server_url_hint')}</span>
 
             {/* Test result */}
             {testResult && (
