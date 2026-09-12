@@ -37,7 +37,6 @@
 use std::thread::{self, JoinHandle};
 
 use tokio::runtime::{Builder, Handle};
-use tokio::sync::oneshot;
 use tokio_util::sync::CancellationToken;
 
 /// Number of worker threads for the streaming runtime.
@@ -62,51 +61,37 @@ pub struct StreamingRuntime {
 impl StreamingRuntime {
     /// Creates a new streaming runtime on dedicated high-priority threads.
     ///
+    /// Callable from any context, including inside another Tokio runtime
+    /// (the headless server calls it from `#[tokio::main]`): nothing here
+    /// blocks. Building a runtime is allowed in async context; only blocking
+    /// on one or dropping it is not, so both happen on a dedicated keeper
+    /// thread that owns the `Runtime` until shutdown.
+    ///
     /// # Errors
     ///
-    /// Returns an error if the runtime thread fails to spawn or initialize.
+    /// Returns an error if the runtime or its keeper thread cannot be created.
     /// Priority elevation failures are logged but don't cause errors.
     pub fn new() -> std::io::Result<Self> {
-        let (tx, rx) = oneshot::channel();
+        let runtime = Builder::new_multi_thread()
+            .worker_threads(STREAMING_WORKER_THREADS)
+            .thread_name("streaming-worker")
+            // Elevate EACH worker thread's priority
+            .on_thread_start(raise_thread_priority)
+            .enable_all()
+            .build()?;
+        let handle = runtime.handle().clone();
+
         let cancel = CancellationToken::new();
         let cancel_clone = cancel.clone();
-
         let thread = thread::Builder::new()
             .name("streaming-runtime".into())
             .spawn(move || {
-                // Build a dedicated multi-threaded Tokio runtime
-                let runtime = Builder::new_multi_thread()
-                    .worker_threads(STREAMING_WORKER_THREADS)
-                    .thread_name("streaming-worker")
-                    .on_thread_start(|| {
-                        // Elevate EACH worker thread's priority
-                        raise_thread_priority();
-                    })
-                    .enable_all()
-                    .build()
-                    .expect("Failed to build streaming runtime");
-
-                let handle = runtime.handle().clone();
-
-                // Send handle back to caller
-                if tx.send(handle).is_err() {
-                    log::error!("Failed to send streaming runtime handle");
-                    return;
-                }
-
-                // Block until shutdown is requested
                 runtime.block_on(async {
                     cancel_clone.cancelled().await;
                     log::info!("Streaming runtime shutting down");
                 });
-
-                // Runtime drops here, stopping all workers
+                // Runtime drops here, on a plain thread, stopping all workers
             })?;
-
-        // Wait for runtime to be ready
-        let handle = rx
-            .blocking_recv()
-            .map_err(|_| std::io::Error::other("Failed to receive streaming runtime handle"))?;
 
         log::info!(
             "Streaming runtime started with {} worker threads",
@@ -358,6 +343,14 @@ mod tests {
 
     /// Test timeout to prevent CI hangs
     const TEST_TIMEOUT: Duration = Duration::from_secs(5);
+
+    /// Regression test: the headless server constructs the runtime from inside
+    /// `#[tokio::main]`, which used to panic.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn runtime_starts_inside_tokio_runtime() {
+        let mut runtime = StreamingRuntime::new().expect("should start from inside a runtime");
+        runtime.shutdown();
+    }
 
     #[test]
     fn runtime_starts_and_stops() {
