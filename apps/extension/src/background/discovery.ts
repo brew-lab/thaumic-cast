@@ -16,6 +16,7 @@
 
 import { DEFAULT_MAX_CONCURRENT_STREAMS, type AppType } from '@thaumic-cast/protocol';
 import { createLogger } from '@thaumic-cast/shared';
+import { hasHostPermission } from '../lib/hostPermission';
 import { loadExtensionSettings } from '../lib/settings';
 import { getConnectionState, setDesktopApp } from './connection-state';
 
@@ -97,6 +98,12 @@ export async function discoverDesktopApp(force = false): Promise<DiscoveredApp |
 
   if (!settings.useAutoDiscover && settings.serverUrl) {
     log.info(`Using custom server URL: ${settings.serverUrl}`);
+    if (!(await hasHostPermission(settings.serverUrl))) {
+      log.warn(
+        `No host permission for ${settings.serverUrl}; open Options → Server and click Test to allow it`,
+      );
+      return null;
+    }
     const app = await probeUrl(settings.serverUrl);
 
     if (app) {

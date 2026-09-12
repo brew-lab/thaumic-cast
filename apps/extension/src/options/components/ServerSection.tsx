@@ -8,6 +8,7 @@ import {
   getServerTestErrorKey,
   type ServerTestResult,
 } from '../../lib/serverTest';
+import { ensureHostPermission, hasHostPermission } from '../../lib/hostPermission';
 import styles from '../Options.module.css';
 
 interface ServerSectionProps {
@@ -49,6 +50,12 @@ export function ServerSection({ settings, onUpdate }: ServerSectionProps): JSX.E
     ]);
     setTestResult(result);
 
+    if (result.success) {
+      // A newly granted host permission doesn't change settings, so nudge the
+      // background to retry discovery with it.
+      await chrome.runtime.sendMessage({ type: 'ENSURE_CONNECTION' });
+    }
+
     setTesting(false);
   }, []);
 
@@ -74,6 +81,10 @@ export function ServerSection({ settings, onUpdate }: ServerSectionProps): JSX.E
 
   /**
    * Saves the URL if changed and optionally tests the connection.
+   *
+   * Reaching a server other than localhost needs a host permission. The Test
+   * button click is a user gesture, so it can show Chrome's prompt; the blur
+   * path cannot, so it only reports that Test must be clicked.
    * @param forceTest - If true, tests even if URL hasn't changed
    */
   const saveAndTest = useCallback(
@@ -85,9 +96,23 @@ export function ServerSection({ settings, onUpdate }: ServerSectionProps): JSX.E
         await onUpdate({ serverUrl: url });
       }
 
-      if (url && (urlChanged || forceTest)) {
-        await handleTestConnection(url);
+      if (!url || !(urlChanged || forceTest)) return;
+
+      if (forceTest) {
+        const permission = await ensureHostPermission(url);
+        if (permission !== 'granted') {
+          setTestResult({
+            success: false,
+            error: permission === 'invalid' ? 'network_failed' : 'permission_denied',
+          });
+          return;
+        }
+      } else if (!(await hasHostPermission(url))) {
+        setTestResult({ success: false, error: 'permission_needed' });
+        return;
       }
+
+      await handleTestConnection(url);
     },
     [urlInput, settings.serverUrl, onUpdate, handleTestConnection],
   );
@@ -136,6 +161,7 @@ export function ServerSection({ settings, onUpdate }: ServerSectionProps): JSX.E
           />
           <div className={styles.radioContent}>
             <span className={styles.radioLabel}>{t('server_custom_url')}</span>
+            <span className={styles.radioDesc}>{t('server_custom_url_hint')}</span>
           </div>
         </label>
 
