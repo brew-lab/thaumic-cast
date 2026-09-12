@@ -16,12 +16,13 @@ const LOCAL_HOSTS = new Set(['localhost', '127.0.0.1', '[::1]']);
 /**
  * Builds the match pattern covering a server URL's host.
  * @param url - The server URL (e.g. `http://192.168.1.50:49400`)
- * @returns The pattern (e.g. `http://192.168.1.50/*`), or null if the URL is not plain http
+ * @returns The pattern (e.g. `http://192.168.1.50/*`), or null if the URL is not http(s)
  */
 function originPattern(url: string): string | null {
   try {
     const parsed = new URL(url);
-    return parsed.protocol === 'http:' ? `http://${parsed.hostname}/*` : null;
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return null;
+    return `${parsed.protocol}//${parsed.hostname}/*`;
   } catch {
     return null;
   }
