@@ -30,6 +30,7 @@ pub use types::{
 
 use mdns_sd::ServiceDaemon;
 use quick_xml::events::Event;
+use quick_xml::name::QName;
 use quick_xml::reader::Reader;
 use reqwest::Client;
 use std::collections::HashMap;
@@ -403,6 +404,18 @@ async fn fetch_device_description(client: &Client, url: &str) -> Option<DeviceIn
     parse_device_description(&body)
 }
 
+/// Reads an element's text content as an owned `String`.
+///
+/// quick-xml 0.41 returns `BytesText` from `read_text`; `decode` yields the
+/// raw (still XML-escaped) text as before, honouring the document encoding.
+fn read_text_string(reader: &mut Reader<&[u8]>, name: QName<'_>) -> Option<String> {
+    reader
+        .read_text(name)
+        .ok()
+        .and_then(|t| t.decode().ok())
+        .map(|t| t.into_owned())
+}
+
 /// Parses device description XML.
 fn parse_device_description(xml: &str) -> Option<DeviceInfo> {
     let mut reader = Reader::from_str(xml);
@@ -420,13 +433,13 @@ fn parse_device_description(xml: &str) -> Option<DeviceInfo> {
 
                 match name {
                     b"UDN" => {
-                        uuid = reader.read_text(e.name()).ok().map(|t| t.to_string());
+                        uuid = read_text_string(&mut reader, e.name());
                     }
                     b"friendlyName" => {
-                        friendly_name = reader.read_text(e.name()).ok().map(|t| t.to_string());
+                        friendly_name = read_text_string(&mut reader, e.name());
                     }
                     b"modelName" => {
-                        model_name = reader.read_text(e.name()).ok().map(|t| t.to_string());
+                        model_name = read_text_string(&mut reader, e.name());
                     }
                     _ => {}
                 }
