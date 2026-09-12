@@ -12,6 +12,7 @@
   },
   "permissions": ["tabCapture", "offscreen", "storage", "activeTab", "power"],
   "host_permissions": ["http://localhost/*"],
+  "optional_host_permissions": ["http://*/*", "https://*/*"],
   "background": {
     "service_worker": "src/background/main.ts",
     "type": "module"

@@ -9,6 +9,7 @@ import {
   getServerTestErrorKey,
   type ServerTestResult,
 } from '../../../lib/serverTest';
+import { ensureHostPermission } from '../../../lib/hostPermission';
 import { saveExtensionSettings } from '../../../lib/settings';
 import styles from './DesktopConnectionStep.module.css';
 
@@ -69,6 +70,18 @@ export function DesktopConnectionStep({
 
     setTesting(true);
     setTestResult(null);
+
+    // Servers other than localhost need a host permission; this click is the
+    // user gesture that lets Chrome show the prompt.
+    const permission = await ensureHostPermission(url);
+    if (permission !== 'granted') {
+      setTestResult({
+        success: false,
+        error: permission === 'invalid' ? 'network_failed' : 'permission_denied',
+      });
+      setTesting(false);
+      return;
+    }
 
     // Ensure loading state shows for at least 400ms to avoid flashing
     const [result] = await Promise.all([

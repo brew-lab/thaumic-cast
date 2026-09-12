@@ -15,7 +15,12 @@ export interface ServerTestResult {
 /**
  * Error types for connection test failures.
  */
-export type ServerTestErrorType = 'network_failed' | 'server_error' | 'wrong_server';
+export type ServerTestErrorType =
+  | 'network_failed'
+  | 'server_error'
+  | 'wrong_server'
+  | 'permission_needed'
+  | 'permission_denied';
 
 /**
  * Maps a server test result to its corresponding i18n error key.
@@ -32,6 +37,10 @@ export function getServerTestErrorKey(result: ServerTestResult): string | null {
       return 'error_server_error';
     case 'wrong_server':
       return 'error_wrong_server';
+    case 'permission_needed':
+      return 'error_permission_needed';
+    case 'permission_denied':
+      return 'error_permission_denied';
     default:
       return 'server_test_failed';
   }
