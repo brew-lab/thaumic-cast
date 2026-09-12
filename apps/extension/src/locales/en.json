@@ -78,7 +78,7 @@
   "server_auto_discover": "Auto-discover",
   "server_auto_discover_hint": "Let the extension find it",
   "server_custom_url": "Specify manually",
-  "server_custom_url_hint": "For a server on another machine. Click Connect; Chrome will ask once to let the extension \"read and change your data\" on that one address, which is how it words access to any site",
+  "server_url_hint": "Click Connect to save and connect. For a server on another machine, Chrome asks once to let the extension \"read and change your data\" on that address, its standard wording for access to any site, limited to that one host.",
   "server_url_label": "Server URL",
   "server_url_placeholder": "http://localhost:49400",
   "server_test_connection": "Connect",
