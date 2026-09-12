@@ -8,6 +8,8 @@
  * - Extension: `package.json` → `manifest.json`
  * - Server: `package.json` → `Cargo.toml`
  * - Core: `package.json` → `Cargo.toml`
+ * - Every Cargo package above: `Cargo.toml` → its `[[package]]` entry in `Cargo.lock`
+ *   (so `cargo build --locked` passes after a release)
  * - Protocol: `package.json` → `websocket.ts`, `protocol_constants.rs`
  *
  * Failure policy: if any regex-based sync can't locate the target declaration
@@ -23,6 +25,20 @@ import { join } from 'node:path';
 
 /** Matches the `version = "…"` declaration in a Cargo.toml `[package]` section. */
 const CARGO_VERSION_REGEX = /^(version\s*=\s*")([^"]+)(")/m;
+
+/** Matches the `name = "…"` declaration in a Cargo.toml `[package]` section. */
+const CARGO_NAME_REGEX = /^name\s*=\s*"([^"]+)"/m;
+
+/**
+ * Builds a regex for a package's `[[package]]` entry in `Cargo.lock`, where the
+ * version is on the line right after the name.
+ *
+ * @param name - Cargo package name
+ * @returns Regex with the version in capture group 2
+ */
+function cargoLockVersionRegex(name: string): RegExp {
+  return new RegExp(`^(\\[\\[package\\]\\]\\nname = "${name}"\\nversion = ")([^"]+)(")`, 'm');
+}
 
 /**
  * Matches the `PROTOCOL_VERSION` constant exported from `@thaumic-cast/protocol`.
@@ -131,6 +147,21 @@ function syncCargoVersion(filePath: string, target: string, label: string): void
     replaceTemplate: `$1${target}$3`,
     target,
     label,
+  });
+
+  // Keep the workspace lockfile in step, otherwise `cargo build --locked`
+  // (release CI, Dockerfile) fails right after a release bump.
+  const name = readFileSync(filePath, 'utf-8').match(CARGO_NAME_REGEX)?.[1];
+  if (!name) {
+    throw new Error(`${label}: package name not found`);
+  }
+  syncRegexFile({
+    filePath: join(ROOT, 'Cargo.lock'),
+    regex: cargoLockVersionRegex(name),
+    versionGroup: 2,
+    replaceTemplate: `$1${target}$3`,
+    target,
+    label: `Cargo.lock (${name})`,
   });
 }
 
