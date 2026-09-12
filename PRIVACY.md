@@ -33,7 +33,9 @@ This data is stored locally on your device using Chrome extension storage.
 
 ## Where data goes
 
-- The extension connects only to a local companion app on your machine (by default `http://localhost`).
+- The extension connects only to your companion app: by default on your machine (`http://localhost`), or, if you
+  point it at a companion elsewhere on your network, only at the address you entered and explicitly allowed through
+  Chrome's permission prompt.
 - The extension streams audio and related control/metadata messages to that companion app over a local connection.
 - From there, audio is streamed to your Sonos speakers on your local network.
 

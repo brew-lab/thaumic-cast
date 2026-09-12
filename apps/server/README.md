@@ -12,7 +12,8 @@ desktop app, so the browser extension can stream to it from any machine on your 
 - Any headless Linux box running as a system service
 
 The extension is normally paired with a desktop app on the same machine. When the server lives elsewhere, point the
-extension at it: **Options → Server → turn off auto-discover → enter `http://<server-ip>:49400` → Test**.
+extension at it: **Options → Server → turn off auto-discover → enter `http://<server-ip>:49400` → Test**, and accept
+Chrome's prompt to allow that address.
 
 ## Network requirements
 
@@ -199,6 +200,7 @@ container's IP and, if you did not set `PASSWORD`, the generated root password. 
    ```
 
 5. **Point the extension at it.** Options → Server → disable auto-discover → `http://<container-ip>:49400` → Test.
+   Chrome asks once to allow the extension to reach that address; accept.
 
 Speakers not showing up? Check the [network requirements](#network-requirements): same VLAN, or mDNS reflected across
 subnets, or add one by IP with `POST /api/speakers/manual` (`{"ip":"192.168.1.50"}`); it is persisted in `data_dir`
@@ -227,8 +229,9 @@ The server exposes the same HTTP/WebSocket API as the desktop app:
 | `GET /artwork.jpg`                   | Album artwork for Sonos display          |
 | `WS /ws`                             | WebSocket for real-time events and audio |
 
-Cross-origin requests are accepted from browser-extension origins (`chrome-extension://`, `moz-extension://`) only, so
-the extension can talk to a remote server while ordinary web pages cannot read API responses.
+The API sends no CORS headers. The extension may talk to `localhost` out of the box; for a server on another machine
+it asks you once, through Chrome's own permission prompt, to allow that address when you click **Test** in its
+settings. Ordinary web pages cannot read API responses.
 
 ## Graceful shutdown
 
