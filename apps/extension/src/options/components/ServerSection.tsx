@@ -82,9 +82,9 @@ export function ServerSection({ settings, onUpdate }: ServerSectionProps): JSX.E
   /**
    * Saves the URL if changed and optionally tests the connection.
    *
-   * Reaching a server other than localhost needs a host permission. The Test
+   * Reaching a server other than localhost needs a host permission. The Connect
    * button click is a user gesture, so it can show Chrome's prompt; the blur
-   * path cannot, so it only reports that Test must be clicked.
+   * path cannot, so it only reports that Connect must be clicked.
    * @param forceTest - If true, tests even if URL hasn't changed
    */
   const saveAndTest = useCallback(
@@ -119,7 +119,7 @@ export function ServerSection({ settings, onUpdate }: ServerSectionProps): JSX.E
 
   const handleUrlBlur = useCallback(
     (e: FocusEvent) => {
-      // Don't save on blur if focus moved to the test button
+      // Don't save on blur if focus moved to the connect button
       const relatedTarget = e.relatedTarget as HTMLElement | null;
       if (relatedTarget?.dataset.serverTest) return;
 

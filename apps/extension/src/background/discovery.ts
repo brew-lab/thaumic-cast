@@ -100,7 +100,7 @@ export async function discoverDesktopApp(force = false): Promise<DiscoveredApp |
     log.info(`Using custom server URL: ${settings.serverUrl}`);
     if (!(await hasHostPermission(settings.serverUrl))) {
       log.warn(
-        `No host permission for ${settings.serverUrl}; open Options → Server and click Test to allow it`,
+        `No host permission for ${settings.serverUrl}; open Options → Server and click Connect to allow it`,
       );
       return null;
     }
