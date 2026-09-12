@@ -37,7 +37,11 @@ pub fn extract_xml_text(xml: &str, element_name: &str) -> Option<String> {
     loop {
         match reader.read_event_into(&mut buf) {
             Ok(Event::Start(ref e)) if e.local_name().as_ref() == target_bytes => {
-                if let Ok(text) = reader.read_text(e.name()) {
+                if let Some(text) = reader
+                    .read_text(e.name())
+                    .ok()
+                    .and_then(|t| t.decode().ok())
+                {
                     let decoded = html_escape::decode_html_entities(&text);
                     return Some(decoded.to_string());
                 }
