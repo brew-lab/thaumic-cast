@@ -457,6 +457,7 @@ export function maybePostStats(
 /**
  * Returns ring buffer control indices.
  * Lazily imported to avoid circular dependency with ring-buffer module.
+ * @returns The control-array index constants
  */
 function getCtrlIndices(): {
   CTRL_WRITE_IDX: number;
