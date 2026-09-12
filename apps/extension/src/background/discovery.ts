@@ -48,6 +48,27 @@ export interface DiscoveredApp {
 const CACHE_TTL = 5 * 60 * 1000;
 
 /**
+ * Explains a failed discovery to the user: a custom server the extension has
+ * no permission to reach is a different problem from a server that is down.
+ * Only called on the failure path, so the permission lookup costs nothing
+ * when discovery succeeds.
+ * @returns The i18n key describing why discovery found nothing
+ */
+export async function discoveryFailureError(): Promise<
+  'error_desktop_not_found' | 'error_permission_needed'
+> {
+  const settings = await loadExtensionSettings();
+  if (
+    !settings.useAutoDiscover &&
+    settings.serverUrl &&
+    !(await hasHostPermission(settings.serverUrl))
+  ) {
+    return 'error_permission_needed';
+  }
+  return 'error_desktop_not_found';
+}
+
+/**
  * Probes a specific URL to check if it's a valid Thaumic Cast Desktop App.
  * @param url - The URL to probe
  * @returns Discovered app info or null if not valid
@@ -98,12 +119,6 @@ export async function discoverDesktopApp(force = false): Promise<DiscoveredApp |
 
   if (!settings.useAutoDiscover && settings.serverUrl) {
     log.info(`Using custom server URL: ${settings.serverUrl}`);
-    if (!(await hasHostPermission(settings.serverUrl))) {
-      log.warn(
-        `No host permission for ${settings.serverUrl}; open Options → Server and click Connect to allow it`,
-      );
-      return null;
-    }
     const app = await probeUrl(settings.serverUrl);
 
     if (app) {

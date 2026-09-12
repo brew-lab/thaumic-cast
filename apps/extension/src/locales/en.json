@@ -33,7 +33,7 @@
   "error_server_error": "The server is having one of those days",
   "error_wrong_server": "That's not the server we're looking for",
   "error_network_failed": "The server remains stubbornly unreachable",
-  "error_permission_needed": "The extension needs your leave to go there. Click Connect.",
+  "error_permission_needed": "The extension needs your leave to reach that server. Open Options and click Connect.",
   "error_permission_denied": "Permission was declined, so the server remains politely out of reach",
   "error_load_settings": "Settings declined to be loaded",
   "error_save_settings": "Settings declined to be saved",
