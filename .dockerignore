@@ -1,0 +1,21 @@
+# Build context for apps/server/Dockerfile (run from the repo root).
+# Only the Cargo workspace is needed; everything else would just invalidate
+# the build layer when it changes.
+.git
+**/node_modules
+**/target
+**/dist
+old
+docs
+conductor
+.claude
+.changeset
+.github
+scripts
+apps/extension
+packages/protocol
+packages/shared
+packages/ui
+bun.lock
+package.json
+*.md

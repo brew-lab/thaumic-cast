@@ -1,0 +1,29 @@
+[Unit]
+Description=Thaumic Cast Server
+Documentation=https://github.com/brew-lab/thaumic-cast
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=thaumic
+Group=thaumic
+ExecStart=/usr/local/bin/thaumic-server --config /etc/thaumic-server/config.yaml
+Environment=THAUMIC_DATA_DIR=/var/lib/thaumic-server
+StateDirectory=thaumic-server
+Restart=on-failure
+RestartSec=5
+
+# Lets the streaming workers raise their scheduling priority (nice -10).
+# Without it the server still runs; it just logs a warning at startup.
+AmbientCapabilities=CAP_SYS_NICE
+CapabilityBoundingSet=CAP_SYS_NICE
+
+# Hardening that needs no mount namespaces. Filesystem sandboxing lives in
+# thaumic-server.service.d/10-sandbox.conf so hosts that cannot create mount
+# namespaces (unprivileged LXC without nesting) can run without it.
+NoNewPrivileges=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_NETLINK
+
+[Install]
+WantedBy=multi-user.target
