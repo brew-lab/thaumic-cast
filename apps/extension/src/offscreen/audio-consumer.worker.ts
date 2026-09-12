@@ -507,6 +507,7 @@ function flushFrameIfReady(): void {
 
 /**
  * Returns worker-specific metrics for stats reporting.
+ * @returns The current custom metrics snapshot
  */
 function getCustomMetrics(): CustomMetrics {
   return {

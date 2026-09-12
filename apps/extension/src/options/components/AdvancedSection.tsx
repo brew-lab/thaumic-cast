@@ -10,6 +10,9 @@ interface AdvancedSectionProps {
   onUpdate: (partial: Partial<ExtensionSettings>) => Promise<void>;
 }
 
+/** Browser capture requires WASAPI (Windows only). */
+const isWindows = navigator.userAgent.includes('Windows');
+
 /**
  * Advanced settings section for experimental features.
  * Includes video sync and keep tab audible options.
@@ -17,15 +20,6 @@ interface AdvancedSectionProps {
  * @param props.settings - Current extension settings
  * @param props.onUpdate - Callback to update settings
  * @returns The advanced section element
- */
-/** Browser capture requires WASAPI (Windows only). */
-const isWindows = navigator.userAgent.includes('Windows');
-
-/**
- *
- * @param root0
- * @param root0.settings
- * @param root0.onUpdate
  */
 export function AdvancedSection({ settings, onUpdate }: AdvancedSectionProps): JSX.Element {
   const { t } = useTranslation();
