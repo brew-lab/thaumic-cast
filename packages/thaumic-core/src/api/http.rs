@@ -9,13 +9,14 @@ use std::path::PathBuf;
 use axum::{
     body::Body,
     extract::{connect_info::ConnectInfo, Path, State},
-    http::{header, HeaderMap, Request, StatusCode},
+    http::{header, HeaderMap, Method, Request, StatusCode},
     response::{IntoResponse, Response},
     routing::{any, get, post},
     Json, Router,
 };
 use serde::Deserialize;
 use serde_json::json;
+use tower_http::cors::{AllowOrigin, CorsLayer};
 
 use super::stream::stream_audio;
 use crate::api::response::{api_error, api_ok, api_success};
@@ -102,7 +103,8 @@ struct ManualSpeakerRequest {
 
 /// Creates the Axum router with all routes.
 pub fn create_router(state: AppState) -> Router {
-    Router::new()
+    // Routes the browser extension calls with `fetch`, so they need CORS.
+    let extension_api = Router::new()
         .route("/health", get(health_check))
         .route("/ready", get(readiness_check))
         .route("/api/speakers", get(list_speakers))
@@ -124,6 +126,12 @@ pub fn create_router(state: AppState) -> Router {
             "/api/speakers/manual/{ip}",
             axum::routing::delete(remove_manual_speaker),
         )
+        .route_layer(cors_layer());
+
+    // Routes reached by Sonos speakers and the WebSocket client. Kept outside
+    // the CORS layer so the audio path carries no middleware.
+    Router::new()
+        .merge(extension_api)
         .route("/sonos/gena", any(handle_gena_notify))
         .route("/stream/{id}/live", get(stream_audio))
         .route("/stream/{id}/live.wav", get(stream_audio))
@@ -131,6 +139,27 @@ pub fn create_router(state: AppState) -> Router {
         .route("/artwork.jpg", get(serve_artwork))
         .route("/ws", get(ws_handler))
         .with_state(state)
+}
+
+/// CORS policy for the HTTP API.
+///
+/// The browser extension runs on a `chrome-extension://` (or `moz-extension://`)
+/// origin. Chrome exempts it from CORS only for hosts listed in its manifest
+/// (`http://localhost/*`), so when the companion runs on another machine, e.g. a
+/// headless server on a NAS, every `fetch` from the extension is a cross-origin
+/// request that needs these headers. Regular web pages are still refused.
+///
+/// Temporary: remove once the extension requests an optional host permission
+/// for the configured server origin, which makes CORS unnecessary.
+fn cors_layer() -> CorsLayer {
+    CorsLayer::new()
+        .allow_origin(AllowOrigin::predicate(|origin, _| {
+            origin.to_str().is_ok_and(|o| {
+                o.starts_with("chrome-extension://") || o.starts_with("moz-extension://")
+            })
+        }))
+        .allow_methods([Method::GET, Method::POST, Method::DELETE])
+        .allow_headers([header::CONTENT_TYPE])
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
