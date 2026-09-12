@@ -4,11 +4,11 @@ import { useTranslation } from 'react-i18next';
 import { Card, Button } from '@thaumic-cast/ui';
 import type { ExtensionSettings } from '../../lib/settings';
 import {
-  testServerConnection,
+  connectToServer,
   getServerTestErrorKey,
   type ServerTestResult,
 } from '../../lib/serverTest';
-import { ensureHostPermission, hasHostPermission } from '../../lib/hostPermission';
+import { releaseHostPermission } from '../../lib/hostPermission';
 import styles from '../Options.module.css';
 
 interface ServerSectionProps {
@@ -18,7 +18,9 @@ interface ServerSectionProps {
 
 /**
  * Server configuration section.
- * Allows user to configure auto-discover or manual server URL.
+ * Allows user to configure auto-discover or manual server URL. Connect is the
+ * only action that changes the configured server, since reaching a server on
+ * another machine needs a permission prompt that only a click can open.
  * @param root0
  * @param root0.settings
  * @param root0.onUpdate
@@ -36,38 +38,18 @@ export function ServerSection({ settings, onUpdate }: ServerSectionProps): JSX.E
   }, [settings.serverUrl]);
 
   /**
-   * Tests connection to the specified server URL.
-   * Uses a minimum delay to prevent the loading state from flashing.
-   */
-  const handleTestConnection = useCallback(async (url: string) => {
-    setTesting(true);
-    setTestResult(null);
-
-    // Ensure loading state shows for at least 400ms to avoid flashing
-    const [result] = await Promise.all([
-      testServerConnection(url),
-      new Promise((resolve) => setTimeout(resolve, 400)),
-    ]);
-    setTestResult(result);
-
-    if (result.success) {
-      // A newly granted host permission doesn't change settings, so nudge the
-      // background to retry discovery with it.
-      await chrome.runtime.sendMessage({ type: 'ENSURE_CONNECTION' });
-    }
-
-    setTesting(false);
-  }, []);
-
-  /**
-   * Handles auto-discover toggle.
+   * Handles auto-discover toggle. Leaving manual mode gives the manual
+   * server's permission back.
    */
   const handleAutoDiscoverChange = useCallback(
     async (useAutoDiscover: boolean) => {
       await onUpdate({ useAutoDiscover });
       setTestResult(null);
+      if (useAutoDiscover && settings.serverUrl) {
+        await releaseHostPermission(settings.serverUrl);
+      }
     },
-    [onUpdate],
+    [onUpdate, settings.serverUrl],
   );
 
   /**
@@ -80,57 +62,26 @@ export function ServerSection({ settings, onUpdate }: ServerSectionProps): JSX.E
   }, []);
 
   /**
-   * Saves the URL if changed and optionally tests the connection.
-   *
-   * Reaching a server other than localhost needs a host permission. The Connect
-   * button click is a user gesture, so it can show Chrome's prompt; the blur
-   * path cannot, so it only reports that Connect must be clicked.
-   * @param forceTest - If true, tests even if URL hasn't changed
+   * Clearing the field forgets the manual server; anything else waits for Connect.
    */
-  const saveAndTest = useCallback(
-    async (forceTest = false) => {
-      const url = urlInput.trim() || null;
-      const urlChanged = url !== settings.serverUrl;
+  const handleUrlBlur = useCallback(async () => {
+    if (urlInput.trim() || !settings.serverUrl) return;
+    const previous = settings.serverUrl;
+    await onUpdate({ serverUrl: null });
+    await releaseHostPermission(previous);
+  }, [urlInput, settings.serverUrl, onUpdate]);
 
-      if (urlChanged) {
-        await onUpdate({ serverUrl: url });
-      }
-
-      if (!url || !(urlChanged || forceTest)) return;
-
-      if (forceTest) {
-        const permission = await ensureHostPermission(url);
-        if (permission !== 'granted') {
-          setTestResult({
-            success: false,
-            error: permission === 'invalid' ? 'network_failed' : 'permission_denied',
-          });
-          return;
-        }
-      } else if (!(await hasHostPermission(url))) {
-        setTestResult({ success: false, error: 'permission_needed' });
-        return;
-      }
-
-      await handleTestConnection(url);
-    },
-    [urlInput, settings.serverUrl, onUpdate, handleTestConnection],
-  );
-
-  const handleUrlBlur = useCallback(
-    (e: FocusEvent) => {
-      // Don't save on blur if focus moved to the connect button
-      const relatedTarget = e.relatedTarget as HTMLElement | null;
-      if (relatedTarget?.dataset.serverTest) return;
-
-      void saveAndTest(false);
-    },
-    [saveAndTest],
-  );
-
-  const handleSaveAndTest = useCallback(() => {
-    void saveAndTest(true);
-  }, [saveAndTest]);
+  /**
+   * Connects to the entered URL and saves it on success.
+   */
+  const handleConnect = useCallback(async () => {
+    const url = urlInput.trim();
+    if (!url) return;
+    setTesting(true);
+    setTestResult(null);
+    setTestResult(await connectToServer(url));
+    setTesting(false);
+  }, [urlInput]);
 
   return (
     <Card title={t('server_section_title')}>
@@ -185,10 +136,9 @@ export function ServerSection({ settings, onUpdate }: ServerSectionProps): JSX.E
               />
               <Button
                 variant="secondary"
-                onClick={handleSaveAndTest}
+                onClick={handleConnect}
                 disabled={testing || !urlInput.trim()}
                 aria-busy={testing}
-                data-server-test="true"
               >
                 {testing ? t('server_testing') : t('server_test_connection')}
               </Button>

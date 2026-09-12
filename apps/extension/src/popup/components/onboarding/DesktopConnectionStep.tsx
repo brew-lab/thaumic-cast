@@ -5,12 +5,10 @@ import { useTranslation } from 'react-i18next';
 import { GITHUB_RELEASES_URL } from '@thaumic-cast/shared';
 import { useConnectionStatus } from '../../hooks/useConnectionStatus';
 import {
-  testServerConnection,
+  connectToServer,
   getServerTestErrorKey,
   type ServerTestResult,
 } from '../../../lib/serverTest';
-import { ensureHostPermission } from '../../../lib/hostPermission';
-import { saveExtensionSettings } from '../../../lib/settings';
 import styles from './DesktopConnectionStep.module.css';
 
 interface DesktopConnectionStepProps {
@@ -61,41 +59,15 @@ export function DesktopConnectionStep({
   }, []);
 
   /**
-   * Tests connection and saves settings on success.
-   * Uses a minimum delay to prevent the loading state from flashing.
+   * Connects to the entered URL; the shared flow saves it on success and the
+   * background picks up the new settings.
    */
-  const handleTestConnection = useCallback(async () => {
+  const handleConnect = useCallback(async () => {
     const url = urlInput.trim();
     if (!url) return;
-
     setTesting(true);
     setTestResult(null);
-
-    // Servers other than localhost need a host permission; this click is the
-    // user gesture that lets Chrome show the prompt.
-    const permission = await ensureHostPermission(url);
-    if (permission !== 'granted') {
-      setTestResult({
-        success: false,
-        error: permission === 'invalid' ? 'network_failed' : 'permission_denied',
-      });
-      setTesting(false);
-      return;
-    }
-
-    // Ensure loading state shows for at least 400ms to avoid flashing
-    const [result] = await Promise.all([
-      testServerConnection(url),
-      new Promise((resolve) => setTimeout(resolve, 400)),
-    ]);
-    setTestResult(result);
-
-    if (result.success) {
-      // Save settings and trigger reconnection
-      await saveExtensionSettings({ serverUrl: url, useAutoDiscover: false });
-      await chrome.runtime.sendMessage({ type: 'ENSURE_CONNECTION' });
-    }
-
+    setTestResult(await connectToServer(url));
     setTesting(false);
   }, [urlInput]);
 
@@ -144,7 +116,7 @@ export function DesktopConnectionStep({
               />
               <Button
                 variant="secondary"
-                onClick={handleTestConnection}
+                onClick={handleConnect}
                 disabled={testing || !urlInput.trim()}
                 aria-busy={testing}
                 fullWidth

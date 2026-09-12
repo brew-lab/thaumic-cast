@@ -15,7 +15,8 @@
 
 import { createLogger } from '@thaumic-cast/shared';
 import type { BackgroundInboundMessage } from '../lib/messages';
-import { ExtensionSettingsSchema } from '../lib/settings';
+import { ExtensionSettingsSchema, loadExtensionSettings } from '../lib/settings';
+import { permissionChangeCovers } from '../lib/hostPermission';
 
 // State management modules (these register themselves with persistenceManager on import)
 import { removeFromCache } from './metadata-cache';
@@ -151,10 +152,32 @@ initPromise.then(() => {
 });
 
 /**
- * Listen for server settings changes and reconnect when they change.
- * This handles the case where user changes server URL or auto-discover mode
- * after the extension has already connected.
+ * Drops the current connection and connects to whatever the server settings
+ * now point at. Runs when the server settings change and when the host
+ * permission for a custom server is granted or revoked, since that server is
+ * only reachable while the permission is held.
  */
+async function reapplyServerConfig(): Promise<void> {
+  log.info('Server settings changed, reconnecting...');
+
+  // Disconnect existing WebSocket before clearing state
+  if (getConnectionState().connected) {
+    await offscreenBroker.disconnectWebSocket().catch(noop);
+  }
+
+  // Clear connection state to force fresh discovery
+  clearConnectionState();
+
+  // Trigger fresh discovery and connection
+  const app = await discoverAndCache(true);
+  if (app) {
+    await connectWebSocket(app.url);
+  }
+
+  // Notify popup of connection state change
+  notifyPopup({ type: 'WS_CONNECTION_LOST', reason: 'settings_changed' });
+}
+
 chrome.storage.local.onChanged.addListener(async (changes) => {
   if (!changes['extensionSettings']) return;
 
@@ -164,28 +187,29 @@ chrome.storage.local.onChanged.addListener(async (changes) => {
   const oldSettings = oldParsed.success ? oldParsed.data : undefined;
   const newSettings = newParsed.success ? newParsed.data : undefined;
 
-  // Check if server-related settings changed
   const serverUrlChanged = oldSettings?.serverUrl !== newSettings?.serverUrl;
   const autoDiscoverChanged = oldSettings?.useAutoDiscover !== newSettings?.useAutoDiscover;
 
   if (serverUrlChanged || autoDiscoverChanged) {
-    log.info('Server settings changed, reconnecting...');
-
-    // Disconnect existing WebSocket before clearing state
-    if (getConnectionState().connected) {
-      await offscreenBroker.disconnectWebSocket().catch(noop);
-    }
-
-    // Clear connection state to force fresh discovery
-    clearConnectionState();
-
-    // Trigger fresh discovery and connection
-    const app = await discoverAndCache(true);
-    if (app) {
-      await connectWebSocket(app.url);
-    }
-
-    // Notify popup of connection state change
-    notifyPopup({ type: 'WS_CONNECTION_LOST', reason: 'settings_changed' });
+    await reapplyServerConfig();
   }
 });
+
+/**
+ * Reconnects when a host permission for the configured custom server is
+ * granted or revoked, e.g. from the extension's site-access settings.
+ * @param change - The permissions that were added or removed
+ */
+async function onHostPermissionChanged(change: chrome.permissions.Permissions): Promise<void> {
+  const settings = await loadExtensionSettings();
+  if (
+    !settings.useAutoDiscover &&
+    settings.serverUrl &&
+    permissionChangeCovers(change.origins, settings.serverUrl)
+  ) {
+    await reapplyServerConfig();
+  }
+}
+
+chrome.permissions.onAdded.addListener((change) => void onHostPermissionChanged(change));
+chrome.permissions.onRemoved.addListener((change) => void onHostPermissionChanged(change));

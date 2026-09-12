@@ -21,7 +21,7 @@ import type {
   NetworkEventMessage,
   TopologyEventMessage,
 } from '../../lib/messages';
-import { discoverDesktopApp } from '../discovery';
+import { discoverDesktopApp, discoveryFailureError } from '../discovery';
 import {
   getConnectionState,
   setConnected,
@@ -199,17 +199,19 @@ export async function ensureConnection(): Promise<EnsureConnectionResponse> {
   try {
     const app = await discoverAndCache();
     if (!app) {
+      const error = await discoveryFailureError();
       clearConnectionState();
+      setConnectionError(error);
       notifyPopup({
         type: 'CONNECTION_ATTEMPT_FAILED',
-        error: 'error_desktop_not_found',
+        error,
         canRetry: true, // No auto-retry for discovery, user can retry manually
       });
       return {
         connected: false,
         desktopAppUrl: null,
         maxStreams: null,
-        error: 'error_desktop_not_found',
+        error,
       };
     }
 
