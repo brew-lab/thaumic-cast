@@ -35,7 +35,7 @@ speaking). The server can be the Desktop app or the headless server.
 
 - Desktop app (Windows/macOS/Linux): [Latest release](../../releases/latest)
 - Chrome extension zip: [Latest release](../../releases/latest) (look for `thaumic-cast-extension-vX.Y.Z.zip`)
-- Headless server: [`apps/server/README.md`](apps/server/README.md)
+- Headless server (Linux x64/arm64): [Latest release](../../releases/latest) (look for `thaumic-server-vX.Y.Z-linux-*.tar.gz`), setup in [`apps/server/README.md`](apps/server/README.md)
 
 > [!NOTE]
 > Desktop app releases are currently unsigned. Your OS may warn you (macOS Gatekeeper, Windows SmartScreen). Make sure
