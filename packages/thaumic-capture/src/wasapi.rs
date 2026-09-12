@@ -248,6 +248,9 @@ fn capture_thread_inner(
     let mut silent_frames: u64 = 0;
     let mut empty_callbacks: u64 = 0;
     let mut stats_timer = std::time::Instant::now();
+    // Stream-relative index the next packet should start at; a packet that
+    // starts later means the engine discarded audio in between.
+    let mut expected_pos: Option<u64> = None;
 
     while !cancel.is_cancelled() {
         // Check if target process has exited (non-blocking)
@@ -277,9 +280,16 @@ fn capture_thread_inner(
             let mut buffer: *mut u8 = ptr::null_mut();
             let mut frames_available: u32 = 0;
             let mut flags: u32 = 0;
+            let mut device_pos: u64 = 0;
 
             let hr = unsafe {
-                capture_client.GetBuffer(&mut buffer, &mut frames_available, &mut flags, None, None)
+                capture_client.GetBuffer(
+                    &mut buffer,
+                    &mut frames_available,
+                    &mut flags,
+                    Some(&mut device_pos as *mut u64),
+                    None,
+                )
             };
 
             match hr {
@@ -308,13 +318,25 @@ fn capture_thread_inner(
             got_data = true;
             total_frames += frames_available as u64;
 
+            // Frames lost between packets, from the device position. The
+            // discontinuity flag alone says nothing about how much was lost.
+            let lost_frames = expected_pos
+                .map_or(0, |expected| device_pos.saturating_sub(expected))
+                .min(u32::MAX as u64) as u32;
+            expected_pos = Some(device_pos + frames_available as u64);
+
             let buf_flags = BufferFlags {
-                discontinuity: flags & AUDCLNT_BUFFERFLAGS_DATA_DISCONTINUITY.0 as u32 != 0,
+                discontinuity: flags & AUDCLNT_BUFFERFLAGS_DATA_DISCONTINUITY.0 as u32 != 0
+                    || lost_frames > 0,
                 silent: flags & AUDCLNT_BUFFERFLAGS_SILENT.0 as u32 != 0,
+                lost_frames,
             };
 
             if buf_flags.discontinuity {
-                log::warn!("WASAPI discontinuity detected");
+                log::warn!(
+                    "WASAPI discontinuity detected ({} frames lost)",
+                    lost_frames
+                );
             }
 
             if buf_flags.silent {

@@ -25,7 +25,8 @@ use crate::sonos::utils::build_sonos_stream_uri;
 use crate::sonos::SonosPlayback;
 use crate::state::{SonosState, StreamingConfig};
 use crate::stream::{
-    AudioCodec, AudioFormat, CleanupOrder, StreamMetadata, StreamRegistry, StreamState,
+    apply_fade_in, crossfade_samples, AudioCodec, AudioFormat, CleanupOrder, StreamMetadata,
+    StreamRegistry, StreamState,
 };
 use crate::utils::now_millis;
 
@@ -55,6 +56,13 @@ struct StreamSinkBridge {
     ready_notified: AtomicBool,
     /// Notify handle to wake the WebSocket handler when first frame arrives.
     ready_notify: Arc<Notify>,
+    /// Fade length applied to the first packet after a discontinuity.
+    fade_samples: usize,
+    /// Most silence (in audio frames) backfilled for one loss: one jitter
+    /// buffer, so a long source pause costs at most that much extra latency.
+    backfill_cap_frames: u64,
+    /// Rate limit for backfill logging (once per second).
+    last_backfill_log: Mutex<Option<std::time::Instant>>,
 }
 
 impl StreamSinkBridge {
@@ -62,6 +70,8 @@ impl StreamSinkBridge {
         stream_id: String,
         coordinator: Arc<StreamCoordinator>,
         ready_notify: Arc<Notify>,
+        audio_format: &AudioFormat,
+        jitter_buffer_ms: u64,
     ) -> Self {
         Self {
             stream_id,
@@ -70,32 +80,92 @@ impl StreamSinkBridge {
             buf: Mutex::new(Vec::with_capacity(1920)),
             ready_notified: AtomicBool::new(false),
             ready_notify,
+            fade_samples: crossfade_samples(audio_format.sample_rate),
+            backfill_cap_frames: jitter_buffer_ms * audio_format.sample_rate as u64 / 1000,
+            last_backfill_log: Mutex::new(None),
         }
     }
-}
 
-impl AudioSink for StreamSinkBridge {
-    fn push_audio(&self, data: &[f32], _frames: u32, _channels: u16, _flags: BufferFlags) {
-        // Convert Float32 [-1.0, 1.0] → PCM16 [-32768, 32767]
-        let mut buf = self.buf.lock(); // uncontended — single capture thread, ~25ns
-        buf.clear();
-        buf.reserve(data.len() * 2);
-        for &sample in data {
-            // Clamp first to avoid i16 overflow, then scale by 32767 (i16::MAX)
-            let clamped = (sample.clamp(-1.0, 1.0) * 32767.0) as i16;
-            buf.extend_from_slice(&clamped.to_le_bytes());
-        }
-
-        let is_first = match self
-            .coordinator
-            .push_frame(&self.stream_id, Bytes::copy_from_slice(&buf))
-        {
+    /// Pushes one frame, returning whether it was the stream's first.
+    fn push(&self, frame: Bytes) -> bool {
+        match self.coordinator.push_frame(&self.stream_id, frame) {
             Some(first) => first,
             None => {
                 log::warn!("push_frame failed for stream {}", self.stream_id);
                 false
             }
+        }
+    }
+
+    /// Replaces audio the platform discarded with the same duration of
+    /// silence, in packet-sized frames, so the cadence consumer's timeline
+    /// (and its jitter-buffer depth) is not shortened by the loss.
+    /// Returns whether one of the pushed frames was the stream's first.
+    fn backfill_lost(&self, lost_frames: u32, packet_frames: u32, channels: u16) -> bool {
+        let fill = (lost_frames as u64).min(self.backfill_cap_frames);
+        let packet = packet_frames as u64;
+        let chunks = (fill + packet / 2) / packet;
+        if chunks == 0 {
+            return false;
+        }
+        let silence = Bytes::from(vec![0u8; packet as usize * channels as usize * 2]);
+        let mut is_first = false;
+        for _ in 0..chunks {
+            is_first |= self.push(silence.clone());
+        }
+
+        let mut last_log = self.last_backfill_log.lock();
+        let now = std::time::Instant::now();
+        let due = match *last_log {
+            None => true,
+            Some(t) => now.duration_since(t).as_secs() >= 1,
         };
+        if due {
+            *last_log = Some(now);
+            log::info!(
+                "[Capture] Backfilled {} silence frames for {} lost audio frames{} on stream {}",
+                chunks,
+                lost_frames,
+                if (lost_frames as u64) > fill {
+                    " (capped)"
+                } else {
+                    ""
+                },
+                self.stream_id
+            );
+        }
+        is_first
+    }
+}
+
+impl AudioSink for StreamSinkBridge {
+    fn push_audio(&self, data: &[f32], frames: u32, channels: u16, flags: BufferFlags) {
+        let mut is_first = false;
+        if flags.lost_frames > 0 && frames > 0 && channels > 0 {
+            is_first |= self.backfill_lost(flags.lost_frames, frames, channels);
+        }
+
+        let mut buf = self.buf.lock(); // uncontended — single capture thread, ~25ns
+        buf.clear();
+        if flags.silent {
+            // The platform declares the buffer silent; its bytes may be stale.
+            buf.resize(data.len() * 2, 0);
+        } else {
+            // Convert Float32 [-1.0, 1.0] → PCM16 [-32768, 32767]
+            buf.reserve(data.len() * 2);
+            for &sample in data {
+                // Clamp first to avoid i16 overflow, then scale by 32767 (i16::MAX)
+                let clamped = (sample.clamp(-1.0, 1.0) * 32767.0) as i16;
+                buf.extend_from_slice(&clamped.to_le_bytes());
+            }
+            if flags.discontinuity && channels > 0 {
+                // The previous packet ended wherever the loss cut it; soften
+                // the resume so the seam is not a hard edge.
+                apply_fade_in(&mut buf, channels, self.fade_samples);
+            }
+        }
+
+        is_first |= self.push(Bytes::copy_from_slice(&buf));
 
         if is_first && !self.ready_notified.swap(true, Ordering::SeqCst) {
             self.ready_notify.notify_one();
@@ -407,6 +477,8 @@ impl StreamCoordinator {
             stream_id.clone(),
             Arc::clone(self),
             Arc::clone(&ready_notify),
+            &audio_format,
+            jitter_buffer_ms,
         ));
 
         let handle = source.start(bridge).map_err(|e| {
@@ -1681,6 +1753,128 @@ mod tests {
                 "Promoted session should preserve slave's original_coordinator_uuid (None), \
                  not re-query topology which would return Kitchen's UUID"
             );
+        }
+
+        // ─────────────────────────────────────────────────────────────────
+        // Capture bridge: lost-frame backfill, silent packets, seam fade
+        // ─────────────────────────────────────────────────────────────────
+
+        /// Builds a PCM stream with a bridge attached and a subscriber on
+        /// its broadcast channel.
+        fn capture_bridge(
+            jitter_buffer_ms: u64,
+        ) -> (
+            Arc<StreamSinkBridge>,
+            tokio::sync::broadcast::Receiver<Bytes>,
+        ) {
+            let coord = Arc::new(create_coordinator_with(
+                Arc::new(TrackingSonosPlayback::new()) as Arc<dyn SonosPlayback>,
+                create_sonos_state_with_members(&[("192.168.1.100", "RINCON_A")]),
+                Arc::new(CollectingEventEmitter::new()) as Arc<dyn EventEmitter>,
+            ));
+            let format = AudioFormat::new(48000, 2, 16);
+            let stream_id = coord
+                .create_stream(AudioCodec::Pcm, format, jitter_buffer_ms, 10)
+                .unwrap();
+            let (_, _, rx) = coord.get_stream(&stream_id).unwrap().subscribe();
+            let bridge = Arc::new(StreamSinkBridge::new(
+                stream_id,
+                Arc::clone(&coord),
+                Arc::new(Notify::new()),
+                &format,
+                jitter_buffer_ms,
+            ));
+            // Keep the coordinator alive for the bridge's lifetime.
+            std::mem::forget(coord);
+            (bridge, rx)
+        }
+
+        fn drain(rx: &mut tokio::sync::broadcast::Receiver<Bytes>) -> Vec<Bytes> {
+            let mut out = Vec::new();
+            while let Ok(frame) = rx.try_recv() {
+                out.push(frame);
+            }
+            out
+        }
+
+        fn is_zero(frame: &Bytes) -> bool {
+            frame.iter().all(|&b| b == 0)
+        }
+
+        /// 480-frame stereo packet at a constant level (0.5 → 0x3FFF).
+        fn packet() -> Vec<f32> {
+            vec![0.5f32; 480 * 2]
+        }
+
+        #[tokio::test]
+        async fn capture_bridge_backfills_lost_frames_with_silence() {
+            let (bridge, mut rx) = capture_bridge(200);
+
+            bridge.push_audio(&packet(), 480, 2, BufferFlags::default());
+            // 50ms of audio lost between packets → five 10ms silence frames
+            bridge.push_audio(
+                &packet(),
+                480,
+                2,
+                BufferFlags {
+                    discontinuity: true,
+                    silent: false,
+                    lost_frames: 2400,
+                },
+            );
+
+            let frames = drain(&mut rx);
+            assert_eq!(frames.len(), 7, "audio + 5 silence + audio");
+            assert!(!is_zero(&frames[0]));
+            assert!(frames[1..6].iter().all(is_zero), "backfill is silence");
+            let resumed = &frames[6];
+            assert_eq!(resumed.len(), 1920);
+            assert_ne!(&resumed[..2], &[0xFF, 0x3F], "first sample is faded in");
+            assert_eq!(&resumed[1918..], &[0xFF, 0x3F], "last sample is untouched");
+        }
+
+        #[tokio::test]
+        async fn capture_bridge_caps_backfill_at_one_jitter_buffer() {
+            let (bridge, mut rx) = capture_bridge(200);
+
+            bridge.push_audio(&packet(), 480, 2, BufferFlags::default());
+            drain(&mut rx);
+            // A whole second lost is backfilled with at most 200ms (20 packets)
+            bridge.push_audio(
+                &packet(),
+                480,
+                2,
+                BufferFlags {
+                    discontinuity: true,
+                    silent: false,
+                    lost_frames: 48_000,
+                },
+            );
+
+            let frames = drain(&mut rx);
+            assert_eq!(frames.len(), 21, "20 silence frames + audio");
+            assert_eq!(frames.iter().filter(|f| is_zero(f)).count(), 20);
+        }
+
+        #[tokio::test]
+        async fn capture_bridge_zero_fills_silent_packets() {
+            let (bridge, mut rx) = capture_bridge(200);
+
+            bridge.push_audio(
+                &packet(),
+                480,
+                2,
+                BufferFlags {
+                    discontinuity: false,
+                    silent: true,
+                    lost_frames: 0,
+                },
+            );
+
+            let frames = drain(&mut rx);
+            assert_eq!(frames.len(), 1);
+            assert_eq!(frames[0].len(), 1920);
+            assert!(is_zero(&frames[0]), "silent flag overrides buffer contents");
         }
     }
 }

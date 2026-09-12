@@ -51,6 +51,10 @@ pub struct BufferFlags {
     pub discontinuity: bool,
     /// The buffer contains silence (e.g., WASAPI `AUDCLNT_BUFFERFLAGS_SILENT`).
     pub silent: bool,
+    /// Audio frames the platform discarded between the previous buffer and
+    /// this one (from the device position on WASAPI). Sinks backfill this
+    /// much silence so downstream timing is not shortened by the loss.
+    pub lost_frames: u32,
 }
 
 /// Returned by `AudioSource::start()` — owns the capture lifetime.
