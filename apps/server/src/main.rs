@@ -124,11 +124,11 @@ async fn main() -> Result<()> {
         AppInfo::new(env!("CARGO_PKG_VERSION"), AppType::Server),
     );
 
-    // Spawn HTTP server on the main tokio runtime.
-    // Unlike the desktop app (which uses a dedicated high-priority streaming runtime
-    // to avoid UI thread contention), the server has no UI and the main runtime
-    // is sufficient for consistent audio delivery.
-    let server_handle = tokio::spawn(async move {
+    // Serve HTTP (audio streams, WebSocket, API) on the dedicated streaming
+    // runtime, as the desktop app does. Its workers raise their scheduling
+    // priority (CAP_SYS_NICE on Linux), which keeps audio cadence steady when
+    // the host is under load; the main runtime keeps discovery and GENA work.
+    let server_handle = services.streaming_runtime.spawn(async move {
         if let Err(e) = start_server(app_state).await {
             log::error!("Server error: {}", e);
         }
