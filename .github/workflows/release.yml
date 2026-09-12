@@ -148,9 +148,52 @@ jobs:
           tag_name: v${{ needs.create-release.outputs.version }}
           files: thaumic-cast-extension-v${{ needs.create-release.outputs.version }}.zip
 
+  build-server:
+    name: Build Server (${{ matrix.name }})
+    needs: create-release
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: ubuntu-22.04
+            name: linux-x64
+          - platform: ubuntu-22.04-arm
+            name: linux-arm64
+
+    runs-on: ${{ matrix.platform }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.name }}
+
+      - name: Build server
+        run: cargo build --release --locked -p thaumic-server
+
+      - name: Package server
+        run: |
+          NAME=thaumic-server-v${{ needs.create-release.outputs.version }}-${{ matrix.name }}
+          mkdir -p dist/${NAME}
+          cp target/release/thaumic-server dist/${NAME}/
+          cp apps/server/README.md apps/server/config.example.yaml apps/server/thaumic-server.service apps/server/install.sh dist/${NAME}/
+          cp -r apps/server/thaumic-server.service.d dist/${NAME}/
+          tar -C dist -czf ${NAME}.tar.gz ${NAME}
+          sha256sum ${NAME}.tar.gz > ${NAME}.tar.gz.sha256
+
+      - name: Upload server to release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ needs.create-release.outputs.version }}
+          files: thaumic-server-v${{ needs.create-release.outputs.version }}-${{ matrix.name }}.tar.gz*
+
   publish-release:
     name: Publish Release
-    needs: [create-release, build-desktop, build-extension]
+    needs: [create-release, build-desktop, build-extension, build-server]
     runs-on: ubuntu-latest
     steps:
       - name: Publish release
