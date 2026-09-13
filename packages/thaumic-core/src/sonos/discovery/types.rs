@@ -274,8 +274,7 @@ pub struct DeviceInfo {
 ///
 /// Covers Linux containers/VMs, Windows virtual switches, and VPN overlays.
 pub const VIRTUAL_INTERFACE_PREFIXES: &[&str] = &[
-    // Linux: loopback, containers, bridges, VMs
-    "lo",
+    // Linux: containers, bridges, VMs
     "docker",
     "veth",
     "br-",
@@ -290,12 +289,34 @@ pub const VIRTUAL_INTERFACE_PREFIXES: &[&str] = &[
     "wg",
     "tailscale",
     "zt",
+    // macOS tunnels: utun covers VPNs, WireGuard and Tailscale there; ipsec and
+    // ppp cover IKEv2/L2TP. None of them is ever a LAN interface on a client,
+    // and "utun" does not match the "tun" prefix above.
+    "utun",
+    "ipsec",
+    "ppp",
 ];
+
+/// Interface name stems that are only virtual when followed by a unit number.
+///
+/// These are matched as `lo`, `lo0`, `lo1` and nothing else, unlike
+/// [`VIRTUAL_INTERFACE_PREFIXES`] which matches any name starting with the
+/// entry. `lo` is too short to match loosely: on Windows the names we see are
+/// adapter *friendly names*, and "Local Area Connection" — still the Ethernet
+/// adapter's name on machines upgraded in place — starts with it. Treating that
+/// as loopback would hide the only real LAN adapter from both SSDP discovery
+/// and address detection. Loopback addresses are filtered by address anyway in
+/// both callers, so a miss here costs nothing.
+const NUMBERED_VIRTUAL_INTERFACE_STEMS: &[&str] = &["lo"];
 
 /// Checks if an interface name belongs to a virtual/container interface.
 pub fn is_virtual_interface(name: &str) -> bool {
     let name_lower = name.to_lowercase();
-    VIRTUAL_INTERFACE_PREFIXES
+    NUMBERED_VIRTUAL_INTERFACE_STEMS.iter().any(|stem| {
+        name_lower
+            .strip_prefix(stem)
+            .is_some_and(|unit| unit.chars().all(|c| c.is_ascii_digit()))
+    }) || VIRTUAL_INTERFACE_PREFIXES
         .iter()
         .any(|prefix| name_lower.starts_with(prefix))
 }
@@ -356,6 +377,8 @@ mod tests {
     fn test_is_virtual_interface() {
         // Linux: containers, bridges, VMs
         assert!(is_virtual_interface("lo"));
+        assert!(is_virtual_interface("lo0"));
+        assert!(is_virtual_interface("lo1"));
         assert!(is_virtual_interface("docker0"));
         assert!(is_virtual_interface("veth1234"));
         assert!(is_virtual_interface("br-abc"));
@@ -373,6 +396,10 @@ mod tests {
         assert!(is_virtual_interface("wg0"));
         assert!(is_virtual_interface("tailscale0"));
         assert!(is_virtual_interface("zt1234abcd"));
+        assert!(is_virtual_interface("utun0"));
+        assert!(is_virtual_interface("utun3"));
+        assert!(is_virtual_interface("ipsec0"));
+        assert!(is_virtual_interface("ppp0"));
 
         // Real interfaces should pass through
         assert!(!is_virtual_interface("eth0"));
@@ -381,6 +408,10 @@ mod tests {
         assert!(!is_virtual_interface("Wi-Fi"));
         assert!(!is_virtual_interface("Ethernet"));
         assert!(!is_virtual_interface("Bluetooth Network Connection"));
+        // Windows friendly names that merely begin with a virtual stem: the
+        // Ethernet adapter on an upgraded machine must not read as loopback.
+        assert!(!is_virtual_interface("Local Area Connection"));
+        assert!(!is_virtual_interface("Local Area Connection 2"));
     }
 
     #[test]

@@ -193,7 +193,7 @@ impl GenaSubscriptionManager {
 
                 let to_renew = self.store.get_expiring(GENA_RENEWAL_BUFFER_SECS);
 
-                for (sid, ip, service, callback_url) in to_renew {
+                for (sid, ip, service, _callback_url) in to_renew {
                     match self.client.renew(&ip, service, &sid).await {
                         Ok(timeout_secs) => {
                             self.store.update_expiry(&sid, timeout_secs);
@@ -212,28 +212,15 @@ impl GenaSubscriptionManager {
                                 e
                             );
 
-                            // Remove the failed subscription
+                            // Drop it and let the topology monitor rebuild it.
+                            // Re-subscribing from here would reuse the callback
+                            // URL the subscription was made with, which after an
+                            // address change is exactly the stale URL the next
+                            // refresh is about to drop - so the monitor, which
+                            // always subscribes with the current URL, does it
+                            // instead. SubscriptionLost triggers that refresh.
                             self.store.remove(&sid);
-
-                            // Attempt to re-subscribe
-                            log::info!(
-                                "[GENA] Attempting to re-subscribe to {} on {}",
-                                service.name(),
-                                ip
-                            );
-                            if let Err(re_err) =
-                                self.subscribe(ip.clone(), service, callback_url).await
-                            {
-                                log::error!(
-                                    "[GENA] Re-subscription failed for {} on {}: {}",
-                                    service.name(),
-                                    ip,
-                                    re_err
-                                );
-
-                                // Emit SubscriptionLost event
-                                self.emit_subscription_lost(ip, service, re_err.to_string());
-                            }
+                            self.emit_subscription_lost(ip, service, e.to_string());
                         }
                     }
                 }
@@ -347,6 +334,52 @@ impl GenaSubscriptionManager {
         }
     }
 
+    /// Unsubscribes from every subscription whose callback URL is not `callback_url`.
+    ///
+    /// A subscription is created with a callback URL and never re-sends it:
+    /// [`Self::start_renewal_task`] renews by SID alone, which needs only
+    /// outbound reachability. So one created while we advertised an address the
+    /// speakers cannot reach (a VPN tunnel, a since-changed DHCP lease) renews
+    /// successfully forever, delivers nothing, and — because [`Self::subscribe`]
+    /// short-circuits on an existing (ip, service) pair — blocks its own
+    /// replacement. The stored address differing from the current one is proof
+    /// of that by construction, with no timing or counting involved.
+    ///
+    /// # Returns
+    /// The speaker IPs affected, deduplicated, so callers can restore whatever
+    /// they own on those speakers.
+    pub async fn unsubscribe_stale_callbacks(&self, callback_url: &str) -> Vec<String> {
+        let stale = self.store.get_stale_callbacks(callback_url);
+        if stale.is_empty() {
+            return Vec::new();
+        }
+
+        let mut ips: Vec<String> = Vec::with_capacity(stale.len());
+        for (sid, ip) in &stale {
+            log::warn!(
+                "[GENA] Subscription {} on {} was built against another callback URL; dropping it so it is rebuilt for {}",
+                sid,
+                ip,
+                callback_url
+            );
+            if !ips.contains(ip) {
+                ips.push(ip.clone());
+            }
+        }
+
+        let futures: Vec<_> = stale
+            .iter()
+            .map(|(sid, _)| async move {
+                if let Err(e) = self.unsubscribe(sid).await {
+                    log::error!("[GENA] Failed to unsubscribe stale {}: {}", sid, e);
+                }
+            })
+            .collect();
+        futures::future::join_all(futures).await;
+
+        ips
+    }
+
     /// Unsubscribes from all active subscriptions concurrently.
     pub async fn unsubscribe_all(&self) {
         let sids = self.store.get_all_sids();
@@ -387,5 +420,99 @@ impl GenaSubscriptionManager {
     #[must_use]
     pub fn subscription_count(&self) -> usize {
         self.store.len()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Builds a manager whose HTTP calls fail immediately.
+    ///
+    /// Unsubscribe removes from the store regardless of the speaker's reply, so
+    /// a 1ms timeout exercises the real path without needing a speaker.
+    fn manager() -> Arc<GenaSubscriptionManager> {
+        let http_client = Client::builder()
+            .timeout(Duration::from_millis(1))
+            .build()
+            .unwrap();
+        let (manager, _rx) = GenaSubscriptionManager::new(http_client);
+        Arc::new(manager)
+    }
+
+    const CURRENT_CALLBACK: &str = "http://192.168.1.5:8080/gena";
+
+    #[tokio::test]
+    async fn a_subscription_built_against_another_address_is_dropped() {
+        let manager = manager();
+        // Built while a VPN tunnel address was advertised: renews forever,
+        // delivers nothing, and blocks its own replacement.
+        manager.store.insert(
+            "uuid:stale".to_string(),
+            "192.0.2.10".to_string(),
+            SonosService::AVTransport,
+            "http://10.8.0.2:8080/gena".to_string(),
+            300,
+        );
+        // Built against the address we advertise now.
+        manager.store.insert(
+            "uuid:fresh".to_string(),
+            "192.0.2.11".to_string(),
+            SonosService::AVTransport,
+            CURRENT_CALLBACK.to_string(),
+            300,
+        );
+
+        let affected = manager.unsubscribe_stale_callbacks(CURRENT_CALLBACK).await;
+
+        assert_eq!(affected, vec!["192.0.2.10".to_string()]);
+        // The stale one is gone, so the next reconciliation can rebuild it...
+        assert!(!manager.is_subscribed("192.0.2.10", SonosService::AVTransport));
+        // ...and the matching one was left alone.
+        assert!(manager.is_subscribed("192.0.2.11", SonosService::AVTransport));
+    }
+
+    #[tokio::test]
+    async fn an_idle_healthy_system_rebuilds_nothing() {
+        // Subscriptions exist and not one NOTIFY has arrived, because nothing is
+        // playing. Silence is not a defect, and nothing here reacts to it.
+        let manager = manager();
+        for (sid, ip) in [("uuid:1", "192.0.2.10"), ("uuid:2", "192.0.2.11")] {
+            manager.store.insert(
+                sid.to_string(),
+                ip.to_string(),
+                SonosService::AVTransport,
+                CURRENT_CALLBACK.to_string(),
+                300,
+            );
+        }
+
+        assert!(manager
+            .unsubscribe_stale_callbacks(CURRENT_CALLBACK)
+            .await
+            .is_empty());
+        assert_eq!(manager.subscription_count(), 2);
+    }
+
+    #[tokio::test]
+    async fn every_service_on_a_speaker_is_reported_once() {
+        let manager = manager();
+        for (sid, service) in [
+            ("uuid:av", SonosService::AVTransport),
+            ("uuid:grc", SonosService::GroupRenderingControl),
+        ] {
+            manager.store.insert(
+                sid.to_string(),
+                "192.0.2.10".to_string(),
+                service,
+                "http://10.8.0.2:8080/gena".to_string(),
+                300,
+            );
+        }
+
+        let affected = manager.unsubscribe_stale_callbacks(CURRENT_CALLBACK).await;
+
+        assert_eq!(affected, vec!["192.0.2.10".to_string()]);
+        assert_eq!(manager.subscription_count(), 0);
     }
 }
