@@ -82,6 +82,23 @@ impl StreamAccess {
             StreamAccess::UnlistedServed | StreamAccess::UnlistedRefused => true,
         }
     }
+
+    /// Whether this reader's connections count as speaker playback.
+    ///
+    /// Playback bookkeeping is per source address: a connection starts an
+    /// epoch for its address, and a later connection from the same address is
+    /// treated as the speaker resuming (prefill skipped, `Play` re-sent). Both
+    /// are meaningless for a reader that is not a speaker, and harmful: the
+    /// epoch map is a bounded LRU sized for a household's speakers, so a
+    /// handful of unlisted readers would evict a real speaker's entry and turn
+    /// its next reconnect into a mis-timed cold start, and a reconnecting
+    /// unlisted reader would have a SOAP `Play` sent to its own address.
+    fn tracks_playback(self) -> bool {
+        match self {
+            StreamAccess::Speaker | StreamAccess::CompanionHost => true,
+            StreamAccess::UnlistedServed | StreamAccess::UnlistedRefused => false,
+        }
+    }
 }
 
 /// Decides whether `peer` may fetch a stream whose speakers are `speaker_ips`.
@@ -154,18 +171,32 @@ pub(super) async fn stream_audio(
     // quietly fall through as both allowed and uncapped.
     let reader_slot = if access.draws_unlisted_budget() {
         let refused = access == StreamAccess::UnlistedRefused;
-        log::warn!(
-            "[Stream] Fetch from an address this stream is not for: client={}, stream={}, \
-             allowed={:?} — {}",
-            remote_ip,
-            id,
-            allowed_ips,
-            if refused {
-                "refused (strict_stream_access is on)"
-            } else {
-                "serving anyway (strict_stream_access is off)"
-            }
-        );
+        // Once per address per stream at warn, then debug: a refused reader
+        // that retries in a loop must not be able to fill the log, and the
+        // first line already carries everything needed to judge it.
+        let verdict = if refused {
+            "refused (strict_stream_access is on)"
+        } else {
+            "serving anyway (strict_stream_access is off)"
+        };
+        if stream_state.note_unlisted_reader(remote_ip) {
+            log::warn!(
+                "[Stream] Fetch from an address this stream is not for: client={}, stream={}, \
+                 allowed={:?} — {}",
+                remote_ip,
+                id,
+                allowed_ips,
+                verdict
+            );
+        } else {
+            log::debug!(
+                "[Stream] Repeat fetch from an address this stream is not for: client={}, \
+                 stream={} — {}",
+                remote_ip,
+                id,
+                verdict
+            );
+        }
         if refused {
             // 404, not 403: an expired stream already answers 404, so a
             // harvested id learns nothing about whether it was ever valid.
@@ -217,8 +248,11 @@ pub(super) async fn stream_audio(
 
     // Detect resume: this specific IP had a previous HTTP connection.
     // Uses per-IP epoch tracking (not global counter) to avoid misclassifying
-    // new speakers as resumes after the first speaker connects.
-    let is_resume = stream_state.timing.current_epoch_for(remote_ip).is_some();
+    // new speakers as resumes after the first speaker connects. Readers that
+    // are not speakers never start an epoch (see `tracks_playback`), so they
+    // can never look like one resuming either.
+    let is_resume =
+        access.tracks_playback() && stream_state.timing.current_epoch_for(remote_ip).is_some();
 
     // Upfront buffering delay for PCM streams BEFORE subscribing.
     // Lets the ring buffer accumulate frames so the prefill snapshot returned
@@ -272,13 +306,17 @@ pub(super) async fn stream_audio(
     // Uses Arc so it can be shared between cadence stream and final frame recording.
     let guard = Arc::new(LoggingStreamGuard::new(id.to_string(), remote_ip));
 
-    // One-shot epoch hook for whichever pipeline is built below.
-    let epoch_hook: EpochHook = (
-        Arc::downgrade(&stream_state),
-        epoch_candidate,
-        connected_at,
-        remote_ip,
-    );
+    // One-shot epoch hook for whichever pipeline is built below. None for a
+    // reader that is not a speaker: its connection must not enter the
+    // per-address playback bookkeeping (see `tracks_playback`).
+    let epoch_hook: Option<EpochHook> = access.tracks_playback().then(|| {
+        (
+            Arc::downgrade(&stream_state),
+            epoch_candidate,
+            connected_at,
+            remote_ip,
+        )
+    });
 
     // Build combined stream - PCM gets cadence-based streaming, compressed codecs don't.
     //
@@ -308,7 +346,7 @@ pub(super) async fn stream_audio(
                 prefill_frames,
             ),
             Some(Arc::downgrade(&stream_state)),
-            Some(epoch_hook),
+            epoch_hook,
         ))
     } else {
         // Compressed codecs: no silence injection, chain prefill before live
@@ -320,7 +358,10 @@ pub(super) async fn stream_audio(
         let raw_stream = futures::StreamExt::chain(prefill_stream, live_stream);
 
         // Fire epoch on first non-empty frame (compressed codecs never inject silence)
-        Box::pin(with_epoch_hook(raw_stream, epoch_hook))
+        match epoch_hook {
+            Some(hook) => Box::pin(with_epoch_hook(raw_stream, hook)),
+            None => Box::pin(raw_stream),
+        }
     };
 
     // Content-Type based on output codec
@@ -597,6 +638,10 @@ mod tests {
         assert!(!StreamAccess::Speaker.draws_unlisted_budget());
         assert!(!StreamAccess::CompanionHost.draws_unlisted_budget());
         assert!(StreamAccess::UnlistedServed.draws_unlisted_budget());
+        assert!(StreamAccess::Speaker.tracks_playback());
+        assert!(StreamAccess::CompanionHost.tracks_playback());
+        assert!(!StreamAccess::UnlistedServed.tracks_playback());
+        assert!(!StreamAccess::UnlistedRefused.tracks_playback());
 
         // A stream whose unlisted budget is fully spent still admits speakers:
         // they never consult it.
