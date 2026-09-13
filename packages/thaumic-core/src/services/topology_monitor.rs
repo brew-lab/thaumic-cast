@@ -414,7 +414,7 @@ impl TopologyMonitor {
     /// its own: a coordinator that only exists after this refresh (a slave promoted
     /// when its coordinator left) gets its AVTransport subscription here, instead of
     /// waiting up to a full refresh interval for one.
-    async fn quick_refresh_zone_groups(&self, callback_url: &str) -> ThaumicResult<()> {
+    pub(crate) async fn quick_refresh_zone_groups(&self, callback_url: &str) -> ThaumicResult<()> {
         // Pick a coordinator IP from current state
         let coordinator_ip = {
             let groups = self.sonos_state.groups.read();
