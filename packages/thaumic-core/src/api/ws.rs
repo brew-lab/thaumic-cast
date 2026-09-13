@@ -6,13 +6,13 @@ use axum::http::{header, HeaderMap, StatusCode, Uri};
 use axum::response::{IntoResponse, Response};
 use bytes::Bytes;
 use futures::sink::SinkExt;
-use futures::stream::StreamExt;
+use futures::stream::{SplitSink, StreamExt};
 use serde::{Deserialize, Serialize};
 use std::future::Future;
 use std::net::{IpAddr, SocketAddr};
 use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::{broadcast, mpsc, oneshot};
 use tokio_util::sync::CancellationToken;
 
 use crate::api::ws_connection::{is_loopback_ip, ConnectionGuard, WsConnectionManager};
@@ -986,6 +986,103 @@ fn build_initial_state(state: &AppState, conn: &ConnectionGuard) -> Option<Messa
     WsOutgoing::InitialState { payload }.to_message()
 }
 
+/// Sends `conn`'s `INITIAL_STATE` snapshot down `sender`.
+///
+/// Used both on connect and to resynchronise a connection whose broadcast
+/// receiver lagged, so the redaction in [`build_initial_state`] applies to
+/// both and a resync can never hand this client another client's stream ids.
+///
+/// Returns `false` when the socket is gone and the connection should end. A
+/// snapshot that fails to serialize is skipped, not fatal.
+async fn send_initial_state(
+    sender: &mut SplitSink<WebSocket, Message>,
+    state: &AppState,
+    conn: &ConnectionGuard,
+) -> bool {
+    match build_initial_state(state, conn) {
+        Some(msg) => sender.send(msg).await.is_ok(),
+        None => true,
+    }
+}
+
+/// Logs a lagged connection and re-sends its `INITIAL_STATE` snapshot.
+///
+/// Returns `false` when the socket is gone and the connection should end.
+async fn resync_after_lag(
+    sender: &mut SplitSink<WebSocket, Message>,
+    state: &AppState,
+    conn: &ConnectionGuard,
+    skipped: u64,
+) -> bool {
+    log::warn!(
+        "[WS] Connection {} lagged, {} event(s) dropped; resending INITIAL_STATE",
+        conn.id(),
+        skipped
+    );
+    send_initial_state(sender, state, conn).await
+}
+
+/// Shortest gap between two lag-triggered `INITIAL_STATE` resyncs on one
+/// connection.
+const RESYNC_MIN_INTERVAL: Duration = Duration::from_secs(2);
+
+/// Per-connection bookkeeping for recovering from a lagged event receiver.
+///
+/// The event channel holds `EVENT_CHANNEL_CAPACITY` events; a client that
+/// stalls on TCP backpressure overruns it and tokio drops what it missed.
+/// Those events are gone, so the only honest recovery is to re-send the
+/// `INITIAL_STATE` snapshot. Rebuilding that snapshot is the expensive part,
+/// though, and a continuously slow client would earn one per lagged `recv()`,
+/// so lags are coalesced into at most one resync per [`RESYNC_MIN_INTERVAL`]:
+/// a suppressed lag is remembered and released by the heartbeat tick, which
+/// keeps the client eventually consistent without a rebuild loop.
+#[derive(Default)]
+struct LagResync {
+    /// Events dropped since the last snapshot went out.
+    skipped: u64,
+    /// A lag arrived while a resync was still rate-limited.
+    deferred: bool,
+    /// When the last snapshot went out; `None` until the first lag.
+    last_sent: Option<Instant>,
+}
+
+impl LagResync {
+    /// Records `skipped` dropped events, returning the coalesced skip count
+    /// when a snapshot should be sent now. `None` means the lag was deferred;
+    /// [`Self::take_due`] releases it once the interval has passed.
+    fn on_lag(&mut self, skipped: u64, now: Instant) -> Option<u64> {
+        self.skipped = self.skipped.saturating_add(skipped);
+        if self.is_due(now) {
+            Some(self.take(now))
+        } else {
+            self.deferred = true;
+            None
+        }
+    }
+
+    /// Returns the coalesced skip count once a deferred resync comes due.
+    fn take_due(&mut self, now: Instant) -> Option<u64> {
+        if self.deferred && self.is_due(now) {
+            Some(self.take(now))
+        } else {
+            None
+        }
+    }
+
+    fn is_due(&self, now: Instant) -> bool {
+        match self.last_sent {
+            Some(sent) => now.duration_since(sent) >= RESYNC_MIN_INTERVAL,
+            None => true,
+        }
+    }
+
+    fn take(&mut self, now: Instant) -> u64 {
+        self.deferred = false;
+        self.last_sent = Some(now);
+        std::mem::take(&mut self.skipped)
+    }
+}
+
 /// Result of handling a handshake request.
 enum HandshakeResult {
     /// Successfully created stream with this ID.
@@ -1626,6 +1723,7 @@ async fn handle_ws(
     let mut broadcast_rx = state.event_bridge.subscribe();
     let mut last_activity = Instant::now();
     let mut latency_monitoring = false;
+    let mut lag_resync = LagResync::default();
 
     // Register connection for tracking, identity and force-close capability
     let conn_guard = state.ws_manager.register(remote_addr, client_id);
@@ -1650,11 +1748,9 @@ async fn handle_ws(
 
     // Send initial state immediately on connect (before any handshake)
     // This allows clients to monitor speaker state without creating a stream
-    if let Some(msg) = build_initial_state(&state, &conn_guard) {
-        if sender.send(msg).await.is_err() {
-            log::warn!("[WS] Failed to send initial state, client disconnected");
-            return;
-        }
+    if !send_initial_state(&mut sender, &state, &conn_guard).await {
+        log::warn!("[WS] Failed to send initial state, client disconnected");
+        return;
     }
 
     // Use interval instead of sleep to reduce timer allocations and prevent drift.
@@ -1862,15 +1958,39 @@ async fn handle_ws(
                 }
             }
             // Handle broadcasted events (GENA, etc.)
-            Ok(mut event) = broadcast_rx.recv() => {
-                // Each connection owns its copy of the event, so filtering and
-                // redaction here are per-client and cannot affect anyone else.
-                if event_is_visible_to(&conn_guard, &event) {
-                    redact_foreign_stream_uris(&conn_guard, &mut event);
-                    if let Ok(json) = serde_json::to_string(&event) {
-                        if sender.send(Message::Text(json.into())).await.is_err() {
-                            break;
+            received = broadcast_rx.recv() => {
+                match received {
+                    Ok(mut event) => {
+                        // Each connection owns its copy of the event, so filtering and
+                        // redaction here are per-client and cannot affect anyone else.
+                        if event_is_visible_to(&conn_guard, &event) {
+                            redact_foreign_stream_uris(&conn_guard, &mut event);
+                            if let Ok(json) = serde_json::to_string(&event) {
+                                if sender.send(Message::Text(json.into())).await.is_err() {
+                                    break;
+                                }
+                            }
                         }
+                    }
+                    // This client fell behind and tokio dropped the events it
+                    // missed. Swallowing that would leave its speaker list,
+                    // group volumes and session view permanently wrong until it
+                    // reconnected, so re-send the snapshot instead.
+                    Err(broadcast::error::RecvError::Lagged(skipped)) => {
+                        if let Some(total) = lag_resync.on_lag(skipped, Instant::now()) {
+                            if !resync_after_lag(&mut sender, &state, &conn_guard, total).await {
+                                break;
+                            }
+                        }
+                    }
+                    // The bridge is gone (shutdown): no more events will ever
+                    // arrive, so this connection has nothing left to serve.
+                    Err(broadcast::error::RecvError::Closed) => {
+                        log::info!(
+                            "[WS] Event channel closed, ending connection {}",
+                            conn_guard.id()
+                        );
+                        break;
                     }
                 }
             }
@@ -1914,6 +2034,13 @@ async fn handle_ws(
                 if last_activity.elapsed() > Duration::from_secs(WS_HEARTBEAT_TIMEOUT_SECS) {
                     log::warn!("[WS] Heartbeat timeout");
                     break;
+                }
+                // Release a resync that was rate-limited while the client was
+                // lagging, so a continuously slow client still converges.
+                if let Some(total) = lag_resync.take_due(Instant::now()) {
+                    if !resync_after_lag(&mut sender, &state, &conn_guard, total).await {
+                        break;
+                    }
                 }
             }
         }
@@ -2920,5 +3047,55 @@ mod tests {
             &reply_from_result(failed, volume_state),
             "speaker unreachable",
         );
+    }
+
+    // ─────────────────────────────────────────────────────────────────────
+    // Lagged event receiver
+    // ─────────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn the_first_lag_resyncs_straight_away() {
+        let mut resync = LagResync::default();
+        let now = Instant::now();
+
+        assert_eq!(resync.on_lag(7, now), Some(7));
+        // Nothing is left over once the snapshot has gone out.
+        assert_eq!(resync.take_due(now + RESYNC_MIN_INTERVAL * 2), None);
+    }
+
+    #[test]
+    fn lags_inside_the_interval_are_coalesced_into_one_later_resync() {
+        let mut resync = LagResync::default();
+        let now = Instant::now();
+        assert_eq!(resync.on_lag(3, now), Some(3));
+
+        // A client that keeps falling behind must not earn a snapshot rebuild
+        // per lagged recv() — that is the work it is already too slow for.
+        assert_eq!(resync.on_lag(5, now + Duration::from_millis(10)), None);
+        assert_eq!(resync.on_lag(4, now + Duration::from_millis(20)), None);
+        assert_eq!(resync.take_due(now + Duration::from_millis(30)), None);
+
+        // ...but once the interval passes, the skipped counts arrive together.
+        assert_eq!(resync.take_due(now + RESYNC_MIN_INTERVAL), Some(9));
+        // And only once: a released resync is not replayed on the next tick.
+        assert_eq!(resync.take_due(now + RESYNC_MIN_INTERVAL * 2), None);
+    }
+
+    #[test]
+    fn a_connection_that_never_lagged_is_never_resynced() {
+        let mut resync = LagResync::default();
+        let now = Instant::now();
+        assert_eq!(resync.take_due(now), None);
+        assert_eq!(resync.take_due(now + RESYNC_MIN_INTERVAL * 10), None);
+    }
+
+    #[test]
+    fn a_lag_after_a_quiet_period_resyncs_immediately_again() {
+        let mut resync = LagResync::default();
+        let now = Instant::now();
+        assert_eq!(resync.on_lag(2, now), Some(2));
+
+        let later = now + RESYNC_MIN_INTERVAL * 3;
+        assert_eq!(resync.on_lag(6, later), Some(6));
     }
 }
