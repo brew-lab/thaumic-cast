@@ -40,7 +40,7 @@ import {
 import { notifyPopup } from './notification-service';
 import { offscreenBroker } from './offscreen-broker';
 import { noop } from '../lib/noop';
-import type { SpeakerRemovalReason } from '@thaumic-cast/protocol';
+import { SpeakerRemovalReasonSchema, type SpeakerRemovalReason } from '@thaumic-cast/protocol';
 
 const log = createLogger('SonosEvents');
 
@@ -98,7 +98,9 @@ export async function handleSonosEvent(event: BroadcastEvent): Promise<void> {
         await handlePlaybackStopped(
           eventData.streamId as string,
           eventData.speakerIp as string,
-          eventData.reason as SpeakerRemovalReason | undefined,
+          // Broadcast events pass through unvalidated, so this is whatever
+          // string the companion sent - normalized in handlePlaybackStopped.
+          eventData.reason as string | undefined,
         );
         break;
 
@@ -483,12 +485,12 @@ async function handleStreamEnded(streamId: string): Promise<void> {
  *
  * @param streamId - The stream ID that was stopped
  * @param speakerIp - The speaker IP where playback stopped
- * @param reason - Optional reason from server (defaults to 'playback_stopped' for backward compat)
+ * @param reason - Optional raw reason string from server
  */
 async function handlePlaybackStopped(
   streamId: string,
   speakerIp: string,
-  reason?: SpeakerRemovalReason,
+  reason?: string,
 ): Promise<void> {
   // Use streamId to find the correct session (avoids race conditions during recast)
   const session = getSessionByStreamId(streamId);
@@ -497,11 +499,27 @@ async function handlePlaybackStopped(
     return;
   }
 
-  // Use reason from server event, default to 'playback_stopped' for backward compat
-  const finalReason: SpeakerRemovalReason = reason ?? 'playback_stopped';
+  if (reason === 'speaker_taken_over') {
+    log.warn(`Speaker ${speakerIp} was taken over by another client of the companion`);
+  }
 
   // Delegate to shared removal logic with pre-resolved session
-  await handleSpeakerRemoval(speakerIp, finalReason, session);
+  await handleSpeakerRemoval(speakerIp, normalizeStopReason(reason), session);
+}
+
+/**
+ * Maps the raw `reason` on a stream event onto a reason the popup can render.
+ *
+ * Broadcast events reach us unvalidated, and the companion may name a reason
+ * this build predates, so anything unrecognised degrades to a message the user
+ * can actually read instead of surfacing a raw key.
+ * @param reason - The raw reason string from the companion, if any
+ * @returns A reason with a localised message behind it
+ */
+function normalizeStopReason(reason: string | undefined): SpeakerRemovalReason {
+  const parsed = SpeakerRemovalReasonSchema.safeParse(reason);
+  if (parsed.success) return parsed.data;
+  return 'playback_stopped';
 }
 
 /**

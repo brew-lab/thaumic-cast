@@ -1,6 +1,5 @@
 {
   "app_name": "Thaumic Cast",
-
   "target_speaker": "Cast to",
   "start_casting": "Cast",
   "cast_to_n_speakers": "Cast to {{count}} speakers",
@@ -10,15 +9,12 @@
   "go_to_tab": "Return to source",
   "dismiss": "Dismiss",
   "active_casts": "Active Rituals",
-
   "connection_status_checking": "Looking for companion...",
   "connection_status_disconnected": "Disconnected",
   "connection_status_connected": "Connected",
   "connection_status_connected_desktop": "Connected to Desktop App",
   "connection_status_connected_server": "Connected to Server",
-
   "warning_reconnecting": "The connection wandered off. We're fetching it.",
-
   "error_cast_failed": "The ritual failed to take hold",
   "error_desktop_not_found": "The Desktop App has wandered off.",
   "error_connection_lost": "The connection has wandered off.",
@@ -39,23 +35,20 @@
   "error_save_settings": "Settings declined to be saved",
   "error_codec_detection": "Audio capabilities remain mysterious",
   "error_unsupported_sample_rate": "Your audio hardware speaks an unfamiliar dialect. Try 48kHz or 44.1kHz in system settings.",
-
   "auto_stop_source_changed": "Sonos has been distracted by something else",
   "auto_stop_stream_ended": "The stream has concluded its journey",
   "auto_stop_playback_stopped": "Playback has decided to take a break",
   "auto_stop_speaker_stopped": "The speaker has wandered off mid-sentence",
+  "auto_stop_speaker_taken_over": "Another caster has claimed this speaker",
   "auto_stop_user_removed": "The last speaker was dismissed from the ritual",
   "auto_stop_capture_error": "Audio capture encountered an unexpected difficulty",
   "auto_stop_process_exited": "The browser process has departed unexpectedly",
   "auto_stop_device_disconnected": "The audio device has wandered off mid-performance",
   "error_speaker_stop_failed": "{{name}} declined to stop. Feel free to try again.",
-
   "loading_speakers": "Seeking speakers...",
   "no_speakers_found": "The network was searched. The speakers were not forthcoming.",
   "no_speakers_placeholder": "No speakers",
-
   "network.speakers_not_responding": "The speakers have been located but appear to be giving us the silent treatment. A VPN or firewall is the likely culprit.",
-
   "volume": "Volume",
   "volume_speaker": "{{name}} volume",
   "mute": "Mute",
@@ -67,13 +60,10 @@
   "pause": "Pause",
   "previous_track": "Previous track",
   "next_track": "Next track",
-
   "hint_replace_source": "This will interrupt whatever's playing",
   "hint_replace_cast": "This will end your current ritual",
-
   "settings": "Settings",
   "settings_title": "Settings",
-
   "server_section_title": "Server",
   "server_auto_discover": "Auto-discover",
   "server_auto_discover_hint": "Let the extension find it",
@@ -87,7 +77,6 @@
   "server_status_latency": "{{latency}}ms",
   "server_test_success": "Contact established",
   "server_test_failed": "No response",
-
   "audio_section_title": "Audio Quality",
   "audio_mode": "Quality",
   "audio_mode_low": "Economical",
@@ -98,7 +87,6 @@
   "audio_mode_high_desc": "Every bit, every nuance",
   "audio_mode_custom": "Bespoke",
   "audio_mode_custom_desc": "For those who know what they're doing",
-
   "audio_resolved_settings": "What You're Getting",
   "audio_settings": "Audio Settings",
   "audio_codec": "Codec",
@@ -128,22 +116,18 @@
   "bitrate": "Bitrate",
   "bitrate_not_applicable": "Lossless doesn't work that way",
   "lossless": "Lossless",
-
   "audio_detecting_codecs": "Consulting the hardware...",
   "audio_no_codecs_detected": "This device lacks the necessary enchantments",
-
   "appearance_section_title": "Appearance",
   "appearance_theme": "Theme",
   "appearance_theme_auto": "Auto",
   "appearance_theme_auto_desc": "Whatever the system prefers",
   "appearance_theme_light": "Light",
   "appearance_theme_dark": "Dark",
-
   "language_section_title": "Language",
   "language_label": "Language",
   "language_en": "English",
   "language_coming_soon": "More languages in due course",
-
   "about_section_title": "About",
   "about_version": "Version {{version}}",
   "about_extension_name": "Thaumic Cast Extension",
@@ -154,16 +138,13 @@
   "about_companion_type_generic": "Desktop App or Server",
   "about_companion_protocol": "Protocol · Version {{version}}",
   "about_companion_unknown_version": "Unknown version",
-
   "version_mismatch_message": "Your {{appTypeLabel}} has fallen behind the extension (currently v{{appVersion}}). Update to restore harmony.",
   "version_mismatch_unknown_message": "Your app predates this extension and can't report its version. Update to restore harmony.",
   "version_mismatch_action_desktop": "Update Desktop App",
   "version_mismatch_action_server": "Update Server",
   "version_mismatch_action_generic": "Update",
   "update_available": "Update available",
-
   "loading_settings": "Loading settings...",
-
   "onboarding.skip": "Skip the formalities",
   "onboarding.next": "Onwards",
   "onboarding.back": "Retreat",
@@ -172,12 +153,10 @@
   "onboarding.step_desktop": "Desktop",
   "onboarding.step_speakers": "Speakers",
   "onboarding.step_ready": "Ready",
-
   "onboarding.welcome.title": "Welcome, Caster",
   "onboarding.welcome.subtitle": "A brief orientation before we proceed",
   "onboarding.welcome.body": "Thaumic Cast channels audio from your browser to your Sonos speakers. Think of it as a magical conduit, except the magic is networking and the wand is a browser extension.",
   "onboarding.welcome.footnote": "No actual magic involved. Probably.",
-
   "onboarding.desktop.title": "The Desktop App",
   "onboarding.desktop.subtitle": "Your local anchor to the speaker realm",
   "onboarding.desktop.checking": "Seeking the Desktop App...",
@@ -189,19 +168,16 @@
   "onboarding.desktop.manual_toggle": "Can't find it? Configure manually",
   "onboarding.desktop.manual_hint": "For non-standard ports or remote servers",
   "onboarding.desktop.manual_connected": "Connection established. You may proceed.",
-
   "onboarding.speakers.title": "Your Speakers Await",
   "onboarding.speakers.subtitle": "Let's see who's listening",
   "onboarding.speakers.loading": "Seeking speakers...",
   "onboarding.speakers.found": "Discovered {{count}} speaker(s). They seem receptive.",
   "onboarding.speakers.none_found": "No speakers have made themselves known. Ensure they're powered on.",
-
   "onboarding.ready.title": "The Ritual is Complete",
   "onboarding.ready.subtitle": "Your speakers await instruction",
   "onboarding.ready.intro": "You can stream audio from up to {{maxStreams}} tabs at once. The universe has limits.",
   "onboarding.ready.performance_body": "Best for music. Latency is 100–300ms — fine for tunes, less so for conducting orchestras.",
   "onboarding.ready.battery_warning": "Laptops on battery may experience hiccups. Browsers like to save power.",
-
   "advanced_section_title": "Here Be Dragons",
   "video_sync_enable": "Video sync controls",
   "video_sync_description": "For when the lips move but the words arrive fashionably late",

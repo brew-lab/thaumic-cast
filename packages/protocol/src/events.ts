@@ -13,6 +13,7 @@ export const SpeakerRemovalReasonSchema = z.enum([
   'source_changed',
   'playback_stopped',
   'speaker_stopped',
+  'speaker_taken_over',
   'user_removed',
 ]);
 export type SpeakerRemovalReason = z.infer<typeof SpeakerRemovalReasonSchema>;
