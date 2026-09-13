@@ -358,33 +358,46 @@ impl StreamState {
             }
         }
 
-        // Add to recent buffer (ring buffer behavior)
-        // Clone the Bytes (cheap - just Arc bump) for buffer storage
-        {
+        // Buffer and broadcast under the same write lock. `subscribe()` copies the
+        // buffer while holding the read lock, so a broadcast outside this lock would
+        // let a subscriber copy the frame from the buffer *and* then receive it again
+        // on the channel - a duplicated frame at the start of playback. Holding the
+        // write lock across the send makes the pair atomic against `subscribe()`.
+        //
+        // `broadcast::Sender::send` never blocks: it overwrites the oldest slot and
+        // lets lagging receivers observe `RecvError::Lagged` instead of waiting, so
+        // holding a lock across it cannot stall the pusher.
+        let is_first_frame = {
             let mut buffer = self.buffer.write();
             if buffer.len() >= self.buffer_frames {
                 buffer.pop_front();
             }
+            // Clone the Bytes (cheap - just Arc bump) for buffer storage
             buffer.push_back(TimestampedFrame {
                 captured_at,
                 data: frame.clone(),
             });
-        }
 
-        // Signal ready on first frame (compare_exchange ensures only first frame triggers)
-        let is_first_frame = self
-            .has_frames
-            .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
-            .is_ok();
+            // Signal ready on first frame (compare_exchange ensures only first frame triggers)
+            let is_first = self
+                .has_frames
+                .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+                .is_ok();
+
+            if is_first {
+                self.timing.record_first_frame();
+            }
+
+            // Broadcast to all active HTTP listeners
+            if let Err(e) = self.tx.send(frame) {
+                log::trace!("Failed to broadcast frame for stream {}: {}", self.id, e);
+            }
+
+            is_first
+        };
 
         if is_first_frame {
-            self.timing.record_first_frame();
             log::debug!("[Stream] {} is now ready (first frame received)", self.id);
-        }
-
-        // Broadcast to all active HTTP listeners
-        if let Err(e) = self.tx.send(frame) {
-            log::trace!("Failed to broadcast frame for stream {}: {}", self.id, e);
         }
 
         is_first_frame
@@ -424,12 +437,14 @@ impl StreamState {
     /// - `prefill_frames`: A `Vec<Bytes>` containing buffered frames to send immediately
     /// - `live_receiver`: A `broadcast::Receiver<Bytes>` for subsequent live frames
     pub fn subscribe(&self) -> (Option<Instant>, Vec<Bytes>, broadcast::Receiver<Bytes>) {
-        // Hold the buffer lock while subscribing to ensure atomicity.
-        // This prevents races where a frame could appear in both prefill and rx:
-        // - Any push_frame() that completes before we lock will have its frame in buffer
-        //   AND will have already broadcast (so we won't receive it in rx)
-        // - Any push_frame() that starts after we lock will block until we're done,
-        //   then broadcast (so we'll receive it in rx, not in prefill)
+        // Hold the buffer read lock while subscribing to ensure atomicity.
+        // `push_frame()` buffers and broadcasts a frame under the matching write
+        // lock, so the two cannot interleave and every frame lands on exactly one
+        // side of this boundary:
+        // - A push that completed before we lock is in `buffer` and was broadcast
+        //   before `tx.subscribe()`, so it reaches the caller only via prefill.
+        // - A push that starts after we lock waits for the write lock, so it is
+        //   broadcast after `tx.subscribe()` and reaches the caller only via rx.
         let buffer = self.buffer.read();
         let rx = self.tx.subscribe();
 
@@ -525,5 +540,110 @@ impl StreamRegistry {
     #[must_use]
     pub fn list_stream_ids(&self) -> Vec<String> {
         self.streams.iter().map(|r| r.key().clone()).collect()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashSet;
+    use tokio::sync::broadcast::error::TryRecvError;
+
+    fn test_state(buffer_frames: usize, channel_capacity: usize) -> StreamState {
+        StreamState::new(
+            "test-stream".to_string(),
+            AudioCodec::Pcm,
+            AudioFormat::new(48_000, 2, 16),
+            buffer_frames,
+            channel_capacity,
+            200,
+            20,
+        )
+    }
+
+    fn frame(id: u32) -> Bytes {
+        Bytes::copy_from_slice(&id.to_le_bytes())
+    }
+
+    #[test]
+    fn subscribe_returns_buffered_frames_without_replaying_them_live() {
+        let state = test_state(8, 16);
+        // Keep a receiver alive so broadcasts are not dropped for want of listeners.
+        let _keepalive = state.tx.subscribe();
+
+        assert!(state.push_frame(frame(1)), "first frame marks stream ready");
+        assert!(!state.push_frame(frame(2)));
+
+        let (epoch, prefill, mut rx) = state.subscribe();
+
+        assert!(
+            epoch.is_some(),
+            "epoch candidate comes from the oldest frame"
+        );
+        assert_eq!(prefill, vec![frame(1), frame(2)]);
+        // Already-buffered frames were broadcast before we subscribed.
+        assert_eq!(rx.try_recv(), Err(TryRecvError::Empty));
+
+        state.push_frame(frame(3));
+        assert_eq!(rx.try_recv(), Ok(frame(3)));
+        assert_eq!(rx.try_recv(), Err(TryRecvError::Empty));
+    }
+
+    #[test]
+    fn buffer_trims_to_the_newest_frames() {
+        let state = test_state(2, 16);
+        let _keepalive = state.tx.subscribe();
+
+        for id in 1..=4 {
+            state.push_frame(frame(id));
+        }
+
+        let (_, prefill, _rx) = state.subscribe();
+        assert_eq!(state.buffer_len(), 2);
+        assert_eq!(prefill, vec![frame(3), frame(4)]);
+    }
+
+    /// Regression test: `push_frame` must buffer and broadcast a frame under one
+    /// write lock. With the broadcast outside the lock, a `subscribe()` landing in
+    /// between copies the frame out of the prefill buffer *and* then receives it on
+    /// the channel, so the newest prefill frame is played twice at stream start.
+    #[test]
+    fn concurrent_subscribe_never_sees_a_frame_twice() {
+        let state = Arc::new(test_state(8, 64));
+        let _keepalive = state.tx.subscribe();
+        let stop = Arc::new(AtomicBool::new(false));
+
+        let pusher = {
+            let state = Arc::clone(&state);
+            let stop = Arc::clone(&stop);
+            std::thread::spawn(move || {
+                let mut id: u32 = 0;
+                while !stop.load(Ordering::Relaxed) {
+                    id += 1;
+                    state.push_frame(frame(id));
+                    std::thread::yield_now();
+                }
+            })
+        };
+
+        for _ in 0..5_000 {
+            let (_, prefill, mut rx) = state.subscribe();
+            let buffered: HashSet<Bytes> = prefill.into_iter().collect();
+
+            // Anything arriving live must be a frame pushed after we subscribed.
+            for _ in 0..4 {
+                match rx.try_recv() {
+                    Ok(live) => assert!(
+                        !buffered.contains(&live),
+                        "frame delivered twice: once as prefill, once live"
+                    ),
+                    Err(TryRecvError::Empty) => std::thread::yield_now(),
+                    Err(_) => break,
+                }
+            }
+        }
+
+        stop.store(true, Ordering::Relaxed);
+        pusher.join().expect("pusher thread panicked");
     }
 }
