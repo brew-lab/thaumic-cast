@@ -472,6 +472,9 @@ fn trim_prefill(mut prefill_frames: Vec<Bytes>, buffer_depth: usize) -> Vec<Byte
 ///
 /// Epoch tracking (optional): when `epoch_hook` is `Some`, the stream fires
 /// `start_new_epoch` on the first real audio frame, then discards the hook.
+/// The hook holds a `Weak` reference so the response body never keeps the
+/// `StreamState` (and with it the broadcast sender) alive; if the upgrade
+/// fails the stream has been removed and the hook is dropped unfired.
 ///
 /// This ensures Sonos always receives continuous data with smooth transitions,
 /// eliminating pops from abrupt audio/silence boundaries.
@@ -480,7 +483,12 @@ pub fn create_wav_stream_with_cadence(
     guard: Arc<LoggingStreamGuard>,
     config: CadenceConfig,
     stream_state: Option<std::sync::Weak<StreamState>>,
-    epoch_hook: Option<(Arc<StreamState>, Option<Instant>, Instant, IpAddr)>,
+    epoch_hook: Option<(
+        std::sync::Weak<StreamState>,
+        Option<Instant>,
+        Instant,
+        IpAddr,
+    )>,
 ) -> impl Stream<Item = Result<Bytes, std::io::Error>> {
     stream! {
         let CadenceConfig {
@@ -647,13 +655,17 @@ pub fn create_wav_stream_with_cadence(
 
                         crossfade.track_frame(&frame);
 
-                        // Fire epoch hook on first real audio frame
-                        if let Some((stream_state, epoch_candidate, connected_at, remote_ip)) = epoch_hook.take() {
-                            stream_state.timing.start_new_epoch(
-                                epoch_candidate,
-                                connected_at,
-                                remote_ip,
-                            );
+                        // Fire epoch hook on first real audio frame. A failed
+                        // upgrade means the stream was removed, so there is no
+                        // epoch left to start - drop the hook either way.
+                        if let Some((weak_state, epoch_candidate, connected_at, remote_ip)) = epoch_hook.take() {
+                            if let Some(state) = weak_state.upgrade() {
+                                state.timing.start_new_epoch(
+                                    epoch_candidate,
+                                    connected_at,
+                                    remote_ip,
+                                );
+                            }
                         }
 
                         if !first_yield_logged {
@@ -887,7 +899,9 @@ mod tests {
     ///
     /// The channel must be closed (tx dropped) before calling this, so the
     /// stream can detect closure and terminate.
-    async fn drain_to_end<S>(stream: &mut Pin<&mut S>)
+    ///
+    /// Returns whether the stream ended within the polling budget.
+    async fn drain_to_end<S>(stream: &mut Pin<&mut S>) -> bool
     where
         S: Stream + ?Sized,
     {
@@ -899,9 +913,10 @@ mod tests {
             })
             .await;
             if done {
-                break;
+                return true;
             }
         }
+        false
     }
 
     #[tokio::test(start_paused = true)]
@@ -1176,6 +1191,55 @@ mod tests {
         assert!(
             frame.is_none(),
             "stream should end when channel closed and queue empty"
+        );
+    }
+
+    /// A connection whose source never produces audio keeps its epoch hook armed
+    /// for the life of the stream. The hook must hold the stream weakly, or the
+    /// broadcast sender outlives the coordinator's `Arc` and the metronome emits
+    /// silence to the speaker forever.
+    #[tokio::test(start_paused = true)]
+    async fn armed_epoch_hook_does_not_keep_the_stream_alive() {
+        let state = Arc::new(StreamState::new(
+            "test-stream".to_string(),
+            crate::stream::AudioCodec::Pcm,
+            test_audio_format(),
+            8,
+            16,
+            200,
+            SILENCE_FRAME_DURATION_MS,
+        ));
+        let weak = Arc::downgrade(&state);
+        let (_, _, rx) = state.subscribe();
+
+        let mut stream = Box::pin(create_wav_stream_with_cadence(
+            rx,
+            test_guard(),
+            test_config(),
+            Some(Arc::downgrade(&state)),
+            Some((
+                Arc::downgrade(&state),
+                None,
+                Instant::now(),
+                IpAddr::V4(Ipv4Addr::LOCALHOST),
+            )),
+        ));
+
+        // Start the metronome with the hook still armed - no audio ever arrives.
+        prime(&mut stream.as_mut()).await;
+
+        // The coordinator removes the stream.
+        drop(state);
+        assert!(
+            weak.upgrade().is_none(),
+            "the cadence stream must not hold the coordinator's stream alive"
+        );
+
+        // The sender went with the stream, so the channel is closed and the
+        // metronome stops instead of emitting silence forever.
+        assert!(
+            drain_to_end(&mut stream.as_mut()).await,
+            "cadence stream must end once the stream is removed"
         );
     }
 
