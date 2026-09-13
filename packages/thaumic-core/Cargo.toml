@@ -26,13 +26,13 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 
 # XML for UPnP/SOAP
-quick-xml = { version = "0.41", features = ["serialize"] }
+quick-xml = { version = "0.42", features = ["serialize"] }
 html-escape = "0.2.13"
 
 # Networking
 local-ip-address = "0.6"
 socket2 = { version = "0.6", features = ["all"] }
-mdns-sd = "0.20"
+mdns-sd = "0.21"
 
 # Concurrency
 dashmap = "6"
