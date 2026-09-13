@@ -178,13 +178,15 @@ pub fn parse_zone_group_xml(xml: &str) -> Vec<ZoneGroup> {
 /// # Arguments
 /// * `client` - The HTTP client to use for the request
 /// * `ip` - IP address of any Sonos speaker on the network
+/// * `port` - TCP port the speaker's UPnP services listen on (1400 on real hardware)
 ///
 /// # Returns
 /// A vector of `ZoneGroup` representing the current topology
-pub async fn get_zone_groups(client: &Client, ip: &str) -> SoapResult<Vec<ZoneGroup>> {
+pub async fn get_zone_groups(client: &Client, ip: &str, port: u16) -> SoapResult<Vec<ZoneGroup>> {
     let response = soap_request(
         client,
         ip,
+        port,
         SonosService::ZoneGroupTopology,
         "GetZoneGroupState",
         &[],

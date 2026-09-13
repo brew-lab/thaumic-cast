@@ -5,13 +5,14 @@
 use reqwest::{Client, Method};
 
 use crate::protocol_constants::GENA_SUBSCRIPTION_TIMEOUT_SECS;
+use crate::sonos::utils::SONOS_PORT;
 
 use super::gena::GenaError;
 
 /// Convenient Result alias for GENA operations.
 type GenaResult<T> = Result<T, GenaError>;
 use super::services::SonosService;
-use super::utils::build_sonos_url;
+use super::utils::build_sonos_url_with_port;
 
 /// Response from a successful GENA subscription.
 pub struct SubscribeResponse {
@@ -27,12 +28,25 @@ pub struct SubscribeResponse {
 /// State management is delegated to `GenaSubscriptionStore`.
 pub struct GenaClient {
     client: Client,
+    /// TCP port the speakers' event endpoints listen on.
+    speaker_port: u16,
 }
 
 impl GenaClient {
-    /// Creates a new GENA client with the given HTTP client.
+    /// Creates a new GENA client that addresses speakers on the standard port.
     pub fn new(client: Client) -> Self {
-        Self { client }
+        Self::with_speaker_port(client, SONOS_PORT)
+    }
+
+    /// Creates a new GENA client that addresses speakers on `speaker_port`.
+    ///
+    /// Real speakers listen on [`SONOS_PORT`]; this exists so a test double
+    /// bound to an ephemeral port can stand in for one.
+    pub fn with_speaker_port(client: Client, speaker_port: u16) -> Self {
+        Self {
+            client,
+            speaker_port,
+        }
     }
 
     /// Creates the HTTP method for SUBSCRIBE requests.
@@ -76,7 +90,7 @@ impl GenaClient {
         service: SonosService,
         callback_url: &str,
     ) -> GenaResult<SubscribeResponse> {
-        let url = build_sonos_url(ip, service.event_path());
+        let url = build_sonos_url_with_port(ip, self.speaker_port, service.event_path());
         let timeout_header = format!("Second-{}", GENA_SUBSCRIPTION_TIMEOUT_SECS);
 
         let response = self
@@ -114,7 +128,7 @@ impl GenaClient {
     /// # Returns
     /// The new timeout value from the speaker's response.
     pub async fn renew(&self, ip: &str, service: SonosService, sid: &str) -> GenaResult<u64> {
-        let url = build_sonos_url(ip, service.event_path());
+        let url = build_sonos_url_with_port(ip, self.speaker_port, service.event_path());
         let timeout_header = format!("Second-{}", GENA_SUBSCRIPTION_TIMEOUT_SECS);
 
         let response = self
@@ -143,7 +157,7 @@ impl GenaClient {
     /// `true` if the unsubscribe was successful, `false` if the request failed
     /// (but the subscription should still be removed locally).
     pub async fn unsubscribe(&self, ip: &str, service: SonosService, sid: &str) -> bool {
-        let url = build_sonos_url(ip, service.event_path());
+        let url = build_sonos_url_with_port(ip, self.speaker_port, service.event_path());
 
         match self
             .client

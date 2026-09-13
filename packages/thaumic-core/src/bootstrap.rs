@@ -24,6 +24,7 @@ use crate::runtime::TokioSpawner;
 use crate::services::{DiscoveryService, LatencyMonitor, StreamCoordinator};
 use crate::sonos::gena::GenaSubscriptionManager;
 use crate::sonos::subscription_arbiter::SubscriptionArbiter;
+use crate::sonos::utils::SONOS_PORT;
 use crate::sonos::{SonosClient, SonosClientImpl, SonosPlayback, SonosTopologyClient};
 use crate::state::{Config, SonosState};
 use crate::streaming_runtime::StreamingRuntime;
@@ -126,9 +127,9 @@ impl BootstrappedServices {
 ///
 /// Using a shared client enables connection pooling for better performance.
 /// This is created once during bootstrap and injected into services that need it.
-fn create_http_client() -> Client {
+fn create_http_client(soap_timeout: Duration) -> Client {
     Client::builder()
-        .timeout(Duration::from_secs(SOAP_TIMEOUT_SECS))
+        .timeout(soap_timeout)
         .build()
         .expect("Failed to create HTTP client")
 }
@@ -183,6 +184,30 @@ pub fn bootstrap_services_with_network(
     network: NetworkContext,
     runtime_handle: tokio::runtime::Handle,
 ) -> ThaumicResult<BootstrappedServices> {
+    bootstrap_services_with_speaker_port(
+        config,
+        network,
+        runtime_handle,
+        SONOS_PORT,
+        Duration::from_secs(SOAP_TIMEOUT_SECS),
+    )
+}
+
+/// Like [`bootstrap_services_with_network`], but addresses speakers on
+/// `speaker_port` instead of the standard 1400 and gives every SOAP call
+/// `soap_timeout` instead of the standard [`SOAP_TIMEOUT_SECS`].
+///
+/// Crate-internal: production always uses the standard values; the
+/// integration tests point the real clients at fake speakers bound to an
+/// ephemeral port, and shorten the timeout so a speaker that never answers
+/// costs a test milliseconds rather than the real budget.
+pub(crate) fn bootstrap_services_with_speaker_port(
+    config: &Config,
+    network: NetworkContext,
+    runtime_handle: tokio::runtime::Handle,
+    speaker_port: u16,
+    soap_timeout: Duration,
+) -> ThaumicResult<BootstrappedServices> {
     // Create dedicated streaming runtime first (high-priority threads)
     let streaming_runtime = Arc::new(StreamingRuntime::new().map_err(|e| {
         ThaumicError::Internal(format!("Failed to create streaming runtime: {}", e))
@@ -192,7 +217,7 @@ pub fn bootstrap_services_with_network(
     let spawner = TokioSpawner::new(runtime_handle);
 
     // Create shared HTTP client for connection pooling
-    let http_client = create_http_client();
+    let http_client = create_http_client(soap_timeout);
 
     // Create broadcast channel for real-time events to WebSocket clients
     let (broadcast_tx, _) = broadcast::channel::<BroadcastEvent>(EVENT_CHANNEL_CAPACITY);
@@ -208,7 +233,10 @@ pub fn bootstrap_services_with_network(
     let ws_manager = Arc::new(WsConnectionManager::new());
 
     // Create the Sonos client (implements multiple traits)
-    let sonos_impl = Arc::new(SonosClientImpl::new(http_client.clone()));
+    let sonos_impl = Arc::new(SonosClientImpl::with_speaker_port(
+        http_client.clone(),
+        speaker_port,
+    ));
 
     // mDNS advertisement slot, shared with the API layer and the topology monitor
     let mdns_advertiser = advertiser_handle();
@@ -220,7 +248,8 @@ pub fn bootstrap_services_with_network(
         .expect("Invalid streaming configuration");
 
     // Create gena_manager first (shared between StreamCoordinator and DiscoveryService)
-    let (gena_manager, gena_event_rx) = GenaSubscriptionManager::new(http_client.clone());
+    let (gena_manager, gena_event_rx) =
+        GenaSubscriptionManager::with_speaker_port(http_client.clone(), speaker_port);
     let gena_manager = Arc::new(gena_manager);
 
     // Topology refresh notifier — shared between StreamCoordinator, GenaEventProcessor,
@@ -295,7 +324,7 @@ mod tests {
 
     #[test]
     fn http_client_has_timeout() {
-        let client = create_http_client();
+        let client = create_http_client(Duration::from_secs(SOAP_TIMEOUT_SECS));
         // We can't directly test timeout, but verify client is created
         assert!(client.get("https://example.com").build().is_ok());
     }

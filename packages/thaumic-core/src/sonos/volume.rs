@@ -21,10 +21,12 @@ use crate::sonos::utils::extract_xml_text;
 /// # Arguments
 /// * `client` - The HTTP client to use for the request
 /// * `coordinator_ip` - IP address of the group coordinator
-pub async fn get_group_volume(client: &Client, coordinator_ip: &str) -> SoapResult<u8> {
+/// * `port` - TCP port the speaker's UPnP services listen on (1400 on real hardware)
+pub async fn get_group_volume(client: &Client, coordinator_ip: &str, port: u16) -> SoapResult<u8> {
     let response = soap_request(
         client,
         coordinator_ip,
+        port,
         SonosService::GroupRenderingControl,
         "GetGroupVolume",
         &[("InstanceID", "0")],
@@ -44,14 +46,21 @@ pub async fn get_group_volume(client: &Client, coordinator_ip: &str) -> SoapResu
 /// # Arguments
 /// * `client` - The HTTP client to use for the request
 /// * `coordinator_ip` - IP address of the group coordinator
+/// * `port` - TCP port the speaker's UPnP services listen on (1400 on real hardware)
 /// * `volume` - Desired volume level (0-100, values > 100 are clamped)
-pub async fn set_group_volume(client: &Client, coordinator_ip: &str, volume: u8) -> SoapResult<()> {
+pub async fn set_group_volume(
+    client: &Client,
+    coordinator_ip: &str,
+    port: u16,
+    volume: u8,
+) -> SoapResult<()> {
     let clamped = volume.min(100);
 
     let clamped_str = clamped.to_string();
     soap_request(
         client,
         coordinator_ip,
+        port,
         SonosService::GroupRenderingControl,
         "SetGroupVolume",
         &[("InstanceID", "0"), ("DesiredVolume", &clamped_str)],
@@ -70,13 +79,15 @@ pub async fn set_group_volume(client: &Client, coordinator_ip: &str, volume: u8)
 /// # Arguments
 /// * `client` - The HTTP client to use for the request
 /// * `coordinator_ip` - IP address of the group coordinator
+/// * `port` - TCP port the speaker's UPnP services listen on (1400 on real hardware)
 ///
 /// # Returns
 /// `true` if the group is muted, `false` otherwise
-pub async fn get_group_mute(client: &Client, coordinator_ip: &str) -> SoapResult<bool> {
+pub async fn get_group_mute(client: &Client, coordinator_ip: &str, port: u16) -> SoapResult<bool> {
     let response = soap_request(
         client,
         coordinator_ip,
+        port,
         SonosService::GroupRenderingControl,
         "GetGroupMute",
         &[("InstanceID", "0")],
@@ -93,11 +104,18 @@ pub async fn get_group_mute(client: &Client, coordinator_ip: &str) -> SoapResult
 /// # Arguments
 /// * `client` - The HTTP client to use for the request
 /// * `coordinator_ip` - IP address of the group coordinator
+/// * `port` - TCP port the speaker's UPnP services listen on (1400 on real hardware)
 /// * `mute` - `true` to mute, `false` to unmute
-pub async fn set_group_mute(client: &Client, coordinator_ip: &str, mute: bool) -> SoapResult<()> {
+pub async fn set_group_mute(
+    client: &Client,
+    coordinator_ip: &str,
+    port: u16,
+    mute: bool,
+) -> SoapResult<()> {
     soap_request(
         client,
         coordinator_ip,
+        port,
         SonosService::GroupRenderingControl,
         "SetGroupMute",
         &[
@@ -122,10 +140,12 @@ pub async fn set_group_mute(client: &Client, coordinator_ip: &str, mute: bool) -
 /// # Arguments
 /// * `client` - The HTTP client to use for the request
 /// * `speaker_ip` - IP address of the speaker
-pub async fn get_speaker_volume(client: &Client, speaker_ip: &str) -> SoapResult<u8> {
+/// * `port` - TCP port the speaker's UPnP services listen on (1400 on real hardware)
+pub async fn get_speaker_volume(client: &Client, speaker_ip: &str, port: u16) -> SoapResult<u8> {
     let response = soap_request(
         client,
         speaker_ip,
+        port,
         SonosService::RenderingControl,
         "GetVolume",
         &[("InstanceID", "0"), ("Channel", "Master")],
@@ -147,14 +167,21 @@ pub async fn get_speaker_volume(client: &Client, speaker_ip: &str) -> SoapResult
 /// # Arguments
 /// * `client` - The HTTP client to use for the request
 /// * `speaker_ip` - IP address of the speaker
+/// * `port` - TCP port the speaker's UPnP services listen on (1400 on real hardware)
 /// * `volume` - Desired volume level (0-100, values > 100 are clamped)
-pub async fn set_speaker_volume(client: &Client, speaker_ip: &str, volume: u8) -> SoapResult<()> {
+pub async fn set_speaker_volume(
+    client: &Client,
+    speaker_ip: &str,
+    port: u16,
+    volume: u8,
+) -> SoapResult<()> {
     let clamped = volume.min(100);
 
     let clamped_str = clamped.to_string();
     soap_request(
         client,
         speaker_ip,
+        port,
         SonosService::RenderingControl,
         "SetVolume",
         &[
@@ -176,10 +203,12 @@ pub async fn set_speaker_volume(client: &Client, speaker_ip: &str, volume: u8) -
 /// # Arguments
 /// * `client` - The HTTP client to use for the request
 /// * `speaker_ip` - IP address of the speaker
-pub async fn get_speaker_mute(client: &Client, speaker_ip: &str) -> SoapResult<bool> {
+/// * `port` - TCP port the speaker's UPnP services listen on (1400 on real hardware)
+pub async fn get_speaker_mute(client: &Client, speaker_ip: &str, port: u16) -> SoapResult<bool> {
     let response = soap_request(
         client,
         speaker_ip,
+        port,
         SonosService::RenderingControl,
         "GetMute",
         &[("InstanceID", "0"), ("Channel", "Master")],
@@ -200,11 +229,18 @@ pub async fn get_speaker_mute(client: &Client, speaker_ip: &str) -> SoapResult<b
 /// # Arguments
 /// * `client` - The HTTP client to use for the request
 /// * `speaker_ip` - IP address of the speaker
+/// * `port` - TCP port the speaker's UPnP services listen on (1400 on real hardware)
 /// * `mute` - `true` to mute, `false` to unmute
-pub async fn set_speaker_mute(client: &Client, speaker_ip: &str, mute: bool) -> SoapResult<()> {
+pub async fn set_speaker_mute(
+    client: &Client,
+    speaker_ip: &str,
+    port: u16,
+    mute: bool,
+) -> SoapResult<()> {
     soap_request(
         client,
         speaker_ip,
+        port,
         SonosService::RenderingControl,
         "SetMute",
         &[
