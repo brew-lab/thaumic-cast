@@ -84,8 +84,10 @@ impl NetworkContext {
         })
     }
 
-    /// Like [`NetworkContext::auto_detect`], but falls back to the default-route
-    /// address when detection finds nothing usable.
+    /// Like [`NetworkContext::auto_detect`], but falls back to the address the
+    /// platform's `local_ip()` reports (the default route's on Linux and Windows,
+    /// the first non-loopback interface's on macOS) when detection finds nothing
+    /// usable.
     ///
     /// For the desktop launch path ONLY. Detection is deliberately strict so the
     /// topology monitor can tell "no usable address" from a genuine network
@@ -113,7 +115,7 @@ impl NetworkContext {
                     _ => return Err(e),
                 };
                 log::warn!(
-                    "[Network] {}; falling back to the default-route address {}. Speakers may \
+                    "[Network] {}; falling back to the platform's default address {}. Speakers may \
                      not be able to reach this machine - set an explicit advertise address if \
                      streaming does not work.",
                     e,
@@ -275,7 +277,22 @@ fn shares_subnet_with_speaker(candidate: Ipv4Addr, known_speaker_ips: &[Ipv4Addr
 /// Candidates are the IPv4 addresses of interfaces that
 /// [`is_virtual_interface`] does not reject — the same filter SSDP discovery
 /// applies — minus loopback, link-local, multicast, broadcast and unspecified
-/// addresses.
+/// addresses. One exception to the name filter: an address in the same /24 as
+/// a speaker we know about is a candidate whatever its interface is called.
+/// The speakers are reachable there, which is the whole question the name was
+/// standing in for; the name filter exists to keep tunnels and container
+/// bridges out, and no speaker has ever been found on one of those. This is
+/// what keeps a host whose only LAN address sits on a filtered adapter — a
+/// Windows machine under Hyper-V, whose LAN lives on `vEthernet (External
+/// Switch)` — on that address when a VPN comes up: the tunnel adapter carries
+/// a generic friendly name the filter does not catch, and without the
+/// exception it would be the only candidate.
+///
+/// The name filter is only as good as the names. Linux and macOS report
+/// kernel names (`tun0`, `utun3`, `docker0`); Windows reports adapter
+/// friendly names, which for most VPN clients are generic ("Ethernet 2"), so
+/// there the filter is largely inert and the speaker-subnet key is what keeps
+/// the tunnel out once a speaker has been discovered.
 ///
 /// # Ordering rule
 ///
@@ -289,10 +306,11 @@ fn shares_subnet_with_speaker(candidate: Ipv4Addr, known_speaker_ips: &[Ipv4Addr
 ///    192.168.86.x, where the bridge is the numerically lower of the two.
 ///    Speakers are only ever discovered over interfaces this same filter
 ///    accepts, so this cannot point at a tunnel.
-/// 2. The address the default route already uses, as long as it survives the
-///    candidate filter. That is the address the machine reaches the rest of the
-///    world on, and on every machine without a tunnel it is the LAN address the
-///    speakers know. Honouring it means this detector never second-guesses a
+/// 2. The address the platform's `local_ip()` reports, as long as it survives
+///    the candidate filter: the default route's address on Linux and Windows,
+///    the first non-loopback interface on macOS. That is the address the
+///    machine reaches the rest of the world on, and on every machine without a
+///    tunnel it is the LAN address the speakers know. Honouring it means this detector never second-guesses a
 ///    working setup — including multi-homed ones (docked laptop, host-only
 ///    adapter, container bridge) where the kernel's own choice is better
 ///    informed than any ranking we could invent.
@@ -319,11 +337,14 @@ fn select_advertise_address(
 
     interfaces
         .into_iter()
-        .filter(|(name, _)| !is_virtual_interface(name))
-        .filter_map(|(_, addr)| match addr {
-            IpAddr::V4(v4) => Some(v4),
+        .filter_map(|(name, addr)| match addr {
+            IpAddr::V4(v4) => Some((name, v4)),
             IpAddr::V6(_) => None,
         })
+        .filter(|(name, v4)| {
+            !is_virtual_interface(name) || shares_subnet_with_speaker(*v4, known_speaker_ips)
+        })
+        .map(|(_, v4)| v4)
         .filter(|v4| is_usable_advertise_address(*v4))
         .min_by_key(|v4| {
             (
@@ -502,14 +523,38 @@ mod tests {
         // A split-tunnel VPN, or simply a multi-homed machine: the kernel is
         // already using the LAN interface, so we must not second-guess it even
         // though the tunnel address sorts lower.
-        let interfaces = ifaces(&[
-            ("Wi-Fi", "192.168.1.42"),
-            ("Cisco AnyConnect Virtual Miniport Adapter", "10.8.0.2"),
-        ]);
+        let interfaces = ifaces(&[("wlan0", "192.168.1.42"), ("tun0", "10.8.0.2")]);
 
         assert_eq!(
             select_advertise_address(interfaces, route("192.168.1.42"), &[]),
             Some(Ipv4Addr::new(192, 168, 1, 42))
+        );
+    }
+
+    #[test]
+    fn a_filtered_adapter_on_the_speakers_subnet_beats_an_unfiltered_tunnel() {
+        // Windows under Hyper-V: the only LAN address sits on the external
+        // switch, whose name the filter rejects, and a VPN client's adapter
+        // carries a generic friendly name the filter does not catch. Once a
+        // speaker is known on the switch's subnet, that subnet decides - the
+        // tunnel must not become the only candidate, or a VPN connect would
+        // move the advertised address onto it.
+        let interfaces = ifaces(&[
+            ("vEthernet (External Switch)", "192.168.1.50"),
+            ("Ethernet 2", "10.8.0.2"),
+        ]);
+        let speakers = [Ipv4Addr::new(192, 168, 1, 71)];
+
+        assert_eq!(
+            select_advertise_address(interfaces.clone(), route("10.8.0.2"), &speakers),
+            Some(Ipv4Addr::new(192, 168, 1, 50))
+        );
+
+        // Without a known speaker the exception does not apply: the name filter
+        // stands, and the tunnel is the only candidate left.
+        assert_eq!(
+            select_advertise_address(interfaces, route("10.8.0.2"), &[]),
+            Some(Ipv4Addr::new(10, 8, 0, 2))
         );
     }
 

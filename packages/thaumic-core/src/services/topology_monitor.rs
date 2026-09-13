@@ -290,6 +290,8 @@ impl TopologyMonitor {
             // Read initial IP from shared state
             let mut current_ip = self.network.get_local_ip();
             let mut callback_url = self.network.gena_callback_url();
+            // The last detection failure reported, so it is logged on change only.
+            let mut detection_failure: Option<String> = None;
             log::info!("[TopologyMonitor] GENA callback URL: {}", callback_url);
 
             let mut interval =
@@ -320,6 +322,12 @@ impl TopologyMonitor {
                 // refresh turns out to fail.
                 match self.network.detect_ip(&self.known_speaker_ips()) {
                     Ok(new_ip_str) => {
+                        if detection_failure.take().is_some() {
+                            log::info!(
+                                "[TopologyMonitor] Local IP detection recovered: {}",
+                                new_ip_str
+                            );
+                        }
                         if new_ip_str != current_ip {
                             log::warn!(
                                 "[TopologyMonitor] Local IP changed: {} -> {}. Re-subscribing...",
@@ -338,12 +346,24 @@ impl TopologyMonitor {
                     Err(NetworkError::NoDetector) => {}
                     Err(e) => {
                         // A swallowed detection failure is invisible in the field and
-                        // looks exactly like "the VPN broke it", so say so out loud.
-                        log::warn!(
-                            "[TopologyMonitor] Local IP detection failed, still advertising {}: {}",
-                            current_ip,
-                            e
-                        );
+                        // looks exactly like "the VPN broke it", so say so out loud -
+                        // once per failure, not once per tick: a host with no
+                        // acceptable interface stays in this state for its whole
+                        // life, and a warn every refresh interval buries the log.
+                        let message = e.to_string();
+                        if detection_failure.as_ref() != Some(&message) {
+                            log::warn!(
+                                "[TopologyMonitor] Local IP detection failed, still advertising {}: {}",
+                                current_ip,
+                                message
+                            );
+                            detection_failure = Some(message);
+                        } else {
+                            log::debug!(
+                                "[TopologyMonitor] Local IP detection still failing, advertising {}",
+                                current_ip
+                            );
+                        }
                     }
                 }
 
