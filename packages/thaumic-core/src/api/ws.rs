@@ -1321,7 +1321,7 @@ impl BrowserCaptureState {
 /// on that very machine may well have pasted the LAN address into the
 /// extension. Treating that as remote would refuse browser capture to exactly
 /// the desktop+Windows setup the feature exists for.
-fn is_companion_host(local_ip: &str, peer: IpAddr) -> bool {
+pub(super) fn is_companion_host(local_ip: &str, peer: IpAddr) -> bool {
     let peer = peer.to_canonical();
     is_loopback_ip(peer)
         || local_ip

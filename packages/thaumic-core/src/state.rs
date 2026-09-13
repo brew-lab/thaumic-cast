@@ -95,6 +95,32 @@ pub struct Config {
     /// Streaming configuration.
     #[serde(default)]
     pub streaming: StreamingConfig,
+
+    // Access control
+    /// Whether `GET /stream/{id}/live` refuses addresses the stream is not for.
+    ///
+    /// A stream id is not a secret: the server hands the stream URL to a Sonos
+    /// speaker, and the speaker republishes it as `CurrentTrackURI` to any
+    /// unauthenticated device on the LAN that asks. Every fetch is therefore
+    /// checked against the addresses the stream is actually playing on, plus
+    /// this machine.
+    ///
+    /// Defaults to `false`, which **logs and serves**: a fetch from an
+    /// unexpected address is reported at `warn` and still gets its audio. A
+    /// wrongly refused fetch is dead air with nothing in the UI to explain it,
+    /// so the first release observes real households before anyone enforces.
+    /// Set to `true` once the logs show no unexpected addresses.
+    ///
+    /// What it does not do: the allowlist is simply whatever the control API
+    /// has been told to play on, and `POST /api/playback/start` is
+    /// unauthenticated like the rest of the LAN API — it accepts any address as
+    /// a speaker. A device that can reach that endpoint can therefore name
+    /// itself and be admitted. This flag closes the passive hole, where a
+    /// stream URL is readable off any speaker by anyone; it is not a defence
+    /// against someone actively driving the control API, which needs
+    /// authentication there instead.
+    #[serde(default)]
+    pub strict_stream_access: bool,
 }
 
 impl Default for Config {
@@ -103,6 +129,7 @@ impl Default for Config {
             preferred_port: 0,
             topology_refresh_interval: 30,
             streaming: StreamingConfig::default(),
+            strict_stream_access: false,
         }
     }
 }

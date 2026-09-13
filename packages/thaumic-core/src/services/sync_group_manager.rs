@@ -199,7 +199,7 @@ impl SyncGroupManager {
         );
 
         // Held until this function returns, on every path.
-        let _start = self.sessions.lock_speaker_start(slave_ip).await;
+        let _start = self.sessions.lock_speaker_start(stream_id, slave_ip).await;
 
         // Check for existing sessions on this speaker and handle appropriately
         if let Some(existing) = self.sessions.get(stream_id, slave_ip) {

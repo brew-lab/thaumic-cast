@@ -3,7 +3,7 @@ use dashmap::DashMap;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, VecDeque};
 use std::net::IpAddr;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, OnceLock};
 use std::time::Instant;
 use tokio::sync::broadcast;
@@ -254,6 +254,48 @@ impl Default for StreamTiming {
     }
 }
 
+/// Upper bound on simultaneous HTTP readers of one stream that the stream is
+/// not being played on.
+///
+/// Readers are not streams: `StreamingConfig::max_concurrent_streams` caps how
+/// many casts exist, and nothing caps how many connections pull a single cast.
+/// Each reader spawns its own cadence pipeline and its own broadcast receiver,
+/// so a stream id — which Sonos republishes to any LAN device that asks a
+/// speaker for its `CurrentTrackURI` — would otherwise be an unbounded
+/// fan-out.
+///
+/// **Only readers that are not on the stream's allowlist draw on this budget.**
+/// A speaker the stream is actually playing on is never refused for being one
+/// reader too many: a refusal there is silent dead air with nothing in the UI
+/// to explain it, the count is bounded by the household's hardware anyway, and
+/// the routine reconnects (Range GET on resume or seek, the re-request after a
+/// pause, the roughly-300s re-request) each double-count for as long as the
+/// replaced connection takes to be reaped — which, for a half-open socket left
+/// by a Wi-Fi drop, is however long the kernel retransmits for.
+///
+/// 32 is the number of players Sonos supports in one system. Even a household
+/// whose entire topology renumbered at once — every speaker fetching from an
+/// address its session does not know yet, and so every speaker unlisted —
+/// stays under it, while a harvested stream id still buys a fixed fan-out
+/// rather than an unbounded one.
+pub const MAX_UNLISTED_STREAM_READERS: usize = 32;
+
+/// Holds one of a stream's unlisted-reader slots, releasing it when the
+/// response body is dropped.
+///
+/// Holds the counter alone and never the [`StreamState`]: the body outlives the
+/// handler, so a strong `Arc<StreamState>` here would keep a removed stream's
+/// broadcast sender alive — the same hazard the epoch hook avoids.
+pub struct StreamReaderSlot {
+    readers: Arc<AtomicUsize>,
+}
+
+impl Drop for StreamReaderSlot {
+    fn drop(&mut self) {
+        self.readers.fetch_sub(1, Ordering::AcqRel);
+    }
+}
+
 /// State for a single active audio stream
 pub struct StreamState {
     pub id: String,
@@ -284,6 +326,9 @@ pub struct StreamState {
     last_push_at: parking_lot::Mutex<Option<Instant>>,
     /// Receive jitter stats, reset periodically by the cadence pipeline.
     receive_stats: parking_lot::Mutex<ReceiveStats>,
+    /// Live HTTP readers of this stream that are not on its allowlist, capped
+    /// at [`MAX_UNLISTED_STREAM_READERS`].
+    unlisted_readers: Arc<AtomicUsize>,
 }
 
 impl StreamState {
@@ -331,7 +376,34 @@ impl StreamState {
             frame_duration_ms,
             last_push_at: parking_lot::Mutex::new(None),
             receive_stats: parking_lot::Mutex::new(ReceiveStats::new()),
+            unlisted_readers: Arc::new(AtomicUsize::new(0)),
         }
+    }
+
+    /// Claims one of this stream's unlisted-reader slots.
+    ///
+    /// Call this only for a peer the stream is *not* playing on; readers on the
+    /// allowlist are deliberately uncapped, see [`MAX_UNLISTED_STREAM_READERS`].
+    /// Returns `None` when that many unlisted readers are already connected.
+    /// Hold the returned slot for the life of the response body; dropping it
+    /// frees the slot.
+    #[must_use]
+    pub fn acquire_unlisted_reader(&self) -> Option<StreamReaderSlot> {
+        self.unlisted_readers
+            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |readers| {
+                (readers < MAX_UNLISTED_STREAM_READERS).then_some(readers + 1)
+            })
+            .ok()
+            .map(|_| StreamReaderSlot {
+                readers: Arc::clone(&self.unlisted_readers),
+            })
+    }
+
+    /// Number of HTTP readers currently connected to this stream from an
+    /// address it is not playing on.
+    #[must_use]
+    pub fn unlisted_reader_count(&self) -> usize {
+        self.unlisted_readers.load(Ordering::Acquire)
     }
 
     /// Pushes a new audio frame into the stream.

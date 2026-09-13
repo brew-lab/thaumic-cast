@@ -870,7 +870,10 @@ impl StreamCoordinator {
         } = params;
 
         // Held until this function returns, on every path.
-        let _start = self.sessions.lock_speaker_start(speaker_ip).await;
+        let _start = self
+            .sessions
+            .lock_speaker_start(stream_id, speaker_ip)
+            .await;
 
         log::debug!(
             "[Playback] start_single_playback called: speaker={}, stream={}",
@@ -1117,6 +1120,14 @@ impl StreamCoordinator {
         self.sync_group
             .stop_speaker_for_stream(stream_id, speaker_ip, reason)
             .await
+    }
+
+    /// Speaker addresses entitled to fetch `stream_id` over HTTP right now.
+    ///
+    /// See [`PlaybackSessionStore::allowed_reader_ips`]: live sessions in any
+    /// role plus speakers whose start is still in flight.
+    pub fn allowed_reader_ips(&self, stream_id: &str) -> Vec<String> {
+        self.sessions.allowed_reader_ips(stream_id)
     }
 
     /// Gets all active playback sessions.
