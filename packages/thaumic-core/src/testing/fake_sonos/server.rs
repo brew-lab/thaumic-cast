@@ -97,7 +97,9 @@ async fn handle_soap(
     system.record(speaker, service, &action, args.clone());
 
     match system.failure_for(&speaker.ip_string(), &action) {
-        Some(Failure::Fault(code)) => return fault_response(code, "Injected fault"),
+        Some(Failure::Fault(code) | Failure::FaultOnce(code)) => {
+            return fault_response(code, "Injected fault")
+        }
         Some(Failure::Hang) => std::future::pending::<()>().await,
         Some(Failure::Delay(delay)) => tokio::time::sleep(delay).await,
         None => {}
@@ -128,15 +130,23 @@ fn handle_subscribe(
 
     if headers.contains_key("SID") {
         let sid = header("SID");
-        system.record(
-            speaker,
-            service,
-            "RENEW",
-            vec![
-                ("SID".to_string(), sid.clone()),
-                ("TIMEOUT".to_string(), requested_timeout),
-            ],
-        );
+        // CALLBACK and NT are recorded when present so a test can prove a
+        // renewal carried neither; hardware rejects a renewal that does.
+        let mut args = vec![
+            ("SID".to_string(), sid.clone()),
+            ("TIMEOUT".to_string(), requested_timeout),
+        ];
+        let mut malformed = false;
+        for name in ["CALLBACK", "NT"] {
+            if headers.contains_key(name) {
+                args.push((name.to_string(), header(name)));
+                malformed = true;
+            }
+        }
+        system.record(speaker, service, "RENEW", args);
+        if malformed {
+            return StatusCode::BAD_REQUEST.into_response();
+        }
         if let Some(failure) = system.failure_for(&speaker.ip_string(), "RENEW") {
             return gena_failure(failure);
         }
@@ -200,7 +210,7 @@ fn handle_unsubscribe(
 /// and a delay is not supported on this path.
 fn gena_failure(failure: Failure) -> Response {
     match failure {
-        Failure::Fault(_) | Failure::Hang | Failure::Delay(_) => {
+        Failure::Fault(_) | Failure::FaultOnce(_) | Failure::Hang | Failure::Delay(_) => {
             StatusCode::INTERNAL_SERVER_ERROR.into_response()
         }
     }

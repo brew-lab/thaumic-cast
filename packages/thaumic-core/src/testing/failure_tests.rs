@@ -99,6 +99,31 @@ async fn a_transient_play_fault_is_retried_until_the_budget_is_spent() {
     .await;
 }
 
+/// Proves: a `Play` that faults with 701 once and then answers is retried
+/// and the start succeeds — the speaker fetches, the session is recorded —
+/// which is what a speaker caught between states looks like in practice.
+#[tokio::test]
+async fn a_transient_play_fault_is_retried_and_the_start_succeeds() {
+    within("transient play fault, then recovery", async {
+        let sys = TestSystem::builder().speakers(["Kitchen"]).build().await;
+        let kitchen = sys.ip("Kitchen");
+        sys.fake.fail(&kitchen, "Play", Failure::FaultOnce(701));
+        let stream = sys.new_stream();
+
+        let results = sys.start(&stream, &["Kitchen"], false).await;
+
+        assert!(results[0].success, "{results:?}");
+        assert_eq!(
+            av_actions_since(&sys, &kitchen, 0),
+            ["SetAVTransportURI", "Play", "Play"],
+            "one fault, one retry, no second SetAVTransportURI"
+        );
+        assert_eq!(sys.fake.speaker_named("Kitchen").fetches().len(), 1);
+        assert!(sys.session(&stream, "Kitchen").is_some());
+    })
+    .await;
+}
+
 /// Proves: a `Stop` answered with 701 means the speaker is already stopped
 /// and is reported as success, while any other fault is still an error.
 #[tokio::test]
