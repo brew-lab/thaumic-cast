@@ -20,12 +20,18 @@ use crate::sonos::soap::soap_request;
 /// # Arguments
 /// * `client` - The HTTP client to use for the request
 /// * `ip` - IP address of the speaker to join (will become a slave)
+/// * `port` - TCP port the speaker's UPnP services listen on (1400 on real hardware)
 /// * `coordinator_uuid` - UUID of the coordinator speaker (RINCON_xxx format)
 ///
 /// # Note
 /// This creates a temporary group for streaming purposes and does not modify
 /// the user's permanent Sonos group configuration.
-pub async fn join_group(client: &Client, ip: &str, coordinator_uuid: &str) -> SoapResult<()> {
+pub async fn join_group(
+    client: &Client,
+    ip: &str,
+    port: u16,
+    coordinator_uuid: &str,
+) -> SoapResult<()> {
     let group_uri = format!("x-rincon:{}", coordinator_uuid);
 
     log::info!(
@@ -44,6 +50,7 @@ pub async fn join_group(client: &Client, ip: &str, coordinator_uuid: &str) -> So
         soap_request(
             client,
             ip,
+            port,
             SonosService::AVTransport,
             "SetAVTransportURI",
             &set_uri_args,
@@ -58,7 +65,14 @@ pub async fn join_group(client: &Client, ip: &str, coordinator_uuid: &str) -> So
 
     let play_args = [("InstanceID", "0"), ("Speed", "1")];
     with_retry("Play", || {
-        soap_request(client, ip, SonosService::AVTransport, "Play", &play_args)
+        soap_request(
+            client,
+            ip,
+            port,
+            SonosService::AVTransport,
+            "Play",
+            &play_args,
+        )
     })
     .await?;
 
@@ -76,16 +90,18 @@ pub async fn join_group(client: &Client, ip: &str, coordinator_uuid: &str) -> So
 /// # Arguments
 /// * `client` - The HTTP client to use for the request
 /// * `ip` - IP address of the speaker to unjoin
+/// * `port` - TCP port the speaker's UPnP services listen on (1400 on real hardware)
 ///
 /// # Note
 /// This is safe to call on speakers that are already standalone - the
 /// action is idempotent.
-pub async fn leave_group(client: &Client, ip: &str) -> SoapResult<()> {
+pub async fn leave_group(client: &Client, ip: &str, port: u16) -> SoapResult<()> {
     log::info!("[Sonos] Speaker {} leaving group (becoming standalone)", ip);
 
     soap_request(
         client,
         ip,
+        port,
         SonosService::AVTransport,
         "BecomeCoordinatorOfStandaloneGroup",
         &[("InstanceID", "0")],

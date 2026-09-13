@@ -8,7 +8,7 @@ use std::time::Duration;
 use reqwest::Client;
 use thiserror::Error;
 
-use super::utils::{build_sonos_url, escape_xml, extract_xml_text};
+use super::utils::{build_sonos_url_with_port, escape_xml, extract_xml_text};
 use crate::protocol_constants::SOAP_TIMEOUT_SECS;
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -113,6 +113,7 @@ impl SoapOptions {
 /// # Arguments
 /// * `client` - The HTTP client to use for the request
 /// * `ip` - IP address of the Sonos speaker
+/// * `port` - TCP port the speaker's UPnP services listen on (1400 on real hardware)
 /// * `endpoint` - The control URL path (e.g., "/MediaRenderer/AVTransport/Control")
 /// * `service` - The UPnP service URN (e.g., "urn:schemas-upnp-org:service:AVTransport:1")
 /// * `action` - The SOAP action name (e.g., "Play", "Stop", "GetVolume")
@@ -124,6 +125,7 @@ impl SoapOptions {
 pub async fn send_soap_request(
     client: &Client,
     ip: &str,
+    port: u16,
     endpoint: &str,
     service: &str,
     action: &str,
@@ -132,6 +134,7 @@ pub async fn send_soap_request(
     send_soap_request_with(
         client,
         ip,
+        port,
         endpoint,
         service,
         action,
@@ -145,16 +148,18 @@ pub async fn send_soap_request(
 ///
 /// Identical to [`send_soap_request`] except for the timeout and the level
 /// the per-call log lines are written at.
+#[allow(clippy::too_many_arguments)]
 pub async fn send_soap_request_with(
     client: &Client,
     ip: &str,
+    port: u16,
     endpoint: &str,
     service: &str,
     action: &str,
     args: &[(&str, &str)],
     options: SoapOptions,
 ) -> SoapResult<String> {
-    let url = build_sonos_url(ip, endpoint);
+    let url = build_sonos_url_with_port(ip, port, endpoint);
 
     // Build SOAP envelope - must be a single line with no leading whitespace
     // Some SOAP parsers (including Sonos) reject XML with whitespace before the root element
@@ -238,17 +243,28 @@ use super::services::SonosService;
 /// # Arguments
 /// * `client` - The HTTP client to use for the request
 /// * `ip` - IP address of the Sonos speaker
+/// * `port` - TCP port the speaker's UPnP services listen on (1400 on real hardware)
 /// * `service` - The Sonos service to target
 /// * `action` - The SOAP action name (e.g., "Play", "Stop", "GetVolume")
 /// * `args` - Key-value pairs for action arguments (order is preserved)
 pub async fn soap_request(
     client: &Client,
     ip: &str,
+    port: u16,
     service: SonosService,
     action: &str,
     args: &[(&str, &str)],
 ) -> SoapResult<String> {
-    soap_request_with(client, ip, service, action, args, SoapOptions::default()).await
+    soap_request_with(
+        client,
+        ip,
+        port,
+        service,
+        action,
+        args,
+        SoapOptions::default(),
+    )
+    .await
 }
 
 /// Sends a service-resolved SOAP request with explicit [`SoapOptions`].
@@ -257,6 +273,7 @@ pub async fn soap_request(
 pub async fn soap_request_with(
     client: &Client,
     ip: &str,
+    port: u16,
     service: SonosService,
     action: &str,
     args: &[(&str, &str)],
@@ -265,6 +282,7 @@ pub async fn soap_request_with(
     send_soap_request_with(
         client,
         ip,
+        port,
         service.control_path(),
         service.urn(),
         action,
