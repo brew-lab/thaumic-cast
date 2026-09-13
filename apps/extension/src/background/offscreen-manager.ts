@@ -16,7 +16,7 @@
  */
 
 import { createLogger } from '@thaumic-cast/shared';
-import type { WsStatusResponse } from '../lib/messages';
+import { OFFSCREEN_MESSAGE_TARGET, type WsStatusResponse } from '../lib/messages';
 import { setConnected, getConnectionState } from './connection-state';
 import { setSonosState } from './sonos-state';
 import { notifyPopup } from './notification-service';
@@ -26,6 +26,17 @@ const log = createLogger('Background');
 
 /** Maximum time to wait for an offscreen message response (ms). */
 const OFFSCREEN_MESSAGE_TIMEOUT_MS = 10_000;
+
+/**
+ * Timeout for long-running offscreen operations (capture and playback start).
+ *
+ * Must exceed the offscreen document's own internal timeouts (15 s session init,
+ * 10 s waiting for STREAM_READY plus 15 s waiting for playback results) so the
+ * offscreen always answers first and this timeout is only a last resort. If the
+ * background gave up earlier, the offscreen would still finish and hold a session
+ * the background never registered.
+ */
+export const OFFSCREEN_LONG_OPERATION_TIMEOUT_MS = 30_000;
 
 /** Promise to track ongoing offscreen creation to avoid duplicates. */
 let offscreenCreationPromise: Promise<void> | null = null;
@@ -38,19 +49,29 @@ let offscreenReadyPromise: Promise<void> | null = null;
 
 /**
  * Sends a message to the offscreen document with error handling.
+ *
+ * The message is stamped with `target: 'offscreen'` so the offscreen listener can
+ * distinguish it from the same message type broadcast by other contexts (e.g. the
+ * popup's SET_VOLUME, which every extension context receives).
+ *
  * @param message - The message to send
+ * @param timeoutMs - Maximum time to wait for a response (defaults to 10 s)
  * @returns The response from the offscreen document
  */
-export async function sendToOffscreen<T = unknown>(message: object): Promise<T | undefined> {
-  const timeoutPromise = new Promise<never>((_, reject) =>
-    setTimeout(
-      () => reject(new Error('Offscreen message timed out')),
-      OFFSCREEN_MESSAGE_TIMEOUT_MS,
-    ),
-  );
+export async function sendToOffscreen<T = unknown>(
+  message: object,
+  timeoutMs: number = OFFSCREEN_MESSAGE_TIMEOUT_MS,
+): Promise<T | undefined> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error('Offscreen message timed out')), timeoutMs);
+  });
 
   try {
-    return await Promise.race([chrome.runtime.sendMessage(message), timeoutPromise]);
+    return await Promise.race([
+      chrome.runtime.sendMessage({ ...message, target: OFFSCREEN_MESSAGE_TARGET }),
+      timeoutPromise,
+    ]);
   } catch (err) {
     const errorMessage = err instanceof Error ? err.message : String(err);
     if (
@@ -60,6 +81,8 @@ export async function sendToOffscreen<T = unknown>(message: object): Promise<T |
       log.warn('Offscreen not available, may need recreation');
     }
     throw err;
+  } finally {
+    clearTimeout(timer);
   }
 }
 

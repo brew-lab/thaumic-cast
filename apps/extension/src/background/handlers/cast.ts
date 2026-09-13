@@ -54,6 +54,12 @@ const log = createLogger('Background');
  */
 export async function handleStartCast(msg: StartCastMessage): Promise<ExtensionResponse> {
   let disabledAutoDiscard = false;
+  /**
+   * True once a capture request has been sent to the offscreen document. From
+   * then on the offscreen may hold a session for this tab, so any failure before
+   * registerSession() must stop it or nothing in the popup can ever stop it.
+   */
+  let captureRequested = false;
   let tab: chrome.tabs.Tab | null | undefined;
 
   try {
@@ -116,8 +122,6 @@ export async function handleStartCast(msg: StartCastMessage): Promise<ExtensionR
     // 6. Branch on capture mode
     let captureResponse: { success: boolean; streamId?: string; error?: string };
     let captureMode: 'tab' | 'browser';
-    const cleanupCapture = (id: number): Promise<void> =>
-      offscreenBroker.stopSession(id).then(() => {});
 
     if (settings.captureMode === 'browser') {
       // ─── Browser-wide capture path (WASAPI) ─────────────────────────────
@@ -127,6 +131,7 @@ export async function handleStartCast(msg: StartCastMessage): Promise<ExtensionR
         await connectWebSocket(app.url);
       }
 
+      captureRequested = true;
       const response = await offscreenBroker.startBrowserCapture(tabId, app.url, encoderConfig);
       if (!response) throw new Error('error_offscreen_unavailable');
       captureResponse = response;
@@ -148,6 +153,7 @@ export async function handleStartCast(msg: StartCastMessage): Promise<ExtensionR
         await connectWebSocket(app.url);
       }
 
+      captureRequested = true;
       const response = await offscreenBroker.startCapture(
         tabId,
         mediaStreamId,
@@ -184,8 +190,8 @@ export async function handleStartCast(msg: StartCastMessage): Promise<ExtensionR
 
       const successfulResults = playbackResponse.results.filter((r) => r.success);
       if (successfulResults.length === 0) {
+        // The catch block below stops the offscreen session
         log.error('All playback attempts failed, cleaning up capture');
-        await cleanupCapture(tabId);
         throw new Error('error_playback_failed');
       }
 
@@ -227,6 +233,18 @@ export async function handleStartCast(msg: StartCastMessage): Promise<ExtensionR
     }
     const message = err instanceof Error ? err.message : String(err);
     log.error(`Cast failed: ${message}`);
+
+    // Stop any session the offscreen may have started (including when our
+    // request timed out but the offscreen finished anyway), so an orphaned
+    // stream never keeps playing with no registered session to stop it.
+    if (captureRequested && tab?.id) {
+      try {
+        await offscreenBroker.stopSession(tab.id);
+      } catch (cleanupErr) {
+        log.warn(`Failed to stop offscreen session after cast failure: ${String(cleanupErr)}`);
+      }
+    }
+
     return { success: false, error: message };
   }
 }
