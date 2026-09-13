@@ -1,0 +1,3 @@
+[test]
+# Installs the chrome.* stub before any extension module is imported.
+preload = ["./src/test-support/chrome-stub.ts"]

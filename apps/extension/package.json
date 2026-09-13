@@ -12,7 +12,7 @@
     "build": "vite build",
     "typecheck": "tsc --noEmit",
     "clean": "rm -rf dist",
-    "test": "echo 'No tests yet'"
+    "test": "bun test"
   },
   "dependencies": {
     "@thaumic-cast/protocol": "workspace:*",
