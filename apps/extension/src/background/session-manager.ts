@@ -151,11 +151,14 @@ export function registerSession(
 ): void {
   const wasEmpty = sessions.size === 0;
 
+  // Own copies: removeSpeakerFromSession splices these in place, so sharing
+  // the caller's arrays would let a later removal reach into whatever else
+  // still holds them (a request payload, a popup snapshot).
   sessions.set(tabId, {
     streamId,
     tabId,
-    speakerIps,
-    speakerNames,
+    speakerIps: [...speakerIps],
+    speakerNames: [...speakerNames],
     encoderConfig,
     startedAt: Date.now(),
     syncSpeakers,
