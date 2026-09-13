@@ -40,6 +40,22 @@ pub struct ServerConfig {
     /// If not set, checks for `artwork.jpg` in data_dir, then uses embedded default.
     /// Override: `THAUMIC_ARTWORK_URL`
     pub artwork_url: Option<String>,
+
+    /// Whether `/stream/{id}/live` refuses fetches from addresses the stream is
+    /// not playing on.
+    ///
+    /// Defaults to `false`, which logs the unexpected address at `warn` and
+    /// still serves the audio. Turn it on once those logs are quiet: a wrongly
+    /// refused fetch is silent dead air on the speaker. One known case: a
+    /// speaker whose address changes mid-cast (DHCP renewal, reboot) is
+    /// refused until playback is restarted, because its session still names
+    /// the old address.
+    ///
+    /// It binds the audio endpoint to whatever the control API has been told to
+    /// play on, and that API is unauthenticated, so it is not a defence against
+    /// an attacker actively driving it. See `thaumic_core::Config`.
+    /// Override: `THAUMIC_STRICT_STREAM_ACCESS`
+    pub strict_stream_access: bool,
 }
 
 impl Default for ServerConfig {
@@ -50,6 +66,7 @@ impl Default for ServerConfig {
             topology_refresh_interval: 30,
             data_dir: None,
             artwork_url: None,
+            strict_stream_access: false,
         }
     }
 }
@@ -97,6 +114,7 @@ impl ServerConfig {
         thaumic_core::Config {
             preferred_port: self.bind_port,
             topology_refresh_interval: self.topology_refresh_interval,
+            strict_stream_access: self.strict_stream_access,
             ..Default::default()
         }
     }
@@ -148,6 +166,19 @@ mod tests {
         let config = ServerConfig::from_yaml("bind_port: 0\n").expect("should parse");
         config.validate().expect("port 0 means auto-assign");
         assert_eq!(config.to_core_config().preferred_port, 0);
+    }
+
+    /// The flag ships off, and reaches core only when a config file turns it on.
+    #[test]
+    fn strict_stream_access_defaults_off_and_is_forwarded_to_core() {
+        assert!(
+            !ServerConfig::default()
+                .to_core_config()
+                .strict_stream_access
+        );
+
+        let config = ServerConfig::from_yaml("strict_stream_access: true\n").expect("should parse");
+        assert!(config.to_core_config().strict_stream_access);
     }
 
     #[test]
