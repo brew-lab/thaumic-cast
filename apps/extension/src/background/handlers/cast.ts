@@ -16,6 +16,7 @@
 
 import { createLogger } from '@thaumic-cast/shared';
 import type { StreamMetadata } from '@thaumic-cast/protocol';
+import { countRemoteStreams } from '@thaumic-cast/protocol';
 import type {
   StartCastMessage,
   StopCastMessage,
@@ -36,7 +37,7 @@ import {
   hasTabCaptureSessions,
   hasBrowserCaptureSessions,
 } from '../session-manager';
-import { getSpeakerGroups } from '../sonos-state';
+import { getSpeakerGroups, getSonosState } from '../sonos-state';
 import { getConnectionState, clearConnectionState } from '../connection-state';
 import { stopCastForTab } from '../sonos-event-handlers';
 import { ensureOffscreen } from '../offscreen-manager';
@@ -77,8 +78,14 @@ export async function handleStartCast(msg: StartCastMessage): Promise<ExtensionR
       throw new Error('error_desktop_not_found');
     }
 
-    // 2. Check session limits
-    if (getSessionCount() >= app.maxStreams) {
+    // 2. Check session limits. The companion's cap is global, not per-client,
+    //    so other clients' streams occupy slots too - counting only our own map
+    //    lets two browsers each think the last slot is theirs and fails the
+    //    second one after tab capture has already started. The companion sends
+    //    other clients' sessions redacted, which is enough to count them;
+    //    countRemoteStreams drops the ones whose speakers have since stopped so
+    //    a connect-time snapshot can't block a cast the companion would accept.
+    if (getSessionCount() + countRemoteStreams(getSonosState()) >= app.maxStreams) {
       throw new Error('error_max_sessions');
     }
 
