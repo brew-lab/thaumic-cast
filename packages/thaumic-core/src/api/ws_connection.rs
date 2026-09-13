@@ -13,6 +13,7 @@
 //! busy" (see `ws::build_initial_state`), and what keeps another client's live
 //! stream ids out of the broadcast events it receives.
 
+use std::collections::HashSet;
 use std::net::{IpAddr, SocketAddr};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
@@ -80,6 +81,23 @@ impl ConnectionState {
     pub fn owner_ip(&self) -> IpAddr {
         self.remote_addr.ip().to_canonical()
     }
+}
+
+/// What is connected from machines other than the one this process runs on.
+///
+/// Plain owned numbers taken in one pass, so a caller can hold the summary —
+/// and decide what to do about it — without holding any lock on the connection
+/// table. See [`WsConnectionManager::remote_peers`].
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct RemotePeers {
+    /// Distinct owner addresses that are not this machine: how many *other*
+    /// machines a server-wide action would reach.
+    pub machines: usize,
+    /// Live sockets those machines hold. Normally higher than `machines`: one
+    /// browser keeps a control socket plus one socket per cast.
+    pub connections: usize,
+    /// Streams those machines currently own.
+    pub streams: usize,
 }
 
 /// Which connection owns a stream.
@@ -207,6 +225,55 @@ impl WsConnectionManager {
         self.connections.len()
     }
 
+    /// Summarises what is connected from machines other than this one.
+    ///
+    /// This is the "who else does a server-wide action reach" question, and the
+    /// unit is machines, not sockets: one browser holds a control socket plus
+    /// one socket per cast (see `api::ws`), so counting sockets would multiply
+    /// a single user into a crowd. Two browsers on one machine count once,
+    /// which is the same grouping ownership already uses (see
+    /// [`ConnectionState::owner_ip`]).
+    ///
+    /// `host_ip` is this process's own advertised address, or `None` when it
+    /// has no local client to exclude — the headless server, where every client
+    /// is on another machine by definition. Loopback is always local; the
+    /// advertised address counts as local too, because a browser on this very
+    /// machine may have been pointed at the LAN address rather than
+    /// `localhost`, which is the same allowance `ws::is_companion_host` makes.
+    ///
+    /// One pass over two small maps, cheap enough to call on a tray click, and
+    /// it copies out what it needs rather than lending a borrow, so nothing is
+    /// locked once it returns.
+    #[must_use]
+    pub fn remote_peers(&self, host_ip: Option<IpAddr>) -> RemotePeers {
+        let host_ip = host_ip.map(|ip| ip.to_canonical());
+        // `owner_ip()` and `StreamOwner::owner_ip` are already canonical, so
+        // both sides of this comparison are.
+        let is_remote = |ip: IpAddr| !is_loopback_ip(ip) && Some(ip) != host_ip;
+
+        let mut machines = HashSet::new();
+        let mut connections = 0;
+        for entry in self.connections.iter() {
+            let ip = entry.value().owner_ip();
+            if is_remote(ip) {
+                machines.insert(ip);
+                connections += 1;
+            }
+        }
+
+        let streams = self
+            .stream_owners
+            .iter()
+            .filter(|entry| is_remote(entry.value().owner_ip))
+            .count();
+
+        RemotePeers {
+            machines: machines.len(),
+            connections,
+            streams,
+        }
+    }
+
     /// Force-closes all connections.
     ///
     /// This cancels the global token, which signals all connection handlers
@@ -329,6 +396,10 @@ mod tests {
 
     fn addr(s: &str) -> SocketAddr {
         s.parse().expect("valid socket address")
+    }
+
+    fn ip(s: &str) -> IpAddr {
+        s.parse().expect("valid IP address")
     }
 
     fn manager() -> Arc<WsConnectionManager> {
@@ -469,6 +540,95 @@ mod tests {
         assert!(!stranger.stream_is_owned_by_other("stream-unknown"));
         owner.manager().release_stream("stream-1");
         assert!(!stranger.stream_is_owned_by_other("stream-1"));
+    }
+
+    #[test]
+    fn nothing_connected_reaches_nobody() {
+        let manager = manager();
+        assert_eq!(manager.remote_peers(None), RemotePeers::default());
+        assert_eq!(
+            manager.remote_peers(Some(ip("192.168.1.5"))),
+            RemotePeers::default()
+        );
+    }
+
+    #[test]
+    fn loopback_clients_are_not_other_machines() {
+        let manager = manager();
+        let local = manager.register(addr("127.0.0.1:5001"), None);
+        let local_v6 = manager.register(addr("[::1]:5002"), None);
+        let local_mapped = manager.register(addr("[::ffff:127.0.0.1]:5003"), None);
+        local.claim_stream("stream-1");
+        local_v6.claim_stream("stream-2");
+        local_mapped.claim_stream("stream-3");
+
+        assert_eq!(manager.connection_count(), 3);
+        assert_eq!(manager.remote_peers(None), RemotePeers::default());
+    }
+
+    #[test]
+    fn several_sockets_from_one_browser_are_one_machine() {
+        let manager = manager();
+        // Control socket plus one socket per cast, all from one extension.
+        let _control = manager.register(addr("192.168.1.9:5001"), None);
+        let first_cast = manager.register(addr("192.168.1.9:5002"), None);
+        let second_cast = manager.register(addr("[::ffff:192.168.1.9]:5003"), None);
+        first_cast.claim_stream("stream-1");
+        second_cast.claim_stream("stream-2");
+
+        let remote = manager.remote_peers(None);
+        assert_eq!(remote.machines, 1, "one browser is one machine");
+        assert_eq!(remote.connections, 3);
+        assert_eq!(remote.streams, 2);
+    }
+
+    #[test]
+    fn a_mix_of_loopback_and_remote_counts_only_the_remote() {
+        let manager = manager();
+        let _local = manager.register(addr("127.0.0.1:5001"), None);
+        let local_cast = manager.register(addr("127.0.0.1:5002"), None);
+        let far = manager.register(addr("192.168.1.9:5003"), None);
+        let farther = manager.register(addr("192.168.1.20:5004"), None);
+        local_cast.claim_stream("local-stream");
+        far.claim_stream("far-stream");
+        farther.claim_stream("farther-stream");
+
+        let remote = manager.remote_peers(None);
+        assert_eq!(remote.machines, 2);
+        assert_eq!(remote.connections, 2);
+        assert_eq!(remote.streams, 2, "the loopback stream is not theirs");
+        assert_eq!(manager.connection_count(), 4);
+    }
+
+    #[test]
+    fn the_advertised_lan_address_is_this_machine_too() {
+        // A browser on this very machine may have been pointed at the address
+        // the Server view offers to copy instead of localhost.
+        let manager = manager();
+        let same_machine = manager.register(addr("192.168.1.5:5001"), None);
+        let other_machine = manager.register(addr("192.168.1.9:5002"), None);
+        same_machine.claim_stream("mine");
+        other_machine.claim_stream("theirs");
+
+        let remote = manager.remote_peers(Some(ip("192.168.1.5")));
+        assert_eq!(remote.machines, 1);
+        assert_eq!(remote.connections, 1);
+        assert_eq!(remote.streams, 1);
+
+        // With no host address to exclude — the headless server — both are
+        // other machines.
+        assert_eq!(manager.remote_peers(None).machines, 2);
+    }
+
+    #[test]
+    fn a_disconnected_peer_stops_counting() {
+        let manager = manager();
+        {
+            let leaving = manager.register(addr("192.168.1.9:5001"), None);
+            leaving.claim_stream("stream-1");
+            assert_eq!(manager.remote_peers(None).machines, 1);
+        }
+        assert_eq!(manager.remote_peers(None), RemotePeers::default());
     }
 
     #[test]
