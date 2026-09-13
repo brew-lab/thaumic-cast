@@ -6,3 +6,5 @@
 
 pub(crate) mod fake_sonos;
 pub(crate) mod harness;
+
+mod playback_tests;
