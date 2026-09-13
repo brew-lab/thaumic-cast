@@ -149,12 +149,8 @@ impl StreamSinkBridge {
             log::info!(
                 "[Capture] Backfilled {} silence frames for {} lost audio frames{} on stream {}",
                 chunks,
-                lost_frames,
-                if (lost_frames as u64) > fill {
-                    " (capped)"
-                } else {
-                    ""
-                },
+                total,
+                if capped { " (capped)" } else { "" },
                 self.stream_id
             );
         }

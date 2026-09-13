@@ -250,10 +250,14 @@ fn capture_thread_inner(
     let mut stats_timer = std::time::Instant::now();
     // Stream-relative index the next packet should start at; a packet that
     // starts later means the engine discarded audio in between. The jump is
-    // bounded by wall-clock time since the previous packet, so a position
-    // re-base that is not a real loss cannot inject a jitter buffer of silence.
+    // bounded by wall-clock time since capture start (the device position
+    // cannot run ahead of the clock by more than the engine buffer), so a
+    // position re-base that is not a real loss cannot inject a jitter buffer
+    // of silence, while a real loss after a burst of stale packets still
+    // reports in full.
     let mut expected_pos: Option<u64> = None;
-    let mut last_packet_at = std::time::Instant::now();
+    let capture_started = std::time::Instant::now();
+    let clock_slack_frames = sample_rate as u64 / 10 + frames_per_buffer(buffer_ms, sample_rate);
     // Frames from packets this loop had to skip (unreadable buffers), owed
     // to the sink as loss on the next packet.
     let mut pending_lost: u64 = 0;
@@ -331,14 +335,17 @@ fn capture_thread_inner(
             // Frames lost between packets, from the device position. The
             // discontinuity flag alone says nothing about how much was lost.
             let now = std::time::Instant::now();
-            let pos_delta = expected_pos.map_or(0, |expected| device_pos.saturating_sub(expected));
-            let max_by_clock = (now.duration_since(last_packet_at).as_secs_f64()
-                * sample_rate as f64) as u64
-                + frames_available as u64;
-            let lost_frames =
-                (pos_delta.min(max_by_clock) + pending_lost).min(u32::MAX as u64) as u32;
+            let lost_frames = match expected_pos {
+                None => 0,
+                Some(expected) => {
+                    let pos_delta = device_pos.saturating_sub(expected);
+                    let clock_frames = (now.duration_since(capture_started).as_secs_f64()
+                        * sample_rate as f64) as u64;
+                    let max_by_clock = (clock_frames + clock_slack_frames).saturating_sub(expected);
+                    (pos_delta.min(max_by_clock) + pending_lost).min(u32::MAX as u64) as u32
+                }
+            };
             pending_lost = 0;
-            last_packet_at = now;
             expected_pos = Some(device_pos + frames_available as u64);
 
             let buf_flags = BufferFlags {
@@ -351,9 +358,13 @@ fn capture_thread_inner(
             if buf_flags.discontinuity {
                 disc_events += 1;
                 disc_frames += lost_frames as u64;
-                if now.duration_since(disc_log_at) >= std::time::Duration::from_secs(1) {
+                // First event of a burst logs at once; the rest aggregate for
+                // a second and are flushed with the periodic stats below.
+                if disc_events == 1
+                    || now.duration_since(disc_log_at) >= std::time::Duration::from_secs(1)
+                {
                     log::warn!(
-                        "WASAPI discontinuity: {} event(s), {} frames lost since last report",
+                        "WASAPI discontinuity: {} event(s), {} frames lost",
                         disc_events,
                         disc_frames
                     );
@@ -408,6 +419,16 @@ fn capture_thread_inner(
 
         // Log stats every 5 seconds
         if stats_timer.elapsed() >= std::time::Duration::from_secs(5) {
+            if disc_events > 0 {
+                log::warn!(
+                    "WASAPI discontinuity: {} event(s), {} frames lost",
+                    disc_events,
+                    disc_frames
+                );
+                disc_events = 0;
+                disc_frames = 0;
+                disc_log_at = std::time::Instant::now();
+            }
             let silent_pct = if total_frames > 0 {
                 (silent_frames as f64 / total_frames as f64) * 100.0
             } else {
@@ -625,6 +646,11 @@ fn revert_mmcss(handle: Option<HANDLE>) {
 }
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
+
+/// Frames held by an engine buffer of `buffer_ms` at `sample_rate`.
+fn frames_per_buffer(buffer_ms: u32, sample_rate: u32) -> u64 {
+    buffer_ms as u64 * sample_rate as u64 / 1000
+}
 
 fn make_waveformat(tag: u16, channels: u16, sample_rate: u32, bits: u16) -> WAVEFORMATEX {
     let block_align = channels * (bits / 8);
