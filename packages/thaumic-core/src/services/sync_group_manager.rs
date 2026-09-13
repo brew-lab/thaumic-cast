@@ -378,13 +378,28 @@ impl SyncGroupManager {
     /// 2. Restore slaves to their original groups (best-effort)
     /// 3. Stop coordinators
     /// 4. Switch coordinators to queue (cleanup)
-    pub async fn stop_speakers(&self, speaker_ips: &[String]) {
+    ///
+    /// `speaker_ips` was read from `stream_id`'s sessions a moment ago, but a
+    /// speaker can change hands in between: another client's start on the same
+    /// speaker removes this stream's session and inserts its own. A speaker
+    /// whose session now belongs to a different stream is skipped, so this
+    /// stream's teardown cannot silence a cast that has just replaced it.
+    pub async fn stop_speakers(&self, stream_id: &str, speaker_ips: &[String]) {
         let mut coordinators: Vec<(String, Option<String>)> = Vec::new();
         let mut slaves = Vec::new();
         let mut slave_restoration_info: Vec<(String, String)> = Vec::new();
 
         for ip in speaker_ips {
             if let Some(session) = self.sessions.get_by_speaker_ip(ip) {
+                if session.stream_id != stream_id {
+                    log::info!(
+                        "[GroupSync] Not stopping {}: it now plays stream {} instead of {}",
+                        ip,
+                        session.stream_id,
+                        stream_id
+                    );
+                    continue;
+                }
                 match session.role {
                     GroupRole::Coordinator => {
                         coordinators.push((ip.clone(), session.original_coordinator_uuid.clone()));
@@ -872,7 +887,25 @@ impl SyncGroupManager {
         )
         .await;
 
-        // 6. Promote the chosen slave
+        // 6. Promote the chosen slave.
+        //
+        // Under the speaker's start lock: another client may be starting its
+        // own stream on this very speaker right now, and that start removes our
+        // slave session, stops the speaker and inserts its own. Without the
+        // lock the SOAP calls below would interleave with that start and the
+        // insert would displace the other client's session with no event, so
+        // the speaker would play this stream while the store said otherwise.
+        // Holding the lock also serialises with promote's own callers: nothing
+        // that reaches here holds a speaker lock (it is entered from the stop
+        // path), so this can never nest.
+        let promoted_start = self.sessions.lock_speaker_start(&promoted_ip).await;
+        if self.sessions.get(stream_id, &promoted_ip).is_none() {
+            return Err(format!(
+                "Slave {} was taken by another stream while waiting to promote it",
+                promoted_ip
+            ));
+        }
+
         if let Err(e) = self.sonos.leave_group(&promoted_ip).await {
             log::warn!(
                 "[GroupSync] Failed to unjoin promoted slave {}: {}",
@@ -911,6 +944,8 @@ impl SyncGroupManager {
             original_coordinator_uuid: promoted_original_coordinator,
         });
 
+        drop(promoted_start);
+
         log::info!(
             "[GroupSync] Promoted {} to coordinator successfully",
             promoted_ip
@@ -927,6 +962,24 @@ impl SyncGroupManager {
             // No `move` — promoted_ip/promoted_uuid are owned Strings that outlive join_all,
             // so borrowing avoids cloning them into each future.
             .map(|(slave_key, slave_session)| async {
+                // Same race as the promotion above, per slave. Each future
+                // locks only its own speaker, so they still run concurrently.
+                let _start = self
+                    .sessions
+                    .lock_speaker_start(&slave_key.speaker_ip)
+                    .await;
+                if self
+                    .sessions
+                    .get(stream_id, &slave_key.speaker_ip)
+                    .is_none()
+                {
+                    log::info!(
+                        "[GroupSync] Slave {} was taken by another stream; not re-pointing it",
+                        slave_key.speaker_ip
+                    );
+                    return;
+                }
+
                 log::debug!(
                     "[GroupSync] Re-pointing slave {} to new coordinator {}",
                     slave_key.speaker_ip,

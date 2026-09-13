@@ -73,13 +73,16 @@ impl StreamGuard {
 
 impl Drop for StreamGuard {
     fn drop(&mut self) {
-        // Released even when disarmed: the stream is gone either way, so the
-        // ownership record must not outlive it.
-        self.ws_manager.release_stream(&self.stream_id);
+        // Removal first, release second: removal broadcasts `Ended`, and while
+        // the ownership record still stands that event reaches the owner with
+        // the real id and everyone else with the alias they know the stream by
+        // (see `redact_foreign_streams`). Released even when disarmed: the
+        // stream is gone either way, so the record must not outlive it.
         if self.armed {
             self.stream_coordinator.remove_stream(&self.stream_id);
             log::info!("[WS] Stream cleanup: {}", self.stream_id);
         }
+        self.ws_manager.release_stream(&self.stream_id);
     }
 }
 
@@ -811,41 +814,44 @@ fn session_for_connection(conn: &ConnectionGuard, session: &PlaybackSession) -> 
 /// so a new event variant carrying a stream id cannot silently inherit a
 /// permissive default.
 ///
-/// `Created` and `PlaybackStarted` go to the owner and nobody else.
-/// `Created` is broadcast from inside stream creation, a moment *before* the
-/// creating socket records its claim, so a sibling socket could see it while
-/// the stream still looks unowned — these two must fail closed rather than ask
-/// about liveness. Nothing consumes either event today, so a non-owner loses
-/// nothing.
+/// `Created` goes to the owner and nobody else. It is broadcast from inside
+/// stream creation, a moment *before* the creating socket records its claim,
+/// so a sibling socket could see it while the stream still looks unowned — it
+/// must fail closed rather than ask about liveness. Nothing consumes it today,
+/// so a non-owner loses nothing.
 ///
-/// Every other stream-id-bearing event — the three teardown events and the two
-/// latency events — is gated on the id still being *live and someone else's*.
-/// That is not the same as "not mine": once the ownership record is released
-/// the stream is gone and its id buys nothing, so those events go to everyone,
-/// which is what keeps each extension's session cleanup working. While the
-/// record is still held the stream is still serving audio, so only its owner
-/// hears about it. This is what closes the multi-speaker teardown case, where
-/// one speaker leaving a cast announces a stream id that is still playing on
-/// the others. Non-owners lose nothing here either: the extension resolves all
-/// five events through `getSessionByStreamId` and returns early for ids that
-/// are not its own.
+/// `PlaybackStarted`, `PlaybackStopped` and `Ended` go to everyone, because
+/// they are how a client keeps its picture of *which speakers other clients
+/// hold* current between snapshots — without them "in use by another client"
+/// would only ever be true at connect time. They are not a disclosure: on the
+/// way out [`redact_foreign_streams`] replaces another client's stream id with
+/// the same opaque alias `INITIAL_STATE` used for it, and blanks the URL.
+///
+/// `PlaybackStopFailed` and the two latency events are gated on the id still
+/// being *live and someone else's*. Non-owners have no use for them (the
+/// extension resolves them through its own session table and returns early for
+/// ids that are not its own), and the latency pair repeats for the whole cast.
+/// Once the ownership record is released the stream is gone and its id buys
+/// nothing, so they go to everyone, which keeps an owner's own cleanup working
+/// on the paths where release precedes the event.
 fn event_is_visible_to(conn: &ConnectionGuard, event: &BroadcastEvent) -> bool {
     match event {
+        BroadcastEvent::Stream(StreamEvent::Created { stream_id, .. }) => {
+            conn.owns_stream(stream_id)
+        }
         BroadcastEvent::Stream(
-            StreamEvent::Created { stream_id, .. } | StreamEvent::PlaybackStarted { stream_id, .. },
-        ) => conn.owns_stream(stream_id),
-        BroadcastEvent::Stream(
-            StreamEvent::Ended { stream_id, .. }
-            | StreamEvent::PlaybackStopped { stream_id, .. }
-            | StreamEvent::PlaybackStopFailed { stream_id, .. },
-        )
+            StreamEvent::PlaybackStarted { .. }
+            | StreamEvent::PlaybackStopped { .. }
+            | StreamEvent::Ended { .. },
+        ) => true,
+        BroadcastEvent::Stream(StreamEvent::PlaybackStopFailed { stream_id, .. })
         | BroadcastEvent::Latency(
             LatencyEvent::Updated { stream_id, .. } | LatencyEvent::Stale { stream_id, .. },
         ) => !conn.stream_is_owned_by_other(stream_id),
         // Speaker, network and topology state is shared by everyone casting to
         // the same Sonos system. Sonos events name no stream id, but two of
         // them quote a URI that may *contain* one - see
-        // [`redact_foreign_stream_uris`], which runs on the way out.
+        // [`redact_foreign_streams`], which runs on the way out.
         BroadcastEvent::Sonos(_) | BroadcastEvent::Network(_) | BroadcastEvent::Topology(_) => true,
     }
 }
@@ -868,7 +874,14 @@ fn stream_id_in_uri(uri: &str) -> Option<&str> {
     (!id.is_empty()).then_some(id)
 }
 
-/// Replaces any URI naming another client's live stream with [`REDACTED_URI`].
+/// Rewrites every reference to another client's live stream out of `event`.
+///
+/// Two kinds of reference exist. `StreamEvent::PlaybackStarted`,
+/// `PlaybackStopped` and `Ended` name a stream id outright: for a stream
+/// someone else owns the id becomes the [`opaque_stream_alias`] that
+/// `INITIAL_STATE` already showed this client, so it can keep its list of
+/// other clients' sessions current by the same key, and the URL on
+/// `PlaybackStarted` is blanked because it embeds the id.
 ///
 /// `SonosEvent::TransportState` and `SonosEvent::SourceChanged` carry the
 /// speaker's `CurrentTrackURI` straight from the GENA notification, which for a
@@ -878,13 +891,31 @@ fn stream_id_in_uri(uri: &str) -> Option<&str> {
 /// victim pauses or the track changes, bypassing every other check here. The
 /// events themselves must still reach every client — the extension drops a
 /// speaker from its own cast on `sourceChanged`, and both handlers act on
-/// `speakerIp` alone — so the URI field is rewritten rather than the event
-/// withheld. No consumer reads these fields beyond one log line.
-fn redact_foreign_stream_uris(conn: &ConnectionGuard, event: &mut BroadcastEvent) {
+/// `speakerIp` alone — so the URI field is rewritten to [`REDACTED_URI`]
+/// rather than the event withheld. No consumer reads these fields beyond one
+/// log line.
+fn redact_foreign_streams(conn: &ConnectionGuard, event: &mut BroadcastEvent) {
     let foreign =
         |uri: &str| stream_id_in_uri(uri).is_some_and(|id| conn.stream_is_owned_by_other(id));
 
     match event {
+        BroadcastEvent::Stream(StreamEvent::PlaybackStarted {
+            stream_id,
+            stream_url,
+            ..
+        }) => {
+            if conn.stream_is_owned_by_other(stream_id) {
+                *stream_id = opaque_stream_alias(stream_id);
+                stream_url.clear();
+            }
+        }
+        BroadcastEvent::Stream(
+            StreamEvent::PlaybackStopped { stream_id, .. } | StreamEvent::Ended { stream_id, .. },
+        ) => {
+            if conn.stream_is_owned_by_other(stream_id) {
+                *stream_id = opaque_stream_alias(stream_id);
+            }
+        }
         BroadcastEvent::Sonos(SonosEvent::TransportState { current_uri, .. }) => {
             if current_uri.as_deref().is_some_and(foreign) {
                 *current_uri = Some(REDACTED_URI.to_string());
@@ -902,17 +933,20 @@ fn redact_foreign_stream_uris(conn: &ConnectionGuard, event: &mut BroadcastEvent
                 *expected_uri = Some(REDACTED_URI.to_string());
             }
         }
-        // Listed rather than wildcarded, so a new event that quotes a URI has
-        // to be classified here instead of shipping unscrubbed. Stream and
-        // latency events name streams too, but [`event_is_visible_to`] has
-        // already decided whether this client may see them at all.
+        // Listed rather than wildcarded, so a new event that names a stream or
+        // quotes a URI has to be classified here instead of shipping
+        // unscrubbed. The remaining stream and latency events name streams
+        // too, but [`event_is_visible_to`] withholds them from non-owners
+        // while the stream is live.
         BroadcastEvent::Sonos(
             SonosEvent::GroupVolume { .. }
             | SonosEvent::GroupMute { .. }
             | SonosEvent::ZoneGroupsUpdated { .. }
             | SonosEvent::SubscriptionLost { .. },
         )
-        | BroadcastEvent::Stream(_)
+        | BroadcastEvent::Stream(
+            StreamEvent::Created { .. } | StreamEvent::PlaybackStopFailed { .. },
+        )
         | BroadcastEvent::Network(_)
         | BroadcastEvent::Topology(_)
         | BroadcastEvent::Latency(_) => {}
@@ -1964,7 +1998,7 @@ async fn handle_ws(
                         // Each connection owns its copy of the event, so filtering and
                         // redaction here are per-client and cannot affect anyone else.
                         if event_is_visible_to(&conn_guard, &event) {
-                            redact_foreign_stream_uris(&conn_guard, &mut event);
+                            redact_foreign_streams(&conn_guard, &mut event);
                             if let Ok(json) = serde_json::to_string(&event) {
                                 if sender.send(Message::Text(json.into())).await.is_err() {
                                     break;
@@ -1977,6 +2011,15 @@ async fn handle_ws(
                     // group volumes and session view permanently wrong until it
                     // reconnected, so re-send the snapshot instead.
                     Err(broadcast::error::RecvError::Lagged(skipped)) => {
+                        // A streaming socket discards INITIAL_STATE and every
+                        // broadcast (the offscreen worker only reads replies), and
+                        // it is the one most likely to be behind on TCP, so a
+                        // snapshot there is bytes added to the backlog for nothing.
+                        // The extension's control socket is the one that keeps
+                        // state, and it gets the resync.
+                        if stream_guard.is_some() {
+                            continue;
+                        }
                         if let Some(total) = lag_resync.on_lag(skipped, Instant::now()) {
                             if !resync_after_lag(&mut sender, &state, &conn_guard, total).await {
                                 break;
@@ -2343,9 +2386,36 @@ mod tests {
             timestamp: 0,
         });
 
-        for event in [&created, &started] {
-            assert!(event_is_visible_to(&owner, event));
-            assert!(!event_is_visible_to(&stranger, event));
+        assert!(event_is_visible_to(&owner, &created));
+        assert!(!event_is_visible_to(&stranger, &created));
+
+        // PlaybackStarted is how the stranger learns the speaker is now held
+        // by someone else, so it goes through - under the alias, URL blanked.
+        assert!(event_is_visible_to(&owner, &started));
+        assert!(event_is_visible_to(&stranger, &started));
+
+        let mut for_owner = started.clone();
+        redact_foreign_streams(&owner, &mut for_owner);
+        assert_eq!(
+            serde_json::to_string(&for_owner).unwrap(),
+            serde_json::to_string(&started).unwrap(),
+            "the owner sees its own event untouched"
+        );
+
+        let mut for_stranger = started;
+        redact_foreign_streams(&stranger, &mut for_stranger);
+        match for_stranger {
+            BroadcastEvent::Stream(StreamEvent::PlaybackStarted {
+                stream_id: seen,
+                stream_url,
+                speaker_ip,
+                ..
+            }) => {
+                assert_eq!(seen, opaque_stream_alias(&stream_id));
+                assert_eq!(stream_url, "");
+                assert_eq!(speaker_ip, "192.168.1.31");
+            }
+            other => panic!("unexpected event {other:?}"),
         }
     }
 
@@ -2372,10 +2442,12 @@ mod tests {
     }
 
     #[test]
-    fn teardown_events_for_a_still_live_stream_go_only_to_its_owner() {
+    fn teardown_events_for_a_still_live_stream_reach_others_only_under_the_alias() {
         // Removing one speaker from a two-speaker cast stops playback there
         // while the stream keeps playing on the other, so the id in the event
-        // is still fetchable from /stream/{id}/live.wav.
+        // is still fetchable from /stream/{id}/live.wav. The stranger still
+        // needs to hear that the speaker is free, so Ended and PlaybackStopped
+        // go through aliased; PlaybackStopFailed is the owner's business.
         let manager = Arc::new(WsConnectionManager::new());
         let owner = manager.register(addr("192.168.1.9:5001"), None);
         let stranger = manager.register(addr("192.168.1.20:5002"), None);
@@ -2384,7 +2456,33 @@ mod tests {
 
         for event in teardown_events(stream_id) {
             assert!(event_is_visible_to(&owner, &event));
-            assert!(!event_is_visible_to(&stranger, &event));
+            let failed = matches!(
+                event,
+                BroadcastEvent::Stream(StreamEvent::PlaybackStopFailed { .. })
+            );
+            assert_eq!(event_is_visible_to(&stranger, &event), !failed);
+
+            let mut for_owner = event.clone();
+            redact_foreign_streams(&owner, &mut for_owner);
+            assert_eq!(
+                serde_json::to_string(&for_owner).unwrap(),
+                serde_json::to_string(&event).unwrap()
+            );
+
+            let mut for_stranger = event;
+            redact_foreign_streams(&stranger, &mut for_stranger);
+            match for_stranger {
+                BroadcastEvent::Stream(
+                    StreamEvent::Ended {
+                        stream_id: seen, ..
+                    }
+                    | StreamEvent::PlaybackStopped {
+                        stream_id: seen, ..
+                    },
+                ) => assert_eq!(seen, opaque_stream_alias(stream_id)),
+                BroadcastEvent::Stream(StreamEvent::PlaybackStopFailed { .. }) => {}
+                other => panic!("unexpected event {other:?}"),
+            }
         }
     }
 
@@ -2503,7 +2601,7 @@ mod tests {
             transport_state(Some(&url)),
             source_changed(&url, Some(&url)),
         ] {
-            redact_foreign_stream_uris(&stranger, &mut event);
+            redact_foreign_streams(&stranger, &mut event);
             let json = serde_json::to_string(&event).expect("serializable");
             assert!(!json.contains(stream_id), "leaked stream id: {json}");
             // The event itself still arrives: the extension acts on speakerIp.
@@ -2520,7 +2618,7 @@ mod tests {
         let url = format!("http://192.168.1.5:49400/stream/{stream_id}/live.wav");
 
         let mut event = source_changed(&url, Some(&url));
-        redact_foreign_stream_uris(&owner, &mut event);
+        redact_foreign_streams(&owner, &mut event);
         let json = serde_json::to_string(&event).expect("serializable");
         assert!(json.contains(&url), "owner lost its own URI: {json}");
     }
@@ -2533,7 +2631,7 @@ mod tests {
         let stranger = manager.register(addr("192.168.1.20:5002"), None);
 
         let mut event = transport_state(Some("x-sonosapi-stream:s24939?sid=254"));
-        redact_foreign_stream_uris(&stranger, &mut event);
+        redact_foreign_streams(&stranger, &mut event);
         let json = serde_json::to_string(&event).expect("serializable");
         assert!(json.contains("x-sonosapi-stream:s24939?sid=254"));
 
@@ -2541,7 +2639,7 @@ mod tests {
         let mut event = transport_state(Some(
             "http://192.168.1.5:49400/stream/already-ended/live.wav",
         ));
-        redact_foreign_stream_uris(&stranger, &mut event);
+        redact_foreign_streams(&stranger, &mut event);
         let json = serde_json::to_string(&event).expect("serializable");
         assert!(json.contains("already-ended"));
     }

@@ -636,7 +636,7 @@ impl StreamCoordinator {
                 // Close HTTP first, but keep sessions intact so stop_speakers
                 // can determine role ordering (unjoin slaves before coordinators).
                 self.stream_registry.remove_stream(stream_id);
-                self.sync_group.stop_speakers(&speaker_ips).await;
+                self.sync_group.stop_speakers(stream_id, &speaker_ips).await;
                 self.sessions.remove_all_for_stream(stream_id);
                 self.emit_event(StreamEvent::Ended {
                     stream_id: stream_id.to_string(),
@@ -644,7 +644,7 @@ impl StreamCoordinator {
                 });
             }
             CleanupOrder::SoapFirst => {
-                self.sync_group.stop_speakers(&speaker_ips).await;
+                self.sync_group.stop_speakers(stream_id, &speaker_ips).await;
                 self.remove_stream(stream_id);
             }
         }

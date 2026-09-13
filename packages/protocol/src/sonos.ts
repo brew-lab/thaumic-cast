@@ -182,11 +182,12 @@ export function isRemoteSession(session: PlaybackSession): boolean {
 /**
  * Checks whether another client's session is still believed to be running.
  *
- * The session list only arrives with the connect-time snapshot, so a remote
- * session outlives the stream it describes. Transport state, by contrast, is
- * broadcast to every client, so a speaker reading `Stopped` retires the session
- * that named it. Both the picker and the slot count go through here, so one
- * snapshot can never call a speaker free while its stream still holds a slot.
+ * The session list comes from the connect-time snapshot and is kept current
+ * from the aliased playback events the companion sends, but an event can be
+ * missed. Transport state is broadcast to every client too, so a speaker
+ * reading `Stopped` retires the session that named it. Both the picker and the
+ * slot count go through here, so one snapshot can never call a speaker free
+ * while its stream still holds a slot.
  * @param session - A session from a state snapshot
  * @param state - The snapshot the session came from
  * @returns True if another client owns the session and its speaker hasn't stopped
@@ -201,13 +202,21 @@ function isLiveRemoteSession(session: PlaybackSession, state: SonosStateSnapshot
  * The companion's concurrent-stream limit is global, not per-client, so this is
  * what a client has to add to its own session count before deciding a slot is
  * free. Streams whose speakers have since stopped are left out, so a stale
- * snapshot can't block a cast the companion would accept.
+ * snapshot can't block a cast the companion would accept. So are streams on
+ * speakers this client is casting to itself: taking a speaker over ends the
+ * other client's stream there, and our own cast keeps its transport `Playing`,
+ * so that is the one case transport state cannot retire.
  * @param state - The current Sonos state snapshot
+ * @param castingSpeakerIps - Speakers this client is casting to right now
  * @returns The number of distinct live streams owned by other clients
  */
-export function countRemoteStreams(state: SonosStateSnapshot): number {
+export function countRemoteStreams(
+  state: SonosStateSnapshot,
+  castingSpeakerIps: readonly string[] = [],
+): number {
   const streamIds = new Set<string>();
   for (const session of state.sessions ?? []) {
+    if (castingSpeakerIps.includes(session.speakerIp)) continue;
     if (isLiveRemoteSession(session, state)) streamIds.add(session.streamId);
   }
   return streamIds.size;
