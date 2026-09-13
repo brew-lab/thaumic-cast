@@ -11,6 +11,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, OnceLock};
 
 use bytes::Bytes;
+use dashmap::DashMap;
 use parking_lot::Mutex;
 use tokio::sync::Notify;
 
@@ -262,6 +263,33 @@ pub struct StreamCoordinator {
     emitter: Arc<dyn EventEmitter>,
     /// Sync group lifecycle manager.
     sync_group: SyncGroupManager,
+    /// Per-speaker locks serialising the start sequence for one speaker.
+    ///
+    /// Keyed by speaker IP so unrelated speakers still start concurrently.
+    /// Entries are pruned when the last holder releases them, so the map
+    /// stays bounded by the number of in-flight starts.
+    speaker_starts: DashMap<String, Arc<tokio::sync::Mutex<()>>>,
+}
+
+/// Held for the duration of one speaker's start sequence.
+///
+/// Releases the speaker's lock and prunes its map entry on drop — including
+/// on early returns and error paths — so the lock map cannot grow without
+/// bound.
+struct SpeakerStartGuard<'a> {
+    starts: &'a DashMap<String, Arc<tokio::sync::Mutex<()>>>,
+    speaker_ip: &'a str,
+    guard: Option<tokio::sync::OwnedMutexGuard<()>>,
+}
+
+impl Drop for SpeakerStartGuard<'_> {
+    fn drop(&mut self) {
+        // Release the mutex first: the guard owns a strong reference, so the
+        // map's own reference is the only one left when nobody is waiting.
+        drop(self.guard.take());
+        self.starts
+            .remove_if(self.speaker_ip, |_, lock| Arc::strong_count(lock) == 1);
+    }
 }
 
 impl StreamCoordinator {
@@ -301,6 +329,7 @@ impl StreamCoordinator {
             sessions,
             emitter,
             sync_group,
+            speaker_starts: DashMap::new(),
         }
     }
 
@@ -851,7 +880,31 @@ impl StreamCoordinator {
         results
     }
 
+    /// Acquires this speaker's start lock, waiting for any in-flight start.
+    ///
+    /// Two clients casting different tabs to the same speaker is expected and
+    /// allowed — the later start wins. The lock only stops their
+    /// find/stop/play/insert sequences from interleaving, which would leave the
+    /// loser's session in the store unreachable by speaker IP.
+    async fn lock_speaker_start<'a>(&'a self, speaker_ip: &'a str) -> SpeakerStartGuard<'a> {
+        let lock = Arc::clone(
+            self.speaker_starts
+                .entry(speaker_ip.to_string())
+                .or_default()
+                .value(),
+        );
+        SpeakerStartGuard {
+            starts: &self.speaker_starts,
+            speaker_ip,
+            guard: Some(lock.lock_owned().await),
+        }
+    }
+
     /// Starts playback on a single speaker.
+    ///
+    /// The whole sequence (detect an existing stream on this speaker, stop it,
+    /// play the new one, record the session) runs under this speaker's start
+    /// lock. Starts on *other* speakers are unaffected.
     async fn start_single_playback(&self, params: SinglePlaybackParams<'_>) -> PlaybackResult {
         let SinglePlaybackParams {
             speaker_ip,
@@ -862,6 +915,9 @@ impl StreamCoordinator {
             artwork_url,
             metadata,
         } = params;
+
+        // Held until this function returns, on every path.
+        let _start = self.lock_speaker_start(speaker_ip).await;
 
         log::debug!(
             "[Playback] start_single_playback called: speaker={}, stream={}",
@@ -946,12 +1002,13 @@ impl StreamCoordinator {
                 log::warn!("Failed to stop old playback on {}: {}", speaker_ip, e);
             }
 
-            // Emit PlaybackStopped for the old stream so extension cleans up correctly
-            // Reason is None here - extension will default to 'playback_stopped'
+            // Emit PlaybackStopped for the old stream so the displaced client
+            // cleans up — and can tell the user the speaker was taken over
+            // rather than showing a generic "playback stopped".
             self.emit_event(StreamEvent::PlaybackStopped {
                 stream_id: old_stream_id,
                 speaker_ip: speaker_ip.to_string(),
-                reason: None,
+                reason: Some(SpeakerRemovalReason::SpeakerTakenOver),
                 timestamp: now_millis(),
             });
         }
@@ -1336,6 +1393,23 @@ mod tests {
                     })
                     .collect()
             }
+
+            /// (stream_id, reason) for every PlaybackStopped seen, in order.
+            fn playback_stopped_reasons(
+                &self,
+            ) -> Vec<(String, Option<crate::events::SpeakerRemovalReason>)> {
+                self.events
+                    .lock()
+                    .unwrap()
+                    .iter()
+                    .filter_map(|e| match e {
+                        StreamEvent::PlaybackStopped {
+                            stream_id, reason, ..
+                        } => Some((stream_id.clone(), *reason)),
+                        _ => None,
+                    })
+                    .collect()
+            }
         }
 
         impl EventEmitter for CollectingEventEmitter {
@@ -1357,6 +1431,9 @@ mod tests {
             switch_to_queue_count: AtomicUsize,
             /// If set, play_uri returns this error.
             play_uri_fail: Mutex<Option<String>>,
+            /// Yields inserted inside stop/play_uri so concurrent starts on one
+            /// speaker actually interleave in a single-threaded test runtime.
+            yields_per_call: AtomicUsize,
         }
 
         impl TrackingSonosPlayback {
@@ -1368,12 +1445,24 @@ mod tests {
                     join_group_count: AtomicUsize::new(0),
                     switch_to_queue_count: AtomicUsize::new(0),
                     play_uri_fail: Mutex::new(None),
+                    yields_per_call: AtomicUsize::new(0),
                 }
             }
 
             fn with_play_uri_fail(self, msg: &str) -> Self {
                 *self.play_uri_fail.lock().unwrap() = Some(msg.to_string());
                 self
+            }
+
+            fn with_yields(self, n: usize) -> Self {
+                self.yields_per_call.store(n, Ordering::SeqCst);
+                self
+            }
+
+            async fn interleave(&self) {
+                for _ in 0..self.yields_per_call.load(Ordering::SeqCst) {
+                    tokio::task::yield_now().await;
+                }
             }
         }
 
@@ -1389,6 +1478,7 @@ mod tests {
                 _: &str,
             ) -> SoapResult<()> {
                 self.play_uri_count.fetch_add(1, Ordering::SeqCst);
+                self.interleave().await;
                 if let Some(msg) = self.play_uri_fail.lock().unwrap().as_ref() {
                     return Err(crate::sonos::soap::SoapError::Fault(msg.clone()));
                 }
@@ -1399,6 +1489,7 @@ mod tests {
             }
             async fn stop(&self, _: &str) -> SoapResult<()> {
                 self.stop_count.fetch_add(1, Ordering::SeqCst);
+                self.interleave().await;
                 Ok(())
             }
             async fn switch_to_queue(&self, _: &str, _: &str) -> SoapResult<()> {
@@ -1841,6 +1932,113 @@ mod tests {
                 promoted.original_coordinator_uuid, None,
                 "Promoted session should preserve slave's original_coordinator_uuid (None), \
                  not re-query topology which would return Kitchen's UUID"
+            );
+        }
+
+        // ─────────────────────────────────────────────────────────────────
+        // Speaker contention between clients
+        // ─────────────────────────────────────────────────────────────────
+
+        #[tokio::test]
+        async fn concurrent_starts_on_one_speaker_leave_one_reachable_session() {
+            // Two clients cast different tabs to the same speaker at the same
+            // instant. Contention is allowed — both starts must be accepted —
+            // but the store must not be left with a session that no lookup by
+            // speaker IP can reach.
+            let sonos = Arc::new(TrackingSonosPlayback::new().with_yields(4));
+            let emitter = Arc::new(CollectingEventEmitter::new());
+            let coord = create_coordinator_with(
+                Arc::clone(&sonos) as Arc<dyn SonosPlayback>,
+                create_sonos_state_with_members(&[("192.168.1.100", "RINCON_A")]),
+                Arc::clone(&emitter) as Arc<dyn EventEmitter>,
+            );
+
+            let stream_a = coord
+                .create_stream(AudioCodec::Aac, AudioFormat::default(), 200, 20)
+                .unwrap();
+            let stream_b = coord
+                .create_stream(AudioCodec::Aac, AudioFormat::default(), 200, 20)
+                .unwrap();
+
+            let (a, b) = tokio::join!(
+                coord.start_playback("192.168.1.100", &stream_a, None, ""),
+                coord.start_playback("192.168.1.100", &stream_b, None, ""),
+            );
+            assert!(a.is_ok(), "first client must not be rejected: {a:?}");
+            assert!(b.is_ok(), "second client must not be rejected: {b:?}");
+
+            let sessions = coord.get_all_sessions();
+            assert_eq!(
+                sessions.len(),
+                1,
+                "concurrent starts left an orphaned session: {sessions:?}"
+            );
+
+            let reachable = coord
+                .sessions
+                .get_by_speaker_ip("192.168.1.100")
+                .expect("surviving session must be reachable by speaker IP");
+            assert_eq!(reachable.stream_id, sessions[0].stream_id);
+            assert!(reachable.stream_id == stream_a || reachable.stream_id == stream_b);
+            assert_eq!(
+                coord
+                    .sessions
+                    .get_key_by_speaker_ip("192.168.1.100")
+                    .unwrap()
+                    .stream_id,
+                reachable.stream_id,
+                "ip_index must agree with the primary map"
+            );
+
+            // Serialised, so the loser's playback was stopped exactly once
+            // rather than both starts racing straight to play_uri.
+            assert_eq!(sonos.play_uri_count.load(Ordering::SeqCst), 2);
+            assert_eq!(sonos.stop_count.load(Ordering::SeqCst), 1);
+        }
+
+        #[tokio::test]
+        async fn takeover_reports_speaker_taken_over() {
+            let sonos = Arc::new(TrackingSonosPlayback::new());
+            let emitter = Arc::new(CollectingEventEmitter::new());
+            let coord = create_coordinator_with(
+                Arc::clone(&sonos) as Arc<dyn SonosPlayback>,
+                create_sonos_state_with_members(&[("192.168.1.100", "RINCON_A")]),
+                Arc::clone(&emitter) as Arc<dyn EventEmitter>,
+            );
+
+            let displaced = coord
+                .create_stream(AudioCodec::Aac, AudioFormat::default(), 200, 20)
+                .unwrap();
+            let taker = coord
+                .create_stream(AudioCodec::Aac, AudioFormat::default(), 200, 20)
+                .unwrap();
+
+            coord
+                .start_playback("192.168.1.100", &displaced, None, "")
+                .await
+                .unwrap();
+            coord
+                .start_playback("192.168.1.100", &taker, None, "")
+                .await
+                .unwrap();
+
+            // The displaced client learns *why* its cast ended.
+            assert_eq!(
+                emitter.playback_stopped_reasons(),
+                vec![(
+                    displaced.clone(),
+                    Some(SpeakerRemovalReason::SpeakerTakenOver)
+                )]
+            );
+
+            // ...and the second client keeps the speaker.
+            assert_eq!(
+                coord
+                    .sessions
+                    .get_by_speaker_ip("192.168.1.100")
+                    .unwrap()
+                    .stream_id,
+                taker
             );
         }
 
