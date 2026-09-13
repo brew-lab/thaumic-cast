@@ -193,7 +193,7 @@ impl GenaSubscriptionManager {
 
                 let to_renew = self.store.get_expiring(GENA_RENEWAL_BUFFER_SECS);
 
-                for (sid, ip, service, callback_url) in to_renew {
+                for (sid, ip, service, _callback_url) in to_renew {
                     match self.client.renew(&ip, service, &sid).await {
                         Ok(timeout_secs) => {
                             self.store.update_expiry(&sid, timeout_secs);
@@ -212,28 +212,15 @@ impl GenaSubscriptionManager {
                                 e
                             );
 
-                            // Remove the failed subscription
+                            // Drop it and let the topology monitor rebuild it.
+                            // Re-subscribing from here would reuse the callback
+                            // URL the subscription was made with, which after an
+                            // address change is exactly the stale URL the next
+                            // refresh is about to drop - so the monitor, which
+                            // always subscribes with the current URL, does it
+                            // instead. SubscriptionLost triggers that refresh.
                             self.store.remove(&sid);
-
-                            // Attempt to re-subscribe
-                            log::info!(
-                                "[GENA] Attempting to re-subscribe to {} on {}",
-                                service.name(),
-                                ip
-                            );
-                            if let Err(re_err) =
-                                self.subscribe(ip.clone(), service, callback_url).await
-                            {
-                                log::error!(
-                                    "[GENA] Re-subscription failed for {} on {}: {}",
-                                    service.name(),
-                                    ip,
-                                    re_err
-                                );
-
-                                // Emit SubscriptionLost event
-                                self.emit_subscription_lost(ip, service, re_err.to_string());
-                            }
+                            self.emit_subscription_lost(ip, service, e.to_string());
                         }
                     }
                 }
