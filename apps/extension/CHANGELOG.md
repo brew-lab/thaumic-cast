@@ -1,5 +1,15 @@
 # @thaumic-cast/extension
 
+## 0.12.1
+
+### Patch Changes
+
+- [#136](https://github.com/brew-lab/thaumic-cast/pull/136) [`bb3da36`](https://github.com/brew-lab/thaumic-cast/commit/bb3da36f91ad14ad55e23e5f35bddd419146cf04) Thanks [@skezo](https://github.com/skezo)! - feat(extension): ask for permission to reach a companion on another machine
+
+  When you enter a custom server URL and click Connect (previously "Test"), Chrome now prompts once to allow that address, scoped to that
+  origin only. This replaces the companion's CORS layer, which trusted every installed browser extension and wrapped the
+  API in middleware; the HTTP API no longer sends CORS headers.
+
 ## 0.12.0
 
 ### Minor Changes
