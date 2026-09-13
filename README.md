@@ -1,5 +1,5 @@
 <p align="center">
-  <a href="../../releases/latest">Download</a> · <a href="#quick-start">Quick start</a> · <a href="#development">Development</a>
+  <a href="../../releases/latest">Download</a> · <a href="https://chromewebstore.google.com/detail/thaumic-cast/hpemmkbecklfacogdidaoncjmfadgedm">Chrome extension</a> · <a href="#quick-start">Quick start</a> · <a href="#development">Development</a>
 </p>
 
 <p align="center">
@@ -23,8 +23,9 @@ speaking). The server can be the Desktop app or the headless server.
 
 1. Download and run the **Desktop app** from the [latest release](../../releases/latest). Prefer headless? Use the
    server instead of the Desktop app: see [`apps/server/README.md`](apps/server/README.md).
-2. Download the **Browser extension** `thaumic-cast-extension-vX.Y.Z.zip` from the [latest release](../../releases/latest),
-   unzip it, then load it via `chrome://extensions` → Developer mode → **Load unpacked**.
+2. Install the **Browser extension** from the [Chrome Web Store](https://chromewebstore.google.com/detail/thaumic-cast/hpemmkbecklfacogdidaoncjmfadgedm). Prefer to load it yourself? Download
+   `thaumic-cast-extension-vX.Y.Z.zip` from the [latest release](../../releases/latest), unzip it, then load it via
+   `chrome://extensions` → Developer mode → **Load unpacked**.
 3. Click the extension, pick a Sonos group, and start streaming.
 
 > [!NOTE]
@@ -34,7 +35,7 @@ speaking). The server can be the Desktop app or the headless server.
 ## Downloads
 
 - Desktop app (Windows/macOS/Linux): [Latest release](../../releases/latest)
-- Chrome extension zip: [Latest release](../../releases/latest) (look for `thaumic-cast-extension-vX.Y.Z.zip`)
+- Chrome extension: [Chrome Web Store](https://chromewebstore.google.com/detail/thaumic-cast/hpemmkbecklfacogdidaoncjmfadgedm), or the zip from the [latest release](../../releases/latest) (look for `thaumic-cast-extension-vX.Y.Z.zip`)
 - Headless server (Linux x64/arm64): [Latest release](../../releases/latest) (look for `thaumic-server-vX.Y.Z-linux-*.tar.gz`), setup in [`apps/server/README.md`](apps/server/README.md)
 
 > [!NOTE]
