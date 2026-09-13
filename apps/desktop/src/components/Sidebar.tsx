@@ -34,7 +34,7 @@ export function Sidebar() {
   return (
     <aside className={styles.sidebar}>
       <div className={styles.brand}>
-        <Radio size={24} color="var(--color-primary)" className={styles['brand-icon']} />
+        <Radio size={24} color="var(--color-primary)" className={styles.brandIcon} />
         <h1 className={styles.title}>{t('app.title')}</h1>
       </div>
 

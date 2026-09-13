@@ -14,12 +14,10 @@
     <script>
       (function () {
         var theme = localStorage.getItem('thaumic-cast-theme') || 'auto';
+        // Only set the attribute. The <style> block below maps it to
+        // color-scheme, and an inline style would outrank that stylesheet
+        // forever, freezing the resolved scheme at whatever was stored on load.
         document.documentElement.dataset.theme = theme;
-        if (theme === 'light') {
-          document.documentElement.style.colorScheme = 'light';
-        } else if (theme === 'dark') {
-          document.documentElement.style.colorScheme = 'dark';
-        }
       })();
     </script>
     <style>

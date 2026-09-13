@@ -1,6 +1,26 @@
 import type { ComponentChildren } from 'preact';
 import styles from './ButtonGroup.module.css';
 
+/**
+ * Gap and alignment classes, looked up explicitly.
+ *
+ * The CSS class names are kebab-case, but both Vite configs set
+ * `localsConvention: 'camelCaseOnly'`, so only camelCase keys are exported. A
+ * computed lookup such as `styles[`gap-${gap}`]` therefore resolves to
+ * `undefined` and the class is silently dropped.
+ */
+const GAP_CLASS = {
+  xs: styles.gapXs,
+  sm: styles.gapSm,
+  md: styles.gapMd,
+} as const;
+
+const ALIGN_CLASS = {
+  start: styles.alignStart,
+  center: styles.alignCenter,
+  end: styles.alignEnd,
+} as const;
+
 export interface ButtonGroupProps {
   /** Button elements to group */
   children: ComponentChildren;
@@ -38,10 +58,10 @@ export function ButtonGroup({
 }: ButtonGroupProps) {
   const classes = [
     styles.group,
-    styles[`gap-${gap}`],
+    GAP_CLASS[gap],
     wrap && styles.wrap,
     grow && styles.grow,
-    styles[`align-${align}`],
+    ALIGN_CLASS[align],
     className,
   ]
     .filter(Boolean)
