@@ -469,3 +469,26 @@ export type BackgroundInboundMessage =
  * From background service worker only.
  */
 export type OffscreenInboundMessage = BackgroundToOffscreenMessage;
+
+/**
+ * Marker the background stamps on every message it addresses to the offscreen document.
+ *
+ * `chrome.runtime.sendMessage` is delivered to every extension context, so a message
+ * the popup sends (e.g. SET_VOLUME) would otherwise be handled by the offscreen listener
+ * directly AND again when the background forwards it. The offscreen listener only acts
+ * on messages carrying this marker.
+ */
+export const OFFSCREEN_MESSAGE_TARGET = 'offscreen' as const;
+
+/**
+ * Checks whether a runtime message was addressed to the offscreen document by the background.
+ * @param msg - The raw runtime message
+ * @returns True when the message carries the offscreen target marker
+ */
+export function isOffscreenTargetedMessage(msg: unknown): boolean {
+  return (
+    typeof msg === 'object' &&
+    msg !== null &&
+    (msg as { target?: unknown }).target === OFFSCREEN_MESSAGE_TARGET
+  );
+}

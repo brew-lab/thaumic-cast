@@ -19,7 +19,7 @@ import type {
   SupportedCodecsResult,
 } from '@thaumic-cast/protocol';
 import type { ExtensionResponse, StartPlaybackResponse, WsStatusResponse } from '../lib/messages';
-import { sendToOffscreen } from './offscreen-manager';
+import { sendToOffscreen, OFFSCREEN_LONG_OPERATION_TIMEOUT_MS } from './offscreen-manager';
 import { noop } from '../lib/noop';
 
 /**
@@ -57,16 +57,19 @@ class OffscreenBroker {
     baseUrl: string,
     options?: { keepTabAudible?: boolean },
   ): Promise<ExtensionResponse | undefined> {
-    return sendToOffscreen<ExtensionResponse>({
-      type: 'START_CAPTURE',
-      payload: {
-        tabId,
-        mediaStreamId,
-        encoderConfig,
-        baseUrl,
-        keepTabAudible: options?.keepTabAudible,
+    return sendToOffscreen<ExtensionResponse>(
+      {
+        type: 'START_CAPTURE',
+        payload: {
+          tabId,
+          mediaStreamId,
+          encoderConfig,
+          baseUrl,
+          keepTabAudible: options?.keepTabAudible,
+        },
       },
-    });
+      OFFSCREEN_LONG_OPERATION_TIMEOUT_MS,
+    );
   }
 
   /**
@@ -95,10 +98,13 @@ class OffscreenBroker {
     encoderConfig: EncoderConfig,
     browserName?: string,
   ): Promise<ExtensionResponse | undefined> {
-    return sendToOffscreen<ExtensionResponse>({
-      type: 'START_BROWSER_CAPTURE',
-      payload: { tabId, baseUrl, encoderConfig, browserName },
-    });
+    return sendToOffscreen<ExtensionResponse>(
+      {
+        type: 'START_BROWSER_CAPTURE',
+        payload: { tabId, baseUrl, encoderConfig, browserName },
+      },
+      OFFSCREEN_LONG_OPERATION_TIMEOUT_MS,
+    );
   }
 
   // ─────────────────────────────────────────────────────────────────────────────
@@ -121,10 +127,13 @@ class OffscreenBroker {
     syncSpeakers: boolean = false,
     videoSyncEnabled: boolean = false,
   ): Promise<StartPlaybackResponse | undefined> {
-    return sendToOffscreen<StartPlaybackResponse>({
-      type: 'START_PLAYBACK',
-      payload: { tabId, speakerIps, metadata, syncSpeakers, videoSyncEnabled },
-    });
+    return sendToOffscreen<StartPlaybackResponse>(
+      {
+        type: 'START_PLAYBACK',
+        payload: { tabId, speakerIps, metadata, syncSpeakers, videoSyncEnabled },
+      },
+      OFFSCREEN_LONG_OPERATION_TIMEOUT_MS,
+    );
   }
 
   /**

@@ -15,7 +15,7 @@
 
 import { createLogger } from '@thaumic-cast/shared';
 import { detectSupportedCodecs } from '@thaumic-cast/protocol';
-import type { OffscreenInboundMessage } from '../lib/messages';
+import { isOffscreenTargetedMessage, type OffscreenInboundMessage } from '../lib/messages';
 import {
   WsConnectMessageSchema,
   WsReconnectMessageSchema,
@@ -62,6 +62,14 @@ interface ChromeTabCaptureConstraints {
  */
 export function setupMessageHandlers(): void {
   chrome.runtime.onMessage.addListener((msg: OffscreenInboundMessage, _sender, sendResponse) => {
+    // chrome.runtime.sendMessage is delivered to every extension context, so a
+    // popup SET_VOLUME would otherwise be handled here directly AND again when
+    // the background forwards it. Only act on messages the background addressed
+    // to this document (stamped by sendToOffscreen).
+    if (!isOffscreenTargetedMessage(msg)) {
+      return false;
+    }
+
     // ─────────────────────────────────────────────────────────────────────────
     // WebSocket Control Messages
     // ─────────────────────────────────────────────────────────────────────────
