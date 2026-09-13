@@ -3,7 +3,7 @@
   "compilerOptions": {
     "jsx": "react-jsx",
     "jsxImportSource": "preact",
-    "types": ["vite/client", "chrome"]
+    "types": ["vite/client", "chrome", "bun"]
   },
   "include": ["src"]
 }

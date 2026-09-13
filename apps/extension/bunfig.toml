@@ -1,0 +1,5 @@
+[test]
+# Installs the chrome.* stub and the offscreen broker mock before any
+# extension module is imported. Both are process-wide by nature, so they are
+# installed once here rather than inside individual test files.
+preload = ["./src/test-support/chrome-stub.ts", "./src/test-support/offscreen-broker-mock.ts"]
