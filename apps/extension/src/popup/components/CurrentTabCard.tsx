@@ -165,7 +165,11 @@ export function CurrentTabCard<T extends SpeakerGroupLike>({
 
           {/* Hint text - reserved space prevents layout shift */}
           <p id="cast-hint" className={styles.castHint} aria-live="polite">
-            {selectedAvailability === 'in_use' && t('hint_replace_source')}
+            {/* `remote_cast` means another client of the companion holds the
+                speaker - taking it over interrupts them, same as any other
+                source, and is allowed. */}
+            {(selectedAvailability === 'in_use' || selectedAvailability === 'remote_cast') &&
+              t('hint_replace_source')}
             {selectedAvailability === 'casting' && t('hint_replace_cast')}
           </p>
         </div>

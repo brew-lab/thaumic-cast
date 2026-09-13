@@ -57,11 +57,22 @@ export type ZoneGroup = z.infer<typeof ZoneGroupSchema>;
 
 /**
  * Active playback session linking a stream to a speaker.
+ *
+ * One companion serves several clients at once, so a snapshot lists other
+ * clients' sessions alongside your own. Theirs arrive redacted: `streamId` is
+ * an opaque placeholder and `streamUrl` is empty, leaving `speakerIp` as the
+ * only meaningful field. All three stay required so redacted entries still
+ * validate on clients that predate the flag.
  */
 export const PlaybackSessionSchema = z.object({
   streamId: z.string(),
   speakerIp: z.string(),
   streamUrl: z.string(),
+  /**
+   * True when the companion redacted this session because another client owns
+   * it. Absent on your own sessions, and on companions predating redaction.
+   */
+  redacted: z.boolean().optional(),
 });
 export type PlaybackSession = z.infer<typeof PlaybackSessionSchema>;
 
@@ -134,9 +145,16 @@ export type InitialStatePayload = z.infer<typeof InitialStatePayloadSchema>;
 
 /**
  * Speaker availability status for UI display.
- * Indicates whether a speaker is available, in use by another source, or casting from Thaumic Cast.
+ *
+ * - `available`: idle, or playing something we have no session for
+ * - `in_use`: playing from a source outside Thaumic Cast (Spotify, AirPlay, …)
+ * - `casting`: this client is casting to it
+ * - `remote_cast`: another client of the same companion is casting to it
+ *
+ * None of these block selection: speakers are shared devices, and taking one
+ * over is allowed. The status exists so users don't collide by accident.
  */
-export type SpeakerAvailability = 'available' | 'in_use' | 'casting';
+export type SpeakerAvailability = 'available' | 'in_use' | 'casting' | 'remote_cast';
 
 /**
  * User-friendly labels for speaker availability status.
@@ -145,7 +163,55 @@ export const SPEAKER_AVAILABILITY_LABELS: Record<SpeakerAvailability, string> = 
   available: 'Available',
   in_use: 'In Use',
   casting: 'Casting',
+  remote_cast: 'Casting Elsewhere',
 } as const;
+
+/**
+ * Checks whether a playback session belongs to another client of the companion.
+ *
+ * The companion redacts other clients' sessions, so a redacted `streamId` is an
+ * opaque placeholder: it is stable enough to compare between snapshots, but the
+ * companion's audio endpoints reject it. Never use it for anything else.
+ * @param session - A session from a state snapshot
+ * @returns True if another client owns the session
+ */
+export function isRemoteSession(session: PlaybackSession): boolean {
+  return session.redacted === true;
+}
+
+/**
+ * Checks whether another client's session is still believed to be running.
+ *
+ * The session list only arrives with the connect-time snapshot, so a remote
+ * session outlives the stream it describes. Transport state, by contrast, is
+ * broadcast to every client, so a speaker reading `Stopped` retires the session
+ * that named it. Both the picker and the slot count go through here, so one
+ * snapshot can never call a speaker free while its stream still holds a slot.
+ * @param session - A session from a state snapshot
+ * @param state - The snapshot the session came from
+ * @returns True if another client owns the session and its speaker hasn't stopped
+ */
+function isLiveRemoteSession(session: PlaybackSession, state: SonosStateSnapshot): boolean {
+  return isRemoteSession(session) && state.transportStates[session.speakerIp] !== 'Stopped';
+}
+
+/**
+ * Counts the distinct streams other clients are still running on the companion.
+ *
+ * The companion's concurrent-stream limit is global, not per-client, so this is
+ * what a client has to add to its own session count before deciding a slot is
+ * free. Streams whose speakers have since stopped are left out, so a stale
+ * snapshot can't block a cast the companion would accept.
+ * @param state - The current Sonos state snapshot
+ * @returns The number of distinct live streams owned by other clients
+ */
+export function countRemoteStreams(state: SonosStateSnapshot): number {
+  const streamIds = new Set<string>();
+  for (const session of state.sessions ?? []) {
+    if (isLiveRemoteSession(session, state)) streamIds.add(session.streamId);
+  }
+  return streamIds.size;
+}
 
 /**
  * Gets a human-readable status string for a speaker.
@@ -171,10 +237,11 @@ export function isSpeakerPlaying(speakerIp: string, state: SonosStateSnapshot): 
 }
 
 /**
- * Determines speaker availability considering both transport state and active casts.
+ * Determines speaker availability from transport state, this client's casts and
+ * the sessions the companion reports for its other clients.
  * @param speakerIp - The speaker IP address
  * @param state - The current Sonos state snapshot
- * @param castingSpeakerIps - Array of speaker IPs with active Thaumic Cast sessions
+ * @param castingSpeakerIps - Array of speaker IPs with active Thaumic Cast sessions on this client
  * @returns The speaker's availability status
  */
 export function getSpeakerAvailability(
@@ -182,11 +249,20 @@ export function getSpeakerAvailability(
   state: SonosStateSnapshot,
   castingSpeakerIps: string[],
 ): SpeakerAvailability {
-  // Check if this speaker has an active Thaumic Cast session
+  // This client's own cast wins - we know about it first-hand
   if (castingSpeakerIps.includes(speakerIp)) return 'casting';
 
-  // Check if playing from another source
   const transport = state.transportStates[speakerIp];
+
+  // Another client of the same companion holds this speaker. Sessions whose
+  // speaker has since stopped are already excluded, so this self-heals between
+  // connects.
+  const heldByOtherClient = state.sessions?.some(
+    (session) => session.speakerIp === speakerIp && isLiveRemoteSession(session, state),
+  );
+  if (heldByOtherClient) return 'remote_cast';
+
+  // Check if playing from another source
   if (transport === 'Playing') return 'in_use';
 
   // Otherwise available (stopped, paused, or unknown state)
