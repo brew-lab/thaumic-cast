@@ -314,7 +314,9 @@ async fn volume_and_topology_notifies_reach_state_and_clients() {
         assert_eq!(sys.fake.notify_zone_group_topology().await, 200);
         let updated = sys
             .events
-            .wait_for_sonos(|event| matches!(event, SonosEvent::ZoneGroupsUpdated { .. }))
+            .wait_for_sonos(|event| {
+                matches!(event, SonosEvent::ZoneGroupsUpdated { groups, .. } if groups.len() == 2)
+            })
             .await;
         match updated {
             SonosEvent::ZoneGroupsUpdated { groups, .. } => {
