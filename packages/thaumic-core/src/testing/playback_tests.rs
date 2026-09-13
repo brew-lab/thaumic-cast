@@ -512,6 +512,106 @@ async fn a_promotion_that_loses_the_slave_to_a_takeover_stands_down() {
     .await;
 }
 
+/// Proves: the re-point step of a promotion, like the promotion itself,
+/// stands down for a slave that another stream has taken while the promotion
+/// was in flight. The taken speaker sees only the takeover — never the
+/// re-point's leave and re-join — and keeps the new stream's session.
+///
+/// Which slave gets promoted is not fixed, so both slaves' `leave` is delayed
+/// and the promoted one is learned from the first leave that arrives; the
+/// takeover then targets the other.
+#[tokio::test]
+async fn a_repoint_that_loses_its_slave_to_a_takeover_stands_down() {
+    within("re-point vs takeover", async {
+        let sys = TestSystem::builder()
+            .speakers(["Kitchen", "Office", "Bedroom"])
+            .build()
+            .await;
+        let (kitchen, office, bedroom) = (sys.ip("Kitchen"), sys.ip("Office"), sys.ip("Bedroom"));
+        let stream_a = sys.new_stream();
+        assert!(sys
+            .start(&stream_a, &["Kitchen", "Office", "Bedroom"], true)
+            .await
+            .iter()
+            .all(|r| r.success));
+        let stream_b = sys.new_stream();
+        let from = sys.fake.next_seq();
+
+        for slave in [&office, &bedroom] {
+            sys.fake.fail(
+                slave,
+                "BecomeCoordinatorOfStandaloneGroup",
+                Failure::Delay(Duration::from_millis(300)),
+            );
+        }
+
+        let taken = Arc::new(Mutex::new(String::new()));
+        let (stopped, results_b) = tokio::join!(
+            sys.coordinator().stop_playback_speaker(
+                &stream_a,
+                &kitchen,
+                Some(SpeakerRemovalReason::UserRemoved)
+            ),
+            async {
+                let leave = sys
+                    .fake
+                    .wait_for_call(from, |call| {
+                        call.action == "BecomeCoordinatorOfStandaloneGroup"
+                            && (call.speaker_ip == office || call.speaker_ip == bedroom)
+                    })
+                    .await;
+                let other = if leave.speaker_ip == office {
+                    "Bedroom"
+                } else {
+                    "Office"
+                };
+                *taken.lock().unwrap() = sys.ip(other);
+                sys.start(&stream_b, &[other], false).await
+            }
+        );
+        assert!(results_b[0].success, "{results_b:?}");
+        assert_eq!(stopped, vec![kitchen.clone()]);
+        let taken = taken.lock().unwrap().clone();
+        let promoted = if taken == office { &bedroom } else { &office };
+
+        let joins: Vec<_> = sys
+            .fake
+            .calls_since(from)
+            .into_iter()
+            .filter(|call| call.sets_uri_starting_with(&taken, "x-rincon:"))
+            .collect();
+        assert!(
+            joins.is_empty(),
+            "the taken slave was re-pointed: {joins:?}"
+        );
+        let session = sys.sessions().into_iter().find(|s| s.speaker_ip == taken);
+        assert_eq!(
+            session.as_ref().map(|s| (s.stream_id.clone(), s.role)),
+            Some((stream_b.clone(), GroupRole::Coordinator)),
+            "{session:?}"
+        );
+        assert_eq!(
+            sys.fake.speaker_at(&taken).current_uri(),
+            sys.speaker_uri(&stream_b)
+        );
+        let promoted_session = sys.session(
+            &stream_a,
+            if promoted == &office {
+                "Office"
+            } else {
+                "Bedroom"
+            },
+        );
+        assert_eq!(
+            promoted_session.as_ref().map(|s| s.role),
+            Some(GroupRole::Coordinator),
+            "the other slave was still promoted: {:?}",
+            sys.sessions()
+        );
+    })
+    .await;
+}
+
 /// Proves: once another stream has taken a speaker, tearing the first stream
 /// down sends that speaker nothing — it keeps playing the new stream.
 ///
@@ -549,6 +649,96 @@ async fn tearing_down_a_replaced_stream_leaves_the_taken_speaker_alone() {
                 matches!(event, StreamEvent::Ended { stream_id, .. } if *stream_id == stream_a)
             })
             .await;
+    })
+    .await;
+}
+
+/// Proves: `stop_speakers` given an address list that has gone stale — the
+/// speaker changed hands after the list was read, which a start on another
+/// runtime thread can do in the window before the check — sends that
+/// speaker nothing. Driven directly because no public path can hold that
+/// window open on a single-threaded test runtime.
+#[tokio::test]
+async fn stop_speakers_skips_a_speaker_another_stream_has_since_taken() {
+    within("stale stop list", async {
+        let sys = TestSystem::builder().speakers(["Kitchen"]).build().await;
+        let kitchen = sys.ip("Kitchen");
+        let stream_a = sys.new_stream();
+        let stream_b = sys.new_stream();
+        assert!(sys.start(&stream_a, &["Kitchen"], false).await[0].success);
+        assert!(sys.start(&stream_b, &["Kitchen"], false).await[0].success);
+        let from = sys.fake.next_seq();
+
+        sys.coordinator()
+            .sync_group()
+            .stop_speakers(&stream_a, std::slice::from_ref(&kitchen))
+            .await;
+
+        assert!(
+            sys.fake.calls_since(from).is_empty(),
+            "no request reached the speaker: {:?}",
+            sys.fake.calls_since(from)
+        );
+        assert_eq!(
+            sys.session(&stream_b, "Kitchen").map(|s| s.stream_id),
+            Some(stream_b)
+        );
+        assert!(sys.fake.speaker_named("Kitchen").is_fetching());
+    })
+    .await;
+}
+
+/// Proves: tearing down a synced group unjoins every slave before the
+/// coordinator is stopped, so no slave is left following a coordinator that
+/// has gone silent, and the slaves' sync-session RenderingControl
+/// subscriptions are released with the group.
+#[tokio::test]
+async fn tearing_down_a_synced_group_unjoins_slaves_before_stopping_the_coordinator() {
+    within("synced teardown", async {
+        let sys = TestSystem::builder()
+            .speakers(["Kitchen", "Office", "Bedroom"])
+            .build()
+            .await;
+        let (kitchen, office, bedroom) = (sys.ip("Kitchen"), sys.ip("Office"), sys.ip("Bedroom"));
+        let stream = sys.new_stream();
+        assert!(sys
+            .start(&stream, &["Kitchen", "Office", "Bedroom"], true)
+            .await
+            .iter()
+            .all(|r| r.success));
+        let from = sys.fake.next_seq();
+
+        sys.coordinator().remove_stream_async(&stream).await;
+
+        let calls = sys.fake.calls_since(from);
+        let stop = calls
+            .iter()
+            .find(|call| call.is(&kitchen, "Stop"))
+            .expect("the coordinator is stopped");
+        for slave in [&office, &bedroom] {
+            let leave = calls
+                .iter()
+                .find(|call| call.is(slave, "BecomeCoordinatorOfStandaloneGroup"))
+                .unwrap_or_else(|| panic!("{slave} is unjoined: {calls:?}"));
+            assert!(
+                leave.seq < stop.seq,
+                "{slave} left (seq {}) before the coordinator stopped (seq {})",
+                leave.seq,
+                stop.seq
+            );
+            assert_eq!(
+                sys.fake.speaker_at(slave).coordinator_uuid(),
+                sys.fake.speaker_at(slave).uuid.clone()
+            );
+            assert!(
+                sys.fake
+                    .subscription(slave, SonosService::RenderingControl)
+                    .is_none(),
+                "{slave} is no longer on RenderingControl"
+            );
+        }
+        assert!(sys.sessions().is_empty());
+        assert!(!sys.fake.speaker_named("Kitchen").is_fetching());
     })
     .await;
 }
@@ -593,7 +783,9 @@ async fn an_unsynced_start_has_every_speaker_fetch_the_stream() {
 ///
 /// Limit: every loopback peer counts as the companion host, so with fakes on
 /// 127/8 a refusal (404) cannot be provoked and `strict_stream_access` is
-/// not exercised here. What is observable is the allowlist itself.
+/// not exercised here. What is observable is the allowlist itself; the 200
+/// the fetch receives is not evidence of anything, as it would be served to
+/// any loopback peer. `decide_stream_access` has its own unit tests.
 #[tokio::test]
 async fn a_speaker_is_on_the_allowlist_when_its_fetch_arrives() {
     within("allowlist at fetch time", async {

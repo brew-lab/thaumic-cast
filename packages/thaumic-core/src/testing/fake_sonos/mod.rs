@@ -4,9 +4,13 @@
 //! (`127.0.0.2`, `127.0.0.3`, ...) on one port shared by the household, so
 //! the crate's real SOAP client, XML parsers, GENA client and services talk
 //! to it exactly as they would to hardware: only the port differs from 1400.
-//! The port is reserved by holding a listener on `127.0.0.1` for as long as
-//! any speaker listener is open, so households in parallel tests never
-//! collide.
+//! The port is chosen from below the kernel's ephemeral range and claimed by
+//! binding `127.0.0.1` and every speaker address on it; a port that is
+//! taken on any of them is skipped. Ports the kernel hands out to outbound
+//! connections (a speaker's own stream fetch, sourced from `127.0.0.k`)
+//! all come from the ephemeral range, so they can never coincide with a
+//! household's port, and the `127.0.0.1` listener is held for as long as any
+//! speaker listener is open so two households never share one.
 //!
 //! # Behaviour model
 //!
@@ -117,6 +121,9 @@ impl Call {
 pub(crate) enum Failure {
     /// Answer with a SOAP fault carrying this UPnP error code.
     Fault(u16),
+    /// Like [`Failure::Fault`], but only for the next request; the one after
+    /// is answered normally. For proving that a retry recovers.
+    FaultOnce(u16),
     /// Never answer. The client's own timeout is the only way out.
     Hang,
     /// Answer normally, but only after this long.
@@ -452,25 +459,66 @@ pub(crate) struct FakeSonosSystem {
     ///
     /// Shared with every speaker's server task: an aborted task drops its
     /// listener only when the runtime next reaps it, so the reservation must
-    /// outlive the listeners or another test could be handed the port in
+    /// outlive the listeners or another household could claim the port in
     /// between and collide on a speaker address.
     _port_reservation: Arc<TcpListener>,
     servers: Mutex<Vec<JoinHandle<()>>>,
 }
 
+/// Lowest and highest port a household may use. Linux hands outbound
+/// connections ports from `net.ipv4.ip_local_port_range` (32768–60999 by
+/// default), so anything below that is never taken by a speaker's own stream
+/// fetch, whose source address is the same `127.0.0.k` a listener needs.
+const HOUSEHOLD_PORT_RANGE: std::ops::Range<u16> = 20000..30000;
+
+/// Binds `127.0.0.1` and every speaker address on one port from
+/// [`HOUSEHOLD_PORT_RANGE`], moving to the next port whenever any of them is
+/// taken. Returns the `127.0.0.1` reservation, the port, and one listener per
+/// speaker address in the order given.
+///
+/// Candidates start from a process-wide counter, so households started in
+/// parallel try different ports first and a collision only costs one retry.
+async fn claim_household_port(
+    speaker_ips: impl Iterator<Item = Ipv4Addr> + Clone,
+) -> (TcpListener, u16, Vec<TcpListener>) {
+    static NEXT: AtomicU64 = AtomicU64::new(0);
+    let span = u64::from(HOUSEHOLD_PORT_RANGE.end - HOUSEHOLD_PORT_RANGE.start);
+    let seed = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos() as u64)
+        .unwrap_or(0)
+        ^ u64::from(std::process::id());
+    let first = NEXT.fetch_add(97, Ordering::Relaxed).wrapping_add(seed) % span;
+
+    for attempt in 0..span {
+        let port = HOUSEHOLD_PORT_RANGE.start + ((first + attempt) % span) as u16;
+        let Ok(reservation) = TcpListener::bind((Ipv4Addr::LOCALHOST, port)).await else {
+            continue;
+        };
+        let mut listeners = Vec::new();
+        for ip in speaker_ips.clone() {
+            match TcpListener::bind(SocketAddr::from((ip, port))).await {
+                Ok(listener) => listeners.push(listener),
+                Err(_) => break,
+            }
+        }
+        if listeners.len() == speaker_ips.clone().count() {
+            return (reservation, port, listeners);
+        }
+        // Something else holds this port on one of the speaker addresses;
+        // drop everything bound so far and try the next port.
+    }
+    panic!("no free port for a fake household in {HOUSEHOLD_PORT_RANGE:?}");
+}
+
 impl FakeSonosSystem {
     /// Starts one fake speaker per room name, each on its own loopback
-    /// address, all on one freshly reserved port.
+    /// address, all on one port claimed on every address at once.
     pub async fn start(names: &[&str]) -> Arc<Self> {
         assert!(
             !names.is_empty() && names.len() < 200,
             "between 1 and 199 fake speakers"
         );
-        let reservation = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
-            .await
-            .expect("reserve a port on 127.0.0.1");
-        let port = reservation.local_addr().expect("reserved address").port();
-
         let speakers: Vec<Arc<FakeSpeaker>> = names
             .iter()
             .enumerate()
@@ -484,6 +532,9 @@ impl FakeSonosSystem {
         for speaker in &speakers {
             speaker.state.lock().coordinator_uuid = speaker.uuid.clone();
         }
+
+        let (reservation, port, listeners) =
+            claim_household_port(speakers.iter().map(|speaker| speaker.ip)).await;
 
         let system = Arc::new(Self {
             port,
@@ -504,11 +555,7 @@ impl FakeSonosSystem {
             servers: Mutex::new(Vec::new()),
         });
 
-        for speaker in &system.speakers {
-            let address = SocketAddr::from((speaker.ip, port));
-            let listener = TcpListener::bind(address).await.unwrap_or_else(|e| {
-                panic!("bind fake speaker {} on {}: {}", speaker.name, address, e)
-            });
+        for (speaker, listener) in system.speakers.iter().zip(listeners) {
             let router = server::router(Arc::downgrade(&system), Arc::clone(speaker));
             let reservation = Arc::clone(&system._port_reservation);
             let task = tokio::spawn(async move {
@@ -682,10 +729,15 @@ impl FakeSonosSystem {
     }
 
     fn failure_for(&self, speaker_ip: &str, action: &str) -> Option<Failure> {
-        self.failures
-            .lock()
-            .get(&(speaker_ip.to_string(), action.to_string()))
-            .copied()
+        let key = (speaker_ip.to_string(), action.to_string());
+        let mut failures = self.failures.lock();
+        match failures.get(&key).copied() {
+            Some(once @ Failure::FaultOnce(_)) => {
+                failures.remove(&key);
+                Some(once)
+            }
+            other => other,
+        }
     }
 
     // ── Stream fetches ──────────────────────────────────────────────────────

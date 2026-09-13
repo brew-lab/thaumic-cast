@@ -650,6 +650,13 @@ impl StreamCoordinator {
         }
     }
 
+    /// The sync-group manager, for tests that drive its public operations
+    /// directly with inputs the coordinator's own paths cannot produce.
+    #[cfg(test)]
+    pub(crate) fn sync_group(&self) -> &SyncGroupManager {
+        &self.sync_group
+    }
+
     /// Gets a stream by ID.
     pub fn get_stream(&self, id: &str) -> Option<Arc<StreamState>> {
         self.stream_registry.get_stream(id)
