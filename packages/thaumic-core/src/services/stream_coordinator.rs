@@ -1444,7 +1444,10 @@ mod tests {
                 self.play_uri_count.fetch_add(1, Ordering::SeqCst);
                 self.interleave().await;
                 if let Some(msg) = self.play_uri_fail.lock().unwrap().as_ref() {
-                    return Err(crate::sonos::soap::SoapError::Fault(msg.clone()));
+                    return Err(crate::sonos::soap::SoapError::Fault {
+                        code: None,
+                        message: msg.clone(),
+                    });
                 }
                 Ok(())
             }

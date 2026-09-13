@@ -3,13 +3,10 @@
 //! This module handles the raw SOAP envelope building, HTTP transport,
 //! and XML response parsing. For high-level Sonos commands, see `client.rs`.
 
-use std::time::Duration;
-
 use reqwest::Client;
 use thiserror::Error;
 
 use super::utils::{build_sonos_url_with_port, escape_xml, extract_xml_text};
-use crate::protocol_constants::SOAP_TIMEOUT_SECS;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Error Types
@@ -27,8 +24,18 @@ pub enum SoapError {
     HttpStatus(u16, String),
 
     /// Speaker returned a SOAP fault response.
-    #[error("SOAP fault: {0}")]
-    Fault(String),
+    ///
+    /// Sonos faults carry `faultstring=UPnPError` and put the meaning in
+    /// `detail/UPnPError/errorCode` and `errorDescription`; `code` is that
+    /// error code when present and `message` is the description, falling
+    /// back to the faultstring.
+    #[error("SOAP fault{}: {message}", code.map(|c| format!(" {c}")).unwrap_or_default())]
+    Fault {
+        /// UPnP error code from the fault detail, if the speaker sent one.
+        code: Option<u16>,
+        /// Human-readable fault text.
+        message: String,
+    },
 
     /// Failed to parse SOAP response XML.
     #[error("Failed to parse SOAP response")]
@@ -48,11 +55,9 @@ impl SoapError {
     #[must_use]
     pub fn is_transient(&self) -> bool {
         match self {
-            SoapError::Fault(msg) => {
-                msg.contains("701")
-                    || msg.contains("714")
-                    || msg.contains("716")
-                    || msg.to_lowercase().contains("transition")
+            SoapError::Fault { code, message } => {
+                matches!(code, Some(701 | 714 | 716))
+                    || message.to_lowercase().contains("transition")
             }
             // Network timeouts can also be transient
             SoapError::Http(e) => e.is_timeout(),
@@ -117,7 +122,8 @@ pub async fn send_soap_request(
         .header("Content-Type", "text/xml; charset=\"utf-8\"")
         .header("SOAPAction", format!("\"{}#{}\"", service, action))
         .body(body)
-        .timeout(Duration::from_secs(SOAP_TIMEOUT_SECS))
+        // No per-request timeout: the client's own timeout governs (see
+        // `bootstrap::create_http_client`), so tests can shorten it.
         .send()
         .await;
 
@@ -136,9 +142,7 @@ pub async fn send_soap_request(
 
     // Check for SOAP fault in response (can occur even on 500 status)
     if response_text.contains("<s:Fault>") || response_text.contains("<soap:Fault>") {
-        let fault_msg = extract_fault_string(&response_text)
-            .unwrap_or_else(|| "Unknown SOAP fault".to_string());
-        return Err(SoapError::Fault(fault_msg));
+        return Err(parse_soap_fault(&response_text));
     }
 
     // Check HTTP status after SOAP fault check (SOAP faults may come with 500 status)
@@ -149,9 +153,19 @@ pub async fn send_soap_request(
     Ok(response_text)
 }
 
-/// Extracts the faultstring from a SOAP fault response.
-fn extract_fault_string(xml: &str) -> Option<String> {
-    extract_xml_text(xml, "faultstring")
+/// Builds the [`SoapError::Fault`] a fault response describes.
+///
+/// Sonos sends `<faultstring>UPnPError</faultstring>` for every fault and
+/// puts the meaning in `<detail><UPnPError><errorCode>701</errorCode>
+/// <errorDescription>Transition not available</errorDescription>`, so the
+/// code has to be read from the detail; the faultstring alone never names it.
+fn parse_soap_fault(xml: &str) -> SoapError {
+    let code = extract_xml_text(xml, "errorCode").and_then(|c| c.trim().parse().ok());
+    let message = extract_xml_text(xml, "errorDescription")
+        .filter(|d| !d.trim().is_empty())
+        .or_else(|| extract_xml_text(xml, "faultstring"))
+        .unwrap_or_else(|| "Unknown SOAP fault".to_string());
+    SoapError::Fault { code, message }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -191,4 +205,63 @@ pub async fn soap_request(
         args,
     )
     .await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The shape real hardware sends: the code lives in the detail, and the
+    /// faultstring is the same for every error.
+    const SONOS_FAULT_701: &str = r#"<?xml version="1.0"?>
+<s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/" s:encodingStyle="http://schemas.xmlsoap.org/soap/encoding/">
+<s:Body><s:Fault><faultcode>s:Client</faultcode><faultstring>UPnPError</faultstring>
+<detail><UPnPError xmlns="urn:schemas-upnp-org:control-1-0"><errorCode>701</errorCode><errorDescription>Transition not available</errorDescription></UPnPError></detail>
+</s:Fault></s:Body></s:Envelope>"#;
+
+    #[test]
+    fn a_sonos_fault_yields_its_upnp_code_and_description() {
+        let err = parse_soap_fault(SONOS_FAULT_701);
+        match &err {
+            SoapError::Fault { code, message } => {
+                assert_eq!(*code, Some(701));
+                assert_eq!(message, "Transition not available");
+            }
+            other => panic!("unexpected {other:?}"),
+        }
+        assert!(err.is_transient(), "701 is retried");
+        assert_eq!(err.to_string(), "SOAP fault 701: Transition not available");
+    }
+
+    #[test]
+    fn transience_is_decided_by_the_code_not_by_digits_in_the_text() {
+        let transient = |code| SoapError::Fault {
+            code: Some(code),
+            message: "UPnPError".into(),
+        };
+        assert!(transient(701).is_transient());
+        assert!(transient(714).is_transient());
+        assert!(transient(716).is_transient());
+        assert!(!transient(402).is_transient());
+        assert!(!transient(500).is_transient());
+
+        let no_code = SoapError::Fault {
+            code: None,
+            message: "error 701 in the text but no detail".into(),
+        };
+        assert!(!no_code.is_transient());
+    }
+
+    #[test]
+    fn a_fault_without_detail_keeps_the_faultstring() {
+        let xml = "<s:Envelope><s:Body><s:Fault><faultcode>s:Client</faultcode>\
+                   <faultstring>Something else</faultstring></s:Fault></s:Body></s:Envelope>";
+        match parse_soap_fault(xml) {
+            SoapError::Fault { code, message } => {
+                assert_eq!(code, None);
+                assert_eq!(message, "Something else");
+            }
+            other => panic!("unexpected {other:?}"),
+        }
+    }
 }

@@ -137,7 +137,9 @@ pub async fn stop(client: &Client, ip: &str, port: u16) -> SoapResult<()> {
 
     match result {
         Ok(_) => Ok(()),
-        Err(SoapError::Fault(msg)) if msg.contains("701") => {
+        Err(SoapError::Fault {
+            code: Some(701), ..
+        }) => {
             // Error 701 means "transition not available" - speaker is already stopped
             log::debug!(
                 "[Sonos] Stop: Speaker {} may already be stopped (ignoring 701)",
