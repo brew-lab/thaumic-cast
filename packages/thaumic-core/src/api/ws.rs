@@ -1,26 +1,29 @@
 //! WebSocket handler for real-time client communication.
 
 use axum::extract::ws::{Message, WebSocket};
-use axum::extract::{State, WebSocketUpgrade};
-use axum::response::IntoResponse;
+use axum::extract::{connect_info::ConnectInfo, State, WebSocketUpgrade};
+use axum::http::{header, HeaderMap, StatusCode, Uri};
+use axum::response::{IntoResponse, Response};
 use bytes::Bytes;
 use futures::sink::SinkExt;
-use futures::stream::StreamExt;
+use futures::stream::{SplitSink, StreamExt};
 use serde::{Deserialize, Serialize};
 use std::future::Future;
-use std::sync::Arc;
+use std::net::{IpAddr, SocketAddr};
+use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::{broadcast, mpsc, oneshot};
 use tokio_util::sync::CancellationToken;
 
+use crate::api::ws_connection::{is_loopback_ip, ConnectionGuard, WsConnectionManager};
 use crate::api::AppState;
-use crate::events::SpeakerRemovalReason;
+use crate::events::{BroadcastEvent, LatencyEvent, SonosEvent, SpeakerRemovalReason, StreamEvent};
 use crate::protocol_constants::{
     DEFAULT_JITTER_BUFFER_MS, MAX_FRAME_DURATION_MS, MAX_JITTER_BUFFER_MS, MIN_FRAME_DURATION_MS,
     MIN_JITTER_BUFFER_MS, SILENCE_FRAME_DURATION_MS, SOAP_TIMEOUT_SECS,
     WS_HEARTBEAT_CHECK_INTERVAL_SECS, WS_HEARTBEAT_TIMEOUT_SECS,
 };
-use crate::services::StreamCoordinator;
+use crate::services::{PlaybackSession, StreamCoordinator};
 use crate::stream::{AudioCodec, AudioFormat, StreamMetadata};
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -34,15 +37,24 @@ use crate::stream::{AudioCodec, AudioFormat, StreamMetadata};
 struct StreamGuard {
     stream_id: String,
     stream_coordinator: Arc<StreamCoordinator>,
+    /// Holds the ownership record claimed for this stream, so it is released
+    /// whenever the stream goes away — not only when the connection ends.
+    ws_manager: Arc<WsConnectionManager>,
     /// Cleared by `disarm()` once the stream has been removed gracefully.
     armed: bool,
 }
 
 impl StreamGuard {
-    fn new(stream_id: String, stream_coordinator: Arc<StreamCoordinator>) -> Self {
+    /// Creates the guard and records `conn` as the owner of `stream_id`.
+    ///
+    /// Ownership is what `INITIAL_STATE` uses to decide whose sessions a
+    /// client may see in full (see [`build_initial_state`]).
+    fn new(state: &AppState, conn: &ConnectionGuard, stream_id: String) -> Self {
+        conn.claim_stream(&stream_id);
         Self {
             stream_id,
-            stream_coordinator,
+            stream_coordinator: Arc::clone(&state.stream_coordinator),
+            ws_manager: conn.manager(),
             armed: true,
         }
     }
@@ -61,10 +73,16 @@ impl StreamGuard {
 
 impl Drop for StreamGuard {
     fn drop(&mut self) {
+        // Removal first, release second: removal broadcasts `Ended`, and while
+        // the ownership record still stands that event reaches the owner with
+        // the real id and everyone else with the alias they know the stream by
+        // (see `redact_foreign_streams`). Released even when disarmed: the
+        // stream is gone either way, so the record must not outlive it.
         if self.armed {
             self.stream_coordinator.remove_stream(&self.stream_id);
             log::info!("[WS] Stream cleanup: {}", self.stream_id);
         }
+        self.ws_manager.release_stream(&self.stream_id);
     }
 }
 
@@ -733,6 +751,208 @@ fn dispatch_control_command(
 // WebSocket Message Handlers
 // ─────────────────────────────────────────────────────────────────────────────
 
+/// Returns a stable, opaque stand-in for a stream id.
+///
+/// Derived from a per-process random salt, so it is stable for the life of the
+/// companion (a client can correlate the same speaker across snapshots) while
+/// revealing nothing about the real id: `/stream/{id}` rejects it, and it
+/// cannot be worked back to the UUID without the salt, which never leaves the
+/// process.
+fn opaque_stream_alias(stream_id: &str) -> String {
+    use std::hash::{Hash, Hasher};
+
+    static SALT: OnceLock<u128> = OnceLock::new();
+    let salt = *SALT.get_or_init(|| uuid::Uuid::new_v4().as_u128());
+
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    salt.hash(&mut hasher);
+    stream_id.hash(&mut hasher);
+    format!("redacted-{:016x}", hasher.finish())
+}
+
+/// Builds the `sessions` entry another client is allowed to see.
+///
+/// Carries the speaker (so the UI can show it as in use by someone else) and
+/// nothing that could be replayed against the audio endpoints: no stream id and
+/// no stream URL. `/stream/{id}/live.wav` serves anyone who knows the id, so
+/// handing out other clients' ids here is handing out their tab audio.
+///
+/// The shape still satisfies the extension's `PlaybackSessionSchema`
+/// (`streamId`, `speakerIp`, `streamUrl`, all required strings), so the
+/// placeholder id and empty URL are deliberate: omitting the fields would make
+/// the whole `INITIAL_STATE` payload fail validation on shipped extensions.
+fn redacted_session(session: &PlaybackSession) -> serde_json::Value {
+    serde_json::json!({
+        "streamId": opaque_stream_alias(&session.stream_id),
+        "speakerIp": session.speaker_ip,
+        "streamUrl": "",
+        "redacted": true,
+    })
+}
+
+/// Serializes one playback session for `conn`.
+///
+/// Sessions this client created — any socket from the same machine, so the
+/// extension's control socket sees what its streaming socket started — are sent
+/// in full; everyone else's are reduced to [`redacted_session`].
+fn session_for_connection(conn: &ConnectionGuard, session: &PlaybackSession) -> serde_json::Value {
+    if conn.owns_stream(&session.stream_id) {
+        match serde_json::to_value(session) {
+            Ok(value) => return value,
+            Err(e) => log::warn!("[WS] Failed to serialize session: {}", e),
+        }
+    }
+    redacted_session(session)
+}
+
+/// Returns `true` if `event` may be forwarded to `conn`.
+///
+/// `/stream/{id}/live.wav` serves whoever knows the id, so every event that
+/// names a stream id is a disclosure: without this, staying connected while
+/// somebody else casts would undo [`build_initial_state`]'s redaction one event
+/// later. Each arm is therefore listed explicitly and the match is exhaustive,
+/// so a new event variant carrying a stream id cannot silently inherit a
+/// permissive default.
+///
+/// `Created` goes to the owner and nobody else. It is broadcast from inside
+/// stream creation, a moment *before* the creating socket records its claim,
+/// so a sibling socket could see it while the stream still looks unowned — it
+/// must fail closed rather than ask about liveness. Nothing consumes it today,
+/// so a non-owner loses nothing.
+///
+/// `PlaybackStarted`, `PlaybackStopped` and `Ended` go to everyone, because
+/// they are how a client keeps its picture of *which speakers other clients
+/// hold* current between snapshots — without them "in use by another client"
+/// would only ever be true at connect time. They are not a disclosure: on the
+/// way out [`redact_foreign_streams`] replaces another client's stream id with
+/// the same opaque alias `INITIAL_STATE` used for it, and blanks the URL.
+///
+/// `PlaybackStopFailed` and the two latency events are gated on the id still
+/// being *live and someone else's*. Non-owners have no use for them (the
+/// extension resolves them through its own session table and returns early for
+/// ids that are not its own), and the latency pair repeats for the whole cast.
+/// Once the ownership record is released the stream is gone and its id buys
+/// nothing, so they go to everyone, which keeps an owner's own cleanup working
+/// on the paths where release precedes the event.
+fn event_is_visible_to(conn: &ConnectionGuard, event: &BroadcastEvent) -> bool {
+    match event {
+        BroadcastEvent::Stream(StreamEvent::Created { stream_id, .. }) => {
+            conn.owns_stream(stream_id)
+        }
+        BroadcastEvent::Stream(
+            StreamEvent::PlaybackStarted { .. }
+            | StreamEvent::PlaybackStopped { .. }
+            | StreamEvent::Ended { .. },
+        ) => true,
+        BroadcastEvent::Stream(StreamEvent::PlaybackStopFailed { stream_id, .. })
+        | BroadcastEvent::Latency(
+            LatencyEvent::Updated { stream_id, .. } | LatencyEvent::Stale { stream_id, .. },
+        ) => !conn.stream_is_owned_by_other(stream_id),
+        // Speaker, network and topology state is shared by everyone casting to
+        // the same Sonos system. Sonos events name no stream id, but two of
+        // them quote a URI that may *contain* one - see
+        // [`redact_foreign_streams`], which runs on the way out.
+        BroadcastEvent::Sonos(_) | BroadcastEvent::Network(_) | BroadcastEvent::Topology(_) => true,
+    }
+}
+
+/// Placeholder left in a URI field whose value was another client's stream.
+///
+/// A string rather than an omission because `SourceChangedSchema` requires
+/// `currentUri`; it also reads as deliberate in the extension's log line.
+const REDACTED_URI: &str = "<redacted>";
+
+/// Returns the stream id named by a companion stream URL, if it names one.
+///
+/// Stream URLs look like `http://<host>:<port>/stream/{id}/live.wav`, and Sonos
+/// quotes them back verbatim in its GENA notifications. Any other URI (a radio
+/// stream, a Spotify track, `x-rincon:` group membership) has no `/stream/`
+/// segment and yields `None`.
+fn stream_id_in_uri(uri: &str) -> Option<&str> {
+    let after = uri.split("/stream/").nth(1)?;
+    let id = after.split('/').next().unwrap_or(after);
+    (!id.is_empty()).then_some(id)
+}
+
+/// Rewrites every reference to another client's live stream out of `event`.
+///
+/// Two kinds of reference exist. `StreamEvent::PlaybackStarted`,
+/// `PlaybackStopped` and `Ended` name a stream id outright: for a stream
+/// someone else owns the id becomes the [`opaque_stream_alias`] that
+/// `INITIAL_STATE` already showed this client, so it can keep its list of
+/// other clients' sessions current by the same key, and the URL on
+/// `PlaybackStarted` is blanked because it embeds the id.
+///
+/// `SonosEvent::TransportState` and `SonosEvent::SourceChanged` carry the
+/// speaker's `CurrentTrackURI` straight from the GENA notification, which for a
+/// speaker someone else is casting to *is* that client's
+/// `/stream/{id}/live.wav` URL. Forwarding it verbatim would hand out a
+/// ready-made fetch URL for another client's tab audio the first time the
+/// victim pauses or the track changes, bypassing every other check here. The
+/// events themselves must still reach every client — the extension drops a
+/// speaker from its own cast on `sourceChanged`, and both handlers act on
+/// `speakerIp` alone — so the URI field is rewritten to [`REDACTED_URI`]
+/// rather than the event withheld. No consumer reads these fields beyond one
+/// log line.
+fn redact_foreign_streams(conn: &ConnectionGuard, event: &mut BroadcastEvent) {
+    let foreign =
+        |uri: &str| stream_id_in_uri(uri).is_some_and(|id| conn.stream_is_owned_by_other(id));
+
+    match event {
+        BroadcastEvent::Stream(StreamEvent::PlaybackStarted {
+            stream_id,
+            stream_url,
+            ..
+        }) => {
+            if conn.stream_is_owned_by_other(stream_id) {
+                *stream_id = opaque_stream_alias(stream_id);
+                stream_url.clear();
+            }
+        }
+        BroadcastEvent::Stream(
+            StreamEvent::PlaybackStopped { stream_id, .. } | StreamEvent::Ended { stream_id, .. },
+        ) => {
+            if conn.stream_is_owned_by_other(stream_id) {
+                *stream_id = opaque_stream_alias(stream_id);
+            }
+        }
+        BroadcastEvent::Sonos(SonosEvent::TransportState { current_uri, .. }) => {
+            if current_uri.as_deref().is_some_and(foreign) {
+                *current_uri = Some(REDACTED_URI.to_string());
+            }
+        }
+        BroadcastEvent::Sonos(SonosEvent::SourceChanged {
+            current_uri,
+            expected_uri,
+            ..
+        }) => {
+            if foreign(current_uri) {
+                REDACTED_URI.clone_into(current_uri);
+            }
+            if expected_uri.as_deref().is_some_and(foreign) {
+                *expected_uri = Some(REDACTED_URI.to_string());
+            }
+        }
+        // Listed rather than wildcarded, so a new event that names a stream or
+        // quotes a URI has to be classified here instead of shipping
+        // unscrubbed. The remaining stream and latency events name streams
+        // too, but [`event_is_visible_to`] withholds them from non-owners
+        // while the stream is live.
+        BroadcastEvent::Sonos(
+            SonosEvent::GroupVolume { .. }
+            | SonosEvent::GroupMute { .. }
+            | SonosEvent::ZoneGroupsUpdated { .. }
+            | SonosEvent::SubscriptionLost { .. },
+        )
+        | BroadcastEvent::Stream(
+            StreamEvent::Created { .. } | StreamEvent::PlaybackStopFailed { .. },
+        )
+        | BroadcastEvent::Network(_)
+        | BroadcastEvent::Topology(_)
+        | BroadcastEvent::Latency(_) => {}
+    }
+}
+
 /// Builds the initial state message for WebSocket clients.
 ///
 /// Includes Sonos state (groups, transport, volume, mute), active playback
@@ -743,19 +963,22 @@ fn dispatch_control_command(
 /// control connection the extension uses purely for state monitoring — so
 /// putting the version fields here means the extension's mismatch warning
 /// fires immediately, without waiting for the user to start a stream.
-fn build_initial_state(state: &AppState) -> Option<Message> {
+///
+/// One companion serves several extensions at once, so sessions are filtered
+/// per connection: `conn`'s own sessions in full, everyone else's redacted.
+fn build_initial_state(state: &AppState, conn: &ConnectionGuard) -> Option<Message> {
     let mut payload = state.sonos_state.to_json();
 
     // Add sessions to the initial state
     if let serde_json::Value::Object(ref mut map) = payload {
-        let sessions = state.stream_coordinator.get_all_sessions();
-        let sessions_json = match serde_json::to_value(&sessions) {
-            Ok(v) => v,
-            Err(e) => {
-                log::warn!("[WS] Failed to serialize sessions: {}", e);
-                serde_json::Value::Array(vec![])
-            }
-        };
+        let sessions_json = serde_json::Value::Array(
+            state
+                .stream_coordinator
+                .get_all_sessions()
+                .iter()
+                .map(|session| session_for_connection(conn, session))
+                .collect(),
+        );
         map.insert("sessions".to_string(), sessions_json);
 
         // Add network health to the initial state
@@ -795,6 +1018,103 @@ fn build_initial_state(state: &AppState) -> Option<Message> {
     }
 
     WsOutgoing::InitialState { payload }.to_message()
+}
+
+/// Sends `conn`'s `INITIAL_STATE` snapshot down `sender`.
+///
+/// Used both on connect and to resynchronise a connection whose broadcast
+/// receiver lagged, so the redaction in [`build_initial_state`] applies to
+/// both and a resync can never hand this client another client's stream ids.
+///
+/// Returns `false` when the socket is gone and the connection should end. A
+/// snapshot that fails to serialize is skipped, not fatal.
+async fn send_initial_state(
+    sender: &mut SplitSink<WebSocket, Message>,
+    state: &AppState,
+    conn: &ConnectionGuard,
+) -> bool {
+    match build_initial_state(state, conn) {
+        Some(msg) => sender.send(msg).await.is_ok(),
+        None => true,
+    }
+}
+
+/// Logs a lagged connection and re-sends its `INITIAL_STATE` snapshot.
+///
+/// Returns `false` when the socket is gone and the connection should end.
+async fn resync_after_lag(
+    sender: &mut SplitSink<WebSocket, Message>,
+    state: &AppState,
+    conn: &ConnectionGuard,
+    skipped: u64,
+) -> bool {
+    log::warn!(
+        "[WS] Connection {} lagged, {} event(s) dropped; resending INITIAL_STATE",
+        conn.id(),
+        skipped
+    );
+    send_initial_state(sender, state, conn).await
+}
+
+/// Shortest gap between two lag-triggered `INITIAL_STATE` resyncs on one
+/// connection.
+const RESYNC_MIN_INTERVAL: Duration = Duration::from_secs(2);
+
+/// Per-connection bookkeeping for recovering from a lagged event receiver.
+///
+/// The event channel holds `EVENT_CHANNEL_CAPACITY` events; a client that
+/// stalls on TCP backpressure overruns it and tokio drops what it missed.
+/// Those events are gone, so the only honest recovery is to re-send the
+/// `INITIAL_STATE` snapshot. Rebuilding that snapshot is the expensive part,
+/// though, and a continuously slow client would earn one per lagged `recv()`,
+/// so lags are coalesced into at most one resync per [`RESYNC_MIN_INTERVAL`]:
+/// a suppressed lag is remembered and released by the heartbeat tick, which
+/// keeps the client eventually consistent without a rebuild loop.
+#[derive(Default)]
+struct LagResync {
+    /// Events dropped since the last snapshot went out.
+    skipped: u64,
+    /// A lag arrived while a resync was still rate-limited.
+    deferred: bool,
+    /// When the last snapshot went out; `None` until the first lag.
+    last_sent: Option<Instant>,
+}
+
+impl LagResync {
+    /// Records `skipped` dropped events, returning the coalesced skip count
+    /// when a snapshot should be sent now. `None` means the lag was deferred;
+    /// [`Self::take_due`] releases it once the interval has passed.
+    fn on_lag(&mut self, skipped: u64, now: Instant) -> Option<u64> {
+        self.skipped = self.skipped.saturating_add(skipped);
+        if self.is_due(now) {
+            Some(self.take(now))
+        } else {
+            self.deferred = true;
+            None
+        }
+    }
+
+    /// Returns the coalesced skip count once a deferred resync comes due.
+    fn take_due(&mut self, now: Instant) -> Option<u64> {
+        if self.deferred && self.is_due(now) {
+            Some(self.take(now))
+        } else {
+            None
+        }
+    }
+
+    fn is_due(&self, now: Instant) -> bool {
+        match self.last_sent {
+            Some(sent) => now.duration_since(sent) >= RESYNC_MIN_INTERVAL,
+            None => true,
+        }
+    }
+
+    fn take(&mut self, now: Instant) -> u64 {
+        self.deferred = false;
+        self.last_sent = Some(now);
+        std::mem::take(&mut self.skipped)
+    }
 }
 
 /// Result of handling a handshake request.
@@ -993,19 +1313,58 @@ impl BrowserCaptureState {
     }
 }
 
+/// Returns `true` if `peer` is the machine this companion runs on.
+///
+/// `local_ip` is the companion's own advertised address. Loopback is the
+/// obvious case but not the only one: the companion binds `0.0.0.0` and the
+/// desktop Server view prints `<local ip>:<port>` with a copy button, so a user
+/// on that very machine may well have pasted the LAN address into the
+/// extension. Treating that as remote would refuse browser capture to exactly
+/// the desktop+Windows setup the feature exists for.
+fn is_companion_host(local_ip: &str, peer: IpAddr) -> bool {
+    let peer = peer.to_canonical();
+    is_loopback_ip(peer)
+        || local_ip
+            .parse::<IpAddr>()
+            .is_ok_and(|local| local.to_canonical() == peer)
+}
+
 /// Handles a START_BROWSER_CAPTURE message: starts capture and creates a stream.
 ///
 /// Uses the `CaptureSourceFactory` from `AppState` to create a platform-specific
 /// capture source. The capture thread pushes Float32 audio through the
 /// `StreamSinkBridge`, which converts to PCM16 and calls `push_frame()`.
 /// When the first frame arrives, `ready_notify` fires and we send `STREAM_READY`.
+///
+/// Restricted to clients on the companion's own machine (see
+/// [`is_companion_host`]): the factory records the *companion host's* audio
+/// output, so a client elsewhere asking for it would be recording someone
+/// else's machine, not its own browser.
 async fn handle_start_browser_capture(
     state: &AppState,
+    conn: &ConnectionGuard,
     sender: &mut futures::stream::SplitSink<WebSocket, Message>,
     stream_guard: &mut Option<StreamGuard>,
     capture: &mut BrowserCaptureState,
     payload: StartBrowserCaptureRequest,
 ) {
+    // Only a client running on this machine may capture this machine's audio.
+    if !is_companion_host(&state.network.get_local_ip(), conn.remote_addr().ip()) {
+        log::warn!(
+            "[WS] Rejected START_BROWSER_CAPTURE from non-local client {} ({})",
+            conn.remote_addr(),
+            conn.id()
+        );
+        let msg = WsOutgoing::Error {
+            message: "Browser capture is only available to clients on the companion's machine"
+                .into(),
+        };
+        if let Some(msg) = msg.to_message() {
+            let _ = sender.send(msg).await;
+        }
+        return;
+    }
+
     // Reject if already capturing
     if capture.session.is_some() {
         let msg = WsOutgoing::Error {
@@ -1094,7 +1453,7 @@ async fn handle_start_browser_capture(
             let ready = Arc::clone(&session.ready_notify);
 
             // Create stream guard for RAII cleanup
-            let guard = StreamGuard::new(stream_id.clone(), Arc::clone(&state.stream_coordinator));
+            let guard = StreamGuard::new(state, conn, stream_id.clone());
 
             // Send handshake ack with the stream ID
             let ack = WsOutgoing::HandshakeAck {
@@ -1255,22 +1614,153 @@ async fn handle_start_playback(
     }
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Upgrade Admission
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Origin schemes a browser gives an extension page, service worker or
+/// offscreen document.
+///
+/// Chromium (Chrome, Edge, Brave, Opera) uses `chrome-extension`, Firefox
+/// `moz-extension`, Safari `safari-web-extension`. Any id is accepted on
+/// purpose: `apps/extension/manifest.json` carries no `key`, so every unpacked
+/// developer build has a different id and pinning one would lock those users
+/// out. Allowing the schemes still rejects every `http(s)://` page, which is
+/// the attack this closes.
+const EXTENSION_ORIGIN_SCHEMES: [&str; 3] =
+    ["chrome-extension", "moz-extension", "safari-web-extension"];
+
+/// Longest client id accepted from the query string.
+const MAX_CLIENT_ID_LEN: usize = 64;
+
+/// Decides whether a WebSocket upgrade may proceed.
+///
+/// WebSockets are exempt from the same-origin policy, so without this any page
+/// the user visits could open `ws://127.0.0.1:<port>/ws` and drive their
+/// speakers. The only legitimate client of `/ws` is the browser extension (the
+/// desktop UI uses Tauri commands, Sonos uses the HTTP stream endpoints), so an
+/// extension origin is required.
+///
+/// A missing `Origin` means a non-browser client (curl, native tooling, tests).
+/// That is accepted only from loopback: a blanket bypass would hand the whole
+/// endpoint to anything on the LAN, which is what the check exists to stop.
+/// Extensions are unaffected by that rule even in the headless deployment,
+/// where the extension reaches the companion across the LAN — the browser still
+/// sends its `chrome-extension://…` origin on the upgrade.
+///
+/// This is worth exactly what the browser's word is worth: it stops web pages,
+/// which cannot forge `Origin`. A native client can set any header it likes, so
+/// this is not authentication — that needs the shared-secret work planned
+/// separately.
+fn check_upgrade_origin(origin: Option<&str>, peer: IpAddr) -> Result<(), &'static str> {
+    match origin {
+        Some(origin) => {
+            let scheme = origin.split("://").next().unwrap_or_default();
+            if EXTENSION_ORIGIN_SCHEMES
+                .iter()
+                .any(|allowed| scheme.eq_ignore_ascii_case(allowed))
+            {
+                Ok(())
+            } else {
+                Err("origin is not a browser extension")
+            }
+        }
+        None if is_loopback_ip(peer) => Ok(()),
+        None => Err("no Origin header and the peer is not loopback"),
+    }
+}
+
+/// Trims an untrusted string to something safe to put in a log line.
+///
+/// Keeps printable ASCII only (no newlines to forge log records with) and caps
+/// the length.
+fn sanitize_label(value: &str, max_len: usize) -> String {
+    value
+        .chars()
+        .filter(|c| c.is_ascii_graphic())
+        .take(max_len)
+        .collect()
+}
+
+/// Reads the optional `clientId` query parameter of the upgrade request.
+///
+/// A browser cannot set request headers on a WebSocket handshake, so the query
+/// string is the only channel a client id can arrive on.
+///
+/// The value is a label, never a credential and never an ownership key: nothing
+/// verifies it, so any client can present any value. It exists so a human
+/// reading the logs of a companion serving several browsers can tell them
+/// apart and follow one across its reconnects. Stream ownership is keyed on the
+/// peer address instead — see [`crate::api::ws_connection::ConnectionState::owner_ip`].
+fn client_id_from_query(query: Option<&str>) -> Option<String> {
+    let raw = query?.split('&').find_map(|pair| {
+        let (key, value) = pair.split_once('=')?;
+        (key == "clientId").then_some(value)
+    })?;
+    let sanitized = sanitize_label(raw, MAX_CLIENT_ID_LEN);
+    (!sanitized.is_empty()).then_some(sanitized)
+}
+
 /// WebSocket upgrade handler.
-pub async fn ws_handler(ws: WebSocketUpgrade, State(state): State<AppState>) -> impl IntoResponse {
-    ws.on_upgrade(move |socket| handle_ws(socket, state))
+///
+/// Admits the upgrade (see [`check_upgrade_origin`]) before handing the socket
+/// to [`handle_ws`], and logs the observed `Origin` on every accepted upgrade
+/// so the real extension id can be read out of the logs later.
+pub async fn ws_handler(
+    ws: WebSocketUpgrade,
+    State(state): State<AppState>,
+    ConnectInfo(remote_addr): ConnectInfo<SocketAddr>,
+    uri: Uri,
+    headers: HeaderMap,
+) -> Response {
+    // A present-but-unreadable Origin is a present Origin: it must fail the
+    // check below, not fall through to the "no Origin" rule.
+    let origin = headers
+        .get(header::ORIGIN)
+        .map(|value| value.to_str().unwrap_or("<invalid>"));
+
+    if let Err(reason) = check_upgrade_origin(origin, remote_addr.ip()) {
+        log::warn!(
+            "[WS] Rejected upgrade from {}: {} (origin: {})",
+            remote_addr,
+            reason,
+            origin.map_or_else(|| "<none>".to_string(), |o| sanitize_label(o, 128))
+        );
+        return (
+            StatusCode::FORBIDDEN,
+            "WebSocket upgrades are limited to the browser extension",
+        )
+            .into_response();
+    }
+
+    let client_id = client_id_from_query(uri.query());
+    log::info!(
+        "[WS] Accepted upgrade from {} (origin: {}, clientId: {})",
+        remote_addr,
+        origin.map_or_else(|| "<none>".to_string(), |o| sanitize_label(o, 128)),
+        client_id.as_deref().unwrap_or("<none>")
+    );
+
+    ws.on_upgrade(move |socket| handle_ws(socket, state, remote_addr, client_id))
 }
 
 /// Main WebSocket connection handler.
-async fn handle_ws(socket: WebSocket, state: AppState) {
+async fn handle_ws(
+    socket: WebSocket,
+    state: AppState,
+    remote_addr: SocketAddr,
+    client_id: Option<String>,
+) {
     let (mut sender, mut receiver) = socket.split();
     let mut stream_guard: Option<StreamGuard> = None;
     let mut capture = BrowserCaptureState::new();
     let mut broadcast_rx = state.event_bridge.subscribe();
     let mut last_activity = Instant::now();
     let mut latency_monitoring = false;
+    let mut lag_resync = LagResync::default();
 
-    // Register connection for tracking and force-close capability
-    let conn_guard = state.ws_manager.register();
+    // Register connection for tracking, identity and force-close capability
+    let conn_guard = state.ws_manager.register(remote_addr, client_id);
     let cancel_token = conn_guard.cancel_token().clone();
 
     log::info!("[WS] New connection established: {}", conn_guard.id());
@@ -1292,11 +1782,9 @@ async fn handle_ws(socket: WebSocket, state: AppState) {
 
     // Send initial state immediately on connect (before any handshake)
     // This allows clients to monitor speaker state without creating a stream
-    if let Some(msg) = build_initial_state(&state) {
-        if sender.send(msg).await.is_err() {
-            log::warn!("[WS] Failed to send initial state, client disconnected");
-            return;
-        }
+    if !send_initial_state(&mut sender, &state, &conn_guard).await {
+        log::warn!("[WS] Failed to send initial state, client disconnected");
+        return;
     }
 
     // Use interval instead of sleep to reduce timer allocations and prevent drift.
@@ -1330,10 +1818,8 @@ async fn handle_ws(socket: WebSocket, state: AppState) {
                                             last_activity = Instant::now();
                                         }
                                         // Create guard immediately - cleanup happens on drop
-                                        let guard = StreamGuard::new(
-                                            id.clone(),
-                                            Arc::clone(&state.stream_coordinator),
-                                        );
+                                        let guard =
+                                            StreamGuard::new(&state, &conn_guard, id.clone());
                                         let ack = WsOutgoing::HandshakeAck {
                                             payload: HandshakePayload { stream_id: id },
                                         };
@@ -1451,6 +1937,7 @@ async fn handle_ws(socket: WebSocket, state: AppState) {
                                 }
                                 handle_start_browser_capture(
                                     &state,
+                                    &conn_guard,
                                     &mut sender,
                                     &mut stream_guard,
                                     &mut capture,
@@ -1505,9 +1992,47 @@ async fn handle_ws(socket: WebSocket, state: AppState) {
                 }
             }
             // Handle broadcasted events (GENA, etc.)
-            Ok(event) = broadcast_rx.recv() => {
-                if let Ok(json) = serde_json::to_string(&event) {
-                    if sender.send(Message::Text(json.into())).await.is_err() {
+            received = broadcast_rx.recv() => {
+                match received {
+                    Ok(mut event) => {
+                        // Each connection owns its copy of the event, so filtering and
+                        // redaction here are per-client and cannot affect anyone else.
+                        if event_is_visible_to(&conn_guard, &event) {
+                            redact_foreign_streams(&conn_guard, &mut event);
+                            if let Ok(json) = serde_json::to_string(&event) {
+                                if sender.send(Message::Text(json.into())).await.is_err() {
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                    // This client fell behind and tokio dropped the events it
+                    // missed. Swallowing that would leave its speaker list,
+                    // group volumes and session view permanently wrong until it
+                    // reconnected, so re-send the snapshot instead.
+                    Err(broadcast::error::RecvError::Lagged(skipped)) => {
+                        // A streaming socket discards INITIAL_STATE and every
+                        // broadcast (the offscreen worker only reads replies), and
+                        // it is the one most likely to be behind on TCP, so a
+                        // snapshot there is bytes added to the backlog for nothing.
+                        // The extension's control socket is the one that keeps
+                        // state, and it gets the resync.
+                        if stream_guard.is_some() {
+                            continue;
+                        }
+                        if let Some(total) = lag_resync.on_lag(skipped, Instant::now()) {
+                            if !resync_after_lag(&mut sender, &state, &conn_guard, total).await {
+                                break;
+                            }
+                        }
+                    }
+                    // The bridge is gone (shutdown): no more events will ever
+                    // arrive, so this connection has nothing left to serve.
+                    Err(broadcast::error::RecvError::Closed) => {
+                        log::info!(
+                            "[WS] Event channel closed, ending connection {}",
+                            conn_guard.id()
+                        );
                         break;
                     }
                 }
@@ -1552,6 +2077,13 @@ async fn handle_ws(socket: WebSocket, state: AppState) {
                 if last_activity.elapsed() > Duration::from_secs(WS_HEARTBEAT_TIMEOUT_SECS) {
                     log::warn!("[WS] Heartbeat timeout");
                     break;
+                }
+                // Release a resync that was rate-limited while the client was
+                // lagging, so a continuously slow client still converges.
+                if let Some(total) = lag_resync.take_due(Instant::now()) {
+                    if !resync_after_lag(&mut sender, &state, &conn_guard, total).await {
+                        break;
+                    }
                 }
             }
         }
@@ -1608,10 +2140,508 @@ async fn handle_ws(socket: WebSocket, state: AppState) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::services::GroupRole;
     use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
     fn json(msg: &WsOutgoing) -> String {
         serde_json::to_string(msg).expect("serializable")
+    }
+
+    fn addr(value: &str) -> SocketAddr {
+        value.parse().expect("valid socket address")
+    }
+
+    fn ip(value: &str) -> IpAddr {
+        value.parse().expect("valid IP address")
+    }
+
+    fn session(stream_id: &str, speaker_ip: &str) -> PlaybackSession {
+        PlaybackSession {
+            stream_id: stream_id.to_string(),
+            speaker_ip: speaker_ip.to_string(),
+            stream_url: format!("http://192.168.1.2:49400/stream/{stream_id}/live.wav"),
+            codec: AudioCodec::Pcm,
+            role: GroupRole::Coordinator,
+            coordinator_ip: None,
+            coordinator_uuid: None,
+            original_coordinator_uuid: None,
+        }
+    }
+
+    // ─────────────────────────────────────────────────────────────────────
+    // Upgrade admission
+    // ─────────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn extension_origins_are_accepted_from_any_peer() {
+        // The headless deployment has the extension connecting across the LAN;
+        // the browser still stamps the extension origin on the upgrade.
+        for origin in [
+            "chrome-extension://abcdefghijklmnopabcdefghijklmnop",
+            "moz-extension://9f0c1b7e-0000-4000-8000-000000000000",
+            "safari-web-extension://ABCDEF01-2345-6789-ABCD-EF0123456789",
+            "Chrome-Extension://abcdefghijklmnopabcdefghijklmnop",
+        ] {
+            assert!(
+                check_upgrade_origin(Some(origin), ip("192.168.1.50")).is_ok(),
+                "{origin} must be allowed"
+            );
+        }
+    }
+
+    #[test]
+    fn web_page_origins_are_rejected_even_from_loopback() {
+        // This is the whole attack: a page the user visits opening
+        // ws://127.0.0.1:<port>/ws and driving their speakers.
+        for origin in [
+            "https://evil.example",
+            "http://localhost:3000",
+            "file://",
+            "null",
+            "",
+        ] {
+            assert!(
+                check_upgrade_origin(Some(origin), ip("127.0.0.1")).is_err(),
+                "{origin} must be rejected"
+            );
+        }
+    }
+
+    #[test]
+    fn a_missing_origin_is_accepted_only_from_loopback() {
+        // Non-browser clients (curl, native tooling, tests) send no Origin.
+        assert!(check_upgrade_origin(None, ip("127.0.0.1")).is_ok());
+        assert!(check_upgrade_origin(None, ip("::1")).is_ok());
+        assert!(check_upgrade_origin(None, ip("::ffff:127.0.0.1")).is_ok());
+        // ...but a missing Origin must never be a bypass from the network.
+        assert!(check_upgrade_origin(None, ip("192.168.1.50")).is_err());
+        assert!(check_upgrade_origin(None, ip("fe80::1")).is_err());
+    }
+
+    #[test]
+    fn client_id_is_read_from_the_query_string_and_sanitized() {
+        assert_eq!(
+            client_id_from_query(Some("clientId=ext-abc123")),
+            Some("ext-abc123".to_string())
+        );
+        assert_eq!(
+            client_id_from_query(Some("other=1&clientId=ext-abc&x=2")),
+            Some("ext-abc".to_string())
+        );
+        assert_eq!(client_id_from_query(None), None);
+        assert_eq!(client_id_from_query(Some("clientid=ext-abc")), None);
+        assert_eq!(client_id_from_query(Some("clientId=")), None);
+
+        // Log-injection and unbounded values are trimmed away.
+        assert_eq!(
+            client_id_from_query(Some("clientId=ext\n[WS] forged line")),
+            Some("ext[WS]forgedline".to_string())
+        );
+        assert_eq!(
+            client_id_from_query(Some(&format!("clientId={}", "a".repeat(200))))
+                .expect("id")
+                .len(),
+            MAX_CLIENT_ID_LEN
+        );
+    }
+
+    // ─────────────────────────────────────────────────────────────────────
+    // INITIAL_STATE session disclosure
+    // ─────────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn another_clients_session_never_carries_its_stream_id_or_url() {
+        let manager = Arc::new(WsConnectionManager::new());
+        let owner = manager.register(addr("192.168.1.9:5001"), None);
+        let stranger = manager.register(addr("192.168.1.20:5002"), None);
+
+        let live = session("11111111-2222-4333-8444-555555555555", "192.168.1.31");
+        owner.claim_stream(&live.stream_id);
+
+        let seen = session_for_connection(&stranger, &live);
+        let text = seen.to_string();
+        assert!(
+            !text.contains(&live.stream_id),
+            "redacted session leaked the stream id: {text}"
+        );
+        assert!(
+            !text.contains("live.wav"),
+            "redacted session leaked the stream URL: {text}"
+        );
+
+        // Still enough to render "this speaker is in use by another client",
+        // and still parseable by the extension's PlaybackSessionSchema.
+        assert_eq!(seen["speakerIp"], "192.168.1.31");
+        assert_eq!(seen["redacted"], true);
+        assert!(seen["streamId"].as_str().is_some_and(|id| !id.is_empty()));
+        assert_eq!(seen["streamUrl"], "");
+    }
+
+    #[test]
+    fn a_client_still_sees_its_own_session_in_full() {
+        let manager = Arc::new(WsConnectionManager::new());
+        let owner = manager.register(addr("192.168.1.9:5001"), None);
+
+        let live = session("11111111-2222-4333-8444-555555555555", "192.168.1.31");
+        owner.claim_stream(&live.stream_id);
+
+        let seen = session_for_connection(&owner, &live);
+        assert_eq!(seen["streamId"], live.stream_id);
+        assert_eq!(seen["streamUrl"], live.stream_url);
+        assert!(seen.get("redacted").is_none());
+    }
+
+    #[test]
+    fn a_clients_second_connection_sees_its_own_session() {
+        let manager = Arc::new(WsConnectionManager::new());
+        // The extension's streaming socket and its always-on control socket,
+        // both from the same browser, and a second browser elsewhere.
+        let streaming = manager.register(addr("192.168.1.9:5001"), None);
+        let control = manager.register(addr("192.168.1.9:5002"), None);
+        let other_browser = manager.register(addr("192.168.1.20:5003"), None);
+
+        let live = session("11111111-2222-4333-8444-555555555555", "192.168.1.31");
+        streaming.claim_stream(&live.stream_id);
+
+        assert_eq!(
+            session_for_connection(&control, &live)["streamId"],
+            live.stream_id
+        );
+        assert_ne!(
+            session_for_connection(&other_browser, &live)["streamId"],
+            live.stream_id
+        );
+    }
+
+    #[test]
+    fn asserting_someone_elses_client_id_does_not_unredact_their_session() {
+        let manager = Arc::new(WsConnectionManager::new());
+        let victim = manager.register(addr("192.168.1.9:5001"), None);
+        let live = session("11111111-2222-4333-8444-555555555555", "192.168.1.31");
+        victim.claim_stream(&live.stream_id);
+
+        // The client id is a label, not a key: asserting the victim's
+        // connection id — or anything else — buys nothing.
+        let attacker = manager.register(addr("192.168.1.20:5002"), Some(victim.id().to_string()));
+        let seen = session_for_connection(&attacker, &live);
+        assert_ne!(seen["streamId"], live.stream_id);
+        assert_eq!(seen["redacted"], true);
+    }
+
+    #[test]
+    fn the_placeholder_id_is_stable_per_stream_and_distinct_between_streams() {
+        let first = "11111111-2222-4333-8444-555555555555";
+        let second = "66666666-7777-4888-8999-aaaaaaaaaaaa";
+
+        assert_eq!(opaque_stream_alias(first), opaque_stream_alias(first));
+        assert_ne!(opaque_stream_alias(first), opaque_stream_alias(second));
+        assert!(!opaque_stream_alias(first).contains(first));
+    }
+
+    // ─────────────────────────────────────────────────────────────────────
+    // Browser capture admission
+    // ─────────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn browser_capture_is_restricted_to_clients_on_this_machine() {
+        // The factory records the companion host's own output, so only a
+        // client on that host may ask for it.
+        assert!(is_companion_host("192.168.1.5", ip("127.0.0.1")));
+        assert!(is_companion_host("192.168.1.5", ip("::1")));
+        assert!(is_companion_host("192.168.1.5", ip("::ffff:127.0.0.1")));
+        // The desktop Server view offers the LAN address with a copy button, so
+        // the local user's browser may well arrive on it.
+        assert!(is_companion_host("192.168.1.5", ip("192.168.1.5")));
+        assert!(is_companion_host("192.168.1.5", ip("::ffff:192.168.1.5")));
+        // Anyone else on the LAN is still refused.
+        assert!(!is_companion_host("192.168.1.5", ip("192.168.1.50")));
+        // A companion that has not resolved its address yet falls back to
+        // loopback-only rather than accepting everyone.
+        assert!(is_companion_host("", ip("127.0.0.1")));
+        assert!(!is_companion_host("", ip("192.168.1.5")));
+    }
+
+    // ─────────────────────────────────────────────────────────────────────
+    // Broadcast event disclosure
+    // ─────────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn live_stream_events_go_only_to_the_client_that_owns_the_stream() {
+        let manager = Arc::new(WsConnectionManager::new());
+        let owner = manager.register(addr("192.168.1.9:5001"), None);
+        let stranger = manager.register(addr("192.168.1.20:5002"), None);
+        let stream_id = "11111111-2222-4333-8444-555555555555".to_string();
+        owner.claim_stream(&stream_id);
+
+        // Staying connected while someone else starts a cast must not hand out
+        // the id — or the ready-made URL — that /stream/{id}/live.wav answers.
+        let created = BroadcastEvent::Stream(StreamEvent::Created {
+            stream_id: stream_id.clone(),
+            timestamp: 0,
+        });
+        let started = BroadcastEvent::Stream(StreamEvent::PlaybackStarted {
+            stream_id: stream_id.clone(),
+            speaker_ip: "192.168.1.31".into(),
+            stream_url: format!("http://192.168.1.5:49400/stream/{stream_id}/live.wav"),
+            timestamp: 0,
+        });
+
+        assert!(event_is_visible_to(&owner, &created));
+        assert!(!event_is_visible_to(&stranger, &created));
+
+        // PlaybackStarted is how the stranger learns the speaker is now held
+        // by someone else, so it goes through - under the alias, URL blanked.
+        assert!(event_is_visible_to(&owner, &started));
+        assert!(event_is_visible_to(&stranger, &started));
+
+        let mut for_owner = started.clone();
+        redact_foreign_streams(&owner, &mut for_owner);
+        assert_eq!(
+            serde_json::to_string(&for_owner).unwrap(),
+            serde_json::to_string(&started).unwrap(),
+            "the owner sees its own event untouched"
+        );
+
+        let mut for_stranger = started;
+        redact_foreign_streams(&stranger, &mut for_stranger);
+        match for_stranger {
+            BroadcastEvent::Stream(StreamEvent::PlaybackStarted {
+                stream_id: seen,
+                stream_url,
+                speaker_ip,
+                ..
+            }) => {
+                assert_eq!(seen, opaque_stream_alias(&stream_id));
+                assert_eq!(stream_url, "");
+                assert_eq!(speaker_ip, "192.168.1.31");
+            }
+            other => panic!("unexpected event {other:?}"),
+        }
+    }
+
+    fn teardown_events(stream_id: &str) -> Vec<BroadcastEvent> {
+        vec![
+            BroadcastEvent::Stream(StreamEvent::Ended {
+                stream_id: stream_id.to_string(),
+                timestamp: 0,
+            }),
+            BroadcastEvent::Stream(StreamEvent::PlaybackStopped {
+                stream_id: stream_id.to_string(),
+                speaker_ip: "192.168.1.31".into(),
+                reason: None,
+                timestamp: 0,
+            }),
+            BroadcastEvent::Stream(StreamEvent::PlaybackStopFailed {
+                stream_id: stream_id.to_string(),
+                speaker_ip: "192.168.1.31".into(),
+                error: "boom".into(),
+                reason: None,
+                timestamp: 0,
+            }),
+        ]
+    }
+
+    #[test]
+    fn teardown_events_for_a_still_live_stream_reach_others_only_under_the_alias() {
+        // Removing one speaker from a two-speaker cast stops playback there
+        // while the stream keeps playing on the other, so the id in the event
+        // is still fetchable from /stream/{id}/live.wav. The stranger still
+        // needs to hear that the speaker is free, so Ended and PlaybackStopped
+        // go through aliased; PlaybackStopFailed is the owner's business.
+        let manager = Arc::new(WsConnectionManager::new());
+        let owner = manager.register(addr("192.168.1.9:5001"), None);
+        let stranger = manager.register(addr("192.168.1.20:5002"), None);
+        let stream_id = "11111111-2222-4333-8444-555555555555";
+        owner.claim_stream(stream_id);
+
+        for event in teardown_events(stream_id) {
+            assert!(event_is_visible_to(&owner, &event));
+            let failed = matches!(
+                event,
+                BroadcastEvent::Stream(StreamEvent::PlaybackStopFailed { .. })
+            );
+            assert_eq!(event_is_visible_to(&stranger, &event), !failed);
+
+            let mut for_owner = event.clone();
+            redact_foreign_streams(&owner, &mut for_owner);
+            assert_eq!(
+                serde_json::to_string(&for_owner).unwrap(),
+                serde_json::to_string(&event).unwrap()
+            );
+
+            let mut for_stranger = event;
+            redact_foreign_streams(&stranger, &mut for_stranger);
+            match for_stranger {
+                BroadcastEvent::Stream(
+                    StreamEvent::Ended {
+                        stream_id: seen, ..
+                    }
+                    | StreamEvent::PlaybackStopped {
+                        stream_id: seen, ..
+                    },
+                ) => assert_eq!(seen, opaque_stream_alias(stream_id)),
+                BroadcastEvent::Stream(StreamEvent::PlaybackStopFailed { .. }) => {}
+                other => panic!("unexpected event {other:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn teardown_events_for_a_released_stream_reach_every_client() {
+        // Once the stream is gone its id buys nothing, so every extension gets
+        // the event it cleans its own session up from.
+        let manager = Arc::new(WsConnectionManager::new());
+        let owner = manager.register(addr("192.168.1.9:5001"), None);
+        let stranger = manager.register(addr("192.168.1.20:5002"), None);
+        let stream_id = "11111111-2222-4333-8444-555555555555";
+        owner.claim_stream(stream_id);
+        owner.manager().release_stream(stream_id);
+
+        for event in teardown_events(stream_id) {
+            assert!(event_is_visible_to(&owner, &event));
+            assert!(event_is_visible_to(&stranger, &event));
+        }
+    }
+
+    #[test]
+    fn latency_events_do_not_hand_another_clients_stream_id_around() {
+        // These repeat for the whole cast when video sync is on, so leaving
+        // them unfiltered would be a continuous disclosure.
+        let manager = Arc::new(WsConnectionManager::new());
+        let owner = manager.register(addr("192.168.1.9:5001"), None);
+        let stranger = manager.register(addr("192.168.1.20:5002"), None);
+        let stream_id = "11111111-2222-4333-8444-555555555555".to_string();
+        owner.claim_stream(&stream_id);
+
+        let events = [
+            BroadcastEvent::Latency(LatencyEvent::Updated {
+                stream_id: stream_id.clone(),
+                speaker_ip: "192.168.1.31".into(),
+                epoch_id: 1,
+                latency_ms: 40,
+                jitter_ms: 2,
+                confidence: 0.9,
+                timestamp: 0,
+            }),
+            BroadcastEvent::Latency(LatencyEvent::Stale {
+                stream_id,
+                speaker_ip: "192.168.1.31".into(),
+                epoch_id: 1,
+                timestamp: 0,
+            }),
+        ];
+
+        for event in &events {
+            assert!(event_is_visible_to(&owner, event));
+            assert!(!event_is_visible_to(&stranger, event));
+        }
+    }
+
+    #[test]
+    fn non_stream_events_are_not_filtered() {
+        let manager = Arc::new(WsConnectionManager::new());
+        let conn = manager.register(addr("192.168.1.20:5002"), None);
+
+        // Speaker state is shared by everyone casting to the same system.
+        let event = BroadcastEvent::Network(crate::events::NetworkEvent::HealthChanged {
+            health: crate::events::NetworkHealth::Ok,
+            reason: None,
+            timestamp: 0,
+        });
+        assert!(event_is_visible_to(&conn, &event));
+    }
+
+    // ─────────────────────────────────────────────────────────────────────
+    // Stream URLs quoted inside Sonos events
+    // ─────────────────────────────────────────────────────────────────────
+
+    fn transport_state(current_uri: Option<&str>) -> BroadcastEvent {
+        BroadcastEvent::Sonos(SonosEvent::TransportState {
+            speaker_ip: "192.168.1.31".into(),
+            state: crate::sonos::types::TransportState::Paused,
+            current_uri: current_uri.map(str::to_string),
+            timestamp: 0,
+        })
+    }
+
+    fn source_changed(current_uri: &str, expected_uri: Option<&str>) -> BroadcastEvent {
+        BroadcastEvent::Sonos(SonosEvent::SourceChanged {
+            speaker_ip: "192.168.1.31".into(),
+            current_uri: current_uri.to_string(),
+            expected_uri: expected_uri.map(str::to_string),
+            timestamp: 0,
+        })
+    }
+
+    #[test]
+    fn a_stream_id_is_recognised_inside_a_quoted_uri() {
+        assert_eq!(
+            stream_id_in_uri("http://192.168.1.5:49400/stream/abc-123/live.wav"),
+            Some("abc-123")
+        );
+        // Anything that is not one of our stream URLs names no stream.
+        assert_eq!(stream_id_in_uri("x-sonos-spotify:track%3a4uLU6"), None);
+        assert_eq!(stream_id_in_uri("x-rincon:RINCON_0000"), None);
+        assert_eq!(stream_id_in_uri("http://192.168.1.5:49400/stream/"), None);
+    }
+
+    #[test]
+    fn sonos_events_do_not_quote_another_clients_stream_url() {
+        // The speaker echoes the victim's stream URL back in its GENA
+        // notifications, so a bystander could read it out of a pause or a
+        // source change without ever seeing a stream event.
+        let manager = Arc::new(WsConnectionManager::new());
+        let owner = manager.register(addr("192.168.1.9:5001"), None);
+        let stranger = manager.register(addr("192.168.1.20:5002"), None);
+        let stream_id = "11111111-2222-4333-8444-555555555555";
+        owner.claim_stream(stream_id);
+        let url = format!("http://192.168.1.5:49400/stream/{stream_id}/live.wav");
+
+        for mut event in [
+            transport_state(Some(&url)),
+            source_changed(&url, Some(&url)),
+        ] {
+            redact_foreign_streams(&stranger, &mut event);
+            let json = serde_json::to_string(&event).expect("serializable");
+            assert!(!json.contains(stream_id), "leaked stream id: {json}");
+            // The event itself still arrives: the extension acts on speakerIp.
+            assert!(json.contains("192.168.1.31"));
+        }
+    }
+
+    #[test]
+    fn a_client_still_sees_its_own_stream_url_quoted_back() {
+        let manager = Arc::new(WsConnectionManager::new());
+        let owner = manager.register(addr("192.168.1.9:5001"), None);
+        let stream_id = "11111111-2222-4333-8444-555555555555";
+        owner.claim_stream(stream_id);
+        let url = format!("http://192.168.1.5:49400/stream/{stream_id}/live.wav");
+
+        let mut event = source_changed(&url, Some(&url));
+        redact_foreign_streams(&owner, &mut event);
+        let json = serde_json::to_string(&event).expect("serializable");
+        assert!(json.contains(&url), "owner lost its own URI: {json}");
+    }
+
+    #[test]
+    fn uris_that_name_no_stream_are_left_alone() {
+        // Everything a speaker plays that is not a cast - radio, Spotify,
+        // group membership - must survive untouched, for every client.
+        let manager = Arc::new(WsConnectionManager::new());
+        let stranger = manager.register(addr("192.168.1.20:5002"), None);
+
+        let mut event = transport_state(Some("x-sonosapi-stream:s24939?sid=254"));
+        redact_foreign_streams(&stranger, &mut event);
+        let json = serde_json::to_string(&event).expect("serializable");
+        assert!(json.contains("x-sonosapi-stream:s24939?sid=254"));
+
+        // A released stream's id buys nothing, so it is not redacted either.
+        let mut event = transport_state(Some(
+            "http://192.168.1.5:49400/stream/already-ended/live.wav",
+        ));
+        redact_foreign_streams(&stranger, &mut event);
+        let json = serde_json::to_string(&event).expect("serializable");
+        assert!(json.contains("already-ended"));
     }
 
     fn set_volume(volume: u8) -> ControlCommand {
@@ -2115,5 +3145,55 @@ mod tests {
             &reply_from_result(failed, volume_state),
             "speaker unreachable",
         );
+    }
+
+    // ─────────────────────────────────────────────────────────────────────
+    // Lagged event receiver
+    // ─────────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn the_first_lag_resyncs_straight_away() {
+        let mut resync = LagResync::default();
+        let now = Instant::now();
+
+        assert_eq!(resync.on_lag(7, now), Some(7));
+        // Nothing is left over once the snapshot has gone out.
+        assert_eq!(resync.take_due(now + RESYNC_MIN_INTERVAL * 2), None);
+    }
+
+    #[test]
+    fn lags_inside_the_interval_are_coalesced_into_one_later_resync() {
+        let mut resync = LagResync::default();
+        let now = Instant::now();
+        assert_eq!(resync.on_lag(3, now), Some(3));
+
+        // A client that keeps falling behind must not earn a snapshot rebuild
+        // per lagged recv() — that is the work it is already too slow for.
+        assert_eq!(resync.on_lag(5, now + Duration::from_millis(10)), None);
+        assert_eq!(resync.on_lag(4, now + Duration::from_millis(20)), None);
+        assert_eq!(resync.take_due(now + Duration::from_millis(30)), None);
+
+        // ...but once the interval passes, the skipped counts arrive together.
+        assert_eq!(resync.take_due(now + RESYNC_MIN_INTERVAL), Some(9));
+        // And only once: a released resync is not replayed on the next tick.
+        assert_eq!(resync.take_due(now + RESYNC_MIN_INTERVAL * 2), None);
+    }
+
+    #[test]
+    fn a_connection_that_never_lagged_is_never_resynced() {
+        let mut resync = LagResync::default();
+        let now = Instant::now();
+        assert_eq!(resync.take_due(now), None);
+        assert_eq!(resync.take_due(now + RESYNC_MIN_INTERVAL * 10), None);
+    }
+
+    #[test]
+    fn a_lag_after_a_quiet_period_resyncs_immediately_again() {
+        let mut resync = LagResync::default();
+        let now = Instant::now();
+        assert_eq!(resync.on_lag(2, now), Some(2));
+
+        let later = now + RESYNC_MIN_INTERVAL * 3;
+        assert_eq!(resync.on_lag(6, later), Some(6));
     }
 }

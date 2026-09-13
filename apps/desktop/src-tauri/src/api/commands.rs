@@ -4,6 +4,7 @@
 
 use serde::Serialize;
 use tauri::{Manager, WebviewWindow};
+use thaumic_core::api::ws_connection::RemotePeers;
 use thaumic_core::{
     probe_speaker_by_ip, validate_speaker_ip, ErrorCode, ManualSpeakerConfig, NetworkHealth,
     PlaybackSession, Speaker, ZoneGroup,
@@ -133,17 +134,125 @@ pub fn get_playback_sessions(state: tauri::State<'_, AppState>) -> Vec<PlaybackS
     state.services.stream_coordinator.get_all_sessions()
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Blast radius of the server-wide clears
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// How far a server-wide clear reaches.
+///
+/// One server serves every extension that connects to it, on this machine and
+/// on others, so "stop everything" is never a local action: it ends other
+/// people's casts too, on machines whose owners are not looking at this tray.
+/// This is the count that makes that visible before it happens.
+///
+/// `connections` and `streams` are the totals the clear ends, everywhere.
+/// `remote` is the part of that which belongs to somebody else, counted rather
+/// than guessed: `WsConnectionManager::remote_peers` walks the peer addresses
+/// it already canonicalises and reports the distinct machines behind them,
+/// excluding loopback and this host's own advertised address. Machines is the
+/// right unit - one browser holds a control socket plus one socket per cast, so
+/// counting sockets would turn a single user into a crowd.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ClearAllImpact {
+    /// Live WebSocket connections the clear would drop, on every machine.
+    pub connections: usize,
+    /// Active streams the clear would end, on every machine.
+    pub streams: usize,
+    /// The part of that which belongs to other machines.
+    pub remote: RemotePeers,
+}
+
+impl ClearAllImpact {
+    /// Builds the impact from the live totals and the remote-peer summary.
+    #[must_use]
+    pub fn measure(connections: usize, streams: usize, remote: RemotePeers) -> Self {
+        Self {
+            connections,
+            streams,
+            remote,
+        }
+    }
+
+    /// Reads the impact off the running services.
+    ///
+    /// The advertised local IP is passed to `remote_peers` so a browser on this
+    /// machine that was pointed at the LAN address instead of `localhost` is
+    /// still recognised as local.
+    #[must_use]
+    pub fn of(state: &AppState) -> Self {
+        let host_ip = state.services.network.get_local_ip().parse().ok();
+        Self::measure(
+            state.services.ws_manager.connection_count(),
+            state.services.stream_coordinator.stream_count(),
+            state.services.ws_manager.remote_peers(host_ip),
+        )
+    }
+
+    /// Returns `true` when the clear reaches a machine other than this one.
+    ///
+    /// The ordinary case of this machine casting its own tabs stays below this,
+    /// however many sockets or streams it holds, so nothing is logged and
+    /// nothing is surfaced: the click stays a single silent click.
+    #[must_use]
+    pub fn affects_others(&self) -> bool {
+        self.remote.machines > 0
+    }
+
+    /// One-line summary of the impact, for logs and tray feedback.
+    #[must_use]
+    pub fn summary(&self) -> String {
+        format!(
+            "{} other machine(s) holding {} connection(s) and {} stream(s); \
+             {} connection(s) and {} active stream(s) in total",
+            self.remote.machines,
+            self.remote.connections,
+            self.remote.streams,
+            self.connections,
+            self.streams
+        )
+    }
+}
+
+/// Logs a warning when a server-wide clear would reach another machine.
+///
+/// Contention for a speaker is expected and allowed, but silently ending
+/// someone else's cast from a control that looks local is not: this is what
+/// puts the blast radius in the log before the action runs.
+///
+/// Returns the impact so the caller can surface the same numbers to the user.
+pub fn warn_if_server_wide(action: &str, state: &AppState) -> ClearAllImpact {
+    let impact = ClearAllImpact::of(state);
+    if impact.affects_others() {
+        log::warn!(
+            "[{}] Server-wide: this ends the casts of every connected client, \
+             including clients on other machines ({})",
+            action,
+            impact.summary()
+        );
+    }
+    impact
+}
+
 /// Clears all active streams and stops all playback.
+///
+/// Server-wide: every connected extension loses its cast, not just this
+/// machine. Logs a warning naming the blast radius when more than one client
+/// is affected.
 ///
 /// Returns the number of streams that were cleared.
 #[tauri::command]
 pub async fn clear_all_streams(state: tauri::State<'_, AppState>) -> Result<usize, CommandError> {
+    warn_if_server_wide("clear_all_streams", state.inner());
     Ok(state.clear_all_streams().await)
 }
 
 /// Force-closes all WebSocket connections.
+///
+/// Server-wide: every connected extension is disconnected. Logs a warning
+/// naming the blast radius when more than one client is affected.
 #[tauri::command]
 pub fn clear_all_connections(state: tauri::State<'_, AppState>) -> usize {
+    warn_if_server_wide("clear_all_connections", state.inner());
     state.services.ws_manager.close_all()
 }
 
@@ -501,5 +610,79 @@ mod tests {
         assert_eq!(extract_ip_from_input("[::1]"), "::1");
         assert_eq!(extract_ip_from_input("[::1]:8080"), "::1");
         assert_eq!(extract_ip_from_input("http://[::1]:8080/"), "::1");
+    }
+
+    /// The remote-peer summary a manager would report for `machines` other
+    /// machines holding `connections` sockets and `streams` casts.
+    fn remote(machines: usize, connections: usize, streams: usize) -> RemotePeers {
+        RemotePeers {
+            machines,
+            connections,
+            streams,
+        }
+    }
+
+    #[test]
+    fn no_connections_affects_nobody() {
+        let impact = ClearAllImpact::measure(0, 0, RemotePeers::default());
+        assert_eq!(impact.remote.machines, 0);
+        assert!(!impact.affects_others());
+    }
+
+    #[test]
+    fn a_single_local_client_is_not_a_crowd() {
+        // One extension on this machine casting one tab: control socket + one
+        // stream socket, and nothing remote behind them.
+        let impact = ClearAllImpact::measure(2, 1, RemotePeers::default());
+        assert_eq!(impact.remote, RemotePeers::default());
+        assert!(!impact.affects_others());
+    }
+
+    #[test]
+    fn two_local_browsers_are_still_one_machine() {
+        // Both browsers are the same person at the same keyboard, so the
+        // sockets they pile up must not read as a crowd.
+        let impact = ClearAllImpact::measure(5, 3, RemotePeers::default());
+        assert!(!impact.affects_others());
+    }
+
+    #[test]
+    fn one_remote_client_already_affects_others() {
+        // The old socket-minus-stream estimate called this "1 client" and
+        // stayed silent, hiding a stop that ended somebody else's cast.
+        let impact = ClearAllImpact::measure(2, 1, remote(1, 2, 1));
+        assert!(impact.affects_others());
+    }
+
+    #[test]
+    fn a_remote_client_alongside_a_local_one_affects_others() {
+        // Two sockets and one stream here, two sockets and one stream there.
+        let impact = ClearAllImpact::measure(4, 2, remote(1, 2, 1));
+        assert_eq!(impact.remote.machines, 1);
+        assert_eq!(impact.remote.streams, 1);
+        assert!(impact.affects_others());
+    }
+
+    #[test]
+    fn a_headless_server_counts_every_client_as_remote() {
+        let impact = ClearAllImpact::measure(4, 2, remote(2, 4, 2));
+        assert_eq!(impact.remote.machines, 2);
+        assert!(impact.affects_others());
+    }
+
+    #[test]
+    fn summary_names_the_remote_counts_and_the_totals() {
+        let summary = ClearAllImpact::measure(5, 3, remote(2, 3, 2)).summary();
+        assert!(summary.contains("2 other machine(s)"), "{}", summary);
+        assert!(
+            summary.contains("3 connection(s) and 2 stream(s)"),
+            "{}",
+            summary
+        );
+        assert!(
+            summary.contains("5 connection(s) and 3 active stream(s)"),
+            "{}",
+            summary
+        );
     }
 }

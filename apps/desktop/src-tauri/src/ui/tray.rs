@@ -25,6 +25,7 @@ use thiserror::Error;
 
 use thaumic_core::{BroadcastEvent, StreamEvent};
 
+use crate::api::commands::{warn_if_server_wide, ClearAllImpact};
 use crate::api::AppState;
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -94,6 +95,30 @@ impl TrayState {
     #[cfg(not(target_os = "windows"))]
     pub fn update_for_theme(&self, _theme: tauri::Theme) {
         // No-op: macOS uses template icons, Linux has no theme detection
+    }
+
+    /// Puts the outcome of a server-wide stop-all in the tray tooltip.
+    ///
+    /// The tray has no dialog to confirm with, so the tooltip is where the
+    /// blast radius becomes visible: how many streams ended and how many other
+    /// machines lost one. A stop that only reached this machine restores the
+    /// plain tooltip instead, leaving that case silent.
+    ///
+    /// Linux tray tooltips are unsupported by the platform, so there the
+    /// warning log is the only feedback.
+    fn report_stop_all(&self, impact: &ClearAllImpact, streams_cleared: usize) {
+        let text = format_stop_all_tooltip(impact, streams_cleared);
+        if let Err(e) = self.tray_icon.set_tooltip(Some(&text)) {
+            log::warn!("Failed to update tray tooltip: {}", e);
+        }
+    }
+
+    /// Restores the plain tooltip, dropping stale stop-all feedback.
+    fn reset_tooltip(&self) {
+        let plain = t!("tray.tooltip").to_string();
+        if let Err(e) = self.tray_icon.set_tooltip(Some(&plain)) {
+            log::warn!("Failed to reset tray tooltip: {}", e);
+        }
     }
 
     /// Sets the tray icon, logging warnings on failure.
@@ -189,6 +214,25 @@ fn format_status_text(stream_count: usize) -> String {
         0 => t!("tray.status_idle").to_string(),
         1 => t!("tray.status_streaming_one").to_string(),
         n => t!("tray.status_streaming_many", count = n).to_string(),
+    }
+}
+
+/// Builds the tray tooltip shown after "Stop All Streams".
+///
+/// Names the blast radius when the stop reached another machine, and returns
+/// the plain tooltip when it did not, so the ordinary stop of this machine's
+/// own casts leaves no trace.
+fn format_stop_all_tooltip(impact: &ClearAllImpact, streams_cleared: usize) -> String {
+    if impact.affects_others() {
+        format!(
+            "{} - stopped {} stream(s), {} of them on {} other machine(s)",
+            t!("tray.tooltip"),
+            streams_cleared,
+            impact.remote.streams,
+            impact.remote.machines
+        )
+    } else {
+        t!("tray.tooltip").to_string()
     }
 }
 
@@ -422,15 +466,18 @@ fn start_status_listener(app: AppHandle) {
             match rx.recv().await {
                 Ok(BroadcastEvent::Stream(event)) => {
                     // Update tray on stream created/ended events
-                    if matches!(
-                        event,
-                        StreamEvent::Created { .. } | StreamEvent::Ended { .. }
-                    ) {
+                    let created = matches!(event, StreamEvent::Created { .. });
+                    if created || matches!(event, StreamEvent::Ended { .. }) {
                         let stream_count = app_state.services.stream_coordinator.stream_count();
 
                         if let Some(tray_state) = app.try_state::<TrayState>() {
                             tray_state.update_status(stream_count);
                             tray_state.update_icon(stream_count > 0);
+                            if created {
+                                // Casting has resumed: last stop-all's report
+                                // is stale, so put the plain tooltip back.
+                                tray_state.reset_tooltip();
+                            }
                         }
                     }
                 }
@@ -539,10 +586,26 @@ fn toggle_autostart(app: &AppHandle) {
 }
 
 /// Stops all active streams.
+///
+/// This is server-wide, not local: every extension connected to this server
+/// loses its cast, including clients on other machines. When another machine is
+/// affected, the blast radius is logged as a warning and reported in the tray
+/// tooltip. A stop that only reaches this machine stays a single silent click.
 fn stop_all_streams(app: &AppHandle) {
-    spawn_with_state(app, |state| async move {
+    let handle = app.clone();
+    spawn_with_state(app, move |state| async move {
+        let impact = warn_if_server_wide("Tray:stop_all_streams", &state);
+
         let count = state.clear_all_streams().await;
-        log::info!("Stopped {} stream(s) via tray", count);
+        log::info!(
+            "Stopped {} stream(s) via tray ({})",
+            count,
+            impact.summary()
+        );
+
+        if let Some(tray_state) = handle.try_state::<TrayState>() {
+            tray_state.report_stop_all(&impact, count);
+        }
     });
 }
 
@@ -568,4 +631,52 @@ fn focus_window(window: &WebviewWindow) {
     let _ = window.show();
     let _ = window.unminimize();
     let _ = window.set_focus();
+}
+
+#[cfg(test)]
+mod tests {
+    use thaumic_core::api::ws_connection::RemotePeers;
+
+    use super::*;
+
+    #[test]
+    fn tooltip_stays_plain_for_this_machines_own_casts() {
+        // One extension here casting one tab: control socket + one stream
+        // socket, nothing remote behind them.
+        let impact = ClearAllImpact::measure(2, 1, RemotePeers::default());
+        assert_eq!(
+            format_stop_all_tooltip(&impact, 1),
+            t!("tray.tooltip").to_string()
+        );
+    }
+
+    #[test]
+    fn tooltip_stays_plain_with_nothing_connected() {
+        let impact = ClearAllImpact::measure(0, 0, RemotePeers::default());
+        assert_eq!(
+            format_stop_all_tooltip(&impact, 0),
+            t!("tray.tooltip").to_string()
+        );
+    }
+
+    #[test]
+    fn tooltip_names_the_blast_radius_when_it_reaches_other_machines() {
+        // This machine casting one tab, plus two other machines casting one
+        // each.
+        let impact = ClearAllImpact::measure(
+            6,
+            3,
+            RemotePeers {
+                machines: 2,
+                connections: 4,
+                streams: 2,
+            },
+        );
+        let tooltip = format_stop_all_tooltip(&impact, 3);
+        let plain = t!("tray.tooltip").to_string();
+        assert!(tooltip.contains("3 stream(s)"), "{}", tooltip);
+        assert!(tooltip.contains("2 of them"), "{}", tooltip);
+        assert!(tooltip.contains("2 other machine(s)"), "{}", tooltip);
+        assert!(tooltip.starts_with(&plain), "{}", tooltip);
+    }
 }

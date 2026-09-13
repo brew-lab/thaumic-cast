@@ -4,7 +4,8 @@
  * Manages speaker group selection state with persistence and automatic defaults.
  * - Persists selection to chrome.storage.local for cross-session retention
  * - Validates saved selection against available speakers on load
- * - Auto-selects first group when no valid saved selection exists
+ * - Auto-selects the first group no other client is casting to, when no valid
+ *   saved selection exists
  */
 
 import { useState, useEffect, useMemo, useCallback, useRef } from 'preact/hooks';
@@ -32,6 +33,7 @@ interface UseSpeakerSelectionResult {
  *
  * Selection is persisted to chrome.storage.local (device-specific, survives browser restart).
  * On load, validates saved IPs against current groups and falls back to auto-select if needed.
+ * Auto-select skips speakers another client of the companion is already casting to.
  *
  * @param speakerGroups - Available speaker groups from useSonosState
  * @param sonosState - Current Sonos state snapshot for availability calculation
@@ -85,15 +87,24 @@ export function useSpeakerSelection(
         saveSpeakerSelection(validSavedIps);
       }
     } else {
-      // No valid saved selection - auto-select first speaker
-      const firstGroup = speakerGroups.groups[0];
+      // No valid saved selection - auto-select the first speaker no other
+      // client of the companion is already casting to. Every machine sees the
+      // same alphabetical group list, so without this they all default to the
+      // same speaker and collide on their first cast. Occupied speakers stay
+      // selectable, they just aren't the default.
+      const firstGroup =
+        speakerGroups.groups.find(
+          (group) =>
+            getSpeakerAvailability(group.coordinatorIp, sonosState, castingSpeakerIps) !==
+            'remote_cast',
+        ) ?? speakerGroups.groups[0];
       if (firstGroup) {
         const newSelection = [firstGroup.coordinatorIp];
         setSelectedIps(newSelection);
         saveSpeakerSelection(newSelection);
       }
     }
-  }, [isStorageLoaded, speakerGroups, selectedIps]);
+  }, [isStorageLoaded, speakerGroups, selectedIps, sonosState, castingSpeakerIps]);
 
   // Clear selection and reset when groups become empty (e.g., disconnect)
   useEffect(() => {

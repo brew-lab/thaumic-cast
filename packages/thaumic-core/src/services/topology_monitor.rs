@@ -77,6 +77,25 @@ fn clamp_refresh_interval_secs(secs: u64) -> u64 {
     }
 }
 
+/// Collects every speaker IP that appears in a zone group topology.
+///
+/// The quick refresh path has no SSDP result to take live speaker IPs from, so it
+/// derives them from group membership instead: every playable speaker (coordinator,
+/// slave or satellite) is listed as a member of exactly one group. Zone bridges are
+/// absent from both, and never hold per-speaker state.
+fn speaker_ips_from_groups(groups: &[ZoneGroup]) -> HashSet<String> {
+    groups
+        .iter()
+        .flat_map(|group| {
+            group
+                .members
+                .iter()
+                .map(|member| member.ip.clone())
+                .chain(std::iter::once(group.coordinator_ip.clone()))
+        })
+        .collect()
+}
+
 /// Monitors Sonos network topology and manages GENA subscriptions.
 pub struct TopologyMonitor {
     /// Sonos client for discovery and topology operations.
@@ -245,6 +264,10 @@ impl TopologyMonitor {
 
             let mut interval =
                 tokio::time::interval(Duration::from_secs(self.topology_refresh_interval_secs));
+            // Keep at least one interval between full refreshes: a burst of topology
+            // events (each one iteration of this loop) must not leave a pile of missed
+            // ticks that then fire back to back.
+            interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
 
             loop {
                 let is_manual_refresh = tokio::select! {
@@ -258,11 +281,6 @@ impl TopologyMonitor {
                         true
                     }
                 };
-
-                // Reset interval after manual refresh to push back automatic refresh
-                if is_manual_refresh {
-                    interval.reset();
-                }
 
                 // Check for IP changes (e.g., laptop moved networks)
                 if let Ok(new_ip_str) = self.network.detect_ip() {
@@ -281,11 +299,15 @@ impl TopologyMonitor {
                     }
                 }
 
-                // Manual refreshes (from sync session join/unjoin) use the quick path
-                // that skips SSDP discovery (~5s) and goes straight to SOAP (~300ms).
+                // Manual refreshes (sync session join/unjoin, GENA topology events, a
+                // lost subscription) use the quick path that skips SSDP discovery (~5s)
+                // and goes straight to SOAP (~300ms). It reconciles subscriptions and
+                // cached state exactly like the full refresh, and deliberately leaves
+                // the periodic interval alone so a stream of topology events cannot
+                // keep pushing the full refresh out of reach.
                 // Falls back to full refresh if quick path fails (no known speakers, etc).
                 if is_manual_refresh {
-                    match self.quick_refresh_zone_groups().await {
+                    match self.quick_refresh_zone_groups(&callback_url).await {
                         Ok(()) => {
                             log::info!("[TopologyMonitor] Quick refresh succeeded");
                             continue;
@@ -319,7 +341,12 @@ impl TopologyMonitor {
     /// reducing refresh time from ~5s to ~300ms. Used for manual refresh triggers
     /// (e.g., after sync session join/unjoin) where we know speakers are already on
     /// the network and just need updated group topology.
-    async fn quick_refresh_zone_groups(&self) -> ThaumicResult<()> {
+    ///
+    /// The fetched topology is reconciled the same way the full refresh reconciles
+    /// its own: a coordinator that only exists after this refresh (a slave promoted
+    /// when its coordinator left) gets its AVTransport subscription here, instead of
+    /// waiting up to a full refresh interval for one.
+    async fn quick_refresh_zone_groups(&self, callback_url: &str) -> ThaumicResult<()> {
         // Pick a coordinator IP from current state
         let coordinator_ip = {
             let groups = self.sonos_state.groups.read();
@@ -346,6 +373,16 @@ impl TopologyMonitor {
             groups.len()
         );
 
+        // A reachable coordinator that reports no groups at all is anomalous: without
+        // SSDP this path cannot tell "network is empty" from "bad response", and the
+        // reconciliation below would wipe every speaker's cached state on the strength
+        // of it. Let the full refresh decide instead.
+        if groups.is_empty() {
+            return Err(ThaumicError::SpeakerNotFound(
+                "quick refresh returned no groups".to_string(),
+            ));
+        }
+
         // Update state and emit event
         {
             let mut state = self.sonos_state.groups.write();
@@ -356,8 +393,20 @@ impl TopologyMonitor {
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
             .as_millis() as u64;
-        self.emitter
-            .emit_topology(TopologyEvent::GroupsDiscovered { groups, timestamp });
+        self.emitter.emit_topology(TopologyEvent::GroupsDiscovered {
+            groups: groups.clone(),
+            timestamp,
+        });
+
+        // Without SSDP the topology itself is the list of live speakers.
+        let current_speaker_ips = speaker_ips_from_groups(&groups);
+        self.reconcile_topology(
+            &groups,
+            &current_speaker_ips,
+            Some(ip.as_str()),
+            callback_url,
+        )
+        .await;
 
         Ok(())
     }
@@ -502,22 +551,14 @@ impl TopologyMonitor {
             timestamp,
         });
 
-        // Collect coordinator IPs
-        let coordinator_ips: HashSet<String> =
-            groups.iter().map(|g| g.coordinator_ip.clone()).collect();
-
-        // Clean up stale state entries for speakers that left the network
-        self.sonos_state.cleanup_stale_entries(&current_speaker_ips);
-
-        // Sync subscriptions with current topology
-        self.ensure_topology_subscription(&speakers, &current_speaker_ips, callback_url)
-            .await;
-
-        self.sync_coordinator_subscriptions(&coordinator_ips, callback_url)
-            .await;
-
-        // Cleanup stale subscriptions (coordinators that disappeared or were demoted)
-        self.cleanup_stale_subscriptions(&coordinator_ips).await;
+        // Clean up stale state and sync subscriptions with the current topology
+        self.reconcile_topology(
+            &groups,
+            &current_speaker_ips,
+            speakers.first().map(|s| s.ip.as_str()),
+            callback_url,
+        )
+        .await;
 
         let av_sub_count = self
             .gena_manager
@@ -628,10 +669,53 @@ impl TopologyMonitor {
     // Subscription Management Helpers
     // ─────────────────────────────────────────────────────────────────────────────
 
+    /// Reconciles cached speaker state and GENA subscriptions with a topology snapshot.
+    ///
+    /// Shared by the full and the quick refresh path, so a topology change picked up
+    /// by the quick path leaves subscriptions correct for *every* current coordinator
+    /// (several clients can be casting to different groups at once), not just the
+    /// groups snapshot handed to the UI.
+    ///
+    /// Cheap to run on every topology event: subscribing and unsubscribing are both
+    /// skipped for IPs already in the desired state, so an event that changed nothing
+    /// costs a handful of map lookups and no network I/O.
+    ///
+    /// # Arguments
+    /// * `groups` - Zone groups just fetched from a speaker
+    /// * `current_speaker_ips` - Every speaker IP believed to still be on the network
+    /// * `topology_sub_ip` - Speaker to carry the ZoneGroupTopology subscription if no
+    ///   existing subscription points at a live speaker
+    /// * `callback_url` - GENA callback URL for new subscriptions
+    async fn reconcile_topology(
+        &self,
+        groups: &[ZoneGroup],
+        current_speaker_ips: &HashSet<String>,
+        topology_sub_ip: Option<&str>,
+        callback_url: &str,
+    ) {
+        let coordinator_ips: HashSet<String> =
+            groups.iter().map(|g| g.coordinator_ip.clone()).collect();
+
+        // Clean up stale state entries for speakers that left the network
+        self.sonos_state.cleanup_stale_entries(current_speaker_ips);
+
+        self.ensure_topology_subscription(topology_sub_ip, current_speaker_ips, callback_url)
+            .await;
+
+        self.sync_coordinator_subscriptions(&coordinator_ips, callback_url)
+            .await;
+
+        // Cleanup stale subscriptions (coordinators that disappeared or were demoted)
+        self.cleanup_stale_subscriptions(&coordinator_ips).await;
+    }
+
     /// Ensures a ZoneGroupTopology subscription exists on a valid speaker.
+    ///
+    /// `candidate_ip` is only used when no existing subscription points at a speaker
+    /// that is still on the network.
     async fn ensure_topology_subscription(
         &self,
-        speakers: &[Speaker],
+        candidate_ip: Option<&str>,
         current_speaker_ips: &HashSet<String>,
         callback_url: &str,
     ) {
@@ -642,31 +726,35 @@ impl TopologyMonitor {
             .iter()
             .any(|ip| current_speaker_ips.contains(ip));
 
-        if !has_valid_sub {
-            if let Some(speaker) = speakers.first() {
-                match self
-                    .gena_manager
-                    .subscribe(
-                        speaker.ip.clone(),
-                        SonosService::ZoneGroupTopology,
-                        callback_url.to_string(),
-                    )
-                    .await
-                {
-                    Ok(()) => {
-                        log::info!(
-                            "[TopologyMonitor] Subscribed to ZoneGroupTopology on {}",
-                            speaker.ip
-                        );
-                    }
-                    Err(e) => {
-                        log::error!(
-                            "[TopologyMonitor] Failed to subscribe to ZoneGroupTopology on {}: {}",
-                            speaker.ip,
-                            e
-                        );
-                    }
-                }
+        if has_valid_sub {
+            return;
+        }
+
+        let Some(ip) = candidate_ip else {
+            return;
+        };
+
+        match self
+            .gena_manager
+            .subscribe(
+                ip.to_string(),
+                SonosService::ZoneGroupTopology,
+                callback_url.to_string(),
+            )
+            .await
+        {
+            Ok(()) => {
+                log::info!(
+                    "[TopologyMonitor] Subscribed to ZoneGroupTopology on {}",
+                    ip
+                );
+            }
+            Err(e) => {
+                log::error!(
+                    "[TopologyMonitor] Failed to subscribe to ZoneGroupTopology on {}: {}",
+                    ip,
+                    e
+                );
             }
         }
     }
@@ -774,7 +862,105 @@ impl TopologyMonitor {
 
 #[cfg(test)]
 mod tests {
-    use super::clamp_refresh_interval_secs;
+    use super::*;
+
+    use std::sync::Mutex;
+
+    use async_trait::async_trait;
+
+    use crate::error::{DiscoveryResult, SoapResult};
+    use crate::events::{LatencyEvent, SonosEvent, StreamEvent};
+    use crate::sonos::types::{TransportState, ZoneGroupMember};
+
+    /// Topology client that serves a canned zone group list.
+    struct StubTopologyClient {
+        groups: Vec<ZoneGroup>,
+    }
+
+    #[async_trait]
+    impl crate::sonos::traits::SonosTopology for StubTopologyClient {
+        async fn get_zone_groups(&self, _ip: &str) -> SoapResult<Vec<ZoneGroup>> {
+            Ok(self.groups.clone())
+        }
+    }
+
+    #[async_trait]
+    impl crate::sonos::traits::SonosDiscovery for StubTopologyClient {
+        async fn discover_speakers(&self) -> DiscoveryResult<Vec<Speaker>> {
+            Ok(Vec::new())
+        }
+    }
+
+    /// Event emitter that records the topology events it is handed.
+    struct CollectingEmitter {
+        topology: Mutex<Vec<TopologyEvent>>,
+    }
+
+    impl CollectingEmitter {
+        fn new() -> Self {
+            Self {
+                topology: Mutex::new(Vec::new()),
+            }
+        }
+    }
+
+    impl EventEmitter for CollectingEmitter {
+        fn emit_stream(&self, _event: StreamEvent) {}
+        fn emit_sonos(&self, _event: SonosEvent) {}
+        fn emit_network(&self, _event: NetworkEvent) {}
+        fn emit_topology(&self, event: TopologyEvent) {
+            self.topology.lock().unwrap().push(event);
+        }
+        fn emit_latency(&self, _event: LatencyEvent) {}
+    }
+
+    /// Builds a single-speaker group (the shape of an ungrouped room).
+    fn group(coordinator_ip: &str, uuid: &str) -> ZoneGroup {
+        ZoneGroup {
+            id: format!("{}:1", uuid),
+            name: format!("Room {}", coordinator_ip),
+            coordinator_uuid: uuid.to_string(),
+            coordinator_ip: coordinator_ip.to_string(),
+            members: vec![ZoneGroupMember {
+                uuid: uuid.to_string(),
+                ip: coordinator_ip.to_string(),
+                zone_name: format!("Room {}", coordinator_ip),
+                model: "One".to_string(),
+            }],
+        }
+    }
+
+    /// Creates a monitor whose quick refresh returns `groups`.
+    ///
+    /// The GENA client uses a 1ms timeout so subscribe attempts against speakers
+    /// that do not exist fail immediately instead of blocking on TCP retries.
+    fn create_monitor(
+        groups: Vec<ZoneGroup>,
+        sonos_state: Arc<SonosState>,
+        emitter: Arc<dyn EventEmitter>,
+    ) -> TopologyMonitor {
+        let http_client = Client::builder()
+            .timeout(Duration::from_millis(1))
+            .build()
+            .unwrap();
+        let (gena_manager, _rx) = GenaSubscriptionManager::new(http_client.clone());
+        let gena_manager = Arc::new(gena_manager);
+        let arbiter = Arc::new(SubscriptionArbiter::new(Arc::clone(&gena_manager)));
+        TopologyMonitor::new(
+            Arc::new(StubTopologyClient { groups }),
+            gena_manager,
+            sonos_state,
+            emitter,
+            TopologyMonitorConfig {
+                topology_refresh_interval_secs: 30,
+                network: NetworkContext::for_test(),
+                refresh_notify: Arc::new(Notify::new()),
+                http_client,
+                spawner: TokioSpawner::new(tokio::runtime::Handle::current()),
+            },
+            arbiter,
+        )
+    }
 
     #[test]
     fn zero_refresh_interval_is_clamped_to_one_second() {
@@ -785,5 +971,133 @@ mod tests {
     fn valid_refresh_interval_is_unchanged() {
         assert_eq!(clamp_refresh_interval_secs(1), 1);
         assert_eq!(clamp_refresh_interval_secs(30), 30);
+    }
+
+    #[test]
+    fn speaker_ips_cover_every_member_of_every_group() {
+        let mut grouped = group("192.168.1.10", "RINCON_A");
+        grouped.members.push(ZoneGroupMember {
+            uuid: "RINCON_B".to_string(),
+            ip: "192.168.1.11".to_string(),
+            zone_name: "Kitchen".to_string(),
+            model: "One".to_string(),
+        });
+        let groups = vec![grouped, group("192.168.1.20", "RINCON_C")];
+
+        let ips = speaker_ips_from_groups(&groups);
+
+        assert_eq!(ips.len(), 3);
+        assert!(ips.contains("192.168.1.10"));
+        assert!(ips.contains("192.168.1.11"));
+        assert!(ips.contains("192.168.1.20"));
+    }
+
+    #[tokio::test]
+    async fn quick_refresh_replaces_groups_and_emits() {
+        let sonos_state = Arc::new(SonosState::default());
+        *sonos_state.groups.write() = vec![group("192.168.1.10", "RINCON_A")];
+        let emitter = Arc::new(CollectingEmitter::new());
+
+        let monitor = create_monitor(
+            vec![
+                group("192.168.1.10", "RINCON_A"),
+                group("192.168.1.20", "RINCON_C"),
+            ],
+            Arc::clone(&sonos_state),
+            Arc::clone(&emitter) as Arc<dyn EventEmitter>,
+        );
+
+        monitor
+            .quick_refresh_zone_groups("http://127.0.0.1:0/gena")
+            .await
+            .unwrap();
+
+        assert_eq!(sonos_state.groups.read().len(), 2);
+        assert_eq!(emitter.topology.lock().unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn quick_refresh_drops_state_for_speakers_that_left() {
+        // Two clients casting to two different groups, plus a speaker that has
+        // since vanished from the topology.
+        let sonos_state = Arc::new(SonosState::default());
+        *sonos_state.groups.write() = vec![
+            group("192.168.1.10", "RINCON_A"),
+            group("192.168.1.20", "RINCON_C"),
+            group("192.168.1.30", "RINCON_GONE"),
+        ];
+        sonos_state
+            .transport_states
+            .insert("192.168.1.10".to_string(), TransportState::Playing);
+        sonos_state
+            .transport_states
+            .insert("192.168.1.20".to_string(), TransportState::Playing);
+        sonos_state
+            .transport_states
+            .insert("192.168.1.30".to_string(), TransportState::Playing);
+        sonos_state
+            .group_volumes
+            .insert("192.168.1.30".to_string(), 42);
+
+        let monitor = create_monitor(
+            vec![
+                group("192.168.1.10", "RINCON_A"),
+                group("192.168.1.20", "RINCON_C"),
+            ],
+            Arc::clone(&sonos_state),
+            Arc::new(CollectingEmitter::new()) as Arc<dyn EventEmitter>,
+        );
+
+        monitor
+            .quick_refresh_zone_groups("http://127.0.0.1:0/gena")
+            .await
+            .unwrap();
+
+        // Both still-present coordinators keep their state; the departed one is dropped.
+        assert!(sonos_state.transport_states.contains_key("192.168.1.10"));
+        assert!(sonos_state.transport_states.contains_key("192.168.1.20"));
+        assert!(!sonos_state.transport_states.contains_key("192.168.1.30"));
+        assert!(!sonos_state.group_volumes.contains_key("192.168.1.30"));
+    }
+
+    #[tokio::test]
+    async fn quick_refresh_keeps_state_when_topology_comes_back_empty() {
+        let sonos_state = Arc::new(SonosState::default());
+        *sonos_state.groups.write() = vec![group("192.168.1.10", "RINCON_A")];
+        sonos_state
+            .transport_states
+            .insert("192.168.1.10".to_string(), TransportState::Playing);
+
+        let monitor = create_monitor(
+            Vec::new(),
+            Arc::clone(&sonos_state),
+            Arc::new(CollectingEmitter::new()) as Arc<dyn EventEmitter>,
+        );
+
+        assert!(monitor
+            .quick_refresh_zone_groups("http://127.0.0.1:0/gena")
+            .await
+            .is_err());
+
+        // Nothing was wiped - the full refresh path decides what to do.
+        assert_eq!(sonos_state.groups.read().len(), 1);
+        assert!(sonos_state.transport_states.contains_key("192.168.1.10"));
+    }
+
+    #[tokio::test]
+    async fn quick_refresh_needs_a_known_speaker() {
+        let sonos_state = Arc::new(SonosState::default());
+        let monitor = create_monitor(
+            vec![group("192.168.1.10", "RINCON_A")],
+            Arc::clone(&sonos_state),
+            Arc::new(CollectingEmitter::new()) as Arc<dyn EventEmitter>,
+        );
+
+        let err = monitor
+            .quick_refresh_zone_groups("http://127.0.0.1:0/gena")
+            .await
+            .unwrap_err();
+
+        assert!(matches!(err, ThaumicError::SpeakerNotFound(_)));
     }
 }

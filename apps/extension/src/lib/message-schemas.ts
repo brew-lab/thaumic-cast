@@ -412,6 +412,7 @@ export const CastAutoStopReasonSchema = z.enum([
   'source_changed',
   'playback_stopped',
   'speaker_stopped',
+  'speaker_taken_over',
   'stream_ended',
   'user_removed',
   ...CaptureErrorReasons,

@@ -24,6 +24,10 @@ use serde::{Deserialize, Serialize};
 /// - `PlaybackStopped`: Playback stopped on the speaker (system/network issue)
 /// - `SpeakerStopped`: Speaker stopped unexpectedly (e.g., stream killed due to underflow)
 /// - `UserRemoved`: User explicitly removed the speaker via UI
+/// - `SpeakerTakenOver`: Another cast client started its own stream on this speaker
+///
+/// Wire strings are snake_case and are part of the client protocol: never
+/// rename an existing variant.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SpeakerRemovalReason {
@@ -31,6 +35,7 @@ pub enum SpeakerRemovalReason {
     PlaybackStopped,
     SpeakerStopped,
     UserRemoved,
+    SpeakerTakenOver,
 }
 
 /// Events broadcast to clients.
@@ -232,5 +237,35 @@ impl From<TopologyEvent> for BroadcastEvent {
 impl From<LatencyEvent> for BroadcastEvent {
     fn from(event: LatencyEvent) -> Self {
         BroadcastEvent::Latency(event)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The wire strings are protocol, shared with the extension's event
+    /// handling — a rename here silently breaks the client.
+    #[test]
+    fn speaker_removal_reason_wire_strings() {
+        let wire = |r: SpeakerRemovalReason| serde_json::to_string(&r).unwrap();
+
+        assert_eq!(
+            wire(SpeakerRemovalReason::SourceChanged),
+            "\"source_changed\""
+        );
+        assert_eq!(
+            wire(SpeakerRemovalReason::PlaybackStopped),
+            "\"playback_stopped\""
+        );
+        assert_eq!(
+            wire(SpeakerRemovalReason::SpeakerStopped),
+            "\"speaker_stopped\""
+        );
+        assert_eq!(wire(SpeakerRemovalReason::UserRemoved), "\"user_removed\"");
+        assert_eq!(
+            wire(SpeakerRemovalReason::SpeakerTakenOver),
+            "\"speaker_taken_over\""
+        );
     }
 }
