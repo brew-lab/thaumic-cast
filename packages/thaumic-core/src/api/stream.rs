@@ -8,10 +8,10 @@
 //! runs on the dedicated `StreamingRuntime` high-priority threads — inherited
 //! via `streaming_runtime.spawn()` in the Tauri API layer.
 
-use std::net::SocketAddr;
+use std::net::{IpAddr, SocketAddr};
 use std::pin::Pin;
 use std::sync::atomic::Ordering;
-use std::sync::Arc;
+use std::sync::{Arc, Weak};
 use std::time::{Duration, Instant};
 
 use axum::{
@@ -30,11 +30,23 @@ use crate::error::{ThaumicError, ThaumicResult};
 use crate::protocol_constants::{APP_NAME, ICY_METAINT, WAV_STREAM_SIZE_MAX};
 use crate::stream::{
     create_wav_header, create_wav_stream_with_cadence, lagged_error, AudioCodec, CadenceConfig,
-    IcyMetadataInjector, LoggingStreamGuard,
+    IcyMetadataInjector, LoggingStreamGuard, StreamState,
 };
 
+/// A single item of an audio body stream.
+type FrameResult = Result<Bytes, std::io::Error>;
+
 /// Boxed stream type for audio data.
-type AudioStream = Pin<Box<dyn Stream<Item = Result<Bytes, std::io::Error>> + Send>>;
+type AudioStream = Pin<Box<dyn Stream<Item = FrameResult> + Send>>;
+
+/// One-shot epoch hook: the stream to time, its epoch candidate, the moment the
+/// client connected, and the client address.
+///
+/// Holds a [`Weak`] reference on purpose. The response body outlives the handler,
+/// so a strong `Arc` here would keep the [`StreamState`] — and with it the
+/// broadcast sender — alive after the coordinator removed the stream, leaving the
+/// connection streaming to a stream that no longer exists.
+type EpochHook = (Weak<StreamState>, Option<Instant>, Instant, IpAddr);
 
 pub(super) async fn stream_audio(
     Path(id): Path<String>,
@@ -128,6 +140,14 @@ pub(super) async fn stream_audio(
     // Uses Arc so it can be shared between cadence stream and final frame recording.
     let guard = Arc::new(LoggingStreamGuard::new(id.to_string(), remote_ip));
 
+    // One-shot epoch hook for whichever pipeline is built below.
+    let epoch_hook: EpochHook = (
+        Arc::downgrade(&stream_state),
+        epoch_candidate,
+        connected_at,
+        remote_ip,
+    );
+
     // Build combined stream - PCM gets cadence-based streaming, compressed codecs don't.
     //
     // Why PCM-only: Sonos treats PCM/WAV as a "file" requiring continuous data flow.
@@ -156,12 +176,7 @@ pub(super) async fn stream_audio(
                 prefill_frames,
             ),
             Some(Arc::downgrade(&stream_state)),
-            Some((
-                Arc::clone(&stream_state),
-                epoch_candidate,
-                connected_at,
-                remote_ip,
-            )),
+            Some(epoch_hook),
         ))
     } else {
         // Compressed codecs: no silence injection, chain prefill before live
@@ -173,33 +188,7 @@ pub(super) async fn stream_audio(
         let raw_stream = futures::StreamExt::chain(prefill_stream, live_stream);
 
         // Fire epoch on first non-empty frame (compressed codecs never inject silence)
-        let epoch_hook = Some((
-            Arc::clone(&stream_state),
-            epoch_candidate,
-            connected_at,
-            remote_ip,
-        ));
-        Box::pin(
-            raw_stream.scan(epoch_hook, |hook, item: Result<Bytes, std::io::Error>| {
-                if let Some((stream_state, epoch_candidate, connected_at, remote_ip)) = hook.take()
-                {
-                    if let Ok(ref frame) = item {
-                        if !frame.is_empty() {
-                            stream_state.timing.start_new_epoch(
-                                epoch_candidate,
-                                connected_at,
-                                remote_ip,
-                            );
-                        } else {
-                            *hook = Some((stream_state, epoch_candidate, connected_at, remote_ip));
-                        }
-                    } else {
-                        *hook = Some((stream_state, epoch_candidate, connected_at, remote_ip));
-                    }
-                }
-                futures::future::ready(Some(item))
-            }),
-        )
+        Box::pin(with_epoch_hook(raw_stream, epoch_hook))
     };
 
     // Content-Type based on output codec
@@ -233,14 +222,10 @@ pub(super) async fn stream_audio(
 
     // Apply ICY injection or PCM/WAV header
     let inner_stream: AudioStream = if wants_icy {
-        let stream_ref = Arc::clone(&stream_state);
-        let mut injector = IcyMetadataInjector::new();
-
-        Box::pin(combined_stream.map(move |res| {
-            let chunk = res?;
-            let metadata = stream_ref.metadata.read();
-            Ok::<Bytes, std::io::Error>(injector.inject(chunk.as_ref(), &metadata))
-        }))
+        Box::pin(with_icy_metadata(
+            combined_stream,
+            Arc::downgrade(&stream_state),
+        ))
     } else if stream_state.codec == AudioCodec::Pcm {
         // PCM streams need WAV header prepended per-connection (Sonos may reconnect)
         let audio_format = stream_state.audio_format;
@@ -277,4 +262,189 @@ pub(super) async fn stream_audio(
     builder
         .body(Body::from_stream(final_stream))
         .map_err(|e| ThaumicError::Internal(e.to_string()))
+}
+
+/// Starts a new playback epoch on the first real (non-empty) frame, then forgets
+/// the hook.
+///
+/// Errors and empty frames leave the hook armed: a live stream that has not
+/// produced audio yet must still be timed from its first real frame.
+///
+/// If the [`Weak`] no longer upgrades the stream has been removed, so there is
+/// nothing to time and the hook is dropped. The body itself ends on its own once
+/// the broadcast sender goes with the stream.
+fn with_epoch_hook<S>(stream: S, hook: EpochHook) -> impl Stream<Item = FrameResult> + Send
+where
+    S: Stream<Item = FrameResult> + Send,
+{
+    stream.scan(Some(hook), |hook, item: FrameResult| {
+        if let Some((weak_state, epoch_candidate, connected_at, remote_ip)) = hook.take() {
+            let is_audio = item.as_ref().is_ok_and(|frame| !frame.is_empty());
+            match weak_state.upgrade() {
+                Some(stream_state) if is_audio => {
+                    stream_state
+                        .timing
+                        .start_new_epoch(epoch_candidate, connected_at, remote_ip);
+                }
+                // Alive but nothing to time yet - stay armed.
+                Some(_) => *hook = Some((weak_state, epoch_candidate, connected_at, remote_ip)),
+                // Stream gone - drop the hook.
+                None => {}
+            }
+        }
+        futures::future::ready(Some(item))
+    })
+}
+
+/// Injects ICY metadata blocks into a body stream at `ICY_METAINT` intervals.
+///
+/// Holds the stream weakly for the same reason as [`EpochHook`]: the body must
+/// not keep a removed stream alive. A failed upgrade ends the body, which tears
+/// down the connection instead of feeding a speaker from a stream that is gone.
+fn with_icy_metadata<S>(
+    stream: S,
+    stream_state: Weak<StreamState>,
+) -> impl Stream<Item = FrameResult> + Send
+where
+    S: Stream<Item = FrameResult> + Send,
+{
+    stream.scan(IcyMetadataInjector::new(), move |injector, res| {
+        let item = match res {
+            Ok(chunk) => stream_state.upgrade().map(|state| {
+                let metadata = state.metadata.read();
+                Ok(injector.inject(chunk.as_ref(), &metadata))
+            }),
+            Err(e) => Some(Err(e)),
+        };
+        futures::future::ready(item)
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::stream::AudioFormat;
+    use std::net::Ipv4Addr;
+
+    fn test_stream_state() -> Arc<StreamState> {
+        Arc::new(StreamState::new(
+            "test-stream".to_string(),
+            AudioCodec::Aac,
+            AudioFormat::default(),
+            8,
+            16,
+            200,
+            20,
+        ))
+    }
+
+    fn test_ip() -> IpAddr {
+        IpAddr::V4(Ipv4Addr::LOCALHOST)
+    }
+
+    fn hook_for(state: &Arc<StreamState>) -> EpochHook {
+        (Arc::downgrade(state), None, Instant::now(), test_ip())
+    }
+
+    #[tokio::test]
+    async fn epoch_hook_stays_armed_until_the_first_real_frame() {
+        let state = test_stream_state();
+        let source = futures::stream::iter(vec![
+            Err(std::io::Error::other("transient")),
+            Ok(Bytes::new()),
+            Ok(Bytes::from_static(b"audio")),
+        ]);
+        let mut body = Box::pin(with_epoch_hook(source, hook_for(&state)));
+
+        body.next().await.expect("error item").expect_err("error");
+        assert!(
+            state.timing.current_epoch_for(test_ip()).is_none(),
+            "an error must not start an epoch"
+        );
+
+        body.next().await.expect("empty frame").expect("ok");
+        assert!(
+            state.timing.current_epoch_for(test_ip()).is_none(),
+            "an empty frame must not start an epoch"
+        );
+
+        body.next().await.expect("audio frame").expect("ok");
+        assert!(
+            state.timing.current_epoch_for(test_ip()).is_some(),
+            "the first real frame must start an epoch"
+        );
+    }
+
+    #[tokio::test]
+    async fn epoch_hook_does_not_keep_the_stream_alive() {
+        let state = test_stream_state();
+        let weak = Arc::downgrade(&state);
+        // Never yields audio, so the hook is still armed when the stream is removed.
+        let source = futures::stream::iter(vec![Ok(Bytes::new()), Ok(Bytes::from_static(b"late"))]);
+        let mut body = Box::pin(with_epoch_hook(source, hook_for(&state)));
+
+        body.next().await.expect("empty frame").expect("ok");
+        drop(state);
+
+        assert!(
+            weak.upgrade().is_none(),
+            "an armed epoch hook must not hold the coordinator's stream alive"
+        );
+        // The armed hook is simply discarded; frames still pass through.
+        body.next().await.expect("late frame").expect("ok");
+    }
+
+    #[tokio::test]
+    async fn icy_injection_passes_chunks_while_the_stream_lives() {
+        let state = test_stream_state();
+        let source = futures::stream::iter(vec![Ok(Bytes::from_static(b"aac-frame"))]);
+        let mut body = Box::pin(with_icy_metadata(source, Arc::downgrade(&state)));
+
+        let chunk = body.next().await.expect("chunk").expect("ok");
+        assert_eq!(chunk.as_ref(), b"aac-frame");
+    }
+
+    #[tokio::test]
+    async fn icy_injection_ends_the_body_when_the_stream_is_removed() {
+        let state = test_stream_state();
+        let weak = Arc::downgrade(&state);
+        let source = futures::stream::iter(vec![Ok(Bytes::from_static(b"aac-frame"))]);
+        let mut body = Box::pin(with_icy_metadata(source, weak.clone()));
+
+        drop(state);
+        assert!(weak.upgrade().is_none());
+        assert!(
+            body.next().await.is_none(),
+            "the body must end once the stream is gone"
+        );
+    }
+
+    /// The compressed-codec body as it is assembled in `stream_audio`: dropping the
+    /// coordinator's `Arc` must close the broadcast channel and end the response body.
+    #[tokio::test]
+    async fn compressed_body_ends_when_the_coordinator_drops_the_stream() {
+        let state = test_stream_state();
+        let (_, _, rx) = state.subscribe();
+        let weak = Arc::downgrade(&state);
+
+        let live = BroadcastStream::new(rx).map(|res| match res {
+            Ok(frame) => Ok(frame),
+            Err(BroadcastStreamRecvError::Lagged(n)) => Err(lagged_error(n)),
+        });
+        let mut body = Box::pin(with_icy_metadata(
+            with_epoch_hook(live, hook_for(&state)),
+            weak.clone(),
+        ));
+
+        drop(state);
+
+        assert!(
+            weak.upgrade().is_none(),
+            "the response body must not hold a strong reference to the stream"
+        );
+        assert!(
+            body.next().await.is_none(),
+            "the body must end when the stream's broadcast sender is dropped"
+        );
+    }
 }
