@@ -7,4 +7,6 @@
 pub(crate) mod fake_sonos;
 pub(crate) mod harness;
 
+mod failure_tests;
+mod gena_tests;
 mod playback_tests;
