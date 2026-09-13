@@ -83,7 +83,7 @@ describe('getSpeakerAvailability', () => {
       sessions: [remoteSession(SPEAKER)],
     });
 
-    expect(getSpeakerAvailability(SPEAKER, state, [])).not.toBe('in_use');
+    expect(getSpeakerAvailability(SPEAKER, state, [])).toBe('remote_cast');
   });
 
   it('should retire a remote session once its speaker reads Stopped', () => {
