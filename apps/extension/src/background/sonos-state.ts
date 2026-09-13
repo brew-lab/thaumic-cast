@@ -13,7 +13,12 @@
  * - Message passing
  */
 
-import type { SonosStateSnapshot, ZoneGroup, TransportState } from '@thaumic-cast/protocol';
+import type {
+  SonosStateSnapshot,
+  ZoneGroup,
+  TransportState,
+  PlaybackSession,
+} from '@thaumic-cast/protocol';
 import { createEmptySonosState } from '@thaumic-cast/protocol';
 import { createLogger } from '@thaumic-cast/shared';
 import { persistenceManager } from './persistence-manager';
@@ -139,4 +144,60 @@ export function updateVolumeFixed(speakerIp: string, fixed: boolean): SonosState
   };
   storage.schedule();
   return state;
+}
+
+/**
+ * Records that another client of the companion started playing on a speaker.
+ *
+ * The companion sends other clients' stream ids as opaque aliases, the same
+ * ones the connect-time snapshot used, so the entry matches what a fresh
+ * snapshot would contain. A speaker holds one session at a time, so any
+ * earlier remote entry for the same speaker is replaced.
+ * @param streamId - The aliased stream id the companion sent
+ * @param speakerIp - The speaker now playing that stream
+ * @returns The updated state
+ */
+export function addRemoteSession(streamId: string, speakerIp: string): SonosStateSnapshot {
+  const others = (state.sessions ?? []).filter((session) => session.speakerIp !== speakerIp);
+  state = {
+    ...state,
+    sessions: [...others, { streamId, speakerIp, streamUrl: '', redacted: true }],
+  };
+  storage.schedule();
+  return state;
+}
+
+/**
+ * Drops the remote sessions `keep` rejects. Sessions this client owns are never
+ * touched; they are tracked by the session manager, not by this snapshot.
+ * @param keep - Returns true for a remote session that should stay
+ * @returns The updated state
+ */
+function retainRemoteSessions(keep: (session: PlaybackSession) => boolean): SonosStateSnapshot {
+  const sessions = (state.sessions ?? []).filter(
+    (session) => session.redacted !== true || keep(session),
+  );
+  if (sessions.length !== (state.sessions ?? []).length) {
+    state = { ...state, sessions };
+    storage.schedule();
+  }
+  return state;
+}
+
+/**
+ * Forgets another client's session on a speaker that stopped playing it.
+ * @param speakerIp - The speaker that stopped
+ * @returns The updated state
+ */
+export function removeRemoteSessionForSpeaker(speakerIp: string): SonosStateSnapshot {
+  return retainRemoteSessions((session) => session.speakerIp !== speakerIp);
+}
+
+/**
+ * Forgets every session of another client's stream that has ended.
+ * @param streamId - The aliased stream id the companion sent
+ * @returns The updated state
+ */
+export function removeRemoteSessionsForStream(streamId: string): SonosStateSnapshot {
+  return retainRemoteSessions((session) => session.streamId !== streamId);
 }

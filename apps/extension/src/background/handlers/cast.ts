@@ -34,6 +34,7 @@ import {
   hasSession,
   getSession,
   getSessionCount,
+  getAllSessions,
   hasTabCaptureSessions,
   hasBrowserCaptureSessions,
 } from '../session-manager';
@@ -85,7 +86,8 @@ export async function handleStartCast(msg: StartCastMessage): Promise<ExtensionR
     //    other clients' sessions redacted, which is enough to count them;
     //    countRemoteStreams drops the ones whose speakers have since stopped so
     //    a connect-time snapshot can't block a cast the companion would accept.
-    if (getSessionCount() + countRemoteStreams(getSonosState()) >= app.maxStreams) {
+    const ownSpeakerIps = getAllSessions().flatMap((session) => session.speakerIps);
+    if (getSessionCount() + countRemoteStreams(getSonosState(), ownSpeakerIps) >= app.maxStreams) {
       throw new Error('error_max_sessions');
     }
 

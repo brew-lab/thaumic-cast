@@ -28,6 +28,9 @@ import {
   updateVolumeFixed,
   updateTransportState,
   getSonosState,
+  addRemoteSession,
+  removeRemoteSessionForSpeaker,
+  removeRemoteSessionsForStream,
 } from './sonos-state';
 import {
   getSession,
@@ -90,6 +93,10 @@ export async function handleSonosEvent(event: BroadcastEvent): Promise<void> {
     }
   } else if (event.category === 'stream') {
     switch (event.type) {
+      case 'playbackStarted':
+        handlePlaybackStarted(eventData.streamId as string, eventData.speakerIp as string);
+        break;
+
       case 'ended':
         await handleStreamEnded(eventData.streamId as string);
         break;
@@ -459,20 +466,40 @@ async function handleSpeakerRemoval(
 async function handleStreamEnded(streamId: string): Promise<void> {
   const session = getSessionByStreamId(streamId);
 
-  if (session) {
-    log.info(`Stream ${streamId} ended, cleaning up session for tab ${session.tabId}`);
-
-    // Stop the capture in offscreen
-    await stopCastForTab(session.tabId);
-
-    // Notify popup that the cast was stopped (use first speaker for backward compat)
-    notifyPopup({
-      type: 'CAST_AUTO_STOPPED',
-      tabId: session.tabId,
-      speakerIp: session.speakerIps[0],
-      reason: 'stream_ended',
-    });
+  if (!session) {
+    // Another client's stream, named by its alias: its speakers are free now.
+    notifyPopup({ type: 'WS_STATE_CHANGED', state: removeRemoteSessionsForStream(streamId) });
+    return;
   }
+
+  log.info(`Stream ${streamId} ended, cleaning up session for tab ${session.tabId}`);
+
+  // Stop the capture in offscreen
+  await stopCastForTab(session.tabId);
+
+  // Notify popup that the cast was stopped (use first speaker for backward compat)
+  notifyPopup({
+    type: 'CAST_AUTO_STOPPED',
+    tabId: session.tabId,
+    speakerIp: session.speakerIps[0],
+    reason: 'stream_ended',
+  });
+}
+
+/**
+ * Handles playback started events.
+ *
+ * Our own starts are acknowledged on the streaming socket, so the only thing
+ * to learn here is that another client took a speaker. The companion sends
+ * those under an opaque alias; recording it keeps the picker's "in use by
+ * another client" state and the slot count current between snapshots.
+ * @param streamId - The stream id, aliased when the stream is another client's
+ * @param speakerIp - The speaker that started playing it
+ */
+function handlePlaybackStarted(streamId: string, speakerIp: string): void {
+  if (getSessionByStreamId(streamId)) return;
+  log.info(`Speaker ${speakerIp} is now held by another client of the companion`);
+  notifyPopup({ type: 'WS_STATE_CHANGED', state: addRemoteSession(streamId, speakerIp) });
 }
 
 /**
@@ -494,7 +521,12 @@ async function handlePlaybackStopped(
 ): Promise<void> {
   // Use streamId to find the correct session (avoids race conditions during recast)
   const session = getSessionByStreamId(streamId);
-  if (!session || !session.speakerIps.includes(speakerIp)) {
+  if (!session) {
+    // Another client's cast left this speaker, so it is no longer held.
+    notifyPopup({ type: 'WS_STATE_CHANGED', state: removeRemoteSessionForSpeaker(speakerIp) });
+    return;
+  }
+  if (!session.speakerIps.includes(speakerIp)) {
     log.debug(`PlaybackStopped: stream ${streamId} / speaker ${speakerIp} not found, ignoring`);
     return;
   }
