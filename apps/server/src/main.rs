@@ -9,7 +9,7 @@ mod config;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use anyhow::{Context, Result};
+use anyhow::{anyhow, Context, Result};
 use clap::Parser;
 use parking_lot::RwLock;
 use thaumic_core::{
@@ -128,27 +128,38 @@ async fn main() -> Result<()> {
     // runtime, as the desktop app does. Its workers raise their scheduling
     // priority (CAP_SYS_NICE on Linux), which keeps audio cadence steady when
     // the host is under load; the main runtime keeps discovery and GENA work.
-    let server_handle = services.streaming_runtime.spawn(async move {
-        if let Err(e) = start_server(app_state).await {
-            log::error!("Server error: {}", e);
+    // start_server logs "Server listening" once the bind succeeds.
+    let mut server_handle = services.streaming_runtime.spawn(start_server(app_state));
+
+    // Run until a shutdown signal arrives or the HTTP server stops. A server
+    // failure (e.g. the bind port is already in use) must be fatal so that a
+    // supervisor such as systemd sees the exit and can restart the unit.
+    tokio::select! {
+        _ = shutdown_signal() => {
+            log::info!("Shutdown signal received, cleaning up...");
+
+            // Graceful shutdown
+            services.shutdown().await;
+
+            // Abort the server task (it will have stopped when the services shut down)
+            server_handle.abort();
+
+            log::info!("Shutdown complete");
+            Ok(())
         }
-    });
+        result = &mut server_handle => {
+            let err = match result {
+                Ok(Ok(())) => anyhow!("HTTP server exited unexpectedly"),
+                Ok(Err(e)) => anyhow::Error::new(e).context("HTTP server failed"),
+                Err(e) => anyhow::Error::new(e).context("HTTP server task failed"),
+            };
+            log::error!("{err:#}");
 
-    log::info!("HTTP server started on port {}", config.bind_port);
+            services.shutdown().await;
 
-    // Wait for shutdown signal
-    shutdown_signal().await;
-
-    log::info!("Shutdown signal received, cleaning up...");
-
-    // Graceful shutdown
-    services.shutdown().await;
-
-    // Abort the server task (it will have stopped when the services shut down)
-    server_handle.abort();
-
-    log::info!("Shutdown complete");
-    Ok(())
+            Err(err)
+        }
+    }
 }
 
 /// Waits for a shutdown signal (Ctrl+C or SIGTERM).
