@@ -1,36 +1,19 @@
-import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import {
   createEmptySonosState,
   createEncoderConfig,
   type BroadcastEvent,
-  type SonosStateSnapshot,
 } from '@thaumic-cast/protocol';
 
 import type { BackgroundToPopupMessage } from '../lib/messages';
 import { resetChromeStub, tabMessages } from '../test-support/chrome-stub';
+// The offscreen broker is mocked process-wide by the test preload; see
+// test-support/offscreen-broker-mock.ts.
+import { brokerCalls as broker, resetBrokerCalls } from '../test-support/offscreen-broker-mock';
 import { notificationService } from './notification-service';
 import { clearAllSessions, getSession, hasSession, registerSession } from './session-manager';
+import { handleSonosEvent } from './sonos-event-handlers';
 import { getSonosState, setSonosState } from './sonos-state';
-
-/** Calls made to the offscreen broker, which would otherwise reach a real offscreen document. */
-const broker = {
-  stoppedTabs: [] as number[],
-  syncedStates: [] as SonosStateSnapshot[],
-};
-
-mock.module('./offscreen-broker', () => ({
-  offscreenBroker: {
-    async stopSession(tabId: number): Promise<void> {
-      broker.stoppedTabs.push(tabId);
-    },
-    syncSonosState(state: SonosStateSnapshot): void {
-      broker.syncedStates.push(state);
-    },
-    async startPlayback(): Promise<void> {},
-  },
-}));
-
-const { handleSonosEvent } = await import('./sonos-event-handlers');
 
 const ENCODER = createEncoderConfig({ codec: 'pcm' });
 const NOW = 1_700_000_000_000;
@@ -66,8 +49,7 @@ beforeEach(() => {
   resetChromeStub();
   clearAllSessions();
   setSonosState(createEmptySonosState());
-  broker.stoppedTabs.length = 0;
-  broker.syncedStates.length = 0;
+  resetBrokerCalls();
   notifications.length = 0;
   unsubscribe = notificationService.subscribe((msg) => notifications.push(msg));
 });
@@ -359,6 +341,66 @@ describe('sonos events', () => {
       { type: 'TRANSPORT_STATE_UPDATE', speakerIp, state: 'Playing' },
     ]);
     expect(broker.syncedStates).toHaveLength(1);
+  });
+
+  it('should drop a casting speaker whose source changed and say why', async () => {
+    const changed = freshIp();
+    const kept = freshIp();
+    registerOwnCast(1, 'own-stream', [changed, kept]);
+    notifications.length = 0;
+
+    await handleSonosEvent(
+      sonosEvent({ type: 'sourceChanged', speakerIp: changed, currentUri: 'x-sonosapi:spotify' }),
+    );
+
+    expect(getSession(1)?.speakerIps).toEqual([kept]);
+    expect(broker.stoppedTabs).toEqual([]);
+    expect(notifications).toContainEqual({
+      type: 'SPEAKER_REMOVED',
+      tabId: 1,
+      speakerIp: changed,
+      reason: 'source_changed',
+    });
+  });
+
+  it('should stop the cast when its only speaker reports Stopped', async () => {
+    const speakerIp = freshIp();
+    registerOwnCast(1, 'own-stream', [speakerIp]);
+    notifications.length = 0;
+
+    await handleSonosEvent(sonosEvent({ type: 'transportState', speakerIp, state: 'Stopped' }));
+    await Bun.sleep(600);
+
+    expect(hasSession(1)).toBe(false);
+    expect(broker.stoppedTabs).toEqual([1]);
+    expect(notifications).toContainEqual({
+      type: 'CAST_AUTO_STOPPED',
+      tabId: 1,
+      speakerIp,
+      reason: 'speaker_stopped',
+    });
+  });
+
+  it('should ignore a second removal of the same speaker arriving within two seconds', async () => {
+    // A speaker's stop reaches us twice (stream event, then the transport
+    // notification). If the user has already recast to it in between, the
+    // late duplicate must not tear the new cast down.
+    const speakerIp = freshIp();
+    registerOwnCast(1, 'old-stream', [speakerIp]);
+    await handleSonosEvent(
+      sonosEvent({ type: 'sourceChanged', speakerIp, currentUri: 'x-sonosapi:spotify' }),
+    );
+    expect(hasSession(1)).toBe(false);
+
+    registerOwnCast(2, 'new-stream', [speakerIp]);
+    notifications.length = 0;
+    await handleSonosEvent(
+      sonosEvent({ type: 'sourceChanged', speakerIp, currentUri: 'x-sonosapi:spotify' }),
+    );
+
+    expect(hasSession(2)).toBe(true);
+    expect(broker.stoppedTabs).toEqual([1]);
+    expect(notifications).toEqual([]);
   });
 });
 

@@ -20,6 +20,10 @@ describe('primitive schemas', () => {
     expect(SpeakerIpSchema.safeParse(SPEAKER).success).toBe(true);
     expect(SpeakerIpSchema.safeParse('sonos.local').success).toBe(false);
     expect(SpeakerIpSchema.safeParse('fe80::1').success).toBe(false);
+    // Digits and dots alone are not enough: it has to be four octets.
+    expect(SpeakerIpSchema.safeParse('1.2.3').success).toBe(false);
+    expect(SpeakerIpSchema.safeParse('1.2.3.4.5').success).toBe(false);
+    expect(SpeakerIpSchema.safeParse('1..2.3.4').success).toBe(false);
   });
 
   it('should only accept positive integer tab ids', () => {

@@ -204,6 +204,20 @@ describe('generateDynamicPresets', () => {
     expect(presets.low).toMatchObject({ codec: 'he-aac', bitrate: 64 });
   });
 
+  it('should skip every lossless option for the low tier, not just the one used for high', () => {
+    // Two lossless options: one becomes the high tier, the other would sort
+    // lowest by bitrate (0) and must still lose to the lossy option.
+    const presets = generateDynamicPresets(
+      support([
+        ['pcm', 0],
+        ['flac', 0],
+        ['aac-lc', 128],
+      ]),
+    );
+
+    expect(presets.low).toMatchObject({ codec: 'aac-lc', bitrate: 128 });
+  });
+
   it('should break a low-tier bitrate tie in favour of the more efficient codec', () => {
     const presets = generateDynamicPresets(
       support([

@@ -51,6 +51,18 @@ afterEach(() => {
 });
 
 describe('registerSession', () => {
+  it('should not mutate the arrays the caller passed to registerSession', () => {
+    const ips = [KITCHEN, OFFICE];
+    const names = ['Kitchen', 'Office'];
+    registerSession(1, 'stream-1', ips, names, ENCODER, false, 'tab');
+
+    removeSpeakerFromSession(1, KITCHEN);
+
+    expect(ips).toEqual([KITCHEN, OFFICE]);
+    expect(names).toEqual(['Kitchen', 'Office']);
+    expect(getSession(1)?.speakerIps).toEqual([OFFICE]);
+  });
+
   it('should store the session under its tab with tab capture by default', () => {
     register(1, 'stream-1', [KITCHEN, OFFICE]);
 
@@ -244,6 +256,8 @@ describe('restoring persisted sessions', () => {
   it('should ignore stored data that is not a session list', async () => {
     chromeStorageData.session.activeSessions = { corrupted: true };
 
-    expect(await persistenceManager.get('activeSessions')?.restore()).toBeUndefined();
+    const entry = persistenceManager.get('activeSessions');
+    expect(entry).toBeDefined();
+    expect(await entry!.restore()).toBeUndefined();
   });
 });
