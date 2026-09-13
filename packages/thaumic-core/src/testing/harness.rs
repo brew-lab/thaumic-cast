@@ -26,6 +26,7 @@ use crate::artwork::ArtworkConfig;
 use crate::bootstrap::{bootstrap_services_with_speaker_port, BootstrappedServices};
 use crate::context::NetworkContext;
 use crate::events::{BroadcastEvent, SonosEvent, StreamEvent};
+use crate::protocol_constants::SOAP_TIMEOUT_SECS;
 use crate::services::{PlaybackResult, PlaybackSession, StreamCoordinator};
 use crate::sonos::utils::build_sonos_stream_uri;
 use crate::state::Config;
@@ -165,6 +166,7 @@ pub(crate) struct TestSystemBuilder {
     speakers: Vec<String>,
     codec: AudioCodec,
     gena_timeout_secs: Option<u64>,
+    soap_timeout: Duration,
 }
 
 impl TestSystemBuilder {
@@ -191,6 +193,14 @@ impl TestSystemBuilder {
         self
     }
 
+    /// How long the real SOAP client waits for a speaker to answer. The
+    /// production value by default; tests that make a speaker hang shorten it
+    /// so the wait costs milliseconds.
+    pub fn soap_timeout(mut self, timeout: Duration) -> Self {
+        self.soap_timeout = timeout;
+        self
+    }
+
     /// Starts the fakes, bootstraps the real services against them, serves
     /// the real router and seeds the topology.
     pub async fn build(self) -> TestSystem {
@@ -207,6 +217,7 @@ impl TestSystemBuilder {
             network,
             tokio::runtime::Handle::current(),
             fake.port(),
+            self.soap_timeout,
         )
         .expect("bootstrap services against the fake household");
 
@@ -278,6 +289,7 @@ impl TestSystem {
             speakers: vec!["Kitchen".to_string()],
             codec: AudioCodec::Aac,
             gena_timeout_secs: None,
+            soap_timeout: Duration::from_secs(SOAP_TIMEOUT_SECS),
         }
     }
 

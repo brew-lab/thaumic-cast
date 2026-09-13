@@ -127,9 +127,9 @@ impl BootstrappedServices {
 ///
 /// Using a shared client enables connection pooling for better performance.
 /// This is created once during bootstrap and injected into services that need it.
-fn create_http_client() -> Client {
+fn create_http_client(soap_timeout: Duration) -> Client {
     Client::builder()
-        .timeout(Duration::from_secs(SOAP_TIMEOUT_SECS))
+        .timeout(soap_timeout)
         .build()
         .expect("Failed to create HTTP client")
 }
@@ -184,19 +184,29 @@ pub fn bootstrap_services_with_network(
     network: NetworkContext,
     runtime_handle: tokio::runtime::Handle,
 ) -> ThaumicResult<BootstrappedServices> {
-    bootstrap_services_with_speaker_port(config, network, runtime_handle, SONOS_PORT)
+    bootstrap_services_with_speaker_port(
+        config,
+        network,
+        runtime_handle,
+        SONOS_PORT,
+        Duration::from_secs(SOAP_TIMEOUT_SECS),
+    )
 }
 
 /// Like [`bootstrap_services_with_network`], but addresses speakers on
-/// `speaker_port` instead of the standard 1400.
+/// `speaker_port` instead of the standard 1400 and gives every SOAP call
+/// `soap_timeout` instead of the standard [`SOAP_TIMEOUT_SECS`].
 ///
-/// Crate-internal: production always uses [`SONOS_PORT`]; the integration
-/// tests point the real clients at fake speakers bound to an ephemeral port.
+/// Crate-internal: production always uses the standard values; the
+/// integration tests point the real clients at fake speakers bound to an
+/// ephemeral port, and shorten the timeout so a speaker that never answers
+/// costs a test milliseconds rather than the real budget.
 pub(crate) fn bootstrap_services_with_speaker_port(
     config: &Config,
     network: NetworkContext,
     runtime_handle: tokio::runtime::Handle,
     speaker_port: u16,
+    soap_timeout: Duration,
 ) -> ThaumicResult<BootstrappedServices> {
     // Create dedicated streaming runtime first (high-priority threads)
     let streaming_runtime = Arc::new(StreamingRuntime::new().map_err(|e| {
@@ -207,7 +217,7 @@ pub(crate) fn bootstrap_services_with_speaker_port(
     let spawner = TokioSpawner::new(runtime_handle);
 
     // Create shared HTTP client for connection pooling
-    let http_client = create_http_client();
+    let http_client = create_http_client(soap_timeout);
 
     // Create broadcast channel for real-time events to WebSocket clients
     let (broadcast_tx, _) = broadcast::channel::<BroadcastEvent>(EVENT_CHANNEL_CAPACITY);
@@ -314,7 +324,7 @@ mod tests {
 
     #[test]
     fn http_client_has_timeout() {
-        let client = create_http_client();
+        let client = create_http_client(Duration::from_secs(SOAP_TIMEOUT_SECS));
         // We can't directly test timeout, but verify client is created
         assert!(client.get("https://example.com").build().is_ok());
     }
