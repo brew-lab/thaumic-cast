@@ -4,16 +4,16 @@
 //! that is deliberate. A paused tokio clock auto-advances to the next timer
 //! whenever the runtime parks without a cross-thread unpark; I/O readiness
 //! found during the zero-length park does not count (`did_wake` is only set
-//! by `Handle::unpark`). With a 10s SOAP timeout pending, every loopback
-//! round trip — even the first `GetZoneGroupState` — therefore lands after
-//! the deadline and times out. So a hang costs a real SOAP timeout: the
-//! `Stop` hang below costs one (10s), and the `Play` hang, which the retry
-//! policy attempts four times, costs over forty and is ignored by default.
+//! by `Handle::unpark`). With a SOAP timeout pending, every loopback round
+//! trip — even the first `GetZoneGroupState` — would therefore land after
+//! the deadline and time out. So a hang costs a real SOAP timeout, and the
+//! hang tests shorten that timeout through the builder so the cost is
+//! milliseconds; only the retry back-off (1.7s over three retries) is paid
+//! at its production length.
 
 use std::time::Duration;
 
 use crate::events::StreamEvent;
-use crate::protocol_constants::SOAP_TIMEOUT_SECS;
 use crate::sonos::services::SonosService;
 use crate::sonos::soap::{soap_request, SoapError};
 
@@ -32,15 +32,15 @@ fn av_actions_since(sys: &TestSystem, ip: &str, seq: usize) -> Vec<String> {
         .collect()
 }
 
-/// Proves: a `Play` that faults fails the start at once (a fault is not a
-/// transient error, so nothing is retried) and leaves no session, no stream
-/// admission and no `PlaybackStarted` behind.
+/// Proves: a `Play` that faults with a code the retry policy does not treat
+/// as transient (402, invalid args) fails the start at once and leaves no
+/// session, no stream admission and no `PlaybackStarted` behind.
 #[tokio::test]
 async fn a_faulting_play_fails_the_start_and_leaves_no_session() {
     within("faulting play", async {
         let sys = TestSystem::builder().speakers(["Kitchen"]).build().await;
         let kitchen = sys.ip("Kitchen");
-        sys.fake.fail(&kitchen, "Play", Failure::Fault(701));
+        sys.fake.fail(&kitchen, "Play", Failure::Fault(402));
         let stream = sys.new_stream();
 
         let results = sys.start(&stream, &["Kitchen"], false).await;
@@ -66,6 +66,61 @@ async fn a_faulting_play_fails_the_start_and_leaves_no_session() {
             .iter()
             .any(|event| matches!(event, StreamEvent::PlaybackStarted { .. })));
         assert!(sys.fake.speaker_named("Kitchen").fetches().is_empty());
+    })
+    .await;
+}
+
+/// Proves: a `Play` that faults with 701 (transition not available, the
+/// speaker is between states) is retried until the retry budget is spent —
+/// one attempt and three retries — and only then fails the start, leaving
+/// nothing behind. Hardware reports the code in the fault detail, not the
+/// faultstring, and the fake does the same, so this is the path a real
+/// speaker takes.
+#[tokio::test]
+async fn a_transient_play_fault_is_retried_until_the_budget_is_spent() {
+    within("transient play fault", async {
+        let sys = TestSystem::builder().speakers(["Kitchen"]).build().await;
+        let kitchen = sys.ip("Kitchen");
+        sys.fake.fail(&kitchen, "Play", Failure::Fault(701));
+        let stream = sys.new_stream();
+
+        let results = sys.start(&stream, &["Kitchen"], false).await;
+
+        assert!(!results[0].success, "{results:?}");
+        let plays = av_actions_since(&sys, &kitchen, 0)
+            .iter()
+            .filter(|action| *action == "Play")
+            .count();
+        assert_eq!(plays, 4, "one attempt and three retries");
+        assert!(sys.sessions().is_empty());
+        assert!(sys.coordinator().allowed_reader_ips(&stream).is_empty());
+        assert!(sys.fake.speaker_named("Kitchen").fetches().is_empty());
+    })
+    .await;
+}
+
+/// Proves: a `Stop` answered with 701 means the speaker is already stopped
+/// and is reported as success, while any other fault is still an error.
+#[tokio::test]
+async fn a_stop_answered_with_701_counts_as_already_stopped() {
+    within("stop on a stopped speaker", async {
+        let sys = TestSystem::builder()
+            .speakers(["Kitchen", "Office"])
+            .build()
+            .await;
+        let kitchen = sys.ip("Kitchen");
+        let office = sys.ip("Office");
+        sys.fake.fail(&kitchen, "Stop", Failure::Fault(701));
+        sys.fake.fail(&office, "Stop", Failure::Fault(500));
+
+        assert!(sys.services.sonos.stop(&kitchen).await.is_ok());
+        assert!(matches!(
+            sys.services.sonos.stop(&office).await,
+            Err(SoapError::Fault {
+                code: Some(500),
+                ..
+            })
+        ));
     })
     .await;
 }
@@ -113,10 +168,16 @@ async fn a_faulting_stop_does_not_abort_teardown() {
 /// continues: the speaker is switched to its queue over a fresh connection,
 /// the session is removed and `Ended` is emitted.
 ///
-/// Costs a real 10s; see the module docs for why the clock is not paused.
+/// Runs with a shortened SOAP timeout; see the module docs for why the clock
+/// is not paused instead.
 #[tokio::test]
 async fn a_hanging_stop_holds_teardown_for_one_soap_timeout_then_continues() {
-    let sys = TestSystem::builder().speakers(["Kitchen"]).build().await;
+    let timeout = Duration::from_millis(300);
+    let sys = TestSystem::builder()
+        .speakers(["Kitchen"])
+        .soap_timeout(timeout)
+        .build()
+        .await;
     let kitchen = sys.ip("Kitchen");
     let stream = sys.new_stream();
     assert!(sys.start(&stream, &["Kitchen"], false).await[0].success);
@@ -131,13 +192,12 @@ async fn a_hanging_stop_holds_teardown_for_one_soap_timeout_then_continues() {
     .await;
     let elapsed = started.elapsed();
 
-    let timeout = Duration::from_secs(SOAP_TIMEOUT_SECS);
     assert!(
         elapsed >= timeout,
         "returned after {elapsed:?}, before the timeout"
     );
     assert!(
-        elapsed < timeout + Duration::from_secs(5),
+        elapsed < timeout + Duration::from_secs(2),
         "returned after {elapsed:?}, well past one timeout"
     );
     assert_eq!(
@@ -158,13 +218,17 @@ async fn a_hanging_stop_holds_teardown_for_one_soap_timeout_then_continues() {
 /// and its three retries — within the budget those allow — and leaves no
 /// session, no stream admission and no `PlaybackStarted` behind.
 ///
-/// Ignored by default because it costs over forty real seconds (four 10s
-/// timeouts plus the retry delays); see the module docs for why the clock
-/// cannot be paused. Run it with `--ignored`.
+/// Runs with a shortened SOAP timeout, so the cost is four short timeouts
+/// plus the production retry back-off; see the module docs for why the clock
+/// is not paused instead.
 #[tokio::test]
-#[ignore = "costs four real SOAP timeouts (over 40s); run with --ignored"]
 async fn a_hanging_play_fails_the_start_within_the_retry_budget() {
-    let sys = TestSystem::builder().speakers(["Kitchen"]).build().await;
+    let timeout = Duration::from_millis(300);
+    let sys = TestSystem::builder()
+        .speakers(["Kitchen"])
+        .soap_timeout(timeout)
+        .build()
+        .await;
     let kitchen = sys.ip("Kitchen");
     sys.fake.fail(&kitchen, "Play", Failure::Hang);
     let stream = sys.new_stream();
@@ -179,11 +243,13 @@ async fn a_hanging_play_fails_the_start_within_the_retry_budget() {
         .filter(|action| *action == "Play")
         .count();
     assert_eq!(plays, 4, "one attempt and three retries");
-    let budget = Duration::from_secs(SOAP_TIMEOUT_SECS * 4) + Duration::from_secs(5);
+    // Four timeouts plus the 200 + 500 + 1000 ms retry back-off, with slack.
+    let backoff = Duration::from_millis(1700);
+    let budget = timeout * 4 + backoff + Duration::from_secs(3);
     assert!(elapsed <= budget, "took {elapsed:?}, more than {budget:?}");
     assert!(
-        elapsed >= Duration::from_secs(SOAP_TIMEOUT_SECS * 4),
-        "took {elapsed:?}, less than four timeouts"
+        elapsed >= timeout * 4 + backoff,
+        "took {elapsed:?}, less than four timeouts and the back-off"
     );
     assert!(sys.sessions().is_empty());
     assert!(sys.coordinator().allowed_reader_ips(&stream).is_empty());
@@ -219,7 +285,13 @@ async fn the_fake_faults_on_actions_it_does_not_model() {
         .await;
 
         assert!(
-            matches!(result, Err(SoapError::Fault(ref message)) if message == "UPnPError"),
+            matches!(
+                result,
+                Err(SoapError::Fault {
+                    code: Some(401),
+                    ..
+                })
+            ),
             "{result:?}"
         );
         let seek = sys
