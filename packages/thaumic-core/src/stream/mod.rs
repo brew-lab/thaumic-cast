@@ -8,8 +8,8 @@ pub use cadence::{
 };
 pub use icy::{IcyMetadataInjector, ICY_METAINT};
 pub use manager::{
-    AudioCodec, CleanupOrder, PlaybackEpoch, StreamMetadata, StreamRegistry, StreamState,
-    StreamTiming,
+    AudioCodec, CleanupOrder, PlaybackEpoch, StreamMetadata, StreamReaderSlot, StreamRegistry,
+    StreamState, StreamTiming, MAX_UNLISTED_STREAM_READERS,
 };
 pub use wav::create_wav_header;
 

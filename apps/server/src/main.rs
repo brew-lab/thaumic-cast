@@ -52,6 +52,12 @@ struct Args {
     /// Custom artwork URL shown on Sonos (overrides config file; empty is ignored).
     #[arg(long, value_name = "URL", env = "THAUMIC_ARTWORK_URL")]
     artwork_url: Option<String>,
+
+    /// Refuse audio fetches from addresses the stream is not playing on
+    /// (overrides config file). Off by default: unexpected addresses are logged
+    /// and still served, because a wrongly refused fetch is silent dead air.
+    #[arg(long, value_name = "BOOL", env = "THAUMIC_STRICT_STREAM_ACCESS")]
+    strict_stream_access: Option<bool>,
 }
 
 #[tokio::main]
@@ -85,6 +91,9 @@ async fn main() -> Result<()> {
     }
     if let Some(url) = args.artwork_url.filter(|url| !url.trim().is_empty()) {
         config.artwork_url = Some(url);
+    }
+    if let Some(strict) = args.strict_stream_access {
+        config.strict_stream_access = strict;
     }
 
     // CLI/env overrides can introduce invalid values (e.g. --port 0), so

@@ -25,12 +25,13 @@ use futures::stream::{Stream, StreamExt};
 use tokio_stream::wrappers::errors::BroadcastStreamRecvError;
 use tokio_stream::wrappers::BroadcastStream;
 
+use crate::api::ws::is_companion_host;
 use crate::api::AppState;
 use crate::error::{ThaumicError, ThaumicResult};
 use crate::protocol_constants::{APP_NAME, ICY_METAINT, WAV_STREAM_SIZE_MAX};
 use crate::stream::{
     create_wav_header, create_wav_stream_with_cadence, lagged_error, AudioCodec, CadenceConfig,
-    IcyMetadataInjector, LoggingStreamGuard, StreamState,
+    IcyMetadataInjector, LoggingStreamGuard, StreamState, MAX_UNLISTED_STREAM_READERS,
 };
 
 /// A single item of an audio body stream.
@@ -48,6 +49,81 @@ type AudioStream = Pin<Box<dyn Stream<Item = FrameResult> + Send>>;
 /// connection streaming to a stream that no longer exists.
 type EpochHook = (Weak<StreamState>, Option<Instant>, Instant, IpAddr);
 
+/// What to do with a fetch of `/stream/{id}/live`, and why.
+///
+/// Produced by [`decide_stream_access`] so the warning line and the refusal
+/// come from one decision rather than two that could drift apart.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum StreamAccess {
+    /// The peer holds a playback session on this stream, or is mid-start for it.
+    Speaker,
+    /// The peer is this machine: loopback, or the companion's own address.
+    CompanionHost,
+    /// The peer is on no list, and `strict_stream_access` is off: serve, warn.
+    UnlistedServed,
+    /// The peer is on no list, and `strict_stream_access` is on: refuse.
+    UnlistedRefused,
+}
+
+impl StreamAccess {
+    /// Whether this reader draws on the stream's unlisted-reader budget.
+    ///
+    /// Only a peer the stream is not playing on does. A speaker on the
+    /// allowlist, or this host, is never refused for being one reader too
+    /// many: it would be silent dead air, a large unsynced cast legitimately
+    /// has as many readers as it has speakers, and each of their routine
+    /// reconnects double-counts until the replaced connection is reaped. The
+    /// cap exists to bound a *harvested* stream id, which is unlisted by
+    /// definition, and exempting real speakers is also what stops an unlisted
+    /// flood from starving them. See [`MAX_UNLISTED_STREAM_READERS`].
+    fn draws_unlisted_budget(self) -> bool {
+        match self {
+            StreamAccess::Speaker | StreamAccess::CompanionHost => false,
+            StreamAccess::UnlistedServed | StreamAccess::UnlistedRefused => true,
+        }
+    }
+}
+
+/// Decides whether `peer` may fetch a stream whose speakers are `speaker_ips`.
+///
+/// `speaker_ips` comes from `StreamCoordinator::allowed_reader_ips`, derived per
+/// request rather than recorded at start, so speakers joining, leaving, being
+/// taken over or being promoted need no bookkeeping here. `local_ip` is the
+/// companion's own advertised address.
+///
+/// Both sides of every comparison are canonicalised. A dual-stack listener
+/// reports an IPv4 client as an IPv4-mapped IPv6 address (`::ffff:192.168.1.5`),
+/// which the WebSocket path already had to handle; session addresses arrive as
+/// strings parsed out of the Sonos topology, so they are parsed and canonicalised
+/// too rather than compared as text.
+///
+/// An address that parses as nothing is simply not a match — never a refusal of
+/// everything else.
+fn decide_stream_access(
+    peer: IpAddr,
+    speaker_ips: &[String],
+    local_ip: &str,
+    strict: bool,
+) -> StreamAccess {
+    let peer = peer.to_canonical();
+
+    let is_speaker = speaker_ips
+        .iter()
+        .filter_map(|ip| ip.parse::<IpAddr>().ok())
+        .any(|ip| ip.to_canonical() == peer);
+
+    if is_speaker {
+        StreamAccess::Speaker
+    } else if is_companion_host(local_ip, peer) {
+        // Covers loopback in both forms as well as this host's LAN address.
+        StreamAccess::CompanionHost
+    } else if strict {
+        StreamAccess::UnlistedRefused
+    } else {
+        StreamAccess::UnlistedServed
+    }
+}
+
 pub(super) async fn stream_audio(
     Path(id): Path<String>,
     State(state): State<AppState>,
@@ -60,6 +136,62 @@ pub(super) async fn stream_audio(
         .ok_or_else(|| ThaumicError::StreamNotFound(id.clone()))?;
 
     let remote_ip = remote_addr.ip();
+
+    // A stream id is not a credential — Sonos republishes the stream URL as
+    // `CurrentTrackURI` to anything on the LAN that asks — so check that this
+    // peer is one of the devices the stream is actually for. Derived per
+    // request; see `decide_stream_access`.
+    let allowed_ips = state.stream_coordinator.allowed_reader_ips(&id);
+    let strict = state.config.read().strict_stream_access;
+    let access = decide_stream_access(
+        remote_ip,
+        &allowed_ips,
+        &state.network.get_local_ip(),
+        strict,
+    );
+
+    // `draws_unlisted_budget` matches exhaustively, so a future variant cannot
+    // quietly fall through as both allowed and uncapped.
+    let reader_slot = if access.draws_unlisted_budget() {
+        let refused = access == StreamAccess::UnlistedRefused;
+        log::warn!(
+            "[Stream] Fetch from an address this stream is not for: client={}, stream={}, \
+             allowed={:?} — {}",
+            remote_ip,
+            id,
+            allowed_ips,
+            if refused {
+                "refused (strict_stream_access is on)"
+            } else {
+                "serving anyway (strict_stream_access is off)"
+            }
+        );
+        if refused {
+            // 404, not 403: an expired stream already answers 404, so a
+            // harvested id learns nothing about whether it was ever valid.
+            return Err(ThaumicError::StreamNotFound(id));
+        }
+
+        // Serving it, but on a budget: every reader costs a cadence pipeline,
+        // so a harvested id must not fan out without bound. Not an access
+        // decision — it is not gated on `strict_stream_access`; strict mode
+        // simply refuses these peers before they ever reach it. The slot is
+        // held by the response body below and freed when that body is dropped.
+        // 404 for the same reason a refusal is: the caller learns nothing.
+        let Some(slot) = stream_state.acquire_unlisted_reader() else {
+            log::warn!(
+                "[Stream] Refusing fetch: stream {} already has its maximum of {} readers from \
+                 addresses it is not playing on (client={})",
+                id,
+                MAX_UNLISTED_STREAM_READERS,
+                remote_ip
+            );
+            return Err(ThaumicError::StreamNotFound(id));
+        };
+        Some(slot)
+    } else {
+        None
+    };
 
     let range_header = headers
         .get(header::RANGE)
@@ -244,9 +376,13 @@ pub(super) async fn stream_audio(
 
     // Wrap stream with logging guard to track delivery timing and errors.
     // The guard logs summary stats on drop when the stream ends.
-    let guard_for_frames = Arc::clone(&guard);
+    // What the response body owns: the stats guard it records into, and — for
+    // an unlisted reader — its budget slot, freed when the body is dropped,
+    // the moment this reader is really gone.
+    let body_owned = (Arc::clone(&guard), reader_slot);
     let final_stream: AudioStream =
         Box::pin(inner_stream.map(move |res: Result<Bytes, std::io::Error>| {
+            let (guard_for_frames, _reader_slot) = &body_owned;
             match &res {
                 Ok(bytes) => {
                     guard_for_frames.record_frame();
@@ -325,6 +461,161 @@ mod tests {
     use super::*;
     use crate::stream::AudioFormat;
     use std::net::Ipv4Addr;
+
+    /// The companion's own advertised address in these tests.
+    const LOCAL_IP: &str = "192.168.1.5";
+
+    fn ip(s: &str) -> IpAddr {
+        s.parse().expect("test address")
+    }
+
+    fn speakers(ips: &[&str]) -> Vec<String> {
+        ips.iter().map(|s| (*s).to_string()).collect()
+    }
+
+    /// Access is decided by `decide_stream_access` rather than inside the axum
+    /// handler, so these exercise the real decision without an HTTP stack, a
+    /// bound port or a Sonos speaker. What they cannot cover is the wiring —
+    /// that the handler calls it with the coordinator's live allowlist and turns
+    /// a refusal into the same 404 an expired stream returns.
+    #[test]
+    fn a_speaker_playing_this_stream_is_served() {
+        let allowed = speakers(&["192.168.1.50", "192.168.1.51"]);
+        for strict in [false, true] {
+            assert_eq!(
+                decide_stream_access(ip("192.168.1.51"), &allowed, LOCAL_IP, strict),
+                StreamAccess::Speaker,
+                "every speaker of an unsynced multi-speaker cast fetches the same URL"
+            );
+        }
+    }
+
+    #[test]
+    fn an_unknown_address_is_served_and_logged_until_the_flag_is_on() {
+        let allowed = speakers(&["192.168.1.50"]);
+        assert_eq!(
+            decide_stream_access(ip("192.168.1.200"), &allowed, LOCAL_IP, false),
+            StreamAccess::UnlistedServed
+        );
+        assert_eq!(
+            decide_stream_access(ip("192.168.1.200"), &allowed, LOCAL_IP, true),
+            StreamAccess::UnlistedRefused
+        );
+    }
+
+    /// Loopback in both forms, and the host's own LAN address, which the desktop
+    /// Server view offers with a copy button.
+    #[test]
+    fn this_machine_is_always_allowed() {
+        for peer in ["127.0.0.1", "::1", "::ffff:127.0.0.1", LOCAL_IP] {
+            assert_eq!(
+                decide_stream_access(ip(peer), &[], LOCAL_IP, true),
+                StreamAccess::CompanionHost,
+                "{peer} is this machine"
+            );
+        }
+    }
+
+    /// A dual-stack listener reports an IPv4 client as an IPv4-mapped IPv6
+    /// address; session addresses come out of the Sonos topology as plain IPv4
+    /// strings. Comparing either side raw would refuse a real speaker.
+    #[test]
+    fn an_ipv4_mapped_peer_matches_its_plain_session_address() {
+        assert_eq!(
+            decide_stream_access(
+                ip("::ffff:192.168.1.50"),
+                &speakers(&["192.168.1.50"]),
+                LOCAL_IP,
+                true
+            ),
+            StreamAccess::Speaker
+        );
+    }
+
+    /// An unparsable or empty entry must not match, and must not poison the list.
+    #[test]
+    fn unparsable_addresses_are_ignored_not_fatal() {
+        let allowed = speakers(&["", "not-an-ip", "192.168.1.50"]);
+        assert_eq!(
+            decide_stream_access(ip("192.168.1.50"), &allowed, LOCAL_IP, true),
+            StreamAccess::Speaker
+        );
+        assert_eq!(
+            decide_stream_access(ip("192.168.1.60"), &allowed, "", true),
+            StreamAccess::UnlistedRefused,
+            "a companion that has not resolved its own address yet still refuses strangers"
+        );
+    }
+
+    /// Promotion hands a slave the stream URL while its session still reads
+    /// `Slave` and calls `play_uri` before re-recording it as coordinator, so the
+    /// promoted speaker must already be on the list when that call lands.
+    #[test]
+    fn a_promoted_coordinator_is_allowed_when_play_uri_runs() {
+        // What the session store holds at that instant: the old coordinator has
+        // been torn down, the promoted speaker is still recorded as a slave.
+        let allowed = speakers(&["192.168.1.51", "192.168.1.52"]);
+        assert_eq!(
+            decide_stream_access(ip("192.168.1.51"), &allowed, LOCAL_IP, true),
+            StreamAccess::Speaker
+        );
+    }
+
+    #[test]
+    fn the_reader_cap_trips_and_frees_its_slots() {
+        let state = test_stream_state();
+
+        let slots: Vec<_> = (0..MAX_UNLISTED_STREAM_READERS)
+            .map(|n| {
+                state
+                    .acquire_unlisted_reader()
+                    .unwrap_or_else(|| panic!("reader {n} is within the cap"))
+            })
+            .collect();
+        assert_eq!(state.unlisted_reader_count(), MAX_UNLISTED_STREAM_READERS);
+        assert!(
+            state.acquire_unlisted_reader().is_none(),
+            "a harvested stream id must not fan out past the cap"
+        );
+
+        drop(slots);
+        assert_eq!(
+            state.unlisted_reader_count(),
+            0,
+            "a closed body frees its slot"
+        );
+        assert!(state.acquire_unlisted_reader().is_some());
+    }
+
+    /// The cap must never be able to refuse a device the stream is actually
+    /// for. An unsynced cast legitimately has one reader per speaker, each
+    /// routine reconnect double-counts until the replaced connection is reaped,
+    /// and a refusal is dead air — so speakers and this host take no slot at
+    /// all, which is also what stops an unlisted flood from starving them.
+    #[test]
+    fn allowlisted_readers_are_exempt_from_the_cap() {
+        assert!(!StreamAccess::Speaker.draws_unlisted_budget());
+        assert!(!StreamAccess::CompanionHost.draws_unlisted_budget());
+        assert!(StreamAccess::UnlistedServed.draws_unlisted_budget());
+
+        // A stream whose unlisted budget is fully spent still admits speakers:
+        // they never consult it.
+        let state = test_stream_state();
+        let _flood: Vec<_> = (0..MAX_UNLISTED_STREAM_READERS)
+            .map(|_| state.acquire_unlisted_reader().expect("within the cap"))
+            .collect();
+        assert!(state.acquire_unlisted_reader().is_none());
+        assert_eq!(
+            decide_stream_access(
+                ip("192.168.1.50"),
+                &speakers(&["192.168.1.50"]),
+                LOCAL_IP,
+                false
+            ),
+            StreamAccess::Speaker,
+            "a real speaker's fetch is unaffected by the unlisted budget"
+        );
+    }
 
     fn test_stream_state() -> Arc<StreamState> {
         Arc::new(StreamState::new(

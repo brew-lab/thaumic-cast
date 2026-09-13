@@ -5,7 +5,7 @@
 
 use std::sync::Arc;
 
-use dashmap::DashMap;
+use dashmap::{DashMap, DashSet};
 use tokio::sync::{Mutex, OwnedMutexGuard};
 
 use crate::stream::AudioCodec;
@@ -114,26 +114,49 @@ pub(crate) struct PlaybackSessionStore {
     /// Entries are pruned when the last holder releases them, so the map
     /// stays bounded by the number of in-flight starts.
     speaker_starts: DashMap<String, Arc<Mutex<()>>>,
+    /// Speakers allowed to fetch a stream before their session exists.
+    ///
+    /// A start sends `play_uri` and only records the session once the speaker
+    /// has acknowledged `Play` — but the speaker opens its HTTP fetch the moment
+    /// it receives `Play`, so a purely session-derived allowlist would not yet
+    /// contain it. Refusing there would be silent dead air, so the start
+    /// sequence admits the pair for its whole duration (see
+    /// [`Self::lock_speaker_start`]) and [`Self::allowed_reader_ips`] reads both.
+    ///
+    /// One entry per live [`SpeakerStartGuard`]. A guard holds the speaker's
+    /// start lock for its whole life, so a speaker never has two admissions at
+    /// once and no refcount is needed.
+    pending_starts: DashSet<PlaybackSessionKey>,
 }
 
 /// Held for the duration of one speaker's start sequence.
 ///
-/// Releases the speaker's lock and prunes its map entry on drop — including
-/// on early returns and error paths — so the lock map cannot grow without
-/// bound.
+/// Releases the speaker's lock, withdraws the speaker's stream admission and
+/// prunes both map entries on drop — including on early returns and error
+/// paths — so neither map can grow without bound and a failed start leaves
+/// nothing admitted.
 pub(crate) struct SpeakerStartGuard<'a> {
-    starts: &'a DashMap<String, Arc<Mutex<()>>>,
-    speaker_ip: &'a str,
+    store: &'a PlaybackSessionStore,
+    admission: PlaybackSessionKey,
     guard: Option<OwnedMutexGuard<()>>,
 }
 
 impl Drop for SpeakerStartGuard<'_> {
     fn drop(&mut self) {
-        // Release the mutex first: the guard owns a strong reference, so the
-        // map's own reference is the only one left when nobody is waiting.
+        // Withdraw the admission *before* releasing the lock. A start already
+        // waiting on this speaker acquires the lock the instant it is free and
+        // admits itself under the same key; withdrawing afterwards would revoke
+        // that new admission and leave its speaker refused.
+        self.store.pending_starts.remove(&self.admission);
+
+        // Then the mutex: the guard owns a strong reference, so the map's own
+        // reference is the only one left when nobody is waiting.
         drop(self.guard.take());
-        self.starts
-            .remove_if(self.speaker_ip, |_, lock| Arc::strong_count(lock) == 1);
+        self.store
+            .speaker_starts
+            .remove_if(&self.admission.speaker_ip, |_, lock| {
+                Arc::strong_count(lock) == 1
+            });
     }
 }
 
@@ -144,6 +167,7 @@ impl PlaybackSessionStore {
             sessions: DashMap::new(),
             ip_index: DashMap::new(),
             speaker_starts: DashMap::new(),
+            pending_starts: DashSet::new(),
         }
     }
 
@@ -160,9 +184,14 @@ impl PlaybackSessionStore {
     /// The lock is per speaker, never global, so starts on unrelated speakers
     /// stay concurrent. It is **not reentrant**: a caller already holding a
     /// speaker's guard must never call a path that locks the same speaker.
+    ///
+    /// The guard also admits `speaker_ip` as a reader of `stream_id` for as long
+    /// as it is held, closing the window between `play_uri` and the session
+    /// insert that follows it — see [`Self::allowed_reader_ips`].
     pub(crate) async fn lock_speaker_start<'a>(
         &'a self,
-        speaker_ip: &'a str,
+        stream_id: &str,
+        speaker_ip: &str,
     ) -> SpeakerStartGuard<'a> {
         let lock = Arc::clone(
             self.speaker_starts
@@ -170,11 +199,40 @@ impl PlaybackSessionStore {
                 .or_default()
                 .value(),
         );
+        let guard = lock.lock_owned().await;
+
+        let admission = PlaybackSessionKey::new(stream_id, speaker_ip);
+        self.pending_starts.insert(admission.clone());
+
         SpeakerStartGuard {
-            starts: &self.speaker_starts,
-            speaker_ip,
-            guard: Some(lock.lock_owned().await),
+            store: self,
+            admission,
+            guard: Some(guard),
         }
+    }
+
+    /// Every speaker address entitled to fetch `stream_id` over HTTP right now.
+    ///
+    /// Derived on each call rather than recorded when playback starts, so
+    /// speakers joining, leaving, being taken over or being promoted need no
+    /// extra bookkeeping and the answer is never stale.
+    ///
+    /// Includes slaves. A slave is joined with an `x-rincon:` URI and so should
+    /// never fetch the URL itself, but including it costs nothing and covers
+    /// coordinator promotion, which hands a slave the stream URL while its
+    /// session still says `Slave`.
+    ///
+    /// Includes speakers whose start sequence is still in flight, which is what
+    /// makes the list safe to enforce: a speaker fetches as soon as it receives
+    /// `Play`, before the start records its session.
+    pub fn allowed_reader_ips(&self, stream_id: &str) -> Vec<String> {
+        let mut ips: Vec<String> = self.get_ips_for_stream(stream_id);
+        for key in self.pending_starts.iter() {
+            if key.stream_id == stream_id && !ips.contains(&key.speaker_ip) {
+                ips.push(key.speaker_ip.clone());
+            }
+        }
+        ips
     }
 
     /// Inserts a playback session.
@@ -730,6 +788,51 @@ mod tests {
         let mut ips = store.get_ips_for_stream("s1");
         ips.sort();
         assert_eq!(ips, vec!["192.168.1.100", "192.168.1.101"]);
+    }
+
+    /// Both roles count: a slave never fetches the URL itself, but a promotion
+    /// hands it the stream while its session still reads `Slave`.
+    #[test]
+    fn allowed_reader_ips_covers_every_role_and_only_this_stream() {
+        let store = PlaybackSessionStore::new();
+        store.insert(make_session("s1", "192.168.1.100", GroupRole::Coordinator));
+        store.insert(make_session("s1", "192.168.1.101", GroupRole::Slave));
+        store.insert(make_session("s2", "192.168.1.102", GroupRole::Coordinator));
+
+        let mut ips = store.allowed_reader_ips("s1");
+        ips.sort();
+        assert_eq!(ips, vec!["192.168.1.100", "192.168.1.101"]);
+    }
+
+    /// The window this closes: `start_single_playback` calls `play_uri` and only
+    /// inserts the session afterwards, but the speaker fetches the moment it
+    /// receives `Play`. The start guard must admit it for that whole stretch.
+    #[tokio::test]
+    async fn a_speaker_mid_start_is_allowed_before_its_session_exists() {
+        let store = PlaybackSessionStore::new();
+        assert!(store.allowed_reader_ips("s1").is_empty());
+
+        let start = store.lock_speaker_start("s1", "192.168.1.100").await;
+        assert_eq!(store.allowed_reader_ips("s1"), vec!["192.168.1.100"]);
+        // Only for the stream being started.
+        assert!(store.allowed_reader_ips("s2").is_empty());
+
+        // A start that fails leaves nothing behind.
+        drop(start);
+        assert!(store.allowed_reader_ips("s1").is_empty());
+    }
+
+    /// A successful start hands off from the admission to the session, so the
+    /// speaker is allowed continuously across the guard's release.
+    #[tokio::test]
+    async fn admission_hands_over_to_the_session_it_created() {
+        let store = PlaybackSessionStore::new();
+        let start = store.lock_speaker_start("s1", "192.168.1.100").await;
+        store.insert(make_session("s1", "192.168.1.100", GroupRole::Coordinator));
+
+        assert_eq!(store.allowed_reader_ips("s1"), vec!["192.168.1.100"]);
+        drop(start);
+        assert_eq!(store.allowed_reader_ips("s1"), vec!["192.168.1.100"]);
     }
 
     #[test]
