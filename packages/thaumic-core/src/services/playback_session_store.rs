@@ -3,7 +3,10 @@
 //! Provides O(1) session lookups by (stream_id, speaker_ip) composite key
 //! and by speaker_ip alone via a secondary index.
 
+use std::sync::Arc;
+
 use dashmap::DashMap;
+use tokio::sync::{Mutex, OwnedMutexGuard};
 
 use crate::stream::AudioCodec;
 
@@ -95,11 +98,43 @@ pub struct PlaybackResult {
 /// Provides O(1) lookups by composite key (stream_id, speaker_ip) and by
 /// speaker_ip alone via a secondary index. The secondary index eliminates
 /// linear scans that were previously needed to find sessions by IP.
+///
+/// Also owns the per-speaker start locks ([`Self::lock_speaker_start`]), which
+/// live here because the invariant they protect — one speaker plays at most one
+/// stream — is this store's invariant, and because every service that starts
+/// playback already shares one store.
 pub(crate) struct PlaybackSessionStore {
     /// Primary: (stream_id, speaker_ip) -> PlaybackSession
     sessions: DashMap<PlaybackSessionKey, PlaybackSession>,
     /// Secondary: speaker_ip -> PlaybackSessionKey (O(1) lookup)
     ip_index: DashMap<String, PlaybackSessionKey>,
+    /// Per-speaker locks serialising the start sequence for one speaker.
+    ///
+    /// Keyed by speaker IP so unrelated speakers still start concurrently.
+    /// Entries are pruned when the last holder releases them, so the map
+    /// stays bounded by the number of in-flight starts.
+    speaker_starts: DashMap<String, Arc<Mutex<()>>>,
+}
+
+/// Held for the duration of one speaker's start sequence.
+///
+/// Releases the speaker's lock and prunes its map entry on drop — including
+/// on early returns and error paths — so the lock map cannot grow without
+/// bound.
+pub(crate) struct SpeakerStartGuard<'a> {
+    starts: &'a DashMap<String, Arc<Mutex<()>>>,
+    speaker_ip: &'a str,
+    guard: Option<OwnedMutexGuard<()>>,
+}
+
+impl Drop for SpeakerStartGuard<'_> {
+    fn drop(&mut self) {
+        // Release the mutex first: the guard owns a strong reference, so the
+        // map's own reference is the only one left when nobody is waiting.
+        drop(self.guard.take());
+        self.starts
+            .remove_if(self.speaker_ip, |_, lock| Arc::strong_count(lock) == 1);
+    }
 }
 
 impl PlaybackSessionStore {
@@ -108,6 +143,37 @@ impl PlaybackSessionStore {
         Self {
             sessions: DashMap::new(),
             ip_index: DashMap::new(),
+            speaker_starts: DashMap::new(),
+        }
+    }
+
+    /// Acquires this speaker's start lock, waiting for any in-flight start.
+    ///
+    /// Two clients casting different tabs to the same speaker is expected and
+    /// allowed — the later start wins. The lock only stops their
+    /// find/stop/play/insert sequences from interleaving, which would let one
+    /// client's stop land after the other's play (speaker silent while a
+    /// session claims it is playing) and would report the two takeovers out of
+    /// order. Every caller that starts playback on a speaker — standalone
+    /// coordinator or sync-group slave — must hold it for that whole sequence.
+    ///
+    /// The lock is per speaker, never global, so starts on unrelated speakers
+    /// stay concurrent. It is **not reentrant**: a caller already holding a
+    /// speaker's guard must never call a path that locks the same speaker.
+    pub(crate) async fn lock_speaker_start<'a>(
+        &'a self,
+        speaker_ip: &'a str,
+    ) -> SpeakerStartGuard<'a> {
+        let lock = Arc::clone(
+            self.speaker_starts
+                .entry(speaker_ip.to_string())
+                .or_default()
+                .value(),
+        );
+        SpeakerStartGuard {
+            starts: &self.speaker_starts,
+            speaker_ip,
+            guard: Some(lock.lock_owned().await),
         }
     }
 
@@ -127,7 +193,7 @@ impl PlaybackSessionStore {
     /// Both map writes happen while this speaker's index entry is held, so
     /// concurrent inserts for the same speaker cannot interleave and leave the two
     /// maps disagreeing. Callers that need the whole find/stop/play/insert sequence
-    /// to be atomic must still serialise it themselves.
+    /// to be atomic must serialise it with [`Self::lock_speaker_start`].
     pub fn insert(&self, session: PlaybackSession) -> Option<PlaybackSession> {
         let key = PlaybackSessionKey::new(&session.stream_id, &session.speaker_ip);
 
