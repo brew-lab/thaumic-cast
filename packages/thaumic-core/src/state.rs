@@ -109,7 +109,17 @@ pub struct Config {
     /// unexpected address is reported at `warn` and still gets its audio. A
     /// wrongly refused fetch is dead air with nothing in the UI to explain it,
     /// so the first release observes real households before anyone enforces.
-    /// Set to `true` once the logs show no unexpected addresses.
+    /// Set to `true` once the logs show no unexpected addresses. Only the
+    /// headless server exposes the option today (`strict_stream_access` in its
+    /// config, or `THAUMIC_STRICT_STREAM_ACCESS`); the desktop app runs with
+    /// the default.
+    ///
+    /// Known gap once enforced: sessions are keyed by the speaker's address,
+    /// and nothing rewrites a live session when a speaker is renumbered
+    /// mid-cast (DHCP renewal, reboot). That speaker's next fetch comes from
+    /// an address the stream does not list and is refused until playback is
+    /// restarted. With the flag off the fetch is served and logged, which is
+    /// how often this happens gets measured.
     ///
     /// What it does not do: the allowlist is simply whatever the control API
     /// has been told to play on, and `POST /api/playback/start` is

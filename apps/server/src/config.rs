@@ -46,7 +46,10 @@ pub struct ServerConfig {
     ///
     /// Defaults to `false`, which logs the unexpected address at `warn` and
     /// still serves the audio. Turn it on once those logs are quiet: a wrongly
-    /// refused fetch is silent dead air on the speaker.
+    /// refused fetch is silent dead air on the speaker. One known case: a
+    /// speaker whose address changes mid-cast (DHCP renewal, reboot) is
+    /// refused until playback is restarted, because its session still names
+    /// the old address.
     ///
     /// It binds the audio endpoint to whatever the control API has been told to
     /// play on, and that API is unauthenticated, so it is not a defence against

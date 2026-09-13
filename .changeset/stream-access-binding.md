@@ -15,6 +15,8 @@ matters because an unsynchronised cast has every speaker fetching separately.
 This ships observing rather than enforcing. The `strict_stream_access` option defaults to off, so every request is
 served exactly as before and unexpected addresses are logged with the stream and the addresses that were expected.
 Turn it on once the logs from a real setup show nothing unexpected, because a wrongly refused request is silence with
-nothing to see. Refused requests answer not-found, the same as an expired stream. A separate limit bounds simultaneous
-readers that are not on the list, since each one starts its own pipeline; speakers the stream is for are never counted
-against it.
+nothing to see. Only the headless server exposes the option; the desktop app keeps the default. Refused requests answer
+not-found, the same as an expired stream. A separate limit bounds simultaneous readers that are not on the list, since
+each one starts its own pipeline; speakers the stream is for are never counted against it, and readers that are not
+speakers are kept out of the per-speaker playback tracking so they cannot disturb a real speaker's reconnects. One
+known gap once enforced: a speaker whose address changes mid-cast is refused until playback is restarted.

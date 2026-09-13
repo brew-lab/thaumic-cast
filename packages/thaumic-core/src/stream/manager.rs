@@ -329,6 +329,9 @@ pub struct StreamState {
     /// Live HTTP readers of this stream that are not on its allowlist, capped
     /// at [`MAX_UNLISTED_STREAM_READERS`].
     unlisted_readers: Arc<AtomicUsize>,
+    /// Addresses that have already been reported for fetching this stream
+    /// without being on its list, so each is logged at warn once.
+    unlisted_reported: parking_lot::Mutex<std::collections::HashSet<std::net::IpAddr>>,
 }
 
 impl StreamState {
@@ -377,6 +380,7 @@ impl StreamState {
             last_push_at: parking_lot::Mutex::new(None),
             receive_stats: parking_lot::Mutex::new(ReceiveStats::new()),
             unlisted_readers: Arc::new(AtomicUsize::new(0)),
+            unlisted_reported: parking_lot::Mutex::new(std::collections::HashSet::new()),
         }
     }
 
@@ -402,6 +406,14 @@ impl StreamState {
     /// Number of HTTP readers currently connected to this stream from an
     /// address it is not playing on.
     #[must_use]
+    /// Records that `peer` fetched this stream without being on its list.
+    ///
+    /// Returns `true` the first time an address is seen, so the caller can
+    /// log it once at warn and quietly thereafter.
+    pub fn note_unlisted_reader(&self, peer: std::net::IpAddr) -> bool {
+        self.unlisted_reported.lock().insert(peer)
+    }
+
     pub fn unlisted_reader_count(&self) -> usize {
         self.unlisted_readers.load(Ordering::Acquire)
     }

@@ -897,8 +897,14 @@ impl SyncGroupManager {
         // the speaker would play this stream while the store said otherwise.
         // Holding the lock also serialises with promote's own callers: nothing
         // that reaches here holds a speaker lock (it is entered from the stop
-        // path), so this can never nest.
-        let promoted_start = self.sessions.lock_speaker_start(&promoted_ip).await;
+        // path), so this can never nest. The guard also admits the promoted
+        // speaker as a reader of the stream: it fetches the URL the moment
+        // `play_uri` lands, before the coordinator session below exists, and
+        // its old slave session may already be gone by then.
+        let promoted_start = self
+            .sessions
+            .lock_speaker_start(stream_id, &promoted_ip)
+            .await;
         if self.sessions.get(stream_id, &promoted_ip).is_none() {
             return Err(format!(
                 "Slave {} was taken by another stream while waiting to promote it",
@@ -966,7 +972,7 @@ impl SyncGroupManager {
                 // locks only its own speaker, so they still run concurrently.
                 let _start = self
                     .sessions
-                    .lock_speaker_start(&slave_key.speaker_ip)
+                    .lock_speaker_start(stream_id, &slave_key.speaker_ip)
                     .await;
                 if self
                     .sessions

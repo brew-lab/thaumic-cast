@@ -34,7 +34,9 @@ topology_refresh_interval: 30
 # speaker and the speaker republishes it to any device on the LAN that asks.
 # Left false, an unexpected address is logged at warn and still served. Turn it
 # on once your logs show no unexpected addresses — a wrongly refused fetch is
-# silent dead air on the speaker, with nothing in the UI to explain it.
+# silent dead air on the speaker, with nothing in the UI to explain it. Known
+# case: a speaker whose address changes mid-cast (DHCP renewal, reboot) is
+# refused until playback is restarted.
 # It allows the addresses the control API has been told to play on, and that API
 # is unauthenticated, so it stops a passive reader of the republished URL rather
 # than someone actively driving the API.
