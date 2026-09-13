@@ -8,6 +8,7 @@
 //! - Network health monitoring
 
 use std::collections::HashSet;
+use std::net::Ipv4Addr;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -19,9 +20,10 @@ use reqwest::Client;
 use tokio::sync::Notify;
 use tokio_util::sync::CancellationToken;
 
-use crate::context::NetworkContext;
+use crate::context::{NetworkContext, NetworkError};
 use crate::error::{ThaumicError, ThaumicResult};
 use crate::events::{EventEmitter, NetworkEvent, NetworkHealth, TopologyEvent};
+use crate::mdns_advertise::{self, MdnsAdvertiserHandle};
 use crate::runtime::TokioSpawner;
 use crate::sonos::discovery::{probe_speaker_by_ip, Speaker};
 use crate::sonos::gena::GenaSubscriptionManager;
@@ -61,6 +63,8 @@ pub struct TopologyMonitorConfig {
     pub http_client: Client,
     /// Task spawner for background tasks.
     pub spawner: TokioSpawner,
+    /// Shared mDNS advertisement slot, re-registered when the local address changes.
+    pub mdns_advertiser: MdnsAdvertiserHandle,
 }
 
 /// Clamps a topology refresh interval to a period `tokio::time::interval` accepts.
@@ -75,6 +79,26 @@ fn clamp_refresh_interval_secs(secs: u64) -> u64 {
     } else {
         secs
     }
+}
+
+/// Decides whether a completed full refresh should raise the degraded banner.
+///
+/// The signal is cached transport state: we can see groups, we hold
+/// subscriptions on their coordinators, and yet not one of them has ever told
+/// us what it is doing. Cached state is kept for as long as a speaker stays in
+/// the topology, so a working system that simply has nothing playing keeps its
+/// last known states and stays healthy — and, just as importantly, rebuilding
+/// every subscription (after an address change, say) does not raise the banner
+/// during the seconds it takes the first NOTIFY to come back.
+///
+/// The first discovery is exempt: nothing has had time to report yet.
+fn refresh_looks_degraded(
+    was_first_discovery: bool,
+    has_groups: bool,
+    has_subscriptions: bool,
+    transport_states_empty: bool,
+) -> bool {
+    !was_first_discovery && has_groups && has_subscriptions && transport_states_empty
 }
 
 /// Collects every speaker IP that appears in a zone group topology.
@@ -123,6 +147,10 @@ pub struct TopologyMonitor {
     spawner: TokioSpawner,
     /// Subscription arbiter for RenderingControl/GroupRenderingControl conflict resolution.
     arbiter: Arc<SubscriptionArbiter>,
+    /// Shared mDNS advertisement slot, re-registered when the local address changes.
+    mdns_advertiser: MdnsAdvertiserHandle,
+    /// Last non-empty set of known speaker addresses, kept across refreshes.
+    remembered_speaker_ips: RwLock<Vec<Ipv4Addr>>,
 }
 
 impl TopologyMonitor {
@@ -159,6 +187,8 @@ impl TopologyMonitor {
             http_client: config.http_client,
             spawner: config.spawner,
             arbiter,
+            mdns_advertiser: config.mdns_advertiser,
+            remembered_speaker_ips: RwLock::new(Vec::new()),
         }
     }
 
@@ -282,20 +312,38 @@ impl TopologyMonitor {
                     }
                 };
 
-                // Check for IP changes (e.g., laptop moved networks)
-                if let Ok(new_ip_str) = self.network.detect_ip() {
-                    if new_ip_str != current_ip {
+                // Check for IP changes (e.g., laptop moved networks, VPN up or down).
+                // Nothing is unsubscribed here: every existing subscription now
+                // holds a callback URL we no longer answer on, and the
+                // reconciliation below drops exactly those at the moment it can
+                // replace them — rather than leaving us with none at all if this
+                // refresh turns out to fail.
+                match self.network.detect_ip(&self.known_speaker_ips()) {
+                    Ok(new_ip_str) => {
+                        if new_ip_str != current_ip {
+                            log::warn!(
+                                "[TopologyMonitor] Local IP changed: {} -> {}. Re-subscribing...",
+                                current_ip,
+                                new_ip_str
+                            );
+                            // Update shared state so other services see the change
+                            self.network.set_local_ip(new_ip_str.clone());
+                            current_ip = new_ip_str;
+                            callback_url = self.network.gena_callback_url();
+                            self.readvertise_mdns();
+                        }
+                    }
+                    // Explicit mode (headless server) configures the advertise
+                    // address, so there is nothing to detect and nothing to report.
+                    Err(NetworkError::NoDetector) => {}
+                    Err(e) => {
+                        // A swallowed detection failure is invisible in the field and
+                        // looks exactly like "the VPN broke it", so say so out loud.
                         log::warn!(
-                            "[TopologyMonitor] Local IP changed: {} -> {}. Re-subscribing...",
+                            "[TopologyMonitor] Local IP detection failed, still advertising {}: {}",
                             current_ip,
-                            new_ip_str
+                            e
                         );
-                        // Update shared state so other services see the change
-                        self.network.set_local_ip(new_ip_str.clone());
-                        current_ip = new_ip_str;
-                        callback_url = self.network.gena_callback_url();
-                        self.arbiter.leave_all_sync_sessions(&callback_url).await;
-                        self.gena_manager.unsubscribe_all().await;
                     }
                 }
 
@@ -586,7 +634,12 @@ impl TopologyMonitor {
         let transport_states_empty = self.sonos_state.transport_states.is_empty();
         let has_groups = !groups.is_empty();
 
-        if !was_first_discovery && has_groups && has_subscriptions && transport_states_empty {
+        if refresh_looks_degraded(
+            was_first_discovery,
+            has_groups,
+            has_subscriptions,
+            transport_states_empty,
+        ) {
             log::warn!(
                 "[TopologyMonitor] Communication issue: have {} groups and {} subscriptions but no transport states",
                 groups.len(),
@@ -603,6 +656,63 @@ impl TopologyMonitor {
         // On first discovery, don't set health yet - give time for events to arrive
 
         Ok(())
+    }
+
+    /// Speaker addresses we already know about, for choosing which of our own
+    /// addresses to advertise.
+    ///
+    /// Two sources, because either can be the only one: the discovered topology
+    /// is what we have once anything has worked, and a manually configured
+    /// speaker is exactly the case where SSDP never worked. At first launch both
+    /// are empty, which is what the detector's block ranking is for.
+    ///
+    /// The last non-empty answer is remembered and returned when this refresh
+    /// has none. [`Self::refresh_topology`] clears the groups on any discovery
+    /// round that finds nothing, and a lost SSDP round is routine on Wi-Fi (or
+    /// simply means the speakers are switched off) - so without this a single
+    /// missed round would silently demote address selection to first-launch
+    /// behaviour, move the advertised address to a bridge on the same block,
+    /// and re-advertise mDNS and rebuild every subscription against an address
+    /// no speaker can reach, then flip back on the round after. Addresses that
+    /// were right a refresh ago are better evidence than none; when the machine
+    /// really has moved networks they simply match no candidate and the ranking
+    /// decides as before.
+    fn known_speaker_ips(&self) -> Vec<Ipv4Addr> {
+        let mut ips: Vec<Ipv4Addr> = speaker_ips_from_groups(&self.sonos_state.groups.read())
+            .iter()
+            .filter_map(|ip| ip.parse().ok())
+            .collect();
+
+        if let Some(dir) = self.app_data_dir.read().clone() {
+            ips.extend(
+                ManualSpeakerConfig::load(&dir)
+                    .speaker_ips
+                    .iter()
+                    .filter_map(|ip| ip.parse::<Ipv4Addr>().ok()),
+            );
+        }
+
+        if ips.is_empty() {
+            return self.remembered_speaker_ips.read().clone();
+        }
+
+        ips.sort_unstable();
+        ips.dedup();
+        *self.remembered_speaker_ips.write() = ips.clone();
+        ips
+    }
+
+    /// Re-registers the mDNS advertisement at the current address and port.
+    ///
+    /// The advertisement is registered once when the server binds; without this
+    /// a process launched while a VPN was up would advertise the tunnel address
+    /// for its whole lifetime. Best-effort and non-fatal, like all mDNS here.
+    fn readvertise_mdns(&self) {
+        mdns_advertise::advertise(
+            &self.mdns_advertiser,
+            &self.network.get_local_ip(),
+            self.network.get_port(),
+        );
     }
 
     /// Cleans up all GENA subscriptions and stops background tasks (for graceful shutdown).
@@ -699,6 +809,11 @@ impl TopologyMonitor {
         // Clean up stale state entries for speakers that left the network
         self.sonos_state.cleanup_stale_entries(current_speaker_ips);
 
+        // Drop subscriptions that name an address we no longer advertise, before
+        // the steps below rebuild them against the one we do.
+        self.rebuild_stale_callback_subscriptions(callback_url)
+            .await;
+
         self.ensure_topology_subscription(topology_sub_ip, current_speaker_ips, callback_url)
             .await;
 
@@ -707,6 +822,38 @@ impl TopologyMonitor {
 
         // Cleanup stale subscriptions (coordinators that disappeared or were demoted)
         self.cleanup_stale_subscriptions(&coordinator_ips).await;
+    }
+
+    /// Drops subscriptions whose callback address is not the one we advertise now.
+    ///
+    /// This is the escape from the state that forced a server restart. A
+    /// subscription carries the callback URL it was created with and never
+    /// re-sends it - a GENA RENEW carries only the SID and needs only outbound
+    /// reachability - so one built while we advertised an address the speakers
+    /// cannot reach renews successfully forever while delivering nothing, and
+    /// `subscribe()` short-circuits on the existing (ip, service) pair, so it
+    /// blocks its own replacement. A stored address that differs from the
+    /// current one is proof of exactly that, with no counting, no timing, and
+    /// nothing for an idle-but-healthy system to trip.
+    ///
+    /// Speakers released from a sync session are handed back to the arbiter: the
+    /// stale subscription there is RenderingControl, and `ensure_group_rendering`
+    /// deliberately refuses to give a sync-active speaker GroupRenderingControl,
+    /// so a plain unsubscribe would leave them with no volume event source that
+    /// anything ever restores.
+    ///
+    /// The caller rebuilds what it owns immediately afterwards.
+    async fn rebuild_stale_callback_subscriptions(&self, callback_url: &str) {
+        let affected_ips = self
+            .gena_manager
+            .unsubscribe_stale_callbacks(callback_url)
+            .await;
+
+        for ip in affected_ips {
+            if self.arbiter.is_in_sync_session(&ip) {
+                self.arbiter.leave_sync_session(&ip, callback_url).await;
+            }
+        }
     }
 
     /// Ensures a ZoneGroupTopology subscription exists on a valid speaker.
@@ -957,6 +1104,7 @@ mod tests {
                 refresh_notify: Arc::new(Notify::new()),
                 http_client,
                 spawner: TokioSpawner::new(tokio::runtime::Handle::current()),
+                mdns_advertiser: crate::mdns_advertise::advertiser_handle(),
             },
             arbiter,
         )
@@ -971,6 +1119,34 @@ mod tests {
     fn valid_refresh_interval_is_unchanged() {
         assert_eq!(clamp_refresh_interval_secs(1), 1);
         assert_eq!(clamp_refresh_interval_secs(30), 30);
+    }
+
+    #[test]
+    fn a_refresh_with_subscriptions_but_nothing_reported_is_degraded() {
+        // Groups are visible and their coordinators are subscribed, yet not one
+        // speaker has ever said what it is doing: they cannot reach us.
+        assert!(refresh_looks_degraded(false, true, true, true));
+    }
+
+    #[test]
+    fn an_address_change_does_not_raise_the_banner_on_a_healthy_system() {
+        // Reconciliation has just rebuilt every subscription against the new
+        // callback URL and the first NOTIFY is still in flight, microseconds
+        // later. Cached transport state from before the change is still there,
+        // so nothing is reported to the user.
+        assert!(!refresh_looks_degraded(false, true, true, false));
+    }
+
+    #[test]
+    fn the_first_discovery_is_never_degraded() {
+        // Subscriptions were created moments ago in this same refresh.
+        assert!(!refresh_looks_degraded(true, true, true, true));
+    }
+
+    #[test]
+    fn nothing_to_listen_to_is_not_degraded() {
+        assert!(!refresh_looks_degraded(false, true, false, true));
+        assert!(!refresh_looks_degraded(false, false, true, true));
     }
 
     #[test]
@@ -1099,5 +1275,73 @@ mod tests {
             .unwrap_err();
 
         assert!(matches!(err, ThaumicError::SpeakerNotFound(_)));
+    }
+
+    #[tokio::test]
+    async fn nothing_is_known_before_anything_is_discovered() {
+        // First launch: the detector gets an empty slice and falls back to its
+        // block ranking.
+        let monitor = create_monitor(
+            Vec::new(),
+            Arc::new(SonosState::default()),
+            Arc::new(CollectingEmitter::new()) as Arc<dyn EventEmitter>,
+        );
+
+        assert!(monitor.known_speaker_ips().is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_lost_discovery_round_keeps_the_speakers_we_already_knew() {
+        // refresh_topology clears the groups whenever discovery finds nothing,
+        // which happens on a dropped multicast round, a Wi-Fi roam, or speakers
+        // simply switched off. The address we advertise must not move on the
+        // strength of that: it would re-advertise mDNS and rebuild every
+        // subscription against an address the speakers cannot reach, then flip
+        // back on the next round.
+        let sonos_state = Arc::new(SonosState::default());
+        *sonos_state.groups.write() = vec![group("192.168.86.40", "RINCON_A")];
+
+        let monitor = create_monitor(
+            Vec::new(),
+            Arc::clone(&sonos_state),
+            Arc::new(CollectingEmitter::new()) as Arc<dyn EventEmitter>,
+        );
+
+        assert_eq!(
+            monitor.known_speaker_ips(),
+            vec![Ipv4Addr::new(192, 168, 86, 40)]
+        );
+
+        sonos_state.groups.write().clear();
+
+        assert_eq!(
+            monitor.known_speaker_ips(),
+            vec![Ipv4Addr::new(192, 168, 86, 40)]
+        );
+    }
+
+    #[tokio::test]
+    async fn a_successful_discovery_replaces_what_we_remembered() {
+        // The laptop really did move networks: the new topology is what counts,
+        // and the old addresses must not linger and keep steering selection.
+        let sonos_state = Arc::new(SonosState::default());
+        *sonos_state.groups.write() = vec![group("192.168.86.40", "RINCON_A")];
+
+        let monitor = create_monitor(
+            Vec::new(),
+            Arc::clone(&sonos_state),
+            Arc::new(CollectingEmitter::new()) as Arc<dyn EventEmitter>,
+        );
+        assert_eq!(
+            monitor.known_speaker_ips(),
+            vec![Ipv4Addr::new(192, 168, 86, 40)]
+        );
+
+        *sonos_state.groups.write() = vec![group("10.1.2.3", "RINCON_B")];
+
+        assert_eq!(
+            monitor.known_speaker_ips(),
+            vec![Ipv4Addr::new(10, 1, 2, 3)]
+        );
     }
 }
