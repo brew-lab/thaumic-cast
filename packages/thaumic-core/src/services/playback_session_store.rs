@@ -116,16 +116,44 @@ impl PlaybackSessionStore {
     /// Maintains the ip_index — always points to the latest session for a given IP.
     /// If a session with the same composite key already existed, returns the old session.
     ///
-    /// **Invariant:** Callers must `remove()` any existing session for this speaker on
-    /// a *different* stream before inserting. Otherwise the old primary entry becomes a
-    /// phantom (reachable by composite key, invisible to `get_by_speaker_ip` and iterators
-    /// that rely on the ip_index). This is safe today because a speaker can only play one
-    /// stream at a time, and all call sites clean up before re-assigning.
+    /// **Invariant (enforced here):** a speaker plays at most one stream, so the
+    /// primary map may hold at most one session per speaker IP. If the index still
+    /// points at a session on a *different* stream, that session is already dead and
+    /// is dropped as part of this insert. Without that, the displaced entry would
+    /// become a phantom: reachable by composite key but invisible to
+    /// `get_by_speaker_ip`, `get_key_by_speaker_ip` and everything routed through
+    /// them, so it would never be torn down.
+    ///
+    /// Both map writes happen while this speaker's index entry is held, so
+    /// concurrent inserts for the same speaker cannot interleave and leave the two
+    /// maps disagreeing. Callers that need the whole find/stop/play/insert sequence
+    /// to be atomic must still serialise it themselves.
     pub fn insert(&self, session: PlaybackSession) -> Option<PlaybackSession> {
         let key = PlaybackSessionKey::new(&session.stream_id, &session.speaker_ip);
-        self.ip_index
-            .insert(session.speaker_ip.clone(), key.clone());
-        self.sessions.insert(key, session)
+
+        // Holding the index entry serialises same-speaker inserts. Lock order is
+        // ip_index -> sessions, matching every other method that touches both.
+        let mut index = self
+            .ip_index
+            .entry(session.speaker_ip.clone())
+            .or_insert_with(|| key.clone());
+        let displaced = std::mem::replace(&mut *index, key.clone());
+
+        if displaced != key {
+            // Speaker moved to a different stream without the old session being
+            // removed first. Drop it here so it cannot linger unreachable.
+            log::warn!(
+                "Speaker {} switched from stream {} to {} with the old session still present - dropping it",
+                session.speaker_ip,
+                displaced.stream_id,
+                session.stream_id
+            );
+            self.sessions.remove(&displaced);
+        }
+
+        let previous = self.sessions.insert(key, session);
+        drop(index);
+        previous
     }
 
     /// Removes a session by (stream_id, speaker_ip).
@@ -656,7 +684,51 @@ mod tests {
             "s2"
         );
 
-        // Old session still accessible by key
-        assert!(store.get("s1", "192.168.1.100").is_some());
+        // The displaced session is gone, not left as a phantom reachable only
+        // by composite key.
+        assert!(store.get("s1", "192.168.1.100").is_none());
+        assert_eq!(store.all_sessions().len(), 1);
+    }
+
+    #[test]
+    fn insert_displacing_another_stream_leaves_no_orphan() {
+        let store = PlaybackSessionStore::new();
+        store.insert(make_session("s1", "192.168.1.100", GroupRole::Coordinator));
+        store.insert(make_session("s1", "192.168.1.101", GroupRole::Slave));
+
+        // A second client takes .100 for its own stream without stopping s1 first.
+        store.insert(make_session("s2", "192.168.1.100", GroupRole::Coordinator));
+
+        // Exactly one session for that speaker, and it is the new one.
+        let for_speaker: Vec<_> = store
+            .all_sessions()
+            .into_iter()
+            .filter(|s| s.speaker_ip == "192.168.1.100")
+            .collect();
+        assert_eq!(for_speaker.len(), 1);
+        assert_eq!(for_speaker[0].stream_id, "s2");
+        assert_eq!(
+            store
+                .get_key_by_speaker_ip("192.168.1.100")
+                .unwrap()
+                .stream_id,
+            "s2"
+        );
+
+        // s1 keeps its other speaker; only the contended one moved.
+        assert_eq!(store.get_ips_for_stream("s1"), vec!["192.168.1.101"]);
+    }
+
+    #[test]
+    fn insert_same_key_does_not_evict_itself() {
+        let store = PlaybackSessionStore::new();
+        store.insert(make_session("s1", "192.168.1.100", GroupRole::Coordinator));
+
+        // Role change on the same (stream, speaker) pair must survive.
+        store.insert(make_session("s1", "192.168.1.100", GroupRole::Slave));
+
+        let session = store.get_by_speaker_ip("192.168.1.100").unwrap();
+        assert_eq!(session.role, GroupRole::Slave);
+        assert_eq!(store.all_sessions().len(), 1);
     }
 }
