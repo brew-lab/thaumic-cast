@@ -201,6 +201,7 @@ pub async fn get_zone_groups(client: &Client, ip: &str) -> SoapResult<Vec<ZoneGr
 
 #[cfg(test)]
 mod tests {
+    use super::super::test_fixtures::ZONE_GROUP_STATE_SOAP_RESPONSE;
     use super::*;
 
     /// Helper to build a ZoneGroupMember XML element.
@@ -321,5 +322,24 @@ mod tests {
         let groups = parse_zone_group_xml(&xml);
         assert_eq!(groups.len(), 1);
         assert_eq!(groups[0].name, "Living Room");
+    }
+
+    #[test]
+    fn soap_path_decodes_entity_escaped_zone_names() {
+        // Mirrors get_zone_groups: decode the SOAP body once, then parse the
+        // attributes of the resulting ZoneGroupState document. Before
+        // get_xml_attr unescaped attribute values these came back raw, as
+        // "Tom&apos;s Office".
+        let state = extract_xml_text(ZONE_GROUP_STATE_SOAP_RESPONSE, "ZoneGroupState")
+            .expect("ZoneGroupState element");
+        let groups = parse_zone_group_xml(&state);
+
+        assert_eq!(groups.len(), 3);
+        assert_eq!(groups[0].name, "Tom's Office");
+        assert_eq!(groups[0].members[0].zone_name, "Tom's Office");
+        assert_eq!(groups[1].name, "Kitchen & Bar");
+        assert_eq!(groups[1].members[0].zone_name, "Kitchen & Bar");
+        assert_eq!(groups[2].name, "Tom's \"Den\"");
+        assert_eq!(groups[2].members[0].zone_name, "Tom's \"Den\"");
     }
 }

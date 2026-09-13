@@ -36,20 +36,22 @@ where
         return events;
     };
 
-    let unescaped = html_escape::decode_html_entities(&last_change);
-    let attrs = extract_empty_val_attrs(&unescaped, &["TransportState", "CurrentTrackURI"]);
+    // One decode per layer: `extract_xml_text` decoded the LastChange text and
+    // `extract_empty_val_attrs` decodes each `val` attribute. Decoding again
+    // here would splice the escaped DIDL-Lite of CurrentTrackMetaData into the
+    // document as raw markup, corrupting that attribute (and any later value
+    // whose decoded text contains a quote). The two fields read below happen
+    // to survive it today, so this is correctness-by-construction rather than
+    // a fix for an observed symptom on this path.
+    let attrs = extract_empty_val_attrs(&last_change, &["TransportState", "CurrentTrackURI"]);
 
     let transport_state: Option<TransportState> =
         attrs.get("TransportState").and_then(|val| val.parse().ok());
 
-    let current_uri: Option<String> = attrs.get("CurrentTrackURI").and_then(|val| {
-        let decoded = html_escape::decode_html_entities(val).to_string();
-        if decoded.is_empty() {
-            None
-        } else {
-            Some(decoded)
-        }
-    });
+    let current_uri: Option<String> = attrs
+        .get("CurrentTrackURI")
+        .filter(|val| !val.is_empty())
+        .cloned();
 
     // Emit transport state event
     if let Some(state) = transport_state {
@@ -145,13 +147,14 @@ pub fn parse_rendering_control_events(ip: &str, body: &str) -> Vec<SonosEvent> {
         return events;
     };
 
-    let unescaped = html_escape::decode_html_entities(&last_change);
-
     // Extract Volume and Mute from the InstanceID element, Master channel only.
     // Format: <Volume channel="Master" val="42"/>
     //         <Mute channel="Master" val="0"/>
     // Stereo pairs also send LF/RF channels which we ignore.
-    let attrs = extract_master_channel_attrs(&unescaped, &["Volume", "Mute"]);
+    // Already decoded once by `extract_xml_text`; one decode per layer, with
+    // `get_xml_attr` decoding each `val`. (Volume and Mute are numeric, so a
+    // second decode here was harmless - it is removed for consistency.)
+    let attrs = extract_master_channel_attrs(&last_change, &["Volume", "Mute"]);
 
     let volume: Option<u8> = attrs
         .get("Volume")
@@ -195,8 +198,12 @@ pub fn parse_zone_topology_events(body: &str) -> Vec<SonosEvent> {
         return vec![];
     };
 
-    let unescaped = html_escape::decode_html_entities(&zone_state);
-    let groups = parse_zone_group_xml(&unescaped);
+    // Already decoded once by `extract_xml_text`; the zone names inside stay
+    // escaped until `parse_zone_group_xml` reads them as attributes and
+    // `get_xml_attr` decodes them. Decoding again here truncates any room name
+    // whose decoded text contains a quote - see
+    // `parse_zone_topology_events_decodes_zone_names_like_soap_path`.
+    let groups = parse_zone_group_xml(&zone_state);
 
     if groups.is_empty() {
         return vec![];
@@ -270,9 +277,12 @@ mod tests {
     // ─────────────────────────────────────────────────────────────────────────────
 
     use super::super::test_fixtures::{
-        RENDERING_CONTROL_NOTIFY_FULL, RENDERING_CONTROL_NOTIFY_MUTED,
-        RENDERING_CONTROL_NOTIFY_VOLUME_ONLY,
+        AV_TRANSPORT_NOTIFY_WITH_METADATA, AV_TRANSPORT_STREAM_URI, RENDERING_CONTROL_NOTIFY_FULL,
+        RENDERING_CONTROL_NOTIFY_MUTED, RENDERING_CONTROL_NOTIFY_VOLUME_ONLY,
+        ZONE_GROUP_STATE_SOAP_RESPONSE, ZONE_GROUP_TOPOLOGY_NOTIFY,
     };
+    use crate::sonos::types::ZoneGroup;
+    use crate::sonos::utils::extract_xml_text;
 
     #[test]
     fn parse_rendering_control_events_emits_volume_and_mute() {
@@ -471,5 +481,176 @@ mod tests {
         let events = parse_rendering_control_events("192.168.1.100", body);
         // No Master channel = no events
         assert!(events.is_empty());
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────────
+    // Entity decoding tests (AVTransport + ZoneGroupTopology)
+    // ─────────────────────────────────────────────────────────────────────────────
+
+    /// Flattens groups into comparable tuples (`ZoneGroup` has no `PartialEq`).
+    fn group_summary(groups: &[ZoneGroup]) -> Vec<(String, String, String, Vec<String>)> {
+        groups
+            .iter()
+            .map(|g| {
+                (
+                    g.id.clone(),
+                    g.name.clone(),
+                    g.coordinator_uuid.clone(),
+                    g.members.iter().map(|m| m.zone_name.clone()).collect(),
+                )
+            })
+            .collect()
+    }
+
+    #[test]
+    fn parse_av_transport_events_handles_didl_metadata() {
+        let events = parse_av_transport_events(
+            "192.168.1.50",
+            AV_TRANSPORT_NOTIFY_WITH_METADATA,
+            None::<fn(&str) -> Option<String>>,
+        );
+
+        assert_eq!(events.len(), 1);
+        match &events[0] {
+            SonosEvent::TransportState {
+                speaker_ip,
+                state,
+                current_uri,
+                ..
+            } => {
+                assert_eq!(speaker_ip, "192.168.1.50");
+                assert_eq!(*state, TransportState::Playing);
+                // The URI is escaped once inside the LastChange document, so it
+                // must come back decoded exactly once.
+                assert_eq!(current_uri.as_deref(), Some(AV_TRANSPORT_STREAM_URI));
+            }
+            _ => panic!("Expected TransportState event"),
+        }
+    }
+
+    #[test]
+    fn av_transport_last_change_parses_fields_after_track_metadata() {
+        // The NOTIFY body is decoded exactly once, so the DIDL-Lite inside
+        // CurrentTrackMetaData stays escaped and every state variable that
+        // follows it parses normally.
+        let last_change = extract_xml_text(AV_TRANSPORT_NOTIFY_WITH_METADATA, "LastChange")
+            .expect("LastChange element");
+        let attrs = extract_empty_val_attrs(
+            &last_change,
+            &[
+                "TransportState",
+                "CurrentTrackURI",
+                "AVTransportURI",
+                "CurrentTransportActions",
+            ],
+        );
+
+        assert_eq!(
+            attrs.get("TransportState").map(String::as_str),
+            Some("PLAYING")
+        );
+        assert_eq!(
+            attrs.get("CurrentTrackURI").map(String::as_str),
+            Some(AV_TRANSPORT_STREAM_URI)
+        );
+        // Both of these follow CurrentTrackMetaData in the payload.
+        assert_eq!(
+            attrs.get("AVTransportURI").map(String::as_str),
+            Some(AV_TRANSPORT_STREAM_URI)
+        );
+        assert_eq!(
+            attrs.get("CurrentTransportActions").map(String::as_str),
+            Some("Set, Play, Stop, Pause, Seek, X_DLNA_SeekTime, X_DLNA_SeekTrackNr")
+        );
+    }
+
+    #[test]
+    fn av_transport_track_metadata_decodes_to_usable_didl() {
+        let last_change = extract_xml_text(AV_TRANSPORT_NOTIFY_WITH_METADATA, "LastChange")
+            .expect("LastChange element");
+        let attrs = extract_empty_val_attrs(&last_change, &["CurrentTrackMetaData"]);
+        let didl = attrs
+            .get("CurrentTrackMetaData")
+            .expect("CurrentTrackMetaData val");
+
+        // One decode per layer leaves a well-formed DIDL-Lite document.
+        assert!(didl.starts_with("<DIDL-Lite "), "not DIDL-Lite: {didl}");
+        assert!(
+            didl.ends_with("</DIDL-Lite>"),
+            "truncated DIDL-Lite: {didl}"
+        );
+        assert_eq!(
+            extract_xml_text(didl, "streamContent").as_deref(),
+            Some("Tom's \"Work\" Tab")
+        );
+        assert_eq!(
+            extract_xml_text(didl, "res").as_deref(),
+            Some(AV_TRANSPORT_STREAM_URI)
+        );
+    }
+
+    /// Records exactly what a second decode of the AVTransport `LastChange`
+    /// does, so the scope of that change is not overstated.
+    ///
+    /// This is a characterisation test, **not** a guard on the production line:
+    /// quick-xml resynchronises after the mangled `CurrentTrackMetaData`, so
+    /// the two variables `parse_av_transport_events` actually reads
+    /// (`TransportState`, `CurrentTrackURI`) come back identical either way,
+    /// and re-inserting the decode there would not fail any test. The damage is
+    /// confined to values whose decoded text contains a quote, which today is
+    /// only the DIDL metadata this path does not read. Reading any metadata
+    /// field here later would make the double decode fatal - the reason the
+    /// extra decode is gone rather than merely unused.
+    #[test]
+    fn double_decoding_av_transport_last_change_corrupts_only_the_didl() {
+        let once = extract_xml_text(AV_TRANSPORT_NOTIFY_WITH_METADATA, "LastChange")
+            .expect("LastChange element");
+        let twice = html_escape::decode_html_entities(&once).to_string();
+
+        let read_by_production = ["TransportState", "CurrentTrackURI"];
+        assert_eq!(
+            extract_empty_val_attrs(&once, &read_by_production),
+            extract_empty_val_attrs(&twice, &read_by_production),
+            "the fields this path reads are insensitive to the extra decode"
+        );
+
+        // The metadata is not insensitive: the `"` in the track title ends the
+        // `val` attribute as soon as the DIDL is spliced in as raw markup.
+        let good = extract_empty_val_attrs(&once, &["CurrentTrackMetaData"]);
+        let mangled = extract_empty_val_attrs(&twice, &["CurrentTrackMetaData"]);
+        assert!(good["CurrentTrackMetaData"].ends_with("</DIDL-Lite>"));
+        assert_eq!(
+            mangled.get("CurrentTrackMetaData").map(String::as_str),
+            Some("<DIDL-Lite xmlns:dc=")
+        );
+    }
+
+    #[test]
+    fn parse_zone_topology_events_decodes_zone_names_like_soap_path() {
+        let events = parse_zone_topology_events(ZONE_GROUP_TOPOLOGY_NOTIFY);
+        assert_eq!(events.len(), 1);
+
+        let soap_state = extract_xml_text(ZONE_GROUP_STATE_SOAP_RESPONSE, "ZoneGroupState")
+            .expect("ZoneGroupState element");
+        let soap_groups = parse_zone_group_xml(&soap_state);
+
+        match &events[0] {
+            SonosEvent::ZoneGroupsUpdated { groups, .. } => {
+                assert_eq!(groups.len(), 3);
+                assert_eq!(groups[0].name, "Tom's Office");
+                assert_eq!(groups[0].members[0].zone_name, "Tom's Office");
+                assert_eq!(groups[1].name, "Kitchen & Bar");
+                // Regression guard for the second decode removed from this
+                // function: `'` and `&` survive a double decode by luck, but a
+                // quoted room name truncates to `Tom's ` because the decoded
+                // `"` ends the ZoneName attribute early.
+                assert_eq!(groups[2].name, "Tom's \"Den\"");
+                assert_eq!(groups[2].members[0].zone_name, "Tom's \"Den\"");
+                // GENA and SOAP carry the same document, so they must decode
+                // to exactly the same groups.
+                assert_eq!(group_summary(groups), group_summary(&soap_groups));
+            }
+            _ => panic!("Expected ZoneGroupsUpdated event"),
+        }
     }
 }
