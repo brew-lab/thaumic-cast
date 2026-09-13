@@ -26,14 +26,17 @@ use crate::stream::{AudioCodec, AudioFormat, StreamMetadata};
 /// # Arguments
 /// * `client` - The HTTP client to use for the request
 /// * `ip` - IP address of the Sonos speaker (coordinator for grouped speakers)
+/// * `port` - TCP port the speaker's UPnP services listen on (1400 on real hardware)
 /// * `uri` - The audio stream URL to play
 /// * `codec` - The audio codec for proper URI formatting and DIDL-Lite metadata
 /// * `audio_format` - Audio format configuration (sample rate, channels, bit depth)
 /// * `metadata` - Optional stream metadata for display (title, artist, source)
 /// * `artwork_url` - URL to the static app icon for album art display
+#[allow(clippy::too_many_arguments)]
 pub async fn play_uri(
     client: &Client,
     ip: &str,
+    port: u16,
     uri: &str,
     codec: AudioCodec,
     audio_format: &AudioFormat,
@@ -55,6 +58,7 @@ pub async fn play_uri(
         soap_request(
             client,
             ip,
+            port,
             SonosService::AVTransport,
             "SetAVTransportURI",
             &set_uri_args,
@@ -66,7 +70,14 @@ pub async fn play_uri(
 
     let play_args = [("InstanceID", "0"), ("Speed", "1")];
     with_retry("Play", || {
-        soap_request(client, ip, SonosService::AVTransport, "Play", &play_args)
+        soap_request(
+            client,
+            ip,
+            port,
+            SonosService::AVTransport,
+            "Play",
+            &play_args,
+        )
     })
     .await?;
 
@@ -83,8 +94,14 @@ pub async fn play_uri(
 /// # Arguments
 /// * `client` - The HTTP client to use for the request
 /// * `ip` - IP address of the Sonos speaker (coordinator for grouped speakers)
+/// * `port` - TCP port the speaker's UPnP services listen on (1400 on real hardware)
 /// * `item` - The item to queue
-pub async fn set_next_uri(client: &Client, ip: &str, item: &NextItem<'_>) -> SoapResult<()> {
+pub async fn set_next_uri(
+    client: &Client,
+    ip: &str,
+    port: u16,
+    item: &NextItem<'_>,
+) -> SoapResult<()> {
     let sonos_uri = build_sonos_stream_uri(item.uri, item.codec);
     let didl_metadata = format_didl_lite_as(
         item.uri,
@@ -110,6 +127,7 @@ pub async fn set_next_uri(client: &Client, ip: &str, item: &NextItem<'_>) -> Soa
         soap_request(
             client,
             ip,
+            port,
             SonosService::AVTransport,
             "SetNextAVTransportURI",
             &args,
@@ -127,12 +145,20 @@ pub async fn set_next_uri(client: &Client, ip: &str, item: &NextItem<'_>) -> Soa
 /// # Arguments
 /// * `client` - The HTTP client to use for the request
 /// * `ip` - IP address of the Sonos speaker (coordinator for grouped speakers)
-pub async fn play(client: &Client, ip: &str) -> SoapResult<()> {
+/// * `port` - TCP port the speaker's UPnP services listen on (1400 on real hardware)
+pub async fn play(client: &Client, ip: &str, port: u16) -> SoapResult<()> {
     log::info!("[Sonos] Sending Play command to {}", ip);
 
     let play_args = [("InstanceID", "0"), ("Speed", "1")];
     with_retry("Play", || {
-        soap_request(client, ip, SonosService::AVTransport, "Play", &play_args)
+        soap_request(
+            client,
+            ip,
+            port,
+            SonosService::AVTransport,
+            "Play",
+            &play_args,
+        )
     })
     .await?;
 
@@ -145,6 +171,7 @@ pub async fn play(client: &Client, ip: &str) -> SoapResult<()> {
 /// # Arguments
 /// * `client` - The HTTP client to use for the request
 /// * `ip` - IP address of the Sonos speaker (coordinator for grouped speakers)
+/// * `port` - TCP port the speaker's UPnP services listen on (1400 on real hardware)
 ///
 /// # Note
 /// This function handles the "already stopped" case gracefully by ignoring
@@ -152,10 +179,11 @@ pub async fn play(client: &Client, ip: &str) -> SoapResult<()> {
 ///
 /// Unlike `play_uri`/`play`, this intentionally skips `with_retry` — stop is
 /// best-effort cleanup, and retrying would delay teardown for unresponsive speakers.
-pub async fn stop(client: &Client, ip: &str) -> SoapResult<()> {
+pub async fn stop(client: &Client, ip: &str, port: u16) -> SoapResult<()> {
     let result = soap_request(
         client,
         ip,
+        port,
         SonosService::AVTransport,
         "Stop",
         &[("InstanceID", "0")],
@@ -185,12 +213,18 @@ pub async fn stop(client: &Client, ip: &str) -> SoapResult<()> {
 /// # Arguments
 /// * `client` - The HTTP client to use for the request
 /// * `ip` - IP address of the Sonos speaker (coordinator for grouped speakers)
+/// * `port` - TCP port the speaker's UPnP services listen on (1400 on real hardware)
 /// * `coordinator_uuid` - The speaker's RINCON_xxx UUID for building the queue URI
 ///
 /// # Note
 /// Like `stop`, this intentionally skips `with_retry` — it's a post-stop cleanup
 /// step and retrying would delay teardown for unresponsive speakers.
-pub async fn switch_to_queue(client: &Client, ip: &str, coordinator_uuid: &str) -> SoapResult<()> {
+pub async fn switch_to_queue(
+    client: &Client,
+    ip: &str,
+    port: u16,
+    coordinator_uuid: &str,
+) -> SoapResult<()> {
     let queue_uri = format!("x-rincon-queue:{}#0", coordinator_uuid);
 
     log::info!(
@@ -202,6 +236,7 @@ pub async fn switch_to_queue(client: &Client, ip: &str, coordinator_uuid: &str) 
     soap_request(
         client,
         ip,
+        port,
         SonosService::AVTransport,
         "SetAVTransportURI",
         &[
@@ -226,6 +261,7 @@ pub async fn switch_to_queue(client: &Client, ip: &str, coordinator_uuid: &str) 
 /// # Arguments
 /// * `client` - The HTTP client to use for the request
 /// * `ip` - IP address of the Sonos speaker (coordinator for grouped speakers)
+/// * `port` - TCP port the speaker's UPnP services listen on (1400 on real hardware)
 ///
 /// # Returns
 /// Position information including track number, duration, URI, and elapsed time.
@@ -236,10 +272,11 @@ pub async fn switch_to_queue(client: &Client, ip: &str, coordinator_uuid: &str) 
 ///
 /// This is polled continuously for the length of a cast, so its per-call log
 /// lines are at `debug` and it gives up after [`POSITION_POLL_TIMEOUT_MS`].
-pub async fn get_position_info(client: &Client, ip: &str) -> SoapResult<PositionInfo> {
+pub async fn get_position_info(client: &Client, ip: &str, port: u16) -> SoapResult<PositionInfo> {
     let response = soap_request_with(
         client,
         ip,
+        port,
         SonosService::AVTransport,
         "GetPositionInfo",
         &[("InstanceID", "0")],
@@ -268,10 +305,16 @@ pub async fn get_position_info(client: &Client, ip: &str) -> SoapResult<Position
 /// # Arguments
 /// * `client` - The HTTP client to use for the request
 /// * `ip` - IP address of the Sonos speaker (coordinator for grouped speakers)
-pub async fn get_transport_info(client: &Client, ip: &str) -> SoapResult<TransportState> {
+/// * `port` - TCP port the speaker's UPnP services listen on (1400 on real hardware)
+pub async fn get_transport_info(
+    client: &Client,
+    ip: &str,
+    port: u16,
+) -> SoapResult<TransportState> {
     let response = soap_request_with(
         client,
         ip,
+        port,
         SonosService::AVTransport,
         "GetTransportInfo",
         &[("InstanceID", "0")],

@@ -329,7 +329,7 @@ pub fn build_sonos_stream_uri(base_uri: &str, codec: AudioCodec) -> String {
     }
 }
 
-/// Builds a Sonos speaker URL for the given IP and endpoint.
+/// Builds a Sonos speaker URL for the given IP and endpoint on the standard port.
 ///
 /// # Arguments
 /// * `ip` - The speaker's IP address
@@ -338,7 +338,23 @@ pub fn build_sonos_stream_uri(base_uri: &str, codec: AudioCodec) -> String {
 /// # Returns
 /// A fully-formed HTTP URL string
 pub fn build_sonos_url(ip: &str, endpoint: &str) -> String {
-    format!("http://{}:{}{}", ip, SONOS_PORT, endpoint)
+    build_sonos_url_with_port(ip, SONOS_PORT, endpoint)
+}
+
+/// Builds a Sonos speaker URL for the given IP, port and endpoint.
+///
+/// Real speakers listen on [`SONOS_PORT`]; the port is a parameter so a test
+/// double bound to an ephemeral port can stand in for one.
+///
+/// # Arguments
+/// * `ip` - The speaker's IP address
+/// * `port` - TCP port the speaker's UPnP services listen on
+/// * `endpoint` - The UPnP endpoint path (e.g., "/MediaRenderer/AVTransport/Control")
+///
+/// # Returns
+/// A fully-formed HTTP URL string
+pub fn build_sonos_url_with_port(ip: &str, port: u16, endpoint: &str) -> String {
+    format!("http://{}:{}{}", ip, port, endpoint)
 }
 
 /// Gets an attribute value from an XML element, decoded exactly once.

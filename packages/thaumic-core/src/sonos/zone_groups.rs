@@ -294,14 +294,20 @@ fn channels_for(map: &str, uuid: &str) -> Option<String> {
 /// # Arguments
 /// * `client` - The HTTP client to use for the request
 /// * `ip` - IP address of any Sonos speaker on the network
+/// * `port` - TCP port the speaker's UPnP services listen on (1400 on real hardware)
 ///
 /// # Returns
 /// The groups and the household read from the same answer; both empty when
 /// the answer carries no `ZoneGroupState`.
-pub async fn get_zone_group_state(client: &Client, ip: &str) -> SoapResult<ZoneGroupSnapshot> {
+pub async fn get_zone_group_state(
+    client: &Client,
+    ip: &str,
+    port: u16,
+) -> SoapResult<ZoneGroupSnapshot> {
     let response = soap_request(
         client,
         ip,
+        port,
         SonosService::ZoneGroupTopology,
         "GetZoneGroupState",
         &[],
