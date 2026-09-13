@@ -31,6 +31,8 @@ use crate::stream::{AudioCodec, AudioFormat, StreamMetadata};
 struct StreamGuard {
     stream_id: String,
     stream_coordinator: Arc<StreamCoordinator>,
+    /// Cleared by `disarm()` once the stream has been removed gracefully.
+    armed: bool,
 }
 
 impl StreamGuard {
@@ -38,6 +40,7 @@ impl StreamGuard {
         Self {
             stream_id,
             stream_coordinator,
+            armed: true,
         }
     }
 
@@ -45,12 +48,20 @@ impl StreamGuard {
     fn id(&self) -> &str {
         &self.stream_id
     }
+
+    /// Consumes the guard after the stream was already removed gracefully,
+    /// so dropping it does not remove the stream (and emit `Ended`) again.
+    fn disarm(mut self) {
+        self.armed = false;
+    }
 }
 
 impl Drop for StreamGuard {
     fn drop(&mut self) {
-        self.stream_coordinator.remove_stream(&self.stream_id);
-        log::info!("[WS] Stream cleanup: {}", self.stream_id);
+        if self.armed {
+            self.stream_coordinator.remove_stream(&self.stream_id);
+            log::info!("[WS] Stream cleanup: {}", self.stream_id);
+        }
     }
 }
 
@@ -690,14 +701,27 @@ async fn handle_start_browser_capture(
         ..Default::default()
     };
 
-    match state.stream_coordinator.start_capture_stream(
-        source,
-        stream_config.codec,
-        stream_config.audio_format,
-        stream_config.jitter_buffer_ms,
-        stream_config.frame_duration_ms,
-        Some(metadata),
-    ) {
+    // Only the buffering parameters apply: the wire format (PCM at the
+    // source's negotiated rate and channel count) is decided by the source.
+    //
+    // Starting the source blocks until the platform has negotiated a format
+    // (WASAPI activation and initialization can take seconds when an endpoint
+    // misbehaves), so run it on the blocking pool rather than a runtime worker.
+    let coordinator = Arc::clone(&state.stream_coordinator);
+    let jitter_buffer_ms = stream_config.jitter_buffer_ms;
+    let frame_duration_ms = stream_config.frame_duration_ms;
+    let started = tokio::task::spawn_blocking(move || {
+        coordinator.start_capture_stream(
+            source,
+            jitter_buffer_ms,
+            frame_duration_ms,
+            Some(metadata),
+        )
+    })
+    .await
+    .unwrap_or_else(|e| Err(format!("Failed to start capture: {}", e)));
+
+    match started {
         Ok(mut session) => {
             let stream_id = session.stream_id.clone();
             let ready = Arc::clone(&session.ready_notify);
@@ -754,8 +778,11 @@ async fn handle_start_browser_capture(
     }
 }
 
-/// Handles a STOP_BROWSER_CAPTURE message: stops the capture and cleans up.
+/// Handles a STOP_BROWSER_CAPTURE message: stops the capture, then removes
+/// the stream with the same graceful speaker cleanup as a disconnect (SOAP
+/// Stop, sync slave restoration, `PlaybackStopped`).
 async fn handle_stop_browser_capture(
+    state: &AppState,
     sender: &mut futures::stream::SplitSink<WebSocket, Message>,
     stream_guard: &mut Option<StreamGuard>,
     capture: &mut BrowserCaptureState,
@@ -767,8 +794,14 @@ async fn handle_stop_browser_capture(
         );
         capture.error_rx = None;
         session.handle.stop_and_wait();
-        // StreamGuard drop will clean up the stream
-        stream_guard.take();
+        if let Some(guard) = stream_guard.take() {
+            state.latency_monitor.stop_stream(guard.id()).await;
+            state
+                .stream_coordinator
+                .remove_stream_async(guard.id())
+                .await;
+            guard.disarm();
+        }
     } else {
         let msg = WsOutgoing::Error {
             message: "No active browser capture to stop".into(),
@@ -1053,6 +1086,7 @@ async fn handle_ws(socket: WebSocket, state: AppState) {
                             }
                             Ok(WsIncoming::StopBrowserCapture) => {
                                 handle_stop_browser_capture(
+                                    &state,
                                     &mut sender,
                                     &mut stream_guard,
                                     &mut capture,
@@ -1142,9 +1176,9 @@ async fn handle_ws(socket: WebSocket, state: AppState) {
         session.handle.stop_and_wait();
     }
 
-    // Graceful cleanup: stop speakers before stream removal.
-    // StreamGuard::drop() will be a no-op since remove_stream is idempotent.
-    if let Some(ref guard) = stream_guard {
+    // Graceful cleanup: stop speakers before stream removal, then disarm the
+    // guard so its drop does not remove the stream (and emit `Ended`) again.
+    if let Some(guard) = stream_guard.take() {
         // Stop latency monitoring for this stream
         state.latency_monitor.stop_stream(guard.id()).await;
 
@@ -1152,6 +1186,7 @@ async fn handle_ws(socket: WebSocket, state: AppState) {
             .stream_coordinator
             .remove_stream_async(guard.id())
             .await;
+        guard.disarm();
     }
 
     // StreamGuard and ConnectionGuard Drop impls handle any remaining cleanup

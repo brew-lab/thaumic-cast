@@ -93,6 +93,9 @@ pub struct WasapiSource {
     pid: u32,
     buffer_ms: u32,
     started: AtomicBool,
+    /// Format negotiated with the audio engine, set by `start()` once the
+    /// capture thread has initialized its client.
+    negotiated: Mutex<Option<AudioFormat>>,
 }
 
 impl WasapiSource {
@@ -102,6 +105,7 @@ impl WasapiSource {
             pid,
             buffer_ms: 10,
             started: AtomicBool::new(false),
+            negotiated: Mutex::new(None),
         }
     }
 
@@ -118,7 +122,8 @@ impl AudioSource for WasapiSource {
             return Err(CaptureError::AlreadyStarted);
         }
 
-        let (error_tx, error_rx) = tokio::sync::mpsc::channel(8);
+        let (error_tx, mut error_rx) = tokio::sync::mpsc::channel(8);
+        let (format_tx, format_rx) = std::sync::mpsc::channel::<AudioFormat>();
         let cancel = CancellationToken::new();
         let cancel_clone = cancel.clone();
         let pid = self.pid;
@@ -127,9 +132,29 @@ impl AudioSource for WasapiSource {
         let join_handle = std::thread::Builder::new()
             .name("wasapi-capture".to_string())
             .spawn(move || {
-                capture_thread(pid, buffer_ms, sink, cancel_clone, error_tx);
+                capture_thread(pid, buffer_ms, sink, cancel_clone, error_tx, format_tx);
             })
             .map_err(|e| CaptureError::ThreadSpawn(e.to_string()))?;
+
+        // Wait for the capture thread to negotiate a format with the audio
+        // engine so `format()` reports what will actually be delivered. Every
+        // exit path of the thread drops the sender, and activation waits are
+        // bounded, so this cannot block indefinitely.
+        match format_rx.recv() {
+            Ok(format) => {
+                *self.negotiated.lock().unwrap_or_else(|e| e.into_inner()) = Some(format);
+            }
+            Err(_) => {
+                // The thread exited before initializing; surface its error.
+                cancel.cancel();
+                let _ = join_handle.join();
+                return Err(error_rx.try_recv().unwrap_or_else(|_| {
+                    CaptureError::Platform(
+                        "Capture thread exited before negotiating a format".into(),
+                    )
+                }));
+            }
+        }
 
         Ok(CaptureHandle::new(error_rx, cancel, join_handle))
     }
@@ -138,12 +163,17 @@ impl AudioSource for WasapiSource {
         "WASAPI Process Loopback"
     }
 
+    /// The negotiated format once `start()` has returned; the preferred
+    /// format (48 kHz stereo Float32) before that.
     fn format(&self) -> AudioFormat {
-        AudioFormat {
-            sample_rate: 48000,
-            channels: 2,
-            bits_per_sample: 32,
-        }
+        self.negotiated
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .unwrap_or(AudioFormat {
+                sample_rate: 48000,
+                channels: 2,
+                bits_per_sample: 32,
+            })
     }
 }
 
@@ -155,6 +185,7 @@ fn capture_thread(
     sink: Arc<dyn AudioSink>,
     cancel: CancellationToken,
     error_tx: tokio::sync::mpsc::Sender<CaptureError>,
+    format_tx: std::sync::mpsc::Sender<AudioFormat>,
 ) {
     // 1. COM init
     if let Err(e) = unsafe { CoInitializeEx(None, COINIT_MULTITHREADED) }.ok() {
@@ -163,7 +194,7 @@ fn capture_thread(
         return;
     }
 
-    let result = capture_thread_inner(pid, buffer_ms, sink, &cancel, &error_tx);
+    let result = capture_thread_inner(pid, buffer_ms, sink, &cancel, &error_tx, format_tx);
 
     // COM cleanup (always runs)
     unsafe { CoUninitialize() };
@@ -180,6 +211,7 @@ fn capture_thread_inner(
     sink: Arc<dyn AudioSink>,
     cancel: &CancellationToken,
     _error_tx: &tokio::sync::mpsc::Sender<CaptureError>,
+    format_tx: std::sync::mpsc::Sender<AudioFormat>,
 ) -> Result<(), CaptureError> {
     // 2. Activate process loopback
     let audio_client = activate_process_loopback(pid)
@@ -198,6 +230,13 @@ fn capture_thread_inner(
         buffer_ms,
         use_event
     );
+
+    // Report the negotiated format to `start()`, which blocks on it.
+    let _ = format_tx.send(AudioFormat {
+        sample_rate,
+        channels,
+        bits_per_sample,
+    });
 
     // Create capture event if using event-driven mode
     let capture_event = if use_event {
