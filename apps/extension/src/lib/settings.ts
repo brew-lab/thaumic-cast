@@ -12,6 +12,7 @@ import {
   FRAME_DURATION_MS_DEFAULT,
   FrameDurationMsSchema,
   isValidBitrateForCodec,
+  isValidBitDepthForCodec,
   getDefaultBitrate,
 } from '@thaumic-cast/protocol';
 import { createLogger } from '@thaumic-cast/shared';
@@ -87,10 +88,12 @@ async function markMigrationComplete(): Promise<void> {
 async function ensureMigrationComplete(): Promise<void> {
   if (await isMigrationComplete()) return;
 
-  // Migrate both settings and onboarding state
+  // Migrate both settings and onboarding state.
+  // Settings are validated per field so a single stale value (e.g. a bitrate
+  // literal that was removed from the protocol) does not discard the whole blob.
   await migrateFromSyncStorage(
     EXTENSION_SETTINGS_KEY,
-    ExtensionSettingsSchema,
+    LenientExtensionSettingsSchema,
     'extension settings',
   );
   await migrateFromSyncStorage(
@@ -225,9 +228,141 @@ const DEFAULT_EXTENSION_SETTINGS: ExtensionSettings = {
 };
 
 /**
+ * Detects whether the extension is running on Windows, the only platform that
+ * supports browser-wide (WASAPI) capture. Mirrors the check used by the options page.
+ * @returns True when the user agent reports Windows
+ */
+function isWindowsPlatform(): boolean {
+  return typeof navigator !== 'undefined' && navigator.userAgent.includes('Windows');
+}
+
+/**
+ * Validates each field of `data` against the matching field of `schema`,
+ * falling back to the value from `defaults` for any field that is missing or
+ * invalid. Only the invalid fields are discarded; everything else survives.
+ * Nested object schemas are validated field by field as well.
+ *
+ * @param schema - Object schema whose shape drives the per-field validation
+ * @param data - Raw stored object (unknown keys are dropped)
+ * @param defaults - Fallback values, one per schema key
+ * @param dropped - Accumulates dotted paths of fields that were replaced
+ * @param prefix - Dotted path of the current object, for logging
+ * @returns An object with exactly the schema's keys
+ */
+function parseFieldsLeniently<T extends Record<string, unknown>>(
+  schema: z.ZodObject<z.ZodRawShape>,
+  data: Record<string, unknown>,
+  defaults: T,
+  dropped: string[],
+  prefix = '',
+): T {
+  const out: Record<string, unknown> = {};
+
+  for (const [key, field] of Object.entries(schema.shape)) {
+    const fieldSchema = field as z.ZodType;
+    const raw = data[key];
+    const fallback = defaults[key];
+    const path = prefix ? `${prefix}.${key}` : key;
+
+    // Recurse into nested objects so a single bad nested field does not
+    // discard its siblings (e.g. customAudioSettings.bitrate). Nested objects
+    // are declared with `.default(...)`, so unwrap that before checking.
+    const innerSchema = fieldSchema instanceof z.ZodDefault ? fieldSchema.unwrap() : fieldSchema;
+    if (
+      innerSchema instanceof z.ZodObject &&
+      typeof raw === 'object' &&
+      raw !== null &&
+      !Array.isArray(raw) &&
+      typeof fallback === 'object' &&
+      fallback !== null
+    ) {
+      out[key] = parseFieldsLeniently(
+        innerSchema,
+        raw as Record<string, unknown>,
+        fallback as Record<string, unknown>,
+        dropped,
+        path,
+      );
+      continue;
+    }
+
+    const parsed = fieldSchema.safeParse(raw);
+    if (parsed.success) {
+      out[key] = parsed.data;
+      continue;
+    }
+
+    // Missing fields are expected when the schema gains a key; only report
+    // values that were actually present and rejected.
+    if (raw !== undefined) dropped.push(path);
+    out[key] = fallback;
+  }
+
+  return out as T;
+}
+
+/**
+ * Parses stored extension settings field by field, keeping every valid field
+ * and replacing only the invalid ones with their defaults. Also normalises
+ * values that are valid in isolation but unusable on this machine.
+ *
+ * @param data - Raw stored settings object
+ * @returns Fully populated extension settings
+ */
+function parseExtensionSettingsLeniently(data: Record<string, unknown>): ExtensionSettings {
+  const dropped: string[] = [];
+  const settings = parseFieldsLeniently(
+    ExtensionSettingsSchema,
+    data,
+    DEFAULT_EXTENSION_SETTINGS,
+    dropped,
+  );
+
+  if (dropped.length > 0) {
+    log.warn(`Discarded invalid stored extension settings fields: ${dropped.join(', ')}`);
+  }
+
+  // A dropped codec can leave it paired with a bitrate or bit depth it does not
+  // support; re-apply both invariants the options UI enforces on codec change.
+  const { codec, bitrate, bitsPerSample } = settings.customAudioSettings;
+  if (!isValidBitrateForCodec(codec, bitrate)) {
+    settings.customAudioSettings = {
+      ...settings.customAudioSettings,
+      bitrate: getDefaultBitrate(codec),
+    };
+  }
+  if (!isValidBitDepthForCodec(codec, bitsPerSample)) {
+    settings.customAudioSettings = {
+      ...settings.customAudioSettings,
+      bitsPerSample: DEFAULT_BITS_PER_SAMPLE,
+    };
+  }
+
+  // Browser-wide capture only exists on Windows. A profile can carry
+  // captureMode 'browser' from another platform (e.g. via sync), and the
+  // options page hides the toggle elsewhere, so fall back to tab capture.
+  if (settings.captureMode === 'browser' && !isWindowsPlatform()) {
+    log.warn("captureMode 'browser' is not supported on this platform, using 'tab'");
+    settings.captureMode = 'tab';
+  }
+
+  return settings;
+}
+
+/**
+ * Loading schema for extension settings: accepts any object and validates it
+ * per field via {@link parseExtensionSettingsLeniently}. Used wherever stored
+ * settings are read so one stale field cannot wipe the rest.
+ */
+const LenientExtensionSettingsSchema: z.ZodType<ExtensionSettings> = z
+  .record(z.string(), z.unknown())
+  .transform(parseExtensionSettingsLeniently);
+
+/**
  * Loads extension settings from chrome.storage.local.
  * Performs one-time migration from sync storage if needed.
- * Falls back to defaults if not set or invalid.
+ * Falls back to defaults if not set. Invalid fields are replaced with their
+ * defaults individually; valid fields are always preserved.
  * @returns The extension settings
  */
 export async function loadExtensionSettings(): Promise<ExtensionSettings> {
@@ -240,7 +375,7 @@ export async function loadExtensionSettings(): Promise<ExtensionSettings> {
 
     if (!data) return { ...DEFAULT_EXTENSION_SETTINGS };
 
-    const parsed = ExtensionSettingsSchema.safeParse(data);
+    const parsed = LenientExtensionSettingsSchema.safeParse(data);
     if (!parsed.success) {
       log.warn('Invalid stored extension settings, using defaults');
       return { ...DEFAULT_EXTENSION_SETTINGS };
