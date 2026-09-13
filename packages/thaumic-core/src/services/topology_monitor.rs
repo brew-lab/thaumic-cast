@@ -63,6 +63,20 @@ pub struct TopologyMonitorConfig {
     pub spawner: TokioSpawner,
 }
 
+/// Clamps a topology refresh interval to a period `tokio::time::interval` accepts.
+///
+/// A zero period makes `tokio::time::interval` panic, which under the release
+/// profile's `panic = "abort"` takes the whole process down, so a misconfigured
+/// interval is clamped (with a warning) instead of trusted.
+fn clamp_refresh_interval_secs(secs: u64) -> u64 {
+    if secs == 0 {
+        log::warn!("[TopologyMonitor] topology_refresh_interval_secs is 0; clamping to 1 second");
+        1
+    } else {
+        secs
+    }
+}
+
 /// Monitors Sonos network topology and manages GENA subscriptions.
 pub struct TopologyMonitor {
     /// Sonos client for discovery and topology operations.
@@ -109,6 +123,8 @@ impl TopologyMonitor {
         config: TopologyMonitorConfig,
         arbiter: Arc<SubscriptionArbiter>,
     ) -> Self {
+        let topology_refresh_interval_secs =
+            clamp_refresh_interval_secs(config.topology_refresh_interval_secs);
         Self {
             sonos,
             gena_manager,
@@ -116,7 +132,7 @@ impl TopologyMonitor {
             emitter,
             network_health: RwLock::new(NetworkHealthState::default()),
             speakers_discovered: AtomicBool::new(false),
-            topology_refresh_interval_secs: config.topology_refresh_interval_secs,
+            topology_refresh_interval_secs,
             network: config.network,
             refresh_notify: config.refresh_notify,
             cancel_token: CancellationToken::new(),
@@ -753,5 +769,21 @@ impl TopologyMonitor {
                 .unsubscribe_by_ip_and_service(&ip, SonosService::GroupRenderingControl)
                 .await;
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::clamp_refresh_interval_secs;
+
+    #[test]
+    fn zero_refresh_interval_is_clamped_to_one_second() {
+        assert_eq!(clamp_refresh_interval_secs(0), 1);
+    }
+
+    #[test]
+    fn valid_refresh_interval_is_unchanged() {
+        assert_eq!(clamp_refresh_interval_secs(1), 1);
+        assert_eq!(clamp_refresh_interval_secs(30), 30);
     }
 }

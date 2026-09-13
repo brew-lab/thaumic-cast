@@ -26,7 +26,14 @@ pub trait AudioSource: Send + Sync {
     /// Human-readable name for logging/UI.
     fn name(&self) -> &str;
 
-    /// Audio format this source produces (used for logging/diagnostics).
+    /// Audio format this source produces.
+    ///
+    /// Once `start()` has returned this MUST report the format actually
+    /// negotiated with the platform (sample rate and channel count): the
+    /// stream coordinator derives the wire format of the outgoing stream from
+    /// it, so a placeholder value here produces a stream header that does not
+    /// match the pushed audio. Before `start()` it may return a preferred
+    /// format.
     ///
     /// Note: the source delivers Float32 samples via `AudioSink::push_audio`.
     /// The bridge layer handles conversion to the pipeline's PCM16 format.

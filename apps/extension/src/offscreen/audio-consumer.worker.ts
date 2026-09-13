@@ -32,8 +32,7 @@ import {
   postToMain,
   alignDown,
   yieldMacrotask,
-  isWsBackpressured,
-  enqueueFrame,
+  sendOrEnqueue,
   flushFrameQueue,
   flushQueuedFrames,
   maybePostStats,
@@ -423,10 +422,16 @@ function handleUnderflowRamp(): void {
   // Mark frame as complete
   frameOffset = frameSizeSamples;
 
-  // Encode and send (skip backpressure check for underflow frame)
+  // Encode and send. Realtime mode skips the backpressure check for the
+  // underflow frame; quality mode goes through the queue so it stays ordered
+  // behind any frames still waiting to be flushed.
   const encoded = encoder.encode(frameBuffer);
   if (encoded) {
-    s.socket.send(encoded);
+    if (s.policy?.dropOnBackpressure) {
+      s.socket.send(encoded);
+    } else {
+      sendOrEnqueue(s, encoded);
+    }
   }
 
   // Reset for next frame
@@ -483,22 +488,13 @@ function flushFrameIfReady(): void {
 
   if (!encoded) return;
 
-  // WebSocket backpressure handling differs by mode
-  const wsBackpressured = isWsBackpressured(s);
-
-  if (wsBackpressured) {
-    if (s.policy.dropOnBackpressure) {
-      // Realtime mode: drop the encoded frame
-      droppedFrameCount++;
-    } else {
-      // Quality mode: queue the frame instead of blocking ring buffer drain
-      enqueueFrame(s, encoded);
-    }
-    return;
+  // WebSocket backpressure handling differs by mode:
+  // - Realtime mode: drop the encoded frame when backpressured
+  // - Quality mode: queue behind any older frames or when backpressured,
+  //   so frames are never sent out of order
+  if (!sendOrEnqueue(s, encoded)) {
+    droppedFrameCount++;
   }
-
-  // No backpressure: send directly
-  s.socket.send(encoded);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -770,6 +766,10 @@ async function consumeLoop(): Promise<void> {
  * Flushes any remaining samples, encoder buffer, and queued frames.
  */
 function flushRemaining(): void {
+  // Flush queued frames first (quality mode may have buffered frames during
+  // backpressure) so the partial frame and encoder tail stay in order
+  flushQueuedFrames(s);
+
   // Flush partial frame
   if (frameBuffer && frameOffset > 0 && encoder && s.socket?.readyState === WebSocket.OPEN) {
     // subarray() returns a view, no copy needed
@@ -787,9 +787,6 @@ function flushRemaining(): void {
       s.socket.send(final);
     }
   }
-
-  // Flush queued frames (quality mode may have buffered frames during backpressure)
-  flushQueuedFrames(s);
 }
 
 /**

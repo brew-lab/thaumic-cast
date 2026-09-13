@@ -8,7 +8,7 @@
 //! - Broadcast stream lifecycle events to WebSocket clients
 
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 use bytes::Bytes;
 use parking_lot::Mutex;
@@ -195,6 +195,36 @@ impl AudioSink for StreamSinkBridge {
         }
     }
 }
+
+/// Sink that forwards audio to an inner sink once one is bound and drops it
+/// until then. Lets a source start (and negotiate its format with the
+/// platform) before the stream that will receive its audio exists.
+#[derive(Default)]
+struct LateBoundSink {
+    inner: OnceLock<Arc<dyn AudioSink>>,
+}
+
+impl LateBoundSink {
+    /// Binds the sink that receives all further audio. Only the first bind takes effect.
+    fn bind(&self, sink: Arc<dyn AudioSink>) {
+        let _ = self.inner.set(sink);
+    }
+}
+
+impl AudioSink for LateBoundSink {
+    fn push_audio(&self, data: &[f32], frames: u32, channels: u16, flags: BufferFlags) {
+        if let Some(sink) = self.inner.get() {
+            sink.push_audio(data, frames, channels, flags);
+        }
+    }
+}
+
+/// Packet duration delivered by capture sources, in milliseconds.
+///
+/// WASAPI shared-mode loopback delivers one engine period (10 ms) per packet
+/// regardless of the client's preset, so a capture stream's cadence must run
+/// at this rate or the jitter buffer fills faster than it drains.
+const CAPTURE_PACKET_DURATION_MS: u32 = 10;
 
 /// Active browser capture session returned by [`StreamCoordinator::start_capture_stream`].
 pub struct CaptureStreamSession {
@@ -474,22 +504,62 @@ impl StreamCoordinator {
     /// via the [`StreamSinkBridge`], which converts Float32 → PCM16 and
     /// calls [`push_frame`].
     ///
-    /// Stream parameters come from the client's encoder config (same as tab capture),
-    /// with codec forced to PCM (WASAPI delivers raw audio).
+    /// The wire format is dictated by the source, not the client: the codec
+    /// is always PCM and the sample rate and channel count come from the
+    /// format the source negotiated (so the source is started first, before
+    /// the stream exists). Only `jitter_buffer_ms` comes from the client;
+    /// `frame_duration_ms` must match the source's packet duration and is
+    /// overridden with a warning when it does not.
     ///
     /// Returns a [`CaptureStreamSession`] with the stream ID, capture handle,
     /// and a `Notify` that fires when the first audio frame arrives.
     pub fn start_capture_stream(
         self: &Arc<Self>,
         source: Arc<dyn AudioSource>,
-        codec: AudioCodec,
-        audio_format: AudioFormat,
         jitter_buffer_ms: u64,
         frame_duration_ms: u32,
         metadata: Option<StreamMetadata>,
     ) -> Result<CaptureStreamSession, String> {
-        let stream_id =
-            self.create_stream(codec, audio_format, jitter_buffer_ms, frame_duration_ms)?;
+        // The source negotiates its format on start, so start it against a
+        // sink that drops audio until the stream is created and bound below.
+        let sink = Arc::new(LateBoundSink::default());
+        let handle = source
+            .start(Arc::clone(&sink) as Arc<dyn AudioSink>)
+            .map_err(|e| format!("Failed to start capture: {}", e))?;
+
+        let source_format = source.format();
+        if !matches!(source_format.channels, 1 | 2) {
+            handle.stop_and_wait();
+            return Err(format!(
+                "Unsupported capture channel count: {}",
+                source_format.channels
+            ));
+        }
+        // The bridge converts whatever the source delivers to PCM16.
+        let audio_format = AudioFormat::new(source_format.sample_rate, source_format.channels, 16);
+
+        if frame_duration_ms != CAPTURE_PACKET_DURATION_MS {
+            log::warn!(
+                "[Capture] Client frame duration {}ms does not match the {}ms capture packet; using {}ms",
+                frame_duration_ms,
+                CAPTURE_PACKET_DURATION_MS,
+                CAPTURE_PACKET_DURATION_MS
+            );
+        }
+        let frame_duration_ms = CAPTURE_PACKET_DURATION_MS;
+
+        let stream_id = match self.create_stream(
+            AudioCodec::Pcm,
+            audio_format,
+            jitter_buffer_ms,
+            frame_duration_ms,
+        ) {
+            Ok(id) => id,
+            Err(e) => {
+                handle.stop_and_wait();
+                return Err(e);
+            }
+        };
 
         if let Some(meta) = metadata {
             self.update_metadata(&stream_id, meta);
@@ -503,18 +573,14 @@ impl StreamCoordinator {
             &audio_format,
             jitter_buffer_ms,
         ));
-
-        let handle = source.start(bridge).map_err(|e| {
-            // Clean up the stream we just created
-            self.remove_stream(&stream_id);
-            format!("Failed to start capture: {}", e)
-        })?;
+        sink.bind(bridge);
 
         log::info!(
-            "[Capture] Started {} for stream {} ({:?})",
+            "[Capture] Started {} for stream {} (source {:?}, wire {:?})",
             source.name(),
             stream_id,
-            source.format(),
+            source_format,
+            audio_format,
         );
 
         Ok(CaptureStreamSession {

@@ -9,7 +9,7 @@ mod config;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use anyhow::{Context, Result};
+use anyhow::{anyhow, Context, Result};
 use clap::Parser;
 use parking_lot::RwLock;
 use thaumic_core::{
@@ -44,6 +44,14 @@ struct Args {
     /// Data directory for persistent state (manual speakers, etc.).
     #[arg(short = 'd', long, env = "THAUMIC_DATA_DIR")]
     data_dir: Option<PathBuf>,
+
+    /// Seconds between topology refresh checks (overrides config file).
+    #[arg(long, value_name = "SECS", env = "THAUMIC_TOPOLOGY_REFRESH_INTERVAL")]
+    topology_refresh_interval: Option<u64>,
+
+    /// Custom artwork URL shown on Sonos (overrides config file; empty is ignored).
+    #[arg(long, value_name = "URL", env = "THAUMIC_ARTWORK_URL")]
+    artwork_url: Option<String>,
 }
 
 #[tokio::main]
@@ -72,6 +80,16 @@ async fn main() -> Result<()> {
     if let Some(data_dir) = args.data_dir {
         config.data_dir = Some(data_dir);
     }
+    if let Some(interval) = args.topology_refresh_interval {
+        config.topology_refresh_interval = interval;
+    }
+    if let Some(url) = args.artwork_url.filter(|url| !url.trim().is_empty()) {
+        config.artwork_url = Some(url);
+    }
+
+    // CLI/env overrides can introduce invalid values (e.g. --port 0), so
+    // validate the merged configuration before anything is started.
+    config.validate().context("Invalid configuration")?;
 
     // Resolve advertise IP: use explicit config, or fall back to auto-detection
     let network = if let Some(ip) = config.advertise_ip {
@@ -128,27 +146,38 @@ async fn main() -> Result<()> {
     // runtime, as the desktop app does. Its workers raise their scheduling
     // priority (CAP_SYS_NICE on Linux), which keeps audio cadence steady when
     // the host is under load; the main runtime keeps discovery and GENA work.
-    let server_handle = services.streaming_runtime.spawn(async move {
-        if let Err(e) = start_server(app_state).await {
-            log::error!("Server error: {}", e);
+    // start_server logs "Server listening" once the bind succeeds.
+    let mut server_handle = services.streaming_runtime.spawn(start_server(app_state));
+
+    // Run until a shutdown signal arrives or the HTTP server stops. A server
+    // failure (e.g. the bind port is already in use) must be fatal so that a
+    // supervisor such as systemd sees the exit and can restart the unit.
+    tokio::select! {
+        _ = shutdown_signal() => {
+            log::info!("Shutdown signal received, cleaning up...");
+
+            // Graceful shutdown
+            services.shutdown().await;
+
+            // Abort the server task (it will have stopped when the services shut down)
+            server_handle.abort();
+
+            log::info!("Shutdown complete");
+            Ok(())
         }
-    });
+        result = &mut server_handle => {
+            let err = match result {
+                Ok(Ok(())) => anyhow!("HTTP server exited unexpectedly"),
+                Ok(Err(e)) => anyhow::Error::new(e).context("HTTP server failed"),
+                Err(e) => anyhow::Error::new(e).context("HTTP server task failed"),
+            };
+            log::error!("{err:#}");
 
-    log::info!("HTTP server started on port {}", config.bind_port);
+            services.shutdown().await;
 
-    // Wait for shutdown signal
-    shutdown_signal().await;
-
-    log::info!("Shutdown signal received, cleaning up...");
-
-    // Graceful shutdown
-    services.shutdown().await;
-
-    // Abort the server task (it will have stopped when the services shut down)
-    server_handle.abort();
-
-    log::info!("Shutdown complete");
-    Ok(())
+            Err(err)
+        }
+    }
 }
 
 /// Waits for a shutdown signal (Ctrl+C or SIGTERM).
@@ -173,5 +202,99 @@ async fn shutdown_signal() {
     tokio::select! {
         _ = ctrl_c => {},
         _ = terminate => {},
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Mutex;
+
+    use super::Args;
+    use clap::Parser;
+
+    /// Serialises the tests that mutate the process-global environment, which
+    /// clap reads while parsing.
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    /// Runs `f` with `key` set to `value`, restoring the previous value after.
+    fn with_env<T>(key: &str, value: &str, f: impl FnOnce() -> T) -> T {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|err| err.into_inner());
+        let previous = std::env::var_os(key);
+        std::env::set_var(key, value);
+        let result = f();
+        match previous {
+            Some(previous) => std::env::set_var(key, previous),
+            None => std::env::remove_var(key),
+        }
+        result
+    }
+
+    /// Every override is a real clap flag, so unparsable values are reported
+    /// rather than silently ignored.
+    #[test]
+    fn unparsable_override_values_are_rejected() {
+        assert!(Args::try_parse_from(["thaumic-server", "--port", "not-a-port"]).is_err());
+        assert!(Args::try_parse_from(["thaumic-server", "--advertise-ip", "not-an-ip"]).is_err());
+        assert!(Args::try_parse_from([
+            "thaumic-server",
+            "--topology-refresh-interval",
+            "not-a-number",
+        ])
+        .is_err());
+    }
+
+    /// The overrides that used to be parsed by hand in `config.rs` are now
+    /// clap flags that actually reach `Args`.
+    #[test]
+    fn override_flags_are_parsed() {
+        let args = Args::try_parse_from([
+            "thaumic-server",
+            "--topology-refresh-interval",
+            "5",
+            "--artwork-url",
+            "https://example.test/art.jpg",
+            "--port",
+            "49401",
+        ])
+        .expect("valid overrides should parse");
+        assert_eq!(args.topology_refresh_interval, Some(5));
+        assert_eq!(
+            args.artwork_url.as_deref(),
+            Some("https://example.test/art.jpg")
+        );
+        assert_eq!(args.port, Some(49401));
+    }
+
+    /// `THAUMIC_*` values reach `Args` through the same clap parser, so an
+    /// invalid one fails the parse instead of being swallowed.
+    #[test]
+    fn environment_overrides_are_parsed_and_validated() {
+        with_env("THAUMIC_TOPOLOGY_REFRESH_INTERVAL", "abc", || {
+            assert!(Args::try_parse_from(["thaumic-server"]).is_err());
+        });
+        with_env("THAUMIC_TOPOLOGY_REFRESH_INTERVAL", "5", || {
+            let args = Args::try_parse_from(["thaumic-server"]).expect("valid env value");
+            assert_eq!(args.topology_refresh_interval, Some(5));
+        });
+
+        with_env("THAUMIC_BIND_PORT", "not-a-port", || {
+            assert!(Args::try_parse_from(["thaumic-server"]).is_err());
+        });
+        with_env("THAUMIC_BIND_PORT", "49401", || {
+            let args = Args::try_parse_from(["thaumic-server"]).expect("valid env value");
+            assert_eq!(args.port, Some(49401));
+        });
+
+        with_env(
+            "THAUMIC_ARTWORK_URL",
+            "https://example.test/art.jpg",
+            || {
+                let args = Args::try_parse_from(["thaumic-server"]).expect("valid env value");
+                assert_eq!(
+                    args.artwork_url.as_deref(),
+                    Some("https://example.test/art.jpg")
+                );
+            },
+        );
     }
 }

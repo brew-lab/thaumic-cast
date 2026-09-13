@@ -341,6 +341,53 @@ export function flushFrameQueue(s: WorkerState): number {
 }
 
 /**
+ * Sends an encoded frame while preserving order with respect to the frame queue.
+ *
+ * Realtime mode (dropOnBackpressure): never queues. Sends directly unless the
+ * WebSocket is backpressured, in which case the frame is dropped and `false`
+ * is returned so the caller can count it.
+ *
+ * Quality mode: older frames may still sit in the queue from a previous
+ * iteration, so the queue is flushed first. The frame is sent directly only if
+ * the queue is then empty and the socket is not backpressured; otherwise it is
+ * appended to the queue so the server never receives audio out of order.
+ *
+ * @param s - Worker state
+ * @param frame - Encoded frame data (ArrayBuffer-backed)
+ * @param copyOnQueue - Copy the frame before queueing (required when `frame` is a view over a reused buffer)
+ * @returns True if the frame was sent or queued, false if it was dropped (realtime backpressure)
+ */
+export function sendOrEnqueue(
+  s: WorkerState,
+  frame: Uint8Array<ArrayBuffer>,
+  copyOnQueue: boolean = false,
+): boolean {
+  if (!s.socket || s.socket.readyState !== WebSocket.OPEN) {
+    return false;
+  }
+
+  if (s.policy?.dropOnBackpressure) {
+    if (isWsBackpressured(s)) {
+      return false;
+    }
+    s.socket.send(frame);
+    return true;
+  }
+
+  if (s.frameQueue.length > 0) {
+    flushFrameQueue(s);
+  }
+
+  if (s.frameQueue.length > 0 || isWsBackpressured(s)) {
+    enqueueFrame(s, copyOnQueue ? new Uint8Array(frame) : frame);
+    return true;
+  }
+
+  s.socket.send(frame);
+  return true;
+}
+
+/**
  * Flushes all remaining queued frames to WebSocket without backpressure checks.
  * Used during cleanup/shutdown when we want to drain everything.
  * @param s - Worker state

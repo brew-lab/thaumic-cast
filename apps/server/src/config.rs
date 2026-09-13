@@ -1,11 +1,14 @@
 //! Server configuration.
 //!
-//! Supports loading from YAML files with environment variable overrides.
+//! Loads from a YAML file and validates the result. Environment variable and
+//! CLI overrides are applied by the clap argument parser in `main.rs` (the
+//! `THAUMIC_*` variables named below), which also rejects unparsable values;
+//! `main` re-validates after applying them.
 
 use std::net::IpAddr;
 use std::path::{Path, PathBuf};
 
-use anyhow::{Context, Result};
+use anyhow::{bail, Context, Result};
 use serde::Deserialize;
 
 /// Server configuration loaded from YAML with environment overrides.
@@ -13,6 +16,8 @@ use serde::Deserialize;
 #[serde(default)]
 pub struct ServerConfig {
     /// Port to bind the HTTP server to.
+    /// `0` means auto-assign: the first free port in 49400-49410 is used and
+    /// advertised to Sonos speakers once the server is listening.
     /// Override: `THAUMIC_BIND_PORT`
     pub bind_port: u16,
 
@@ -50,48 +55,41 @@ impl Default for ServerConfig {
 }
 
 impl ServerConfig {
-    /// Loads configuration from a YAML file, then applies environment overrides.
+    /// Loads and validates configuration from a YAML file.
+    ///
+    /// Without a path the defaults are used. Returns an error if the file
+    /// cannot be read or parsed, or if any value is out of range.
     pub fn load(path: Option<&Path>) -> Result<Self> {
-        let mut config = if let Some(path) = path {
+        let config = if let Some(path) = path {
             let content = std::fs::read_to_string(path)
                 .with_context(|| format!("Failed to read config file: {}", path.display()))?;
-            serde_yaml::from_str(&content)
-                .with_context(|| format!("Failed to parse config file: {}", path.display()))?
+            Self::from_yaml(&content)
+                .with_context(|| format!("Invalid config file: {}", path.display()))?
         } else {
             Self::default()
         };
 
-        config.apply_env_overrides();
+        config.validate()?;
         Ok(config)
     }
 
-    /// Applies environment variable overrides to the configuration.
-    fn apply_env_overrides(&mut self) {
-        if let Ok(val) = std::env::var("THAUMIC_BIND_PORT") {
-            if let Ok(port) = val.parse() {
-                self.bind_port = port;
-            }
-        }
+    /// Parses configuration from a YAML document.
+    fn from_yaml(content: &str) -> Result<Self> {
+        serde_yaml::from_str(content).context("Failed to parse YAML")
+    }
 
-        if let Ok(val) = std::env::var("THAUMIC_ADVERTISE_IP") {
-            if let Ok(ip) = val.parse() {
-                self.advertise_ip = Some(ip);
-            }
+    /// Checks that all values are usable at runtime.
+    ///
+    /// Call this again after applying CLI overrides. A zero
+    /// `topology_refresh_interval` would panic inside the topology monitor
+    /// (`tokio::time::interval` rejects a zero period). `bind_port` is not
+    /// checked here: `0` is the supported auto-assign sentinel, and any other
+    /// `u16` is a bindable port.
+    pub fn validate(&self) -> Result<()> {
+        if self.topology_refresh_interval == 0 {
+            bail!("topology_refresh_interval must be at least 1 second (got 0)");
         }
-
-        if let Ok(val) = std::env::var("THAUMIC_TOPOLOGY_REFRESH_INTERVAL") {
-            if let Ok(interval) = val.parse() {
-                self.topology_refresh_interval = interval;
-            }
-        }
-
-        if let Ok(val) = std::env::var("THAUMIC_ARTWORK_URL") {
-            if !val.is_empty() {
-                self.artwork_url = Some(val);
-            }
-        }
-
-        // Note: THAUMIC_DATA_DIR is handled by clap via #[arg(env = ...)] in main.rs
+        Ok(())
     }
 
     /// Converts to thaumic-core's Config type.
@@ -109,5 +107,56 @@ impl ServerConfig {
             url: self.artwork_url.clone(),
             data_dir: self.data_dir.clone(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn default_config_is_valid() {
+        let config = ServerConfig::default();
+        assert!(config.validate().is_ok());
+        assert!(ServerConfig::load(None).is_ok());
+    }
+
+    #[test]
+    fn valid_yaml_is_accepted() {
+        let config = ServerConfig::from_yaml(
+            "bind_port: 8080\nadvertise_ip: 192.168.1.10\ntopology_refresh_interval: 5\n",
+        )
+        .expect("should parse");
+        config.validate().expect("should validate");
+        assert_eq!(config.bind_port, 8080);
+        assert_eq!(config.advertise_ip, Some("192.168.1.10".parse().unwrap()));
+        assert_eq!(config.topology_refresh_interval, 5);
+    }
+
+    #[test]
+    fn zero_topology_refresh_interval_is_rejected() {
+        let config =
+            ServerConfig::from_yaml("topology_refresh_interval: 0\n").expect("should parse");
+        let err = config.validate().expect_err("interval 0 must be rejected");
+        assert!(err.to_string().contains("topology_refresh_interval"));
+    }
+
+    /// `0` is the auto-assign sentinel (`start_server` scans 49400-49410 and
+    /// then publishes the chosen port), so it must keep validating.
+    #[test]
+    fn zero_bind_port_is_accepted_as_auto_assign() {
+        let config = ServerConfig::from_yaml("bind_port: 0\n").expect("should parse");
+        config.validate().expect("port 0 means auto-assign");
+        assert_eq!(config.to_core_config().preferred_port, 0);
+    }
+
+    #[test]
+    fn unparsable_advertise_ip_is_rejected() {
+        assert!(ServerConfig::from_yaml("advertise_ip: not-an-ip\n").is_err());
+    }
+
+    #[test]
+    fn out_of_range_bind_port_is_rejected() {
+        assert!(ServerConfig::from_yaml("bind_port: 70000\n").is_err());
     }
 }
