@@ -133,17 +133,119 @@ pub fn get_playback_sessions(state: tauri::State<'_, AppState>) -> Vec<PlaybackS
     state.services.stream_coordinator.get_all_sessions()
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Blast radius of the server-wide clears
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// How far a server-wide clear reaches.
+///
+/// One server serves every extension that connects to it, on this machine and
+/// on others, so "stop everything" is never a local action: it ends other
+/// people's casts too, on machines whose owners are not looking at this tray.
+/// This is the count that makes that visible before it happens.
+///
+/// `clients` is an estimate, not a roll call. `WsConnectionManager` exposes a
+/// total socket count only, not the peers behind it, so the number of distinct
+/// extensions is derived from the shape of those sockets: an extension holds
+/// one control socket for as long as it is connected and opens one further
+/// socket per active cast (see `api/ws.rs`), so sockets minus active streams is
+/// the number of control sockets, which is the number of connected extensions.
+/// It drifts by one per socket that is mid-reconnect, which is fine for
+/// deciding whether to warn, and it does not mistake the ordinary single
+/// casting client for a crowd. An exact count - and the split between this
+/// machine's own clients and the rest - would need `WsConnectionManager` to
+/// expose the peer addresses it already canonicalises, next to the
+/// `is_loopback_ip` that already classifies them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ClearAllImpact {
+    /// Live WebSocket connections the clear would drop.
+    pub connections: usize,
+    /// Active streams the clear would end.
+    pub streams: usize,
+    /// Estimated number of distinct extensions behind those connections.
+    pub clients: usize,
+}
+
+impl ClearAllImpact {
+    /// Derives the impact from the live connection and stream counts.
+    #[must_use]
+    pub fn measure(connections: usize, streams: usize) -> Self {
+        Self {
+            connections,
+            streams,
+            clients: connections.saturating_sub(streams),
+        }
+    }
+
+    /// Reads the impact off the running services.
+    #[must_use]
+    pub fn of(state: &AppState) -> Self {
+        Self::measure(
+            state.services.ws_manager.connection_count(),
+            state.services.stream_coordinator.stream_count(),
+        )
+    }
+
+    /// Returns `true` when the clear reaches past a single client.
+    ///
+    /// One client - the ordinary case of this machine casting its own tab -
+    /// stays below this, so nothing is logged and nothing is surfaced: the
+    /// click stays a single silent click.
+    #[must_use]
+    pub fn affects_others(&self) -> bool {
+        self.clients > 1
+    }
+
+    /// One-line summary of the impact, for logs and tray feedback.
+    #[must_use]
+    pub fn summary(&self) -> String {
+        format!(
+            "~{} client(s), {} connection(s), {} active stream(s)",
+            self.clients, self.connections, self.streams
+        )
+    }
+}
+
+/// Logs a warning when a server-wide clear would reach other clients.
+///
+/// Contention for a speaker is expected and allowed, but silently ending
+/// someone else's cast from a control that looks local is not: this is what
+/// puts the blast radius in the log before the action runs.
+///
+/// Returns the impact so the caller can surface the same numbers to the user.
+pub fn warn_if_server_wide(action: &str, state: &AppState) -> ClearAllImpact {
+    let impact = ClearAllImpact::of(state);
+    if impact.affects_others() {
+        log::warn!(
+            "[{}] Server-wide: this ends the casts of every connected client, \
+             including clients on other machines ({})",
+            action,
+            impact.summary()
+        );
+    }
+    impact
+}
+
 /// Clears all active streams and stops all playback.
+///
+/// Server-wide: every connected extension loses its cast, not just this
+/// machine. Logs a warning naming the blast radius when more than one client
+/// is affected.
 ///
 /// Returns the number of streams that were cleared.
 #[tauri::command]
 pub async fn clear_all_streams(state: tauri::State<'_, AppState>) -> Result<usize, CommandError> {
+    warn_if_server_wide("clear_all_streams", state.inner());
     Ok(state.clear_all_streams().await)
 }
 
 /// Force-closes all WebSocket connections.
+///
+/// Server-wide: every connected extension is disconnected. Logs a warning
+/// naming the blast radius when more than one client is affected.
 #[tauri::command]
 pub fn clear_all_connections(state: tauri::State<'_, AppState>) -> usize {
+    warn_if_server_wide("clear_all_connections", state.inner());
     state.services.ws_manager.close_all()
 }
 
@@ -501,5 +603,67 @@ mod tests {
         assert_eq!(extract_ip_from_input("[::1]"), "::1");
         assert_eq!(extract_ip_from_input("[::1]:8080"), "::1");
         assert_eq!(extract_ip_from_input("http://[::1]:8080/"), "::1");
+    }
+
+    #[test]
+    fn no_connections_affects_nobody() {
+        let impact = ClearAllImpact::measure(0, 0);
+        assert_eq!(impact.clients, 0);
+        assert!(!impact.affects_others());
+    }
+
+    #[test]
+    fn a_single_idle_client_is_not_a_crowd() {
+        // One extension connected, not casting: control socket only.
+        let impact = ClearAllImpact::measure(1, 0);
+        assert_eq!(impact.clients, 1);
+        assert!(!impact.affects_others());
+    }
+
+    #[test]
+    fn a_single_casting_client_is_not_a_crowd() {
+        // One extension casting one tab: control socket + one stream socket.
+        let impact = ClearAllImpact::measure(2, 1);
+        assert_eq!(impact.clients, 1);
+        assert!(!impact.affects_others());
+    }
+
+    #[test]
+    fn a_single_client_casting_two_tabs_is_not_a_crowd() {
+        let impact = ClearAllImpact::measure(3, 2);
+        assert_eq!(impact.clients, 1);
+        assert!(!impact.affects_others());
+    }
+
+    #[test]
+    fn two_casting_clients_affect_each_other() {
+        // Two extensions, each casting one tab.
+        let impact = ClearAllImpact::measure(4, 2);
+        assert_eq!(impact.clients, 2);
+        assert!(impact.affects_others());
+    }
+
+    #[test]
+    fn an_idle_client_alongside_a_casting_one_affects_others() {
+        let impact = ClearAllImpact::measure(3, 1);
+        assert_eq!(impact.clients, 2);
+        assert!(impact.affects_others());
+    }
+
+    #[test]
+    fn more_streams_than_sockets_does_not_underflow() {
+        // A stream whose socket already dropped: estimate floors at zero
+        // rather than wrapping into a bogus crowd.
+        let impact = ClearAllImpact::measure(1, 3);
+        assert_eq!(impact.clients, 0);
+        assert!(!impact.affects_others());
+    }
+
+    #[test]
+    fn summary_names_all_three_counts() {
+        let summary = ClearAllImpact::measure(4, 2).summary();
+        assert!(summary.contains("2 client"), "{}", summary);
+        assert!(summary.contains("4 connection"), "{}", summary);
+        assert!(summary.contains("2 active stream"), "{}", summary);
     }
 }
