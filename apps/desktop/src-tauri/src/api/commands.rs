@@ -4,6 +4,7 @@
 
 use serde::Serialize;
 use tauri::{Manager, WebviewWindow};
+use thaumic_core::api::ws_connection::RemotePeers;
 use thaumic_core::{
     probe_speaker_by_ip, validate_speaker_ip, ErrorCode, ManualSpeakerConfig, NetworkHealth,
     PlaybackSession, Speaker, ZoneGroup,
@@ -144,69 +145,75 @@ pub fn get_playback_sessions(state: tauri::State<'_, AppState>) -> Vec<PlaybackS
 /// people's casts too, on machines whose owners are not looking at this tray.
 /// This is the count that makes that visible before it happens.
 ///
-/// `clients` is an estimate, not a roll call. `WsConnectionManager` exposes a
-/// total socket count only, not the peers behind it, so the number of distinct
-/// extensions is derived from the shape of those sockets: an extension holds
-/// one control socket for as long as it is connected and opens one further
-/// socket per active cast (see `api/ws.rs`), so sockets minus active streams is
-/// the number of control sockets, which is the number of connected extensions.
-/// It drifts by one per socket that is mid-reconnect, which is fine for
-/// deciding whether to warn, and it does not mistake the ordinary single
-/// casting client for a crowd. An exact count - and the split between this
-/// machine's own clients and the rest - would need `WsConnectionManager` to
-/// expose the peer addresses it already canonicalises, next to the
-/// `is_loopback_ip` that already classifies them.
+/// `connections` and `streams` are the totals the clear ends, everywhere.
+/// `remote` is the part of that which belongs to somebody else, counted rather
+/// than guessed: `WsConnectionManager::remote_peers` walks the peer addresses
+/// it already canonicalises and reports the distinct machines behind them,
+/// excluding loopback and this host's own advertised address. Machines is the
+/// right unit - one browser holds a control socket plus one socket per cast, so
+/// counting sockets would turn a single user into a crowd.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ClearAllImpact {
-    /// Live WebSocket connections the clear would drop.
+    /// Live WebSocket connections the clear would drop, on every machine.
     pub connections: usize,
-    /// Active streams the clear would end.
+    /// Active streams the clear would end, on every machine.
     pub streams: usize,
-    /// Estimated number of distinct extensions behind those connections.
-    pub clients: usize,
+    /// The part of that which belongs to other machines.
+    pub remote: RemotePeers,
 }
 
 impl ClearAllImpact {
-    /// Derives the impact from the live connection and stream counts.
+    /// Builds the impact from the live totals and the remote-peer summary.
     #[must_use]
-    pub fn measure(connections: usize, streams: usize) -> Self {
+    pub fn measure(connections: usize, streams: usize, remote: RemotePeers) -> Self {
         Self {
             connections,
             streams,
-            clients: connections.saturating_sub(streams),
+            remote,
         }
     }
 
     /// Reads the impact off the running services.
+    ///
+    /// The advertised local IP is passed to `remote_peers` so a browser on this
+    /// machine that was pointed at the LAN address instead of `localhost` is
+    /// still recognised as local.
     #[must_use]
     pub fn of(state: &AppState) -> Self {
+        let host_ip = state.services.network.get_local_ip().parse().ok();
         Self::measure(
             state.services.ws_manager.connection_count(),
             state.services.stream_coordinator.stream_count(),
+            state.services.ws_manager.remote_peers(host_ip),
         )
     }
 
-    /// Returns `true` when the clear reaches past a single client.
+    /// Returns `true` when the clear reaches a machine other than this one.
     ///
-    /// One client - the ordinary case of this machine casting its own tab -
-    /// stays below this, so nothing is logged and nothing is surfaced: the
-    /// click stays a single silent click.
+    /// The ordinary case of this machine casting its own tabs stays below this,
+    /// however many sockets or streams it holds, so nothing is logged and
+    /// nothing is surfaced: the click stays a single silent click.
     #[must_use]
     pub fn affects_others(&self) -> bool {
-        self.clients > 1
+        self.remote.machines > 0
     }
 
     /// One-line summary of the impact, for logs and tray feedback.
     #[must_use]
     pub fn summary(&self) -> String {
         format!(
-            "~{} client(s), {} connection(s), {} active stream(s)",
-            self.clients, self.connections, self.streams
+            "{} other machine(s) holding {} connection(s) and {} stream(s); \
+             {} connection(s) and {} active stream(s) in total",
+            self.remote.machines,
+            self.remote.connections,
+            self.remote.streams,
+            self.connections,
+            self.streams
         )
     }
 }
 
-/// Logs a warning when a server-wide clear would reach other clients.
+/// Logs a warning when a server-wide clear would reach another machine.
 ///
 /// Contention for a speaker is expected and allowed, but silently ending
 /// someone else's cast from a control that looks local is not: this is what
@@ -605,65 +612,77 @@ mod tests {
         assert_eq!(extract_ip_from_input("http://[::1]:8080/"), "::1");
     }
 
+    /// The remote-peer summary a manager would report for `machines` other
+    /// machines holding `connections` sockets and `streams` casts.
+    fn remote(machines: usize, connections: usize, streams: usize) -> RemotePeers {
+        RemotePeers {
+            machines,
+            connections,
+            streams,
+        }
+    }
+
     #[test]
     fn no_connections_affects_nobody() {
-        let impact = ClearAllImpact::measure(0, 0);
-        assert_eq!(impact.clients, 0);
+        let impact = ClearAllImpact::measure(0, 0, RemotePeers::default());
+        assert_eq!(impact.remote.machines, 0);
         assert!(!impact.affects_others());
     }
 
     #[test]
-    fn a_single_idle_client_is_not_a_crowd() {
-        // One extension connected, not casting: control socket only.
-        let impact = ClearAllImpact::measure(1, 0);
-        assert_eq!(impact.clients, 1);
+    fn a_single_local_client_is_not_a_crowd() {
+        // One extension on this machine casting one tab: control socket + one
+        // stream socket, and nothing remote behind them.
+        let impact = ClearAllImpact::measure(2, 1, RemotePeers::default());
+        assert_eq!(impact.remote, RemotePeers::default());
         assert!(!impact.affects_others());
     }
 
     #[test]
-    fn a_single_casting_client_is_not_a_crowd() {
-        // One extension casting one tab: control socket + one stream socket.
-        let impact = ClearAllImpact::measure(2, 1);
-        assert_eq!(impact.clients, 1);
+    fn two_local_browsers_are_still_one_machine() {
+        // Both browsers are the same person at the same keyboard, so the
+        // sockets they pile up must not read as a crowd.
+        let impact = ClearAllImpact::measure(5, 3, RemotePeers::default());
         assert!(!impact.affects_others());
     }
 
     #[test]
-    fn a_single_client_casting_two_tabs_is_not_a_crowd() {
-        let impact = ClearAllImpact::measure(3, 2);
-        assert_eq!(impact.clients, 1);
-        assert!(!impact.affects_others());
-    }
-
-    #[test]
-    fn two_casting_clients_affect_each_other() {
-        // Two extensions, each casting one tab.
-        let impact = ClearAllImpact::measure(4, 2);
-        assert_eq!(impact.clients, 2);
+    fn one_remote_client_already_affects_others() {
+        // The old socket-minus-stream estimate called this "1 client" and
+        // stayed silent, hiding a stop that ended somebody else's cast.
+        let impact = ClearAllImpact::measure(2, 1, remote(1, 2, 1));
         assert!(impact.affects_others());
     }
 
     #[test]
-    fn an_idle_client_alongside_a_casting_one_affects_others() {
-        let impact = ClearAllImpact::measure(3, 1);
-        assert_eq!(impact.clients, 2);
+    fn a_remote_client_alongside_a_local_one_affects_others() {
+        // Two sockets and one stream here, two sockets and one stream there.
+        let impact = ClearAllImpact::measure(4, 2, remote(1, 2, 1));
+        assert_eq!(impact.remote.machines, 1);
+        assert_eq!(impact.remote.streams, 1);
         assert!(impact.affects_others());
     }
 
     #[test]
-    fn more_streams_than_sockets_does_not_underflow() {
-        // A stream whose socket already dropped: estimate floors at zero
-        // rather than wrapping into a bogus crowd.
-        let impact = ClearAllImpact::measure(1, 3);
-        assert_eq!(impact.clients, 0);
-        assert!(!impact.affects_others());
+    fn a_headless_server_counts_every_client_as_remote() {
+        let impact = ClearAllImpact::measure(4, 2, remote(2, 4, 2));
+        assert_eq!(impact.remote.machines, 2);
+        assert!(impact.affects_others());
     }
 
     #[test]
-    fn summary_names_all_three_counts() {
-        let summary = ClearAllImpact::measure(4, 2).summary();
-        assert!(summary.contains("2 client"), "{}", summary);
-        assert!(summary.contains("4 connection"), "{}", summary);
-        assert!(summary.contains("2 active stream"), "{}", summary);
+    fn summary_names_the_remote_counts_and_the_totals() {
+        let summary = ClearAllImpact::measure(5, 3, remote(2, 3, 2)).summary();
+        assert!(summary.contains("2 other machine(s)"), "{}", summary);
+        assert!(
+            summary.contains("3 connection(s) and 2 stream(s)"),
+            "{}",
+            summary
+        );
+        assert!(
+            summary.contains("5 connection(s) and 3 active stream(s)"),
+            "{}",
+            summary
+        );
     }
 }
