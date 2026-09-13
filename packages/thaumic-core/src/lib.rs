@@ -46,6 +46,8 @@ pub mod sonos;
 pub mod state;
 pub mod stream;
 pub mod streaming_runtime;
+#[cfg(test)]
+mod testing;
 pub mod utils;
 
 // Re-export commonly used types at the crate root
