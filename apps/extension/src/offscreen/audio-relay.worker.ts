@@ -20,7 +20,7 @@ import {
   resetFrameQueueState,
   postToMain,
   yieldMacrotask,
-  enqueueFrame,
+  sendOrEnqueue,
   flushFrameQueue,
   isWsBackpressured,
   BACKPRESSURE_BACKOFF_INITIAL_MS,
@@ -163,22 +163,16 @@ function emitFloat32Samples(
 
 /**
  * Sends directly from the passed view when the socket has capacity; copies
- * into the persistent queue when in quality mode and backpressured.
+ * into the persistent queue when in quality mode and older frames are still
+ * queued or the socket is backpressured. Realtime mode drops on backpressure.
  * @param frameView
  */
 function sendOrQueue(frameView: Uint8Array<ArrayBuffer>): void {
   if (!s.socket || s.socket.readyState !== WebSocket.OPEN || !s.policy) return;
 
-  if (isWsBackpressured(s)) {
-    if (s.policy.dropOnBackpressure) {
-      droppedFrameCount++;
-    } else {
-      enqueueFrame(s, new Uint8Array(frameView));
-    }
-    return;
+  if (!sendOrEnqueue(s, frameView, true)) {
+    droppedFrameCount++;
   }
-
-  s.socket.send(frameView);
 }
 
 /**
