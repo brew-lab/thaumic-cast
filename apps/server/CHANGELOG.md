@@ -1,5 +1,54 @@
 # @thaumic-cast/server
 
+## 0.12.1
+
+### Patch Changes
+
+- [#137](https://github.com/brew-lab/thaumic-cast/pull/137) [`0342009`](https://github.com/brew-lab/thaumic-cast/commit/0342009aabfdc4848dd44e49363793d8e0040e98) Thanks [@skezo](https://github.com/skezo)! - fix(core): recover audio quality after stalls instead of skipping until restart
+
+  After any underrun the cadence stream resumed on the very first frame, leaving the jitter buffer empty; with browser
+  (WASAPI) capture delivering exactly one packet per tick it could never refill, so every later hiccup was an audible
+  skip until the app was restarted. Playback is now held on silence until the queue is back at the configured jitter
+  depth, with a timeout of twice that depth counted from when frames resume, and frames that arrived just before a
+  tick no longer count as an underrun. On Windows, audio the engine discarded (`DATA_DISCONTINUITY`, measured from the
+  device position and bounded by wall-clock time) is backfilled with the same duration of silence starting with a
+  fade-out, packets flagged silent are zero-filled, and the first packet after a loss is faded in. Stream summaries now
+  report `rebuffers`.
+
+- [#136](https://github.com/brew-lab/thaumic-cast/pull/136) [`bb3da36`](https://github.com/brew-lab/thaumic-cast/commit/bb3da36f91ad14ad55e23e5f35bddd419146cf04) Thanks [@skezo](https://github.com/skezo)! - feat(extension): ask for permission to reach a companion on another machine
+
+  When you enter a custom server URL and click Connect (previously "Test"), Chrome now prompts once to allow that address, scoped to that
+  origin only. This replaces the companion's CORS layer, which trusted every installed browser extension and wrapped the
+  API in middleware; the HTTP API no longer sends CORS headers.
+
+- [#134](https://github.com/brew-lab/thaumic-cast/pull/134) [`e4121e2`](https://github.com/brew-lab/thaumic-cast/commit/e4121e2f3bfb5e701b6e0d2ef704d565bfee2329) Thanks [@skezo](https://github.com/skezo)! - fix(core): allow the extension to reach a companion on another machine
+
+  The extension only has host permission for `localhost`, so every request to a remote headless server was blocked by
+  CORS. The HTTP API now answers CORS for `chrome-extension://` and `moz-extension://` origins only; regular web pages
+  remain unable to read responses.
+
+- [#133](https://github.com/brew-lab/thaumic-cast/pull/133) [`0ccd8a9`](https://github.com/brew-lab/thaumic-cast/commit/0ccd8a98ef72eac1fa34e9379198d0858a598e49) Thanks [@dependabot](https://github.com/apps/dependabot)! - build(deps): update Rust dependencies
+
+  Bumps 26 crates, notably quick-xml 0.39 → 0.41, mdns-sd 0.19 → 0.20 and tower-http 0.6 → 0.7, and adapts the XML
+  text readers to quick-xml's new `BytesText` return type. No behaviour change.
+
+- [#134](https://github.com/brew-lab/thaumic-cast/pull/134) [`b70fde3`](https://github.com/brew-lab/thaumic-cast/commit/b70fde3ae3ae1b5af9e41f6bdeb92a63b5079db3) Thanks [@skezo](https://github.com/skezo)! - feat(server): one-command install, update and Proxmox setup
+
+  Releases now include `thaumic-server-vX.Y.Z-linux-{x64,arm64}.tar.gz` with checksums, a hardened systemd unit and
+  `install.sh`. The installer (`curl … | sudo bash`) installs or updates in place, verifies checksums and only ever
+  contacts GitHub releases. `proxmox-lxc.sh` creates an unprivileged Debian 12 container on a Proxmox host and runs the
+  installer inside it. Added `apps/server/Dockerfile`, refreshed the README (Proxmox guide, network requirements,
+  correct Rust version) and made the release version sync refresh `Cargo.lock` so `cargo build --locked` passes after a
+  release.
+
+- [#134](https://github.com/brew-lab/thaumic-cast/pull/134) [`bffd1da`](https://github.com/brew-lab/thaumic-cast/commit/bffd1dac35de6af3ec0c1f9bdf7a2287afdcf741) Thanks [@skezo](https://github.com/skezo)! - fix(server): stop panicking at startup and serve audio on the streaming runtime
+
+  `thaumic-server` aborted immediately with "Cannot block the current thread from within a runtime" because the
+  streaming runtime blocked on a channel from inside `#[tokio::main]`. The runtime is now built on the calling thread
+  and handed to a keeper thread, so nothing blocks and it can be created from any context. The server also serves
+  HTTP on that runtime, as the desktop app does, so its priority-elevated workers carry the audio path instead of
+  sitting idle.
+
 ## 0.12.0
 
 ### Minor Changes
