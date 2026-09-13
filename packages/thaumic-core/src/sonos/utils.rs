@@ -2,6 +2,7 @@ use std::collections::HashMap;
 
 use quick_xml::events::{BytesStart, Event};
 use quick_xml::reader::Reader;
+use quick_xml::XmlVersion;
 
 use crate::stream::AudioCodec;
 
@@ -340,19 +341,32 @@ pub fn build_sonos_url(ip: &str, endpoint: &str) -> String {
     format!("http://{}:{}{}", ip, SONOS_PORT, endpoint)
 }
 
-/// Gets an attribute value from an XML element.
+/// Gets an attribute value from an XML element, decoded exactly once.
+///
+/// quick-xml exposes `Attribute::value` as the raw (still escaped) bytes, so
+/// this applies XML attribute-value normalization to turn `&amp;`, `&apos;`,
+/// `&lt;`, `&gt;` and `&quot;` into the characters they stand for. Callers
+/// must therefore not decode the result again: a zone name that Sonos sends
+/// as `ZoneName="Tom&apos;s Office"` comes back as `Tom's Office`, and an
+/// escaped DIDL-Lite document in a `val` attribute comes back as usable XML.
 ///
 /// # Arguments
 /// * `elem` - The XML element to search
 /// * `attr_name` - The attribute name as bytes (e.g., `b"ZoneName"`)
 ///
 /// # Returns
-/// The attribute value as a String, or None if not found
+/// The decoded attribute value as a String, or None if not found.
+/// Values with entities that cannot be resolved fall back to the raw text.
 pub fn get_xml_attr(elem: &BytesStart, attr_name: &[u8]) -> Option<String> {
     elem.attributes()
         .flatten()
         .find(|a| a.key.as_ref() == attr_name)
-        .map(|a| String::from_utf8_lossy(&a.value).to_string())
+        .map(|a| {
+            a.normalized_value(XmlVersion::Implicit1_0).map_or_else(
+                |_| String::from_utf8_lossy(&a.value).into_owned(),
+                std::borrow::Cow::into_owned,
+            )
+        })
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
