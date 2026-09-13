@@ -60,8 +60,6 @@ pub(crate) struct CadenceStats {
     pub frames_dropped: u64,
     /// Times playback was held after an underrun until the queue refilled.
     pub rebuffer_events: u64,
-    /// Times a consumer stall was resolved by trimming the backlog.
-    pub resync_events: u64,
 }
 
 /// Maximum pipeline snapshots to keep (300 entries × ~1s = ~5 minutes).
@@ -247,15 +245,10 @@ impl Drop for LoggingStreamGuard {
             .map(|s| format!(", frames_dropped={}", s.frames_dropped))
             .unwrap_or_default();
 
-        // Recovery events: rebuffers after underrun, resyncs after consumer stalls
+        // Recovery events: playback held after an underrun until refilled
         let recovery_info = cadence
-            .filter(|s| s.rebuffer_events > 0 || s.resync_events > 0)
-            .map(|s| {
-                format!(
-                    ", rebuffers={}, resyncs={}",
-                    s.rebuffer_events, s.resync_events
-                )
-            })
+            .filter(|s| s.rebuffer_events > 0)
+            .map(|s| format!(", rebuffers={}", s.rebuffer_events))
             .unwrap_or_default();
 
         let timeline = self.pipeline_timeline.lock();
@@ -541,17 +534,16 @@ pub fn create_wav_stream_with_cadence(
         let mut silence_frames: u64 = 0;
         let mut frames_dropped: u64 = 0;
         let mut rebuffer_events: u64 = 0;
-        let mut resync_events: u64 = 0;
 
         // Recovery state. `rebuffering` holds playback after an underrun that
         // interrupted real audio until the queue is back at `buffer_depth`;
         // startup starvation is deliberately not gated (see api/stream.rs
-        // prefill delay). `seam_pending` fades in the next frame after a
-        // resync discarded audio, so the cut is not a hard edge.
+        // prefill delay). `rebuffer_started` is set when frames begin to
+        // arrive again, so the timeout bounds a trickling producer without
+        // expiring during a long source pause.
         let mut has_played_audio = false;
         let mut rebuffering = false;
         let mut rebuffer_started: Option<TokioInstant> = None;
-        let mut seam_pending = false;
 
         let mut crossfade = CrossfadeState::new(&audio_format, frame_duration_ms);
 
@@ -578,13 +570,17 @@ pub fn create_wav_stream_with_cadence(
                 biased;
 
                 // PRIORITY 1: Metronome tick - MUST emit something every frame_duration_ms
-                tick_at = metronome.tick() => {
+                _ = metronome.tick() => {
                     // Drain pending frames BEFORE deciding what to emit, so a
                     // frame that landed just before the tick counts as
                     // available instead of being treated as an underrun. With
                     // biased select, ticks always win, so without this drain
                     // frames could pile up in rx while we emit silence.
-                    let mut dropped_now: u64 = 0;
+                    //
+                    // A consumer stall is left to `MissedTickBehavior::Burst`:
+                    // the missed ticks replay the backlog (and silence for the
+                    // rest), which keeps the byte timeline Sonos expects, and
+                    // the rebuffer gate below restores the depth afterwards.
                     if !rx_closed {
                         loop {
                             match rx.try_recv() {
@@ -592,7 +588,6 @@ pub fn create_wav_stream_with_cadence(
                                     if queue.len() >= overflow_cap {
                                         queue.pop_front();
                                         frames_dropped += 1;
-                                        dropped_now += 1;
                                     }
                                     queue.push_back(frame);
                                 }
@@ -609,39 +604,17 @@ pub fn create_wav_stream_with_cadence(
                         }
                     }
 
-                    // Consumer stall resync. Overflow drops during a drain on a
-                    // late tick mean the consumer stopped polling long enough
-                    // that audio was already lost. Trim the backlog to the
-                    // target depth so latency returns to the configured jitter
-                    // buffer rather than the overflow cap, and reset the
-                    // metronome so the missed ticks are not replayed as a
-                    // burst that drains the queue to zero.
-                    let late_by = TokioInstant::now().saturating_duration_since(tick_at);
-                    if dropped_now > 0
-                        && buffer_depth > 0
-                        && late_by > cadence_duration
-                        && queue.len() > buffer_depth
-                    {
-                        let surplus = queue.len() - buffer_depth;
-                        queue.drain(..surplus);
-                        frames_dropped += surplus as u64;
-                        resync_events += 1;
-                        seam_pending = true;
-                        metronome.reset();
-                        log::warn!(
-                            "[Cadence] Resync after {}ms consumer stall: trimmed {} frames, depth={}",
-                            late_by.as_millis(),
-                            surplus,
-                            queue.len()
-                        );
-                    }
-
                     // Post-underrun rebuffer gate: keep emitting silence until
                     // the queue is back at the target depth (or the timeout
-                    // elapses), so playback resumes with real jitter margin.
+                    // elapses, counted from when frames resumed), so playback
+                    // resumes with real jitter margin. A closed channel ends
+                    // the hold so the queued tail plays out and the stream ends.
                     let hold_for_rebuffer = rebuffering && {
+                        if rebuffer_started.is_none() && !queue.is_empty() {
+                            rebuffer_started = Some(TokioInstant::now());
+                        }
                         let waited = rebuffer_started.map(|t| t.elapsed()).unwrap_or_default();
-                        if queue.len() >= buffer_depth || waited >= rebuffer_timeout {
+                        if rx_closed || queue.len() >= buffer_depth || waited >= rebuffer_timeout {
                             rebuffering = false;
                             rebuffer_events += 1;
                             log::info!(
@@ -689,8 +662,7 @@ pub fn create_wav_stream_with_cadence(
                         }
                         has_played_audio = true;
 
-                        if was_in_silence || seam_pending {
-                            seam_pending = false;
+                        if was_in_silence {
                             yield Ok(crossfade.maybe_fade_in(frame));
                         } else {
                             yield Ok(frame);
@@ -712,7 +684,7 @@ pub fn create_wav_stream_with_cadence(
                             // frame as before.
                             if has_played_audio && buffer_depth > 0 {
                                 rebuffering = true;
-                                rebuffer_started = Some(TokioInstant::now());
+                                rebuffer_started = None;
                             }
                             yield Ok(crossfade.enter_silence(&silence_frame));
                         } else {
@@ -809,7 +781,6 @@ pub fn create_wav_stream_with_cadence(
             silence_frames,
             frames_dropped,
             rebuffer_events,
-            resync_events,
         });
     }
 }
@@ -1255,7 +1226,7 @@ mod tests {
     }
 
     // ─────────────────────────────────────────────────────────────────────
-    // Recovery: rebuffer after underrun, resync after consumer stall
+    // Recovery: rebuffer after underrun
     // ─────────────────────────────────────────────────────────────────────
 
     /// Frame large enough that a fade-in leaves its last bytes untouched.
@@ -1405,54 +1376,72 @@ mod tests {
         drop(tx);
     }
 
-    /// When the consumer stalls long enough that the overflow cap already
-    /// dropped audio, the backlog is trimmed to `buffer_depth` (newest
-    /// frames kept) and the metronome is reset instead of replaying the
-    /// missed ticks as a burst that would drain the queue to zero.
+    /// The rebuffer timeout counts from when frames resume, not from the
+    /// underrun, so a long source pause still resumes with a full margin.
     #[tokio::test(start_paused = true)]
-    async fn stall_resync_trims_backlog_and_keeps_target_depth() {
-        let (tx, rx) = broadcast::channel::<Bytes>(32);
-        let guard = test_guard();
-        let guard_for_check = Arc::clone(&guard);
+    async fn rebuffer_timeout_counts_from_frame_resume() {
+        let (tx, rx) = broadcast::channel::<Bytes>(16);
         let mut stream = Box::pin(create_wav_stream_with_cadence(
             rx,
-            guard,
-            buffered_config(vec![big_frame(1), big_frame(2), big_frame(3)]),
+            test_guard(),
+            buffered_config(vec![big_frame(1)]),
+            None,
+            None,
+        ));
+
+        prime(&mut stream.as_mut()).await; // plays the single prefill frame
+        assert!(
+            is_silence(&next_tick(&mut stream.as_mut()).await),
+            "underrun"
+        );
+
+        // Source pause far longer than the 60ms timeout
+        for _ in 0..30 {
+            assert!(is_silence(&next_tick(&mut stream.as_mut()).await));
+        }
+
+        // Frames resume one per tick: still held until depth 3
+        tx.send(big_frame(10)).unwrap();
+        assert!(
+            is_silence(&next_tick(&mut stream.as_mut()).await),
+            "depth 1 held"
+        );
+        tx.send(big_frame(11)).unwrap();
+        assert!(
+            is_silence(&next_tick(&mut stream.as_mut()).await),
+            "depth 2 held"
+        );
+        tx.send(big_frame(12)).unwrap();
+        assert_eq!(next_tick(&mut stream.as_mut()).await[BIG_FRAME - 1], 10);
+        drop(tx);
+    }
+
+    /// Closing the channel while rebuffering releases the hold so the
+    /// queued tail plays out immediately and the stream ends.
+    #[tokio::test(start_paused = true)]
+    async fn channel_close_releases_rebuffer_gate() {
+        let (tx, rx) = broadcast::channel::<Bytes>(16);
+        let mut stream = Box::pin(create_wav_stream_with_cadence(
+            rx,
+            test_guard(),
+            buffered_config(vec![big_frame(1)]),
             None,
             None,
         ));
 
         prime(&mut stream.as_mut()).await;
-        assert_eq!(next_tick(&mut stream.as_mut()).await[BIG_FRAME - 1], 2);
-
-        // Consumer stalls for 120ms (12 ticks) while the producer keeps going
-        for tag in 10..22u8 {
-            tx.send(big_frame(tag)).unwrap();
-        }
-        time::advance(Duration::from_millis(120)).await;
-
-        // First poll after the stall: drain drops to the 6-frame cap
-        // (7 dropped), resync trims to depth 3 (3 more), newest kept.
-        let frame = stream.next().await.expect("stream should yield").unwrap();
-        assert_eq!(
-            frame[BIG_FRAME - 1],
-            19,
-            "resumes from the newest buffer_depth frames"
+        assert!(
+            is_silence(&next_tick(&mut stream.as_mut()).await),
+            "underrun"
         );
 
-        // No burst: the missed ticks were discarded by the metronome reset
-        let pending = poll_fn(|cx| Poll::Ready(stream.as_mut().poll_next(cx).is_pending())).await;
-        assert!(pending, "missed ticks must not be replayed as a burst");
-
-        // Normal cadence resumes with the target depth intact
-        assert_eq!(next_tick(&mut stream.as_mut()).await[BIG_FRAME - 1], 20);
-        assert_eq!(next_tick(&mut stream.as_mut()).await[BIG_FRAME - 1], 21);
-
+        tx.send(big_frame(5)).unwrap();
+        assert!(is_silence(&next_tick(&mut stream.as_mut()).await), "held");
         drop(tx);
+
+        // Channel closed: the tail plays without waiting for depth/timeout
+        assert_eq!(next_tick(&mut stream.as_mut()).await[BIG_FRAME - 1], 5);
         drain_to_end(&mut stream.as_mut()).await;
-        let stats = guard_for_check.cadence_stats.get().unwrap();
-        assert_eq!(stats.resync_events, 1);
-        assert_eq!(stats.frames_dropped, 10, "7 overflow drops + 3 trimmed");
     }
 
     // ─────────────────────────────────────────────────────────────────────

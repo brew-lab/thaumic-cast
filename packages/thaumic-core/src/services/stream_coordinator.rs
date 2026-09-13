@@ -25,8 +25,8 @@ use crate::sonos::utils::build_sonos_stream_uri;
 use crate::sonos::SonosPlayback;
 use crate::state::{SonosState, StreamingConfig};
 use crate::stream::{
-    apply_fade_in, crossfade_samples, AudioCodec, AudioFormat, CleanupOrder, StreamMetadata,
-    StreamRegistry, StreamState,
+    apply_fade_in, create_fade_out_frame, crossfade_samples, extract_last_sample_pair, AudioCodec,
+    AudioFormat, CleanupOrder, StreamMetadata, StreamRegistry, StreamState,
 };
 use crate::utils::now_millis;
 
@@ -63,6 +63,12 @@ struct StreamSinkBridge {
     backfill_cap_frames: u64,
     /// Rate limit for backfill logging (once per second).
     last_backfill_log: Mutex<Option<std::time::Instant>>,
+    /// Last converted sample pair, so backfilled silence can start with a
+    /// fade-out instead of a hard cut from the last real packet.
+    last_sample_pair: Mutex<Option<(i16, i16)>>,
+    /// Lost frames below one packet carried to the next loss, so repeated
+    /// small losses are backfilled in total rather than rounded away.
+    backfill_residual: Mutex<u64>,
 }
 
 impl StreamSinkBridge {
@@ -83,6 +89,8 @@ impl StreamSinkBridge {
             fade_samples: crossfade_samples(audio_format.sample_rate),
             backfill_cap_frames: jitter_buffer_ms * audio_format.sample_rate as u64 / 1000,
             last_backfill_log: Mutex::new(None),
+            last_sample_pair: Mutex::new(None),
+            backfill_residual: Mutex::new(0),
         }
     }
 
@@ -102,15 +110,31 @@ impl StreamSinkBridge {
     /// (and its jitter-buffer depth) is not shortened by the loss.
     /// Returns whether one of the pushed frames was the stream's first.
     fn backfill_lost(&self, lost_frames: u32, packet_frames: u32, channels: u16) -> bool {
-        let fill = (lost_frames as u64).min(self.backfill_cap_frames);
         let packet = packet_frames as u64;
-        let chunks = (fill + packet / 2) / packet;
+        let mut residual = self.backfill_residual.lock();
+        let total = *residual + lost_frames as u64;
+        let capped = total > self.backfill_cap_frames;
+        let fill = total.min(self.backfill_cap_frames);
+        let chunks = fill / packet;
+        // Whole packets are pushed now; the remainder waits for the next loss
+        // (dropped when the cap applies, so it cannot grow without bound).
+        *residual = if capped { 0 } else { total - chunks * packet };
+        drop(residual);
         if chunks == 0 {
             return false;
         }
+
         let silence = Bytes::from(vec![0u8; packet as usize * channels as usize * 2]);
-        let mut is_first = false;
-        for _ in 0..chunks {
+        // First chunk fades out from the last real sample so the loss point
+        // is not a hard edge; the rest is plain silence.
+        let first = match self.last_sample_pair.lock().take() {
+            Some((left, right)) => {
+                create_fade_out_frame(left, right, channels, self.fade_samples, packet as usize)
+            }
+            None => silence.clone(),
+        };
+        let mut is_first = self.push(first);
+        for _ in 1..chunks {
             is_first |= self.push(silence.clone());
         }
 
@@ -163,6 +187,9 @@ impl AudioSink for StreamSinkBridge {
                 // the resume so the seam is not a hard edge.
                 apply_fade_in(&mut buf, channels, self.fade_samples);
             }
+        }
+        if channels > 0 {
+            *self.last_sample_pair.lock() = extract_last_sample_pair(&buf, channels);
         }
 
         is_first |= self.push(Bytes::copy_from_slice(&buf));
@@ -1826,7 +1853,17 @@ mod tests {
             let frames = drain(&mut rx);
             assert_eq!(frames.len(), 7, "audio + 5 silence + audio");
             assert!(!is_zero(&frames[0]));
-            assert!(frames[1..6].iter().all(is_zero), "backfill is silence");
+            let fade_out = &frames[1];
+            assert_eq!(fade_out.len(), 1920);
+            assert!(
+                !is_zero(fade_out),
+                "first backfill chunk fades out from the last sample"
+            );
+            assert_eq!(&fade_out[1918..], &[0, 0], "fade-out ends in silence");
+            assert!(
+                frames[2..6].iter().all(is_zero),
+                "remaining backfill is silence"
+            );
             let resumed = &frames[6];
             assert_eq!(resumed.len(), 1920);
             assert_ne!(&resumed[..2], &[0xFF, 0x3F], "first sample is faded in");
@@ -1853,7 +1890,28 @@ mod tests {
 
             let frames = drain(&mut rx);
             assert_eq!(frames.len(), 21, "20 silence frames + audio");
-            assert_eq!(frames.iter().filter(|f| is_zero(f)).count(), 20);
+            let ends_silent = |f: &Bytes| f[f.len() - 2..] == [0, 0];
+            assert_eq!(frames.iter().filter(|f| ends_silent(f)).count(), 20);
+        }
+
+        #[tokio::test]
+        async fn capture_bridge_carries_sub_packet_losses_forward() {
+            let (bridge, mut rx) = capture_bridge(200);
+            let lost = |n: u32| BufferFlags {
+                discontinuity: true,
+                silent: false,
+                lost_frames: n,
+            };
+
+            bridge.push_audio(&packet(), 480, 2, BufferFlags::default());
+            // 300 lost frames: under one packet, nothing yet
+            bridge.push_audio(&packet(), 480, 2, lost(300));
+            assert_eq!(drain(&mut rx).len(), 2, "no backfill below one packet");
+            // Another 300: 600 total → one packet backfilled, 120 carried
+            bridge.push_audio(&packet(), 480, 2, lost(300));
+            let frames = drain(&mut rx);
+            assert_eq!(frames.len(), 2, "one backfill packet + audio");
+            assert_eq!(&frames[0][1918..], &[0, 0]);
         }
 
         #[tokio::test]

@@ -249,8 +249,18 @@ fn capture_thread_inner(
     let mut empty_callbacks: u64 = 0;
     let mut stats_timer = std::time::Instant::now();
     // Stream-relative index the next packet should start at; a packet that
-    // starts later means the engine discarded audio in between.
+    // starts later means the engine discarded audio in between. The jump is
+    // bounded by wall-clock time since the previous packet, so a position
+    // re-base that is not a real loss cannot inject a jitter buffer of silence.
     let mut expected_pos: Option<u64> = None;
+    let mut last_packet_at = std::time::Instant::now();
+    // Frames from packets this loop had to skip (unreadable buffers), owed
+    // to the sink as loss on the next packet.
+    let mut pending_lost: u64 = 0;
+    // Discontinuity reporting, rate limited to one line per second.
+    let mut disc_events: u64 = 0;
+    let mut disc_frames: u64 = 0;
+    let mut disc_log_at = std::time::Instant::now();
 
     while !cancel.is_cancelled() {
         // Check if target process has exited (non-blocking)
@@ -320,9 +330,15 @@ fn capture_thread_inner(
 
             // Frames lost between packets, from the device position. The
             // discontinuity flag alone says nothing about how much was lost.
-            let lost_frames = expected_pos
-                .map_or(0, |expected| device_pos.saturating_sub(expected))
-                .min(u32::MAX as u64) as u32;
+            let now = std::time::Instant::now();
+            let pos_delta = expected_pos.map_or(0, |expected| device_pos.saturating_sub(expected));
+            let max_by_clock = (now.duration_since(last_packet_at).as_secs_f64()
+                * sample_rate as f64) as u64
+                + frames_available as u64;
+            let lost_frames =
+                (pos_delta.min(max_by_clock) + pending_lost).min(u32::MAX as u64) as u32;
+            pending_lost = 0;
+            last_packet_at = now;
             expected_pos = Some(device_pos + frames_available as u64);
 
             let buf_flags = BufferFlags {
@@ -333,10 +349,18 @@ fn capture_thread_inner(
             };
 
             if buf_flags.discontinuity {
-                log::warn!(
-                    "WASAPI discontinuity detected ({} frames lost)",
-                    lost_frames
-                );
+                disc_events += 1;
+                disc_frames += lost_frames as u64;
+                if now.duration_since(disc_log_at) >= std::time::Duration::from_secs(1) {
+                    log::warn!(
+                        "WASAPI discontinuity: {} event(s), {} frames lost since last report",
+                        disc_events,
+                        disc_frames
+                    );
+                    disc_events = 0;
+                    disc_frames = 0;
+                    disc_log_at = now;
+                }
             }
 
             if buf_flags.silent {
@@ -351,6 +375,8 @@ fn capture_thread_inner(
                     // but skip gracefully rather than panicking the capture thread.
                     if buffer as usize % std::mem::align_of::<f32>() != 0 {
                         log::error!("WASAPI buffer misaligned, skipping frame");
+                        // Owed to the sink as loss on the next packet.
+                        pending_lost += frames_available as u64 + lost_frames as u64;
                         unsafe {
                             let _ = capture_client.ReleaseBuffer(frames_available);
                         }
@@ -366,6 +392,9 @@ fn capture_thread_inner(
                     let float_samples: Vec<f32> = src.iter().map(|&s| s as f32 / 32768.0).collect();
                     sink.push_audio(&float_samples, frames_available, channels, buf_flags);
                 }
+            } else {
+                // Unreadable packet: owed to the sink as loss on the next one.
+                pending_lost += frames_available as u64 + lost_frames as u64;
             }
 
             unsafe {
