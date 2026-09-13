@@ -348,9 +348,9 @@ where
 /// Commands are dispatched with `try_send`, so a stuck worker (e.g. a speaker
 /// that is not answering SOAP calls) never blocks the audio ingest loop; once
 /// the queue is full the client gets an `ERROR` reply instead. Replies share the
-/// capacity, and the teardown drain keeps reading them (see
-/// [`drain_control_worker`]), so the worker can never park on `reply_tx.send`
-/// while it finishes its queue.
+/// capacity, and both the teardown drain ([`drain_control_worker`]) and the
+/// inline barrier ([`quiesce_control_worker`]) keep reading them, so the worker
+/// can never park on `reply_tx.send` while it finishes its queue.
 const CONTROL_COMMAND_QUEUE_CAPACITY: usize = 32;
 
 /// Worst case for a single retried SOAP action.
@@ -585,8 +585,20 @@ async fn run_control_worker<F, Fut>(
 /// A full command queue is handled inside that same bound rather than waved
 /// through: the barrier waits for a slot, because a backed-up worker is exactly
 /// the situation where an unordered teardown does damage.
-async fn quiesce_control_worker(cmd_tx: &mpsc::Sender<ControlCommand>) {
-    let (ack_tx, ack_rx) = oneshot::channel();
+///
+/// Replies keep flowing while this waits. The worker parks on `reply_tx.send`
+/// once the reply channel is full, and the `select!` arm that normally drains
+/// it is the one parked here — so without forwarding replies in this loop a
+/// worker with more than a channel's worth of replies queued could never reach
+/// the barrier, and the ingest loop would sit out the whole grace period.
+async fn quiesce_control_worker<S>(
+    cmd_tx: &mpsc::Sender<ControlCommand>,
+    reply_rx: &mut mpsc::Receiver<WsOutgoing>,
+    sender: &mut S,
+) where
+    S: futures::Sink<Message> + Unpin,
+{
+    let (ack_tx, mut ack_rx) = oneshot::channel();
     let barrier = async {
         match cmd_tx.try_send(ControlCommand::Barrier(ack_tx)) {
             Ok(()) => {}
@@ -596,13 +608,40 @@ async fn quiesce_control_worker(cmd_tx: &mpsc::Sender<ControlCommand>) {
                 // A full queue is exactly when ordering matters most, so wait for
                 // a slot instead of tearing down unordered. Awaiting here is no
                 // worse than the barrier wait itself, and the whole thing is
-                // bounded by the timeout below.
-                if cmd_tx.send(command).await.is_err() {
-                    return;
+                // bounded by the timeout below. Replies are forwarded meanwhile
+                // for the same reason as below: the worker cannot free a slot
+                // while it is parked on a full reply channel.
+                let mut pending = Some(command);
+                loop {
+                    let command = pending.take().expect("command is pending");
+                    tokio::select! {
+                        sent = cmd_tx.send(command) => {
+                            if sent.is_err() {
+                                return;
+                            }
+                            break;
+                        }
+                        Some(reply) = reply_rx.recv() => {
+                            // `send` took the command by value; it is only lost
+                            // if the future completed, which is the arm above.
+                            if let Some(msg) = reply.to_message() {
+                                let _ = sender.send(msg).await;
+                            }
+                        }
+                    }
                 }
             }
         }
-        let _ = ack_rx.await;
+        loop {
+            tokio::select! {
+                _ = &mut ack_rx => break,
+                Some(reply) = reply_rx.recv() => {
+                    if let Some(msg) = reply.to_message() {
+                        let _ = sender.send(msg).await;
+                    }
+                }
+            }
+        }
     };
     if tokio::time::timeout(CONTROL_WORKER_GRACE, barrier)
         .await
@@ -1287,7 +1326,8 @@ async fn handle_ws(socket: WebSocket, state: AppState) {
                                         // (sync removal), so let any queued command
                                         // for that stream finish first.
                                         if stream_guard.is_some() {
-                                            quiesce_control_worker(&cmd_tx).await;
+                                            quiesce_control_worker(&cmd_tx, &mut reply_rx, &mut sender).await;
+                                            last_activity = Instant::now();
                                         }
                                         // Create guard immediately - cleanup happens on drop
                                         let guard = StreamGuard::new(
@@ -1403,8 +1443,11 @@ async fn handle_ws(socket: WebSocket, state: AppState) {
                             Ok(WsIncoming::StartBrowserCapture { payload }) => {
                                 // Replacing a live stream drops its guard, so drain
                                 // any command still queued for that stream first.
-                                if stream_guard.is_some() {
-                                    quiesce_control_worker(&cmd_tx).await;
+                                // A duplicate request is rejected by the handler
+                                // without touching the stream, so it skips the wait.
+                                if stream_guard.is_some() && capture.session.is_none() {
+                                    quiesce_control_worker(&cmd_tx, &mut reply_rx, &mut sender).await;
+                                    last_activity = Instant::now();
                                 }
                                 handle_start_browser_capture(
                                     &state,
@@ -1419,7 +1462,8 @@ async fn handle_ws(socket: WebSocket, state: AppState) {
                                 // START_PLAYBACK must finish first so its speaker is
                                 // registered and gets stopped by the removal.
                                 if capture.session.is_some() {
-                                    quiesce_control_worker(&cmd_tx).await;
+                                    quiesce_control_worker(&cmd_tx, &mut reply_rx, &mut sender).await;
+                                    last_activity = Instant::now();
                                 }
                                 handle_stop_browser_capture(
                                     &state,
@@ -1766,13 +1810,14 @@ mod tests {
         ));
 
         dispatch_control_command(&cmd_tx, set_volume(9)).unwrap();
-        quiesce_control_worker(&cmd_tx).await;
+        let mut forwarded = Vec::new();
+        quiesce_control_worker(&cmd_tx, &mut reply_rx, &mut forwarded).await;
         assert!(
             finished.load(Ordering::SeqCst),
             "barrier must not resolve before the queued command completes"
         );
         assert_eq!(
-            json(&reply_rx.recv().await.expect("reply")),
+            take_reply(&mut forwarded, &mut reply_rx).await,
             json(&volume_state(9))
         );
 
@@ -1950,14 +1995,15 @@ mod tests {
             },
         ));
 
-        quiesce_control_worker(&cmd_tx).await;
+        let mut forwarded = Vec::new();
+        quiesce_control_worker(&cmd_tx, &mut reply_rx, &mut forwarded).await;
         assert_eq!(
             executed.load(Ordering::SeqCst),
             1,
             "a full queue must delay teardown, not wave it through unordered"
         );
         assert_eq!(
-            json(&reply_rx.recv().await.expect("reply")),
+            take_reply(&mut forwarded, &mut reply_rx).await,
             json(&volume_state(4))
         );
 
@@ -1971,9 +2017,76 @@ mod tests {
         drop(cmd_rx);
 
         // Nothing is left to order against, so this must not burn the grace.
-        tokio::time::timeout(CONTROL_WORKER_GRACE, quiesce_control_worker(&cmd_tx))
-            .await
-            .expect("barrier returns as soon as the worker is gone");
+        let (_reply_tx, mut reply_rx) = mpsc::channel::<WsOutgoing>(1);
+        let mut forwarded = Vec::new();
+        tokio::time::timeout(
+            CONTROL_WORKER_GRACE,
+            quiesce_control_worker(&cmd_tx, &mut reply_rx, &mut forwarded),
+        )
+        .await
+        .expect("barrier returns as soon as the worker is gone");
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn barrier_forwards_replies_so_a_full_reply_channel_cannot_stall_it() {
+        // Reply channel of one, three reply-producing commands queued: the
+        // worker parks on its second reply unless the barrier keeps draining.
+        let (cmd_tx, cmd_rx) = mpsc::channel::<ControlCommand>(4);
+        let (reply_tx, mut reply_rx) = mpsc::channel::<WsOutgoing>(1);
+        let cancel = CancellationToken::new();
+        let worker = tokio::spawn(run_control_worker(
+            cancel.clone(),
+            cmd_rx,
+            reply_tx,
+            |command| async move {
+                match command {
+                    ControlCommand::SetVolume(req) => Some(volume_state(req.volume)),
+                    _ => None,
+                }
+            },
+        ));
+        for volume in 1..=3 {
+            dispatch_control_command(&cmd_tx, set_volume(volume)).unwrap();
+        }
+
+        let mut forwarded = Vec::new();
+        let started = tokio::time::Instant::now();
+        quiesce_control_worker(&cmd_tx, &mut reply_rx, &mut forwarded).await;
+        assert!(
+            started.elapsed() < CONTROL_WORKER_GRACE,
+            "the barrier must be acked, not time out"
+        );
+
+        let mut replies: Vec<String> = forwarded
+            .iter()
+            .map(|m| match m {
+                Message::Text(t) => t.to_string(),
+                other => panic!("unexpected frame {other:?}"),
+            })
+            .collect();
+        while let Ok(reply) = reply_rx.try_recv() {
+            replies.push(json(&reply));
+        }
+        assert_eq!(
+            replies,
+            (1..=3).map(|v| json(&volume_state(v))).collect::<Vec<_>>(),
+            "every reply reaches the client, in command order"
+        );
+
+        drop(cmd_tx);
+        worker.await.expect("worker exits");
+    }
+
+    /// The reply the barrier saw: forwarded into the sink if it arrived while
+    /// the barrier waited, otherwise still queued behind it.
+    async fn take_reply(
+        forwarded: &mut [Message],
+        reply_rx: &mut mpsc::Receiver<WsOutgoing>,
+    ) -> String {
+        if let Some(Message::Text(text)) = forwarded.first() {
+            return text.to_string();
+        }
+        json(&reply_rx.recv().await.expect("reply"))
     }
 
     #[test]
