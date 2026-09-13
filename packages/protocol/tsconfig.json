@@ -6,7 +6,8 @@
     "declaration": true,
     "emitDeclarationOnly": true,
     "noEmit": false,
-    "outDir": "./dist"
+    "outDir": "./dist",
+    "types": ["bun"]
   },
   "include": ["index.ts", "src/**/*.ts"]
 }

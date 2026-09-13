@@ -30,4 +30,13 @@ export default [
       'jsdoc/require-returns': 'warn',
     },
   },
+  {
+    files: ['**/*.test.ts'],
+    rules: {
+      // Test names document the behaviour; a JSDoc block per helper adds noise.
+      'jsdoc/require-jsdoc': 'off',
+      'jsdoc/require-param': 'off',
+      'jsdoc/require-returns': 'off',
+    },
+  },
 ];
