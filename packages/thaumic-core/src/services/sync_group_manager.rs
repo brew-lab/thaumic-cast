@@ -175,6 +175,14 @@ impl SyncGroupManager {
     ///
     /// This creates a playback session with `GroupRole::Slave` and uses the x-rincon
     /// protocol to sync the slave's playback timing to the coordinator.
+    ///
+    /// The whole sequence (detect an existing stream on this speaker, unjoin it,
+    /// join the coordinator, record the session) runs under the speaker's start
+    /// lock, shared with `StreamCoordinator::start_single_playback` so the two
+    /// cannot interleave their SOAP calls on one speaker. The lock is taken
+    /// here, at the outermost point of this path: the coordinator start that
+    /// precedes a group start has already released its own guard by the time
+    /// slaves are joined, so no caller reaches this function holding a guard.
     pub async fn join_slave_to_coordinator(
         &self,
         slave_ip: &str,
@@ -189,6 +197,9 @@ impl SyncGroupManager {
             coordinator_ip,
             coordinator_uuid
         );
+
+        // Held until this function returns, on every path.
+        let _start = self.sessions.lock_speaker_start(slave_ip).await;
 
         // Check for existing sessions on this speaker and handle appropriately
         if let Some(existing) = self.sessions.get(stream_id, slave_ip) {
@@ -252,10 +263,12 @@ impl SyncGroupManager {
                     log::warn!("[GroupSync] Failed to unjoin slave {}: {}", slave_ip, e);
                 }
 
+                // Tell the displaced client *why* its cast ended: another
+                // client took this speaker, exactly as on the coordinator path.
                 self.emit_event(StreamEvent::PlaybackStopped {
                     stream_id: old_stream_id,
                     speaker_ip: slave_ip.to_string(),
-                    reason: None,
+                    reason: Some(SpeakerRemovalReason::SpeakerTakenOver),
                     timestamp: now_millis(),
                 });
             }

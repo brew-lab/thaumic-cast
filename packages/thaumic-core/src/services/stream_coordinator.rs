@@ -11,7 +11,6 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, OnceLock};
 
 use bytes::Bytes;
-use dashmap::DashMap;
 use parking_lot::Mutex;
 use tokio::sync::Notify;
 
@@ -263,33 +262,6 @@ pub struct StreamCoordinator {
     emitter: Arc<dyn EventEmitter>,
     /// Sync group lifecycle manager.
     sync_group: SyncGroupManager,
-    /// Per-speaker locks serialising the start sequence for one speaker.
-    ///
-    /// Keyed by speaker IP so unrelated speakers still start concurrently.
-    /// Entries are pruned when the last holder releases them, so the map
-    /// stays bounded by the number of in-flight starts.
-    speaker_starts: DashMap<String, Arc<tokio::sync::Mutex<()>>>,
-}
-
-/// Held for the duration of one speaker's start sequence.
-///
-/// Releases the speaker's lock and prunes its map entry on drop — including
-/// on early returns and error paths — so the lock map cannot grow without
-/// bound.
-struct SpeakerStartGuard<'a> {
-    starts: &'a DashMap<String, Arc<tokio::sync::Mutex<()>>>,
-    speaker_ip: &'a str,
-    guard: Option<tokio::sync::OwnedMutexGuard<()>>,
-}
-
-impl Drop for SpeakerStartGuard<'_> {
-    fn drop(&mut self) {
-        // Release the mutex first: the guard owns a strong reference, so the
-        // map's own reference is the only one left when nobody is waiting.
-        drop(self.guard.take());
-        self.starts
-            .remove_if(self.speaker_ip, |_, lock| Arc::strong_count(lock) == 1);
-    }
 }
 
 impl StreamCoordinator {
@@ -329,7 +301,6 @@ impl StreamCoordinator {
             sessions,
             emitter,
             sync_group,
-            speaker_starts: DashMap::new(),
         }
     }
 
@@ -880,31 +851,13 @@ impl StreamCoordinator {
         results
     }
 
-    /// Acquires this speaker's start lock, waiting for any in-flight start.
-    ///
-    /// Two clients casting different tabs to the same speaker is expected and
-    /// allowed — the later start wins. The lock only stops their
-    /// find/stop/play/insert sequences from interleaving, which would leave the
-    /// loser's session in the store unreachable by speaker IP.
-    async fn lock_speaker_start<'a>(&'a self, speaker_ip: &'a str) -> SpeakerStartGuard<'a> {
-        let lock = Arc::clone(
-            self.speaker_starts
-                .entry(speaker_ip.to_string())
-                .or_default()
-                .value(),
-        );
-        SpeakerStartGuard {
-            starts: &self.speaker_starts,
-            speaker_ip,
-            guard: Some(lock.lock_owned().await),
-        }
-    }
-
     /// Starts playback on a single speaker.
     ///
     /// The whole sequence (detect an existing stream on this speaker, stop it,
     /// play the new one, record the session) runs under this speaker's start
-    /// lock. Starts on *other* speakers are unaffected.
+    /// lock, which it shares with the sync-group slave path so a slave join and
+    /// a coordinator start on the same speaker cannot interleave. Starts on
+    /// *other* speakers are unaffected.
     async fn start_single_playback(&self, params: SinglePlaybackParams<'_>) -> PlaybackResult {
         let SinglePlaybackParams {
             speaker_ip,
@@ -917,7 +870,7 @@ impl StreamCoordinator {
         } = params;
 
         // Held until this function returns, on every path.
-        let _start = self.lock_speaker_start(speaker_ip).await;
+        let _start = self.sessions.lock_speaker_start(speaker_ip).await;
 
         log::debug!(
             "[Playback] start_single_playback called: speaker={}, stream={}",
@@ -2039,6 +1992,157 @@ mod tests {
                     .unwrap()
                     .stream_id,
                 taker
+            );
+        }
+
+        #[tokio::test]
+        async fn slave_takeover_reports_speaker_taken_over() {
+            // A second client casts a sync group whose *slave* happens to be
+            // the speaker a first client is already using. The slave path takes
+            // the speaker just like the coordinator path, so it has to say so.
+            let sonos = Arc::new(TrackingSonosPlayback::new());
+            let emitter = Arc::new(CollectingEventEmitter::new());
+            let coord = create_coordinator_with(
+                Arc::clone(&sonos) as Arc<dyn SonosPlayback>,
+                create_sonos_state_with_members(&[
+                    ("192.168.1.100", "RINCON_A"),
+                    ("192.168.1.101", "RINCON_B"),
+                ]),
+                Arc::clone(&emitter) as Arc<dyn EventEmitter>,
+            );
+
+            let displaced = coord
+                .create_stream(AudioCodec::Aac, AudioFormat::default(), 200, 20)
+                .unwrap();
+            let group = coord
+                .create_stream(AudioCodec::Aac, AudioFormat::default(), 200, 20)
+                .unwrap();
+
+            coord
+                .start_playback("192.168.1.100", &displaced, None, "")
+                .await
+                .unwrap();
+
+            // .101 coordinates the group; .100 is pulled in as its slave.
+            let results = coord
+                .start_playback_multi(
+                    &["192.168.1.101".to_string(), "192.168.1.100".to_string()],
+                    &group,
+                    None,
+                    "",
+                    true,
+                )
+                .await;
+            assert!(
+                results.iter().all(|r| r.success),
+                "group start must not be rejected: {results:?}"
+            );
+
+            // The displaced client learns *why* its cast ended.
+            assert_eq!(
+                emitter.playback_stopped_reasons(),
+                vec![(
+                    displaced.clone(),
+                    Some(SpeakerRemovalReason::SpeakerTakenOver)
+                )]
+            );
+
+            let taken = coord
+                .sessions
+                .get_by_speaker_ip("192.168.1.100")
+                .expect("taken speaker must be reachable by IP");
+            assert_eq!(taken.stream_id, group);
+            assert_eq!(taken.role, GroupRole::Slave);
+        }
+
+        #[tokio::test]
+        async fn slave_join_and_coordinator_start_cannot_interleave_on_one_speaker() {
+            // Kitchen (.100) is already carrying a third client's cast when two
+            // more clients grab it at the same instant: one as a standalone
+            // coordinator, one as the slave of a sync group. Contention is
+            // allowed, but the two find/stop/play/insert sequences must not
+            // interleave — if both read the store before either writes it, one
+            // client's stop lands after the other's play and the second
+            // takeover is never announced to the client that lost the speaker.
+            let sonos = Arc::new(TrackingSonosPlayback::new().with_yields(4));
+            let emitter = Arc::new(CollectingEventEmitter::new());
+            let coord = create_coordinator_with(
+                Arc::clone(&sonos) as Arc<dyn SonosPlayback>,
+                create_sonos_state_with_members(&[
+                    ("192.168.1.100", "RINCON_A"),
+                    ("192.168.1.101", "RINCON_B"),
+                ]),
+                Arc::clone(&emitter) as Arc<dyn EventEmitter>,
+            );
+
+            let incumbent = coord
+                .create_stream(AudioCodec::Aac, AudioFormat::default(), 200, 20)
+                .unwrap();
+            let solo = coord
+                .create_stream(AudioCodec::Aac, AudioFormat::default(), 200, 20)
+                .unwrap();
+            let group = coord
+                .create_stream(AudioCodec::Aac, AudioFormat::default(), 200, 20)
+                .unwrap();
+
+            coord
+                .start_playback("192.168.1.100", &incumbent, None, "")
+                .await
+                .unwrap();
+
+            let group_ips = ["192.168.1.101".to_string(), "192.168.1.100".to_string()];
+            let (solo_result, group_results) = tokio::join!(
+                coord.start_playback("192.168.1.100", &solo, None, ""),
+                coord.start_playback_multi(&group_ips, &group, None, "", true),
+            );
+            assert!(solo_result.is_ok(), "solo client rejected: {solo_result:?}");
+            assert!(
+                group_results.iter().all(|r| r.success),
+                "group client rejected: {group_results:?}"
+            );
+
+            // The contended speaker ends up on exactly one stream, reachable
+            // by IP — no orphan behind it.
+            let winner = coord
+                .sessions
+                .get_by_speaker_ip("192.168.1.100")
+                .expect("contended speaker must be reachable by IP");
+            let on_speaker: Vec<_> = coord
+                .get_all_sessions()
+                .into_iter()
+                .filter(|s| s.speaker_ip == "192.168.1.100")
+                .collect();
+            assert_eq!(
+                on_speaker.len(),
+                1,
+                "contended speaker left with more than one session: {on_speaker:?}"
+            );
+            assert_eq!(on_speaker[0].stream_id, winner.stream_id);
+
+            // Every cast displaced from that speaker was announced exactly
+            // once, with the takeover reason. Interleaved sequences lose one of
+            // these announcements.
+            let mut announced: Vec<String> = emitter
+                .playback_stopped_reasons()
+                .into_iter()
+                .map(|(stream_id, reason)| {
+                    assert_eq!(
+                        reason,
+                        Some(SpeakerRemovalReason::SpeakerTakenOver),
+                        "displaced cast {stream_id} was not told it was taken over"
+                    );
+                    stream_id
+                })
+                .collect();
+            let mut expected: Vec<String> = vec![incumbent, solo, group]
+                .into_iter()
+                .filter(|id| *id != winner.stream_id)
+                .collect();
+            announced.sort();
+            expected.sort();
+            assert_eq!(
+                announced, expected,
+                "each client displaced from the speaker must be told exactly once"
             );
         }
 
