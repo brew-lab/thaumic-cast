@@ -38,8 +38,120 @@ let videoSyncEnabled = false;
 /** User trim adjustment in milliseconds (per-cast) */
 let currentTrimMs = 0;
 
-/** Flag to prevent re-acquire during our own coarse alignment pause/resume */
-let isPerformingCoarseAlignment = false;
+/**
+ * Whether a coarse alignment (pause → wait → play) is currently in flight.
+ * Latency samples that arrive during the wait must not start another alignment.
+ */
+let coarseAlignmentInProgress = false;
+
+/** Video events the sync code itself provokes and must therefore not react to. */
+type SelfEventType = 'pause' | 'play';
+
+/**
+ * Pending self-inflicted pause/play events as expiry timestamps (performance.now()).
+ * Every programmatic pause()/play() registers the event it is expected to fire;
+ * the matching handler consumes one entry and ignores the event. Entries expire so
+ * a call that produced no event (e.g. a rejected play()) cannot swallow a later
+ * user action.
+ */
+const expectedSelfEvents: Record<SelfEventType, number[]> = { pause: [], play: [] };
+
+/** How long a self-inflicted pause/play event may take to arrive */
+const SELF_EVENT_TTL_MS = 1000;
+
+/**
+ * Registers that the sync code is about to provoke a pause or play event.
+ * @param type - The event type the upcoming call will fire
+ */
+function expectSelfEvent(type: SelfEventType): void {
+  expectedSelfEvents[type].push(performance.now() + SELF_EVENT_TTL_MS);
+}
+
+/**
+ * Consumes one pending self-inflicted expectation for the given event type.
+ * @param type - The event type that just fired
+ * @returns True if the event was self-inflicted and should be ignored
+ */
+function consumeSelfEvent(type: SelfEventType): boolean {
+  const now = performance.now();
+  const pending = expectedSelfEvents[type].filter((expiresAt) => expiresAt > now);
+  const selfInflicted = pending.length > 0;
+  if (selfInflicted) pending.shift();
+  expectedSelfEvents[type] = pending;
+  return selfInflicted;
+}
+
+/**
+ * The corrective seek currently in flight: when the expectation lapses and the
+ * video time we asked for. At most one is outstanding at a time.
+ */
+let pendingSelfSeek: { expiresAtMs: number; targetSec: number } | null = null;
+
+/**
+ * How long to wait for a corrective seek to land before allowing another one.
+ * Long enough for a seek that has to buffer, short enough that a page which
+ * silently ignores currentTime writes does not block corrections for long.
+ */
+const SELF_SEEK_TTL_MS = 2000;
+
+/**
+ * How far from the requested time a seek may land and still count as ours (seconds).
+ * Covers keyframe snapping; a user seek, or one the page clamps or reverts, lands
+ * much further away than this.
+ */
+const SELF_SEEK_TOLERANCE_SEC = 0.5;
+
+/**
+ * Checks whether a corrective seek issued by the sync code is still outstanding.
+ * @returns True if a self-inflicted seek has neither landed nor lapsed
+ */
+function hasPendingSelfSeek(): boolean {
+  return pendingSelfSeek !== null && performance.now() < pendingSelfSeek.expiresAtMs;
+}
+
+/**
+ * Decides whether a `seeked` event belongs to the corrective seek we issued.
+ * The expectation is consumed only when the video landed near the time we asked
+ * for, so a user seek during the window - or our own seek clamped or reverted by
+ * the page - still falls through to the normal re-acquire.
+ * @param landedSec - The video time the seek landed on
+ * @returns True if the event was self-inflicted and should be ignored
+ */
+function consumeSelfSeek(landedSec: number): boolean {
+  const pending = pendingSelfSeek;
+  pendingSelfSeek = null;
+  if (!pending || performance.now() >= pending.expiresAtMs) return false;
+  return Math.abs(landedSec - pending.targetSec) <= SELF_SEEK_TOLERANCE_SEC;
+}
+
+/**
+ * When a pause performed by the sync code itself is expected to end
+ * (performance.now() basis; 0 = the video is not paused by us).
+ * Unlike the event expectations above this stays set for the whole pause, so a
+ * stall check landing mid-pause knows `video.paused` is our own doing.
+ */
+let selfPauseUntilMs = 0;
+
+/** Slack added to a self-inflicted pause window to cover the resume */
+const SELF_PAUSE_MARGIN_MS = 250;
+
+/**
+ * Checks whether the video is currently paused by the sync code itself.
+ * @returns True if a self-inflicted pause is in flight
+ */
+function isSelfPauseActive(): boolean {
+  return performance.now() < selfPauseUntilMs;
+}
+
+/**
+ * Drops all pending self-inflicted event expectations and pause bookkeeping.
+ */
+function clearSelfEvents(): void {
+  expectedSelfEvents.pause = [];
+  expectedSelfEvents.play = [];
+  pendingSelfSeek = null;
+  selfPauseUntilMs = 0;
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // State Management
@@ -132,6 +244,7 @@ function setState(streamId: string, speakerIp: string, state: VideoSyncState): v
 function resetAllStates(): void {
   syncStates.clear();
   lastSyncErrorMs = 0;
+  clearSelfEvents();
 }
 
 /**
@@ -518,14 +631,13 @@ async function performCoarseAlignment(
 ): Promise<{ lockNowMs: number; lockVideoTime: number }> {
   log.info(`Coarse alignment: pausing video for ${delayMs.toFixed(0)}ms`);
 
-  // Set flag to prevent play event from triggering re-acquire
-  isPerformingCoarseAlignment = true;
-
   // Record anchors at PAUSE START so the wait time is "counted" in elapsedSec
   const lockNowMs = performance.now();
   const lockVideoTime = video.currentTime;
 
-  // Pause video
+  // Pause video (self-inflicted: must not stop the loop or trigger re-acquire)
+  expectSelfEvent('pause');
+  selfPauseUntilMs = performance.now() + delayMs + SELF_PAUSE_MARGIN_MS;
   video.pause();
 
   // Wait for the delay (this time is accounted for in elapsed calculation)
@@ -533,15 +645,12 @@ async function performCoarseAlignment(
 
   log.info(`Coarse alignment: resuming at videoTime=${lockVideoTime.toFixed(2)}s`);
 
-  // Resume playback
+  // Resume playback (self-inflicted: the play event must not trigger re-acquire)
+  expectSelfEvent('play');
+  selfPauseUntilMs = 0;
   video.play().catch((err) => {
     log.warn('Play rejected (user interaction may be required):', err.message);
   });
-
-  // Clear flag after a short delay to allow the play event to fire first
-  setTimeout(() => {
-    isPerformingCoarseAlignment = false;
-  }, 100);
 
   return { lockNowMs, lockVideoTime };
 }
@@ -649,11 +758,23 @@ function triggerReAcquire(reason: string): void {
 
 /**
  * Handles video seeking/seeked events.
- * Re-acquires sync since anchor is now invalid.
+ * Re-acquires sync since the anchor is now invalid - unless this is the
+ * corrective seek we issued and the video landed where we asked it to.
  */
 function handleVideoSeeking(): void {
+  const video = targetVideo;
+  if (video && consumeSelfSeek(video.currentTime)) {
+    log.debug('Ignoring self-inflicted seeked event');
+    return;
+  }
   triggerReAcquire('video seeking');
 }
+
+/** How long to wait before deciding a waiting/stalled event has persisted */
+const STALL_DEBOUNCE_MS = 400;
+
+/** How often the stall check may be deferred while our own correction is in flight */
+const MAX_STALL_CHECK_DEFERRALS = 3;
 
 /**
  * Handles video waiting/stalled events.
@@ -668,9 +789,15 @@ function handleVideoStalled(): void {
   if (stallDebounceTimer) return;
 
   // Capture video at event time to detect target changes during wait
-  const v0 = targetVideo;
+  scheduleStallCheck(targetVideo, 0);
+}
 
-  // Wait a beat and check if still in trouble
+/**
+ * Schedules the debounced "is the video still in trouble?" check.
+ * @param v0 - The video captured when the stall event fired (detects target changes)
+ * @param deferrals - How many times this check has already been deferred
+ */
+function scheduleStallCheck(v0: HTMLVideoElement | null, deferrals: number): void {
   stallDebounceTimer = setTimeout(() => {
     stallDebounceTimer = null;
     const video = targetVideo;
@@ -678,9 +805,25 @@ function handleVideoStalled(): void {
     // Target changed during wait, or no target - let normal logic handle it
     if (!video || video !== v0) return;
 
+    // Lock already gone - nothing to re-acquire
+    if (!hasAnyLockedState()) return;
+
     // Track ended - let target-change logic handle it (not a real stall)
     if (video.ended) {
       log.debug('Ignoring waiting/stalled on ended video');
+      return;
+    }
+
+    // Our own micro-pause or hard seek makes the video look paused/seeking/
+    // under-buffered. That is not a stall, so re-check once the correction has
+    // finished rather than dropping the lock (and give up after a few tries -
+    // a real stall keeps firing waiting/stalled events).
+    if (isSelfPauseActive() || hasPendingSelfSeek()) {
+      if (deferrals < MAX_STALL_CHECK_DEFERRALS) {
+        scheduleStallCheck(v0, deferrals + 1);
+      } else {
+        log.debug('Ignoring waiting/stalled: sync correction still in flight');
+      }
       return;
     }
 
@@ -692,7 +835,7 @@ function handleVideoStalled(): void {
     } else {
       log.debug('Ignoring transient waiting/stalled event');
     }
-  }, 400);
+  }, STALL_DEBOUNCE_MS);
 }
 
 /**
@@ -701,6 +844,10 @@ function handleVideoStalled(): void {
  * Logs diagnostic info to distinguish user pause from autoplay/ads/track end.
  */
 function handleVideoPause(): void {
+  if (consumeSelfEvent('pause')) {
+    log.debug('Ignoring self-inflicted pause event');
+    return;
+  }
   const video = targetVideo;
   if (video) {
     log.info(
@@ -718,9 +865,11 @@ function handleVideoPause(): void {
  * Re-acquires sync since we don't know how long we were paused.
  */
 function handleVideoPlay(): void {
-  // Skip if this is our own coarse alignment resume
-  if (isPerformingCoarseAlignment) {
-    log.debug('Ignoring play event during coarse alignment');
+  // Skip if this is our own resume (coarse alignment or micro-pause)
+  if (consumeSelfEvent('play')) {
+    log.debug('Ignoring self-inflicted play event');
+    // Make sure the loop is running again if we are locked (idempotent)
+    if (hasAnyLockedState()) startSyncLoop();
     return;
   }
 
@@ -786,6 +935,45 @@ function detachVideoEventListeners(): void {
     clearTimeout(stallDebounceTimer);
     stallDebounceTimer = null;
   }
+}
+
+/**
+ * Seeks the video forward to the sync target.
+ *
+ * Only one seek is in flight at a time: while it is outstanding the correction
+ * is left to land rather than being re-issued on every frame. The `seeked` event
+ * is ignored only if the video lands near `target`, so a page that clamps,
+ * reverts or redirects the seek (ads, live edge, some MSE/DRM players) still
+ * drops the lock and re-acquires, as it did before self-inflicted events were
+ * filtered out.
+ *
+ * @param video - The video to seek
+ * @param target - The video time the sync schedule wants
+ */
+function seekToTarget(video: HTMLVideoElement, target: number): void {
+  // Previous seek has not landed yet - give it time instead of re-issuing it
+  if (hasPendingSelfSeek()) return;
+
+  log.info(`Seek correction: advancing by ${((target - video.currentTime) * 1000).toFixed(0)}ms`);
+  pendingSelfSeek = { expiresAtMs: performance.now() + SELF_SEEK_TTL_MS, targetSec: target };
+  video.currentTime = target;
+}
+
+/**
+ * Pauses the video briefly to let audio catch up, then resumes.
+ * Both events are self-inflicted and ignored by the re-acquire handlers.
+ * @param video - The video to pause
+ * @param pauseMs - How long to pause for
+ */
+function microPause(video: HTMLVideoElement, pauseMs: number): void {
+  expectSelfEvent('pause');
+  selfPauseUntilMs = performance.now() + pauseMs + SELF_PAUSE_MARGIN_MS;
+  video.pause();
+  setTimeout(() => {
+    expectSelfEvent('play');
+    selfPauseUntilMs = 0;
+    video.play().catch(noop);
+  }, pauseMs);
 }
 
 /**
@@ -873,6 +1061,10 @@ function runSyncIteration(): void {
     );
   }
 
+  // Nothing to correct while paused (our own micro-pause is in progress,
+  // or the site paused without an event). Resuming re-enters here.
+  if (video.paused) return;
+
   // Apply correction based on error magnitude
   if (Math.abs(error) < C.ERROR_DEADBAND_SEC) {
     // Within deadband - no correction needed
@@ -883,17 +1075,14 @@ function runSyncIteration(): void {
   } else if (Math.abs(error) > C.HARD_ERROR_THRESHOLD_SEC) {
     // Hard error - use seek or pause
     if (error < 0) {
-      // Video behind - seek forward
-      log.info(`Hard correction: seeking forward by ${(-error * 1000).toFixed(0)}ms`);
-      video.currentTime = target;
+      // Video behind - seek forward (bounded: one seek at a time, and a page
+      // that clamps or reverts it re-acquires instead of being seeked again)
+      seekToTarget(video, target);
     } else {
       // Video ahead - micro-pause
       const pauseMs = Math.min(C.MAX_MICRO_PAUSE_MS, error * 1000);
       log.info(`Hard correction: micro-pause for ${pauseMs.toFixed(0)}ms`);
-      video.pause();
-      setTimeout(() => {
-        video.play().catch(noop);
-      }, pauseMs);
+      microPause(video, pauseMs);
     }
     expectedPlaybackRate = 1.0;
   } else {
@@ -909,11 +1098,13 @@ function runSyncIteration(): void {
       expectedPlaybackRate = 1.0;
       if (error > C.ERROR_DEADBAND_SEC) {
         const pauseMs = Math.min(C.MAX_MICRO_PAUSE_MS, (error - C.ERROR_DEADBAND_SEC) * 1000);
-        video.pause();
-        setTimeout(() => {
-          video.play().catch(noop);
-        }, pauseMs);
+        microPause(video, pauseMs);
       }
+      // Video behind by less than the hard threshold: nothing safe to do here.
+      // playbackRate is unusable (the site fights it) and a seek takes longer to
+      // land than the error is large, so it would leave the same error behind and
+      // seek again forever. Real drift still crosses HARD_ERROR_THRESHOLD_SEC and
+      // is corrected by the single seek above.
     }
   }
 }
@@ -972,12 +1163,16 @@ async function handleLatencyUpdated(event: LatencyUpdatedBroadcastEvent): Promis
         `Acquiring: ${state.samples.buf.length}/${MIN_SAMPLES_FOR_LOCK} samples, median=${medianLatency(state.samples).toFixed(0)}ms`,
       );
 
+      // A coarse alignment is already in flight (we are awaiting its pause/play).
+      // Samples keep accumulating, but must not start a second alignment.
+      if (coarseAlignmentInProgress) break;
+
       if (passesStabilityGate(state.samples)) {
         // Gate passed - transition to Locked
         // Use p10 (10th percentile) with adaptive floor - robust for EMA-smoothed values
         const stats = lockLatencyWithStats(state.samples);
         const chosenLatency = stats.chosen;
-        const userTrim = 0; // Fresh lock starts with no user trim
+        const userTrim = currentTrimMs;
 
         // Diagnostic: show distribution and clamp effect
         log.info(
@@ -998,10 +1193,34 @@ async function handleLatencyUpdated(event: LatencyUpdatedBroadcastEvent): Promis
           attachVideoEventListeners(targetVideo);
 
           // Coarse alignment uses total delay (latency + userTrim)
-          const { lockNowMs, lockVideoTime } = await performCoarseAlignment(
-            targetVideo,
-            chosenLatency + userTrim,
-          );
+          const alignedVideo = targetVideo;
+          let anchors: { lockNowMs: number; lockVideoTime: number };
+          coarseAlignmentInProgress = true;
+          try {
+            anchors = await performCoarseAlignment(alignedVideo, chosenLatency + userTrim);
+          } finally {
+            coarseAlignmentInProgress = false;
+          }
+
+          // While we were waiting the world may have moved on: epoch change,
+          // stale event, sync disabled, or a different target video. Only lock
+          // if this Acquiring state is still current and the video unchanged.
+          const current = syncStates.get(stateKey(streamId, speakerIp));
+          if (current !== state) {
+            log.info(
+              `State changed during coarse alignment (now ${current?.kind ?? 'none'}), not locking`,
+            );
+            break;
+          }
+          if (targetVideo !== alignedVideo) {
+            log.info('Target video changed during coarse alignment, re-acquiring');
+            setState(streamId, speakerIp, {
+              kind: 'Acquiring',
+              epochId,
+              samples: createSampleWindow(),
+            });
+            break;
+          }
 
           // Reset jump detection baseline
           lastSyncErrorMs = 0;
@@ -1011,9 +1230,10 @@ async function handleLatencyUpdated(event: LatencyUpdatedBroadcastEvent): Promis
             epochId,
             samples: state.samples,
             lockedLatencyMs: chosenLatency,
-            userTrimMs: userTrim,
-            lockNowMs,
-            lockVideoTime,
+            // Use the latest trim: it may have changed during the alignment wait
+            userTrimMs: currentTrimMs,
+            lockNowMs: anchors.lockNowMs,
+            lockVideoTime: anchors.lockVideoTime,
             rateMode: 'rate',
           });
 
@@ -1159,6 +1379,18 @@ function init(): void {
       const newTrim = message.payload?.trimMs ?? 0;
       log.info(`SET_VIDEO_SYNC_TRIM: ${currentTrimMs} → ${newTrim}`);
       currentTrimMs = newTrim;
+      // Apply to active locks: the sync loop reads userTrimMs from the locked
+      // state, so the resulting error shift is absorbed by its normal control
+      // logic - rate slew (rate mode) or micro-pause (pause mode) to delay the
+      // video, rate slew to advance it - and a shift past the hard error
+      // threshold seeks or micro-pauses directly. No re-alignment is needed.
+      // Exception: in pause mode a sub-threshold trim that advances the video
+      // cannot be applied (see runSyncIteration); it takes effect at the next lock.
+      for (const [key, state] of syncStates.entries()) {
+        if (state.kind === 'Locked' || state.kind === 'Stale') {
+          syncStates.set(key, { ...state, userTrimMs: newTrim });
+        }
+      }
       broadcastSyncState();
       sendResponse({ success: true });
       return true;
