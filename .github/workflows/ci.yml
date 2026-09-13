@@ -2,6 +2,7 @@ name: CI
 
 permissions:
   contents: read
+  pull-requests: read
 
 on:
   push:
@@ -14,6 +15,54 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # Which parts of the tree a change touches. Jobs below skip when their
+  # inputs are untouched; a skipped job still satisfies the branch ruleset's
+  # required checks, whereas a workflow-level path filter would leave them
+  # pending forever. Lint is unconditional: it also checks Markdown and YAML.
+  changes:
+    name: Detect changes
+    runs-on: ubuntu-latest
+    outputs:
+      rust: ${{ steps.filter.outputs.rust }}
+      ts: ${{ steps.filter.outputs.ts }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Filter paths
+        id: filter
+        uses: dorny/paths-filter@v3
+        with:
+          filters: |
+            rust:
+              - 'packages/thaumic-core/**'
+              - 'packages/thaumic-capture/**'
+              - 'apps/server/src/**'
+              - 'apps/server/Cargo.toml'
+              - 'apps/desktop/src-tauri/**'
+              - 'apps/wasapi-capture/**'
+              - 'Cargo.toml'
+              - 'Cargo.lock'
+              - '.github/workflows/ci.yml'
+              - '!**/CHANGELOG.md'
+            ts:
+              - 'apps/extension/**'
+              - 'apps/desktop/src/**'
+              - 'apps/desktop/index.html'
+              - 'apps/desktop/package.json'
+              - 'apps/desktop/tsconfig.json'
+              - 'apps/desktop/vite.config.ts'
+              - 'packages/protocol/**'
+              - 'packages/shared/**'
+              - 'packages/ui/**'
+              - 'scripts/**'
+              - 'package.json'
+              - 'bun.lock'
+              - 'tsconfig.json'
+              - '.github/workflows/ci.yml'
+              - '!**/CHANGELOG.md'
+
   lint:
     name: Lint
     runs-on: ubuntu-latest
@@ -39,6 +88,8 @@ jobs:
 
   typecheck:
     name: Type Check
+    needs: changes
+    if: needs.changes.outputs.ts == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -56,6 +107,8 @@ jobs:
 
   rust-check:
     name: Rust Check
+    needs: changes
+    if: needs.changes.outputs.rust == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -93,6 +146,8 @@ jobs:
 
   build-extension:
     name: Build Extension
+    needs: changes
+    if: needs.changes.outputs.ts == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
