@@ -1644,7 +1644,10 @@ mod tests {
                 }
             };
             if refuse {
-                return Err(SoapError::Fault("UPnPError 800".to_string()));
+                return Err(SoapError::Fault {
+                    code: Some(800),
+                    message: "UPnPError".to_string(),
+                });
             }
             self.queued.lock().push((
                 ip.to_string(),
