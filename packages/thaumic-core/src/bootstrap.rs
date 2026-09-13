@@ -24,6 +24,7 @@ use crate::runtime::TokioSpawner;
 use crate::services::{DiscoveryService, LatencyMonitor, StreamCoordinator};
 use crate::sonos::gena::GenaSubscriptionManager;
 use crate::sonos::subscription_arbiter::SubscriptionArbiter;
+use crate::sonos::utils::SONOS_PORT;
 use crate::sonos::{SonosClient, SonosClientImpl, SonosPlayback, SonosTopologyClient};
 use crate::state::{Config, SonosState};
 use crate::streaming_runtime::StreamingRuntime;
@@ -183,6 +184,20 @@ pub fn bootstrap_services_with_network(
     network: NetworkContext,
     runtime_handle: tokio::runtime::Handle,
 ) -> ThaumicResult<BootstrappedServices> {
+    bootstrap_services_with_speaker_port(config, network, runtime_handle, SONOS_PORT)
+}
+
+/// Like [`bootstrap_services_with_network`], but addresses speakers on
+/// `speaker_port` instead of the standard 1400.
+///
+/// Crate-internal: production always uses [`SONOS_PORT`]; the integration
+/// tests point the real clients at fake speakers bound to an ephemeral port.
+pub(crate) fn bootstrap_services_with_speaker_port(
+    config: &Config,
+    network: NetworkContext,
+    runtime_handle: tokio::runtime::Handle,
+    speaker_port: u16,
+) -> ThaumicResult<BootstrappedServices> {
     // Create dedicated streaming runtime first (high-priority threads)
     let streaming_runtime = Arc::new(StreamingRuntime::new().map_err(|e| {
         ThaumicError::Internal(format!("Failed to create streaming runtime: {}", e))
@@ -208,7 +223,10 @@ pub fn bootstrap_services_with_network(
     let ws_manager = Arc::new(WsConnectionManager::new());
 
     // Create the Sonos client (implements multiple traits)
-    let sonos_impl = Arc::new(SonosClientImpl::new(http_client.clone()));
+    let sonos_impl = Arc::new(SonosClientImpl::with_speaker_port(
+        http_client.clone(),
+        speaker_port,
+    ));
 
     // mDNS advertisement slot, shared with the API layer and the topology monitor
     let mdns_advertiser = advertiser_handle();
@@ -220,7 +238,8 @@ pub fn bootstrap_services_with_network(
         .expect("Invalid streaming configuration");
 
     // Create gena_manager first (shared between StreamCoordinator and DiscoveryService)
-    let (gena_manager, gena_event_rx) = GenaSubscriptionManager::new(http_client.clone());
+    let (gena_manager, gena_event_rx) =
+        GenaSubscriptionManager::with_speaker_port(http_client.clone(), speaker_port);
     let gena_manager = Arc::new(gena_manager);
 
     // Topology refresh notifier — shared between StreamCoordinator, GenaEventProcessor,

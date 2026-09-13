@@ -20,6 +20,7 @@ use crate::sonos::grouping;
 use crate::sonos::playback;
 use crate::sonos::traits::{SonosDiscovery, SonosPlayback, SonosTopology, SonosVolumeControl};
 use crate::sonos::types::{PositionInfo, ZoneGroup};
+use crate::sonos::utils::SONOS_PORT;
 use crate::sonos::volume;
 use crate::sonos::zone_groups;
 use crate::stream::{AudioCodec, AudioFormat, StreamMetadata};
@@ -31,6 +32,8 @@ use crate::stream::{AudioCodec, AudioFormat, StreamMetadata};
 pub struct SonosClientImpl {
     /// HTTP client for Sonos communication.
     client: Client,
+    /// TCP port the speakers' UPnP services listen on.
+    speaker_port: u16,
     /// Discovery coordinator (lazily initialized).
     discovery_coordinator: OnceLock<Arc<DiscoveryCoordinator>>,
     /// Discovery configuration.
@@ -41,6 +44,7 @@ impl std::fmt::Debug for SonosClientImpl {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("SonosClientImpl")
             .field("client", &"Client")
+            .field("speaker_port", &self.speaker_port)
             .field("discovery_config", &self.discovery_config)
             .finish()
     }
@@ -50,6 +54,7 @@ impl Clone for SonosClientImpl {
     fn clone(&self) -> Self {
         Self {
             client: self.client.clone(),
+            speaker_port: self.speaker_port,
             discovery_coordinator: OnceLock::new(),
             discovery_config: self.discovery_config.clone(),
         }
@@ -59,12 +64,28 @@ impl Clone for SonosClientImpl {
 impl SonosClientImpl {
     /// Creates a new SonosClientImpl with the given HTTP client.
     ///
+    /// Speakers are addressed on the standard port, [`SONOS_PORT`].
+    ///
     /// # Arguments
     /// * `client` - The HTTP client to use for all Sonos communication
     #[must_use]
     pub fn new(client: Client) -> Self {
+        Self::with_speaker_port(client, SONOS_PORT)
+    }
+
+    /// Creates a new SonosClientImpl that addresses speakers on `speaker_port`.
+    ///
+    /// Real speakers listen on [`SONOS_PORT`]; this exists so a test double
+    /// bound to an ephemeral port can stand in for one.
+    ///
+    /// # Arguments
+    /// * `client` - The HTTP client to use for all Sonos communication
+    /// * `speaker_port` - TCP port the speakers' UPnP services listen on
+    #[must_use]
+    pub fn with_speaker_port(client: Client, speaker_port: u16) -> Self {
         Self {
             client,
+            speaker_port,
             discovery_coordinator: OnceLock::new(),
             discovery_config: DiscoveryConfig::default(),
         }
@@ -91,6 +112,7 @@ impl SonosPlayback for SonosClientImpl {
         playback::play_uri(
             &self.client,
             ip,
+            self.speaker_port,
             uri,
             codec,
             audio_format,
@@ -101,69 +123,69 @@ impl SonosPlayback for SonosClientImpl {
     }
 
     async fn play(&self, ip: &str) -> SoapResult<()> {
-        playback::play(&self.client, ip).await
+        playback::play(&self.client, ip, self.speaker_port).await
     }
 
     async fn stop(&self, ip: &str) -> SoapResult<()> {
-        playback::stop(&self.client, ip).await
+        playback::stop(&self.client, ip, self.speaker_port).await
     }
 
     async fn switch_to_queue(&self, ip: &str, coordinator_uuid: &str) -> SoapResult<()> {
-        playback::switch_to_queue(&self.client, ip, coordinator_uuid).await
+        playback::switch_to_queue(&self.client, ip, self.speaker_port, coordinator_uuid).await
     }
 
     async fn get_position_info(&self, ip: &str) -> SoapResult<PositionInfo> {
-        playback::get_position_info(&self.client, ip).await
+        playback::get_position_info(&self.client, ip, self.speaker_port).await
     }
 
     async fn join_group(&self, ip: &str, coordinator_uuid: &str) -> SoapResult<()> {
-        grouping::join_group(&self.client, ip, coordinator_uuid).await
+        grouping::join_group(&self.client, ip, self.speaker_port, coordinator_uuid).await
     }
 
     async fn leave_group(&self, ip: &str) -> SoapResult<()> {
-        grouping::leave_group(&self.client, ip).await
+        grouping::leave_group(&self.client, ip, self.speaker_port).await
     }
 }
 
 #[async_trait]
 impl SonosTopology for SonosClientImpl {
     async fn get_zone_groups(&self, ip: &str) -> SoapResult<Vec<ZoneGroup>> {
-        zone_groups::get_zone_groups(&self.client, ip).await
+        zone_groups::get_zone_groups(&self.client, ip, self.speaker_port).await
     }
 }
 
 #[async_trait]
 impl SonosVolumeControl for SonosClientImpl {
     async fn get_group_volume(&self, coordinator_ip: &str) -> SoapResult<u8> {
-        volume::get_group_volume(&self.client, coordinator_ip).await
+        volume::get_group_volume(&self.client, coordinator_ip, self.speaker_port).await
     }
 
     async fn set_group_volume(&self, coordinator_ip: &str, volume: u8) -> SoapResult<()> {
-        volume::set_group_volume(&self.client, coordinator_ip, volume).await
+        volume::set_group_volume(&self.client, coordinator_ip, self.speaker_port, volume).await
     }
 
     async fn get_group_mute(&self, coordinator_ip: &str) -> SoapResult<bool> {
-        volume::get_group_mute(&self.client, coordinator_ip).await
+        volume::get_group_mute(&self.client, coordinator_ip, self.speaker_port).await
     }
 
     async fn set_group_mute(&self, coordinator_ip: &str, mute: bool) -> SoapResult<()> {
-        volume::set_group_mute(&self.client, coordinator_ip, mute).await
+        volume::set_group_mute(&self.client, coordinator_ip, self.speaker_port, mute).await
     }
 
     async fn get_speaker_volume(&self, speaker_ip: &str) -> SoapResult<u8> {
-        volume::get_speaker_volume(&self.client, speaker_ip).await
+        volume::get_speaker_volume(&self.client, speaker_ip, self.speaker_port).await
     }
 
     async fn set_speaker_volume(&self, speaker_ip: &str, volume: u8) -> SoapResult<()> {
-        volume::set_speaker_volume(&self.client, speaker_ip, volume).await
+        volume::set_speaker_volume(&self.client, speaker_ip, self.speaker_port, volume).await
     }
 
     async fn get_speaker_mute(&self, speaker_ip: &str) -> SoapResult<bool> {
-        volume::get_speaker_mute(&self.client, speaker_ip).await
+        volume::get_speaker_mute(&self.client, speaker_ip, self.speaker_port).await
     }
 
     async fn set_speaker_mute(&self, speaker_ip: &str, mute: bool) -> SoapResult<()> {
-        volume::set_speaker_mute(&self.client, speaker_ip, mute).await
+        volume::set_speaker_mute(&self.client, speaker_ip, self.speaker_port, mute).await
     }
 }
 

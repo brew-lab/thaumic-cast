@@ -16,6 +16,7 @@ use crate::protocol_constants::{
     GENA_EVENT_CHANNEL_CAPACITY, GENA_RENEWAL_BUFFER_SECS, GENA_RENEWAL_CHECK_SECS,
 };
 use crate::runtime::TokioSpawner;
+use crate::sonos::utils::SONOS_PORT;
 
 use super::gena_client::GenaClient;
 use super::gena_store::GenaSubscriptionStore;
@@ -125,10 +126,20 @@ impl GenaSubscriptionManager {
     /// # Arguments
     /// * `http_client` - The HTTP client to use for GENA requests
     pub fn new(http_client: Client) -> (Self, mpsc::Receiver<SonosEvent>) {
+        Self::with_speaker_port(http_client, SONOS_PORT)
+    }
+
+    /// Like [`Self::new`], but addresses speakers on `speaker_port` instead of
+    /// the standard 1400, so a test double on an ephemeral port can stand in
+    /// for a speaker.
+    pub fn with_speaker_port(
+        http_client: Client,
+        speaker_port: u16,
+    ) -> (Self, mpsc::Receiver<SonosEvent>) {
         let (event_tx, event_rx) = mpsc::channel(GENA_EVENT_CHANNEL_CAPACITY);
         let manager = Self {
             store: GenaSubscriptionStore::new(),
-            client: GenaClient::new(http_client),
+            client: GenaClient::with_speaker_port(http_client, speaker_port),
             event_tx,
             cancel_token: CancellationToken::new(),
         };
