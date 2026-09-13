@@ -3,7 +3,6 @@
 //! This module contains thin handlers that delegate to services.
 //! It provides the router construction and server startup functionality.
 
-use std::net::IpAddr;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
@@ -18,7 +17,7 @@ use crate::artwork::{ArtworkConfig, ArtworkSource};
 use crate::capture::CaptureSourceFactory;
 use crate::context::NetworkContext;
 use crate::events::BroadcastEventBridge;
-use crate::mdns_advertise::MdnsAdvertiser;
+use crate::mdns_advertise::{self, MdnsAdvertiserHandle};
 use crate::services::{DiscoveryService, LatencyMonitor, StreamCoordinator};
 use crate::sonos::SonosClient;
 use crate::state::{Config, SonosState};
@@ -107,11 +106,11 @@ pub struct AppState {
     services_started: Arc<AtomicBool>,
     /// Artwork source for Sonos album art display.
     pub artwork: ArtworkSource,
-    /// mDNS advertiser for network discovery (optional, may fail on some systems).
+    /// mDNS advertisement slot for network discovery (best-effort, may stay empty).
     /// Kept alive for its Drop impl to unregister the service on shutdown.
-    /// Created after server binds to get the actual port.
-    #[allow(dead_code)]
-    mdns_advertiser: Arc<RwLock<Option<MdnsAdvertiser>>>,
+    /// Registered after the server binds (so the port is known) and re-registered
+    /// by the topology monitor whenever the advertised address changes.
+    mdns_advertiser: MdnsAdvertiserHandle,
     /// Optional factory for creating browser capture sources (Windows only).
     /// Set by the desktop app; `None` on the headless server.
     pub capture_factory: Option<Arc<dyn CaptureSourceFactory>>,
@@ -144,7 +143,7 @@ impl AppState {
             config,
             services_started: Arc::new(AtomicBool::new(false)),
             artwork: artwork_config.resolve(),
-            mdns_advertiser: Arc::new(RwLock::new(None)),
+            mdns_advertiser: Arc::clone(&services.mdns_advertiser),
             capture_factory: None,
             app_info,
         }
@@ -203,17 +202,9 @@ pub async fn start_server(state: AppState) -> Result<(), ServerError> {
     // Set port and signal waiters
     state.network.set_port(port);
 
-    // Start mDNS advertisement now that we know the actual port (best-effort, non-fatal)
-    if let Ok(ip) = state.network.get_local_ip().parse::<IpAddr>() {
-        match MdnsAdvertiser::new(ip, port) {
-            Ok(advertiser) => {
-                *state.mdns_advertiser.write() = Some(advertiser);
-            }
-            Err(e) => {
-                log::debug!("[Server] mDNS advertisement unavailable: {}", e);
-            }
-        }
-    }
+    // Start mDNS advertisement now that we know the actual port (best-effort, non-fatal).
+    // The topology monitor calls the same helper when the local address changes.
+    mdns_advertise::advertise(&state.mdns_advertiser, &state.network.get_local_ip(), port);
 
     log::info!("Server listening on http://0.0.0.0:{}", port);
     let app = http::create_router(state);

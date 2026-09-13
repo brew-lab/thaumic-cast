@@ -11,6 +11,7 @@ use tokio::sync::{mpsc, Notify};
 
 use crate::context::NetworkContext;
 use crate::events::{EventEmitter, SonosEvent};
+use crate::mdns_advertise::MdnsAdvertiserHandle;
 use crate::runtime::TokioSpawner;
 use crate::sonos::gena::GenaSubscriptionManager;
 use crate::sonos::subscription_arbiter::SubscriptionArbiter;
@@ -47,6 +48,7 @@ impl DiscoveryService {
     /// * `gena_manager` - Pre-created GENA subscription manager (shared with StreamCoordinator)
     /// * `gena_event_rx` - Receiver for GENA events
     /// * `arbiter` - Subscription arbiter for RenderingControl/GroupRenderingControl conflict resolution
+    /// * `mdns_advertiser` - Shared mDNS advertisement slot, re-registered when the local address changes
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         sonos: Arc<dyn SonosTopologyClient>,
@@ -61,6 +63,7 @@ impl DiscoveryService {
         gena_event_rx: mpsc::Receiver<SonosEvent>,
         refresh_notify: Arc<Notify>,
         arbiter: Arc<SubscriptionArbiter>,
+        mdns_advertiser: MdnsAdvertiserHandle,
     ) -> Self {
         let topology_monitor = Arc::new(TopologyMonitor::new(
             sonos,
@@ -73,6 +76,7 @@ impl DiscoveryService {
                 refresh_notify: Arc::clone(&refresh_notify),
                 http_client,
                 spawner: spawner.clone(),
+                mdns_advertiser,
             },
             arbiter,
         ));

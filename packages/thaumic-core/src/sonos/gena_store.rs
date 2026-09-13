@@ -199,6 +199,26 @@ impl GenaSubscriptionStore {
             .collect()
     }
 
+    /// Returns subscriptions whose callback URL is not `callback_url`.
+    ///
+    /// A subscription stores the callback URL it was created with and never
+    /// re-sends it: a GENA RENEW carries only the SID. So a subscription made
+    /// while we advertised an address the speakers cannot reach stays in the
+    /// store, renews successfully forever, and delivers nothing. Comparing the
+    /// stored URL against the one we advertise now names exactly those.
+    ///
+    /// # Returns
+    /// A vector of (sid, ip) pairs, one per stale subscription.
+    #[must_use]
+    pub fn get_stale_callbacks(&self, callback_url: &str) -> Vec<(String, String)> {
+        self.subscriptions
+            .read()
+            .iter()
+            .filter(|(_, sub)| sub.callback_url != callback_url)
+            .map(|(sid, sub)| (sid.clone(), sub.ip.clone()))
+            .collect()
+    }
+
     /// Gets all SIDs for a specific IP.
     pub fn get_sids_by_ip(&self, ip: &str) -> Vec<String> {
         self.subscriptions
@@ -381,6 +401,56 @@ mod tests {
         let grc_ips = store.get_subscribed_ips(SonosService::GroupRenderingControl);
         assert_eq!(grc_ips.len(), 1);
         assert!(grc_ips.contains(&"192.168.1.100".to_string()));
+    }
+
+    #[test]
+    fn stale_callbacks_name_only_the_subscriptions_built_against_another_address() {
+        let store = GenaSubscriptionStore::new();
+
+        // Built while a VPN tunnel address was being advertised.
+        store.insert(
+            "uuid:stale".to_string(),
+            "192.0.2.10".to_string(),
+            SonosService::AVTransport,
+            "http://10.8.0.2:8080/gena".to_string(),
+            300,
+        );
+        // Built against the address we advertise now.
+        store.insert(
+            "uuid:fresh".to_string(),
+            "192.0.2.11".to_string(),
+            SonosService::AVTransport,
+            "http://192.168.1.5:8080/gena".to_string(),
+            300,
+        );
+
+        let stale = store.get_stale_callbacks("http://192.168.1.5:8080/gena");
+
+        assert_eq!(
+            stale,
+            vec![("uuid:stale".to_string(), "192.0.2.10".to_string())]
+        );
+    }
+
+    #[test]
+    fn nothing_is_stale_when_every_callback_matches() {
+        // An idle but healthy system: subscriptions exist, no event has arrived
+        // in hours, and none of that makes a subscription stale.
+        let store = GenaSubscriptionStore::new();
+
+        for (sid, ip) in [("uuid:1", "192.0.2.10"), ("uuid:2", "192.0.2.11")] {
+            store.insert(
+                sid.to_string(),
+                ip.to_string(),
+                SonosService::AVTransport,
+                "http://192.168.1.5:8080/gena".to_string(),
+                300,
+            );
+        }
+
+        assert!(store
+            .get_stale_callbacks("http://192.168.1.5:8080/gena")
+            .is_empty());
     }
 
     #[test]

@@ -18,6 +18,7 @@ use crate::api::WsConnectionManager;
 use crate::context::{LocalIpDetector, NetworkContext};
 use crate::error::{ThaumicError, ThaumicResult};
 use crate::events::{BroadcastEvent, BroadcastEventBridge, EventEmitter};
+use crate::mdns_advertise::{advertiser_handle, MdnsAdvertiserHandle};
 use crate::protocol_constants::{EVENT_CHANNEL_CAPACITY, SOAP_TIMEOUT_SECS};
 use crate::runtime::TokioSpawner;
 use crate::services::{DiscoveryService, LatencyMonitor, StreamCoordinator};
@@ -59,6 +60,9 @@ pub struct BootstrappedServices {
     pub spawner: TokioSpawner,
     /// Cancellation token for graceful shutdown.
     pub cancel_token: CancellationToken,
+    /// Shared mDNS advertisement slot (registered by the server, re-registered
+    /// by the topology monitor when the advertised address changes).
+    pub mdns_advertiser: MdnsAdvertiserHandle,
 }
 
 impl BootstrappedServices {
@@ -150,8 +154,9 @@ pub fn bootstrap_services(
     runtime_handle: tokio::runtime::Handle,
 ) -> ThaumicResult<BootstrappedServices> {
     let ip_detector = LocalIpDetector::arc();
-    let network = NetworkContext::auto_detect(config.preferred_port, ip_detector)
-        .map_err(|e| ThaumicError::Internal(format!("Failed to detect local IP: {}", e)))?;
+    let network =
+        NetworkContext::auto_detect_with_route_fallback(config.preferred_port, ip_detector)
+            .map_err(|e| ThaumicError::Internal(format!("Failed to detect local IP: {}", e)))?;
 
     bootstrap_services_with_network(config, network, runtime_handle)
 }
@@ -205,6 +210,9 @@ pub fn bootstrap_services_with_network(
     // Create the Sonos client (implements multiple traits)
     let sonos_impl = Arc::new(SonosClientImpl::new(http_client.clone()));
 
+    // mDNS advertisement slot, shared with the API layer and the topology monitor
+    let mdns_advertiser = advertiser_handle();
+
     // Validate streaming config (panics early if invalid)
     config
         .streaming
@@ -257,6 +265,7 @@ pub fn bootstrap_services_with_network(
         gena_event_rx,
         refresh_notify,
         arbiter,
+        Arc::clone(&mdns_advertiser),
     ));
 
     // Coerce to the general SonosClient trait for storage
@@ -276,6 +285,7 @@ pub fn bootstrap_services_with_network(
         http_client,
         spawner,
         cancel_token,
+        mdns_advertiser,
     })
 }
 

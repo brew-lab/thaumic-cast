@@ -153,20 +153,6 @@ impl SubscriptionArbiter {
         }
     }
 
-    /// Leaves sync sessions for all currently tracked speaker IPs concurrently.
-    ///
-    /// Called during IP changes when all subscriptions are being torn down.
-    pub async fn leave_all_sync_sessions(&self, callback_url: &str) {
-        let ips: Vec<String> = self.sync_ips.iter().map(|r| r.clone()).collect();
-
-        let futures: Vec<_> = ips
-            .iter()
-            .map(|ip| self.leave_sync_session(ip, callback_url))
-            .collect();
-
-        futures::future::join_all(futures).await;
-    }
-
     /// Ensures GroupRenderingControl is subscribed for a coordinator IP.
     ///
     /// Skips subscription if the speaker is in a sync session (RC is active).
@@ -271,31 +257,6 @@ mod tests {
             .await;
 
         assert!(!arbiter.is_in_sync_session("192.168.1.100"));
-    }
-
-    #[tokio::test]
-    async fn leave_all_clears_sync_ips() {
-        let arbiter = create_test_arbiter();
-        let ips = vec![
-            "192.168.1.100".to_string(),
-            "192.168.1.101".to_string(),
-            "192.168.1.102".to_string(),
-        ];
-        arbiter
-            .enter_sync_session(&ips, "http://localhost:1400/notify")
-            .await;
-
-        assert!(arbiter.is_in_sync_session("192.168.1.100"));
-        assert!(arbiter.is_in_sync_session("192.168.1.101"));
-        assert!(arbiter.is_in_sync_session("192.168.1.102"));
-
-        arbiter
-            .leave_all_sync_sessions("http://localhost:1400/notify")
-            .await;
-
-        assert!(!arbiter.is_in_sync_session("192.168.1.100"));
-        assert!(!arbiter.is_in_sync_session("192.168.1.101"));
-        assert!(!arbiter.is_in_sync_session("192.168.1.102"));
     }
 
     #[tokio::test]
