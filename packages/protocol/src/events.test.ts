@@ -6,6 +6,7 @@ import {
   parseSonosEvent,
   SpeakerRemovalReasonSchema,
   StreamEventSchema,
+  NetworkEventSchema,
   type LatencyEvent,
   type SonosEvent,
   type StreamEvent,
@@ -252,5 +253,50 @@ describe('LatencyEventSchema', () => {
     };
 
     expect(LatencyEventSchema.parse(stale)).toEqual(stale);
+  });
+});
+
+describe('NetworkEventSchema', () => {
+  it('should parse a speaker link quality event', () => {
+    const parsed = NetworkEventSchema.safeParse({
+      type: 'speakerLinkQuality',
+      speakerIp: '192.168.1.10',
+      quality: 'poor',
+      rttMedianMs: 12,
+      rttMaxMs: 215,
+      spikesPerMinute: 7,
+      failuresPerMinute: 1,
+      timestamp: NOW,
+    });
+    expect(parsed.success).toBe(true);
+    if (parsed.success && parsed.data.type === 'speakerLinkQuality') {
+      expect(parsed.data.quality).toBe('poor');
+    }
+  });
+
+  it('should reject a link quality it does not know', () => {
+    const parsed = NetworkEventSchema.safeParse({
+      type: 'speakerLinkQuality',
+      speakerIp: '192.168.1.10',
+      quality: 'terrible',
+      rttMedianMs: 12,
+      rttMaxMs: 215,
+      spikesPerMinute: 7,
+      failuresPerMinute: 1,
+      timestamp: NOW,
+    });
+    expect(parsed.success).toBe(false);
+  });
+
+  it('should still parse the health change event', () => {
+    expect(
+      NetworkEventSchema.safeParse({ type: 'healthChanged', health: 'degraded', timestamp: NOW })
+        .success,
+    ).toBe(true);
+  });
+
+  it('should accept network and topology broadcast categories', () => {
+    expect(BroadcastEventSchema.safeParse({ category: 'network', type: 'x' }).success).toBe(true);
+    expect(BroadcastEventSchema.safeParse({ category: 'topology', type: 'x' }).success).toBe(true);
   });
 });
