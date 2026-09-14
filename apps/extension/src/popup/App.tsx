@@ -349,21 +349,34 @@ function MainPopup(): JSX.Element {
       )}
 
       {wsConnected &&
-        linkQualityAlerts.map((alert) => (
-          <Alert
-            key={alert.speakerIp}
-            variant="warning"
-            className={styles.alert}
-            action={t('speaker_link_quality_action_open_settings')}
-            onAction={openSettings}
-            onDismiss={() => dismissLinkQualityAlert(alert.speakerIp)}
-          >
-            {t(`speaker_link_quality_${alert.quality}_message`, {
-              name: alert.speakerName,
-              spikes: alert.spikesPerMinute,
-            })}
-          </Alert>
-        ))}
+        linkQualityAlerts.map((alert) => {
+          // The companion decides whether a bigger buffer would help; when it
+          // made no suggestion there is nothing to set, so no settings button.
+          const suggested = alert.suggestedJitterBufferMs;
+          return (
+            <Alert
+              key={alert.speakerIp}
+              variant="warning"
+              className={styles.alert}
+              action={
+                suggested !== undefined ? t('speaker_link_quality_action_open_settings') : undefined
+              }
+              onAction={suggested !== undefined ? openSettings : undefined}
+              onDismiss={() => dismissLinkQualityAlert(alert.speakerIp)}
+            >
+              {suggested !== undefined
+                ? t(`speaker_link_quality_${alert.quality}_raise_buffer_message`, {
+                    name: alert.speakerName,
+                    suggested,
+                    current: alert.jitterBufferMs,
+                  })
+                : t('speaker_link_quality_no_remedy_message', {
+                    name: alert.speakerName,
+                    current: alert.jitterBufferMs,
+                  })}
+            </Alert>
+          );
+        })}
 
       {/* Active Casts List with Volume Controls */}
       <ActiveCastsList

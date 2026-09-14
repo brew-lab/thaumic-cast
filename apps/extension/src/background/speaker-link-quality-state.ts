@@ -37,7 +37,9 @@ export function getSpeakerLinkQuality(): Record<string, SpeakerLinkQualityState>
 
 /**
  * Records a `speakerLinkQuality` event as the latest reading for its speaker.
- * The event's timestamp becomes `updatedAt`, the popup's dismissal key.
+ * The companion's numbers are carried through as sent, including its buffer
+ * suggestion when it made one; the event's timestamp becomes `updatedAt`,
+ * the popup's dismissal key.
  * @param event - The companion's link-quality event
  */
 export function applySpeakerLinkQualityEvent(event: SpeakerLinkQualityEvent): void {
@@ -47,12 +49,21 @@ export function applySpeakerLinkQualityEvent(event: SpeakerLinkQualityEvent): vo
     rttMaxMs: event.rttMaxMs,
     spikesPerMinute: event.spikesPerMinute,
     failuresPerMinute: event.failuresPerMinute,
+    jitterBufferMs: event.jitterBufferMs,
+    ...(event.suggestedJitterBufferMs !== undefined && {
+      suggestedJitterBufferMs: event.suggestedJitterBufferMs,
+    }),
     updatedAt: event.timestamp,
   });
   log.info(
     `Link to ${event.speakerIp} is ${event.quality} ` +
       `(rtt median ${event.rttMedianMs} ms, max ${event.rttMaxMs} ms, ` +
-      `${event.spikesPerMinute} spikes/min, ${event.failuresPerMinute} failures/min)`,
+      `${event.spikesPerMinute} troubled samples/min, ` +
+      `${event.failuresPerMinute} retransmission timeouts/min, ` +
+      `buffer ${event.jitterBufferMs} ms` +
+      (event.suggestedJitterBufferMs !== undefined
+        ? `, suggested ${event.suggestedJitterBufferMs} ms)`
+        : ')'),
   );
 }
 

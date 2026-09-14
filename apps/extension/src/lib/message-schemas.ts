@@ -507,8 +507,9 @@ export type NetworkHealthChangedMessage = z.infer<typeof NetworkHealthChangedMes
 
 /**
  * Latest link-quality reading for one speaker, as kept by the background.
- * Field meanings match the companion's `speakerLinkQuality` event; `updatedAt`
- * is the event's timestamp and doubles as the popup's dismissal key, since the
+ * Fields are the companion's `speakerLinkQuality` event carried through
+ * unchanged (the extension computes nothing from them); `updatedAt` is the
+ * event's timestamp and doubles as the popup's dismissal key, since the
  * companion only sends the event when the quality changes.
  */
 export const SpeakerLinkQualityStateSchema = z.object({
@@ -517,6 +518,10 @@ export const SpeakerLinkQualityStateSchema = z.object({
   rttMaxMs: z.number().int().nonnegative(),
   spikesPerMinute: z.number().int().nonnegative(),
   failuresPerMinute: z.number().int().nonnegative(),
+  /** The jitter buffer the stream to this speaker runs with, in milliseconds */
+  jitterBufferMs: z.number().int().nonnegative(),
+  /** The buffer the companion says would ride out the stalls; absent when raising it would not help */
+  suggestedJitterBufferMs: z.number().int().nonnegative().optional(),
   updatedAt: z.number(),
 });
 export type SpeakerLinkQualityState = z.infer<typeof SpeakerLinkQualityStateSchema>;
