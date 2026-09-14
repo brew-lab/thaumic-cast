@@ -30,6 +30,14 @@
 /// will continue at normal priority, which may result in audio stuttering under
 /// heavy CPU load.
 pub fn raise_process_priority() {
+    if thaumic_core::priority_boost_disabled() {
+        log::info!(
+            "Process priority left at default ({} is set)",
+            thaumic_core::NO_PRIORITY_BOOST_ENV
+        );
+        return;
+    }
+
     #[cfg(target_os = "windows")]
     raise_priority_windows();
 

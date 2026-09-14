@@ -654,6 +654,14 @@ fn activate_process_loopback(pid: u32) -> windows::core::Result<IAudioClient> {
 // ─── MMCSS ──────────────────────────────────────────────────────────────────
 
 fn elevate_thread_mmcss() -> Option<HANDLE> {
+    // Mirrors thaumic_core's priority switch (this crate cannot depend on it):
+    // with THAUMIC_NO_PRIORITY_BOOST set, the capture thread keeps the
+    // default scheduling so it cannot starve the browser it is capturing.
+    if std::env::var_os("THAUMIC_NO_PRIORITY_BOOST").is_some_and(|v| !v.is_empty() && v != "0") {
+        log::info!("MMCSS: not registering the capture thread (THAUMIC_NO_PRIORITY_BOOST is set)");
+        return None;
+    }
+
     let task_name_wide: Vec<u16> = "Pro Audio\0".encode_utf16().collect();
     let mut task_index: u32 = 0;
 
