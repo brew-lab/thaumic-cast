@@ -2,6 +2,7 @@ import { describe, expect, it } from 'bun:test';
 
 import {
   CastAutoStoppedMessageSchema,
+  NetworkEventMessageSchema,
   RawMediaStateSchema,
   SpeakerIpSchema,
   SpeakerRemovedMessageSchema,
@@ -153,5 +154,66 @@ describe('RawMediaStateSchema', () => {
 
   it('should reject an action the MediaSession API does not define', () => {
     expect(RawMediaStateSchema.safeParse({ supportedActions: ['rewind'] }).success).toBe(false);
+  });
+});
+
+describe('NetworkEventMessageSchema', () => {
+  const message = (payload: Record<string, unknown>) => ({
+    type: 'NETWORK_EVENT',
+    payload: { category: 'network', timestamp: 1, ...payload },
+  });
+  const linkQuality = (fields: Record<string, unknown> = {}) =>
+    message({
+      type: 'speakerLinkQuality',
+      speakerIp: SPEAKER,
+      quality: 'degraded',
+      rttMedianMs: 3,
+      rttMaxMs: 40,
+      spikesPerMinute: 2,
+      failuresPerMinute: 0,
+      jitterBufferMs: 200,
+      ...fields,
+    });
+
+  it('should accept healthChanged as before', () => {
+    const parsed = NetworkEventMessageSchema.parse(
+      message({ type: 'healthChanged', health: 'degraded', reason: 'vpn' }),
+    );
+
+    expect(parsed.payload).toMatchObject({ type: 'healthChanged', health: 'degraded' });
+  });
+
+  it('should accept speakerLinkQuality with the protocol fields', () => {
+    const parsed = NetworkEventMessageSchema.parse(linkQuality());
+
+    expect(parsed.payload).toMatchObject({
+      type: 'speakerLinkQuality',
+      speakerIp: SPEAKER,
+      quality: 'degraded',
+      spikesPerMinute: 2,
+    });
+  });
+
+  it('should carry the buffer suggestion when present and require the current buffer', () => {
+    const suggested = NetworkEventMessageSchema.parse(
+      linkQuality({ suggestedJitterBufferMs: 500 }),
+    );
+
+    expect(suggested.payload).toMatchObject({ jitterBufferMs: 200, suggestedJitterBufferMs: 500 });
+    expect(
+      NetworkEventMessageSchema.safeParse(linkQuality({ jitterBufferMs: undefined })).success,
+    ).toBe(false);
+  });
+
+  it('should reject a speakerLinkQuality event with an unknown quality', () => {
+    expect(NetworkEventMessageSchema.safeParse(linkQuality({ quality: 'awful' })).success).toBe(
+      false,
+    );
+  });
+
+  it('should tag an unknown event type as unrecognized instead of failing', () => {
+    const parsed = NetworkEventMessageSchema.parse(message({ type: 'somethingNewer', extra: 1 }));
+
+    expect(parsed.payload).toEqual({ type: 'unrecognized', eventType: 'somethingNewer' });
   });
 });

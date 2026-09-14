@@ -42,6 +42,18 @@ use crate::utils::now_millis;
 /// 500ms is sufficient since Sonos RelTime only has 1-second precision.
 const POLL_INTERVAL_MS: u64 = 500;
 
+/// Environment variable that turns on position polling for every playing
+/// speaker, not only those driving video sync, so the cushion and its trend
+/// reach the log. Off by default: it is one SOAP call per speaker every
+/// second and a half for the whole cast, and the link judgement no longer
+/// needs it (it reads the stream connection's own TCP counters instead).
+pub const SPEAKER_DIAGNOSTICS_ENV: &str = "THAUMIC_SPEAKER_DIAGNOSTICS";
+
+/// Whether cushion diagnostics are switched on for this process.
+pub fn speaker_diagnostics_enabled() -> bool {
+    std::env::var_os(SPEAKER_DIAGNOSTICS_ENV).is_some_and(|v| !v.is_empty() && v != "0")
+}
+
 /// Polling interval for a speaker that is only being watched for diagnostics,
 /// not driving video sync. With the dither below this is one poll every
 /// second and a half on average: enough samples for a trend fit to resolve

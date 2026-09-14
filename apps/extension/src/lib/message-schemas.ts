@@ -19,6 +19,8 @@ import {
   PlaybackResultSchema,
   LatencyBroadcastEvent,
   SpeakerRemovalReasonSchema,
+  NetworkEventSchema,
+  LinkQualitySchema,
 } from '@thaumic-cast/protocol';
 
 // Re-export SpeakerRemovalReason from protocol for convenience
@@ -461,16 +463,40 @@ export type ConnectionAttemptFailedMessage = z.infer<typeof ConnectionAttemptFai
 export const NetworkHealthStatusSchema = z.enum(['ok', 'degraded']);
 export type NetworkHealthStatus = z.infer<typeof NetworkHealthStatusSchema>;
 
+/** Network event types this extension build knows how to handle. */
+const KNOWN_NETWORK_EVENT_TYPES: ReadonlySet<string> = new Set(
+  NetworkEventSchema.options.map((option) => option.shape.type.value),
+);
+
+/**
+ * A network event whose `type` this build does not know. A newer companion
+ * may add event types before the extension learns them; those must not fail
+ * validation of the whole message (which would log an error and drop it),
+ * so they are accepted and tagged for the handler to ignore. A known type
+ * with a bad body is not caught here: the refine only admits unknown types,
+ * so the message is rejected as a whole.
+ */
+const UnrecognizedNetworkEventSchema = z
+  .object({ type: z.string() })
+  .refine((event) => !KNOWN_NETWORK_EVENT_TYPES.has(event.type))
+  .transform((event) => ({ type: 'unrecognized' as const, eventType: event.type }));
+
+/**
+ * Network event forwarded by the offscreen document (offscreen → background).
+ * The payload is the companion's `NetworkEvent` as defined by the protocol
+ * package, or an `unrecognized` marker for event types this build lacks.
+ */
 export const NetworkEventMessageSchema = z.object({
   type: z.literal('NETWORK_EVENT'),
-  payload: z.object({
-    type: z.literal('healthChanged'),
-    health: NetworkHealthStatusSchema,
-    reason: z.string().optional(),
-    timestamp: z.number(),
-  }),
+  payload: z.union([NetworkEventSchema, UnrecognizedNetworkEventSchema]),
 });
 export type NetworkEventMessage = z.infer<typeof NetworkEventMessageSchema>;
+
+/** The `speakerLinkQuality` variant of the companion's network event. */
+export type SpeakerLinkQualityEvent = Extract<
+  z.infer<typeof NetworkEventSchema>,
+  { type: 'speakerLinkQuality' }
+>;
 
 export const NetworkHealthChangedMessageSchema = z.object({
   type: z.literal('NETWORK_HEALTH_CHANGED'),
@@ -478,6 +504,46 @@ export const NetworkHealthChangedMessageSchema = z.object({
   reason: z.string().nullable(),
 });
 export type NetworkHealthChangedMessage = z.infer<typeof NetworkHealthChangedMessageSchema>;
+
+/**
+ * Latest link-quality reading for one speaker, as kept by the background.
+ * Fields are the companion's `speakerLinkQuality` event carried through
+ * unchanged (the extension computes nothing from them); `updatedAt` is the
+ * event's timestamp and doubles as the popup's dismissal key, since the
+ * companion only sends the event when the quality changes.
+ */
+export const SpeakerLinkQualityStateSchema = z.object({
+  quality: LinkQualitySchema,
+  rttMedianMs: z.number().int().nonnegative(),
+  rttMaxMs: z.number().int().nonnegative(),
+  spikesPerMinute: z.number().int().nonnegative(),
+  failuresPerMinute: z.number().int().nonnegative(),
+  /** The jitter buffer the stream to this speaker runs with, in milliseconds */
+  jitterBufferMs: z.number().int().nonnegative(),
+  /** The buffer the companion says would ride out the stalls; absent when raising it would not help */
+  suggestedJitterBufferMs: z.number().int().nonnegative().optional(),
+  updatedAt: z.number(),
+});
+export type SpeakerLinkQualityState = z.infer<typeof SpeakerLinkQualityStateSchema>;
+
+/**
+ * Link-quality broadcast (background → popup). Mirrors CAPTURE_HEALTH_CHANGED:
+ * carries the whole snapshot, keyed by speaker IP, so a cleared speaker simply
+ * disappears from the map.
+ */
+export const SpeakerLinkQualityChangedMessageSchema = z.object({
+  type: z.literal('SPEAKER_LINK_QUALITY_CHANGED'),
+  speakers: z.record(SpeakerIpSchema, SpeakerLinkQualityStateSchema),
+});
+export type SpeakerLinkQualityChangedMessage = z.infer<
+  typeof SpeakerLinkQualityChangedMessageSchema
+>;
+
+/** Popup → background query for the current link-quality snapshot. */
+export const GetSpeakerLinkQualityMessageSchema = z.object({
+  type: z.literal('GET_SPEAKER_LINK_QUALITY'),
+});
+export type GetSpeakerLinkQualityMessage = z.infer<typeof GetSpeakerLinkQualityMessageSchema>;
 
 /**
  * Capture-health event (offscreen → background). Fired when `StreamSession`

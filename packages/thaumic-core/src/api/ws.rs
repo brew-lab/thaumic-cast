@@ -1541,6 +1541,14 @@ async fn handle_stop_browser_capture(
 /// Handles a START_PLAYBACK message: starts playback on the requested speakers.
 ///
 /// Runs on the control worker; returns the reply for the client.
+/// Whether a START_PLAYBACK should put its speakers under position polling.
+///
+/// Only video sync needs the polls. A plain cast never polls, exactly as the
+/// release behaves; the diagnostics switch opts a cast in for cushion logging.
+fn speaker_monitoring_wanted(video_sync: bool) -> bool {
+    video_sync || crate::services::speaker_diagnostics_enabled()
+}
+
 async fn handle_start_playback(
     state: &AppState,
     stream_id: Option<String>,
@@ -1596,15 +1604,18 @@ async fn handle_start_playback(
         )
         .await;
 
-    // Every speaker is monitored so its cushion and trend reach the log; the
-    // measurements are only sent to the client when it asked for them (video
-    // sync), which also selects the faster poll rate.
-    for result in &results {
-        if result.success {
-            state
-                .latency_monitor
-                .start_monitoring(&stream_id, &result.speaker_ip, latency_monitoring)
-                .await;
+    // Position polling drives video sync when the client asked for it, and
+    // otherwise runs only with the diagnostics switch set, when it logs the
+    // speaker's cushion and trend. It costs a SOAP call per speaker every
+    // second and a half, so it is not on by default.
+    if speaker_monitoring_wanted(latency_monitoring) {
+        for result in &results {
+            if result.success {
+                state
+                    .latency_monitor
+                    .start_monitoring(&stream_id, &result.speaker_ip, latency_monitoring)
+                    .await;
+            }
         }
     }
 
@@ -2166,6 +2177,37 @@ mod tests {
             coordinator_uuid: None,
             original_coordinator_uuid: None,
         }
+    }
+
+    // ─────────────────────────────────────────────────────────────────────
+    // Speaker position polling
+    // ─────────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn a_plain_cast_never_polls_the_speakers() {
+        use crate::services::latency_monitor::SPEAKER_DIAGNOSTICS_ENV;
+        // The env var is read at each START_PLAYBACK, so this test owns it
+        // for its duration and leaves it unset.
+        std::env::remove_var(SPEAKER_DIAGNOSTICS_ENV);
+        assert!(
+            !speaker_monitoring_wanted(false),
+            "a cast without video sync must not poll the speakers"
+        );
+        assert!(
+            speaker_monitoring_wanted(true),
+            "video sync needs the polls"
+        );
+
+        std::env::set_var(SPEAKER_DIAGNOSTICS_ENV, "1");
+        assert!(
+            speaker_monitoring_wanted(false),
+            "the diagnostics switch opts in"
+        );
+        std::env::set_var(SPEAKER_DIAGNOSTICS_ENV, "0");
+        assert!(!speaker_monitoring_wanted(false), "0 means off");
+        std::env::set_var(SPEAKER_DIAGNOSTICS_ENV, "");
+        assert!(!speaker_monitoring_wanted(false), "empty means off");
+        std::env::remove_var(SPEAKER_DIAGNOSTICS_ENV);
     }
 
     // ─────────────────────────────────────────────────────────────────────

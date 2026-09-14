@@ -99,6 +99,11 @@ struct PipelineSnapshot {
     receive: ReceiveWindow,
     cadence: CadenceWindow,
     delivery: DeliveryWindow,
+    /// TCP statistics for the speaker's connection since the last snapshot,
+    /// where the platform reports them. This is the only window that can see
+    /// a Wi-Fi stall: the kernel's send buffer hides it from `delivery`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    link: Option<crate::api::link::TcpLinkWindow>,
 }
 
 /// Wrapper that logs HTTP audio stream lifecycle and tracks delivery timing.
@@ -127,6 +132,14 @@ pub struct LoggingStreamGuard {
     /// Uses Mutex (not OnceLock) because the cadence stream may be dropped
     /// mid-loop when Sonos closes HTTP, before it can write a final value.
     pipeline_timeline: parking_lot::Mutex<VecDeque<PipelineSnapshot>>,
+    /// TCP statistics probe for the client's connection, when available.
+    link_probe: Option<crate::api::link::TcpLinkProbe>,
+    /// When retransmissions were last reported, to rate-limit the warning.
+    last_retransmit_warning: parking_lot::Mutex<Option<Instant>>,
+    /// Judges the connection from its samples and reports quality changes.
+    link_judge: parking_lot::Mutex<Option<crate::api::link::LinkJudge>>,
+    /// Where link quality changes are broadcast.
+    link_emitter: Option<Arc<dyn crate::events::EventEmitter>>,
 }
 
 impl LoggingStreamGuard {
@@ -150,6 +163,98 @@ impl LoggingStreamGuard {
             bytes_sent: AtomicU64::new(0),
             interval_max_gap_ms: AtomicU64::new(0),
             pipeline_timeline: parking_lot::Mutex::new(VecDeque::new()),
+            link_probe: None,
+            last_retransmit_warning: parking_lot::Mutex::new(None),
+            link_judge: parking_lot::Mutex::new(None),
+            link_emitter: None,
+        }
+    }
+
+    /// Attaches the TCP statistics probe for the client's connection, and
+    /// what is needed to judge it: the stream's jitter buffer, which decides
+    /// what a stall costs, and the emitter that broadcasts the verdict.
+    pub fn with_link_probe(
+        mut self,
+        probe: Option<crate::api::link::TcpLinkProbe>,
+        jitter_buffer_ms: u64,
+        emitter: Arc<dyn crate::events::EventEmitter>,
+    ) -> Self {
+        if probe.is_some() {
+            *self.link_judge.lock() = Some(crate::api::link::LinkJudge::new(jitter_buffer_ms));
+            self.link_emitter = Some(emitter);
+        }
+        self.link_probe = probe;
+        self
+    }
+
+    /// Reads the connection's TCP counters since the last read and warns, at
+    /// most once every five seconds, when data had to be retransmitted.
+    fn sample_link(&self) -> Option<crate::api::link::TcpLinkWindow> {
+        let window = self.link_probe.as_ref()?.sample()?;
+        let verdict = self
+            .link_judge
+            .lock()
+            .as_mut()
+            .and_then(|judge| judge.record(Instant::now(), window));
+        if let Some(report) = verdict {
+            self.report_link(report);
+        }
+        if window.retransmitted > 0 || window.timeouts > 0 {
+            let mut last = self.last_retransmit_warning.lock();
+            let due = last.map_or(true, |at| at.elapsed() >= Duration::from_secs(5));
+            if due {
+                *last = Some(Instant::now());
+                log::warn!(
+                    "[Stream] TCP retransmissions on the connection to {} (stream {}): +{} \
+                     retransmitted, +{} timeout(s), rtt {}ms. The audio left this machine on time; \
+                     the network between here and the speaker did not carry it",
+                    self.client_ip,
+                    self.stream_id,
+                    window.retransmitted,
+                    window.timeouts,
+                    window.rtt_ms
+                );
+            }
+        }
+        Some(window)
+    }
+
+    /// Logs a change in the connection's quality and broadcasts it as a
+    /// `speakerLinkQuality` event for the client's address.
+    fn report_link(&self, report: crate::api::link::LinkReport) {
+        use crate::events::{LinkQuality, NetworkEvent};
+        let line = format!(
+            "[Stream] Link to {} is {:?} (stream {}): median rtt {}ms, worst {}ms, {} troubled \
+             sample(s) and {} timeout(s) in the last minute; jitter buffer {}ms{}",
+            self.client_ip,
+            report.quality,
+            self.stream_id,
+            report.rtt_median_ms,
+            report.rtt_max_ms,
+            report.spikes,
+            report.failures,
+            report.jitter_buffer_ms,
+            report
+                .suggested_jitter_buffer_ms
+                .map(|ms| format!(", {ms}ms would ride this out"))
+                .unwrap_or_default()
+        );
+        match report.quality {
+            LinkQuality::Good => log::info!("{}", line),
+            LinkQuality::Degraded | LinkQuality::Poor => log::warn!("{}", line),
+        }
+        if let Some(emitter) = &self.link_emitter {
+            emitter.emit_network(NetworkEvent::SpeakerLinkQuality {
+                speaker_ip: self.client_ip.to_string(),
+                quality: report.quality,
+                rtt_median_ms: report.rtt_median_ms,
+                rtt_max_ms: report.rtt_max_ms,
+                spikes_per_minute: report.spikes,
+                failures_per_minute: report.failures,
+                jitter_buffer_ms: report.jitter_buffer_ms,
+                suggested_jitter_buffer_ms: report.suggested_jitter_buffer_ms,
+                timestamp: crate::utils::now_millis(),
+            });
         }
     }
 
@@ -263,11 +368,18 @@ impl Drop for LoggingStreamGuard {
         } else {
             format!(", pipeline_timeline={}", timeline_json)
         };
+        // Retransmissions over the whole connection, where the platform
+        // reports them: the one number that says the network dropped audio.
+        let link_info = self
+            .link_probe
+            .as_ref()
+            .map(|probe| format!(", tcp_retransmitted={}", probe.total_retransmitted()))
+            .unwrap_or_default();
 
         if let Some(ref err) = *first_error {
             log::warn!(
                 "[Stream] HTTP stream ended with error{}: stream={}, client={}, frames_sent={}, \
-                 max_gap={}ms, gaps_over_{}ms={}, final_gap={}ms{}{}{}{}, error={}",
+                 max_gap={}ms, gaps_over_{}ms={}, final_gap={}ms{}{}{}{}{}, error={}",
                 stalled_suffix,
                 self.stream_id,
                 self.client_ip,
@@ -279,13 +391,14 @@ impl Drop for LoggingStreamGuard {
                 silence_info,
                 dropped_info,
                 recovery_info,
+                link_info,
                 timeline_info,
                 err
             );
         } else {
             log::info!(
                 "[Stream] HTTP stream ended normally{}: stream={}, client={}, frames_sent={}, \
-                 max_gap={}ms, gaps_over_{}ms={}, final_gap={}ms{}{}{}{}",
+                 max_gap={}ms, gaps_over_{}ms={}, final_gap={}ms{}{}{}{}{}",
                 stalled_suffix,
                 self.stream_id,
                 self.client_ip,
@@ -297,6 +410,7 @@ impl Drop for LoggingStreamGuard {
                 silence_info,
                 dropped_info,
                 recovery_info,
+                link_info,
                 timeline_info
             );
         }
@@ -760,6 +874,7 @@ pub fn create_wav_stream_with_cadence(
                             receive,
                             cadence: cadence_window,
                             delivery,
+                            link: guard.sample_link(),
                         });
                     }
                 }
