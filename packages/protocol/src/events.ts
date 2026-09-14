@@ -149,6 +149,49 @@ export const LatencyEventSchema = z.discriminatedUnion('type', [
 export type LatencyEvent = z.infer<typeof LatencyEventSchema>;
 
 /**
+ * Quality of the network path between the companion and one speaker, judged
+ * from the round trips of the companion's own position polls to that speaker.
+ *
+ * - `good`: no latency spikes in the last minute.
+ * - `degraded`: a few spikes; short dropouts are possible on a small buffer.
+ * - `poor`: repeated spikes or failed round trips; audio will stutter unless
+ *   the jitter buffer is large enough to ride them out.
+ */
+export const LinkQualitySchema = z.enum(['good', 'degraded', 'poor']);
+export type LinkQuality = z.infer<typeof LinkQualitySchema>;
+
+/**
+ * Network event types broadcast by the companion.
+ */
+export const NetworkEventSchema = z.discriminatedUnion('type', [
+  z.object({
+    type: z.literal('healthChanged'),
+    health: z.enum(['ok', 'degraded']),
+    /** Why the network is degraded, when it is */
+    reason: z.string().optional(),
+    /** Unix timestamp in milliseconds */
+    timestamp: z.number(),
+  }),
+  z.object({
+    type: z.literal('speakerLinkQuality'),
+    /** IP address of the speaker the path leads to */
+    speakerIp: z.string(),
+    quality: LinkQualitySchema,
+    /** Median round trip to the speaker over the last minute, in milliseconds */
+    rttMedianMs: z.number().int().nonnegative(),
+    /** Worst round trip over the last minute, in milliseconds */
+    rttMaxMs: z.number().int().nonnegative(),
+    /** Round trips over the spike threshold in the last minute */
+    spikesPerMinute: z.number().int().nonnegative(),
+    /** Round trips that failed outright in the last minute */
+    failuresPerMinute: z.number().int().nonnegative(),
+    /** Unix timestamp in milliseconds */
+    timestamp: z.number(),
+  }),
+]);
+export type NetworkEvent = z.infer<typeof NetworkEventSchema>;
+
+/**
  * Broadcast event wrapper from desktop app.
  * Uses passthrough to allow the nested event fields.
  */
@@ -156,6 +199,8 @@ export const BroadcastEventSchema = z.union([
   z.object({ category: z.literal('sonos') }).passthrough(),
   z.object({ category: z.literal('stream') }).passthrough(),
   z.object({ category: z.literal('latency') }).passthrough(),
+  z.object({ category: z.literal('network') }).passthrough(),
+  z.object({ category: z.literal('topology') }).passthrough(),
 ]);
 
 /**
