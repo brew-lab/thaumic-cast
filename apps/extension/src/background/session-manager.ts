@@ -19,6 +19,11 @@ import { getCachedState } from './metadata-cache';
 import { notifyPopup } from './notification-service';
 import { persistenceManager } from './persistence-manager';
 import { captureHealthBroadcast, clearCaptureHealthForTab } from './capture-health-state';
+import {
+  clearAllSpeakerLinkQuality,
+  clearSpeakerLinkQuality,
+  speakerLinkQualityBroadcast,
+} from './speaker-link-quality-state';
 
 const log = createLogger('SessionManager');
 
@@ -196,6 +201,7 @@ export function removeSession(tabId: number): void {
     if (clearCaptureHealthForTab(tabId)) {
       notifyPopup(captureHealthBroadcast());
     }
+    dropLinkQualityForSpeakers(session.speakerIps);
 
     persistSessions();
     notifySessionsChanged();
@@ -213,8 +219,28 @@ export function clearAllSessions(): void {
   log.info(`Clearing all ${sessions.size} session(s) - desktop unreachable`);
   sessions.clear();
   releaseKeepAwake();
+  if (clearAllSpeakerLinkQuality()) {
+    notifyPopup(speakerLinkQualityBroadcast());
+  }
   persistSessions();
   notifySessionsChanged();
+}
+
+/**
+ * Drops link-quality readings for speakers that no longer belong to any
+ * active cast. The companion only reports on speakers playing a stream, so
+ * a reading outlives its usefulness the moment the speaker leaves the cast.
+ * @param speakerIps - Speakers that just left a session
+ */
+function dropLinkQualityForSpeakers(speakerIps: readonly string[]): void {
+  let changed = false;
+  for (const speakerIp of speakerIps) {
+    if (getSessionBySpeakerIp(speakerIp)) continue;
+    if (clearSpeakerLinkQuality(speakerIp)) changed = true;
+  }
+  if (changed) {
+    notifyPopup(speakerLinkQualityBroadcast());
+  }
 }
 
 /**
@@ -277,6 +303,7 @@ export function removeSpeakerFromSession(tabId: number, speakerIp: string): bool
     return true;
   }
 
+  dropLinkQualityForSpeakers([speakerIp]);
   persistSessions();
   notifySessionsChanged();
   log.info(

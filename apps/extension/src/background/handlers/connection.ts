@@ -35,7 +35,12 @@ import { setSonosState, getSonosState as getStoredSonosState, updateGroups } fro
 import { ensureOffscreen } from '../offscreen-manager';
 import { offscreenBroker } from '../offscreen-broker';
 import { notifyPopup } from '../notification-service';
-import { clearAllSessions } from '../session-manager';
+import { clearAllSessions, getSessionBySpeakerIp } from '../session-manager';
+import {
+  applySpeakerLinkQualityEvent,
+  clearAllSpeakerLinkQuality,
+  speakerLinkQualityBroadcast,
+} from '../speaker-link-quality-state';
 
 const log = createLogger('Background');
 
@@ -136,6 +141,7 @@ export function handleWsConnected(
  */
 export function handleWsTemporarilyDisconnected(): void {
   setConnected(false);
+  forgetSpeakerLinkQuality();
   log.warn('WebSocket disconnected, reconnecting...');
   notifyPopup({ type: 'WS_CONNECTION_LOST', reason: 'reconnecting' });
 }
@@ -148,9 +154,21 @@ export function handleWsPermanentlyDisconnected(): void {
   // Clear all sessions - offscreen's stopAllSessions() terminates workers
   // synchronously, so SESSION_DISCONNECTED messages are never sent
   clearAllSessions();
+  forgetSpeakerLinkQuality();
   setConnectionError('error_connection_lost');
   log.warn('WebSocket permanently disconnected');
   notifyPopup({ type: 'WS_CONNECTION_LOST', reason: 'max_retries_exceeded' });
+}
+
+/**
+ * Drops every speaker link-quality reading and tells the popup. The
+ * companion's verdicts only hold while it is connected and reporting; after a
+ * reconnect it sends fresh transitions for whatever is still playing.
+ */
+function forgetSpeakerLinkQuality(): void {
+  if (clearAllSpeakerLinkQuality()) {
+    notifyPopup(speakerLinkQualityBroadcast());
+  }
 }
 
 /**
@@ -264,18 +282,38 @@ export function getSonosState(): { state: SonosStateSnapshot | null } {
 }
 
 /**
- * Handles NETWORK_EVENT from offscreen (network health changes).
+ * Handles NETWORK_EVENT from offscreen: overall network health changes and
+ * per-speaker link-quality verdicts. Event types this build does not know
+ * arrive tagged `unrecognized` by the message schema and are ignored.
  * @param payload - The network event payload
  */
 export function handleNetworkEvent(payload: NetworkEventMessage['payload']): void {
-  if (payload.type === 'healthChanged') {
-    const reason = payload.reason ?? null;
-    setNetworkHealth(payload.health, reason);
-    notifyPopup({
-      type: 'NETWORK_HEALTH_CHANGED',
-      health: payload.health,
-      reason,
-    });
+  switch (payload.type) {
+    case 'healthChanged': {
+      const reason = payload.reason ?? null;
+      setNetworkHealth(payload.health, reason);
+      notifyPopup({
+        type: 'NETWORK_HEALTH_CHANGED',
+        health: payload.health,
+        reason,
+      });
+      break;
+    }
+    case 'speakerLinkQuality': {
+      // The companion reports on every speaker playing a stream, including
+      // other clients' streams; only the ones this extension is casting to
+      // matter here, and only they get cleared when their cast ends.
+      if (!getSessionBySpeakerIp(payload.speakerIp)) {
+        log.debug(`Ignoring link quality for ${payload.speakerIp}: not in an active cast`);
+        return;
+      }
+      applySpeakerLinkQualityEvent(payload);
+      notifyPopup(speakerLinkQualityBroadcast());
+      break;
+    }
+    case 'unrecognized':
+      log.debug(`Ignoring unknown network event type: ${payload.eventType}`);
+      break;
   }
 }
 

@@ -26,6 +26,7 @@ import { useExtensionSettingsListener } from './hooks/useExtensionSettingsListen
 import { useSpeakerSelection } from './hooks/useSpeakerSelection';
 import { useCompanionVersion } from './hooks/useCompanionVersion';
 import { useCaptureHealth } from './hooks/useCaptureHealth';
+import { useSpeakerLinkQuality } from './hooks/useSpeakerLinkQuality';
 import { companionTypeLabelKey, versionMismatchActionKey } from '../lib/versionCheck';
 import { Onboarding } from './components/Onboarding';
 
@@ -129,6 +130,12 @@ function MainPopup(): JSX.Element {
   // Capture-health alert (LoopbackStream frame drops on low-core Windows)
   const { showAlert: showCaptureHealthAlert, dismiss: dismissCaptureHealthAlert } =
     useCaptureHealth();
+
+  // Link-quality alerts (companion sees latency spikes on the path to a casting speaker)
+  const { alerts: linkQualityAlerts, dismiss: dismissLinkQualityAlert } = useSpeakerLinkQuality(
+    activeCasts,
+    speakerGroups,
+  );
 
   const handleOpenReleases = useCallback(() => {
     chrome.tabs.create({ url: GITHUB_RELEASES_URL });
@@ -340,6 +347,23 @@ function MainPopup(): JSX.Element {
           {t('capture_health_frame_drops_message')}
         </Alert>
       )}
+
+      {wsConnected &&
+        linkQualityAlerts.map((alert) => (
+          <Alert
+            key={alert.speakerIp}
+            variant="warning"
+            className={styles.alert}
+            action={t('speaker_link_quality_action_open_settings')}
+            onAction={openSettings}
+            onDismiss={() => dismissLinkQualityAlert(alert.speakerIp)}
+          >
+            {t(`speaker_link_quality_${alert.quality}_message`, {
+              name: alert.speakerName,
+              spikes: alert.spikesPerMinute,
+            })}
+          </Alert>
+        ))}
 
       {/* Active Casts List with Volume Controls */}
       <ActiveCastsList
