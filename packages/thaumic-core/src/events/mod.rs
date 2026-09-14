@@ -168,8 +168,12 @@ pub enum NetworkEvent {
     },
     /// The network path to a playing speaker changed quality.
     ///
-    /// Sent on transitions only. Names no stream, so it reaches every client;
-    /// the path to a speaker is shared by everyone casting to it.
+    /// Judged from the TCP counters of the connection the speaker fetches
+    /// audio over: retransmissions, timeouts and round trip, straight from
+    /// the kernel, so it measures the path the audio actually takes and
+    /// costs no extra traffic. Sent on transitions only. Names no stream, so
+    /// it reaches every client; the path to a speaker is shared by everyone
+    /// casting to it.
     SpeakerLinkQuality {
         /// The speaker the path leads to.
         #[serde(rename = "speakerIp")]
@@ -185,9 +189,22 @@ pub enum NetworkEvent {
         /// Round trips over the spike threshold in the last minute.
         #[serde(rename = "spikesPerMinute")]
         spikes_per_minute: u32,
-        /// Round trips that failed outright in the last minute.
+        /// Retransmission timeouts in the last minute: stalls long enough
+        /// that the kernel gave up waiting and resent.
         #[serde(rename = "failuresPerMinute")]
         failures_per_minute: u32,
+        /// The jitter buffer the stream to this speaker runs with, which is
+        /// how far ahead of real time the speaker receives audio.
+        #[serde(rename = "jitterBufferMs")]
+        jitter_buffer_ms: u64,
+        /// The jitter buffer that would ride out the stalls seen in the last
+        /// minute, when raising it would help. Absent when the current buffer
+        /// already covers them or is at its maximum.
+        #[serde(
+            rename = "suggestedJitterBufferMs",
+            skip_serializing_if = "Option::is_none"
+        )]
+        suggested_jitter_buffer_ms: Option<u64>,
         /// Unix timestamp in milliseconds.
         timestamp: u64,
     },

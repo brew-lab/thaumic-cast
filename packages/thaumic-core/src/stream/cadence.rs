@@ -136,6 +136,10 @@ pub struct LoggingStreamGuard {
     link_probe: Option<crate::api::link::TcpLinkProbe>,
     /// When retransmissions were last reported, to rate-limit the warning.
     last_retransmit_warning: parking_lot::Mutex<Option<Instant>>,
+    /// Judges the connection from its samples and reports quality changes.
+    link_judge: parking_lot::Mutex<Option<crate::api::link::LinkJudge>>,
+    /// Where link quality changes are broadcast.
+    link_emitter: Option<Arc<dyn crate::events::EventEmitter>>,
 }
 
 impl LoggingStreamGuard {
@@ -161,11 +165,24 @@ impl LoggingStreamGuard {
             pipeline_timeline: parking_lot::Mutex::new(VecDeque::new()),
             link_probe: None,
             last_retransmit_warning: parking_lot::Mutex::new(None),
+            link_judge: parking_lot::Mutex::new(None),
+            link_emitter: None,
         }
     }
 
-    /// Attaches the TCP statistics probe for the client's connection.
-    pub fn with_link_probe(mut self, probe: Option<crate::api::link::TcpLinkProbe>) -> Self {
+    /// Attaches the TCP statistics probe for the client's connection, and
+    /// what is needed to judge it: the stream's jitter buffer, which decides
+    /// what a stall costs, and the emitter that broadcasts the verdict.
+    pub fn with_link_probe(
+        mut self,
+        probe: Option<crate::api::link::TcpLinkProbe>,
+        jitter_buffer_ms: u64,
+        emitter: Arc<dyn crate::events::EventEmitter>,
+    ) -> Self {
+        if probe.is_some() {
+            *self.link_judge.lock() = Some(crate::api::link::LinkJudge::new(jitter_buffer_ms));
+            self.link_emitter = Some(emitter);
+        }
         self.link_probe = probe;
         self
     }
@@ -174,6 +191,14 @@ impl LoggingStreamGuard {
     /// most once every five seconds, when data had to be retransmitted.
     fn sample_link(&self) -> Option<crate::api::link::TcpLinkWindow> {
         let window = self.link_probe.as_ref()?.sample()?;
+        let verdict = self
+            .link_judge
+            .lock()
+            .as_mut()
+            .and_then(|judge| judge.record(Instant::now(), window));
+        if let Some(report) = verdict {
+            self.report_link(report);
+        }
         if window.retransmitted > 0 || window.timeouts > 0 {
             let mut last = self.last_retransmit_warning.lock();
             let due = last.map_or(true, |at| at.elapsed() >= Duration::from_secs(5));
@@ -192,6 +217,45 @@ impl LoggingStreamGuard {
             }
         }
         Some(window)
+    }
+
+    /// Logs a change in the connection's quality and broadcasts it as a
+    /// `speakerLinkQuality` event for the client's address.
+    fn report_link(&self, report: crate::api::link::LinkReport) {
+        use crate::events::{LinkQuality, NetworkEvent};
+        let line = format!(
+            "[Stream] Link to {} is {:?} (stream {}): median rtt {}ms, worst {}ms, {} troubled \
+             sample(s) and {} timeout(s) in the last minute; jitter buffer {}ms{}",
+            self.client_ip,
+            report.quality,
+            self.stream_id,
+            report.rtt_median_ms,
+            report.rtt_max_ms,
+            report.spikes,
+            report.failures,
+            report.jitter_buffer_ms,
+            report
+                .suggested_jitter_buffer_ms
+                .map(|ms| format!(", {ms}ms would ride this out"))
+                .unwrap_or_default()
+        );
+        match report.quality {
+            LinkQuality::Good => log::info!("{}", line),
+            LinkQuality::Degraded | LinkQuality::Poor => log::warn!("{}", line),
+        }
+        if let Some(emitter) = &self.link_emitter {
+            emitter.emit_network(NetworkEvent::SpeakerLinkQuality {
+                speaker_ip: self.client_ip.to_string(),
+                quality: report.quality,
+                rtt_median_ms: report.rtt_median_ms,
+                rtt_max_ms: report.rtt_max_ms,
+                spikes_per_minute: report.spikes,
+                failures_per_minute: report.failures,
+                jitter_buffer_ms: report.jitter_buffer_ms,
+                suggested_jitter_buffer_ms: report.suggested_jitter_buffer_ms,
+                timestamp: crate::utils::now_millis(),
+            });
+        }
     }
 
     /// Records a frame being delivered to the client (lock-free).

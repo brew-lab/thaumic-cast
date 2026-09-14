@@ -266,6 +266,8 @@ describe('NetworkEventSchema', () => {
       rttMaxMs: 215,
       spikesPerMinute: 7,
       failuresPerMinute: 1,
+      jitterBufferMs: 200,
+      suggestedJitterBufferMs: 500,
       timestamp: NOW,
     });
     expect(parsed.success).toBe(true);
@@ -283,6 +285,7 @@ describe('NetworkEventSchema', () => {
       rttMaxMs: 215,
       spikesPerMinute: 7,
       failuresPerMinute: 1,
+      jitterBufferMs: 200,
       timestamp: NOW,
     });
     expect(parsed.success).toBe(false);

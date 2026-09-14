@@ -206,6 +206,8 @@ impl EventEmitter for TauriEventEmitter {
                 rtt_max_ms,
                 spikes_per_minute,
                 failures_per_minute,
+                jitter_buffer_ms,
+                suggested_jitter_buffer_ms,
                 ..
             } => {
                 #[derive(serde::Serialize, Clone)]
@@ -217,6 +219,8 @@ impl EventEmitter for TauriEventEmitter {
                     rtt_max_ms: u32,
                     spikes_per_minute: u32,
                     failures_per_minute: u32,
+                    jitter_buffer_ms: u64,
+                    suggested_jitter_buffer_ms: Option<u64>,
                 }
                 self.emit_to_tauri(
                     "speaker-link-quality",
@@ -227,6 +231,8 @@ impl EventEmitter for TauriEventEmitter {
                         rtt_max_ms: *rtt_max_ms,
                         spikes_per_minute: *spikes_per_minute,
                         failures_per_minute: *failures_per_minute,
+                        jitter_buffer_ms: *jitter_buffer_ms,
+                        suggested_jitter_buffer_ms: *suggested_jitter_buffer_ms,
                     },
                 );
             }
