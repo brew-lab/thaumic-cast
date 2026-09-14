@@ -122,6 +122,20 @@ pub fn validate_speaker_ip(ip: &IpAddr) -> Result<Ipv4Addr, IpValidationError> {
     Ok(ipv4)
 }
 
+/// Environment variable that, when set, stops the process and its audio
+/// threads from raising their own scheduling priority.
+pub const NO_PRIORITY_BOOST_ENV: &str = "THAUMIC_NO_PRIORITY_BOOST";
+
+/// Whether priority boosting has been switched off for this process.
+///
+/// A diagnostic switch: on a small machine, a process at high priority with
+/// its audio threads registered for pro-audio scheduling can starve the very
+/// browser it is capturing, and the captured audio then carries the browser's
+/// dropouts. Running without the boost tells the two apart.
+pub fn priority_boost_disabled() -> bool {
+    std::env::var_os(NO_PRIORITY_BOOST_ENV).is_some_and(|v| !v.is_empty() && v != "0")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

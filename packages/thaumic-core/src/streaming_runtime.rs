@@ -147,6 +147,14 @@ impl Drop for StreamingRuntime {
 ///
 /// Called by each worker thread on startup via `on_thread_start`.
 fn raise_thread_priority() {
+    if crate::utils::priority_boost_disabled() {
+        log::info!(
+            "Streaming thread priority left at default ({} is set)",
+            crate::utils::NO_PRIORITY_BOOST_ENV
+        );
+        return;
+    }
+
     #[cfg(target_os = "windows")]
     raise_thread_priority_windows();
 

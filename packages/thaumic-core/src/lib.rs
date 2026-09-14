@@ -58,7 +58,10 @@ pub use events::{
 };
 pub use runtime::TokioSpawner;
 pub use state::{Config, ManualSpeakerConfig, SonosState, StreamingConfig};
-pub use utils::{now_millis, validate_speaker_ip, IpValidationError};
+pub use utils::{
+    now_millis, priority_boost_disabled, validate_speaker_ip, IpValidationError,
+    NO_PRIORITY_BOOST_ENV,
+};
 
 // Re-export Sonos types
 pub use sonos::discovery::{probe_speaker_by_ip, Speaker};

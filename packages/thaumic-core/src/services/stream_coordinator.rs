@@ -14,6 +14,7 @@ use bytes::Bytes;
 use parking_lot::Mutex;
 use tokio::sync::Notify;
 
+use crate::capture::diagnostics::{tap_dir_from_env, ContentStats, WavTap};
 use crate::capture::{AudioSink, AudioSource, BufferFlags, CaptureHandle};
 
 use crate::context::NetworkContext;
@@ -69,6 +70,12 @@ struct StreamSinkBridge {
     /// Lost frames below one packet carried to the next loss, so repeated
     /// small losses are backfilled in total rather than rounded away.
     backfill_residual: Mutex<u64>,
+    /// Sample rate of the source, for content statistics.
+    sample_rate: u32,
+    /// What the captured samples contain, summarised to the log periodically.
+    content: Mutex<ContentStats>,
+    /// Copy of everything pushed into the pipeline, when a tap directory is set.
+    tap: Mutex<Option<WavTap>>,
 }
 
 impl StreamSinkBridge {
@@ -79,6 +86,25 @@ impl StreamSinkBridge {
         audio_format: &AudioFormat,
         jitter_buffer_ms: u64,
     ) -> Self {
+        let tap =
+            tap_dir_from_env().and_then(|dir| match WavTap::open(&dir, &stream_id, audio_format) {
+                Ok(tap) => {
+                    log::info!(
+                        "[Capture] Writing captured audio for stream {} to {}",
+                        stream_id,
+                        tap.path().display()
+                    );
+                    Some(tap)
+                }
+                Err(e) => {
+                    log::warn!(
+                        "[Capture] Could not open capture tap in {}: {}",
+                        dir.display(),
+                        e
+                    );
+                    None
+                }
+            });
         Self {
             stream_id,
             coordinator,
@@ -91,11 +117,27 @@ impl StreamSinkBridge {
             last_backfill_log: Mutex::new(None),
             last_sample_pair: Mutex::new(None),
             backfill_residual: Mutex::new(0),
+            sample_rate: audio_format.sample_rate,
+            content: Mutex::new(ContentStats::new()),
+            tap: Mutex::new(tap),
         }
     }
 
     /// Pushes one frame, returning whether it was the stream's first.
     fn push(&self, frame: Bytes) -> bool {
+        {
+            let mut tap = self.tap.lock();
+            if let Some(writer) = tap.as_mut() {
+                if let Err(e) = writer.write(&frame) {
+                    log::warn!(
+                        "[Capture] Capture tap {} failed, stopping it: {}",
+                        writer.path().display(),
+                        e
+                    );
+                    *tap = None;
+                }
+            }
+        }
         match self.coordinator.push_frame(&self.stream_id, frame) {
             Some(first) => first,
             None => {
@@ -163,6 +205,31 @@ impl AudioSink for StreamSinkBridge {
         let mut is_first = false;
         if flags.lost_frames > 0 && frames > 0 && channels > 0 {
             is_first |= self.backfill_lost(flags.lost_frames, frames, channels);
+        }
+
+        // What the samples contain. The timing counters downstream cannot
+        // tell a healthy stream from a punctual stream of broken audio.
+        if !flags.silent {
+            if let Some(summary) = self
+                .content
+                .lock()
+                .observe(data, channels, self.sample_rate)
+            {
+                if summary.has_dropouts() {
+                    log::warn!(
+                        "[Capture] Captured audio has holes in it on stream {}: {}. The source \
+                         is delivering gaps (a starved renderer?); the pipeline is passing them on faithfully",
+                        self.stream_id,
+                        summary
+                    );
+                } else {
+                    log::info!(
+                        "[Capture] Content on stream {}: {}",
+                        self.stream_id,
+                        summary
+                    );
+                }
+            }
         }
 
         let mut buf = self.buf.lock(); // uncontended — single capture thread, ~25ns

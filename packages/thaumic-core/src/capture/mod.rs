@@ -5,6 +5,8 @@
 //! Sources push Float32 interleaved audio to sinks, which can bridge into
 //! the streaming pipeline or collect samples for diagnostics.
 
+pub(crate) mod diagnostics;
+
 use std::sync::Arc;
 
 use tokio_util::sync::CancellationToken;
