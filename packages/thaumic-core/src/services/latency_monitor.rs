@@ -42,6 +42,54 @@ use crate::utils::now_millis;
 /// 500ms is sufficient since Sonos RelTime only has 1-second precision.
 const POLL_INTERVAL_MS: u64 = 500;
 
+/// Polling interval for a speaker that is only being watched for diagnostics,
+/// not driving video sync. With the dither below this is one poll every
+/// second and a half on average: enough samples for a trend fit to resolve
+/// a few tens of milliseconds per minute within ten minutes, while keeping a
+/// large unsynced cast to a handful of SOAP calls a second.
+const DIAGNOSTIC_POLL_INTERVAL_MS: u64 = 1000;
+
+/// How often each speaker's cushion and trend are written to the log.
+const DIAGNOSTIC_LOG_INTERVAL_SECS: u64 = 10;
+
+/// Random delay added to every poll, in milliseconds.
+///
+/// The speaker reports its position in whole seconds, so each sample of the
+/// cushion carries an error that depends on where in the speaker's second
+/// the poll lands. Polling on a fixed cadence keeps that phase almost
+/// constant, and under a slow drift it creeps linearly, which a trend fit
+/// cannot tell from the drift itself. Spreading each poll by up to a full
+/// second makes the phase uniform, so the error averages out instead.
+const POLL_DITHER_MS: u64 = 1000;
+
+/// Cushion below which a speaker is about to run dry. The pipeline latency
+/// this service measures is the audio between capture and the speaker's
+/// playhead; when it approaches zero the speaker has nothing left to play
+/// ahead and every network hiccup becomes a dropout.
+const LOW_CUSHION_MS: i64 = 150;
+
+/// Cushion above which a low-cushion warning is re-armed.
+const LOW_CUSHION_CLEAR_MS: i64 = 300;
+
+/// A trend at least this steep, sustained over [`TREND_MIN_SPAN_SECS`] and
+/// at least [`TREND_MIN_SIGMA`] standard errors from zero, is reported. The
+/// source and the speaker run on different clocks and their rates never
+/// match exactly; what matters is whether the mismatch will empty the cushion
+/// within a session.
+const TREND_WARN_MS_PER_MIN: f64 = 10.0;
+
+/// How many standard errors from zero a slope must be before it is called a
+/// trend. Each sample carries up to a second of noise from the speaker's
+/// position precision, so a short window fits a steep slope out of nothing;
+/// the standard error says how much of the slope is noise.
+const TREND_MIN_SIGMA: f64 = 3.0;
+
+/// Shortest span of samples a trend is trusted over.
+const TREND_MIN_SPAN_SECS: f64 = 60.0;
+
+/// Projected time to an empty cushion below which the trend is a warning.
+const TREND_WARN_HORIZON_MIN: f64 = 15.0;
+
 /// Minimum samples needed before emitting latency updates.
 const MIN_SAMPLES_FOR_CONFIDENCE: usize = 5;
 
@@ -66,8 +114,98 @@ enum EpochStatus {
     Stale,
 }
 
+/// Incremental least-squares fit of cushion against time.
+///
+/// Answers one question: is the speaker's cushion shrinking, and how fast?
+/// A steady negative slope means the speaker consumes audio faster than the
+/// source produces it (its DAC clock runs ahead of the capture clock), and
+/// since a live source can only ever deliver at its own rate, the cushion is
+/// never replenished until playback restarts. Sample noise from the speaker's
+/// one-second position precision averages out over a fit spanning minutes.
+#[derive(Debug, Default, Clone, Copy)]
+struct CushionTrend {
+    n: f64,
+    sum_x: f64,
+    sum_y: f64,
+    sum_xx: f64,
+    sum_xy: f64,
+    sum_yy: f64,
+    /// Seconds of samples covered so far.
+    span_secs: f64,
+}
+
+/// A fitted trend: the slope and how sure the fit is of it.
+#[derive(Debug, Clone, Copy)]
+struct Trend {
+    /// Milliseconds of cushion per minute of wall clock; negative is draining.
+    slope_ms_per_min: f64,
+    /// Standard error of the slope, in the same unit.
+    error_ms_per_min: f64,
+}
+
+impl Trend {
+    /// Whether the slope is far enough from zero to be more than noise.
+    fn is_significant(&self) -> bool {
+        self.slope_ms_per_min.abs() >= TREND_MIN_SIGMA * self.error_ms_per_min
+    }
+}
+
+impl CushionTrend {
+    /// Adds a sample: `x_secs` since the first sample, `y_ms` of cushion.
+    fn add(&mut self, x_secs: f64, y_ms: f64) {
+        self.n += 1.0;
+        self.sum_x += x_secs;
+        self.sum_y += y_ms;
+        self.sum_xx += x_secs * x_secs;
+        self.sum_xy += x_secs * y_ms;
+        self.sum_yy += y_ms * y_ms;
+        self.span_secs = x_secs;
+    }
+
+    /// Least-squares slope of cushion against time with its standard error,
+    /// once there are enough samples spread in time to fit one.
+    fn fit(&self) -> Option<Trend> {
+        if self.n < 3.0 {
+            return None;
+        }
+        let sxx = self.sum_xx - self.sum_x * self.sum_x / self.n;
+        if sxx <= f64::EPSILON {
+            return None;
+        }
+        let sxy = self.sum_xy - self.sum_x * self.sum_y / self.n;
+        let syy = self.sum_yy - self.sum_y * self.sum_y / self.n;
+        let slope = sxy / sxx;
+        let residual_variance = ((syy - slope * sxy) / (self.n - 2.0)).max(0.0);
+        let error = (residual_variance / sxx).sqrt();
+        Some(Trend {
+            slope_ms_per_min: slope * 60.0,
+            error_ms_per_min: error * 60.0,
+        })
+    }
+}
+
 /// Tracks latency measurement state for a single speaker.
 struct LatencySession {
+    /// Whether measurements are sent to clients (video sync). Every session
+    /// is logged; only these emit events.
+    emit_events: bool,
+    /// When the speaker was last polled, and the dithered interval before the next poll.
+    last_poll: Option<Instant>,
+    next_poll_after: Duration,
+    /// Cushion trend over the current epoch.
+    trend: CushionTrend,
+    /// When the first trend sample of the current epoch was taken.
+    trend_started: Option<Instant>,
+    /// Most recent raw (unsmoothed) cushion, and its extremes since the last log line.
+    last_raw_ms: i64,
+    window_min_ms: i64,
+    window_max_ms: i64,
+    /// When the cushion and trend were last written to the log.
+    last_diag_log: Option<Instant>,
+    /// Whether the low-cushion warning is armed (re-armed once it recovers).
+    low_cushion_warned: bool,
+    /// When the shrinking-trend warning was last written.
+    last_trend_warning: Option<Instant>,
     /// Last observed Sonos RelTime (ms) for detecting track restarts.
     /// When RelTime goes backwards, we know the track restarted.
     last_sonos_reltime_ms: Option<u64>,
@@ -96,8 +234,19 @@ struct LatencySession {
 
 impl LatencySession {
     /// Creates a new monitoring session.
-    fn new() -> Self {
+    fn new(emit_events: bool) -> Self {
         Self {
+            emit_events,
+            last_poll: None,
+            next_poll_after: Duration::ZERO,
+            trend: CushionTrend::default(),
+            trend_started: None,
+            last_raw_ms: 0,
+            window_min_ms: i64::MAX,
+            window_max_ms: i64::MIN,
+            last_diag_log: None,
+            low_cushion_warned: false,
+            last_trend_warning: None,
             last_sonos_reltime_ms: None,
             sonos_offset_ms: 0,
             ema_latency: 0.0,
@@ -114,6 +263,11 @@ impl LatencySession {
     /// Resets all state when switching to a different stream or epoch.
     /// This clears everything including the position offset.
     fn reset_all(&mut self) {
+        self.trend = CushionTrend::default();
+        self.trend_started = None;
+        self.window_min_ms = i64::MAX;
+        self.window_max_ms = i64::MIN;
+        self.low_cushion_warned = false;
         self.last_sonos_reltime_ms = None;
         self.sonos_offset_ms = 0;
         self.ema_latency = 0.0;
@@ -259,6 +413,12 @@ impl LatencySession {
     fn record_latency(&mut self, latency_ms: i64) {
         let value = latency_ms as f64;
 
+        let started = *self.trend_started.get_or_insert_with(Instant::now);
+        self.trend.add(started.elapsed().as_secs_f64(), value);
+        self.last_raw_ms = latency_ms;
+        self.window_min_ms = self.window_min_ms.min(latency_ms);
+        self.window_max_ms = self.window_max_ms.max(latency_ms);
+
         // Update EMA
         if self.sample_count == 0 {
             self.ema_latency = value;
@@ -324,6 +484,116 @@ impl LatencySession {
     fn mark_emitted(&mut self) {
         self.last_emit = Some(Instant::now());
     }
+
+    /// Whether the speaker is due another position poll.
+    fn poll_due(&self) -> bool {
+        match self.last_poll {
+            None => true,
+            Some(at) => at.elapsed() >= self.next_poll_after,
+        }
+    }
+
+    /// Records a poll and draws the dithered interval before the next one:
+    /// the base cadence for this session plus up to [`POLL_DITHER_MS`],
+    /// taken from the sub-second part of the wall clock, which is as good as
+    /// random relative to the speaker's own second boundaries.
+    fn mark_polled(&mut self) {
+        let base = if self.emit_events {
+            POLL_INTERVAL_MS
+        } else {
+            DIAGNOSTIC_POLL_INTERVAL_MS
+        };
+        let dither = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| u64::from(d.subsec_nanos()) / 1_000_000)
+            .unwrap_or(0)
+            % POLL_DITHER_MS;
+        self.last_poll = Some(Instant::now());
+        self.next_poll_after = Duration::from_millis(base + dither);
+    }
+
+    /// Writes the cushion, its extremes since the last line and its trend to
+    /// the log every [`DIAGNOSTIC_LOG_INTERVAL_SECS`], and warns when the
+    /// cushion is nearly gone or shrinking fast enough to be gone soon.
+    ///
+    /// This is what tells a field log apart: a stream whose server-side
+    /// pipeline looks perfect can still go choppy for good if the speaker's
+    /// cushion drains, and nothing else in the log can see that.
+    fn log_diagnostics(&mut self, stream_id: &str, speaker_ip: &str, rtt_ms: u32) {
+        let raw = self.last_raw_ms;
+        if raw < LOW_CUSHION_MS && !self.low_cushion_warned {
+            self.low_cushion_warned = true;
+            log::warn!(
+                "[LatencyMonitor] stream={}, speaker={}: cushion nearly exhausted ({}ms of audio \
+                 ahead of the playhead); expect dropouts until playback is restarted",
+                stream_id,
+                speaker_ip,
+                raw
+            );
+        } else if raw >= LOW_CUSHION_CLEAR_MS {
+            self.low_cushion_warned = false;
+        }
+
+        let due = match self.last_diag_log {
+            None => self.sample_count >= MIN_SAMPLES_FOR_CONFIDENCE,
+            Some(at) => at.elapsed().as_secs() >= DIAGNOSTIC_LOG_INTERVAL_SECS,
+        };
+        if !due {
+            return;
+        }
+        self.last_diag_log = Some(Instant::now());
+
+        let fitted = self.trend.fit();
+        let trend = match fitted {
+            Some(t) if self.trend.span_secs >= TREND_MIN_SPAN_SECS => format!(
+                "{:+.1}\u{b1}{:.1}ms/min over {:.0}s",
+                t.slope_ms_per_min, t.error_ms_per_min, self.trend.span_secs
+            ),
+            Some(_) => format!("(settling, {:.0}s of samples)", self.trend.span_secs),
+            None => "(no trend yet)".to_string(),
+        };
+        log::info!(
+            "[LatencyMonitor] stream={}, speaker={}: cushion={}ms (last {}ms, {}..{}ms since last \
+             line, jitter {}ms), trend {}, rtt={}ms",
+            stream_id,
+            speaker_ip,
+            self.latency_ms(),
+            raw,
+            self.window_min_ms,
+            self.window_max_ms,
+            self.jitter_ms(),
+            trend,
+            rtt_ms
+        );
+        self.window_min_ms = i64::MAX;
+        self.window_max_ms = i64::MIN;
+
+        if let Some(t) = fitted {
+            let v = t.slope_ms_per_min;
+            if self.trend.span_secs >= TREND_MIN_SPAN_SECS
+                && v <= -TREND_WARN_MS_PER_MIN
+                && t.is_significant()
+            {
+                let minutes_left = self.ema_latency.max(0.0) / -v;
+                let warn_due = self
+                    .last_trend_warning
+                    .map_or(true, |at| at.elapsed().as_secs() >= 60);
+                if minutes_left <= TREND_WARN_HORIZON_MIN && warn_due {
+                    self.last_trend_warning = Some(Instant::now());
+                    log::warn!(
+                        "[LatencyMonitor] stream={}, speaker={}: cushion shrinking {:.1}\u{b1}{:.1}ms/min; \
+                         at this rate the speaker runs dry in ~{:.1} min. The speaker is consuming audio \
+                         faster than the source produces it (clock drift), and a live source cannot catch up.",
+                        stream_id,
+                        speaker_ip,
+                        v,
+                        t.error_ms_per_min,
+                        minutes_left
+                    );
+                }
+            }
+        }
+    }
 }
 
 /// Command sent to the latency monitor background task.
@@ -332,6 +602,8 @@ enum MonitorCommand {
     Start {
         stream_id: String,
         speaker_ip: String,
+        /// Whether to send measurements to clients (video sync) as well as logging them.
+        emit_events: bool,
     },
     /// Stop monitoring for a single speaker.
     StopSpeaker {
@@ -413,13 +685,16 @@ impl LatencyMonitor {
 
     /// Starts monitoring latency for a stream/speaker pair.
     ///
-    /// Call this when playback starts on a speaker.
-    pub async fn start_monitoring(&self, stream_id: &str, speaker_ip: &str) {
+    /// Call this when playback starts on a speaker. Every speaker is polled
+    /// and its cushion logged; with `emit_events` the measurements are also
+    /// sent to clients, which video sync needs at the faster poll rate.
+    pub async fn start_monitoring(&self, stream_id: &str, speaker_ip: &str, emit_events: bool) {
         let _ = self
             .command_tx
             .send(MonitorCommand::Start {
                 stream_id: stream_id.to_string(),
                 speaker_ip: speaker_ip.to_string(),
+                emit_events,
             })
             .await;
     }
@@ -475,14 +750,20 @@ impl LatencyMonitor {
 
                 Some(cmd) = command_rx.recv() => {
                     match cmd {
-                        MonitorCommand::Start { stream_id, speaker_ip } => {
+                        MonitorCommand::Start { stream_id, speaker_ip, emit_events } => {
                             let key = (stream_id.clone(), speaker_ip.clone());
-                            if !sessions.contains_key(&key) {
-                                log::info!(
-                                    "[LatencyMonitor] Starting monitoring: stream={}, speaker={}",
-                                    stream_id, speaker_ip
-                                );
-                                sessions.insert(key, LatencySession::new());
+                            match sessions.get_mut(&key) {
+                                Some(mut existing) => {
+                                    // A video-sync start after a diagnostic one upgrades it.
+                                    existing.emit_events |= emit_events;
+                                }
+                                None => {
+                                    log::info!(
+                                        "[LatencyMonitor] Starting monitoring: stream={}, speaker={}, events={}",
+                                        stream_id, speaker_ip, emit_events
+                                    );
+                                    sessions.insert(key, LatencySession::new(emit_events));
+                                }
                             }
                         }
                         MonitorCommand::StopSpeaker { stream_id, speaker_ip } => {
@@ -545,13 +826,15 @@ impl LatencyMonitor {
                                 // Emit stale event once per stale transition
                                 if session.should_emit_stale() {
                                     let epoch_id = session.last_epoch_id();
-                                    let event = LatencyEvent::Stale {
-                                        stream_id: stream_id.clone(),
-                                        speaker_ip: speaker_ip.clone(),
-                                        epoch_id,
-                                        timestamp: now_millis(),
-                                    };
-                                    emitter.emit_latency(event);
+                                    if session.emit_events {
+                                        let event = LatencyEvent::Stale {
+                                            stream_id: stream_id.clone(),
+                                            speaker_ip: speaker_ip.clone(),
+                                            epoch_id,
+                                            timestamp: now_millis(),
+                                        };
+                                        emitter.emit_latency(event);
+                                    }
                                     session.mark_stale_emitted();
                                     log::warn!(
                                         "[LatencyMonitor] Emitting stale: stream={}, speaker={}, epoch={}",
@@ -563,6 +846,11 @@ impl LatencyMonitor {
                                 continue;
                             }
                         };
+
+                        if !session.poll_due() {
+                            continue;
+                        }
+                        session.mark_polled();
 
                         // Get time elapsed since audio epoch (T0 for this Sonos connection)
                         let stream_elapsed_ms = epoch.audio_epoch.elapsed().as_millis() as u64;
@@ -612,9 +900,10 @@ impl LatencyMonitor {
                         session.record_valid_position();
 
                         session.record_latency(latency_ms);
+                        session.log_diagnostics(&stream_id, &speaker_ip, rtt_ms);
 
                         // Emit update if appropriate
-                        if session.should_emit() {
+                        if session.emit_events && session.should_emit() {
                             let event = LatencyEvent::Updated {
                                 stream_id: stream_id.clone(),
                                 speaker_ip: speaker_ip.clone(),
@@ -654,5 +943,91 @@ impl LatencyMonitor {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Feeds `minutes` of samples along `cushion(t)`, polled the way the
+    /// monitor polls a diagnostic session: every second plus a dither of up
+    /// to a second, with the speaker's position reported in whole seconds, so
+    /// each sample of the cushion is off by up to a second depending on the
+    /// phase of the poll.
+    fn fit(minutes: f64, cushion: impl Fn(f64) -> f64) -> Trend {
+        let mut trend = CushionTrend::default();
+        let mut t: f64 = 0.0;
+        // Small deterministic LCG for the dither so the test is repeatable.
+        let mut seed: u64 = 0x2545_f491_4f6c_dd1d;
+        while t <= minutes * 60.0 {
+            trend.add(t, observed_cushion(t, cushion(t)));
+            seed = seed
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            let dither = (seed >> 33) as f64 / (1u64 << 31) as f64;
+            t += 1.0 + dither;
+        }
+        trend.fit().expect("enough samples")
+    }
+
+    /// The cushion the monitor computes at time `t` when the true cushion is
+    /// `true_ms`: the speaker reports its playhead floored to a whole second.
+    fn observed_cushion(t: f64, true_ms: f64) -> f64 {
+        let playhead_ms = t * 1000.0 - true_ms;
+        let reported_ms = (playhead_ms / 1000.0).floor() * 1000.0;
+        t * 1000.0 - reported_ms
+    }
+
+    #[test]
+    fn a_steady_cushion_fits_a_flat_trend_within_its_own_error() {
+        let trend = fit(10.0, |_| 800.0);
+        assert!(
+            !trend.is_significant(),
+            "flat cushion read as a trend: {trend:?}"
+        );
+        assert!(trend.error_ms_per_min < 8.0, "{trend:?}");
+    }
+
+    #[test]
+    fn a_draining_cushion_is_measured_through_the_position_precision() {
+        // 40 ms/min: the rate that empties a 200 ms prefill in five minutes.
+        let trend = fit(10.0, |t| 800.0 - t * (40.0 / 60.0));
+        assert!(trend.is_significant(), "{trend:?}");
+        assert!(
+            (trend.slope_ms_per_min + 40.0).abs() <= TREND_MIN_SIGMA * trend.error_ms_per_min,
+            "{trend:?}"
+        );
+        assert!(trend.error_ms_per_min < 8.0, "{trend:?}");
+    }
+
+    #[test]
+    fn a_fixed_poll_phase_would_report_a_confidently_wrong_drift() {
+        // Why the poll is dithered: on a fixed cadence the whole-second
+        // reporting error creeps with the drift, so the fit sees a clean line
+        // with a tiny error at the wrong slope. This documents the failure.
+        let mut trend = CushionTrend::default();
+        let mut t: f64 = 0.0;
+        while t <= 600.0 {
+            trend.add(t, observed_cushion(t, 800.0 - t * (40.0 / 60.0)));
+            t += 1.0;
+        }
+        let fitted = trend.fit().expect("enough samples");
+        assert!(
+            (fitted.slope_ms_per_min + 40.0).abs() > TREND_MIN_SIGMA * fitted.error_ms_per_min,
+            "fixed-phase fit happened to be right: {fitted:?}"
+        );
+    }
+
+    #[test]
+    fn a_trend_needs_three_samples_spread_in_time() {
+        let mut trend = CushionTrend::default();
+        assert!(trend.fit().is_none());
+        trend.add(0.0, 500.0);
+        trend.add(0.0, 600.0);
+        trend.add(0.0, 550.0);
+        assert!(trend.fit().is_none(), "no spread in time");
+        trend.add(60.0, 400.0);
+        assert!(trend.fit().is_some());
     }
 }
