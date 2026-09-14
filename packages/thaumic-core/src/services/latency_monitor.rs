@@ -32,7 +32,7 @@ use dashmap::DashMap;
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
-use crate::events::{EventEmitter, LatencyEvent, LinkQuality, NetworkEvent};
+use crate::events::{EventEmitter, LatencyEvent};
 use crate::runtime::TokioSpawner;
 use crate::sonos::traits::SonosPlayback;
 use crate::stream::{PlaybackEpoch, StreamRegistry, StreamTiming};
@@ -41,6 +41,18 @@ use crate::utils::now_millis;
 /// Polling interval for position queries.
 /// 500ms is sufficient since Sonos RelTime only has 1-second precision.
 const POLL_INTERVAL_MS: u64 = 500;
+
+/// Environment variable that turns on position polling for every playing
+/// speaker, not only those driving video sync, so the cushion and its trend
+/// reach the log. Off by default: it is one SOAP call per speaker every
+/// second and a half for the whole cast, and the link judgement no longer
+/// needs it (it reads the stream connection's own TCP counters instead).
+pub const SPEAKER_DIAGNOSTICS_ENV: &str = "THAUMIC_SPEAKER_DIAGNOSTICS";
+
+/// Whether cushion diagnostics are switched on for this process.
+pub fn speaker_diagnostics_enabled() -> bool {
+    std::env::var_os(SPEAKER_DIAGNOSTICS_ENV).is_some_and(|v| !v.is_empty() && v != "0")
+}
 
 /// Polling interval for a speaker that is only being watched for diagnostics,
 /// not driving video sync. With the dither below this is one poll every
@@ -101,89 +113,8 @@ const EMA_ALPHA: f64 = 0.3;
 /// Should be >= 10 * POLL_INTERVAL_MS to avoid false positives during network blips.
 const STALE_EPOCH_TIMEOUT_SECS: u64 = 30;
 
-/// How far back round trips count towards a speaker's link quality.
-const LINK_WINDOW: Duration = Duration::from_secs(60);
-
-/// A round trip at or above this is a spike. A LAN position poll answers in
-/// ten to twenty milliseconds; a Wi-Fi stall shows as tens to hundreds.
-const LINK_SPIKE_MS: u32 = 50;
-
-/// Spikes in one window at which the link is called poor rather than degraded.
-const LINK_POOR_SPIKES: u32 = 4;
-
 /// Key for identifying a monitoring session (stream_id, speaker_ip).
 type SessionKey = (String, String);
-
-/// Round trips to one speaker over the last [`LINK_WINDOW`], and the quality
-/// last reported for them.
-///
-/// Each position poll is a SOAP round trip to the speaker, the same probe as
-/// a ping and on the same path the audio takes. A stall on the tablet's Wi-Fi
-/// shows here as a spike or a failure at the moment the speaker stutters,
-/// which is what makes this a usable "your connection is unstable" signal.
-struct LinkSamples {
-    samples: std::collections::VecDeque<(Instant, Option<u32>)>,
-    reported: Option<LinkQuality>,
-}
-
-/// One window's verdict on a speaker's link.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct LinkReport {
-    quality: LinkQuality,
-    rtt_median_ms: u32,
-    rtt_max_ms: u32,
-    spikes: u32,
-    failures: u32,
-}
-
-impl LinkSamples {
-    fn new() -> Self {
-        Self {
-            samples: std::collections::VecDeque::new(),
-            reported: None,
-        }
-    }
-
-    /// Records one round trip (`None` for a failed one) at `now` and returns
-    /// the new report when the quality changed.
-    fn record(&mut self, now: Instant, rtt_ms: Option<u32>) -> Option<LinkReport> {
-        self.samples.push_back((now, rtt_ms));
-        while let Some((at, _)) = self.samples.front() {
-            if now.duration_since(*at) > LINK_WINDOW {
-                self.samples.pop_front();
-            } else {
-                break;
-            }
-        }
-        let report = self.report();
-        if self.reported == Some(report.quality) {
-            return None;
-        }
-        self.reported = Some(report.quality);
-        Some(report)
-    }
-
-    fn report(&self) -> LinkReport {
-        let mut rtts: Vec<u32> = self.samples.iter().filter_map(|(_, r)| *r).collect();
-        rtts.sort_unstable();
-        let failures = self.samples.iter().filter(|(_, r)| r.is_none()).count() as u32;
-        let spikes = rtts.iter().filter(|&&r| r >= LINK_SPIKE_MS).count() as u32;
-        let quality = if failures > 0 || spikes >= LINK_POOR_SPIKES {
-            LinkQuality::Poor
-        } else if spikes > 0 {
-            LinkQuality::Degraded
-        } else {
-            LinkQuality::Good
-        };
-        LinkReport {
-            quality,
-            rtt_median_ms: rtts.get(rtts.len() / 2).copied().unwrap_or(0),
-            rtt_max_ms: rtts.last().copied().unwrap_or(0),
-            spikes,
-            failures,
-        }
-    }
-}
 
 /// Result of epoch synchronization check.
 enum EpochStatus {
@@ -287,8 +218,6 @@ struct LatencySession {
     low_cushion_warned: bool,
     /// When the shrinking-trend warning was last written.
     last_trend_warning: Option<Instant>,
-    /// Round trips to the speaker, for its link quality.
-    link: LinkSamples,
     /// Last observed Sonos RelTime (ms) for detecting track restarts.
     /// When RelTime goes backwards, we know the track restarted.
     last_sonos_reltime_ms: Option<u64>,
@@ -330,7 +259,6 @@ impl LatencySession {
             last_diag_log: None,
             low_cushion_warned: false,
             last_trend_warning: None,
-            link: LinkSamples::new(),
             last_sonos_reltime_ms: None,
             sonos_offset_ms: 0,
             ema_latency: 0.0,
@@ -948,17 +876,11 @@ impl LatencyMonitor {
                                     "[LatencyMonitor] Failed to get position from {}: {}",
                                     speaker_ip, e
                                 );
-                                if let Some(report) = session.link.record(Instant::now(), None) {
-                                    report_link(&emitter, &speaker_ip, report);
-                                }
                                 continue;
                             }
                         };
                         let rtt = start.elapsed();
                         let rtt_ms = rtt.as_millis() as u32;
-                        if let Some(report) = session.link.record(Instant::now(), Some(rtt_ms)) {
-                            report_link(&emitter, &speaker_ip, report);
-                        }
 
                         // Verify Sonos is playing OUR stream (not previous content)
                         // Our stream URLs look like: http://192.168.x.x:port/stream/{stream_id}/live.wav
@@ -1036,96 +958,9 @@ impl LatencyMonitor {
     }
 }
 
-/// Logs and broadcasts a change in a speaker's link quality.
-fn report_link(emitter: &Arc<dyn EventEmitter>, speaker_ip: &str, report: LinkReport) {
-    let line = format!(
-        "[LatencyMonitor] Link to {} is {:?}: median rtt {}ms, worst {}ms, {} spike(s) and {} \
-         failure(s) in the last minute",
-        speaker_ip,
-        report.quality,
-        report.rtt_median_ms,
-        report.rtt_max_ms,
-        report.spikes,
-        report.failures
-    );
-    match report.quality {
-        LinkQuality::Good => log::info!("{}", line),
-        LinkQuality::Degraded | LinkQuality::Poor => log::warn!("{}", line),
-    }
-    emitter.emit_network(NetworkEvent::SpeakerLinkQuality {
-        speaker_ip: speaker_ip.to_string(),
-        quality: report.quality,
-        rtt_median_ms: report.rtt_median_ms,
-        rtt_max_ms: report.rtt_max_ms,
-        spikes_per_minute: report.spikes,
-        failures_per_minute: report.failures,
-        timestamp: now_millis(),
-    });
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn a_quiet_link_is_reported_good_once_and_then_stays_quiet() {
-        let mut link = LinkSamples::new();
-        let t0 = Instant::now();
-        let first = link.record(t0, Some(12)).expect("first sample reports");
-        assert_eq!(first.quality, LinkQuality::Good);
-        for i in 1..30 {
-            assert!(link
-                .record(t0 + Duration::from_secs(i), Some(10 + (i % 5) as u32))
-                .is_none());
-        }
-    }
-
-    #[test]
-    fn spikes_degrade_the_link_and_enough_of_them_make_it_poor() {
-        let mut link = LinkSamples::new();
-        let t0 = Instant::now();
-        link.record(t0, Some(12));
-        let degraded = link
-            .record(t0 + Duration::from_secs(1), Some(80))
-            .expect("transition");
-        assert_eq!(degraded.quality, LinkQuality::Degraded);
-        assert_eq!(degraded.spikes, 1);
-        assert_eq!(degraded.rtt_max_ms, 80);
-        assert!(link.record(t0 + Duration::from_secs(2), Some(70)).is_none());
-        assert!(link.record(t0 + Duration::from_secs(3), Some(65)).is_none());
-        let poor = link
-            .record(t0 + Duration::from_secs(4), Some(215))
-            .expect("transition");
-        assert_eq!(poor.quality, LinkQuality::Poor);
-        assert_eq!(poor.spikes, 4);
-    }
-
-    #[test]
-    fn one_failed_round_trip_is_poor_on_its_own() {
-        let mut link = LinkSamples::new();
-        let t0 = Instant::now();
-        link.record(t0, Some(12));
-        let poor = link
-            .record(t0 + Duration::from_secs(1), None)
-            .expect("transition");
-        assert_eq!(poor.quality, LinkQuality::Poor);
-        assert_eq!(poor.failures, 1);
-    }
-
-    #[test]
-    fn the_link_recovers_once_the_spikes_age_out_of_the_window() {
-        let mut link = LinkSamples::new();
-        let t0 = Instant::now();
-        link.record(t0, Some(12));
-        link.record(t0 + Duration::from_secs(1), Some(120));
-        assert_eq!(link.reported, Some(LinkQuality::Degraded));
-        // Quiet samples for a minute: the spike leaves the window.
-        let mut last = None;
-        for i in 2..=62 {
-            last = link.record(t0 + Duration::from_secs(i), Some(11)).or(last);
-        }
-        assert_eq!(last.map(|r| r.quality), Some(LinkQuality::Good));
-    }
 
     /// Feeds `minutes` of samples along `cushion(t)`, polled the way the
     /// monitor polls a diagnostic session: every second plus a dither of up

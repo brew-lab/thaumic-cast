@@ -150,7 +150,7 @@ export type LatencyEvent = z.infer<typeof LatencyEventSchema>;
 
 /**
  * Quality of the network path between the companion and one speaker, judged
- * from the round trips of the companion's own position polls to that speaker.
+ * from the TCP counters of the connection the speaker fetches audio over.
  *
  * - `good`: no latency spikes in the last minute.
  * - `degraded`: a few spikes; short dropouts are possible on a small buffer.
@@ -183,8 +183,16 @@ export const NetworkEventSchema = z.discriminatedUnion('type', [
     rttMaxMs: z.number().int().nonnegative(),
     /** Round trips over the spike threshold in the last minute */
     spikesPerMinute: z.number().int().nonnegative(),
-    /** Round trips that failed outright in the last minute */
+    /** Retransmission timeouts in the last minute: stalls the kernel had to resend after */
     failuresPerMinute: z.number().int().nonnegative(),
+    /** The jitter buffer the stream to this speaker runs with, in milliseconds */
+    jitterBufferMs: z.number().int().nonnegative(),
+    /**
+     * The jitter buffer that would ride out the stalls seen in the last minute,
+     * when raising it would help. Absent when the current buffer already covers
+     * them or is at its maximum.
+     */
+    suggestedJitterBufferMs: z.number().int().nonnegative().optional(),
     /** Unix timestamp in milliseconds */
     timestamp: z.number(),
   }),
