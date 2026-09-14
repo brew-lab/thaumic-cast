@@ -99,6 +99,11 @@ struct PipelineSnapshot {
     receive: ReceiveWindow,
     cadence: CadenceWindow,
     delivery: DeliveryWindow,
+    /// TCP statistics for the speaker's connection since the last snapshot,
+    /// where the platform reports them. This is the only window that can see
+    /// a Wi-Fi stall: the kernel's send buffer hides it from `delivery`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    link: Option<crate::api::link::TcpLinkWindow>,
 }
 
 /// Wrapper that logs HTTP audio stream lifecycle and tracks delivery timing.
@@ -127,6 +132,10 @@ pub struct LoggingStreamGuard {
     /// Uses Mutex (not OnceLock) because the cadence stream may be dropped
     /// mid-loop when Sonos closes HTTP, before it can write a final value.
     pipeline_timeline: parking_lot::Mutex<VecDeque<PipelineSnapshot>>,
+    /// TCP statistics probe for the client's connection, when available.
+    link_probe: Option<crate::api::link::TcpLinkProbe>,
+    /// When retransmissions were last reported, to rate-limit the warning.
+    last_retransmit_warning: parking_lot::Mutex<Option<Instant>>,
 }
 
 impl LoggingStreamGuard {
@@ -150,7 +159,39 @@ impl LoggingStreamGuard {
             bytes_sent: AtomicU64::new(0),
             interval_max_gap_ms: AtomicU64::new(0),
             pipeline_timeline: parking_lot::Mutex::new(VecDeque::new()),
+            link_probe: None,
+            last_retransmit_warning: parking_lot::Mutex::new(None),
         }
+    }
+
+    /// Attaches the TCP statistics probe for the client's connection.
+    pub fn with_link_probe(mut self, probe: Option<crate::api::link::TcpLinkProbe>) -> Self {
+        self.link_probe = probe;
+        self
+    }
+
+    /// Reads the connection's TCP counters since the last read and warns, at
+    /// most once every five seconds, when data had to be retransmitted.
+    fn sample_link(&self) -> Option<crate::api::link::TcpLinkWindow> {
+        let window = self.link_probe.as_ref()?.sample()?;
+        if window.retransmitted > 0 || window.timeouts > 0 {
+            let mut last = self.last_retransmit_warning.lock();
+            let due = last.map_or(true, |at| at.elapsed() >= Duration::from_secs(5));
+            if due {
+                *last = Some(Instant::now());
+                log::warn!(
+                    "[Stream] TCP retransmissions on the connection to {} (stream {}): +{} \
+                     retransmitted, +{} timeout(s), rtt {}ms. The audio left this machine on time; \
+                     the network between here and the speaker did not carry it",
+                    self.client_ip,
+                    self.stream_id,
+                    window.retransmitted,
+                    window.timeouts,
+                    window.rtt_ms
+                );
+            }
+        }
+        Some(window)
     }
 
     /// Records a frame being delivered to the client (lock-free).
@@ -263,11 +304,18 @@ impl Drop for LoggingStreamGuard {
         } else {
             format!(", pipeline_timeline={}", timeline_json)
         };
+        // Retransmissions over the whole connection, where the platform
+        // reports them: the one number that says the network dropped audio.
+        let link_info = self
+            .link_probe
+            .as_ref()
+            .map(|probe| format!(", tcp_retransmitted={}", probe.total_retransmitted()))
+            .unwrap_or_default();
 
         if let Some(ref err) = *first_error {
             log::warn!(
                 "[Stream] HTTP stream ended with error{}: stream={}, client={}, frames_sent={}, \
-                 max_gap={}ms, gaps_over_{}ms={}, final_gap={}ms{}{}{}{}, error={}",
+                 max_gap={}ms, gaps_over_{}ms={}, final_gap={}ms{}{}{}{}{}, error={}",
                 stalled_suffix,
                 self.stream_id,
                 self.client_ip,
@@ -279,13 +327,14 @@ impl Drop for LoggingStreamGuard {
                 silence_info,
                 dropped_info,
                 recovery_info,
+                link_info,
                 timeline_info,
                 err
             );
         } else {
             log::info!(
                 "[Stream] HTTP stream ended normally{}: stream={}, client={}, frames_sent={}, \
-                 max_gap={}ms, gaps_over_{}ms={}, final_gap={}ms{}{}{}{}",
+                 max_gap={}ms, gaps_over_{}ms={}, final_gap={}ms{}{}{}{}{}",
                 stalled_suffix,
                 self.stream_id,
                 self.client_ip,
@@ -297,6 +346,7 @@ impl Drop for LoggingStreamGuard {
                 silence_info,
                 dropped_info,
                 recovery_info,
+                link_info,
                 timeline_info
             );
         }
@@ -760,6 +810,7 @@ pub fn create_wav_stream_with_cadence(
                             receive,
                             cadence: cadence_window,
                             delivery,
+                            link: guard.sample_link(),
                         });
                     }
                 }

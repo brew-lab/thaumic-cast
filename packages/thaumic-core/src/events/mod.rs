@@ -138,6 +138,20 @@ pub enum NetworkHealth {
     Degraded,
 }
 
+/// Quality of the network path between this machine and one speaker, judged
+/// from the round trips of our own position polls to it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum LinkQuality {
+    /// No latency spikes in the last minute.
+    Good,
+    /// A few spikes: short dropouts are possible on a small jitter buffer.
+    Degraded,
+    /// Repeated spikes or failed round trips: audio will stutter unless the
+    /// jitter buffer is large enough to ride them out.
+    Poor,
+}
+
 /// Events related to network health and speaker reachability.
 #[derive(Debug, Clone, Serialize)]
 #[serde(tag = "type", rename_all = "camelCase")]
@@ -149,6 +163,31 @@ pub enum NetworkEvent {
         /// Human-readable reason for the status (if degraded).
         #[serde(skip_serializing_if = "Option::is_none")]
         reason: Option<String>,
+        /// Unix timestamp in milliseconds.
+        timestamp: u64,
+    },
+    /// The network path to a playing speaker changed quality.
+    ///
+    /// Sent on transitions only. Names no stream, so it reaches every client;
+    /// the path to a speaker is shared by everyone casting to it.
+    SpeakerLinkQuality {
+        /// The speaker the path leads to.
+        #[serde(rename = "speakerIp")]
+        speaker_ip: String,
+        /// The judged quality.
+        quality: LinkQuality,
+        /// Median round trip over the last minute, in milliseconds.
+        #[serde(rename = "rttMedianMs")]
+        rtt_median_ms: u32,
+        /// Worst round trip over the last minute, in milliseconds.
+        #[serde(rename = "rttMaxMs")]
+        rtt_max_ms: u32,
+        /// Round trips over the spike threshold in the last minute.
+        #[serde(rename = "spikesPerMinute")]
+        spikes_per_minute: u32,
+        /// Round trips that failed outright in the last minute.
+        #[serde(rename = "failuresPerMinute")]
+        failures_per_minute: u32,
         /// Unix timestamp in milliseconds.
         timestamp: u64,
     },

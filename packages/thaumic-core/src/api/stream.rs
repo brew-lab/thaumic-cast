@@ -304,7 +304,10 @@ pub(super) async fn stream_audio(
 
     // Create logging guard early so we can pass it to the cadence stream for internal tracking.
     // Uses Arc so it can be shared between cadence stream and final frame recording.
-    let guard = Arc::new(LoggingStreamGuard::new(id.to_string(), remote_ip));
+    let guard = Arc::new(
+        LoggingStreamGuard::new(id.to_string(), remote_ip)
+            .with_link_probe(state.link_registry.claim(remote_addr)),
+    );
 
     // One-shot epoch hook for whichever pipeline is built below. None for a
     // reader that is not a speaker: its connection must not enter the
