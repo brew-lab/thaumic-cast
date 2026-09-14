@@ -1596,15 +1596,15 @@ async fn handle_start_playback(
         )
         .await;
 
-    // Only start latency monitoring if video sync is enabled
-    if latency_monitoring {
-        for result in &results {
-            if result.success {
-                state
-                    .latency_monitor
-                    .start_monitoring(&stream_id, &result.speaker_ip)
-                    .await;
-            }
+    // Every speaker is monitored so its cushion and trend reach the log; the
+    // measurements are only sent to the client when it asked for them (video
+    // sync), which also selects the faster poll rate.
+    for result in &results {
+        if result.success {
+            state
+                .latency_monitor
+                .start_monitoring(&stream_id, &result.speaker_ip, latency_monitoring)
+                .await;
         }
     }
 
