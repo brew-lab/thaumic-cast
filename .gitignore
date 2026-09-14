@@ -59,3 +59,5 @@ old/
 docs/plans/*
 docs/guff.md
 conductor/
+# Local scratch for logs and captures handed over during debugging
+tmp/
