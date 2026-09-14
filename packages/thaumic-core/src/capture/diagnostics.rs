@@ -205,14 +205,15 @@ pub(crate) fn tap_dir_from_env() -> Option<PathBuf> {
 
 /// Writes PCM frames to a WAV file as they enter the pipeline.
 ///
-/// The header is written with placeholder sizes and patched when the tap is
-/// dropped, so an interrupted session still leaves a readable file up to the
-/// last flushed frame for any tool that ignores the declared length.
+/// Frames are handed to a writer thread over a channel, so the capture
+/// thread, which runs at audio priority and must never block, does no disk
+/// I/O. The header is written with placeholder sizes and patched when the tap
+/// is dropped, so an interrupted session still leaves a readable file up to
+/// the last flushed frame for any tool that ignores the declared length.
 pub(crate) struct WavTap {
-    file: BufWriter<File>,
-    data_bytes: u64,
+    sender: Option<std::sync::mpsc::Sender<Vec<u8>>>,
+    writer: Option<std::thread::JoinHandle<()>>,
     path: PathBuf,
-    failed: bool,
 }
 
 impl WavTap {
@@ -222,11 +223,37 @@ impl WavTap {
         let path = dir.join(format!("capture-{stream_id}.wav"));
         let mut file = BufWriter::new(File::create(&path)?);
         file.write_all(&wav_header(format, 0))?;
+
+        let (sender, receiver) = std::sync::mpsc::channel::<Vec<u8>>();
+        let thread_path = path.clone();
+        let writer = std::thread::Builder::new()
+            .name("capture-tap".into())
+            .spawn(move || {
+                let mut data_bytes: u64 = 0;
+                for frame in receiver {
+                    if let Err(e) = file.write_all(&frame) {
+                        log::warn!(
+                            "[Capture] Capture tap {} failed, stopping it: {}",
+                            thread_path.display(),
+                            e
+                        );
+                        break;
+                    }
+                    data_bytes += frame.len() as u64;
+                }
+                if let Err(e) = finish_wav(&mut file, data_bytes) {
+                    log::warn!(
+                        "[Capture] Could not finalise tap {}: {}",
+                        thread_path.display(),
+                        e
+                    );
+                }
+            })?;
+
         Ok(Self {
-            file,
-            data_bytes: 0,
+            sender: Some(sender),
+            writer: Some(writer),
             path,
-            failed: false,
         })
     }
 
@@ -235,45 +262,42 @@ impl WavTap {
         &self.path
     }
 
-    /// Appends one frame. After the first failure every call is a no-op.
+    /// Queues one frame for the writer thread. Fails once the writer has
+    /// stopped, after which the caller should drop the tap.
     pub fn write(&mut self, frame: &[u8]) -> io::Result<()> {
-        if self.failed {
-            return Ok(());
+        match self.sender.as_ref() {
+            Some(sender) => sender
+                .send(frame.to_vec())
+                .map_err(|_| io::Error::new(io::ErrorKind::BrokenPipe, "capture tap stopped")),
+            None => Err(io::Error::new(
+                io::ErrorKind::BrokenPipe,
+                "capture tap closed",
+            )),
         }
-        match self.file.write_all(frame) {
-            Ok(()) => {
-                self.data_bytes += frame.len() as u64;
-                Ok(())
-            }
-            Err(e) => {
-                self.failed = true;
-                Err(e)
-            }
-        }
-    }
-
-    fn finish(&mut self) -> io::Result<()> {
-        self.file.flush()?;
-        let file = self.file.get_mut();
-        let data = u32::try_from(self.data_bytes).unwrap_or(u32::MAX);
-        file.seek(SeekFrom::Start(4))?;
-        file.write_all(&(36u32.saturating_add(data)).to_le_bytes())?;
-        file.seek(SeekFrom::Start(40))?;
-        file.write_all(&data.to_le_bytes())?;
-        file.flush()
     }
 }
 
 impl Drop for WavTap {
     fn drop(&mut self) {
-        if let Err(e) = self.finish() {
-            log::warn!(
-                "[Capture] Could not finalise tap {}: {}",
-                self.path.display(),
-                e
-            );
+        // Closing the channel ends the writer's loop; joining it waits for the
+        // header to be patched so the file is complete when this returns.
+        drop(self.sender.take());
+        if let Some(writer) = self.writer.take() {
+            let _ = writer.join();
         }
     }
+}
+
+/// Flushes the file and patches the RIFF and data sizes in its header.
+fn finish_wav(file: &mut BufWriter<File>, data_bytes: u64) -> io::Result<()> {
+    file.flush()?;
+    let inner = file.get_mut();
+    let data = u32::try_from(data_bytes).unwrap_or(u32::MAX);
+    inner.seek(SeekFrom::Start(4))?;
+    inner.write_all(&(36u32.saturating_add(data)).to_le_bytes())?;
+    inner.seek(SeekFrom::Start(40))?;
+    inner.write_all(&data.to_le_bytes())?;
+    inner.flush()
 }
 
 /// A 44-byte canonical WAV header for 16-bit PCM with `data_bytes` of audio.

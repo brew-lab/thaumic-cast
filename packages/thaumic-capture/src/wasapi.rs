@@ -98,18 +98,29 @@ pub struct WasapiSource {
     negotiated: Mutex<Option<AudioFormat>>,
 }
 
+/// Capture buffer requested from the audio engine, in milliseconds.
+///
+/// The engine still signals the capture thread every period (10 ms) and the
+/// thread drains everything available each time, so this adds no latency.
+/// What it buys is tolerance: the buffer is how late the capture thread may
+/// wake before the engine has nowhere to put the next period. Requested at
+/// one period, as it used to be, any wake-up more than 10 ms late lost audio,
+/// and on a two-core tablet under load that happened many times a minute,
+/// with the loss arriving as silence rather than a flagged discontinuity.
+const DEFAULT_BUFFER_MS: u32 = 200;
+
 impl WasapiSource {
     /// Create a new WASAPI source targeting the given process ID.
     pub fn new(pid: u32) -> Self {
         Self {
             pid,
-            buffer_ms: 10,
+            buffer_ms: DEFAULT_BUFFER_MS,
             started: AtomicBool::new(false),
             negotiated: Mutex::new(None),
         }
     }
 
-    /// Set the WASAPI buffer size in milliseconds.
+    /// Set the WASAPI buffer size in milliseconds (see [`DEFAULT_BUFFER_MS`]).
     pub fn with_buffer_ms(mut self, ms: u32) -> Self {
         self.buffer_ms = ms;
         self
