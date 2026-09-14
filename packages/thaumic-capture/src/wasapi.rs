@@ -98,18 +98,29 @@ pub struct WasapiSource {
     negotiated: Mutex<Option<AudioFormat>>,
 }
 
+/// Capture buffer requested from the audio engine, in milliseconds.
+///
+/// The engine still signals the capture thread every period (10 ms) and the
+/// thread drains everything available each time, so this adds no latency.
+/// What it buys is tolerance: the buffer is how late the capture thread may
+/// wake before the engine has nowhere to put the next period. Requested at
+/// one period, as it used to be, any wake-up more than 10 ms late lost audio,
+/// and on a two-core tablet under load that happened many times a minute,
+/// with the loss arriving as silence rather than a flagged discontinuity.
+const DEFAULT_BUFFER_MS: u32 = 200;
+
 impl WasapiSource {
     /// Create a new WASAPI source targeting the given process ID.
     pub fn new(pid: u32) -> Self {
         Self {
             pid,
-            buffer_ms: 10,
+            buffer_ms: DEFAULT_BUFFER_MS,
             started: AtomicBool::new(false),
             negotiated: Mutex::new(None),
         }
     }
 
-    /// Set the WASAPI buffer size in milliseconds.
+    /// Set the WASAPI buffer size in milliseconds (see [`DEFAULT_BUFFER_MS`]).
     pub fn with_buffer_ms(mut self, ms: u32) -> Self {
         self.buffer_ms = ms;
         self
@@ -654,6 +665,14 @@ fn activate_process_loopback(pid: u32) -> windows::core::Result<IAudioClient> {
 // ─── MMCSS ──────────────────────────────────────────────────────────────────
 
 fn elevate_thread_mmcss() -> Option<HANDLE> {
+    // Mirrors thaumic_core's priority switch (this crate cannot depend on it):
+    // with THAUMIC_NO_PRIORITY_BOOST set, the capture thread keeps the
+    // default scheduling so it cannot starve the browser it is capturing.
+    if std::env::var_os("THAUMIC_NO_PRIORITY_BOOST").is_some_and(|v| !v.is_empty() && v != "0") {
+        log::info!("MMCSS: not registering the capture thread (THAUMIC_NO_PRIORITY_BOOST is set)");
+        return None;
+    }
+
     let task_name_wide: Vec<u16> = "Pro Audio\0".encode_utf16().collect();
     let mut task_index: u32 = 0;
 
