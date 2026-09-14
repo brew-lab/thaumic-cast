@@ -18,7 +18,7 @@ use std::sync::Arc;
 rust_i18n::i18n!("locales", fallback = "en");
 
 use tauri::{Manager, RunEvent};
-use tauri_plugin_log::{Target, TargetKind};
+use tauri_plugin_log::{RotationStrategy, Target, TargetKind};
 
 use crate::api::commands::{
     add_manual_speaker_ip, clear_all_connections, clear_all_streams, get_autostart_enabled,
@@ -44,6 +44,10 @@ pub fn run() {
                     Target::new(TargetKind::Webview),
                 ])
                 .max_file_size(1_000_000) // 1 MB (default 40 KB rotates away pipeline timelines)
+                // The plugin's default, KeepOne, deletes the file outright at the
+                // size limit; a field session's diagnostics vanished that way.
+                // Keep the last few rotated files as `<name>_<date>.log`.
+                .rotation_strategy(RotationStrategy::KeepSome(5))
                 .level(if cfg!(debug_assertions) {
                     log::LevelFilter::Debug
                 } else {
