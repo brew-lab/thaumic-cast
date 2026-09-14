@@ -23,6 +23,7 @@ use crate::sonos::SonosClient;
 use crate::state::{Config, SonosState};
 
 pub mod http;
+pub mod link;
 pub mod response;
 mod stream;
 pub mod ws;
@@ -116,6 +117,9 @@ pub struct AppState {
     pub capture_factory: Option<Arc<dyn CaptureSourceFactory>>,
     /// Version metadata advertised to the extension on handshake.
     pub app_info: AppInfo,
+    /// Sockets of accepted connections, so the stream handler can read TCP
+    /// statistics for the connection a speaker fetches over.
+    pub link_registry: Arc<link::TcpLinkRegistry>,
 }
 
 impl AppState {
@@ -146,6 +150,7 @@ impl AppState {
             mdns_advertiser: Arc::clone(&services.mdns_advertiser),
             capture_factory: None,
             app_info,
+            link_registry: link::TcpLinkRegistry::new(),
         }
     }
 
@@ -207,6 +212,7 @@ pub async fn start_server(state: AppState) -> Result<(), ServerError> {
     mdns_advertise::advertise(&state.mdns_advertiser, &state.network.get_local_ip(), port);
 
     log::info!("Server listening on http://0.0.0.0:{}", port);
+    let link_registry = Arc::clone(&state.link_registry);
     let app = http::create_router(state);
 
     // TCP_NODELAY: Disable Nagle's algorithm on every accepted connection.
@@ -216,7 +222,7 @@ pub async fn start_server(state: AppState) -> Result<(), ServerError> {
     // TCP keepalive: Detect dead connections within ~25s (10s idle + 3 × 5s probes)
     // instead of the default ~2 hours. Critical for streaming connections where a
     // stalled Sonos speaker would otherwise hold the async task alive indefinitely.
-    let listener = listener.tap_io(|tcp_stream| {
+    let listener = listener.tap_io(move |tcp_stream| {
         if let Err(err) = tcp_stream.set_nodelay(true) {
             log::warn!("Failed to set TCP_NODELAY on incoming connection: {err:#}");
         }
@@ -230,6 +236,12 @@ pub async fn start_server(state: AppState) -> Result<(), ServerError> {
         if let Err(err) = sock_ref.set_tcp_keepalive(&keepalive) {
             log::warn!("Failed to set TCP keepalive: {err:#}");
         }
+
+        // Remember the socket so the stream handler can read the connection's
+        // TCP statistics; see `link`.
+        if let Ok(peer) = tcp_stream.peer_addr() {
+            link_registry.register(peer, raw_socket(tcp_stream));
+        }
     });
 
     // Use into_make_service_with_connect_info to enable ConnectInfo<SocketAddr> extraction
@@ -239,4 +251,18 @@ pub async fn start_server(state: AppState) -> Result<(), ServerError> {
     )
     .await?;
     Ok(())
+}
+
+/// The OS handle of an accepted connection, as the statistics queries want it.
+#[cfg(unix)]
+fn raw_socket(stream: &tokio::net::TcpStream) -> u64 {
+    use std::os::fd::AsRawFd;
+    stream.as_raw_fd() as u64
+}
+
+/// The OS handle of an accepted connection, as the statistics queries want it.
+#[cfg(windows)]
+fn raw_socket(stream: &tokio::net::TcpStream) -> u64 {
+    use std::os::windows::io::AsRawSocket;
+    stream.as_raw_socket() as u64
 }
