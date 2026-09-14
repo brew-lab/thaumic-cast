@@ -171,6 +171,7 @@ describe('NetworkEventMessageSchema', () => {
       rttMaxMs: 40,
       spikesPerMinute: 2,
       failuresPerMinute: 0,
+      jitterBufferMs: 200,
       ...fields,
     });
 
@@ -191,6 +192,17 @@ describe('NetworkEventMessageSchema', () => {
       quality: 'degraded',
       spikesPerMinute: 2,
     });
+  });
+
+  it('should carry the buffer suggestion when present and require the current buffer', () => {
+    const suggested = NetworkEventMessageSchema.parse(
+      linkQuality({ suggestedJitterBufferMs: 500 }),
+    );
+
+    expect(suggested.payload).toMatchObject({ jitterBufferMs: 200, suggestedJitterBufferMs: 500 });
+    expect(
+      NetworkEventMessageSchema.safeParse(linkQuality({ jitterBufferMs: undefined })).success,
+    ).toBe(false);
   });
 
   it('should reject a speakerLinkQuality event with an unknown quality', () => {

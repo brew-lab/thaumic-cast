@@ -34,6 +34,7 @@ function linkEvent(
     rttMaxMs: 180,
     spikesPerMinute: 7,
     failuresPerMinute: 1,
+    jitterBufferMs: 200,
     timestamp: NOW,
     ...fields,
   };
@@ -68,7 +69,12 @@ describe('applySpeakerLinkQualityEvent', () => {
     applySpeakerLinkQualityEvent(linkEvent(KITCHEN, { quality: 'degraded', timestamp: NOW }));
     applySpeakerLinkQualityEvent(linkEvent(OFFICE, { quality: 'good', spikesPerMinute: 0 }));
     applySpeakerLinkQualityEvent(
-      linkEvent(KITCHEN, { quality: 'poor', spikesPerMinute: 12, timestamp: NOW + 60_000 }),
+      linkEvent(KITCHEN, {
+        quality: 'poor',
+        spikesPerMinute: 12,
+        suggestedJitterBufferMs: 500,
+        timestamp: NOW + 60_000,
+      }),
     );
 
     expect(getSpeakerLinkQuality()).toEqual({
@@ -78,6 +84,8 @@ describe('applySpeakerLinkQualityEvent', () => {
         rttMaxMs: 180,
         spikesPerMinute: 12,
         failuresPerMinute: 1,
+        jitterBufferMs: 200,
+        suggestedJitterBufferMs: 500,
         updatedAt: NOW + 60_000,
       },
       [OFFICE]: {
@@ -86,9 +94,17 @@ describe('applySpeakerLinkQualityEvent', () => {
         rttMaxMs: 180,
         spikesPerMinute: 0,
         failuresPerMinute: 1,
+        jitterBufferMs: 200,
         updatedAt: NOW,
       },
     });
+  });
+
+  it('should forget an earlier suggestion when the next reading has none', () => {
+    applySpeakerLinkQualityEvent(linkEvent(KITCHEN, { suggestedJitterBufferMs: 500 }));
+    applySpeakerLinkQualityEvent(linkEvent(KITCHEN, { timestamp: NOW + 60_000 }));
+
+    expect(getSpeakerLinkQuality()[KITCHEN]).not.toHaveProperty('suggestedJitterBufferMs');
   });
 
   it('should hand out a copy that later events do not mutate', () => {

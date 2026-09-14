@@ -33,6 +33,7 @@ function linkQualityPayload(fields: Record<string, unknown> = {}): Record<string
     rttMaxMs: 180,
     spikesPerMinute: 7,
     failuresPerMinute: 1,
+    jitterBufferMs: 200,
     timestamp: NOW,
     ...fields,
   };
@@ -71,11 +72,34 @@ describe('NETWORK_EVENT route', () => {
             rttMaxMs: 180,
             spikesPerMinute: 7,
             failuresPerMinute: 1,
+            jitterBufferMs: 200,
             updatedAt: NOW,
           },
         },
       },
     ]);
+  });
+
+  it('should pass the companion’s buffer suggestion straight through, and omit it when absent', async () => {
+    registerSession(1, 'stream-1', [KITCHEN], ['Kitchen'], ENCODER, false, 'tab');
+    notifications.length = 0;
+
+    await networkEvent(linkQualityPayload({ suggestedJitterBufferMs: 500 }));
+    await networkEvent(linkQualityPayload({ quality: 'degraded', timestamp: NOW + 60_000 }));
+
+    expect(notifications).toEqual([
+      {
+        type: 'SPEAKER_LINK_QUALITY_CHANGED',
+        speakers: {
+          [KITCHEN]: expect.objectContaining({ jitterBufferMs: 200, suggestedJitterBufferMs: 500 }),
+        },
+      },
+      {
+        type: 'SPEAKER_LINK_QUALITY_CHANGED',
+        speakers: { [KITCHEN]: expect.not.objectContaining({ suggestedJitterBufferMs: 500 }) },
+      },
+    ]);
+    expect(getSpeakerLinkQuality()[KITCHEN]).not.toHaveProperty('suggestedJitterBufferMs');
   });
 
   it('should ignore link quality for a speaker this extension is not casting to', async () => {

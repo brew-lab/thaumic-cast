@@ -4,7 +4,9 @@
  * Mirrors `useCaptureHealth`. Reads the cached per-speaker snapshot from the
  * background on mount and replaces it on every `SPEAKER_LINK_QUALITY_CHANGED`
  * broadcast. Exposes one alert per speaker in an active cast whose network
- * path the companion currently rates `degraded` or `poor`.
+ * path the companion currently rates `degraded` or `poor`. The alert only
+ * relays the companion's verdict and its buffer suggestion; nothing is
+ * judged or computed here.
  *
  * Dismissal is keyed on the reading's `updatedAt` per speaker and persisted
  * in `chrome.storage.local`, so closing and reopening the popup keeps a
@@ -28,8 +30,10 @@ export interface SpeakerLinkQualityAlert {
   speakerName: string;
   /** The companion's verdict; never `good` here. */
   quality: Exclude<LinkQuality, 'good'>;
-  /** Round trips over the spike threshold in the last minute. */
-  spikesPerMinute: number;
+  /** The jitter buffer the stream to this speaker runs with, in milliseconds. */
+  jitterBufferMs: number;
+  /** The buffer the companion suggests; undefined when raising it would not help. */
+  suggestedJitterBufferMs?: number;
 }
 
 export interface UseSpeakerLinkQualityResult {
@@ -151,7 +155,8 @@ export function useSpeakerLinkQuality(
           speakerIp,
           speakerName: resolveSpeakerName(speakerIp, speakerGroups, casts),
           quality: reading.quality,
-          spikesPerMinute: reading.spikesPerMinute,
+          jitterBufferMs: reading.jitterBufferMs,
+          suggestedJitterBufferMs: reading.suggestedJitterBufferMs,
         });
       }
     }
