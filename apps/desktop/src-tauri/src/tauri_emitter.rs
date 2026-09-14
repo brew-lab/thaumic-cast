@@ -199,6 +199,37 @@ impl EventEmitter for TauriEventEmitter {
                     },
                 );
             }
+            NetworkEvent::SpeakerLinkQuality {
+                speaker_ip,
+                quality,
+                rtt_median_ms,
+                rtt_max_ms,
+                spikes_per_minute,
+                failures_per_minute,
+                ..
+            } => {
+                #[derive(serde::Serialize, Clone)]
+                #[serde(rename_all = "camelCase")]
+                struct SpeakerLinkQualityPayload {
+                    speaker_ip: String,
+                    quality: String,
+                    rtt_median_ms: u32,
+                    rtt_max_ms: u32,
+                    spikes_per_minute: u32,
+                    failures_per_minute: u32,
+                }
+                self.emit_to_tauri(
+                    "speaker-link-quality",
+                    SpeakerLinkQualityPayload {
+                        speaker_ip: speaker_ip.clone(),
+                        quality: format!("{:?}", quality).to_lowercase(),
+                        rtt_median_ms: *rtt_median_ms,
+                        rtt_max_ms: *rtt_max_ms,
+                        spikes_per_minute: *spikes_per_minute,
+                        failures_per_minute: *failures_per_minute,
+                    },
+                );
+            }
         }
     }
 
