@@ -42,25 +42,64 @@ impl CaptureSourceFactory for WasapiCaptureFactory {
         browser_name: Option<&str>,
     ) -> Result<Arc<dyn AudioSource>, CaptureError> {
         let pid = match browser_name {
-            Some(name) => thaumic_capture::find_browser_pid_by_name(name)?,
-            None => {
-                let browsers = thaumic_capture::find_browser_pids();
-                browsers
-                    .first()
-                    .map(|b| {
-                        log::info!(
-                            "[Capture] Auto-detected browser: {} (PID {})",
-                            b.name,
-                            b.pid
-                        );
-                        b.pid
-                    })
-                    .ok_or_else(|| CaptureError::Platform("No running browser detected".into()))?
-            }
+            Some(name) => match thaumic_capture::find_browser_pid_by_name(name) {
+                Ok(pid) => {
+                    log::info!("[Capture] Capturing {} (PID {})", name, pid);
+                    pid
+                }
+                Err(e) => {
+                    // The extension named a browser that is not running under
+                    // that name (a build with a different executable, or a
+                    // browser we know by another name). Guessing is better than
+                    // refusing, but say so, because a wrong guess is silence.
+                    log::warn!(
+                        "[Capture] {} not found ({}); falling back to auto-detection",
+                        name,
+                        e
+                    );
+                    auto_detect_browser_pid()?
+                }
+            },
+            None => auto_detect_browser_pid()?,
         };
 
         Ok(Arc::new(thaumic_capture::WasapiSource::new(pid)))
     }
+}
+
+/// Picks a browser to capture when the extension did not name one.
+///
+/// The choice is the lowest process id among the supported browsers, which
+/// is simply the one that started first, not the one casting. With several
+/// browsers running that is a guess, and a wrong guess captures a process
+/// that is playing nothing, so the ambiguity is logged at warn.
+#[cfg(windows)]
+fn auto_detect_browser_pid() -> Result<u32, CaptureError> {
+    let browsers = thaumic_capture::find_browser_pids();
+    let chosen = browsers
+        .first()
+        .ok_or_else(|| CaptureError::Platform("No running browser detected".into()))?;
+    if browsers.len() > 1 {
+        let names: Vec<String> = browsers
+            .iter()
+            .map(|b| format!("{} (PID {})", b.name, b.pid))
+            .collect();
+        log::warn!(
+            "[Capture] {} supported browsers are running [{}]; capturing {} (PID {}), which may not \
+             be the one casting - the extension did not name its browser",
+            browsers.len(),
+            names.join(", "),
+            chosen.name,
+            chosen.pid
+        );
+    } else {
+        log::info!(
+            "[Capture] Auto-detected browser: {} (PID {})",
+            chosen.name,
+            chosen.pid
+        );
+    }
+    Ok(chosen.pid)
 }
 
 /// Desktop-specific application state.

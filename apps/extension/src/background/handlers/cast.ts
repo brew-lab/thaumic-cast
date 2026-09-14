@@ -43,6 +43,7 @@ import { getConnectionState, clearConnectionState } from '../connection-state';
 import { stopCastForTab } from '../sonos-event-handlers';
 import { ensureOffscreen } from '../offscreen-manager';
 import { offscreenBroker } from '../offscreen-broker';
+import { detectBrowserExecutable } from '../../lib/browser-detect';
 import { detectAndCacheCodecSupport } from '../codec-support';
 import { discoverAndCache, connectWebSocket } from './connection';
 
@@ -141,7 +142,14 @@ export async function handleStartCast(msg: StartCastMessage): Promise<ExtensionR
       }
 
       captureRequested = true;
-      const response = await offscreenBroker.startBrowserCapture(tabId, app.url, encoderConfig);
+      // Name our own browser so the companion captures this process tree and
+      // not whichever supported browser happens to have started first.
+      const response = await offscreenBroker.startBrowserCapture(
+        tabId,
+        app.url,
+        encoderConfig,
+        detectBrowserExecutable(),
+      );
       if (!response) throw new Error('error_offscreen_unavailable');
       captureResponse = response;
     } else {
