@@ -6,11 +6,15 @@ import {
   LatencyModeSchema,
   BitDepthSchema,
   DEFAULT_BITS_PER_SAMPLE,
-  JITTER_BUFFER_MS_MIN,
-  JITTER_BUFFER_MS_MAX,
   JITTER_BUFFER_MS_DEFAULT,
   FRAME_DURATION_MS_DEFAULT,
+  FRAME_DURATIONS,
   FrameDurationMsSchema,
+  PCM_SMOOTHING_DEFAULT_MS,
+  PCM_SMOOTHING_OPTIONS,
+  PcmSmoothingMsSchema,
+  type FrameDurationMs,
+  type PcmSmoothingMs,
   isValidBitrateForCodec,
   isValidBitDepthForCodec,
   getDefaultBitrate,
@@ -147,16 +151,27 @@ export const CustomAudioSettingsSchema = z.object({
   latencyMode: LatencyModeSchema.default('quality'),
   /** Bit depth (16 or 24). Supported depths depend on the codec. */
   bitsPerSample: BitDepthSchema.default(DEFAULT_BITS_PER_SAMPLE),
-  /** Jitter buffer size for PCM streaming in milliseconds. */
-  jitterBufferMs: z
-    .number()
-    .min(JITTER_BUFFER_MS_MIN)
-    .max(JITTER_BUFFER_MS_MAX)
-    .default(JITTER_BUFFER_MS_DEFAULT),
-  /** Frame duration in milliseconds. Currently only used when codec is 'pcm'. */
-  frameDurationMs: FrameDurationMsSchema.default(FRAME_DURATION_MS_DEFAULT),
 });
 export type CustomAudioSettings = z.infer<typeof CustomAudioSettingsSchema>;
+
+/**
+ * Version of the stored audio settings layout. Version 2 moved smoothing and
+ * frame size out of the custom settings into standalone PCM settings that
+ * apply in every mode (see {@link migrateAudioSettingsV2}).
+ */
+export const AUDIO_SETTINGS_VERSION = 2;
+
+/**
+ * Records a smoothing value the version 2 migration changed, so the options
+ * page can say so once.
+ */
+export const SmoothingMigrationNoticeSchema = z.object({
+  /** Smoothing the user's streams ran with before, in milliseconds. */
+  from: z.number(),
+  /** Smoothing they run with now, in milliseconds. */
+  to: PcmSmoothingMsSchema,
+});
+export type SmoothingMigrationNotice = z.infer<typeof SmoothingMigrationNoticeSchema>;
 
 /**
  * Global extension settings schema.
@@ -184,9 +199,21 @@ export const ExtensionSettingsSchema = z.object({
     sampleRate: 48000,
     latencyMode: 'quality',
     bitsPerSample: DEFAULT_BITS_PER_SAMPLE,
-    jitterBufferMs: JITTER_BUFFER_MS_DEFAULT,
-    frameDurationMs: FRAME_DURATION_MS_DEFAULT,
   }),
+
+  // Smoothing for PCM streams, in every mode: how much audio the companion
+  // holds back to even out delivery from the browser. Sent as jitterBufferMs.
+  pcmSmoothingMs: PcmSmoothingMsSchema.default(PCM_SMOOTHING_DEFAULT_MS),
+
+  // Frame size for PCM streams, in every mode: audio per message from the browser.
+  pcmFrameDurationMs: FrameDurationMsSchema.default(FRAME_DURATION_MS_DEFAULT),
+
+  // Layout version of the audio settings above (see AUDIO_SETTINGS_VERSION).
+  audioSettingsVersion: z.number().int().nonnegative().default(AUDIO_SETTINGS_VERSION),
+
+  // Set when the version 2 migration changed the user's smoothing; cleared
+  // once the options page line is dismissed.
+  smoothingMigrationNotice: SmoothingMigrationNoticeSchema.nullable().default(null),
 
   // Video sync: controls visibility of video sync controls in popup (default: false)
   videoSyncEnabled: z.boolean().default(false),
@@ -218,9 +245,11 @@ const DEFAULT_EXTENSION_SETTINGS: ExtensionSettings = {
     sampleRate: 48000,
     latencyMode: 'quality',
     bitsPerSample: DEFAULT_BITS_PER_SAMPLE,
-    jitterBufferMs: JITTER_BUFFER_MS_DEFAULT,
-    frameDurationMs: FRAME_DURATION_MS_DEFAULT,
   },
+  pcmSmoothingMs: PCM_SMOOTHING_DEFAULT_MS,
+  pcmFrameDurationMs: FRAME_DURATION_MS_DEFAULT,
+  audioSettingsVersion: AUDIO_SETTINGS_VERSION,
+  smoothingMigrationNotice: null,
   videoSyncEnabled: false,
   keepTabAudible: true,
   syncSpeakers: false,
@@ -234,6 +263,94 @@ const DEFAULT_EXTENSION_SETTINGS: ExtensionSettings = {
  */
 function isWindowsPlatform(): boolean {
   return typeof navigator !== 'undefined' && navigator.userAgent.includes('Windows');
+}
+
+/**
+ * Snaps a smoothing value to the nearest step the extension offers. Values
+ * halfway between two steps go up; values beyond the last step take it.
+ * @param ms - Smoothing in milliseconds
+ * @returns The nearest offered step
+ */
+export function snapToSmoothingOption(ms: number): PcmSmoothingMs {
+  let best: PcmSmoothingMs = PCM_SMOOTHING_OPTIONS[0];
+  for (const option of PCM_SMOOTHING_OPTIONS) {
+    if (Math.abs(option - ms) <= Math.abs(best - ms)) best = option;
+  }
+  return best;
+}
+
+/**
+ * Reads a plain object from an unknown stored value.
+ * @param value - The stored value
+ * @returns The value as a record, or null if it is not a plain object
+ */
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
+}
+
+/**
+ * Moves stored settings from the version 1 layout, where each mode carried
+ * its own smoothing and frame size, to version 2, where both are standalone
+ * PCM settings that apply in every mode.
+ *
+ * Smoothing:
+ * - Custom mode keeps its value, snapped to the nearest offered step (values
+ *   above 500 ms take 500).
+ * - The Quality presets (Luxurious, Sensible) ran with 500 ms and move to 300.
+ * - The Realtime preset (Economical) ran with 200 ms and keeps it.
+ *
+ * Frame size keeps the custom value in custom mode; presets always ran with
+ * the default. When the effective smoothing changes, the result carries a
+ * `smoothingMigrationNotice` so the options page can say so once.
+ *
+ * @param data - Raw stored settings; returned untouched when already migrated
+ * @returns The settings in the version 2 layout (still raw, not validated)
+ */
+export function migrateAudioSettingsV2(data: Record<string, unknown>): Record<string, unknown> {
+  const version = data.audioSettingsVersion;
+  if (typeof version === 'number' && version >= AUDIO_SETTINGS_VERSION) return data;
+
+  const parsedMode = AudioModeSchema.safeParse(data.audioMode);
+  const mode: AudioMode = parsedMode.success
+    ? parsedMode.data
+    : DEFAULT_EXTENSION_SETTINGS.audioMode;
+  const custom = asRecord(data.customAudioSettings);
+
+  let from: number;
+  let to: PcmSmoothingMs;
+  let frameDurationMs: FrameDurationMs = FRAME_DURATION_MS_DEFAULT;
+
+  if (mode === 'custom') {
+    const stored = custom?.jitterBufferMs;
+    from =
+      typeof stored === 'number' && Number.isFinite(stored) ? stored : JITTER_BUFFER_MS_DEFAULT;
+    to = snapToSmoothingOption(from);
+    const frame = custom?.frameDurationMs;
+    if ((FRAME_DURATIONS as readonly unknown[]).includes(frame)) {
+      frameDurationMs = frame as FrameDurationMs;
+    }
+  } else if (mode === 'low') {
+    from = 200;
+    to = 200;
+  } else {
+    from = 500;
+    to = 300;
+  }
+
+  const notice: SmoothingMigrationNotice | null = from === to ? null : { from, to };
+  if (notice) {
+    log.info(`Smoothing is now one setting for every mode: ${from} ms -> ${to} ms (${mode} mode)`);
+  }
+
+  return {
+    ...data,
+    pcmSmoothingMs: to,
+    pcmFrameDurationMs: frameDurationMs,
+    audioSettingsVersion: AUDIO_SETTINGS_VERSION,
+    smoothingMigrationNotice: notice,
+  };
 }
 
 /**
@@ -304,7 +421,8 @@ function parseFieldsLeniently<T extends Record<string, unknown>>(
 /**
  * Parses stored extension settings field by field, keeping every valid field
  * and replacing only the invalid ones with their defaults. Also normalises
- * values that are valid in isolation but unusable on this machine.
+ * values that are valid in isolation but unusable on this machine. Settings
+ * in an older layout are migrated first.
  *
  * @param data - Raw stored settings object
  * @returns Fully populated extension settings
@@ -313,7 +431,7 @@ function parseExtensionSettingsLeniently(data: Record<string, unknown>): Extensi
   const dropped: string[] = [];
   const settings = parseFieldsLeniently(
     ExtensionSettingsSchema,
-    data,
+    migrateAudioSettingsV2(data),
     DEFAULT_EXTENSION_SETTINGS,
     dropped,
   );
@@ -379,6 +497,14 @@ export async function loadExtensionSettings(): Promise<ExtensionSettings> {
     if (!parsed.success) {
       log.warn('Invalid stored extension settings, using defaults');
       return { ...DEFAULT_EXTENSION_SETTINGS };
+    }
+
+    // Persist a layout migration straight away, so it (and its log line) runs once.
+    const storedVersion = asRecord(data)?.audioSettingsVersion;
+    if (typeof storedVersion !== 'number' || storedVersion < AUDIO_SETTINGS_VERSION) {
+      await chrome.storage.local
+        .set({ [EXTENSION_SETTINGS_KEY]: parsed.data })
+        .catch((err) => log.warn('Failed to save migrated extension settings:', err));
     }
 
     return parsed.data;

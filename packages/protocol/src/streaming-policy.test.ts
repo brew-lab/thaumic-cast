@@ -23,7 +23,6 @@ describe('getStreamingPolicy', () => {
     const realtime = getStreamingPolicy('realtime');
 
     expect(quality.ringBufferSeconds).toBeGreaterThan(realtime.ringBufferSeconds);
-    expect(quality.jitterBufferMs).toBeGreaterThan(realtime.jitterBufferMs);
     expect(quality.wsBufferHighWater).toBeGreaterThan(realtime.wsBufferHighWater);
   });
 });

@@ -1,19 +1,23 @@
 import type { JSX } from 'preact';
-import { useCallback, useMemo } from 'preact/hooks';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { useTranslation } from 'react-i18next';
-import { Card } from '@thaumic-cast/ui';
+import { Alert, Card, Disclosure } from '@thaumic-cast/ui';
 import type {
   AudioCodec,
   BitDepth,
   Bitrate,
   FrameDurationMs,
   LatencyMode,
+  PcmSmoothingMs,
   SupportedCodecsResult,
   SupportedSampleRate,
 } from '@thaumic-cast/protocol';
 import {
   CODEC_METADATA,
   FRAME_DURATIONS,
+  FRAME_DURATION_MS_DEFAULT,
+  PCM_SMOOTHING_DEFAULT_MS,
+  PCM_SMOOTHING_OPTIONS,
   getSupportedBitrates,
   getSupportedSampleRates,
   getSupportedBitDepths,
@@ -21,23 +25,32 @@ import {
 } from '@thaumic-cast/protocol';
 import type { ExtensionSettings, AudioMode } from '../../lib/settings';
 import { getResolvedConfigForDisplay, getDynamicPresets } from '../../lib/presets';
+import { pcmAudioRows, type PcmRowsContext } from '../../lib/pcm-audio-rows';
 import styles from '../Options.module.css';
+
+/** Fragment the popup links to so the advanced options open in view. */
+const ADVANCED_HASH = '#audio-advanced';
 
 interface AudioSectionProps {
   settings: ExtensionSettings;
   onUpdate: (partial: Partial<ExtensionSettings>) => Promise<void>;
   codecSupport: SupportedCodecsResult;
   codecLoading: boolean;
+  /** The companion's speaker-side settings and type, for the head start rows. */
+  companion: PcmRowsContext;
 }
 
 /**
  * Audio quality settings section.
- * Allows user to select quality mode and custom settings.
+ * Allows user to select quality mode and custom settings. For PCM, smoothing
+ * and frame size sit under Advanced in every mode, and the summary shows the
+ * speaker head start the companion adds and the delay the two add together.
  * @param root0
  * @param root0.settings
  * @param root0.onUpdate
  * @param root0.codecSupport
  * @param root0.codecLoading
+ * @param root0.companion
  * @returns The audio section element
  */
 export function AudioSection({
@@ -45,8 +58,11 @@ export function AudioSection({
   onUpdate,
   codecSupport,
   codecLoading,
+  companion,
 }: AudioSectionProps): JSX.Element {
   const { t } = useTranslation();
+  const [advancedOpen, setAdvancedOpen] = useState(() => location.hash === ADVANCED_HASH);
+  const advancedRef = useRef<HTMLDivElement>(null);
 
   // Get resolved config for display
   const resolvedConfig = useMemo(() => {
@@ -57,8 +73,32 @@ export function AudioSection({
       settings.audioMode,
       codecSupport,
       settings.customAudioSettings,
+      { smoothingMs: settings.pcmSmoothingMs, frameDurationMs: settings.pcmFrameDurationMs },
     );
-  }, [settings.audioMode, settings.customAudioSettings, codecSupport, codecLoading]);
+  }, [
+    settings.audioMode,
+    settings.customAudioSettings,
+    settings.pcmSmoothingMs,
+    settings.pcmFrameDurationMs,
+    codecSupport,
+    codecLoading,
+  ]);
+
+  const isPcm = resolvedConfig?.codec === 'pcm';
+
+  // Opened from the popup's smoothing advice: expand Advanced and bring it
+  // into view once it exists (it waits for codec detection).
+  useEffect(() => {
+    /** Expands and scrolls to Advanced when the fragment asks for it. */
+    const reveal = (): void => {
+      if (location.hash !== ADVANCED_HASH) return;
+      setAdvancedOpen(true);
+      advancedRef.current?.scrollIntoView({ block: 'start' });
+    };
+    if (isPcm) reveal();
+    window.addEventListener('hashchange', reveal);
+    return () => window.removeEventListener('hashchange', reveal);
+  }, [isPcm]);
 
   // Get dynamic presets for showing resolved codec/bitrate per tier
   const dynamicPresets = useMemo(() => {
@@ -198,19 +238,21 @@ export function AudioSection({
   );
 
   /**
-   * Handles jitter buffer change (PCM only).
+   * Handles smoothing change (PCM, every mode).
    */
-  const handleJitterBufferChange = useCallback(
-    async (jitterBufferMs: number) => {
-      await onUpdate({
-        customAudioSettings: {
-          ...settings.customAudioSettings,
-          jitterBufferMs,
-        },
-      });
+  const handleSmoothingChange = useCallback(
+    async (pcmSmoothingMs: PcmSmoothingMs) => {
+      await onUpdate({ pcmSmoothingMs });
     },
-    [settings.customAudioSettings, onUpdate],
+    [onUpdate],
   );
+
+  /**
+   * Dismisses the one-time line saying the migration changed smoothing.
+   */
+  const handleDismissMigration = useCallback(async () => {
+    await onUpdate({ smoothingMigrationNotice: null });
+  }, [onUpdate]);
 
   /**
    * Handles bit depth change.
@@ -228,18 +270,27 @@ export function AudioSection({
   );
 
   /**
-   * Handles frame duration change.
+   * Handles frame size change (PCM, every mode).
    */
   const handleFrameDurationChange = useCallback(
-    async (frameDurationMs: FrameDurationMs) => {
-      await onUpdate({
-        customAudioSettings: {
-          ...settings.customAudioSettings,
-          frameDurationMs,
-        },
-      });
+    async (pcmFrameDurationMs: FrameDurationMs) => {
+      await onUpdate({ pcmFrameDurationMs });
     },
-    [settings.customAudioSettings, onUpdate],
+    [onUpdate],
+  );
+
+  /**
+   * Labels an option in ms, marking the default.
+   * @param value - The option, in ms
+   * @param defaultValue - The default option, in ms
+   * @returns The option label
+   */
+  const optionLabel = useCallback(
+    (value: number, defaultValue: number): string => {
+      const ms = t('audio_option_ms', { value });
+      return value === defaultValue ? t('audio_option_default', { value: ms }) : ms;
+    },
+    [t],
   );
 
   // Get available bitrates for current codec (excluding 0 = lossless)
@@ -257,6 +308,17 @@ export function AudioSection({
   }, [settings.customAudioSettings.codec, codecSupport, codecLoading]);
 
   const isCustomMode = settings.audioMode === 'custom';
+
+  // PCM rows: sample rate follows capture, then smoothing, head start and delay.
+  const pcmRows = useMemo(() => {
+    if (!isPcm || !resolvedConfig) return [];
+    return pcmAudioRows(resolvedConfig.jitterBufferMs, companion).map((row) => ({
+      key: row.key,
+      label: t(row.labelKey),
+      value: t(row.value.key, row.value.params),
+    }));
+  }, [isPcm, resolvedConfig, companion, t]);
+
   const resolvedRows = useMemo(() => {
     if (!resolvedConfig) return [];
     const rows: { key: string; label: string; value: string }[] = [
@@ -276,12 +338,15 @@ export function AudioSection({
         value:
           resolvedConfig.channels === 2 ? t('audio_channels_stereo') : t('audio_channels_mono'),
       },
-      {
+    ];
+
+    if (!isPcm) {
+      rows.push({
         key: 'sample-rate',
         label: t('audio_sample_rate'),
         value: `${resolvedConfig.sampleRate / 1000} kHz`,
-      },
-    ];
+      });
+    }
 
     if (CODEC_METADATA[resolvedConfig.codec].webCodecsId !== null) {
       rows.push({
@@ -301,21 +366,8 @@ export function AudioSection({
         resolvedConfig.bitsPerSample === 24 ? t('audio_bit_depth_24') : t('audio_bit_depth_16'),
     });
 
-    if (resolvedConfig.codec === 'pcm') {
-      rows.push({
-        key: 'jitter-buffer',
-        label: t('audio_jitter_buffer'),
-        value: `${resolvedConfig.jitterBufferMs}ms`,
-      });
-      rows.push({
-        key: 'frame-duration',
-        label: t('audio_frame_duration'),
-        value: `${resolvedConfig.frameDurationMs}ms`,
-      });
-    }
-
-    return rows;
-  }, [resolvedConfig, t]);
+    return [...rows, ...pcmRows];
+  }, [resolvedConfig, isPcm, pcmRows, t]);
 
   return (
     <Card title={t('audio_section_title')}>
@@ -435,30 +487,31 @@ export function AudioSection({
                     </select>
                   </div>
 
-                  {/* Sample Rate - only show if codec supports multiple rates */}
-                  {availableSampleRates.length > 0 && (
-                    <div className={styles.field}>
-                      <label htmlFor="audio-sample-rate" className={styles.label}>
-                        {t('audio_sample_rate')}
-                      </label>
-                      <select
-                        id="audio-sample-rate"
-                        className={styles.select}
-                        value={settings.customAudioSettings.sampleRate}
-                        onChange={(e) =>
-                          handleSampleRateChange(
-                            Number((e.target as HTMLSelectElement).value) as SupportedSampleRate,
-                          )
-                        }
-                      >
-                        {availableSampleRates.map((rate) => (
-                          <option key={rate} value={rate}>
-                            {rate / 1000} kHz
-                          </option>
-                        ))}
-                      </select>
-                    </div>
-                  )}
+                  {/* Sample Rate - PCM follows the capture device, so only for compressed codecs */}
+                  {settings.customAudioSettings.codec !== 'pcm' &&
+                    availableSampleRates.length > 0 && (
+                      <div className={styles.field}>
+                        <label htmlFor="audio-sample-rate" className={styles.label}>
+                          {t('audio_sample_rate')}
+                        </label>
+                        <select
+                          id="audio-sample-rate"
+                          className={styles.select}
+                          value={settings.customAudioSettings.sampleRate}
+                          onChange={(e) =>
+                            handleSampleRateChange(
+                              Number((e.target as HTMLSelectElement).value) as SupportedSampleRate,
+                            )
+                          }
+                        >
+                          {availableSampleRates.map((rate) => (
+                            <option key={rate} value={rate}>
+                              {rate / 1000} kHz
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    )}
 
                   {/* Latency Mode - only show for codecs that use WebCodecs encoding */}
                   {CODEC_METADATA[settings.customAudioSettings.codec].webCodecsId !== null && (
@@ -506,57 +559,15 @@ export function AudioSection({
                     <span className={styles.hint}>{t('audio_bit_depth_hint')}</span>
                   </div>
 
-                  {/* Jitter Buffer - only show for PCM codec */}
-                  {settings.customAudioSettings.codec === 'pcm' && (
-                    <div className={styles.field}>
-                      <label htmlFor="audio-jitter-buffer" className={styles.label}>
-                        {t('audio_jitter_buffer')}
-                      </label>
-                      <select
-                        id="audio-jitter-buffer"
-                        className={styles.select}
-                        value={settings.customAudioSettings.jitterBufferMs}
-                        onChange={(e) =>
-                          handleJitterBufferChange(Number((e.target as HTMLSelectElement).value))
-                        }
-                      >
-                        <option value={100}>{t('audio_buffer_low')} (100ms)</option>
-                        <option value={200}>{t('audio_buffer_balanced')} (200ms)</option>
-                        <option value={500}>{t('audio_buffer_stable')} (500ms)</option>
-                        <option value={1000}>{t('audio_buffer_max')} (1000ms)</option>
-                      </select>
-                      <span className={styles.hint}>{t('audio_buffer_hint')}</span>
-                    </div>
-                  )}
-
-                  {/* Frame Duration - only show for PCM codec (for now) */}
-                  {settings.customAudioSettings.codec === 'pcm' && (
-                    <div className={styles.field}>
-                      <label htmlFor="audio-frame-duration" className={styles.label}>
-                        {t('audio_frame_duration')}
-                      </label>
-                      <select
-                        id="audio-frame-duration"
-                        className={styles.select}
-                        value={settings.customAudioSettings.frameDurationMs}
-                        onChange={(e) =>
-                          handleFrameDurationChange(
-                            Number((e.target as HTMLSelectElement).value) as FrameDurationMs,
-                          )
-                        }
-                      >
-                        {FRAME_DURATIONS.map((duration) => (
-                          <option key={duration} value={duration}>
-                            {duration === 10
-                              ? t('audio_frame_low')
-                              : duration === 20
-                                ? t('audio_frame_balanced')
-                                : t('audio_frame_stable')}{' '}
-                            ({duration}ms)
-                          </option>
-                        ))}
-                      </select>
-                      <span className={styles.hint}>{t('audio_frame_hint')}</span>
+                  {/* PCM summary: sample rate, smoothing, head start, added delay */}
+                  {pcmRows.length > 0 && (
+                    <div className={styles.resolvedSettings}>
+                      {pcmRows.map((row) => (
+                        <div key={row.key} className={styles.resolvedRow}>
+                          <span className={styles.resolvedLabel}>{row.label}</span>
+                          <span className={styles.resolvedValue}>{row.value}</span>
+                        </div>
+                      ))}
                     </div>
                   )}
                 </div>
@@ -574,6 +585,75 @@ export function AudioSection({
                 )
               )}
             </div>
+
+            {isPcm && (
+              <span className={styles.hint}>{t('audio_sample_rate_follows_capture_hint')}</span>
+            )}
+
+            {isPcm && settings.smoothingMigrationNotice && (
+              <Alert variant="info" onDismiss={handleDismissMigration} dismissLabel={t('dismiss')}>
+                {t('audio_smoothing_migrated', settings.smoothingMigrationNotice)}
+              </Alert>
+            )}
+
+            {/* Advanced: smoothing and frame size, for PCM in every mode */}
+            {isPcm && (
+              <div id="audio-advanced" ref={advancedRef} className={styles.advancedAnchor}>
+                <Disclosure
+                  label={t('audio_advanced')}
+                  expanded={advancedOpen}
+                  onExpandedChange={setAdvancedOpen}
+                >
+                  <div className={styles.cardContent}>
+                    <div className={styles.field}>
+                      <label htmlFor="audio-smoothing" className={styles.label}>
+                        {t('audio_smoothing')}
+                      </label>
+                      <select
+                        id="audio-smoothing"
+                        className={styles.select}
+                        value={settings.pcmSmoothingMs}
+                        onChange={(e) =>
+                          handleSmoothingChange(
+                            Number((e.target as HTMLSelectElement).value) as PcmSmoothingMs,
+                          )
+                        }
+                      >
+                        {PCM_SMOOTHING_OPTIONS.map((ms) => (
+                          <option key={ms} value={ms}>
+                            {optionLabel(ms, PCM_SMOOTHING_DEFAULT_MS)}
+                          </option>
+                        ))}
+                      </select>
+                      <span className={styles.hint}>{t('audio_smoothing_hint')}</span>
+                    </div>
+
+                    <div className={styles.field}>
+                      <label htmlFor="audio-frame-size" className={styles.label}>
+                        {t('audio_frame_size')}
+                      </label>
+                      <select
+                        id="audio-frame-size"
+                        className={styles.select}
+                        value={settings.pcmFrameDurationMs}
+                        onChange={(e) =>
+                          handleFrameDurationChange(
+                            Number((e.target as HTMLSelectElement).value) as FrameDurationMs,
+                          )
+                        }
+                      >
+                        {FRAME_DURATIONS.map((ms) => (
+                          <option key={ms} value={ms}>
+                            {optionLabel(ms, FRAME_DURATION_MS_DEFAULT)}
+                          </option>
+                        ))}
+                      </select>
+                      <span className={styles.hint}>{t('audio_frame_size_hint')}</span>
+                    </div>
+                  </div>
+                </Disclosure>
+              </div>
+            )}
           </>
         )}
       </div>

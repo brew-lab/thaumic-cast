@@ -116,6 +116,7 @@ export async function handleStartCast(msg: StartCastMessage): Promise<ExtensionR
       settings.audioMode,
       codecSupport,
       settings.customAudioSettings,
+      { smoothingMs: settings.pcmSmoothingMs, frameDurationMs: settings.pcmFrameDurationMs },
     );
     log.info(
       `Encoder config (${settings.audioMode} mode): ${describeEncoderConfig(encoderConfig)}`,

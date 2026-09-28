@@ -174,6 +174,32 @@ export const JITTER_BUFFER_MS_MAX = 1000;
 export const JITTER_BUFFER_MS_DEFAULT = 200;
 
 /**
+ * Default smoothing for PCM streams, in milliseconds: how much audio the
+ * companion holds back to even out delivery from the browser. Sent on the wire
+ * as `jitterBufferMs`.
+ */
+export const PCM_SMOOTHING_DEFAULT_MS = 200;
+
+/**
+ * Smoothing steps the extension offers, in milliseconds. The wire accepts any
+ * value from {@link JITTER_BUFFER_MS_MIN} to {@link JITTER_BUFFER_MS_MAX}.
+ */
+export const PCM_SMOOTHING_OPTIONS = [100, 200, 300, 500] as const;
+
+/** A smoothing step the extension offers, in milliseconds. */
+export type PcmSmoothingMs = (typeof PCM_SMOOTHING_OPTIONS)[number];
+
+/**
+ * Zod schema for a smoothing step the extension offers.
+ */
+export const PcmSmoothingMsSchema = z.union([
+  z.literal(100),
+  z.literal(200),
+  z.literal(300),
+  z.literal(500),
+]);
+
+/**
  * Frame duration options (in milliseconds).
  * Controls how audio is chunked for streaming:
  * - 10ms: Low latency, higher CPU overhead (default)
