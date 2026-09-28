@@ -56,6 +56,18 @@ pub struct ServerConfig {
     /// an attacker actively driving it. See `thaumic_core::Config`.
     /// Override: `THAUMIC_STRICT_STREAM_ACCESS`
     pub strict_stream_access: bool,
+
+    /// Whether each speaker playing a stream is polled for its playback
+    /// position every few seconds, so a speaker about to run out of audio
+    /// shows up in the log before it is heard.
+    ///
+    /// Defaults to `true`: about 24 quiet SOAP calls a minute per speaker
+    /// that fetches a stream, never more than 120 a minute in all. `false`
+    /// polls only casts whose client asked for video sync, as releases before
+    /// this setting did. Applies from each speaker's next connection. See
+    /// `thaumic_core::Config`.
+    /// Override: `THAUMIC_SPEAKER_MONITOR` (`on` or `off`)
+    pub speaker_monitor: bool,
 }
 
 impl Default for ServerConfig {
@@ -67,6 +79,7 @@ impl Default for ServerConfig {
             data_dir: None,
             artwork_url: None,
             strict_stream_access: false,
+            speaker_monitor: true,
         }
     }
 }
@@ -115,6 +128,7 @@ impl ServerConfig {
             preferred_port: self.bind_port,
             topology_refresh_interval: self.topology_refresh_interval,
             strict_stream_access: self.strict_stream_access,
+            speaker_monitor: self.speaker_monitor,
             ..Default::default()
         }
     }
@@ -179,6 +193,21 @@ mod tests {
 
         let config = ServerConfig::from_yaml("strict_stream_access: true\n").expect("should parse");
         assert!(config.to_core_config().strict_stream_access);
+    }
+
+    /// Monitoring ships on, and a config file can switch it off.
+    #[test]
+    fn speaker_monitor_defaults_on_and_is_forwarded_to_core() {
+        assert!(ServerConfig::default().to_core_config().speaker_monitor);
+        assert!(
+            ServerConfig::from_yaml("bind_port: 8080\n")
+                .expect("should parse")
+                .to_core_config()
+                .speaker_monitor
+        );
+
+        let config = ServerConfig::from_yaml("speaker_monitor: false\n").expect("should parse");
+        assert!(!config.to_core_config().speaker_monitor);
     }
 
     #[test]

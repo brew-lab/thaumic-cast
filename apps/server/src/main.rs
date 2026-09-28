@@ -58,6 +58,23 @@ struct Args {
     /// and still served, because a wrongly refused fetch is silent dead air.
     #[arg(long, value_name = "BOOL", env = "THAUMIC_STRICT_STREAM_ACCESS")]
     strict_stream_access: Option<bool>,
+
+    /// Poll each speaker playing a stream for its playback position: on or off
+    /// (overrides config file). On by default; off polls only casts that asked
+    /// for video sync.
+    #[arg(
+        long,
+        value_name = "on|off",
+        env = thaumic_core::services::SPEAKER_MONITOR_ENV,
+        value_parser = parse_speaker_monitor
+    )]
+    speaker_monitor: Option<bool>,
+}
+
+/// Parses `--speaker-monitor` / `THAUMIC_SPEAKER_MONITOR`.
+fn parse_speaker_monitor(value: &str) -> Result<bool, String> {
+    thaumic_core::services::latency_monitor::parse_speaker_monitor_switch(value)
+        .ok_or_else(|| format!("expected on or off, got {value:?}"))
 }
 
 #[tokio::main]
@@ -95,10 +112,21 @@ async fn main() -> Result<()> {
     if let Some(strict) = args.strict_stream_access {
         config.strict_stream_access = strict;
     }
+    if let Some(monitor) = args.speaker_monitor {
+        config.speaker_monitor = monitor;
+    }
 
     // CLI/env overrides can introduce invalid values (e.g. --port 0), so
     // validate the merged configuration before anything is started.
     config.validate().context("Invalid configuration")?;
+    log::info!(
+        "Speaker monitoring: {}",
+        if config.speaker_monitor {
+            "on"
+        } else {
+            "off (video sync only)"
+        }
+    );
 
     // Resolve advertise IP: use explicit config, or fall back to auto-detection
     let network = if let Some(ip) = config.advertise_ip {
@@ -292,6 +320,18 @@ mod tests {
         with_env("THAUMIC_BIND_PORT", "49401", || {
             let args = Args::try_parse_from(["thaumic-server"]).expect("valid env value");
             assert_eq!(args.port, Some(49401));
+        });
+
+        with_env("THAUMIC_SPEAKER_MONITOR", "sometimes", || {
+            assert!(Args::try_parse_from(["thaumic-server"]).is_err());
+        });
+        with_env("THAUMIC_SPEAKER_MONITOR", "off", || {
+            let args = Args::try_parse_from(["thaumic-server"]).expect("valid env value");
+            assert_eq!(args.speaker_monitor, Some(false));
+        });
+        with_env("THAUMIC_SPEAKER_MONITOR", "on", || {
+            let args = Args::try_parse_from(["thaumic-server"]).expect("valid env value");
+            assert_eq!(args.speaker_monitor, Some(true));
         });
 
         with_env(

@@ -42,3 +42,14 @@ topology_refresh_interval: 30
 # than someone actively driving the API.
 # Environment: THAUMIC_STRICT_STREAM_ACCESS
 # strict_stream_access: true
+
+# Keep an eye on each speaker playing a stream (default: true)
+# Every speaker that fetches a stream is asked for its playback position every
+# two to three seconds (quiet SOAP calls, never more than 120 a minute in all),
+# so a speaker that is about to run out of audio shows up in the log before it
+# is heard. Grouped speakers and satellites that follow another speaker are
+# never polled. Set to false to poll only casts that asked for video sync, as
+# earlier releases did; video sync works either way. Applies from each
+# speaker's next connection.
+# Environment: THAUMIC_SPEAKER_MONITOR (on or off)
+# speaker_monitor: false
