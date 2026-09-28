@@ -25,6 +25,7 @@ use tokio::sync::mpsc;
 use super::cadence::{LoggingStreamGuard, PipelineSample};
 use super::manager::PlaybackEpoch;
 use super::{AudioCodec, AudioFormat};
+use crate::events::LinkQuality;
 
 /// Length of the WAV header every PCM connection starts with.
 pub const WAV_HEADER_BYTES: u32 = 44;
@@ -65,6 +66,41 @@ pub struct ConnectionTap {
     /// The playback epoch this connection started, set once on its first
     /// real frame, before the tap is registered with the monitor.
     epoch: OnceLock<PlaybackEpoch>,
+    /// The speaker head start this connection was sent, set once when its
+    /// cadence body is built (PCM only), before the tap is registered.
+    head_start: OnceLock<HeadStart>,
+}
+
+/// The speaker head start one PCM connection got: the connect burst sent
+/// ahead of real-time pacing, and what was configured.
+///
+/// The two differ when the stream's ring held less than the configured
+/// burst on top of the jitter buffer (a resume soon after the stream began
+/// or after a source pause); the speaker's reserve starts from what was
+/// sent, so that is what its low floor is sized from.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct HeadStart {
+    /// Milliseconds of audio actually sent as the connect burst.
+    pub sent_ms: u32,
+    /// Milliseconds the connect burst was configured to, after any
+    /// environment override and clamping.
+    pub configured_ms: u32,
+}
+
+impl HeadStart {
+    /// A head start of `sent_ms` out of `configured_ms`, both in ms.
+    pub fn new(sent_ms: u64, configured_ms: u64) -> Self {
+        let ms = |v: u64| v.min(u64::from(u32::MAX)) as u32;
+        Self {
+            sent_ms: ms(sent_ms),
+            configured_ms: ms(configured_ms),
+        }
+    }
+
+    /// Whether the whole configured head start was sent.
+    pub fn is_full(&self) -> bool {
+        self.sent_ms >= self.configured_ms
+    }
 }
 
 impl ConnectionTap {
@@ -98,6 +134,7 @@ impl ConnectionTap {
             monitor,
             guard,
             epoch: OnceLock::new(),
+            head_start: OnceLock::new(),
         }
     }
 
@@ -111,6 +148,44 @@ impl ConnectionTap {
     /// any effect: a connection starts exactly one epoch.
     pub(crate) fn set_epoch(&self, epoch: PlaybackEpoch) {
         let _ = self.epoch.set(epoch);
+    }
+
+    /// The speaker head start this connection was sent, once its cadence
+    /// body has been built. Always `None` for a compressed codec, which gets
+    /// no connect burst.
+    pub fn head_start(&self) -> Option<HeadStart> {
+        self.head_start.get().copied()
+    }
+
+    /// Records the head start this connection was sent. Only the first call
+    /// has any effect.
+    pub(crate) fn set_head_start(&self, head_start: HeadStart) {
+        let _ = self.head_start.set(head_start);
+    }
+
+    /// The latest verdict on the network path to this connection's speaker,
+    /// judged from its TCP counters, or `None` before the first verdict or
+    /// where the platform does not report them. Read by the speaker monitor
+    /// to tell a Wi-Fi stall from other causes of a low reserve.
+    pub fn link_verdict(&self) -> Option<LinkQuality> {
+        self.guard.link_verdict()
+    }
+
+    /// How far the speaker's acknowledgements lag the audio handed to the
+    /// connection right now, in milliseconds of audio, where the platform
+    /// reports acknowledged bytes (PCM only).
+    ///
+    /// Read from the monitor, not between frames as the pipeline snapshots
+    /// are, so a frame yielded between the two reads can skew it by one
+    /// frame. It is taken on every monitor tick because the snapshots are
+    /// taken only while the connection is being polled for audio: a stall
+    /// long enough to stop that is otherwise seen only once it clears.
+    pub fn unacked_ms_now(&self) -> Option<f64> {
+        if self.byte_rate == 0 {
+            return None;
+        }
+        let bytes = self.guard.unacked_bytes_now()?;
+        Some(bytes as f64 * 1000.0 / f64::from(self.byte_rate))
     }
 
     /// Audio bytes handed to the connection so far, excluding the header.
@@ -316,6 +391,9 @@ pub(crate) mod test_support {
             Arc::new(LoggingStreamGuard::new(stream_id.to_string(), ip)),
             monitor,
         ));
+        if codec == AudioCodec::Pcm {
+            tap.set_head_start(HeadStart::new(500, 500));
+        }
         tap.set_epoch(PlaybackEpoch {
             id: NEXT_EPOCH.fetch_add(1, Ordering::Relaxed),
             audio_epoch: Instant::now(),

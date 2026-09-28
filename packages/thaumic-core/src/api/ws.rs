@@ -2572,9 +2572,13 @@ mod tests {
             reserve_p10_ms: Some(180),
             reserve_acked: true,
             target_ms: Some(520),
+            head_start_ms: Some(500),
+            head_start_configured_ms: Some(500),
+            floor_ms: Some(150),
+            stall_ms: None,
             clock_ppm: Some(40.0),
             clock_se_ppm: Some(6.0),
-            time_to_empty_s: Some(4_500),
+            time_to_floor_s: Some(4_500),
             timestamp: 0,
         });
 

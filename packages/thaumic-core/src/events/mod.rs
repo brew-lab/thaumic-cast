@@ -163,9 +163,10 @@ pub enum SpeakerHealthState {
     /// The reserve is measured and healthy.
     Ok,
     /// The speaker plays faster than the audio arrives and its reserve is
-    /// projected to run out within twenty minutes.
+    /// projected to reach the low floor within thirty minutes.
     Draining,
-    /// The reserve has fallen well below the level it settled at.
+    /// The reserve has fallen below the absolute floor sized from the
+    /// speaker head start its connection was sent.
     Low,
     /// The speaker is known not to be playing.
     Paused,
@@ -240,9 +241,9 @@ pub enum NetworkEvent {
     /// changes, while the speaker is monitored. Names its stream, so it only
     /// reaches the client that owns it while the stream is live.
     ///
-    /// The reserve's absolute zero is not known exactly: figures are best
-    /// read against `target_ms`, the level the reserve settled at once the
-    /// cast began.
+    /// The low state is judged against `floor_ms`, an absolute floor sized
+    /// from the speaker head start the connection was sent; `target_ms` is
+    /// the level the reserve settled at once that head start had gone out.
     SpeakerHealth {
         /// The stream the speaker is fetching.
         #[serde(rename = "streamId")]
@@ -267,7 +268,7 @@ pub enum NetworkEvent {
         reserve_min_ms: Option<i32>,
         /// The level the reserve stayed above nine tenths of the last
         /// report's window, on the same basis as `reserve_min_ms`. The low
-        /// state is judged on this.
+        /// state is judged on this, against `floor_ms`.
         #[serde(rename = "reserveP10Ms", skip_serializing_if = "Option::is_none")]
         reserve_p10_ms: Option<i32>,
         /// Whether `reserve_min_ms` and `reserve_p10_ms` are on acknowledged
@@ -275,10 +276,32 @@ pub enum NetworkEvent {
         /// are the delivered-count estimate.
         #[serde(rename = "reserveAcked")]
         reserve_acked: bool,
-        /// The reserve the speaker settled at, which the low state is
-        /// measured against, once learned.
+        /// The reserve the speaker settled at on this connection once its
+        /// head start had gone out, once learned.
         #[serde(rename = "targetMs", skip_serializing_if = "Option::is_none")]
         target_ms: Option<i32>,
+        /// The speaker head start the connection was actually sent, in ms
+        /// (PCM only): less than configured when the stream held too little
+        /// audio when the speaker connected.
+        #[serde(rename = "headStartMs", skip_serializing_if = "Option::is_none")]
+        head_start_ms: Option<u32>,
+        /// The speaker head start configured when the connection was made,
+        /// in ms (PCM only).
+        #[serde(
+            rename = "headStartConfiguredMs",
+            skip_serializing_if = "Option::is_none"
+        )]
+        head_start_configured_ms: Option<u32>,
+        /// The acknowledged reserve below which the speaker is low, in ms,
+        /// sized from `head_start_ms` (PCM only).
+        #[serde(rename = "floorMs", skip_serializing_if = "Option::is_none")]
+        floor_ms: Option<u32>,
+        /// How far the worst acknowledgement lag of the last report's window
+        /// stood above its median, in ms: the audio a Wi-Fi stall held back,
+        /// less what is steadily in flight. Where acknowledgements are
+        /// measured.
+        #[serde(rename = "stallMs", skip_serializing_if = "Option::is_none")]
+        stall_ms: Option<u32>,
         /// How much faster the speaker plays than audio arrives, in parts
         /// per million. Positive drains the reserve.
         #[serde(rename = "clockPpm", skip_serializing_if = "Option::is_none")]
@@ -286,10 +309,10 @@ pub enum NetworkEvent {
         /// Standard error of `clock_ppm`.
         #[serde(rename = "clockSePpm", skip_serializing_if = "Option::is_none")]
         clock_se_ppm: Option<f32>,
-        /// Seconds until the reserve runs out at the measured clock rate,
-        /// when the speaker is measurably draining it.
-        #[serde(rename = "timeToEmptyS", skip_serializing_if = "Option::is_none")]
-        time_to_empty_s: Option<u32>,
+        /// Seconds until the reserve reaches `floor_ms` at the rate the
+        /// speaker drains it, when it is measurably draining it.
+        #[serde(rename = "timeToFloorS", skip_serializing_if = "Option::is_none")]
+        time_to_floor_s: Option<u32>,
         /// Unix timestamp in milliseconds.
         timestamp: u64,
     },
@@ -443,9 +466,13 @@ mod tests {
             reserve_p10_ms: Some(470),
             reserve_acked: true,
             target_ms: Some(540),
+            head_start_ms: Some(500),
+            head_start_configured_ms: Some(500),
+            floor_ms: Some(150),
+            stall_ms: Some(90),
             clock_ppm: Some(39.75),
             clock_se_ppm: Some(7.25),
-            time_to_empty_s: Some(900),
+            time_to_floor_s: Some(900),
             timestamp: 1,
         });
         assert_eq!(
@@ -463,9 +490,13 @@ mod tests {
                 "reserveP10Ms": 470,
                 "reserveAcked": true,
                 "targetMs": 540,
+                "headStartMs": 500,
+                "headStartConfiguredMs": 500,
+                "floorMs": 150,
+                "stallMs": 90,
                 "clockPpm": 39.75,
                 "clockSePpm": 7.25,
-                "timeToEmptyS": 900,
+                "timeToFloorS": 900,
                 "timestamp": 1,
             })
         );
@@ -481,9 +512,13 @@ mod tests {
             reserve_p10_ms: None,
             reserve_acked: false,
             target_ms: None,
+            head_start_ms: None,
+            head_start_configured_ms: None,
+            floor_ms: None,
+            stall_ms: None,
             clock_ppm: None,
             clock_se_ppm: None,
-            time_to_empty_s: None,
+            time_to_floor_s: None,
             timestamp: 1,
         });
         assert_eq!(

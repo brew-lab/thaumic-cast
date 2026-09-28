@@ -390,7 +390,7 @@ mod tests {
             // A 700 ms stall of the playhead twenty minutes in, as an underrun.
             gen.steps = vec![(20.0 * MINUTE, -700.0)];
             let mut tracker = ReserveTracker::new();
-            tracker.start_connection(true);
+            tracker.start_connection(true, None);
             // The same polls, fitted as if nothing had happened.
             let mut unbroken = ClockFit::new();
             let mut breaks = Vec::new();

@@ -33,8 +33,8 @@ use crate::services::latency_monitor::speaker_monitor_enabled;
 use crate::stream::manager::TimestampedFrame;
 use crate::stream::{
     create_wav_header, create_wav_stream_with_cadence, lagged_error, pcm_connect_burst_ms,
-    AudioCodec, CadenceConfig, ConnectionTap, EpochHook, IcyMetadataInjector, LoggingStreamGuard,
-    StreamState, MAX_UNLISTED_STREAM_READERS,
+    AudioCodec, CadenceConfig, ConnectionTap, EpochHook, FirstConnectionWait, HeadStart,
+    IcyMetadataInjector, LoggingStreamGuard, StreamState, MAX_UNLISTED_STREAM_READERS,
 };
 
 /// A single item of an audio body stream.
@@ -284,27 +284,44 @@ pub(super) async fn stream_audio(
     // (see `pcm_prefill_delay`). A speaker's GET usually follows the
     // stream's first frame within a second, so without the longer wait its
     // first connection, the one the reserve matters most on, would get only
-    // a fraction of the burst. The longest wait is jitter buffer plus burst;
-    // the Playbar has been seen to accept a 1000 ms wait before the response.
-    // `jitter_buffer_ms` is already validated against `MAX_JITTER_BUFFER_MS`
-    // at the protocol layer, and the burst against its maximum.
+    // a fraction of the burst. The longest wait is jitter buffer plus burst.
+    // A Playbar has been seen to accept a 1000 ms wait before the response;
+    // longer ones are untried, so the wait is not capped but logged, and so
+    // is whether the speaker kept its connection through it (see
+    // `LoggingStreamGuard::with_first_wait`). `jitter_buffer_ms` is already
+    // validated against `MAX_JITTER_BUFFER_MS` at the protocol layer, and
+    // the burst against its maximum.
     //
     // SKIP on resume: Sonos closes the connection within milliseconds if we
     // delay. The ring buffer already has frames from before the pause.
     let connect_burst_ms = pcm_connect_burst_ms(connect_burst_ms);
+    let since_first_frame = stream_state.timing.first_frame_at().map(|t| t.elapsed());
     let prefill_delay = pcm_prefill_delay(
         stream_state.jitter_buffer_ms,
         connect_burst_ms,
-        stream_state.timing.first_frame_at().map(|t| t.elapsed()),
+        since_first_frame,
     );
+    let mut first_wait = None;
     if stream_state.codec == AudioCodec::Pcm && !prefill_delay.is_zero() && !is_resume {
+        let wait = FirstConnectionWait {
+            waited_ms: prefill_delay.as_millis() as u64,
+            smoothing_ms: stream_state.jitter_buffer_ms,
+            head_start_ms: connect_burst_ms,
+        };
         log::info!(
-            "[Stream] Applying {}ms prefill delay for PCM stream (jitter buffer {}ms, connect \
-             burst {}ms)",
-            prefill_delay.as_millis(),
-            stream_state.jitter_buffer_ms,
-            connect_burst_ms
+            "[Stream] First-connection wait: client={}, stream={}, holding the response {}ms \
+             (smoothing {}ms + head start {}ms, stream {} old)",
+            remote_ip,
+            id,
+            wait.waited_ms,
+            wait.smoothing_ms,
+            wait.head_start_ms,
+            since_first_frame.map_or_else(
+                || "not yet started".to_string(),
+                |d| format!("{}ms", d.as_millis())
+            )
         );
+        first_wait = Some(wait);
         tokio::time::sleep(prefill_delay).await;
     } else if is_resume && stream_state.codec == AudioCodec::Pcm {
         log::info!(
@@ -344,13 +361,15 @@ pub(super) async fn stream_audio(
         .tracks_playback()
         .then(|| state.link_registry.claim(remote_addr))
         .flatten();
-    let guard = Arc::new(
-        LoggingStreamGuard::new(id.to_string(), remote_ip).with_link_probe(
-            link_probe,
-            stream_state.jitter_buffer_ms,
-            Arc::clone(&state.event_bridge) as Arc<dyn crate::events::EventEmitter>,
-        ),
+    let mut guard = LoggingStreamGuard::new(id.to_string(), remote_ip).with_link_probe(
+        link_probe,
+        stream_state.jitter_buffer_ms,
+        Arc::clone(&state.event_bridge) as Arc<dyn crate::events::EventEmitter>,
     );
+    if let Some(wait) = first_wait {
+        guard = guard.with_first_wait(wait);
+    }
+    let guard = Arc::new(guard);
 
     // One-shot epoch hook for whichever pipeline is built below. None for a
     // reader that is not a speaker: its connection must not enter the
@@ -404,6 +423,8 @@ pub(super) async fn stream_audio(
         // connect burst, are sent at once so the speaker starts with that much
         // audio in hand (see `CadenceConfig::burst_frames`). A resume gets it
         // too: that is when a speaker's reserve starts again from nothing.
+        // The tap records the head start actually sent, which the speaker
+        // monitor sizes the speaker's low floor from.
         pcm_cadence_stream(
             &stream_state,
             connect_burst_ms,
@@ -411,6 +432,7 @@ pub(super) async fn stream_audio(
             rx,
             Arc::clone(&guard),
             epoch_hook,
+            tap.as_deref(),
             remote_ip,
             is_resume,
         )
@@ -517,7 +539,8 @@ fn pcm_prefill_delay(
 
 /// Builds a PCM connection's cadence body from its `subscribe()` snapshot,
 /// with a connect burst of `burst_ms` (already resolved, see
-/// [`pcm_connect_burst_ms`]), and logs how the prefill was split.
+/// [`pcm_connect_burst_ms`]), records on `tap` the head start the ring
+/// allowed, and logs how the prefill was split.
 #[allow(clippy::too_many_arguments)]
 fn pcm_cadence_stream(
     stream_state: &Arc<StreamState>,
@@ -526,6 +549,7 @@ fn pcm_cadence_stream(
     rx: tokio::sync::broadcast::Receiver<Bytes>,
     guard: Arc<LoggingStreamGuard>,
     epoch_hook: Option<EpochHook>,
+    tap: Option<&ConnectionTap>,
     remote_ip: IpAddr,
     is_resume: bool,
 ) -> AudioStream {
@@ -539,6 +563,9 @@ fn pcm_cadence_stream(
         stream_state.audio_format,
         prefill_frames,
     );
+    if let Some(tap) = tap {
+        tap.set_head_start(HeadStart::new(config.burst_ms(), burst_ms));
+    }
     log_connect_burst(
         &stream_state.id,
         remote_ip,
@@ -634,8 +661,9 @@ where
     S: Stream<Item = FrameResult> + Send,
     O: Send,
 {
+    let closed_on_drop = BodyClosedOnDrop(Arc::clone(&guard));
     stream.map(move |res: FrameResult| {
-        let _owned = &owned;
+        let _owned = (&owned, &closed_on_drop);
         match &res {
             Ok(bytes) => {
                 guard.record_frame();
@@ -647,6 +675,17 @@ where
         }
         res
     })
+}
+
+/// Marks the connection's body closed when the body is dropped, which stops
+/// the speaker monitor reading its socket (see
+/// [`LoggingStreamGuard::mark_body_closed`]).
+struct BodyClosedOnDrop(Arc<LoggingStreamGuard>);
+
+impl Drop for BodyClosedOnDrop {
+    fn drop(&mut self) {
+        self.0.mark_body_closed();
+    }
 }
 
 /// Starts a new playback epoch on the first real (non-empty) frame, then forgets
@@ -1106,6 +1145,7 @@ mod tests {
             rx,
             Arc::clone(&guard),
             Some(hook),
+            Some(&tap),
             remote,
             is_resume,
         );
@@ -1206,6 +1246,50 @@ mod tests {
         assert_eq!(pcm_prefill_delay(0, 0, None), Duration::ZERO);
     }
 
+    /// The wait is not capped: it follows the smoothing and the configured
+    /// head start up to the head start's 2000 ms maximum, so a field test
+    /// can find out what a speaker accepts.
+    #[test]
+    fn prefill_wait_follows_smoothing_and_head_start_up_to_2000ms() {
+        let ms = Duration::from_millis;
+        assert_eq!(pcm_prefill_delay(200, 1000, Some(ms(100))), ms(1100));
+        assert_eq!(pcm_prefill_delay(300, 2000, Some(ms(100))), ms(2200));
+        assert_eq!(pcm_prefill_delay(1000, 2000, None), ms(3000));
+        assert_eq!(pcm_prefill_delay(300, 2000, Some(ms(4000))), ms(300));
+    }
+
+    /// The tap records the head start the ring allowed beside the one
+    /// configured: all of it with a full ring, only what the ring held
+    /// beyond the jitter buffer otherwise.
+    #[tokio::test(start_paused = true)]
+    async fn head_start_recorded_is_what_the_ring_allowed() {
+        let state = Arc::new(StreamState::new(
+            "pcm-stream".to_string(),
+            AudioCodec::Pcm,
+            AudioFormat::default(),
+            crate::protocol_constants::pcm_ring_frames(10),
+            64,
+            200,
+            10,
+        ));
+        let _keepalive = state.tx.subscribe();
+        // 45 frames: 20 for the jitter buffer, 25 (250 ms) for the burst.
+        push_tagged(&state, 0, 45);
+        let (_body, tap) = pcm_connection(&state, ip("192.168.1.50"), 500);
+        let head_start = tap.head_start().expect("recorded");
+        assert_eq!(head_start, HeadStart::new(250, 500));
+        assert!(!head_start.is_full());
+
+        push_tagged(&state, 45, 100);
+        let (_body, tap) = pcm_connection(&state, ip("192.168.1.51"), 500);
+        let head_start = tap.head_start().expect("recorded");
+        assert_eq!(head_start, HeadStart::new(500, 500));
+        assert!(head_start.is_full());
+
+        let (_body, tap) = pcm_connection(&state, ip("192.168.1.52"), 0);
+        assert_eq!(tap.head_start(), Some(HeadStart::new(0, 0)));
+    }
+
     /// A speaker fetching 100 ms after the stream's first frame, as a fresh
     /// cast's first GET does, still gets the whole burst: the prefill delay
     /// waits for the ring to hold it as well as the jitter buffer.
@@ -1246,6 +1330,17 @@ mod tests {
         );
         assert_eq!(tap.delivered_ms(), Some(510));
         producer.abort();
+    }
+
+    /// Dropping the body marks it closed, which stops the speaker monitor
+    /// reading a socket handle that may be reused.
+    #[test]
+    fn dropping_the_body_marks_it_closed() {
+        let guard = Arc::new(LoggingStreamGuard::new("s".into(), test_ip()));
+        let body = with_delivery_record(futures::stream::empty(), Arc::clone(&guard), ());
+        assert!(!guard.body_closed());
+        drop(body);
+        assert!(guard.body_closed());
     }
 
     /// Without the burst a connection starts exactly as before: one frame

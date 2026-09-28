@@ -34,7 +34,7 @@ pub use reserve::{LockReason, ReserveEstimate, ReserveEstimator};
 pub use rollup::WindowStats;
 pub use segment::{Segment, SegmentBreak};
 pub use topology_diff::{MemberChange, RadioField, TopologyDiff};
-pub use tracker::{AckedReserve, ConnectionStats, MonitorState, ReserveTracker};
+pub use tracker::{AckedReserve, ConnectionStats, MonitorState, PreBreak, ReserveTracker};
 pub use transport_gate::{
     GenaTransport, GenaTransportView, TransportGate, TransportSource, TransportStateView,
     TransportVerdict,
