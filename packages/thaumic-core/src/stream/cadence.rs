@@ -215,11 +215,8 @@ pub fn parse_pcm_connect_burst_ms(value: &str) -> Result<u64, String> {
 pub fn pcm_connect_burst_env_override() -> Option<u64> {
     static WARNED: std::sync::Once = std::sync::Once::new();
     let raw = std::env::var(PCM_CONNECT_BURST_ENV).ok()?;
-    if raw.trim().is_empty() {
-        return None;
-    }
-    match parse_pcm_connect_burst_ms(&raw) {
-        Ok(ms) => Some(ms),
+    match pcm_connect_burst_override_from(&raw) {
+        Ok(ms) => ms,
         Err(e) => {
             WARNED.call_once(|| {
                 log::warn!(
@@ -232,6 +229,15 @@ pub fn pcm_connect_burst_env_override() -> Option<u64> {
             None
         }
     }
+}
+
+/// The override a raw [`PCM_CONNECT_BURST_ENV`] value asks for: `None` when it
+/// is blank, the parsed value when it is valid.
+fn pcm_connect_burst_override_from(raw: &str) -> Result<Option<u64>, String> {
+    if raw.trim().is_empty() {
+        return Ok(None);
+    }
+    parse_pcm_connect_burst_ms(raw).map(Some)
 }
 
 /// The PCM connect burst for a new connection, in milliseconds, given the
@@ -2669,6 +2675,24 @@ mod tests {
             "the env wins"
         );
         assert_eq!(resolve_pcm_connect_burst_ms(9000, None), 2000, "clamped");
+    }
+
+    #[test]
+    fn connect_burst_env_value_is_read_as_an_override() {
+        assert_eq!(pcm_connect_burst_override_from("1500"), Ok(Some(1500)));
+        assert_eq!(
+            pcm_connect_burst_override_from(" 0 "),
+            Ok(Some(0)),
+            "0 turns it off"
+        );
+        assert_eq!(pcm_connect_burst_override_from("2000"), Ok(Some(2000)));
+        assert_eq!(
+            pcm_connect_burst_override_from("  "),
+            Ok(None),
+            "blank is unset"
+        );
+        assert!(pcm_connect_burst_override_from("2001").is_err());
+        assert!(pcm_connect_burst_override_from("lots").is_err());
     }
 
     #[test]
