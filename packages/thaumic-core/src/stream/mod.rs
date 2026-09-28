@@ -5,7 +5,8 @@ pub mod tap;
 pub mod wav;
 
 pub use cadence::{
-    create_wav_stream_with_cadence, lagged_error, CadenceConfig, EpochHook, LoggingStreamGuard,
+    create_wav_stream_with_cadence, lagged_error, parse_pcm_connect_burst_ms, pcm_connect_burst_ms,
+    CadenceConfig, EpochHook, LoggingStreamGuard, PCM_CONNECT_BURST_ENV,
 };
 pub use icy::{IcyMetadataInjector, ICY_METAINT};
 pub use manager::{

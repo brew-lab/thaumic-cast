@@ -102,6 +102,82 @@ const DELIVERY_GAP_THRESHOLD_MS: u64 = 100;
 /// Only log gaps exceeding this threshold to avoid log spam (500ms).
 const DELIVERY_GAP_LOG_THRESHOLD_MS: u64 = 500;
 
+/// Environment variable that overrides the PCM connect burst setting, in
+/// milliseconds (`0` turns it off). See [`crate::Config::pcm_connect_burst_ms`].
+pub const PCM_CONNECT_BURST_ENV: &str = "THAUMIC_PCM_CONNECT_BURST_MS";
+
+/// Parses a PCM connect burst in milliseconds: a whole number from `0` to
+/// [`MAX_PCM_CONNECT_BURST_MS`].
+///
+/// [`MAX_PCM_CONNECT_BURST_MS`]: crate::protocol_constants::MAX_PCM_CONNECT_BURST_MS
+pub fn parse_pcm_connect_burst_ms(value: &str) -> Result<u64, String> {
+    use crate::protocol_constants::MAX_PCM_CONNECT_BURST_MS;
+    let ms: u64 = value.trim().parse().map_err(|_| {
+        format!("expected milliseconds (0-{MAX_PCM_CONNECT_BURST_MS}), got {value:?}")
+    })?;
+    if ms > MAX_PCM_CONNECT_BURST_MS {
+        return Err(format!(
+            "at most {MAX_PCM_CONNECT_BURST_MS} ms, got {ms} ms"
+        ));
+    }
+    Ok(ms)
+}
+
+/// The value [`PCM_CONNECT_BURST_ENV`] forces the setting to, if it is set to
+/// something valid. An invalid value is ignored, with a warning the first
+/// time it is seen.
+fn pcm_connect_burst_env_override() -> Option<u64> {
+    static WARNED: std::sync::Once = std::sync::Once::new();
+    let raw = std::env::var(PCM_CONNECT_BURST_ENV).ok()?;
+    if raw.trim().is_empty() {
+        return None;
+    }
+    match parse_pcm_connect_burst_ms(&raw) {
+        Ok(ms) => Some(ms),
+        Err(e) => {
+            WARNED.call_once(|| {
+                log::warn!(
+                    "[Stream] Ignoring {}={:?}: {}",
+                    PCM_CONNECT_BURST_ENV,
+                    raw,
+                    e
+                );
+            });
+            None
+        }
+    }
+}
+
+/// The PCM connect burst for a new connection, in milliseconds, given the
+/// configured setting.
+///
+/// [`PCM_CONNECT_BURST_ENV`] overrides `configured` when set to a valid
+/// value, and the result is clamped to [`MAX_PCM_CONNECT_BURST_MS`]. Read
+/// once per connection.
+///
+/// [`MAX_PCM_CONNECT_BURST_MS`]: crate::protocol_constants::MAX_PCM_CONNECT_BURST_MS
+pub fn pcm_connect_burst_ms(configured: u64) -> u64 {
+    resolve_pcm_connect_burst_ms(configured, pcm_connect_burst_env_override())
+}
+
+/// [`pcm_connect_burst_ms`] without the environment.
+fn resolve_pcm_connect_burst_ms(configured: u64, env_override: Option<u64>) -> u64 {
+    use crate::protocol_constants::MAX_PCM_CONNECT_BURST_MS;
+    let ms = env_override.unwrap_or(configured);
+    if ms > MAX_PCM_CONNECT_BURST_MS {
+        static WARNED: std::sync::Once = std::sync::Once::new();
+        WARNED.call_once(|| {
+            log::warn!(
+                "[Stream] PCM connect burst of {}ms is above the {}ms maximum; using {}ms",
+                ms,
+                MAX_PCM_CONNECT_BURST_MS,
+                MAX_PCM_CONNECT_BURST_MS
+            );
+        });
+    }
+    ms.min(MAX_PCM_CONNECT_BURST_MS)
+}
+
 /// Creates an IO error for broadcast channel lag.
 ///
 /// Logs a warning and returns a formatted error. Centralizes the handling
@@ -622,20 +698,27 @@ pub struct CadenceConfig {
     pub frame_duration_ms: u32,
     /// Audio format (sample rate, channels, bit depth).
     pub audio_format: AudioFormat,
+    /// Frames sent the moment the body is first polled, as fast as the
+    /// connection takes them, before real-time pacing starts: the connect
+    /// burst, oldest first. They immediately precede `prefill_frames`, so the
+    /// speaker holds this much audio ahead of its playhead from the start.
+    /// Empty when the burst is off or the ring held no more than the jitter
+    /// buffer.
+    pub burst_frames: Vec<Bytes>,
     /// Initial frames pre-populated in the queue to eliminate handoff gap.
     /// Trimmed by [`CadenceConfig::new`] so the initial queue depth stays
     /// bounded by the intended jitter buffer size.
     pub prefill_frames: Vec<Bytes>,
-    /// Capture time of the first frame in `prefill_frames`: the first audio
-    /// this connection serves, which the speaker plays at RelTime 0. The
-    /// epoch hook anchors the playback epoch here. `None` when no prefill
-    /// survived, in which case the epoch falls back as described on
-    /// [`crate::stream::StreamTiming::start_new_epoch`].
+    /// Capture time of the first frame served: the first burst frame, or the
+    /// first of `prefill_frames` without a burst. The speaker plays it at
+    /// RelTime 0, and the epoch hook anchors the playback epoch here. `None`
+    /// when no prefill survived, in which case the epoch falls back as
+    /// described on [`crate::stream::StreamTiming::start_new_epoch`].
     ///
     /// It must be taken *after* trimming. The ring holds more frames than the
-    /// jitter buffer, so its oldest frame can predate the first frame served
-    /// by several hundred milliseconds on a reconnect, and an epoch anchored
-    /// there reads every later latency and cushion that much too high.
+    /// burst and jitter buffer, so its oldest frame can predate the first
+    /// frame served by seconds on a reconnect, and an epoch anchored there
+    /// reads every later latency and cushion that much too high.
     pub epoch_candidate: Option<Instant>,
 }
 
@@ -648,29 +731,46 @@ impl CadenceConfig {
     /// [`crate::protocol_constants::MAX_CADENCE_QUEUE_SIZE`] with a floor of
     /// [`crate::protocol_constants::MIN_OVERFLOW_CAP`].
     ///
-    /// Prefill frames are trimmed to the intended buffer depth so a resume
-    /// with a full ring buffer doesn't replay stale audio before catching up
-    /// to live. The epoch candidate is the capture time of the first frame
-    /// kept, since that is the first frame served.
+    /// The prefill is trimmed to the newest `connect_burst_ms` plus the
+    /// intended buffer depth, so a resume with a full ring buffer doesn't
+    /// replay stale audio before catching up to live. The newest
+    /// `buffer_depth` frames of what is kept are queued, exactly as without a
+    /// burst, so the queue keeps its full jitter margin; everything older
+    /// becomes the connect burst. A ring holding less than both bursts only
+    /// what it has beyond the buffer depth, and never pads with silence. The
+    /// epoch candidate is the capture time of the first frame kept, since
+    /// that is the first frame served.
+    ///
+    /// `connect_burst_ms` is rounded up to whole frames and clamped to
+    /// [`crate::protocol_constants::MAX_PCM_CONNECT_BURST_MS`]; `0` gives
+    /// exactly the unburst behaviour.
     pub fn new(
         silence_frame: Bytes,
         jitter_buffer_ms: u64,
+        connect_burst_ms: u64,
         frame_duration_ms: u32,
         audio_format: AudioFormat,
         prefill_frames: Vec<TimestampedFrame>,
     ) -> Self {
         use crate::protocol_constants::{
-            JITTER_OVERFLOW_MULTIPLIER, MAX_CADENCE_QUEUE_SIZE, MIN_OVERFLOW_CAP,
+            JITTER_OVERFLOW_MULTIPLIER, MAX_CADENCE_QUEUE_SIZE, MAX_PCM_CONNECT_BURST_MS,
+            MIN_OVERFLOW_CAP,
         };
 
-        let buffer_depth = jitter_buffer_ms.div_ceil(frame_duration_ms as u64) as usize;
+        let frame_ms = u64::from(frame_duration_ms.max(1));
+        let buffer_depth = jitter_buffer_ms.div_ceil(frame_ms) as usize;
         let overflow_cap = buffer_depth
             .saturating_mul(JITTER_OVERFLOW_MULTIPLIER)
             .clamp(MIN_OVERFLOW_CAP, MAX_CADENCE_QUEUE_SIZE);
+        let burst_wanted = connect_burst_ms
+            .min(MAX_PCM_CONNECT_BURST_MS)
+            .div_ceil(frame_ms) as usize;
 
-        let prefill_frames = trim_prefill(prefill_frames, buffer_depth);
-        let epoch_candidate = prefill_frames.first().map(|f| f.captured_at);
-        let prefill_frames = prefill_frames.into_iter().map(|f| f.data).collect();
+        let mut kept = trim_prefill(prefill_frames, buffer_depth + burst_wanted);
+        let epoch_candidate = kept.first().map(|f| f.captured_at);
+        let queued = kept.split_off(kept.len().saturating_sub(buffer_depth));
+        let burst_frames = kept.into_iter().map(|f| f.data).collect();
+        let prefill_frames = queued.into_iter().map(|f| f.data).collect();
 
         Self {
             silence_frame,
@@ -678,9 +778,16 @@ impl CadenceConfig {
             buffer_depth,
             frame_duration_ms,
             audio_format,
+            burst_frames,
             prefill_frames,
             epoch_candidate,
         }
+    }
+
+    /// Milliseconds of audio in the connect burst.
+    #[must_use]
+    pub fn burst_ms(&self) -> u64 {
+        self.burst_frames.len() as u64 * u64::from(self.frame_duration_ms)
     }
 }
 
@@ -739,6 +846,7 @@ pub fn create_wav_stream_with_cadence(
             buffer_depth,
             frame_duration_ms,
             audio_format,
+            burst_frames,
             prefill_frames,
             epoch_candidate,
         } = config;
@@ -761,7 +869,8 @@ pub fn create_wav_stream_with_cadence(
         // Correlate with `speaker_stopped` events to validate or falsify the
         // "empty prefill → silence-first → Sonos stops" hypothesis.
         log::info!(
-            "[Cadence] Startup: prefill_frames={}, overflow_cap={}, frame_ms={}",
+            "[Cadence] Startup: burst_frames={}, prefill_frames={}, overflow_cap={}, frame_ms={}",
+            burst_frames.len(),
             queue.len(),
             overflow_cap,
             frame_duration_ms
@@ -770,6 +879,11 @@ pub fn create_wav_stream_with_cadence(
         // Fire first tick immediately to get audio flowing before Sonos times out.
         // Startup buffering to protect against an empty prefill is handled by the
         // caller via a bounded pre-subscribe sleep in `api/stream.rs`.
+        //
+        // Started before the connect burst, so real-time pacing is anchored to
+        // the moment the body is first polled: if the connection is slow to
+        // take the burst, the missed ticks replay afterwards and the speaker
+        // still ends up the whole burst ahead of real time.
         let mut metronome = interval(cadence_duration);
         metronome.set_missed_tick_behavior(MissedTickBehavior::Burst);
 
@@ -810,6 +924,25 @@ pub fn create_wav_stream_with_cadence(
         let mut prev_delivery_bytes: u64 = 0;
         let mut prev_delivery_gaps: u64 = 0;
         let mut prev_snapshot_ms: u64 = 0;
+
+        // Connect burst: already-captured audio, sent as fast as the
+        // connection takes it, so the speaker starts with that much in hand.
+        // The first burst frame is the first frame served, so it starts the
+        // epoch, anchored to it. The queue still holds the full jitter
+        // buffer, which the metronome paces out from here exactly as it
+        // would have without a burst.
+        if !burst_frames.is_empty() {
+            if let Some(hook) = epoch_hook.take() {
+                hook.fire(epoch_candidate);
+            }
+            log::info!("[Cadence] First yield: audio (connect burst of {} frames)", burst_frames.len());
+            first_yield_logged = true;
+            has_played_audio = true;
+            for frame in burst_frames {
+                crossfade.track_frame(&frame);
+                yield Ok(frame);
+            }
+        }
 
         loop {
             // Exit when channel closed AND queue drained
@@ -902,13 +1035,14 @@ pub fn create_wav_stream_with_cadence(
                         // upgrade means the stream was removed, so there is no
                         // epoch left to start - drop the hook either way.
                         //
-                        // With prefill queued this is the first tick (the
-                        // metronome fires as soon as the body is polled) and
-                        // the frame is the first prefill frame, the one
-                        // `epoch_candidate` was captured from. The overflow
-                        // cap leaves room for twice the jitter buffer of live
-                        // frames on top of the prefill, so none is dropped
-                        // before that first tick.
+                        // After a connect burst the hook has already fired.
+                        // Otherwise, with prefill queued this is the first
+                        // tick (the metronome fires as soon as the body is
+                        // polled) and the frame is the first prefill frame,
+                        // the one `epoch_candidate` was captured from. The
+                        // overflow cap leaves room for twice the jitter
+                        // buffer of live frames on top of the prefill, so
+                        // none is dropped before that first tick.
                         if let Some(hook) = epoch_hook.take() {
                             hook.fire(epoch_candidate);
                         }
@@ -1092,6 +1226,7 @@ mod tests {
             buffer_depth: 0,
             frame_duration_ms: SILENCE_FRAME_DURATION_MS,
             audio_format: test_audio_format(),
+            burst_frames: vec![],
             prefill_frames: vec![],
             epoch_candidate: None,
         }
@@ -1567,6 +1702,7 @@ mod tests {
             buffer_depth: 3,
             frame_duration_ms: SILENCE_FRAME_DURATION_MS,
             audio_format: test_audio_format(),
+            burst_frames: vec![],
             prefill_frames: prefill,
             epoch_candidate: None,
         }
@@ -1771,6 +1907,7 @@ mod tests {
         let cfg = CadenceConfig::new(
             test_silence_frame(),
             200, // 200ms jitter buffer
+            0,   // no connect burst
             20,  // 20ms frames
             test_audio_format(),
             vec![],
@@ -1782,7 +1919,7 @@ mod tests {
     #[test]
     fn cadence_config_new_respects_min_overflow_cap() {
         // jitter_buffer_ms = 0 → buffer_depth = 0 → overflow_cap clamped to MIN_OVERFLOW_CAP (1)
-        let cfg = CadenceConfig::new(test_silence_frame(), 0, 20, test_audio_format(), vec![]);
+        let cfg = CadenceConfig::new(test_silence_frame(), 0, 0, 20, test_audio_format(), vec![]);
         assert_eq!(cfg.overflow_cap, 1);
     }
 
@@ -1806,6 +1943,7 @@ mod tests {
         let cfg = CadenceConfig::new(
             test_silence_frame(),
             200, // 200ms / 20ms = 10 frames buffer_depth
+            0,
             20,
             test_audio_format(),
             prefill,
@@ -1819,7 +1957,14 @@ mod tests {
     fn cadence_config_new_anchors_epoch_to_first_kept_frame() {
         let prefill = timestamped((0..20u8).map(|i| Bytes::from(vec![i; 4])).collect(), 20);
         let kept_first = prefill[10].captured_at;
-        let cfg = CadenceConfig::new(test_silence_frame(), 200, 20, test_audio_format(), prefill);
+        let cfg = CadenceConfig::new(
+            test_silence_frame(),
+            200,
+            0,
+            20,
+            test_audio_format(),
+            prefill,
+        );
         assert_eq!(
             cfg.epoch_candidate,
             Some(kept_first),
@@ -1829,12 +1974,19 @@ mod tests {
 
     #[test]
     fn cadence_config_new_without_prefill_has_no_epoch_candidate() {
-        let cfg = CadenceConfig::new(test_silence_frame(), 200, 20, test_audio_format(), vec![]);
+        let cfg = CadenceConfig::new(
+            test_silence_frame(),
+            200,
+            0,
+            20,
+            test_audio_format(),
+            vec![],
+        );
         assert_eq!(cfg.epoch_candidate, None);
 
         // Zero depth serves no prefill, so no prefill frame may anchor it.
         let prefill = timestamped(vec![test_audio_frame(); 3], 20);
-        let cfg = CadenceConfig::new(test_silence_frame(), 0, 20, test_audio_format(), prefill);
+        let cfg = CadenceConfig::new(test_silence_frame(), 0, 0, 20, test_audio_format(), prefill);
         assert_eq!(cfg.epoch_candidate, None);
     }
 
@@ -1878,6 +2030,7 @@ mod tests {
         let config = CadenceConfig::new(
             test_silence_frame(),
             JITTER_MS,
+            0,
             FRAME_MS,
             test_audio_format(),
             prefill,
@@ -1906,6 +2059,232 @@ mod tests {
             .expect("the first real frame starts an epoch");
         assert_eq!(epoch.audio_epoch, first_kept);
         assert_ne!(epoch.audio_epoch, oldest);
+    }
+
+    // ─────────────────────────────────────────────────────────────────────
+    // Connect burst
+    // ─────────────────────────────────────────────────────────────────────
+
+    /// Every frame the stream yields without time moving on: the connect
+    /// burst and the metronome's immediate first tick.
+    async fn ready_now<S>(stream: &mut Pin<&mut S>) -> Vec<Bytes>
+    where
+        S: Stream<Item = Result<Bytes, std::io::Error>> + ?Sized,
+    {
+        poll_fn(|cx| {
+            let mut frames = Vec::new();
+            while let Poll::Ready(Some(item)) = stream.as_mut().poll_next(cx) {
+                frames.push(item.expect("ok"));
+            }
+            Poll::Ready(frames)
+        })
+        .await
+    }
+
+    /// `n` big frames tagged `1..=n`, captured 10 ms apart.
+    fn tagged_prefill(n: u8) -> Vec<TimestampedFrame> {
+        timestamped((1..=n).map(big_frame).collect(), 10)
+    }
+
+    fn tags(frames: &[Bytes]) -> Vec<u8> {
+        frames.iter().map(|f| f[f.len() - 1]).collect()
+    }
+
+    /// 30 ms jitter buffer (3 frames) and a 50 ms burst (5 frames) out of a
+    /// 10-frame ring: the oldest two frames are dropped, the next five are
+    /// burst, and the newest three stay queued.
+    fn burst_config(prefill: Vec<TimestampedFrame>, burst_ms: u64) -> CadenceConfig {
+        CadenceConfig::new(
+            Bytes::from(vec![0u8; BIG_FRAME]),
+            30,
+            burst_ms,
+            SILENCE_FRAME_DURATION_MS,
+            test_audio_format(),
+            prefill,
+        )
+    }
+
+    /// The burst goes out before the metronome has moved at all, then the
+    /// queue, still a full jitter buffer deep, is paced out one frame per
+    /// tick. Without the burst only the first tick's frame is ready at once.
+    #[tokio::test(start_paused = true)]
+    async fn connect_burst_is_sent_at_once_then_paced() {
+        let (tx, rx) = broadcast::channel::<Bytes>(16);
+        let mut stream = Box::pin(create_wav_stream_with_cadence(
+            rx,
+            test_guard(),
+            burst_config(tagged_prefill(10), 50),
+            None,
+            None,
+        ));
+
+        assert_eq!(
+            tags(&ready_now(&mut stream.as_mut()).await),
+            vec![3, 4, 5, 6, 7, 8],
+            "five burst frames and the first tick, before any time passes"
+        );
+        assert!(
+            ready_now(&mut stream.as_mut()).await.is_empty(),
+            "nothing more until the next tick"
+        );
+
+        // The queue holds exactly the jitter buffer: three frames, one per
+        // tick (the first went out on the immediate tick), then an underrun.
+        tx.send(big_frame(11)).unwrap();
+        assert_eq!(next_tick(&mut stream.as_mut()).await[BIG_FRAME - 1], 9);
+        assert!(ready_now(&mut stream.as_mut()).await.is_empty());
+        assert_eq!(next_tick(&mut stream.as_mut()).await[BIG_FRAME - 1], 10);
+        assert_eq!(
+            next_tick(&mut stream.as_mut()).await[BIG_FRAME - 1],
+            11,
+            "live frames follow the queue with no gap or repeat"
+        );
+        assert!(is_silence(&next_tick(&mut stream.as_mut()).await));
+        drop(tx);
+    }
+
+    /// The queue after the burst is the configured jitter buffer, however
+    /// large the burst.
+    #[test]
+    fn connect_burst_leaves_the_jitter_buffer_queued() {
+        let cfg = burst_config(tagged_prefill(10), 50);
+        assert_eq!(cfg.buffer_depth, 3);
+        assert_eq!(tags(&cfg.burst_frames), vec![3, 4, 5, 6, 7]);
+        assert_eq!(tags(&cfg.prefill_frames), vec![8, 9, 10]);
+        assert_eq!(cfg.burst_ms(), 50);
+    }
+
+    /// A ring holding less than the burst plus the jitter buffer keeps the
+    /// jitter buffer and bursts only what is left; one holding no more than
+    /// the jitter buffer bursts nothing. No silence is invented either way.
+    #[test]
+    fn connect_burst_is_clamped_to_the_audio_available() {
+        let cfg = burst_config(tagged_prefill(5), 50);
+        assert_eq!(tags(&cfg.burst_frames), vec![1, 2]);
+        assert_eq!(tags(&cfg.prefill_frames), vec![3, 4, 5]);
+
+        let cfg = burst_config(tagged_prefill(2), 50);
+        assert!(cfg.burst_frames.is_empty());
+        assert_eq!(tags(&cfg.prefill_frames), vec![1, 2]);
+        assert!(cfg.epoch_candidate.is_some());
+    }
+
+    /// Asking for more than the maximum bursts the maximum.
+    #[test]
+    fn connect_burst_is_capped_at_the_maximum() {
+        use crate::protocol_constants::MAX_PCM_CONNECT_BURST_MS;
+        let frames = (MAX_PCM_CONNECT_BURST_MS / 10) as usize + 3 + 50;
+        let prefill = timestamped(vec![test_audio_frame(); frames], 10);
+        let cfg = CadenceConfig::new(
+            test_silence_frame(),
+            30,
+            u64::MAX,
+            SILENCE_FRAME_DURATION_MS,
+            test_audio_format(),
+            prefill,
+        );
+        assert_eq!(cfg.burst_ms(), MAX_PCM_CONNECT_BURST_MS);
+        assert_eq!(cfg.prefill_frames.len(), 3);
+    }
+
+    /// A burst of 0 is the stream as it was: the prefill trimmed to the
+    /// jitter buffer, the first of it on the immediate tick and one frame per
+    /// tick after, byte for byte.
+    #[tokio::test(start_paused = true)]
+    async fn zero_connect_burst_is_the_unburst_stream() {
+        let prefill = tagged_prefill(10);
+        let expected: Vec<Bytes> = prefill[7..].iter().map(|f| f.data.clone()).collect();
+        let cfg = burst_config(prefill, 0);
+        assert!(cfg.burst_frames.is_empty());
+        assert_eq!(cfg.prefill_frames, expected);
+
+        let (tx, rx) = broadcast::channel::<Bytes>(16);
+        let mut stream = Box::pin(create_wav_stream_with_cadence(
+            rx,
+            test_guard(),
+            cfg,
+            None,
+            None,
+        ));
+        let mut out = ready_now(&mut stream.as_mut()).await;
+        assert_eq!(out.len(), 1, "only the first tick is ready at once");
+        out.push(next_tick(&mut stream.as_mut()).await);
+        out.push(next_tick(&mut stream.as_mut()).await);
+        assert_eq!(out, expected);
+        drop(tx);
+    }
+
+    /// The first frame the speaker plays with a burst is the first burst
+    /// frame, so the epoch, and every latency and reserve reckoned from it,
+    /// is anchored there.
+    #[tokio::test(start_paused = true)]
+    async fn epoch_anchors_to_the_first_burst_frame() {
+        let state = Arc::new(StreamState::new(
+            "test-stream".to_string(),
+            crate::stream::AudioCodec::Pcm,
+            test_audio_format(),
+            50,
+            100,
+            30,
+            SILENCE_FRAME_DURATION_MS,
+        ));
+        let _keepalive = state.tx.subscribe();
+        for i in 0..20u8 {
+            if i == 12 {
+                // Separate the first burst frame's capture time from the
+                // first queued frame's.
+                std::thread::sleep(Duration::from_millis(2));
+            }
+            state.push_frame(big_frame(i + 1));
+        }
+        let (prefill, rx) = state.subscribe();
+        let first_burst = prefill[12].captured_at;
+        let first_queued = prefill[17].captured_at;
+        assert!(first_queued > first_burst);
+
+        let remote = IpAddr::V4(Ipv4Addr::new(192, 168, 1, 50));
+        let cfg = burst_config(prefill, 50);
+        assert_eq!(cfg.epoch_candidate, Some(first_burst));
+        let mut stream = Box::pin(create_wav_stream_with_cadence(
+            rx,
+            test_guard(),
+            cfg,
+            Some(Arc::downgrade(&state)),
+            Some(EpochHook::new(
+                Arc::downgrade(&state),
+                Instant::now(),
+                remote,
+            )),
+        ));
+        let first = stream.next().await.expect("first frame").expect("ok");
+        assert_eq!(
+            first[BIG_FRAME - 1],
+            13,
+            "the first burst frame is served first"
+        );
+        let epoch = state
+            .timing
+            .current_epoch_for(remote)
+            .expect("the burst starts the epoch");
+        assert_eq!(epoch.audio_epoch, first_burst);
+    }
+
+    #[test]
+    fn connect_burst_setting_is_parsed_and_bounded() {
+        assert_eq!(parse_pcm_connect_burst_ms("0"), Ok(0));
+        assert_eq!(parse_pcm_connect_burst_ms(" 750 "), Ok(750));
+        assert_eq!(parse_pcm_connect_burst_ms("2000"), Ok(2000));
+        assert!(parse_pcm_connect_burst_ms("2001").is_err());
+        assert!(parse_pcm_connect_burst_ms("-1").is_err());
+        assert!(parse_pcm_connect_burst_ms("half a second").is_err());
+
+        assert_eq!(resolve_pcm_connect_burst_ms(500, None), 500);
+        assert_eq!(
+            resolve_pcm_connect_burst_ms(500, Some(0)),
+            0,
+            "the env wins"
+        );
+        assert_eq!(resolve_pcm_connect_burst_ms(9000, None), 2000, "clamped");
     }
 
     #[test]

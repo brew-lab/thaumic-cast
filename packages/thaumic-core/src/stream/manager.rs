@@ -578,6 +578,24 @@ impl Drop for StreamState {
     }
 }
 
+/// Ring buffer size for a new stream.
+///
+/// A PCM connection is served its connect burst plus its jitter buffer out of
+/// the ring, so a PCM ring holds at least the largest of both
+/// ([`pcm_ring_frames`]); a fixed 50-frame ring used to cap both, together, at
+/// 500 ms of 10 ms frames. Compressed connections are served the whole ring as
+/// prefill, so theirs stays at `configured` and their start is unchanged.
+///
+/// [`pcm_ring_frames`]: crate::protocol_constants::pcm_ring_frames
+fn ring_frames(codec: AudioCodec, configured: usize, frame_duration_ms: u32) -> usize {
+    match codec {
+        AudioCodec::Pcm => configured.max(crate::protocol_constants::pcm_ring_frames(
+            frame_duration_ms,
+        )),
+        AudioCodec::Aac | AudioCodec::Mp3 | AudioCodec::Flac => configured,
+    }
+}
+
 /// Thread-safe registry of active audio streams.
 ///
 /// Provides keyed storage and concurrency-limited creation of [`StreamState`]
@@ -620,11 +638,12 @@ impl StreamRegistry {
         }
 
         let id = Uuid::new_v4().to_string();
+        let buffer_frames = ring_frames(codec, self.config.buffer_frames, frame_duration_ms);
         let state = Arc::new(StreamState::new(
             id.clone(),
             codec,
             audio_format,
-            self.config.buffer_frames,
+            buffer_frames,
             self.config.channel_capacity,
             jitter_buffer_ms,
             frame_duration_ms,
@@ -877,5 +896,75 @@ mod tests {
 
         stop.store(true, Ordering::Relaxed);
         pusher.join().expect("pusher thread panicked");
+    }
+
+    /// A PCM stream's ring holds the largest connect burst plus the largest
+    /// jitter buffer, so a 1000 ms jitter buffer is honoured in full with a
+    /// 2000 ms burst on top. It used to be capped, silently, at the 50-frame
+    /// ring's 500 ms. A compressed stream's ring, all of which a new
+    /// connection is served, is unchanged.
+    #[test]
+    fn pcm_ring_holds_the_largest_burst_and_jitter_buffer() {
+        use crate::protocol_constants::{MAX_JITTER_BUFFER_MS, MAX_PCM_CONNECT_BURST_MS};
+        use crate::stream::CadenceConfig;
+
+        let registry = StreamRegistry::new(StreamingConfig::default());
+        let format = AudioFormat::new(48_000, 2, 16);
+        let pcm = registry
+            .create_stream(AudioCodec::Pcm, format, MAX_JITTER_BUFFER_MS, 10)
+            .expect("created");
+        let aac = registry
+            .create_stream(AudioCodec::Aac, format, MAX_JITTER_BUFFER_MS, 10)
+            .expect("created");
+        let pcm = registry.get_stream(&pcm).expect("pcm");
+        let aac = registry.get_stream(&aac).expect("aac");
+        assert_eq!(pcm.buffer_frames, 300);
+        assert_eq!(aac.buffer_frames, StreamingConfig::default().buffer_frames);
+
+        let _keepalive = pcm.tx.subscribe();
+        for i in 0..400 {
+            pcm.push_frame(frame(i));
+        }
+        let (prefill, _rx) = pcm.subscribe();
+        let cfg = CadenceConfig::new(
+            Bytes::new(),
+            MAX_JITTER_BUFFER_MS,
+            MAX_PCM_CONNECT_BURST_MS,
+            10,
+            format,
+            prefill,
+        );
+        assert_eq!(
+            cfg.prefill_frames.len(),
+            100,
+            "the full 1000 ms stays queued"
+        );
+        assert_eq!(
+            cfg.burst_ms(),
+            MAX_PCM_CONNECT_BURST_MS,
+            "the full burst is sent"
+        );
+        assert_eq!(
+            cfg.burst_frames[0],
+            frame(100),
+            "the newest 300 frames are served"
+        );
+    }
+
+    /// Frame durations that do not divide the maxima round up, as the cadence
+    /// does, so neither is short by a frame.
+    #[test]
+    fn pcm_ring_rounds_up_to_whole_frames() {
+        use crate::protocol_constants::pcm_ring_frames;
+        assert_eq!(pcm_ring_frames(10), 300);
+        assert_eq!(pcm_ring_frames(5), 600);
+        // 2000/150 → 14, 1000/150 → 7.
+        assert_eq!(pcm_ring_frames(150), 21);
+        assert_eq!(
+            ring_frames(AudioCodec::Pcm, 1000, 10),
+            1000,
+            "never shrinks"
+        );
+        assert_eq!(ring_frames(AudioCodec::Flac, 50, 10), 50);
     }
 }

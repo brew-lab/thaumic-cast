@@ -154,3 +154,30 @@ pub const MIN_OVERFLOW_CAP: usize = 1;
 /// possible frame duration.
 pub const MAX_CADENCE_QUEUE_SIZE: usize =
     (MAX_JITTER_BUFFER_MS / MIN_FRAME_DURATION_MS as u64) as usize * JITTER_OVERFLOW_MULTIPLIER;
+
+/// Default PCM connect burst (ms): audio handed to a speaker as fast as TCP
+/// takes it when its GET starts, ahead of real-time pacing.
+///
+/// A Sonos speaker playing an endless WAV holds only the audio that reached
+/// it ahead of its playhead. Paced from the first frame, that is a few tens
+/// of milliseconds, which a Wi-Fi retransmission burst outlasts. HTTP
+/// renderers expect a large first portion on GET and regulate the rest with
+/// TCP flow control, so the speaker keeps this much in hand.
+pub const DEFAULT_PCM_CONNECT_BURST_MS: u64 = 500;
+
+/// Maximum PCM connect burst (ms). End-to-end latency grows by the burst, and
+/// the stream's ring must hold this much on top of [`MAX_JITTER_BUFFER_MS`].
+pub const MAX_PCM_CONNECT_BURST_MS: u64 = 2000;
+
+/// Ring buffer frames a PCM stream keeps for late-joining connections, at
+/// `frame_duration_ms`: enough for the largest connect burst plus the largest
+/// jitter buffer, each rounded up to whole frames the way the cadence rounds
+/// them, so neither setting is silently capped by the ring.
+pub const fn pcm_ring_frames(frame_duration_ms: u32) -> usize {
+    let frame_ms = if frame_duration_ms == 0 {
+        1
+    } else {
+        frame_duration_ms as u64
+    };
+    (MAX_PCM_CONNECT_BURST_MS.div_ceil(frame_ms) + MAX_JITTER_BUFFER_MS.div_ceil(frame_ms)) as usize
+}

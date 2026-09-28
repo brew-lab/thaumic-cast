@@ -62,6 +62,12 @@ pub(crate) struct SimSpeaker {
     pub round_reltime: bool,
     /// Seed for the poll dither, round trips and jitter.
     pub seed: u64,
+    /// The stream's PCM connect burst, ms.
+    pub connect_burst_ms: u64,
+    /// A delivery stall: from `.0` ms after the connection starts, nothing
+    /// reaches the speaker for `.1` ms, after which everything sent in the
+    /// meantime arrives at once, as after a Wi-Fi retransmission burst.
+    pub stall: Option<(f64, f64)>,
 }
 
 impl Default for SimSpeaker {
@@ -73,6 +79,8 @@ impl Default for SimSpeaker {
             tick_jitter_ms: 0.0,
             round_reltime: false,
             seed: 1,
+            connect_burst_ms: 0,
+            stall: None,
         }
     }
 }
@@ -177,7 +185,7 @@ impl SimSpeaker {
             true,
         );
         let audio = Bytes::from(vec![0x11u8; frame_bytes]);
-        let prefill = (0..JITTER_BUFFER_MS / u64::from(FRAME_MS))
+        let prefill = (0..(JITTER_BUFFER_MS + self.connect_burst_ms) / u64::from(FRAME_MS))
             .map(|_| TimestampedFrame {
                 captured_at: Instant::now(),
                 data: audio.clone(),
@@ -186,10 +194,14 @@ impl SimSpeaker {
         let config = CadenceConfig::new(
             format.silence_frame(FRAME_MS),
             JITTER_BUFFER_MS,
+            self.connect_burst_ms,
             FRAME_MS,
             format,
             prefill,
         );
+        // Burst frames are yielded before the first tick; the source has
+        // nothing to deliver for them.
+        let mut burst_left = config.burst_frames.len();
         let mut stream: Pin<Box<dyn Stream<Item = std::io::Result<Bytes>>>> = Box::pin(
             create_wav_stream_with_cadence(rx, Arc::clone(&guard), config, None, None),
         );
@@ -212,13 +224,18 @@ impl SimSpeaker {
         let mut pending: Option<PendingPoll> = None;
         let mut next_poll = 5_000.0;
         let mut next_estimate = ESTIMATE_EVERY_MS;
+        let mut stalled_at: Option<f64> = None;
 
         let start = tokio::time::Instant::now();
         let end = minutes * 60_000.0;
         loop {
             // The source delivers one frame per frame period, just ahead of
             // the metronome tick that sends it on.
-            let _ = tx.send(audio.clone());
+            if burst_left > 0 {
+                burst_left -= 1;
+            } else {
+                let _ = tx.send(audio.clone());
+            }
             let Some(Ok(frame)) = stream.next().await else {
                 break;
             };
@@ -226,7 +243,14 @@ impl SimSpeaker {
                 .bytes_sent
                 .fetch_add(frame.len() as u64, Ordering::Relaxed);
             let now = start.elapsed().as_secs_f64() * 1000.0;
-            let received_ms = tap.audio_bytes_sent() as f64 * 1000.0 / byte_rate;
+            let sent_ms = tap.audio_bytes_sent() as f64 * 1000.0 / byte_rate;
+            // During a stall the speaker has only what reached it before.
+            let received_ms = match self.stall {
+                Some((from, len)) if now >= from && now < from + len => {
+                    *stalled_at.get_or_insert(sent_ms)
+                }
+                _ => sent_ms,
+            };
 
             // Read the playhead for a poll whose read moment falls in this
             // frame period, before the playhead moves past it.
@@ -407,6 +431,39 @@ mod tests {
         assert!(
             steps.len() == 1 && steps[0] > dry_at && steps[0] - dry_at <= 6.0 * MINUTE,
             "offset steps at {steps:?} ms, ran dry at {dry_at:.0} ms"
+        );
+    }
+
+    /// The field case of 2026-09-28: a Playbar that starts playing with
+    /// about 70 ms in hand, and a Wi-Fi loss burst that holds up 90 ms of
+    /// audio. Paced from the first frame, the speaker never gets further
+    /// ahead than it started, so the stall empties it. A 500 ms connect burst
+    /// leaves it with over half a second in hand, which rides the stall out.
+    #[tokio::test(start_paused = true)]
+    async fn connect_burst_rides_out_a_90ms_stall() {
+        let run = |connect_burst_ms| SimSpeaker {
+            prebuffer_ms: 70.0,
+            connect_burst_ms,
+            stall: Some((20_000.0, 90.0)),
+            seed: 13,
+            ..SimSpeaker::default()
+        };
+
+        let unburst = run(0).run(0.5, true).await;
+        let dry_at = *unburst
+            .underruns
+            .first()
+            .expect("without a burst the stall empties the speaker");
+        assert!(
+            (20_000.0..20_090.0).contains(&dry_at),
+            "ran dry at {dry_at:.0} ms"
+        );
+
+        let burst = run(500).run(0.5, true).await;
+        assert!(
+            burst.underruns.is_empty(),
+            "a 500 ms burst rides out a 90 ms stall: {:?}",
+            burst.underruns
         );
     }
 
