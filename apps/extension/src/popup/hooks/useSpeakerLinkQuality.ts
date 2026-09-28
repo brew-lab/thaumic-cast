@@ -57,7 +57,7 @@ const DISMISSED_STORAGE_KEY = 'dismissedSpeakerLinkQualityAt';
  * @param casts - Active casts, whose names are parallel to their IPs
  * @returns The best available display name
  */
-function resolveSpeakerName(
+export function resolveSpeakerName(
   speakerIp: string,
   speakerGroups: SpeakerGroupCollection,
   casts: ActiveCast[],
@@ -170,7 +170,7 @@ export function useSpeakerLinkQuality(
  * @param value - The value read from storage
  * @returns True if every entry is a number
  */
-function isDismissedMap(value: unknown): value is DismissedMap {
+export function isDismissedMap(value: unknown): value is Record<string, number> {
   return (
     typeof value === 'object' &&
     value !== null &&

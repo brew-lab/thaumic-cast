@@ -211,6 +211,44 @@ describe('NetworkEventMessageSchema', () => {
     );
   });
 
+  it('should accept speakerHealth with the protocol fields', () => {
+    const parsed = NetworkEventMessageSchema.parse(
+      message({
+        type: 'speakerHealth',
+        streamId: 'stream-1',
+        speakerIp: SPEAKER,
+        epochId: 2,
+        state: 'low',
+        reserveMs: 310,
+        reserveP10Ms: 180,
+        reserveAcked: true,
+        targetMs: 520,
+      }),
+    );
+
+    expect(parsed.payload).toMatchObject({
+      type: 'speakerHealth',
+      speakerIp: SPEAKER,
+      state: 'low',
+      reserveP10Ms: 180,
+    });
+  });
+
+  it('should reject a speakerHealth event with an unknown state', () => {
+    expect(
+      NetworkEventMessageSchema.safeParse(
+        message({
+          type: 'speakerHealth',
+          streamId: 'stream-1',
+          speakerIp: SPEAKER,
+          epochId: 2,
+          state: 'empty',
+          reserveAcked: false,
+        }),
+      ).success,
+    ).toBe(false);
+  });
+
   it('should tag an unknown event type as unrecognized instead of failing', () => {
     const parsed = NetworkEventMessageSchema.parse(message({ type: 'somethingNewer', extra: 1 }));
 

@@ -41,6 +41,11 @@ import {
   clearAllSpeakerLinkQuality,
   speakerLinkQualityBroadcast,
 } from '../speaker-link-quality-state';
+import {
+  applySpeakerHealthEvent,
+  clearAllSpeakerHealth,
+  speakerHealthBroadcast,
+} from '../speaker-health-state';
 
 const log = createLogger('Background');
 
@@ -141,7 +146,7 @@ export function handleWsConnected(
  */
 export function handleWsTemporarilyDisconnected(): void {
   setConnected(false);
-  forgetSpeakerLinkQuality();
+  forgetSpeakerReadings();
   log.warn('WebSocket disconnected, reconnecting...');
   notifyPopup({ type: 'WS_CONNECTION_LOST', reason: 'reconnecting' });
 }
@@ -154,20 +159,24 @@ export function handleWsPermanentlyDisconnected(): void {
   // Clear all sessions - offscreen's stopAllSessions() terminates workers
   // synchronously, so SESSION_DISCONNECTED messages are never sent
   clearAllSessions();
-  forgetSpeakerLinkQuality();
+  forgetSpeakerReadings();
   setConnectionError('error_connection_lost');
   log.warn('WebSocket permanently disconnected');
   notifyPopup({ type: 'WS_CONNECTION_LOST', reason: 'max_retries_exceeded' });
 }
 
 /**
- * Drops every speaker link-quality reading and tells the popup. The
- * companion's verdicts only hold while it is connected and reporting; after a
- * reconnect it sends fresh transitions for whatever is still playing.
+ * Drops every speaker link-quality and speaker-health reading and tells the
+ * popup. The companion's verdicts only hold while it is connected and
+ * reporting; after a reconnect it sends fresh ones for whatever is still
+ * playing.
  */
-function forgetSpeakerLinkQuality(): void {
+function forgetSpeakerReadings(): void {
   if (clearAllSpeakerLinkQuality()) {
     notifyPopup(speakerLinkQualityBroadcast());
+  }
+  if (clearAllSpeakerHealth()) {
+    notifyPopup(speakerHealthBroadcast());
   }
 }
 
@@ -282,8 +291,8 @@ export function getSonosState(): { state: SonosStateSnapshot | null } {
 }
 
 /**
- * Handles NETWORK_EVENT from offscreen: overall network health changes and
- * per-speaker link-quality verdicts. Event types this build does not know
+ * Handles NETWORK_EVENT from offscreen: overall network health changes,
+ * per-speaker link-quality verdicts and speaker buffer health. Event types this build does not know
  * arrive tagged `unrecognized` by the message schema and are ignored.
  * @param payload - The network event payload
  */
@@ -309,6 +318,21 @@ export function handleNetworkEvent(payload: NetworkEventMessage['payload']): voi
       }
       applySpeakerLinkQualityEvent(payload);
       notifyPopup(speakerLinkQualityBroadcast());
+      break;
+    }
+    case 'speakerHealth': {
+      // The companion sends this only to the stream's owner, but a reading
+      // for a stream this speaker has since left (a late event from a cast
+      // that just ended or was replaced) must not raise a warning.
+      if (getSessionBySpeakerIp(payload.speakerIp)?.streamId !== payload.streamId) {
+        log.debug(
+          `Ignoring speaker health for ${payload.speakerIp}: stream ${payload.streamId} ` +
+            'is not its active cast',
+        );
+        return;
+      }
+      applySpeakerHealthEvent(payload);
+      notifyPopup(speakerHealthBroadcast());
       break;
     }
     case 'unrecognized':

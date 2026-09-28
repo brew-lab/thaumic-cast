@@ -7,6 +7,7 @@ import { notificationService } from '../notification-service';
 import { dispatch } from '../router';
 import { clearAllSessions, registerSession } from '../session-manager';
 import { clearAllSpeakerLinkQuality, getSpeakerLinkQuality } from '../speaker-link-quality-state';
+import { clearAllSpeakerHealth, getSpeakerHealth } from '../speaker-health-state';
 import { registerOffscreenRoutes } from './offscreen-routes';
 
 const ENCODER = createEncoderConfig({ codec: 'pcm' });
@@ -39,6 +40,22 @@ function linkQualityPayload(fields: Record<string, unknown> = {}): Record<string
   };
 }
 
+function speakerHealthPayload(fields: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    type: 'speakerHealth',
+    streamId: 'stream-1',
+    speakerIp: KITCHEN,
+    epochId: 1,
+    state: 'low',
+    reserveMs: 310,
+    reserveP10Ms: 180,
+    reserveAcked: true,
+    targetMs: 520,
+    timestamp: NOW,
+    ...fields,
+  };
+}
+
 const notifications: BackgroundToPopupMessage[] = [];
 let unsubscribe = (): void => {};
 
@@ -46,6 +63,7 @@ beforeEach(() => {
   resetChromeStub();
   clearAllSessions();
   clearAllSpeakerLinkQuality();
+  clearAllSpeakerHealth();
   notifications.length = 0;
   unsubscribe = notificationService.subscribe((msg) => notifications.push(msg));
 });
@@ -106,6 +124,44 @@ describe('NETWORK_EVENT route', () => {
     await networkEvent(linkQualityPayload());
 
     expect(getSpeakerLinkQuality()).toEqual({});
+    expect(notifications).toEqual([]);
+  });
+
+  it('should turn a speakerHealth event for a casting speaker into a popup notification', async () => {
+    registerSession(1, 'stream-1', [KITCHEN], ['Kitchen'], ENCODER, false, 'tab');
+    notifications.length = 0;
+
+    const result = await networkEvent(speakerHealthPayload());
+
+    expect(result).toEqual({ success: true });
+    expect(notifications).toEqual([
+      {
+        type: 'SPEAKER_HEALTH_CHANGED',
+        speakers: {
+          [KITCHEN]: {
+            streamId: 'stream-1',
+            epochId: 1,
+            state: 'low',
+            reserveMs: 310,
+            reserveP10Ms: 180,
+            reserveAcked: true,
+            targetMs: 520,
+            updatedAt: NOW,
+            alarmSince: NOW,
+          },
+        },
+      },
+    ]);
+  });
+
+  it('should ignore speaker health for a stream the speaker is not casting', async () => {
+    registerSession(1, 'stream-2', [KITCHEN], ['Kitchen'], ENCODER, false, 'tab');
+    notifications.length = 0;
+
+    await networkEvent(speakerHealthPayload());
+    await networkEvent(speakerHealthPayload({ speakerIp: '192.168.1.99' }));
+
+    expect(getSpeakerHealth()).toEqual({});
     expect(notifications).toEqual([]);
   });
 

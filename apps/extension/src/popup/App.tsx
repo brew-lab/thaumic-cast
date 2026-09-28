@@ -27,6 +27,7 @@ import { useSpeakerSelection } from './hooks/useSpeakerSelection';
 import { useCompanionVersion } from './hooks/useCompanionVersion';
 import { useCaptureHealth } from './hooks/useCaptureHealth';
 import { useSpeakerLinkQuality } from './hooks/useSpeakerLinkQuality';
+import { useSpeakerHealth } from './hooks/useSpeakerHealth';
 import { companionTypeLabelKey, versionMismatchActionKey } from '../lib/versionCheck';
 import { Onboarding } from './components/Onboarding';
 
@@ -133,6 +134,12 @@ function MainPopup(): JSX.Element {
 
   // Link-quality alerts (companion sees latency spikes on the path to a casting speaker)
   const { alerts: linkQualityAlerts, dismiss: dismissLinkQualityAlert } = useSpeakerLinkQuality(
+    activeCasts,
+    speakerGroups,
+  );
+
+  // Speaker-health alerts (companion sees a casting speaker's buffer running low)
+  const { alerts: speakerHealthAlerts, dismiss: dismissSpeakerHealthAlert } = useSpeakerHealth(
     activeCasts,
     speakerGroups,
   );
@@ -377,6 +384,23 @@ function MainPopup(): JSX.Element {
             </Alert>
           );
         })}
+
+      {wsConnected &&
+        speakerHealthAlerts.map((alert) => (
+          <Alert
+            key={`health-${alert.speakerIp}`}
+            variant="warning"
+            className={styles.alert}
+            onDismiss={() => dismissSpeakerHealthAlert(alert.speakerIp)}
+          >
+            {alert.state === 'draining' && alert.minutesToEmpty !== undefined
+              ? t('speaker_health_draining_message', {
+                  name: alert.speakerName,
+                  minutes: alert.minutesToEmpty,
+                })
+              : t('speaker_health_low_message', { name: alert.speakerName })}
+          </Alert>
+        ))}
 
       {/* Active Casts List with Volume Controls */}
       <ActiveCastsList
