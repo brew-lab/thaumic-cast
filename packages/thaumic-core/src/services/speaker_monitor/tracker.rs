@@ -12,8 +12,49 @@ use super::reserve::{ReserveEstimate, ReserveEstimator};
 use super::segment::{Segment, SegmentBreak};
 
 /// How many standard errors from zero a drain must be before a time to
-/// empty is projected from it.
+/// empty is projected from it, when its error is known exactly. An error
+/// estimated from few blocks is itself uncertain, so the bar is raised to
+/// Student's t at the same one-sided tail (see [`drain_threshold_sigmas`]).
 pub const DRAIN_MIN_SIGMA: f64 = 3.0;
+
+/// Student's t at the one-sided tail of [`DRAIN_MIN_SIGMA`] normal standard
+/// errors (p ≈ 0.00135), by degrees of freedom.
+const DRAIN_T_TABLE: [(usize, f64); 14] = [
+    (2, 19.21),
+    (3, 9.22),
+    (4, 6.62),
+    (5, 5.51),
+    (6, 4.90),
+    (7, 4.53),
+    (8, 4.28),
+    (10, 3.96),
+    (12, 3.76),
+    (15, 3.59),
+    (20, 3.42),
+    (30, 3.27),
+    (60, 3.13),
+    (120, 3.06),
+];
+
+/// How many standard errors from zero a clock rate estimated with `dof`
+/// degrees of freedom must be to count as draining: [`DRAIN_MIN_SIGMA`]
+/// widened to Student's t, interpolated in `1/dof`. With a single segment
+/// of four blocks (two degrees of freedom) that is about 19; it falls to
+/// about 4 by ten.
+pub fn drain_threshold_sigmas(dof: usize) -> f64 {
+    let inv = |d: usize| 1.0 / d as f64;
+    let (first, last) = (DRAIN_T_TABLE[0], DRAIN_T_TABLE[DRAIN_T_TABLE.len() - 1]);
+    if dof <= first.0 {
+        return first.1;
+    }
+    if dof >= last.0 {
+        // Towards the normal value as 1/dof goes to zero.
+        return DRAIN_MIN_SIGMA + (last.1 - DRAIN_MIN_SIGMA) * inv(dof) / inv(last.0);
+    }
+    let i = DRAIN_T_TABLE.partition_point(|(d, _)| *d <= dof);
+    let ((d0, t0), (d1, t1)) = (DRAIN_T_TABLE[i - 1], DRAIN_T_TABLE[i]);
+    t0 + (t1 - t0) * (inv(dof) - inv(d0)) / (inv(d1) - inv(d0))
+}
 
 /// The monitor's view of one speaker, for the log.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -140,7 +181,9 @@ impl ReserveTracker {
         if !self.pcm || self.segment.paused() {
             return (None, None);
         }
-        let ppm = self.clock.estimate().map_or(0.0, |c| c.ppm);
+        // Shrunk, so a rate from a few short segments (whose error can be
+        // hundreds of ppm) cannot drag the older bounds far.
+        let ppm = self.clock.estimate().map_or(0.0, |c| c.shrunk_ppm());
         let Some(est) = self.reserve.estimate(now, ppm) else {
             return (None, None);
         };
@@ -209,7 +252,7 @@ impl ReserveTracker {
 
     /// Seconds until the reserve runs out at the measured clock rate, when
     /// the estimate is locked and the speaker is draining it by more than
-    /// [`DRAIN_MIN_SIGMA`] standard errors.
+    /// [`drain_threshold_sigmas`] standard errors.
     ///
     /// The reserve's absolute zero is not known exactly (the speaker holds
     /// some audio of its own past the playhead it reports), so this is an
@@ -217,7 +260,7 @@ impl ReserveTracker {
     pub fn time_to_empty_s(&self) -> Option<f64> {
         let est = self.last.filter(|e| e.locked)?;
         let clock = self.clock()?;
-        if clock.ppm <= DRAIN_MIN_SIGMA * clock.se_ppm || clock.ppm <= 0.0 {
+        if clock.ppm <= drain_threshold_sigmas(clock.dof) * clock.se_ppm || clock.ppm <= 0.0 {
             return None;
         }
         // ppm·1e-6 ms per ms is ppm·1e-3 ms per second.
@@ -247,7 +290,10 @@ mod tests {
 
     const URI: &str = "http://10.0.0.1:49400/stream/s/live.wav";
 
-    fn run(tracker: &mut ReserveTracker, gen: &mut PollGen, from: f64, to: f64) {
+    /// Polls and estimates every 30 s from `from` to `to`, and returns the
+    /// shortest time to empty projected meanwhile.
+    fn run(tracker: &mut ReserveTracker, gen: &mut PollGen, from: f64, to: f64) -> Option<f64> {
+        let mut shortest: Option<f64> = None;
         let mut t = from;
         while t < to {
             t += 30_000.0;
@@ -255,7 +301,11 @@ mod tests {
                 tracker.observe(p, URI, false);
             });
             tracker.estimate(t);
+            if let Some(s) = tracker.time_to_empty_s() {
+                shortest = Some(shortest.map_or(s, |m| m.min(s)));
+            }
         }
+        shortest
     }
 
     #[test]
@@ -328,5 +378,85 @@ mod tests {
         assert_eq!(tracker.connection().polls, polls);
         assert_eq!(tracker.state(false, false), MonitorState::Paused);
         assert_eq!(tracker.estimate(p.tr), (None, None));
+    }
+
+    /// A speaker at `ppm` with `tick_jitter_ms` of RelTime jitter that
+    /// fetches the stream afresh every `every_min` minutes, `connections`
+    /// times, estimated every 30 s. Returns the pooled clock at the end and
+    /// the shortest time to empty ever projected.
+    fn reconnecting(
+        seed: u64,
+        ppm: f64,
+        tick_jitter_ms: f64,
+        every_min: f64,
+        connections: u64,
+    ) -> (Option<ClockEstimate>, Option<f64>) {
+        let mut tracker = ReserveTracker::new();
+        let mut shortest: Option<f64> = None;
+        for i in 0..connections {
+            tracker.start_connection(true);
+            let mut gen = PollGen::new(seed * 1000 + i);
+            gen.ppm = ppm;
+            gen.tick_jitter_ms = tick_jitter_ms;
+            if let Some(s) = run(&mut tracker, &mut gen, 0.0, every_min * 60_000.0) {
+                shortest = Some(shortest.map_or(s, |m| m.min(s)));
+            }
+        }
+        (tracker.clock(), shortest)
+    }
+
+    #[test]
+    fn reconnects_every_5min_pool_into_an_honest_clock() {
+        // Twelve segments of four or five blocks each, as a speaker that
+        // refetches every 300 s leaves. Pooling each segment's rate by its
+        // own error let the one that happened to scatter least take over,
+        // reporting e.g. -842±6 ppm for a +40 ppm speaker.
+        for ppm in [40.0, -40.0] {
+            let mut outside = Vec::new();
+            for seed in 0..40 {
+                let (clock, shortest) = reconnecting(seed, ppm, 50.0, 5.0, 12);
+                let c = clock.expect("pooled clock");
+                if (c.ppm - ppm).abs() > 3.0 * c.se_ppm {
+                    outside.push((seed, c));
+                }
+                assert!(c.dof >= 30, "seed {seed}: {c:?}");
+                // +40 ppm drains a 600 ms reserve in about four hours: it
+                // must never be projected inside the 20 minutes the monitor
+                // warns at.
+                assert!(
+                    shortest.map_or(true, |s| s > 20.0 * 60.0),
+                    "seed {seed} at {ppm} ppm: projected empty in {shortest:?}s"
+                );
+            }
+            assert!(outside.len() <= 2, "{ppm} ppm, outside 3 SE: {outside:?}");
+        }
+    }
+
+    #[test]
+    fn a_steady_reconnecting_speaker_is_not_projected_to_drain() {
+        let mut projected = Vec::new();
+        for seed in 0..40 {
+            if let (_, Some(s)) = reconnecting(seed, 0.0, 50.0, 5.0, 12) {
+                assert!(s > 20.0 * 60.0, "seed {seed}: projected empty in {s:.0}s");
+                projected.push((seed, s));
+            }
+        }
+        assert!(projected.len() <= 1, "{projected:?}");
+    }
+
+    #[test]
+    fn the_drain_threshold_widens_for_few_degrees_of_freedom() {
+        assert_eq!(drain_threshold_sigmas(1), 19.21);
+        assert_eq!(drain_threshold_sigmas(2), 19.21);
+        assert_eq!(drain_threshold_sigmas(8), 4.28);
+        let nine = drain_threshold_sigmas(9);
+        assert!(nine < 4.28 && nine > 3.96, "{nine}");
+        assert!((drain_threshold_sigmas(1_000_000) - DRAIN_MIN_SIGMA).abs() < 1e-3);
+        let mut last = f64::INFINITY;
+        for dof in 2..500 {
+            let t = drain_threshold_sigmas(dof);
+            assert!(t <= last && t > DRAIN_MIN_SIGMA, "dof {dof}: {t}");
+            last = t;
+        }
     }
 }

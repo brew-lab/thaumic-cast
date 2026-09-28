@@ -11,8 +11,8 @@
 //! weighted least-squares line through the blocks of the current segment
 //! gives the rate, with a standard error from the blocks' scatter about it.
 //! Nothing inside a segment is forgotten, so the error keeps shrinking for
-//! as long as playback runs unbroken. Finished segments are pooled with the
-//! current one by their errors.
+//! as long as playback runs unbroken. Finished segments are fitted jointly
+//! with the current one: one slope, an intercept per segment.
 //!
 //! On simulated speakers polled at the monitor-only cadence the error is
 //! about 10-18 ppm (RMS) after 30 minutes and 3-5 ppm after an hour, for
@@ -42,12 +42,21 @@ pub const MIN_BLOCKS_FOR_FIT: usize = 4;
 /// near-infinite weight.
 const MIN_BLOCK_HALF_WIDTH_MS: f64 = 10.0;
 
-/// Floor on a segment's standard error, so one whose blocks happened to
-/// line up cannot swamp the pool.
+/// Floor on the standard error, so blocks that happened to line up cannot
+/// claim a perfect rate.
 const MIN_SE_PPM: f64 = 0.5;
 
-/// Finished segments kept for pooling.
-const MAX_POOLED_SEGMENTS: usize = 16;
+/// Finished segments kept for the joint fit. A speaker that fetches the
+/// stream afresh every five minutes leaves segments of four or five blocks,
+/// each pinning the slope only a little, so enough are kept to cover a few
+/// hours of them. A clock's rate belongs to the hardware, so old segments
+/// stay valid.
+const MAX_POOLED_SEGMENTS: usize = 64;
+
+/// Spread of speaker clock rates expected before measuring: audio crystals
+/// are specified to within about ±100 ppm, and the one speaker measured so
+/// far (a Playbar) runs about 40 ppm fast.
+pub const CLOCK_PRIOR_SD_PPM: f64 = 100.0;
 
 /// A measured clock rate.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -59,6 +68,23 @@ pub struct ClockEstimate {
     pub se_ppm: f64,
     /// Time the estimate spans, in milliseconds.
     pub span_ms: f64,
+    /// Degrees of freedom `se_ppm` was estimated with: blocks, less one
+    /// intercept per segment and the shared slope. With few, the error is
+    /// itself unreliable.
+    pub dof: usize,
+}
+
+impl ClockEstimate {
+    /// The rate shrunk towards zero by how uncertain it is: the posterior
+    /// mean under a prior of [`CLOCK_PRIOR_SD_PPM`] about zero. A precise
+    /// rate passes through almost unchanged; one from a few short segments,
+    /// whose error can be hundreds of ppm, is mostly discounted. For
+    /// correcting other measurements by the rate, where a wild value would
+    /// do harm; the log reports the unshrunk rate.
+    pub fn shrunk_ppm(&self) -> f64 {
+        let prior = CLOCK_PRIOR_SD_PPM * CLOCK_PRIOR_SD_PPM;
+        self.ppm * prior / (prior + self.se_ppm * self.se_ppm)
+    }
 }
 
 /// One block reduced to an offset.
@@ -84,8 +110,8 @@ pub struct ClockFit {
     origin: Option<(f64, f64)>,
     /// The current segment's blocks.
     points: Vec<BlockPoint>,
-    /// Estimates of finished segments.
-    finished: Vec<ClockEstimate>,
+    /// Finished segments, oldest first.
+    finished: Vec<SegmentSums>,
 }
 
 impl ClockFit {
@@ -105,16 +131,17 @@ impl ClockFit {
         self.block.push(obs.offset_bound());
     }
 
-    /// Ends the current segment: its rate joins the pool, and the next poll
-    /// starts a fresh line. Used when the offset can no longer be assumed
-    /// continuous (a new connection, a restart, an underrun). The unfinished
-    /// block is dropped with it.
+    /// Ends the current segment: its blocks join the joint fit with an
+    /// intercept of their own, and the next poll starts a fresh line. Used
+    /// when the offset can no longer be assumed continuous (a new
+    /// connection, a restart, an underrun). The unfinished block is dropped
+    /// with it.
     pub fn break_segment(&mut self) {
-        if let Some(est) = self.current() {
+        if let Some(sums) = segment_sums(&self.points) {
             if self.finished.len() == MAX_POOLED_SEGMENTS {
                 self.finished.remove(0);
             }
-            self.finished.push(est);
+            self.finished.push(sums);
         }
         self.block.clear();
         self.block_start = None;
@@ -151,56 +178,99 @@ impl ClockFit {
 
     /// The current segment's rate, once it has [`MIN_BLOCKS_FOR_FIT`] blocks.
     pub fn current(&self) -> Option<ClockEstimate> {
-        let n = self.points.len();
-        if n < MIN_BLOCKS_FOR_FIT {
+        if self.points.len() < MIN_BLOCKS_FOR_FIT {
             return None;
         }
-        let sw: f64 = self.points.iter().map(|p| p.w).sum();
-        let mx = self.points.iter().map(|p| p.w * p.x).sum::<f64>() / sw;
-        let my = self.points.iter().map(|p| p.w * p.y).sum::<f64>() / sw;
-        let sxx: f64 = self.points.iter().map(|p| p.w * (p.x - mx).powi(2)).sum();
-        if sxx <= f64::EPSILON {
-            return None;
-        }
-        let sxy: f64 = self
-            .points
-            .iter()
-            .map(|p| p.w * (p.x - mx) * (p.y - my))
-            .sum();
-        let slope = sxy / sxx;
-        // The error comes from the blocks' scatter about the line rather
-        // than from the weights' absolute size: the half-widths are bounds,
-        // not standard deviations.
-        let rss: f64 = self
-            .points
-            .iter()
-            .map(|p| p.w * (p.y - my - slope * (p.x - mx)).powi(2))
-            .sum();
-        let se = (rss / (n - 2) as f64 / sxx).sqrt();
-        Some(ClockEstimate {
-            ppm: slope * 1e6,
-            se_ppm: (se * 1e6).max(MIN_SE_PPM),
-            span_ms: self.points[n - 1].x - self.points[0].x,
-        })
+        joint_fit(segment_sums(&self.points).iter())
     }
 
-    /// The rate over every segment so far, pooled by inverse variance.
+    /// The rate over every segment so far.
+    ///
+    /// Segments are fitted jointly: one slope shared by all of them, a free
+    /// intercept for each (the offset restarts at every break), and the
+    /// scatter about the line estimated from every block together. So a
+    /// segment weighs in by how much it pins the slope, and the error's
+    /// degrees of freedom add up across segments. Pooling each segment's own
+    /// estimate by its own error instead lets whichever short segment
+    /// happened to scatter least take over, with an error far too small.
     pub fn estimate(&self) -> Option<ClockEstimate> {
-        let mut weight = 0.0;
-        let mut sum = 0.0;
-        let mut span = 0.0;
-        for est in self.finished.iter().chain(self.current().iter()) {
-            let w = 1.0 / est.se_ppm.powi(2);
-            weight += w;
-            sum += w * est.ppm;
-            span += est.span_ms;
-        }
-        (weight > 0.0).then(|| ClockEstimate {
-            ppm: sum / weight,
-            se_ppm: (1.0 / weight).sqrt(),
-            span_ms: span,
-        })
+        let current = segment_sums(&self.points);
+        joint_fit(self.finished.iter().chain(current.iter()))
     }
+}
+
+/// What a segment's blocks contribute to the joint fit, about their own
+/// weighted means.
+#[derive(Debug, Clone, Copy)]
+struct SegmentSums {
+    /// Blocks in the segment.
+    n: usize,
+    /// Weighted sum of squared time deviations.
+    sxx: f64,
+    /// Weighted sum of time-offset cross deviations.
+    sxy: f64,
+    /// Weighted sum of squared offset deviations.
+    syy: f64,
+    /// Time from the first block to the last.
+    span_ms: f64,
+}
+
+/// Reduces a segment's blocks to their sums, if there are at least two
+/// (one block says nothing about the slope once its intercept is free).
+fn segment_sums(points: &[BlockPoint]) -> Option<SegmentSums> {
+    let n = points.len();
+    if n < 2 {
+        return None;
+    }
+    let sw: f64 = points.iter().map(|p| p.w).sum();
+    let mx = points.iter().map(|p| p.w * p.x).sum::<f64>() / sw;
+    let my = points.iter().map(|p| p.w * p.y).sum::<f64>() / sw;
+    let (mut sxx, mut sxy, mut syy) = (0.0, 0.0, 0.0);
+    for p in points {
+        let (dx, dy) = (p.x - mx, p.y - my);
+        sxx += p.w * dx * dx;
+        sxy += p.w * dx * dy;
+        syy += p.w * dy * dy;
+    }
+    Some(SegmentSums {
+        n,
+        sxx,
+        sxy,
+        syy,
+        span_ms: points[n - 1].x - points[0].x,
+    })
+}
+
+/// One weighted line slope through every segment's blocks, each segment
+/// keeping its own intercept, once the scatter about it has
+/// [`MIN_BLOCKS_FOR_FIT`]` − 2` degrees of freedom.
+fn joint_fit<'a>(segments: impl Iterator<Item = &'a SegmentSums>) -> Option<ClockEstimate> {
+    let (mut n, mut k, mut sxx, mut sxy, mut syy, mut span) = (0, 0, 0.0, 0.0, 0.0, 0.0);
+    for s in segments {
+        n += s.n;
+        k += 1;
+        sxx += s.sxx;
+        sxy += s.sxy;
+        syy += s.syy;
+        span += s.span_ms;
+    }
+    // One intercept per segment and the shared slope.
+    let dof = n.checked_sub(k + 1)?;
+    if dof < MIN_BLOCKS_FOR_FIT - 2 || sxx <= f64::EPSILON {
+        return None;
+    }
+    let slope = sxy / sxx;
+    // The error comes from the blocks' scatter about the line rather than
+    // from the weights' absolute size: the half-widths are bounds, not
+    // standard deviations.
+    let rss = (syy - slope * sxy).max(0.0);
+    let se = (rss / dof as f64 / sxx).sqrt();
+    Some(ClockEstimate {
+        ppm: slope * 1e6,
+        se_ppm: (se * 1e6).max(MIN_SE_PPM),
+        span_ms: span,
+        dof,
+    })
 }
 
 #[cfg(test)]
@@ -365,7 +435,20 @@ mod tests {
     }
 
     #[test]
-    fn segments_are_pooled_by_their_errors() {
+    fn an_uncertain_rate_is_shrunk_towards_zero() {
+        let est = |ppm, se_ppm| ClockEstimate {
+            ppm,
+            se_ppm,
+            span_ms: 0.0,
+            dof: 10,
+        };
+        assert!((est(40.0, 5.0).shrunk_ppm() - 40.0).abs() < 0.2);
+        assert!((est(500.0, 300.0).shrunk_ppm() - 50.0).abs() < 1e-9);
+        assert!((est(-80.0, 100.0).shrunk_ppm() + 40.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn segments_are_fitted_jointly() {
         let mut fit = ClockFit::new();
         for seed in [31, 32, 33] {
             let mut gen = PollGen::new(seed);
@@ -380,6 +463,8 @@ mod tests {
             "{pooled:?}"
         );
         assert!(pooled.span_ms >= 100.0 * MINUTE, "{pooled:?}");
+        // About 39 blocks each, less an intercept each and the slope.
+        assert!(pooled.dof >= 3 * 36, "{pooled:?}");
     }
 
     #[test]
