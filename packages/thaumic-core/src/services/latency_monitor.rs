@@ -44,6 +44,19 @@
 //! them. A speaker reporting another track is left alone until it fetches the
 //! stream again, and a poll taken while the speaker is known not to be
 //! playing is not measured (see [`TransportGate`]).
+//!
+//! # Reserve and clock
+//!
+//! Every measured poll of a PCM connection also bounds the speaker's
+//! *reserve*: the audio delivered to it minus the audio it has played (see
+//! [`crate::services::speaker_monitor`]). Every 30 s each watched speaker's
+//! reserve is estimated from the last three minutes of polls and its clock
+//! rate from the whole unbroken segment, and one `[SpeakerMonitor]` line
+//! reports both, with the cadence queue and the link beside them; the same
+//! figures go into the connection's pipeline snapshots. When a connection
+//! ends, a summary line reports what it saw. Compressed codecs, whose
+//! delivered bytes say nothing exact about playback time, get the clock
+//! rate and keep the older wall-clock cushion line instead.
 
 use std::collections::HashMap;
 use std::net::IpAddr;
@@ -57,11 +70,14 @@ use crate::events::{EventEmitter, LatencyEvent};
 use crate::protocol_constants::POSITION_POLL_TIMEOUT_MS;
 use crate::runtime::TokioSpawner;
 use crate::services::speaker_monitor::{
-    GenaTransport, TransportGate, TransportStateView, TransportVerdict,
+    GenaTransport, MonitorState, PollObservation, ReserveTracker, SegmentBreak, TransportGate,
+    TransportSource, TransportStateView, TransportVerdict, WindowStats,
 };
 use crate::sonos::traits::SonosPlayback;
 use crate::sonos::types::{PositionInfo, TransportState};
-use crate::stream::{ConnectionTap, MonitorRegistrar, PlaybackEpoch, StreamRegistry};
+use crate::stream::{
+    ConnectionTap, MonitorRegistrar, PlaybackEpoch, SpeakerFigures, StreamRegistry,
+};
 use crate::utils::now_millis;
 
 /// Polling interval for position queries.
@@ -155,8 +171,21 @@ const MONITOR_POLLS_PER_MIN: u64 = 60_000 / (MONITOR_POLL_INTERVAL_MS + MONITOR_
 /// exempt: video sync needs its cadence.
 pub const SPEAKER_MONITOR_MAX_POLLS_PER_MIN: u64 = 120;
 
-/// How often each speaker's cushion and trend are written to the log.
+/// How often each compressed-codec speaker's cushion and trend are written
+/// to the log.
 const DIAGNOSTIC_LOG_INTERVAL_SECS: u64 = 30;
+
+/// How often each watched speaker's reserve and clock are estimated and
+/// written to the log.
+const SPEAKER_REPORT_INTERVAL: Duration = Duration::from_secs(30);
+
+/// Projected time to an empty reserve below which the speaker is reported
+/// as draining.
+const DRAINING_WARN_SECS: f64 = 20.0 * 60.0;
+
+/// Projected time to an empty reserve above which a draining warning is
+/// re-armed.
+const DRAINING_CLEAR_SECS: f64 = 30.0 * 60.0;
 
 /// Polls in a row reporting a track that is not the stream after which the
 /// speaker is left alone until it fetches the stream again. Two, so a single
@@ -392,6 +421,28 @@ struct LatencySession {
     in_flight: Option<u64>,
     /// Polls in a row that timed out or failed; resets on any answer.
     consecutive_failures: u32,
+    /// Reserve and clock tracking across the speaker's connections.
+    tracker: ReserveTracker,
+    /// When the current connection was accepted: the origin of the times
+    /// fed to the tracker.
+    connected_at: Option<Instant>,
+    /// Whether the current connection is PCM, whose reserve is measured.
+    /// A compressed one keeps the wall-clock cushion line.
+    pcm: bool,
+    /// When the reserve and clock were last reported.
+    last_report: Option<Instant>,
+    /// Polls measured since the last report.
+    polls_since_report: u32,
+    /// Where the last transport verdict came from.
+    last_transport_source: TransportSource,
+    /// Whether the draining warning is armed (re-armed once it recovers).
+    draining_warned: bool,
+    /// Whether the current connection is owed an end-of-connection summary.
+    summary_owed: bool,
+    /// When the previous connection was found closed, and the gap from
+    /// then to the current connection.
+    previous_connection_ended: Option<Instant>,
+    reconnect_gap: Option<Duration>,
 }
 
 impl LatencySession {
@@ -427,6 +478,16 @@ impl LatencySession {
             stale_emitted: false,
             in_flight: None,
             consecutive_failures: 0,
+            tracker: ReserveTracker::new(),
+            connected_at: None,
+            pcm: false,
+            last_report: None,
+            polls_since_report: 0,
+            last_transport_source: TransportSource::None,
+            draining_warned: false,
+            summary_owed: false,
+            previous_connection_ended: None,
+            reconnect_gap: None,
         }
     }
 
@@ -450,13 +511,166 @@ impl LatencySession {
 
     /// Takes over a connection that has started its epoch: the speaker's
     /// first fetch, or a later one replacing the last. Whatever the previous
-    /// connection concluded about the track playing no longer holds.
+    /// connection concluded about the track playing no longer holds, and
+    /// the reserve is measured afresh: the new connection restarts both the
+    /// delivered count and the speaker's RelTime.
     fn attach(&mut self, tap: &Arc<ConnectionTap>) {
+        let now = Instant::now();
+        // A connection replaced before a tick noticed it closing still gets
+        // its summary.
+        self.end_connection(&tap.stream_id, tap.speaker_ip, now);
+        self.reconnect_gap = self
+            .previous_connection_ended
+            .take()
+            .map(|ended| tap.connected_at.saturating_duration_since(ended));
         self.tap = Some(Arc::downgrade(tap));
         self.monitor = tap.monitor;
         self.tap_lost_at = None;
         self.dormant = false;
         self.uri_mismatches = 0;
+        // Sync now rather than on the next tick, so a late answer to a poll
+        // of the old connection is recognised as such.
+        if let Some(epoch) = tap.epoch() {
+            self.sync_epoch(epoch);
+        }
+        self.pcm = tap.byte_rate > 0;
+        self.connected_at = Some(tap.connected_at);
+        self.tracker.start_connection(self.pcm);
+        self.last_report = Some(now);
+        self.polls_since_report = 0;
+        self.draining_warned = false;
+        self.summary_owed = self.wants_polls();
+    }
+
+    /// Logs the end-of-connection summary, if the current connection is
+    /// owed one: how long it lasted, its reserve at the start, the end and
+    /// the lowest, the clock rate, polls, segment breaks by reason, suspected
+    /// underruns and the gap before it.
+    fn end_connection(&mut self, stream_id: &str, speaker_ip: IpAddr, now: Instant) {
+        if !std::mem::take(&mut self.summary_owed) {
+            return;
+        }
+        self.previous_connection_ended = Some(now);
+        let Some(connected_at) = self.connected_at else {
+            return;
+        };
+        let c = self.tracker.connection();
+        let ms = |v: Option<f64>| v.map_or_else(|| "?".to_string(), |v| format!("{v:.0}"));
+        let breaks: Vec<String> = SegmentBreak::ALL
+            .iter()
+            .filter(|r| **r != SegmentBreak::NewConnection)
+            .map(|r| format!("{}={}", r, self.tracker.connection_breaks(*r)))
+            .collect();
+        let (estimates, inconsistent) = self.tracker.estimate_counts();
+        log::info!(
+            "[SpeakerMonitor] {} stream={} connection ended after {}: reserve start={}ms end={}ms \
+             min={}ms clock={} polls={} breaks[{}] underruns_suspected={} incons={}/{} \
+             reconnect_gap={}",
+            speaker_ip,
+            stream_id,
+            format_duration(now.saturating_duration_since(connected_at)),
+            ms(c.reserve_start_ms),
+            ms(c.reserve_end_ms),
+            ms(c.reserve_min_ms),
+            format_clock(self.tracker.clock()),
+            c.polls,
+            breaks.join(" "),
+            self.tracker.connection_breaks(SegmentBreak::OffsetStep),
+            inconsistent,
+            estimates,
+            self.reconnect_gap
+                .map_or_else(|| "none".to_string(), format_duration),
+        );
+    }
+
+    /// Whether the reserve and clock are due another report.
+    fn report_due(&self, now: Instant) -> bool {
+        self.last_report.map_or(true, |at| {
+            now.saturating_duration_since(at) >= SPEAKER_REPORT_INTERVAL
+        })
+    }
+
+    /// Estimates the reserve and clock, publishes them to the connection's
+    /// pipeline snapshots and writes the rolled-up `[SpeakerMonitor]` line,
+    /// warning when the reserve is draining towards empty or has stepped as
+    /// an underrun would.
+    fn report(&mut self, stream_id: &str, speaker_ip: IpAddr, tap: &ConnectionTap, now: Instant) {
+        let window = self.last_report.map_or(SPEAKER_REPORT_INTERVAL, |at| {
+            now.saturating_duration_since(at)
+        });
+        self.last_report = Some(now);
+        let polls = std::mem::take(&mut self.polls_since_report);
+
+        let now_ms = ms_between(tap.connected_at, now);
+        let (estimate, brk) = self.tracker.estimate(now_ms);
+        if brk == Some(SegmentBreak::OffsetStep) {
+            log::warn!(
+                "[SpeakerMonitor] {} stream={}: underrun suspected: the reserve stepped and \
+                 stayed stepped; measuring it afresh",
+                speaker_ip,
+                stream_id
+            );
+        }
+        let clock = self.tracker.clock();
+        tap.publish_speaker(SpeakerFigures {
+            reserve: estimate.map(|e| (e.reserve_ms, e.half_width_ms)),
+            clock_ppm: clock.map(|c| (c.ppm, c.se_ppm)),
+        });
+
+        let stale = self.consecutive_failures >= BACKOFF_AFTER_FAILURES || self.is_stale();
+        let state = self.tracker.state(self.dormant, stale);
+        let reserve = match (&estimate, self.pcm) {
+            (Some(e), _) => format!(
+                "{:.0}\u{b1}{:.0}ms{}",
+                e.reserve_ms,
+                e.half_width_ms,
+                if e.inconsistent { "(incons)" } else { "" }
+            ),
+            (None, true) => "\u{2014}".to_string(),
+            (None, false) => "n/a(compressed)".to_string(),
+        };
+        let tte = self.tracker.time_to_empty_s();
+        let (_, inconsistent) = self.tracker.estimate_counts();
+        let per_min = f64::from(polls) * 60.0 / window.as_secs_f64().max(1.0);
+        log::info!(
+            "[SpeakerMonitor] {} stream={} state={} reserve={} clock={} tte={} polls={:.0}/min \
+             incons={} j={:.0}ms {} transport={}",
+            speaker_ip,
+            stream_id,
+            state,
+            reserve,
+            format_clock(clock),
+            tte.map_or_else(
+                || "\u{2014}".to_string(),
+                |s| format_duration(Duration::from_secs_f64(s))
+            ),
+            per_min,
+            inconsistent,
+            self.tracker.jitter_ms(),
+            format_pipeline(&tap.recent_pipeline(window)),
+            self.last_transport_source,
+        );
+
+        match tte {
+            Some(secs) if secs < DRAINING_WARN_SECS && state == MonitorState::Ok => {
+                if !self.draining_warned {
+                    self.draining_warned = true;
+                    log::warn!(
+                        "[SpeakerMonitor] {} stream={}: reserve draining: the speaker plays {} \
+                         faster than the audio arrives, leaving about {} before it runs dry \
+                         (reserve={}). A live source cannot catch up; expect dropouts from then \
+                         until playback is restarted",
+                        speaker_ip,
+                        stream_id,
+                        format_clock(clock),
+                        format_duration(Duration::from_secs_f64(secs)),
+                        reserve
+                    );
+                }
+            }
+            Some(secs) if secs < DRAINING_CLEAR_SECS => {}
+            _ => self.draining_warned = false,
+        }
     }
 
     /// The current connection, if it is still open.
@@ -802,6 +1016,60 @@ fn monitor_poll_interval_ms(dither_ms: u64, monitor_only_sessions: usize) -> u64
     }
 }
 
+/// Milliseconds from `origin` to `at`, zero if `at` is earlier.
+fn ms_between(origin: Instant, at: Instant) -> f64 {
+    at.saturating_duration_since(origin).as_secs_f64() * 1000.0
+}
+
+/// A duration for the log: `4.5s`, `12m05s`, `1h23m`.
+fn format_duration(d: Duration) -> String {
+    let secs = d.as_secs();
+    if secs < 60 {
+        format!("{:.1}s", d.as_secs_f64())
+    } else if secs < 3600 {
+        format!("{}m{:02}s", secs / 60, secs % 60)
+    } else {
+        format!("{}h{:02}m", secs / 3600, (secs % 3600) / 60)
+    }
+}
+
+/// A clock estimate for the log: `+39.8±7.1ppm(31m)`, positive when the
+/// speaker plays faster than we deliver.
+fn format_clock(clock: Option<crate::services::speaker_monitor::ClockEstimate>) -> String {
+    clock.map_or_else(
+        || "\u{2014}".to_string(),
+        |c| {
+            format!(
+                "{:+.1}\u{b1}{:.1}ppm({}m)",
+                c.ppm,
+                c.se_ppm,
+                (c.span_ms / 60_000.0).round()
+            )
+        },
+    )
+}
+
+/// The cadence queue, delivery gaps and retransmissions over a report's
+/// window, for the log.
+fn format_pipeline(samples: &[crate::stream::cadence::PipelineSample]) -> String {
+    let mut queue: Vec<f64> = samples.iter().map(|s| s.queue_len as f64).collect();
+    let queue = WindowStats::of(&mut queue).map_or_else(
+        || "\u{2014}".to_string(),
+        |q| format!("{:.0}/{:.0}/{:.0}", q.min, q.p10, q.max),
+    );
+    let gap_max = samples.iter().map(|s| s.max_gap_ms).max();
+    let retransmitted: Option<u64> = samples
+        .iter()
+        .filter_map(|s| s.retransmitted)
+        .fold(None, |acc, r| Some(acc.unwrap_or(0) + r));
+    format!(
+        "queue[min/p10/max]={} gap_max={} retx={}",
+        queue,
+        gap_max.map_or_else(|| "\u{2014}".to_string(), |g| format!("{g}ms")),
+        retransmitted.map_or_else(|| "\u{2014}".to_string(), |r| r.to_string()),
+    )
+}
+
 /// Command sent to the latency monitor background task.
 enum MonitorCommand {
     /// Send a speaker's measurements to clients for video sync.
@@ -1010,7 +1278,14 @@ impl LatencyMonitor {
                         MonitorCommand::StartVideoSync { stream_id, speaker_ip } => {
                             let key = (stream_id.clone(), speaker_ip);
                             match sessions.get_mut(&key) {
-                                Some(existing) => existing.emit_events = true,
+                                Some(existing) => {
+                                    existing.emit_events = true;
+                                    // Polled from now on, so its connection is
+                                    // owed a summary even if monitoring is off.
+                                    if existing.live_tap().is_some() {
+                                        existing.summary_owed = true;
+                                    }
+                                }
                                 None => {
                                     log::info!(
                                         "[LatencyMonitor] Video sync requested before the speaker's \
@@ -1023,7 +1298,8 @@ impl LatencyMonitor {
                         }
                         MonitorCommand::StopSpeaker { stream_id, speaker_ip } => {
                             let key = (stream_id.clone(), speaker_ip);
-                            if sessions.remove(&key).is_some() {
+                            if let Some(mut session) = sessions.remove(&key) {
+                                session.end_connection(&stream_id, speaker_ip, Instant::now());
                                 log::info!(
                                     "[LatencyMonitor] Stopped monitoring: stream={}, speaker={}",
                                     stream_id, speaker_ip
@@ -1031,7 +1307,14 @@ impl LatencyMonitor {
                             }
                         }
                         MonitorCommand::StopStream { stream_id } => {
-                            sessions.retain(|k, _| k.0 != stream_id);
+                            let now = Instant::now();
+                            sessions.retain(|k, session| {
+                                if k.0 != stream_id {
+                                    return true;
+                                }
+                                session.end_connection(&k.0, k.1, now);
+                                false
+                            });
                             log::info!(
                                 "[LatencyMonitor] Stopped all monitoring for stream={}",
                                 stream_id
@@ -1082,6 +1365,7 @@ impl LatencyMonitor {
                             // while for the speaker's next fetch to take it over; a
                             // video-sync one is owned by the client that asked for it.
                             None if session.tap.is_some() => {
+                                session.end_connection(stream_id, *speaker_ip, now);
                                 let lost = *session.tap_lost_at.get_or_insert(now);
                                 if !session.emit_events
                                     && now.saturating_duration_since(lost) >= CONNECTION_LOST_GRACE
@@ -1121,6 +1405,9 @@ impl LatencyMonitor {
 
                         let Some(tap) = tap else { continue };
                         let Some(epoch) = tap.epoch() else { continue };
+                        if session.wants_polls() && session.report_due(now) {
+                            session.report(stream_id, *speaker_ip, &tap, now);
+                        }
                         if !session.wants_polls()
                             || session.in_flight.is_some()
                             || !session.poll_due()
@@ -1154,7 +1441,9 @@ impl LatencyMonitor {
 
                     if let Some(keys) = finished {
                         for (key, reason) in keys {
-                            sessions.remove(&key);
+                            if let Some(mut session) = sessions.remove(&key) {
+                                session.end_connection(&key.0, key.1, now);
+                            }
                             log::info!(
                                 "[LatencyMonitor] Ended monitoring ({}): stream={}, speaker={}",
                                 reason,
@@ -1373,6 +1662,34 @@ fn apply_poll_result(
         .gate
         .observe_rel_time(position.rel_time_ms, poll.answered_at);
     let (verdict, source) = session.gate.verdict(gena.as_ref(), poll.answered_at);
+    session.last_transport_source = source;
+
+    // Bound the reserve and the clock from this poll. A poll while the
+    // speaker is known not to be playing ends the segment instead.
+    if let Some(origin) = session.connected_at {
+        let not_playing = matches!(verdict, TransportVerdict::NotPlaying(_));
+        let obs = PollObservation {
+            ts: ms_between(origin, poll.sent_at),
+            tr: ms_between(origin, poll.answered_at),
+            rel_ms: position.rel_time_ms,
+            d_ts_ms: poll.delivered_ms_at_send.unwrap_or(0) as f64,
+            d_tr_ms: poll.delivered_ms_at_answer.unwrap_or(0) as f64,
+        };
+        if let Some(brk) = session
+            .tracker
+            .observe(&obs, &position.track_uri, not_playing)
+        {
+            log::info!(
+                "[SpeakerMonitor] {} stream={}: segment break ({}); measuring afresh",
+                speaker_ip,
+                stream_id,
+                brk
+            );
+        }
+        if !not_playing {
+            session.polls_since_report += 1;
+        }
+    }
 
     log::debug!(
         "[LatencyMonitor] poll stream={}, speaker={}: rel={}ms rtt={}ms delivered={:?}..{:?}ms \
@@ -1405,7 +1722,11 @@ fn apply_poll_result(
         session.calculate_latency(poll.stream_elapsed_ms, position.rel_time_ms, poll.rtt_ms);
 
     session.record_latency(latency_ms);
-    session.log_diagnostics(stream_id, &speaker_ip, poll.rtt_ms);
+    // The wall-clock cushion is inflated by our own queue and by the epoch's
+    // anchoring, so it is only logged where the reserve cannot be measured.
+    if !session.pcm {
+        session.log_diagnostics(stream_id, &speaker_ip, poll.rtt_ms);
+    }
 
     // Emit update if appropriate
     if session.emit_events && session.should_emit() {
@@ -1874,14 +2195,21 @@ mod tests {
                 track_uri: "x-sonos-spotify:track".to_string(),
                 rel_time_ms: 5000,
             };
+            // Attaching syncs the session to the connection's epoch, so the
+            // answers must belong to it to count.
+            let epoch_id = tap.epoch().expect("started").id;
+            let answer = |poll_id| PollResult {
+                epoch_id,
+                ..poll(poll_id, Ok(elsewhere()))
+            };
             session.in_flight = Some(1);
-            apply_poll_result(&mut session, poll(1, Ok(elsewhere())), &NoEvents, None);
+            apply_poll_result(&mut session, answer(1), &NoEvents, None);
             assert!(
                 session.wants_polls(),
                 "one odd answer does not end monitoring"
             );
             session.in_flight = Some(2);
-            apply_poll_result(&mut session, poll(2, Ok(elsewhere())), &NoEvents, None);
+            apply_poll_result(&mut session, answer(2), &NoEvents, None);
             assert!(!session.wants_polls(), "dormant until the next fetch");
 
             let refetch = started_tap("stream", HUNG_IP, true);
@@ -1911,6 +2239,51 @@ mod tests {
             session.in_flight = Some(3);
             apply_poll_result(&mut session, playing, &NoEvents, None);
             assert_eq!(session.sample_count, 1);
+        }
+
+        #[test]
+        fn a_pcm_session_estimates_the_reserve_and_publishes_it() {
+            use crate::services::speaker_monitor::test_support::PollGen;
+
+            let tap = started_tap("stream", HUNG_IP, true);
+            let mut session = LatencySession::new(false);
+            session.attach(&tap);
+            let epoch_id = tap.epoch().expect("started").id;
+            let origin = tap.connected_at;
+            let at = |ms: f64| origin + Duration::from_secs_f64(ms / 1000.0);
+
+            // Four minutes of polls of a speaker holding 600 ms, answered as
+            // the real poll task would report them.
+            let mut gen = PollGen::new(61);
+            let mut poll_id = 0;
+            gen.run_until(240_000.0, |p| {
+                poll_id += 1;
+                session.in_flight = Some(poll_id);
+                let result = PollResult {
+                    key: ("stream".to_string(), HUNG_IP.parse().unwrap()),
+                    poll_id,
+                    epoch_id,
+                    stream_elapsed_ms: p.ts as u64,
+                    rtt_ms: (p.tr - p.ts) as u32,
+                    sent_at: at(p.ts),
+                    answered_at: at(p.tr),
+                    delivered_ms_at_send: Some(p.d_ts_ms as u64),
+                    delivered_ms_at_answer: Some(p.d_tr_ms as u64),
+                    outcome: Ok(ours(p.rel_ms)),
+                    transport: None,
+                };
+                apply_poll_result(&mut session, result, &NoEvents, None);
+            });
+            assert!(
+                session.sample_count > 90,
+                "video sync's latency is still measured alongside the reserve"
+            );
+
+            session.report("stream", HUNG_IP.parse().unwrap(), &tap, at(240_000.0));
+            let est = session.tracker.last_estimate().copied().expect("estimate");
+            assert!((est.reserve_ms - 600.0).abs() <= 50.0, "{est:?}");
+            let published = tap.speaker_snapshot().expect("published");
+            assert_eq!(published.reserve_ms, Some(est.reserve_ms.round() as i32));
         }
 
         #[test]
