@@ -10,7 +10,6 @@ import {
   applySpeakerHealthEvent,
   clearAllSpeakerHealth,
   getSpeakerHealth,
-  isSpeakerHealthAlarm,
 } from './speaker-health-state';
 
 const ENCODER = createEncoderConfig({ codec: 'pcm' });
@@ -57,16 +56,6 @@ afterEach(() => {
   unsubscribe();
 });
 
-describe('isSpeakerHealthAlarm', () => {
-  it('should warn only for low and draining', () => {
-    expect(isSpeakerHealthAlarm('low')).toBe(true);
-    expect(isSpeakerHealthAlarm('draining')).toBe(true);
-    for (const state of ['locking', 'ok', 'paused', 'stale', 'dormant'] as const) {
-      expect(isSpeakerHealthAlarm(state)).toBe(false);
-    }
-  });
-});
-
 describe('applySpeakerHealthEvent', () => {
   it('should keep the latest reading per speaker with the event time as updatedAt', () => {
     applySpeakerHealthEvent(healthEvent(KITCHEN));
@@ -87,33 +76,41 @@ describe('applySpeakerHealthEvent', () => {
     expect(snapshot[OFFICE]?.state).toBe('locking');
   });
 
-  it('should hold alarmSince through a run of low and draining readings', () => {
-    applySpeakerHealthEvent(healthEvent(KITCHEN, { state: 'low', timestamp: NOW }));
-    applySpeakerHealthEvent(
-      healthEvent(KITCHEN, { state: 'low', reserveMs: 300, timestamp: NOW + REPORT_MS }),
-    );
+  it('should carry the companion notice and the head start figures through as sent', () => {
+    const notice = {
+      kind: 'head_start_close',
+      noticeId: 3,
+      stallMs: 420,
+      leftMs: 60,
+      headStartMs: 500,
+      suggestedHeadStartMs: 750,
+      restartHelps: false,
+    } as const;
     applySpeakerHealthEvent(
       healthEvent(KITCHEN, {
-        state: 'draining',
-        timeToEmptyS: 600,
-        timestamp: NOW + 2 * REPORT_MS,
+        headStartMs: 500,
+        headStartConfiguredMs: 500,
+        floorMs: 150,
+        stallMs: 420,
+        notice,
       }),
     );
 
     expect(getSpeakerHealth()[KITCHEN]).toMatchObject({
-      state: 'draining',
-      updatedAt: NOW + 2 * REPORT_MS,
-      alarmSince: NOW,
+      headStartMs: 500,
+      headStartConfiguredMs: 500,
+      floorMs: 150,
+      stallMs: 420,
+      notice,
     });
   });
 
-  it('should re-arm alarmSince after the speaker recovers', () => {
-    applySpeakerHealthEvent(healthEvent(KITCHEN, { state: 'low', timestamp: NOW }));
-    applySpeakerHealthEvent(healthEvent(KITCHEN, { state: 'ok', timestamp: NOW + REPORT_MS }));
-    expect(getSpeakerHealth()[KITCHEN]?.alarmSince).toBeUndefined();
+  it('should drop the notice once the companion stops repeating it', () => {
+    const notice = { kind: 'running_low', noticeId: 1, leftMs: 90, restartHelps: true } as const;
+    applySpeakerHealthEvent(healthEvent(KITCHEN, { state: 'low', notice }));
+    applySpeakerHealthEvent(healthEvent(KITCHEN, { timestamp: NOW + REPORT_MS }));
 
-    applySpeakerHealthEvent(healthEvent(KITCHEN, { state: 'low', timestamp: NOW + 2 * REPORT_MS }));
-    expect(getSpeakerHealth()[KITCHEN]?.alarmSince).toBe(NOW + 2 * REPORT_MS);
+    expect(getSpeakerHealth()[KITCHEN]?.notice).toBeUndefined();
   });
 });
 

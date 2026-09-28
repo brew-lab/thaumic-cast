@@ -19,11 +19,7 @@ import { getCachedState } from './metadata-cache';
 import { notifyPopup } from './notification-service';
 import { persistenceManager } from './persistence-manager';
 import { captureHealthBroadcast, clearCaptureHealthForTab } from './capture-health-state';
-import {
-  clearAllSpeakerLinkQuality,
-  clearSpeakerLinkQuality,
-  speakerLinkQualityBroadcast,
-} from './speaker-link-quality-state';
+import { clearAllIngestGaps, clearIngestGaps, ingestGapsBroadcast } from './ingest-gaps-state';
 import {
   clearAllSpeakerHealth,
   clearSpeakerHealth,
@@ -207,6 +203,9 @@ export function removeSession(tabId: number): void {
       notifyPopup(captureHealthBroadcast());
     }
     dropReadingsForSpeakers(session.speakerIps);
+    if (clearIngestGaps(session.streamId)) {
+      notifyPopup(ingestGapsBroadcast());
+    }
 
     persistSessions();
     notifySessionsChanged();
@@ -224,35 +223,29 @@ export function clearAllSessions(): void {
   log.info(`Clearing all ${sessions.size} session(s) - desktop unreachable`);
   sessions.clear();
   releaseKeepAwake();
-  if (clearAllSpeakerLinkQuality()) {
-    notifyPopup(speakerLinkQualityBroadcast());
-  }
   if (clearAllSpeakerHealth()) {
     notifyPopup(speakerHealthBroadcast());
+  }
+  if (clearAllIngestGaps()) {
+    notifyPopup(ingestGapsBroadcast());
   }
   persistSessions();
   notifySessionsChanged();
 }
 
 /**
- * Drops link-quality and speaker-health readings for speakers that no longer
- * belong to any active cast. The companion only reports on speakers playing
- * a stream, so a reading outlives its usefulness the moment the speaker
- * leaves the cast.
+ * Drops speaker-health readings for speakers that no longer belong to any
+ * active cast. The companion only reports on speakers playing a stream, so a
+ * reading outlives its usefulness the moment the speaker leaves the cast.
  * @param speakerIps - Speakers that just left a session
  */
 function dropReadingsForSpeakers(speakerIps: readonly string[]): void {
-  let linkChanged = false;
-  let healthChanged = false;
+  let changed = false;
   for (const speakerIp of speakerIps) {
     if (getSessionBySpeakerIp(speakerIp)) continue;
-    if (clearSpeakerLinkQuality(speakerIp)) linkChanged = true;
-    if (clearSpeakerHealth(speakerIp)) healthChanged = true;
+    if (clearSpeakerHealth(speakerIp)) changed = true;
   }
-  if (linkChanged) {
-    notifyPopup(speakerLinkQualityBroadcast());
-  }
-  if (healthChanged) {
+  if (changed) {
     notifyPopup(speakerHealthBroadcast());
   }
 }

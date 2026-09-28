@@ -15,7 +15,7 @@
  */
 
 import { createLogger } from '@thaumic-cast/shared';
-import type { AppType, SonosStateSnapshot } from '@thaumic-cast/protocol';
+import type { AppType, CompanionAudio, SonosStateSnapshot } from '@thaumic-cast/protocol';
 import type {
   EnsureConnectionResponse,
   NetworkEventMessage,
@@ -30,6 +30,7 @@ import {
   clearConnectionState,
   setNetworkHealth,
   setDesktopApp,
+  setCompanionAudio,
 } from '../connection-state';
 import { setSonosState, getSonosState as getStoredSonosState, updateGroups } from '../sonos-state';
 import { ensureOffscreen } from '../offscreen-manager';
@@ -37,15 +38,11 @@ import { offscreenBroker } from '../offscreen-broker';
 import { notifyPopup } from '../notification-service';
 import { clearAllSessions, getSessionBySpeakerIp } from '../session-manager';
 import {
-  applySpeakerLinkQualityEvent,
-  clearAllSpeakerLinkQuality,
-  speakerLinkQualityBroadcast,
-} from '../speaker-link-quality-state';
-import {
   applySpeakerHealthEvent,
   clearAllSpeakerHealth,
   speakerHealthBroadcast,
 } from '../speaker-health-state';
+import { clearAllIngestGaps, ingestGapsBroadcast } from '../ingest-gaps-state';
 
 const log = createLogger('Background');
 
@@ -107,6 +104,7 @@ export async function discoverAndCache(force = false): Promise<DiscoverResult | 
  * @param metadata.appType - Companion type (`desktop` | `server`), or null when absent
  * @param metadata.appVersion - Companion app semver, or null when absent (pre-0.4.0)
  * @param metadata.protocolVersion - Wire-protocol semver, or null when absent (pre-0.4.0)
+ * @param companionAudio - The companion's speaker-side audio settings, or null when absent
  */
 export function handleWsConnected(
   state: SonosStateSnapshot,
@@ -115,9 +113,12 @@ export function handleWsConnected(
     appVersion: string | null;
     protocolVersion: string | null;
   },
+  companionAudio: CompanionAudio | null = null,
 ): void {
   setConnected(true);
   setConnectionMetadata(metadata);
+  setCompanionAudio(companionAudio);
+  notifyPopup({ type: 'COMPANION_AUDIO_CHANGED', audio: companionAudio });
   updateSonosState(state);
   log.info('WebSocket connected');
 
@@ -166,17 +167,17 @@ export function handleWsPermanentlyDisconnected(): void {
 }
 
 /**
- * Drops every speaker link-quality and speaker-health reading and tells the
+ * Drops every speaker-health reading and ingest-gaps report and tells the
  * popup. The companion's verdicts only hold while it is connected and
  * reporting; after a reconnect it sends fresh ones for whatever is still
  * playing.
  */
 function forgetSpeakerReadings(): void {
-  if (clearAllSpeakerLinkQuality()) {
-    notifyPopup(speakerLinkQualityBroadcast());
-  }
   if (clearAllSpeakerHealth()) {
     notifyPopup(speakerHealthBroadcast());
+  }
+  if (clearAllIngestGaps()) {
+    notifyPopup(ingestGapsBroadcast());
   }
 }
 
@@ -291,9 +292,10 @@ export function getSonosState(): { state: SonosStateSnapshot | null } {
 }
 
 /**
- * Handles NETWORK_EVENT from offscreen: overall network health changes,
- * per-speaker link-quality verdicts and speaker buffer health. Event types this build does not know
- * arrive tagged `unrecognized` by the message schema and are ignored.
+ * Handles NETWORK_EVENT from offscreen: overall network health changes and
+ * speaker buffer health, with the companion's speaker notices. Event types
+ * this build does not know arrive tagged `unrecognized` by the message schema
+ * and are ignored.
  * @param payload - The network event payload
  */
 export function handleNetworkEvent(payload: NetworkEventMessage['payload']): void {
@@ -306,18 +308,6 @@ export function handleNetworkEvent(payload: NetworkEventMessage['payload']): voi
         health: payload.health,
         reason,
       });
-      break;
-    }
-    case 'speakerLinkQuality': {
-      // The companion reports on every speaker playing a stream, including
-      // other clients' streams; only the ones this extension is casting to
-      // matter here, and only they get cleared when their cast ends.
-      if (!getSessionBySpeakerIp(payload.speakerIp)) {
-        log.debug(`Ignoring link quality for ${payload.speakerIp}: not in an active cast`);
-        return;
-      }
-      applySpeakerLinkQualityEvent(payload);
-      notifyPopup(speakerLinkQualityBroadcast());
       break;
     }
     case 'speakerHealth': {

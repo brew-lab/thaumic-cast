@@ -6,8 +6,9 @@ import { resetChromeStub } from '../../test-support/chrome-stub';
 import { notificationService } from '../notification-service';
 import { dispatch } from '../router';
 import { clearAllSessions, registerSession } from '../session-manager';
-import { clearAllSpeakerLinkQuality, getSpeakerLinkQuality } from '../speaker-link-quality-state';
 import { clearAllSpeakerHealth, getSpeakerHealth } from '../speaker-health-state';
+import { clearAllIngestGaps, getIngestGaps } from '../ingest-gaps-state';
+import { clearConnectionState, getConnectionState } from '../connection-state';
 import { registerOffscreenRoutes } from './offscreen-routes';
 
 const ENCODER = createEncoderConfig({ codec: 'pcm' });
@@ -25,19 +26,11 @@ function networkEvent(payload: Record<string, unknown>): Promise<unknown> {
   );
 }
 
-function linkQualityPayload(fields: Record<string, unknown> = {}): Record<string, unknown> {
-  return {
-    type: 'speakerLinkQuality',
-    speakerIp: KITCHEN,
-    quality: 'poor',
-    rttMedianMs: 4,
-    rttMaxMs: 180,
-    spikesPerMinute: 7,
-    failuresPerMinute: 1,
-    jitterBufferMs: 200,
-    timestamp: NOW,
-    ...fields,
-  };
+function streamEvent(payload: Record<string, unknown>): Promise<unknown> {
+  return dispatch(
+    { type: 'SONOS_EVENT', payload: { category: 'stream', ...payload } } as never,
+    SENDER,
+  );
 }
 
 function speakerHealthPayload(fields: Record<string, unknown> = {}): Record<string, unknown> {
@@ -62,8 +55,9 @@ let unsubscribe = (): void => {};
 beforeEach(() => {
   resetChromeStub();
   clearAllSessions();
-  clearAllSpeakerLinkQuality();
   clearAllSpeakerHealth();
+  clearAllIngestGaps();
+  clearConnectionState();
   notifications.length = 0;
   unsubscribe = notificationService.subscribe((msg) => notifications.push(msg));
 });
@@ -73,60 +67,6 @@ afterEach(() => {
 });
 
 describe('NETWORK_EVENT route', () => {
-  it('should turn a speakerLinkQuality event for a casting speaker into a popup notification', async () => {
-    registerSession(1, 'stream-1', [KITCHEN], ['Kitchen'], ENCODER, false, 'tab');
-    notifications.length = 0;
-
-    const result = await networkEvent(linkQualityPayload());
-
-    expect(result).toEqual({ success: true });
-    expect(notifications).toEqual([
-      {
-        type: 'SPEAKER_LINK_QUALITY_CHANGED',
-        speakers: {
-          [KITCHEN]: {
-            quality: 'poor',
-            rttMedianMs: 4,
-            rttMaxMs: 180,
-            spikesPerMinute: 7,
-            failuresPerMinute: 1,
-            jitterBufferMs: 200,
-            updatedAt: NOW,
-          },
-        },
-      },
-    ]);
-  });
-
-  it('should pass the companion’s buffer suggestion straight through, and omit it when absent', async () => {
-    registerSession(1, 'stream-1', [KITCHEN], ['Kitchen'], ENCODER, false, 'tab');
-    notifications.length = 0;
-
-    await networkEvent(linkQualityPayload({ suggestedJitterBufferMs: 500 }));
-    await networkEvent(linkQualityPayload({ quality: 'degraded', timestamp: NOW + 60_000 }));
-
-    expect(notifications).toEqual([
-      {
-        type: 'SPEAKER_LINK_QUALITY_CHANGED',
-        speakers: {
-          [KITCHEN]: expect.objectContaining({ jitterBufferMs: 200, suggestedJitterBufferMs: 500 }),
-        },
-      },
-      {
-        type: 'SPEAKER_LINK_QUALITY_CHANGED',
-        speakers: { [KITCHEN]: expect.not.objectContaining({ suggestedJitterBufferMs: 500 }) },
-      },
-    ]);
-    expect(getSpeakerLinkQuality()[KITCHEN]).not.toHaveProperty('suggestedJitterBufferMs');
-  });
-
-  it('should ignore link quality for a speaker this extension is not casting to', async () => {
-    await networkEvent(linkQualityPayload());
-
-    expect(getSpeakerLinkQuality()).toEqual({});
-    expect(notifications).toEqual([]);
-  });
-
   it('should turn a speakerHealth event for a casting speaker into a popup notification', async () => {
     registerSession(1, 'stream-1', [KITCHEN], ['Kitchen'], ENCODER, false, 'tab');
     notifications.length = 0;
@@ -147,7 +87,6 @@ describe('NETWORK_EVENT route', () => {
             reserveAcked: true,
             targetMs: 520,
             updatedAt: NOW,
-            alarmSince: NOW,
           },
         },
       },
@@ -189,7 +128,117 @@ describe('NETWORK_EVENT route', () => {
     registerSession(1, 'stream-1', [KITCHEN], ['Kitchen'], ENCODER, false, 'tab');
     notifications.length = 0;
 
-    await expect(networkEvent(linkQualityPayload({ quality: 'terrible' }))).rejects.toThrow();
+    await expect(networkEvent(speakerHealthPayload({ state: 'terrible' }))).rejects.toThrow();
     expect(notifications).toEqual([]);
+  });
+});
+
+describe('SONOS_EVENT route (notice-related stream events)', () => {
+  const gaps = {
+    type: 'ingestGaps',
+    streamId: 'stream-1',
+    gapsLastMinute: 3,
+    worstGapMs: 280,
+    smoothingMs: 200,
+    suggestedSmoothingMs: 500,
+    timestamp: NOW,
+  };
+
+  it('should keep an ingestGaps report for an active cast and tell the popup', async () => {
+    registerSession(1, 'stream-1', [KITCHEN], ['Kitchen'], ENCODER, false, 'tab');
+    notifications.length = 0;
+
+    await streamEvent(gaps);
+
+    expect(getIngestGaps()['stream-1']).toMatchObject({
+      gapsLastMinute: 3,
+      worstGapMs: 280,
+      smoothingMs: 200,
+      suggestedSmoothingMs: 500,
+    });
+    expect(notifications).toEqual([{ type: 'INGEST_GAPS_CHANGED', streams: getIngestGaps() }]);
+  });
+
+  it('should ignore ingestGaps for a stream that is not an active cast', async () => {
+    await streamEvent(gaps);
+
+    expect(getIngestGaps()).toEqual({});
+    expect(notifications).toEqual([]);
+  });
+
+  it('should drop the report when its cast ends', async () => {
+    registerSession(1, 'stream-1', [KITCHEN], ['Kitchen'], ENCODER, false, 'tab');
+    await streamEvent(gaps);
+
+    clearAllSessions();
+
+    expect(getIngestGaps()).toEqual({});
+  });
+
+  it('should record companionAudioChanged and tell the popup', async () => {
+    await streamEvent({
+      type: 'companionAudioChanged',
+      headStartMs: 750,
+      headStartFixed: false,
+      speakerMonitor: true,
+      timestamp: NOW,
+    });
+
+    const audio = { headStartMs: 750, headStartFixed: false, speakerMonitor: true };
+    expect(getConnectionState().companionAudio).toEqual(audio);
+    expect(notifications).toEqual([{ type: 'COMPANION_AUDIO_CHANGED', audio }]);
+  });
+
+  it('should drop a malformed companionAudioChanged without touching the settings', async () => {
+    await streamEvent({ type: 'companionAudioChanged', headStartMs: 'lots', timestamp: NOW });
+
+    expect(getConnectionState().companionAudio).toBeNull();
+    expect(notifications).toEqual([]);
+  });
+});
+
+describe('WS_CONNECTED route', () => {
+  const state = {
+    groups: [],
+    transportStates: {},
+    groupVolumes: {},
+    groupMutes: {},
+    groupVolumeFixed: {},
+  };
+
+  it('should record the companion audio settings from INITIAL_STATE', async () => {
+    const companionAudio = { headStartMs: 500, headStartFixed: true, speakerMonitor: true };
+    await dispatch(
+      {
+        type: 'WS_CONNECTED',
+        state,
+        appType: 'desktop',
+        appVersion: '1.0.0',
+        protocolVersion: '0.5.0',
+        companionAudio,
+      } as never,
+      SENDER,
+    );
+
+    expect(getConnectionState().companionAudio).toEqual(companionAudio);
+    expect(notifications).toContainEqual({
+      type: 'COMPANION_AUDIO_CHANGED',
+      audio: companionAudio,
+    });
+  });
+
+  it('should clear stale settings when a companion does not report them', async () => {
+    await dispatch(
+      {
+        type: 'WS_CONNECTED',
+        state,
+        appType: 'server',
+        appVersion: null,
+        protocolVersion: null,
+      } as never,
+      SENDER,
+    );
+
+    expect(getConnectionState().companionAudio).toBeNull();
   });
 });

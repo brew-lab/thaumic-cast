@@ -305,40 +305,6 @@ describe('LatencyEventSchema', () => {
 });
 
 describe('NetworkEventSchema', () => {
-  it('should parse a speaker link quality event', () => {
-    const parsed = NetworkEventSchema.safeParse({
-      type: 'speakerLinkQuality',
-      speakerIp: '192.168.1.10',
-      quality: 'poor',
-      rttMedianMs: 12,
-      rttMaxMs: 215,
-      spikesPerMinute: 7,
-      failuresPerMinute: 1,
-      jitterBufferMs: 200,
-      suggestedJitterBufferMs: 500,
-      timestamp: NOW,
-    });
-    expect(parsed.success).toBe(true);
-    if (parsed.success && parsed.data.type === 'speakerLinkQuality') {
-      expect(parsed.data.quality).toBe('poor');
-    }
-  });
-
-  it('should reject a link quality it does not know', () => {
-    const parsed = NetworkEventSchema.safeParse({
-      type: 'speakerLinkQuality',
-      speakerIp: '192.168.1.10',
-      quality: 'terrible',
-      rttMedianMs: 12,
-      rttMaxMs: 215,
-      spikesPerMinute: 7,
-      failuresPerMinute: 1,
-      jitterBufferMs: 200,
-      timestamp: NOW,
-    });
-    expect(parsed.success).toBe(false);
-  });
-
   const draining = {
     type: 'speakerHealth',
     streamId: 's1',
@@ -452,6 +418,16 @@ describe('NetworkEventSchema', () => {
       'drift_uncorrected',
       'drift_saturated',
     ]);
+  });
+
+  it('should no longer know the link quality event', () => {
+    const parsed = NetworkEventSchema.safeParse({
+      type: 'speakerLinkQuality',
+      speakerIp: SPEAKER,
+      quality: 'poor',
+      timestamp: NOW,
+    });
+    expect(parsed.success).toBe(false);
   });
 
   it('should still parse the health change event', () => {

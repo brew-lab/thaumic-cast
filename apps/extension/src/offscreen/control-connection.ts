@@ -18,6 +18,7 @@
  */
 
 import { createLogger } from '@thaumic-cast/shared';
+import { CompanionAudioSchema } from '@thaumic-cast/protocol';
 import type { SonosStateSnapshot, WsControlCommand } from '@thaumic-cast/protocol';
 import type { WsStatusResponse } from '../lib/messages';
 import { stopAllSessions } from './stream-session';
@@ -100,7 +101,11 @@ export function connectControlWebSocket(url: string): void {
           appVersion?: unknown;
           protocolVersion?: unknown;
           appType?: unknown;
+          companionAudio?: unknown;
         };
+        // Malformed or absent settings become null rather than failing the
+        // whole WS_CONNECTED message at the background's validation.
+        const companionAudio = CompanionAudioSchema.safeParse(payload.companionAudio);
         chrome.runtime
           .sendMessage({
             type: 'WS_CONNECTED',
@@ -112,6 +117,7 @@ export function connectControlWebSocket(url: string): void {
               payload.appType === 'desktop' || payload.appType === 'server'
                 ? payload.appType
                 : null,
+            companionAudio: companionAudio.success ? companionAudio.data : null,
           })
           .catch(noop);
       }

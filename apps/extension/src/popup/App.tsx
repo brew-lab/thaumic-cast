@@ -26,8 +26,9 @@ import { useExtensionSettingsListener } from './hooks/useExtensionSettingsListen
 import { useSpeakerSelection } from './hooks/useSpeakerSelection';
 import { useCompanionVersion } from './hooks/useCompanionVersion';
 import { useCaptureHealth } from './hooks/useCaptureHealth';
-import { useSpeakerLinkQuality } from './hooks/useSpeakerLinkQuality';
-import { useSpeakerHealth } from './hooks/useSpeakerHealth';
+import { useSpeakerNotices } from './hooks/useSpeakerNotices';
+import { useIngestGaps } from './hooks/useIngestGaps';
+import type { NoticeLine } from '../lib/speaker-notices';
 import { companionTypeLabelKey, versionMismatchActionKey } from '../lib/versionCheck';
 import { Onboarding } from './components/Onboarding';
 
@@ -132,16 +133,19 @@ function MainPopup(): JSX.Element {
   const { showAlert: showCaptureHealthAlert, dismiss: dismissCaptureHealthAlert } =
     useCaptureHealth();
 
-  // Link-quality alerts (companion sees latency spikes on the path to a casting speaker)
-  const { alerts: linkQualityAlerts, dismiss: dismissLinkQualityAlert } = useSpeakerLinkQuality(
+  // Speaker notices (the companion decided a casting speaker cut out, came
+  // close, or is running low, and says what would help)
+  const { notices: speakerNotices, dismiss: dismissSpeakerNotice } = useSpeakerNotices(
     activeCasts,
     speakerGroups,
+    { companionAudio: connection.companionAudio, appType: connection.appType },
   );
 
-  // Speaker-health alerts (companion sees a casting speaker's buffer running low)
-  const { alerts: speakerHealthAlerts, dismiss: dismissSpeakerHealthAlert } = useSpeakerHealth(
+  // Ingest-gap notices (audio from this browser reached the companion late,
+  // so every speaker had a gap)
+  const { notices: ingestGapsNotices, dismiss: dismissIngestGapsNotice } = useIngestGaps(
     activeCasts,
-    speakerGroups,
+    connection.appType,
   );
 
   const handleOpenReleases = useCallback(() => {
@@ -174,6 +178,25 @@ function MainPopup(): JSX.Element {
   const openSettings = useCallback(() => {
     chrome.runtime.openOptionsPage();
   }, []);
+
+  /**
+   * Opens the extension settings at the audio section's advanced options,
+   * where smoothing is set.
+   */
+  const openAudioAdvancedSettings = useCallback(() => {
+    const page = chrome.runtime.getManifest().options_page ?? 'src/options/index.html';
+    chrome.tabs.create({ url: chrome.runtime.getURL(`${page}#audio-advanced`) });
+  }, []);
+
+  /**
+   * Translates the sentences of a notice and joins them into one message.
+   * @param lines - The sentences, in order
+   * @returns The message to show
+   */
+  const noticeText = useCallback(
+    (lines: NoticeLine[]) => lines.map((line) => t(line.key, line.params)).join(' '),
+    [t],
+  );
 
   /**
    * Triggers the start of a cast session for the current tab.
@@ -356,49 +379,32 @@ function MainPopup(): JSX.Element {
       )}
 
       {wsConnected &&
-        linkQualityAlerts.map((alert) => {
-          // The companion decides whether a bigger buffer would help; when it
-          // made no suggestion there is nothing to set, so no settings button.
-          const suggested = alert.suggestedJitterBufferMs;
-          return (
-            <Alert
-              key={alert.speakerIp}
-              variant="warning"
-              className={styles.alert}
-              action={
-                suggested !== undefined ? t('speaker_link_quality_action_open_settings') : undefined
-              }
-              onAction={suggested !== undefined ? openSettings : undefined}
-              onDismiss={() => dismissLinkQualityAlert(alert.speakerIp)}
-            >
-              {suggested !== undefined
-                ? t(`speaker_link_quality_${alert.quality}_raise_buffer_message`, {
-                    name: alert.speakerName,
-                    suggested,
-                    current: alert.jitterBufferMs,
-                  })
-                : t('speaker_link_quality_no_remedy_message', {
-                    name: alert.speakerName,
-                    current: alert.jitterBufferMs,
-                  })}
-            </Alert>
-          );
-        })}
-
-      {wsConnected &&
-        speakerHealthAlerts.map((alert) => (
+        speakerNotices.map((view) => (
           <Alert
-            key={`health-${alert.speakerIp}`}
+            key={`notice-${view.speakerIp}`}
             variant="warning"
             className={styles.alert}
-            onDismiss={() => dismissSpeakerHealthAlert(alert.speakerIp)}
+            onDismiss={() => dismissSpeakerNotice(view.speakerIp)}
+            dismissLabel={t('speaker_notice_dismiss')}
           >
-            {alert.state === 'draining' && alert.minutesToEmpty !== undefined
-              ? t('speaker_health_draining_message', {
-                  name: alert.speakerName,
-                  minutes: alert.minutesToEmpty,
-                })
-              : t('speaker_health_low_message', { name: alert.speakerName })}
+            {noticeText(view.lines)}
+          </Alert>
+        ))}
+
+      {/* A capture-health alert already explains late audio from this browser. */}
+      {wsConnected &&
+        !showCaptureHealthAlert &&
+        ingestGapsNotices.map((view) => (
+          <Alert
+            key={`ingest-${view.streamId}`}
+            variant="warning"
+            className={styles.alert}
+            action={view.hasRemedy ? t('ingest_gaps_action_open_settings') : undefined}
+            onAction={view.hasRemedy ? openAudioAdvancedSettings : undefined}
+            onDismiss={() => dismissIngestGapsNotice(view.streamId)}
+            dismissLabel={t('speaker_notice_dismiss')}
+          >
+            {noticeText([view.line])}
           </Alert>
         ))}
 

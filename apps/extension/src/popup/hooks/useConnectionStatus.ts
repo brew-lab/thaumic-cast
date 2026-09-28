@@ -1,5 +1,5 @@
 import { useReducer, useEffect, useCallback } from 'preact/hooks';
-import type { AppType } from '@thaumic-cast/protocol';
+import type { AppType, CompanionAudio } from '@thaumic-cast/protocol';
 import type { ConnectionState as BackgroundConnectionState } from '../../background/connection-state';
 import type { EnsureConnectionResponse } from '../../lib/messages';
 import { useChromeMessage } from './useChromeMessage';
@@ -41,6 +41,8 @@ export interface ConnectionStatus {
   appVersion: string | null;
   /** Wire-protocol semver from `INITIAL_STATE` (null on pre-0.4.0 builds). */
   protocolVersion: string | null;
+  /** The companion's speaker-side audio settings (null until reported, or on older builds). */
+  companionAudio: CompanionAudio | null;
   /** Triggers a connection retry attempt (sets phase to 'checking') */
   retry: () => Promise<void>;
 }
@@ -57,6 +59,7 @@ interface ConnectionState {
   appType: AppType | null;
   appVersion: string | null;
   protocolVersion: string | null;
+  companionAudio: CompanionAudio | null;
 }
 
 /** Actions that can update connection state */
@@ -68,7 +71,8 @@ type ConnectionAction =
   | { type: 'WS_RECONNECTING' }
   | { type: 'WS_PERMANENTLY_LOST' }
   | { type: 'CONNECTION_FAILED'; error: string; canRetry: boolean }
-  | { type: 'NETWORK_HEALTH_CHANGED'; health: NetworkHealthStatus; reason: string | null };
+  | { type: 'NETWORK_HEALTH_CHANGED'; health: NetworkHealthStatus; reason: string | null }
+  | { type: 'COMPANION_AUDIO_CHANGED'; audio: CompanionAudio | null };
 
 const initialState: ConnectionState = {
   phase: 'checking',
@@ -81,6 +85,7 @@ const initialState: ConnectionState = {
   appType: null,
   appVersion: null,
   protocolVersion: null,
+  companionAudio: null,
 };
 
 /**
@@ -118,6 +123,7 @@ function connectionReducer(state: ConnectionState, action: ConnectionAction): Co
         appType,
         appVersion,
         protocolVersion,
+        companionAudio,
       } = action.payload;
       if (!desktopAppUrl) return state;
       return {
@@ -132,6 +138,7 @@ function connectionReducer(state: ConnectionState, action: ConnectionAction): Co
         appType: appType ?? null,
         appVersion: appVersion ?? null,
         protocolVersion: protocolVersion ?? null,
+        companionAudio: companionAudio ?? null,
       };
     }
 
@@ -161,6 +168,9 @@ function connectionReducer(state: ConnectionState, action: ConnectionAction): Co
 
     case 'NETWORK_HEALTH_CHANGED':
       return { ...state, networkHealth: action.health, networkHealthReason: action.reason };
+
+    case 'COMPANION_AUDIO_CHANGED':
+      return { ...state, companionAudio: action.audio };
 
     default:
       return state;
@@ -265,6 +275,10 @@ export function useConnectionStatus(): ConnectionStatus {
           health: msg.health as NetworkHealthStatus,
           reason: msg.reason as string | null,
         });
+        break;
+
+      case 'COMPANION_AUDIO_CHANGED':
+        dispatch({ type: 'COMPANION_AUDIO_CHANGED', audio: msg.audio as CompanionAudio | null });
         break;
     }
   });

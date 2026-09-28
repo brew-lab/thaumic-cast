@@ -43,7 +43,13 @@ import {
 import { notifyPopup } from './notification-service';
 import { offscreenBroker } from './offscreen-broker';
 import { noop } from '../lib/noop';
-import { SpeakerRemovalReasonSchema, type SpeakerRemovalReason } from '@thaumic-cast/protocol';
+import {
+  SpeakerRemovalReasonSchema,
+  StreamEventSchema,
+  type SpeakerRemovalReason,
+} from '@thaumic-cast/protocol';
+import { applyIngestGapsEvent, ingestGapsBroadcast } from './ingest-gaps-state';
+import { setCompanionAudio } from './connection-state';
 
 const log = createLogger('SonosEvents');
 
@@ -118,9 +124,56 @@ export async function handleSonosEvent(event: BroadcastEvent): Promise<void> {
           eventData.error as string,
         );
         break;
+
+      case 'ingestGaps':
+      case 'companionAudioChanged':
+        handleCompanionNoticeEvent(eventData);
+        break;
     }
   } else if (event.category === 'latency') {
     await handleLatencyEvent(event as LatencyBroadcastEvent);
+  }
+}
+
+/**
+ * Handles the stream events that feed notices: `ingestGaps` for one of this
+ * extension's streams, and `companionAudioChanged`, which keeps the head start
+ * shown and the notice wording current. Broadcast events arrive unvalidated,
+ * so these are checked against the protocol schema and dropped if malformed.
+ * @param eventData - The raw stream event
+ */
+function handleCompanionNoticeEvent(eventData: Record<string, unknown>): void {
+  const parsed = StreamEventSchema.safeParse(eventData);
+  if (!parsed.success) {
+    log.warn(`Dropping malformed ${String(eventData.type)} event`);
+    return;
+  }
+  const event = parsed.data;
+  if (event.type === 'ingestGaps') {
+    // The companion sends this only to the stream's owner; a late one for a
+    // cast that just ended must not raise a notice.
+    if (!getSessionByStreamId(event.streamId)) {
+      log.debug(`Ignoring ingest gaps for stream ${event.streamId}: not an active cast`);
+      return;
+    }
+    applyIngestGapsEvent(event, Date.now());
+    notifyPopup(ingestGapsBroadcast());
+  } else if (event.type === 'companionAudioChanged') {
+    const audio = {
+      headStartMs: event.headStartMs,
+      headStartFixed: event.headStartFixed,
+      speakerMonitor: event.speakerMonitor,
+      ...(event.driftCompensation !== undefined && {
+        driftCompensation: event.driftCompensation,
+      }),
+    };
+    log.info(
+      `Companion audio settings: head start ${audio.headStartMs} ms` +
+        `${audio.headStartFixed ? ' (fixed by env)' : ''}, ` +
+        `speaker monitor ${audio.speakerMonitor ? 'on' : 'off'}`,
+    );
+    setCompanionAudio(audio);
+    notifyPopup({ type: 'COMPANION_AUDIO_CHANGED', audio });
   }
 }
 

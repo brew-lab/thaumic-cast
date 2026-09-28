@@ -4,17 +4,17 @@
  * Keeps the companion's latest verdict on the buffer of each speaker this
  * extension is casting to. The companion measures how much audio a speaker
  * holds ahead of its playhead and sends a `speakerHealth` network event every
- * 30 s and on every state change; this module caches the latest reading per
- * speaker so a freshly opened popup can warn at once, and logs each reading
- * so the figures reach the extension's logs.
+ * 30 s and on every state change, with the notice (if any) it decided the user
+ * should see. This module caches the latest reading per speaker so a freshly
+ * opened popup can show the notice at once, and logs each reading so the
+ * figures reach the extension's logs. Nothing is judged here: the companion
+ * decides every notice.
  *
  * State is ephemeral (not persisted). Entries are dropped when the speaker
- * leaves every active cast and wholesale when the WebSocket drops, like the
- * link-quality readings beside them.
+ * leaves every active cast and wholesale when the WebSocket drops.
  */
 
 import { createLogger } from '@thaumic-cast/shared';
-import type { SpeakerHealthState } from '@thaumic-cast/protocol';
 import type {
   SpeakerHealthChangedMessage,
   SpeakerHealthEntry,
@@ -29,16 +29,6 @@ const log = createLogger('SpeakerHealthState');
 const entries = new Map<string, SpeakerHealthEntry>();
 
 /**
- * Whether a state warrants warning the user: the speaker's buffer is running
- * low or is on course to run dry.
- * @param state - The companion's verdict
- * @returns True for `low` and `draining`
- */
-export function isSpeakerHealthAlarm(state: SpeakerHealthState): boolean {
-  return state === 'low' || state === 'draining';
-}
-
-/**
  * Returns the current speaker-health snapshot keyed by speaker IP (read-only copy).
  * @returns Latest reading for every tracked speaker
  */
@@ -47,17 +37,13 @@ export function getSpeakerHealth(): Record<string, SpeakerHealthEntry> {
 }
 
 /**
- * Records a `speakerHealth` event as the latest reading for its speaker.
- * While consecutive readings stay `low` or `draining`, `alarmSince` keeps the
- * timestamp of the first of them, so a dismissed warning stays dismissed
- * through the repeats and returns only after the speaker has recovered and
- * run low again.
+ * Records a `speakerHealth` event as the latest reading for its speaker,
+ * carrying the companion's figures and notice through as sent. Logs a new
+ * notice (a new `noticeId`) as a warning and every other reading at debug.
  * @param event - The companion's speaker-health event
  */
 export function applySpeakerHealthEvent(event: SpeakerHealthEvent): void {
   const previous = entries.get(event.speakerIp);
-  const alarm = isSpeakerHealthAlarm(event.state);
-  const alarmSince = alarm ? (previous?.alarmSince ?? event.timestamp) : undefined;
   entries.set(event.speakerIp, {
     streamId: event.streamId,
     epochId: event.epochId,
@@ -68,20 +54,30 @@ export function applySpeakerHealthEvent(event: SpeakerHealthEvent): void {
     reserveP10Ms: event.reserveP10Ms,
     reserveAcked: event.reserveAcked,
     targetMs: event.targetMs,
+    headStartMs: event.headStartMs,
+    headStartConfiguredMs: event.headStartConfiguredMs,
+    floorMs: event.floorMs,
+    stallMs: event.stallMs,
     clockPpm: event.clockPpm,
     clockSePpm: event.clockSePpm,
-    timeToEmptyS: event.timeToEmptyS,
+    timeToFloorS: event.timeToFloorS,
+    notice: event.notice,
     updatedAt: event.timestamp,
-    alarmSince,
   });
 
+  const notice = event.notice;
   const line =
     `Speaker ${event.speakerIp} buffer ${event.state}: ` +
     `reserve ${event.reserveMs ?? '?'}±${event.reservePrecisionMs ?? '?'} ms ` +
     `(p10 ${event.reserveP10Ms ?? '?'} ms${event.reserveAcked ? ' acked' : ''}, ` +
-    `target ${event.targetMs ?? '?'} ms), clock ${event.clockPpm?.toFixed(1) ?? '?'} ppm, ` +
-    `empty in ${event.timeToEmptyS ?? '—'} s`;
-  if (alarm && previous?.state !== event.state) {
+    `floor ${event.floorMs ?? '?'} ms, stall ${event.stallMs ?? '?'} ms), ` +
+    `head start ${event.headStartMs ?? '?'}/${event.headStartConfiguredMs ?? '?'} ms, ` +
+    `clock ${event.clockPpm?.toFixed(1) ?? '?'} ppm, floor in ${event.timeToFloorS ?? '—'} s` +
+    (notice ? `, notice ${notice.kind} #${notice.noticeId}` : '');
+  const isNewNotice =
+    notice !== undefined &&
+    (previous?.notice?.noticeId !== notice.noticeId || previous.streamId !== event.streamId);
+  if (isNewNotice) {
     log.warn(line);
   } else {
     log.debug(line);

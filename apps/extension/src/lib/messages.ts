@@ -135,13 +135,6 @@ export {
   type NetworkEventMessage,
   NetworkHealthChangedMessageSchema,
   type NetworkHealthChangedMessage,
-  type SpeakerLinkQualityEvent,
-  SpeakerLinkQualityStateSchema,
-  type SpeakerLinkQualityState,
-  SpeakerLinkQualityChangedMessageSchema,
-  type SpeakerLinkQualityChangedMessage,
-  GetSpeakerLinkQualityMessageSchema,
-  type GetSpeakerLinkQualityMessage,
   type SpeakerHealthEvent,
   SpeakerHealthEntrySchema,
   type SpeakerHealthEntry,
@@ -149,6 +142,14 @@ export {
   type SpeakerHealthChangedMessage,
   GetSpeakerHealthMessageSchema,
   type GetSpeakerHealthMessage,
+  IngestGapsEntrySchema,
+  type IngestGapsEntry,
+  IngestGapsChangedMessageSchema,
+  type IngestGapsChangedMessage,
+  GetIngestGapsMessageSchema,
+  type GetIngestGapsMessage,
+  CompanionAudioChangedMessageSchema,
+  type CompanionAudioChangedMessage,
   CaptureHealthEventMessageSchema,
   type CaptureHealthEventMessage,
   CaptureHealthChangedMessageSchema,
@@ -232,8 +233,9 @@ import type {
   ConnectionAttemptFailedMessage,
   NetworkHealthChangedMessage,
   CaptureHealthChangedMessage,
-  SpeakerLinkQualityChangedMessage,
   SpeakerHealthChangedMessage,
+  IngestGapsChangedMessage,
+  CompanionAudioChangedMessage,
   LatencyUpdateMessage,
   LatencyStaleMessage,
   VideoSyncStateChangedMessage,
@@ -276,8 +278,8 @@ export type PopupToBackgroundType =
   | 'GET_SONOS_STATE'
   | 'GET_CONNECTION_STATUS'
   | 'GET_CAPTURE_HEALTH'
-  | 'GET_SPEAKER_LINK_QUALITY'
   | 'GET_SPEAKER_HEALTH'
+  | 'GET_INGEST_GAPS'
   | 'GET_CURRENT_TAB_STATE'
   | 'GET_ACTIVE_CASTS'
   | 'ENSURE_CONNECTION'
@@ -307,8 +309,9 @@ export type BackgroundToPopupType =
   | 'CONNECTION_ATTEMPT_FAILED'
   | 'NETWORK_HEALTH_CHANGED'
   | 'CAPTURE_HEALTH_CHANGED'
-  | 'SPEAKER_LINK_QUALITY_CHANGED'
   | 'SPEAKER_HEALTH_CHANGED'
+  | 'INGEST_GAPS_CHANGED'
+  | 'COMPANION_AUDIO_CHANGED'
   | 'LATENCY_UPDATE'
   | 'LATENCY_STALE';
 
@@ -373,8 +376,8 @@ export type PopupToBackgroundMessage =
   | GetSonosStateMessage
   | { type: 'GET_CONNECTION_STATUS' }
   | { type: 'GET_CAPTURE_HEALTH' }
-  | { type: 'GET_SPEAKER_LINK_QUALITY' }
   | { type: 'GET_SPEAKER_HEALTH' }
+  | { type: 'GET_INGEST_GAPS' }
   | { type: 'GET_CURRENT_TAB_STATE' }
   | GetActiveCastsMessage
   | EnsureConnectionMessage
@@ -407,8 +410,9 @@ export type BackgroundToPopupMessage =
   | ConnectionAttemptFailedMessage
   | NetworkHealthChangedMessage
   | CaptureHealthChangedMessage
-  | SpeakerLinkQualityChangedMessage
   | SpeakerHealthChangedMessage
+  | IngestGapsChangedMessage
+  | CompanionAudioChangedMessage
   | LatencyUpdateMessage
   | LatencyStaleMessage
   | VideoSyncStateChangedMessage;
