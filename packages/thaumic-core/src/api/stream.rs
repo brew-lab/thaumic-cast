@@ -30,10 +30,11 @@ use crate::api::AppState;
 use crate::error::{ThaumicError, ThaumicResult};
 use crate::protocol_constants::{APP_NAME, ICY_METAINT, WAV_STREAM_SIZE_MAX};
 use crate::services::latency_monitor::speaker_monitor_enabled;
+use crate::stream::manager::TimestampedFrame;
 use crate::stream::{
-    create_wav_header, create_wav_stream_with_cadence, lagged_error, AudioCodec, CadenceConfig,
-    ConnectionTap, EpochHook, IcyMetadataInjector, LoggingStreamGuard, StreamState,
-    MAX_UNLISTED_STREAM_READERS,
+    create_wav_header, create_wav_stream_with_cadence, lagged_error, pcm_connect_burst_ms,
+    AudioCodec, CadenceConfig, ConnectionTap, EpochHook, IcyMetadataInjector, LoggingStreamGuard,
+    StreamState, MAX_UNLISTED_STREAM_READERS,
 };
 
 /// A single item of an audio body stream.
@@ -167,9 +168,13 @@ pub(super) async fn stream_audio(
     // peer is one of the devices the stream is actually for. Derived per
     // request; see `decide_stream_access`.
     let allowed_ips = state.stream_coordinator.allowed_reader_ips(&id);
-    let (strict, speaker_monitor) = {
+    let (strict, speaker_monitor, connect_burst_ms) = {
         let config = state.config.read();
-        (config.strict_stream_access, config.speaker_monitor)
+        (
+            config.strict_stream_access,
+            config.speaker_monitor,
+            config.pcm_connect_burst_ms,
+        )
     };
     let access = decide_stream_access(
         remote_ip,
@@ -277,6 +282,11 @@ pub(super) async fn stream_audio(
     //
     // SKIP on resume: Sonos closes the connection within milliseconds if we
     // delay. The ring buffer already has frames from before the pause.
+    //
+    // Not lengthened for the connect burst: the ring has been filling since
+    // the stream's first frame, which on a first connection is usually more
+    // than the jitter buffer by the time the speaker fetches, and whatever it
+    // holds beyond the jitter buffer is burst (see `CadenceConfig::new`).
     let prefill_delay_ms = stream_state.jitter_buffer_ms;
     if stream_state.codec == AudioCodec::Pcm && prefill_delay_ms > 0 && !is_resume {
         log::debug!(
@@ -377,22 +387,21 @@ pub(super) async fn stream_audio(
         // handoff gap; `CadenceConfig::new` trims them so the initial queue
         // does not exceed the intended buffer depth, and anchors the epoch to
         // the first frame it keeps.
-        let frame_duration_ms = stream_state.frame_duration_ms;
-        let silence_frame = stream_state.audio_format.silence_frame(frame_duration_ms);
-
-        Box::pin(create_wav_stream_with_cadence(
+        //
+        // The oldest frames beyond the jitter buffer, up to the configured
+        // connect burst, are sent at once so the speaker starts with that much
+        // audio in hand (see `CadenceConfig::burst_frames`). A resume gets it
+        // too: that is when a speaker's reserve starts again from nothing.
+        pcm_cadence_stream(
+            &stream_state,
+            pcm_connect_burst_ms(connect_burst_ms),
+            prefill_frames,
             rx,
             Arc::clone(&guard),
-            CadenceConfig::new(
-                silence_frame,
-                stream_state.jitter_buffer_ms,
-                frame_duration_ms,
-                stream_state.audio_format,
-                prefill_frames,
-            ),
-            Some(Arc::downgrade(&stream_state)),
             epoch_hook,
-        ))
+            remote_ip,
+            is_resume,
+        )
     } else {
         // Compressed codecs: no silence injection, chain prefill before live.
         // Every prefill frame is served, so the oldest one is the first.
@@ -463,31 +472,151 @@ pub(super) async fn stream_audio(
     };
 
     // Wrap stream with logging guard to track delivery timing and errors.
-    // The guard logs summary stats on drop when the stream ends.
-    // What the response body owns: the stats guard it records into, the
-    // connection's monitoring tap (the monitor holds it weakly, so dropping
-    // the body ends its monitoring), and — for an unlisted reader — its
-    // budget slot, freed when the body is dropped, the moment this reader is
-    // really gone.
-    let body_owned = (Arc::clone(&guard), tap, reader_slot);
-    let final_stream: AudioStream =
-        Box::pin(inner_stream.map(move |res: Result<Bytes, std::io::Error>| {
-            let (guard_for_frames, _tap, _reader_slot) = &body_owned;
-            match &res {
-                Ok(bytes) => {
-                    guard_for_frames.record_frame();
-                    guard_for_frames
-                        .bytes_sent
-                        .fetch_add(bytes.len() as u64, Ordering::Relaxed);
-                }
-                Err(e) => guard_for_frames.record_error(&e.to_string()),
-            }
-            res
-        }));
+    // The guard logs summary stats on drop when the stream ends. The body
+    // also owns the connection's tap and, for an unlisted reader, its budget
+    // slot (see `with_delivery_record`).
+    let final_stream: AudioStream = Box::pin(with_delivery_record(
+        inner_stream,
+        guard,
+        (tap, reader_slot),
+    ));
 
     builder
         .body(Body::from_stream(final_stream))
         .map_err(|e| ThaumicError::Internal(e.to_string()))
+}
+
+/// Builds a PCM connection's cadence body from its `subscribe()` snapshot,
+/// with a connect burst of `burst_ms` (already resolved, see
+/// [`pcm_connect_burst_ms`]), and logs how the prefill was split.
+#[allow(clippy::too_many_arguments)]
+fn pcm_cadence_stream(
+    stream_state: &Arc<StreamState>,
+    burst_ms: u64,
+    prefill_frames: Vec<TimestampedFrame>,
+    rx: tokio::sync::broadcast::Receiver<Bytes>,
+    guard: Arc<LoggingStreamGuard>,
+    epoch_hook: Option<EpochHook>,
+    remote_ip: IpAddr,
+    is_resume: bool,
+) -> AudioStream {
+    let frame_duration_ms = stream_state.frame_duration_ms;
+    let available_frames = prefill_frames.len();
+    let config = CadenceConfig::new(
+        stream_state.audio_format.silence_frame(frame_duration_ms),
+        stream_state.jitter_buffer_ms,
+        burst_ms,
+        frame_duration_ms,
+        stream_state.audio_format,
+        prefill_frames,
+    );
+    log_connect_burst(
+        &stream_state.id,
+        remote_ip,
+        is_resume,
+        burst_ms,
+        available_frames,
+        &config,
+    );
+    Box::pin(create_wav_stream_with_cadence(
+        rx,
+        guard,
+        config,
+        Some(Arc::downgrade(stream_state)),
+        epoch_hook,
+    ))
+}
+
+/// Logs how much of a PCM connection's prefill is sent as its connect burst
+/// and how much stays queued as the jitter buffer, and says so when the ring
+/// held less than was asked for.
+fn log_connect_burst(
+    stream_id: &str,
+    remote_ip: IpAddr,
+    is_resume: bool,
+    requested_ms: u64,
+    available_frames: usize,
+    config: &CadenceConfig,
+) {
+    let frame_ms = u64::from(config.frame_duration_ms);
+    let burst_ms = config.burst_ms();
+    let queued_ms = config.prefill_frames.len() as u64 * frame_ms;
+    let target_ms = config.buffer_depth as u64 * frame_ms;
+    let kind = if is_resume {
+        "resume"
+    } else {
+        "new connection"
+    };
+    if requested_ms == 0 {
+        log::info!(
+            "[Stream] Connect burst off: client={}, stream={}, {}, queued={}ms of {}ms jitter buffer",
+            remote_ip,
+            stream_id,
+            kind,
+            queued_ms,
+            target_ms
+        );
+    } else if burst_ms < requested_ms {
+        // Info, not warn: a first connection moments after the stream starts
+        // is routinely short, and the next connection gets the full burst.
+        log::info!(
+            "[Stream] Connect burst short: client={}, stream={}, {}, burst={}ms of {}ms requested, \
+             queued={}ms of {}ms jitter buffer; the stream only held {}ms of audio, and the \
+             jitter buffer is kept first",
+            remote_ip,
+            stream_id,
+            kind,
+            burst_ms,
+            requested_ms,
+            queued_ms,
+            target_ms,
+            available_frames as u64 * frame_ms
+        );
+    } else {
+        log::info!(
+            "[Stream] Connect burst: client={}, stream={}, {}, burst={}ms, queued={}ms of {}ms \
+             jitter buffer",
+            remote_ip,
+            stream_id,
+            kind,
+            burst_ms,
+            queued_ms,
+            target_ms
+        );
+    }
+}
+
+/// Counts every item the body yields into `guard`: frames and bytes
+/// delivered, which the speaker monitor reads as the delivered side of the
+/// speaker's reserve (so a connect burst counts in full), and the first
+/// error.
+///
+/// `owned` is whatever else the response body must own for its lifetime: the
+/// connection's monitoring tap (the monitor holds it weakly, so dropping the
+/// body ends its monitoring) and, for an unlisted reader, its budget slot,
+/// freed when the body is dropped, the moment this reader is really gone.
+fn with_delivery_record<S, O>(
+    stream: S,
+    guard: Arc<LoggingStreamGuard>,
+    owned: O,
+) -> impl Stream<Item = FrameResult> + Send
+where
+    S: Stream<Item = FrameResult> + Send,
+    O: Send,
+{
+    stream.map(move |res: FrameResult| {
+        let _owned = &owned;
+        match &res {
+            Ok(bytes) => {
+                guard.record_frame();
+                guard
+                    .bytes_sent
+                    .fetch_add(bytes.len() as u64, Ordering::Relaxed);
+            }
+            Err(e) => guard.record_error(&e.to_string()),
+        }
+        res
+    })
 }
 
 /// Starts a new playback epoch on the first real (non-empty) frame, then forgets
@@ -901,5 +1030,153 @@ mod tests {
             body.next().await.is_none(),
             "the body must end when the stream's broadcast sender is dropped"
         );
+    }
+
+    /// Every item a PCM body yields before time moves on: the WAV header,
+    /// the connect burst and the metronome's immediate first tick.
+    async fn ready_now(body: &mut AudioStream) -> Vec<Bytes> {
+        std::future::poll_fn(|cx| {
+            let mut items = Vec::new();
+            while let std::task::Poll::Ready(Some(item)) = body.as_mut().poll_next(cx) {
+                items.push(item.expect("ok"));
+            }
+            std::task::Poll::Ready(items)
+        })
+        .await
+    }
+
+    /// One PCM connection assembled as `stream_audio` assembles it (subscribe,
+    /// cadence body with the burst, WAV header, delivery record), with a
+    /// monitored tap. Returns the body and the tap.
+    fn pcm_connection(
+        state: &Arc<StreamState>,
+        remote: IpAddr,
+        burst_ms: u64,
+    ) -> (AudioStream, Arc<ConnectionTap>) {
+        use crate::stream::MonitorRegistrar;
+        let is_resume = state.timing.current_epoch_for(remote).is_some();
+        let (prefill, rx) = state.subscribe();
+        let guard = Arc::new(LoggingStreamGuard::new(state.id.clone(), remote));
+        let tap = Arc::new(ConnectionTap::new(
+            state.id.clone(),
+            remote,
+            Instant::now(),
+            AudioCodec::Pcm,
+            &state.audio_format,
+            Arc::clone(&guard),
+            true,
+        ));
+        let (registrar, _registrations) = MonitorRegistrar::channel();
+        let hook = EpochHook::new(Arc::downgrade(state), Instant::now(), remote)
+            .with_monitor(Arc::clone(&tap), registrar);
+        let cadence = pcm_cadence_stream(
+            state,
+            burst_ms,
+            prefill,
+            rx,
+            Arc::clone(&guard),
+            Some(hook),
+            remote,
+            is_resume,
+        );
+        let format = state.audio_format;
+        let header = create_wav_header(format.sample_rate, format.channels, format.bits_per_sample);
+        let body =
+            futures::StreamExt::chain(futures::stream::once(async move { Ok(header) }), cadence);
+        let body: AudioStream = Box::pin(with_delivery_record(body, guard, Arc::clone(&tap)));
+        (body, tap)
+    }
+
+    /// Pushes frames `from..to`, each a 10 ms PCM frame filled with its
+    /// index, and returns their capture times.
+    fn push_tagged(state: &StreamState, from: u8, to: u8) -> Vec<Instant> {
+        (from..to)
+            .map(|i| {
+                state.push_frame(Bytes::from(vec![i; state.audio_format.frame_bytes(10)]));
+                Instant::now()
+            })
+            .collect()
+    }
+
+    /// A speaker's first connection and its reconnect each get the full
+    /// connect burst ahead of real-time pacing, each epoch is anchored to that
+    /// connection's first burst frame, and the delivered-audio count the
+    /// speaker monitor reads its reserve from includes the burst.
+    #[tokio::test(start_paused = true)]
+    async fn pcm_connection_and_its_reconnect_each_get_the_burst() {
+        let state = Arc::new(StreamState::new(
+            "pcm-stream".to_string(),
+            AudioCodec::Pcm,
+            AudioFormat::default(),
+            crate::protocol_constants::pcm_ring_frames(10),
+            64,
+            200,
+            10,
+        ));
+        let _keepalive = state.tx.subscribe();
+        let remote = ip("192.168.1.50");
+        push_tagged(&state, 0, 100);
+
+        // First connection: 100 frames in the ring, 50 burst (30..80), 20
+        // queued (80..100), the first of which goes out on the first tick.
+        let (mut body, tap) = pcm_connection(&state, remote, 500);
+        let items = ready_now(&mut body).await;
+        assert_eq!(items.len(), 1 + 50 + 1, "header, burst and first tick");
+        assert_eq!(items[0].len(), 44, "the WAV header comes first");
+        let tags: Vec<u8> = items[1..].iter().map(|f| f[0]).collect();
+        assert_eq!(
+            tags,
+            (30..81).collect::<Vec<u8>>(),
+            "in order, no gap or repeat"
+        );
+        assert_eq!(
+            tap.delivered_ms(),
+            Some(510),
+            "the burst counts as delivered"
+        );
+        let first = state.timing.current_epoch_for(remote).expect("epoch");
+        assert_eq!(tap.epoch().map(|e| e.id), Some(first.id));
+        drop(body);
+        drop(tap);
+
+        // The speaker reconnects (a resume: it already has an epoch) after 20
+        // more frames. It gets the burst again, from the newest frames.
+        let times = push_tagged(&state, 100, 120);
+        assert!(state.timing.current_epoch_for(remote).is_some());
+        let (prefill_first, _rx) = state.subscribe();
+        let first_burst_at = prefill_first[prefill_first.len() - 70].captured_at;
+        assert!(first_burst_at < times[0]);
+
+        let (mut body, tap) = pcm_connection(&state, remote, 500);
+        let items = ready_now(&mut body).await;
+        assert_eq!(items.len(), 1 + 50 + 1);
+        let tags: Vec<u8> = items[1..].iter().map(|f| f[0]).collect();
+        assert_eq!(tags, (50..101).collect::<Vec<u8>>());
+        assert_eq!(tap.delivered_ms(), Some(510));
+        let second = state.timing.current_epoch_for(remote).expect("epoch");
+        assert!(second.id > first.id, "the reconnect starts its own epoch");
+        assert_eq!(second.audio_epoch, first_burst_at);
+    }
+
+    /// Without the burst a connection starts exactly as before: one frame
+    /// ahead of real time.
+    #[tokio::test(start_paused = true)]
+    async fn pcm_connection_without_burst_starts_one_frame_ahead() {
+        let state = Arc::new(StreamState::new(
+            "pcm-stream".to_string(),
+            AudioCodec::Pcm,
+            AudioFormat::default(),
+            crate::protocol_constants::pcm_ring_frames(10),
+            64,
+            200,
+            10,
+        ));
+        let _keepalive = state.tx.subscribe();
+        push_tagged(&state, 0, 100);
+        let (mut body, tap) = pcm_connection(&state, ip("192.168.1.50"), 0);
+        let items = ready_now(&mut body).await;
+        assert_eq!(items.len(), 2, "header and first tick");
+        assert_eq!(items[1][0], 80);
+        assert_eq!(tap.delivered_ms(), Some(10));
     }
 }

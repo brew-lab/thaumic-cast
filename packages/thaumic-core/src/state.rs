@@ -26,8 +26,11 @@ pub struct StreamingConfig {
 
     /// Maximum frames to buffer for late-joining clients.
     /// Frames are 10 ms by default (the extension's default and every capture
-    /// packet), so 50 frames ≈ 500 ms of audio. The PCM cadence serves only the
-    /// newest `jitter_buffer_ms` of it to a new connection.
+    /// packet), so 50 frames ≈ 500 ms of audio. A compressed connection is
+    /// served all of it. A PCM stream's ring is sized up from this to hold the
+    /// largest connect burst plus the largest jitter buffer (see
+    /// [`crate::protocol_constants::pcm_ring_frames`]), and a new PCM
+    /// connection is served only its burst plus its `jitter_buffer_ms` of it.
     pub buffer_frames: usize,
 
     /// Capacity of the broadcast channel for audio frames.
@@ -155,11 +158,39 @@ pub struct Config {
     /// [`crate::services::latency_monitor::speaker_monitor_enabled`]).
     #[serde(default = "default_speaker_monitor")]
     pub speaker_monitor: bool,
+
+    // Streaming
+    /// Milliseconds of already-captured audio a PCM connection is sent as fast
+    /// as TCP takes it when a speaker's GET starts, before real-time pacing
+    /// takes over. `0` turns the burst off.
+    ///
+    /// Defaults to [`DEFAULT_PCM_CONNECT_BURST_MS`]. Paced from its first
+    /// frame, a speaker never holds more than a few tens of milliseconds of
+    /// audio ahead of its playhead, and a Wi-Fi retransmission burst outlasts
+    /// that; the burst leaves it this much in hand, on every connection
+    /// including a resume. End-to-end latency grows by the same amount, which
+    /// video sync accounts for. The server's own jitter buffer is kept on top,
+    /// so a stream whose ring does not yet hold both (a connection moments
+    /// after the stream starts) bursts only what it has beyond the jitter
+    /// buffer. Values above [`MAX_PCM_CONNECT_BURST_MS`] are clamped. Compressed
+    /// codecs are unaffected. Read once per connection;
+    /// `THAUMIC_PCM_CONNECT_BURST_MS` overrides it (see
+    /// [`crate::stream::pcm_connect_burst_ms`]).
+    ///
+    /// [`DEFAULT_PCM_CONNECT_BURST_MS`]: crate::protocol_constants::DEFAULT_PCM_CONNECT_BURST_MS
+    /// [`MAX_PCM_CONNECT_BURST_MS`]: crate::protocol_constants::MAX_PCM_CONNECT_BURST_MS
+    #[serde(default = "default_pcm_connect_burst_ms")]
+    pub pcm_connect_burst_ms: u64,
 }
 
 /// Speaker monitoring is on unless switched off.
 fn default_speaker_monitor() -> bool {
     true
+}
+
+/// The PCM connect burst is on unless switched off.
+fn default_pcm_connect_burst_ms() -> u64 {
+    crate::protocol_constants::DEFAULT_PCM_CONNECT_BURST_MS
 }
 
 impl Default for Config {
@@ -170,6 +201,7 @@ impl Default for Config {
             streaming: StreamingConfig::default(),
             strict_stream_access: false,
             speaker_monitor: default_speaker_monitor(),
+            pcm_connect_burst_ms: default_pcm_connect_burst_ms(),
         }
     }
 }
@@ -457,6 +489,22 @@ mod tests {
         )
         .expect("parses");
         assert!(!config.speaker_monitor);
+    }
+
+    /// The connect burst ships on, including for a config written before the
+    /// field existed, and a config can switch it off.
+    #[test]
+    fn pcm_connect_burst_defaults_on_when_absent() {
+        assert_eq!(Config::default().pcm_connect_burst_ms, 500);
+        let config: Config =
+            serde_json::from_str(r#"{"preferred_port":0,"topology_refresh_interval":30}"#)
+                .expect("parses");
+        assert_eq!(config.pcm_connect_burst_ms, 500);
+        let config: Config = serde_json::from_str(
+            r#"{"preferred_port":0,"topology_refresh_interval":30,"pcm_connect_burst_ms":0}"#,
+        )
+        .expect("parses");
+        assert_eq!(config.pcm_connect_burst_ms, 0);
     }
 
     #[test]
