@@ -69,6 +69,17 @@ struct Args {
         value_parser = parse_speaker_monitor
     )]
     speaker_monitor: Option<bool>,
+
+    /// Milliseconds of audio sent to a speaker at once when it starts fetching
+    /// a PCM stream, ahead of real-time pacing, 0-2000 (overrides config file).
+    /// 500 by default; 0 turns it off.
+    #[arg(
+        long,
+        value_name = "MS",
+        env = thaumic_core::stream::PCM_CONNECT_BURST_ENV,
+        value_parser = thaumic_core::stream::parse_pcm_connect_burst_ms
+    )]
+    pcm_connect_burst_ms: Option<u64>,
 }
 
 /// Parses `--speaker-monitor` / `THAUMIC_SPEAKER_MONITOR`.
@@ -115,6 +126,9 @@ async fn main() -> Result<()> {
     if let Some(monitor) = args.speaker_monitor {
         config.speaker_monitor = monitor;
     }
+    if let Some(burst) = args.pcm_connect_burst_ms {
+        config.pcm_connect_burst_ms = burst;
+    }
 
     // CLI/env overrides can introduce invalid values (e.g. --port 0), so
     // validate the merged configuration before anything is started.
@@ -127,6 +141,14 @@ async fn main() -> Result<()> {
             "off (video sync only)"
         }
     );
+    if config.pcm_connect_burst_ms > 0 {
+        log::info!(
+            "PCM connect burst: {}ms (each speaker starts that far ahead of real time)",
+            config.pcm_connect_burst_ms
+        );
+    } else {
+        log::info!("PCM connect burst: off");
+    }
 
     // Resolve advertise IP: use explicit config, or fall back to auto-detection
     let network = if let Some(ip) = config.advertise_ip {
@@ -332,6 +354,21 @@ mod tests {
         with_env("THAUMIC_SPEAKER_MONITOR", "on", || {
             let args = Args::try_parse_from(["thaumic-server"]).expect("valid env value");
             assert_eq!(args.speaker_monitor, Some(true));
+        });
+
+        with_env("THAUMIC_PCM_CONNECT_BURST_MS", "lots", || {
+            assert!(Args::try_parse_from(["thaumic-server"]).is_err());
+        });
+        with_env("THAUMIC_PCM_CONNECT_BURST_MS", "2001", || {
+            assert!(Args::try_parse_from(["thaumic-server"]).is_err());
+        });
+        with_env("THAUMIC_PCM_CONNECT_BURST_MS", "0", || {
+            let args = Args::try_parse_from(["thaumic-server"]).expect("valid env value");
+            assert_eq!(args.pcm_connect_burst_ms, Some(0));
+        });
+        with_env("THAUMIC_PCM_CONNECT_BURST_MS", "1000", || {
+            let args = Args::try_parse_from(["thaumic-server"]).expect("valid env value");
+            assert_eq!(args.pcm_connect_burst_ms, Some(1000));
         });
 
         with_env(
