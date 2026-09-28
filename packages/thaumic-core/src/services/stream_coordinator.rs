@@ -7,6 +7,7 @@
 //! - Track expected stream URLs for source change detection
 //! - Broadcast stream lifecycle events to WebSocket clients
 
+use std::net::Ipv4Addr;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, OnceLock};
 
@@ -301,6 +302,15 @@ pub struct CaptureStreamSession {
     pub handle: CaptureHandle,
     /// Notified when the first audio frame arrives (for STREAM_READY signal).
     pub ready_notify: Arc<Notify>,
+}
+
+/// Moves a URL we serve from `old_base` onto `new_base`, leaving any other URL
+/// (a hosted artwork image, say) untouched.
+fn rebase_local_url(url: &str, old_base: &str, new_base: &str) -> String {
+    match url.strip_prefix(old_base) {
+        Some(path) if path.is_empty() || path.starts_with('/') => format!("{new_base}{path}"),
+        _ => url.to_string(),
+    }
 }
 
 /// Parameters for starting playback on a single speaker.
@@ -787,6 +797,24 @@ impl StreamCoordinator {
             .as_ref()
             .map(|s| s.audio_format)
             .unwrap_or_default();
+
+        // Never hand a speaker a URL on an address it cannot reach when one it
+        // can is available. The artwork URL was built by the caller from the
+        // same address, so it follows the stream URL across the switch.
+        let old_base = self.network.url_builder().base_url();
+        let target_ips: Vec<Ipv4Addr> = speaker_ips
+            .iter()
+            .filter_map(|ip| ip.parse().ok())
+            .collect();
+        let artwork_url = match self.network.prefer_address_reachable_from(&target_ips) {
+            Some(_) => rebase_local_url(
+                artwork_url,
+                &old_base,
+                &self.network.url_builder().base_url(),
+            ),
+            None => artwork_url.to_string(),
+        };
+        let artwork_url = artwork_url.as_str();
 
         let url_builder = self.network.url_builder();
         let stream_url = url_builder.stream_url(stream_id);
@@ -1353,6 +1381,36 @@ mod tests {
 
         assert_eq!(result, "x-rincon:RINCON_542A1BD0029202400");
         assert!(!result.ends_with(".wav")); // Should NOT have .wav extension
+    }
+
+    #[test]
+    fn a_local_artwork_url_follows_the_advertised_address() {
+        assert_eq!(
+            rebase_local_url(
+                "http://100.96.0.12:8080/artwork.jpg",
+                "http://100.96.0.12:8080",
+                "http://192.168.2.50:8080"
+            ),
+            "http://192.168.2.50:8080/artwork.jpg"
+        );
+        // A hosted image is not ours to move, and a longer port that merely
+        // starts with the old one is a different server.
+        assert_eq!(
+            rebase_local_url(
+                "https://example.com/art.jpg",
+                "http://100.96.0.12:8080",
+                "http://192.168.2.50:8080"
+            ),
+            "https://example.com/art.jpg"
+        );
+        assert_eq!(
+            rebase_local_url(
+                "http://100.96.0.12:80801/artwork.jpg",
+                "http://100.96.0.12:8080",
+                "http://192.168.2.50:8080"
+            ),
+            "http://100.96.0.12:80801/artwork.jpg"
+        );
     }
 
     #[test]

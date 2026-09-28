@@ -33,7 +33,7 @@ use crate::services::latency_monitor::MemberChangeSink;
 use crate::services::speaker_monitor::topology_diff::summarize;
 use crate::services::speaker_monitor::{MemberChange, TopologyDiff};
 use crate::sonos::discovery::{probe_speaker_by_ip, Speaker};
-use crate::sonos::gena::GenaSubscriptionManager;
+use crate::sonos::gena::{GenaError, GenaResult, GenaSubscriptionManager};
 use crate::sonos::subscription_arbiter::SubscriptionArbiter;
 use crate::sonos::types::{HouseholdTopology, ZoneGroup};
 use crate::sonos::SonosService;
@@ -293,6 +293,10 @@ pub struct TopologyMonitor {
     topology_diff: Mutex<TopologyDiff>,
     /// Where household changes concerning a fetching speaker are sent.
     member_changes: Option<MemberChangeSink>,
+    /// The address mDNS was last registered at, to tell when it must move.
+    advertised_ip: Mutex<String>,
+    /// The last detection failure reported, so it is logged on change only.
+    detection_failure: Mutex<Option<String>>,
 }
 
 impl TopologyMonitor {
@@ -314,6 +318,7 @@ impl TopologyMonitor {
     ) -> Self {
         let topology_refresh_interval_secs =
             clamp_refresh_interval_secs(config.topology_refresh_interval_secs);
+        let advertised_ip = Mutex::new(config.network.get_local_ip());
         Self {
             sonos,
             gena_manager,
@@ -333,6 +338,8 @@ impl TopologyMonitor {
             remembered_speaker_ips: RwLock::new(Vec::new()),
             topology_diff: Mutex::new(TopologyDiff::new()),
             member_changes: config.member_changes,
+            advertised_ip,
+            detection_failure: Mutex::new(None),
         }
     }
 
@@ -431,12 +438,10 @@ impl TopologyMonitor {
                 }
             }
 
-            // Read initial IP from shared state
-            let mut current_ip = self.network.get_local_ip();
-            let mut callback_url = self.network.gena_callback_url();
-            // The last detection failure reported, so it is logged on change only.
-            let mut detection_failure: Option<String> = None;
-            log::info!("[TopologyMonitor] GENA callback URL: {}", callback_url);
+            log::info!(
+                "[TopologyMonitor] GENA callback URL: {}",
+                self.network.gena_callback_url()
+            );
 
             let mut interval =
                 tokio::time::interval(Duration::from_secs(self.topology_refresh_interval_secs));
@@ -464,52 +469,7 @@ impl TopologyMonitor {
                 // reconciliation below drops exactly those at the moment it can
                 // replace them — rather than leaving us with none at all if this
                 // refresh turns out to fail.
-                match self.network.detect_ip(&self.known_speaker_ips()) {
-                    Ok(new_ip_str) => {
-                        if detection_failure.take().is_some() {
-                            log::info!(
-                                "[TopologyMonitor] Local IP detection recovered: {}",
-                                new_ip_str
-                            );
-                        }
-                        if new_ip_str != current_ip {
-                            log::warn!(
-                                "[TopologyMonitor] Local IP changed: {} -> {}. Re-subscribing...",
-                                current_ip,
-                                new_ip_str
-                            );
-                            // Update shared state so other services see the change
-                            self.network.set_local_ip(new_ip_str.clone());
-                            current_ip = new_ip_str;
-                            callback_url = self.network.gena_callback_url();
-                            self.readvertise_mdns();
-                        }
-                    }
-                    // Explicit mode (headless server) configures the advertise
-                    // address, so there is nothing to detect and nothing to report.
-                    Err(NetworkError::NoDetector) => {}
-                    Err(e) => {
-                        // A swallowed detection failure is invisible in the field and
-                        // looks exactly like "the VPN broke it", so say so out loud -
-                        // once per failure, not once per tick: a host with no
-                        // acceptable interface stays in this state for its whole
-                        // life, and a warn every refresh interval buries the log.
-                        let message = e.to_string();
-                        if detection_failure.as_ref() != Some(&message) {
-                            log::warn!(
-                                "[TopologyMonitor] Local IP detection failed, still advertising {}: {}",
-                                current_ip,
-                                message
-                            );
-                            detection_failure = Some(message);
-                        } else {
-                            log::debug!(
-                                "[TopologyMonitor] Local IP detection still failing, advertising {}",
-                                current_ip
-                            );
-                        }
-                    }
-                }
+                self.sync_local_ip(&self.known_speaker_ips());
 
                 // Manual refreshes (sync session join/unjoin, GENA topology events, a
                 // lost subscription) use the quick path that skips SSDP discovery (~5s)
@@ -519,7 +479,7 @@ impl TopologyMonitor {
                 // keep pushing the full refresh out of reach.
                 // Falls back to full refresh if quick path fails (no known speakers, etc).
                 if is_manual_refresh {
-                    match self.quick_refresh_zone_groups(&callback_url).await {
+                    match self.quick_refresh_zone_groups().await {
                         Ok(()) => {
                             log::info!("[TopologyMonitor] Quick refresh succeeded");
                             continue;
@@ -533,7 +493,7 @@ impl TopologyMonitor {
                     }
                 }
 
-                if let Err(e) = self.refresh_topology(&callback_url).await {
+                if let Err(e) = self.refresh_topology().await {
                     match &e {
                         ThaumicError::SpeakerNotFound(_) => {
                             log::debug!("[TopologyMonitor] No speakers discovered");
@@ -558,7 +518,7 @@ impl TopologyMonitor {
     /// its own: a coordinator that only exists after this refresh (a slave promoted
     /// when its coordinator left) gets its AVTransport subscription here, instead of
     /// waiting up to a full refresh interval for one.
-    async fn quick_refresh_zone_groups(&self, callback_url: &str) -> ThaumicResult<()> {
+    async fn quick_refresh_zone_groups(&self) -> ThaumicResult<()> {
         // Pick a coordinator IP from current state
         let coordinator_ip = {
             let groups = self.sonos_state.groups.read();
@@ -614,11 +574,12 @@ impl TopologyMonitor {
 
         // Without SSDP the topology itself is the list of live speakers.
         let current_speaker_ips = speaker_ips_from_groups(&groups);
+        let callback_url = self.network.gena_callback_url();
         self.reconcile_topology(
             &groups,
             &current_speaker_ips,
             Some(ip.as_str()),
-            callback_url,
+            &callback_url,
         )
         .await;
 
@@ -629,7 +590,16 @@ impl TopologyMonitor {
     ///
     /// Discovers speakers, fetches zone groups, updates state, and syncs subscriptions.
     /// Tracks network health based on discovery and communication success.
-    async fn refresh_topology(&self, callback_url: &str) -> ThaumicResult<()> {
+    ///
+    /// Address detection is re-run as soon as discovery has found anything,
+    /// against the speakers it found, and before the groups are published or a
+    /// single subscription is made. At launch nothing is known yet, so the
+    /// address picked then is a guess from the interface list alone - and on a
+    /// machine whose default route runs through a VPN adapter the filter does
+    /// not recognise, it is the tunnel's. Waiting for the next pass of the loop
+    /// to correct it would build the first round of subscriptions, and any
+    /// stream cast in the meantime, on an address no speaker can reach.
+    async fn refresh_topology(&self) -> ThaumicResult<()> {
         log::info!(
             "[TopologyMonitor] Refreshing topology (speakers_discovered={})",
             self.speakers_discovered.load(Ordering::Relaxed)
@@ -710,6 +680,12 @@ impl TopologyMonitor {
 
         let current_speaker_ips: HashSet<String> = speakers.iter().map(|s| s.ip.clone()).collect();
 
+        // Now that we know where the speakers are, advertise the address they
+        // can reach, before anything below builds a URL from it.
+        let discovered: Vec<Ipv4Addr> = speakers.iter().filter_map(|s| s.ip.parse().ok()).collect();
+        self.sync_local_ip(&discovered);
+        let callback_url = self.network.gena_callback_url();
+
         // Phase 2: Fetch zone groups (HTTP/SOAP call to speaker)
         // Prefer playable speakers - network infrastructure devices (Boost, Bridge)
         // don't participate in zone groups and return empty topology data
@@ -773,7 +749,7 @@ impl TopologyMonitor {
             &groups,
             &current_speaker_ips,
             speakers.first().map(|s| s.ip.as_str()),
-            callback_url,
+            &callback_url,
         )
         .await;
 
@@ -958,12 +934,144 @@ impl TopologyMonitor {
         ips
     }
 
+    /// Re-runs address detection against `speaker_ips` and adopts the result.
+    ///
+    /// Called at the top of every pass of the monitoring loop with the speakers
+    /// we already know about, and again by [`Self::refresh_topology`] with the
+    /// speakers it has just discovered. A failure keeps the address already
+    /// advertised, and is logged once per distinct failure rather than once per
+    /// tick: a host with no acceptable interface stays in that state for its
+    /// whole life, and a warning every refresh interval buries the log.
+    ///
+    /// Whatever moved the address - this detection, or the playback path pulling
+    /// it onto a speaker's subnet - the mDNS record is moved with it. Existing
+    /// subscriptions are left for [`Self::reconcile_topology`], which drops the
+    /// ones built on the old callback at the moment it can replace them.
+    ///
+    /// # Returns
+    /// Whether the advertised address changed.
+    fn sync_local_ip(&self, speaker_ips: &[Ipv4Addr]) -> bool {
+        let previous = self.network.get_local_ip();
+        match self.network.detect_ip(speaker_ips) {
+            Ok(detected) => {
+                if self.detection_failure.lock().take().is_some() {
+                    log::info!(
+                        "[TopologyMonitor] Local IP detection recovered: {}",
+                        detected
+                    );
+                }
+                if detected != previous {
+                    log::warn!(
+                        "[TopologyMonitor] Local IP changed: {} -> {}. Re-subscribing...",
+                        previous,
+                        detected
+                    );
+                    self.network.set_local_ip(detected);
+                }
+            }
+            // Explicit mode (headless server) configures the advertise
+            // address, so there is nothing to detect and nothing to report.
+            Err(NetworkError::NoDetector) => {}
+            Err(e) => {
+                let message = e.to_string();
+                let mut failure = self.detection_failure.lock();
+                if failure.as_ref() != Some(&message) {
+                    log::warn!(
+                        "[TopologyMonitor] Local IP detection failed, still advertising {}: {}",
+                        previous,
+                        message
+                    );
+                    *failure = Some(message);
+                } else {
+                    log::debug!(
+                        "[TopologyMonitor] Local IP detection still failing, advertising {}",
+                        previous
+                    );
+                }
+            }
+        }
+
+        let current = self.network.get_local_ip();
+        let mut advertised = self.advertised_ip.lock();
+        if *advertised == current {
+            return false;
+        }
+        *advertised = current;
+        drop(advertised);
+        self.readvertise_mdns();
+        true
+    }
+
+    /// The callback URL to retry a rejected subscription with, if there is a
+    /// better one than `rejected_callback`.
+    ///
+    /// A speaker answering SUBSCRIBE with 412 Precondition Failed has refused
+    /// the request as sent, and the only part of it that changes between
+    /// attempts is the callback. So detection is re-run against the speakers we
+    /// know about plus the one that refused, and a callback on the address that
+    /// produces is returned when it differs. `None` means detection agrees with
+    /// the rejected callback, and retrying it now would only be refused again.
+    fn corrected_callback_after_rejection(
+        &self,
+        speaker_ip: &str,
+        rejected_callback: &str,
+    ) -> Option<String> {
+        let mut speakers = self.known_speaker_ips();
+        if let Ok(ip) = speaker_ip.parse::<Ipv4Addr>() {
+            speakers.push(ip);
+        }
+        self.sync_local_ip(&speakers);
+        let corrected = self.network.gena_callback_url();
+        (corrected != rejected_callback).then_some(corrected)
+    }
+
+    /// Subscribes `ip` to `service`, retrying once with a corrected callback URL
+    /// when the speaker rejects the first one with 412.
+    ///
+    /// When the address does change, a refresh is also requested so every
+    /// other subscription made in this pass with the old callback is rebuilt
+    /// promptly, rather than a full refresh interval later.
+    async fn subscribe_with_recovery(
+        &self,
+        ip: &str,
+        service: SonosService,
+        callback_url: &str,
+    ) -> GenaResult<()> {
+        let result = self
+            .gena_manager
+            .subscribe(ip.to_string(), service, callback_url.to_string())
+            .await;
+        let Err(GenaError::SubscriptionFailed(412)) = result else {
+            return result;
+        };
+        let Some(corrected) = self.corrected_callback_after_rejection(ip, callback_url) else {
+            return result;
+        };
+
+        log::warn!(
+            "[TopologyMonitor] {} rejected {:?} callback {} (412); retrying with {}",
+            ip,
+            service,
+            callback_url,
+            corrected
+        );
+        self.refresh_notify.notify_one();
+        self.gena_manager
+            .subscribe(ip.to_string(), service, corrected)
+            .await
+    }
+
     /// Re-registers the mDNS advertisement at the current address and port.
     ///
     /// The advertisement is registered once when the server binds; without this
     /// a process launched while a VPN was up would advertise the tunnel address
     /// for its whole lifetime. Best-effort and non-fatal, like all mDNS here.
+    /// Before the server has a port there is nothing to advertise: the bind
+    /// registers the record itself, at whatever address is current by then.
     fn readvertise_mdns(&self) {
+        if self.network.get_port() == 0 {
+            return;
+        }
         mdns_advertise::advertise(
             &self.mdns_advertiser,
             &self.network.get_local_ip(),
@@ -1138,12 +1246,7 @@ impl TopologyMonitor {
         };
 
         match self
-            .gena_manager
-            .subscribe(
-                ip.to_string(),
-                SonosService::ZoneGroupTopology,
-                callback_url.to_string(),
-            )
+            .subscribe_with_recovery(ip, SonosService::ZoneGroupTopology, callback_url)
             .await
         {
             Ok(()) => {
@@ -1172,8 +1275,7 @@ impl TopologyMonitor {
         for ip in ips {
             if !self.gena_manager.is_subscribed(ip, service) {
                 match self
-                    .gena_manager
-                    .subscribe(ip.to_string(), service, callback_url.to_string())
+                    .subscribe_with_recovery(ip, service, callback_url)
                     .await
                 {
                     Ok(()) => {
@@ -1277,14 +1379,37 @@ mod tests {
 
     /// Topology client that serves a canned zone group list, and a
     /// household that tests can swap between refreshes.
+    ///
+    /// It can also discover a fixed set of speakers, and record the address
+    /// being advertised at the moment it is asked for zone groups: that call
+    /// comes after discovery and before any subscription is made, so it shows
+    /// which callback the first subscriptions are built on.
     struct StubTopologyClient {
         groups: Vec<ZoneGroup>,
         household: Arc<Mutex<HouseholdTopology>>,
+        speakers: Vec<Speaker>,
+        network: Option<NetworkContext>,
+        ip_at_soap: Arc<Mutex<Option<String>>>,
+    }
+
+    impl StubTopologyClient {
+        fn new(groups: Vec<ZoneGroup>, household: Arc<Mutex<HouseholdTopology>>) -> Self {
+            Self {
+                groups,
+                household,
+                speakers: Vec::new(),
+                network: None,
+                ip_at_soap: Arc::new(Mutex::new(None)),
+            }
+        }
     }
 
     #[async_trait]
     impl crate::sonos::traits::SonosTopology for StubTopologyClient {
         async fn get_zone_group_state(&self, _ip: &str) -> SoapResult<ZoneGroupSnapshot> {
+            if let Some(network) = &self.network {
+                *self.ip_at_soap.lock().unwrap() = Some(network.get_local_ip());
+            }
             Ok(ZoneGroupSnapshot {
                 groups: self.groups.clone(),
                 household: self.household.lock().unwrap().clone(),
@@ -1295,7 +1420,7 @@ mod tests {
     #[async_trait]
     impl crate::sonos::traits::SonosDiscovery for StubTopologyClient {
         async fn discover_speakers(&self) -> DiscoveryResult<Vec<Speaker>> {
-            Ok(Vec::new())
+            Ok(self.speakers.clone())
         }
     }
 
@@ -1363,6 +1488,21 @@ mod tests {
         sonos_state: Arc<SonosState>,
         emitter: Arc<dyn EventEmitter>,
     ) -> TopologyMonitor {
+        create_monitor_with_client(
+            StubTopologyClient::new(groups, household),
+            NetworkContext::for_test(),
+            sonos_state,
+            emitter,
+        )
+    }
+
+    /// Creates a monitor around `client`, advertising through `network`.
+    fn create_monitor_with_client(
+        client: StubTopologyClient,
+        network: NetworkContext,
+        sonos_state: Arc<SonosState>,
+        emitter: Arc<dyn EventEmitter>,
+    ) -> TopologyMonitor {
         let http_client = Client::builder()
             .timeout(Duration::from_millis(1))
             .build()
@@ -1371,13 +1511,13 @@ mod tests {
         let gena_manager = Arc::new(gena_manager);
         let arbiter = Arc::new(SubscriptionArbiter::new(Arc::clone(&gena_manager)));
         TopologyMonitor::new(
-            Arc::new(StubTopologyClient { groups, household }),
+            Arc::new(client),
             gena_manager,
             sonos_state,
             emitter,
             TopologyMonitorConfig {
                 topology_refresh_interval_secs: 30,
-                network: NetworkContext::for_test(),
+                network,
                 refresh_notify: Arc::new(Notify::new()),
                 http_client,
                 spawner: TokioSpawner::new(tokio::runtime::Handle::current()),
@@ -1461,10 +1601,7 @@ mod tests {
             Arc::clone(&emitter) as Arc<dyn EventEmitter>,
         );
 
-        monitor
-            .quick_refresh_zone_groups("http://127.0.0.1:0/gena")
-            .await
-            .unwrap();
+        monitor.quick_refresh_zone_groups().await.unwrap();
 
         assert_eq!(sonos_state.groups.read().len(), 2);
         assert_eq!(emitter.topology.lock().unwrap().len(), 1);
@@ -1502,10 +1639,7 @@ mod tests {
             Arc::new(CollectingEmitter::new()) as Arc<dyn EventEmitter>,
         );
 
-        monitor
-            .quick_refresh_zone_groups("http://127.0.0.1:0/gena")
-            .await
-            .unwrap();
+        monitor.quick_refresh_zone_groups().await.unwrap();
 
         // Both still-present coordinators keep their state; the departed one is dropped.
         assert!(sonos_state.transport_states.contains_key("192.168.1.10"));
@@ -1528,10 +1662,7 @@ mod tests {
             Arc::new(CollectingEmitter::new()) as Arc<dyn EventEmitter>,
         );
 
-        assert!(monitor
-            .quick_refresh_zone_groups("http://127.0.0.1:0/gena")
-            .await
-            .is_err());
+        assert!(monitor.quick_refresh_zone_groups().await.is_err());
 
         // Nothing was wiped - the full refresh path decides what to do.
         assert_eq!(sonos_state.groups.read().len(), 1);
@@ -1547,10 +1678,7 @@ mod tests {
             Arc::new(CollectingEmitter::new()) as Arc<dyn EventEmitter>,
         );
 
-        let err = monitor
-            .quick_refresh_zone_groups("http://127.0.0.1:0/gena")
-            .await
-            .unwrap_err();
+        let err = monitor.quick_refresh_zone_groups().await.unwrap_err();
 
         assert!(matches!(err, ThaumicError::SpeakerNotFound(_)));
     }
@@ -1652,20 +1780,14 @@ mod tests {
             Arc::clone(&emitter) as Arc<dyn EventEmitter>,
         );
 
-        monitor
-            .quick_refresh_zone_groups("http://127.0.0.1:0/gena")
-            .await
-            .unwrap();
+        monitor.quick_refresh_zone_groups().await.unwrap();
         assert!(
             member_changes(&emitter).is_empty(),
             "a healthy first snapshot has nothing to report"
         );
 
         *household.lock().unwrap() = parse_household_topology(HT_HOUSEHOLD_LR_MISSING);
-        monitor
-            .quick_refresh_zone_groups("http://127.0.0.1:0/gena")
-            .await
-            .unwrap();
+        monitor.quick_refresh_zone_groups().await.unwrap();
 
         let changes = member_changes(&emitter);
         assert_eq!(changes.len(), 1);
@@ -1705,6 +1827,136 @@ mod tests {
                 "HT {HT_PRIMARY_UUID}(192.168.2.204) Living Room: satellite {HT_LR_UUID} (LR) \
                  missing"
             )
+        );
+    }
+
+    /// A Windows laptop with Cloudflare WARP connected at launch: the tunnel
+    /// adapter's name is not one the virtual-interface filter knows, its CGNAT
+    /// address owns the default route, and the speakers are on the Wi-Fi LAN.
+    fn warp_network() -> NetworkContext {
+        let detector = Arc::new(crate::context::FakeInterfaceDetector::new(
+            &[("CloudflareWARP", "100.96.0.12"), ("Wi-Fi", "192.168.2.50")],
+            Some("100.96.0.12"),
+        ));
+        NetworkContext::auto_detect(0, detector).unwrap()
+    }
+
+    fn speaker(ip: &str, uuid: &str) -> Speaker {
+        Speaker {
+            ip: ip.to_string(),
+            name: format!("Room {ip}"),
+            uuid: uuid.to_string(),
+            model_name: Some("One".to_string()),
+        }
+    }
+
+    #[tokio::test]
+    async fn the_first_discovery_moves_the_address_onto_the_speakers_lan_before_subscribing() {
+        let network = warp_network();
+        // Nothing is known at launch, so the default route decides.
+        assert_eq!(network.get_local_ip(), "100.96.0.12");
+
+        let mut client = StubTopologyClient::new(
+            vec![group("192.168.2.204", "RINCON_A")],
+            Arc::new(Mutex::new(HouseholdTopology::default())),
+        );
+        client.speakers = vec![speaker("192.168.2.204", "RINCON_A")];
+        client.network = Some(network.clone());
+        let ip_at_soap = Arc::clone(&client.ip_at_soap);
+        let monitor = create_monitor_with_client(
+            client,
+            network.clone(),
+            Arc::new(SonosState::default()),
+            Arc::new(CollectingEmitter::new()) as Arc<dyn EventEmitter>,
+        );
+
+        monitor.refresh_topology().await.unwrap();
+
+        // Corrected in the same refresh, before the groups were published or
+        // the first subscription was attempted - not a refresh interval later.
+        assert_eq!(ip_at_soap.lock().unwrap().as_deref(), Some("192.168.2.50"));
+        assert_eq!(network.get_local_ip(), "192.168.2.50");
+        assert_eq!(
+            network.gena_callback_url(),
+            "http://192.168.2.50:0/sonos/gena"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_refresh_that_discovers_nothing_keeps_the_launch_address() {
+        let network = warp_network();
+        let monitor = create_monitor_with_client(
+            StubTopologyClient::new(
+                Vec::new(),
+                Arc::new(Mutex::new(HouseholdTopology::default())),
+            ),
+            network.clone(),
+            Arc::new(SonosState::default()),
+            Arc::new(CollectingEmitter::new()) as Arc<dyn EventEmitter>,
+        );
+
+        assert!(monitor.refresh_topology().await.is_err());
+        assert_eq!(network.get_local_ip(), "100.96.0.12");
+    }
+
+    #[tokio::test]
+    async fn a_rejected_subscription_is_retried_on_the_speakers_subnet() {
+        // A speaker refused SUBSCRIBE with 412 while we still advertised the
+        // tunnel: the retry must carry a callback on the LAN address.
+        let network = warp_network();
+        let monitor = create_monitor_with_client(
+            StubTopologyClient::new(
+                Vec::new(),
+                Arc::new(Mutex::new(HouseholdTopology::default())),
+            ),
+            network.clone(),
+            Arc::new(SonosState::default()),
+            Arc::new(CollectingEmitter::new()) as Arc<dyn EventEmitter>,
+        );
+        let rejected = network.gena_callback_url();
+
+        assert_eq!(
+            monitor
+                .corrected_callback_after_rejection("192.168.2.204", &rejected)
+                .as_deref(),
+            Some("http://192.168.2.50:0/sonos/gena")
+        );
+
+        // Detection now agrees with the callback, so a second rejection has
+        // nothing better to retry with.
+        assert_eq!(
+            monitor.corrected_callback_after_rejection(
+                "192.168.2.204",
+                "http://192.168.2.50:0/sonos/gena"
+            ),
+            None
+        );
+    }
+
+    #[tokio::test]
+    async fn the_headless_server_keeps_its_configured_address() {
+        // Explicit mode: a refresh that finds speakers elsewhere changes nothing.
+        let network = NetworkContext::explicit(0, "100.96.0.12".parse().unwrap());
+        let mut client = StubTopologyClient::new(
+            vec![group("192.168.2.204", "RINCON_A")],
+            Arc::new(Mutex::new(HouseholdTopology::default())),
+        );
+        client.speakers = vec![speaker("192.168.2.204", "RINCON_A")];
+        let monitor = create_monitor_with_client(
+            client,
+            network.clone(),
+            Arc::new(SonosState::default()),
+            Arc::new(CollectingEmitter::new()) as Arc<dyn EventEmitter>,
+        );
+
+        monitor.refresh_topology().await.unwrap();
+        assert_eq!(network.get_local_ip(), "100.96.0.12");
+        assert_eq!(
+            monitor.corrected_callback_after_rejection(
+                "192.168.2.204",
+                "http://100.96.0.12:0/sonos/gena"
+            ),
+            None
         );
     }
 }
