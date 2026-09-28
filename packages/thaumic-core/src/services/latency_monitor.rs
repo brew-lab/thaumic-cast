@@ -71,8 +71,8 @@ use crate::events::{EventEmitter, LatencyEvent, NetworkEvent};
 use crate::protocol_constants::POSITION_POLL_TIMEOUT_MS;
 use crate::runtime::TokioSpawner;
 use crate::services::speaker_monitor::{
-    GenaTransport, MonitorState, PollObservation, ReserveTracker, SegmentBreak, TransportGate,
-    TransportSource, TransportStateView, TransportVerdict, WindowStats,
+    GenaTransport, MemberChange, MonitorState, PollObservation, ReserveTracker, SegmentBreak,
+    TransportGate, TransportSource, TransportStateView, TransportVerdict, WindowStats,
 };
 use crate::sonos::traits::SonosPlayback;
 use crate::sonos::types::{PositionInfo, TransportState};
@@ -179,6 +179,10 @@ const DIAGNOSTIC_LOG_INTERVAL_SECS: u64 = 30;
 /// How often each watched speaker's reserve and clock are estimated and
 /// written to the log.
 const SPEAKER_REPORT_INTERVAL: Duration = Duration::from_secs(30);
+
+/// Most household changes listed on one report line. A flapping satellite
+/// between two reports is still counted in the connection's summary.
+const MAX_TOPOLOGY_NOTES: usize = 8;
 
 /// Projected time to an empty reserve above which a draining warning is
 /// re-armed (it fires below
@@ -448,6 +452,12 @@ struct LatencySession {
     /// The state last sent to clients in a speaker health event, so a
     /// change between reports is sent at once.
     health_reported: Option<MonitorState>,
+    /// Household changes concerning this speaker since the last report, for
+    /// its next `[SpeakerMonitor]` line (at most [`MAX_TOPOLOGY_NOTES`]).
+    topology_since_report: Vec<MemberChange>,
+    /// Household changes concerning this speaker during the current
+    /// connection, for its summary.
+    connection_topology_changes: u32,
 }
 
 impl LatencySession {
@@ -494,6 +504,8 @@ impl LatencySession {
             previous_connection_ended: None,
             reconnect_gap: None,
             health_reported: None,
+            topology_since_report: Vec::new(),
+            connection_topology_changes: 0,
         }
     }
 
@@ -544,7 +556,19 @@ impl LatencySession {
         self.tracker.start_connection(self.pcm);
         self.last_report = Some(now);
         self.polls_since_report = 0;
+        self.connection_topology_changes = 0;
         self.summary_owed = self.wants_polls();
+    }
+
+    /// Adds a household change concerning this speaker (a satellite of its
+    /// home theatre dropping, a device in its group rebooting) to its
+    /// timeline: the next report line lists it, and the connection's summary
+    /// counts it.
+    fn note_topology(&mut self, change: MemberChange) {
+        self.connection_topology_changes = self.connection_topology_changes.saturating_add(1);
+        if self.topology_since_report.len() < MAX_TOPOLOGY_NOTES {
+            self.topology_since_report.push(change);
+        }
     }
 
     /// Logs the end-of-connection summary, if the current connection is
@@ -571,7 +595,7 @@ impl LatencySession {
         log::info!(
             "[SpeakerMonitor] {} stream={} connection ended after {}: reserve start={}ms end={}ms \
              min={}ms{} clock={} polls={} breaks[{}] underruns_suspected={} incons={}/{} \
-             reconnect_gap={}",
+             topology_changes={} reconnect_gap={}",
             speaker_ip,
             stream_id,
             format_duration(now.saturating_duration_since(connected_at)),
@@ -585,6 +609,7 @@ impl LatencySession {
             self.tracker.connection_breaks(SegmentBreak::OffsetStep),
             inconsistent,
             estimates,
+            self.connection_topology_changes,
             self.reconnect_gap
                 .map_or_else(|| "none".to_string(), format_duration),
         );
@@ -664,9 +689,10 @@ impl LatencySession {
         let tte = self.tracker.time_to_empty_s();
         let (estimates, inconsistent) = self.tracker.connection_estimate_counts();
         let per_min = f64::from(polls) * 60.0 / window.as_secs_f64().max(1.0);
+        let topology = format_topology(&std::mem::take(&mut self.topology_since_report));
         log::info!(
             "[SpeakerMonitor] {} stream={} state={} reserve={} clock={} tte={} polls={:.0}/min \
-             incons={}/{} j={:.0}ms {} transport={}",
+             incons={}/{} j={:.0}ms {} transport={}{}",
             speaker_ip,
             stream_id,
             state,
@@ -682,6 +708,7 @@ impl LatencySession {
             self.tracker.jitter_ms(),
             format_pipeline(&pipeline),
             self.last_transport_source,
+            topology,
         );
 
         let is_low = self.tracker.is_low();
@@ -1238,6 +1265,16 @@ fn format_pipeline(samples: &[crate::stream::cadence::PipelineSample]) -> String
     )
 }
 
+/// Household changes noted since the last report, for the end of its line:
+/// nothing when there were none.
+fn format_topology(changes: &[MemberChange]) -> String {
+    if changes.is_empty() {
+        return String::new();
+    }
+    let listed: Vec<String> = changes.iter().map(ToString::to_string).collect();
+    format!(" topology[{}]", listed.join("; "))
+}
+
 /// Command sent to the latency monitor background task.
 enum MonitorCommand {
     /// Send a speaker's measurements to clients for video sync.
@@ -1252,6 +1289,44 @@ enum MonitorCommand {
     },
     /// Stop all monitoring for a stream.
     StopStream { stream_id: String },
+    /// Note a household change on every session of a speaker.
+    MemberChanged {
+        speaker_ip: IpAddr,
+        change: MemberChange,
+    },
+}
+
+/// Where the topology monitor reports household changes that concern a
+/// speaker fetching one of our streams.
+///
+/// Cheap to clone. Nothing it does blocks: a change the monitor cannot take
+/// at once is dropped, since it is also in the topology monitor's own log.
+#[derive(Clone)]
+pub struct MemberChangeSink {
+    tx: mpsc::Sender<MonitorCommand>,
+    stream_registry: Arc<StreamRegistry>,
+}
+
+impl MemberChangeSink {
+    /// The streams the speaker at `ip` is fetching right now.
+    pub fn streams_fetched_by(&self, ip: IpAddr) -> Vec<String> {
+        self.stream_registry.streams_fetched_by(ip)
+    }
+
+    /// Adds `change` to the timeline of every session watching the speaker
+    /// at `speaker_ip`, whatever stream it is fetching.
+    pub fn record(&self, speaker_ip: IpAddr, change: MemberChange) {
+        let command = MonitorCommand::MemberChanged {
+            speaker_ip: speaker_ip.to_canonical(),
+            change,
+        };
+        if let Err(mpsc::error::TrySendError::Full(_)) = self.tx.try_send(command) {
+            log::debug!(
+                "[LatencyMonitor] Busy; topology change for {} not added to its timeline",
+                speaker_ip
+            );
+        }
+    }
 }
 
 /// Latency monitoring service.
@@ -1343,6 +1418,15 @@ impl LatencyMonitor {
     /// [`crate::stream::EpochHook::with_monitor`]).
     pub fn registrar(&self) -> MonitorRegistrar {
         self.registrar.clone()
+    }
+
+    /// Where the topology monitor reports household changes, for the
+    /// timelines of the speakers they concern.
+    pub fn member_change_sink(&self) -> MemberChangeSink {
+        MemberChangeSink {
+            tx: self.command_tx.clone(),
+            stream_registry: Arc::clone(&self.stream_registry),
+        }
     }
 
     /// Sends a speaker's latency measurements to clients, for video sync.
@@ -1487,6 +1571,13 @@ impl LatencyMonitor {
                                 "[LatencyMonitor] Stopped all monitoring for stream={}",
                                 stream_id
                             );
+                        }
+                        MonitorCommand::MemberChanged { speaker_ip, change } => {
+                            for ((_, ip), session) in sessions.iter_mut() {
+                                if *ip == speaker_ip {
+                                    session.note_topology(change.clone());
+                                }
+                            }
                         }
                     }
                 }
@@ -2790,6 +2881,31 @@ mod tests {
             " (acked min30s=431 p10=470)"
         );
         assert_eq!(format_acked(None, None), "");
+    }
+
+    #[test]
+    fn topology_changes_go_on_the_next_report_line_and_into_the_summary_count() {
+        let rebooted = |to| MemberChange::DeviceRebooted {
+            uuid: "RINCON_SUB".to_string(),
+            from: 31,
+            to,
+        };
+        let mut session = LatencySession::new(false);
+        assert_eq!(format_topology(&session.topology_since_report), "");
+
+        session.note_topology(rebooted(32));
+        assert_eq!(
+            format_topology(&session.topology_since_report),
+            " topology[RINCON_SUB rebooted (BootSeq 31->32)]"
+        );
+
+        // A flapping device fills the line up to its cap; the summary still
+        // counts every change.
+        for to in 33..45 {
+            session.note_topology(rebooted(to));
+        }
+        assert_eq!(session.topology_since_report.len(), MAX_TOPOLOGY_NOTES);
+        assert_eq!(session.connection_topology_changes, 13);
     }
 
     #[test]

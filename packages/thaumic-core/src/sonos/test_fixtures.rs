@@ -1,4 +1,4 @@
-//! Shared test fixtures for GENA notification payloads.
+//! Shared test fixtures for GENA notification payloads and zone group state.
 //!
 //! These constants are used by multiple test modules to avoid duplication.
 
@@ -104,3 +104,117 @@ pub const ZONE_GROUP_TOPOLOGY_NOTIFY: &str = concat!(
     zone_group_state_escaped!(),
     r#"</ZoneGroupState></e:property><e:property><ThirdPartyMediaServersX></ThirdPartyMediaServersX></e:property><e:property><AvailableSoftwareUpdate>&lt;UpdateItem xmlns=&quot;urn:schemas-rinconnetworks-com:update-1-0/&quot; Type=&quot;Software&quot; Version=&quot;83.1-61240&quot; UpdateURL=&quot;http://update-firmware.sonos.com/firmware/Gold/83.1-61240-1-1/^83.1-61240&quot; DownloadSize=&quot;0&quot; ManifestURL=&quot;http://update-firmware.sonos.com/firmware/Gold/83.1-61240-1-1/update_manifest.xml&quot;/&gt;</AvailableSoftwareUpdate></e:property><e:property><AlarmRunSequence>RINCON_000E58AAAAAA01400:42:0</AlarmRunSequence></e:property><e:property><ZoneGroupName>Tom&apos;s Office</ZoneGroupName></e:property><e:property><ZoneGroupID>RINCON_000E58AAAAAA01400:12</ZoneGroupID></e:property><e:property><ZonePlayerUUIDsInGroup>RINCON_000E58AAAAAA01400</ZonePlayerUUIDsInGroup></e:property></e:propertyset>"#
 );
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Household topology: a home theatre with satellites
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// Unescaped `ZoneGroupState` documents (what `extract_xml_text` yields from a
+// `GetZoneGroupState` answer), in the shape Sonos S2 firmware sends for a
+// Playbar home theatre with a Sub and two surrounds: the primary's
+// `ZoneGroupMember` carries the `HTSatChanMapSet` and holds one `<Satellite>`
+// child per bonded satellite, the satellites are `Invisible`, the BOOST is a
+// zone bridge in a group of its own, and a Kitchen One stands alone. While a
+// satellite has dropped off, Sonos keeps it in the channel map but stops
+// listing its `<Satellite>` element.
+
+/// The Playbar home theatre's primary.
+pub const HT_PRIMARY_UUID: &str = "RINCON_5CAAFD11111101400";
+/// The Sub bonded to it.
+pub const HT_SUB_UUID: &str = "RINCON_5CAAFD22222201400";
+/// The left surround bonded to it.
+pub const HT_LR_UUID: &str = "RINCON_5CAAFD33333301400";
+/// The right surround bonded to it.
+pub const HT_RR_UUID: &str = "RINCON_5CAAFD44444401400";
+/// The standalone Kitchen speaker.
+pub const KITCHEN_UUID: &str = "RINCON_48A6B8CCCCCC01400";
+
+macro_rules! ht_group_open {
+    () => {
+        r#"<ZoneGroupState><ZoneGroups><ZoneGroup Coordinator="RINCON_5CAAFD11111101400" ID="RINCON_5CAAFD11111101400:2710"><ZoneGroupMember UUID="RINCON_5CAAFD11111101400" Location="http://192.168.2.204:1400/xml/device_description.xml" ZoneName="Living Room" Icon="x-rincon-roomicon:living" Configuration="1" SoftwareVersion="83.1-61240" SWGen="2" MinCompatibleVersion="82.0-00000" LegacyCompatibleVersion="58.0-00000" HTSatChanMapSet="RINCON_5CAAFD11111101400:LF,RF;RINCON_5CAAFD22222201400:SW;RINCON_5CAAFD33333301400:LR;RINCON_5CAAFD44444401400:RR" BootSeq="118" TVConfigurationError="0" HdmiCecAvailable="0" WirelessMode="0" WirelessLeafOnly="0" ChannelFreq="2437" BehindWifiExtender="0" WifiEnabled="1" EthLink="0" Orientation="0" RoomCalibrationState="4" SecureRegState="3" VoiceConfigState="0" MicEnabled="0" AirPlayEnabled="1" IdleState="0" MoreInfo="" SSLPort="1443" HHSSLPort="1843">"#
+    };
+}
+
+macro_rules! ht_sub_satellite {
+    () => {
+        r#"<Satellite UUID="RINCON_5CAAFD22222201400" Location="http://192.168.2.205:1400/xml/device_description.xml" ZoneName="Living Room" Icon="x-rincon-roomicon:living" Configuration="1" Invisible="1" SoftwareVersion="83.1-61240" SWGen="2" MinCompatibleVersion="82.0-00000" LegacyCompatibleVersion="58.0-00000" HTSatChanMapSet="RINCON_5CAAFD11111101400:LF,RF;RINCON_5CAAFD22222201400:SW;RINCON_5CAAFD33333301400:LR;RINCON_5CAAFD44444401400:RR" BootSeq="31" TVConfigurationError="0" HdmiCecAvailable="0" WirelessMode="0" WirelessLeafOnly="0" ChannelFreq="5745" BehindWifiExtender="0" WifiEnabled="1" EthLink="0" Orientation="0" RoomCalibrationState="4" SecureRegState="3" VoiceConfigState="0" MicEnabled="0" AirPlayEnabled="0" IdleState="0" MoreInfo="" SSLPort="1443" HHSSLPort="1843"/>"#
+    };
+}
+
+macro_rules! ht_lr_satellite {
+    () => {
+        r#"<Satellite UUID="RINCON_5CAAFD33333301400" Location="http://192.168.2.206:1400/xml/device_description.xml" ZoneName="Living Room" Icon="x-rincon-roomicon:living" Configuration="1" Invisible="1" SoftwareVersion="83.1-61240" SWGen="2" MinCompatibleVersion="82.0-00000" LegacyCompatibleVersion="58.0-00000" HTSatChanMapSet="RINCON_5CAAFD11111101400:LF,RF;RINCON_5CAAFD22222201400:SW;RINCON_5CAAFD33333301400:LR;RINCON_5CAAFD44444401400:RR" BootSeq="29" TVConfigurationError="0" HdmiCecAvailable="0" WirelessMode="0" WirelessLeafOnly="0" ChannelFreq="5745" BehindWifiExtender="0" WifiEnabled="1" EthLink="0" Orientation="0" RoomCalibrationState="4" SecureRegState="3" VoiceConfigState="0" MicEnabled="0" AirPlayEnabled="0" IdleState="0" MoreInfo="" SSLPort="1443" HHSSLPort="1843"/>"#
+    };
+}
+
+macro_rules! ht_rr_satellite {
+    () => {
+        r#"<Satellite UUID="RINCON_5CAAFD44444401400" Location="http://192.168.2.207:1400/xml/device_description.xml" ZoneName="Living Room" Icon="x-rincon-roomicon:living" Configuration="1" Invisible="1" SoftwareVersion="83.1-61240" SWGen="2" MinCompatibleVersion="82.0-00000" LegacyCompatibleVersion="58.0-00000" HTSatChanMapSet="RINCON_5CAAFD11111101400:LF,RF;RINCON_5CAAFD22222201400:SW;RINCON_5CAAFD33333301400:LR;RINCON_5CAAFD44444401400:RR" BootSeq="33" TVConfigurationError="0" HdmiCecAvailable="0" WirelessMode="0" WirelessLeafOnly="0" ChannelFreq="5745" BehindWifiExtender="0" WifiEnabled="1" EthLink="0" Orientation="0" RoomCalibrationState="4" SecureRegState="3" VoiceConfigState="0" MicEnabled="0" AirPlayEnabled="0" IdleState="0" MoreInfo="" SSLPort="1443" HHSSLPort="1843"/>"#
+    };
+}
+
+macro_rules! ht_group_close_and_boost {
+    () => {
+        r#"</ZoneGroupMember></ZoneGroup><ZoneGroup Coordinator="RINCON_000E58BBBBBB01400" ID="RINCON_000E58BBBBBB01400:88"><ZoneGroupMember UUID="RINCON_000E58BBBBBB01400" Location="http://192.168.2.200:1400/xml/device_description.xml" ZoneName="BOOST" Icon="" Configuration="1" Invisible="1" IsZoneBridge="1" SoftwareVersion="83.1-61240" SWGen="2" MinCompatibleVersion="82.0-00000" LegacyCompatibleVersion="58.0-00000" BootSeq="12" TVConfigurationError="0" HdmiCecAvailable="0" WirelessMode="0" WirelessLeafOnly="0" ChannelFreq="2437" BehindWifiExtender="0" WifiEnabled="1" EthLink="1" Orientation="0" RoomCalibrationState="5" SecureRegState="3" VoiceConfigState="0" MicEnabled="0" AirPlayEnabled="0" IdleState="1" MoreInfo="" SSLPort="1443" HHSSLPort="1843"/></ZoneGroup>"#
+    };
+}
+
+macro_rules! kitchen_group {
+    () => {
+        r#"<ZoneGroup Coordinator="RINCON_48A6B8CCCCCC01400" ID="RINCON_48A6B8CCCCCC01400:41"><ZoneGroupMember UUID="RINCON_48A6B8CCCCCC01400" Location="http://192.168.2.210:1400/xml/device_description.xml" ZoneName="Kitchen" Icon="x-rincon-roomicon:kitchen" Configuration="1" SoftwareVersion="83.1-61240" SWGen="2" MinCompatibleVersion="82.0-00000" LegacyCompatibleVersion="58.0-00000" BootSeq="57" TVConfigurationError="0" HdmiCecAvailable="0" WirelessMode="0" WirelessLeafOnly="0" ChannelFreq="2437" BehindWifiExtender="0" WifiEnabled="1" EthLink="0" Orientation="0" RoomCalibrationState="4" SecureRegState="3" VoiceConfigState="0" MicEnabled="0" AirPlayEnabled="1" IdleState="1" MoreInfo="" SSLPort="1443" HHSSLPort="1843"/></ZoneGroup>"#
+    };
+}
+
+/// The household with every satellite present and nothing vanished.
+pub const HT_HOUSEHOLD: &str = concat!(
+    ht_group_open!(),
+    ht_sub_satellite!(),
+    ht_lr_satellite!(),
+    ht_rr_satellite!(),
+    ht_group_close_and_boost!(),
+    kitchen_group!(),
+    r#"</ZoneGroups><VanishedDevices></VanishedDevices></ZoneGroupState>"#
+);
+
+/// [`HT_HOUSEHOLD`] while the left surround has dropped off: still in the
+/// primary's channel map, no longer listed as a `<Satellite>`.
+pub const HT_HOUSEHOLD_LR_MISSING: &str = concat!(
+    ht_group_open!(),
+    ht_sub_satellite!(),
+    ht_rr_satellite!(),
+    ht_group_close_and_boost!(),
+    kitchen_group!(),
+    r#"</ZoneGroups><VanishedDevices></VanishedDevices></ZoneGroupState>"#
+);
+
+/// [`HT_HOUSEHOLD`] after the Kitchen speaker was switched off: its group is
+/// gone and it is listed under `VanishedDevices`.
+pub const HT_HOUSEHOLD_KITCHEN_VANISHED: &str = concat!(
+    ht_group_open!(),
+    ht_sub_satellite!(),
+    ht_lr_satellite!(),
+    ht_rr_satellite!(),
+    ht_group_close_and_boost!(),
+    r#"</ZoneGroups><VanishedDevices><Device UUID="RINCON_48A6B8CCCCCC01400" ZoneName="Kitchen" Reason="powered off"/></VanishedDevices></ZoneGroupState>"#
+);
+
+/// Rewrites one attribute of the element whose `UUID` is `uuid`, for
+/// deriving a variant of a fixture (a BootSeq bump, a radio change) without
+/// copying the whole document.
+///
+/// Panics if the element or the attribute is not there, so a fixture edit
+/// that stops matching fails loudly instead of testing nothing.
+pub fn with_device_attr(xml: &str, uuid: &str, attr: &str, value: &str) -> String {
+    let start = xml
+        .find(&format!(r#"UUID="{uuid}""#))
+        .unwrap_or_else(|| panic!("no element with UUID {uuid}"));
+    let end = start + xml[start..].find('>').expect("element end");
+    let key = format!(r#" {attr}=""#);
+    let attr_start = start
+        + xml[start..end]
+            .find(&key)
+            .unwrap_or_else(|| panic!("{uuid} has no {attr}"))
+        + key.len();
+    let attr_end = attr_start + xml[attr_start..].find('"').expect("attribute end");
+    format!("{}{}{}", &xml[..attr_start], value, &xml[attr_end..])
+}

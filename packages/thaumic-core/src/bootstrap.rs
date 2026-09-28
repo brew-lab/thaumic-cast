@@ -271,6 +271,7 @@ pub fn bootstrap_services_with_network(
         refresh_notify,
         arbiter,
         Arc::clone(&mdns_advertiser),
+        Some(latency_monitor.member_change_sink()),
     ));
 
     // Coerce to the general SonosClient trait for storage

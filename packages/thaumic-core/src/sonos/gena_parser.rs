@@ -8,7 +8,7 @@ use crate::sonos::types::TransportState;
 use crate::sonos::utils::{
     extract_empty_val_attrs, extract_master_channel_attrs, extract_xml_text,
 };
-use crate::sonos::zone_groups::parse_zone_group_xml;
+use crate::sonos::zone_groups::{parse_household_topology, parse_zone_group_xml};
 use crate::utils::now_millis;
 
 /// Parses an AVTransport NOTIFY event body and builds events.
@@ -209,9 +209,31 @@ pub fn parse_zone_topology_events(body: &str) -> Vec<SonosEvent> {
         return vec![];
     }
 
-    log::info!("[GENA] Zone topology updated: {} group(s)", groups.len());
+    log::info!(
+        "[GENA] Zone topology updated: {}; a SOAP refresh follows to say what changed",
+        household_shape(&zone_state)
+    );
 
     vec![SonosEvent::ZoneGroupsUpdated { groups, timestamp }]
+}
+
+/// The shape of a `ZoneGroupState` document for the log: groups, devices,
+/// satellites listed and missing, and vanished devices.
+///
+/// Only a description of this one body: GENA bodies can be stale, so what
+/// changed is decided from the SOAP answer the topology monitor fetches next,
+/// never by comparing bodies.
+fn household_shape(zone_state: &str) -> String {
+    let household = parse_household_topology(zone_state);
+    let (satellites, missing) = household.satellite_counts();
+    format!(
+        "{} group(s), {} device(s), {} satellite(s) ({} missing), {} vanished",
+        household.groups.len(),
+        household.devices().count(),
+        satellites,
+        missing,
+        household.vanished.len()
+    )
 }
 
 /// Checks if the current URI matches the expected stream URL.
@@ -277,9 +299,10 @@ mod tests {
     // ─────────────────────────────────────────────────────────────────────────────
 
     use super::super::test_fixtures::{
-        AV_TRANSPORT_NOTIFY_WITH_METADATA, AV_TRANSPORT_STREAM_URI, RENDERING_CONTROL_NOTIFY_FULL,
-        RENDERING_CONTROL_NOTIFY_MUTED, RENDERING_CONTROL_NOTIFY_VOLUME_ONLY,
-        ZONE_GROUP_STATE_SOAP_RESPONSE, ZONE_GROUP_TOPOLOGY_NOTIFY,
+        AV_TRANSPORT_NOTIFY_WITH_METADATA, AV_TRANSPORT_STREAM_URI, HT_HOUSEHOLD_LR_MISSING,
+        RENDERING_CONTROL_NOTIFY_FULL, RENDERING_CONTROL_NOTIFY_MUTED,
+        RENDERING_CONTROL_NOTIFY_VOLUME_ONLY, ZONE_GROUP_STATE_SOAP_RESPONSE,
+        ZONE_GROUP_TOPOLOGY_NOTIFY,
     };
     use crate::sonos::types::ZoneGroup;
     use crate::sonos::utils::extract_xml_text;
@@ -652,5 +675,16 @@ mod tests {
             }
             _ => panic!("Expected ZoneGroupsUpdated event"),
         }
+    }
+
+    /// The GENA line describes the body's household, satellites included,
+    /// which the old group count hid: a home theatre with a surround missing
+    /// is still one group.
+    #[test]
+    fn household_shape_counts_satellites_and_missing_ones() {
+        assert_eq!(
+            household_shape(HT_HOUSEHOLD_LR_MISSING),
+            "3 group(s), 5 device(s), 2 satellite(s) (1 missing), 0 vanished"
+        );
     }
 }

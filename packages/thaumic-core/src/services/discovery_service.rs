@@ -19,6 +19,7 @@ use crate::sonos::SonosTopologyClient;
 use crate::state::SonosState;
 
 use super::gena_event_processor::GenaEventProcessor;
+use super::latency_monitor::MemberChangeSink;
 use super::stream_coordinator::StreamCoordinator;
 use super::topology_monitor::{TopologyMonitor, TopologyMonitorConfig};
 
@@ -49,6 +50,7 @@ impl DiscoveryService {
     /// * `gena_event_rx` - Receiver for GENA events
     /// * `arbiter` - Subscription arbiter for RenderingControl/GroupRenderingControl conflict resolution
     /// * `mdns_advertiser` - Shared mDNS advertisement slot, re-registered when the local address changes
+    /// * `member_changes` - Where household changes concerning a fetching speaker are sent
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         sonos: Arc<dyn SonosTopologyClient>,
@@ -64,6 +66,7 @@ impl DiscoveryService {
         refresh_notify: Arc<Notify>,
         arbiter: Arc<SubscriptionArbiter>,
         mdns_advertiser: MdnsAdvertiserHandle,
+        member_changes: Option<MemberChangeSink>,
     ) -> Self {
         let topology_monitor = Arc::new(TopologyMonitor::new(
             sonos,
@@ -77,6 +80,7 @@ impl DiscoveryService {
                 http_client,
                 spawner: spawner.clone(),
                 mdns_advertiser,
+                member_changes,
             },
             arbiter,
         ));

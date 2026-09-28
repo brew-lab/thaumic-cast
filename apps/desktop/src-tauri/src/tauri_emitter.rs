@@ -260,6 +260,9 @@ impl EventEmitter for TauriEventEmitter {
                     },
                 );
             }
+            // Household changes are for the log and the extension; the
+            // desktop frontend shows nothing for them.
+            TopologyEvent::MemberChanged { .. } => {}
         }
     }
 

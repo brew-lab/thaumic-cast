@@ -19,7 +19,7 @@ use crate::sonos::discovery::{DiscoveryConfig, DiscoveryCoordinator, Speaker};
 use crate::sonos::grouping;
 use crate::sonos::playback;
 use crate::sonos::traits::{SonosDiscovery, SonosPlayback, SonosTopology, SonosVolumeControl};
-use crate::sonos::types::{PositionInfo, TransportState, ZoneGroup};
+use crate::sonos::types::{PositionInfo, TransportState, ZoneGroupSnapshot};
 use crate::sonos::volume;
 use crate::sonos::zone_groups;
 use crate::stream::{AudioCodec, AudioFormat, StreamMetadata};
@@ -131,8 +131,8 @@ impl SonosPlayback for SonosClientImpl {
 
 #[async_trait]
 impl SonosTopology for SonosClientImpl {
-    async fn get_zone_groups(&self, ip: &str) -> SoapResult<Vec<ZoneGroup>> {
-        zone_groups::get_zone_groups(&self.client, ip).await
+    async fn get_zone_group_state(&self, ip: &str) -> SoapResult<ZoneGroupSnapshot> {
+        zone_groups::get_zone_group_state(&self.client, ip).await
     }
 }
 

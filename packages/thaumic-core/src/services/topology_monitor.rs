@@ -6,16 +6,20 @@
 //! - GENA subscription lifecycle management
 //! - Manual refresh coordination
 //! - Network health monitoring
+//! - Household change reporting: each SOAP answer is compared with the one
+//!   before it, and satellites dropping off, reboots, radio changes, vanished
+//!   devices and membership changes are logged, sent to clients and added to
+//!   the timeline of any speaker fetching one of our streams they concern
 
 use std::collections::HashSet;
-use std::net::Ipv4Addr;
+use std::net::{IpAddr, Ipv4Addr};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use futures::future::join_all;
-use parking_lot::RwLock;
+use parking_lot::{Mutex, RwLock};
 use reqwest::Client;
 use tokio::sync::Notify;
 use tokio_util::sync::CancellationToken;
@@ -25,10 +29,13 @@ use crate::error::{ThaumicError, ThaumicResult};
 use crate::events::{EventEmitter, NetworkEvent, NetworkHealth, TopologyEvent};
 use crate::mdns_advertise::{self, MdnsAdvertiserHandle};
 use crate::runtime::TokioSpawner;
+use crate::services::latency_monitor::MemberChangeSink;
+use crate::services::speaker_monitor::topology_diff::summarize;
+use crate::services::speaker_monitor::{MemberChange, TopologyDiff};
 use crate::sonos::discovery::{probe_speaker_by_ip, Speaker};
 use crate::sonos::gena::GenaSubscriptionManager;
 use crate::sonos::subscription_arbiter::SubscriptionArbiter;
-use crate::sonos::types::ZoneGroup;
+use crate::sonos::types::{HouseholdTopology, ZoneGroup};
 use crate::sonos::SonosService;
 use crate::sonos::SonosTopologyClient;
 use crate::state::{ManualSpeakerConfig, SonosState};
@@ -65,6 +72,9 @@ pub struct TopologyMonitorConfig {
     pub spawner: TokioSpawner,
     /// Shared mDNS advertisement slot, re-registered when the local address changes.
     pub mdns_advertiser: MdnsAdvertiserHandle,
+    /// Where household changes concerning a speaker fetching one of our
+    /// streams are sent, for its timeline in the speaker monitor.
+    pub member_changes: Option<MemberChangeSink>,
 }
 
 /// Clamps a topology refresh interval to a period `tokio::time::interval` accepts.
@@ -120,6 +130,134 @@ fn speaker_ips_from_groups(groups: &[ZoneGroup]) -> HashSet<String> {
         .collect()
 }
 
+/// The device a change is placed by: the primary for a satellite change
+/// (the satellite may no longer be listed), otherwise its subject.
+fn anchor_uuid(change: &MemberChange) -> &str {
+    match change {
+        MemberChange::SatelliteMissing { primary_uuid, .. }
+        | MemberChange::SatelliteReturned { primary_uuid, .. } => primary_uuid,
+        other => other.subject_uuid(),
+    }
+}
+
+/// Addresses of the speakers a change concerns, as far as `household` still
+/// lists them: the anchor device, the member it is bonded to (for a
+/// satellite) and its group's coordinator, whichever of them fetch audio.
+fn related_ips(household: &HouseholdTopology, change: &MemberChange) -> Vec<IpAddr> {
+    let anchor = anchor_uuid(change);
+    let mut ips: Vec<IpAddr> = Vec::new();
+    for group in &household.groups {
+        for member in &group.members {
+            let bonded = member.satellites.iter().find(|s| s.device.uuid == anchor);
+            if member.device.uuid != anchor && bonded.is_none() {
+                continue;
+            }
+            let coordinator = household.device(&group.coordinator_uuid);
+            let candidates = bonded
+                .map(|s| s.device.ip.as_str())
+                .into_iter()
+                .chain(std::iter::once(member.device.ip.as_str()))
+                .chain(coordinator.map(|c| c.ip.as_str()));
+            for ip in candidates.filter_map(|ip| ip.parse::<IpAddr>().ok()) {
+                if !ips.contains(&ip) {
+                    ips.push(ip);
+                }
+            }
+        }
+    }
+    ips
+}
+
+/// Names a device for the log: `RINCON_…(192.168.2.204) Living Room`, or
+/// just its UUID when `household` no longer lists it.
+fn describe_device(household: &HouseholdTopology, uuid: &str) -> String {
+    match household.device(uuid) {
+        Some(d) if d.zone_name.is_empty() => format!("{}({})", d.uuid, d.ip),
+        Some(d) => format!("{}({}) {}", d.uuid, d.ip, d.zone_name),
+        None => uuid.to_string(),
+    }
+}
+
+/// The log line for one change, naming devices with their addresses and
+/// rooms from the household the change was found in.
+fn describe_change(household: &HouseholdTopology, change: &MemberChange) -> String {
+    match change {
+        MemberChange::SatelliteMissing {
+            primary_uuid,
+            uuid,
+            role,
+        } => format!(
+            "HT {}: satellite {} ({}) missing",
+            describe_device(household, primary_uuid),
+            uuid,
+            role
+        ),
+        MemberChange::SatelliteReturned {
+            primary_uuid,
+            uuid,
+            role,
+            after_ms,
+        } => format!(
+            "HT {}: satellite {} ({}) returned{}",
+            describe_device(household, primary_uuid),
+            describe_device(household, uuid),
+            role,
+            after_ms
+                .map(|ms| format!(" after {}s", ms / 1000))
+                .unwrap_or_default()
+        ),
+        MemberChange::DeviceRebooted { uuid, from, to } => format!(
+            "{}: rebooted (BootSeq {} -> {})",
+            describe_device(household, uuid),
+            from,
+            to
+        ),
+        MemberChange::RadioChanged {
+            uuid,
+            field,
+            from,
+            to,
+        } => {
+            let v = |v: &Option<u32>| v.map_or_else(|| "?".to_string(), |v| v.to_string());
+            format!(
+                "{}: {} {} -> {}",
+                describe_device(household, uuid),
+                field,
+                v(from),
+                v(to)
+            )
+        }
+        MemberChange::Vanished { uuid, reason } => {
+            let room = household
+                .vanished
+                .iter()
+                .find(|v| v.uuid == *uuid)
+                .and_then(|v| v.zone_name.as_deref())
+                .map(|name| format!(" {name}"))
+                .unwrap_or_default();
+            format!(
+                "{}{}: vanished{}",
+                uuid,
+                room,
+                reason
+                    .as_deref()
+                    .map(|r| format!(" ({r})"))
+                    .unwrap_or_default()
+            )
+        }
+        MemberChange::MembersChanged {
+            coordinator_uuid,
+            joined,
+            left,
+        } => format!(
+            "group {}: joined [{}] left [{}]",
+            describe_device(household, coordinator_uuid),
+            joined.join(", "),
+            left.join(", ")
+        ),
+    }
+}
+
 /// Monitors Sonos network topology and manages GENA subscriptions.
 pub struct TopologyMonitor {
     /// Sonos client for discovery and topology operations.
@@ -151,6 +289,10 @@ pub struct TopologyMonitor {
     mdns_advertiser: MdnsAdvertiserHandle,
     /// Last non-empty set of known speaker addresses, kept across refreshes.
     remembered_speaker_ips: RwLock<Vec<Ipv4Addr>>,
+    /// The previous household snapshot, for naming what each refresh changed.
+    topology_diff: Mutex<TopologyDiff>,
+    /// Where household changes concerning a fetching speaker are sent.
+    member_changes: Option<MemberChangeSink>,
 }
 
 impl TopologyMonitor {
@@ -189,6 +331,8 @@ impl TopologyMonitor {
             arbiter,
             mdns_advertiser: config.mdns_advertiser,
             remembered_speaker_ips: RwLock::new(Vec::new()),
+            topology_diff: Mutex::new(TopologyDiff::new()),
+            member_changes: config.member_changes,
         }
     }
 
@@ -430,11 +574,12 @@ impl TopologyMonitor {
             ip
         );
 
-        let groups = self
+        let snapshot = self
             .sonos
-            .get_zone_groups(&ip)
+            .get_zone_group_state(&ip)
             .await
             .map_err(|e| ThaumicError::Soap(format!("quick refresh SOAP failed: {}", e)))?;
+        let groups = snapshot.groups;
 
         log::info!(
             "[TopologyMonitor] Quick refresh: {} groups found",
@@ -456,6 +601,7 @@ impl TopologyMonitor {
             let mut state = self.sonos_state.groups.write();
             *state = groups.clone();
         }
+        self.observe_household(snapshot.household, true);
 
         let timestamp = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -577,13 +723,13 @@ impl TopologyMonitor {
             query_speaker.ip,
             query_speaker.name
         );
-        let groups: Vec<ZoneGroup> = match self.sonos.get_zone_groups(&query_speaker.ip).await {
-            Ok(groups) => {
+        let snapshot = match self.sonos.get_zone_group_state(&query_speaker.ip).await {
+            Ok(snapshot) => {
                 log::info!(
                     "[TopologyMonitor] SOAP succeeded: {} groups found",
-                    groups.len()
+                    snapshot.groups.len()
                 );
-                groups
+                snapshot
             }
             Err(e) => {
                 log::error!(
@@ -599,6 +745,8 @@ impl TopologyMonitor {
             }
         };
 
+        let groups: Vec<ZoneGroup> = snapshot.groups;
+
         // Update stored groups and broadcast to clients
         {
             let mut state = self.sonos_state.groups.write();
@@ -608,6 +756,7 @@ impl TopologyMonitor {
                 state.len()
             );
         }
+        self.observe_household(snapshot.household, false);
 
         // Broadcast groups update to WebSocket clients and Tauri frontend
         let timestamp = std::time::SystemTime::now()
@@ -676,6 +825,93 @@ impl TopologyMonitor {
         // On first discovery, don't set health yet - give time for events to arrive
 
         Ok(())
+    }
+
+    /// Compares a freshly fetched household with the previous one and reports
+    /// what changed.
+    ///
+    /// Each change is logged (at warn when it points at trouble), sent to
+    /// clients as [`TopologyEvent::MemberChanged`], and added to the timeline
+    /// of every speaker it concerns that is fetching one of our streams: the
+    /// device itself, the home-theatre primary it is bonded to, and its
+    /// group's coordinator. A summary line follows each refresh prompted by a
+    /// topology event (`after_event`), saying `unchanged` when nothing was.
+    ///
+    /// Only SOAP answers come here; GENA topology bodies can be stale.
+    fn observe_household(&self, household: HouseholdTopology, after_event: bool) {
+        if household.groups.is_empty() {
+            return;
+        }
+        let mut diff = self.topology_diff.lock();
+        let first = diff.current().is_none();
+        let changes = diff.observe(household, Instant::now());
+        let Some(household) = diff.current() else {
+            return;
+        };
+
+        if first {
+            let (satellites, missing) = household.satellite_counts();
+            log::info!(
+                "[Topology] Household: {} group(s), {} device(s), {} satellite(s) ({} missing), \
+                 {} vanished",
+                household.groups.len(),
+                household.devices().count(),
+                satellites,
+                missing,
+                household.vanished.len()
+            );
+        } else if after_event {
+            log::info!("[Topology] After topology event: {}", summarize(&changes));
+        } else if changes.is_empty() {
+            log::debug!("[Topology] Refresh: unchanged");
+        } else {
+            log::info!("[Topology] Refresh: {}", summarize(&changes));
+        }
+
+        let timestamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as u64;
+        for change in changes {
+            let related = related_ips(household, &change);
+            let streams: Vec<String> = match &self.member_changes {
+                Some(sink) => {
+                    let mut streams: Vec<String> = related
+                        .iter()
+                        .flat_map(|ip| sink.streams_fetched_by(*ip))
+                        .collect();
+                    streams.sort_unstable();
+                    streams.dedup();
+                    streams
+                }
+                None => Vec::new(),
+            };
+            let casting = if streams.is_empty() {
+                String::new()
+            } else {
+                format!(" (casting stream={})", streams.join(","))
+            };
+            let line = describe_change(household, &change);
+            if change.is_warning() {
+                log::warn!("[Topology] {}{}", line, casting);
+            } else {
+                log::info!("[Topology] {}{}", line, casting);
+            }
+
+            if let Some(sink) = &self.member_changes {
+                for ip in &related {
+                    sink.record(*ip, change.clone());
+                }
+            }
+            let speaker_ip = household
+                .device(change.subject_uuid())
+                .map(|d| d.ip.clone());
+            self.emitter.emit_topology(TopologyEvent::MemberChanged {
+                change,
+                speaker_ip,
+                timestamp,
+            });
+        }
     }
 
     /// Speaker addresses we already know about, for choosing which of our own
@@ -1037,17 +1273,22 @@ mod tests {
 
     use crate::error::{DiscoveryResult, SoapResult};
     use crate::events::{LatencyEvent, SonosEvent, StreamEvent};
-    use crate::sonos::types::{TransportState, ZoneGroupMember};
+    use crate::sonos::types::{TransportState, ZoneGroupMember, ZoneGroupSnapshot};
 
-    /// Topology client that serves a canned zone group list.
+    /// Topology client that serves a canned zone group list, and a
+    /// household that tests can swap between refreshes.
     struct StubTopologyClient {
         groups: Vec<ZoneGroup>,
+        household: Arc<Mutex<HouseholdTopology>>,
     }
 
     #[async_trait]
     impl crate::sonos::traits::SonosTopology for StubTopologyClient {
-        async fn get_zone_groups(&self, _ip: &str) -> SoapResult<Vec<ZoneGroup>> {
-            Ok(self.groups.clone())
+        async fn get_zone_group_state(&self, _ip: &str) -> SoapResult<ZoneGroupSnapshot> {
+            Ok(ZoneGroupSnapshot {
+                groups: self.groups.clone(),
+                household: self.household.lock().unwrap().clone(),
+            })
         }
     }
 
@@ -1106,6 +1347,22 @@ mod tests {
         sonos_state: Arc<SonosState>,
         emitter: Arc<dyn EventEmitter>,
     ) -> TopologyMonitor {
+        create_monitor_with_household(
+            groups,
+            Arc::new(Mutex::new(HouseholdTopology::default())),
+            sonos_state,
+            emitter,
+        )
+    }
+
+    /// Creates a monitor whose quick refresh returns `groups` and whatever
+    /// `household` holds at the time.
+    fn create_monitor_with_household(
+        groups: Vec<ZoneGroup>,
+        household: Arc<Mutex<HouseholdTopology>>,
+        sonos_state: Arc<SonosState>,
+        emitter: Arc<dyn EventEmitter>,
+    ) -> TopologyMonitor {
         let http_client = Client::builder()
             .timeout(Duration::from_millis(1))
             .build()
@@ -1114,7 +1371,7 @@ mod tests {
         let gena_manager = Arc::new(gena_manager);
         let arbiter = Arc::new(SubscriptionArbiter::new(Arc::clone(&gena_manager)));
         TopologyMonitor::new(
-            Arc::new(StubTopologyClient { groups }),
+            Arc::new(StubTopologyClient { groups, household }),
             gena_manager,
             sonos_state,
             emitter,
@@ -1125,6 +1382,7 @@ mod tests {
                 http_client,
                 spawner: TokioSpawner::new(tokio::runtime::Handle::current()),
                 mdns_advertiser: crate::mdns_advertise::advertiser_handle(),
+                member_changes: None,
             },
             arbiter,
         )
@@ -1362,6 +1620,91 @@ mod tests {
         assert_eq!(
             monitor.known_speaker_ips(),
             vec![Ipv4Addr::new(10, 1, 2, 3)]
+        );
+    }
+
+    fn member_changes(emitter: &CollectingEmitter) -> Vec<MemberChange> {
+        emitter
+            .topology
+            .lock()
+            .unwrap()
+            .iter()
+            .filter_map(|e| match e {
+                TopologyEvent::MemberChanged { change, .. } => Some(change.clone()),
+                TopologyEvent::GroupsDiscovered { .. } => None,
+            })
+            .collect()
+    }
+
+    #[tokio::test]
+    async fn a_refresh_reports_a_satellite_that_dropped_since_the_last_one() {
+        use crate::sonos::test_fixtures::{HT_HOUSEHOLD, HT_HOUSEHOLD_LR_MISSING, HT_LR_UUID};
+        use crate::sonos::zone_groups::parse_household_topology;
+
+        let sonos_state = Arc::new(SonosState::default());
+        *sonos_state.groups.write() = vec![group("192.168.2.204", "RINCON_A")];
+        let household = Arc::new(Mutex::new(parse_household_topology(HT_HOUSEHOLD)));
+        let emitter = Arc::new(CollectingEmitter::new());
+        let monitor = create_monitor_with_household(
+            vec![group("192.168.2.204", "RINCON_A")],
+            Arc::clone(&household),
+            Arc::clone(&sonos_state),
+            Arc::clone(&emitter) as Arc<dyn EventEmitter>,
+        );
+
+        monitor
+            .quick_refresh_zone_groups("http://127.0.0.1:0/gena")
+            .await
+            .unwrap();
+        assert!(
+            member_changes(&emitter).is_empty(),
+            "a healthy first snapshot has nothing to report"
+        );
+
+        *household.lock().unwrap() = parse_household_topology(HT_HOUSEHOLD_LR_MISSING);
+        monitor
+            .quick_refresh_zone_groups("http://127.0.0.1:0/gena")
+            .await
+            .unwrap();
+
+        let changes = member_changes(&emitter);
+        assert_eq!(changes.len(), 1);
+        assert_eq!(changes[0].kind(), "satellite_missing");
+        assert_eq!(changes[0].subject_uuid(), HT_LR_UUID);
+    }
+
+    #[test]
+    fn a_satellite_change_concerns_the_primary_that_fetches() {
+        use crate::sonos::test_fixtures::{HT_HOUSEHOLD, HT_LR_UUID, HT_PRIMARY_UUID, HT_SUB_UUID};
+        use crate::sonos::zone_groups::parse_household_topology;
+
+        let household = parse_household_topology(HT_HOUSEHOLD);
+        let ip = |s: &str| s.parse::<IpAddr>().unwrap();
+
+        // The missing satellite is no longer listed: its primary is.
+        let missing = MemberChange::SatelliteMissing {
+            primary_uuid: HT_PRIMARY_UUID.to_string(),
+            uuid: HT_LR_UUID.to_string(),
+            role: "LR".to_string(),
+        };
+        assert_eq!(related_ips(&household, &missing), vec![ip("192.168.2.204")]);
+
+        // A satellite rebooting concerns itself and the primary it plays for.
+        let rebooted = MemberChange::DeviceRebooted {
+            uuid: HT_SUB_UUID.to_string(),
+            from: 31,
+            to: 32,
+        };
+        assert_eq!(
+            related_ips(&household, &rebooted),
+            vec![ip("192.168.2.205"), ip("192.168.2.204")]
+        );
+        assert_eq!(
+            describe_change(&household, &missing),
+            format!(
+                "HT {HT_PRIMARY_UUID}(192.168.2.204) Living Room: satellite {HT_LR_UUID} (LR) \
+                 missing"
+            )
         );
     }
 }
