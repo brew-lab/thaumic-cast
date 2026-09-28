@@ -1031,12 +1031,21 @@ impl LatencySession {
         self.last_emit = Some(Instant::now());
     }
 
-    /// Whether the speaker is due another position poll.
-    fn poll_due(&self) -> bool {
-        match self.last_poll {
-            None => true,
-            Some(at) => at.elapsed() >= self.next_poll_after,
-        }
+    /// How long after `now` the speaker's next position poll should be sent,
+    /// if that falls before `now + horizon`; `None` if it is due later.
+    ///
+    /// The monitor only wakes every [`POLL_INTERVAL_MS`], so a poll sent on
+    /// the wake-up that noticed it was due would land on that 500 ms grid,
+    /// and every poll would hit one of two points in the speaker's second.
+    /// The dither is then lost and the reserve bounds cannot narrow below
+    /// half a second. Returning the delay lets the poll be sent at its own
+    /// dithered moment instead.
+    fn poll_start_delay(&self, now: Instant, horizon: Duration) -> Option<Duration> {
+        let Some(at) = self.last_poll else {
+            return Some(Duration::ZERO);
+        };
+        let due = at + self.next_poll_after;
+        (due < now + horizon).then(|| due.saturating_duration_since(now))
     }
 
     /// Records a poll and draws the dithered interval before the next one.
@@ -1049,8 +1058,14 @@ impl LatencySession {
     /// sub-second part of the wall clock, which is as good as random relative
     /// to the speaker's own second boundaries. A speaker that has stopped
     /// answering is polled every [`BACKOFF_POLL_INTERVAL_MS`].
+    #[cfg(test)]
     fn mark_polled(&mut self, monitor_only_sessions: usize) {
-        self.last_poll = Some(Instant::now());
+        self.mark_polled_at(Instant::now(), monitor_only_sessions);
+    }
+
+    /// As [`Self::mark_polled`], for a poll that will be sent at `sent_at`.
+    fn mark_polled_at(&mut self, sent_at: Instant, monitor_only_sessions: usize) {
+        self.last_poll = Some(sent_at);
         if self.consecutive_failures >= BACKOFF_AFTER_FAILURES {
             self.next_poll_after = Duration::from_millis(BACKOFF_POLL_INTERVAL_MS);
             return;
@@ -1595,6 +1610,7 @@ impl LatencyMonitor {
                     // collecting finished ones for cleanup. Nothing here awaits.
                     // Use Option to avoid Vec allocation on every poll (common case: none).
                     let now = Instant::now();
+                    let tick = Duration::from_millis(POLL_INTERVAL_MS);
                     let monitor_only = sessions
                         .values()
                         .filter(|s| s.polls_for_monitoring_only())
@@ -1676,12 +1692,14 @@ impl LatencyMonitor {
                                 session.emit_health(stream_id, *speaker_ip, state, emitter.as_ref());
                             }
                         }
-                        if !session.wants_polls()
-                            || session.in_flight.is_some()
-                            || !session.poll_due()
-                        {
+                        if !session.wants_polls() || session.in_flight.is_some() {
                             continue;
                         }
+                        // Due before the next wake-up: the poll task waits out the
+                        // rest so the request goes at its dithered moment.
+                        let Some(start_delay) = session.poll_start_delay(now, tick) else {
+                            continue;
+                        };
 
                         let gena = transport_view.gena_transport(&speaker_ip.to_string());
                         if session.gate.take_stale_notice(gena.as_ref(), now) {
@@ -1692,11 +1710,11 @@ impl LatencyMonitor {
                         }
                         let want_transport = session.gate.take_transport_poll(gena.as_ref(), now);
 
-                        session.mark_polled(monitor_only);
+                        session.mark_polled_at(now + start_delay, monitor_only);
                         next_poll_id += 1;
                         session.in_flight = Some(next_poll_id);
 
-                        spawner.spawn(poll_position(
+                        let poll = poll_position(
                             Arc::clone(&sonos),
                             key.clone(),
                             next_poll_id,
@@ -1704,7 +1722,14 @@ impl LatencyMonitor {
                             tap,
                             want_transport,
                             result_tx.clone(),
-                        ));
+                        );
+                        // Send at the poll's own dithered moment, not on the tick.
+                        spawner.spawn(async move {
+                            if !start_delay.is_zero() {
+                                tokio::time::sleep(start_delay).await;
+                            }
+                            poll.await;
+                        });
                     }
 
                     if let Some(keys) = finished {
@@ -2297,33 +2322,55 @@ mod tests {
             cancel.cancel();
 
             let healthy = speakers.calls_to(HEALTHY_IP);
-            let grid_start = speakers
-                .calls
-                .lock()
-                .first()
-                .expect("speakers were polled")
-                .1;
-            // First poll on the first or second tick, then at most 1.5 s apart
-            // (500 ms plus the full dither, which lands on a tick): at least
-            // four in 5.5 s. A loop that waited out each hung speaker's
-            // 1.5 s timeout in turn would be blocked almost the whole time.
+            // At most 1.5 s apart (500 ms plus the full dither): at least four
+            // in 5.5 s. A loop that waited out each hung speaker's 1.5 s
+            // timeout in turn would be blocked almost the whole time.
             assert!(
                 healthy.len() >= 4,
                 "healthy speaker polled {} times in {WATCH:?}",
                 healthy.len()
             );
-            // Polls are only ever issued on the monitor's 500 ms tick, whose
-            // first firing issued the first poll. A poll that lands more than
-            // 50 ms off that grid was held up by something.
-            let tick = POLL_INTERVAL_MS as u128;
-            for at in &healthy {
-                let offset = at.saturating_duration_since(grid_start).as_millis() % tick;
-                let lateness = offset.min(tick - offset);
+            // Each poll is sent at its own dithered moment, so consecutive
+            // polls are never further apart than the longest dithered interval.
+            // One held up by the hung speaker would overshoot it.
+            let longest = POLL_INTERVAL_MS + POLL_DITHER_MS;
+            for pair in healthy.windows(2) {
+                let gap = pair[1].saturating_duration_since(pair[0]).as_millis() as u64;
                 assert!(
-                    lateness <= 50,
-                    "healthy speaker polled {lateness} ms off its tick"
+                    gap <= longest + 50,
+                    "healthy speaker polled {gap} ms after its previous poll"
                 );
             }
+        }
+
+        /// The monitor wakes every 500 ms, but polls must not land on that
+        /// grid: the reserve bounds only narrow if the polls' phase against the
+        /// speaker's whole-second RelTime is spread across the second. On the
+        /// grid every poll hits one of two phases and the estimate stalls at
+        /// about half a second wide, which is what the first field run showed.
+        #[tokio::test]
+        async fn polls_are_sent_at_their_dithered_moment_not_on_the_tick() {
+            let cancel = CancellationToken::new();
+            let (speakers, _taps) = watch_hung_and_healthy_speakers(&cancel).await;
+            tokio::time::sleep(WATCH).await;
+            cancel.cancel();
+
+            let healthy = speakers.calls_to(HEALTHY_IP);
+            let first = *healthy.first().expect("speaker was polled");
+            let tick = POLL_INTERVAL_MS as u128;
+            let off_grid = healthy
+                .iter()
+                .skip(1)
+                .filter(|at| {
+                    let offset = at.saturating_duration_since(first).as_millis() % tick;
+                    offset.min(tick - offset) > 50
+                })
+                .count();
+            assert!(
+                off_grid >= 1,
+                "every one of {} polls landed on the monitor's 500 ms tick",
+                healthy.len()
+            );
         }
 
         #[tokio::test]
