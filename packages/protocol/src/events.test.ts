@@ -7,7 +7,9 @@ import {
   SpeakerRemovalReasonSchema,
   StreamEventSchema,
   NetworkEventSchema,
+  SpeakerHealthStateSchema,
   type LatencyEvent,
+  type NetworkEvent,
   type SonosEvent,
   type StreamEvent,
 } from './events.js';
@@ -289,6 +291,69 @@ describe('NetworkEventSchema', () => {
       timestamp: NOW,
     });
     expect(parsed.success).toBe(false);
+  });
+
+  const draining = {
+    type: 'speakerHealth',
+    streamId: 's1',
+    speakerIp: SPEAKER,
+    epochId: 3,
+    state: 'draining',
+    reserveMs: 512,
+    reservePrecisionMs: 34,
+    reserveMinMs: 431,
+    reserveP10Ms: 470,
+    reserveAcked: true,
+    targetMs: 540,
+    clockPpm: 39.75,
+    clockSePpm: 7.25,
+    timeToEmptyS: 900,
+    timestamp: NOW,
+  } satisfies NetworkEvent;
+
+  it('should parse a speaker health event with every figure', () => {
+    expect(NetworkEventSchema.parse(draining)).toEqual(draining);
+  });
+
+  it('should parse a speaker health event that has no figures yet', () => {
+    const locking: NetworkEvent = {
+      type: 'speakerHealth',
+      streamId: 's1',
+      speakerIp: SPEAKER,
+      epochId: 3,
+      state: 'locking',
+      reserveAcked: false,
+      timestamp: NOW,
+    };
+    expect(NetworkEventSchema.parse(locking)).toEqual(locking);
+  });
+
+  it('should accept a reserve below zero and a speaker slower than the companion', () => {
+    // The reserve's zero is only approximate, and a slow speaker fills it.
+    const parsed = NetworkEventSchema.safeParse({ ...draining, reserveMs: -20, clockPpm: -40.5 });
+    expect(parsed.success).toBe(true);
+  });
+
+  it('should reject a speaker health state it does not know', () => {
+    expect(NetworkEventSchema.safeParse({ ...draining, state: 'empty' }).success).toBe(false);
+  });
+
+  it('should reject fractional reserve figures', () => {
+    expect(NetworkEventSchema.safeParse({ ...draining, reserveMs: 512.5 }).success).toBe(false);
+    expect(NetworkEventSchema.safeParse({ ...draining, timeToEmptyS: -1 }).success).toBe(false);
+  });
+
+  it('should know every state the companion sends', () => {
+    // Mirrors SpeakerHealthState in thaumic-core's events module.
+    expect(SpeakerHealthStateSchema.options).toEqual([
+      'locking',
+      'ok',
+      'draining',
+      'low',
+      'paused',
+      'stale',
+      'dormant',
+    ]);
   });
 
   it('should still parse the health change event', () => {
