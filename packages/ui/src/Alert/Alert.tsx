@@ -15,6 +15,8 @@ interface AlertProps {
   className?: string;
   /** Callback when dismiss button is clicked. If provided, shows a dismiss button. */
   onDismiss?: () => void;
+  /** Accessible label for the dismiss button (default: "Dismiss"), for translated UIs. */
+  dismissLabel?: string;
   /** Action button label. If provided along with onAction, shows an inline action button. */
   action?: string;
   /** Callback when action button is clicked */
@@ -42,6 +44,7 @@ const VARIANT_ICONS: Record<AlertVariant, FunctionComponent<LucideProps>> = {
  * @param props.variant - Visual variant (default: warning)
  * @param props.className - Additional CSS class
  * @param props.onDismiss - Callback when dismiss button is clicked
+ * @param props.dismissLabel - Accessible label for the dismiss button
  * @param props.action - Action button label
  * @param props.onAction - Callback when action button is clicked
  * @returns The rendered Alert component
@@ -51,6 +54,7 @@ export function Alert({
   variant = 'warning',
   className,
   onDismiss,
+  dismissLabel = 'Dismiss',
   action,
   onAction,
 }: AlertProps) {
@@ -69,7 +73,12 @@ export function Alert({
         )}
       </div>
       {onDismiss && (
-        <IconButton size="sm" className={styles.dismiss} onClick={onDismiss} aria-label="Dismiss">
+        <IconButton
+          size="sm"
+          className={styles.dismiss}
+          onClick={onDismiss}
+          aria-label={dismissLabel}
+        >
           <X size={14} aria-hidden="true" />
         </IconButton>
       )}

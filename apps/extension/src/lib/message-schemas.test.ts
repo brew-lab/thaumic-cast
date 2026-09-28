@@ -12,6 +12,7 @@ import {
   TabIdSchema,
   TopologyEventMessageSchema,
   VolumeSchema,
+  WsConnectedMessageSchema,
   WsStateChangedMessageSchema,
 } from './message-schemas';
 
@@ -163,19 +164,6 @@ describe('NetworkEventMessageSchema', () => {
     type: 'NETWORK_EVENT',
     payload: { category: 'network', timestamp: 1, ...payload },
   });
-  const linkQuality = (fields: Record<string, unknown> = {}) =>
-    message({
-      type: 'speakerLinkQuality',
-      speakerIp: SPEAKER,
-      quality: 'degraded',
-      rttMedianMs: 3,
-      rttMaxMs: 40,
-      spikesPerMinute: 2,
-      failuresPerMinute: 0,
-      jitterBufferMs: 200,
-      ...fields,
-    });
-
   it('should accept healthChanged as before', () => {
     const parsed = NetworkEventMessageSchema.parse(
       message({ type: 'healthChanged', health: 'degraded', reason: 'vpn' }),
@@ -184,32 +172,13 @@ describe('NetworkEventMessageSchema', () => {
     expect(parsed.payload).toMatchObject({ type: 'healthChanged', health: 'degraded' });
   });
 
-  it('should accept speakerLinkQuality with the protocol fields', () => {
-    const parsed = NetworkEventMessageSchema.parse(linkQuality());
-
-    expect(parsed.payload).toMatchObject({
-      type: 'speakerLinkQuality',
-      speakerIp: SPEAKER,
-      quality: 'degraded',
-      spikesPerMinute: 2,
-    });
-  });
-
-  it('should carry the buffer suggestion when present and require the current buffer', () => {
-    const suggested = NetworkEventMessageSchema.parse(
-      linkQuality({ suggestedJitterBufferMs: 500 }),
+  it('should tag the retired speakerLinkQuality event as unrecognized', () => {
+    // An older companion still sends it; it must not fail validation.
+    const parsed = NetworkEventMessageSchema.parse(
+      message({ type: 'speakerLinkQuality', speakerIp: SPEAKER, quality: 'poor' }),
     );
 
-    expect(suggested.payload).toMatchObject({ jitterBufferMs: 200, suggestedJitterBufferMs: 500 });
-    expect(
-      NetworkEventMessageSchema.safeParse(linkQuality({ jitterBufferMs: undefined })).success,
-    ).toBe(false);
-  });
-
-  it('should reject a speakerLinkQuality event with an unknown quality', () => {
-    expect(NetworkEventMessageSchema.safeParse(linkQuality({ quality: 'awful' })).success).toBe(
-      false,
-    );
+    expect(parsed.payload).toEqual({ type: 'unrecognized', eventType: 'speakerLinkQuality' });
   });
 
   it('should accept speakerHealth with the protocol fields', () => {
@@ -233,6 +202,33 @@ describe('NetworkEventMessageSchema', () => {
       state: 'low',
       reserveP10Ms: 180,
     });
+  });
+
+  it('should carry the companion notice on speakerHealth', () => {
+    const notice = {
+      kind: 'head_start_ran_out',
+      noticeId: 4,
+      stallMs: 620,
+      leftMs: -120,
+      headStartMs: 500,
+      suggestedHeadStartMs: 750,
+      restartHelps: false,
+    };
+    const parsed = NetworkEventMessageSchema.parse(
+      message({
+        type: 'speakerHealth',
+        streamId: 'stream-1',
+        speakerIp: SPEAKER,
+        epochId: 2,
+        state: 'low',
+        reserveAcked: true,
+        headStartMs: 500,
+        floorMs: 150,
+        notice,
+      }),
+    );
+
+    expect(parsed.payload).toMatchObject({ type: 'speakerHealth', floorMs: 150, notice });
   });
 
   it('should reject a speakerHealth event with an unknown state', () => {
@@ -287,5 +283,26 @@ describe('TopologyEventMessageSchema', () => {
         payload: { type: 'groupsDiscovered', timestamp: 1 },
       }).success,
     ).toBe(false);
+  });
+});
+
+describe('WsConnectedMessageSchema', () => {
+  const base = {
+    type: 'WS_CONNECTED',
+    state: { groups: [], transportStates: {}, groupVolumes: {}, groupMutes: {} },
+    appVersion: '1.0.0',
+    protocolVersion: '0.5.0',
+  };
+
+  it('should accept the companion audio settings, null, or their absence', () => {
+    const companionAudio = { headStartMs: 250, headStartFixed: false, speakerMonitor: true };
+
+    expect(WsConnectedMessageSchema.parse({ ...base, companionAudio }).companionAudio).toEqual(
+      companionAudio,
+    );
+    expect(WsConnectedMessageSchema.parse({ ...base, companionAudio: null }).companionAudio).toBe(
+      null,
+    );
+    expect(WsConnectedMessageSchema.parse(base).companionAudio).toBeUndefined();
   });
 });

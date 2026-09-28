@@ -45,11 +45,15 @@ const log = createLogger('OffscreenRoutes');
  */
 export function registerOffscreenRoutes(): void {
   registerValidatedRoute('WS_CONNECTED', WsConnectedMessageSchema, (msg) => {
-    handleWsConnected(msg.state, {
-      appType: msg.appType ?? null,
-      appVersion: msg.appVersion,
-      protocolVersion: msg.protocolVersion,
-    });
+    handleWsConnected(
+      msg.state,
+      {
+        appType: msg.appType ?? null,
+        appVersion: msg.appVersion,
+        protocolVersion: msg.protocolVersion,
+      },
+      msg.companionAudio ?? null,
+    );
     return { success: true };
   });
 

@@ -182,18 +182,6 @@ export const LatencyEventSchema = z.discriminatedUnion('type', [
 export type LatencyEvent = z.infer<typeof LatencyEventSchema>;
 
 /**
- * Quality of the network path between the companion and one speaker, judged
- * from the TCP counters of the connection the speaker fetches audio over.
- *
- * - `good`: no latency spikes in the last minute.
- * - `degraded`: a few spikes; short dropouts are possible on a small buffer.
- * - `poor`: repeated spikes or failed round trips; audio will stutter unless
- *   the jitter buffer is large enough to ride them out.
- */
-export const LinkQualitySchema = z.enum(['good', 'degraded', 'poor']);
-export type LinkQuality = z.infer<typeof LinkQualitySchema>;
-
-/**
  * The companion's verdict on the buffer of a speaker fetching one of its streams.
  *
  * - `locking`: measuring, but the estimate is not yet precise or settled.
@@ -282,30 +270,6 @@ export const NetworkEventSchema = z.discriminatedUnion('type', [
     timestamp: z.number(),
   }),
   z.object({
-    type: z.literal('speakerLinkQuality'),
-    /** IP address of the speaker the path leads to */
-    speakerIp: z.string(),
-    quality: LinkQualitySchema,
-    /** Median round trip to the speaker over the last minute, in milliseconds */
-    rttMedianMs: z.number().int().nonnegative(),
-    /** Worst round trip over the last minute, in milliseconds */
-    rttMaxMs: z.number().int().nonnegative(),
-    /** Round trips over the spike threshold in the last minute */
-    spikesPerMinute: z.number().int().nonnegative(),
-    /** Retransmission timeouts in the last minute: stalls the kernel had to resend after */
-    failuresPerMinute: z.number().int().nonnegative(),
-    /** The jitter buffer the stream to this speaker runs with, in milliseconds */
-    jitterBufferMs: z.number().int().nonnegative(),
-    /**
-     * The jitter buffer that would ride out the stalls seen in the last minute,
-     * when raising it would help. Absent when the current buffer already covers
-     * them or is at its maximum.
-     */
-    suggestedJitterBufferMs: z.number().int().nonnegative().optional(),
-    /** Unix timestamp in milliseconds */
-    timestamp: z.number(),
-  }),
-  z.object({
     /**
      * How much audio a speaker fetching one of our streams holds ahead of its
      * playhead (its reserve), and how fast that is changing. Sent every 30 s
@@ -354,8 +318,6 @@ export const NetworkEventSchema = z.discriminatedUnion('type', [
     stallMs: z.number().int().nonnegative().optional(),
     /** Seconds until the reserve reaches `floorMs`, when the speaker is measurably draining it */
     timeToFloorS: z.number().int().nonnegative().optional(),
-    /** Seconds until the reserve runs out; sent only by companions that predate `timeToFloorS` */
-    timeToEmptyS: z.number().int().nonnegative().optional(),
     /**
      * What the user should be told about this speaker, decided by the
      * companion. Repeated in every report while it stands, under the same

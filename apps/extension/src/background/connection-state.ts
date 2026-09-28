@@ -13,7 +13,7 @@
  * - Message passing
  */
 
-import { type AppType } from '@thaumic-cast/protocol';
+import { type AppType, type CompanionAudio } from '@thaumic-cast/protocol';
 import { createLogger } from '@thaumic-cast/shared';
 import { persistenceManager } from './persistence-manager';
 
@@ -53,6 +53,12 @@ export interface ConnectionState {
   appVersion: string | null;
   /** Wire-protocol semver advertised by the companion. Null on pre-0.4.0 builds. */
   protocolVersion: string | null;
+  /**
+   * The companion's speaker-side audio settings (speaker head start, speaker
+   * monitor), from `INITIAL_STATE` and kept current by `companionAudioChanged`.
+   * Null until reported, and from companions that predate them.
+   */
+  companionAudio: CompanionAudio | null;
 }
 
 /** Current connection state */
@@ -67,6 +73,7 @@ let state: ConnectionState = {
   appType: null,
   appVersion: null,
   protocolVersion: null,
+  companionAudio: null,
 };
 
 /**
@@ -94,6 +101,7 @@ const storage = persistenceManager.register<ConnectionState>(
         appType: s.appType ?? null,
         appVersion: s.appVersion ?? null,
         protocolVersion: s.protocolVersion ?? null,
+        companionAudio: s.companionAudio ?? null,
       };
     },
   },
@@ -182,6 +190,15 @@ export function setConnectionMetadata(metadata: {
 }
 
 /**
+ * Records the companion's speaker-side audio settings.
+ * @param audio - The settings as the companion reports them, or null when it does not
+ */
+export function setCompanionAudio(audio: CompanionAudio | null): void {
+  state = { ...state, companionAudio: audio };
+  storage.schedule();
+}
+
+/**
  * Sets a connection error.
  * @param error - The error message
  */
@@ -224,6 +241,7 @@ export function clearConnectionState(): void {
     appType: null,
     appVersion: null,
     protocolVersion: null,
+    companionAudio: null,
   };
   storage.schedule();
 }

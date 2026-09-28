@@ -20,8 +20,9 @@ import {
   LatencyBroadcastEvent,
   SpeakerRemovalReasonSchema,
   NetworkEventSchema,
-  LinkQualitySchema,
   SpeakerHealthStateSchema,
+  SpeakerNoticeSchema,
+  CompanionAudioSchema,
 } from '@thaumic-cast/protocol';
 
 // Re-export SpeakerRemovalReason from protocol for convenience
@@ -319,6 +320,8 @@ export const WsConnectedMessageSchema = z.object({
   appType: z.enum(['desktop', 'server']).nullable().optional(),
   appVersion: z.string().nullable(),
   protocolVersion: z.string().nullable(),
+  /** The companion's speaker-side audio settings; null from companions that predate them */
+  companionAudio: CompanionAudioSchema.nullable().optional(),
 });
 export type WsConnectedMessage = z.infer<typeof WsConnectedMessageSchema>;
 
@@ -493,58 +496,12 @@ export const NetworkEventMessageSchema = z.object({
 });
 export type NetworkEventMessage = z.infer<typeof NetworkEventMessageSchema>;
 
-/** The `speakerLinkQuality` variant of the companion's network event. */
-export type SpeakerLinkQualityEvent = Extract<
-  z.infer<typeof NetworkEventSchema>,
-  { type: 'speakerLinkQuality' }
->;
-
 export const NetworkHealthChangedMessageSchema = z.object({
   type: z.literal('NETWORK_HEALTH_CHANGED'),
   health: NetworkHealthStatusSchema,
   reason: z.string().nullable(),
 });
 export type NetworkHealthChangedMessage = z.infer<typeof NetworkHealthChangedMessageSchema>;
-
-/**
- * Latest link-quality reading for one speaker, as kept by the background.
- * Fields are the companion's `speakerLinkQuality` event carried through
- * unchanged (the extension computes nothing from them); `updatedAt` is the
- * event's timestamp and doubles as the popup's dismissal key, since the
- * companion only sends the event when the quality changes.
- */
-export const SpeakerLinkQualityStateSchema = z.object({
-  quality: LinkQualitySchema,
-  rttMedianMs: z.number().int().nonnegative(),
-  rttMaxMs: z.number().int().nonnegative(),
-  spikesPerMinute: z.number().int().nonnegative(),
-  failuresPerMinute: z.number().int().nonnegative(),
-  /** The jitter buffer the stream to this speaker runs with, in milliseconds */
-  jitterBufferMs: z.number().int().nonnegative(),
-  /** The buffer the companion says would ride out the stalls; absent when raising it would not help */
-  suggestedJitterBufferMs: z.number().int().nonnegative().optional(),
-  updatedAt: z.number(),
-});
-export type SpeakerLinkQualityState = z.infer<typeof SpeakerLinkQualityStateSchema>;
-
-/**
- * Link-quality broadcast (background → popup). Mirrors CAPTURE_HEALTH_CHANGED:
- * carries the whole snapshot, keyed by speaker IP, so a cleared speaker simply
- * disappears from the map.
- */
-export const SpeakerLinkQualityChangedMessageSchema = z.object({
-  type: z.literal('SPEAKER_LINK_QUALITY_CHANGED'),
-  speakers: z.record(SpeakerIpSchema, SpeakerLinkQualityStateSchema),
-});
-export type SpeakerLinkQualityChangedMessage = z.infer<
-  typeof SpeakerLinkQualityChangedMessageSchema
->;
-
-/** Popup → background query for the current link-quality snapshot. */
-export const GetSpeakerLinkQualityMessageSchema = z.object({
-  type: z.literal('GET_SPEAKER_LINK_QUALITY'),
-});
-export type GetSpeakerLinkQualityMessage = z.infer<typeof GetSpeakerLinkQualityMessageSchema>;
 
 /** The `speakerHealth` variant of the companion's network event. */
 export type SpeakerHealthEvent = Extract<
@@ -555,10 +512,9 @@ export type SpeakerHealthEvent = Extract<
 /**
  * Latest speaker-health reading for one speaker, as kept by the background.
  * The figures are the companion's `speakerHealth` event carried through
- * unchanged, for logs and diagnostics. The companion sends the event every
- * 30 s, so `updatedAt` cannot key a dismissal; `alarmSince` does instead: the
- * timestamp of the first event of the current run of `low` or `draining`
- * readings, carried forward while the speaker stays in either state.
+ * unchanged, for logs and diagnostics, with the notice the companion decided
+ * on. The companion repeats a standing notice in every report under the same
+ * `noticeId`, which is what the popup dismisses by.
  */
 export const SpeakerHealthEntrySchema = z.object({
   streamId: z.string(),
@@ -570,18 +526,22 @@ export const SpeakerHealthEntrySchema = z.object({
   reserveP10Ms: z.number().int().optional(),
   reserveAcked: z.boolean(),
   targetMs: z.number().int().optional(),
+  headStartMs: z.number().int().nonnegative().optional(),
+  headStartConfiguredMs: z.number().int().nonnegative().optional(),
+  floorMs: z.number().int().nonnegative().optional(),
+  stallMs: z.number().int().nonnegative().optional(),
   clockPpm: z.number().optional(),
   clockSePpm: z.number().nonnegative().optional(),
-  timeToEmptyS: z.number().int().nonnegative().optional(),
+  timeToFloorS: z.number().int().nonnegative().optional(),
+  /** What the companion says the user should be told; absent while nothing stands */
+  notice: SpeakerNoticeSchema.optional(),
   updatedAt: z.number(),
-  /** When the current low or draining run began; absent while the speaker is neither */
-  alarmSince: z.number().optional(),
 });
 export type SpeakerHealthEntry = z.infer<typeof SpeakerHealthEntrySchema>;
 
 /**
  * Speaker-health broadcast (background → popup). Carries the whole snapshot,
- * keyed by speaker IP, like SPEAKER_LINK_QUALITY_CHANGED.
+ * keyed by speaker IP, so a cleared speaker simply disappears from the map.
  */
 export const SpeakerHealthChangedMessageSchema = z.object({
   type: z.literal('SPEAKER_HEALTH_CHANGED'),
@@ -594,6 +554,50 @@ export const GetSpeakerHealthMessageSchema = z.object({
   type: z.literal('GET_SPEAKER_HEALTH'),
 });
 export type GetSpeakerHealthMessage = z.infer<typeof GetSpeakerHealthMessageSchema>;
+
+/**
+ * The companion's latest `ingestGaps` report for one of this extension's
+ * streams, as kept by the background: audio from the browser reached the
+ * companion late often enough that every speaker had gaps. `receivedAt` is
+ * this browser's clock when it arrived, which ages the notice out and keys
+ * its dismissal.
+ */
+export const IngestGapsEntrySchema = z.object({
+  gapsLastMinute: z.number().int().nonnegative(),
+  worstGapMs: z.number().int().nonnegative(),
+  smoothingMs: z.number().int().nonnegative(),
+  /** The smoothing step that would have covered the worst gap; absent when none would */
+  suggestedSmoothingMs: z.number().int().positive().optional(),
+  receivedAt: z.number(),
+});
+export type IngestGapsEntry = z.infer<typeof IngestGapsEntrySchema>;
+
+/**
+ * Ingest-gaps broadcast (background → popup). Carries the whole snapshot,
+ * keyed by stream ID.
+ */
+export const IngestGapsChangedMessageSchema = z.object({
+  type: z.literal('INGEST_GAPS_CHANGED'),
+  streams: z.record(z.string(), IngestGapsEntrySchema),
+});
+export type IngestGapsChangedMessage = z.infer<typeof IngestGapsChangedMessageSchema>;
+
+/** Popup → background query for the current ingest-gaps snapshot. */
+export const GetIngestGapsMessageSchema = z.object({
+  type: z.literal('GET_INGEST_GAPS'),
+});
+export type GetIngestGapsMessage = z.infer<typeof GetIngestGapsMessageSchema>;
+
+/**
+ * The companion's speaker-side audio settings changed (background → popup),
+ * from a `companionAudioChanged` event or a fresh `INITIAL_STATE`. Null when
+ * the companion does not report them.
+ */
+export const CompanionAudioChangedMessageSchema = z.object({
+  type: z.literal('COMPANION_AUDIO_CHANGED'),
+  audio: CompanionAudioSchema.nullable(),
+});
+export type CompanionAudioChangedMessage = z.infer<typeof CompanionAudioChangedMessageSchema>;
 
 /**
  * Capture-health event (offscreen → background). Fired when `StreamSession`
