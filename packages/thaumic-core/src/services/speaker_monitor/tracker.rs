@@ -182,12 +182,13 @@ impl ReserveTracker {
             return (None, None);
         }
         // Shrunk, so a rate from a few short segments (whose error can be
-        // hundreds of ppm) cannot drag the older bounds far.
+        // hundreds of ppm) cannot drag the older bounds, or the step
+        // baseline, far.
         let ppm = self.clock.estimate().map_or(0.0, |c| c.shrunk_ppm());
         let Some(est) = self.reserve.estimate(now, ppm) else {
             return (None, None);
         };
-        if let Some(brk) = self.segment.observe_estimate(&est) {
+        if let Some(brk) = self.segment.observe_estimate(&est, ppm) {
             self.clear();
             self.last = None;
             return (None, Some(brk));
@@ -457,6 +458,67 @@ mod tests {
             let t = drain_threshold_sigmas(dof);
             assert!(t <= last && t > DRAIN_MIN_SIGMA, "dof {dof}: {t}");
             last = t;
+        }
+    }
+
+    /// Runs `seeds` speakers at +40 ppm with `tick_jitter_ms` for an hour,
+    /// with the playhead stepping by `step_ms` half an hour in. Returns how
+    /// many saw the step within six minutes of it and how many breaks came
+    /// anywhere else.
+    fn steps_seen(step_ms: f64, tick_jitter_ms: f64, seeds: u64) -> (usize, usize) {
+        let (mut seen, mut spurious) = (0, 0);
+        for seed in 0..seeds {
+            let mut gen = PollGen::new(500 + seed);
+            gen.ppm = 40.0;
+            gen.tick_jitter_ms = tick_jitter_ms;
+            if step_ms != 0.0 {
+                gen.steps = vec![(30.0 * 60_000.0, step_ms)];
+            }
+            let mut tracker = ReserveTracker::new();
+            tracker.start_connection(true);
+            let mut t = 0.0;
+            while t < 60.0 * 60_000.0 {
+                t += 30_000.0;
+                gen.run_until(t, |p| {
+                    tracker.observe(p, URI, false);
+                });
+                if tracker.estimate(t).1 == Some(SegmentBreak::OffsetStep) {
+                    let expected = step_ms != 0.0 && t > 30.0 * 60_000.0 && t <= 36.0 * 60_000.0;
+                    if expected {
+                        seen += 1;
+                    } else {
+                        spurious += 1;
+                    }
+                }
+            }
+        }
+        (seen, spurious)
+    }
+
+    #[test]
+    fn a_300ms_underrun_is_suspected_either_way() {
+        // Compared with the estimate just before, a step arrived as two
+        // half-steps while the reserve window straddled it, and a 300 ms one
+        // was seen by only a few speakers in forty.
+        for step in [-300.0, 300.0] {
+            for jitter in [0.0, 100.0] {
+                let (seen, spurious) = steps_seen(step, jitter, 20);
+                assert_eq!((seen, spurious), (20, 0), "{step} ms at ±{jitter} ms");
+            }
+        }
+    }
+
+    #[test]
+    fn most_200ms_underruns_are_suspected() {
+        let (seen, spurious) = steps_seen(-200.0, 50.0, 20);
+        assert!(seen >= 15, "{seen} of 20");
+        assert_eq!(spurious, 0);
+    }
+
+    #[test]
+    fn measured_tick_jitter_suspects_no_underrun() {
+        for jitter in [0.0, 50.0, 100.0] {
+            assert_eq!(steps_seen(0.0, jitter, 20), (0, 0), "±{jitter} ms");
         }
     }
 }

@@ -8,7 +8,9 @@
 //! by a step. Each of these ends a *segment*; the estimators' windows are
 //! cleared and measurement starts afresh.
 
-use super::reserve::ReserveEstimate;
+use std::collections::VecDeque;
+
+use super::reserve::{ReserveEstimate, RESERVE_WINDOW_MS};
 
 /// RelTime going back by more than this is a restart, not jitter.
 pub const RELTIME_BACKWARDS_TOLERANCE_MS: u64 = 100;
@@ -16,8 +18,21 @@ pub const RELTIME_BACKWARDS_TOLERANCE_MS: u64 = 100;
 /// Smallest jump of the reserve estimate that counts as an offset step.
 pub const OFFSET_STEP_MIN_MS: f64 = 150.0;
 
-/// A jump must also exceed this many half-widths of the estimate before it.
-pub const OFFSET_STEP_HALF_WIDTHS: f64 = 4.0;
+/// A jump must also exceed this many half-widths of the estimate it is
+/// measured from.
+pub const OFFSET_STEP_HALF_WIDTHS: f64 = 2.0;
+
+/// How long before an estimate the one it is compared with was made.
+///
+/// The reserve is a trimmed intersection over [`RESERVE_WINDOW_MS`] of polls,
+/// so for that long after a step the window straddles it: the bounds from
+/// either side cross, the midpoint shows only half the step, and the learnt
+/// jitter swells to cover the rest. Compared with the estimate just before,
+/// a step therefore arrives as two half-steps, each of which can pass under
+/// the threshold. Compared with one made before the window turned over, it
+/// shows in full. The extra minute leaves room for two estimates in a row
+/// to see it.
+pub const OFFSET_STEP_LAG_MS: f64 = RESERVE_WINDOW_MS + 60_000.0;
 
 /// Consecutive estimates a jump must persist for.
 pub const OFFSET_STEP_PERSIST: u32 = 2;
@@ -85,8 +100,9 @@ pub struct Segment {
     /// Whether the speaker is known not to be playing (the break for it has
     /// been reported; playing again starts the next segment).
     paused: bool,
-    /// Reserve estimate the next ones are compared with, and its half-width.
-    step_baseline: Option<(f64, f64)>,
+    /// Recent locked estimates the next ones are compared with, oldest
+    /// first: when each was made, the reserve and its half-width.
+    step_history: VecDeque<(f64, f64, f64)>,
     /// Consecutive estimates that have jumped away from the baseline.
     step_pending: u32,
     /// Breaks so far, by reason.
@@ -110,7 +126,7 @@ impl Segment {
 
     fn record(&mut self, reason: SegmentBreak) {
         self.counts[reason.index()] += 1;
-        self.step_baseline = None;
+        self.step_history.clear();
         self.step_pending = 0;
     }
 
@@ -165,20 +181,38 @@ impl Segment {
 
     /// Checks one reserve estimate for an offset step: a jump of more than
     /// `max(`[`OFFSET_STEP_MIN_MS`]`, `[`OFFSET_STEP_HALF_WIDTHS`]` ×
-    /// half-width)` from the last locked estimate, persisting for
-    /// [`OFFSET_STEP_PERSIST`] estimates in a row.
+    /// half-width)` from a locked estimate made [`OFFSET_STEP_LAG_MS`]
+    /// before (or the oldest one of the segment, until there is one that
+    /// old), persisting for [`OFFSET_STEP_PERSIST`] estimates in a row.
+    /// `clock_ppm` carries that earlier estimate forward along the drift,
+    /// so only a jump stands out.
     ///
     /// A step in the offset is the signal, rather than how many bounds
     /// disagree, because under tick jitter some always do.
-    pub fn observe_estimate(&mut self, est: &ReserveEstimate) -> Option<SegmentBreak> {
-        let Some((baseline, half_width)) = self.step_baseline else {
+    pub fn observe_estimate(
+        &mut self,
+        est: &ReserveEstimate,
+        clock_ppm: f64,
+    ) -> Option<SegmentBreak> {
+        // Only the newest estimate at least the lag old is ever needed.
+        while self
+            .step_history
+            .get(1)
+            .is_some_and(|(at, _, _)| est.at - at >= OFFSET_STEP_LAG_MS)
+        {
+            self.step_history.pop_front();
+        }
+        let Some(&(at, baseline, half_width)) = self.step_history.front() else {
             if est.locked {
-                self.step_baseline = Some((est.reserve_ms, est.half_width_ms));
+                self.step_history
+                    .push_back((est.at, est.reserve_ms, est.half_width_ms));
             }
             return None;
         };
+        // Delivery runs at our clock and the playhead at the speaker's.
+        let expected = baseline - clock_ppm * 1e-6 * (est.at - at);
         let threshold = OFFSET_STEP_MIN_MS.max(OFFSET_STEP_HALF_WIDTHS * half_width);
-        if (est.reserve_ms - baseline).abs() > threshold {
+        if (est.reserve_ms - expected).abs() > threshold {
             self.step_pending += 1;
             if self.step_pending >= OFFSET_STEP_PERSIST {
                 self.record(SegmentBreak::OffsetStep);
@@ -188,8 +222,8 @@ impl Segment {
         }
         self.step_pending = 0;
         if est.locked {
-            // Follow the slow drift, so only a jump stands out.
-            self.step_baseline = Some((est.reserve_ms, est.half_width_ms));
+            self.step_history
+                .push_back((est.at, est.reserve_ms, est.half_width_ms));
         }
         None
     }
@@ -201,9 +235,9 @@ mod tests {
 
     const URI: &str = "http://10.0.0.1:49400/stream/s/live.wav";
 
-    fn estimate(reserve_ms: f64, locked: bool) -> ReserveEstimate {
+    fn estimate(at: f64, reserve_ms: f64, locked: bool) -> ReserveEstimate {
         ReserveEstimate {
-            at: 0.0,
+            at,
             reserve_ms,
             half_width_ms: 30.0,
             inconsistent: false,
@@ -256,25 +290,63 @@ mod tests {
         assert_eq!(seg.count(SegmentBreak::NotPlaying), 1);
     }
 
+    /// Feeds `reserves` as estimates 30 s apart from `from`, returning what
+    /// each one decided.
+    fn feed(seg: &mut Segment, from: f64, reserves: &[(f64, bool)]) -> Vec<Option<SegmentBreak>> {
+        reserves
+            .iter()
+            .enumerate()
+            .map(|(i, (r, locked))| {
+                seg.observe_estimate(&estimate(from + 30_000.0 * i as f64, *r, *locked), 0.0)
+            })
+            .collect()
+    }
+
     #[test]
     fn an_offset_step_must_persist_to_break_segment() {
         let mut seg = Segment::new();
-        assert_eq!(seg.observe_estimate(&estimate(500.0, true)), None);
-        // Slow drift is followed.
-        assert_eq!(seg.observe_estimate(&estimate(490.0, true)), None);
-        // A single jumped estimate is not enough.
-        assert_eq!(seg.observe_estimate(&estimate(800.0, false)), None);
-        assert_eq!(seg.observe_estimate(&estimate(495.0, true)), None);
-        // Two in a row are.
-        assert_eq!(seg.observe_estimate(&estimate(800.0, false)), None);
-        assert_eq!(
-            seg.observe_estimate(&estimate(820.0, false)),
-            Some(SegmentBreak::OffsetStep)
+        // Slow drift and a single jumped estimate are not enough.
+        let decided = feed(
+            &mut seg,
+            0.0,
+            &[(500.0, true), (490.0, true), (800.0, false), (495.0, true)],
         );
+        assert!(decided.iter().all(Option::is_none), "{decided:?}");
+        // Two in a row are.
+        let decided = feed(&mut seg, 120_000.0, &[(800.0, false), (820.0, false)]);
+        assert_eq!(decided, [None, Some(SegmentBreak::OffsetStep)]);
         assert_eq!(seg.count(SegmentBreak::OffsetStep), 1);
         // The next segment needs a fresh locked baseline.
-        assert_eq!(seg.observe_estimate(&estimate(100.0, false)), None);
-        assert_eq!(seg.observe_estimate(&estimate(900.0, false)), None);
+        let decided = feed(&mut seg, 180_000.0, &[(100.0, false), (900.0, false)]);
+        assert_eq!(decided, [None, None]);
+    }
+
+    #[test]
+    fn a_step_that_arrives_in_two_halves_is_still_seen() {
+        // While the reserve window straddles a 200 ms step its estimate
+        // shows half of it, under the threshold; once the window has turned
+        // over it shows the rest. Following the latest estimate would take
+        // each half in its stride.
+        let mut seg = Segment::new();
+        let mut reserves = vec![(500.0, true); 10];
+        reserves.extend([(600.0, true); 6]);
+        reserves.extend([(700.0, true); 4]);
+        let decided = feed(&mut seg, 0.0, &reserves);
+        let at = decided.iter().position(Option::is_some);
+        assert_eq!(at, Some(17), "{decided:?}");
+    }
+
+    #[test]
+    fn drift_at_the_measured_clock_rate_is_not_a_step() {
+        // 300 ppm drains 9 ms every 30 s: 180 ms over the 10 minutes, but
+        // never more than about 70 ms between an estimate and its baseline,
+        // and none of it once the clock rate is allowed for.
+        let mut seg = Segment::new();
+        for i in 0..40 {
+            let at = 30_000.0 * f64::from(i);
+            let est = estimate(at, 700.0 - 300e-6 * at, true);
+            assert_eq!(seg.observe_estimate(&est, 300.0), None, "at {at}");
+        }
     }
 
     #[test]
