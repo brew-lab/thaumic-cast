@@ -12,7 +12,7 @@ pub use manager::{
     AudioCodec, CleanupOrder, PlaybackEpoch, StreamMetadata, StreamReaderSlot, StreamRegistry,
     StreamState, StreamTiming, MAX_UNLISTED_STREAM_READERS,
 };
-pub use tap::{ConnectionTap, MonitorRegistrar};
+pub use tap::{ConnectionTap, MonitorRegistrar, SpeakerFigures, SpeakerSnapshot};
 pub use wav::create_wav_header;
 
 use std::collections::HashMap;

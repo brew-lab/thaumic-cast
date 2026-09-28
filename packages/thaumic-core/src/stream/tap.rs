@@ -15,13 +15,14 @@
 //! serves its first real frame, which is also when its playback epoch starts.
 
 use std::net::IpAddr;
-use std::sync::atomic::Ordering;
+use std::sync::atomic::{AtomicI32, AtomicU32, Ordering};
 use std::sync::{Arc, OnceLock, Weak};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
+use serde::Serialize;
 use tokio::sync::mpsc;
 
-use super::cadence::LoggingStreamGuard;
+use super::cadence::{LoggingStreamGuard, PipelineSample};
 use super::manager::PlaybackEpoch;
 use super::{AudioCodec, AudioFormat};
 
@@ -133,6 +134,116 @@ impl ConnectionTap {
     pub fn delivered_ms(&self) -> Option<u64> {
         (self.byte_rate > 0)
             .then(|| self.audio_bytes_sent().saturating_mul(1000) / u64::from(self.byte_rate))
+    }
+
+    /// Publishes the monitor's latest figures for this connection, where
+    /// the connection's pipeline snapshots pick them up.
+    pub fn publish_speaker(&self, figures: SpeakerFigures) {
+        self.guard.speaker.publish(figures);
+    }
+
+    /// What the connection's pipeline snapshots currently carry from the
+    /// monitor.
+    #[cfg(test)]
+    pub(crate) fn speaker_snapshot(&self) -> Option<SpeakerSnapshot> {
+        self.guard.speaker.snapshot()
+    }
+
+    /// The connection's pipeline snapshots from the last `window`.
+    pub(crate) fn recent_pipeline(&self, window: Duration) -> Vec<PipelineSample> {
+        self.guard.recent_pipeline(window)
+    }
+}
+
+/// What the speaker monitor last concluded about a connection's speaker.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct SpeakerFigures {
+    /// Estimated reserve (audio delivered but not yet played) and its
+    /// precision, in milliseconds.
+    pub reserve: Option<(f64, f64)>,
+    /// How much faster the speaker plays than our clock runs, and the
+    /// standard error, in ppm.
+    pub clock_ppm: Option<(f64, f64)>,
+}
+
+/// The speaker monitor's latest figures, as they appear in a pipeline
+/// snapshot.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize)]
+pub struct SpeakerSnapshot {
+    /// Estimated reserve in milliseconds.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reserve_ms: Option<i32>,
+    /// Half-width of the interval the reserve is known to lie in.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub precision_ms: Option<u32>,
+    /// Speaker clock against ours, in ppm (positive plays faster).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub clock_ppm: Option<f32>,
+    /// Standard error of `clock_ppm`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub clock_se_ppm: Option<f32>,
+}
+
+/// Lock-free home for [`SpeakerFigures`], written by the monitor every 30 s
+/// and read by the cadence loop every 500 ms. Fields are independent
+/// atomics: a snapshot taken mid-update may mix two updates, which is
+/// harmless for figures that change this slowly.
+pub struct SpeakerCell {
+    reserve_ms: AtomicI32,
+    precision_ms: AtomicU32,
+    clock_ppm_milli: AtomicI32,
+    clock_se_ppm_milli: AtomicU32,
+}
+
+/// Marks a signed field of [`SpeakerCell`] as not known.
+const UNKNOWN_I32: i32 = i32::MIN;
+/// Marks an unsigned field of [`SpeakerCell`] as not known.
+const UNKNOWN_U32: u32 = u32::MAX;
+
+impl Default for SpeakerCell {
+    fn default() -> Self {
+        Self {
+            reserve_ms: AtomicI32::new(UNKNOWN_I32),
+            precision_ms: AtomicU32::new(UNKNOWN_U32),
+            clock_ppm_milli: AtomicI32::new(UNKNOWN_I32),
+            clock_se_ppm_milli: AtomicU32::new(UNKNOWN_U32),
+        }
+    }
+}
+
+impl SpeakerCell {
+    /// Stores the latest figures; a figure that is `None` becomes unknown.
+    pub fn publish(&self, figures: SpeakerFigures) {
+        let signed = |v: f64| v.round().clamp(-(i32::MAX as f64), i32::MAX as f64) as i32;
+        let unsigned = |v: f64| v.round().clamp(0.0, (u32::MAX - 1) as f64) as u32;
+        let (reserve, precision) = figures
+            .reserve
+            .map_or((UNKNOWN_I32, UNKNOWN_U32), |(r, p)| {
+                (signed(r), unsigned(p))
+            });
+        let (ppm, se) = figures
+            .clock_ppm
+            .map_or((UNKNOWN_I32, UNKNOWN_U32), |(c, e)| {
+                (signed(c * 1000.0), unsigned(e * 1000.0))
+            });
+        self.reserve_ms.store(reserve, Ordering::Relaxed);
+        self.precision_ms.store(precision, Ordering::Relaxed);
+        self.clock_ppm_milli.store(ppm, Ordering::Relaxed);
+        self.clock_se_ppm_milli.store(se, Ordering::Relaxed);
+    }
+
+    /// The figures for a pipeline snapshot, or `None` if nothing is known.
+    pub fn snapshot(&self) -> Option<SpeakerSnapshot> {
+        let signed = |a: &AtomicI32| Some(a.load(Ordering::Relaxed)).filter(|v| *v != UNKNOWN_I32);
+        let unsigned =
+            |a: &AtomicU32| Some(a.load(Ordering::Relaxed)).filter(|v| *v != UNKNOWN_U32);
+        let snapshot = SpeakerSnapshot {
+            reserve_ms: signed(&self.reserve_ms),
+            precision_ms: unsigned(&self.precision_ms),
+            clock_ppm: signed(&self.clock_ppm_milli).map(|v| v as f32 / 1000.0),
+            clock_se_ppm: unsigned(&self.clock_se_ppm_milli).map(|v| v as f32 / 1000.0),
+        };
+        (snapshot.reserve_ms.is_some() || snapshot.clock_ppm.is_some()).then_some(snapshot)
     }
 }
 
@@ -260,6 +371,30 @@ mod tests {
             audio_epoch: Instant::now(),
         });
         assert_eq!(tap.epoch().map(|e| e.id), Some(7));
+    }
+
+    #[test]
+    fn speaker_figures_reach_the_pipeline_snapshot() {
+        let cell = SpeakerCell::default();
+        assert_eq!(cell.snapshot(), None, "nothing known yet");
+        cell.publish(SpeakerFigures {
+            reserve: Some((512.4, 34.2)),
+            clock_ppm: Some((-39.84, 7.1)),
+        });
+        let snap = cell.snapshot().expect("known");
+        assert_eq!(snap.reserve_ms, Some(512));
+        assert_eq!(snap.precision_ms, Some(34));
+        assert!((snap.clock_ppm.unwrap() + 39.84).abs() < 0.001);
+        cell.publish(SpeakerFigures {
+            reserve: None,
+            clock_ppm: Some((1.0, 2.0)),
+        });
+        let snap = cell.snapshot().expect("clock still known");
+        assert_eq!(snap.reserve_ms, None);
+        assert_eq!(
+            serde_json::to_string(&snap).unwrap(),
+            r#"{"clock_ppm":1.0,"clock_se_ppm":2.0}"#
+        );
     }
 
     #[tokio::test]

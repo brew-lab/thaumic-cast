@@ -179,6 +179,22 @@ struct PipelineSnapshot {
     /// a Wi-Fi stall: the kernel's send buffer hides it from `delivery`.
     #[serde(skip_serializing_if = "Option::is_none")]
     link: Option<crate::api::link::TcpLinkWindow>,
+    /// What the speaker monitor last concluded about the speaker at the
+    /// other end: its reserve and its clock against ours.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    speaker: Option<super::tap::SpeakerSnapshot>,
+}
+
+/// The parts of one pipeline snapshot the speaker monitor rolls up into its
+/// 30-second log line.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) struct PipelineSample {
+    /// Frames queued in the cadence buffer.
+    pub queue_len: usize,
+    /// Longest gap between delivered frames in the snapshot's window.
+    pub max_gap_ms: u64,
+    /// TCP retransmissions in the snapshot's window, where reported.
+    pub retransmitted: Option<u64>,
 }
 
 /// Wrapper that logs HTTP audio stream lifecycle and tracks delivery timing.
@@ -215,6 +231,8 @@ pub struct LoggingStreamGuard {
     link_judge: parking_lot::Mutex<Option<crate::api::link::LinkJudge>>,
     /// Where link quality changes are broadcast.
     link_emitter: Option<Arc<dyn crate::events::EventEmitter>>,
+    /// The speaker monitor's latest figures for this connection.
+    pub(crate) speaker: super::tap::SpeakerCell,
 }
 
 impl LoggingStreamGuard {
@@ -242,6 +260,7 @@ impl LoggingStreamGuard {
             last_retransmit_warning: parking_lot::Mutex::new(None),
             link_judge: parking_lot::Mutex::new(None),
             link_emitter: None,
+            speaker: super::tap::SpeakerCell::default(),
         }
     }
 
@@ -383,6 +402,21 @@ impl LoggingStreamGuard {
         if timeline.len() > MAX_PIPELINE_SNAPSHOTS {
             timeline.pop_front();
         }
+    }
+
+    /// The pipeline snapshots taken in the last `window`, oldest first.
+    pub(crate) fn recent_pipeline(&self, window: Duration) -> Vec<PipelineSample> {
+        let since_ms = (self.reference_time.elapsed().saturating_sub(window)).as_millis() as u64;
+        self.pipeline_timeline
+            .lock()
+            .iter()
+            .filter(|s| s.elapsed_ms >= since_ms)
+            .map(|s| PipelineSample {
+                queue_len: s.cadence.queue_len,
+                max_gap_ms: s.delivery.max_gap_ms,
+                retransmitted: s.link.map(|l| l.retransmitted),
+            })
+            .collect()
     }
 }
 
@@ -966,6 +1000,7 @@ pub fn create_wav_stream_with_cadence(
                             cadence: cadence_window,
                             delivery,
                             link: guard.sample_link(),
+                            speaker: guard.speaker.snapshot(),
                         });
                     }
                 }
