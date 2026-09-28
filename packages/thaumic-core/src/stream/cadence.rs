@@ -121,6 +121,73 @@ pub struct FirstConnectionWait {
     pub head_start_ms: u64,
 }
 
+/// Watches a speaker's first connection through its wait before the
+/// response, so a speaker that hangs up during the wait is logged.
+///
+/// Once the response starts, [`LoggingStreamGuard::with_first_wait`] logs
+/// whether the connection survived. A speaker that refuses a long wait is
+/// likely to close the connection before any response headers arrive,
+/// though, and the server then drops the handler while it is still waiting,
+/// before any guard exists. Arm this before the wait and call
+/// [`Self::completed`] once the wait is over; dropped while still armed, it
+/// logs how far into the wait the speaker hung up.
+#[must_use = "dropping the watch at once logs the wait as not survived"]
+pub struct FirstWaitWatch {
+    wait: FirstConnectionWait,
+    client_ip: IpAddr,
+    stream_id: String,
+    started: tokio::time::Instant,
+    armed: bool,
+    /// Where a test learns how far into the wait the watch was dropped.
+    #[cfg(test)]
+    hung_up_after: Option<Arc<parking_lot::Mutex<Option<Duration>>>>,
+}
+
+impl FirstWaitWatch {
+    /// Arms a watch over `wait`, starting now.
+    pub fn arm(wait: FirstConnectionWait, client_ip: IpAddr, stream_id: &str) -> Self {
+        Self {
+            wait,
+            client_ip,
+            stream_id: stream_id.to_string(),
+            started: tokio::time::Instant::now(),
+            armed: true,
+            #[cfg(test)]
+            hung_up_after: None,
+        }
+    }
+
+    /// Disarms the watch: the wait ran its course with the connection open.
+    pub fn completed(mut self) {
+        self.armed = false;
+    }
+}
+
+impl Drop for FirstWaitWatch {
+    fn drop(&mut self) {
+        if !self.armed {
+            return;
+        }
+        let elapsed = self.started.elapsed();
+        #[cfg(test)]
+        if let Some(cell) = &self.hung_up_after {
+            *cell.lock() = Some(elapsed);
+        }
+        log::warn!(
+            "[Stream] First-connection wait not survived: client={}, stream={}, the speaker hung \
+             up {}ms into a {}ms wait (smoothing {}ms + head start {}ms), before the response \
+             started; unless the cast was stopped or regrouped, if this repeats the speaker may \
+             not accept a wait this long, so try a shorter speaker head start",
+            self.client_ip,
+            self.stream_id,
+            elapsed.as_millis(),
+            self.wait.waited_ms,
+            self.wait.smoothing_ms,
+            self.wait.head_start_ms
+        );
+    }
+}
+
 /// Environment variable that overrides the PCM connect burst setting, in
 /// milliseconds (`0` turns it off). See [`crate::Config::pcm_connect_burst_ms`].
 pub const PCM_CONNECT_BURST_ENV: &str = "THAUMIC_PCM_CONNECT_BURST_MS";
@@ -669,8 +736,9 @@ impl Drop for LoggingStreamGuard {
                 log::warn!(
                     "[Stream] First-connection wait not survived: client={}, stream={}, the \
                      connection ended {}ms after a {}ms wait (smoothing {}ms + head start {}ms), \
-                     having sent {} frames; if this repeats, the speaker may not accept a wait \
-                     this long, so try a shorter speaker head start",
+                     having sent {} frames; unless the cast was stopped or regrouped, if this \
+                     repeats the speaker may not accept a wait this long, so try a shorter \
+                     speaker head start",
                     self.client_ip,
                     self.stream_id,
                     self.reference_time.elapsed().as_millis(),
@@ -2520,5 +2588,77 @@ mod tests {
         assert_eq!(trimmed.len(), 2, "prefill under depth is preserved");
         assert_eq!(trimmed[0][0], 0);
         assert_eq!(trimmed[1][0], 1);
+    }
+
+    fn test_wait() -> FirstConnectionWait {
+        FirstConnectionWait {
+            waited_ms: 2300,
+            smoothing_ms: 300,
+            head_start_ms: 2000,
+        }
+    }
+
+    /// Runs a first-connection wait the way the stream handler does, with a
+    /// watch armed over the sleep, and reports how far into the wait the
+    /// watch saw the speaker hang up, if it did.
+    fn spawn_watched_wait() -> (
+        tokio::task::JoinHandle<()>,
+        Arc<parking_lot::Mutex<Option<Duration>>>,
+    ) {
+        let hung_up = Arc::new(parking_lot::Mutex::new(None));
+        let cell = Arc::clone(&hung_up);
+        let handle = tokio::spawn(async move {
+            let mut watch =
+                FirstWaitWatch::arm(test_wait(), IpAddr::V4(Ipv4Addr::LOCALHOST), "test-stream");
+            watch.hung_up_after = Some(cell);
+            time::sleep(Duration::from_millis(test_wait().waited_ms)).await;
+            watch.completed();
+        });
+        (handle, hung_up)
+    }
+
+    /// A speaker that hangs up before the response makes the server drop the
+    /// handler mid-wait; the watch still logs how far into the wait that was.
+    #[tokio::test(start_paused = true)]
+    async fn a_speaker_hanging_up_mid_wait_is_logged_as_not_surviving_it() {
+        let (handle, hung_up) = spawn_watched_wait();
+        time::sleep(Duration::from_millis(700)).await;
+        handle.abort();
+        assert!(handle.await.unwrap_err().is_cancelled());
+
+        let after = hung_up.lock().expect("a dropped wait is logged");
+        assert_eq!(after, Duration::from_millis(700));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_wait_that_runs_its_course_is_not_logged_as_a_hang_up() {
+        let (handle, hung_up) = spawn_watched_wait();
+        handle.await.expect("wait completes");
+        assert_eq!(*hung_up.lock(), None);
+    }
+
+    /// The guard marks the wait survived only once the connection has been
+    /// fed for [`FIRST_WAIT_SURVIVAL`]; ending sooner leaves it unmarked,
+    /// which is what makes its drop warn.
+    #[test]
+    fn a_first_wait_counts_as_survived_only_after_the_survival_time() {
+        let mut guard =
+            LoggingStreamGuard::new("test-stream".to_string(), IpAddr::V4(Ipv4Addr::LOCALHOST))
+                .with_first_wait(test_wait());
+        guard.record_frame();
+        assert!(!guard.first_wait_survived.load(Ordering::Relaxed));
+
+        guard.reference_time = Instant::now() - FIRST_WAIT_SURVIVAL;
+        guard.record_frame();
+        assert!(guard.first_wait_survived.load(Ordering::Relaxed));
+    }
+
+    #[test]
+    fn a_connection_without_a_first_wait_is_never_marked_survived() {
+        let mut guard =
+            LoggingStreamGuard::new("test-stream".to_string(), IpAddr::V4(Ipv4Addr::LOCALHOST));
+        guard.reference_time = Instant::now() - FIRST_WAIT_SURVIVAL;
+        guard.record_frame();
+        assert!(!guard.first_wait_survived.load(Ordering::Relaxed));
     }
 }
