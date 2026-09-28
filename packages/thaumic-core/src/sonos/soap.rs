@@ -62,6 +62,45 @@ impl SoapError {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Request Options
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Per-call transport options for a SOAP request.
+///
+/// Most actions are user-driven and rare, so the defaults log every call at
+/// `info` and allow [`SOAP_TIMEOUT_SECS`]. Background polls that run for the
+/// whole cast use [`SoapOptions::quiet`] so they neither flood the log nor
+/// hold a poller for ten seconds when a speaker stops answering.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SoapOptions {
+    /// How long to wait for the whole request, response body included.
+    pub timeout: Duration,
+    /// Level of the per-call "sent" and "completed" log lines.
+    pub log_level: log::Level,
+}
+
+impl Default for SoapOptions {
+    fn default() -> Self {
+        Self {
+            timeout: Duration::from_secs(SOAP_TIMEOUT_SECS),
+            log_level: log::Level::Info,
+        }
+    }
+}
+
+impl SoapOptions {
+    /// Options for a periodic background poll: per-call lines at `debug` and
+    /// the given timeout.
+    #[must_use]
+    pub fn quiet(timeout: Duration) -> Self {
+        Self {
+            timeout,
+            log_level: log::Level::Debug,
+        }
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // SOAP Request/Response
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -90,6 +129,31 @@ pub async fn send_soap_request(
     action: &str,
     args: &[(&str, &str)],
 ) -> SoapResult<String> {
+    send_soap_request_with(
+        client,
+        ip,
+        endpoint,
+        service,
+        action,
+        args,
+        SoapOptions::default(),
+    )
+    .await
+}
+
+/// Sends a SOAP request with explicit [`SoapOptions`].
+///
+/// Identical to [`send_soap_request`] except for the timeout and the level
+/// the per-call log lines are written at.
+pub async fn send_soap_request_with(
+    client: &Client,
+    ip: &str,
+    endpoint: &str,
+    service: &str,
+    action: &str,
+    args: &[(&str, &str)],
+    options: SoapOptions,
+) -> SoapResult<String> {
     let url = build_sonos_url(ip, endpoint);
 
     // Build SOAP envelope - must be a single line with no leading whitespace
@@ -106,7 +170,13 @@ pub async fn send_soap_request(
 
     body.push_str(&format!(r#"</u:{}></s:Body></s:Envelope>"#, action));
 
-    log::info!("[SOAP] {} -> {} (body: {} bytes)", action, url, body.len());
+    log::log!(
+        options.log_level,
+        "[SOAP] {} -> {} (body: {} bytes)",
+        action,
+        url,
+        body.len()
+    );
     log::debug!("[SOAP] Request body: {}", body);
 
     let start = std::time::Instant::now();
@@ -115,12 +185,13 @@ pub async fn send_soap_request(
         .header("Content-Type", "text/xml; charset=\"utf-8\"")
         .header("SOAPAction", format!("\"{}#{}\"", service, action))
         .body(body)
-        .timeout(Duration::from_secs(SOAP_TIMEOUT_SECS))
+        .timeout(options.timeout)
         .send()
         .await;
 
     let elapsed = start.elapsed();
-    log::info!(
+    log::log!(
+        options.log_level,
         "[SOAP] {} completed in {:?}: {:?}",
         action,
         elapsed,
@@ -177,13 +248,28 @@ pub async fn soap_request(
     action: &str,
     args: &[(&str, &str)],
 ) -> SoapResult<String> {
-    send_soap_request(
+    soap_request_with(client, ip, service, action, args, SoapOptions::default()).await
+}
+
+/// Sends a service-resolved SOAP request with explicit [`SoapOptions`].
+///
+/// Identical to [`soap_request`] except for the timeout and log level.
+pub async fn soap_request_with(
+    client: &Client,
+    ip: &str,
+    service: SonosService,
+    action: &str,
+    args: &[(&str, &str)],
+    options: SoapOptions,
+) -> SoapResult<String> {
+    send_soap_request_with(
         client,
         ip,
         service.control_path(),
         service.urn(),
         action,
         args,
+        options,
     )
     .await
 }
