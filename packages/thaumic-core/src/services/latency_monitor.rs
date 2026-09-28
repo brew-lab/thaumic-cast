@@ -51,10 +51,11 @@
 //! *reserve*: the audio delivered to it minus the audio it has played (see
 //! [`crate::services::speaker_monitor`]). Every 30 s each watched speaker's
 //! reserve is estimated from the last three minutes of polls and its clock
-//! rate from the whole unbroken segment, and one `[SpeakerMonitor]` line
-//! reports both, with the cadence queue and the link beside them; the same
-//! figures go into the connection's pipeline snapshots. When a connection
-//! ends, a summary line reports what it saw. Compressed codecs, whose
+//! rate from every stretch of unbroken playback so far, and one
+//! `[SpeakerMonitor]` line reports both, with the cadence queue and the link
+//! beside them; the same figures go into the connection's pipeline
+//! snapshots. When a connection ends, a summary line reports what it saw.
+//! Compressed codecs, whose
 //! delivered bytes say nothing exact about playback time, get the clock
 //! rate and keep the older wall-clock cushion line instead.
 
@@ -179,12 +180,9 @@ const DIAGNOSTIC_LOG_INTERVAL_SECS: u64 = 30;
 /// written to the log.
 const SPEAKER_REPORT_INTERVAL: Duration = Duration::from_secs(30);
 
-/// Projected time to an empty reserve below which the speaker is reported
-/// as draining.
-const DRAINING_WARN_SECS: f64 = 20.0 * 60.0;
-
 /// Projected time to an empty reserve above which a draining warning is
-/// re-armed.
+/// re-armed (it fires below
+/// [`DRAINING_WARN_SECS`](crate::services::speaker_monitor::tracker::DRAINING_WARN_SECS)).
 const DRAINING_CLEAR_SECS: f64 = 30.0 * 60.0;
 
 /// Polls in a row reporting a track that is not the stream after which the
@@ -435,7 +433,11 @@ struct LatencySession {
     polls_since_report: u32,
     /// Where the last transport verdict came from.
     last_transport_source: TransportSource,
-    /// Whether the draining warning is armed (re-armed once it recovers).
+    /// Whether the draining warning has fired. It is re-armed only once the
+    /// projection recovers past [`DRAINING_CLEAR_SECS`] or the clock stops
+    /// draining, not when the projection merely lapses (the estimate
+    /// unlocking, an offset step, a new connection), so it does not repeat
+    /// while the speaker drains on.
     draining_warned: bool,
     /// Whether the current connection is owed an end-of-connection summary.
     summary_owed: bool,
@@ -538,21 +540,21 @@ impl LatencySession {
         self.tracker.start_connection(self.pcm);
         self.last_report = Some(now);
         self.polls_since_report = 0;
-        self.draining_warned = false;
         self.summary_owed = self.wants_polls();
     }
 
     /// Logs the end-of-connection summary, if the current connection is
     /// owed one: how long it lasted, its reserve at the start, the end and
     /// the lowest, the clock rate, polls, segment breaks by reason, suspected
-    /// underruns and the gap before it.
-    fn end_connection(&mut self, stream_id: &str, speaker_ip: IpAddr, now: Instant) {
+    /// underruns, inconsistent reserve estimates and the gap before it.
+    /// Returns whether it logged one.
+    fn end_connection(&mut self, stream_id: &str, speaker_ip: IpAddr, now: Instant) -> bool {
         if !std::mem::take(&mut self.summary_owed) {
-            return;
+            return false;
         }
         self.previous_connection_ended = Some(now);
         let Some(connected_at) = self.connected_at else {
-            return;
+            return false;
         };
         let c = self.tracker.connection();
         let ms = |v: Option<f64>| v.map_or_else(|| "?".to_string(), |v| format!("{v:.0}"));
@@ -561,7 +563,7 @@ impl LatencySession {
             .filter(|r| **r != SegmentBreak::NewConnection)
             .map(|r| format!("{}={}", r, self.tracker.connection_breaks(*r)))
             .collect();
-        let (estimates, inconsistent) = self.tracker.estimate_counts();
+        let (estimates, inconsistent) = self.tracker.connection_estimate_counts();
         log::info!(
             "[SpeakerMonitor] {} stream={} connection ended after {}: reserve start={}ms end={}ms \
              min={}ms clock={} polls={} breaks[{}] underruns_suspected={} incons={}/{} \
@@ -581,6 +583,7 @@ impl LatencySession {
             self.reconnect_gap
                 .map_or_else(|| "none".to_string(), format_duration),
         );
+        true
     }
 
     /// Whether the reserve and clock are due another report.
@@ -630,11 +633,11 @@ impl LatencySession {
             (None, false) => "n/a(compressed)".to_string(),
         };
         let tte = self.tracker.time_to_empty_s();
-        let (_, inconsistent) = self.tracker.estimate_counts();
+        let (estimates, inconsistent) = self.tracker.connection_estimate_counts();
         let per_min = f64::from(polls) * 60.0 / window.as_secs_f64().max(1.0);
         log::info!(
             "[SpeakerMonitor] {} stream={} state={} reserve={} clock={} tte={} polls={:.0}/min \
-             incons={} j={:.0}ms {} transport={}",
+             incons={}/{} j={:.0}ms {} transport={}",
             speaker_ip,
             stream_id,
             state,
@@ -646,30 +649,34 @@ impl LatencySession {
             ),
             per_min,
             inconsistent,
+            estimates,
             self.tracker.jitter_ms(),
+            // Copies the window out under the pipeline timeline's lock, which
+            // the cadence loop also takes every 500 ms. Unlike everything
+            // else the monitor reads, this is not an atomic, but the lock is
+            // held only for the copy (about 60 entries every 30 s) and
+            // never across an await.
             format_pipeline(&tap.recent_pipeline(window)),
             self.last_transport_source,
         );
 
-        match tte {
-            Some(secs) if secs < DRAINING_WARN_SECS && state == MonitorState::Ok => {
-                if !self.draining_warned {
-                    self.draining_warned = true;
-                    log::warn!(
-                        "[SpeakerMonitor] {} stream={}: reserve draining: the speaker plays {} \
-                         faster than the audio arrives, leaving about {} before it runs dry \
-                         (reserve={}). A live source cannot catch up; expect dropouts from then \
-                         until playback is restarted",
-                        speaker_ip,
-                        stream_id,
-                        format_clock(clock),
-                        format_duration(Duration::from_secs_f64(secs)),
-                        reserve
-                    );
-                }
-            }
-            Some(secs) if secs < DRAINING_CLEAR_SECS => {}
-            _ => self.draining_warned = false,
+        let due = draining_warning_due(
+            &mut self.draining_warned,
+            state,
+            tte,
+            self.tracker.clock_drains(),
+        );
+        if let (true, Some(secs)) = (due, tte) {
+            log::warn!(
+                "[SpeakerMonitor] {} stream={}: reserve draining: the speaker plays {} faster \
+                 than the audio arrives, leaving about {} before it runs dry (reserve={}). A live \
+                 source cannot catch up; expect dropouts from then until playback is restarted",
+                speaker_ip,
+                stream_id,
+                format_clock(clock),
+                format_duration(Duration::from_secs_f64(secs)),
+                reserve
+            );
         }
     }
 
@@ -1030,6 +1037,32 @@ fn format_duration(d: Duration) -> String {
         format!("{}m{:02}s", secs / 60, secs % 60)
     } else {
         format!("{}h{:02}m", secs / 3600, (secs % 3600) / 60)
+    }
+}
+
+/// Steps the draining warning's hysteresis for one report and returns
+/// whether to warn now. It fires once on entering [`MonitorState::Draining`]
+/// and is re-armed only when the projection recovers past
+/// [`DRAINING_CLEAR_SECS`], or lapses because the clock no longer drains.
+/// A projection that lapses while the clock still drains (the estimate
+/// briefly unlocked, or cleared by an offset step) leaves it fired.
+fn draining_warning_due(
+    warned: &mut bool,
+    state: MonitorState,
+    tte: Option<f64>,
+    clock_drains: bool,
+) -> bool {
+    match tte {
+        Some(_) if state == MonitorState::Draining => !std::mem::replace(warned, true),
+        Some(secs) if secs >= DRAINING_CLEAR_SECS => {
+            *warned = false;
+            false
+        }
+        None if !clock_drains => {
+            *warned = false;
+            false
+        }
+        _ => false,
     }
 }
 
@@ -1832,7 +1865,7 @@ mod tests {
         use crate::error::SoapResult;
         use crate::events::{NetworkEvent, SonosEvent, StreamEvent, TopologyEvent};
         use crate::state::StreamingConfig;
-        use crate::stream::tap::test_support::started_tap;
+        use crate::stream::tap::test_support::{started_tap, started_tap_with_codec};
         use crate::stream::{AudioCodec, AudioFormat, StreamMetadata};
         use async_trait::async_trait;
 
@@ -2286,6 +2319,98 @@ mod tests {
             assert_eq!(published.reserve_ms, Some(est.reserve_ms.round() as i32));
         }
 
+        /// Answers `count` polls of `session` on `tap`'s connection, a
+        /// second apart, from a speaker holding 600 ms.
+        fn answer_polls(session: &mut LatencySession, tap: &ConnectionTap, count: u64) {
+            let epoch_id = tap.epoch().expect("started").id;
+            for poll_id in 1..=count {
+                let ts = poll_id * 1000;
+                let at = tap.connected_at + Duration::from_millis(ts);
+                let delivered = tap.delivered_ms().map(|_| ts);
+                session.in_flight = Some(poll_id);
+                let result = PollResult {
+                    epoch_id,
+                    stream_elapsed_ms: ts,
+                    sent_at: at,
+                    answered_at: at + Duration::from_millis(10),
+                    delivered_ms_at_send: delivered,
+                    delivered_ms_at_answer: delivered.map(|d| d + 10),
+                    ..poll(poll_id, Ok(ours(ts.saturating_sub(600) / 1000 * 1000)))
+                };
+                apply_poll_result(session, result, &NoEvents, None);
+            }
+        }
+
+        #[test]
+        fn the_wall_clock_cushion_is_logged_only_for_compressed_codecs() {
+            let pcm = started_tap("stream", HUNG_IP, true);
+            let mut session = LatencySession::new(false);
+            session.attach(&pcm);
+            answer_polls(&mut session, &pcm, 10);
+            assert!(session.sample_count >= 10);
+            assert!(
+                session.last_diag_log.is_none(),
+                "a PCM connection's reserve is measured; the cushion line would mislead"
+            );
+
+            let aac = started_tap_with_codec("stream", HUNG_IP, true, AudioCodec::Aac);
+            let mut session = LatencySession::new(false);
+            session.attach(&aac);
+            answer_polls(&mut session, &aac, 10);
+            assert!(
+                session.last_diag_log.is_some(),
+                "a compressed connection keeps the cushion line and its trend"
+            );
+        }
+
+        #[test]
+        fn the_reserve_is_reported_every_30s() {
+            let tap = started_tap("stream", HUNG_IP, true);
+            let mut session = LatencySession::new(false);
+            session.attach(&tap);
+            let attached = session.last_report.expect("attaching starts the clock");
+            assert!(!session.report_due(attached + Duration::from_secs(29)));
+            let due = attached + SPEAKER_REPORT_INTERVAL;
+            assert!(session.report_due(due));
+            session.report("stream", HUNG_IP.parse().unwrap(), &tap, due);
+            assert!(!session.report_due(due + Duration::from_secs(29)));
+            assert!(session.report_due(due + SPEAKER_REPORT_INTERVAL));
+        }
+
+        #[test]
+        fn a_connection_is_summarised_once_when_it_ends_or_is_replaced() {
+            let ip: IpAddr = HUNG_IP.parse().unwrap();
+            let mut session = LatencySession::new(false);
+            let first = started_tap("stream", HUNG_IP, true);
+            session.attach(&first);
+            // Replaced before a tick noticed it closing: attaching the next
+            // connection summarises the first.
+            let second = started_tap("stream", HUNG_IP, true);
+            session.attach(&second);
+            assert!(
+                session.reconnect_gap.is_some(),
+                "the replaced connection was summarised, which starts the gap"
+            );
+            assert!(session.summary_owed, "and the new one is owed its own");
+            // The tick that finds it closed, then StopSpeaker or StopStream:
+            // only the first logs.
+            assert!(session.end_connection("stream", ip, Instant::now()));
+            assert!(!session.end_connection("stream", ip, Instant::now()));
+        }
+
+        #[test]
+        fn no_summary_is_owed_while_the_speaker_is_not_polled() {
+            let ip: IpAddr = HUNG_IP.parse().unwrap();
+            // Monitoring off and no video sync: never polled, never summarised.
+            let mut session = LatencySession::new(false);
+            session.attach(&started_tap("stream", HUNG_IP, false));
+            assert!(!session.end_connection("stream", ip, Instant::now()));
+            // Video sync polls whatever the setting, so it is summarised.
+            let mut session = LatencySession::new(true);
+            session.attach(&started_tap("stream", HUNG_IP, false));
+            assert!(session.end_connection("stream", ip, Instant::now()));
+        }
+
         #[test]
         fn a_poll_with_no_trustworthy_transport_state_is_still_measured() {
             let mut session = LatencySession::new(true);
@@ -2342,6 +2467,29 @@ mod tests {
             resolve_speaker_monitor(false, Some(false), true),
             "the diagnostics switch still opts in"
         );
+    }
+
+    #[test]
+    fn the_draining_warning_fires_once_until_the_drain_recovers() {
+        use MonitorState::{Draining, Locking, Ok};
+        let mut warned = false;
+        let mut step =
+            |state, tte, clock_drains| draining_warning_due(&mut warned, state, tte, clock_drains);
+        assert!(step(Draining, Some(900.0), true), "fires on entering");
+        assert!(!step(Draining, Some(880.0), true), "once");
+        // The estimate unlocks, or an offset step clears it, while the clock
+        // still drains: no new warning when it comes back.
+        assert!(!step(Locking, None, true));
+        assert!(!step(Draining, Some(860.0), true));
+        // Between the warning and clearing thresholds nothing changes.
+        assert!(!step(Ok, Some(25.0 * 60.0), true));
+        assert!(!step(Draining, Some(850.0), true));
+        // Recovering past the clearing threshold re-arms it.
+        assert!(!step(Ok, Some(DRAINING_CLEAR_SECS), true));
+        assert!(step(Draining, Some(800.0), true));
+        // So does the clock ceasing to drain.
+        assert!(!step(Ok, None, false));
+        assert!(step(Draining, Some(800.0), true));
     }
 
     #[test]

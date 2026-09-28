@@ -295,12 +295,23 @@ pub(crate) mod test_support {
         speaker_ip: &str,
         monitor: bool,
     ) -> Arc<ConnectionTap> {
+        started_tap_with_codec(stream_id, speaker_ip, monitor, AudioCodec::Pcm)
+    }
+
+    /// A tap of `codec` for `speaker_ip` on `stream_id` whose epoch has
+    /// started.
+    pub(crate) fn started_tap_with_codec(
+        stream_id: &str,
+        speaker_ip: &str,
+        monitor: bool,
+        codec: AudioCodec,
+    ) -> Arc<ConnectionTap> {
         let ip: IpAddr = speaker_ip.parse().expect("test address");
         let tap = Arc::new(ConnectionTap::new(
             stream_id,
             ip,
             Instant::now(),
-            AudioCodec::Pcm,
+            codec,
             &AudioFormat::default(),
             Arc::new(LoggingStreamGuard::new(stream_id.to_string(), ip)),
             monitor,

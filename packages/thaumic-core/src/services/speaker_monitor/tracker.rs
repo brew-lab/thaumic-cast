@@ -56,6 +56,10 @@ pub fn drain_threshold_sigmas(dof: usize) -> f64 {
     t0 + (t1 - t0) * (inv(dof) - inv(d0)) / (inv(d1) - inv(d0))
 }
 
+/// Projected time to an empty reserve below which the speaker is reported
+/// as draining.
+pub const DRAINING_WARN_SECS: f64 = 20.0 * 60.0;
+
 /// The monitor's view of one speaker, for the log.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MonitorState {
@@ -63,6 +67,9 @@ pub enum MonitorState {
     Locking,
     /// The estimate is locked.
     Ok,
+    /// The estimate is locked and the reserve is projected to run out
+    /// within [`DRAINING_WARN_SECS`].
+    Draining,
     /// The speaker is known not to be playing.
     Paused,
     /// The speaker has stopped answering.
@@ -77,6 +84,7 @@ impl MonitorState {
         match self {
             Self::Locking => "locking",
             Self::Ok => "ok",
+            Self::Draining => "draining",
             Self::Paused => "paused",
             Self::Stale => "stale",
             Self::Dormant => "dormant",
@@ -103,6 +111,9 @@ pub struct ConnectionStats {
     pub reserve_min_ms: Option<f64>,
     /// Segment breaks by reason, as counted when the connection started.
     breaks_before: [u32; 5],
+    /// Reserve estimates made and how many were inconsistent, as counted
+    /// when the connection started.
+    estimates_before: (u64, u64),
 }
 
 /// Reserve and clock tracking for one speaker, across its connections.
@@ -138,6 +149,7 @@ impl ReserveTracker {
         self.last = None;
         self.connection = ConnectionStats {
             breaks_before: SegmentBreak::ALL.map(|r| self.segment.count(r)),
+            estimates_before: self.reserve.counts(),
             ..ConnectionStats::default()
         };
     }
@@ -221,10 +233,12 @@ impl ReserveTracker {
         self.reserve.jitter_ms()
     }
 
-    /// Reserve estimates made and how many were inconsistent, over the
-    /// tracker's life.
-    pub fn estimate_counts(&self) -> (u64, u64) {
-        self.reserve.counts()
+    /// Reserve estimates made during the current connection and how many
+    /// were inconsistent.
+    pub fn connection_estimate_counts(&self) -> (u64, u64) {
+        let (total, inconsistent) = self.reserve.counts();
+        let (total_before, inconsistent_before) = self.connection.estimates_before;
+        (total - total_before, inconsistent - inconsistent_before)
     }
 
     /// Whether the speaker is known not to be playing.
@@ -260,12 +274,17 @@ impl ReserveTracker {
     /// approximation that errs towards warning early.
     pub fn time_to_empty_s(&self) -> Option<f64> {
         let est = self.last.filter(|e| e.locked)?;
-        let clock = self.clock()?;
-        if clock.ppm <= drain_threshold_sigmas(clock.dof) * clock.se_ppm || clock.ppm <= 0.0 {
-            return None;
-        }
+        let clock = self.clock().filter(|_| self.clock_drains())?;
         // ppm·1e-6 ms per ms is ppm·1e-3 ms per second.
         Some((est.reserve_ms.max(0.0)) / (clock.ppm * 1e-3))
+    }
+
+    /// Whether the speaker plays faster than we deliver by more than
+    /// [`drain_threshold_sigmas`] standard errors, whatever the reserve
+    /// estimate is doing.
+    pub fn clock_drains(&self) -> bool {
+        self.clock()
+            .is_some_and(|c| c.ppm > 0.0 && c.ppm > drain_threshold_sigmas(c.dof) * c.se_ppm)
     }
 
     /// The state to report, given what the monitor knows beyond the polls.
@@ -277,7 +296,14 @@ impl ReserveTracker {
         } else if self.paused() {
             MonitorState::Paused
         } else if self.last.is_some_and(|e| e.locked) {
-            MonitorState::Ok
+            if self
+                .time_to_empty_s()
+                .is_some_and(|s| s < DRAINING_WARN_SECS)
+            {
+                MonitorState::Draining
+            } else {
+                MonitorState::Ok
+            }
         } else {
             MonitorState::Locking
         }
@@ -316,7 +342,8 @@ mod tests {
         let mut gen = PollGen::new(41);
         gen.ppm = 300.0;
         run(&mut tracker, &mut gen, 0.0, 20.0 * 60_000.0);
-        assert_eq!(tracker.state(false, false), MonitorState::Ok);
+        assert_eq!(tracker.state(false, false), MonitorState::Draining);
+        assert!(tracker.clock_drains());
         let tte = tracker.time_to_empty_s().expect("draining");
         let truth = gen.reserve(20.0 * 60_000.0) / 0.3;
         assert!(
@@ -334,6 +361,8 @@ mod tests {
         let mut gen = PollGen::new(43);
         run(&mut tracker, &mut gen, 0.0, 30.0 * 60_000.0);
         assert_eq!(tracker.time_to_empty_s(), None);
+        assert!(!tracker.clock_drains());
+        assert_eq!(tracker.state(false, false), MonitorState::Ok);
     }
 
     #[test]
@@ -344,8 +373,10 @@ mod tests {
         run(&mut tracker, &mut gen, 0.0, 10.0 * 60_000.0);
         assert!(tracker.connection().polls > 0);
         assert_eq!(tracker.connection_breaks(SegmentBreak::NewConnection), 0);
+        assert!(tracker.connection_estimate_counts().0 > 0);
         tracker.start_connection(true);
         assert_eq!(tracker.connection().polls, 0);
+        assert_eq!(tracker.connection_estimate_counts(), (0, 0));
         assert_eq!(tracker.last_estimate(), None);
         assert!(
             tracker.clock().is_some(),
