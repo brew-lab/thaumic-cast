@@ -21,6 +21,7 @@ use crate::events::{BroadcastEvent, BroadcastEventBridge, EventEmitter};
 use crate::mdns_advertise::{advertiser_handle, MdnsAdvertiserHandle};
 use crate::protocol_constants::{EVENT_CHANNEL_CAPACITY, SOAP_TIMEOUT_SECS};
 use crate::runtime::TokioSpawner;
+use crate::services::speaker_monitor::GenaTransportView;
 use crate::services::{DiscoveryService, LatencyMonitor, StreamCoordinator};
 use crate::sonos::gena::GenaSubscriptionManager;
 use crate::sonos::subscription_arbiter::SubscriptionArbiter;
@@ -247,6 +248,10 @@ pub fn bootstrap_services_with_network(
         Arc::clone(&sonos_impl) as Arc<dyn SonosPlayback>,
         stream_coordinator.stream_registry(),
         Arc::clone(&event_bridge) as Arc<dyn EventEmitter>,
+        Arc::new(GenaTransportView::new(
+            Arc::clone(&sonos_state),
+            Arc::clone(&gena_manager),
+        )),
         cancel_token.clone(),
         spawner.clone(),
     ));

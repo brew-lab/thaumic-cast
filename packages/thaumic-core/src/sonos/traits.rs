@@ -7,7 +7,7 @@ use async_trait::async_trait;
 
 use crate::error::{DiscoveryResult, SoapResult};
 use crate::sonos::discovery::Speaker;
-use crate::sonos::types::{PositionInfo, ZoneGroup};
+use crate::sonos::types::{PositionInfo, TransportState, ZoneGroup};
 use crate::stream::{AudioCodec, AudioFormat, StreamMetadata};
 
 /// Trait for Sonos playback control operations.
@@ -71,6 +71,15 @@ pub trait SonosPlayback: Send + Sync {
     /// # Returns
     /// Position information including track number, duration, URI, and elapsed time.
     async fn get_position_info(&self, ip: &str) -> SoapResult<PositionInfo>;
+
+    /// Gets a speaker's current transport state (`GetTransportInfo`).
+    ///
+    /// Used by the speaker monitor when the state GENA reported cannot be
+    /// vouched for, so it can tell a paused speaker from a playing one.
+    ///
+    /// # Arguments
+    /// * `ip` - IP address of the Sonos speaker (coordinator for grouped speakers)
+    async fn get_transport_info(&self, ip: &str) -> SoapResult<TransportState>;
 
     /// Joins a speaker to a coordinator for synchronized playback.
     ///

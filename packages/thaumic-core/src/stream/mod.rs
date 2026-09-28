@@ -1,6 +1,7 @@
 pub mod cadence;
 pub mod icy;
 pub mod manager;
+pub mod tap;
 pub mod wav;
 
 pub use cadence::{
@@ -11,6 +12,7 @@ pub use manager::{
     AudioCodec, CleanupOrder, PlaybackEpoch, StreamMetadata, StreamReaderSlot, StreamRegistry,
     StreamState, StreamTiming, MAX_UNLISTED_STREAM_READERS,
 };
+pub use tap::{ConnectionTap, MonitorRegistrar};
 pub use wav::create_wav_header;
 
 use std::collections::HashMap;

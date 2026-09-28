@@ -7,13 +7,16 @@ pub mod discovery_service;
 pub mod gena_event_processor;
 pub mod latency_monitor;
 pub mod playback_session_store;
+pub mod speaker_monitor;
 pub mod stream_coordinator;
 pub(crate) mod sync_group_manager;
 pub mod topology_monitor;
 pub(crate) mod volume_router;
 
 pub use discovery_service::DiscoveryService;
-pub use latency_monitor::{speaker_diagnostics_enabled, LatencyMonitor};
+pub use latency_monitor::{
+    speaker_diagnostics_enabled, speaker_monitor_enabled, LatencyMonitor, SPEAKER_MONITOR_ENV,
+};
 pub use playback_session_store::{GroupRole, PlaybackResult, PlaybackSession};
 pub use stream_coordinator::{CaptureStreamSession, StreamCoordinator};
 pub use topology_monitor::{TopologyMonitor, TopologyMonitorConfig};

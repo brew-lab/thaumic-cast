@@ -29,9 +29,11 @@ use crate::api::ws::is_companion_host;
 use crate::api::AppState;
 use crate::error::{ThaumicError, ThaumicResult};
 use crate::protocol_constants::{APP_NAME, ICY_METAINT, WAV_STREAM_SIZE_MAX};
+use crate::services::latency_monitor::speaker_monitor_enabled;
 use crate::stream::{
     create_wav_header, create_wav_stream_with_cadence, lagged_error, AudioCodec, CadenceConfig,
-    EpochHook, IcyMetadataInjector, LoggingStreamGuard, StreamState, MAX_UNLISTED_STREAM_READERS,
+    ConnectionTap, EpochHook, IcyMetadataInjector, LoggingStreamGuard, StreamState,
+    MAX_UNLISTED_STREAM_READERS,
 };
 
 /// A single item of an audio body stream.
@@ -88,6 +90,21 @@ impl StreamAccess {
         match self {
             StreamAccess::Speaker | StreamAccess::CompanionHost => true,
             StreamAccess::UnlistedServed | StreamAccess::UnlistedRefused => false,
+        }
+    }
+
+    /// Whether this reader's playback can be watched by polling it.
+    ///
+    /// Only a speaker the stream is playing on answers `GetPositionInfo`.
+    /// This machine tracks playback (a local player's reconnects are real
+    /// resumes) but is not a Sonos speaker, so polling it would only collect
+    /// refusals.
+    fn monitors_playback(self) -> bool {
+        match self {
+            StreamAccess::Speaker => true,
+            StreamAccess::CompanionHost
+            | StreamAccess::UnlistedServed
+            | StreamAccess::UnlistedRefused => false,
         }
     }
 }
@@ -150,7 +167,10 @@ pub(super) async fn stream_audio(
     // peer is one of the devices the stream is actually for. Derived per
     // request; see `decide_stream_access`.
     let allowed_ips = state.stream_coordinator.allowed_reader_ips(&id);
-    let strict = state.config.read().strict_stream_access;
+    let (strict, speaker_monitor) = {
+        let config = state.config.read();
+        (config.strict_stream_access, config.speaker_monitor)
+    };
     let access = decide_stream_access(
         remote_ip,
         &allowed_ips,
@@ -316,9 +336,31 @@ pub(super) async fn stream_audio(
     //
     // The epoch's content T0 is the first frame each pipeline serves: the PCM
     // cadence trims the prefill first, so it supplies its own.
-    let epoch_hook: Option<EpochHook> = access
-        .tracks_playback()
-        .then(|| (Arc::downgrade(&stream_state), connected_at, remote_ip));
+    //
+    // A speaker's connection is also handed to the speaker monitor once its
+    // epoch starts: whoever actually fetches is the device whose playback can
+    // be measured, however the cast was started. The monitor always learns of
+    // the connection, since video sync may need it; whether it polls a
+    // speaker nobody asked video sync for follows the speaker-monitor
+    // setting as it stands now, so a change applies from the next connection.
+    let tap = access.monitors_playback().then(|| {
+        Arc::new(ConnectionTap::new(
+            id.clone(),
+            remote_ip,
+            connected_at,
+            stream_state.codec,
+            &stream_state.audio_format,
+            Arc::clone(&guard),
+            speaker_monitor_enabled(speaker_monitor),
+        ))
+    });
+    let epoch_hook: Option<EpochHook> = access.tracks_playback().then(|| {
+        let hook = EpochHook::new(Arc::downgrade(&stream_state), connected_at, remote_ip);
+        match &tap {
+            Some(tap) => hook.with_monitor(Arc::clone(tap), state.latency_monitor.registrar()),
+            None => hook,
+        }
+    });
 
     // Build combined stream - PCM gets cadence-based streaming, compressed codecs don't.
     //
@@ -422,13 +464,15 @@ pub(super) async fn stream_audio(
 
     // Wrap stream with logging guard to track delivery timing and errors.
     // The guard logs summary stats on drop when the stream ends.
-    // What the response body owns: the stats guard it records into, and — for
-    // an unlisted reader — its budget slot, freed when the body is dropped,
-    // the moment this reader is really gone.
-    let body_owned = (Arc::clone(&guard), reader_slot);
+    // What the response body owns: the stats guard it records into, the
+    // connection's monitoring tap (the monitor holds it weakly, so dropping
+    // the body ends its monitoring), and — for an unlisted reader — its
+    // budget slot, freed when the body is dropped, the moment this reader is
+    // really gone.
+    let body_owned = (Arc::clone(&guard), tap, reader_slot);
     let final_stream: AudioStream =
         Box::pin(inner_stream.map(move |res: Result<Bytes, std::io::Error>| {
-            let (guard_for_frames, _reader_slot) = &body_owned;
+            let (guard_for_frames, _tap, _reader_slot) = &body_owned;
             match &res {
                 Ok(bytes) => {
                     guard_for_frames.record_frame();
@@ -467,19 +511,15 @@ where
     S: Stream<Item = FrameResult> + Send,
 {
     stream.scan(Some(hook), move |hook, item: FrameResult| {
-        if let Some((weak_state, connected_at, remote_ip)) = hook.take() {
+        if let Some(armed) = hook.take() {
             let is_audio = item.as_ref().is_ok_and(|frame| !frame.is_empty());
-            match weak_state.upgrade() {
-                Some(stream_state) if is_audio => {
-                    stream_state
-                        .timing
-                        .start_new_epoch(epoch_candidate, connected_at, remote_ip);
-                }
+            if is_audio {
+                armed.fire(epoch_candidate);
+            } else if armed.stream_alive() {
                 // Alive but nothing to time yet - stay armed.
-                Some(_) => *hook = Some((weak_state, connected_at, remote_ip)),
-                // Stream gone - drop the hook.
-                None => {}
+                *hook = Some(armed);
             }
+            // Otherwise the stream is gone - drop the hook.
         }
         futures::future::ready(Some(item))
     })
@@ -654,6 +694,12 @@ mod tests {
         assert!(StreamAccess::CompanionHost.tracks_playback());
         assert!(!StreamAccess::UnlistedServed.tracks_playback());
         assert!(!StreamAccess::UnlistedRefused.tracks_playback());
+        assert!(StreamAccess::Speaker.monitors_playback());
+        assert!(
+            !StreamAccess::CompanionHost.monitors_playback(),
+            "this machine is not a Sonos speaker and cannot be polled"
+        );
+        assert!(!StreamAccess::UnlistedServed.monitors_playback());
 
         // A stream whose unlisted budget is fully spent still admits speakers:
         // they never consult it.
@@ -691,7 +737,7 @@ mod tests {
     }
 
     fn hook_for(state: &Arc<StreamState>) -> EpochHook {
-        (Arc::downgrade(state), Instant::now(), test_ip())
+        EpochHook::new(Arc::downgrade(state), Instant::now(), test_ip())
     }
 
     #[tokio::test]
@@ -740,6 +786,48 @@ mod tests {
             .current_epoch_for(test_ip())
             .expect("the first real frame starts an epoch");
         assert_eq!(epoch.audio_epoch, first_served);
+    }
+
+    /// Monitoring follows whoever fetches: the connection reaches the monitor
+    /// when its first real frame starts its epoch, and not before, so the
+    /// monitor never sees a connection it cannot time.
+    #[tokio::test]
+    async fn epoch_hook_registers_a_monitored_connection_once_its_epoch_starts() {
+        use crate::stream::MonitorRegistrar;
+        let state = test_stream_state();
+        let (registrar, mut registrations) = MonitorRegistrar::channel();
+        let tap = Arc::new(ConnectionTap::new(
+            "test-stream",
+            test_ip(),
+            Instant::now(),
+            AudioCodec::Aac,
+            &AudioFormat::default(),
+            Arc::new(LoggingStreamGuard::new("test-stream".into(), test_ip())),
+            true,
+        ));
+        let hook = hook_for(&state).with_monitor(Arc::clone(&tap), registrar);
+        let source =
+            futures::stream::iter(vec![Ok(Bytes::new()), Ok(Bytes::from_static(b"audio"))]);
+        let mut body = Box::pin(with_epoch_hook(source, hook, None));
+
+        body.next().await.expect("empty frame").expect("ok");
+        assert!(
+            registrations.try_recv().is_err(),
+            "no epoch, no registration"
+        );
+
+        body.next().await.expect("audio frame").expect("ok");
+        let registered = registrations
+            .try_recv()
+            .expect("registered on the first real frame")
+            .upgrade()
+            .expect("the connection is still open");
+        let epoch = state.timing.current_epoch_for(test_ip()).expect("epoch");
+        assert_eq!(registered.epoch().map(|e| e.id), Some(epoch.id));
+        assert!(state
+            .timing
+            .current_tap_for(test_ip())
+            .is_some_and(|t| Arc::ptr_eq(&t, &tap)));
     }
 
     #[tokio::test]

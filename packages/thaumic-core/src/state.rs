@@ -6,6 +6,7 @@
 use std::collections::HashSet;
 use std::hash::Hash;
 use std::sync::OnceLock;
+use std::time::Instant;
 
 use dashmap::DashMap;
 use parking_lot::{Mutex, RwLock};
@@ -133,6 +134,32 @@ pub struct Config {
     /// authentication there instead.
     #[serde(default)]
     pub strict_stream_access: bool,
+
+    // Diagnostics
+    /// Whether the server keeps an eye on each speaker playing one of its
+    /// streams by asking it for its playback position every few seconds.
+    ///
+    /// Defaults to `true`. A speaker that fetches a stream is polled with a
+    /// quiet `GetPositionInfo` every two to three seconds (about 24 calls a
+    /// minute, and never more than 120 a minute across the whole process), so
+    /// a speaker that is about to run out of audio shows up in the log before
+    /// it is heard. Speakers that never fetch the stream themselves, such as
+    /// grouped speakers following a coordinator and home-theatre satellites,
+    /// are never polled.
+    ///
+    /// `false` restores the earlier behaviour: a cast is only polled when its
+    /// client asked for video sync, which needs the polls and keeps them
+    /// whatever this says. The setting is read once per speaker connection,
+    /// so a change applies from each speaker's next connection without a
+    /// restart. `THAUMIC_SPEAKER_MONITOR=on|off` overrides it (see
+    /// [`crate::services::latency_monitor::speaker_monitor_enabled`]).
+    #[serde(default = "default_speaker_monitor")]
+    pub speaker_monitor: bool,
+}
+
+/// Speaker monitoring is on unless switched off.
+fn default_speaker_monitor() -> bool {
+    true
 }
 
 impl Default for Config {
@@ -142,6 +169,7 @@ impl Default for Config {
             topology_refresh_interval: 30,
             streaming: StreamingConfig::default(),
             strict_stream_access: false,
+            speaker_monitor: default_speaker_monitor(),
         }
     }
 }
@@ -166,6 +194,13 @@ pub struct SonosState {
     pub groups: RwLock<Vec<ZoneGroup>>,
     /// Map of coordinator IP to their current transport state (from GENA).
     pub transport_states: DashMap<String, TransportState>,
+    /// When each entry of `transport_states` last arrived in a GENA NOTIFY.
+    ///
+    /// Sonos only notifies on change, and a subscription whose callback has
+    /// become unreachable still renews, so an old entry may be right or may
+    /// be stale; the age is what lets a reader tell a state heard since it
+    /// started watching from one it cannot vouch for.
+    pub transport_state_received: DashMap<String, Instant>,
     /// Map of coordinator IP to their current group volume level (0-100).
     pub group_volumes: DashMap<String, u8>,
     /// Map of coordinator IP to their group mute status.
@@ -199,6 +234,8 @@ impl SonosState {
     pub fn cleanup_stale_entries(&self, valid_speaker_ips: &HashSet<String>) {
         self.transport_states
             .retain(|ip, _| valid_speaker_ips.contains(ip));
+        self.transport_state_received
+            .retain(|ip, _| valid_speaker_ips.contains(ip));
 
         // Retain volume/mute data for any speaker still in the topology, not just
         // coordinators. During sync sessions, RenderingControl events populate
@@ -212,6 +249,13 @@ impl SonosState {
             .retain(|ip, _| valid_speaker_ips.contains(ip));
         self.group_volume_fixed
             .retain(|ip, _| valid_speaker_ips.contains(ip));
+    }
+
+    /// Records a transport state heard in a GENA NOTIFY, and when it arrived.
+    pub fn record_transport_state(&self, speaker_ip: &str, state: TransportState) {
+        self.transport_states.insert(speaker_ip.to_string(), state);
+        self.transport_state_received
+            .insert(speaker_ip.to_string(), Instant::now());
     }
 
     /// Looks up a coordinator's UUID by their IP address.
@@ -398,6 +442,21 @@ mod tests {
         let config = Config::default();
         assert_eq!(config.preferred_port, 0);
         assert_eq!(config.topology_refresh_interval, 30);
+        assert!(config.speaker_monitor, "speaker monitoring ships on");
+    }
+
+    /// A config written before the field existed keeps monitoring on.
+    #[test]
+    fn speaker_monitor_defaults_on_when_absent() {
+        let config: Config =
+            serde_json::from_str(r#"{"preferred_port":0,"topology_refresh_interval":30}"#)
+                .expect("parses");
+        assert!(config.speaker_monitor);
+        let config: Config = serde_json::from_str(
+            r#"{"preferred_port":0,"topology_refresh_interval":30,"speaker_monitor":false}"#,
+        )
+        .expect("parses");
+        assert!(!config.speaker_monitor);
     }
 
     #[test]
