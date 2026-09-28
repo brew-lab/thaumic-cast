@@ -13,6 +13,11 @@
 //! only ever read with a statistics query and only while the response body
 //! that claimed it is alive; the connection outlives the body, so the handle
 //! cannot have been reused by then.
+//!
+//! Connections are kept alive, so the one a stream claims may already have
+//! carried other responses (a `HEAD`, an error, artwork). The kernel's byte
+//! counters cover the whole connection, so the probe reads them once as it
+//! claims the connection and counts only what came after.
 
 use std::collections::VecDeque;
 use std::net::SocketAddr;
@@ -63,6 +68,10 @@ impl TcpLinkRegistry {
 /// Reads TCP statistics for one connection, reporting deltas between reads.
 pub struct TcpLinkProbe {
     raw_socket: u64,
+    /// The byte counters as the probe found them, before the response it
+    /// was claimed for; `None` where they could not be read, in which case
+    /// no acknowledged bytes are reported.
+    baseline: Option<TcpBaseline>,
     last: Mutex<Option<TcpSample>>,
     total_retransmitted: Mutex<u64>,
 }
@@ -77,8 +86,9 @@ struct TcpSample {
     /// Retransmission timeouts so far (Windows counts episodes; Linux the
     /// current backoff count, which is what is available without root).
     timeouts: u32,
-    /// Bytes the peer has acknowledged so far, where the platform reports
-    /// them (Linux 4.1 and later, Windows).
+    /// Bytes the peer has acknowledged since the probe claimed the
+    /// connection, where the platform reports them (Linux 4.1 and later,
+    /// Windows) and they are consistent with what the body handed over.
     bytes_acked: Option<u64>,
     /// Bytes written to the socket that the kernel has not yet sent, where
     /// the platform reports them (Linux 4.6 and later).
@@ -111,6 +121,7 @@ impl TcpLinkProbe {
     fn new(raw_socket: u64) -> Self {
         Self {
             raw_socket,
+            baseline: read_baseline(raw_socket),
             last: Mutex::new(None),
             total_retransmitted: Mutex::new(0),
         }
@@ -124,7 +135,7 @@ impl TcpLinkProbe {
     /// read in the same breath: the cadence loop samples between frames,
     /// when nothing else can be yielded.
     pub fn sample(&self, body_bytes: u64) -> Option<TcpLinkWindow> {
-        let now = sample_raw(self.raw_socket, body_bytes)?;
+        let now = sample_raw(self.raw_socket, self.baseline, body_bytes)?;
         let mut last = self.last.lock();
         let (retransmitted, timeouts) = match *last {
             Some(prev) => (
@@ -154,7 +165,7 @@ impl TcpLinkProbe {
 }
 
 /// The leading fields of `struct tcp_info` from linux/tcp.h, through
-/// `tcpi_notsent_bytes`: eight bytes of u8 state and flags, u32 counters up
+/// `tcpi_bytes_retrans`: eight bytes of u8 state and flags, u32 counters up
 /// to `tcpi_total_retrans`, then the u64 and u32 fields later kernels added.
 /// The kernel copies as much of its structure as the caller's length allows
 /// and reports how much that was, so the prefix is stable across kernels and
@@ -174,6 +185,19 @@ struct TcpInfoPrefix {
     segs_in: u32,
     /// Linux 4.6 and later.
     notsent_bytes: u32,
+    min_rtt: u32,
+    data_segs_in: u32,
+    data_segs_out: u32,
+    delivery_rate: u64,
+    busy_time: u64,
+    rwnd_limited: u64,
+    sndbuf_limited: u64,
+    delivered: u32,
+    delivered_ce: u32,
+    /// Linux 4.19 and later: bytes sent, retransmissions included.
+    bytes_sent: u64,
+    /// Linux 4.19 and later.
+    bytes_retrans: u64,
 }
 
 // The offsets linux/tcp.h gives these fields; a layout that disagreed would
@@ -183,6 +207,10 @@ const _: () = {
     assert!(std::mem::offset_of!(TcpInfoPrefix, pacing_rate) == 104);
     assert!(std::mem::offset_of!(TcpInfoPrefix, bytes_acked) == 120);
     assert!(std::mem::offset_of!(TcpInfoPrefix, notsent_bytes) == 144);
+    assert!(std::mem::offset_of!(TcpInfoPrefix, delivery_rate) == 160);
+    assert!(std::mem::offset_of!(TcpInfoPrefix, bytes_sent) == 200);
+    assert!(std::mem::offset_of!(TcpInfoPrefix, bytes_retrans) == 208);
+    assert!(std::mem::size_of::<TcpInfoPrefix>() == 216);
 };
 
 #[cfg(target_os = "linux")]
@@ -193,29 +221,50 @@ impl TcpInfoPrefix {
 
     /// Decodes the fields the kernel filled, given the length it reported:
     /// `None` if it did not reach `tcpi_total_retrans`, and each later field
-    /// `None` unless the length covers it.
+    /// `None` unless the length covers it. `bytes_acked` is the kernel's,
+    /// counted over the connection's whole life.
     fn decode(&self, len: usize) -> Option<TcpSample> {
-        let covers = |offset: usize, size: usize| len >= offset + size;
-        if !covers(
-            std::mem::offset_of!(Self, words),
-            std::mem::size_of::<[u32; 24]>(),
-        ) {
+        if !Self::covers(len, std::mem::offset_of!(Self, words), 24 * 4) {
             return None;
         }
         Some(TcpSample {
             rtt_us: self.words[Self::RTT],
             retransmitted: u64::from(self.words[Self::TOTAL_RETRANS]),
             timeouts: u32::from(self.flags[Self::RETRANSMITS]),
-            bytes_acked: covers(std::mem::offset_of!(Self, bytes_acked), 8)
+            bytes_acked: Self::covers(len, std::mem::offset_of!(Self, bytes_acked), 8)
                 .then_some(self.bytes_acked),
-            notsent: covers(std::mem::offset_of!(Self, notsent_bytes), 4)
+            notsent: Self::covers(len, std::mem::offset_of!(Self, notsent_bytes), 4)
                 .then_some(self.notsent_bytes),
         })
     }
+
+    /// Whether a reported length of `len` covers `size` bytes at `offset`.
+    fn covers(len: usize, offset: usize, size: usize) -> bool {
+        len >= offset + size
+    }
+
+    /// Every byte written to the connection so far, given the length the
+    /// kernel reported: sent once, or still waiting to be. Before 4.19 only
+    /// the bytes acknowledged are known; they stand in, which holds when the
+    /// peer has read every earlier response before asking for the next, as
+    /// a request's own acknowledgement then covers them.
+    fn bytes_written(&self, len: usize) -> Option<u64> {
+        if Self::covers(len, std::mem::offset_of!(Self, bytes_retrans), 8) {
+            let sent_once = self.bytes_sent.saturating_sub(self.bytes_retrans);
+            return Some(sent_once + u64::from(self.notsent_bytes));
+        }
+        Self::covers(len, std::mem::offset_of!(Self, bytes_acked), 8).then_some(self.bytes_acked)
+    }
 }
 
+/// What the connection had carried before the probe claimed it: every byte
+/// written to it so far.
 #[cfg(target_os = "linux")]
-fn sample_raw(raw_socket: u64, _body_bytes: u64) -> Option<TcpSample> {
+type TcpBaseline = u64;
+
+/// Reads `tcp_info`, returning it with the length the kernel filled.
+#[cfg(target_os = "linux")]
+fn read_tcp_info(raw_socket: u64) -> Option<(TcpInfoPrefix, usize)> {
     let mut info = TcpInfoPrefix::default();
     let mut len = std::mem::size_of::<TcpInfoPrefix>() as libc::socklen_t;
     // SAFETY: the descriptor belongs to a live TCP socket the caller holds a
@@ -229,10 +278,40 @@ fn sample_raw(raw_socket: u64, _body_bytes: u64) -> Option<TcpSample> {
             &mut len,
         )
     };
-    if rc != 0 {
-        return None;
-    }
-    info.decode(len as usize)
+    (rc == 0).then_some((info, len as usize))
+}
+
+#[cfg(target_os = "linux")]
+fn read_baseline(raw_socket: u64) -> Option<TcpBaseline> {
+    let (info, len) = read_tcp_info(raw_socket)?;
+    info.bytes_written(len)
+}
+
+/// Samples the connection, counting acknowledged bytes from `baseline`. An
+/// earlier response still unacknowledged when the probe claimed the
+/// connection holds the count at zero until its bytes are, never above.
+#[cfg(target_os = "linux")]
+fn sample_raw(
+    raw_socket: u64,
+    baseline: Option<TcpBaseline>,
+    _body_bytes: u64,
+) -> Option<TcpSample> {
+    let (info, len) = read_tcp_info(raw_socket)?;
+    let mut sample = info.decode(len)?;
+    sample.bytes_acked = sample
+        .bytes_acked
+        .zip(baseline)
+        .map(|(acked, before)| acked.saturating_sub(before));
+    Some(sample)
+}
+
+/// What the connection had carried before the probe claimed it: Windows'
+/// `BytesOut` and `BytesRetrans` at the time.
+#[cfg(windows)]
+#[derive(Debug, Clone, Copy)]
+struct TcpBaseline {
+    bytes_out: u64,
+    bytes_retrans: u32,
 }
 
 /// Whether this machine's `BytesOut` counts retransmitted bytes. Windows
@@ -242,20 +321,26 @@ fn sample_raw(raw_socket: u64, _body_bytes: u64) -> Option<TcpSample> {
 #[cfg(windows)]
 static BYTES_OUT_COUNTS_RETRANSMITS: AtomicBool = AtomicBool::new(false);
 
-/// What may precede the response body on the connection: the HTTP response
-/// head, a few hundred bytes. The bytes acknowledged can exceed the body's
-/// by this much without meaning anything.
+/// What may precede the response body on the connection once earlier
+/// responses are taken off: the HTTP response head, a few hundred bytes.
+/// The bytes acknowledged can exceed the body's by this much without
+/// meaning anything.
 #[cfg(any(windows, test))]
 const RESPONSE_HEAD_SLACK_BYTES: u64 = 2048;
 
-/// Bytes the peer has acknowledged, from Windows' `TCP_INFO_v0`: everything
-/// sent less what is still in flight.
+/// Bytes the peer has acknowledged, from Windows' `TCP_INFO_v0` counted
+/// since the probe claimed the connection: everything sent less what is
+/// still in flight.
 ///
 /// If `BytesOut` counts retransmissions, that overstates the bytes
-/// acknowledged by every byte resent. It shows once the difference exceeds
+/// acknowledged by every byte resent. It shows as a difference exceeding
 /// all the body has handed over (`body_bytes`) by more than a response head
-/// could explain; from then on, on this and every later connection
-/// (`counts_retransmits` latches), the retransmitted bytes are taken off.
+/// could explain, but by no more than the bytes resent (plus a head) do;
+/// from then on, on this and every later connection (`counts_retransmits`
+/// latches), the retransmitted bytes are taken off. An excess the resent
+/// bytes do not explain says nothing about the stack: the counters are not
+/// what they are taken to be, and the read reports `None`, as does any
+/// count still past the body after the resent bytes are taken off.
 #[cfg(any(windows, test))]
 fn windows_acked_bytes(
     bytes_out: u64,
@@ -263,29 +348,37 @@ fn windows_acked_bytes(
     bytes_retransmitted: u32,
     body_bytes: u64,
     counts_retransmits: &AtomicBool,
-) -> u64 {
+) -> Option<u64> {
     let sent_less_in_flight = bytes_out.saturating_sub(u64::from(bytes_in_flight));
-    if sent_less_in_flight > body_bytes.saturating_add(RESPONSE_HEAD_SLACK_BYTES)
-        && !counts_retransmits.swap(true, Ordering::Relaxed)
-    {
-        log::info!(
-            "[Stream] TCP BytesOut counts retransmitted bytes on this machine ({} sent less in \
-             flight against {} handed over, {} retransmitted); acknowledged bytes are counted \
-             net of them from now on",
-            sent_less_in_flight,
-            body_bytes,
-            bytes_retransmitted
-        );
+    let retransmitted = u64::from(bytes_retransmitted);
+    let plausible = body_bytes.saturating_add(RESPONSE_HEAD_SLACK_BYTES);
+    if sent_less_in_flight > plausible && !counts_retransmits.load(Ordering::Relaxed) {
+        let excess = sent_less_in_flight - body_bytes;
+        if retransmitted == 0 || excess > retransmitted + RESPONSE_HEAD_SLACK_BYTES {
+            return None;
+        }
+        if !counts_retransmits.swap(true, Ordering::Relaxed) {
+            log::info!(
+                "[Stream] TCP BytesOut counts retransmitted bytes on this machine ({} sent \
+                 less in flight against {} handed over, {} retransmitted); acknowledged bytes \
+                 are counted net of them from now on",
+                sent_less_in_flight,
+                body_bytes,
+                retransmitted
+            );
+        }
     }
-    if counts_retransmits.load(Ordering::Relaxed) {
-        sent_less_in_flight.saturating_sub(u64::from(bytes_retransmitted))
+    let acked = if counts_retransmits.load(Ordering::Relaxed) {
+        sent_less_in_flight.saturating_sub(retransmitted)
     } else {
         sent_less_in_flight
-    }
+    };
+    (acked <= plausible).then_some(acked)
 }
 
+/// Reads `TCP_INFO_v0` for the socket.
 #[cfg(windows)]
-fn sample_raw(raw_socket: u64, body_bytes: u64) -> Option<TcpSample> {
+fn read_tcp_info(raw_socket: u64) -> Option<windows_sys::Win32::Networking::WinSock::TCP_INFO_v0> {
     use windows_sys::Win32::Networking::WinSock::{TCP_INFO_v0, WSAIoctl, SIO_TCP_INFO, SOCKET};
 
     let version: u32 = 0;
@@ -307,26 +400,56 @@ fn sample_raw(raw_socket: u64, body_bytes: u64) -> Option<TcpSample> {
             None,
         )
     };
-    if rc != 0 {
-        return None;
-    }
+    (rc == 0).then_some(info)
+}
+
+#[cfg(windows)]
+fn read_baseline(raw_socket: u64) -> Option<TcpBaseline> {
+    let info = read_tcp_info(raw_socket)?;
+    Some(TcpBaseline {
+        bytes_out: info.BytesOut,
+        bytes_retrans: info.BytesRetrans,
+    })
+}
+
+#[cfg(windows)]
+fn sample_raw(
+    raw_socket: u64,
+    baseline: Option<TcpBaseline>,
+    body_bytes: u64,
+) -> Option<TcpSample> {
+    let info = read_tcp_info(raw_socket)?;
     Some(TcpSample {
         rtt_us: info.RttUs,
         retransmitted: u64::from(info.BytesRetrans),
         timeouts: info.TimeoutEpisodes,
-        bytes_acked: Some(windows_acked_bytes(
-            info.BytesOut,
-            info.BytesInFlight,
-            info.BytesRetrans,
-            body_bytes,
-            &BYTES_OUT_COUNTS_RETRANSMITS,
-        )),
+        bytes_acked: baseline.and_then(|before| {
+            windows_acked_bytes(
+                info.BytesOut.saturating_sub(before.bytes_out),
+                info.BytesInFlight,
+                info.BytesRetrans.wrapping_sub(before.bytes_retrans),
+                body_bytes,
+                &BYTES_OUT_COUNTS_RETRANSMITS,
+            )
+        }),
         notsent: None,
     })
 }
 
 #[cfg(not(any(target_os = "linux", windows)))]
-fn sample_raw(_raw_socket: u64, _body_bytes: u64) -> Option<TcpSample> {
+type TcpBaseline = ();
+
+#[cfg(not(any(target_os = "linux", windows)))]
+fn read_baseline(_raw_socket: u64) -> Option<TcpBaseline> {
+    None
+}
+
+#[cfg(not(any(target_os = "linux", windows)))]
+fn sample_raw(
+    _raw_socket: u64,
+    _baseline: Option<TcpBaseline>,
+    _body_bytes: u64,
+) -> Option<TcpSample> {
     None
 }
 
@@ -395,6 +518,48 @@ mod tests {
     }
 
     #[test]
+    fn earlier_responses_on_a_kept_alive_connection_are_not_counted() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
+        let mut peer =
+            std::net::TcpStream::connect(listener.local_addr().unwrap()).expect("connect");
+        let (mut accepted, _) = listener.accept().expect("accept");
+        let registry = TcpLinkRegistry::new();
+        let peer_addr = accepted.peer_addr().unwrap();
+        registry.register(peer_addr, accepted.as_raw_fd() as u64);
+
+        // An earlier response, read in full, then the next request (whose
+        // segment acknowledges it) before the stream claims the connection.
+        let earlier = vec![0u8; 20 * 1024];
+        accepted.write_all(&earlier).expect("write");
+        let mut received = vec![0u8; earlier.len()];
+        peer.read_exact(&mut received).expect("read");
+        let request = b"GET /stream HTTP/1.1\r\n\r\n";
+        peer.write_all(request).expect("request");
+        let mut read_back = [0u8; 24];
+        accepted.read_exact(&mut read_back).expect("read request");
+        assert_eq!(&read_back, request);
+        let probe = registry.claim(peer_addr).expect("registered");
+
+        let body = vec![0u8; 8 * 1024];
+        accepted.write_all(&body).expect("write");
+        let mut received = vec![0u8; body.len()];
+        peer.read_exact(&mut received).expect("read");
+        let deadline = Instant::now() + Duration::from_secs(2);
+        loop {
+            let window = probe.sample(body.len() as u64).expect("tcp_info");
+            if window.unacked_bytes == Some(0) {
+                break;
+            }
+            assert!(Instant::now() < deadline, "never acknowledged: {window:?}");
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        // Were the earlier response counted, the acknowledged bytes would
+        // cover this too, and the stall hide behind the clamp at zero.
+        let window = probe.sample(body.len() as u64 + 1000).unwrap();
+        assert_eq!(window.unacked_bytes, Some(1000));
+    }
+
+    #[test]
     fn truncated_optlen_yields_none_fields() {
         let info = TcpInfoPrefix {
             bytes_acked: 5_000,
@@ -431,6 +596,24 @@ mod tests {
         assert!(info.decode(103).is_none());
         assert!(info.decode(0).is_none());
     }
+
+    #[test]
+    fn bytes_written_prefers_bytes_sent_and_falls_back_to_bytes_acked() {
+        let info = TcpInfoPrefix {
+            bytes_acked: 5_000,
+            notsent_bytes: 300,
+            bytes_sent: 9_000,
+            bytes_retrans: 1_500,
+            ..TcpInfoPrefix::default()
+        };
+        let full = std::mem::size_of::<TcpInfoPrefix>();
+        // Sent once (9000 less 1500 resent), plus what waits to be sent.
+        assert_eq!(info.bytes_written(full), Some(7_800));
+        // A 4.1–4.18 kernel has only the bytes acknowledged.
+        assert_eq!(info.bytes_written(215), Some(5_000));
+        assert_eq!(info.bytes_written(128), Some(5_000));
+        assert_eq!(info.bytes_written(127), None);
+    }
 }
 
 #[cfg(test)]
@@ -444,11 +627,11 @@ mod windows_arithmetic_tests {
         let latch = AtomicBool::new(false);
         assert_eq!(
             windows_acked_bytes(100_000, 20_000, 0, 100_000, &latch),
-            80_000
+            Some(80_000)
         );
         assert_eq!(
             windows_acked_bytes(100_300, 0, 1_460, 100_000, &latch),
-            100_300
+            Some(100_300)
         );
         assert!(
             !latch.load(Ordering::Relaxed),
@@ -456,24 +639,57 @@ mod windows_arithmetic_tests {
         );
 
         // A stack whose BytesOut counts them: sent less in flight runs past
-        // everything the body handed over, which only resent bytes explain.
+        // everything the body handed over, by no more than was resent.
         let latch = AtomicBool::new(false);
         let acked = windows_acked_bytes(110_000, 2_000, 10_000, 100_000, &latch);
         assert!(latch.load(Ordering::Relaxed), "learned");
-        assert_eq!(acked, 98_000);
+        assert_eq!(acked, Some(98_000));
         // Once learned, retransmissions are taken off even while too few to
         // show on their own.
         assert_eq!(
             windows_acked_bytes(51_000, 1_000, 1_000, 60_000, &latch),
-            49_000
+            Some(49_000)
         );
 
         // Counters that disagree never go below zero.
         assert_eq!(
             windows_acked_bytes(1_000, 5_000, 0, 0, &AtomicBool::new(false)),
-            0
+            Some(0)
         );
-        assert_eq!(windows_acked_bytes(1_000, 0, 5_000, 0, &latch), 0);
+        assert_eq!(windows_acked_bytes(1_000, 0, 5_000, 0, &latch), Some(0));
+    }
+
+    #[test]
+    fn an_excess_retransmissions_do_not_explain_teaches_nothing() {
+        // An earlier response's bytes, with nothing resent: the counters are
+        // not what they are taken to be, so the read reports nothing, and
+        // the stack is not assumed to count resent bytes.
+        let latch = AtomicBool::new(false);
+        assert_eq!(windows_acked_bytes(130_000, 0, 0, 100_000, &latch), None);
+        assert!(!latch.load(Ordering::Relaxed), "no retransmits, no latch");
+        // Resent bytes that fall well short of the excess explain it no
+        // better.
+        assert_eq!(
+            windows_acked_bytes(130_000, 0, 1_460, 100_000, &latch),
+            None
+        );
+        assert!(
+            !latch.load(Ordering::Relaxed),
+            "too few retransmits to latch"
+        );
+        // The next consistent read is reported as usual.
+        assert_eq!(
+            windows_acked_bytes(100_500, 500, 1_460, 100_000, &latch),
+            Some(100_000)
+        );
+
+        // Once learned, a count still past the body after the resent bytes
+        // are taken off is reported as nothing, not as acknowledged.
+        let latch = AtomicBool::new(true);
+        assert_eq!(
+            windows_acked_bytes(130_000, 0, 1_460, 100_000, &latch),
+            None
+        );
     }
 }
 
