@@ -8,6 +8,7 @@ import {
   StreamEventSchema,
   NetworkEventSchema,
   SpeakerHealthStateSchema,
+  SpeakerNoticeKindSchema,
   type LatencyEvent,
   type NetworkEvent,
   type SonosEvent,
@@ -163,6 +164,51 @@ describe('StreamEventSchema', () => {
     expect(StreamEventSchema.safeParse(base).success).toBe(false);
   });
 
+  it('should parse ingestGaps exactly as thaumic-core serializes it', () => {
+    const withSuggestion = {
+      type: 'ingestGaps',
+      streamId: 's1',
+      gapsLastMinute: 2,
+      worstGapMs: 280,
+      smoothingMs: 200,
+      suggestedSmoothingMs: 500,
+      timestamp: NOW,
+    } satisfies StreamEvent;
+    expect(StreamEventSchema.parse(withSuggestion)).toEqual(withSuggestion);
+
+    // No step covers the gap: the suggestion is omitted.
+    const parsed = StreamEventSchema.parse({
+      ...withSuggestion,
+      worstGapMs: 620,
+      suggestedSmoothingMs: undefined,
+    });
+    expect(parsed.type === 'ingestGaps' && parsed.suggestedSmoothingMs).toBeUndefined();
+  });
+
+  it('should parse companionAudioChanged with its settings flattened in', () => {
+    const event = {
+      type: 'companionAudioChanged',
+      headStartMs: 750,
+      headStartFixed: true,
+      speakerMonitor: false,
+      timestamp: NOW,
+    } satisfies StreamEvent;
+    expect(StreamEventSchema.parse(event)).toEqual(event);
+    expect(StreamEventSchema.safeParse({ ...event, headStartMs: 2001 }).success).toBe(false);
+  });
+
+  it('should degrade a drift mode it does not know instead of failing', () => {
+    const parsed = StreamEventSchema.parse({
+      type: 'companionAudioChanged',
+      headStartMs: 0,
+      headStartFixed: false,
+      speakerMonitor: true,
+      driftCompensation: 'turbo',
+      timestamp: NOW,
+    });
+    expect(parsed.type === 'companionAudioChanged' && parsed.driftCompensation).toBeUndefined();
+  });
+
   it('should reject an unknown stream event type', () => {
     expect(
       StreamEventSchema.safeParse({ type: 'paused', streamId: 's1', timestamp: NOW }).success,
@@ -307,7 +353,18 @@ describe('NetworkEventSchema', () => {
     targetMs: 540,
     clockPpm: 39.75,
     clockSePpm: 7.25,
-    timeToEmptyS: 900,
+    headStartMs: 500,
+    headStartConfiguredMs: 500,
+    floorMs: 150,
+    stallMs: 40,
+    timeToFloorS: 900,
+    notice: {
+      kind: 'drift_uncorrected',
+      noticeId: 2,
+      headStartMs: 500,
+      minutes: 15,
+      restartHelps: true,
+    },
     timestamp: NOW,
   } satisfies NetworkEvent;
 
@@ -340,7 +397,7 @@ describe('NetworkEventSchema', () => {
 
   it('should reject fractional reserve figures', () => {
     expect(NetworkEventSchema.safeParse({ ...draining, reserveMs: 512.5 }).success).toBe(false);
-    expect(NetworkEventSchema.safeParse({ ...draining, timeToEmptyS: -1 }).success).toBe(false);
+    expect(NetworkEventSchema.safeParse({ ...draining, timeToFloorS: -1 }).success).toBe(false);
   });
 
   it('should know every state the companion sends', () => {
@@ -353,6 +410,47 @@ describe('NetworkEventSchema', () => {
       'paused',
       'stale',
       'dormant',
+    ]);
+  });
+
+  it('should parse the notice exactly as thaumic-core serializes it', () => {
+    // Mirrors the wire test in thaumic-core's events module: optional figures
+    // are omitted, not null.
+    const ranOut = {
+      ...draining,
+      state: 'low',
+      notice: {
+        kind: 'head_start_ran_out',
+        noticeId: 7,
+        stallMs: 620,
+        leftMs: -120,
+        headStartMs: 500,
+        suggestedHeadStartMs: 750,
+        restartHelps: true,
+      },
+    } satisfies NetworkEvent;
+    expect(NetworkEventSchema.parse(ranOut)).toEqual(ranOut);
+  });
+
+  it('should drop a notice it cannot read and keep the rest of the report', () => {
+    const parsed = NetworkEventSchema.parse({
+      ...draining,
+      notice: { kind: 'speaker_on_fire', noticeId: 1, restartHelps: false },
+    });
+    expect(parsed.type === 'speakerHealth' && parsed.notice).toBeUndefined();
+    expect(parsed.type === 'speakerHealth' && parsed.floorMs).toBe(150);
+  });
+
+  it('should know every notice kind the companion sends', () => {
+    // Mirrors SpeakerNoticeKind in thaumic-core's speaker monitor, plus the
+    // drift correction kind that arrives with it.
+    expect(SpeakerNoticeKindSchema.options).toEqual([
+      'head_start_ran_out',
+      'head_start_close',
+      'head_start_no_remedy',
+      'running_low',
+      'drift_uncorrected',
+      'drift_saturated',
     ]);
   });
 

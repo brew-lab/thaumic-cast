@@ -1,5 +1,6 @@
 import { z } from 'zod';
 
+import { CompanionAudioSchema } from './audio.js';
 import { TransportStateSchema, ZoneGroupSchema } from './sonos.js';
 
 /**
@@ -105,6 +106,38 @@ export const StreamEventSchema = z.discriminatedUnion('type', [
     reason: SpeakerRemovalReasonSchema.optional(),
     timestamp: z.number(),
   }),
+  z.object({
+    /**
+     * Audio from the casting browser reached the companion late often enough
+     * that every speaker on the stream had gaps: the stream's smoothing ran dry
+     * at least twice in a minute. Sent at most once every ten minutes per
+     * stream, and only to the client that owns it.
+     */
+    type: z.literal('ingestGaps'),
+    /** ID of the stream whose audio arrived late */
+    streamId: z.string(),
+    /** Gaps counted in the last minute */
+    gapsLastMinute: z.number().int().nonnegative(),
+    /** The longest of those gaps in the audio's arrival, in milliseconds */
+    worstGapMs: z.number().int().nonnegative(),
+    /** The smoothing the stream runs with, in milliseconds */
+    smoothingMs: z.number().int().nonnegative(),
+    /**
+     * The smallest smoothing step that would have covered the worst gap.
+     * Absent when no step offered would: the gap is more than smoothing covers.
+     */
+    suggestedSmoothingMs: z.number().int().positive().optional(),
+    timestamp: z.number(),
+  }),
+  CompanionAudioSchema.extend({
+    /**
+     * The companion's speaker-side audio settings changed. Sent to every
+     * client, so the head start they show and the wording of their speaker
+     * notices never go stale. Carries the settings as they now stand.
+     */
+    type: z.literal('companionAudioChanged'),
+    timestamp: z.number(),
+  }),
 ]);
 export type StreamEvent = z.infer<typeof StreamEventSchema>;
 
@@ -166,8 +199,9 @@ export type LinkQuality = z.infer<typeof LinkQualitySchema>;
  * - `locking`: measuring, but the estimate is not yet precise or settled.
  * - `ok`: the reserve is measured and healthy.
  * - `draining`: the speaker plays faster than the audio arrives and its reserve
- *   is projected to run out within twenty minutes.
- * - `low`: the reserve has fallen well below the level it settled at.
+ *   is projected to reach the low floor within thirty minutes.
+ * - `low`: the reserve has fallen below the absolute floor sized from the
+ *   speaker head start its connection was sent.
  * - `paused`: the speaker is known not to be playing.
  * - `stale`: the speaker has stopped answering position polls.
  * - `dormant`: the speaker is playing something else.
@@ -182,6 +216,58 @@ export const SpeakerHealthStateSchema = z.enum([
   'dormant',
 ]);
 export type SpeakerHealthState = z.infer<typeof SpeakerHealthStateSchema>;
+
+/**
+ * What a speaker notice is about. Mirrors `SpeakerNoticeKind` in thaumic-core's
+ * speaker monitor.
+ *
+ * - `head_start_ran_out`: a Wi-Fi stall outlasted the speaker head start and the
+ *   speaker cut out.
+ * - `head_start_close`: a stall nearly outlasted the head start.
+ * - `head_start_no_remedy`: a cut-out the longest head start would not have
+ *   covered either.
+ * - `running_low`: the reserve itself is below the floor.
+ * - `drift_uncorrected`: the speaker's clock is draining the reserve and nothing
+ *   corrects it.
+ * - `drift_saturated`: drift correction is on but cannot keep up with the
+ *   speaker's clock (sent only by companions with drift correction).
+ */
+export const SpeakerNoticeKindSchema = z.enum([
+  'head_start_ran_out',
+  'head_start_close',
+  'head_start_no_remedy',
+  'running_low',
+  'drift_uncorrected',
+  'drift_saturated',
+]);
+export type SpeakerNoticeKind = z.infer<typeof SpeakerNoticeKindSchema>;
+
+/**
+ * What the user is told about one speaker, with the figures its wording needs.
+ * The companion decides; clients pick the words. Values are in milliseconds
+ * unless named otherwise.
+ */
+export const SpeakerNoticeSchema = z.object({
+  kind: SpeakerNoticeKindSchema,
+  /**
+   * The episode, counted per stream and speaker: the same while the notice is
+   * repeated, new on a new episode or an escalation. Clients dismiss by it.
+   */
+  noticeId: z.number().int().nonnegative(),
+  /** The audio a stall held back from the speaker (head-start kinds) */
+  stallMs: z.number().int().nonnegative().optional(),
+  /** The audio the speaker had left at its lowest, or holds most of the time (`running_low`) */
+  leftMs: z.number().int().optional(),
+  /** The speaker head start the connection was sent (PCM only) */
+  headStartMs: z.number().int().nonnegative().optional(),
+  /** The head start that would have covered the stall (`head_start_close`, `head_start_ran_out`) */
+  suggestedHeadStartMs: z.number().int().positive().optional(),
+  /** Minutes until the speaker runs low (drift kinds) */
+  minutes: z.number().int().nonnegative().optional(),
+  /** Whether stopping and restarting the cast refills the speaker */
+  restartHelps: z.boolean(),
+});
+export type SpeakerNotice = z.infer<typeof SpeakerNoticeSchema>;
 
 /**
  * Network event types broadcast by the companion.
@@ -224,8 +310,8 @@ export const NetworkEventSchema = z.discriminatedUnion('type', [
      * How much audio a speaker fetching one of our streams holds ahead of its
      * playhead (its reserve), and how fast that is changing. Sent every 30 s
      * and on every state change while the speaker is monitored, and only to
-     * the client that owns the stream. The reserve's absolute zero is not
-     * known exactly, so figures are best read against `targetMs`.
+     * the client that owns the stream. The reserve's absolute zero is only
+     * approximately known; `low` is judged against `floorMs`.
      */
     type: z.literal('speakerHealth'),
     /** ID of the stream the speaker is fetching */
@@ -245,14 +331,38 @@ export const NetworkEventSchema = z.discriminatedUnion('type', [
     reserveP10Ms: z.number().int().optional(),
     /** Whether `reserveMinMs` and `reserveP10Ms` are on audio the speaker acknowledged */
     reserveAcked: z.boolean(),
-    /** The reserve the speaker settled at, which `low` is measured against */
+    /** The reserve the speaker settled at on this connection once its head start went out */
     targetMs: z.number().int().optional(),
     /** How much faster the speaker plays than audio arrives, in ppm; positive drains */
     clockPpm: z.number().optional(),
     /** Standard error of `clockPpm` */
     clockSePpm: z.number().nonnegative().optional(),
-    /** Seconds until the reserve runs out, when the speaker is measurably draining it */
+    /**
+     * The speaker head start the connection was actually sent, in milliseconds
+     * (PCM only): less than configured when the stream held too little audio
+     * when the speaker connected
+     */
+    headStartMs: z.number().int().nonnegative().optional(),
+    /** The speaker head start configured when the connection was made, in milliseconds (PCM only) */
+    headStartConfiguredMs: z.number().int().nonnegative().optional(),
+    /** The acknowledged reserve below which the speaker is `low`, in milliseconds (PCM only) */
+    floorMs: z.number().int().nonnegative().optional(),
+    /**
+     * How far the worst acknowledgement lag of the window stood above its
+     * median, in milliseconds: the audio a Wi-Fi stall held back
+     */
+    stallMs: z.number().int().nonnegative().optional(),
+    /** Seconds until the reserve reaches `floorMs`, when the speaker is measurably draining it */
+    timeToFloorS: z.number().int().nonnegative().optional(),
+    /** Seconds until the reserve runs out; sent only by companions that predate `timeToFloorS` */
     timeToEmptyS: z.number().int().nonnegative().optional(),
+    /**
+     * What the user should be told about this speaker, decided by the
+     * companion. Repeated in every report while it stands, under the same
+     * `noticeId`. A notice this build cannot read is dropped rather than
+     * failing the whole event.
+     */
+    notice: SpeakerNoticeSchema.optional().catch(undefined),
     /** Unix timestamp in milliseconds */
     timestamp: z.number(),
   }),
