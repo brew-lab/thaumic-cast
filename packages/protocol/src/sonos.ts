@@ -1,5 +1,7 @@
 import { z } from 'zod';
 
+import { CompanionAudioSchema } from './audio.js';
+
 /**
  * Sonos Transport States.
  * These match the UPnP AVTransport states from Sonos.
@@ -140,6 +142,12 @@ export const InitialStatePayloadSchema = z.object({
    * this extension doesn't recognise (e.g. `"cli"`).
    */
   appType: z.enum(['desktop', 'server']).optional().catch(undefined),
+  /**
+   * The companion's speaker-side audio settings (speaker head start, speaker
+   * monitor). Absent on companions that predate them, and degraded to
+   * `undefined` rather than failing the snapshot if malformed.
+   */
+  companionAudio: CompanionAudioSchema.optional().catch(undefined),
 });
 export type InitialStatePayload = z.infer<typeof InitialStatePayloadSchema>;
 

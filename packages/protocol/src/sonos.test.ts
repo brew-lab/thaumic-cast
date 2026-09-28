@@ -319,6 +319,25 @@ describe('InitialStatePayloadSchema', () => {
     });
   });
 
+  it('should carry the companion audio settings, and leave them undefined when absent', () => {
+    expect(InitialStatePayloadSchema.parse(base).companionAudio).toBeUndefined();
+
+    const companionAudio = { headStartMs: 500, headStartFixed: false, speakerMonitor: true };
+    expect(InitialStatePayloadSchema.parse({ ...base, companionAudio }).companionAudio).toEqual(
+      companionAudio,
+    );
+  });
+
+  it('should degrade malformed companion audio settings instead of failing the snapshot', () => {
+    const parsed = InitialStatePayloadSchema.safeParse({
+      ...base,
+      companionAudio: { headStartMs: -5, headStartFixed: false, speakerMonitor: true },
+    });
+
+    expect(parsed.success).toBe(true);
+    expect(parsed.success && parsed.data.companionAudio).toBeUndefined();
+  });
+
   it('should degrade an unrecognised appType to undefined instead of failing', () => {
     const parsed = InitialStatePayloadSchema.safeParse({ ...base, appType: 'cli' });
 

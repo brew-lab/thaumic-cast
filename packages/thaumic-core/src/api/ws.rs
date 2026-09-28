@@ -1032,6 +1032,17 @@ fn build_initial_state(state: &AppState, conn: &ConnectionGuard) -> Option<Messa
         if let Ok(app_type_json) = serde_json::to_value(state.app_info.app_type) {
             map.insert("appType".to_string(), app_type_json);
         }
+
+        // The companion's speaker-side audio settings, so the extension can
+        // show the head start and word speaker notices before any change
+        // event arrives. `CompanionAudioChanged` keeps it current after.
+        let audio = crate::events::CompanionAudio::from_config(&state.config.read());
+        match serde_json::to_value(audio) {
+            Ok(v) => {
+                map.insert("companionAudio".to_string(), v);
+            }
+            Err(e) => log::warn!("[WS] Failed to serialize companionAudio: {}", e),
+        }
     }
 
     WsOutgoing::InitialState { payload }.to_message()

@@ -212,3 +212,37 @@ export const FrameDurationMsSchema = z.union([z.literal(10), z.literal(20), z.li
  */
 export const FRAME_SIZE_SAMPLES_MIN = 64;
 export const FRAME_SIZE_SAMPLES_MAX = 8192;
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Companion Audio Settings
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Largest speaker head start (PCM connect burst) the companion accepts, in ms.
+ *
+ * SYNC REQUIRED: must match `MAX_PCM_CONNECT_BURST_MS` in
+ *   packages/thaumic-core/src/protocol_constants.rs
+ */
+export const HEAD_START_MS_MAX = 2000;
+
+/**
+ * The companion's speaker-side audio settings, for display and for the wording
+ * of speaker notices. The companion owns them: clients only show them. Sent in
+ * `INITIAL_STATE` as `companionAudio` and again in a `companionAudioChanged`
+ * stream event whenever one changes. Each applies from a speaker's next
+ * connection.
+ */
+export const CompanionAudioSchema = z.object({
+  /** Speaker head start sent to each speaker when it connects, in ms. `0` is off. */
+  headStartMs: z.number().int().min(0).max(HEAD_START_MS_MAX),
+  /** Whether an environment variable fixes the head start, so only it can change it. */
+  headStartFixed: z.boolean(),
+  /** Whether the speaker monitor, and with it speaker notices, is on. */
+  speakerMonitor: z.boolean(),
+  /**
+   * Clock drift correction mode. Absent from companions without drift
+   * correction; degraded to `undefined` for a mode this build does not know.
+   */
+  driftCompensation: z.enum(['on', 'observe', 'off']).optional().catch(undefined),
+});
+export type CompanionAudio = z.infer<typeof CompanionAudioSchema>;
