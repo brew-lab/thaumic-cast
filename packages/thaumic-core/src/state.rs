@@ -24,7 +24,9 @@ pub struct StreamingConfig {
     pub max_concurrent_streams: usize,
 
     /// Maximum frames to buffer for late-joining clients.
-    /// Extension sends 20ms frames, so 50 frames ≈ 1 second of audio.
+    /// Frames are 10 ms by default (the extension's default and every capture
+    /// packet), so 50 frames ≈ 500 ms of audio. The PCM cadence serves only the
+    /// newest `jitter_buffer_ms` of it to a new connection.
     pub buffer_frames: usize,
 
     /// Capacity of the broadcast channel for audio frames.

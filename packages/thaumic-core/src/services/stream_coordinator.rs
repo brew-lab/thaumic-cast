@@ -2245,7 +2245,7 @@ mod tests {
             let stream_id = coord
                 .create_stream(AudioCodec::Pcm, format, jitter_buffer_ms, 10)
                 .unwrap();
-            let (_, _, rx) = coord.get_stream(&stream_id).unwrap().subscribe();
+            let (_, rx) = coord.get_stream(&stream_id).unwrap().subscribe();
             let bridge = Arc::new(StreamSinkBridge::new(
                 stream_id,
                 Arc::clone(&coord),
