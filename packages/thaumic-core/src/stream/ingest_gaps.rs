@@ -47,7 +47,8 @@ pub const INGEST_NOTICE_INTERVAL: Duration = Duration::from_secs(10 * 60);
 pub struct IngestGapsReport {
     /// Gaps counted in the last minute.
     pub gaps_last_minute: u32,
-    /// The longest of them, in ms of the audio's arrival.
+    /// The longest of them, in ms of the audio's arrival: an estimate that
+    /// assumes the smoothing was full when audio stopped.
     pub worst_gap_ms: u32,
     /// The smoothing the stream runs with, in ms.
     pub smoothing_ms: u32,
@@ -172,10 +173,10 @@ mod tests {
     }
 
     #[test]
-    fn ingest_gaps_ignore_long_and_capture_explained_gaps() {
+    fn ingest_gaps_ignore_gaps_of_two_seconds_or_more() {
         // A gap of two seconds or more is the source pausing, not late audio.
         // (Gaps the capture itself explains are held back by the popup, which
-        // alone sees the capture-health reports.)
+        // alone sees the capture-health reports, so they are not tested here.)
         let mut window = IngestGapWindow::new();
         let t0 = Instant::now();
         assert_eq!(window.record(t0, 2_000, 200), None);

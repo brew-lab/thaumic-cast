@@ -17,7 +17,7 @@ use std::net::IpAddr;
 use std::pin::Pin;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use bytes::Bytes;
 use futures::{Stream, StreamExt};
@@ -25,6 +25,7 @@ use tokio::sync::broadcast;
 
 use super::bounds::PollObservation;
 use super::clock_fit::ClockEstimate;
+use super::notice::{NoticeInput, NoticeState, SpeakerNotice};
 use super::reserve::ReserveEstimate;
 use super::segment::SegmentBreak;
 use super::test_support::Lcg;
@@ -126,6 +127,9 @@ pub(crate) struct SimEstimate {
     pub brk: Option<SegmentBreak>,
     /// Whether the tracker's low-reserve alarm stood after the estimate.
     pub low: bool,
+    /// The notice standing after the estimate, decided as the monitor does
+    /// (with no link verdict).
+    pub notice: Option<SpeakerNotice>,
 }
 
 /// What a simulation run saw.
@@ -251,6 +255,8 @@ impl SimSpeaker {
         let mut tracker = ReserveTracker::new();
         tracker.start_connection(true, Some(head_start));
         let mut report = SimReport::default();
+        let mut notices = NoticeState::new();
+        let notice_base = Instant::now();
         let mut pending: Option<PendingPoll> = None;
         let mut next_poll = 5_000.0;
         let mut next_estimate = ESTIMATE_EVERY_MS;
@@ -348,7 +354,20 @@ impl SimSpeaker {
 
             if now >= next_estimate {
                 let (reserve, brk) = tracker.estimate(now);
-                tracker.observe_ack_lag(&mut []);
+                let acked = tracker.observe_ack_lag(&mut []);
+                let notice = notices.update(
+                    notice_base + Duration::from_secs_f64(now / 1000.0),
+                    &NoticeInput {
+                        locked: reserve.is_some_and(|r| r.locked()),
+                        acked,
+                        offset_step: brk == Some(SegmentBreak::OffsetStep),
+                        pre_break: tracker.pre_break(),
+                        head_start: tracker.head_start(),
+                        stall_ms: tracker.stall_ms(),
+                        time_to_floor_s: tracker.time_to_floor_s(),
+                        ..NoticeInput::default()
+                    },
+                );
                 report.estimates.push(SimEstimate {
                     at: now,
                     reserve,
@@ -357,6 +376,7 @@ impl SimSpeaker {
                     time_to_floor_s: tracker.time_to_floor_s(),
                     brk,
                     low: tracker.is_low(),
+                    notice,
                 });
                 next_estimate += ESTIMATE_EVERY_MS;
             }
@@ -628,6 +648,12 @@ mod tests {
                 );
                 assert_eq!(e.brk, None, "seed {seed}");
                 assert!(!e.low, "seed {seed}: low at {:.1} min", e.at / MINUTE);
+                assert_eq!(
+                    e.notice,
+                    None,
+                    "seed {seed}: notice at {:.1} min",
+                    e.at / MINUTE
+                );
                 assert!(
                     (r.reserve_ms - e.true_reserve_ms).abs() <= r.half_width_ms,
                     "seed {seed}: {r:?} vs {:.0}",

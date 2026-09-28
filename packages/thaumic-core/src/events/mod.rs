@@ -139,8 +139,11 @@ pub enum StreamEvent {
         /// Gaps counted in the last minute.
         #[serde(rename = "gapsLastMinute")]
         gaps_last_minute: u32,
-        /// The longest of those gaps in the audio's arrival, in ms: the
-        /// smoothing that ran dry plus the silence played after it.
+        /// The longest of those gaps in the audio's arrival, in ms,
+        /// estimated as the smoothing plus the silence played after it ran
+        /// dry. That assumes the smoothing was full when audio stopped, so
+        /// after a partial refill it overstates the gap (and the
+        /// suggestion).
         #[serde(rename = "worstGapMs")]
         worst_gap_ms: u32,
         /// The smoothing the stream runs with, in ms.
