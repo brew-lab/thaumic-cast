@@ -255,6 +255,31 @@ mod tests {
         assert!(err.to_string().contains("pcm_connect_burst_ms"));
     }
 
+    /// The installer copies the example to `/etc/thaumic-server/config.yaml`
+    /// as it stands, so it must parse, validate, and leave every setting it
+    /// spells out at the default the code ships with.
+    #[test]
+    fn config_example_parses_to_the_defaults() {
+        let config = ServerConfig::from_yaml(include_str!("../config.example.yaml"))
+            .expect("config.example.yaml should parse");
+        config
+            .validate()
+            .expect("config.example.yaml should validate");
+
+        let defaults = ServerConfig::default();
+        assert_eq!(config.bind_port, defaults.bind_port);
+        assert_eq!(config.advertise_ip, defaults.advertise_ip);
+        assert_eq!(
+            config.topology_refresh_interval,
+            defaults.topology_refresh_interval
+        );
+        assert_eq!(config.data_dir, defaults.data_dir);
+        assert_eq!(config.artwork_url, defaults.artwork_url);
+        assert_eq!(config.strict_stream_access, defaults.strict_stream_access);
+        assert_eq!(config.speaker_monitor, defaults.speaker_monitor);
+        assert_eq!(config.pcm_connect_burst_ms, defaults.pcm_connect_burst_ms);
+    }
+
     #[test]
     fn unparsable_advertise_ip_is_rejected() {
         assert!(ServerConfig::from_yaml("advertise_ip: not-an-ip\n").is_err());

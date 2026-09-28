@@ -44,22 +44,28 @@ topology_refresh_interval: 30
 # strict_stream_access: true
 
 # Keep an eye on each speaker playing a stream (default: true)
-# Every speaker that fetches a stream is asked for its playback position every
-# two to three seconds (quiet SOAP calls, never more than 120 a minute in all),
-# so a speaker that is about to run out of audio shows up in the log before it
-# is heard. Grouped speakers and satellites that follow another speaker are
+# Asks each speaker that fetches a stream for its playback position every two
+# to three seconds (quiet SOAP calls, never more than 120 a minute in all) and
+# works out how much audio it has in hand, so a speaker about to run out shows
+# up in the log before it is heard. This is what drives the speaker notices
+# clients show. Grouped speakers and satellites that follow another speaker are
 # never polled. Set to false to poll only casts that asked for video sync, as
-# earlier releases did; video sync works either way. Applies from each
-# speaker's next connection.
+# earlier releases did; video sync works either way, but there are no speaker
+# notices. Applies from each speaker's next connection.
 # Environment: THAUMIC_SPEAKER_MONITOR (on or off)
-# speaker_monitor: false
+speaker_monitor: true
 
-# Send each speaker a burst of audio when it starts fetching a PCM stream (default: 500)
-# Milliseconds of already-captured audio handed over at once, before real-time
-# pacing takes over, so the speaker starts with that much in hand. Without it a
-# speaker holds only a few tens of milliseconds ahead of its playhead, and a
-# Wi-Fi stall longer than that is heard as a stutter. End-to-end latency grows
-# by the same amount; video sync accounts for it. 0 turns it off; at most 2000.
-# Compressed codecs are unaffected. Applies from each speaker's next connection.
+# Speaker head start for PCM streams, in ms (default: 500, 0 = off, max 2000)
+# Audio sent to each speaker as fast as it will take it when it connects,
+# before real-time pacing takes over, so it can ride out Wi-Fi hiccups. Without
+# it a speaker holds only a few tens of milliseconds ahead of its playhead, and
+# a Wi-Fi stall longer than that is heard as a stutter. Raise it if one speaker
+# on a weak Wi-Fi link cuts out; every speaker cutting out at once needs more
+# smoothing instead (set in the browser extension's audio options).
+# The head start adds the same delay to every PCM cast, which video sync allows
+# for, so large values add that much delay. A speaker's first connection also
+# waits that much longer before playback starts; the log records the wait and
+# whether the speaker kept its connection through it. Compressed codecs are
+# unaffected. Applies from each speaker's next connection.
 # Environment: THAUMIC_PCM_CONNECT_BURST_MS
-# pcm_connect_burst_ms: 500
+pcm_connect_burst_ms: 500

@@ -116,13 +116,16 @@ thaumic-server --log-level debug
 
 ### CLI options
 
-| Option                    | Environment variable   | Description                             |
-| ------------------------- | ---------------------- | --------------------------------------- |
-| `-c, --config <FILE>`     | -                      | Path to YAML config file                |
-| `-p, --port <PORT>`       | `THAUMIC_BIND_PORT`    | HTTP server port (default `49400`)      |
-| `-a, --advertise-ip <IP>` | `THAUMIC_ADVERTISE_IP` | IP address to advertise to Sonos        |
-| `-d, --data-dir <DIR>`    | `THAUMIC_DATA_DIR`     | Directory for persistent data           |
-| `-l, --log-level <LEVEL>` | `THAUMIC_LOG_LEVEL`    | Log level (error/warn/info/debug/trace) |
+| Option                          | Environment variable           | Description                                        |
+| ------------------------------- | ------------------------------ | -------------------------------------------------- |
+| `-c, --config <FILE>`           | -                              | Path to YAML config file                           |
+| `-p, --port <PORT>`             | `THAUMIC_BIND_PORT`            | HTTP server port (default `49400`)                 |
+| `-a, --advertise-ip <IP>`       | `THAUMIC_ADVERTISE_IP`         | IP address to advertise to Sonos                   |
+| `-d, --data-dir <DIR>`          | `THAUMIC_DATA_DIR`             | Directory for persistent data                      |
+| `-l, --log-level <LEVEL>`       | `THAUMIC_LOG_LEVEL`            | Log level (error/warn/info/debug/trace)            |
+| `--speaker-monitor <on\|off>`   | `THAUMIC_SPEAKER_MONITOR`      | Keep an eye on each speaker (default `on`)         |
+| `--pcm-connect-burst-ms <MS>`   | `THAUMIC_PCM_CONNECT_BURST_MS` | Speaker head start, 0-2000 ms (default `500`)      |
+| `--strict-stream-access <BOOL>` | `THAUMIC_STRICT_STREAM_ACCESS` | Refuse unexpected stream fetches (default `false`) |
 
 CLI flags override environment variables, which override the config file.
 
@@ -133,16 +136,25 @@ commented there. The defaults (port `49400`, auto-detected `advertise_ip`, no `d
 one network interface. Set `advertise_ip` explicitly on hosts with several interfaces (VPN, Docker, ...) to the
 address the speakers can reach, and `data_dir` if you add speakers by IP and want them to persist.
 
+Two settings concern the speakers themselves. `speaker_monitor` (on by default) asks each speaker playing a stream how
+much audio it has in hand, which is what drives the speaker notices clients show. `pcm_connect_burst_ms`, the speaker
+head start (500 ms by default, 0 to 2000), is audio sent to each speaker at once when it connects so it can ride out
+Wi-Fi hiccups on PCM casts; raise it if one speaker on a weak Wi-Fi link cuts out, bearing in mind that it adds that
+much delay. Both apply from each speaker's next connection.
+
 ### Environment variables
 
-| Variable                            | Description                         |
-| ----------------------------------- | ----------------------------------- |
-| `THAUMIC_BIND_PORT`                 | HTTP server port                    |
-| `THAUMIC_ADVERTISE_IP`              | Advertise IP address                |
-| `THAUMIC_TOPOLOGY_REFRESH_INTERVAL` | Topology refresh interval (seconds) |
-| `THAUMIC_DATA_DIR`                  | Directory for persistent data       |
-| `THAUMIC_ARTWORK_URL`               | Custom artwork URL for Sonos        |
-| `THAUMIC_LOG_LEVEL`                 | Log level                           |
+| Variable                            | Description                                                                   |
+| ----------------------------------- | ----------------------------------------------------------------------------- |
+| `THAUMIC_BIND_PORT`                 | HTTP server port                                                              |
+| `THAUMIC_ADVERTISE_IP`              | Advertise IP address                                                          |
+| `THAUMIC_TOPOLOGY_REFRESH_INTERVAL` | Topology refresh interval (seconds)                                           |
+| `THAUMIC_DATA_DIR`                  | Directory for persistent data                                                 |
+| `THAUMIC_ARTWORK_URL`               | Custom artwork URL for Sonos                                                  |
+| `THAUMIC_LOG_LEVEL`                 | Log level                                                                     |
+| `THAUMIC_SPEAKER_MONITOR`           | `on` or `off`: poll each speaker's playback position and send speaker notices |
+| `THAUMIC_PCM_CONNECT_BURST_MS`      | Speaker head start for PCM casts in ms, 0 (off) to 2000; adds that much delay |
+| `THAUMIC_STRICT_STREAM_ACCESS`      | `true` refuses audio fetches from addresses a stream is not playing on        |
 
 ## Running as a service (systemd)
 
