@@ -15,6 +15,7 @@ use thaumic_core::{
 #[cfg(windows)]
 use thaumic_core::{AudioSource, CaptureError, CaptureSourceFactory};
 
+use crate::settings::DesktopSettings;
 use crate::tauri_emitter::TauriEventEmitter;
 
 pub mod commands;
@@ -236,14 +237,26 @@ impl AppState {
         // Set app handle on TauriEventEmitter for frontend events
         self.tauri_emitter.set_app_handle(handle.clone());
 
-        // Set app data dir for manual speaker configuration
+        // Set app data dir for manual speaker configuration, and apply the
+        // saved settings before the server starts reading them.
         match handle.path().app_data_dir() {
-            Ok(path) => self
-                .services
-                .discovery_service
-                .set_app_data_dir(path.clone()),
+            Ok(path) => {
+                let settings = DesktopSettings::load(&path);
+                settings.apply_to(&mut self.config.write());
+                log::info!(
+                    "Speaker monitoring: {}",
+                    if settings.speaker_monitor {
+                        "on"
+                    } else {
+                        "off (video sync only)"
+                    }
+                );
+                self.services
+                    .discovery_service
+                    .set_app_data_dir(path.clone());
+            }
             Err(e) => log::warn!(
-                "Failed to get app data dir, manual speakers will not persist: {}",
+                "Failed to get app data dir, manual speakers and settings will not persist: {}",
                 e
             ),
         }

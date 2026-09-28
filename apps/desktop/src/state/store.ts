@@ -256,6 +256,31 @@ export const setAutostartEnabled = async (enabled: boolean): Promise<void> => {
   await invoke('set_autostart_enabled', { enabled });
 };
 
+/** The speaker-monitor setting as the backend reports it. */
+export interface SpeakerMonitorSetting {
+  /** The saved setting. */
+  enabled: boolean;
+  /** What THAUMIC_SPEAKER_MONITOR forces it to, if that variable is set. */
+  envOverride: boolean | null;
+}
+
+/**
+ * Gets the speaker-monitor setting.
+ * @returns The saved setting and any environment override
+ */
+export const getSpeakerMonitor = async (): Promise<SpeakerMonitorSetting> => {
+  return invoke<SpeakerMonitorSetting>('get_speaker_monitor');
+};
+
+/**
+ * Saves the speaker-monitor setting. Applies from each speaker's next connection.
+ * @param enabled - Whether to poll speakers that are playing a stream
+ * @returns The setting as saved
+ */
+export const setSpeakerMonitor = async (enabled: boolean): Promise<SpeakerMonitorSetting> => {
+  return invoke<SpeakerMonitorSetting>('set_speaker_monitor', { enabled });
+};
+
 /** Supported platform types */
 export type Platform = 'windows' | 'macos' | 'linux' | 'unknown';
 
