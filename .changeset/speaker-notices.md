@@ -19,4 +19,4 @@ every ten minutes, and advice to restart the cast is only given when a restart w
 a PCM stream whose smoothing runs dry twice in a minute, which gives every speaker a gap at once, raises an
 ingestGaps stream event for its owner, at most once every ten minutes, with the smoothing step that would have
 covered the worst gap, or none when no step would. A companionAudioChanged event tells every client the speaker head
-start and speaker monitor setting whenever they change; the desktop app sends it when speaker monitoring is switched.
+start and speaker monitor setting whenever they change; the desktop app sends it when speaker monitoring or the head start is changed.

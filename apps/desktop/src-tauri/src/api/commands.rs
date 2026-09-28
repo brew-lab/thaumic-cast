@@ -351,6 +351,52 @@ pub fn set_speaker_monitor(
     Ok(get_speaker_monitor(state))
 }
 
+/// The speaker head start setting as the settings view shows it.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HeadStartSetting {
+    /// The saved head start, in ms (`0` is off).
+    pub ms: u64,
+    /// What `THAUMIC_PCM_CONNECT_BURST_MS` forces it to, if set: the saved
+    /// setting then waits until the variable is removed.
+    pub env_override: Option<u64>,
+}
+
+/// Returns the speaker head start setting.
+#[tauri::command]
+pub fn get_pcm_connect_burst_ms(state: tauri::State<'_, AppState>) -> HeadStartSetting {
+    HeadStartSetting {
+        ms: state.config.read().pcm_connect_burst_ms,
+        env_override: thaumic_core::stream::cadence::pcm_connect_burst_env_override(),
+    }
+}
+
+/// Saves the speaker head start (the PCM connect burst) and applies it.
+///
+/// Values above the maximum are clamped. The core reads the setting once per
+/// speaker connection, so it takes effect from each speaker's next
+/// connection without a restart.
+#[tauri::command]
+pub fn set_pcm_connect_burst_ms(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+    ms: u64,
+) -> Result<HeadStartSetting, CommandError> {
+    let app_data_dir = get_app_data_dir(&app)?;
+    let settings = DesktopSettings::update(&app_data_dir, |s| s.pcm_connect_burst_ms = ms)
+        .map_err(|e| CommandError {
+            code: "settings_error",
+            message: e.to_string(),
+        })?;
+    settings.apply_to(&mut state.config.write());
+    log::info!(
+        "[Settings] Speaker head start {} ms",
+        settings.pcm_connect_burst_ms
+    );
+    broadcast_companion_audio(&state);
+    Ok(get_pcm_connect_burst_ms(state))
+}
+
 /// Tells every client the speaker-side audio settings new connections now
 /// get, so what they show about them never goes stale.
 fn broadcast_companion_audio(state: &AppState) {

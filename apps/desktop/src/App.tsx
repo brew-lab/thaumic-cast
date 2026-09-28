@@ -7,7 +7,7 @@ import { Settings } from './views/Settings';
 import { Onboarding } from './views/Onboarding';
 import { useOnboarding } from './hooks/useOnboarding';
 import { useHashScroll } from './hooks/useHashScroll';
-import { startNetworkServices } from './state/store';
+import { startNetworkServices, startSpeakerNoticeListener } from './state/store';
 import './App.css';
 import styles from './App.module.css';
 import { useTranslation } from 'react-i18next';
@@ -30,6 +30,7 @@ export function App() {
   useEffect(() => {
     if (isComplete) {
       startNetworkServices();
+      startSpeakerNoticeListener();
     }
   }, [isComplete]);
 

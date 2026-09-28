@@ -6,8 +6,12 @@ import {
   removeManualSpeakerIp,
   getSpeakerMonitor,
   setSpeakerMonitor,
+  getHeadStart,
+  setHeadStart,
+  type HeadStartSetting,
   type SpeakerMonitorSetting,
 } from '../state/store';
+import { headStartOptions } from '../lib/speaker-notices';
 import { useTranslation } from 'react-i18next';
 import { ExternalLink, X } from 'lucide-preact';
 import { getVersion } from '@tauri-apps/api/app';
@@ -34,13 +38,14 @@ const LANGUAGE_NAMES: Record<SupportedLocale, string> = {
  * - Autostart on login
  * - Language selection
  * - Theme (auto/light/dark)
- * - Speaker monitoring and hand-added speakers
+ * - Speaker monitoring, the speaker head start and hand-added speakers
  * @returns The rendered Settings page
  */
 export function Settings() {
   const { t } = useTranslation();
   const [autostart, setAutostart] = useState<boolean | null>(null);
   const [speakerMonitor, setSpeakerMonitorState] = useState<SpeakerMonitorSetting | null>(null);
+  const [headStart, setHeadStartState] = useState<HeadStartSetting | null>(null);
   const [currentLanguage, setCurrentLanguage] = useState<SupportedLocale>(
     i18n.language as SupportedLocale,
   );
@@ -70,6 +75,10 @@ export function Settings() {
     getSpeakerMonitor()
       .then(setSpeakerMonitorState)
       .catch((error) => log.error('Failed to read speaker monitoring setting:', error));
+
+    getHeadStart()
+      .then(setHeadStartState)
+      .catch((error) => log.error('Failed to read the speaker head start setting:', error));
 
     getVersion()
       .then(setAppVersion)
@@ -114,6 +123,14 @@ export function Settings() {
     }
   };
 
+  const handleHeadStartChange = async (ms: number) => {
+    try {
+      setHeadStartState(await setHeadStart(ms));
+    } catch (error) {
+      log.error('Failed to set the speaker head start:', error);
+    }
+  };
+
   const handleLanguageChange = (locale: SupportedLocale) => {
     i18n.changeLanguage(locale);
     setCurrentLanguage(locale);
@@ -126,6 +143,7 @@ export function Settings() {
   };
 
   const availableLanguages = Object.keys(resources) as SupportedLocale[];
+  const headStartMs = headStart?.envOverride ?? headStart?.ms ?? null;
 
   return (
     <div className={styles.settings}>
@@ -222,6 +240,38 @@ export function Settings() {
                     ? 'settings.speaker_monitor_env_on'
                     : 'settings.speaker_monitor_env_off',
                 )}
+              </span>
+            )}
+          </div>
+
+          <div className={styles.field}>
+            <label htmlFor="settings-head-start" className={styles.toggleLabel}>
+              {t('settings.head_start')}
+            </label>
+            <p className={styles.toggleDescription}>{t('settings.head_start_description')}</p>
+            <select
+              id="settings-head-start"
+              value={headStartMs ?? ''}
+              onChange={(e) => handleHeadStartChange(Number(e.currentTarget.value))}
+              disabled={headStart === null || headStart.envOverride !== null}
+              className={styles.select}
+            >
+              {headStartMs !== null &&
+                headStartOptions(headStartMs).map(({ ms, custom }) => (
+                  <option key={ms} value={ms}>
+                    {custom
+                      ? t('settings.head_start_custom', { value: ms })
+                      : ms === 0
+                        ? t('settings.head_start_off')
+                        : t('settings.head_start_ms', { value: ms })}
+                  </option>
+                ))}
+            </select>
+            {headStart?.envOverride != null && (
+              <span className={styles.hint}>
+                {headStart.envOverride === 0
+                  ? t('settings.head_start_env_off')
+                  : t('settings.head_start_env', { value: headStart.envOverride })}
               </span>
             )}
           </div>
