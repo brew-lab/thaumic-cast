@@ -1007,6 +1007,10 @@ pub fn create_wav_stream_with_cadence(
                             delivery,
                             // Read against the byte count loaded above: no
                             // frame is yielded while this snapshot is taken.
+                            // The loop runs only while hyper polls the body,
+                            // so a send buffer that stays full takes no
+                            // samples: the stall is seen in the first one
+                            // after it clears, not while it lasts.
                             link: guard.sample_link(cur_bytes),
                             speaker: guard.speaker.snapshot(),
                         });

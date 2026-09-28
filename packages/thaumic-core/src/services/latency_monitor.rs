@@ -678,12 +678,12 @@ impl LatencySession {
         if is_low && !was_low {
             if let (Some(a), Some(target)) = (acked, self.tracker.target_ms()) {
                 log::warn!(
-                    "[SpeakerMonitor] {} stream={}: reserve low: the speaker's buffer fell to \
-                     {:.0}ms of {} audio against the {:.0}ms it settled at; below about 100ms \
-                     it stutters (reserve={})",
+                    "[SpeakerMonitor] {} stream={}: reserve low: the speaker's buffer spent a \
+                     tenth of the last window at or below {:.0}ms of {} audio against the \
+                     {:.0}ms it settled at; below about 100ms it stutters (reserve={})",
                     speaker_ip,
                     stream_id,
-                    a.min_ms,
+                    a.p10_ms,
                     if a.measured {
                         "acknowledged"
                     } else {
