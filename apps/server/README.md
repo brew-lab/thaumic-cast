@@ -127,7 +127,10 @@ thaumic-server --log-level debug
 | `--pcm-connect-burst-ms <MS>`   | `THAUMIC_PCM_CONNECT_BURST_MS` | Speaker head start, 0-2000 ms (default `500`)      |
 | `--strict-stream-access <BOOL>` | `THAUMIC_STRICT_STREAM_ACCESS` | Refuse unexpected stream fetches (default `false`) |
 
-CLI flags override environment variables, which override the config file.
+CLI flags override environment variables, which override the config file, with two exceptions:
+`THAUMIC_SPEAKER_MONITOR` and `THAUMIC_PCM_CONNECT_BURST_MS` are read again for each speaker connection and win
+over both the flag and the config file, and `THAUMIC_SPEAKER_DIAGNOSTICS` turns speaker monitoring on whatever the
+other settings say.
 
 ## Configuration
 

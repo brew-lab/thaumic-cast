@@ -50,8 +50,8 @@ topology_refresh_interval: 30
 # up in the log before it is heard. This is what drives the speaker notices
 # clients show. Grouped speakers and satellites that follow another speaker are
 # never polled. Set to false to poll only casts that asked for video sync, as
-# earlier releases did; video sync works either way, but there are no speaker
-# notices. Applies from each speaker's next connection.
+# earlier releases did; video sync works either way, but only casts using video
+# sync show speaker notices. Applies from each speaker's next connection.
 # Environment: THAUMIC_SPEAKER_MONITOR (on or off)
 speaker_monitor: true
 
