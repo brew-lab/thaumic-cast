@@ -10,7 +10,7 @@
 
 use std::collections::VecDeque;
 
-use super::reserve::{ReserveEstimate, RESERVE_WINDOW_MS};
+use super::reserve::{acquire_half_width_ms, ReserveEstimate, RESERVE_WINDOW_MS};
 
 /// RelTime going back by more than this is a restart, not jitter.
 pub const RELTIME_BACKWARDS_TOLERANCE_MS: u64 = 100;
@@ -19,7 +19,8 @@ pub const RELTIME_BACKWARDS_TOLERANCE_MS: u64 = 100;
 pub const OFFSET_STEP_MIN_MS: f64 = 150.0;
 
 /// A jump must also exceed this many half-widths of the estimate it is
-/// measured from.
+/// measured from (never counting more of that half-width than acquiring a
+/// lock allows).
 pub const OFFSET_STEP_HALF_WIDTHS: f64 = 2.0;
 
 /// How long before an estimate the one it is compared with was made.
@@ -100,7 +101,7 @@ pub struct Segment {
     /// Whether the speaker is known not to be playing (the break for it has
     /// been reported; playing again starts the next segment).
     paused: bool,
-    /// Recent locked estimates the next ones are compared with, oldest
+    /// Recent tight estimates the next ones are compared with, oldest
     /// first: when each was made, the reserve and its half-width.
     step_history: VecDeque<(f64, f64, f64)>,
     /// Consecutive estimates that have jumped away from the baseline.
@@ -181,11 +182,16 @@ impl Segment {
 
     /// Checks one reserve estimate for an offset step: a jump of more than
     /// `max(`[`OFFSET_STEP_MIN_MS`]`, `[`OFFSET_STEP_HALF_WIDTHS`]` ×
-    /// half-width)` from a locked estimate made [`OFFSET_STEP_LAG_MS`]
-    /// before (or the oldest one of the segment, until there is one that
-    /// old), persisting for [`OFFSET_STEP_PERSIST`] estimates in a row.
-    /// `clock_ppm` carries that earlier estimate forward along the drift,
-    /// so only a jump stands out.
+    /// min(half-width, acquire width))` from a tight estimate made
+    /// [`OFFSET_STEP_LAG_MS`] before (or the oldest one of the segment,
+    /// until there is one that old), persisting for [`OFFSET_STEP_PERSIST`]
+    /// estimates in a row. `clock_ppm` carries that earlier estimate forward
+    /// along the drift, so only a jump stands out.
+    ///
+    /// Only a tight estimate becomes a baseline, and the threshold never
+    /// counts more half-width than acquiring allows (at the estimate's own
+    /// jitter), so a lock held through widening cannot raise the threshold
+    /// until a real step hides under it.
     ///
     /// A step in the offset is the signal, rather than how many bounds
     /// disagree, because under tick jitter some always do.
@@ -203,7 +209,7 @@ impl Segment {
             self.step_history.pop_front();
         }
         let Some(&(at, baseline, half_width)) = self.step_history.front() else {
-            if est.locked {
+            if est.tight() {
                 self.step_history
                     .push_back((est.at, est.reserve_ms, est.half_width_ms));
             }
@@ -211,7 +217,8 @@ impl Segment {
         };
         // Delivery runs at our clock and the playhead at the speaker's.
         let expected = baseline - clock_ppm * 1e-6 * (est.at - at);
-        let threshold = OFFSET_STEP_MIN_MS.max(OFFSET_STEP_HALF_WIDTHS * half_width);
+        let width = half_width.min(acquire_half_width_ms(est.jitter_ms));
+        let threshold = OFFSET_STEP_MIN_MS.max(OFFSET_STEP_HALF_WIDTHS * width);
         if (est.reserve_ms - expected).abs() > threshold {
             self.step_pending += 1;
             if self.step_pending >= OFFSET_STEP_PERSIST {
@@ -221,7 +228,7 @@ impl Segment {
             return None;
         }
         self.step_pending = 0;
-        if est.locked {
+        if est.tight() {
             self.step_history
                 .push_back((est.at, est.reserve_ms, est.half_width_ms));
         }
@@ -231,6 +238,7 @@ impl Segment {
 
 #[cfg(test)]
 mod tests {
+    use super::super::reserve::LockReason;
     use super::*;
 
     const URI: &str = "http://10.0.0.1:49400/stream/s/live.wav";
@@ -243,7 +251,20 @@ mod tests {
             inconsistent: false,
             jitter_ms: 25.0,
             polls: 72,
-            locked,
+            lock_reason: if locked {
+                LockReason::Tight
+            } else {
+                LockReason::Unlocked
+            },
+        }
+    }
+
+    /// A locked estimate held through widening to `half_width_ms`.
+    fn held(at: f64, reserve_ms: f64, half_width_ms: f64) -> ReserveEstimate {
+        ReserveEstimate {
+            half_width_ms,
+            lock_reason: LockReason::Held,
+            ..estimate(at, reserve_ms, true)
         }
     }
 
@@ -356,5 +377,58 @@ mod tests {
         seg.start(SegmentBreak::NewConnection);
         assert_eq!(seg.observe_poll(1_000, URI, false), None);
         assert_eq!(seg.count(SegmentBreak::NewConnection), 1);
+    }
+    #[test]
+    fn held_estimates_do_not_record_step_baselines() {
+        let mut seg = Segment::new();
+        // A segment whose only locked estimates are held has no baseline, so
+        // even a large jump between them is not a step.
+        for (i, r) in [500.0, 500.0, 900.0, 900.0, 900.0].iter().enumerate() {
+            let est = held(30_000.0 * i as f64, *r, 180.0);
+            assert_eq!(seg.observe_estimate(&est, 0.0), None, "estimate {i}");
+        }
+        // Once a tight estimate sets one, a jump from it counts.
+        let decided = feed(
+            &mut seg,
+            150_000.0,
+            &[(900.0, true), (1_300.0, false), (1_300.0, false)],
+        );
+        assert_eq!(decided, [None, None, Some(SegmentBreak::OffsetStep)]);
+    }
+
+    #[test]
+    fn a_200ms_step_while_held_still_breaks_the_segment() {
+        // A tight baseline at 30 ms half-width, then estimates held through
+        // widening to the hold limit and with jitter swollen by the window
+        // straddling the step. The threshold stays at the floor, so a 200 ms
+        // step is seen.
+        let mut seg = Segment::new();
+        let decided = feed(&mut seg, 0.0, &[(500.0, true), (500.0, true)]);
+        assert_eq!(decided, [None, None]);
+        let mut brk = None;
+        for i in 2..10 {
+            let est = ReserveEstimate {
+                jitter_ms: 150.0,
+                ..held(30_000.0 * f64::from(i), 700.0, 200.0)
+            };
+            brk = brk.or(seg.observe_estimate(&est, 0.0));
+        }
+        assert_eq!(brk, Some(SegmentBreak::OffsetStep));
+    }
+
+    #[test]
+    fn a_wide_baseline_cannot_raise_the_threshold_past_the_acquire_width() {
+        // A baseline that was tight only because the jitter was large at the
+        // time is counted at most at the acquire width the current jitter
+        // allows: 2 × 110 ms, not 2 × 180 ms.
+        let mut seg = Segment::new();
+        let wide = ReserveEstimate {
+            half_width_ms: 180.0,
+            jitter_ms: 130.0,
+            ..estimate(0.0, 500.0, true)
+        };
+        assert_eq!(seg.observe_estimate(&wide, 0.0), None);
+        let decided = feed(&mut seg, 30_000.0, &[(750.0, false), (750.0, false)]);
+        assert_eq!(decided, [None, Some(SegmentBreak::OffsetStep)]);
     }
 }

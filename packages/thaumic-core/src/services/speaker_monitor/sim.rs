@@ -79,6 +79,10 @@ pub(crate) struct SimSpeaker {
     /// reaches the speaker for `.1` ms, after which everything sent in the
     /// meantime arrives at once, as after a Wi-Fi retransmission burst.
     pub stall: Option<(f64, f64)>,
+    /// Poll loss bursts: every `.0` ms from the connection's start, polls
+    /// sent in the first `.1` ms go unanswered, as over a Wi-Fi link that
+    /// drops out for a while and comes back.
+    pub poll_loss: Option<(f64, f64)>,
     /// How the polls are dithered.
     pub dither: SimDither,
     /// Poll counts at which to take an extra estimate, into
@@ -98,6 +102,7 @@ impl Default for SimSpeaker {
             seed: 1,
             connect_burst_ms: 0,
             stall: None,
+            poll_loss: None,
             dither: SimDither::Random,
             estimate_at_polls: Vec::new(),
         }
@@ -119,6 +124,8 @@ pub(crate) struct SimEstimate {
     pub time_to_empty_s: Option<f64>,
     /// The segment break the estimate revealed, if any.
     pub brk: Option<SegmentBreak>,
+    /// Whether the tracker's low-reserve alarm stood after the estimate.
+    pub low: bool,
 }
 
 /// What a simulation run saw.
@@ -300,6 +307,9 @@ impl SimSpeaker {
             let delivered = tap.delivered_ms().expect("pcm") as f64;
             if pending.as_ref().is_some_and(|p| p.tr <= now) {
                 let p = pending.take().expect("pending");
+                let lost = self
+                    .poll_loss
+                    .is_some_and(|(every, len)| p.ts % every < len);
                 let obs = PollObservation {
                     ts: p.ts,
                     tr: p.tr,
@@ -307,8 +317,10 @@ impl SimSpeaker {
                     d_ts_ms: p.d_ts_ms,
                     d_tr_ms: delivered,
                 };
-                tracker.observe(&obs, TRACK_URI, false);
-                polls += 1;
+                if !lost {
+                    tracker.observe(&obs, TRACK_URI, false);
+                    polls += 1;
+                }
                 if self.estimate_at_polls.contains(&polls) {
                     let (reserve, _) = tracker.clone().estimate(now);
                     report.at_polls.push((polls, reserve));
@@ -335,6 +347,7 @@ impl SimSpeaker {
 
             if now >= next_estimate {
                 let (reserve, brk) = tracker.estimate(now);
+                tracker.observe_ack_lag(&mut []);
                 report.estimates.push(SimEstimate {
                     at: now,
                     reserve,
@@ -342,6 +355,7 @@ impl SimSpeaker {
                     clock: tracker.clock(),
                     time_to_empty_s: tracker.time_to_empty_s(),
                     brk,
+                    low: tracker.is_low(),
                 });
                 next_estimate += ESTIMATE_EVERY_MS;
             }
@@ -399,7 +413,7 @@ mod tests {
         let locked: Vec<&SimEstimate> = report
             .estimates
             .iter()
-            .filter(|e| e.reserve.is_some_and(|r| r.locked))
+            .filter(|e| e.reserve.is_some_and(|r| r.locked()))
             .collect();
         assert!(
             locked.len() * 10 >= report.estimates.len() * 8,
@@ -577,6 +591,51 @@ mod tests {
         assert!(new_72.2 < old_72.2, "{new_72:?} against {old_72:?}");
     }
 
+    /// A speaker on a 500 ms head start whose link drops every poll for 16 s
+    /// every ten minutes, as the field's Wi-Fi did. Each burst costs the
+    /// window a handful of polls and widens the estimate; the lock must ride
+    /// that out, with no segment break and no low alarm.
+    #[tokio::test(start_paused = true)]
+    async fn loss_bursts_of_16s_every_10min_keep_lock_and_raise_no_notice_at_500ms() {
+        for seed in [21, 22, 23] {
+            let speaker = SimSpeaker {
+                prebuffer_ms: 70.0,
+                connect_burst_ms: 500,
+                tick_jitter_ms: 50.0,
+                poll_loss: Some((10.0 * MINUTE, 16_000.0)),
+                seed,
+                ..SimSpeaker::default()
+            };
+            let report = speaker.run(60.0, false).await;
+            assert!(report.underruns.is_empty(), "seed {seed}");
+            let first_lock = report
+                .estimates
+                .iter()
+                .position(|e| e.reserve.is_some_and(|r| r.locked()))
+                .expect("locks");
+            assert!(
+                report.estimates[first_lock].at <= 5.0 * MINUTE,
+                "seed {seed}: locked at {:.1} min",
+                report.estimates[first_lock].at / MINUTE
+            );
+            for e in &report.estimates[first_lock..] {
+                let r = e.reserve.expect("an estimate");
+                assert!(
+                    r.locked(),
+                    "seed {seed}: dropped at {:.1} min: {r:?}",
+                    e.at / MINUTE
+                );
+                assert_eq!(e.brk, None, "seed {seed}");
+                assert!(!e.low, "seed {seed}: low at {:.1} min", e.at / MINUTE);
+                assert!(
+                    (r.reserve_ms - e.true_reserve_ms).abs() <= r.half_width_ms,
+                    "seed {seed}: {r:?} vs {:.0}",
+                    e.true_reserve_ms
+                );
+            }
+        }
+    }
+
     #[tokio::test(start_paused = true)]
     async fn jitter_100ms_still_locks_within_5min() {
         for seed in [11, 12] {
@@ -591,7 +650,7 @@ mod tests {
             let first_lock = report
                 .estimates
                 .iter()
-                .find(|e| e.reserve.is_some_and(|r| r.locked))
+                .find(|e| e.reserve.is_some_and(|r| r.locked()))
                 .map(|e| e.at)
                 .expect("locks");
             assert!(
