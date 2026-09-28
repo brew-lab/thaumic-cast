@@ -67,7 +67,7 @@ use std::time::{Duration, Instant};
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
-use crate::events::{EventEmitter, LatencyEvent};
+use crate::events::{EventEmitter, LatencyEvent, NetworkEvent};
 use crate::protocol_constants::POSITION_POLL_TIMEOUT_MS;
 use crate::runtime::TokioSpawner;
 use crate::services::speaker_monitor::{
@@ -445,6 +445,9 @@ struct LatencySession {
     /// then to the current connection.
     previous_connection_ended: Option<Instant>,
     reconnect_gap: Option<Duration>,
+    /// The state last sent to clients in a speaker health event, so a
+    /// change between reports is sent at once.
+    health_reported: Option<MonitorState>,
 }
 
 impl LatencySession {
@@ -490,6 +493,7 @@ impl LatencySession {
             summary_owed: false,
             previous_connection_ended: None,
             reconnect_gap: None,
+            health_reported: None,
         }
     }
 
@@ -595,10 +599,17 @@ impl LatencySession {
     }
 
     /// Estimates the reserve and clock, publishes them to the connection's
-    /// pipeline snapshots and writes the rolled-up `[SpeakerMonitor]` line,
-    /// warning when the reserve is draining towards empty or has stepped as
-    /// an underrun would.
-    fn report(&mut self, stream_id: &str, speaker_ip: IpAddr, tap: &ConnectionTap, now: Instant) {
+    /// pipeline snapshots, writes the rolled-up `[SpeakerMonitor]` line and
+    /// sends it to clients as a speaker health event, warning when the
+    /// reserve is draining towards empty or has stepped as an underrun would.
+    fn report(
+        &mut self,
+        stream_id: &str,
+        speaker_ip: IpAddr,
+        tap: &ConnectionTap,
+        now: Instant,
+        emitter: &dyn EventEmitter,
+    ) {
         let window = self.last_report.map_or(SPEAKER_REPORT_INTERVAL, |at| {
             now.saturating_duration_since(at)
         });
@@ -638,8 +649,7 @@ impl LatencySession {
             clock_ppm: clock.map(|c| (c.ppm, c.se_ppm)),
         });
 
-        let stale = self.consecutive_failures >= BACKOFF_AFTER_FAILURES || self.is_stale();
-        let state = self.tracker.state(self.dormant, stale);
+        let state = self.health_state();
         let reserve = match (&estimate, self.pcm) {
             (Some(e), _) => format!(
                 "{:.0}\u{b1}{:.0}ms{}{}",
@@ -719,6 +729,67 @@ impl LatencySession {
                 format_duration(Duration::from_secs_f64(secs)),
                 reserve
             );
+        }
+
+        self.emit_health(stream_id, speaker_ip, state, emitter);
+    }
+
+    /// The monitor's view of the speaker, from its latest report and what
+    /// the polls have shown since.
+    fn health_state(&self) -> MonitorState {
+        let stale = self.consecutive_failures >= BACKOFF_AFTER_FAILURES || self.is_stale();
+        self.tracker.state(self.dormant, stale)
+    }
+
+    /// Whether clients are told about this speaker's health: whenever it is
+    /// polled, or would be but for playing something else.
+    fn reports_health(&self) -> bool {
+        self.monitor || self.emit_events
+    }
+
+    /// Sends the speaker's health, with the figures of its latest report, to
+    /// clients.
+    fn emit_health(
+        &mut self,
+        stream_id: &str,
+        speaker_ip: IpAddr,
+        state: MonitorState,
+        emitter: &dyn EventEmitter,
+    ) {
+        self.health_reported = Some(state);
+        emitter.emit_network(self.health_event(stream_id, speaker_ip, state));
+    }
+
+    /// The speaker health event for `state`, with the figures of the latest
+    /// report.
+    fn health_event(
+        &self,
+        stream_id: &str,
+        speaker_ip: IpAddr,
+        state: MonitorState,
+    ) -> NetworkEvent {
+        let estimate = self.tracker.last_estimate();
+        let acked = self.tracker.last_acked();
+        let clock = self.tracker.clock();
+        let ms = |v: f64| v.round() as i32;
+        NetworkEvent::SpeakerHealth {
+            stream_id: stream_id.to_string(),
+            speaker_ip: speaker_ip.to_string(),
+            epoch_id: self.last_epoch_id,
+            state: state.into(),
+            reserve_ms: estimate.map(|e| ms(e.reserve_ms)),
+            reserve_precision_ms: estimate.map(|e| e.half_width_ms.max(0.0).round() as u32),
+            reserve_min_ms: acked.map(|a| ms(a.min_ms)),
+            reserve_p10_ms: acked.map(|a| ms(a.p10_ms)),
+            reserve_acked: acked.is_some_and(|a| a.measured),
+            target_ms: self.tracker.target_ms().map(ms),
+            clock_ppm: clock.map(|c| c.ppm as f32),
+            clock_se_ppm: clock.map(|c| c.se_ppm as f32),
+            time_to_empty_s: self
+                .tracker
+                .time_to_empty_s()
+                .map(|s| s.max(0.0).round() as u32),
+            timestamp: now_millis(),
         }
     }
 
@@ -1503,7 +1574,16 @@ impl LatencyMonitor {
                         let Some(tap) = tap else { continue };
                         let Some(epoch) = tap.epoch() else { continue };
                         if session.wants_polls() && session.report_due(now) {
-                            session.report(stream_id, *speaker_ip, &tap, now);
+                            session.report(stream_id, *speaker_ip, &tap, now, emitter.as_ref());
+                        }
+                        // A state change between reports (the speaker paused,
+                        // stopped answering or started playing something else)
+                        // is sent at once rather than at the next report.
+                        if session.reports_health() {
+                            let state = session.health_state();
+                            if session.health_reported != Some(state) {
+                                session.emit_health(stream_id, *speaker_ip, state, emitter.as_ref());
+                            }
                         }
                         if !session.wants_polls()
                             || session.in_flight.is_some()
@@ -2019,6 +2099,36 @@ mod tests {
             fn emit_latency(&self, _: LatencyEvent) {}
         }
 
+        /// Keeps the network events the monitor sends.
+        #[derive(Default)]
+        struct NetworkEvents(parking_lot::Mutex<Vec<NetworkEvent>>);
+
+        impl NetworkEvents {
+            /// The states of the speaker health events sent for `ip`, in order.
+            fn health_states(&self, ip: &str) -> Vec<crate::events::SpeakerHealthState> {
+                self.0
+                    .lock()
+                    .iter()
+                    .filter_map(|e| match e {
+                        NetworkEvent::SpeakerHealth {
+                            speaker_ip, state, ..
+                        } if speaker_ip == ip => Some(*state),
+                        _ => None,
+                    })
+                    .collect()
+            }
+        }
+
+        impl EventEmitter for NetworkEvents {
+            fn emit_stream(&self, _: StreamEvent) {}
+            fn emit_sonos(&self, _: SonosEvent) {}
+            fn emit_network(&self, event: NetworkEvent) {
+                self.0.lock().push(event);
+            }
+            fn emit_topology(&self, _: TopologyEvent) {}
+            fn emit_latency(&self, _: LatencyEvent) {}
+        }
+
         /// GENA double that has heard nothing.
         struct NoGena;
 
@@ -2032,6 +2142,7 @@ mod tests {
         struct Harness {
             monitor: LatencyMonitor,
             speakers: Arc<FakeSpeakers>,
+            events: Arc<NetworkEvents>,
             stream_id: String,
         }
 
@@ -2042,10 +2153,11 @@ mod tests {
                     .create_stream(AudioCodec::Pcm, AudioFormat::default(), 200, 10)
                     .expect("stream");
                 let speakers = FakeSpeakers::new(&stream_id);
+                let events = Arc::new(NetworkEvents::default());
                 let monitor = LatencyMonitor::new(
                     Arc::clone(&speakers) as Arc<dyn SonosPlayback>,
                     registry,
-                    Arc::new(NoEvents),
+                    Arc::clone(&events) as Arc<dyn EventEmitter>,
                     Arc::new(NoGena),
                     cancel.clone(),
                     TokioSpawner::new(tokio::runtime::Handle::current()),
@@ -2054,6 +2166,7 @@ mod tests {
                 Self {
                     monitor,
                     speakers,
+                    events,
                     stream_id,
                 }
             }
@@ -2210,6 +2323,65 @@ mod tests {
                 harness.speakers.calls_to(SYNCED).len() >= 2,
                 "video sync keeps polling whatever the setting"
             );
+        }
+
+        /// A monitored speaker's health reaches clients from its first tick,
+        /// naming its stream, so a client learns the speaker is measured
+        /// before the first 30 s report; an unmonitored plain cast sends none.
+        #[tokio::test]
+        async fn a_monitored_speaker_reports_its_health_and_an_unmonitored_one_does_not() {
+            use crate::events::SpeakerHealthState;
+            const MONITORED: &str = "192.168.1.40";
+            const PLAIN: &str = "192.168.1.41";
+            let cancel = CancellationToken::new();
+            let harness = Harness::start(&cancel).await;
+            let _monitored = harness.fetch(MONITORED, true);
+            let _plain = harness.fetch(PLAIN, false);
+
+            tokio::time::sleep(Duration::from_millis(1200)).await;
+            cancel.cancel();
+
+            assert_eq!(
+                harness.events.health_states(MONITORED),
+                vec![SpeakerHealthState::Locking],
+                "one event on the first tick, and no repeat while the state holds"
+            );
+            let named_stream = harness.events.0.lock().iter().all(|e| match e {
+                NetworkEvent::SpeakerHealth { stream_id, .. } => *stream_id == harness.stream_id,
+                _ => true,
+            });
+            assert!(
+                named_stream,
+                "the event names the stream the speaker fetches"
+            );
+            assert!(
+                harness.events.health_states(PLAIN).is_empty(),
+                "a speaker that is not polled has no health to report"
+            );
+        }
+
+        /// A speaker found playing something else is reported dormant without
+        /// the figures of a reserve it is no longer building.
+        #[test]
+        fn a_dormant_speaker_reports_dormant() {
+            let mut session = LatencySession::new(false);
+            session.monitor = true;
+            session.dormant = true;
+            assert!(session.reports_health());
+            assert_eq!(session.health_state(), MonitorState::Dormant);
+            match session.health_event("stream", HUNG_IP.parse().unwrap(), MonitorState::Dormant) {
+                NetworkEvent::SpeakerHealth {
+                    state,
+                    reserve_ms,
+                    target_ms,
+                    ..
+                } => {
+                    assert_eq!(state, crate::events::SpeakerHealthState::Dormant);
+                    assert_eq!(reserve_ms, None);
+                    assert_eq!(target_ms, None);
+                }
+                other => panic!("not a speaker health event: {other:?}"),
+            }
         }
 
         fn poll(poll_id: u64, outcome: Result<PositionInfo, String>) -> PollResult {
@@ -2376,11 +2548,36 @@ mod tests {
                 "video sync's latency is still measured alongside the reserve"
             );
 
-            session.report("stream", HUNG_IP.parse().unwrap(), &tap, at(240_000.0));
+            let events = NetworkEvents::default();
+            session.report(
+                "stream",
+                HUNG_IP.parse().unwrap(),
+                &tap,
+                at(240_000.0),
+                &events,
+            );
             let est = session.tracker.last_estimate().copied().expect("estimate");
             assert!((est.reserve_ms - 600.0).abs() <= 50.0, "{est:?}");
             let published = tap.speaker_snapshot().expect("published");
             assert_eq!(published.reserve_ms, Some(est.reserve_ms.round() as i32));
+            // The report goes to clients with the same figures.
+            let sent = events.0.lock();
+            match sent.as_slice() {
+                [NetworkEvent::SpeakerHealth {
+                    reserve_ms,
+                    reserve_precision_ms,
+                    epoch_id: sent_epoch,
+                    ..
+                }] => {
+                    assert_eq!(*reserve_ms, Some(est.reserve_ms.round() as i32));
+                    assert_eq!(
+                        *reserve_precision_ms,
+                        Some(est.half_width_ms.round() as u32)
+                    );
+                    assert_eq!(*sent_epoch, epoch_id);
+                }
+                other => panic!("expected one speaker health event, got {other:?}"),
+            }
         }
 
         /// Answers `count` polls of `session` on `tap`'s connection, a
@@ -2436,7 +2633,7 @@ mod tests {
             assert!(!session.report_due(attached + Duration::from_secs(29)));
             let due = attached + SPEAKER_REPORT_INTERVAL;
             assert!(session.report_due(due));
-            session.report("stream", HUNG_IP.parse().unwrap(), &tap, due);
+            session.report("stream", HUNG_IP.parse().unwrap(), &tap, due, &NoEvents);
             assert!(!session.report_due(due + Duration::from_secs(29)));
             assert!(session.report_due(due + SPEAKER_REPORT_INTERVAL));
         }
