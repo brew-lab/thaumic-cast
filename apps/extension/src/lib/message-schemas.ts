@@ -659,13 +659,32 @@ export const LatencyEventMessageSchema = z.object({
 });
 export type LatencyEventMessage = z.infer<typeof LatencyEventMessageSchema>;
 
+/** The companion's zone groups, discovered or refreshed. */
+const GroupsDiscoveredEventSchema = z.object({
+  type: z.literal('groupsDiscovered'),
+  groups: SonosStateSnapshotSchema.shape.groups,
+  timestamp: z.number(),
+});
+
+/**
+ * A topology event this build does not use, such as `memberChanged` (a
+ * home-theatre satellite dropping off, a device rebooting). Accepted and
+ * tagged for the handler to ignore, as with network events, so an event type
+ * added by a newer companion does not fail validation and log an error.
+ */
+const UnrecognizedTopologyEventSchema = z
+  .object({ type: z.string() })
+  .refine((event) => event.type !== 'groupsDiscovered')
+  .transform((event) => ({ type: 'unrecognized' as const, eventType: event.type }));
+
+/**
+ * Topology event forwarded by the offscreen document (offscreen → background):
+ * group discovery results, or an `unrecognized` marker for event types this
+ * build does not use.
+ */
 export const TopologyEventMessageSchema = z.object({
   type: z.literal('TOPOLOGY_EVENT'),
-  payload: z.object({
-    type: z.literal('groupsDiscovered'),
-    groups: SonosStateSnapshotSchema.shape.groups,
-    timestamp: z.number(),
-  }),
+  payload: z.union([GroupsDiscoveredEventSchema, UnrecognizedTopologyEventSchema]),
 });
 export type TopologyEventMessage = z.infer<typeof TopologyEventMessageSchema>;
 
