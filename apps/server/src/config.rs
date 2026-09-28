@@ -68,6 +68,17 @@ pub struct ServerConfig {
     /// `thaumic_core::Config`.
     /// Override: `THAUMIC_SPEAKER_MONITOR` (`on` or `off`)
     pub speaker_monitor: bool,
+
+    /// Milliseconds of already-captured audio sent to a speaker at once when
+    /// it starts fetching a PCM (WAV) stream, before real-time pacing takes
+    /// over, so it starts with that much in hand against Wi-Fi stalls. `0`
+    /// turns it off.
+    ///
+    /// Defaults to 500. At most 2000. Latency grows by the same amount; video
+    /// sync accounts for it. Compressed codecs are unaffected. Applies from
+    /// each speaker's next connection. See `thaumic_core::Config`.
+    /// Override: `THAUMIC_PCM_CONNECT_BURST_MS`
+    pub pcm_connect_burst_ms: u64,
 }
 
 impl Default for ServerConfig {
@@ -80,6 +91,7 @@ impl Default for ServerConfig {
             artwork_url: None,
             strict_stream_access: false,
             speaker_monitor: true,
+            pcm_connect_burst_ms: thaumic_core::protocol_constants::DEFAULT_PCM_CONNECT_BURST_MS,
         }
     }
 }
@@ -112,12 +124,20 @@ impl ServerConfig {
     ///
     /// Call this again after applying CLI overrides. A zero
     /// `topology_refresh_interval` would panic inside the topology monitor
-    /// (`tokio::time::interval` rejects a zero period). `bind_port` is not
+    /// (`tokio::time::interval` rejects a zero period), and a
+    /// `pcm_connect_burst_ms` above the maximum would be clamped silently. `bind_port` is not
     /// checked here: `0` is the supported auto-assign sentinel, and any other
     /// `u16` is a bindable port.
     pub fn validate(&self) -> Result<()> {
         if self.topology_refresh_interval == 0 {
             bail!("topology_refresh_interval must be at least 1 second (got 0)");
+        }
+        let max_burst = thaumic_core::protocol_constants::MAX_PCM_CONNECT_BURST_MS;
+        if self.pcm_connect_burst_ms > max_burst {
+            bail!(
+                "pcm_connect_burst_ms must be at most {max_burst} (got {})",
+                self.pcm_connect_burst_ms
+            );
         }
         Ok(())
     }
@@ -129,6 +149,7 @@ impl ServerConfig {
             topology_refresh_interval: self.topology_refresh_interval,
             strict_stream_access: self.strict_stream_access,
             speaker_monitor: self.speaker_monitor,
+            pcm_connect_burst_ms: self.pcm_connect_burst_ms,
             ..Default::default()
         }
     }
@@ -208,6 +229,29 @@ mod tests {
 
         let config = ServerConfig::from_yaml("speaker_monitor: false\n").expect("should parse");
         assert!(!config.to_core_config().speaker_monitor);
+    }
+
+    /// The connect burst ships on at 500 ms, reaches core, can be switched
+    /// off, and is bounded.
+    #[test]
+    fn pcm_connect_burst_defaults_on_and_is_forwarded_to_core() {
+        assert_eq!(
+            ServerConfig::default()
+                .to_core_config()
+                .pcm_connect_burst_ms,
+            500
+        );
+
+        let config = ServerConfig::from_yaml("pcm_connect_burst_ms: 0\n").expect("should parse");
+        config.validate().expect("0 turns the burst off");
+        assert_eq!(config.to_core_config().pcm_connect_burst_ms, 0);
+
+        let config = ServerConfig::from_yaml("pcm_connect_burst_ms: 2000\n").expect("should parse");
+        config.validate().expect("the maximum is allowed");
+
+        let config = ServerConfig::from_yaml("pcm_connect_burst_ms: 2001\n").expect("should parse");
+        let err = config.validate().expect_err("above the maximum");
+        assert!(err.to_string().contains("pcm_connect_burst_ms"));
     }
 
     #[test]

@@ -53,3 +53,13 @@ topology_refresh_interval: 30
 # speaker's next connection.
 # Environment: THAUMIC_SPEAKER_MONITOR (on or off)
 # speaker_monitor: false
+
+# Send each speaker a burst of audio when it starts fetching a PCM stream (default: 500)
+# Milliseconds of already-captured audio handed over at once, before real-time
+# pacing takes over, so the speaker starts with that much in hand. Without it a
+# speaker holds only a few tens of milliseconds ahead of its playhead, and a
+# Wi-Fi stall longer than that is heard as a stutter. End-to-end latency grows
+# by the same amount; video sync accounts for it. 0 turns it off; at most 2000.
+# Compressed codecs are unaffected. Applies from each speaker's next connection.
+# Environment: THAUMIC_PCM_CONNECT_BURST_MS
+# pcm_connect_burst_ms: 500
