@@ -30,7 +30,7 @@ pub use clock_fit::{ClockEstimate, ClockFit};
 pub use reserve::{ReserveEstimate, ReserveEstimator};
 pub use rollup::WindowStats;
 pub use segment::{Segment, SegmentBreak};
-pub use tracker::{ConnectionStats, MonitorState, ReserveTracker};
+pub use tracker::{AckedReserve, ConnectionStats, MonitorState, ReserveTracker};
 pub use transport_gate::{
     GenaTransport, GenaTransportView, TransportGate, TransportSource, TransportStateView,
     TransportVerdict,

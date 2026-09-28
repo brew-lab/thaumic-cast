@@ -566,7 +566,7 @@ impl LatencySession {
         let (estimates, inconsistent) = self.tracker.connection_estimate_counts();
         log::info!(
             "[SpeakerMonitor] {} stream={} connection ended after {}: reserve start={}ms end={}ms \
-             min={}ms clock={} polls={} breaks[{}] underruns_suspected={} incons={}/{} \
+             min={}ms{} clock={} polls={} breaks[{}] underruns_suspected={} incons={}/{} \
              reconnect_gap={}",
             speaker_ip,
             stream_id,
@@ -574,6 +574,7 @@ impl LatencySession {
             ms(c.reserve_start_ms),
             ms(c.reserve_end_ms),
             ms(c.reserve_min_ms),
+            if c.acked_measured { "(acked)" } else { "" },
             format_clock(self.tracker.clock()),
             c.polls,
             breaks.join(" "),
@@ -614,6 +615,23 @@ impl LatencySession {
                 stream_id
             );
         }
+        // Copies the window out under the pipeline timeline's lock, which
+        // the cadence loop also takes every 500 ms. Unlike everything else
+        // the monitor reads, this is not an atomic, but the lock is held
+        // only for the copy (about 60 entries every 30 s) and never across
+        // an await.
+        let pipeline = tap.recent_pipeline(window);
+        let was_low = self.tracker.is_low();
+        let mut lags_ms: Vec<f64> = if tap.byte_rate > 0 {
+            pipeline
+                .iter()
+                .filter_map(|s| s.unacked_bytes)
+                .map(|b| b as f64 * 1000.0 / f64::from(tap.byte_rate))
+                .collect()
+        } else {
+            Vec::new()
+        };
+        let acked = self.tracker.observe_ack_lag(&mut lags_ms);
         let clock = self.tracker.clock();
         tap.publish_speaker(SpeakerFigures {
             reserve: estimate.map(|e| (e.reserve_ms, e.half_width_ms)),
@@ -624,10 +642,11 @@ impl LatencySession {
         let state = self.tracker.state(self.dormant, stale);
         let reserve = match (&estimate, self.pcm) {
             (Some(e), _) => format!(
-                "{:.0}\u{b1}{:.0}ms{}",
+                "{:.0}\u{b1}{:.0}ms{}{}",
                 e.reserve_ms,
                 e.half_width_ms,
-                if e.inconsistent { "(incons)" } else { "" }
+                if e.inconsistent { "(incons)" } else { "" },
+                format_acked(acked, self.tracker.target_ms()),
             ),
             (None, true) => "\u{2014}".to_string(),
             (None, false) => "n/a(compressed)".to_string(),
@@ -651,14 +670,37 @@ impl LatencySession {
             inconsistent,
             estimates,
             self.tracker.jitter_ms(),
-            // Copies the window out under the pipeline timeline's lock, which
-            // the cadence loop also takes every 500 ms. Unlike everything
-            // else the monitor reads, this is not an atomic, but the lock is
-            // held only for the copy (about 60 entries every 30 s) and
-            // never across an await.
-            format_pipeline(&tap.recent_pipeline(window)),
+            format_pipeline(&pipeline),
             self.last_transport_source,
         );
+
+        let is_low = self.tracker.is_low();
+        if is_low && !was_low {
+            if let (Some(a), Some(target)) = (acked, self.tracker.target_ms()) {
+                log::warn!(
+                    "[SpeakerMonitor] {} stream={}: reserve low: the speaker's buffer fell to \
+                     {:.0}ms of {} audio against the {:.0}ms it settled at; below about 100ms \
+                     it stutters (reserve={})",
+                    speaker_ip,
+                    stream_id,
+                    a.min_ms,
+                    if a.measured {
+                        "acknowledged"
+                    } else {
+                        "delivered"
+                    },
+                    target,
+                    reserve
+                );
+            }
+        } else if was_low && !is_low {
+            log::info!(
+                "[SpeakerMonitor] {} stream={}: reserve recovered (reserve={})",
+                speaker_ip,
+                stream_id,
+                reserve
+            );
+        }
 
         let due = draining_warning_due(
             &mut self.draining_warned,
@@ -1052,8 +1094,13 @@ fn draining_warning_due(
     tte: Option<f64>,
     clock_drains: bool,
 ) -> bool {
+    let draining = state == MonitorState::Draining
+        || (state == MonitorState::Low
+            && tte.is_some_and(|s| {
+                s < crate::services::speaker_monitor::tracker::DRAINING_WARN_SECS
+            }));
     match tte {
-        Some(_) if state == MonitorState::Draining => !std::mem::replace(warned, true),
+        Some(_) if draining => !std::mem::replace(warned, true),
         Some(secs) if secs >= DRAINING_CLEAR_SECS => {
             *warned = false;
             false
@@ -1080,6 +1127,23 @@ fn format_clock(clock: Option<crate::services::speaker_monitor::ClockEstimate>) 
             )
         },
     )
+}
+
+/// The acknowledged reserve over a report's window and the target it is
+/// held against, for the log: ` (acked min30s=431 p10=470) target=540`.
+/// Empty where acknowledgements are not measured.
+fn format_acked(
+    acked: Option<crate::services::speaker_monitor::AckedReserve>,
+    target_ms: Option<f64>,
+) -> String {
+    let acked = acked
+        .filter(|a| a.measured)
+        .map(|a| format!(" (acked min30s={:.0} p10={:.0})", a.min_ms, a.p10_ms))
+        .unwrap_or_default();
+    let target = target_ms
+        .map(|t| format!(" target={t:.0}"))
+        .unwrap_or_default();
+    format!("{acked}{target}")
 }
 
 /// The cadence queue, delivery gaps and retransmissions over a report's
@@ -2490,6 +2554,45 @@ mod tests {
         // So does the clock ceasing to drain.
         assert!(!step(Ok, None, false));
         assert!(step(Draining, Some(800.0), true));
+    }
+
+    #[test]
+    fn a_low_speaker_that_is_also_draining_still_gets_the_draining_warning() {
+        use MonitorState::{Draining, Low};
+        let mut warned = false;
+        assert!(
+            !draining_warning_due(&mut warned, Low, Some(25.0 * 60.0), true),
+            "low, but not projected to empty soon"
+        );
+        assert!(draining_warning_due(&mut warned, Low, Some(600.0), true));
+        assert!(!draining_warning_due(
+            &mut warned,
+            Draining,
+            Some(580.0),
+            true
+        ));
+    }
+
+    #[test]
+    fn the_acknowledged_reserve_is_logged_only_when_measured() {
+        use crate::services::speaker_monitor::AckedReserve;
+        let acked = |measured| {
+            Some(AckedReserve {
+                min_ms: 431.4,
+                p10_ms: 470.0,
+                measured,
+            })
+        };
+        assert_eq!(
+            format_acked(acked(true), Some(540.2)),
+            " (acked min30s=431 p10=470) target=540"
+        );
+        assert_eq!(format_acked(acked(false), Some(540.0)), " target=540");
+        assert_eq!(
+            format_acked(acked(true), None),
+            " (acked min30s=431 p10=470)"
+        );
+        assert_eq!(format_acked(None, None), "");
     }
 
     #[test]

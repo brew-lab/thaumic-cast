@@ -195,6 +195,9 @@ pub(crate) struct PipelineSample {
     pub max_gap_ms: u64,
     /// TCP retransmissions in the snapshot's window, where reported.
     pub retransmitted: Option<u64>,
+    /// Bytes handed over but not yet acknowledged by the speaker at the
+    /// time of the snapshot, where reported.
+    pub unacked_bytes: Option<u64>,
 }
 
 /// Wrapper that logs HTTP audio stream lifecycle and tracks delivery timing.
@@ -283,8 +286,10 @@ impl LoggingStreamGuard {
 
     /// Reads the connection's TCP counters since the last read and warns, at
     /// most once every five seconds, when data had to be retransmitted.
-    fn sample_link(&self) -> Option<crate::api::link::TcpLinkWindow> {
-        let window = self.link_probe.as_ref()?.sample()?;
+    /// `body_bytes` is [`Self::bytes_sent`] as it stands, against which the
+    /// bytes the speaker has acknowledged are counted.
+    fn sample_link(&self, body_bytes: u64) -> Option<crate::api::link::TcpLinkWindow> {
+        let window = self.link_probe.as_ref()?.sample(body_bytes)?;
         let verdict = self
             .link_judge
             .lock()
@@ -415,6 +420,7 @@ impl LoggingStreamGuard {
                 queue_len: s.cadence.queue_len,
                 max_gap_ms: s.delivery.max_gap_ms,
                 retransmitted: s.link.map(|l| l.retransmitted),
+                unacked_bytes: s.link.and_then(|l| l.unacked_bytes),
             })
             .collect()
     }
@@ -999,7 +1005,9 @@ pub fn create_wav_stream_with_cadence(
                             receive,
                             cadence: cadence_window,
                             delivery,
-                            link: guard.sample_link(),
+                            // Read against the byte count loaded above: no
+                            // frame is yielded while this snapshot is taken.
+                            link: guard.sample_link(cur_bytes),
                             speaker: guard.speaker.snapshot(),
                         });
                     }

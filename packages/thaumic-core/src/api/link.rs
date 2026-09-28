@@ -16,6 +16,8 @@
 
 use std::collections::VecDeque;
 use std::net::SocketAddr;
+#[cfg(any(windows, test))]
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -75,10 +77,16 @@ struct TcpSample {
     /// Retransmission timeouts so far (Windows counts episodes; Linux the
     /// current backoff count, which is what is available without root).
     timeouts: u32,
+    /// Bytes the peer has acknowledged so far, where the platform reports
+    /// them (Linux 4.1 and later, Windows).
+    bytes_acked: Option<u64>,
+    /// Bytes written to the socket that the kernel has not yet sent, where
+    /// the platform reports them (Linux 4.6 and later).
+    notsent: Option<u32>,
 }
 
 /// What happened on the connection since the previous read.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize)]
 pub struct TcpLinkWindow {
     /// Smoothed round-trip time at the time of the read, in milliseconds.
     pub rtt_ms: u32,
@@ -87,6 +95,16 @@ pub struct TcpLinkWindow {
     pub retransmitted: u64,
     /// Retransmission timeouts since the previous read.
     pub timeouts: u32,
+    /// Bytes the response body had handed over at the time of the read that
+    /// the speaker had not yet acknowledged: what sat in our buffers, in the
+    /// kernel's send buffer or on the air. The speaker cannot play them yet,
+    /// so this is how far its reserve lags the delivered count. `None` where
+    /// the platform does not report acknowledged bytes.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub unacked_bytes: Option<u64>,
+    /// Bytes in the kernel's send buffer not yet sent, where reported.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub notsent_bytes: Option<u32>,
 }
 
 impl TcpLinkProbe {
@@ -100,20 +118,29 @@ impl TcpLinkProbe {
 
     /// Reads the connection's counters and returns the change since the last
     /// read, or `None` where the platform cannot report them.
-    pub fn sample(&self) -> Option<TcpLinkWindow> {
-        let now = sample_raw(self.raw_socket)?;
+    ///
+    /// `body_bytes` is how many bytes the response body has handed over so
+    /// far. The bytes acknowledged are counted against it, so they must be
+    /// read in the same breath: the cadence loop samples between frames,
+    /// when nothing else can be yielded.
+    pub fn sample(&self, body_bytes: u64) -> Option<TcpLinkWindow> {
+        let now = sample_raw(self.raw_socket, body_bytes)?;
         let mut last = self.last.lock();
-        let window = match *last {
-            Some(prev) => TcpLinkWindow {
-                rtt_ms: now.rtt_us / 1000,
-                retransmitted: now.retransmitted.saturating_sub(prev.retransmitted),
-                timeouts: now.timeouts.saturating_sub(prev.timeouts),
-            },
-            None => TcpLinkWindow {
-                rtt_ms: now.rtt_us / 1000,
-                retransmitted: 0,
-                timeouts: 0,
-            },
+        let (retransmitted, timeouts) = match *last {
+            Some(prev) => (
+                now.retransmitted.saturating_sub(prev.retransmitted),
+                now.timeouts.saturating_sub(prev.timeouts),
+            ),
+            None => (0, 0),
+        };
+        let window = TcpLinkWindow {
+            rtt_ms: now.rtt_us / 1000,
+            retransmitted,
+            timeouts,
+            unacked_bytes: now
+                .bytes_acked
+                .map(|acked| body_bytes.saturating_sub(acked)),
+            notsent_bytes: now.notsent,
         };
         *last = Some(now);
         *self.total_retransmitted.lock() += window.retransmitted;
@@ -126,24 +153,71 @@ impl TcpLinkProbe {
     }
 }
 
+/// The leading fields of `struct tcp_info` from linux/tcp.h, through
+/// `tcpi_notsent_bytes`: eight bytes of u8 state and flags, u32 counters up
+/// to `tcpi_total_retrans`, then the u64 and u32 fields later kernels added.
+/// The kernel copies as much of its structure as the caller's length allows
+/// and reports how much that was, so the prefix is stable across kernels and
+/// each later field is trusted only when the reported length covers it.
 #[cfg(target_os = "linux")]
-fn sample_raw(raw_socket: u64) -> Option<TcpSample> {
-    // The leading fields of `struct tcp_info` from linux/tcp.h: eight bytes of
-    // u8 state and flags, then u32 counters up to `tcpi_total_retrans`. The
-    // kernel fills as much as the caller's length allows, so this prefix is
-    // stable across kernel versions.
-    #[repr(C)]
-    #[derive(Default, Clone, Copy)]
-    struct TcpInfoHead {
-        flags: [u8; 8],
-        words: [u32; 24],
-    }
+#[repr(C)]
+#[derive(Default, Clone, Copy)]
+struct TcpInfoPrefix {
+    flags: [u8; 8],
+    words: [u32; 24],
+    pacing_rate: u64,
+    max_pacing_rate: u64,
+    /// Linux 4.1 and later.
+    bytes_acked: u64,
+    bytes_received: u64,
+    segs_out: u32,
+    segs_in: u32,
+    /// Linux 4.6 and later.
+    notsent_bytes: u32,
+}
+
+// The offsets linux/tcp.h gives these fields; a layout that disagreed would
+// read the wrong counters silently.
+#[cfg(target_os = "linux")]
+const _: () = {
+    assert!(std::mem::offset_of!(TcpInfoPrefix, pacing_rate) == 104);
+    assert!(std::mem::offset_of!(TcpInfoPrefix, bytes_acked) == 120);
+    assert!(std::mem::offset_of!(TcpInfoPrefix, notsent_bytes) == 144);
+};
+
+#[cfg(target_os = "linux")]
+impl TcpInfoPrefix {
     const RTT: usize = 15; // tcpi_rtt, microseconds
     const TOTAL_RETRANS: usize = 23; // tcpi_total_retrans, segments
     const RETRANSMITS: usize = 2; // tcpi_retransmits, in `flags`
 
-    let mut info = TcpInfoHead::default();
-    let mut len = std::mem::size_of::<TcpInfoHead>() as libc::socklen_t;
+    /// Decodes the fields the kernel filled, given the length it reported:
+    /// `None` if it did not reach `tcpi_total_retrans`, and each later field
+    /// `None` unless the length covers it.
+    fn decode(&self, len: usize) -> Option<TcpSample> {
+        let covers = |offset: usize, size: usize| len >= offset + size;
+        if !covers(
+            std::mem::offset_of!(Self, words),
+            std::mem::size_of::<[u32; 24]>(),
+        ) {
+            return None;
+        }
+        Some(TcpSample {
+            rtt_us: self.words[Self::RTT],
+            retransmitted: u64::from(self.words[Self::TOTAL_RETRANS]),
+            timeouts: u32::from(self.flags[Self::RETRANSMITS]),
+            bytes_acked: covers(std::mem::offset_of!(Self, bytes_acked), 8)
+                .then_some(self.bytes_acked),
+            notsent: covers(std::mem::offset_of!(Self, notsent_bytes), 4)
+                .then_some(self.notsent_bytes),
+        })
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn sample_raw(raw_socket: u64, _body_bytes: u64) -> Option<TcpSample> {
+    let mut info = TcpInfoPrefix::default();
+    let mut len = std::mem::size_of::<TcpInfoPrefix>() as libc::socklen_t;
     // SAFETY: the descriptor belongs to a live TCP socket the caller holds a
     // probe for, and the buffer is sized by `len`.
     let rc = unsafe {
@@ -151,22 +225,67 @@ fn sample_raw(raw_socket: u64) -> Option<TcpSample> {
             raw_socket as libc::c_int,
             libc::IPPROTO_TCP,
             libc::TCP_INFO,
-            (&mut info as *mut TcpInfoHead).cast(),
+            (&mut info as *mut TcpInfoPrefix).cast(),
             &mut len,
         )
     };
-    if rc != 0 || (len as usize) < std::mem::size_of::<TcpInfoHead>() {
+    if rc != 0 {
         return None;
     }
-    Some(TcpSample {
-        rtt_us: info.words[RTT],
-        retransmitted: u64::from(info.words[TOTAL_RETRANS]),
-        timeouts: u32::from(info.flags[RETRANSMITS]),
-    })
+    info.decode(len as usize)
+}
+
+/// Whether this machine's `BytesOut` counts retransmitted bytes. Windows
+/// does not document it; it is learned from the first connection that
+/// shows it (see [`windows_acked_bytes`]) and holds for every connection
+/// after, since it is a property of the TCP stack.
+#[cfg(windows)]
+static BYTES_OUT_COUNTS_RETRANSMITS: AtomicBool = AtomicBool::new(false);
+
+/// What may precede the response body on the connection: the HTTP response
+/// head, a few hundred bytes. The bytes acknowledged can exceed the body's
+/// by this much without meaning anything.
+#[cfg(any(windows, test))]
+const RESPONSE_HEAD_SLACK_BYTES: u64 = 2048;
+
+/// Bytes the peer has acknowledged, from Windows' `TCP_INFO_v0`: everything
+/// sent less what is still in flight.
+///
+/// If `BytesOut` counts retransmissions, that overstates the bytes
+/// acknowledged by every byte resent. It shows once the difference exceeds
+/// all the body has handed over (`body_bytes`) by more than a response head
+/// could explain; from then on, on this and every later connection
+/// (`counts_retransmits` latches), the retransmitted bytes are taken off.
+#[cfg(any(windows, test))]
+fn windows_acked_bytes(
+    bytes_out: u64,
+    bytes_in_flight: u32,
+    bytes_retransmitted: u32,
+    body_bytes: u64,
+    counts_retransmits: &AtomicBool,
+) -> u64 {
+    let sent_less_in_flight = bytes_out.saturating_sub(u64::from(bytes_in_flight));
+    if sent_less_in_flight > body_bytes.saturating_add(RESPONSE_HEAD_SLACK_BYTES)
+        && !counts_retransmits.swap(true, Ordering::Relaxed)
+    {
+        log::info!(
+            "[Stream] TCP BytesOut counts retransmitted bytes on this machine ({} sent less in \
+             flight against {} handed over, {} retransmitted); acknowledged bytes are counted \
+             net of them from now on",
+            sent_less_in_flight,
+            body_bytes,
+            bytes_retransmitted
+        );
+    }
+    if counts_retransmits.load(Ordering::Relaxed) {
+        sent_less_in_flight.saturating_sub(u64::from(bytes_retransmitted))
+    } else {
+        sent_less_in_flight
+    }
 }
 
 #[cfg(windows)]
-fn sample_raw(raw_socket: u64) -> Option<TcpSample> {
+fn sample_raw(raw_socket: u64, body_bytes: u64) -> Option<TcpSample> {
     use windows_sys::Win32::Networking::WinSock::{TCP_INFO_v0, WSAIoctl, SIO_TCP_INFO, SOCKET};
 
     let version: u32 = 0;
@@ -195,17 +314,26 @@ fn sample_raw(raw_socket: u64) -> Option<TcpSample> {
         rtt_us: info.RttUs,
         retransmitted: u64::from(info.BytesRetrans),
         timeouts: info.TimeoutEpisodes,
+        bytes_acked: Some(windows_acked_bytes(
+            info.BytesOut,
+            info.BytesInFlight,
+            info.BytesRetrans,
+            body_bytes,
+            &BYTES_OUT_COUNTS_RETRANSMITS,
+        )),
+        notsent: None,
     })
 }
 
 #[cfg(not(any(target_os = "linux", windows)))]
-fn sample_raw(_raw_socket: u64) -> Option<TcpSample> {
+fn sample_raw(_raw_socket: u64, _body_bytes: u64) -> Option<TcpSample> {
     None
 }
 
 #[cfg(all(test, target_os = "linux"))]
 mod tests {
     use super::*;
+    use std::io::{Read, Write};
     use std::os::fd::AsRawFd;
 
     #[test]
@@ -220,12 +348,132 @@ mod tests {
         let probe = registry.claim(peer_addr).expect("registered");
         assert!(registry.claim(peer_addr).is_none(), "claimed once");
 
-        let first = probe.sample().expect("linux reports tcp_info");
+        let first = probe.sample(0).expect("linux reports tcp_info");
         assert_eq!(first.retransmitted, 0);
-        let second = probe.sample().expect("second read");
+        assert_eq!(first.unacked_bytes, Some(0));
+        let second = probe.sample(0).expect("second read");
         assert_eq!(second.retransmitted, 0);
         assert_eq!(probe.total_retransmitted(), 0);
         drop(peer);
+    }
+
+    #[test]
+    fn a_loopback_connection_reports_its_acknowledged_bytes() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
+        let mut peer =
+            std::net::TcpStream::connect(listener.local_addr().unwrap()).expect("connect");
+        let (mut accepted, _) = listener.accept().expect("accept");
+        let registry = TcpLinkRegistry::new();
+        let peer_addr = accepted.peer_addr().unwrap();
+        registry.register(peer_addr, accepted.as_raw_fd() as u64);
+        let probe = registry.claim(peer_addr).expect("registered");
+
+        let body = vec![0u8; 64 * 1024];
+        accepted.write_all(&body).expect("write");
+        let mut received = vec![0u8; body.len()];
+        peer.read_exact(&mut received).expect("read");
+        // Everything has arrived; its acknowledgement follows within a
+        // delayed-ACK timeout at most.
+        let deadline = Instant::now() + Duration::from_secs(2);
+        loop {
+            let window = probe.sample(body.len() as u64).expect("tcp_info");
+            let unacked = window.unacked_bytes.expect("kernel 4.1 or later");
+            assert!(window.notsent_bytes.is_some(), "kernel 4.6 or later");
+            if unacked == 0 {
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "{unacked} bytes never acknowledged"
+            );
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        // Counting the acknowledged bytes against more than was handed over
+        // shows the difference as still unacknowledged.
+        let window = probe.sample(body.len() as u64 + 1000).unwrap();
+        assert_eq!(window.unacked_bytes, Some(1000));
+    }
+
+    #[test]
+    fn truncated_optlen_yields_none_fields() {
+        let info = TcpInfoPrefix {
+            bytes_acked: 5_000,
+            notsent_bytes: 300,
+            words: {
+                let mut w = [0u32; 24];
+                w[TcpInfoPrefix::RTT] = 4_000;
+                w[TcpInfoPrefix::TOTAL_RETRANS] = 7;
+                w
+            },
+            ..TcpInfoPrefix::default()
+        };
+        let full = std::mem::size_of::<TcpInfoPrefix>();
+        let sample = info.decode(full).expect("full length");
+        assert_eq!(
+            (sample.rtt_us, sample.retransmitted),
+            (4_000, 7),
+            "the base fields are read"
+        );
+        assert_eq!(sample.bytes_acked, Some(5_000));
+        assert_eq!(sample.notsent, Some(300));
+
+        // A 4.1–4.5 kernel: acknowledged bytes, but no notsent.
+        let sample = info.decode(144).expect("through tcpi_segs_in");
+        assert_eq!((sample.bytes_acked, sample.notsent), (Some(5_000), None));
+        // Short of the end of tcpi_bytes_acked by one byte.
+        let sample = info.decode(127).expect("base fields");
+        assert_eq!((sample.bytes_acked, sample.notsent), (None, None));
+        // A pre-4.1 kernel stops after tcpi_total_retrans.
+        let sample = info.decode(104).expect("base fields");
+        assert_eq!(sample.retransmitted, 7);
+        assert_eq!((sample.bytes_acked, sample.notsent), (None, None));
+        // Anything shorter cannot be read at all.
+        assert!(info.decode(103).is_none());
+        assert!(info.decode(0).is_none());
+    }
+}
+
+#[cfg(test)]
+mod windows_arithmetic_tests {
+    use super::*;
+
+    #[test]
+    fn windows_acked_bytes_arithmetic() {
+        // A stack whose BytesOut excludes retransmissions: acknowledged is
+        // sent less in flight, and a resend changes nothing.
+        let latch = AtomicBool::new(false);
+        assert_eq!(
+            windows_acked_bytes(100_000, 20_000, 0, 100_000, &latch),
+            80_000
+        );
+        assert_eq!(
+            windows_acked_bytes(100_300, 0, 1_460, 100_000, &latch),
+            100_300
+        );
+        assert!(
+            !latch.load(Ordering::Relaxed),
+            "a response head's worth over the body proves nothing"
+        );
+
+        // A stack whose BytesOut counts them: sent less in flight runs past
+        // everything the body handed over, which only resent bytes explain.
+        let latch = AtomicBool::new(false);
+        let acked = windows_acked_bytes(110_000, 2_000, 10_000, 100_000, &latch);
+        assert!(latch.load(Ordering::Relaxed), "learned");
+        assert_eq!(acked, 98_000);
+        // Once learned, retransmissions are taken off even while too few to
+        // show on their own.
+        assert_eq!(
+            windows_acked_bytes(51_000, 1_000, 1_000, 60_000, &latch),
+            49_000
+        );
+
+        // Counters that disagree never go below zero.
+        assert_eq!(
+            windows_acked_bytes(1_000, 5_000, 0, 0, &AtomicBool::new(false)),
+            0
+        );
+        assert_eq!(windows_acked_bytes(1_000, 0, 5_000, 0, &latch), 0);
     }
 }
 
@@ -373,6 +621,7 @@ mod judge_tests {
             rtt_ms,
             retransmitted: 0,
             timeouts: 0,
+            ..TcpLinkWindow::default()
         }
     }
 
@@ -401,6 +650,7 @@ mod judge_tests {
                     rtt_ms: 60,
                     retransmitted: 2,
                     timeouts: 0,
+                    ..TcpLinkWindow::default()
                 },
             )
             .expect("transition");
@@ -434,6 +684,7 @@ mod judge_tests {
                     rtt_ms: 20,
                     retransmitted: 3,
                     timeouts: 1,
+                    ..TcpLinkWindow::default()
                 },
             )
             .expect("timeout");
@@ -454,6 +705,7 @@ mod judge_tests {
                     rtt_ms: 60,
                     retransmitted: 1,
                     timeouts: 0,
+                    ..TcpLinkWindow::default()
                 },
             )
             .expect("transition");
@@ -469,6 +721,7 @@ mod judge_tests {
                     rtt_ms: 20,
                     retransmitted: 1,
                     timeouts: 1,
+                    ..TcpLinkWindow::default()
                 },
             )
             .expect("transition");
@@ -489,6 +742,7 @@ mod judge_tests {
                 rtt_ms: 30,
                 retransmitted: 1,
                 timeouts: 0,
+                ..TcpLinkWindow::default()
             },
         );
         let mut last = None;
