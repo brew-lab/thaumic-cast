@@ -277,23 +277,35 @@ pub(super) async fn stream_audio(
     // been observed to treat as a stalled stream and respond to with a
     // transport-state transition to Stopped.
     //
-    // Delay matches the user-configured `jitter_buffer_ms`, which is already
-    // validated against `MAX_JITTER_BUFFER_MS` at the protocol layer.
+    // The ring must hold the jitter buffer, which the cadence queue keeps,
+    // plus the connect burst, which goes out at once (see
+    // `CadenceConfig::new`). So a first connection waits until the stream is
+    // `jitter_buffer_ms + burst` old, and never less than `jitter_buffer_ms`
+    // (see `pcm_prefill_delay`). A speaker's GET usually follows the
+    // stream's first frame within a second, so without the longer wait its
+    // first connection, the one the reserve matters most on, would get only
+    // a fraction of the burst. The longest wait is jitter buffer plus burst;
+    // the Playbar has been seen to accept a 1000 ms wait before the response.
+    // `jitter_buffer_ms` is already validated against `MAX_JITTER_BUFFER_MS`
+    // at the protocol layer, and the burst against its maximum.
     //
     // SKIP on resume: Sonos closes the connection within milliseconds if we
     // delay. The ring buffer already has frames from before the pause.
-    //
-    // Not lengthened for the connect burst: the ring has been filling since
-    // the stream's first frame, which on a first connection is usually more
-    // than the jitter buffer by the time the speaker fetches, and whatever it
-    // holds beyond the jitter buffer is burst (see `CadenceConfig::new`).
-    let prefill_delay_ms = stream_state.jitter_buffer_ms;
-    if stream_state.codec == AudioCodec::Pcm && prefill_delay_ms > 0 && !is_resume {
-        log::debug!(
-            "[Stream] Applying {}ms prefill delay for PCM stream",
-            prefill_delay_ms
+    let connect_burst_ms = pcm_connect_burst_ms(connect_burst_ms);
+    let prefill_delay = pcm_prefill_delay(
+        stream_state.jitter_buffer_ms,
+        connect_burst_ms,
+        stream_state.timing.first_frame_at().map(|t| t.elapsed()),
+    );
+    if stream_state.codec == AudioCodec::Pcm && !prefill_delay.is_zero() && !is_resume {
+        log::info!(
+            "[Stream] Applying {}ms prefill delay for PCM stream (jitter buffer {}ms, connect \
+             burst {}ms)",
+            prefill_delay.as_millis(),
+            stream_state.jitter_buffer_ms,
+            connect_burst_ms
         );
-        tokio::time::sleep(Duration::from_millis(prefill_delay_ms)).await;
+        tokio::time::sleep(prefill_delay).await;
     } else if is_resume && stream_state.codec == AudioCodec::Pcm {
         log::info!(
             "[Stream] Skipping prefill delay on resume for {}",
@@ -394,7 +406,7 @@ pub(super) async fn stream_audio(
         // too: that is when a speaker's reserve starts again from nothing.
         pcm_cadence_stream(
             &stream_state,
-            pcm_connect_burst_ms(connect_burst_ms),
+            connect_burst_ms,
             prefill_frames,
             rx,
             Arc::clone(&guard),
@@ -486,6 +498,23 @@ pub(super) async fn stream_audio(
         .map_err(|e| ThaumicError::Internal(e.to_string()))
 }
 
+/// How long a new (not resuming) PCM connection waits before subscribing,
+/// so the ring holds the jitter buffer plus the connect burst: until the
+/// stream's first frame is `jitter_buffer_ms + burst_ms` old, and never less
+/// than `jitter_buffer_ms`. `since_first_frame` is `None` before the stream
+/// has received a frame, which waits the whole of both.
+fn pcm_prefill_delay(
+    jitter_buffer_ms: u64,
+    burst_ms: u64,
+    since_first_frame: Option<Duration>,
+) -> Duration {
+    let jitter = Duration::from_millis(jitter_buffer_ms);
+    let wanted = Duration::from_millis(jitter_buffer_ms + burst_ms);
+    wanted
+        .saturating_sub(since_first_frame.unwrap_or_default())
+        .max(jitter)
+}
+
 /// Builds a PCM connection's cadence body from its `subscribe()` snapshot,
 /// with a connect burst of `burst_ms` (already resolved, see
 /// [`pcm_connect_burst_ms`]), and logs how the prefill was split.
@@ -557,8 +586,9 @@ fn log_connect_burst(
             target_ms
         );
     } else if burst_ms < requested_ms {
-        // Info, not warn: a first connection moments after the stream starts
-        // is routinely short, and the next connection gets the full burst.
+        // Info, not warn: the prefill delay waits for the full burst on a
+        // first connection, so this is a resume soon after the stream began
+        // or after a source pause, and the next connection gets it all.
         log::info!(
             "[Stream] Connect burst short: client={}, stream={}, {}, burst={}ms of {}ms requested, \
              queued={}ms of {}ms jitter buffer; the stream only held {}ms of audio, and the \
@@ -1156,6 +1186,66 @@ mod tests {
         let second = state.timing.current_epoch_for(remote).expect("epoch");
         assert!(second.id > first.id, "the reconnect starts its own epoch");
         assert_eq!(second.audio_epoch, first_burst_at);
+    }
+
+    /// A first connection waits until the ring holds the jitter buffer plus
+    /// the burst, allowing for how long the stream has already been running,
+    /// and never less than the jitter buffer.
+    #[test]
+    fn pcm_prefill_delay_fills_the_ring_for_jitter_and_burst() {
+        let ms = Duration::from_millis;
+        assert_eq!(pcm_prefill_delay(200, 500, Some(ms(100))), ms(600));
+        assert_eq!(pcm_prefill_delay(200, 500, Some(ms(650))), ms(200));
+        assert_eq!(pcm_prefill_delay(200, 500, Some(ms(5000))), ms(200));
+        assert_eq!(pcm_prefill_delay(200, 500, None), ms(700));
+        assert_eq!(
+            pcm_prefill_delay(200, 0, Some(ms(10))),
+            ms(200),
+            "burst off"
+        );
+        assert_eq!(pcm_prefill_delay(0, 0, None), Duration::ZERO);
+    }
+
+    /// A speaker fetching 100 ms after the stream's first frame, as a fresh
+    /// cast's first GET does, still gets the whole burst: the prefill delay
+    /// waits for the ring to hold it as well as the jitter buffer.
+    #[tokio::test(start_paused = true)]
+    async fn first_connection_soon_after_the_first_frame_gets_the_full_burst() {
+        let state = Arc::new(StreamState::new(
+            "pcm-stream".to_string(),
+            AudioCodec::Pcm,
+            AudioFormat::default(),
+            crate::protocol_constants::pcm_ring_frames(10),
+            64,
+            200,
+            10,
+        ));
+        let _keepalive = state.tx.subscribe();
+        let producer_state = Arc::clone(&state);
+        let producer = tokio::spawn(async move {
+            let mut ticks = tokio::time::interval(Duration::from_millis(10));
+            for i in 0..=255u8 {
+                ticks.tick().await;
+                push_tagged(&producer_state, i, i + 1);
+            }
+        });
+        tokio::task::yield_now().await;
+        let first_frame = tokio::time::Instant::now();
+
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        let delay = pcm_prefill_delay(200, 500, Some(first_frame.elapsed()));
+        assert_eq!(delay, Duration::from_millis(600));
+        tokio::time::sleep(delay).await;
+
+        let (mut body, tap) = pcm_connection(&state, ip("192.168.1.50"), 500);
+        let items = ready_now(&mut body).await;
+        assert_eq!(
+            items.len(),
+            1 + 50 + 1,
+            "header, the whole burst and first tick"
+        );
+        assert_eq!(tap.delivered_ms(), Some(510));
+        producer.abort();
     }
 
     /// Without the burst a connection starts exactly as before: one frame
