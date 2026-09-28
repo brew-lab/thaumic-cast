@@ -70,6 +70,7 @@ use tokio_util::sync::CancellationToken;
 use crate::events::{EventEmitter, LatencyEvent, NetworkEvent};
 use crate::protocol_constants::POSITION_POLL_TIMEOUT_MS;
 use crate::runtime::TokioSpawner;
+use crate::services::speaker_monitor::reserve::{HOLD_MIN_POLLS, RESERVE_WINDOW_MS};
 use crate::services::speaker_monitor::{
     GenaTransport, MemberChange, MonitorState, PollObservation, ReserveTracker, SegmentBreak,
     TransportGate, TransportSource, TransportStateView, TransportVerdict, WindowStats,
@@ -745,12 +746,13 @@ impl LatencySession {
         let per_min = f64::from(polls) * 60.0 / window.as_secs_f64().max(1.0);
         let topology = format_topology(&std::mem::take(&mut self.topology_since_report));
         log::info!(
-            "[SpeakerMonitor] {} stream={} state={} reserve={} clock={} tte={} polls={}({:.0}/min) \
-             phase_gap={} incons={}/{} j={:.0}ms {} transport={}{}",
+            "[SpeakerMonitor] {} stream={} state={} reserve={} lock={} clock={} tte={} \
+             polls={}({:.0}/min) phase_gap={} incons={}/{} j={:.0}ms {} transport={}{}",
             speaker_ip,
             stream_id,
             state,
             reserve,
+            estimate.map_or("\u{2014}", |e| e.lock_reason.as_str()),
             format_clock(clock),
             tte.map_or_else(
                 || "\u{2014}".to_string(),
@@ -1250,6 +1252,20 @@ fn monitor_poll_interval_ms(dither_ms: u64, monitor_only_sessions: usize) -> u64
     }
 }
 
+/// Polls each of `monitor_only_sessions` monitor-only speakers gets over a
+/// reserve window, at the mean dither and under the process ceiling.
+fn monitor_polls_per_window(monitor_only_sessions: usize) -> f64 {
+    let interval = monitor_poll_interval_ms(MONITOR_POLL_DITHER_MS / 2, monitor_only_sessions);
+    RESERVE_WINDOW_MS / interval as f64
+}
+
+/// Whether `monitor_only_sessions` share the process ceiling so thinly that
+/// each gets fewer than [`HOLD_MIN_POLLS`] polls a window, and so cannot hold
+/// a reserve lock.
+fn monitor_capacity_exceeded(monitor_only_sessions: usize) -> bool {
+    monitor_polls_per_window(monitor_only_sessions) < HOLD_MIN_POLLS as f64
+}
+
 /// Milliseconds from `origin` to `at`, zero if `at` is earlier.
 fn ms_between(origin: Instant, at: Instant) -> f64 {
     at.saturating_duration_since(origin).as_secs_f64() * 1000.0
@@ -1589,6 +1605,9 @@ impl LatencyMonitor {
         // Unbounded is safe: each session has at most one poll in flight.
         let (result_tx, mut result_rx) = mpsc::unbounded_channel::<PollResult>();
         let mut next_poll_id: u64 = 0;
+        // Whether the warning that monitor-only speakers are too many to
+        // hold a lock has been logged; once per process is enough.
+        let mut capacity_warned = false;
 
         // Use interval instead of sleep to reduce timer allocations and prevent drift.
         // Delay mode skips missed ticks rather than bursting to catch up.
@@ -1688,6 +1707,18 @@ impl LatencyMonitor {
                         .values()
                         .filter(|s| s.polls_for_monitoring_only())
                         .count();
+                    if !capacity_warned && monitor_capacity_exceeded(monitor_only) {
+                        capacity_warned = true;
+                        log::warn!(
+                            "[SpeakerMonitor] {} speakers share the monitor's {} polls a minute, \
+                             leaving each about {:.0} polls a window against the {} a reserve \
+                             estimate needs to stay locked; their reserves will not hold a lock",
+                            monitor_only,
+                            SPEAKER_MONITOR_MAX_POLLS_PER_MIN,
+                            monitor_polls_per_window(monitor_only),
+                            HOLD_MIN_POLLS
+                        );
+                    }
                     let mut finished: Option<Vec<(SessionKey, &'static str)>> = None;
 
                     for (key, session) in sessions.iter_mut() {
@@ -3081,6 +3112,15 @@ mod tests {
             "ten speakers each poll half as often"
         );
         assert_eq!(MONITOR_POLLS_PER_MIN, 24);
+    }
+
+    #[test]
+    fn more_than_12_monitor_only_speakers_cannot_hold_a_lock() {
+        for sessions in 1..=12 {
+            assert!(!monitor_capacity_exceeded(sessions), "{sessions} speakers");
+        }
+        assert!(monitor_capacity_exceeded(13));
+        assert_eq!(monitor_polls_per_window(5), 72.0);
     }
 
     #[test]

@@ -13,6 +13,14 @@
 //! [`TRIM_RANK`]th largest lower bound and the [`TRIM_RANK`]th smallest
 //! upper bound, and widens every bound by a jitter allowance learnt from how
 //! badly the un-widened bounds disagree.
+//!
+//! Locking is strict to acquire and loose to hold. An estimate locks only
+//! once it is as narrow as a settled speaker's estimates are; a locked one
+//! stays locked while it is merely wider than that (a few lost polls, an
+//! unlucky spread of phases), and drops only after [`UNLOCK_AFTER_FAILS`]
+//! estimates in a row too wide, or too thinly polled, to be trusted, or at
+//! once on a segment break. [`LockReason`] says which of those an estimate
+//! is, so that only estimates as narrow as acquiring needs set baselines.
 
 use std::collections::VecDeque;
 
@@ -68,6 +76,75 @@ pub const LOCK_MAX_RECENT_INCONSISTENT: usize = 1;
 /// How many recent estimates the consistency condition looks at.
 pub const LOCK_RECENT_ESTIMATES: usize = 3;
 
+/// Absolute half-width a locked estimate may widen to and stay locked.
+///
+/// There is no jitter term: the learnt jitter swells when a window straddles
+/// a real step, and that must not hold the lock. Set from the simulator
+/// (`hw_distribution_old_vs_new_dither`, 300 seeds, ±50 ms tick jitter):
+/// the 99th percentile of the half-width from 36 polls, half a window, is
+/// about 213 ms, clamped to the 160-200 ms the design allows. Estimates 30 s
+/// apart share most of their window, so two failing in a row are nearly as
+/// likely as one: the width is sized for a single estimate.
+pub const HOLD_HALF_WIDTH_MS: f64 = 200.0;
+
+/// Fewest polls in the window a locked estimate may stand on.
+pub const HOLD_MIN_POLLS: usize = 30;
+
+/// Consecutive estimates failing the hold test before the lock drops.
+pub const UNLOCK_AFTER_FAILS: usize = 2;
+
+/// Half-width an estimate may have and still acquire a lock, given the
+/// jitter allowance it was widened by.
+pub fn acquire_half_width_ms(jitter_ms: f64) -> f64 {
+    LOCK_HALF_WIDTH_FLOOR_MS.max(LOCK_HALF_WIDTH_JITTER_FACTOR * jitter_ms)
+}
+
+/// Where an estimate stands against the lock.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum LockReason {
+    /// Not locked: the segment is too short, the estimate too wide or too
+    /// often inconsistent, or the lock has just dropped.
+    Unlocked,
+    /// The estimate that acquired the lock.
+    Acquired,
+    /// Locked and as narrow as acquiring needs, against both the jitter
+    /// allowance now and the one frozen when the lock was acquired.
+    Tight,
+    /// Locked, but wider than acquiring needs (or, for one estimate before
+    /// the lock drops, failing the hold test). Good for the reserve's level;
+    /// not for baselines or anything learnt from it.
+    Held,
+}
+
+impl LockReason {
+    /// Whether the estimate is locked.
+    pub fn locked(self) -> bool {
+        !matches!(self, Self::Unlocked)
+    }
+
+    /// Whether the estimate is locked and as narrow as acquiring needs, so
+    /// it may set baselines and teach targets.
+    pub fn tight(self) -> bool {
+        matches!(self, Self::Acquired | Self::Tight)
+    }
+
+    /// The reason as a log token.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Unlocked => "unlocked",
+            Self::Acquired => "acquired",
+            Self::Tight => "tight",
+            Self::Held => "held",
+        }
+    }
+}
+
+impl std::fmt::Display for LockReason {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
 /// One reserve estimate.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ReserveEstimate {
@@ -84,8 +161,20 @@ pub struct ReserveEstimate {
     pub jitter_ms: f64,
     /// Polls the estimate was made from.
     pub polls: usize,
+    /// Whether, and how firmly, the estimate is locked.
+    pub lock_reason: LockReason,
+}
+
+impl ReserveEstimate {
     /// Whether the estimate is precise and settled enough to act on.
-    pub locked: bool,
+    pub fn locked(&self) -> bool {
+        self.lock_reason.locked()
+    }
+
+    /// Whether the estimate is locked and as narrow as acquiring needs.
+    pub fn tight(&self) -> bool {
+        self.lock_reason.tight()
+    }
 }
 
 /// Rolling reserve estimator for one speaker.
@@ -102,6 +191,11 @@ pub struct ReserveEstimator {
     /// Estimates made and how many were inconsistent, since creation.
     estimates: u64,
     inconsistent: u64,
+    /// The acquire half-width when the current lock was acquired, jitter
+    /// frozen at that moment; `None` while unlocked.
+    lock_width_ms: Option<f64>,
+    /// Consecutive locked estimates that have failed the hold test.
+    held_fails: usize,
 }
 
 impl Default for ReserveEstimator {
@@ -120,6 +214,8 @@ impl ReserveEstimator {
             recent: VecDeque::with_capacity(LOCK_RECENT_ESTIMATES + 1),
             estimates: 0,
             inconsistent: 0,
+            lock_width_ms: None,
+            held_fails: 0,
         }
     }
 
@@ -129,12 +225,20 @@ impl ReserveEstimator {
         self.window.push_back(obs.reserve_bound());
     }
 
-    /// Forgets every poll: the reserve is measured afresh from the next one.
-    /// The learnt jitter is kept, since it belongs to the speaker.
+    /// Forgets every poll and drops the lock: the reserve is measured afresh
+    /// from the next one. The learnt jitter is kept, since it belongs to the
+    /// speaker.
     pub fn clear(&mut self) {
         self.window.clear();
         self.segment_start = None;
         self.recent.clear();
+        self.lock_width_ms = None;
+        self.held_fails = 0;
+    }
+
+    /// Consecutive locked estimates that have failed the hold test.
+    pub fn held_fails(&self) -> usize {
+        self.held_fails
     }
 
     /// The jitter allowance currently applied.
@@ -159,6 +263,15 @@ impl ReserveEstimator {
     /// along the reserve's drift that implies. The shift is taken from the
     /// clock fit rather than from the reserve's own slope so that anything
     /// done to the delivered audio cannot feed back into it.
+    ///
+    /// An unlocked estimate locks when the segment spans
+    /// [`LOCK_MIN_SPAN_MS`], its half-width is within
+    /// [`acquire_half_width_ms`] and at most [`LOCK_MAX_RECENT_INCONSISTENT`]
+    /// of the last [`LOCK_RECENT_ESTIMATES`] were inconsistent. A locked one
+    /// holds while its half-width is within [`HOLD_HALF_WIDTH_MS`] (or the
+    /// acquire width frozen at the lock, if wider), it stands on at least
+    /// [`HOLD_MIN_POLLS`] polls and the same consistency condition holds;
+    /// [`UNLOCK_AFTER_FAILS`] failures in a row drop it.
     ///
     /// Returns `None` until the window holds [`MIN_POLLS_FOR_ESTIMATE`] polls.
     pub fn estimate(&mut self, now: f64, clock_ppm: f64) -> Option<ReserveEstimate> {
@@ -211,11 +324,9 @@ impl ReserveEstimator {
         }
 
         let span = self.segment_start.map_or(0.0, |start| now - start);
-        let recent_inconsistent = self.recent.iter().filter(|i| **i).count();
-        let locked = span >= LOCK_MIN_SPAN_MS
-            && half_width_ms
-                <= LOCK_HALF_WIDTH_FLOOR_MS.max(LOCK_HALF_WIDTH_JITTER_FACTOR * jitter)
-            && recent_inconsistent <= LOCK_MAX_RECENT_INCONSISTENT;
+        let recent_consistent =
+            self.recent.iter().filter(|i| **i).count() <= LOCK_MAX_RECENT_INCONSISTENT;
+        let lock_reason = self.step_lock(n, span, half_width_ms, jitter, recent_consistent);
 
         Some(ReserveEstimate {
             at: now,
@@ -225,8 +336,49 @@ impl ReserveEstimator {
             inconsistent,
             jitter_ms: jitter,
             polls: n,
-            locked,
+            lock_reason,
         })
+    }
+
+    /// Moves the lock on by one estimate of `half_width_ms` from `polls`
+    /// polls over a segment of `span` ms, widened by `jitter`.
+    fn step_lock(
+        &mut self,
+        polls: usize,
+        span: f64,
+        half_width_ms: f64,
+        jitter: f64,
+        recent_consistent: bool,
+    ) -> LockReason {
+        let acquire_width = acquire_half_width_ms(jitter);
+        let Some(lock_width) = self.lock_width_ms else {
+            if span >= LOCK_MIN_SPAN_MS && half_width_ms <= acquire_width && recent_consistent {
+                self.lock_width_ms = Some(acquire_width);
+                self.held_fails = 0;
+                return LockReason::Acquired;
+            }
+            return LockReason::Unlocked;
+        };
+        let holds = half_width_ms <= HOLD_HALF_WIDTH_MS.max(lock_width)
+            && polls >= HOLD_MIN_POLLS
+            && recent_consistent;
+        if !holds {
+            self.held_fails += 1;
+            if self.held_fails >= UNLOCK_AFTER_FAILS {
+                self.lock_width_ms = None;
+                self.held_fails = 0;
+                return LockReason::Unlocked;
+            }
+            return LockReason::Held;
+        }
+        self.held_fails = 0;
+        // Against the stricter of the two widths, so jitter swollen by a
+        // window straddling a step cannot make that window's estimates tight.
+        if half_width_ms <= acquire_width.min(lock_width) {
+            LockReason::Tight
+        } else {
+            LockReason::Held
+        }
     }
 }
 
@@ -264,7 +416,7 @@ mod tests {
                 "seed {seed}: estimated {:.1} vs true {truth:.1}",
                 last.reserve_ms
             );
-            assert!(last.locked, "seed {seed}: {last:?}");
+            assert!(last.locked(), "seed {seed}: {last:?}");
             assert!(!last.inconsistent);
             assert!(
                 last.reserve_ms - last.half_width_ms <= truth
@@ -372,7 +524,7 @@ mod tests {
         let (_, estimates) = run(&mut gen, 60.0);
         let offsets: Vec<f64> = estimates
             .iter()
-            .filter(|(e, _)| e.locked)
+            .filter(|(e, _)| e.locked())
             .map(|(e, truth)| e.reserve_ms - truth)
             .collect();
         let first = offsets[..10].iter().sum::<f64>() / 10.0;
@@ -395,7 +547,7 @@ mod tests {
         assert!(est.estimate(20_000.0, 0.0).is_none());
         gen.run_until(60_000.0, |p| est.add(p));
         let e = est.estimate(60_000.0, 0.0).expect("estimate");
-        assert!(!e.locked, "under the lock span: {e:?}");
+        assert!(!e.locked(), "under the lock span: {e:?}");
     }
 
     #[test]
@@ -407,5 +559,195 @@ mod tests {
         est.clear();
         assert_eq!(est.polls(), 0);
         assert_eq!(est.jitter_ms(), learnt);
+    }
+    /// An estimator whose lock has been acquired at the minimum jitter
+    /// allowance (acquire width 110 ms), without any polls.
+    fn locked_estimator() -> ReserveEstimator {
+        let mut est = ReserveEstimator::new();
+        assert_eq!(
+            est.step_lock(72, LOCK_MIN_SPAN_MS, 60.0, MIN_JITTER_MS, true),
+            LockReason::Acquired
+        );
+        est
+    }
+
+    #[test]
+    fn a_locked_estimate_stays_locked_when_half_width_reaches_150ms() {
+        let mut est = locked_estimator();
+        for _ in 0..10 {
+            assert_eq!(
+                est.step_lock(40, 300_000.0, 150.0, MIN_JITTER_MS, true),
+                LockReason::Held
+            );
+        }
+        assert_eq!(est.held_fails(), 0);
+        // Narrowing again is tight.
+        assert_eq!(
+            est.step_lock(72, 300_000.0, 80.0, MIN_JITTER_MS, true),
+            LockReason::Tight
+        );
+    }
+
+    #[test]
+    fn lock_drops_after_two_estimates_over_the_hold_width() {
+        let mut est = locked_estimator();
+        let wide = HOLD_HALF_WIDTH_MS + 10.0;
+        // One failure is held; a pass in between resets the count.
+        assert_eq!(
+            est.step_lock(72, 300_000.0, wide, MIN_JITTER_MS, true),
+            LockReason::Held
+        );
+        assert_eq!(
+            est.step_lock(72, 300_000.0, 150.0, MIN_JITTER_MS, true),
+            LockReason::Held
+        );
+        assert_eq!(
+            est.step_lock(72, 300_000.0, wide, MIN_JITTER_MS, true),
+            LockReason::Held
+        );
+        assert_eq!(
+            est.step_lock(72, 300_000.0, wide, MIN_JITTER_MS, true),
+            LockReason::Unlocked
+        );
+        // Once dropped, the lock must be acquired again at the strict width.
+        assert_eq!(
+            est.step_lock(72, 300_000.0, 150.0, MIN_JITTER_MS, true),
+            LockReason::Unlocked
+        );
+    }
+
+    #[test]
+    fn lock_drops_immediately_on_segment_break() {
+        let mut gen = PollGen::new(21);
+        let (mut est, estimates) = run(&mut gen, 6.0);
+        assert!(estimates.last().unwrap().0.locked());
+        est.clear();
+        // The next estimate is judged as a fresh segment's: under the lock
+        // span, it cannot be locked however narrow it is.
+        gen.run_until(6.0 * 60_000.0 + 30_000.0, |p| est.add(p));
+        let e = est
+            .estimate(6.0 * 60_000.0 + 30_000.0, 0.0)
+            .expect("estimate");
+        assert_eq!(e.lock_reason, LockReason::Unlocked, "{e:?}");
+    }
+
+    #[test]
+    fn too_few_polls_drops_the_lock() {
+        let mut est = locked_estimator();
+        let few = HOLD_MIN_POLLS - 1;
+        assert_eq!(
+            est.step_lock(few, 300_000.0, 80.0, MIN_JITTER_MS, true),
+            LockReason::Held
+        );
+        assert_eq!(
+            est.step_lock(few, 300_000.0, 80.0, MIN_JITTER_MS, true),
+            LockReason::Unlocked
+        );
+    }
+
+    #[test]
+    fn acquiring_still_needs_the_strict_width() {
+        let mut est = ReserveEstimator::new();
+        let wider = LOCK_HALF_WIDTH_FLOOR_MS + 5.0;
+        assert_eq!(
+            est.step_lock(72, 300_000.0, wider, MIN_JITTER_MS, true),
+            LockReason::Unlocked
+        );
+        assert_eq!(
+            est.step_lock(72, LOCK_MIN_SPAN_MS - 1.0, 60.0, MIN_JITTER_MS, true),
+            LockReason::Unlocked,
+            "under the lock span"
+        );
+        assert_eq!(
+            est.step_lock(72, 300_000.0, 60.0, MIN_JITTER_MS, false),
+            LockReason::Unlocked,
+            "too often inconsistent"
+        );
+        // Jitter still widens the acquire width, as before.
+        assert_eq!(
+            est.step_lock(72, 300_000.0, 140.0, 100.0, true),
+            LockReason::Acquired
+        );
+    }
+
+    #[test]
+    fn swollen_jitter_does_not_widen_the_hold_gate() {
+        // Locked at the minimum jitter; a window straddling a step then
+        // swells the jitter to the maximum, which would let 300 ms acquire.
+        let mut est = locked_estimator();
+        let wide = HOLD_HALF_WIDTH_MS + 50.0;
+        assert_eq!(
+            est.step_lock(72, 300_000.0, wide, MAX_JITTER_MS, true),
+            LockReason::Held
+        );
+        assert_eq!(
+            est.step_lock(72, 300_000.0, wide, MAX_JITTER_MS, true),
+            LockReason::Unlocked
+        );
+        // Nor can the swollen jitter make a held estimate tight: tight is
+        // judged against the width frozen at the lock too.
+        let mut est = locked_estimator();
+        assert_eq!(
+            est.step_lock(72, 300_000.0, 150.0, MAX_JITTER_MS, true),
+            LockReason::Held
+        );
+    }
+
+    #[test]
+    fn a_lock_acquired_under_jitter_holds_to_its_own_acquire_width() {
+        // Jitter of 150 ms acquired at 225 ms, above the absolute hold
+        // width; the lock holds to that width however the jitter moves.
+        let mut est = ReserveEstimator::new();
+        assert_eq!(
+            est.step_lock(72, 300_000.0, 220.0, 150.0, true),
+            LockReason::Acquired
+        );
+        assert_eq!(
+            est.step_lock(72, 300_000.0, 220.0, MIN_JITTER_MS, true),
+            LockReason::Held
+        );
+        assert_eq!(est.held_fails(), 0);
+    }
+
+    #[test]
+    fn losing_half_the_polls_keeps_lock_at_500ms_reserve() {
+        for seed in 0..8 {
+            let mut gen = PollGen::new(200 + seed);
+            gen.start_ms = 500.0;
+            gen.tick_jitter_ms = 50.0;
+            let mut est = ReserveEstimator::new();
+            let mut first_lock = None;
+            let mut kept = 0usize;
+            let mut t = 30_000.0;
+            while t <= 30.0 * 60_000.0 {
+                // From ten minutes on, every other answer is lost.
+                gen.run_until(t, |p| {
+                    kept += 1;
+                    if p.ts < 10.0 * 60_000.0 || kept % 2 == 0 {
+                        est.add(p);
+                    }
+                });
+                if let Some(e) = est.estimate(t, 0.0) {
+                    if e.locked() {
+                        first_lock.get_or_insert(t);
+                    } else if first_lock.is_some() {
+                        panic!("seed {seed}: lock dropped at {t}: {e:?}");
+                    }
+                    if t >= 15.0 * 60_000.0 {
+                        let truth = gen.reserve(t);
+                        assert!(e.polls >= HOLD_MIN_POLLS, "{e:?}");
+                        assert!(
+                            (e.reserve_ms - truth).abs() <= e.half_width_ms,
+                            "seed {seed}: {e:?} vs {truth:.0}"
+                        );
+                    }
+                }
+                t += 30_000.0;
+            }
+            assert!(
+                first_lock.is_some_and(|at| at <= 5.0 * 60_000.0),
+                "seed {seed}: locked at {first_lock:?}"
+            );
+        }
     }
 }

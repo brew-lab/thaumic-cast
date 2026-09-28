@@ -193,7 +193,7 @@ pub struct ReserveTracker {
     /// The acknowledged reserve over the latest report's window.
     last_acked: Option<AckedReserve>,
     /// The reserve the speaker settled at: the mean of the acknowledged
-    /// reserve's 10th percentile over the first two locked windows of a
+    /// reserve's 10th percentile over the first two tight windows of a
     /// segment (the estimate itself where acknowledgements are not
     /// measured), so a steady acknowledgement lag is on both sides of the
     /// low alarm's comparison. Learned once per tracker (that is, per
@@ -201,7 +201,7 @@ pub struct ReserveTracker {
     /// through a drain cannot lower it. The reserve's absolute zero is not
     /// known, so the low alarm is relative to this.
     target_ms: Option<f64>,
-    /// The first locked window's level for the target, while it waits for
+    /// The first tight window's level for the target, while it waits for
     /// a second.
     target_pending: Option<f64>,
     /// Whether the acknowledged reserve is low (with hysteresis).
@@ -294,7 +294,7 @@ impl ReserveTracker {
         }
         self.last = Some(est);
         self.last_fresh = true;
-        if est.locked {
+        if est.locked() {
             let c = &mut self.connection;
             c.reserve_start_ms.get_or_insert(est.reserve_ms);
             c.reserve_end_ms = Some(est.reserve_ms);
@@ -314,8 +314,9 @@ impl ReserveTracker {
     ///
     /// Returns the acknowledged reserve, or `None` if the latest call to
     /// [`Self::estimate`] produced no estimate. Only a locked estimate
-    /// lowers the connection's minimum, teaches the target or moves the
-    /// alarm. Overwrites `lags_ms`. Call once after each
+    /// lowers the connection's minimum or moves the alarm, and only a tight
+    /// one (see [`LockReason`](super::reserve::LockReason)) teaches the
+    /// target. Overwrites `lags_ms`. Call once after each
     /// [`Self::estimate`], with no lags where none were measured.
     pub fn observe_ack_lag(&mut self, lags_ms: &mut [f64]) -> Option<AckedReserve> {
         let est = self.last.filter(|_| self.last_fresh)?;
@@ -337,14 +338,16 @@ impl ReserveTracker {
             },
         };
         self.last_acked = Some(acked);
-        if est.locked {
+        if est.locked() {
             let c = &mut self.connection;
             c.reserve_min_ms = Some(
                 c.reserve_min_ms
                     .map_or(acked.min_ms, |m| m.min(acked.min_ms)),
             );
             c.acked_measured |= acked.measured;
-            if self.target_ms.is_none() {
+            // A held estimate may be a window straddling a step: it may sound
+            // the alarm, but not teach the level the alarm is measured from.
+            if self.target_ms.is_none() && est.tight() {
                 match self.target_pending.take() {
                     Some(first) => self.target_ms = Some((first + acked.p10_ms) / 2.0),
                     None => self.target_pending = Some(acked.p10_ms),
@@ -439,7 +442,7 @@ impl ReserveTracker {
     /// some audio of its own past the playhead it reports), so this is an
     /// approximation that errs towards warning early.
     pub fn time_to_empty_s(&self) -> Option<f64> {
-        let est = self.last.filter(|e| e.locked)?;
+        let est = self.last.filter(|e| e.locked())?;
         let clock = self.clock().filter(|_| self.clock_drains())?;
         let reserve = self.last_acked.map_or(est.reserve_ms, |a| a.p10_ms);
         // ppm·1e-6 ms per ms is ppm·1e-3 ms per second.
@@ -462,7 +465,7 @@ impl ReserveTracker {
             MonitorState::Stale
         } else if self.paused() {
             MonitorState::Paused
-        } else if self.last.is_some_and(|e| e.locked) {
+        } else if self.last.is_some_and(|e| e.locked()) {
             if self.low {
                 MonitorState::Low
             } else if self
@@ -481,6 +484,7 @@ impl ReserveTracker {
 
 #[cfg(test)]
 mod tests {
+    use super::super::reserve::LockReason;
     use super::super::test_support::PollGen;
     use super::*;
 
@@ -682,30 +686,30 @@ mod tests {
     }
 
     #[test]
-    fn the_target_is_the_first_two_locked_estimates_and_survives_reconnects() {
+    fn the_target_is_the_first_two_tight_estimates_and_survives_reconnects() {
         // Unmeasured acknowledgements: the estimates themselves.
         let mut tracker = ReserveTracker::new();
         tracker.start_connection(true);
         let mut gen = PollGen::new(61);
-        let mut locked = Vec::new();
+        let mut tight = Vec::new();
         let mut t = 0.0;
-        while locked.len() < 2 {
+        while tight.len() < 2 {
             t += 30_000.0;
             gen.run_until(t, |p| {
                 tracker.observe(p, URI, false);
             });
             if let (Some(e), _) = tracker.estimate(t) {
-                if e.locked {
-                    locked.push(e.reserve_ms);
+                if e.tight() {
+                    tight.push(e.reserve_ms);
                 }
             }
             tracker.observe_ack_lag(&mut []);
-            if locked.len() < 2 {
+            if tight.len() < 2 {
                 assert_eq!(tracker.target_ms(), None, "at {t}");
             }
         }
         let target = tracker.target_ms().expect("learned");
-        assert_eq!(target, (locked[0] + locked[1]) / 2.0);
+        assert_eq!(target, (tight[0] + tight[1]) / 2.0);
         assert!(
             (target - gen.reserve(t)).abs() < 60.0,
             "{target} vs {}",
@@ -721,7 +725,7 @@ mod tests {
     }
 
     #[test]
-    fn a_segment_break_before_the_second_locked_estimate_restarts_the_target() {
+    fn a_segment_break_before_the_second_tight_estimate_restarts_the_target() {
         let mut tracker = ReserveTracker::new();
         tracker.start_connection(true);
         tracker.target_pending = Some(10_000.0);
@@ -730,6 +734,43 @@ mod tests {
         run(&mut tracker, &mut gen, 0.0, 10.0 * 60_000.0);
         let target = tracker.target_ms().expect("learned");
         assert!(target < 1_000.0, "the stale half was dropped: {target}");
+    }
+
+    #[test]
+    fn straddling_window_does_not_teach_target() {
+        // The first tight window has been seen; the next estimate is held,
+        // as one whose window straddles a step is. It still counts towards
+        // the connection's minimum, but must not finish the target.
+        let mut tracker = ReserveTracker::new();
+        tracker.start_connection(true);
+        tracker.target_pending = Some(500.0);
+        tracker.last = Some(ReserveEstimate {
+            at: 300_000.0,
+            reserve_ms: 300.0,
+            half_width_ms: 180.0,
+            inconsistent: false,
+            jitter_ms: 150.0,
+            polls: 72,
+            lock_reason: LockReason::Held,
+        });
+        tracker.last_fresh = true;
+        tracker
+            .observe_ack_lag(&mut [])
+            .expect("acknowledged reserve");
+        assert_eq!(tracker.target_ms(), None);
+        assert_eq!(tracker.target_pending, Some(500.0));
+        assert_eq!(tracker.connection().reserve_min_ms, Some(300.0));
+
+        // A tight one does.
+        tracker.last = tracker.last.map(|e| ReserveEstimate {
+            reserve_ms: 520.0,
+            half_width_ms: 60.0,
+            lock_reason: LockReason::Tight,
+            ..e
+        });
+        tracker.last_fresh = true;
+        tracker.observe_ack_lag(&mut []);
+        assert_eq!(tracker.target_ms(), Some(510.0));
     }
 
     #[test]
@@ -806,7 +847,7 @@ mod tests {
                 tracker.observe(p, URI, false);
             });
             let est = tracker.estimate(t).0.expect("estimated");
-            assert!(est.locked);
+            assert!(est.locked());
             // A tenth of the window at `level`, the rest clean.
             let mut lags: Vec<f64> = (0..60)
                 .map(|i| if i < 6 { est.reserve_ms - level } else { 0.0 })

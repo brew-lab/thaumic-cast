@@ -30,7 +30,7 @@ pub(crate) mod test_support;
 
 pub use bounds::{PlayheadBound, PollObservation};
 pub use clock_fit::{ClockEstimate, ClockFit};
-pub use reserve::{ReserveEstimate, ReserveEstimator};
+pub use reserve::{LockReason, ReserveEstimate, ReserveEstimator};
 pub use rollup::WindowStats;
 pub use segment::{Segment, SegmentBreak};
 pub use topology_diff::{MemberChange, RadioField, TopologyDiff};
