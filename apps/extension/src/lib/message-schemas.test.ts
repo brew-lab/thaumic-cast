@@ -10,6 +10,7 @@ import {
   StartPlaybackMessageSchema,
   StopCastMessageSchema,
   TabIdSchema,
+  TopologyEventMessageSchema,
   VolumeSchema,
   WsStateChangedMessageSchema,
 } from './message-schemas';
@@ -253,5 +254,38 @@ describe('NetworkEventMessageSchema', () => {
     const parsed = NetworkEventMessageSchema.parse(message({ type: 'somethingNewer', extra: 1 }));
 
     expect(parsed.payload).toEqual({ type: 'unrecognized', eventType: 'somethingNewer' });
+  });
+});
+
+describe('TopologyEventMessageSchema', () => {
+  it('should accept a groupsDiscovered event', () => {
+    const parsed = TopologyEventMessageSchema.parse({
+      type: 'TOPOLOGY_EVENT',
+      payload: { type: 'groupsDiscovered', groups: [], timestamp: 1 },
+    });
+
+    expect(parsed.payload).toEqual({ type: 'groupsDiscovered', groups: [], timestamp: 1 });
+  });
+
+  it('should tag a memberChanged event as unrecognized instead of failing', () => {
+    const parsed = TopologyEventMessageSchema.parse({
+      type: 'TOPOLOGY_EVENT',
+      payload: {
+        type: 'memberChanged',
+        change: { kind: 'satelliteMissing', primaryUuid: 'RINCON_A', uuid: 'RINCON_B', role: 'LR' },
+        timestamp: 1,
+      },
+    });
+
+    expect(parsed.payload).toEqual({ type: 'unrecognized', eventType: 'memberChanged' });
+  });
+
+  it('should reject a malformed groupsDiscovered event', () => {
+    expect(
+      TopologyEventMessageSchema.safeParse({
+        type: 'TOPOLOGY_EVENT',
+        payload: { type: 'groupsDiscovered', timestamp: 1 },
+      }).success,
+    ).toBe(false);
   });
 });

@@ -342,7 +342,8 @@ export function handleNetworkEvent(payload: NetworkEventMessage['payload']): voi
 }
 
 /**
- * Handles TOPOLOGY_EVENT from offscreen (group discovery results).
+ * Handles TOPOLOGY_EVENT from offscreen (group discovery results). Other
+ * topology event types arrive tagged `unrecognized` and are ignored.
  * @param payload - The topology event payload
  */
 export function handleTopologyEvent(payload: TopologyEventMessage['payload']): void {
@@ -353,5 +354,7 @@ export function handleTopologyEvent(payload: TopologyEventMessage['payload']): v
       state: newState,
     });
     log.info(`Groups discovered: ${payload.groups.length} groups`);
+  } else {
+    log.debug(`Ignoring topology event type: ${payload.eventType}`);
   }
 }
