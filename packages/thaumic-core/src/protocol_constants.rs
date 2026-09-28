@@ -58,6 +58,14 @@ pub const ICY_METAINT: usize = 8192;
 /// 10 seconds is reasonable for LAN operations.
 pub const SOAP_TIMEOUT_SECS: u64 = 10;
 
+/// Timeout for a background position poll (milliseconds).
+///
+/// A healthy speaker answers `GetPositionInfo` in tens of milliseconds. A
+/// poll still outstanding after a second and a half is abandoned, so a
+/// speaker that has stopped answering costs its poller at most this long
+/// per attempt instead of the full [`SOAP_TIMEOUT_SECS`].
+pub const POSITION_POLL_TIMEOUT_MS: u64 = 1500;
+
 /// Maximum size of GENA notification body (bytes).
 pub const MAX_GENA_BODY_SIZE: usize = 64 * 1024;
 

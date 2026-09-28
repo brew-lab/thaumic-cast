@@ -3,13 +3,16 @@
 //! Provides play, stop, and transport control via AVTransport SOAP actions,
 //! including retry logic for transient SOAP errors.
 
+use std::time::Duration;
+
 use reqwest::Client;
 
 use crate::error::SoapResult;
+use crate::protocol_constants::POSITION_POLL_TIMEOUT_MS;
 use crate::sonos::didl::format_didl_lite;
 use crate::sonos::retry::with_retry;
 use crate::sonos::services::SonosService;
-use crate::sonos::soap::{soap_request, SoapError};
+use crate::sonos::soap::{soap_request, soap_request_with, SoapError, SoapOptions};
 use crate::sonos::types::PositionInfo;
 use crate::sonos::utils::{build_sonos_stream_uri, extract_xml_text};
 use crate::stream::{AudioCodec, AudioFormat, StreamMetadata};
@@ -185,13 +188,17 @@ pub async fn switch_to_queue(client: &Client, ip: &str, coordinator_uuid: &str) 
 /// # Note
 /// The `RelTime` field is in "H:MM:SS" format with second precision. For streams,
 /// this represents elapsed playback time since the stream started.
+///
+/// This is polled continuously for the length of a cast, so its per-call log
+/// lines are at `debug` and it gives up after [`POSITION_POLL_TIMEOUT_MS`].
 pub async fn get_position_info(client: &Client, ip: &str) -> SoapResult<PositionInfo> {
-    let response = soap_request(
+    let response = soap_request_with(
         client,
         ip,
         SonosService::AVTransport,
         "GetPositionInfo",
         &[("InstanceID", "0")],
+        SoapOptions::quiet(Duration::from_millis(POSITION_POLL_TIMEOUT_MS)),
     )
     .await?;
 
