@@ -19,6 +19,7 @@ import {
 } from '../state/store';
 import { type NetworkHealthPayload, type TransportStatePayload } from '../lib/events';
 import { DeviceCard } from '../components/DeviceCard';
+import { SpeakerNotices } from '../components/SpeakerNotices';
 import { ActionButton, Alert, ButtonGroup } from '@thaumic-cast/ui';
 import { RefreshCw, Square } from 'lucide-preact';
 import styles from './Speakers.module.css';
@@ -129,6 +130,8 @@ export function Speakers() {
           })}
         </Alert>
       )}
+
+      <SpeakerNotices />
 
       {groupsWithCoordinators.length === 0 ? (
         <div className={styles.emptyState}>

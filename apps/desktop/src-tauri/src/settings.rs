@@ -9,6 +9,7 @@ use std::path::Path;
 use std::sync::Mutex;
 
 use serde::{Deserialize, Serialize};
+use thaumic_core::protocol_constants::MAX_PCM_CONNECT_BURST_MS;
 
 /// File name inside the app data directory.
 const SETTINGS_FILE: &str = "settings.json";
@@ -26,22 +27,29 @@ pub struct DesktopSettings {
     /// Whether speakers playing a stream are polled for their playback
     /// position. See `thaumic_core::Config::speaker_monitor`.
     pub speaker_monitor: bool,
+    /// Speaker head start for PCM streams, in ms (`0` is off), at most
+    /// [`MAX_PCM_CONNECT_BURST_MS`]. See
+    /// `thaumic_core::Config::pcm_connect_burst_ms`.
+    pub pcm_connect_burst_ms: u64,
 }
 
 impl Default for DesktopSettings {
     fn default() -> Self {
+        let core = thaumic_core::Config::default();
         Self {
-            speaker_monitor: thaumic_core::Config::default().speaker_monitor,
+            speaker_monitor: core.speaker_monitor,
+            pcm_connect_burst_ms: core.pcm_connect_burst_ms,
         }
     }
 }
 
 impl DesktopSettings {
     /// Loads the settings from `app_data_dir`, or the defaults if the file is
-    /// missing or unreadable.
+    /// missing or unreadable. A head start above the maximum (a hand-edited
+    /// file) loads as the maximum.
     pub fn load(app_data_dir: &Path) -> Self {
         let path = app_data_dir.join(SETTINGS_FILE);
-        match std::fs::read_to_string(&path) {
+        let settings: Self = match std::fs::read_to_string(&path) {
             Ok(contents) => serde_json::from_str(&contents).unwrap_or_else(|e| {
                 log::warn!(
                     "[Settings] {} is not valid ({}); using defaults",
@@ -51,7 +59,22 @@ impl DesktopSettings {
                 Self::default()
             }),
             Err(_) => Self::default(),
+        };
+        settings.clamped()
+    }
+
+    /// The settings with every value inside its range.
+    fn clamped(mut self) -> Self {
+        if self.pcm_connect_burst_ms > MAX_PCM_CONNECT_BURST_MS {
+            log::warn!(
+                "[Settings] Speaker head start of {} ms is above the {} ms maximum; using {} ms",
+                self.pcm_connect_burst_ms,
+                MAX_PCM_CONNECT_BURST_MS,
+                MAX_PCM_CONNECT_BURST_MS
+            );
+            self.pcm_connect_burst_ms = MAX_PCM_CONNECT_BURST_MS;
         }
+        self
     }
 
     /// Loads the settings, applies `change`, and saves the result.
@@ -64,6 +87,7 @@ impl DesktopSettings {
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         let mut settings = Self::load(app_data_dir);
         change(&mut settings);
+        let settings = settings.clamped();
         std::fs::create_dir_all(app_data_dir)?;
         let path = app_data_dir.join(SETTINGS_FILE);
         let temp_path = app_data_dir.join(format!("{SETTINGS_FILE}.tmp"));
@@ -75,6 +99,7 @@ impl DesktopSettings {
     /// Applies the settings to the core configuration.
     pub fn apply_to(&self, config: &mut thaumic_core::Config) {
         config.speaker_monitor = self.speaker_monitor;
+        config.pcm_connect_burst_ms = self.pcm_connect_burst_ms.min(MAX_PCM_CONNECT_BURST_MS);
     }
 }
 
@@ -104,6 +129,53 @@ mod tests {
         let mut config = thaumic_core::Config::default();
         DesktopSettings::load(&dir).apply_to(&mut config);
         assert!(!config.speaker_monitor);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn the_head_start_defaults_to_the_core_default() {
+        let dir = temp_dir("head-start-default");
+        assert_eq!(
+            DesktopSettings::load(&dir).pcm_connect_burst_ms,
+            thaumic_core::protocol_constants::DEFAULT_PCM_CONNECT_BURST_MS
+        );
+    }
+
+    #[test]
+    fn a_saved_head_start_survives_a_reload_and_reaches_the_core() {
+        let dir = temp_dir("head-start-roundtrip");
+        DesktopSettings::update(&dir, |s| s.pcm_connect_burst_ms = 1500).expect("saves");
+        let settings = DesktopSettings::load(&dir);
+        assert_eq!(settings.pcm_connect_burst_ms, 1500);
+        // The monitor setting is untouched by a head start change.
+        assert!(settings.speaker_monitor);
+
+        let mut config = thaumic_core::Config::default();
+        settings.apply_to(&mut config);
+        assert_eq!(config.pcm_connect_burst_ms, 1500);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_head_start_above_the_maximum_is_clamped() {
+        let dir = temp_dir("head-start-clamp");
+        let saved =
+            DesktopSettings::update(&dir, |s| s.pcm_connect_burst_ms = 5000).expect("saves");
+        assert_eq!(saved.pcm_connect_burst_ms, MAX_PCM_CONNECT_BURST_MS);
+
+        // A hand-edited file is clamped on load too.
+        std::fs::write(dir.join(SETTINGS_FILE), r#"{"pcmConnectBurstMs": 9000}"#).unwrap();
+        let loaded = DesktopSettings::load(&dir);
+        assert_eq!(loaded.pcm_connect_burst_ms, MAX_PCM_CONNECT_BURST_MS);
+        assert!(loaded.speaker_monitor);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_head_start_of_zero_is_kept_as_off() {
+        let dir = temp_dir("head-start-off");
+        DesktopSettings::update(&dir, |s| s.pcm_connect_burst_ms = 0).expect("saves");
+        assert_eq!(DesktopSettings::load(&dir).pcm_connect_burst_ms, 0);
         let _ = std::fs::remove_dir_all(&dir);
     }
 

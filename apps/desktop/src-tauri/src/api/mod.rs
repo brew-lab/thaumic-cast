@@ -251,6 +251,18 @@ impl AppState {
                         "off (video sync only)"
                     }
                 );
+                match thaumic_core::stream::cadence::pcm_connect_burst_env_override() {
+                    Some(ms) => log::info!(
+                        "Speaker head start: {} ms from THAUMIC_PCM_CONNECT_BURST_MS \
+                         (setting {} ms; PCM streams only)",
+                        ms,
+                        settings.pcm_connect_burst_ms
+                    ),
+                    None => log::info!(
+                        "Speaker head start: {} ms (PCM streams only)",
+                        settings.pcm_connect_burst_ms
+                    ),
+                }
                 self.services
                     .discovery_service
                     .set_app_data_dir(path.clone());

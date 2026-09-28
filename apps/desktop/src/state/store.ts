@@ -1,6 +1,13 @@
 import { signal } from '@preact/signals';
 import { invoke } from '@tauri-apps/api/core';
+import { listen } from '@tauri-apps/api/event';
+import { NetworkEventSchema, type SpeakerNotice } from '@thaumic-cast/protocol';
 import { createLogger } from '@thaumic-cast/shared';
+import {
+  dismissNotice,
+  emptyDismissals,
+  type SpeakerNoticeDismissals,
+} from '../lib/speaker-notices';
 
 const log = createLogger('Store');
 
@@ -280,6 +287,100 @@ export const getSpeakerMonitor = async (): Promise<SpeakerMonitorSetting> => {
 export const setSpeakerMonitor = async (enabled: boolean): Promise<SpeakerMonitorSetting> => {
   return invoke<SpeakerMonitorSetting>('set_speaker_monitor', { enabled });
 };
+
+/** The speaker head start setting as the backend reports it. */
+export interface HeadStartSetting {
+  /** The saved head start, in ms (0 is off). */
+  ms: number;
+  /** What THAUMIC_PCM_CONNECT_BURST_MS forces it to, if that variable is set. */
+  envOverride: number | null;
+}
+
+/**
+ * Gets the speaker head start setting.
+ * @returns The saved setting and any environment override
+ */
+export const getHeadStart = async (): Promise<HeadStartSetting> => {
+  return invoke<HeadStartSetting>('get_pcm_connect_burst_ms');
+};
+
+/**
+ * Saves the speaker head start. Applies from each speaker's next connection.
+ * @param ms - The head start in ms, 0 for off
+ * @returns The setting as saved
+ */
+export const setHeadStart = async (ms: number): Promise<HeadStartSetting> => {
+  return invoke<HeadStartSetting>('set_pcm_connect_burst_ms', { ms });
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Speaker Notices
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** The latest notice the core stands for one speaker. */
+export interface SpeakerNoticeReading {
+  /** The stream the speaker is playing. */
+  streamId: string;
+  /** The notice, absent when there is nothing to tell the user. */
+  notice?: SpeakerNotice;
+}
+
+/** Latest notice reading per speaker IP, from the core's speaker-health reports. */
+export const speakerNoticeReadings = signal<Record<string, SpeakerNoticeReading>>({});
+
+/** Notices the user dismissed this app run. */
+export const speakerNoticeDismissals = signal<SpeakerNoticeDismissals>(emptyDismissals());
+
+/**
+ * Dismisses the notice currently standing for a speaker.
+ * @param speakerIp - The speaker whose notice to dismiss
+ */
+export const dismissSpeakerNotice = (speakerIp: string): void => {
+  const reading = speakerNoticeReadings.value[speakerIp];
+  if (!reading?.notice) return;
+  speakerNoticeDismissals.value = dismissNotice(
+    speakerNoticeDismissals.value,
+    reading.streamId,
+    speakerIp,
+    reading.notice,
+    Date.now(),
+  );
+};
+
+/**
+ * Starts keeping the latest speaker notice per speaker from the core's
+ * `speaker-health` events. Registered once for the app's life, so notices
+ * survive moving between views. Idempotent.
+ */
+export const startSpeakerNoticeListener = (() => {
+  let started = false;
+  return (): void => {
+    if (started) return;
+    started = true;
+    listen<unknown>('speaker-health', (event) => {
+      const parsed = NetworkEventSchema.safeParse(event.payload);
+      if (!parsed.success || parsed.data.type !== 'speakerHealth') {
+        log.debug('Ignoring unreadable speaker-health event');
+        return;
+      }
+      const { speakerIp, streamId, notice } = parsed.data;
+      const previous = speakerNoticeReadings.value[speakerIp];
+      const isNewNotice =
+        notice !== undefined &&
+        (previous?.notice?.noticeId !== notice.noticeId || previous.streamId !== streamId);
+      if (isNewNotice) {
+        log.info(`Speaker ${speakerIp} notice ${notice.kind} #${notice.noticeId}`);
+      }
+      speakerNoticeReadings.value = {
+        ...speakerNoticeReadings.value,
+        [speakerIp]: { streamId, notice },
+      };
+    }).catch((error) => {
+      started = false;
+      log.error('Failed to listen for speaker notices:', error);
+    });
+  };
+})();
 
 /** Supported platform types */
 export type Platform = 'windows' | 'macos' | 'linux' | 'unknown';
