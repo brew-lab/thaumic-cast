@@ -1,14 +1,14 @@
 ---
 '@thaumic-cast/core': patch
-'@thaumic-cast/protocol': patch
 ---
 
-feat(core): tell clients when the network path to a speaker is unstable
+feat(core): log when the network path to a speaker is unstable
 
-Field testing showed the stream to a speaker stuttering exactly when the casting machine's Wi-Fi had latency
-spikes, while nothing the server measured could see it: the kernel's send buffer hides a stall from the writer. The
-server now judges the path to each playing speaker from the round trips of its own position polls, the same probe
-as a ping, and broadcasts a link quality of good, degraded or poor on every change, with the median and worst round
-trip and the spike and failure counts over the last minute. It also reads the retransmission counters of the
-connection each speaker fetches over, on Windows and Linux, into the pipeline snapshot and the end-of-stream summary,
-and warns when data had to be resent, so a stall shows in the log beside a delivery window that looks perfect.
+Field testing showed the stream to a speaker stuttering exactly when the Wi-Fi between this machine and the speaker
+had trouble, while nothing the server measured could see it: the kernel's send buffer hides a stall from the writer.
+The server now reads the retransmission, timeout and round-trip counters of the connection each speaker fetches
+audio over, on Windows and Linux, into the pipeline snapshot and the end-of-stream summary, warns when data had to be
+resent, and judges the link good, degraded or poor over the last minute, logging each change. The verdict is kept
+for the speaker monitor, which counts a poor link as a cause when a speaker's head start runs out; it is not sent to
+clients, since link trouble the head start rides out needs no telling, and the stream's jitter buffer does nothing
+for this link anyway.

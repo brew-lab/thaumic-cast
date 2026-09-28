@@ -366,11 +366,14 @@ pub(super) async fn stream_audio(
         .tracks_playback()
         .then(|| state.link_registry.claim(remote_addr))
         .flatten();
-    let mut guard = LoggingStreamGuard::new(id.to_string(), remote_ip).with_link_probe(
-        link_probe,
-        stream_state.jitter_buffer_ms,
-        Arc::clone(&state.event_bridge) as Arc<dyn crate::events::EventEmitter>,
-    );
+    let mut guard = LoggingStreamGuard::new(id.to_string(), remote_ip).with_link_probe(link_probe);
+    // Likewise only a speaker's connection reports audio reaching this
+    // machine late: an unlisted reader that falls behind could run its own
+    // queue dry and raise a notice about gaps no speaker heard.
+    if access.tracks_playback() {
+        guard = guard
+            .with_events(Arc::clone(&state.event_bridge) as Arc<dyn crate::events::EventEmitter>);
+    }
     if let Some(wait) = first_wait {
         guard = guard.with_first_wait(wait);
     }

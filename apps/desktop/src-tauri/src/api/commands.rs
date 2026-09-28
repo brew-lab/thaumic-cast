@@ -6,8 +6,8 @@ use serde::Serialize;
 use tauri::{Manager, WebviewWindow};
 use thaumic_core::api::ws_connection::RemotePeers;
 use thaumic_core::{
-    probe_speaker_by_ip, validate_speaker_ip, ErrorCode, ManualSpeakerConfig, NetworkHealth,
-    PlaybackSession, Speaker, ZoneGroup,
+    now_millis, probe_speaker_by_ip, validate_speaker_ip, CompanionAudio, ErrorCode, EventEmitter,
+    ManualSpeakerConfig, NetworkHealth, PlaybackSession, Speaker, StreamEvent, ZoneGroup,
 };
 
 use crate::api::AppState;
@@ -347,7 +347,21 @@ pub fn set_speaker_monitor(
         "[Settings] Speaker monitoring {}",
         if enabled { "on" } else { "off" }
     );
+    broadcast_companion_audio(&state);
     Ok(get_speaker_monitor(state))
+}
+
+/// Tells every client the speaker-side audio settings new connections now
+/// get, so what they show about them never goes stale.
+fn broadcast_companion_audio(state: &AppState) {
+    let audio = CompanionAudio::from_config(&state.config.read());
+    state
+        .services
+        .event_bridge
+        .emit_stream(StreamEvent::CompanionAudioChanged {
+            audio,
+            timestamp: now_millis(),
+        });
 }
 
 /// Network health status response.

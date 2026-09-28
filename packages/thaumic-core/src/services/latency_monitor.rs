@@ -67,13 +67,14 @@ use std::time::{Duration, Instant};
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
-use crate::events::{EventEmitter, LatencyEvent, NetworkEvent};
+use crate::events::{EventEmitter, LatencyEvent, LinkQuality, NetworkEvent};
 use crate::protocol_constants::POSITION_POLL_TIMEOUT_MS;
 use crate::runtime::TokioSpawner;
 use crate::services::speaker_monitor::reserve::{HOLD_MIN_POLLS, RESERVE_WINDOW_MS};
 use crate::services::speaker_monitor::{
-    GenaTransport, MemberChange, MonitorState, PollObservation, ReserveTracker, SegmentBreak,
-    TransportGate, TransportSource, TransportStateView, TransportVerdict, WindowStats,
+    GenaTransport, MemberChange, MonitorState, NoticeInput, NoticeState, PollObservation,
+    ReserveTracker, SegmentBreak, TransportGate, TransportSource, TransportStateView,
+    TransportVerdict, WindowStats,
 };
 use crate::sonos::traits::SonosPlayback;
 use crate::sonos::types::{PositionInfo, TransportState};
@@ -517,6 +518,10 @@ struct LatencySession {
     /// Household changes concerning this speaker during the current
     /// connection, for its summary.
     connection_topology_changes: u32,
+    /// What the user is told about this speaker, decided at each report
+    /// and kept for the rest of the cast (the session's life), so notice
+    /// ids count per stream and speaker.
+    notices: NoticeState,
 }
 
 impl LatencySession {
@@ -569,6 +574,7 @@ impl LatencySession {
             health_reported: None,
             topology_since_report: Vec::new(),
             connection_topology_changes: 0,
+            notices: NoticeState::new(),
         }
     }
 
@@ -812,6 +818,17 @@ impl LatencySession {
             topology,
         );
 
+        self.decide_notice(
+            stream_id,
+            speaker_ip,
+            tap,
+            now,
+            estimate.is_some_and(|e| e.locked()),
+            acked,
+            brk,
+            ttf,
+        );
+
         let is_low = self.tracker.is_low();
         if is_low && !was_low {
             if let (Some(a), Some(floor)) = (acked, self.tracker.floor_ms()) {
@@ -861,6 +878,63 @@ impl LatencySession {
         }
 
         self.emit_health(stream_id, speaker_ip, state, emitter);
+    }
+
+    /// Steps the speaker's notice with what this report found, and logs a
+    /// new or escalated one.
+    #[allow(clippy::too_many_arguments)]
+    fn decide_notice(
+        &mut self,
+        stream_id: &str,
+        speaker_ip: IpAddr,
+        tap: &ConnectionTap,
+        now: Instant,
+        locked: bool,
+        acked: Option<crate::services::speaker_monitor::AckedReserve>,
+        brk: Option<SegmentBreak>,
+        time_to_floor_s: Option<f64>,
+    ) {
+        let input = NoticeInput {
+            locked,
+            acked,
+            offset_step: brk == Some(SegmentBreak::OffsetStep),
+            pre_break: self.tracker.pre_break(),
+            head_start: self.tracker.head_start(),
+            stall_ms: self.tracker.stall_ms(),
+            link_poor: tap.link_verdict() == Some(LinkQuality::Poor),
+            time_to_floor_s,
+            // Drift correction does not exist yet.
+            drift_active: false,
+        };
+        let before = self.notices.active().map(|n| n.notice_id);
+        let notice = self.notices.update(now, &input);
+        if let Some(n) = notice.filter(|n| Some(n.notice_id) != before) {
+            let opt = |v: Option<u32>| v.map_or_else(|| "\u{2014}".to_string(), |v| v.to_string());
+            log::warn!(
+                "[SpeakerMonitor] {} stream={}: notice {} id={}: stall={}ms left={}ms H={}ms \
+                 suggested={}ms minutes={} restart_helps={}",
+                speaker_ip,
+                stream_id,
+                n.kind,
+                n.notice_id,
+                opt(n.stall_ms),
+                n.left_ms
+                    .map_or_else(|| "\u{2014}".to_string(), |v| v.to_string()),
+                opt(n.head_start_ms),
+                opt(n.suggested_head_start_ms),
+                opt(n.minutes),
+                n.restart_helps
+            );
+        } else if notice.is_none() {
+            if let Some(id) = before {
+                log::info!(
+                    "[SpeakerMonitor] {} stream={}: notice id={} cleared",
+                    speaker_ip,
+                    stream_id,
+                    id
+                );
+            }
+        }
     }
 
     /// The monitor's view of the speaker, from its latest report and what
@@ -921,6 +995,7 @@ impl LatencySession {
             clock_ppm: clock.map(|c| c.ppm as f32),
             clock_se_ppm: clock.map(|c| c.se_ppm as f32),
             time_to_floor_s: self.tracker.time_to_floor_s().map(unsigned_ms),
+            notice: self.notices.active(),
             timestamp: now_millis(),
         }
     }
@@ -3261,6 +3336,7 @@ mod tests {
             Some(AckedReserve {
                 min_ms: 431.4,
                 p10_ms: 470.0,
+                median_ms: 480.0,
                 measured,
                 stall_ms: None,
             })

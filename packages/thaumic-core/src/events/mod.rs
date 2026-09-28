@@ -125,6 +125,81 @@ pub enum StreamEvent {
         /// Unix timestamp in milliseconds.
         timestamp: u64,
     },
+    /// Audio from the casting browser reached this machine late often
+    /// enough that every speaker on the stream had gaps: the smoothing
+    /// (jitter buffer) ran dry at least twice in a minute.
+    ///
+    /// Emitted from a PCM connection's cadence, at most once every ten
+    /// minutes per stream (see [`crate::stream::ingest_gaps`]). Names its
+    /// stream, so it only reaches the client that owns it while it is live.
+    IngestGaps {
+        /// The stream whose audio arrived late.
+        #[serde(rename = "streamId")]
+        stream_id: String,
+        /// Gaps counted in the last minute.
+        #[serde(rename = "gapsLastMinute")]
+        gaps_last_minute: u32,
+        /// The longest of those gaps in the audio's arrival, in ms: the
+        /// smoothing that ran dry plus the silence played after it.
+        #[serde(rename = "worstGapMs")]
+        worst_gap_ms: u32,
+        /// The smoothing the stream runs with, in ms.
+        #[serde(rename = "smoothingMs")]
+        smoothing_ms: u32,
+        /// The smallest smoothing step that would have covered the worst gap
+        /// with 50 ms to spare. Absent when no step offered does: the gap is
+        /// more than smoothing can cover.
+        #[serde(
+            rename = "suggestedSmoothingMs",
+            skip_serializing_if = "Option::is_none"
+        )]
+        suggested_smoothing_ms: Option<u32>,
+        /// Unix timestamp in milliseconds.
+        timestamp: u64,
+    },
+    /// The companion's speaker-side audio settings changed. Sent to every
+    /// client, so what they show about the speaker head start and the
+    /// wording of their speaker notices never goes stale. Each setting
+    /// applies from a speaker's next connection.
+    CompanionAudioChanged {
+        /// The settings as they now stand.
+        #[serde(flatten)]
+        audio: CompanionAudio,
+        /// Unix timestamp in milliseconds.
+        timestamp: u64,
+    },
+}
+
+/// The companion's speaker-side audio settings, as clients show them and
+/// word their speaker notices by. Owned by the companion: clients only
+/// display them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CompanionAudio {
+    /// The speaker head start (PCM connect burst) each speaker is sent when
+    /// it connects, in ms, after any environment override. `0` is off.
+    pub head_start_ms: u32,
+    /// Whether an environment variable fixes the head start, so it can only
+    /// be changed there.
+    pub head_start_fixed: bool,
+    /// Whether the speaker monitor, and with it the speaker notices, is on
+    /// for new connections.
+    pub speaker_monitor: bool,
+}
+
+impl CompanionAudio {
+    /// The settings new connections get under `config`, with the
+    /// environment overrides applied.
+    pub fn from_config(config: &crate::state::Config) -> Self {
+        use crate::services::latency_monitor::speaker_monitor_enabled;
+        use crate::stream::cadence::{pcm_connect_burst_env_override, pcm_connect_burst_ms};
+        Self {
+            head_start_ms: u32::try_from(pcm_connect_burst_ms(config.pcm_connect_burst_ms))
+                .unwrap_or(u32::MAX),
+            head_start_fixed: pcm_connect_burst_env_override().is_some(),
+            speaker_monitor: speaker_monitor_enabled(config.speaker_monitor),
+        }
+    }
 }
 
 /// Network health status.
@@ -139,16 +214,21 @@ pub enum NetworkHealth {
 }
 
 /// Quality of the network path between this machine and one speaker, judged
-/// from the round trips of our own position polls to it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "lowercase")]
+/// from the TCP counters of the connection the speaker fetches audio over
+/// (see [`crate::api::link::LinkJudge`]).
+///
+/// For the log and as one input to the speaker notices: trouble on the link
+/// alone is never a notice, since the speaker head start usually rides it
+/// out. The jitter buffer (smoothing) does not help here at all: it only
+/// evens out how audio reaches this machine, not how it leaves it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LinkQuality {
-    /// No latency spikes in the last minute.
+    /// No retransmissions, timeouts or round-trip spikes in the last minute.
     Good,
-    /// A few spikes: short dropouts are possible on a small jitter buffer.
+    /// A few troubled samples in the last minute.
     Degraded,
-    /// Repeated spikes or failed round trips: audio will stutter unless the
-    /// jitter buffer is large enough to ride them out.
+    /// Repeated trouble or a retransmission timeout in the last minute: the
+    /// link stalled for longer than one resend.
     Poor,
 }
 
@@ -187,48 +267,6 @@ pub enum NetworkEvent {
         /// Human-readable reason for the status (if degraded).
         #[serde(skip_serializing_if = "Option::is_none")]
         reason: Option<String>,
-        /// Unix timestamp in milliseconds.
-        timestamp: u64,
-    },
-    /// The network path to a playing speaker changed quality.
-    ///
-    /// Judged from the TCP counters of the connection the speaker fetches
-    /// audio over: retransmissions, timeouts and round trip, straight from
-    /// the kernel, so it measures the path the audio actually takes and
-    /// costs no extra traffic. Sent on transitions only. Names no stream, so
-    /// it reaches every client; the path to a speaker is shared by everyone
-    /// casting to it.
-    SpeakerLinkQuality {
-        /// The speaker the path leads to.
-        #[serde(rename = "speakerIp")]
-        speaker_ip: String,
-        /// The judged quality.
-        quality: LinkQuality,
-        /// Median round trip over the last minute, in milliseconds.
-        #[serde(rename = "rttMedianMs")]
-        rtt_median_ms: u32,
-        /// Worst round trip over the last minute, in milliseconds.
-        #[serde(rename = "rttMaxMs")]
-        rtt_max_ms: u32,
-        /// Round trips over the spike threshold in the last minute.
-        #[serde(rename = "spikesPerMinute")]
-        spikes_per_minute: u32,
-        /// Retransmission timeouts in the last minute: stalls long enough
-        /// that the kernel gave up waiting and resent.
-        #[serde(rename = "failuresPerMinute")]
-        failures_per_minute: u32,
-        /// The jitter buffer the stream to this speaker runs with, which is
-        /// how far ahead of real time the speaker receives audio.
-        #[serde(rename = "jitterBufferMs")]
-        jitter_buffer_ms: u64,
-        /// The jitter buffer that would ride out the stalls seen in the last
-        /// minute, when raising it would help. Absent when the current buffer
-        /// already covers them or is at its maximum.
-        #[serde(
-            rename = "suggestedJitterBufferMs",
-            skip_serializing_if = "Option::is_none"
-        )]
-        suggested_jitter_buffer_ms: Option<u64>,
         /// Unix timestamp in milliseconds.
         timestamp: u64,
     },
@@ -313,6 +351,12 @@ pub enum NetworkEvent {
         /// speaker drains it, when it is measurably draining it.
         #[serde(rename = "timeToFloorS", skip_serializing_if = "Option::is_none")]
         time_to_floor_s: Option<u32>,
+        /// What the user should be told about this speaker, decided here so
+        /// every client says the same thing (see
+        /// [`crate::services::speaker_monitor::notice`]). Repeated in every
+        /// report while it stands, under the same `noticeId`.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        notice: Option<crate::services::speaker_monitor::SpeakerNotice>,
         /// Unix timestamp in milliseconds.
         timestamp: u64,
     },
@@ -473,6 +517,16 @@ mod tests {
             clock_ppm: Some(39.75),
             clock_se_ppm: Some(7.25),
             time_to_floor_s: Some(900),
+            notice: Some(crate::services::speaker_monitor::SpeakerNotice {
+                kind: crate::services::speaker_monitor::SpeakerNoticeKind::DriftUncorrected,
+                notice_id: 2,
+                stall_ms: None,
+                left_ms: None,
+                head_start_ms: Some(500),
+                suggested_head_start_ms: None,
+                minutes: Some(15),
+                restart_helps: true,
+            }),
             timestamp: 1,
         });
         assert_eq!(
@@ -497,6 +551,13 @@ mod tests {
                 "clockPpm": 39.75,
                 "clockSePpm": 7.25,
                 "timeToFloorS": 900,
+                "notice": {
+                    "kind": "drift_uncorrected",
+                    "noticeId": 2,
+                    "headStartMs": 500,
+                    "minutes": 15,
+                    "restartHelps": true,
+                },
                 "timestamp": 1,
             })
         );
@@ -519,6 +580,7 @@ mod tests {
             clock_ppm: None,
             clock_se_ppm: None,
             time_to_floor_s: None,
+            notice: None,
             timestamp: 1,
         });
         assert_eq!(
@@ -546,6 +608,52 @@ mod tests {
         assert_eq!(wire(SpeakerHealthState::Paused), "\"paused\"");
         assert_eq!(wire(SpeakerHealthState::Stale), "\"stale\"");
         assert_eq!(wire(SpeakerHealthState::Dormant), "\"dormant\"");
+    }
+
+    /// The ingest-gap and companion-audio events ride the stream category;
+    /// their shapes are protocol, shared with the extension.
+    #[test]
+    fn ingest_gaps_and_companion_audio_wire_shapes() {
+        let gaps = BroadcastEvent::Stream(StreamEvent::IngestGaps {
+            stream_id: "s".into(),
+            gaps_last_minute: 3,
+            worst_gap_ms: 620,
+            smoothing_ms: 200,
+            suggested_smoothing_ms: None,
+            timestamp: 1,
+        });
+        assert_eq!(
+            serde_json::to_value(&gaps).unwrap(),
+            serde_json::json!({
+                "category": "stream",
+                "type": "ingestGaps",
+                "streamId": "s",
+                "gapsLastMinute": 3,
+                "worstGapMs": 620,
+                "smoothingMs": 200,
+                "timestamp": 1,
+            })
+        );
+
+        let audio = BroadcastEvent::Stream(StreamEvent::CompanionAudioChanged {
+            audio: CompanionAudio {
+                head_start_ms: 750,
+                head_start_fixed: true,
+                speaker_monitor: false,
+            },
+            timestamp: 2,
+        });
+        assert_eq!(
+            serde_json::to_value(&audio).unwrap(),
+            serde_json::json!({
+                "category": "stream",
+                "type": "companionAudioChanged",
+                "headStartMs": 750,
+                "headStartFixed": true,
+                "speakerMonitor": false,
+                "timestamp": 2,
+            })
+        );
     }
 
     /// The member change event rides the topology category with its change

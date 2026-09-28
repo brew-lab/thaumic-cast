@@ -1,5 +1,6 @@
 pub mod cadence;
 pub mod icy;
+pub mod ingest_gaps;
 pub mod manager;
 pub mod tap;
 pub mod wav;

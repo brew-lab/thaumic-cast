@@ -148,6 +148,11 @@ pub const JITTER_OVERFLOW_MULTIPLIER: usize = 3;
 /// even when the configured jitter buffer is 0 (pass-through mode).
 pub const MIN_OVERFLOW_CAP: usize = 1;
 
+/// The smoothing (jitter buffer) steps the extension offers for PCM, in ms.
+/// The ingest-gap notice only ever suggests one of these; the wire still
+/// accepts anything from [`MIN_JITTER_BUFFER_MS`] to [`MAX_JITTER_BUFFER_MS`].
+pub const PCM_SMOOTHING_OPTIONS_MS: [u32; 4] = [100, 200, 300, 500];
+
 /// Maximum cadence queue size (frames).
 /// Upper bound on the overflow cap. Calculated using `MIN_FRAME_DURATION_MS`
 /// to ensure the cap can accommodate the configured capacity at the smallest
@@ -168,6 +173,11 @@ pub const DEFAULT_PCM_CONNECT_BURST_MS: u64 = 500;
 /// Maximum PCM connect burst (ms). End-to-end latency grows by the burst, and
 /// the stream's ring must hold this much on top of [`MAX_JITTER_BUFFER_MS`].
 pub const MAX_PCM_CONNECT_BURST_MS: u64 = 2000;
+
+/// The speaker head start (PCM connect burst) steps a speaker notice may
+/// suggest, in ms, ending at [`MAX_PCM_CONNECT_BURST_MS`]. A speaker that
+/// would need more than the last step gets the no-remedy notice instead.
+pub const HEAD_START_LADDER_MS: [u32; 6] = [250, 500, 750, 1000, 1500, 2000];
 
 /// Ring buffer frames a PCM stream keeps for late-joining connections, at
 /// `frame_duration_ms`: enough for the largest connect burst plus the largest
