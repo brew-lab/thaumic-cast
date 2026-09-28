@@ -236,6 +236,12 @@ impl EventEmitter for TauriEventEmitter {
                     },
                 );
             }
+            NetworkEvent::SpeakerHealth { .. } => {
+                // Relayed as the wire event itself (camelCase fields and its
+                // `type` tag): the frontend reads it as the extension does,
+                // and a field added to the event needs no change here.
+                self.emit_to_tauri("speaker-health", &event);
+            }
         }
     }
 

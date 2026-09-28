@@ -152,6 +152,29 @@ pub enum LinkQuality {
     Poor,
 }
 
+/// The speaker monitor's verdict on one speaker's buffer.
+///
+/// Wire strings are part of the client protocol: never rename a variant.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SpeakerHealthState {
+    /// Measuring, but the estimate is not yet precise or settled.
+    Locking,
+    /// The reserve is measured and healthy.
+    Ok,
+    /// The speaker plays faster than the audio arrives and its reserve is
+    /// projected to run out within twenty minutes.
+    Draining,
+    /// The reserve has fallen well below the level it settled at.
+    Low,
+    /// The speaker is known not to be playing.
+    Paused,
+    /// The speaker has stopped answering position polls.
+    Stale,
+    /// The speaker is playing something else.
+    Dormant,
+}
+
 /// Events related to network health and speaker reachability.
 #[derive(Debug, Clone, Serialize)]
 #[serde(tag = "type", rename_all = "camelCase")]
@@ -205,6 +228,68 @@ pub enum NetworkEvent {
             skip_serializing_if = "Option::is_none"
         )]
         suggested_jitter_buffer_ms: Option<u64>,
+        /// Unix timestamp in milliseconds.
+        timestamp: u64,
+    },
+    /// How much audio a speaker fetching one of our streams holds ahead of
+    /// its playhead (its reserve), and how fast that is changing.
+    ///
+    /// Measured by the speaker monitor from the speaker's reported position
+    /// against the audio delivered and acknowledged on its connection. Sent
+    /// with each rolled-up report (every 30 s) and whenever the state
+    /// changes, while the speaker is monitored. Names its stream, so it only
+    /// reaches the client that owns it while the stream is live.
+    ///
+    /// The reserve's absolute zero is not known exactly: figures are best
+    /// read against `target_ms`, the level the reserve settled at once the
+    /// cast began.
+    SpeakerHealth {
+        /// The stream the speaker is fetching.
+        #[serde(rename = "streamId")]
+        stream_id: String,
+        /// The speaker fetching it.
+        #[serde(rename = "speakerIp")]
+        speaker_ip: String,
+        /// The playback epoch of the speaker's current connection.
+        #[serde(rename = "epochId")]
+        epoch_id: u64,
+        /// The monitor's verdict.
+        state: SpeakerHealthState,
+        /// Best estimate of the reserve, in milliseconds of audio delivered.
+        #[serde(rename = "reserveMs", skip_serializing_if = "Option::is_none")]
+        reserve_ms: Option<i32>,
+        /// Half the width of the interval the reserve is known to lie in.
+        #[serde(rename = "reservePrecisionMs", skip_serializing_if = "Option::is_none")]
+        reserve_precision_ms: Option<u32>,
+        /// The lowest the reserve fell to over the last report's window, on
+        /// audio the speaker acknowledged where that is measured.
+        #[serde(rename = "reserveMinMs", skip_serializing_if = "Option::is_none")]
+        reserve_min_ms: Option<i32>,
+        /// The level the reserve stayed above nine tenths of the last
+        /// report's window, on the same basis as `reserve_min_ms`. The low
+        /// state is judged on this.
+        #[serde(rename = "reserveP10Ms", skip_serializing_if = "Option::is_none")]
+        reserve_p10_ms: Option<i32>,
+        /// Whether `reserve_min_ms` and `reserve_p10_ms` are on acknowledged
+        /// audio. Where the platform does not report acknowledgements they
+        /// are the delivered-count estimate.
+        #[serde(rename = "reserveAcked")]
+        reserve_acked: bool,
+        /// The reserve the speaker settled at, which the low state is
+        /// measured against, once learned.
+        #[serde(rename = "targetMs", skip_serializing_if = "Option::is_none")]
+        target_ms: Option<i32>,
+        /// How much faster the speaker plays than audio arrives, in parts
+        /// per million. Positive drains the reserve.
+        #[serde(rename = "clockPpm", skip_serializing_if = "Option::is_none")]
+        clock_ppm: Option<f32>,
+        /// Standard error of `clock_ppm`.
+        #[serde(rename = "clockSePpm", skip_serializing_if = "Option::is_none")]
+        clock_se_ppm: Option<f32>,
+        /// Seconds until the reserve runs out at the measured clock rate,
+        /// when the speaker is measurably draining it.
+        #[serde(rename = "timeToEmptyS", skip_serializing_if = "Option::is_none")]
+        time_to_empty_s: Option<u32>,
         /// Unix timestamp in milliseconds.
         timestamp: u64,
     },
@@ -323,5 +408,91 @@ mod tests {
             wire(SpeakerRemovalReason::SpeakerTakenOver),
             "\"speaker_taken_over\""
         );
+    }
+
+    /// The speaker health event's shape is protocol, shared with the
+    /// extension's zod schema: field names, state strings and which fields
+    /// are left out when unknown.
+    #[test]
+    fn speaker_health_wire_shape() {
+        let event = BroadcastEvent::Network(NetworkEvent::SpeakerHealth {
+            stream_id: "s".into(),
+            speaker_ip: "192.168.1.31".into(),
+            epoch_id: 3,
+            state: SpeakerHealthState::Draining,
+            reserve_ms: Some(512),
+            reserve_precision_ms: Some(34),
+            reserve_min_ms: Some(431),
+            reserve_p10_ms: Some(470),
+            reserve_acked: true,
+            target_ms: Some(540),
+            clock_ppm: Some(39.75),
+            clock_se_ppm: Some(7.25),
+            time_to_empty_s: Some(900),
+            timestamp: 1,
+        });
+        assert_eq!(
+            serde_json::to_value(&event).unwrap(),
+            serde_json::json!({
+                "category": "network",
+                "type": "speakerHealth",
+                "streamId": "s",
+                "speakerIp": "192.168.1.31",
+                "epochId": 3,
+                "state": "draining",
+                "reserveMs": 512,
+                "reservePrecisionMs": 34,
+                "reserveMinMs": 431,
+                "reserveP10Ms": 470,
+                "reserveAcked": true,
+                "targetMs": 540,
+                "clockPpm": 39.75,
+                "clockSePpm": 7.25,
+                "timeToEmptyS": 900,
+                "timestamp": 1,
+            })
+        );
+
+        let locking = BroadcastEvent::Network(NetworkEvent::SpeakerHealth {
+            stream_id: "s".into(),
+            speaker_ip: "192.168.1.31".into(),
+            epoch_id: 3,
+            state: SpeakerHealthState::Locking,
+            reserve_ms: None,
+            reserve_precision_ms: None,
+            reserve_min_ms: None,
+            reserve_p10_ms: None,
+            reserve_acked: false,
+            target_ms: None,
+            clock_ppm: None,
+            clock_se_ppm: None,
+            time_to_empty_s: None,
+            timestamp: 1,
+        });
+        assert_eq!(
+            serde_json::to_value(&locking).unwrap(),
+            serde_json::json!({
+                "category": "network",
+                "type": "speakerHealth",
+                "streamId": "s",
+                "speakerIp": "192.168.1.31",
+                "epochId": 3,
+                "state": "locking",
+                "reserveAcked": false,
+                "timestamp": 1,
+            })
+        );
+    }
+
+    #[test]
+    fn speaker_health_state_wire_strings() {
+        let wire = |s: SpeakerHealthState| serde_json::to_string(&s).unwrap();
+        assert_eq!(wire(SpeakerHealthState::Locking), "\"locking\"");
+        assert_eq!(wire(SpeakerHealthState::Ok), "\"ok\"");
+        assert_eq!(wire(SpeakerHealthState::Draining), "\"draining\"");
+        assert_eq!(wire(SpeakerHealthState::Low), "\"low\"");
+        assert_eq!(wire(SpeakerHealthState::Paused), "\"paused\"");
+        assert_eq!(wire(SpeakerHealthState::Stale), "\"stale\"");
+        assert_eq!(wire(SpeakerHealthState::Dormant), "\"dormant\"");
     }
 }

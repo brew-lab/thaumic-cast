@@ -17,7 +17,9 @@ use tokio_util::sync::CancellationToken;
 
 use crate::api::ws_connection::{is_loopback_ip, ConnectionGuard, WsConnectionManager};
 use crate::api::AppState;
-use crate::events::{BroadcastEvent, LatencyEvent, SonosEvent, SpeakerRemovalReason, StreamEvent};
+use crate::events::{
+    BroadcastEvent, LatencyEvent, NetworkEvent, SonosEvent, SpeakerRemovalReason, StreamEvent,
+};
 use crate::protocol_constants::{
     DEFAULT_JITTER_BUFFER_MS, MAX_FRAME_DURATION_MS, MAX_JITTER_BUFFER_MS, MIN_FRAME_DURATION_MS,
     MIN_JITTER_BUFFER_MS, SILENCE_FRAME_DURATION_MS, SOAP_TIMEOUT_SECS,
@@ -827,10 +829,11 @@ fn session_for_connection(conn: &ConnectionGuard, session: &PlaybackSession) -> 
 /// way out [`redact_foreign_streams`] replaces another client's stream id with
 /// the same opaque alias `INITIAL_STATE` used for it, and blanks the URL.
 ///
-/// `PlaybackStopFailed` and the two latency events are gated on the id still
-/// being *live and someone else's*. Non-owners have no use for them (the
-/// extension resolves them through its own session table and returns early for
-/// ids that are not its own), and the latency pair repeats for the whole cast.
+/// `PlaybackStopFailed`, the two latency events and `SpeakerHealth` are gated
+/// on the id still being *live and someone else's*. Non-owners have no use for
+/// them (the extension resolves them through its own session table and returns
+/// early for ids that are not its own), and the latency pair and speaker health
+/// repeat for the whole cast.
 /// Once the ownership record is released the stream is gone and its id buys
 /// nothing, so they go to everyone, which keeps an owner's own cleanup working
 /// on the paths where release precedes the event.
@@ -847,12 +850,19 @@ fn event_is_visible_to(conn: &ConnectionGuard, event: &BroadcastEvent) -> bool {
         BroadcastEvent::Stream(StreamEvent::PlaybackStopFailed { stream_id, .. })
         | BroadcastEvent::Latency(
             LatencyEvent::Updated { stream_id, .. } | LatencyEvent::Stale { stream_id, .. },
-        ) => !conn.stream_is_owned_by_other(stream_id),
+        )
+        | BroadcastEvent::Network(NetworkEvent::SpeakerHealth { stream_id, .. }) => {
+            !conn.stream_is_owned_by_other(stream_id)
+        }
         // Speaker, network and topology state is shared by everyone casting to
         // the same Sonos system. Sonos events name no stream id, but two of
         // them quote a URI that may *contain* one - see
         // [`redact_foreign_streams`], which runs on the way out.
-        BroadcastEvent::Sonos(_) | BroadcastEvent::Network(_) | BroadcastEvent::Topology(_) => true,
+        BroadcastEvent::Sonos(_)
+        | BroadcastEvent::Network(
+            NetworkEvent::HealthChanged { .. } | NetworkEvent::SpeakerLinkQuality { .. },
+        )
+        | BroadcastEvent::Topology(_) => true,
     }
 }
 
@@ -935,9 +945,9 @@ fn redact_foreign_streams(conn: &ConnectionGuard, event: &mut BroadcastEvent) {
         }
         // Listed rather than wildcarded, so a new event that names a stream or
         // quotes a URI has to be classified here instead of shipping
-        // unscrubbed. The remaining stream and latency events name streams
-        // too, but [`event_is_visible_to`] withholds them from non-owners
-        // while the stream is live.
+        // unscrubbed. The remaining stream, latency and speaker health events
+        // name streams too, but [`event_is_visible_to`] withholds them from
+        // non-owners while the stream is live.
         BroadcastEvent::Sonos(
             SonosEvent::GroupVolume { .. }
             | SonosEvent::GroupMute { .. }
@@ -2540,6 +2550,39 @@ mod tests {
             assert!(event_is_visible_to(&owner, event));
             assert!(!event_is_visible_to(&stranger, event));
         }
+    }
+
+    #[test]
+    fn speaker_health_goes_only_to_the_streams_owner_while_it_is_live() {
+        // Sent every 30 s for every monitored speaker, and it names the stream.
+        let manager = Arc::new(WsConnectionManager::new());
+        let owner = manager.register(addr("192.168.1.9:5001"), None);
+        let stranger = manager.register(addr("192.168.1.20:5002"), None);
+        let stream_id = "11111111-2222-4333-8444-555555555555";
+        owner.claim_stream(stream_id);
+
+        let event = BroadcastEvent::Network(NetworkEvent::SpeakerHealth {
+            stream_id: stream_id.to_string(),
+            speaker_ip: "192.168.1.31".into(),
+            epoch_id: 1,
+            state: crate::events::SpeakerHealthState::Low,
+            reserve_ms: Some(300),
+            reserve_precision_ms: Some(40),
+            reserve_min_ms: Some(120),
+            reserve_p10_ms: Some(180),
+            reserve_acked: true,
+            target_ms: Some(520),
+            clock_ppm: Some(40.0),
+            clock_se_ppm: Some(6.0),
+            time_to_empty_s: Some(4_500),
+            timestamp: 0,
+        });
+
+        assert!(event_is_visible_to(&owner, &event));
+        assert!(!event_is_visible_to(&stranger, &event));
+
+        owner.manager().release_stream(stream_id);
+        assert!(event_is_visible_to(&stranger, &event));
     }
 
     #[test]

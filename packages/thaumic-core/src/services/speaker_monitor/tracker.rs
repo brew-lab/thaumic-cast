@@ -133,6 +133,20 @@ impl MonitorState {
     }
 }
 
+impl From<MonitorState> for crate::events::SpeakerHealthState {
+    fn from(state: MonitorState) -> Self {
+        match state {
+            MonitorState::Locking => Self::Locking,
+            MonitorState::Ok => Self::Ok,
+            MonitorState::Draining => Self::Draining,
+            MonitorState::Low => Self::Low,
+            MonitorState::Paused => Self::Paused,
+            MonitorState::Stale => Self::Stale,
+            MonitorState::Dormant => Self::Dormant,
+        }
+    }
+}
+
 impl std::fmt::Display for MonitorState {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(self.as_str())
@@ -363,6 +377,12 @@ impl ReserveTracker {
     /// The latest reserve estimate of the current segment.
     pub fn last_estimate(&self) -> Option<&ReserveEstimate> {
         self.last.as_ref()
+    }
+
+    /// The acknowledged reserve over the latest report's window, if that
+    /// report produced an estimate.
+    pub fn last_acked(&self) -> Option<AckedReserve> {
+        self.last_acked
     }
 
     /// The clock rate, pooled over every segment so far.
