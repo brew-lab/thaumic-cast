@@ -125,7 +125,8 @@ impl ServerConfig {
     /// Call this again after applying CLI overrides. A zero
     /// `topology_refresh_interval` would panic inside the topology monitor
     /// (`tokio::time::interval` rejects a zero period), and a
-    /// `pcm_connect_burst_ms` above the maximum would be clamped silently. `bind_port` is not
+    /// `pcm_connect_burst_ms` above the maximum would only be clamped, with a warning in the
+    /// log, rather than refused at startup. `bind_port` is not
     /// checked here: `0` is the supported auto-assign sentinel, and any other
     /// `u16` is a bindable port.
     pub fn validate(&self) -> Result<()> {
