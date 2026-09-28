@@ -26,6 +26,7 @@ use tokio::sync::broadcast;
 use super::bounds::PollObservation;
 use super::clock_fit::ClockEstimate;
 use super::reserve::ReserveEstimate;
+use super::segment::SegmentBreak;
 use super::test_support::Lcg;
 use super::tracker::ReserveTracker;
 use crate::stream::cadence::{create_wav_stream_with_cadence, CadenceConfig, LoggingStreamGuard};
@@ -89,6 +90,8 @@ pub(crate) struct SimEstimate {
     pub clock: Option<ClockEstimate>,
     /// The tracker's projected time to empty.
     pub time_to_empty_s: Option<f64>,
+    /// The segment break the estimate revealed, if any.
+    pub brk: Option<SegmentBreak>,
 }
 
 /// What a simulation run saw.
@@ -272,13 +275,14 @@ impl SimSpeaker {
             }
 
             if now >= next_estimate {
-                let (reserve, _) = tracker.estimate(now);
+                let (reserve, brk) = tracker.estimate(now);
                 report.estimates.push(SimEstimate {
                     at: now,
                     reserve,
                     true_reserve_ms: delivered - playback.playhead_at(now),
                     clock: tracker.clock(),
                     time_to_empty_s: tracker.time_to_empty_s(),
+                    brk,
                 });
                 next_estimate += ESTIMATE_EVERY_MS;
             }
@@ -374,6 +378,35 @@ mod tests {
             dry_at - warned_at >= 5.0 * MINUTE,
             "projected only {:.1} min ahead",
             (dry_at - warned_at) / MINUTE
+        );
+    }
+
+    /// A speaker that runs dry refills its prebuffer before playing on: its
+    /// playhead stalls for as long as the prebuffer lasts, and the reserve
+    /// steps up by as much. The monitor must report that as a suspected
+    /// underrun, once, and nothing before it.
+    #[tokio::test(start_paused = true)]
+    async fn running_dry_is_reported_as_a_suspected_underrun() {
+        let speaker = SimSpeaker {
+            clock_ppm: 100.0,
+            prebuffer_ms: 300.0,
+            tick_jitter_ms: 50.0,
+            seed: 9,
+            ..SimSpeaker::default()
+        };
+        let report = speaker.run(65.0, false).await;
+        // 300 ms at 6 ms/min is 50 minutes.
+        let dry_at = *report.underruns.first().expect("the speaker runs dry");
+        assert_eq!(report.underruns.len(), 1, "{:?}", report.underruns);
+        let steps: Vec<f64> = report
+            .estimates
+            .iter()
+            .filter(|e| e.brk == Some(SegmentBreak::OffsetStep))
+            .map(|e| e.at)
+            .collect();
+        assert!(
+            steps.len() == 1 && steps[0] > dry_at && steps[0] - dry_at <= 6.0 * MINUTE,
+            "offset steps at {steps:?} ms, ran dry at {dry_at:.0} ms"
         );
     }
 
