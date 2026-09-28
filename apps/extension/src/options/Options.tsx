@@ -1,4 +1,5 @@
 import type { JSX } from 'preact';
+import { useMemo } from 'preact/hooks';
 import { useTranslation } from 'react-i18next';
 import { ServerSection } from './components/ServerSection';
 import { AudioSection } from './components/AudioSection';
@@ -8,6 +9,7 @@ import { AdvancedSection } from './components/AdvancedSection';
 import { AboutSection } from './components/AboutSection';
 import { useExtensionSettings } from './hooks/useExtensionSettings';
 import { useCodecSupport } from './hooks/useCodecSupport';
+import { useConnectionStatus } from '../popup/hooks/useConnectionStatus';
 import styles from './Options.module.css';
 
 /**
@@ -19,6 +21,11 @@ export function Options(): JSX.Element {
   const { t } = useTranslation();
   const { settings, updateSettings, loading: settingsLoading } = useExtensionSettings();
   const { codecSupport, loading: codecLoading } = useCodecSupport();
+  const connection = useConnectionStatus();
+  const companion = useMemo(
+    () => ({ companionAudio: connection.companionAudio, appType: connection.appType }),
+    [connection.companionAudio, connection.appType],
+  );
 
   if (settingsLoading) {
     return (
@@ -46,11 +53,12 @@ export function Options(): JSX.Element {
         onUpdate={updateSettings}
         codecSupport={codecSupport}
         codecLoading={codecLoading}
+        companion={companion}
       />
 
       <AdvancedSection settings={settings} onUpdate={updateSettings} />
 
-      <AboutSection />
+      <AboutSection connection={connection} />
     </div>
   );
 }

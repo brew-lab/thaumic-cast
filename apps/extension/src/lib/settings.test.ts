@@ -2,9 +2,12 @@ import { afterEach, beforeEach, describe, expect, it, spyOn } from 'bun:test';
 
 import { chromeStorageData, resetChromeStub } from '../test-support/chrome-stub';
 import {
+  AUDIO_SETTINGS_VERSION,
   getDefaultExtensionSettings,
   loadExtensionSettings,
+  migrateAudioSettingsV2,
   saveExtensionSettings,
+  snapToSmoothingOption,
   type ExtensionSettings,
 } from './settings';
 
@@ -193,5 +196,140 @@ describe('saveExtensionSettings', () => {
     });
 
     expect(saved.customAudioSettings.bitrate).toBe(64);
+  });
+});
+
+describe('migrateAudioSettingsV2', () => {
+  /** A version 1 custom-mode profile with the given stored jitter buffer. */
+  function customV1(jitterBufferMs: unknown, extra: Record<string, unknown> = {}) {
+    return {
+      audioMode: 'custom',
+      customAudioSettings: customAudio({ jitterBufferMs, ...extra }),
+    };
+  }
+
+  it('should snap 1000 down to 500', () => {
+    const migrated = migrateAudioSettingsV2(customV1(1000));
+
+    expect(migrated.pcmSmoothingMs).toBe(500);
+    expect(migrated.smoothingMigrationNotice).toEqual({ from: 1000, to: 500 });
+  });
+
+  it('should keep 500 and 300', () => {
+    for (const ms of [500, 300, 200, 100]) {
+      const migrated = migrateAudioSettingsV2(customV1(ms));
+      expect(migrated.pcmSmoothingMs).toBe(ms);
+      expect(migrated.smoothingMigrationNotice).toBeNull();
+    }
+  });
+
+  it('should snap 150 up to 200', () => {
+    expect(migrateAudioSettingsV2(customV1(150)).pcmSmoothingMs).toBe(200);
+    expect(migrateAudioSettingsV2(customV1(400)).pcmSmoothingMs).toBe(500);
+    expect(migrateAudioSettingsV2(customV1(260)).pcmSmoothingMs).toBe(300);
+  });
+
+  it('should give every Quality preset user 300 ms', () => {
+    for (const audioMode of ['high', 'mid']) {
+      for (const server of [
+        { useAutoDiscover: true, serverUrl: null },
+        { useAutoDiscover: false, serverUrl: 'http://192.168.1.20:49400' },
+      ]) {
+        const migrated = migrateAudioSettingsV2({ audioMode, ...server });
+        expect(migrated.pcmSmoothingMs).toBe(300);
+        expect(migrated.smoothingMigrationNotice).toEqual({ from: 500, to: 300 });
+      }
+    }
+  });
+
+  it('should treat a missing or invalid mode as the default Quality preset', () => {
+    expect(migrateAudioSettingsV2({}).pcmSmoothingMs).toBe(300);
+    expect(migrateAudioSettingsV2({ audioMode: 'turbo' }).pcmSmoothingMs).toBe(300);
+  });
+
+  it('should keep the Realtime preset at 200 ms without a notice', () => {
+    const migrated = migrateAudioSettingsV2({ audioMode: 'low' });
+
+    expect(migrated.pcmSmoothingMs).toBe(200);
+    expect(migrated.smoothingMigrationNotice).toBeNull();
+  });
+
+  it('should set the migration notice only when the value changed', () => {
+    expect(migrateAudioSettingsV2(customV1(200)).smoothingMigrationNotice).toBeNull();
+    expect(migrateAudioSettingsV2(customV1(undefined)).smoothingMigrationNotice).toBeNull();
+    expect(migrateAudioSettingsV2(customV1(1000)).smoothingMigrationNotice).not.toBeNull();
+  });
+
+  it('should carry a custom frame size over and give presets the default', () => {
+    expect(migrateAudioSettingsV2(customV1(200, { frameDurationMs: 40 })).pcmFrameDurationMs).toBe(
+      40,
+    );
+    expect(migrateAudioSettingsV2(customV1(200, { frameDurationMs: 33 })).pcmFrameDurationMs).toBe(
+      10,
+    );
+    expect(migrateAudioSettingsV2({ audioMode: 'high' }).pcmFrameDurationMs).toBe(10);
+  });
+
+  it('should leave settings already on version 2 untouched', () => {
+    const current = { audioMode: 'high', pcmSmoothingMs: 100, audioSettingsVersion: 2 };
+
+    expect(migrateAudioSettingsV2(current)).toBe(current);
+  });
+});
+
+describe('snapToSmoothingOption', () => {
+  it('should take the nearest step, going up on ties and clamping at both ends', () => {
+    expect(snapToSmoothingOption(50)).toBe(100);
+    expect(snapToSmoothingOption(150)).toBe(200);
+    expect(snapToSmoothingOption(250)).toBe(300);
+    expect(snapToSmoothingOption(399)).toBe(300);
+    expect(snapToSmoothingOption(400)).toBe(500);
+    expect(snapToSmoothingOption(2000)).toBe(500);
+  });
+});
+
+describe('loadExtensionSettings audio migration', () => {
+  it('should migrate a version 1 profile and persist it so it runs once', async () => {
+    storeSettings({
+      audioMode: 'custom',
+      customAudioSettings: customAudio({ jitterBufferMs: 1000 }),
+    });
+
+    const settings = await loadExtensionSettings();
+
+    expect(settings.pcmSmoothingMs).toBe(500);
+    expect(settings.smoothingMigrationNotice).toEqual({ from: 1000, to: 500 });
+    expect(settings.audioSettingsVersion).toBe(AUDIO_SETTINGS_VERSION);
+    expect('jitterBufferMs' in settings.customAudioSettings).toBe(false);
+    expect(chromeStorageData.local[SETTINGS_KEY]).toEqual(settings);
+  });
+
+  it('should keep smoothing independent of the mode once migrated', async () => {
+    storeSettings({ audioMode: 'high' });
+    await loadExtensionSettings();
+
+    await saveExtensionSettings({ pcmSmoothingMs: 100 });
+    const saved = await saveExtensionSettings({ audioMode: 'low' });
+
+    expect(saved.pcmSmoothingMs).toBe(100);
+    expect((await loadExtensionSettings()).pcmSmoothingMs).toBe(100);
+  });
+
+  it('should keep a dismissed notice dismissed', async () => {
+    storeSettings({ audioMode: 'mid' });
+    await loadExtensionSettings();
+
+    await saveExtensionSettings({ smoothingMigrationNotice: null });
+
+    expect((await loadExtensionSettings()).smoothingMigrationNotice).toBeNull();
+  });
+
+  it('should give a fresh install the defaults with no notice', async () => {
+    chromeStorageData.local[MIGRATION_KEY] = true;
+
+    const settings = await loadExtensionSettings();
+
+    expect(settings.pcmSmoothingMs).toBe(200);
+    expect(settings.smoothingMigrationNotice).toBeNull();
   });
 });

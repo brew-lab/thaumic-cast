@@ -181,6 +181,7 @@
 .resolved-row {
   display: flex;
   justify-content: space-between;
+  gap: var(--space-md);
   padding-block: var(--space-xs);
 }
 
@@ -192,6 +193,12 @@
 .resolved-value {
   font-size: 0.875rem;
   font-weight: 500;
+  text-align: end;
+}
+
+/* Advanced audio options, linked to from the popup */
+.advanced-anchor {
+  scroll-margin-block-start: var(--space-lg);
 }
 
 /* Divider */

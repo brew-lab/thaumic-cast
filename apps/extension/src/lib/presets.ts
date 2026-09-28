@@ -8,6 +8,7 @@
 
 import type {
   EncoderConfig,
+  FrameDurationMs,
   LatencyMode,
   SupportedCodecsResult,
   DynamicPresets,
@@ -17,8 +18,8 @@ import {
   CODEC_METADATA,
   DEFAULT_BITS_PER_SAMPLE,
   FRAME_DURATION_MS_DEFAULT,
+  PCM_SMOOTHING_DEFAULT_MS,
   generateDynamicPresets,
-  getStreamingPolicy,
   getSupportedSampleRates,
 } from '@thaumic-cast/protocol';
 import { createLogger } from '@thaumic-cast/shared';
@@ -26,19 +27,37 @@ import type { AudioMode, CustomAudioSettings } from './settings';
 
 const log = createLogger('Presets');
 
+/**
+ * Stream settings that apply to PCM in every mode, preset or custom.
+ */
+export interface PcmStreamOptions {
+  /** Smoothing the companion holds back, in milliseconds (sent as `jitterBufferMs`). */
+  smoothingMs: number;
+  /** Audio per message from the browser, in milliseconds. */
+  frameDurationMs: FrameDurationMs;
+}
+
+/** PCM stream settings used when none are given. */
+const DEFAULT_PCM_OPTIONS: PcmStreamOptions = {
+  smoothingMs: PCM_SMOOTHING_DEFAULT_MS,
+  frameDurationMs: FRAME_DURATION_MS_DEFAULT,
+};
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Helper Functions
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
  * Builds an encoder config from custom audio settings.
- * Applies defaults for optional fields (bitsPerSample, jitterBufferMs, frameDurationMs).
+ * Applies defaults for optional fields (bitsPerSample).
  * @param customSettings - The custom audio settings from user preferences
+ * @param pcm - Smoothing and frame size, which apply in every mode
  * @returns A complete encoder config
  */
-function buildConfigFromCustomSettings(customSettings: CustomAudioSettings): EncoderConfig {
-  const policy = getStreamingPolicy(customSettings.latencyMode);
-
+function buildConfigFromCustomSettings(
+  customSettings: CustomAudioSettings,
+  pcm: PcmStreamOptions,
+): EncoderConfig {
   return {
     codec: customSettings.codec,
     bitrate: customSettings.bitrate,
@@ -46,8 +65,8 @@ function buildConfigFromCustomSettings(customSettings: CustomAudioSettings): Enc
     sampleRate: customSettings.sampleRate,
     bitsPerSample: customSettings.bitsPerSample ?? DEFAULT_BITS_PER_SAMPLE,
     latencyMode: customSettings.latencyMode,
-    jitterBufferMs: customSettings.jitterBufferMs ?? policy.jitterBufferMs,
-    frameDurationMs: customSettings.frameDurationMs ?? FRAME_DURATION_MS_DEFAULT,
+    jitterBufferMs: pcm.smoothingMs,
+    frameDurationMs: pcm.frameDurationMs,
     // frameSizeSamples is computed by the audio worker based on codec-optimal frame size
   };
 }
@@ -59,14 +78,16 @@ function buildConfigFromCustomSettings(customSettings: CustomAudioSettings): Enc
 /**
  * Gets the ultimate fallback configuration using any available codec.
  * @param codecSupport - Runtime codec support info
+ * @param pcm - Smoothing and frame size, which apply in every mode
  * @returns A fallback encoder config, or null if no codecs available
  */
-function getFallbackConfig(codecSupport: SupportedCodecsResult): EncoderConfig | null {
+function getFallbackConfig(
+  codecSupport: SupportedCodecsResult,
+  pcm: PcmStreamOptions,
+): EncoderConfig | null {
   if (!codecSupport.defaultCodec || codecSupport.defaultBitrate === null) {
     return null;
   }
-
-  const policy = getStreamingPolicy('quality');
 
   return {
     codec: codecSupport.defaultCodec,
@@ -75,8 +96,8 @@ function getFallbackConfig(codecSupport: SupportedCodecsResult): EncoderConfig |
     channels: 2,
     bitsPerSample: DEFAULT_BITS_PER_SAMPLE,
     latencyMode: 'quality',
-    jitterBufferMs: policy.jitterBufferMs,
-    frameDurationMs: FRAME_DURATION_MS_DEFAULT,
+    jitterBufferMs: pcm.smoothingMs,
+    frameDurationMs: pcm.frameDurationMs,
     // frameSizeSamples is computed by the audio worker based on codec-optimal frame size
   };
 }
@@ -85,6 +106,9 @@ function getFallbackConfig(codecSupport: SupportedCodecsResult): EncoderConfig |
  * Picks the best sample rate for a codec based on tier preference.
  * - High/Balanced: prefer 48kHz (best quality)
  * - Low: prefer 44.1kHz (lower bandwidth)
+ *
+ * PCM goes out at the capture track's native rate whatever is picked here, so
+ * callers never ask it for the lower rate.
  *
  * @param codec - The audio codec
  * @param codecSupport - Runtime codec support info
@@ -126,19 +150,20 @@ function pickSampleRate(
  * @param latencyMode - The latency mode controls both encoder and streaming behavior:
  *   - 'quality': 10s ring buffer, no catch-up drops, pause on backpressure (for music)
  *   - 'realtime': 3s ring buffer, bounded latency with drops, drop on backpressure (for sync)
+ * @param pcm - Smoothing and frame size, which apply in every mode
  * @returns A complete encoder config
  */
 function buildConfigFromOption(
   option: ScoredCodecOption,
   codecSupport: SupportedCodecsResult,
   tier: 'high' | 'mid' | 'low',
-  latencyMode: LatencyMode = 'quality',
+  latencyMode: LatencyMode,
+  pcm: PcmStreamOptions,
 ): EncoderConfig {
-  const sampleRate = pickSampleRate(option.codec, codecSupport, tier === 'low');
+  const preferLowerRate = tier === 'low' && option.codec !== 'pcm';
+  const sampleRate = pickSampleRate(option.codec, codecSupport, preferLowerRate);
   // Low tier uses mono for bandwidth savings
   const channels: 1 | 2 = tier === 'low' ? 1 : 2;
-  // Use policy-defined jitter buffer for server-side jitter tolerance
-  const policy = getStreamingPolicy(latencyMode);
 
   return {
     codec: option.codec,
@@ -147,8 +172,8 @@ function buildConfigFromOption(
     channels,
     bitsPerSample: DEFAULT_BITS_PER_SAMPLE,
     latencyMode,
-    jitterBufferMs: policy.jitterBufferMs,
-    frameDurationMs: FRAME_DURATION_MS_DEFAULT,
+    jitterBufferMs: pcm.smoothingMs,
+    frameDurationMs: pcm.frameDurationMs,
     // frameSizeSamples is computed by the audio worker based on codec-optimal frame size
   };
 }
@@ -177,6 +202,7 @@ function getPresetForMode(
  * @param mode - The audio quality mode
  * @param codecSupport - Runtime codec support info from detectSupportedCodecs()
  * @param customSettings - Custom settings (required if mode is 'custom')
+ * @param pcm - Smoothing and frame size, which apply in every mode
  * @returns The resolved encoder configuration
  * @throws Error if no supported codecs are found
  */
@@ -184,6 +210,7 @@ export function resolveAudioMode(
   mode: AudioMode,
   codecSupport: SupportedCodecsResult,
   customSettings?: CustomAudioSettings,
+  pcm: PcmStreamOptions = DEFAULT_PCM_OPTIONS,
 ): EncoderConfig {
   // Custom mode: use user-provided settings
   if (mode === 'custom' && customSettings) {
@@ -194,7 +221,7 @@ export function resolveAudioMode(
     );
 
     if (isSupported) {
-      return buildConfigFromCustomSettings(customSettings);
+      return buildConfigFromCustomSettings(customSettings, pcm);
     }
 
     // Custom settings not supported - fall back to mid preset
@@ -212,7 +239,7 @@ export function resolveAudioMode(
   if (option) {
     // Use realtime latency for low preset
     const latencyMode: LatencyMode = presetMode === 'low' ? 'realtime' : 'quality';
-    const config = buildConfigFromOption(option, codecSupport, presetMode, latencyMode);
+    const config = buildConfigFromOption(option, codecSupport, presetMode, latencyMode, pcm);
     log.info(
       `Resolved ${mode} preset: ${option.codec} @ ${option.bitrate}kbps @ ${config.sampleRate}Hz (score: ${option.score})`,
     );
@@ -221,7 +248,7 @@ export function resolveAudioMode(
 
   // No preset option available - try fallback
   log.warn(`No options available for ${mode} preset, using fallback`);
-  const fallback = getFallbackConfig(codecSupport);
+  const fallback = getFallbackConfig(codecSupport, pcm);
 
   if (fallback) {
     return fallback;
@@ -236,12 +263,14 @@ export function resolveAudioMode(
  * @param mode - The audio quality mode
  * @param codecSupport - Runtime codec support info
  * @param customSettings - Custom settings (for custom mode)
+ * @param pcm - Smoothing and frame size, which apply in every mode
  * @returns The resolved encoder config for display purposes
  */
 export function getResolvedConfigForDisplay(
   mode: AudioMode,
   codecSupport: SupportedCodecsResult,
   customSettings?: CustomAudioSettings,
+  pcm: PcmStreamOptions = DEFAULT_PCM_OPTIONS,
 ): EncoderConfig | null {
   const dynamicPresets = generateDynamicPresets(codecSupport);
 
@@ -251,7 +280,7 @@ export function getResolvedConfigForDisplay(
     );
 
     if (isSupported) {
-      return buildConfigFromCustomSettings(customSettings);
+      return buildConfigFromCustomSettings(customSettings, pcm);
     }
     return null;
   }
@@ -261,10 +290,10 @@ export function getResolvedConfigForDisplay(
 
   if (option) {
     const latencyMode: LatencyMode = presetMode === 'low' ? 'realtime' : 'quality';
-    return buildConfigFromOption(option, codecSupport, presetMode, latencyMode);
+    return buildConfigFromOption(option, codecSupport, presetMode, latencyMode, pcm);
   }
 
-  return getFallbackConfig(codecSupport);
+  return getFallbackConfig(codecSupport, pcm);
 }
 
 /**

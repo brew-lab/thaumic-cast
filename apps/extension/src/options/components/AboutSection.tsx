@@ -4,21 +4,22 @@ import { useTranslation } from 'react-i18next';
 import { Button, Card } from '@thaumic-cast/ui';
 import { GITHUB_RELEASES_URL } from '@thaumic-cast/shared';
 import { companionTypeLabelKey, hasVersionMismatch } from '../../lib/versionCheck';
-import { useConnectionStatus } from '../../popup/hooks/useConnectionStatus';
+import type { ConnectionStatus } from '../../popup/hooks/useConnectionStatus';
 import styles from '../Options.module.css';
 
 /**
  * About section showing extension information and — when the extension is
  * connected to a desktop app or server — that companion's reported version
- * metadata. Reads from `useConnectionStatus` (backed by `connectionState`),
- * which is populated by `/health` at discovery and `INITIAL_STATE` on
- * WebSocket connect.
+ * metadata. Reads the options page's `useConnectionStatus` (backed by
+ * `connectionState`), which is populated by `/health` at discovery and
+ * `INITIAL_STATE` on WebSocket connect.
+ * @param root0
+ * @param root0.connection - The options page's connection status
  * @returns The about section element
  */
-export function AboutSection(): JSX.Element {
+export function AboutSection({ connection }: { connection: ConnectionStatus }): JSX.Element {
   const { t } = useTranslation();
   const version = chrome.runtime.getManifest().version;
-  const connection = useConnectionStatus();
 
   const handleOpenReleases = useCallback(() => {
     chrome.tabs.create({ url: GITHUB_RELEASES_URL });
