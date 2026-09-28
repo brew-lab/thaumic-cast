@@ -18,9 +18,10 @@
 //!   link caused it. Suggests the smallest step of
 //!   [`HEAD_START_LADDER_MS`] that would have covered it.
 //! - **Head start close** ([`SpeakerNoticeKind::HeadStartClose`]): a stall
-//!   left less than half the floor in hand, without an underrun.
-//! - **No remedy** ([`SpeakerNoticeKind::HeadStartNoRemedy`]): either of
-//!   the two, but even the longest head start would not have covered it.
+//!   left less than half the floor in hand, without an underrun, and a
+//!   longer step would have left room to spare.
+//! - **No remedy** ([`SpeakerNoticeKind::HeadStartNoRemedy`]): the head
+//!   start ran out, but even the longest would not have covered it.
 //! - **Running low** ([`SpeakerNoticeKind::RunningLow`]): the reserve
 //!   itself, not a stall's dip, is below the floor.
 //! - **Drift uncorrected** ([`SpeakerNoticeKind::DriftUncorrected`]): the
@@ -28,10 +29,13 @@
 //!   within half an hour, with nothing correcting it.
 //!
 //! Head-start kinds exist only for PCM connections, whose head start is
-//! known, and stand for the rest of the cast once raised. Each episode gets
-//! a `notice_id` that stays the same while it is repeated, so a client can
-//! dismiss it once; the id changes only on a new episode or an escalation
-//! (close to ran out, or a larger suggestion), which a client shows again.
+//! known, and stand for the rest of the cast once raised, until a
+//! reconnection gets a longer head start than the one they were about. A
+//! compressed connection is judged for running low as if its head start
+//! were off. Each episode gets a `notice_id` that stays the same while it
+//! is repeated, so a client can dismiss it once; the id changes only on a
+//! new episode or an escalation (close to ran out, or a larger suggestion),
+//! which a client shows again.
 
 use std::time::{Duration, Instant};
 
@@ -69,7 +73,7 @@ pub enum SpeakerNoticeKind {
     HeadStartRanOut,
     /// A stall nearly outlasted the speaker head start.
     HeadStartClose,
-    /// A stall that the longest head start would not have covered either.
+    /// A cut-out that the longest head start would not have covered either.
     HeadStartNoRemedy,
     /// The reserve itself is below the floor.
     RunningLow,
@@ -156,8 +160,9 @@ pub struct SpeakerNotice {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub minutes: Option<u32>,
     /// Whether stopping and restarting the cast refills the speaker: only
-    /// when its connection got the whole configured head start, since a
-    /// restart gives a partial one the same partial burst again.
+    /// when its connection got the whole configured head start, and that is
+    /// not off, since a restart gives a partial one the same partial burst
+    /// again and one that is off nothing.
     pub restart_helps: bool,
 }
 
@@ -177,7 +182,8 @@ pub struct NoticeInput {
     /// break, judged when [`Self::offset_step`] is set.
     pub pre_break: Option<PreBreak>,
     /// The speaker head start the connection was sent; `None` for a
-    /// compressed connection, which gets no head-start notices.
+    /// compressed connection, which gets no head-start notices and is judged
+    /// for running low against the floor of a head start that is off.
     pub head_start: Option<HeadStart>,
     /// How far the worst acknowledgement lag of this window stood above its
     /// median, in ms.
@@ -206,7 +212,9 @@ struct HeadStartFinding {
 /// The smallest step of [`HEAD_START_LADDER_MS`] above `current_ms` that
 /// keeps the speaker at or above its own floor after losing `needed_ms` to a
 /// stall: the step `s` with `s − low_floor_ms(s) ≥ needed_ms`. `None` when
-/// no step does.
+/// no step does. Pass the larger of the head start sent and the one
+/// configured, so a partial burst never draws a suggestion below the setting
+/// the user already has.
 pub fn suggest_head_start_ms(needed_ms: f64, current_ms: u32) -> Option<u32> {
     HEAD_START_LADDER_MS
         .iter()
@@ -226,19 +234,22 @@ fn find_head_start(input: &NoticeInput) -> Option<HeadStartFinding> {
             || (h.sent_ms > 0 && input.link_poor)
     };
     let acked_min = input.acked.filter(|_| input.locked).map(|a| a.min_ms);
+    // What a stall held back: what the head start lost to reach `min`, or
+    // the measured stall where that is larger. With the head start off the
+    // arithmetic figure is only the depth below zero (or nothing at all),
+    // while the stall says how long the speaker went without audio.
+    let held_back = |min: f64| (head_start - min).max(input.stall_ms.unwrap_or(0.0));
 
-    let (kind, stall, left, needed) = match acked_min {
+    let (kind, stall, left) = match acked_min {
         Some(min) if min < 0.0 => {
             if !caused(input.stall_ms, 0.5 * head_start) {
                 return None;
             }
             // It had the head start, and the stall took all of it and more.
-            let held_back = head_start - min;
             (
                 SpeakerNoticeKind::HeadStartRanOut,
-                held_back,
+                held_back(min),
                 Some(min),
-                held_back,
             )
         }
         _ if input.offset_step => {
@@ -254,35 +265,38 @@ fn find_head_start(input: &NoticeInput) -> Option<HeadStartFinding> {
             if !caused(stall, 0.5 * head_start) {
                 return None;
             }
-            let stall = stall.unwrap_or(0.0);
-            (SpeakerNoticeKind::HeadStartRanOut, stall, None, stall)
+            // A speaker that underran lost at least its whole head start,
+            // whatever stall was measured (a poor link alone can cause it).
+            (
+                SpeakerNoticeKind::HeadStartRanOut,
+                stall.unwrap_or(0.0).max(head_start),
+                None,
+            )
         }
         Some(min) if min < floor / 2.0 => {
-            let held_back = head_start - min;
             // Only a stall that took a good part of what it had: a speaker
             // that settled this low has nothing to do with the head start.
             if !input
                 .stall_ms
-                .is_some_and(|s| s >= (0.5 * held_back).max(MIN_NOTICE_STALL_MS))
+                .is_some_and(|s| s >= (0.5 * (head_start - min)).max(MIN_NOTICE_STALL_MS))
             {
                 return None;
             }
-            (
-                SpeakerNoticeKind::HeadStartClose,
-                held_back,
-                Some(min),
-                held_back,
-            )
+            (SpeakerNoticeKind::HeadStartClose, held_back(min), Some(min))
         }
         _ => return None,
     };
-    let suggested = suggest_head_start_ms(needed, h.sent_ms);
+    let suggested = suggest_head_start_ms(stall, h.sent_ms.max(h.configured_ms));
+    let kind = match (kind, suggested) {
+        (_, Some(_)) => kind,
+        // A close call no step would have eased: the speaker did not cut
+        // out, and the no-remedy wording says the stall beat the head start.
+        // If it does cut out, ran out (as no remedy) follows.
+        (SpeakerNoticeKind::HeadStartClose, None) => return None,
+        (_, None) => SpeakerNoticeKind::HeadStartNoRemedy,
+    };
     Some(HeadStartFinding {
-        kind: if suggested.is_some() {
-            kind
-        } else {
-            SpeakerNoticeKind::HeadStartNoRemedy
-        },
+        kind,
         stall_ms: stall,
         left_ms: left,
         head_start_ms: h.sent_ms,
@@ -335,10 +349,23 @@ impl NoticeState {
     /// notice standing after it, to go out with the report. The same notice
     /// comes back, under the same id, until it clears or escalates.
     pub fn update(&mut self, now: Instant, input: &NoticeInput) -> Option<SpeakerNotice> {
-        let restart_helps = input.head_start.is_some_and(|h| h.is_full());
+        // With the head start off a restart refills nothing.
+        let restart_helps = input
+            .head_start
+            .is_some_and(|h| h.is_full() && h.sent_ms > 0);
 
-        // Head-start kinds stand for the rest of the cast, and replace
-        // anything less urgent at once.
+        // A reconnection that got a longer head start than the standing
+        // notice was about has taken its advice: the old suggestion no
+        // longer applies.
+        if let (Some(a), Some(h)) = (self.active, input.head_start) {
+            if a.kind.is_head_start() && a.head_start_ms.is_some_and(|old| h.sent_ms > old) {
+                self.active = None;
+            }
+        }
+
+        // Head-start kinds stand for the rest of the cast (unless a longer
+        // head start replaces them), and replace anything less urgent at
+        // once.
         if let Some(found) = find_head_start(input) {
             let escalates = match self.active {
                 Some(a) if a.kind.is_head_start() => {
@@ -382,14 +409,16 @@ impl NoticeState {
             return self.active;
         }
 
-        // Running low, which a drift notice gives way to.
-        let floor = input.head_start.map(|h| low_floor_ms(h.sent_ms));
-        let low = floor.is_some_and(|f| running_low(input, f));
+        // Running low, which a drift notice gives way to. A compressed
+        // connection has no head start, so it is judged as one with the head
+        // start off.
+        let sent_ms = input.head_start.map_or(0, |h| h.sent_ms);
+        let low = running_low(input, low_floor_ms(sent_ms));
         if self
             .active
             .is_some_and(|a| a.kind == SpeakerNoticeKind::RunningLow)
         {
-            let clear = input.head_start.map_or(0.0, |h| low_clear_ms(h.sent_ms));
+            let clear = low_clear_ms(sent_ms);
             let above = input.locked && input.acked.is_some_and(|a| a.p10_ms > clear);
             if !above {
                 self.above_clear_since = None;
@@ -656,17 +685,145 @@ mod tests {
             .expect("ran out");
         assert_eq!(n.kind, SpeakerNoticeKind::HeadStartRanOut);
         assert_eq!(n.head_start_ms, Some(0));
-        // 15 ms held back beyond the start: 250 leaves 175 above its floor.
+        // The stall, not just the 15 ms depth below zero, is what it lost:
+        // 250 leaves 175 above its floor, which covers 90.
+        assert_eq!(n.stall_ms, Some(90));
+        assert_eq!(n.left_ms, Some(-15));
         assert_eq!(n.suggested_head_start_ms, Some(250));
     }
 
     #[test]
-    fn no_head_start_notice_for_compressed() {
+    fn h0_close_reports_the_measured_stall() {
+        // Head start off, a 60 ms stall, and the reserve down to 5 ms: the
+        // arithmetic figure (0 − 5) is below zero, the stall is not.
         let input = NoticeInput {
+            locked: true,
+            acked: acked(5.0, 45.0, 60.0, Some(60.0)),
+            head_start: full(0),
+            stall_ms: Some(60.0),
+            ..NoticeInput::default()
+        };
+        let n = NoticeState::new()
+            .update(Instant::now(), &input)
+            .expect("close");
+        assert_eq!(n.kind, SpeakerNoticeKind::HeadStartClose);
+        assert_eq!(n.stall_ms, Some(60));
+        assert_eq!(n.head_start_ms, Some(0));
+        assert_eq!(n.suggested_head_start_ms, Some(250));
+    }
+
+    #[test]
+    fn step_from_a_poor_link_alone_reports_at_least_the_head_start() {
+        // An underrun step with only a small stall measured, or none: the
+        // poor link caused it, and the speaker lost at least its head start.
+        for stall in [None, Some(5.0), Some(300.0)] {
+            let input = NoticeInput {
+                locked: false,
+                offset_step: true,
+                head_start: full(500),
+                stall_ms: stall,
+                link_poor: true,
+                ..NoticeInput::default()
+            };
+            let n = NoticeState::new()
+                .update(Instant::now(), &input)
+                .expect("ran out");
+            assert_eq!(n.kind, SpeakerNoticeKind::HeadStartRanOut);
+            assert_eq!(n.stall_ms, Some(500), "stall {stall:?}");
+            assert!(n.stall_ms >= n.head_start_ms);
+            // 750 less its 150 ms floor leaves 600, which covers 500.
+            assert_eq!(n.suggested_head_start_ms, Some(750));
+        }
+    }
+
+    #[test]
+    fn a_close_call_no_step_eases_is_no_notice() {
+        // At the longest head start a close call has nothing to suggest, and
+        // the speaker did not cut out.
+        let input = NoticeInput {
+            head_start: full(2_000),
+            acked: acked(40.0, 1_500.0, 1_900.0, Some(1_900.0)),
+            stall_ms: Some(1_900.0),
+            ..report(0.0, 0.0, 0.0, None)
+        };
+        assert_eq!(NoticeState::new().update(Instant::now(), &input), None);
+    }
+
+    #[test]
+    fn suggestion_is_above_the_configured_head_start_too() {
+        // A partial burst of 400 out of 1000 configured: 750 would cover the
+        // stall, but it is less than the user already has.
+        let input = NoticeInput {
+            head_start: Some(HeadStart {
+                sent_ms: 400,
+                configured_ms: 1_000,
+            }),
+            acked: acked(-100.0, 300.0, 380.0, Some(450.0)),
+            stall_ms: Some(450.0),
+            ..report(0.0, 0.0, 0.0, None)
+        };
+        let n = NoticeState::new()
+            .update(Instant::now(), &input)
+            .expect("ran out");
+        assert_eq!(n.stall_ms, Some(500));
+        assert_eq!(n.suggested_head_start_ms, Some(1_500));
+    }
+
+    #[test]
+    fn a_longer_head_start_on_reconnection_clears_the_notice() {
+        let mut state = NoticeState::new();
+        let t0 = Instant::now();
+        let n = state
+            .update(t0, &report(-21.0, 380.0, 470.0, Some(480.0)))
+            .expect("ran out");
+        assert_eq!(n.suggested_head_start_ms, Some(750));
+        // The same head start again: it stands.
+        assert_eq!(
+            state.update(t0 + Duration::from_secs(30), &healthy()),
+            Some(n)
+        );
+        // The speaker reconnected with the suggested 750: nothing to tell.
+        let raised = NoticeInput {
+            head_start: full(750),
+            ..report(600.0, 680.0, 720.0, Some(40.0))
+        };
+        assert_eq!(state.update(t0 + Duration::from_secs(60), &raised), None);
+    }
+
+    #[test]
+    fn compressed_gets_running_low_but_no_head_start_notice() {
+        // A stall that would be ran out on PCM is no notice without a known
+        // head start.
+        let stalled = NoticeInput {
+            head_start: None,
+            ..report(-50.0, 300.0, 400.0, Some(500.0))
+        };
+        assert_eq!(NoticeState::new().update(Instant::now(), &stalled), None);
+        // A reserve under the head-start-off floor is running low, with no
+        // head start to name and no restart advice.
+        let low = NoticeInput {
             head_start: None,
             ..report(-50.0, 10.0, 20.0, Some(500.0))
         };
-        assert_eq!(NoticeState::new().update(Instant::now(), &input), None);
+        let n = NoticeState::new()
+            .update(Instant::now(), &low)
+            .expect("running low");
+        assert_eq!(n.kind, SpeakerNoticeKind::RunningLow);
+        assert_eq!(n.head_start_ms, None);
+        assert!(!n.restart_helps);
+    }
+
+    #[test]
+    fn restart_never_helps_with_the_head_start_off() {
+        let low = NoticeInput {
+            head_start: full(0),
+            ..report(10.0, 20.0, 25.0, Some(10.0))
+        };
+        let n = NoticeState::new()
+            .update(Instant::now(), &low)
+            .expect("running low");
+        assert_eq!(n.kind, SpeakerNoticeKind::RunningLow);
+        assert!(!n.restart_helps);
     }
 
     #[test]
