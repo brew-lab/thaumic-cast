@@ -886,6 +886,16 @@ pub fn create_wav_stream_with_cadence(
         // still ends up the whole burst ahead of real time.
         let mut metronome = interval(cadence_duration);
         metronome.set_missed_tick_behavior(MissedTickBehavior::Burst);
+        let metronome_started = TokioInstant::now();
+
+        // Extra room above `overflow_cap` while the ticks missed during a
+        // slow connect burst replay. Live frames keep arriving while the
+        // connection takes the burst, and the first tick after it drains them
+        // all at once; the replayed ticks then pay them back out one per tick.
+        // Without this room the oldest of them, the frames that directly
+        // follow the burst, would be dropped as overflow. Counts down by one
+        // per tick, so the normal cap is back once the backlog is replayed.
+        let mut catch_up_headroom: usize = 0;
 
         let mut rx_closed = false;
         let mut in_silence = false;
@@ -942,6 +952,19 @@ pub fn create_wav_stream_with_cadence(
                 crossfade.track_frame(&frame);
                 yield Ok(frame);
             }
+            // One frame arrives per missed tick, plus the immediate first
+            // tick, which has not fired yet either.
+            let burst_took = metronome_started.elapsed();
+            let missed_ticks = (burst_took.as_nanos() / cadence_duration.as_nanos().max(1)) as usize;
+            if missed_ticks > 0 {
+                catch_up_headroom = missed_ticks + 1;
+                log::info!(
+                    "[Cadence] Connect burst took {}ms; allowing {} extra queued frames while the \
+                     missed ticks replay",
+                    burst_took.as_millis(),
+                    catch_up_headroom
+                );
+            }
         }
 
         loop {
@@ -969,7 +992,7 @@ pub fn create_wav_stream_with_cadence(
                         loop {
                             match rx.try_recv() {
                                 Ok(frame) => {
-                                    if queue.len() >= overflow_cap {
+                                    if queue.len() >= overflow_cap + catch_up_headroom {
                                         queue.pop_front();
                                         frames_dropped += 1;
                                     }
@@ -1085,6 +1108,8 @@ pub fn create_wav_stream_with_cadence(
                     }
                     // If rx_closed and queue empty, don't yield - loop will break
 
+                    catch_up_headroom = catch_up_headroom.saturating_sub(1);
+
                     // Pipeline snapshot every 50 ticks (500 ms at the default 10 ms frame)
                     tick_count += 1;
                     if tick_count % 50 == 0 {
@@ -1155,7 +1180,7 @@ pub fn create_wav_stream_with_cadence(
                 result = rx.recv(), if !rx_closed => {
                     match result {
                         Ok(frame) => {
-                            if queue.len() >= overflow_cap {
+                            if queue.len() >= overflow_cap + catch_up_headroom {
                                 // Queue full - drop oldest to maintain bounded latency
                                 queue.pop_front();
                                 frames_dropped += 1;
@@ -2139,6 +2164,56 @@ mod tests {
             11,
             "live frames follow the queue with no gap or repeat"
         );
+        assert!(is_silence(&next_tick(&mut stream.as_mut()).await));
+        drop(tx);
+    }
+
+    /// A connection slow to take the burst loses nothing at the handover:
+    /// the live frames that pile up meanwhile are all queued, the missed
+    /// ticks replay them in order, and the queue is back at the jitter buffer
+    /// afterwards. Here the burst stalls for 200 ms after two frames, far
+    /// longer than twice the 30 ms jitter buffer the overflow cap allows for.
+    #[tokio::test(start_paused = true)]
+    async fn slow_connect_burst_drops_nothing_at_the_handover() {
+        let (tx, rx) = broadcast::channel::<Bytes>(32);
+        let mut stream = Box::pin(create_wav_stream_with_cadence(
+            rx,
+            test_guard(),
+            burst_config(tagged_prefill(10), 50),
+            None,
+            None,
+        ));
+
+        // The connection takes two burst frames, then stalls.
+        let taken: Vec<Bytes> = poll_fn(|cx| {
+            let mut frames = Vec::new();
+            for _ in 0..2 {
+                if let Poll::Ready(Some(item)) = stream.as_mut().poll_next(cx) {
+                    frames.push(item.expect("ok"));
+                }
+            }
+            Poll::Ready(frames)
+        })
+        .await;
+        assert_eq!(tags(&taken), vec![3, 4]);
+
+        // 200 ms pass (21 ticks counting the immediate first one), and 21
+        // live frames arrive, before the connection takes anything more.
+        for tag in 11..=31 {
+            tx.send(big_frame(tag)).unwrap();
+        }
+        time::advance(Duration::from_millis(200)).await;
+
+        assert_eq!(
+            tags(&ready_now(&mut stream.as_mut()).await),
+            (5..=28).collect::<Vec<u8>>(),
+            "the rest of the burst, then the queue and live frames, with no gap"
+        );
+
+        // Three frames, the jitter buffer, are still queued.
+        assert_eq!(next_tick(&mut stream.as_mut()).await[BIG_FRAME - 1], 29);
+        assert_eq!(next_tick(&mut stream.as_mut()).await[BIG_FRAME - 1], 30);
+        assert_eq!(next_tick(&mut stream.as_mut()).await[BIG_FRAME - 1], 31);
         assert!(is_silence(&next_tick(&mut stream.as_mut()).await));
         drop(tx);
     }
