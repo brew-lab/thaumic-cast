@@ -4,6 +4,9 @@ import {
   setAutostartEnabled,
   getManualSpeakerIps,
   removeManualSpeakerIp,
+  getSpeakerMonitor,
+  setSpeakerMonitor,
+  type SpeakerMonitorSetting,
 } from '../state/store';
 import { useTranslation } from 'react-i18next';
 import { ExternalLink, X } from 'lucide-preact';
@@ -31,11 +34,13 @@ const LANGUAGE_NAMES: Record<SupportedLocale, string> = {
  * - Autostart on login
  * - Language selection
  * - Theme (auto/light/dark)
+ * - Speaker monitoring and hand-added speakers
  * @returns The rendered Settings page
  */
 export function Settings() {
   const { t } = useTranslation();
   const [autostart, setAutostart] = useState<boolean | null>(null);
+  const [speakerMonitor, setSpeakerMonitorState] = useState<SpeakerMonitorSetting | null>(null);
   const [currentLanguage, setCurrentLanguage] = useState<SupportedLocale>(
     i18n.language as SupportedLocale,
   );
@@ -61,6 +66,10 @@ export function Settings() {
     getManualSpeakerIps()
       .then(setManualIps)
       .catch(() => setManualIps([]));
+
+    getSpeakerMonitor()
+      .then(setSpeakerMonitorState)
+      .catch((error) => log.error('Failed to read speaker monitoring setting:', error));
 
     getVersion()
       .then(setAppVersion)
@@ -94,6 +103,14 @@ export function Settings() {
       setAutostart(enabled);
     } catch (error) {
       log.error('Failed to set autostart:', error);
+    }
+  };
+
+  const handleSpeakerMonitorChange = async (enabled: boolean) => {
+    try {
+      setSpeakerMonitorState(await setSpeakerMonitor(enabled));
+    } catch (error) {
+      log.error('Failed to set speaker monitoring:', error);
     }
   };
 
@@ -182,6 +199,33 @@ export function Settings() {
       {/* Speakers Section */}
       <Card id="speakers" title={t('settings.speakers')} titleLevel="h3" className={styles.section}>
         <div className={styles.sectionContent}>
+          <div className={styles.field}>
+            <label className={styles.toggle}>
+              <div className={styles.toggleInfo}>
+                <h4 className={styles.toggleLabel}>{t('settings.speaker_monitor')}</h4>
+                <p className={styles.toggleDescription}>
+                  {t('settings.speaker_monitor_description')}
+                </p>
+              </div>
+              <input
+                type="checkbox"
+                checked={speakerMonitor?.envOverride ?? speakerMonitor?.enabled ?? false}
+                onChange={(e) => handleSpeakerMonitorChange(e.currentTarget.checked)}
+                disabled={speakerMonitor === null || speakerMonitor.envOverride !== null}
+                className={styles.checkbox}
+              />
+            </label>
+            {speakerMonitor?.envOverride != null && (
+              <span className={styles.hint}>
+                {t(
+                  speakerMonitor.envOverride
+                    ? 'settings.speaker_monitor_env_on'
+                    : 'settings.speaker_monitor_env_off',
+                )}
+              </span>
+            )}
+          </div>
+
           {manualIps.length > 0 && (
             <div className={styles.field}>
               <label className={styles.fieldLabel}>{t('settings.manual_speakers')}</label>

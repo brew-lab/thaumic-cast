@@ -12,6 +12,7 @@ use thaumic_core::{
 
 use crate::api::AppState;
 use crate::error::CommandError;
+use crate::settings::DesktopSettings;
 
 /// Application statistics for the dashboard.
 #[derive(Debug, Serialize)]
@@ -302,6 +303,51 @@ pub fn set_autostart_enabled(app: tauri::AppHandle, enabled: bool) -> Result<(),
         code: "autostart_error",
         message: e.to_string(),
     })
+}
+
+/// The speaker-monitor setting as the settings view shows it.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SpeakerMonitorSetting {
+    /// The saved setting.
+    pub enabled: bool,
+    /// What `THAUMIC_SPEAKER_MONITOR` forces it to, if set: the saved setting
+    /// then waits until the variable is removed.
+    pub env_override: Option<bool>,
+}
+
+/// Returns the speaker-monitor setting.
+#[tauri::command]
+pub fn get_speaker_monitor(state: tauri::State<'_, AppState>) -> SpeakerMonitorSetting {
+    SpeakerMonitorSetting {
+        enabled: state.config.read().speaker_monitor,
+        env_override: thaumic_core::services::latency_monitor::speaker_monitor_env_override(),
+    }
+}
+
+/// Saves the speaker-monitor setting and applies it.
+///
+/// The core reads the setting once per speaker connection, so it takes
+/// effect from each speaker's next connection (a new cast, or the routine
+/// reconnect of one already playing) without a restart.
+#[tauri::command]
+pub fn set_speaker_monitor(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+    enabled: bool,
+) -> Result<SpeakerMonitorSetting, CommandError> {
+    let app_data_dir = get_app_data_dir(&app)?;
+    let settings = DesktopSettings::update(&app_data_dir, |s| s.speaker_monitor = enabled)
+        .map_err(|e| CommandError {
+            code: "settings_error",
+            message: e.to_string(),
+        })?;
+    settings.apply_to(&mut state.config.write());
+    log::info!(
+        "[Settings] Speaker monitoring {}",
+        if enabled { "on" } else { "off" }
+    );
+    Ok(get_speaker_monitor(state))
 }
 
 /// Network health status response.
