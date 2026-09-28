@@ -107,6 +107,9 @@ pub struct AckedReserve {
     pub min_ms: f64,
     /// The level it stayed above nine tenths of the time.
     pub p10_ms: f64,
+    /// Its median: the estimate less the median acknowledgement lag. Below
+    /// the floor, the reserve itself is low, not just dipped by stalls.
+    pub median_ms: f64,
     /// Whether acknowledgements were measured. Where the platform does not
     /// report them this is the delivered-count estimate itself.
     pub measured: bool,
@@ -119,17 +122,22 @@ pub struct AckedReserve {
 /// median, in ms: the audio a stall held back, less the steady amount in
 /// flight on a clean link. `None` without lags. Reorders `lags_ms`.
 pub fn stall_ms(lags_ms: &mut [f64]) -> Option<f64> {
-    if lags_ms.is_empty() {
+    let median = median_ms(lags_ms)?;
+    Some((lags_ms[lags_ms.len() - 1] - median).max(0.0))
+}
+
+/// The median of `samples`, or `None` without any. Sorts `samples`.
+fn median_ms(samples: &mut [f64]) -> Option<f64> {
+    if samples.is_empty() {
         return None;
     }
-    lags_ms.sort_unstable_by(f64::total_cmp);
-    let n = lags_ms.len();
-    let median = if n % 2 == 1 {
-        lags_ms[n / 2]
+    samples.sort_unstable_by(f64::total_cmp);
+    let n = samples.len();
+    Some(if n % 2 == 1 {
+        samples[n / 2]
     } else {
-        (lags_ms[n / 2 - 1] + lags_ms[n / 2]) / 2.0
-    };
-    Some((lags_ms[n - 1] - median).max(0.0))
+        (samples[n / 2 - 1] + samples[n / 2]) / 2.0
+    })
 }
 
 /// The acknowledged reserve from the last report before a segment break,
@@ -411,6 +419,8 @@ impl ReserveTracker {
     /// [`Self::estimate`], with no lags where none were measured.
     pub fn observe_ack_lag(&mut self, lags_ms: &mut [f64]) -> Option<AckedReserve> {
         let stall = stall_ms(lags_ms);
+        // Sorted by the line above.
+        let median_lag = median_ms(lags_ms);
         self.last_stall_ms = stall;
         let est = self.last.filter(|_| self.last_fresh)?;
         // The reserve moves by well under a millisecond over a window, so
@@ -422,12 +432,14 @@ impl ReserveTracker {
             Some(r) => AckedReserve {
                 min_ms: r.min,
                 p10_ms: r.p10,
+                median_ms: est.reserve_ms - median_lag.unwrap_or(0.0),
                 measured: true,
                 stall_ms: stall,
             },
             None => AckedReserve {
                 min_ms: est.reserve_ms,
                 p10_ms: est.reserve_ms,
+                median_ms: est.reserve_ms,
                 measured: false,
                 stall_ms: None,
             },

@@ -829,11 +829,11 @@ fn session_for_connection(conn: &ConnectionGuard, session: &PlaybackSession) -> 
 /// way out [`redact_foreign_streams`] replaces another client's stream id with
 /// the same opaque alias `INITIAL_STATE` used for it, and blanks the URL.
 ///
-/// `PlaybackStopFailed`, the two latency events and `SpeakerHealth` are gated
-/// on the id still being *live and someone else's*. Non-owners have no use for
-/// them (the extension resolves them through its own session table and returns
-/// early for ids that are not its own), and the latency pair and speaker health
-/// repeat for the whole cast.
+/// `PlaybackStopFailed`, `IngestGaps`, the two latency events and
+/// `SpeakerHealth` are gated on the id still being *live and someone else's*.
+/// Non-owners have no use for them (the extension resolves them through its
+/// own session table and returns early for ids that are not its own), and the
+/// latency pair and speaker health repeat for the whole cast.
 /// Once the ownership record is released the stream is gone and its id buys
 /// nothing, so they go to everyone, which keeps an owner's own cleanup working
 /// on the paths where release precedes the event.
@@ -847,7 +847,13 @@ fn event_is_visible_to(conn: &ConnectionGuard, event: &BroadcastEvent) -> bool {
             | StreamEvent::PlaybackStopped { .. }
             | StreamEvent::Ended { .. },
         ) => true,
-        BroadcastEvent::Stream(StreamEvent::PlaybackStopFailed { stream_id, .. })
+        // The companion's own settings name no stream and are the same for
+        // every client.
+        BroadcastEvent::Stream(StreamEvent::CompanionAudioChanged { .. }) => true,
+        BroadcastEvent::Stream(
+            StreamEvent::PlaybackStopFailed { stream_id, .. }
+            | StreamEvent::IngestGaps { stream_id, .. },
+        )
         | BroadcastEvent::Latency(
             LatencyEvent::Updated { stream_id, .. } | LatencyEvent::Stale { stream_id, .. },
         )
@@ -859,9 +865,7 @@ fn event_is_visible_to(conn: &ConnectionGuard, event: &BroadcastEvent) -> bool {
         // them quote a URI that may *contain* one - see
         // [`redact_foreign_streams`], which runs on the way out.
         BroadcastEvent::Sonos(_)
-        | BroadcastEvent::Network(
-            NetworkEvent::HealthChanged { .. } | NetworkEvent::SpeakerLinkQuality { .. },
-        )
+        | BroadcastEvent::Network(NetworkEvent::HealthChanged { .. })
         | BroadcastEvent::Topology(_) => true,
     }
 }
@@ -955,7 +959,10 @@ fn redact_foreign_streams(conn: &ConnectionGuard, event: &mut BroadcastEvent) {
             | SonosEvent::SubscriptionLost { .. },
         )
         | BroadcastEvent::Stream(
-            StreamEvent::Created { .. } | StreamEvent::PlaybackStopFailed { .. },
+            StreamEvent::Created { .. }
+            | StreamEvent::PlaybackStopFailed { .. }
+            | StreamEvent::IngestGaps { .. }
+            | StreamEvent::CompanionAudioChanged { .. },
         )
         | BroadcastEvent::Network(_)
         | BroadcastEvent::Topology(_)
@@ -2579,6 +2586,7 @@ mod tests {
             clock_ppm: Some(40.0),
             clock_se_ppm: Some(6.0),
             time_to_floor_s: Some(4_500),
+            notice: None,
             timestamp: 0,
         });
 
@@ -2587,6 +2595,41 @@ mod tests {
 
         owner.manager().release_stream(stream_id);
         assert!(event_is_visible_to(&stranger, &event));
+    }
+
+    #[test]
+    fn ingest_gaps_go_only_to_the_streams_owner_while_it_is_live() {
+        let manager = Arc::new(WsConnectionManager::new());
+        let owner = manager.register(addr("192.168.1.9:5001"), None);
+        let stranger = manager.register(addr("192.168.1.20:5002"), None);
+        let stream_id = "11111111-2222-4333-8444-555555555555";
+        owner.claim_stream(stream_id);
+
+        let event = BroadcastEvent::Stream(StreamEvent::IngestGaps {
+            stream_id: stream_id.to_string(),
+            gaps_last_minute: 2,
+            worst_gap_ms: 280,
+            smoothing_ms: 200,
+            suggested_smoothing_ms: Some(500),
+            timestamp: 0,
+        });
+        assert!(event_is_visible_to(&owner, &event));
+        assert!(!event_is_visible_to(&stranger, &event));
+    }
+
+    #[test]
+    fn companion_audio_changes_reach_every_client() {
+        let manager = Arc::new(WsConnectionManager::new());
+        let anyone = manager.register(addr("192.168.1.20:5002"), None);
+        let event = BroadcastEvent::Stream(StreamEvent::CompanionAudioChanged {
+            audio: crate::events::CompanionAudio {
+                head_start_ms: 500,
+                head_start_fixed: false,
+                speaker_monitor: true,
+            },
+            timestamp: 0,
+        });
+        assert!(event_is_visible_to(&anyone, &event));
     }
 
     #[test]

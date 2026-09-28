@@ -359,6 +359,9 @@ pub struct StreamState {
     /// Addresses that have already been reported for fetching this stream
     /// without being on its list, so each is logged at warn once.
     unlisted_reported: parking_lot::Mutex<std::collections::HashSet<std::net::IpAddr>>,
+    /// Lets the stream's connections raise at most one ingest-gap notice
+    /// between them every ten minutes.
+    pub ingest_gap_notices: super::ingest_gaps::IngestGapLimiter,
 }
 
 impl StreamState {
@@ -408,6 +411,7 @@ impl StreamState {
             receive_stats: parking_lot::Mutex::new(ReceiveStats::new()),
             unlisted_readers: Arc::new(AtomicUsize::new(0)),
             unlisted_reported: parking_lot::Mutex::new(std::collections::HashSet::new()),
+            ingest_gap_notices: super::ingest_gaps::IngestGapLimiter::default(),
         }
     }
 

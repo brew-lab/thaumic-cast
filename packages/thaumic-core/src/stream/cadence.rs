@@ -212,7 +212,7 @@ pub fn parse_pcm_connect_burst_ms(value: &str) -> Result<u64, String> {
 /// The value [`PCM_CONNECT_BURST_ENV`] forces the setting to, if it is set to
 /// something valid. An invalid value is ignored, with a warning the first
 /// time it is seen.
-fn pcm_connect_burst_env_override() -> Option<u64> {
+pub fn pcm_connect_burst_env_override() -> Option<u64> {
     static WARNED: std::sync::Once = std::sync::Once::new();
     let raw = std::env::var(PCM_CONNECT_BURST_ENV).ok()?;
     if raw.trim().is_empty() {
@@ -392,10 +392,11 @@ pub struct LoggingStreamGuard {
     link_probe: Option<crate::api::link::TcpLinkProbe>,
     /// When retransmissions were last reported, to rate-limit the warning.
     last_retransmit_warning: parking_lot::Mutex<Option<Instant>>,
-    /// Judges the connection from its samples and reports quality changes.
+    /// Judges the connection from its samples and logs quality changes.
     link_judge: parking_lot::Mutex<Option<crate::api::link::LinkJudge>>,
-    /// Where link quality changes are broadcast.
-    link_emitter: Option<Arc<dyn crate::events::EventEmitter>>,
+    /// Where the cadence reports audio reaching this machine late (see
+    /// [`crate::stream::ingest_gaps`]). `None` reports nothing.
+    events: Option<Arc<dyn crate::events::EventEmitter>>,
     /// The speaker monitor's latest figures for this connection.
     pub(crate) speaker: super::tap::SpeakerCell,
     /// The latest link verdict, as [`link_quality_code`] encodes it (`0`
@@ -448,7 +449,7 @@ impl LoggingStreamGuard {
             link_probe: None,
             last_retransmit_warning: parking_lot::Mutex::new(None),
             link_judge: parking_lot::Mutex::new(None),
-            link_emitter: None,
+            events: None,
             speaker: super::tap::SpeakerCell::default(),
             link_verdict: AtomicU8::new(0),
             first_wait: None,
@@ -506,21 +507,48 @@ impl LoggingStreamGuard {
         self.body_closed.load(Ordering::Acquire)
     }
 
-    /// Attaches the TCP statistics probe for the client's connection, and
-    /// what is needed to judge it: the stream's jitter buffer, which decides
-    /// what a stall costs, and the emitter that broadcasts the verdict.
-    pub fn with_link_probe(
-        mut self,
-        probe: Option<crate::api::link::TcpLinkProbe>,
-        jitter_buffer_ms: u64,
-        emitter: Arc<dyn crate::events::EventEmitter>,
-    ) -> Self {
+    /// Attaches the TCP statistics probe for the client's connection, whose
+    /// counters are logged, judged and read for acknowledged bytes.
+    pub fn with_link_probe(mut self, probe: Option<crate::api::link::TcpLinkProbe>) -> Self {
         if probe.is_some() {
-            *self.link_judge.lock() = Some(crate::api::link::LinkJudge::new(jitter_buffer_ms));
-            self.link_emitter = Some(emitter);
+            *self.link_judge.lock() = Some(crate::api::link::LinkJudge::new());
         }
         self.link_probe = probe;
         self
+    }
+
+    /// Attaches the emitter the cadence reports audio reaching this machine
+    /// late to, as a stream event for the stream's owner.
+    pub fn with_events(mut self, emitter: Arc<dyn crate::events::EventEmitter>) -> Self {
+        self.events = Some(emitter);
+        self
+    }
+
+    /// Reports gaps in the audio's arrival to the stream's owner, if an
+    /// emitter is attached.
+    fn report_ingest_gaps(&self, report: super::ingest_gaps::IngestGapsReport) {
+        log::warn!(
+            "[Stream] Audio reached this machine late: stream={}, {} gap(s) in the last minute, \
+             worst {}ms against {}ms of smoothing; every speaker on the stream had a gap{}",
+            self.stream_id,
+            report.gaps_last_minute,
+            report.worst_gap_ms,
+            report.smoothing_ms,
+            report.suggested_smoothing_ms.map_or_else(
+                || ", more than smoothing can cover".to_string(),
+                |ms| format!(", {ms}ms of smoothing would cover it")
+            )
+        );
+        if let Some(emitter) = &self.events {
+            emitter.emit_stream(crate::events::StreamEvent::IngestGaps {
+                stream_id: self.stream_id.clone(),
+                gaps_last_minute: report.gaps_last_minute,
+                worst_gap_ms: report.worst_gap_ms,
+                smoothing_ms: report.smoothing_ms,
+                suggested_smoothing_ms: report.suggested_smoothing_ms,
+                timestamp: crate::utils::now_millis(),
+            });
+        }
     }
 
     /// Reads the connection's TCP counters since the last read and warns, at
@@ -557,15 +585,16 @@ impl LoggingStreamGuard {
         Some(window)
     }
 
-    /// Logs a change in the connection's quality and broadcasts it as a
-    /// `speakerLinkQuality` event for the client's address.
+    /// Logs a change in the connection's quality and keeps the verdict for
+    /// the speaker monitor. Never sent to clients: link trouble alone is not
+    /// a notice (see [`crate::api::link::LinkJudge`]).
     fn report_link(&self, report: crate::api::link::LinkReport) {
-        use crate::events::{LinkQuality, NetworkEvent};
+        use crate::events::LinkQuality;
         self.link_verdict
             .store(link_quality_code(report.quality), Ordering::Relaxed);
         let line = format!(
             "[Stream] Link to {} is {:?} (stream {}): median rtt {}ms, worst {}ms, {} troubled \
-             sample(s) and {} timeout(s) in the last minute; jitter buffer {}ms{}",
+             sample(s) and {} timeout(s) in the last minute",
             self.client_ip,
             report.quality,
             self.stream_id,
@@ -573,28 +602,10 @@ impl LoggingStreamGuard {
             report.rtt_max_ms,
             report.spikes,
             report.failures,
-            report.jitter_buffer_ms,
-            report
-                .suggested_jitter_buffer_ms
-                .map(|ms| format!(", {ms}ms would ride this out"))
-                .unwrap_or_default()
         );
         match report.quality {
             LinkQuality::Good => log::info!("{}", line),
             LinkQuality::Degraded | LinkQuality::Poor => log::warn!("{}", line),
-        }
-        if let Some(emitter) = &self.link_emitter {
-            emitter.emit_network(NetworkEvent::SpeakerLinkQuality {
-                speaker_ip: self.client_ip.to_string(),
-                quality: report.quality,
-                rtt_median_ms: report.rtt_median_ms,
-                rtt_max_ms: report.rtt_max_ms,
-                spikes_per_minute: report.spikes,
-                failures_per_minute: report.failures,
-                jitter_buffer_ms: report.jitter_buffer_ms,
-                suggested_jitter_buffer_ms: report.suggested_jitter_buffer_ms,
-                timestamp: crate::utils::now_millis(),
-            });
         }
     }
 
@@ -1121,6 +1132,8 @@ pub fn create_wav_stream_with_cadence(
         let mut has_played_audio = false;
         let mut rebuffering = false;
         let mut rebuffer_started: Option<TokioInstant> = None;
+        // Underruns over the last minute, for the ingest-gap notice.
+        let mut ingest_gaps = super::ingest_gaps::IngestGapWindow::new();
 
         let mut crossfade = CrossfadeState::new(&audio_format, frame_duration_ms);
 
@@ -1221,6 +1234,26 @@ pub fn create_wav_stream_with_cadence(
                     let hold_for_rebuffer = rebuffering && {
                         if rebuffer_started.is_none() && !queue.is_empty() {
                             rebuffer_started = Some(TokioInstant::now());
+                            // Frames are arriving again: the gap in their
+                            // arrival was the smoothing that ran dry plus
+                            // the silence played since.
+                            let smoothing_ms = stream_state
+                                .as_ref()
+                                .and_then(|w| w.upgrade())
+                                .map_or(buffer_depth as u64 * u64::from(frame_duration_ms), |ss| {
+                                    ss.jitter_buffer_ms
+                                });
+                            let silent_ms = silence_start.map_or(0, |t| t.elapsed().as_millis() as u64);
+                            let now = Instant::now();
+                            if let Some(report) = ingest_gaps.record(now, smoothing_ms + silent_ms, smoothing_ms) {
+                                let claimed = stream_state
+                                    .as_ref()
+                                    .and_then(|w| w.upgrade())
+                                    .is_some_and(|ss| ss.ingest_gap_notices.claim(now));
+                                if claimed {
+                                    guard.report_ingest_gaps(report);
+                                }
+                            }
                         }
                         let waited = rebuffer_started.map(|t| t.elapsed()).unwrap_or_default();
                         if rx_closed || queue.len() >= buffer_depth || waited >= rebuffer_timeout {
@@ -1993,6 +2026,80 @@ mod tests {
             stats.silence_events, 1,
             "one underrun, not one per held tick"
         );
+    }
+
+    /// Records the stream events a guard reports.
+    #[derive(Default)]
+    struct StreamEvents(parking_lot::Mutex<Vec<crate::events::StreamEvent>>);
+
+    impl crate::events::EventEmitter for StreamEvents {
+        fn emit_stream(&self, event: crate::events::StreamEvent) {
+            self.0.lock().push(event);
+        }
+        fn emit_sonos(&self, _: crate::events::SonosEvent) {}
+        fn emit_network(&self, _: crate::events::NetworkEvent) {}
+        fn emit_topology(&self, _: crate::events::TopologyEvent) {}
+        fn emit_latency(&self, _: crate::events::LatencyEvent) {}
+    }
+
+    /// Two underruns within a minute are reported once as late audio, for
+    /// the stream as a whole, with the smoothing the stream runs with.
+    #[tokio::test(start_paused = true)]
+    async fn two_underruns_in_a_minute_report_ingest_gaps_once() {
+        let (tx, rx) = broadcast::channel::<Bytes>(16);
+        let events = Arc::new(StreamEvents::default());
+        let guard = Arc::new(
+            LoggingStreamGuard::new("test-stream".to_string(), IpAddr::V4(Ipv4Addr::LOCALHOST))
+                .with_events(Arc::clone(&events) as Arc<dyn crate::events::EventEmitter>),
+        );
+        let state = Arc::new(StreamState::new(
+            "test-stream".to_string(),
+            crate::stream::AudioCodec::Pcm,
+            test_audio_format(),
+            8,
+            16,
+            30,
+            SILENCE_FRAME_DURATION_MS,
+        ));
+        let mut stream = Box::pin(create_wav_stream_with_cadence(
+            rx,
+            guard,
+            buffered_config(vec![big_frame(1), big_frame(2), big_frame(3)]),
+            Some(Arc::downgrade(&state)),
+            None,
+        ));
+        prime(&mut stream.as_mut()).await;
+        for round in 0..3u8 {
+            // Play the queue out until it runs dry, then refill it.
+            while !is_silence(&next_tick(&mut stream.as_mut()).await) {}
+            for i in 0..3 {
+                tx.send(big_frame(10 * (round + 1) + i)).unwrap();
+            }
+            for _ in 0..3 {
+                next_tick(&mut stream.as_mut()).await;
+            }
+        }
+        let reported: Vec<_> = events.0.lock().drain(..).collect();
+        assert_eq!(reported.len(), 1, "{reported:?}");
+        match &reported[0] {
+            crate::events::StreamEvent::IngestGaps {
+                stream_id,
+                gaps_last_minute,
+                smoothing_ms,
+                worst_gap_ms,
+                suggested_smoothing_ms,
+                ..
+            } => {
+                assert_eq!(stream_id, "test-stream");
+                assert_eq!(*gaps_last_minute, 2);
+                assert_eq!(*smoothing_ms, 30);
+                assert!(*worst_gap_ms >= 30);
+                assert_eq!(*suggested_smoothing_ms, Some(100));
+            }
+            other => panic!("unexpected {other:?}"),
+        }
+        drop(tx);
+        drain_to_end(&mut stream.as_mut()).await;
     }
 
     /// Startup starvation is not gated: with an empty prefill the first
