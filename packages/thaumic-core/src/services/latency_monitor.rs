@@ -12,8 +12,9 @@
 //! - `sonos_reltime` = Sonos playback position in the track
 //! - Result = total pipeline delay (typically 0.5-2s for PCM, 15-25s for AAC)
 //!
-//! The audio epoch (T0) is anchored to the oldest prefill frame served when Sonos
-//! first polls data, capturing buffer-before-GET time for accurate measurement.
+//! The audio epoch (T0) is anchored to the capture time of the first frame the
+//! connection serves (the oldest prefill frame kept after the PCM cadence trims
+//! the prefill), capturing buffer-before-GET time for accurate measurement.
 //!
 //! # Features
 //!

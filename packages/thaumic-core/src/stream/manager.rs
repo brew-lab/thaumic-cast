@@ -101,8 +101,8 @@ pub struct StreamMetadata {
 pub struct PlaybackEpoch {
     /// Incrementing ID to detect epoch changes.
     pub id: u64,
-    /// Timestamp of oldest audio frame being served (content T0).
-    /// This is what RelTime=0 corresponds to.
+    /// Capture time of the first audio frame served on this connection
+    /// (content T0). This is what RelTime=0 corresponds to.
     pub audio_epoch: Instant,
 }
 
@@ -137,6 +137,9 @@ impl ReceiveStats {
 }
 
 /// A frame with its capture timestamp.
+///
+/// Cloning is cheap: the payload is a reference-counted [`Bytes`].
+#[derive(Clone)]
 pub struct TimestampedFrame {
     /// When the frame was received from the browser.
     pub captured_at: Instant,
@@ -150,7 +153,7 @@ pub struct TimestampedFrame {
 /// epochs for accurate latency calculation.
 pub struct StreamTiming {
     /// When browser started sending (first frame received, pre-transcode).
-    /// Used as fallback if no prefill is available.
+    /// Used as the epoch fallback when a connection is served no prefill.
     first_frame_at: OnceLock<Instant>,
 
     /// Current playback epoch per remote IP.
@@ -193,6 +196,12 @@ impl StreamTiming {
     /// Called on first audio chunk polled from the stream body.
     /// Creates a new epoch with incremented ID, which signals the latency
     /// monitor to reset its session state for this speaker.
+    ///
+    /// `audio_epoch` is the capture time of the first frame this connection
+    /// serves: the first prefill frame that survives trimming, which is what
+    /// the speaker plays at RelTime 0. It is `None` only when the connection
+    /// was served no prefill; its first frame then arrives live, and on a
+    /// stream with an empty ring that is the stream's first frame.
     pub fn start_new_epoch(
         &self,
         audio_epoch: Option<Instant>,
@@ -403,9 +412,6 @@ impl StreamState {
             })
     }
 
-    /// Number of HTTP readers currently connected to this stream from an
-    /// address it is not playing on.
-    #[must_use]
     /// Records that `peer` fetched this stream without being on its list.
     ///
     /// Returns `true` the first time an address is seen, so the caller can
@@ -414,6 +420,9 @@ impl StreamState {
         self.unlisted_reported.lock().insert(peer)
     }
 
+    /// Number of HTTP readers currently connected to this stream from an
+    /// address it is not playing on.
+    #[must_use]
     pub fn unlisted_reader_count(&self) -> usize {
         self.unlisted_readers.load(Ordering::Acquire)
     }
@@ -509,18 +518,22 @@ impl StreamState {
         self.buffer.read().len()
     }
 
-    /// Subscribes to the stream, returning epoch candidate, buffered frames, and live receiver.
+    /// Subscribes to the stream, returning the buffered frames and a live receiver.
     ///
     /// This method atomically captures the current buffer contents and creates
     /// a broadcast receiver, ensuring late-joining clients receive prefill data
     /// without duplicates or gaps.
     ///
+    /// Each prefill frame keeps its capture time. The caller may serve only
+    /// part of the prefill (the PCM cadence keeps just the newest frames), and
+    /// the playback epoch must be the capture time of the first frame actually
+    /// served, not of the oldest frame in the ring.
+    ///
     /// # Returns
-    /// A tuple of (epoch_candidate, prefill_frames, live_receiver) where:
-    /// - `epoch_candidate`: Timestamp of oldest buffered frame (None if buffer empty)
-    /// - `prefill_frames`: A `Vec<Bytes>` containing buffered frames to send immediately
+    /// A tuple of (prefill_frames, live_receiver) where:
+    /// - `prefill_frames`: buffered frames, oldest first, with capture times
     /// - `live_receiver`: A `broadcast::Receiver<Bytes>` for subsequent live frames
-    pub fn subscribe(&self) -> (Option<Instant>, Vec<Bytes>, broadcast::Receiver<Bytes>) {
+    pub fn subscribe(&self) -> (Vec<TimestampedFrame>, broadcast::Receiver<Bytes>) {
         // Hold the buffer read lock while subscribing to ensure atomicity.
         // `push_frame()` buffers and broadcasts a frame under the matching write
         // lock, so the two cannot interleave and every frame lands on exactly one
@@ -532,11 +545,9 @@ impl StreamState {
         let buffer = self.buffer.read();
         let rx = self.tx.subscribe();
 
-        // Epoch candidate = timestamp of oldest frame we'll serve (T0 for this connection)
-        let epoch_candidate = buffer.front().map(|f| f.captured_at);
-        let prefill: Vec<Bytes> = buffer.iter().map(|f| f.data.clone()).collect();
+        let prefill: Vec<TimestampedFrame> = buffer.iter().cloned().collect();
 
-        (epoch_candidate, prefill, rx)
+        (prefill, rx)
     }
 }
 
@@ -649,6 +660,10 @@ mod tests {
         Bytes::copy_from_slice(&id.to_le_bytes())
     }
 
+    fn payloads(prefill: &[TimestampedFrame]) -> Vec<Bytes> {
+        prefill.iter().map(|f| f.data.clone()).collect()
+    }
+
     #[test]
     fn subscribe_returns_buffered_frames_without_replaying_them_live() {
         let state = test_state(8, 16);
@@ -658,13 +673,9 @@ mod tests {
         assert!(state.push_frame(frame(1)), "first frame marks stream ready");
         assert!(!state.push_frame(frame(2)));
 
-        let (epoch, prefill, mut rx) = state.subscribe();
+        let (prefill, mut rx) = state.subscribe();
 
-        assert!(
-            epoch.is_some(),
-            "epoch candidate comes from the oldest frame"
-        );
-        assert_eq!(prefill, vec![frame(1), frame(2)]);
+        assert_eq!(payloads(&prefill), vec![frame(1), frame(2)]);
         // Already-buffered frames were broadcast before we subscribed.
         assert_eq!(rx.try_recv(), Err(TryRecvError::Empty));
 
@@ -682,9 +693,39 @@ mod tests {
             state.push_frame(frame(id));
         }
 
-        let (_, prefill, _rx) = state.subscribe();
+        let (prefill, _rx) = state.subscribe();
         assert_eq!(state.buffer_len(), 2);
-        assert_eq!(prefill, vec![frame(3), frame(4)]);
+        assert_eq!(payloads(&prefill), vec![frame(3), frame(4)]);
+    }
+
+    /// The epoch is anchored to whichever prefill frame a connection serves
+    /// first, so `subscribe` must hand back every frame's own capture time, not
+    /// one timestamp for the whole ring.
+    #[test]
+    fn subscribe_returns_each_frames_capture_time() {
+        let state = test_state(4, 16);
+        let _keepalive = state.tx.subscribe();
+
+        let mut pushed_after = Vec::new();
+        for id in 1..=6 {
+            // Space the pushes so every frame has a distinct capture time.
+            std::thread::sleep(std::time::Duration::from_millis(2));
+            state.push_frame(frame(id));
+            pushed_after.push(Instant::now());
+        }
+
+        let (prefill, _rx) = state.subscribe();
+        assert_eq!(
+            payloads(&prefill),
+            vec![frame(3), frame(4), frame(5), frame(6)],
+            "a full ring holds only the newest frames"
+        );
+        for (i, f) in prefill.iter().enumerate() {
+            // Frame `i` of the prefill is pushed frame `i + 3`, captured after
+            // the previous push returned and before its own push returned.
+            assert!(f.captured_at > pushed_after[i + 1], "frame {i} too early");
+            assert!(f.captured_at <= pushed_after[i + 2], "frame {i} too late");
+        }
     }
 
     /// Regression test: `push_frame` must buffer and broadcast a frame under one
@@ -711,8 +752,8 @@ mod tests {
         };
 
         for _ in 0..5_000 {
-            let (_, prefill, mut rx) = state.subscribe();
-            let buffered: HashSet<Bytes> = prefill.into_iter().collect();
+            let (prefill, mut rx) = state.subscribe();
+            let buffered: HashSet<Bytes> = prefill.into_iter().map(|f| f.data).collect();
 
             // Anything arriving live must be a frame pushed after we subscribed.
             for _ in 0..4 {

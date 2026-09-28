@@ -17,10 +17,24 @@ use serde::Serialize;
 use tokio::sync::broadcast;
 use tokio::time::{interval, Instant as TokioInstant, MissedTickBehavior};
 
+use super::manager::TimestampedFrame;
 use super::{
     apply_fade_in, create_fade_out_frame, crossfade_samples, extract_last_sample_pair,
     is_crossfade_compatible, AudioFormat, StreamState,
 };
+
+/// One-shot epoch hook: the stream to time, the moment the client connected,
+/// and the client address.
+///
+/// The epoch's content T0 is not part of the hook. It is the capture time of
+/// the first frame the connection actually serves, which only the pipeline
+/// knows once it has trimmed the prefill (see [`CadenceConfig::epoch_candidate`]).
+///
+/// Holds a [`std::sync::Weak`] reference on purpose. The response body outlives
+/// the handler, so a strong `Arc` here would keep the [`StreamState`] — and with
+/// it the broadcast sender — alive after the coordinator removed the stream,
+/// leaving the connection streaming to a stream that no longer exists.
+pub type EpochHook = (std::sync::Weak<StreamState>, Instant, IpAddr);
 
 /// Threshold for counting delivery gaps (100ms).
 /// PCM at 48kHz stereo 16-bit = 192KB/s, so 100ms = ~19KB of audio.
@@ -62,7 +76,8 @@ pub(crate) struct CadenceStats {
     pub rebuffer_events: u64,
 }
 
-/// Maximum pipeline snapshots to keep (300 entries × ~1s = ~5 minutes).
+/// Maximum pipeline snapshots to keep (300 entries × 500 ms = 2.5 minutes at
+/// the default 10 ms frame).
 const MAX_PIPELINE_SNAPSHOTS: usize = 300;
 
 /// Receive jitter window for a pipeline snapshot.
@@ -92,7 +107,8 @@ struct DeliveryWindow {
     gaps_over_threshold: u64,
 }
 
-/// Timestamped pipeline health snapshot, captured every ~1s in the cadence loop.
+/// Timestamped pipeline health snapshot, captured every 50 cadence ticks
+/// (500 ms at the default 10 ms frame).
 #[derive(Serialize)]
 struct PipelineSnapshot {
     elapsed_ms: u64,
@@ -300,7 +316,8 @@ impl LoggingStreamGuard {
         let _ = self.cadence_stats.set(stats);
     }
 
-    /// Appends a snapshot to the pipeline timeline (called every ~1s from cadence stream).
+    /// Appends a snapshot to the pipeline timeline (called every 50 ticks from
+    /// the cadence stream).
     fn push_pipeline_snapshot(&self, snapshot: PipelineSnapshot) {
         let mut timeline = self.pipeline_timeline.lock();
         timeline.push_back(snapshot);
@@ -510,6 +527,17 @@ pub struct CadenceConfig {
     /// Trimmed by [`CadenceConfig::new`] so the initial queue depth stays
     /// bounded by the intended jitter buffer size.
     pub prefill_frames: Vec<Bytes>,
+    /// Capture time of the first frame in `prefill_frames`: the first audio
+    /// this connection serves, which the speaker plays at RelTime 0. The
+    /// epoch hook anchors the playback epoch here. `None` when no prefill
+    /// survived, in which case the epoch falls back as described on
+    /// [`crate::stream::StreamTiming::start_new_epoch`].
+    ///
+    /// It must be taken *after* trimming. The ring holds more frames than the
+    /// jitter buffer, so its oldest frame can predate the first frame served
+    /// by several hundred milliseconds on a reconnect, and an epoch anchored
+    /// there reads every later latency and cushion that much too high.
+    pub epoch_candidate: Option<Instant>,
 }
 
 impl CadenceConfig {
@@ -523,13 +551,14 @@ impl CadenceConfig {
     ///
     /// Prefill frames are trimmed to the intended buffer depth so a resume
     /// with a full ring buffer doesn't replay stale audio before catching up
-    /// to live.
+    /// to live. The epoch candidate is the capture time of the first frame
+    /// kept, since that is the first frame served.
     pub fn new(
         silence_frame: Bytes,
         jitter_buffer_ms: u64,
         frame_duration_ms: u32,
         audio_format: AudioFormat,
-        prefill_frames: Vec<Bytes>,
+        prefill_frames: Vec<TimestampedFrame>,
     ) -> Self {
         use crate::protocol_constants::{
             JITTER_OVERFLOW_MULTIPLIER, MAX_CADENCE_QUEUE_SIZE, MIN_OVERFLOW_CAP,
@@ -541,6 +570,8 @@ impl CadenceConfig {
             .clamp(MIN_OVERFLOW_CAP, MAX_CADENCE_QUEUE_SIZE);
 
         let prefill_frames = trim_prefill(prefill_frames, buffer_depth);
+        let epoch_candidate = prefill_frames.first().map(|f| f.captured_at);
+        let prefill_frames = prefill_frames.into_iter().map(|f| f.data).collect();
 
         Self {
             silence_frame,
@@ -549,6 +580,7 @@ impl CadenceConfig {
             frame_duration_ms,
             audio_format,
             prefill_frames,
+            epoch_candidate,
         }
     }
 }
@@ -558,7 +590,7 @@ impl CadenceConfig {
 /// When `buffer_depth` is 0, returns an empty vec. When the prefill is already
 /// at or below the depth, the input is returned unchanged. When it exceeds,
 /// the oldest frames are dropped, keeping the most recent `buffer_depth` frames.
-fn trim_prefill(mut prefill_frames: Vec<Bytes>, buffer_depth: usize) -> Vec<Bytes> {
+fn trim_prefill<T>(mut prefill_frames: Vec<T>, buffer_depth: usize) -> Vec<T> {
     if buffer_depth == 0 {
         prefill_frames.clear();
         return prefill_frames;
@@ -585,7 +617,8 @@ fn trim_prefill(mut prefill_frames: Vec<Bytes>, buffer_depth: usize) -> Vec<Byte
 /// guard once at stream end via `set_cadence_stats()`.
 ///
 /// Epoch tracking (optional): when `epoch_hook` is `Some`, the stream fires
-/// `start_new_epoch` on the first real audio frame, then discards the hook.
+/// `start_new_epoch` on the first real audio frame, anchored to
+/// [`CadenceConfig::epoch_candidate`], then discards the hook.
 /// The hook holds a `Weak` reference so the response body never keeps the
 /// `StreamState` (and with it the broadcast sender) alive; if the upgrade
 /// fails the stream has been removed and the hook is dropped unfired.
@@ -597,12 +630,7 @@ pub fn create_wav_stream_with_cadence(
     guard: Arc<LoggingStreamGuard>,
     config: CadenceConfig,
     stream_state: Option<std::sync::Weak<StreamState>>,
-    epoch_hook: Option<(
-        std::sync::Weak<StreamState>,
-        Option<Instant>,
-        Instant,
-        IpAddr,
-    )>,
+    epoch_hook: Option<EpochHook>,
 ) -> impl Stream<Item = Result<Bytes, std::io::Error>> {
     stream! {
         let CadenceConfig {
@@ -612,6 +640,7 @@ pub fn create_wav_stream_with_cadence(
             frame_duration_ms,
             audio_format,
             prefill_frames,
+            epoch_candidate,
         } = config;
         let cadence_duration = Duration::from_millis(frame_duration_ms as u64);
         // Upper bound on holding playback after an underrun: twice the jitter
@@ -772,7 +801,15 @@ pub fn create_wav_stream_with_cadence(
                         // Fire epoch hook on first real audio frame. A failed
                         // upgrade means the stream was removed, so there is no
                         // epoch left to start - drop the hook either way.
-                        if let Some((weak_state, epoch_candidate, connected_at, remote_ip)) = epoch_hook.take() {
+                        //
+                        // With prefill queued this is the first tick (the
+                        // metronome fires as soon as the body is polled) and
+                        // the frame is the first prefill frame, the one
+                        // `epoch_candidate` was captured from. The overflow
+                        // cap leaves room for twice the jitter buffer of live
+                        // frames on top of the prefill, so none is dropped
+                        // before that first tick.
+                        if let Some((weak_state, connected_at, remote_ip)) = epoch_hook.take() {
                             if let Some(state) = weak_state.upgrade() {
                                 state.timing.start_new_epoch(
                                     epoch_candidate,
@@ -820,7 +857,7 @@ pub fn create_wav_stream_with_cadence(
                     }
                     // If rx_closed and queue empty, don't yield - loop will break
 
-                    // Pipeline snapshot every ~50 ticks (~1s at 20ms cadence)
+                    // Pipeline snapshot every 50 ticks (500 ms at the default 10 ms frame)
                     tick_count += 1;
                     if tick_count % 50 == 0 {
                         let elapsed_ms = guard.reference_time.elapsed().as_millis() as u64;
@@ -925,7 +962,7 @@ mod tests {
 
     use crate::protocol_constants::SILENCE_FRAME_DURATION_MS;
 
-    /// Default queue size for tests (10 frames = 200ms at 20ms/frame).
+    /// Default queue size for tests (10 frames = 100ms at 10ms/frame).
     const TEST_QUEUE_SIZE: usize = 10;
 
     /// Test silence frame for assertions.
@@ -955,6 +992,7 @@ mod tests {
             frame_duration_ms: SILENCE_FRAME_DURATION_MS,
             audio_format: test_audio_format(),
             prefill_frames: vec![],
+            epoch_candidate: None,
         }
     }
 
@@ -1325,7 +1363,7 @@ mod tests {
             SILENCE_FRAME_DURATION_MS,
         ));
         let weak = Arc::downgrade(&state);
-        let (_, _, rx) = state.subscribe();
+        let (_, rx) = state.subscribe();
 
         let mut stream = Box::pin(create_wav_stream_with_cadence(
             rx,
@@ -1334,7 +1372,6 @@ mod tests {
             Some(Arc::downgrade(&state)),
             Some((
                 Arc::downgrade(&state),
-                None,
                 Instant::now(),
                 IpAddr::V4(Ipv4Addr::LOCALHOST),
             )),
@@ -1430,6 +1467,7 @@ mod tests {
             frame_duration_ms: SILENCE_FRAME_DURATION_MS,
             audio_format: test_audio_format(),
             prefill_frames: prefill,
+            epoch_candidate: None,
         }
     }
 
@@ -1647,9 +1685,23 @@ mod tests {
         assert_eq!(cfg.overflow_cap, 1);
     }
 
+    /// Prefill frames captured one frame duration apart, oldest first, the way
+    /// `StreamState::subscribe` returns them.
+    fn timestamped(frames: Vec<Bytes>, frame_ms: u64) -> Vec<TimestampedFrame> {
+        let start = Instant::now();
+        frames
+            .into_iter()
+            .enumerate()
+            .map(|(i, data)| TimestampedFrame {
+                captured_at: start + Duration::from_millis(i as u64 * frame_ms),
+                data,
+            })
+            .collect()
+    }
+
     #[test]
     fn cadence_config_new_trims_prefill_to_buffer_depth() {
-        let prefill: Vec<Bytes> = (0..20u8).map(|i| Bytes::from(vec![i; 4])).collect();
+        let prefill = timestamped((0..20u8).map(|i| Bytes::from(vec![i; 4])).collect(), 20);
         let cfg = CadenceConfig::new(
             test_silence_frame(),
             200, // 200ms / 20ms = 10 frames buffer_depth
@@ -1660,6 +1712,95 @@ mod tests {
         assert_eq!(cfg.prefill_frames.len(), 10, "trimmed to buffer_depth");
         assert_eq!(cfg.prefill_frames[0][0], 10, "oldest frames dropped");
         assert_eq!(cfg.prefill_frames[9][0], 19, "newest frame preserved");
+    }
+
+    #[test]
+    fn cadence_config_new_anchors_epoch_to_first_kept_frame() {
+        let prefill = timestamped((0..20u8).map(|i| Bytes::from(vec![i; 4])).collect(), 20);
+        let kept_first = prefill[10].captured_at;
+        let cfg = CadenceConfig::new(test_silence_frame(), 200, 20, test_audio_format(), prefill);
+        assert_eq!(
+            cfg.epoch_candidate,
+            Some(kept_first),
+            "the epoch is the first frame served, not the oldest in the ring"
+        );
+    }
+
+    #[test]
+    fn cadence_config_new_without_prefill_has_no_epoch_candidate() {
+        let cfg = CadenceConfig::new(test_silence_frame(), 200, 20, test_audio_format(), vec![]);
+        assert_eq!(cfg.epoch_candidate, None);
+
+        // Zero depth serves no prefill, so no prefill frame may anchor it.
+        let prefill = timestamped(vec![test_audio_frame(); 3], 20);
+        let cfg = CadenceConfig::new(test_silence_frame(), 0, 20, test_audio_format(), prefill);
+        assert_eq!(cfg.epoch_candidate, None);
+    }
+
+    /// A reconnect finds the ring full: 500 ms of frames against a 200 ms jitter
+    /// buffer. The cadence serves only the newest 200 ms, so the epoch must be
+    /// the capture time of the first of those, the frame the speaker plays at
+    /// RelTime 0. Anchoring to the oldest ring frame read every later latency
+    /// and cushion 300 ms too high.
+    #[tokio::test(start_paused = true)]
+    async fn epoch_anchors_to_first_frame_kept_after_trim_prefill() {
+        const RING_FRAMES: usize = 50;
+        const FRAME_MS: u32 = 10;
+        const JITTER_MS: u64 = 200;
+        let state = Arc::new(StreamState::new(
+            "test-stream".to_string(),
+            crate::stream::AudioCodec::Pcm,
+            test_audio_format(),
+            RING_FRAMES,
+            RING_FRAMES * 2,
+            JITTER_MS,
+            FRAME_MS,
+        ));
+        let _keepalive = state.tx.subscribe();
+        for i in 0..RING_FRAMES {
+            // Capture times come from the real clock; space the frames so the
+            // oldest and the first kept frame are distinguishable.
+            if i == 1 {
+                std::thread::sleep(Duration::from_millis(2));
+            }
+            state.push_frame(big_frame(i as u8 + 1));
+        }
+
+        let (prefill, rx) = state.subscribe();
+        assert_eq!(prefill.len(), RING_FRAMES, "the ring is full");
+        let oldest = prefill[0].captured_at;
+        let kept = RING_FRAMES - (JITTER_MS / FRAME_MS as u64) as usize;
+        let first_kept = prefill[kept].captured_at;
+        assert!(first_kept > oldest);
+
+        let remote = IpAddr::V4(Ipv4Addr::new(192, 168, 1, 50));
+        let config = CadenceConfig::new(
+            test_silence_frame(),
+            JITTER_MS,
+            FRAME_MS,
+            test_audio_format(),
+            prefill,
+        );
+        let mut stream = Box::pin(create_wav_stream_with_cadence(
+            rx,
+            test_guard(),
+            config,
+            Some(Arc::downgrade(&state)),
+            Some((Arc::downgrade(&state), Instant::now(), remote)),
+        ));
+
+        let first = stream.next().await.expect("first tick").expect("ok");
+        assert_eq!(
+            first[BIG_FRAME - 1],
+            kept as u8 + 1,
+            "the first frame served is the first kept after trimming"
+        );
+        let epoch = state
+            .timing
+            .current_epoch_for(remote)
+            .expect("the first real frame starts an epoch");
+        assert_eq!(epoch.audio_epoch, first_kept);
+        assert_ne!(epoch.audio_epoch, oldest);
     }
 
     #[test]
