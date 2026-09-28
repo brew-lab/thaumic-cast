@@ -281,6 +281,26 @@ mod tests {
     }
 
     #[test]
+    fn config_example_spells_out_the_speaker_settings() {
+        let lines: Vec<&str> = include_str!("../config.example.yaml").lines().collect();
+        for key in [
+            format!(
+                "speaker_monitor: {}",
+                ServerConfig::default().speaker_monitor
+            ),
+            format!(
+                "pcm_connect_burst_ms: {}",
+                ServerConfig::default().pcm_connect_burst_ms
+            ),
+        ] {
+            assert!(
+                lines.contains(&key.as_str()),
+                "config.example.yaml should set `{key}` uncommented"
+            );
+        }
+    }
+
+    #[test]
     fn unparsable_advertise_ip_is_rejected() {
         assert!(ServerConfig::from_yaml("advertise_ip: not-an-ip\n").is_err());
     }
