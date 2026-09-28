@@ -259,6 +259,47 @@ const STALE_EPOCH_TIMEOUT_SECS: u64 = 30;
 /// Key for identifying a monitoring session (stream_id, canonical speaker IP).
 type SessionKey = (String, IpAddr);
 
+/// A session's source of poll dither: `splitmix64`, which is small, fast
+/// and uniform enough for spreading polls over a second.
+///
+/// The dither used to be read from the wall clock's sub-second part at the
+/// wake-up that sent the poll. The monitor wakes on a 500 ms grid, so that
+/// read took one of two values, `a` or `a + 500`, for a fixed `a` set by when
+/// the process started, and the polls' phases walked the lattice
+/// `k·a mod 500`. With `a` near 0 or 250 that lattice has two to four
+/// points, and the reserve bounds cannot narrow past the gaps between them.
+#[derive(Debug, Clone)]
+struct DitherRng(u64);
+
+impl DitherRng {
+    /// A generator starting from `seed`.
+    fn new(seed: u64) -> Self {
+        Self(seed)
+    }
+
+    /// The next 64 random bits.
+    fn next_u64(&mut self) -> u64 {
+        self.0 = self.0.wrapping_add(0x9e37_79b9_7f4a_7c15);
+        let mut z = self.0;
+        z = (z ^ (z >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
+        z = (z ^ (z >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
+        z ^ (z >> 31)
+    }
+
+    /// Uniform in `[0, span)`; zero when `span` is zero.
+    fn below(&mut self, span: u64) -> u64 {
+        ((u128::from(self.next_u64()) * u128::from(span)) >> 64) as u64
+    }
+}
+
+/// Seed for a session's poll dither: random per process (std's
+/// [`RandomState`](std::collections::hash_map::RandomState) keys), mixed with
+/// the session's key so speakers polled from the same process draw apart.
+fn dither_seed(key: &SessionKey) -> u64 {
+    use std::hash::BuildHasher;
+    std::collections::hash_map::RandomState::new().hash_one(key)
+}
+
 /// What a spawned poll task hands back to the monitor loop, which alone owns
 /// session state and applies it.
 struct PollResult {
@@ -380,6 +421,8 @@ struct LatencySession {
     /// When the speaker was last polled, and the dithered interval before the next poll.
     last_poll: Option<Instant>,
     next_poll_after: Duration,
+    /// Where the dither of each interval is drawn from.
+    dither: DitherRng,
     /// Cushion trend over the current epoch.
     trend: CushionTrend,
     /// When the first trend sample of the current epoch was taken.
@@ -435,6 +478,11 @@ struct LatencySession {
     last_report: Option<Instant>,
     /// Polls measured since the last report.
     polls_since_report: u32,
+    /// Where each of those polls fell in the second, in ms from the
+    /// connection's start modulo 1000: the midpoint of its round trip.
+    /// Against the speaker's own second this is shifted by a constant, so
+    /// the gaps between them are the gaps the reserve bounds see.
+    phases_since_report: Vec<f64>,
     /// Where the last transport verdict came from.
     last_transport_source: TransportSource,
     /// Whether the draining warning has fired. It is re-armed only once the
@@ -461,8 +509,9 @@ struct LatencySession {
 }
 
 impl LatencySession {
-    /// Creates a new monitoring session with no connection yet.
-    fn new(emit_events: bool) -> Self {
+    /// Creates a new monitoring session with no connection yet, drawing its
+    /// poll dither from `dither_seed` (see [`dither_seed`]).
+    fn new(emit_events: bool, dither_seed: u64) -> Self {
         Self {
             emit_events,
             tap: None,
@@ -473,6 +522,7 @@ impl LatencySession {
             gate: TransportGate::new(Instant::now()),
             last_poll: None,
             next_poll_after: Duration::ZERO,
+            dither: DitherRng::new(dither_seed),
             trend: CushionTrend::default(),
             trend_started: None,
             last_raw_ms: 0,
@@ -498,6 +548,7 @@ impl LatencySession {
             pcm: false,
             last_report: None,
             polls_since_report: 0,
+            phases_since_report: Vec::new(),
             last_transport_source: TransportSource::None,
             draining_warned: false,
             summary_owed: false,
@@ -556,6 +607,7 @@ impl LatencySession {
         self.tracker.start_connection(self.pcm);
         self.last_report = Some(now);
         self.polls_since_report = 0;
+        self.phases_since_report.clear();
         self.connection_topology_changes = 0;
         self.summary_owed = self.wants_polls();
     }
@@ -640,6 +692,8 @@ impl LatencySession {
         });
         self.last_report = Some(now);
         let polls = std::mem::take(&mut self.polls_since_report);
+        let phase_gap = largest_phase_gap_ms(&mut self.phases_since_report);
+        self.phases_since_report.clear();
 
         let now_ms = ms_between(tap.connected_at, now);
         let (estimate, brk) = self.tracker.estimate(now_ms);
@@ -691,8 +745,8 @@ impl LatencySession {
         let per_min = f64::from(polls) * 60.0 / window.as_secs_f64().max(1.0);
         let topology = format_topology(&std::mem::take(&mut self.topology_since_report));
         log::info!(
-            "[SpeakerMonitor] {} stream={} state={} reserve={} clock={} tte={} polls={:.0}/min \
-             incons={}/{} j={:.0}ms {} transport={}{}",
+            "[SpeakerMonitor] {} stream={} state={} reserve={} clock={} tte={} polls={}({:.0}/min) \
+             phase_gap={} incons={}/{} j={:.0}ms {} transport={}{}",
             speaker_ip,
             stream_id,
             state,
@@ -702,7 +756,9 @@ impl LatencySession {
                 || "\u{2014}".to_string(),
                 |s| format_duration(Duration::from_secs_f64(s))
             ),
+            polls,
             per_min,
+            phase_gap.map_or_else(|| "\u{2014}".to_string(), |g| format!("{g:.0}ms")),
             inconsistent,
             estimates,
             self.tracker.jitter_ms(),
@@ -1054,9 +1110,9 @@ impl LatencySession {
     /// [`POLL_DITHER_MS`]; a monitor-only speaker every
     /// [`MONITOR_POLL_INTERVAL_MS`] plus up to [`MONITOR_POLL_DITHER_MS`],
     /// stretched when `monitor_only_sessions` would otherwise exceed
-    /// [`SPEAKER_MONITOR_MAX_POLLS_PER_MIN`]. The dither is taken from the
-    /// sub-second part of the wall clock, which is as good as random relative
-    /// to the speaker's own second boundaries. A speaker that has stopped
+    /// [`SPEAKER_MONITOR_MAX_POLLS_PER_MIN`]. The dither is a random draw
+    /// (see [`DitherRng`]), so it is independent of the speaker's own second
+    /// boundaries and of when the monitor wakes. A speaker that has stopped
     /// answering is polled every [`BACKOFF_POLL_INTERVAL_MS`].
     #[cfg(test)]
     fn mark_polled(&mut self, monitor_only_sessions: usize) {
@@ -1070,16 +1126,18 @@ impl LatencySession {
             self.next_poll_after = Duration::from_millis(BACKOFF_POLL_INTERVAL_MS);
             return;
         }
-        let wall_ms = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| u64::from(d.subsec_nanos()) / 1_000_000)
-            .unwrap_or(0);
         let interval_ms = if self.emit_events {
-            POLL_INTERVAL_MS + wall_ms % POLL_DITHER_MS
+            POLL_INTERVAL_MS + self.next_dither_ms(POLL_DITHER_MS)
         } else {
-            monitor_poll_interval_ms(wall_ms % MONITOR_POLL_DITHER_MS, monitor_only_sessions)
+            let dither_ms = self.next_dither_ms(MONITOR_POLL_DITHER_MS);
+            monitor_poll_interval_ms(dither_ms, monitor_only_sessions)
         };
         self.next_poll_after = Duration::from_millis(interval_ms);
+    }
+
+    /// Draws a poll dither, uniform in `[0, span)` milliseconds.
+    fn next_dither_ms(&mut self, span: u64) -> u64 {
+        self.dither.below(span)
     }
 
     /// Writes the cushion, its extremes since the last line and its trend to
@@ -1164,6 +1222,20 @@ impl LatencySession {
             }
         }
     }
+}
+
+/// The widest gap between the polls' phases in the second, `phases` being
+/// each poll's position in the second in ms (`[0, 1000)`), counting the gap
+/// that wraps from the last phase round to the first. `None` without polls.
+///
+/// The reserve bounds narrow only as far as the polls fill the second, so
+/// this is what limits how tight an estimate can get: ~72 well-spread polls
+/// leave gaps of a few tens of ms, a lattice of four points leaves 250.
+fn largest_phase_gap_ms(phases: &mut [f64]) -> Option<f64> {
+    phases.sort_unstable_by(f64::total_cmp);
+    let (first, last) = (*phases.first()?, *phases.last()?);
+    let inner = phases.windows(2).map(|w| w[1] - w[0]).fold(0.0, f64::max);
+    Some(inner.max(first + 1000.0 - last))
 }
 
 /// Interval before a monitor-only speaker's next poll, given its dither and
@@ -1559,7 +1631,8 @@ impl LatencyMonitor {
                                          first fetch: stream={}, speaker={}",
                                         stream_id, speaker_ip
                                     );
-                                    sessions.insert(key, LatencySession::new(true));
+                                    let seed = dither_seed(&key);
+                                    sessions.insert(key, LatencySession::new(true, seed));
                                 }
                             }
                         }
@@ -1769,7 +1842,7 @@ fn register_connection(
     let key = (tap.stream_id.clone(), tap.speaker_ip);
     let session = sessions
         .entry(key)
-        .or_insert_with(|| LatencySession::new(false));
+        .or_insert_with_key(|key| LatencySession::new(false, dither_seed(key)));
     session.attach(tap);
     let polling = if session.emit_events {
         "video sync"
@@ -1981,6 +2054,9 @@ fn apply_poll_result(
         }
         if !not_playing {
             session.polls_since_report += 1;
+            session
+                .phases_since_report
+                .push(((obs.ts + obs.tr) / 2.0).rem_euclid(1000.0));
         }
     }
 
@@ -2118,6 +2194,159 @@ mod tests {
             (fitted.slope_ms_per_min + 40.0).abs() > TREND_MIN_SIGMA * fitted.error_ms_per_min,
             "fixed-phase fit happened to be right: {fitted:?}"
         );
+    }
+
+    mod dither {
+        use super::super::*;
+
+        /// Kolmogorov-Smirnov critical value at p = 0.01 for `n` samples.
+        fn ks_critical(n: usize) -> f64 {
+            1.628 / (n as f64).sqrt()
+        }
+
+        /// Kolmogorov-Smirnov statistic of `samples` against the uniform
+        /// distribution on `[0, span)`.
+        fn ks_uniform(samples: &mut [f64], span: f64) -> f64 {
+            samples.sort_unstable_by(f64::total_cmp);
+            let n = samples.len() as f64;
+            samples
+                .iter()
+                .enumerate()
+                .map(|(i, x)| {
+                    let f = x / span;
+                    (f - i as f64 / n).max((i as f64 + 1.0) / n - f)
+                })
+                .fold(0.0, f64::max)
+        }
+
+        /// Sends `count` polls from `session` the way the monitor loop does,
+        /// each at its own dithered moment and the first `start_ms` into the
+        /// second, and returns where in the second each one went.
+        fn poll_phases(session: &mut LatencySession, start_ms: u64, count: usize) -> Vec<f64> {
+            let origin = Instant::now();
+            let mut sent_ms = start_ms;
+            (0..count)
+                .map(|_| {
+                    session.mark_polled_at(origin + Duration::from_millis(sent_ms), 1);
+                    let phase = (sent_ms % 1000) as f64;
+                    sent_ms += session.next_poll_after.as_millis() as u64;
+                    phase
+                })
+                .collect()
+        }
+
+        /// The same polls under the old dither: read from the wall clock's
+        /// sub-second part at the 500 ms wake-up that sent each poll, the
+        /// wall clock running `wall_offset_ms` ahead of the wake-ups' grid.
+        fn wall_clock_phases(wall_offset_ms: u64, count: usize) -> Vec<f64> {
+            let mut sent_ms = 0;
+            (0..count)
+                .map(|_| {
+                    let wake = sent_ms / POLL_INTERVAL_MS * POLL_INTERVAL_MS;
+                    let dither = (wake + wall_offset_ms) % MONITOR_POLL_DITHER_MS;
+                    let phase = (sent_ms % 1000) as f64;
+                    sent_ms += MONITOR_POLL_INTERVAL_MS + dither;
+                    phase
+                })
+                .collect()
+        }
+
+        #[test]
+        fn dither_draws_cover_the_second() {
+            let critical = ks_critical(500);
+            for start_ms in [0, 250, 500] {
+                let mut session = LatencySession::new(false, 42);
+                let mut phases = poll_phases(&mut session, start_ms, 500);
+                let d = ks_uniform(&mut phases, 1000.0);
+                assert!(
+                    d < critical,
+                    "monitor-only polls from phase {start_ms}: D={d:.3}"
+                );
+
+                let mut video = LatencySession::new(true, 42);
+                let mut phases = poll_phases(&mut video, start_ms, 500);
+                let d = ks_uniform(&mut phases, 1000.0);
+                assert!(
+                    d < critical,
+                    "video sync polls from phase {start_ms}: D={d:.3}"
+                );
+            }
+            let mut session = LatencySession::new(false, 7);
+            let mut draws: Vec<f64> = (0..500)
+                .map(|_| session.next_dither_ms(1000) as f64)
+                .collect();
+            assert!(draws.iter().all(|d| (0.0..1000.0).contains(d)));
+            let d = ks_uniform(&mut draws, 1000.0);
+            assert!(d < critical, "raw draws: D={d:.3}");
+            assert_eq!(session.next_dither_ms(0), 0);
+        }
+
+        #[test]
+        fn dither_is_independent_of_wall_clock_phase() {
+            // The draws depend on the seed alone: the same seed gives the
+            // same intervals whenever they are drawn.
+            let mut straight = LatencySession::new(false, 99);
+            let mut paused = LatencySession::new(false, 99);
+            for i in 0..40 {
+                straight.mark_polled(1);
+                if i % 10 == 0 {
+                    std::thread::sleep(Duration::from_millis(3));
+                }
+                paused.mark_polled(1);
+                assert_eq!(straight.next_poll_after, paused.next_poll_after);
+            }
+
+            // Where the old wall-clock dither collapsed onto a few points,
+            // the draw still fills the second.
+            for wall_offset_ms in [0, 2, 250, 252] {
+                let mut old = wall_clock_phases(wall_offset_ms, 72);
+                let old_gap = largest_phase_gap_ms(&mut old).expect("polls");
+                assert!(
+                    old_gap >= 245.0,
+                    "offset {wall_offset_ms}: the old dither left {old_gap:.0} ms"
+                );
+                let mut session = LatencySession::new(false, wall_offset_ms);
+                let mut new = poll_phases(&mut session, wall_offset_ms, 72);
+                let new_gap = largest_phase_gap_ms(&mut new).expect("polls");
+                assert!(
+                    new_gap < 120.0,
+                    "offset {wall_offset_ms}: the draw left {new_gap:.0} ms"
+                );
+            }
+        }
+
+        #[test]
+        fn phase_gap_reported_under_120ms_at_72_polls() {
+            for seed in 1..=20 {
+                let mut session = LatencySession::new(false, seed);
+                let mut phases = poll_phases(&mut session, 0, 72);
+                let gap = largest_phase_gap_ms(&mut phases).expect("polls");
+                assert!(gap < 120.0, "seed {seed}: {gap:.0} ms");
+            }
+        }
+
+        #[test]
+        fn phase_gap_counts_the_gap_that_wraps_round_the_second() {
+            assert_eq!(largest_phase_gap_ms(&mut []), None);
+            assert_eq!(largest_phase_gap_ms(&mut [400.0]), Some(1000.0));
+            assert_eq!(largest_phase_gap_ms(&mut [990.0, 10.0]), Some(980.0));
+            assert_eq!(
+                largest_phase_gap_ms(&mut [100.0, 900.0, 500.0]),
+                Some(400.0)
+            );
+            assert_eq!(
+                largest_phase_gap_ms(&mut [0.0, 250.0, 500.0, 750.0]),
+                Some(250.0)
+            );
+        }
+
+        #[test]
+        fn sessions_seeded_from_different_speakers_draw_apart() {
+            let ip = |s: &str| s.parse::<IpAddr>().expect("address");
+            let a = dither_seed(&("s".to_string(), ip("192.168.1.10")));
+            let b = dither_seed(&("s".to_string(), ip("192.168.1.11")));
+            assert_ne!(a, b);
+        }
     }
 
     mod polling {
@@ -2502,7 +2731,7 @@ mod tests {
         /// the figures of a reserve it is no longer building.
         #[test]
         fn a_dormant_speaker_reports_dormant() {
-            let mut session = LatencySession::new(false);
+            let mut session = LatencySession::new(false, 0);
             session.monitor = true;
             session.dormant = true;
             assert!(session.reports_health());
@@ -2547,7 +2776,7 @@ mod tests {
 
         #[test]
         fn three_failed_polls_back_off_until_the_speaker_answers() {
-            let mut session = LatencySession::new(true);
+            let mut session = LatencySession::new(true, 0);
             for poll_id in 1..=BACKOFF_AFTER_FAILURES as u64 {
                 session.mark_polled(0);
                 assert!(session.next_poll_after < Duration::from_millis(BACKOFF_POLL_INTERVAL_MS));
@@ -2579,7 +2808,7 @@ mod tests {
 
         #[test]
         fn an_answer_to_a_poll_the_session_no_longer_awaits_is_ignored() {
-            let mut session = LatencySession::new(true);
+            let mut session = LatencySession::new(true, 0);
             session.in_flight = Some(2);
             apply_poll_result(
                 &mut session,
@@ -2593,7 +2822,7 @@ mod tests {
 
         #[test]
         fn a_speaker_playing_another_track_is_left_alone_until_it_fetches_again() {
-            let mut session = LatencySession::new(false);
+            let mut session = LatencySession::new(false, 0);
             let tap = started_tap("stream", HUNG_IP, true);
             session.attach(&tap);
             assert!(session.wants_polls());
@@ -2626,7 +2855,7 @@ mod tests {
 
         #[test]
         fn a_poll_while_the_speaker_is_known_paused_is_not_measured() {
-            let mut session = LatencySession::new(true);
+            let mut session = LatencySession::new(true, 0);
             session.in_flight = Some(1);
             let mut paused = poll(1, Ok(ours(4000)));
             paused.transport = Some(Ok(TransportState::Paused));
@@ -2653,7 +2882,7 @@ mod tests {
             use crate::services::speaker_monitor::test_support::PollGen;
 
             let tap = started_tap("stream", HUNG_IP, true);
-            let mut session = LatencySession::new(false);
+            let mut session = LatencySession::new(false, 0);
             session.attach(&tap);
             let epoch_id = tap.epoch().expect("started").id;
             let origin = tap.connected_at;
@@ -2685,6 +2914,11 @@ mod tests {
                 session.sample_count > 90,
                 "video sync's latency is still measured alongside the reserve"
             );
+            // Every measured poll's phase is kept for the report's phase gap.
+            assert_eq!(
+                session.phases_since_report.len(),
+                session.polls_since_report as usize
+            );
 
             let events = NetworkEvents::default();
             session.report(
@@ -2693,6 +2927,10 @@ mod tests {
                 &tap,
                 at(240_000.0),
                 &events,
+            );
+            assert!(
+                session.phases_since_report.is_empty(),
+                "each report measures its own window's phases"
             );
             let est = session.tracker.last_estimate().copied().expect("estimate");
             assert!((est.reserve_ms - 600.0).abs() <= 50.0, "{est:?}");
@@ -2743,7 +2981,7 @@ mod tests {
         #[test]
         fn the_wall_clock_cushion_is_logged_only_for_compressed_codecs() {
             let pcm = started_tap("stream", HUNG_IP, true);
-            let mut session = LatencySession::new(false);
+            let mut session = LatencySession::new(false, 0);
             session.attach(&pcm);
             answer_polls(&mut session, &pcm, 10);
             assert!(session.sample_count >= 10);
@@ -2753,7 +2991,7 @@ mod tests {
             );
 
             let aac = started_tap_with_codec("stream", HUNG_IP, true, AudioCodec::Aac);
-            let mut session = LatencySession::new(false);
+            let mut session = LatencySession::new(false, 0);
             session.attach(&aac);
             answer_polls(&mut session, &aac, 10);
             assert!(
@@ -2765,7 +3003,7 @@ mod tests {
         #[test]
         fn the_reserve_is_reported_every_30s() {
             let tap = started_tap("stream", HUNG_IP, true);
-            let mut session = LatencySession::new(false);
+            let mut session = LatencySession::new(false, 0);
             session.attach(&tap);
             let attached = session.last_report.expect("attaching starts the clock");
             assert!(!session.report_due(attached + Duration::from_secs(29)));
@@ -2779,7 +3017,7 @@ mod tests {
         #[test]
         fn a_connection_is_summarised_once_when_it_ends_or_is_replaced() {
             let ip: IpAddr = HUNG_IP.parse().unwrap();
-            let mut session = LatencySession::new(false);
+            let mut session = LatencySession::new(false, 0);
             let first = started_tap("stream", HUNG_IP, true);
             session.attach(&first);
             // Replaced before a tick noticed it closing: attaching the next
@@ -2801,18 +3039,18 @@ mod tests {
         fn no_summary_is_owed_while_the_speaker_is_not_polled() {
             let ip: IpAddr = HUNG_IP.parse().unwrap();
             // Monitoring off and no video sync: never polled, never summarised.
-            let mut session = LatencySession::new(false);
+            let mut session = LatencySession::new(false, 0);
             session.attach(&started_tap("stream", HUNG_IP, false));
             assert!(!session.end_connection("stream", ip, Instant::now()));
             // Video sync polls whatever the setting, so it is summarised.
-            let mut session = LatencySession::new(true);
+            let mut session = LatencySession::new(true, 0);
             session.attach(&started_tap("stream", HUNG_IP, false));
             assert!(session.end_connection("stream", ip, Instant::now()));
         }
 
         #[test]
         fn a_poll_with_no_trustworthy_transport_state_is_still_measured() {
-            let mut session = LatencySession::new(true);
+            let mut session = LatencySession::new(true, 0);
             session.in_flight = Some(1);
             apply_poll_result(&mut session, poll(1, Ok(ours(4000))), &NoEvents, None);
             assert_eq!(session.sample_count, 1);
@@ -2937,7 +3175,7 @@ mod tests {
             from: 31,
             to,
         };
-        let mut session = LatencySession::new(false);
+        let mut session = LatencySession::new(false, 0);
         assert_eq!(format_topology(&session.topology_since_report), "");
 
         session.note_topology(rebooted(32));

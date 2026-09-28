@@ -46,6 +46,17 @@ const ESTIMATE_EVERY_MS: f64 = 30_000.0;
 /// The track URI the speaker reports.
 const TRACK_URI: &str = "http://10.0.0.1:49400/stream/sim/live.wav";
 
+/// Where the simulated monitor's poll dither comes from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SimDither {
+    /// A random draw, uniform over the second, as the monitor now makes.
+    Random,
+    /// The monitor's old dither: the wall clock's sub-second part at the
+    /// 500 ms wake-up that sent the poll, the wall clock running this many
+    /// ms ahead of the wake-ups' grid.
+    WallClock(u64),
+}
+
 /// A simulated speaker.
 #[derive(Debug, Clone)]
 pub(crate) struct SimSpeaker {
@@ -68,6 +79,12 @@ pub(crate) struct SimSpeaker {
     /// reaches the speaker for `.1` ms, after which everything sent in the
     /// meantime arrives at once, as after a Wi-Fi retransmission burst.
     pub stall: Option<(f64, f64)>,
+    /// How the polls are dithered.
+    pub dither: SimDither,
+    /// Poll counts at which to take an extra estimate, into
+    /// [`SimReport::at_polls`]. It is taken on a copy of the tracker, so it
+    /// does not disturb the 30 s estimates.
+    pub estimate_at_polls: Vec<usize>,
 }
 
 impl Default for SimSpeaker {
@@ -81,6 +98,8 @@ impl Default for SimSpeaker {
             seed: 1,
             connect_burst_ms: 0,
             stall: None,
+            dither: SimDither::Random,
+            estimate_at_polls: Vec::new(),
         }
     }
 }
@@ -109,6 +128,9 @@ pub(crate) struct SimReport {
     pub underruns: Vec<f64>,
     /// Every 30 s estimate.
     pub estimates: Vec<SimEstimate>,
+    /// The estimates asked for by [`SimSpeaker::estimate_at_polls`], with
+    /// the poll count each was taken at.
+    pub at_polls: Vec<(usize, Option<ReserveEstimate>)>,
 }
 
 /// The speaker's buffer and playhead.
@@ -225,6 +247,7 @@ impl SimSpeaker {
         let mut next_poll = 5_000.0;
         let mut next_estimate = ESTIMATE_EVERY_MS;
         let mut stalled_at: Option<f64> = None;
+        let mut polls = 0;
 
         let start = tokio::time::Instant::now();
         let end = minutes * 60_000.0;
@@ -285,6 +308,11 @@ impl SimSpeaker {
                     d_tr_ms: delivered,
                 };
                 tracker.observe(&obs, TRACK_URI, false);
+                polls += 1;
+                if self.estimate_at_polls.contains(&polls) {
+                    let (reserve, _) = tracker.clone().estimate(now);
+                    report.at_polls.push((polls, reserve));
+                }
             }
             if pending.is_none() && now >= next_poll {
                 let rtt = rng.range(self.rtt_ms.0, self.rtt_ms.1);
@@ -295,7 +323,14 @@ impl SimSpeaker {
                     d_ts_ms: delivered,
                     rel_ms: None,
                 });
-                next_poll = now + 2000.0 + rng.unit() * 1000.0;
+                let dither = match self.dither {
+                    SimDither::Random => rng.unit() * 1000.0,
+                    SimDither::WallClock(offset_ms) => {
+                        let wake = (now / 500.0).floor() * 500.0;
+                        (wake + offset_ms as f64) % 1000.0
+                    }
+                };
+                next_poll = now + 2000.0 + dither;
             }
 
             if now >= next_estimate {
@@ -465,6 +500,81 @@ mod tests {
             "a 500 ms burst rides out a 90 ms stall: {:?}",
             burst.underruns
         );
+    }
+
+    /// The `p`th percentile (0-100) of `values`, nearest rank.
+    fn percentile(values: &mut [f64], p: f64) -> f64 {
+        values.sort_unstable_by(f64::total_cmp);
+        let rank = ((p / 100.0) * values.len() as f64).ceil() as usize;
+        values[rank.clamp(1, values.len()) - 1]
+    }
+
+    /// Reserve half-widths at 36 and 72 polls (a minute and a half and
+    /// three minutes at the monitor-only cadence) over the given runs. Four
+    /// minutes is enough for 72 polls even at the longest old intervals.
+    async fn half_widths(runs: impl Iterator<Item = SimSpeaker>) -> (Vec<f64>, Vec<f64>) {
+        let (mut at_36, mut at_72) = (Vec::new(), Vec::new());
+        for speaker in runs {
+            let report = SimSpeaker {
+                estimate_at_polls: vec![36, 72],
+                ..speaker
+            }
+            .run(4.0, false)
+            .await;
+            for (polls, estimate) in report.at_polls {
+                let hw = estimate.expect("an estimate from 36 polls").half_width_ms;
+                if polls == 36 {
+                    at_36.push(hw)
+                } else {
+                    at_72.push(hw)
+                }
+            }
+        }
+        (at_36, at_72)
+    }
+
+    /// The evidence for how wide a held lock may grow: the half-width's
+    /// distribution at 36 and 72 polls under the old wall-clock dither,
+    /// swept over where the wall clock sits against the monitor's wake-ups,
+    /// and under the random draw, swept over seeds. Run with `--nocapture`
+    /// to see the percentiles.
+    ///
+    /// The old dither is fine for most offsets but collapses onto a few
+    /// phases for offsets near 0 and 250 ms, which leaves its worst case at
+    /// the lattice gap; the random draw has no such offsets.
+    #[tokio::test(start_paused = true)]
+    async fn hw_distribution_old_vs_new_dither() {
+        let base = |seed| SimSpeaker {
+            tick_jitter_ms: 50.0,
+            seed,
+            ..SimSpeaker::default()
+        };
+        let (mut old_36, mut old_72) = half_widths((0..500).step_by(20).map(|offset| SimSpeaker {
+            dither: SimDither::WallClock(offset),
+            ..base(offset + 1)
+        }))
+        .await;
+        let (mut new_36, mut new_72) = half_widths((1..=50).map(base)).await;
+
+        let row = |label: &str, hw: &mut Vec<f64>| {
+            let [p50, p90, p99] = [50.0, 90.0, 99.0].map(|p| percentile(hw, p));
+            eprintln!(
+                "{label}: n={} HW p50={p50:.0} p90={p90:.0} p99={p99:.0} max={:.0}",
+                hw.len(),
+                hw[hw.len() - 1]
+            );
+            (p50, p90, p99)
+        };
+        let old_36 = row("wall clock, 36 polls", &mut old_36);
+        let old_72 = row("wall clock, 72 polls", &mut old_72);
+        let new_36 = row("random, 36 polls", &mut new_36);
+        let new_72 = row("random, 72 polls", &mut new_72);
+
+        // At the tail, the lattice offsets make the old dither the worse.
+        assert!(new_36.1 < old_36.1, "{new_36:?} against {old_36:?}");
+        assert!(new_72.1 < old_72.1, "{new_72:?} against {old_72:?}");
+        assert!(new_36.2 < old_36.2, "{new_36:?} against {old_36:?}");
+        assert!(new_72.2 < old_72.2, "{new_72:?} against {old_72:?}");
     }
 
     #[tokio::test(start_paused = true)]
