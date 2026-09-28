@@ -161,6 +161,29 @@ export const LinkQualitySchema = z.enum(['good', 'degraded', 'poor']);
 export type LinkQuality = z.infer<typeof LinkQualitySchema>;
 
 /**
+ * The companion's verdict on the buffer of a speaker fetching one of its streams.
+ *
+ * - `locking`: measuring, but the estimate is not yet precise or settled.
+ * - `ok`: the reserve is measured and healthy.
+ * - `draining`: the speaker plays faster than the audio arrives and its reserve
+ *   is projected to run out within twenty minutes.
+ * - `low`: the reserve has fallen well below the level it settled at.
+ * - `paused`: the speaker is known not to be playing.
+ * - `stale`: the speaker has stopped answering position polls.
+ * - `dormant`: the speaker is playing something else.
+ */
+export const SpeakerHealthStateSchema = z.enum([
+  'locking',
+  'ok',
+  'draining',
+  'low',
+  'paused',
+  'stale',
+  'dormant',
+]);
+export type SpeakerHealthState = z.infer<typeof SpeakerHealthStateSchema>;
+
+/**
  * Network event types broadcast by the companion.
  */
 export const NetworkEventSchema = z.discriminatedUnion('type', [
@@ -193,6 +216,43 @@ export const NetworkEventSchema = z.discriminatedUnion('type', [
      * them or is at its maximum.
      */
     suggestedJitterBufferMs: z.number().int().nonnegative().optional(),
+    /** Unix timestamp in milliseconds */
+    timestamp: z.number(),
+  }),
+  z.object({
+    /**
+     * How much audio a speaker fetching one of our streams holds ahead of its
+     * playhead (its reserve), and how fast that is changing. Sent every 30 s
+     * and on every state change while the speaker is monitored, and only to
+     * the client that owns the stream. The reserve's absolute zero is not
+     * known exactly, so figures are best read against `targetMs`.
+     */
+    type: z.literal('speakerHealth'),
+    /** ID of the stream the speaker is fetching */
+    streamId: z.string(),
+    /** IP address of the speaker fetching it */
+    speakerIp: z.string(),
+    /** Playback epoch of the speaker's current connection */
+    epochId: z.number().int().nonnegative(),
+    state: SpeakerHealthStateSchema,
+    /** Best estimate of the reserve, in milliseconds of audio delivered */
+    reserveMs: z.number().int().optional(),
+    /** Half the width of the interval the reserve is known to lie in, in milliseconds */
+    reservePrecisionMs: z.number().int().nonnegative().optional(),
+    /** Lowest the reserve fell to over the last 30 s window, in milliseconds */
+    reserveMinMs: z.number().int().optional(),
+    /** Level the reserve stayed above nine tenths of the last window; `low` is judged on this */
+    reserveP10Ms: z.number().int().optional(),
+    /** Whether `reserveMinMs` and `reserveP10Ms` are on audio the speaker acknowledged */
+    reserveAcked: z.boolean(),
+    /** The reserve the speaker settled at, which `low` is measured against */
+    targetMs: z.number().int().optional(),
+    /** How much faster the speaker plays than audio arrives, in ppm; positive drains */
+    clockPpm: z.number().optional(),
+    /** Standard error of `clockPpm` */
+    clockSePpm: z.number().nonnegative().optional(),
+    /** Seconds until the reserve runs out, when the speaker is measurably draining it */
+    timeToEmptyS: z.number().int().nonnegative().optional(),
     /** Unix timestamp in milliseconds */
     timestamp: z.number(),
   }),
