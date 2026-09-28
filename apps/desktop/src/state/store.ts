@@ -1,12 +1,15 @@
 import { signal } from '@preact/signals';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
-import { NetworkEventSchema, type SpeakerNotice } from '@thaumic-cast/protocol';
+import { NetworkEventSchema } from '@thaumic-cast/protocol';
 import { createLogger } from '@thaumic-cast/shared';
 import {
+  currentReadings,
   dismissNotice,
   emptyDismissals,
   type SpeakerNoticeDismissals,
+  type SpeakerNoticeReading,
+  type SpeakerStreams,
 } from '../lib/speaker-notices';
 
 const log = createLogger('Store');
@@ -61,6 +64,8 @@ export const speakers = signal<Speaker[]>([]);
 export const groups = signal<ZoneGroup[]>([]);
 export const transportStates = signal<TransportStates>({});
 export const castingSpeakers = signal<CastingSpeakers>(new Set());
+/** The stream each casting speaker plays, by speaker IP. */
+export const castingStreams = signal<SpeakerStreams>({});
 export const serverPort = signal<number>(0);
 export const isLoading = signal<boolean>(false);
 export const stats = signal<AppStats | null>(null);
@@ -159,6 +164,12 @@ export const fetchGroups = async (): Promise<void> => {
     groups.value = [...fetchedGroups].sort((a, b) => a.name.localeCompare(b.name));
     transportStates.value = states;
     castingSpeakers.value = new Set(sessions.map((s) => s.speakerIp));
+    castingStreams.value = Object.fromEntries(sessions.map((s) => [s.speakerIp, s.streamId]));
+    // A notice belongs to one cast; forget those whose cast has ended.
+    speakerNoticeReadings.value = currentReadings(
+      speakerNoticeReadings.value,
+      castingStreams.value,
+    );
 
     // Debug: log if health changed
     if (networkHealth.value.health !== health.health) {
@@ -317,19 +328,19 @@ export const setHeadStart = async (ms: number): Promise<HeadStartSetting> => {
 // Speaker Notices
 // ─────────────────────────────────────────────────────────────────────────────
 
-/** The latest notice the core stands for one speaker. */
-export interface SpeakerNoticeReading {
-  /** The stream the speaker is playing. */
-  streamId: string;
-  /** The notice, absent when there is nothing to tell the user. */
-  notice?: SpeakerNotice;
-}
-
 /** Latest notice reading per speaker IP, from the core's speaker-health reports. */
 export const speakerNoticeReadings = signal<Record<string, SpeakerNoticeReading>>({});
 
 /** Notices the user dismissed this app run. */
 export const speakerNoticeDismissals = signal<SpeakerNoticeDismissals>(emptyDismissals());
+
+/**
+ * Forgets every speaker notice, for when the speaker monitor is turned off and
+ * no report will come to replace them.
+ */
+export const clearSpeakerNotices = (): void => {
+  speakerNoticeReadings.value = {};
+};
 
 /**
  * Dismisses the notice currently standing for a speaker.

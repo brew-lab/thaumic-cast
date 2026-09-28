@@ -4,6 +4,7 @@ import {
   setAutostartEnabled,
   getManualSpeakerIps,
   removeManualSpeakerIp,
+  clearSpeakerNotices,
   getSpeakerMonitor,
   setSpeakerMonitor,
   getHeadStart,
@@ -117,9 +118,15 @@ export function Settings() {
 
   const handleSpeakerMonitorChange = async (enabled: boolean) => {
     try {
-      setSpeakerMonitorState(await setSpeakerMonitor(enabled));
+      const setting = await setSpeakerMonitor(enabled);
+      setSpeakerMonitorState(setting);
+      // No more reports will replace the notices showing, so drop them now.
+      if (!(setting.envOverride ?? setting.enabled)) clearSpeakerNotices();
     } catch (error) {
       log.error('Failed to set speaker monitoring:', error);
+      getSpeakerMonitor()
+        .then(setSpeakerMonitorState)
+        .catch(() => {});
     }
   };
 
@@ -128,6 +135,10 @@ export function Settings() {
       setHeadStartState(await setHeadStart(ms));
     } catch (error) {
       log.error('Failed to set the speaker head start:', error);
+      // Re-read so the select stops showing a value that was not saved.
+      getHeadStart()
+        .then(setHeadStartState)
+        .catch(() => {});
     }
   };
 

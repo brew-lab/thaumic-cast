@@ -48,6 +48,35 @@ export function headStartOptions(currentMs: number): HeadStartOption[] {
   return options;
 }
 
+/** The latest notice the core stands for one speaker. */
+export interface SpeakerNoticeReading {
+  /** The stream the speaker is playing. */
+  streamId: string;
+  /** The notice, absent when there is nothing to tell the user. */
+  notice?: SpeakerNotice;
+}
+
+/** Speaker IP → the stream it is playing now, from the playback sessions. */
+export type SpeakerStreams = Record<string, string>;
+
+/**
+ * Drops readings that no longer describe a cast: the speaker has stopped, or
+ * it now plays a different stream than the one the reading is about.
+ * @param readings - Latest reading per speaker IP
+ * @param streams - The stream each casting speaker plays now
+ * @returns The readings still current, or `readings` itself when all are
+ */
+export function currentReadings(
+  readings: Record<string, SpeakerNoticeReading>,
+  streams: SpeakerStreams,
+): Record<string, SpeakerNoticeReading> {
+  const kept = Object.entries(readings).filter(
+    ([speakerIp, reading]) => streams[speakerIp] === reading.streamId,
+  );
+  if (kept.length === Object.keys(readings).length) return readings;
+  return Object.fromEntries(kept);
+}
+
 /** How long a dismissed head-start notice stays dismissed across casts. */
 export const HEAD_START_NOTICE_MEMORY_MS = 24 * 60 * 60 * 1000;
 
