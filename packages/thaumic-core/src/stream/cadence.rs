@@ -18,23 +18,82 @@ use tokio::sync::broadcast;
 use tokio::time::{interval, Instant as TokioInstant, MissedTickBehavior};
 
 use super::manager::TimestampedFrame;
+use super::tap::{ConnectionTap, MonitorRegistrar};
 use super::{
     apply_fade_in, create_fade_out_frame, crossfade_samples, extract_last_sample_pair,
     is_crossfade_compatible, AudioFormat, StreamState,
 };
 
 /// One-shot epoch hook: the stream to time, the moment the client connected,
-/// and the client address.
+/// the client address, and, for a monitored connection, its tap and where to
+/// register it.
 ///
 /// The epoch's content T0 is not part of the hook. It is the capture time of
 /// the first frame the connection actually serves, which only the pipeline
 /// knows once it has trimmed the prefill (see [`CadenceConfig::epoch_candidate`]).
 ///
-/// Holds a [`std::sync::Weak`] reference on purpose. The response body outlives
-/// the handler, so a strong `Arc` here would keep the [`StreamState`] — and with
-/// it the broadcast sender — alive after the coordinator removed the stream,
-/// leaving the connection streaming to a stream that no longer exists.
-pub type EpochHook = (std::sync::Weak<StreamState>, Instant, IpAddr);
+/// Holds a [`std::sync::Weak`] reference to the stream on purpose. The response
+/// body outlives the handler, so a strong `Arc` here would keep the
+/// [`StreamState`] — and with it the broadcast sender — alive after the
+/// coordinator removed the stream, leaving the connection streaming to a
+/// stream that no longer exists. The tap holds nothing of the stream.
+pub struct EpochHook {
+    stream: std::sync::Weak<StreamState>,
+    connected_at: Instant,
+    remote_ip: IpAddr,
+    monitor: Option<(Arc<ConnectionTap>, MonitorRegistrar)>,
+}
+
+impl EpochHook {
+    /// A hook that starts the connection's playback epoch.
+    pub fn new(
+        stream: std::sync::Weak<StreamState>,
+        connected_at: Instant,
+        remote_ip: IpAddr,
+    ) -> Self {
+        Self {
+            stream,
+            connected_at,
+            remote_ip,
+            monitor: None,
+        }
+    }
+
+    /// Also registers the connection with the speaker monitor once its epoch
+    /// has started.
+    #[must_use]
+    pub fn with_monitor(mut self, tap: Arc<ConnectionTap>, registrar: MonitorRegistrar) -> Self {
+        self.monitor = Some((tap, registrar));
+        self
+    }
+
+    /// Whether the stream the hook would time still exists.
+    pub(crate) fn stream_alive(&self) -> bool {
+        self.stream.strong_count() > 0
+    }
+
+    /// Starts the playback epoch, anchored to `epoch_candidate`, and then
+    /// registers the connection with the monitor. Does nothing if the stream
+    /// has been removed: there is no epoch left to start.
+    ///
+    /// Registration comes second so the monitor never sees a connection
+    /// without its epoch. It never blocks (see [`MonitorRegistrar::register`]).
+    pub(crate) fn fire(self, epoch_candidate: Option<Instant>) {
+        let Some(state) = self.stream.upgrade() else {
+            return;
+        };
+        let epoch = state.timing.start_new_epoch(
+            epoch_candidate,
+            self.connected_at,
+            self.remote_ip,
+            self.monitor.as_ref().map(|(tap, _)| Arc::downgrade(tap)),
+        );
+        if let Some((tap, registrar)) = self.monitor {
+            tap.set_epoch(epoch);
+            registrar.register(&tap);
+        }
+    }
+}
 
 /// Threshold for counting delivery gaps (100ms).
 /// PCM at 48kHz stereo 16-bit = 192KB/s, so 100ms = ~19KB of audio.
@@ -617,8 +676,9 @@ fn trim_prefill<T>(mut prefill_frames: Vec<T>, buffer_depth: usize) -> Vec<T> {
 /// guard once at stream end via `set_cadence_stats()`.
 ///
 /// Epoch tracking (optional): when `epoch_hook` is `Some`, the stream fires
-/// `start_new_epoch` on the first real audio frame, anchored to
-/// [`CadenceConfig::epoch_candidate`], then discards the hook.
+/// it on the first real audio frame, which starts the epoch anchored to
+/// [`CadenceConfig::epoch_candidate`] and registers a monitored connection
+/// with the speaker monitor, then discards the hook.
 /// The hook holds a `Weak` reference so the response body never keeps the
 /// `StreamState` (and with it the broadcast sender) alive; if the upgrade
 /// fails the stream has been removed and the hook is dropped unfired.
@@ -809,14 +869,8 @@ pub fn create_wav_stream_with_cadence(
                         // cap leaves room for twice the jitter buffer of live
                         // frames on top of the prefill, so none is dropped
                         // before that first tick.
-                        if let Some((weak_state, connected_at, remote_ip)) = epoch_hook.take() {
-                            if let Some(state) = weak_state.upgrade() {
-                                state.timing.start_new_epoch(
-                                    epoch_candidate,
-                                    connected_at,
-                                    remote_ip,
-                                );
-                            }
+                        if let Some(hook) = epoch_hook.take() {
+                            hook.fire(epoch_candidate);
                         }
 
                         if !first_yield_logged {
@@ -1370,7 +1424,7 @@ mod tests {
             test_guard(),
             test_config(),
             Some(Arc::downgrade(&state)),
-            Some((
+            Some(EpochHook::new(
                 Arc::downgrade(&state),
                 Instant::now(),
                 IpAddr::V4(Ipv4Addr::LOCALHOST),
@@ -1786,7 +1840,11 @@ mod tests {
             test_guard(),
             config,
             Some(Arc::downgrade(&state)),
-            Some((Arc::downgrade(&state), Instant::now(), remote)),
+            Some(EpochHook::new(
+                Arc::downgrade(&state),
+                Instant::now(),
+                remote,
+            )),
         ));
 
         let first = stream.next().await.expect("first tick").expect("ok");

@@ -118,8 +118,7 @@ impl GenaEventProcessor {
                     transport_state
                 );
                 deps.sonos_state
-                    .transport_states
-                    .insert(speaker_ip.clone(), *transport_state);
+                    .record_transport_state(speaker_ip, *transport_state);
             }
             SonosEvent::GroupVolume {
                 speaker_ip,

@@ -13,7 +13,7 @@ use crate::sonos::didl::format_didl_lite;
 use crate::sonos::retry::with_retry;
 use crate::sonos::services::SonosService;
 use crate::sonos::soap::{soap_request, soap_request_with, SoapError, SoapOptions};
-use crate::sonos::types::PositionInfo;
+use crate::sonos::types::{PositionInfo, TransportState};
 use crate::sonos::utils::{build_sonos_stream_uri, extract_xml_text};
 use crate::stream::{AudioCodec, AudioFormat, StreamMetadata};
 
@@ -210,5 +210,37 @@ pub async fn get_position_info(client: &Client, ip: &str) -> SoapResult<Position
     Ok(PositionInfo {
         track_uri,
         rel_time_ms,
+    })
+}
+
+/// Gets a speaker's current transport state.
+///
+/// Used by the speaker monitor as a fallback when the GENA-reported state
+/// cannot be vouched for. Like [`get_position_info`] it may be called
+/// throughout a cast, so its per-call log lines are at `debug` and it gives
+/// up after [`POSITION_POLL_TIMEOUT_MS`].
+///
+/// # Arguments
+/// * `client` - The HTTP client to use for the request
+/// * `ip` - IP address of the Sonos speaker (coordinator for grouped speakers)
+pub async fn get_transport_info(client: &Client, ip: &str) -> SoapResult<TransportState> {
+    let response = soap_request_with(
+        client,
+        ip,
+        SonosService::AVTransport,
+        "GetTransportInfo",
+        &[("InstanceID", "0")],
+        SoapOptions::quiet(Duration::from_millis(POSITION_POLL_TIMEOUT_MS)),
+    )
+    .await?;
+
+    let state = extract_xml_text(&response, "CurrentTransportState").unwrap_or_default();
+    state.parse().map_err(|_| {
+        log::debug!(
+            "[Sonos] GetTransportInfo: unrecognised CurrentTransportState {:?} from {}",
+            state,
+            ip
+        );
+        SoapError::Parse
     })
 }

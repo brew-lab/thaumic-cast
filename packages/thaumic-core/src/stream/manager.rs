@@ -4,13 +4,13 @@ use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, VecDeque};
 use std::net::IpAddr;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
-use std::sync::{Arc, OnceLock};
+use std::sync::{Arc, OnceLock, Weak};
 use std::time::Instant;
 use tokio::sync::broadcast;
 use uuid::Uuid;
 
 use crate::state::StreamingConfig;
-use crate::stream::AudioFormat;
+use crate::stream::{AudioFormat, ConnectionTap};
 
 /// Supported audio codecs for the stream.
 ///
@@ -156,10 +156,12 @@ pub struct StreamTiming {
     /// Used as the epoch fallback when a connection is served no prefill.
     first_frame_at: OnceLock<Instant>,
 
-    /// Current playback epoch per remote IP.
+    /// Current playback epoch per remote IP, with the connection that started
+    /// it when that connection is monitored.
     /// Each Sonos speaker gets its own epoch to prevent stray requests
-    /// from clobbering the real speaker's timing.
-    current_epoch_by_ip: parking_lot::Mutex<HashMap<IpAddr, PlaybackEpoch>>,
+    /// from clobbering the real speaker's timing. The connection is held
+    /// weakly: it belongs to its response body.
+    current_epoch_by_ip: parking_lot::Mutex<HashMap<IpAddr, (PlaybackEpoch, Weak<ConnectionTap>)>>,
 
     /// Monotonic epoch counter (shared across all IPs).
     epoch_counter: AtomicU64,
@@ -191,7 +193,7 @@ impl StreamTiming {
     /// Maximum number of epochs to keep (prevents unbounded HashMap growth).
     const MAX_EPOCHS: usize = 20;
 
-    /// Starts a new playback epoch for a specific remote IP.
+    /// Starts a new playback epoch for a specific remote IP, and returns it.
     ///
     /// Called on first audio chunk polled from the stream body.
     /// Creates a new epoch with incremented ID, which signals the latency
@@ -202,12 +204,17 @@ impl StreamTiming {
     /// the speaker plays at RelTime 0. It is `None` only when the connection
     /// was served no prefill; its first frame then arrives live, and on a
     /// stream with an empty ring that is the stream's first frame.
+    ///
+    /// `tap` is the connection's monitoring state, when it has any; it
+    /// replaces whatever the address's previous connection left, and is
+    /// found again through [`Self::current_tap_for`].
     pub fn start_new_epoch(
         &self,
         audio_epoch: Option<Instant>,
         connected_at: Instant,
         remote_ip: IpAddr,
-    ) {
+        tap: Option<Weak<ConnectionTap>>,
+    ) -> PlaybackEpoch {
         let now = Instant::now();
 
         // Fallback: if no prefill timestamp, use first_frame_at or connected_at
@@ -231,7 +238,7 @@ impl StreamTiming {
             // Evict the epoch serving the oldest content
             if let Some(oldest_ip) = epochs
                 .iter()
-                .min_by_key(|(_, e)| e.audio_epoch)
+                .min_by_key(|(_, (e, _))| e.audio_epoch)
                 .map(|(ip, _)| *ip)
             {
                 epochs.remove(&oldest_ip);
@@ -239,7 +246,7 @@ impl StreamTiming {
             }
         }
 
-        epochs.insert(remote_ip, epoch);
+        epochs.insert(remote_ip, (epoch, tap.unwrap_or_default()));
 
         log::info!(
             "[StreamTiming] Epoch #{} started: remote={}, buffer_age={:?}, poll_delay={:?}, audio_age_at_poll={:?}",
@@ -249,11 +256,22 @@ impl StreamTiming {
             poll_delay,
             audio_age_at_poll,
         );
+
+        epoch
     }
 
     /// Returns the current epoch for a specific IP if one exists.
     pub fn current_epoch_for(&self, ip: IpAddr) -> Option<PlaybackEpoch> {
-        self.current_epoch_by_ip.lock().get(&ip).copied()
+        self.current_epoch_by_ip.lock().get(&ip).map(|(e, _)| *e)
+    }
+
+    /// Returns the connection that started the current epoch for `ip`, while
+    /// that connection is still open and was given monitoring state.
+    pub fn current_tap_for(&self, ip: IpAddr) -> Option<Arc<ConnectionTap>> {
+        self.current_epoch_by_ip
+            .lock()
+            .get(&ip)
+            .and_then(|(_, tap)| tap.upgrade())
     }
 }
 
@@ -662,6 +680,34 @@ mod tests {
 
     fn payloads(prefill: &[TimestampedFrame]) -> Vec<Bytes> {
         prefill.iter().map(|f| f.data.clone()).collect()
+    }
+
+    /// Video sync will read a connection's inserted audio through the epoch
+    /// map, so the map must name the connection that started each epoch and
+    /// forget it once a newer, unmonitored connection replaces it.
+    #[test]
+    fn the_current_tap_follows_the_newest_connection_from_an_address() {
+        use crate::stream::tap::test_support::started_tap;
+        let timing = StreamTiming::new();
+        let ip: IpAddr = "192.168.1.50".parse().unwrap();
+        let tap = started_tap("s", "192.168.1.50", true);
+
+        let epoch = timing.start_new_epoch(None, Instant::now(), ip, Some(Arc::downgrade(&tap)));
+        assert_eq!(timing.current_epoch_for(ip).map(|e| e.id), Some(epoch.id));
+        assert!(timing
+            .current_tap_for(ip)
+            .is_some_and(|t| Arc::ptr_eq(&t, &tap)));
+
+        timing.start_new_epoch(None, Instant::now(), ip, None);
+        assert!(timing.current_tap_for(ip).is_none());
+
+        let tap = started_tap("s", "192.168.1.50", true);
+        timing.start_new_epoch(None, Instant::now(), ip, Some(Arc::downgrade(&tap)));
+        drop(tap);
+        assert!(
+            timing.current_tap_for(ip).is_none(),
+            "a closed connection's tap must not be kept alive by the map"
+        );
     }
 
     #[test]

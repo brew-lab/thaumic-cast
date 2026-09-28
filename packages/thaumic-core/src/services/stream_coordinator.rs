@@ -1533,6 +1533,9 @@ mod tests {
                     rel_time_ms: 0,
                 })
             }
+            async fn get_transport_info(&self, _: &str) -> SoapResult<TransportState> {
+                Ok(TransportState::Playing)
+            }
             async fn join_group(&self, _: &str, _: &str) -> SoapResult<()> {
                 self.join_group_count.fetch_add(1, Ordering::SeqCst);
                 Ok(())

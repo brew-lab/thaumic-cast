@@ -26,10 +26,28 @@
 //! - Track restart detection to maintain continuity
 //! - Isolated polls: each speaker's `GetPositionInfo` runs in its own task with
 //!   a short timeout, so a speaker that stops answering never delays another
+//!
+//! # Which speakers are watched
+//!
+//! Monitoring follows the data plane. Every connection that fetches a stream
+//! for playback registers its [`ConnectionTap`] with the monitor when it serves
+//! its first frame, however the cast was started, so only the device that
+//! actually pulls the audio is ever polled; grouped slaves and home-theatre
+//! satellites never are. A speaker is polled when speaker monitoring was on
+//! for its connection (see [`speaker_monitor_enabled`]), or when a client
+//! asked for video sync on it, which works whatever the setting says. A
+//! video-sync request that arrives before the speaker's first fetch leaves a
+//! pending session that the fetch completes.
+//!
+//! Monitor-only speakers are polled every two to three seconds, and never
+//! more than [`SPEAKER_MONITOR_MAX_POLLS_PER_MIN`] times a minute between
+//! them. A speaker reporting another track is left alone until it fetches the
+//! stream again, and a poll taken while the speaker is known not to be
+//! playing is not measured (see [`TransportGate`]).
 
 use std::collections::HashMap;
 use std::net::IpAddr;
-use std::sync::Arc;
+use std::sync::{Arc, Weak};
 use std::time::{Duration, Instant};
 
 use tokio::sync::mpsc;
@@ -38,36 +56,116 @@ use tokio_util::sync::CancellationToken;
 use crate::events::{EventEmitter, LatencyEvent};
 use crate::protocol_constants::POSITION_POLL_TIMEOUT_MS;
 use crate::runtime::TokioSpawner;
+use crate::services::speaker_monitor::{
+    GenaTransport, TransportGate, TransportStateView, TransportVerdict,
+};
 use crate::sonos::traits::SonosPlayback;
-use crate::sonos::types::PositionInfo;
-use crate::stream::{PlaybackEpoch, StreamRegistry, StreamTiming};
+use crate::sonos::types::{PositionInfo, TransportState};
+use crate::stream::{ConnectionTap, MonitorRegistrar, PlaybackEpoch, StreamRegistry};
 use crate::utils::now_millis;
 
 /// Polling interval for position queries.
 /// 500ms is sufficient since Sonos RelTime only has 1-second precision.
 const POLL_INTERVAL_MS: u64 = 500;
 
-/// Environment variable that turns on position polling for every playing
-/// speaker, not only those driving video sync, so the cushion and its trend
-/// reach the log. Off by default: it is one SOAP call per speaker every
-/// second and a half for the whole cast, and the link judgement no longer
-/// needs it (it reads the stream connection's own TCP counters instead).
+/// Environment variable that forces speaker monitoring on for this process,
+/// whatever the configuration says. Kept from before monitoring was on by
+/// default, for anyone whose setup already sets it.
 pub const SPEAKER_DIAGNOSTICS_ENV: &str = "THAUMIC_SPEAKER_DIAGNOSTICS";
 
-/// Whether cushion diagnostics are switched on for this process.
+/// Whether the diagnostics switch is set for this process.
 pub fn speaker_diagnostics_enabled() -> bool {
     std::env::var_os(SPEAKER_DIAGNOSTICS_ENV).is_some_and(|v| !v.is_empty() && v != "0")
 }
 
-/// Polling interval for a speaker that is only being watched for diagnostics,
-/// not driving video sync. With the dither below this is one poll every
-/// second and a half on average: enough samples for a trend fit to resolve
-/// a few tens of milliseconds per minute within ten minutes, while keeping a
-/// large unsynced cast to a handful of SOAP calls a second.
-const DIAGNOSTIC_POLL_INTERVAL_MS: u64 = 1000;
+/// Environment variable that overrides the speaker-monitor setting:
+/// `on` or `off` (also `true`/`false`, `1`/`0`, `yes`/`no`).
+pub const SPEAKER_MONITOR_ENV: &str = "THAUMIC_SPEAKER_MONITOR";
+
+/// Parses a speaker-monitor switch value, or `None` if it is not one.
+pub fn parse_speaker_monitor_switch(value: &str) -> Option<bool> {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "on" | "true" | "1" | "yes" => Some(true),
+        "off" | "false" | "0" | "no" => Some(false),
+        _ => None,
+    }
+}
+
+/// The value [`SPEAKER_MONITOR_ENV`] forces the setting to, if it is set to
+/// something recognisable. An unrecognisable value is ignored, with a
+/// warning the first time it is seen.
+pub fn speaker_monitor_env_override() -> Option<bool> {
+    static WARNED: std::sync::Once = std::sync::Once::new();
+    let raw = std::env::var(SPEAKER_MONITOR_ENV).ok()?;
+    if raw.trim().is_empty() {
+        return None;
+    }
+    let parsed = parse_speaker_monitor_switch(&raw);
+    if parsed.is_none() {
+        WARNED.call_once(|| {
+            log::warn!(
+                "[LatencyMonitor] Ignoring {}={:?}: expected on or off",
+                SPEAKER_MONITOR_ENV,
+                raw
+            );
+        });
+    }
+    parsed
+}
+
+/// Whether speaker monitoring is on, given the configured setting.
+///
+/// [`SPEAKER_MONITOR_ENV`] overrides `configured` when set, and the older
+/// [`SPEAKER_DIAGNOSTICS_ENV`] switch turns monitoring on regardless. Read
+/// once per speaker connection. Video sync does not depend on this: a speaker
+/// a client asked video sync for is polled either way.
+pub fn speaker_monitor_enabled(configured: bool) -> bool {
+    resolve_speaker_monitor(
+        configured,
+        speaker_monitor_env_override(),
+        speaker_diagnostics_enabled(),
+    )
+}
+
+/// [`speaker_monitor_enabled`] without the environment.
+fn resolve_speaker_monitor(
+    configured: bool,
+    env_override: Option<bool>,
+    diagnostics: bool,
+) -> bool {
+    env_override.unwrap_or(configured) || diagnostics
+}
+
+/// Base polling interval for a speaker that is monitored but not driving
+/// video sync. With [`MONITOR_POLL_DITHER_MS`] this averages one poll every
+/// two and a half seconds, 24 a minute.
+const MONITOR_POLL_INTERVAL_MS: u64 = 2000;
+
+/// Random delay added to every monitor-only poll, for the same reason as
+/// [`POLL_DITHER_MS`]: it spreads the polls uniformly over the speaker's
+/// whole-second RelTime ticks.
+const MONITOR_POLL_DITHER_MS: u64 = 1000;
+
+/// Polls a minute one monitor-only speaker costs at the base interval.
+const MONITOR_POLLS_PER_MIN: u64 = 60_000 / (MONITOR_POLL_INTERVAL_MS + MONITOR_POLL_DITHER_MS / 2);
+
+/// Ceiling on monitor-only polls a minute across the whole process. Past
+/// five fetching speakers (a large unsynced cast) every monitor-only interval
+/// stretches in proportion, so the total stays here. Video-sync polls are
+/// exempt: video sync needs its cadence.
+pub const SPEAKER_MONITOR_MAX_POLLS_PER_MIN: u64 = 120;
 
 /// How often each speaker's cushion and trend are written to the log.
-const DIAGNOSTIC_LOG_INTERVAL_SECS: u64 = 10;
+const DIAGNOSTIC_LOG_INTERVAL_SECS: u64 = 30;
+
+/// Polls in a row reporting a track that is not the stream after which the
+/// speaker is left alone until it fetches the stream again. Two, so a single
+/// odd answer around the start of a cast does not end its monitoring.
+const DORMANT_AFTER_MISMATCHES: u32 = 2;
+
+/// How long a monitor-only session outlives its connection, waiting for the
+/// speaker's next fetch (the routine reconnect, or a resume) to take it over.
+const CONNECTION_LOST_GRACE: Duration = Duration::from_secs(60);
 
 /// Random delay added to every poll, in milliseconds.
 ///
@@ -127,8 +225,8 @@ const EMA_ALPHA: f64 = 0.3;
 /// Should be >= 10 * POLL_INTERVAL_MS to avoid false positives during network blips.
 const STALE_EPOCH_TIMEOUT_SECS: u64 = 30;
 
-/// Key for identifying a monitoring session (stream_id, speaker_ip).
-type SessionKey = (String, String);
+/// Key for identifying a monitoring session (stream_id, canonical speaker IP).
+type SessionKey = (String, IpAddr);
 
 /// What a spawned poll task hands back to the monitor loop, which alone owns
 /// session state and applies it.
@@ -143,18 +241,18 @@ struct PollResult {
     stream_elapsed_ms: u64,
     /// Request round-trip time.
     rtt_ms: u32,
+    /// When the request was sent and when its answer (or timeout) came back.
+    /// The speaker read its position somewhere in between.
+    sent_at: Instant,
+    answered_at: Instant,
+    /// Milliseconds of audio handed to the connection when the request was
+    /// sent and when it was answered; `None` for a compressed codec.
+    delivered_ms_at_send: Option<u64>,
+    delivered_ms_at_answer: Option<u64>,
     /// The speaker's answer, or why there was none.
     outcome: Result<PositionInfo, String>,
-}
-
-/// Result of epoch synchronization check.
-enum EpochStatus {
-    /// Valid epoch available for measurement.
-    Valid(PlaybackEpoch),
-    /// No epoch yet (Sonos hasn't started consuming from this IP).
-    NoEpoch,
-    /// Epoch exists but is stale (no valid position data recently).
-    Stale,
+    /// The speaker's transport state, when the poll also asked for it.
+    transport: Option<Result<TransportState, String>>,
 }
 
 /// Incremental least-squares fit of cushion against time.
@@ -232,6 +330,22 @@ struct LatencySession {
     /// Whether measurements are sent to clients (video sync). Every session
     /// is logged; only these emit events.
     emit_events: bool,
+    /// The speaker's current connection, held weakly (its response body owns
+    /// it). `None` for a video-sync request whose speaker has not fetched yet.
+    tap: Option<Weak<ConnectionTap>>,
+    /// Whether speaker monitoring was on for the current connection. A
+    /// session is polled when this or `emit_events` is set.
+    monitor: bool,
+    /// When the current connection was found closed, while no newer one has
+    /// taken its place.
+    tap_lost_at: Option<Instant>,
+    /// The speaker reported a track that is not this stream, so it is not
+    /// polled until it fetches the stream again.
+    dormant: bool,
+    /// Polls in a row that reported another track.
+    uri_mismatches: u32,
+    /// Whether the speaker is playing, from evidence that can be trusted.
+    gate: TransportGate,
     /// When the speaker was last polled, and the dithered interval before the next poll.
     last_poll: Option<Instant>,
     next_poll_after: Duration,
@@ -281,10 +395,16 @@ struct LatencySession {
 }
 
 impl LatencySession {
-    /// Creates a new monitoring session.
+    /// Creates a new monitoring session with no connection yet.
     fn new(emit_events: bool) -> Self {
         Self {
             emit_events,
+            tap: None,
+            monitor: false,
+            tap_lost_at: None,
+            dormant: false,
+            uri_mismatches: 0,
+            gate: TransportGate::new(Instant::now()),
             last_poll: None,
             next_poll_after: Duration::ZERO,
             trend: CushionTrend::default(),
@@ -328,18 +448,40 @@ impl LatencySession {
         self.stale_emitted = false;
     }
 
-    /// Syncs with current epoch for a speaker IP.
+    /// Takes over a connection that has started its epoch: the speaker's
+    /// first fetch, or a later one replacing the last. Whatever the previous
+    /// connection concluded about the track playing no longer holds.
+    fn attach(&mut self, tap: &Arc<ConnectionTap>) {
+        self.tap = Some(Arc::downgrade(tap));
+        self.monitor = tap.monitor;
+        self.tap_lost_at = None;
+        self.dormant = false;
+        self.uri_mismatches = 0;
+    }
+
+    /// The current connection, if it is still open.
+    fn live_tap(&self) -> Option<Arc<ConnectionTap>> {
+        self.tap.as_ref().and_then(Weak::upgrade)
+    }
+
+    /// Whether the speaker is to be polled at all while its connection is open.
+    fn wants_polls(&self) -> bool {
+        (self.emit_events || self.monitor) && !self.dormant
+    }
+
+    /// Whether this session counts against the monitor-only poll ceiling.
+    fn polls_for_monitoring_only(&self) -> bool {
+        self.monitor
+            && !self.emit_events
+            && !self.dormant
+            && self.tap.as_ref().is_some_and(|t| t.strong_count() > 0)
+    }
+
+    /// Syncs with the epoch of the speaker's current connection.
     ///
-    /// Returns the epoch status: Valid with epoch, NoEpoch if none exists,
-    /// or Stale if we haven't received valid position data recently.
     /// Resets session if epoch changed, but seeds EMA with previous value
     /// to avoid "jump to 0 then climb back" behavior.
-    fn sync_epoch(&mut self, timing: &StreamTiming, speaker_ip: IpAddr) -> EpochStatus {
-        let epoch = match timing.current_epoch_for(speaker_ip) {
-            Some(e) => e,
-            None => return EpochStatus::NoEpoch,
-        };
-
+    fn sync_epoch(&mut self, epoch: PlaybackEpoch) {
         if epoch.id != self.last_epoch_id {
             if self.last_epoch_id > 0 {
                 log::info!(
@@ -355,20 +497,13 @@ impl LatencySession {
             }
             self.last_epoch_id = epoch.id;
         }
+    }
 
-        // Check for stale epoch (no valid position data in a while)
-        if let Some(last_valid) = self.last_valid_position {
-            if last_valid.elapsed().as_secs() > STALE_EPOCH_TIMEOUT_SECS {
-                log::debug!(
-                    "[LatencyMonitor] Epoch {} appears stale (no valid position for {}s)",
-                    epoch.id,
-                    last_valid.elapsed().as_secs()
-                );
-                return EpochStatus::Stale;
-            }
-        }
-
-        EpochStatus::Valid(epoch)
+    /// Whether the session has had no valid position for
+    /// [`STALE_EPOCH_TIMEOUT_SECS`], having had one before.
+    fn is_stale(&self) -> bool {
+        self.last_valid_position
+            .is_some_and(|at| at.elapsed().as_secs() > STALE_EPOCH_TIMEOUT_SECS)
     }
 
     /// Records that we received valid position info (for stale detection).
@@ -543,28 +678,32 @@ impl LatencySession {
         }
     }
 
-    /// Records a poll and draws the dithered interval before the next one:
-    /// the base cadence for this session plus up to [`POLL_DITHER_MS`],
-    /// taken from the sub-second part of the wall clock, which is as good as
-    /// random relative to the speaker's own second boundaries. A speaker that
-    /// has stopped answering is polled every [`BACKOFF_POLL_INTERVAL_MS`].
-    fn mark_polled(&mut self) {
+    /// Records a poll and draws the dithered interval before the next one.
+    ///
+    /// Video sync polls every [`POLL_INTERVAL_MS`] plus up to
+    /// [`POLL_DITHER_MS`]; a monitor-only speaker every
+    /// [`MONITOR_POLL_INTERVAL_MS`] plus up to [`MONITOR_POLL_DITHER_MS`],
+    /// stretched when `monitor_only_sessions` would otherwise exceed
+    /// [`SPEAKER_MONITOR_MAX_POLLS_PER_MIN`]. The dither is taken from the
+    /// sub-second part of the wall clock, which is as good as random relative
+    /// to the speaker's own second boundaries. A speaker that has stopped
+    /// answering is polled every [`BACKOFF_POLL_INTERVAL_MS`].
+    fn mark_polled(&mut self, monitor_only_sessions: usize) {
         self.last_poll = Some(Instant::now());
         if self.consecutive_failures >= BACKOFF_AFTER_FAILURES {
             self.next_poll_after = Duration::from_millis(BACKOFF_POLL_INTERVAL_MS);
             return;
         }
-        let base = if self.emit_events {
-            POLL_INTERVAL_MS
-        } else {
-            DIAGNOSTIC_POLL_INTERVAL_MS
-        };
-        let dither = std::time::SystemTime::now()
+        let wall_ms = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| u64::from(d.subsec_nanos()) / 1_000_000)
-            .unwrap_or(0)
-            % POLL_DITHER_MS;
-        self.next_poll_after = Duration::from_millis(base + dither);
+            .unwrap_or(0);
+        let interval_ms = if self.emit_events {
+            POLL_INTERVAL_MS + wall_ms % POLL_DITHER_MS
+        } else {
+            monitor_poll_interval_ms(wall_ms % MONITOR_POLL_DITHER_MS, monitor_only_sessions)
+        };
+        self.next_poll_after = Duration::from_millis(interval_ms);
     }
 
     /// Writes the cushion, its extremes since the last line and its trend to
@@ -651,19 +790,29 @@ impl LatencySession {
     }
 }
 
+/// Interval before a monitor-only speaker's next poll, given its dither and
+/// how many monitor-only speakers share the process ceiling.
+fn monitor_poll_interval_ms(dither_ms: u64, monitor_only_sessions: usize) -> u64 {
+    let base = MONITOR_POLL_INTERVAL_MS + dither_ms;
+    let demand = monitor_only_sessions as u64 * MONITOR_POLLS_PER_MIN;
+    if demand <= SPEAKER_MONITOR_MAX_POLLS_PER_MIN {
+        base
+    } else {
+        base * demand / SPEAKER_MONITOR_MAX_POLLS_PER_MIN
+    }
+}
+
 /// Command sent to the latency monitor background task.
 enum MonitorCommand {
-    /// Start monitoring a stream/speaker pair.
-    Start {
+    /// Send a speaker's measurements to clients for video sync.
+    StartVideoSync {
         stream_id: String,
-        speaker_ip: String,
-        /// Whether to send measurements to clients (video sync) as well as logging them.
-        emit_events: bool,
+        speaker_ip: IpAddr,
     },
     /// Stop monitoring for a single speaker.
     StopSpeaker {
         stream_id: String,
-        speaker_ip: String,
+        speaker_ip: IpAddr,
     },
     /// Stop all monitoring for a stream.
     StopStream { stream_id: String },
@@ -680,10 +829,15 @@ pub struct LatencyMonitor {
     command_tx: mpsc::Sender<MonitorCommand>,
     /// Command receiver (taken when start() is called).
     command_rx: parking_lot::Mutex<Option<mpsc::Receiver<MonitorCommand>>>,
+    /// Where stream connections register for monitoring.
+    registrar: MonitorRegistrar,
+    /// Registration receiver (taken when start() is called).
+    register_rx: parking_lot::Mutex<Option<mpsc::Receiver<Weak<ConnectionTap>>>>,
     /// Dependencies for the background task.
     sonos: Arc<dyn SonosPlayback>,
     stream_registry: Arc<StreamRegistry>,
     emitter: Arc<dyn EventEmitter>,
+    transport_view: Arc<dyn TransportStateView>,
     cancel: CancellationToken,
     /// Task spawner for background tasks.
     spawner: TokioSpawner,
@@ -697,25 +851,31 @@ impl LatencyMonitor {
     ///
     /// # Arguments
     /// * `sonos` - Sonos client for position queries
-    /// * `stream_registry` - Stream registry for timing information
+    /// * `stream_registry` - Stream registry, to prune sessions of removed streams
     /// * `emitter` - Event emitter for latency updates
+    /// * `transport_view` - GENA's view of each speaker's transport state
     /// * `cancel` - Cancellation token for graceful shutdown
     /// * `spawner` - Task spawner for background tasks
     pub fn new(
         sonos: Arc<dyn SonosPlayback>,
         stream_registry: Arc<StreamRegistry>,
         emitter: Arc<dyn EventEmitter>,
+        transport_view: Arc<dyn TransportStateView>,
         cancel: CancellationToken,
         spawner: TokioSpawner,
     ) -> Self {
         let (command_tx, command_rx) = mpsc::channel(32);
+        let (registrar, register_rx) = MonitorRegistrar::channel();
 
         Self {
             command_tx,
             command_rx: parking_lot::Mutex::new(Some(command_rx)),
+            registrar,
+            register_rx: parking_lot::Mutex::new(Some(register_rx)),
             sonos,
             stream_registry,
             emitter,
+            transport_view,
             cancel,
             spawner,
         }
@@ -727,30 +887,46 @@ impl LatencyMonitor {
     /// Can only be called once; subsequent calls are no-ops.
     pub fn start(&self) {
         let command_rx = self.command_rx.lock().take();
-        if let Some(rx) = command_rx {
-            let sonos = Arc::clone(&self.sonos);
-            let stream_registry = Arc::clone(&self.stream_registry);
-            let emitter = Arc::clone(&self.emitter);
+        let register_rx = self.register_rx.lock().take();
+        if let (Some(rx), Some(register_rx)) = (command_rx, register_rx) {
+            let deps = MonitorDeps {
+                sonos: Arc::clone(&self.sonos),
+                stream_registry: Arc::clone(&self.stream_registry),
+                emitter: Arc::clone(&self.emitter),
+                transport_view: Arc::clone(&self.transport_view),
+                spawner: self.spawner.clone(),
+            };
             let cancel = self.cancel.clone();
-            let spawner = self.spawner.clone();
             self.spawner.spawn(async move {
-                Self::run_monitor(sonos, stream_registry, emitter, rx, cancel, spawner).await;
+                Self::run_monitor(deps, rx, register_rx, cancel).await;
             });
         }
     }
 
-    /// Starts monitoring latency for a stream/speaker pair.
+    /// Where stream connections register for monitoring (see
+    /// [`crate::stream::EpochHook::with_monitor`]).
+    pub fn registrar(&self) -> MonitorRegistrar {
+        self.registrar.clone()
+    }
+
+    /// Sends a speaker's latency measurements to clients, for video sync.
     ///
-    /// Call this when playback starts on a speaker. Every speaker is polled
-    /// and its cushion logged; with `emit_events` the measurements are also
-    /// sent to clients, which video sync needs at the faster poll rate.
-    pub async fn start_monitoring(&self, stream_id: &str, speaker_ip: &str, emit_events: bool) {
+    /// Call this when playback starts with video sync. It does not decide
+    /// which speaker is polled — the speaker's own fetch does that — but it
+    /// makes sure the speaker is polled at the video-sync cadence whatever the
+    /// speaker-monitor setting says. If the speaker has not fetched yet, the
+    /// request waits for its first fetch; a speaker that never fetches (a
+    /// grouped slave) is never polled.
+    pub async fn start_video_sync(&self, stream_id: &str, speaker_ip: &str) {
+        let Ok(ip) = speaker_ip.parse::<IpAddr>() else {
+            log::warn!("[LatencyMonitor] Invalid speaker IP: {}", speaker_ip);
+            return;
+        };
         let _ = self
             .command_tx
-            .send(MonitorCommand::Start {
+            .send(MonitorCommand::StartVideoSync {
                 stream_id: stream_id.to_string(),
-                speaker_ip: speaker_ip.to_string(),
-                emit_events,
+                speaker_ip: ip.to_canonical(),
             })
             .await;
     }
@@ -771,11 +947,14 @@ impl LatencyMonitor {
     ///
     /// Call this when a speaker is removed from a multi-group cast.
     pub async fn stop_speaker(&self, stream_id: &str, speaker_ip: &str) {
+        let Ok(ip) = speaker_ip.parse::<IpAddr>() else {
+            return;
+        };
         let _ = self
             .command_tx
             .send(MonitorCommand::StopSpeaker {
                 stream_id: stream_id.to_string(),
-                speaker_ip: speaker_ip.to_string(),
+                speaker_ip: ip.to_canonical(),
             })
             .await;
     }
@@ -787,13 +966,18 @@ impl LatencyMonitor {
     /// a channel; the loop applies it to the session, which it alone owns.
     /// A speaker that hangs therefore delays only its own next poll.
     async fn run_monitor(
-        sonos: Arc<dyn SonosPlayback>,
-        stream_registry: Arc<StreamRegistry>,
-        emitter: Arc<dyn EventEmitter>,
+        deps: MonitorDeps,
         mut command_rx: mpsc::Receiver<MonitorCommand>,
+        mut register_rx: mpsc::Receiver<Weak<ConnectionTap>>,
         cancel: CancellationToken,
-        spawner: TokioSpawner,
     ) {
+        let MonitorDeps {
+            sonos,
+            stream_registry,
+            emitter,
+            transport_view,
+            spawner,
+        } = deps;
         let mut sessions: HashMap<SessionKey, LatencySession> = HashMap::new();
         // Unbounded is safe: each session has at most one poll in flight.
         let (result_tx, mut result_rx) = mpsc::unbounded_channel::<PollResult>();
@@ -813,26 +997,32 @@ impl LatencyMonitor {
                     break;
                 }
 
+                Some(tap) = register_rx.recv() => {
+                    // A connection that closed before its registration was read
+                    // has nothing left to monitor.
+                    if let Some(tap) = tap.upgrade() {
+                        register_connection(&mut sessions, &tap);
+                    }
+                }
+
                 Some(cmd) = command_rx.recv() => {
                     match cmd {
-                        MonitorCommand::Start { stream_id, speaker_ip, emit_events } => {
-                            let key = (stream_id.clone(), speaker_ip.clone());
+                        MonitorCommand::StartVideoSync { stream_id, speaker_ip } => {
+                            let key = (stream_id.clone(), speaker_ip);
                             match sessions.get_mut(&key) {
-                                Some(existing) => {
-                                    // A video-sync start after a diagnostic one upgrades it.
-                                    existing.emit_events |= emit_events;
-                                }
+                                Some(existing) => existing.emit_events = true,
                                 None => {
                                     log::info!(
-                                        "[LatencyMonitor] Starting monitoring: stream={}, speaker={}, events={}",
-                                        stream_id, speaker_ip, emit_events
+                                        "[LatencyMonitor] Video sync requested before the speaker's \
+                                         first fetch: stream={}, speaker={}",
+                                        stream_id, speaker_ip
                                     );
-                                    sessions.insert(key, LatencySession::new(emit_events));
+                                    sessions.insert(key, LatencySession::new(true));
                                 }
                             }
                         }
                         MonitorCommand::StopSpeaker { stream_id, speaker_ip } => {
-                            let key = (stream_id.clone(), speaker_ip.clone());
+                            let key = (stream_id.clone(), speaker_ip);
                             if sessions.remove(&key).is_some() {
                                 log::info!(
                                     "[LatencyMonitor] Stopped monitoring: stream={}, speaker={}",
@@ -853,75 +1043,101 @@ impl LatencyMonitor {
                 Some(result) = result_rx.recv() => {
                     // The session may have been stopped while its poll was out.
                     if let Some(session) = sessions.get_mut(&result.key) {
-                        apply_poll_result(session, result, emitter.as_ref());
+                        let gena = transport_view.gena_transport(&result.key.1.to_string());
+                        apply_poll_result(session, result, emitter.as_ref(), gena);
                     }
                 }
 
                 _ = poll_interval.tick() => {
                     // Walk the sessions, spawning a poll for each one that is due and
-                    // collecting orphaned ones for cleanup. Nothing here awaits.
-                    // Sessions become orphaned when StreamGuard::drop removes the stream
-                    // without calling stop_stream (e.g., WS handler panic/unexpected exit).
-                    // Use Option to avoid Vec allocation on every poll (common case: no orphans).
-                    let mut orphaned_keys: Option<Vec<SessionKey>> = None;
+                    // collecting finished ones for cleanup. Nothing here awaits.
+                    // Use Option to avoid Vec allocation on every poll (common case: none).
+                    let now = Instant::now();
+                    let monitor_only = sessions
+                        .values()
+                        .filter(|s| s.polls_for_monitoring_only())
+                        .count();
+                    let mut finished: Option<Vec<(SessionKey, &'static str)>> = None;
 
                     for (key, session) in sessions.iter_mut() {
                         let (stream_id, speaker_ip) = key;
 
-                        // Get stream for timing info
-                        let stream = match stream_registry.get_stream(stream_id) {
-                            Some(s) => s,
-                            None => {
-                                // Stream no longer exists - mark session for removal
-                                orphaned_keys
-                                    .get_or_insert_with(Vec::new)
-                                    .push(key.clone());
-                                continue;
-                            }
-                        };
-
-                        // Parse speaker IP and sync with current epoch for this speaker
-                        let speaker_ip_addr: IpAddr = match speaker_ip.parse() {
-                            Ok(ip) => ip,
-                            Err(_) => {
-                                log::warn!("[LatencyMonitor] Invalid speaker IP: {}", speaker_ip);
-                                continue;
-                            }
-                        };
-
-                        // Sync epoch - skip if no epoch yet, emit stale if stale
-                        let epoch = match session.sync_epoch(&stream.timing, speaker_ip_addr) {
-                            EpochStatus::Valid(e) => e,
-                            EpochStatus::NoEpoch => continue, // Sonos hasn't started consuming yet
-                            EpochStatus::Stale => {
-                                // Emit stale event once per stale transition
-                                if session.should_emit_stale() {
-                                    let epoch_id = session.last_epoch_id();
-                                    if session.emit_events {
-                                        let event = LatencyEvent::Stale {
-                                            stream_id: stream_id.clone(),
-                                            speaker_ip: speaker_ip.clone(),
-                                            epoch_id,
-                                            timestamp: now_millis(),
-                                        };
-                                        emitter.emit_latency(event);
-                                    }
-                                    session.mark_stale_emitted();
-                                    log::warn!(
-                                        "[LatencyMonitor] Emitting stale: stream={}, speaker={}, epoch={}",
-                                        stream_id,
-                                        speaker_ip,
-                                        epoch_id
-                                    );
-                                }
-                                continue;
-                            }
-                        };
-
-                        if session.in_flight.is_some() || !session.poll_due() {
+                        // Sessions are orphaned when StreamGuard::drop removes the stream
+                        // without calling stop_stream (e.g., WS handler panic/unexpected exit).
+                        if stream_registry.get_stream(stream_id).is_none() {
+                            finished
+                                .get_or_insert_with(Vec::new)
+                                .push((key.clone(), "stream no longer exists"));
                             continue;
                         }
-                        session.mark_polled();
+
+                        let tap = session.live_tap();
+                        match &tap {
+                            Some(tap) => {
+                                if let Some(epoch) = tap.epoch() {
+                                    session.sync_epoch(epoch);
+                                }
+                            }
+                            // The connection closed. A monitor-only session waits a
+                            // while for the speaker's next fetch to take it over; a
+                            // video-sync one is owned by the client that asked for it.
+                            None if session.tap.is_some() => {
+                                let lost = *session.tap_lost_at.get_or_insert(now);
+                                if !session.emit_events
+                                    && now.saturating_duration_since(lost) >= CONNECTION_LOST_GRACE
+                                {
+                                    finished
+                                        .get_or_insert_with(Vec::new)
+                                        .push((key.clone(), "connection closed"));
+                                    continue;
+                                }
+                            }
+                            // Video sync asked for a speaker that has not fetched yet.
+                            None => continue,
+                        }
+
+                        // Emit stale once per stale transition. Polling carries on
+                        // (at the backoff rate if the speaker has stopped answering),
+                        // so the session recovers as soon as it answers again.
+                        if !session.dormant && session.is_stale() && session.should_emit_stale() {
+                            let epoch_id = session.last_epoch_id();
+                            if session.emit_events {
+                                emitter.emit_latency(LatencyEvent::Stale {
+                                    stream_id: stream_id.clone(),
+                                    speaker_ip: speaker_ip.to_string(),
+                                    epoch_id,
+                                    timestamp: now_millis(),
+                                });
+                            }
+                            session.mark_stale_emitted();
+                            log::warn!(
+                                "[LatencyMonitor] No valid position for {}s: stream={}, speaker={}, epoch={}",
+                                STALE_EPOCH_TIMEOUT_SECS,
+                                stream_id,
+                                speaker_ip,
+                                epoch_id
+                            );
+                        }
+
+                        let Some(tap) = tap else { continue };
+                        let Some(epoch) = tap.epoch() else { continue };
+                        if !session.wants_polls()
+                            || session.in_flight.is_some()
+                            || !session.poll_due()
+                        {
+                            continue;
+                        }
+
+                        let gena = transport_view.gena_transport(&speaker_ip.to_string());
+                        if session.gate.take_stale_notice(gena.as_ref(), now) {
+                            log::info!(
+                                "[LatencyMonitor] {}: GENA transport state stale; using polled state",
+                                speaker_ip
+                            );
+                        }
+                        let want_transport = session.gate.take_transport_poll(gena.as_ref(), now);
+
+                        session.mark_polled(monitor_only);
                         next_poll_id += 1;
                         session.in_flight = Some(next_poll_id);
 
@@ -930,18 +1146,18 @@ impl LatencyMonitor {
                             key.clone(),
                             next_poll_id,
                             epoch,
+                            tap,
+                            want_transport,
                             result_tx.clone(),
                         ));
                     }
 
-                    // Clean up orphaned sessions (stream no longer exists).
-                    // This handles cases where StreamGuard::drop removed the stream
-                    // but stop_stream was never called (panic, unexpected exit, etc.).
-                    if let Some(keys) = orphaned_keys {
-                        for key in keys {
+                    if let Some(keys) = finished {
+                        for (key, reason) in keys {
                             sessions.remove(&key);
                             log::info!(
-                                "[LatencyMonitor] Pruned orphaned session: stream={}, speaker={}",
+                                "[LatencyMonitor] Ended monitoring ({}): stream={}, speaker={}",
+                                reason,
                                 key.0,
                                 key.1
                             );
@@ -953,9 +1169,46 @@ impl LatencyMonitor {
     }
 }
 
-/// Queries one speaker's position and sends the result back to the monitor.
+/// What the monitor loop needs besides its channels.
+struct MonitorDeps {
+    sonos: Arc<dyn SonosPlayback>,
+    stream_registry: Arc<StreamRegistry>,
+    emitter: Arc<dyn EventEmitter>,
+    transport_view: Arc<dyn TransportStateView>,
+    spawner: TokioSpawner,
+}
+
+/// Hands a connection that has started its epoch to its speaker's session,
+/// creating the session on the speaker's first fetch.
+fn register_connection(
+    sessions: &mut HashMap<SessionKey, LatencySession>,
+    tap: &Arc<ConnectionTap>,
+) {
+    let key = (tap.stream_id.clone(), tap.speaker_ip);
+    let session = sessions
+        .entry(key)
+        .or_insert_with(|| LatencySession::new(false));
+    session.attach(tap);
+    let polling = if session.emit_events {
+        "video sync"
+    } else if tap.monitor {
+        "monitoring"
+    } else {
+        "not polled: speaker monitoring is off"
+    };
+    log::info!(
+        "[LatencyMonitor] Connection registered: stream={}, speaker={}, epoch=#{}, {}",
+        tap.stream_id,
+        tap.speaker_ip,
+        tap.epoch().map_or(0, |e| e.id),
+        polling
+    );
+}
+
+/// Queries one speaker's position, and its transport state when asked, and
+/// sends the result back to the monitor.
 ///
-/// Runs as its own task. The request is abandoned after
+/// Runs as its own task. Each request is abandoned after
 /// [`POSITION_POLL_TIMEOUT_MS`] whatever the transport's own timeout, so the
 /// session is free to poll again soon after a speaker stops answering.
 async fn poll_position(
@@ -963,24 +1216,41 @@ async fn poll_position(
     key: SessionKey,
     poll_id: u64,
     epoch: PlaybackEpoch,
+    tap: Arc<ConnectionTap>,
+    want_transport: bool,
     results: mpsc::UnboundedSender<PollResult>,
 ) {
+    let timeout = Duration::from_millis(POSITION_POLL_TIMEOUT_MS);
+    let ip = key.1.to_string();
+
     // Get time elapsed since audio epoch (T0 for this Sonos connection)
     let stream_elapsed_ms = epoch.audio_epoch.elapsed().as_millis() as u64;
 
-    // Query Sonos position with RTT measurement
-    let start = Instant::now();
-    let outcome = match tokio::time::timeout(
-        Duration::from_millis(POSITION_POLL_TIMEOUT_MS),
-        sonos.get_position_info(&key.1),
-    )
-    .await
-    {
+    // Query Sonos position with RTT measurement, bracketed by the audio
+    // delivered on either side of it.
+    let sent_at = Instant::now();
+    let delivered_ms_at_send = tap.delivered_ms();
+    let outcome = match tokio::time::timeout(timeout, sonos.get_position_info(&ip)).await {
         Ok(Ok(position)) => Ok(position),
         Ok(Err(e)) => Err(e.to_string()),
         Err(_) => Err(format!("no answer within {}ms", POSITION_POLL_TIMEOUT_MS)),
     };
-    let rtt_ms = start.elapsed().as_millis() as u32;
+    let answered_at = Instant::now();
+    let delivered_ms_at_answer = tap.delivered_ms();
+    let rtt_ms = answered_at.duration_since(sent_at).as_millis() as u32;
+    drop(tap);
+
+    let transport = if want_transport && outcome.is_ok() {
+        Some(
+            match tokio::time::timeout(timeout, sonos.get_transport_info(&ip)).await {
+                Ok(Ok(state)) => Ok(state),
+                Ok(Err(e)) => Err(e.to_string()),
+                Err(_) => Err(format!("no answer within {}ms", POSITION_POLL_TIMEOUT_MS)),
+            },
+        )
+    } else {
+        None
+    };
 
     // The monitor has shut down if this fails; nothing to do.
     let _ = results.send(PollResult {
@@ -989,19 +1259,32 @@ async fn poll_position(
         epoch_id: epoch.id,
         stream_elapsed_ms,
         rtt_ms,
+        sent_at,
+        answered_at,
+        delivered_ms_at_send,
+        delivered_ms_at_answer,
         outcome,
+        transport,
     });
 }
 
 /// Applies a finished poll to its session: the latency sample, the
 /// diagnostics log and, for video sync, the client event.
-fn apply_poll_result(session: &mut LatencySession, poll: PollResult, emitter: &dyn EventEmitter) {
+///
+/// `gena` is what GENA currently says about the speaker's transport.
+fn apply_poll_result(
+    session: &mut LatencySession,
+    poll: PollResult,
+    emitter: &dyn EventEmitter,
+    gena: Option<GenaTransport>,
+) {
     if session.in_flight != Some(poll.poll_id) {
         // An answer for a poll this session is no longer waiting for.
         return;
     }
     session.in_flight = None;
     let (stream_id, speaker_ip) = &poll.key;
+    let speaker_ip = speaker_ip.to_string();
 
     let position = match poll.outcome {
         Ok(p) => p,
@@ -1035,6 +1318,16 @@ fn apply_poll_result(session: &mut LatencySession, poll: PollResult, emitter: &d
     }
     session.consecutive_failures = 0;
 
+    match poll.transport {
+        Some(Ok(state)) => session.gate.observe_polled(state, poll.answered_at),
+        Some(Err(e)) => log::trace!(
+            "[LatencyMonitor] Failed to get transport state from {}: {}",
+            speaker_ip,
+            e
+        ),
+        None => {}
+    }
+
     // The speaker reconnected while the poll was out; the next tick resets
     // the session for the new epoch, and this sample belongs to the old one.
     if poll.epoch_id != session.last_epoch_id() {
@@ -1043,16 +1336,29 @@ fn apply_poll_result(session: &mut LatencySession, poll: PollResult, emitter: &d
 
     // Verify Sonos is playing OUR stream (not previous content)
     // Our stream URLs look like: http://192.168.x.x:port/stream/{stream_id}/live.wav
+    // A speaker playing something else is left alone until it fetches the
+    // stream again, which starts a new epoch and re-arms the session.
     if !position.track_uri.contains(stream_id.as_str()) {
-        log::debug!(
-            "[LatencyMonitor] Waiting for stream {} (current URI: {})",
-            stream_id,
-            position.track_uri
-        );
-        // Reset all state if Sonos switches away from our stream
-        session.reset_all();
+        session.uri_mismatches += 1;
+        if session.uri_mismatches >= DORMANT_AFTER_MISMATCHES {
+            session.dormant = true;
+            log::info!(
+                "[LatencyMonitor] stream={}, speaker={}: playing something else ({}); not polling \
+                 it until it fetches the stream again",
+                stream_id,
+                speaker_ip,
+                position.track_uri
+            );
+        } else {
+            log::debug!(
+                "[LatencyMonitor] Waiting for stream {} (current URI: {})",
+                stream_id,
+                position.track_uri
+            );
+        }
         return;
     }
+    session.uri_mismatches = 0;
 
     log::trace!(
         "[LatencyMonitor] URI matched: {} contains {}",
@@ -1060,15 +1366,46 @@ fn apply_poll_result(session: &mut LatencySession, poll: PollResult, emitter: &d
         stream_id
     );
 
+    // The speaker answered about our stream, so the position is valid (for
+    // stale detection) even if it is not playing.
+    session.record_valid_position();
+    session
+        .gate
+        .observe_rel_time(position.rel_time_ms, poll.answered_at);
+    let (verdict, source) = session.gate.verdict(gena.as_ref(), poll.answered_at);
+
+    log::debug!(
+        "[LatencyMonitor] poll stream={}, speaker={}: rel={}ms rtt={}ms delivered={:?}..{:?}ms \
+         span={}ms transport={:?} ({})",
+        stream_id,
+        speaker_ip,
+        position.rel_time_ms,
+        poll.rtt_ms,
+        poll.delivered_ms_at_send,
+        poll.delivered_ms_at_answer,
+        poll.answered_at.duration_since(poll.sent_at).as_millis(),
+        verdict,
+        source
+    );
+
+    // A speaker known not to be playing says nothing about its reserve: its
+    // RelTime stands still while the clock runs on.
+    if let TransportVerdict::NotPlaying(state) = verdict {
+        log::trace!(
+            "[LatencyMonitor] speaker={}: {} ({}), poll not measured",
+            speaker_ip,
+            state,
+            source
+        );
+        return;
+    }
+
     // Calculate absolute latency (handles track restarts via offset)
     let latency_ms =
         session.calculate_latency(poll.stream_elapsed_ms, position.rel_time_ms, poll.rtt_ms);
 
-    // Record that we received valid position info (for stale detection)
-    session.record_valid_position();
-
     session.record_latency(latency_ms);
-    session.log_diagnostics(stream_id, speaker_ip, poll.rtt_ms);
+    session.log_diagnostics(stream_id, &speaker_ip, poll.rtt_ms);
 
     // Emit update if appropriate
     if session.emit_events && session.should_emit() {
@@ -1100,10 +1437,10 @@ mod tests {
     use super::*;
 
     /// Feeds `minutes` of samples along `cushion(t)`, polled the way the
-    /// monitor polls a diagnostic session: every second plus a dither of up
-    /// to a second, with the speaker's position reported in whole seconds, so
-    /// each sample of the cushion is off by up to a second depending on the
-    /// phase of the poll.
+    /// monitor polls a monitor-only speaker: every two seconds plus a dither
+    /// of up to a second, with the speaker's position reported in whole
+    /// seconds, so each sample of the cushion is off by up to a second
+    /// depending on the phase of the poll.
     fn fit(minutes: f64, cushion: impl Fn(f64) -> f64) -> Trend {
         let mut trend = CushionTrend::default();
         let mut t: f64 = 0.0;
@@ -1115,7 +1452,8 @@ mod tests {
                 .wrapping_mul(6364136223846793005)
                 .wrapping_add(1442695040888963407);
             let dither = (seed >> 33) as f64 / (1u64 << 31) as f64;
-            t += 1.0 + dither;
+            t +=
+                (MONITOR_POLL_INTERVAL_MS as f64 + dither * MONITOR_POLL_DITHER_MS as f64) / 1000.0;
         }
         trend.fit().expect("enough samples")
     }
@@ -1173,6 +1511,7 @@ mod tests {
         use crate::error::SoapResult;
         use crate::events::{NetworkEvent, SonosEvent, StreamEvent, TopologyEvent};
         use crate::state::StreamingConfig;
+        use crate::stream::tap::test_support::started_tap;
         use crate::stream::{AudioCodec, AudioFormat, StreamMetadata};
         use async_trait::async_trait;
 
@@ -1192,6 +1531,13 @@ mod tests {
         }
 
         impl FakeSpeakers {
+            fn new(stream_id: &str) -> Arc<Self> {
+                Arc::new(Self {
+                    stream_id: stream_id.to_string(),
+                    calls: parking_lot::Mutex::new(Vec::new()),
+                })
+            }
+
             fn calls_to(&self, ip: &str) -> Vec<Instant> {
                 self.calls
                     .lock()
@@ -1234,6 +1580,9 @@ mod tests {
                     rel_time_ms: 0,
                 })
             }
+            async fn get_transport_info(&self, _: &str) -> SoapResult<TransportState> {
+                Ok(TransportState::Playing)
+            }
             async fn join_group(&self, _: &str, _: &str) -> SoapResult<()> {
                 Ok(())
             }
@@ -1252,43 +1601,76 @@ mod tests {
             fn emit_latency(&self, _: LatencyEvent) {}
         }
 
-        /// Starts a monitor watching three hung speakers and one healthy one,
-        /// all already fetching a live stream, and returns the speaker double.
-        async fn watch_hung_and_healthy_speakers(cancel: &CancellationToken) -> Arc<FakeSpeakers> {
-            let registry = Arc::new(StreamRegistry::new(StreamingConfig::default()));
-            let stream_id = registry
-                .create_stream(AudioCodec::Pcm, AudioFormat::default(), 200, 10)
-                .expect("stream");
-            let stream = registry.get_stream(&stream_id).expect("stream");
-            for ip in HUNG_IPS.iter().chain([&HEALTHY_IP]) {
-                stream.timing.start_new_epoch(
-                    Some(Instant::now()),
-                    Instant::now(),
-                    ip.parse().unwrap(),
+        /// GENA double that has heard nothing.
+        struct NoGena;
+
+        impl TransportStateView for NoGena {
+            fn gena_transport(&self, _: &str) -> Option<GenaTransport> {
+                None
+            }
+        }
+
+        /// A running monitor over a live stream, and the speaker double it polls.
+        struct Harness {
+            monitor: LatencyMonitor,
+            speakers: Arc<FakeSpeakers>,
+            stream_id: String,
+        }
+
+        impl Harness {
+            async fn start(cancel: &CancellationToken) -> Self {
+                let registry = Arc::new(StreamRegistry::new(StreamingConfig::default()));
+                let stream_id = registry
+                    .create_stream(AudioCodec::Pcm, AudioFormat::default(), 200, 10)
+                    .expect("stream");
+                let speakers = FakeSpeakers::new(&stream_id);
+                let monitor = LatencyMonitor::new(
+                    Arc::clone(&speakers) as Arc<dyn SonosPlayback>,
+                    registry,
+                    Arc::new(NoEvents),
+                    Arc::new(NoGena),
+                    cancel.clone(),
+                    TokioSpawner::new(tokio::runtime::Handle::current()),
                 );
+                monitor.start();
+                Self {
+                    monitor,
+                    speakers,
+                    stream_id,
+                }
             }
-            let speakers = Arc::new(FakeSpeakers {
-                stream_id: stream_id.clone(),
-                calls: parking_lot::Mutex::new(Vec::new()),
-            });
-            let monitor = LatencyMonitor::new(
-                Arc::clone(&speakers) as Arc<dyn SonosPlayback>,
-                registry,
-                Arc::new(NoEvents),
-                cancel.clone(),
-                TokioSpawner::new(tokio::runtime::Handle::current()),
-            );
-            monitor.start();
+
+            /// `ip` fetches the stream: its connection starts an epoch and
+            /// registers. The returned tap is the open connection.
+            fn fetch(&self, ip: &str, monitor: bool) -> Arc<ConnectionTap> {
+                let tap = started_tap(&self.stream_id, ip, monitor);
+                self.monitor.registrar().register(&tap);
+                tap
+            }
+        }
+
+        /// Starts a monitor watching three hung speakers and one healthy one,
+        /// all already fetching a live stream with video sync, and returns the
+        /// speaker double and the open connections.
+        async fn watch_hung_and_healthy_speakers(
+            cancel: &CancellationToken,
+        ) -> (Arc<FakeSpeakers>, Vec<Arc<ConnectionTap>>) {
+            let harness = Harness::start(cancel).await;
+            let mut taps = Vec::new();
             for ip in HUNG_IPS.iter().chain([&HEALTHY_IP]) {
-                monitor.start_monitoring(&stream_id, ip, true).await;
+                taps.push(harness.fetch(ip, false));
+                harness
+                    .monitor
+                    .start_video_sync(&harness.stream_id, ip)
+                    .await;
             }
-            speakers
+            (harness.speakers, taps)
         }
 
         #[tokio::test]
         async fn a_hung_speaker_does_not_delay_another_speakers_polls_by_more_than_50ms() {
             let cancel = CancellationToken::new();
-            let speakers = watch_hung_and_healthy_speakers(&cancel).await;
+            let (speakers, _taps) = watch_hung_and_healthy_speakers(&cancel).await;
             tokio::time::sleep(WATCH).await;
             cancel.cancel();
 
@@ -1325,7 +1707,7 @@ mod tests {
         #[tokio::test]
         async fn a_hung_speaker_is_polled_again_only_after_its_poll_times_out() {
             let cancel = CancellationToken::new();
-            let speakers = watch_hung_and_healthy_speakers(&cancel).await;
+            let (speakers, _taps) = watch_hung_and_healthy_speakers(&cancel).await;
             tokio::time::sleep(WATCH).await;
             cancel.cancel();
 
@@ -1344,14 +1726,94 @@ mod tests {
             }
         }
 
+        /// Replaces `a_plain_cast_never_polls_the_speakers`: with monitoring on
+        /// (the default) a plain cast polls the speaker that fetches, at the
+        /// monitor-only cadence, and never a speaker that does not fetch — a
+        /// grouped slave, here one that video sync was even asked for.
+        #[tokio::test]
+        async fn a_plain_cast_polls_only_fetching_speakers_within_budget() {
+            const FETCHING: &str = "192.168.1.20";
+            const SLAVE: &str = "192.168.1.21";
+            let cancel = CancellationToken::new();
+            let harness = Harness::start(&cancel).await;
+            let _tap = harness.fetch(FETCHING, true);
+            harness
+                .monitor
+                .start_video_sync(&harness.stream_id, SLAVE)
+                .await;
+
+            let watch = Duration::from_millis(6200);
+            tokio::time::sleep(watch).await;
+            cancel.cancel();
+
+            let polls = harness.speakers.calls_to(FETCHING);
+            // First poll at once, then every 2-3 s: two or three in 6.2 s.
+            assert!(
+                (2..=4).contains(&polls.len()),
+                "fetching speaker polled {} times in {watch:?}",
+                polls.len()
+            );
+            for pair in polls.windows(2) {
+                assert!(
+                    pair[1].duration_since(pair[0])
+                        >= Duration::from_millis(MONITOR_POLL_INTERVAL_MS),
+                    "monitor-only polls closer than the base interval"
+                );
+            }
+            assert!(
+                harness.speakers.calls_to(SLAVE).is_empty(),
+                "a speaker that never fetches must never be polled"
+            );
+        }
+
+        /// Off restores the old behaviour: a plain cast is not polled at all,
+        /// and video sync still works.
+        #[tokio::test]
+        async fn speaker_monitor_off_never_polls() {
+            const PLAIN: &str = "192.168.1.30";
+            const SYNCED: &str = "192.168.1.31";
+            let cancel = CancellationToken::new();
+            let harness = Harness::start(&cancel).await;
+            let _plain = harness.fetch(PLAIN, false);
+            let _synced = harness.fetch(SYNCED, false);
+            harness
+                .monitor
+                .start_video_sync(&harness.stream_id, SYNCED)
+                .await;
+
+            tokio::time::sleep(Duration::from_millis(2600)).await;
+            cancel.cancel();
+
+            assert!(
+                harness.speakers.calls_to(PLAIN).is_empty(),
+                "with monitoring off a cast without video sync must not poll"
+            );
+            assert!(
+                harness.speakers.calls_to(SYNCED).len() >= 2,
+                "video sync keeps polling whatever the setting"
+            );
+        }
+
         fn poll(poll_id: u64, outcome: Result<PositionInfo, String>) -> PollResult {
             PollResult {
-                key: ("stream".to_string(), HUNG_IP.to_string()),
+                key: ("stream".to_string(), HUNG_IP.parse().unwrap()),
                 poll_id,
                 epoch_id: 0,
                 stream_elapsed_ms: 1000,
                 rtt_ms: 10,
+                sent_at: Instant::now(),
+                answered_at: Instant::now(),
+                delivered_ms_at_send: None,
+                delivered_ms_at_answer: None,
                 outcome,
+                transport: None,
+            }
+        }
+
+        fn ours(rel_time_ms: u64) -> PositionInfo {
+            PositionInfo {
+                track_uri: "http://10.0.0.1:1400/stream/stream/live.wav".to_string(),
+                rel_time_ms,
             }
         }
 
@@ -1359,17 +1821,18 @@ mod tests {
         fn three_failed_polls_back_off_until_the_speaker_answers() {
             let mut session = LatencySession::new(true);
             for poll_id in 1..=BACKOFF_AFTER_FAILURES as u64 {
-                session.mark_polled();
+                session.mark_polled(0);
                 assert!(session.next_poll_after < Duration::from_millis(BACKOFF_POLL_INTERVAL_MS));
                 session.in_flight = Some(poll_id);
                 apply_poll_result(
                     &mut session,
                     poll(poll_id, Err("timeout".into())),
                     &NoEvents,
+                    None,
                 );
                 assert_eq!(session.in_flight, None);
             }
-            session.mark_polled();
+            session.mark_polled(0);
             assert_eq!(
                 session.next_poll_after,
                 Duration::from_millis(BACKOFF_POLL_INTERVAL_MS)
@@ -1380,9 +1843,9 @@ mod tests {
                 track_uri: String::new(),
                 rel_time_ms: 0,
             };
-            apply_poll_result(&mut session, poll(99, Ok(answer)), &NoEvents);
+            apply_poll_result(&mut session, poll(99, Ok(answer)), &NoEvents, None);
             assert_eq!(session.consecutive_failures, 0);
-            session.mark_polled();
+            session.mark_polled(0);
             assert!(session.next_poll_after < Duration::from_millis(BACKOFF_POLL_INTERVAL_MS));
         }
 
@@ -1390,10 +1853,122 @@ mod tests {
         fn an_answer_to_a_poll_the_session_no_longer_awaits_is_ignored() {
             let mut session = LatencySession::new(true);
             session.in_flight = Some(2);
-            apply_poll_result(&mut session, poll(1, Err("timeout".into())), &NoEvents);
+            apply_poll_result(
+                &mut session,
+                poll(1, Err("timeout".into())),
+                &NoEvents,
+                None,
+            );
             assert_eq!(session.in_flight, Some(2));
             assert_eq!(session.consecutive_failures, 0);
         }
+
+        #[test]
+        fn a_speaker_playing_another_track_is_left_alone_until_it_fetches_again() {
+            let mut session = LatencySession::new(false);
+            let tap = started_tap("stream", HUNG_IP, true);
+            session.attach(&tap);
+            assert!(session.wants_polls());
+
+            let elsewhere = || PositionInfo {
+                track_uri: "x-sonos-spotify:track".to_string(),
+                rel_time_ms: 5000,
+            };
+            session.in_flight = Some(1);
+            apply_poll_result(&mut session, poll(1, Ok(elsewhere())), &NoEvents, None);
+            assert!(
+                session.wants_polls(),
+                "one odd answer does not end monitoring"
+            );
+            session.in_flight = Some(2);
+            apply_poll_result(&mut session, poll(2, Ok(elsewhere())), &NoEvents, None);
+            assert!(!session.wants_polls(), "dormant until the next fetch");
+
+            let refetch = started_tap("stream", HUNG_IP, true);
+            session.attach(&refetch);
+            assert!(session.wants_polls(), "a new fetch re-arms the session");
+        }
+
+        #[test]
+        fn a_poll_while_the_speaker_is_known_paused_is_not_measured() {
+            let mut session = LatencySession::new(true);
+            session.in_flight = Some(1);
+            let mut paused = poll(1, Ok(ours(4000)));
+            paused.transport = Some(Ok(TransportState::Paused));
+            apply_poll_result(&mut session, paused, &NoEvents, None);
+            assert_eq!(session.sample_count, 0, "a paused poll is not a sample");
+            assert!(
+                session.last_valid_position.is_some(),
+                "but it is a valid answer, so the session does not go stale"
+            );
+
+            session.in_flight = Some(2);
+            apply_poll_result(&mut session, poll(2, Ok(ours(4000))), &NoEvents, None);
+            assert_eq!(session.sample_count, 0, "the polled state still holds");
+
+            let mut playing = poll(3, Ok(ours(4000)));
+            playing.transport = Some(Ok(TransportState::Playing));
+            session.in_flight = Some(3);
+            apply_poll_result(&mut session, playing, &NoEvents, None);
+            assert_eq!(session.sample_count, 1);
+        }
+
+        #[test]
+        fn a_poll_with_no_trustworthy_transport_state_is_still_measured() {
+            let mut session = LatencySession::new(true);
+            session.in_flight = Some(1);
+            apply_poll_result(&mut session, poll(1, Ok(ours(4000))), &NoEvents, None);
+            assert_eq!(session.sample_count, 1);
+        }
+    }
+
+    #[test]
+    fn process_poll_ceiling_stretches_intervals() {
+        let mean_dither = MONITOR_POLL_DITHER_MS / 2;
+        for sessions in 1..=5 {
+            assert_eq!(
+                monitor_poll_interval_ms(mean_dither, sessions),
+                MONITOR_POLL_INTERVAL_MS + mean_dither,
+                "up to five speakers poll at the base interval"
+            );
+        }
+        for sessions in 1..=40usize {
+            let interval = monitor_poll_interval_ms(mean_dither, sessions);
+            let per_minute = sessions as u64 * 60_000 / interval;
+            assert!(
+                per_minute <= SPEAKER_MONITOR_MAX_POLLS_PER_MIN,
+                "{sessions} speakers poll {per_minute} times a minute"
+            );
+        }
+        assert_eq!(
+            monitor_poll_interval_ms(mean_dither, 10),
+            2 * (MONITOR_POLL_INTERVAL_MS + mean_dither),
+            "ten speakers each poll half as often"
+        );
+        assert_eq!(MONITOR_POLLS_PER_MIN, 24);
+    }
+
+    #[test]
+    fn the_speaker_monitor_switch_accepts_on_and_off() {
+        for on in ["on", "ON", " true ", "1", "yes"] {
+            assert_eq!(parse_speaker_monitor_switch(on), Some(true), "{on:?}");
+        }
+        for off in ["off", "Off", "false", "0", "no"] {
+            assert_eq!(parse_speaker_monitor_switch(off), Some(false), "{off:?}");
+        }
+        assert_eq!(parse_speaker_monitor_switch("sometimes"), None);
+    }
+
+    #[test]
+    fn the_environment_overrides_the_setting_and_diagnostics_force_it_on() {
+        assert!(resolve_speaker_monitor(true, None, false));
+        assert!(!resolve_speaker_monitor(false, None, false));
+        assert!(!resolve_speaker_monitor(true, Some(false), false));
+        assert!(resolve_speaker_monitor(false, Some(true), false));
+        assert!(
+            resolve_speaker_monitor(false, Some(false), true),
+            "the diagnostics switch still opts in"
+        );
     }
 
     #[test]
