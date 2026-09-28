@@ -1,10 +1,13 @@
 import { describe, expect, it } from 'bun:test';
+import { readFileSync } from 'node:fs';
 import type { SpeakerNotice } from '@thaumic-cast/protocol';
 
 import en from '../locales/en.json';
 import extensionEn from '../../../extension/src/locales/en.json';
 import {
   HEAD_START_NOTICE_MEMORY_MS,
+  HEAD_START_OPTIONS_MS,
+  currentReadings,
   dismissNotice,
   emptyDismissals,
   headStartOptions,
@@ -41,6 +44,17 @@ describe('headStartOptions', () => {
     expect(headStartOptions(500)).toEqual(
       [0, 250, 500, 750, 1000, 1500, 2000].map((ms) => ({ ms, custom: false })),
     );
+  });
+
+  it("should offer every step the core's notices may suggest", () => {
+    const constants = readFileSync(
+      new URL('../../../../packages/thaumic-core/src/protocol_constants.rs', import.meta.url),
+      'utf8',
+    );
+    const match = /pub const HEAD_START_LADDER_MS: \[u32; \d+\] = \[([^\]]+)\];/.exec(constants);
+    expect(match).not.toBeNull();
+    const ladder = match![1].split(',').map((step) => Number(step.trim()));
+    expect(HEAD_START_OPTIONS_MS).toEqual([0, ...ladder]);
   });
 
   it('should show an off-ladder value as a custom option in order', () => {
@@ -123,6 +137,7 @@ describe('speakerNoticeLines', () => {
       (key) =>
         key.startsWith('dashboard.speaker_notice_') &&
         key !== 'dashboard.speaker_notice_where' &&
+        key !== 'dashboard.speaker_notice_where_fixed' &&
         !key.endsWith('_open_settings'),
     );
     expect(shared.length).toBeGreaterThan(0);
@@ -194,5 +209,26 @@ describe('dismissal', () => {
     const later = NOW + HEAD_START_NOTICE_MEMORY_MS + 1;
     const second = dismissNotice(first, 'stream-2', KITCHEN, { ...ranOut, noticeId: 5 }, later);
     expect(Object.keys(second.byNotice)).toEqual([`stream-2|${KITCHEN}|5`]);
+  });
+});
+
+describe('currentReadings', () => {
+  const reading = { streamId: STREAM, notice: ranOut };
+
+  it('should keep a reading about the stream the speaker plays now', () => {
+    const readings = { [KITCHEN]: reading };
+    expect(currentReadings(readings, { [KITCHEN]: STREAM })).toBe(readings);
+  });
+
+  it('should drop a reading from an earlier cast when the speaker plays a new stream', () => {
+    expect(currentReadings({ [KITCHEN]: reading }, { [KITCHEN]: 'stream-2' })).toEqual({});
+  });
+
+  it('should drop a reading for a speaker that no longer casts', () => {
+    const lounge = '192.168.1.11';
+    const readings = { [KITCHEN]: reading, [lounge]: { streamId: STREAM } };
+    expect(currentReadings(readings, { [lounge]: STREAM })).toEqual({
+      [lounge]: { streamId: STREAM },
+    });
   });
 });

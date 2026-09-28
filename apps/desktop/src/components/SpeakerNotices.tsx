@@ -4,7 +4,7 @@ import { useTranslation } from 'react-i18next';
 import { Alert } from '@thaumic-cast/ui';
 import { createLogger } from '@thaumic-cast/shared';
 import {
-  castingSpeakers,
+  castingStreams,
   dismissSpeakerNotice,
   getHeadStart,
   groups,
@@ -13,6 +13,7 @@ import {
   type ZoneGroup,
 } from '../state/store';
 import {
+  currentReadings,
   isNoticeDismissed,
   noticeOffersSettings,
   speakerNoticeLines,
@@ -55,11 +56,13 @@ export function SpeakerNotices() {
   }, []);
 
   const now = Date.now();
-  const casting = castingSpeakers.value;
   const dismissals = speakerNoticeDismissals.value;
-  const cards = Object.entries(speakerNoticeReadings.value).flatMap(([speakerIp, reading]) => {
+  // Only a reading about the stream the speaker plays now: a notice from an
+  // earlier cast must not come back when the speaker starts a new one.
+  const readings = currentReadings(speakerNoticeReadings.value, castingStreams.value);
+  const cards = Object.entries(readings).flatMap(([speakerIp, reading]) => {
     const notice = reading.notice;
-    if (!notice || !casting.has(speakerIp)) return [];
+    if (!notice) return [];
     if (isNoticeDismissed(dismissals, reading.streamId, speakerIp, notice, now)) return [];
     const lines = speakerNoticeLines(notice, {
       speakerName: speakerName(speakerIp, groups.value),

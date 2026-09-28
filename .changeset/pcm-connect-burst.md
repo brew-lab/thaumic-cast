@@ -18,7 +18,7 @@ whether a speaker accepts a long one. A resume is never delayed and
 bursts only what the stream holds beyond the jitter buffer, never padding with silence. End-to-end
 latency grows by the burst; the playback epoch is anchored to the first burst frame, so video sync and the speaker
 monitor's reserve account for it. A PCM stream's ring now holds the largest burst plus the largest jitter buffer, which
-also fixes jitter buffers above 500 ms being silently capped at 500 ms. Compressed codecs are unaffected. The burst, called
-the speaker head start in the apps, is set in the desktop app under Settings > Speakers (Off, or 250 to 2000 ms), with
-`pcm_connect_burst_ms` in the server's config.yaml, or with `THAUMIC_PCM_CONNECT_BURST_MS`, which outranks both (0
-turns it off, at most 2000). It applies from each speaker's next connection, to PCM casts only.
+also fixes jitter buffers above 500 ms being silently capped at 500 ms. Compressed codecs are unaffected. The burst,
+called the speaker head start in the apps, is set in the desktop app under Settings > Speakers (Off, or 250 to 2000
+ms), with `pcm_connect_burst_ms` in the server's config.yaml, or with `THAUMIC_PCM_CONNECT_BURST_MS`, which outranks
+both (0 turns it off, at most 2000). It applies from each speaker's next connection, to PCM casts only.
