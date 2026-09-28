@@ -155,6 +155,71 @@ impl NetworkContext {
         }
     }
 
+    /// Moves the advertised address onto a speaker's subnet when it is not on
+    /// one already and detection finds one that is.
+    ///
+    /// The last line of defence before a URL is handed to a speaker. The
+    /// topology monitor re-runs detection as soon as discovery finds speakers,
+    /// so in practice the address is already right by the time anything can be
+    /// cast; this covers whatever slips past that, such as a cast that races the
+    /// first refresh. It only ever moves the address *towards* the speakers: when
+    /// the current address already shares a /24 with one of them, when detection
+    /// fails, or when detection has nothing better to offer, it changes nothing.
+    ///
+    /// A no-op in explicit mode. The headless server is told which address to
+    /// advertise and must keep advertising it.
+    ///
+    /// # Arguments
+    ///
+    /// * `speaker_ips` - The speakers about to be handed a URL.
+    ///
+    /// # Returns
+    ///
+    /// The newly adopted address, or `None` when nothing changed. The caller is
+    /// expected to re-advertise anything built from the old address; the
+    /// topology monitor notices the change on its next pass and rebuilds its
+    /// subscriptions and the mDNS record.
+    pub fn prefer_address_reachable_from(&self, speaker_ips: &[Ipv4Addr]) -> Option<String> {
+        if speaker_ips.is_empty() {
+            return None;
+        }
+        let detector = self.ip_detector.as_ref()?;
+
+        let current = self.get_local_ip();
+        if current
+            .parse::<Ipv4Addr>()
+            .is_ok_and(|ip| shares_subnet_with_speaker(ip, speaker_ips))
+        {
+            return None;
+        }
+
+        let detected = match detector.detect(speaker_ips) {
+            Ok(ip) => ip,
+            Err(e) => {
+                log::debug!(
+                    "[Network] {} is on no speaker's subnet, and detection failed: {}",
+                    current,
+                    e
+                );
+                return None;
+            }
+        };
+        let better = detected
+            .parse::<Ipv4Addr>()
+            .is_ok_and(|ip| shares_subnet_with_speaker(ip, speaker_ips));
+        if !better || detected == current {
+            return None;
+        }
+
+        log::warn!(
+            "[Network] Advertised address {} is on no speaker's subnet; switching to {}",
+            current,
+            detected
+        );
+        self.set_local_ip(detected.clone());
+        Some(detected)
+    }
+
     /// Returns the current port value.
     #[must_use]
     pub fn get_port(&self) -> u16 {
@@ -265,7 +330,10 @@ fn is_usable_advertise_address(ip: Ipv4Addr) -> bool {
 /// /24 is an assumption, but the right one to make here: it is the default for
 /// every consumer LAN a Sonos system lives on, and being wrong only costs us the
 /// preference — the block ranking and the numeric tie-break still decide.
-fn shares_subnet_with_speaker(candidate: Ipv4Addr, known_speaker_ips: &[Ipv4Addr]) -> bool {
+pub(crate) fn shares_subnet_with_speaker(
+    candidate: Ipv4Addr,
+    known_speaker_ips: &[Ipv4Addr],
+) -> bool {
     let prefix = &candidate.octets()[..3];
     known_speaker_ips
         .iter()
@@ -411,6 +479,45 @@ impl IpDetector for LocalIpDetector {
             .ok_or_else(|| {
                 NetworkError::Detection("no usable address on a non-virtual interface".to_string())
             })
+    }
+}
+
+/// A detector over a fixed interface list, for tests elsewhere in the crate.
+///
+/// Runs the real [`select_advertise_address`], so a test sees exactly the
+/// choice [`LocalIpDetector`] would make on a machine with these interfaces
+/// and this default route.
+#[cfg(test)]
+pub(crate) struct FakeInterfaceDetector {
+    interfaces: Vec<(String, IpAddr)>,
+    default_route: Option<IpAddr>,
+}
+
+#[cfg(test)]
+impl FakeInterfaceDetector {
+    /// Builds a detector from `(name, address)` pairs and an optional
+    /// default-route address.
+    pub(crate) fn new(interfaces: &[(&str, &str)], default_route: Option<&str>) -> Self {
+        Self {
+            interfaces: interfaces
+                .iter()
+                .map(|(name, ip)| ((*name).to_string(), ip.parse().expect("test address")))
+                .collect(),
+            default_route: default_route.map(|ip| ip.parse().expect("test address")),
+        }
+    }
+}
+
+#[cfg(test)]
+impl IpDetector for FakeInterfaceDetector {
+    fn detect(&self, known_speaker_ips: &[Ipv4Addr]) -> Result<String, NetworkError> {
+        select_advertise_address(
+            self.interfaces.clone(),
+            self.default_route,
+            known_speaker_ips,
+        )
+        .map(|ip| ip.to_string())
+        .ok_or_else(|| NetworkError::Detection("no usable address".to_string()))
     }
 }
 
@@ -831,6 +938,64 @@ mod tests {
         assert!(!is_usable_advertise_address(Ipv4Addr::UNSPECIFIED));
         assert!(!is_usable_advertise_address(Ipv4Addr::BROADCAST));
         assert!(is_usable_advertise_address(Ipv4Addr::new(192, 168, 1, 50)));
+    }
+
+    /// A Windows laptop with Cloudflare WARP connected: the tunnel adapter has a
+    /// name the virtual-interface filter does not catch, carries a CGNAT address,
+    /// and owns the default route. The speakers are on the Wi-Fi LAN.
+    fn warp_detector() -> Arc<dyn IpDetector> {
+        Arc::new(FakeInterfaceDetector::new(
+            &[("CloudflareWARP", "100.96.0.12"), ("Wi-Fi", "192.168.2.50")],
+            Some("100.96.0.12"),
+        ))
+    }
+
+    #[test]
+    fn with_no_speakers_known_the_launch_address_is_unchanged() {
+        // Nothing has been discovered at launch, so the default route decides,
+        // exactly as it did before discovery could correct it.
+        let ctx = NetworkContext::auto_detect(0, warp_detector()).unwrap();
+        assert_eq!(ctx.get_local_ip(), "100.96.0.12");
+        assert_eq!(ctx.prefer_address_reachable_from(&[]), None);
+        assert_eq!(ctx.get_local_ip(), "100.96.0.12");
+    }
+
+    #[test]
+    fn a_speaker_about_to_be_handed_a_url_pulls_the_address_onto_its_subnet() {
+        let ctx = NetworkContext::auto_detect(8080, warp_detector()).unwrap();
+        let speakers = [Ipv4Addr::new(192, 168, 2, 204)];
+
+        assert_eq!(
+            ctx.prefer_address_reachable_from(&speakers).as_deref(),
+            Some("192.168.2.50")
+        );
+        assert_eq!(
+            ctx.stream_url("abc"),
+            "http://192.168.2.50:8080/stream/abc/live"
+        );
+        // Already on the speakers' subnet: nothing more to do.
+        assert_eq!(ctx.prefer_address_reachable_from(&speakers), None);
+    }
+
+    #[test]
+    fn a_speaker_on_a_subnet_we_do_not_have_leaves_the_address_alone() {
+        let ctx = NetworkContext::auto_detect(0, warp_detector()).unwrap();
+        assert_eq!(
+            ctx.prefer_address_reachable_from(&[Ipv4Addr::new(10, 1, 2, 3)]),
+            None
+        );
+        assert_eq!(ctx.get_local_ip(), "100.96.0.12");
+    }
+
+    #[test]
+    fn an_explicit_address_is_never_second_guessed() {
+        // The headless server's advertise address is configuration, not a guess.
+        let ctx = NetworkContext::explicit(8080, IpAddr::V4(Ipv4Addr::new(100, 96, 0, 12)));
+        assert_eq!(
+            ctx.prefer_address_reachable_from(&[Ipv4Addr::new(192, 168, 2, 204)]),
+            None
+        );
+        assert_eq!(ctx.get_local_ip(), "100.96.0.12");
     }
 
     #[test]
