@@ -142,6 +142,13 @@ export {
   type SpeakerLinkQualityChangedMessage,
   GetSpeakerLinkQualityMessageSchema,
   type GetSpeakerLinkQualityMessage,
+  type SpeakerHealthEvent,
+  SpeakerHealthEntrySchema,
+  type SpeakerHealthEntry,
+  SpeakerHealthChangedMessageSchema,
+  type SpeakerHealthChangedMessage,
+  GetSpeakerHealthMessageSchema,
+  type GetSpeakerHealthMessage,
   CaptureHealthEventMessageSchema,
   type CaptureHealthEventMessage,
   CaptureHealthChangedMessageSchema,
@@ -226,6 +233,7 @@ import type {
   NetworkHealthChangedMessage,
   CaptureHealthChangedMessage,
   SpeakerLinkQualityChangedMessage,
+  SpeakerHealthChangedMessage,
   LatencyUpdateMessage,
   LatencyStaleMessage,
   VideoSyncStateChangedMessage,
@@ -269,6 +277,7 @@ export type PopupToBackgroundType =
   | 'GET_CONNECTION_STATUS'
   | 'GET_CAPTURE_HEALTH'
   | 'GET_SPEAKER_LINK_QUALITY'
+  | 'GET_SPEAKER_HEALTH'
   | 'GET_CURRENT_TAB_STATE'
   | 'GET_ACTIVE_CASTS'
   | 'ENSURE_CONNECTION'
@@ -299,6 +308,7 @@ export type BackgroundToPopupType =
   | 'NETWORK_HEALTH_CHANGED'
   | 'CAPTURE_HEALTH_CHANGED'
   | 'SPEAKER_LINK_QUALITY_CHANGED'
+  | 'SPEAKER_HEALTH_CHANGED'
   | 'LATENCY_UPDATE'
   | 'LATENCY_STALE';
 
@@ -364,6 +374,7 @@ export type PopupToBackgroundMessage =
   | { type: 'GET_CONNECTION_STATUS' }
   | { type: 'GET_CAPTURE_HEALTH' }
   | { type: 'GET_SPEAKER_LINK_QUALITY' }
+  | { type: 'GET_SPEAKER_HEALTH' }
   | { type: 'GET_CURRENT_TAB_STATE' }
   | GetActiveCastsMessage
   | EnsureConnectionMessage
@@ -397,6 +408,7 @@ export type BackgroundToPopupMessage =
   | NetworkHealthChangedMessage
   | CaptureHealthChangedMessage
   | SpeakerLinkQualityChangedMessage
+  | SpeakerHealthChangedMessage
   | LatencyUpdateMessage
   | LatencyStaleMessage
   | VideoSyncStateChangedMessage;

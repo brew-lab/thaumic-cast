@@ -21,6 +21,7 @@ import {
   SpeakerRemovalReasonSchema,
   NetworkEventSchema,
   LinkQualitySchema,
+  SpeakerHealthStateSchema,
 } from '@thaumic-cast/protocol';
 
 // Re-export SpeakerRemovalReason from protocol for convenience
@@ -544,6 +545,55 @@ export const GetSpeakerLinkQualityMessageSchema = z.object({
   type: z.literal('GET_SPEAKER_LINK_QUALITY'),
 });
 export type GetSpeakerLinkQualityMessage = z.infer<typeof GetSpeakerLinkQualityMessageSchema>;
+
+/** The `speakerHealth` variant of the companion's network event. */
+export type SpeakerHealthEvent = Extract<
+  z.infer<typeof NetworkEventSchema>,
+  { type: 'speakerHealth' }
+>;
+
+/**
+ * Latest speaker-health reading for one speaker, as kept by the background.
+ * The figures are the companion's `speakerHealth` event carried through
+ * unchanged, for logs and diagnostics. The companion sends the event every
+ * 30 s, so `updatedAt` cannot key a dismissal; `alarmSince` does instead: the
+ * timestamp of the first event of the current run of `low` or `draining`
+ * readings, carried forward while the speaker stays in either state.
+ */
+export const SpeakerHealthEntrySchema = z.object({
+  streamId: z.string(),
+  epochId: z.number().int().nonnegative(),
+  state: SpeakerHealthStateSchema,
+  reserveMs: z.number().int().optional(),
+  reservePrecisionMs: z.number().int().nonnegative().optional(),
+  reserveMinMs: z.number().int().optional(),
+  reserveP10Ms: z.number().int().optional(),
+  reserveAcked: z.boolean(),
+  targetMs: z.number().int().optional(),
+  clockPpm: z.number().optional(),
+  clockSePpm: z.number().nonnegative().optional(),
+  timeToEmptyS: z.number().int().nonnegative().optional(),
+  updatedAt: z.number(),
+  /** When the current low or draining run began; absent while the speaker is neither */
+  alarmSince: z.number().optional(),
+});
+export type SpeakerHealthEntry = z.infer<typeof SpeakerHealthEntrySchema>;
+
+/**
+ * Speaker-health broadcast (background → popup). Carries the whole snapshot,
+ * keyed by speaker IP, like SPEAKER_LINK_QUALITY_CHANGED.
+ */
+export const SpeakerHealthChangedMessageSchema = z.object({
+  type: z.literal('SPEAKER_HEALTH_CHANGED'),
+  speakers: z.record(SpeakerIpSchema, SpeakerHealthEntrySchema),
+});
+export type SpeakerHealthChangedMessage = z.infer<typeof SpeakerHealthChangedMessageSchema>;
+
+/** Popup → background query for the current speaker-health snapshot. */
+export const GetSpeakerHealthMessageSchema = z.object({
+  type: z.literal('GET_SPEAKER_HEALTH'),
+});
+export type GetSpeakerHealthMessage = z.infer<typeof GetSpeakerHealthMessageSchema>;
 
 /**
  * Capture-health event (offscreen → background). Fired when `StreamSession`

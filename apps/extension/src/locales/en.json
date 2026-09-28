@@ -193,6 +193,8 @@
   "speaker_link_quality_degraded_raise_buffer_message": "If audio stutters, raise the network buffer to {{suggested}} ms (currently {{current}} ms) to cover the stalls to {{name}}. Takes effect on the next cast.",
   "speaker_link_quality_no_remedy_message": "The connection to {{name}} is stalling and the network buffer ({{current}} ms) cannot cover it. Move the device closer to the router or use a wired connection.",
   "speaker_link_quality_action_open_settings": "Open settings",
+  "speaker_health_low_message": "Speaker buffer running low on {{name}}. Audio may stutter; stopping and restarting the cast refills it.",
+  "speaker_health_draining_message": "Speaker buffer running low on {{name}}: it plays slightly faster than the audio arrives and will run dry in about {{minutes}} min. Stopping and restarting the cast refills it.",
   "video_sync": "Video Sync",
   "video_sync_toggle": "Sync video to audio",
   "video_sync_status_waiting": "Waiting",

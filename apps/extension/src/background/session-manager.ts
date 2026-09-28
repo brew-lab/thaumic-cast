@@ -24,6 +24,11 @@ import {
   clearSpeakerLinkQuality,
   speakerLinkQualityBroadcast,
 } from './speaker-link-quality-state';
+import {
+  clearAllSpeakerHealth,
+  clearSpeakerHealth,
+  speakerHealthBroadcast,
+} from './speaker-health-state';
 
 const log = createLogger('SessionManager');
 
@@ -201,7 +206,7 @@ export function removeSession(tabId: number): void {
     if (clearCaptureHealthForTab(tabId)) {
       notifyPopup(captureHealthBroadcast());
     }
-    dropLinkQualityForSpeakers(session.speakerIps);
+    dropReadingsForSpeakers(session.speakerIps);
 
     persistSessions();
     notifySessionsChanged();
@@ -222,24 +227,33 @@ export function clearAllSessions(): void {
   if (clearAllSpeakerLinkQuality()) {
     notifyPopup(speakerLinkQualityBroadcast());
   }
+  if (clearAllSpeakerHealth()) {
+    notifyPopup(speakerHealthBroadcast());
+  }
   persistSessions();
   notifySessionsChanged();
 }
 
 /**
- * Drops link-quality readings for speakers that no longer belong to any
- * active cast. The companion only reports on speakers playing a stream, so
- * a reading outlives its usefulness the moment the speaker leaves the cast.
+ * Drops link-quality and speaker-health readings for speakers that no longer
+ * belong to any active cast. The companion only reports on speakers playing
+ * a stream, so a reading outlives its usefulness the moment the speaker
+ * leaves the cast.
  * @param speakerIps - Speakers that just left a session
  */
-function dropLinkQualityForSpeakers(speakerIps: readonly string[]): void {
-  let changed = false;
+function dropReadingsForSpeakers(speakerIps: readonly string[]): void {
+  let linkChanged = false;
+  let healthChanged = false;
   for (const speakerIp of speakerIps) {
     if (getSessionBySpeakerIp(speakerIp)) continue;
-    if (clearSpeakerLinkQuality(speakerIp)) changed = true;
+    if (clearSpeakerLinkQuality(speakerIp)) linkChanged = true;
+    if (clearSpeakerHealth(speakerIp)) healthChanged = true;
   }
-  if (changed) {
+  if (linkChanged) {
     notifyPopup(speakerLinkQualityBroadcast());
+  }
+  if (healthChanged) {
+    notifyPopup(speakerHealthBroadcast());
   }
 }
 
@@ -303,7 +317,7 @@ export function removeSpeakerFromSession(tabId: number, speakerIp: string): bool
     return true;
   }
 
-  dropLinkQualityForSpeakers([speakerIp]);
+  dropReadingsForSpeakers([speakerIp]);
   persistSessions();
   notifySessionsChanged();
   log.info(

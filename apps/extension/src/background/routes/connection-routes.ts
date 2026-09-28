@@ -2,7 +2,7 @@
  * Connection Routes
  *
  * Handles message routing for WebSocket and connection management:
- * - GET_CONNECTION_STATUS, GET_CAPTURE_HEALTH, GET_SPEAKER_LINK_QUALITY
+ * - GET_CONNECTION_STATUS, GET_CAPTURE_HEALTH, GET_SPEAKER_LINK_QUALITY, GET_SPEAKER_HEALTH
  * - ENSURE_CONNECTION, WS_CONNECT, WS_DISCONNECT, WS_RECONNECT
  */
 
@@ -10,6 +10,7 @@ import { registerRoute, registerValidatedRoute } from '../router';
 import { getConnectionState } from '../connection-state';
 import { getCaptureHealthState } from '../capture-health-state';
 import { getSpeakerLinkQuality } from '../speaker-link-quality-state';
+import { getSpeakerHealth } from '../speaker-health-state';
 import { ensureConnection, handleWsConnectRequest } from '../handlers/connection';
 import { offscreenBroker } from '../offscreen-broker';
 import { WsConnectMessageSchema, WsReconnectMessageSchema } from '../../lib/message-schemas';
@@ -28,6 +29,10 @@ export function registerConnectionRoutes(): void {
 
   registerRoute('GET_SPEAKER_LINK_QUALITY', () => {
     return getSpeakerLinkQuality();
+  });
+
+  registerRoute('GET_SPEAKER_HEALTH', () => {
+    return getSpeakerHealth();
   });
 
   registerRoute('ENSURE_CONNECTION', async () => {
