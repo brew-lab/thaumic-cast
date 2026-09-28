@@ -33,8 +33,8 @@ use crate::services::latency_monitor::speaker_monitor_enabled;
 use crate::stream::manager::TimestampedFrame;
 use crate::stream::{
     create_wav_header, create_wav_stream_with_cadence, lagged_error, pcm_connect_burst_ms,
-    AudioCodec, CadenceConfig, ConnectionTap, EpochHook, FirstConnectionWait, HeadStart,
-    IcyMetadataInjector, LoggingStreamGuard, StreamState, MAX_UNLISTED_STREAM_READERS,
+    AudioCodec, CadenceConfig, ConnectionTap, EpochHook, FirstConnectionWait, FirstWaitWatch,
+    HeadStart, IcyMetadataInjector, LoggingStreamGuard, StreamState, MAX_UNLISTED_STREAM_READERS,
 };
 
 /// A single item of an audio body stream.
@@ -288,9 +288,9 @@ pub(super) async fn stream_audio(
     // A Playbar has been seen to accept a 1000 ms wait before the response;
     // longer ones are untried, so the wait is not capped but logged, and so
     // is whether the speaker kept its connection through it (see
-    // `LoggingStreamGuard::with_first_wait`). `jitter_buffer_ms` is already
-    // validated against `MAX_JITTER_BUFFER_MS` at the protocol layer, and
-    // the burst against its maximum.
+    // `FirstWaitWatch` and `LoggingStreamGuard::with_first_wait`).
+    // `jitter_buffer_ms` is already validated against `MAX_JITTER_BUFFER_MS`
+    // at the protocol layer, and the burst against its maximum.
     //
     // SKIP on resume: Sonos closes the connection within milliseconds if we
     // delay. The ring buffer already has frames from before the pause.
@@ -310,19 +310,24 @@ pub(super) async fn stream_audio(
         };
         log::info!(
             "[Stream] First-connection wait: client={}, stream={}, holding the response {}ms \
-             (smoothing {}ms + head start {}ms, stream {} old)",
+             so the stream holds smoothing {}ms + head start {}ms ({})",
             remote_ip,
             id,
             wait.waited_ms,
             wait.smoothing_ms,
             wait.head_start_ms,
             since_first_frame.map_or_else(
-                || "not yet started".to_string(),
-                |d| format!("{}ms", d.as_millis())
+                || "stream not started yet".to_string(),
+                |d| format!("stream age {}ms", d.as_millis())
             )
         );
         first_wait = Some(wait);
+        // A speaker that will not take the wait may hang up during it, and
+        // the handler is then dropped here, before any guard exists to log
+        // the outcome; the watch logs it instead.
+        let watch = FirstWaitWatch::arm(wait, remote_ip, &id);
         tokio::time::sleep(prefill_delay).await;
+        watch.completed();
     } else if is_resume && stream_state.codec == AudioCodec::Pcm {
         log::info!(
             "[Stream] Skipping prefill delay on resume for {}",
