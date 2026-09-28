@@ -28,11 +28,11 @@ use super::clock_fit::ClockEstimate;
 use super::reserve::ReserveEstimate;
 use super::segment::SegmentBreak;
 use super::test_support::Lcg;
-use super::tracker::ReserveTracker;
+use super::tracker::{ReserveTracker, DRAINING_WARN_SECS};
 use crate::stream::cadence::{create_wav_stream_with_cadence, CadenceConfig, LoggingStreamGuard};
 use crate::stream::manager::TimestampedFrame;
 use crate::stream::tap::WAV_HEADER_BYTES;
-use crate::stream::{AudioCodec, AudioFormat, ConnectionTap};
+use crate::stream::{AudioCodec, AudioFormat, ConnectionTap, HeadStart};
 
 /// Frame length the stream runs at, as in production.
 const FRAME_MS: u32 = 10;
@@ -120,8 +120,8 @@ pub(crate) struct SimEstimate {
     pub true_reserve_ms: f64,
     /// The tracker's clock estimate.
     pub clock: Option<ClockEstimate>,
-    /// The tracker's projected time to empty.
-    pub time_to_empty_s: Option<f64>,
+    /// The tracker's projected time to the low floor.
+    pub time_to_floor_s: Option<f64>,
     /// The segment break the estimate revealed, if any.
     pub brk: Option<SegmentBreak>,
     /// Whether the tracker's low-reserve alarm stood after the estimate.
@@ -228,6 +228,7 @@ impl SimSpeaker {
             format,
             prefill,
         );
+        let head_start = HeadStart::new(config.burst_ms(), self.connect_burst_ms);
         // Burst frames are yielded before the first tick; the source has
         // nothing to deliver for them.
         let mut burst_left = config.burst_frames.len();
@@ -248,7 +249,7 @@ impl SimSpeaker {
             at: 0.0,
         };
         let mut tracker = ReserveTracker::new();
-        tracker.start_connection(true);
+        tracker.start_connection(true, Some(head_start));
         let mut report = SimReport::default();
         let mut pending: Option<PendingPoll> = None;
         let mut next_poll = 5_000.0;
@@ -353,7 +354,7 @@ impl SimSpeaker {
                     reserve,
                     true_reserve_ms: delivered - playback.playhead_at(now),
                     clock: tracker.clock(),
-                    time_to_empty_s: tracker.time_to_empty_s(),
+                    time_to_floor_s: tracker.time_to_floor_s(),
                     brk,
                     low: tracker.is_low(),
                 });
@@ -444,9 +445,9 @@ mod tests {
         let warned_at = report
             .estimates
             .iter()
-            .find(|e| e.time_to_empty_s.is_some_and(|s| s < 20.0 * 60.0))
+            .find(|e| e.time_to_floor_s.is_some_and(|s| s < DRAINING_WARN_SECS))
             .map(|e| e.at)
-            .expect("a time to empty under 20 minutes was projected");
+            .expect("a time to the floor under half an hour was projected");
         assert!(
             dry_at - warned_at >= 5.0 * MINUTE,
             "projected only {:.1} min ahead",

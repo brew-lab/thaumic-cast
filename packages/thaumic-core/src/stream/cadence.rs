@@ -6,7 +6,7 @@
 
 use std::collections::VecDeque;
 use std::net::IpAddr;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicU8, Ordering};
 use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
 
@@ -101,6 +101,25 @@ const DELIVERY_GAP_THRESHOLD_MS: u64 = 100;
 
 /// Only log gaps exceeding this threshold to avoid log spam (500ms).
 const DELIVERY_GAP_LOG_THRESHOLD_MS: u64 = 500;
+
+/// How long a connection that waited before its response must stay open to
+/// count as having survived the wait. A speaker that refuses a long wait
+/// closes the connection, or stops playing and closes it, within a second or
+/// two of the response starting; one still being fed after this has taken it.
+pub const FIRST_WAIT_SURVIVAL: Duration = Duration::from_secs(5);
+
+/// How long a speaker's first connection waited before its response
+/// started, and why: the smoothing (jitter buffer) plus the configured
+/// speaker head start, less how long the stream had already been running.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FirstConnectionWait {
+    /// Milliseconds the connection was held before the response.
+    pub waited_ms: u64,
+    /// The stream's smoothing (jitter buffer), ms.
+    pub smoothing_ms: u64,
+    /// The configured speaker head start, ms.
+    pub head_start_ms: u64,
+}
 
 /// Environment variable that overrides the PCM connect burst setting, in
 /// milliseconds (`0` turns it off). See [`crate::Config::pcm_connect_burst_ms`].
@@ -312,6 +331,30 @@ pub struct LoggingStreamGuard {
     link_emitter: Option<Arc<dyn crate::events::EventEmitter>>,
     /// The speaker monitor's latest figures for this connection.
     pub(crate) speaker: super::tap::SpeakerCell,
+    /// The latest link verdict, as [`link_quality_code`] encodes it (`0`
+    /// before the first one).
+    link_verdict: AtomicU8,
+    /// The wait before the response, for a speaker's first connection that
+    /// was held for one.
+    first_wait: Option<FirstConnectionWait>,
+    /// Whether the connection has been logged as surviving
+    /// [`Self::first_wait`].
+    first_wait_survived: AtomicBool,
+    /// Whether the response body has been dropped. The socket handle the
+    /// link probe reads may be reused once it has, so reads from outside
+    /// the body stop then.
+    body_closed: AtomicBool,
+}
+
+/// [`LinkQuality`](crate::events::LinkQuality) as stored in
+/// [`LoggingStreamGuard::link_verdict`].
+fn link_quality_code(quality: crate::events::LinkQuality) -> u8 {
+    use crate::events::LinkQuality;
+    match quality {
+        LinkQuality::Good => 1,
+        LinkQuality::Degraded => 2,
+        LinkQuality::Poor => 3,
+    }
 }
 
 impl LoggingStreamGuard {
@@ -340,7 +383,60 @@ impl LoggingStreamGuard {
             link_judge: parking_lot::Mutex::new(None),
             link_emitter: None,
             speaker: super::tap::SpeakerCell::default(),
+            link_verdict: AtomicU8::new(0),
+            first_wait: None,
+            first_wait_survived: AtomicBool::new(false),
+            body_closed: AtomicBool::new(false),
         }
+    }
+
+    /// Records that this connection was held for `wait` before its response
+    /// started, so whether the speaker kept the connection through it is
+    /// logged: once it has been fed for [`FIRST_WAIT_SURVIVAL`], or when it
+    /// ends sooner.
+    #[must_use]
+    pub fn with_first_wait(mut self, wait: FirstConnectionWait) -> Self {
+        self.first_wait = Some(wait);
+        self
+    }
+
+    /// The latest verdict on the connection's link, or `None` before the
+    /// first one.
+    pub(crate) fn link_verdict(&self) -> Option<crate::events::LinkQuality> {
+        use crate::events::LinkQuality;
+        match self.link_verdict.load(Ordering::Relaxed) {
+            1 => Some(LinkQuality::Good),
+            2 => Some(LinkQuality::Degraded),
+            3 => Some(LinkQuality::Poor),
+            _ => None,
+        }
+    }
+
+    /// Bytes handed to the connection that the speaker has not yet
+    /// acknowledged, read now, where the platform reports them and while
+    /// the response body is open.
+    ///
+    /// The body can close between the check and the read, but only a
+    /// socket closed and its handle handed to another in those few
+    /// microseconds could make the read wrong, and then only that one.
+    pub(crate) fn unacked_bytes_now(&self) -> Option<u64> {
+        if self.body_closed.load(Ordering::Acquire) {
+            return None;
+        }
+        let body_bytes = self.bytes_sent.load(Ordering::Relaxed);
+        self.link_probe.as_ref()?.unacked_bytes(body_bytes)
+    }
+
+    /// Records that the response body has been dropped (see
+    /// [`Self::unacked_bytes_now`]).
+    pub(crate) fn mark_body_closed(&self) {
+        self.body_closed.store(true, Ordering::Release);
+    }
+
+    /// Whether the response body has been dropped.
+    #[cfg(test)]
+    pub(crate) fn body_closed(&self) -> bool {
+        self.body_closed.load(Ordering::Acquire)
     }
 
     /// Attaches the TCP statistics probe for the client's connection, and
@@ -398,6 +494,8 @@ impl LoggingStreamGuard {
     /// `speakerLinkQuality` event for the client's address.
     fn report_link(&self, report: crate::api::link::LinkReport) {
         use crate::events::{LinkQuality, NetworkEvent};
+        self.link_verdict
+            .store(link_quality_code(report.quality), Ordering::Relaxed);
         let line = format!(
             "[Stream] Link to {} is {:?} (stream {}): median rtt {}ms, worst {}ms, {} troubled \
              sample(s) and {} timeout(s) in the last minute; jitter buffer {}ms{}",
@@ -437,7 +535,25 @@ impl LoggingStreamGuard {
     pub fn record_frame(&self) {
         self.frames_sent.fetch_add(1, Ordering::Relaxed);
 
-        let now_nanos = self.reference_time.elapsed().as_nanos() as u64;
+        let elapsed = self.reference_time.elapsed();
+        if let Some(wait) = self.first_wait {
+            if elapsed >= FIRST_WAIT_SURVIVAL
+                && !self.first_wait_survived.swap(true, Ordering::Relaxed)
+            {
+                log::info!(
+                    "[Stream] First-connection wait survived: client={}, stream={}, the speaker \
+                     kept its connection {}s after a {}ms wait (smoothing {}ms + head start {}ms)",
+                    self.client_ip,
+                    self.stream_id,
+                    FIRST_WAIT_SURVIVAL.as_secs(),
+                    wait.waited_ms,
+                    wait.smoothing_ms,
+                    wait.head_start_ms
+                );
+            }
+        }
+
+        let now_nanos = elapsed.as_nanos() as u64;
         let prev_nanos = self.last_delivery_nanos.swap(now_nanos, Ordering::Relaxed);
 
         if prev_nanos > 0 {
@@ -547,6 +663,24 @@ impl Drop for LoggingStreamGuard {
             .filter(|s| s.rebuffer_events > 0)
             .map(|s| format!(", rebuffers={}", s.rebuffer_events))
             .unwrap_or_default();
+
+        if let Some(wait) = self.first_wait {
+            if !self.first_wait_survived.load(Ordering::Relaxed) {
+                log::warn!(
+                    "[Stream] First-connection wait not survived: client={}, stream={}, the \
+                     connection ended {}ms after a {}ms wait (smoothing {}ms + head start {}ms), \
+                     having sent {} frames; if this repeats, the speaker may not accept a wait \
+                     this long, so try a shorter speaker head start",
+                    self.client_ip,
+                    self.stream_id,
+                    self.reference_time.elapsed().as_millis(),
+                    wait.waited_ms,
+                    wait.smoothing_ms,
+                    wait.head_start_ms,
+                    frames
+                );
+            }
+        }
 
         let timeline = self.pipeline_timeline.lock();
         let timeline_json = if timeline.is_empty() {

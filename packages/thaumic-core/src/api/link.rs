@@ -135,7 +135,7 @@ impl TcpLinkProbe {
     /// read in the same breath: the cadence loop samples between frames,
     /// when nothing else can be yielded.
     pub fn sample(&self, body_bytes: u64) -> Option<TcpLinkWindow> {
-        let now = sample_raw(self.raw_socket, self.baseline, body_bytes)?;
+        let now = sample_raw(self.raw_socket, self.baseline, body_bytes, true)?;
         let mut last = self.last.lock();
         let (retransmitted, timeouts) = match *last {
             Some(prev) => (
@@ -156,6 +156,23 @@ impl TcpLinkProbe {
         *last = Some(now);
         *self.total_retransmitted.lock() += window.retransmitted;
         Some(window)
+    }
+
+    /// Bytes of the `body_bytes` handed over so far that the peer has not yet
+    /// acknowledged, or `None` where the platform does not report
+    /// acknowledged bytes. Reads the counters without disturbing the deltas
+    /// [`Self::sample`] reports.
+    ///
+    /// For a read from outside the body, where `body_bytes` cannot be read
+    /// in the same breath: it never teaches the process anything about how
+    /// the stack counts (see `windows_acked_bytes`), since a frame handed
+    /// over between the two reads could look like a stack counting resent
+    /// bytes. The caller must know the body is still open (see the module
+    /// documentation on handle reuse).
+    pub fn unacked_bytes(&self, body_bytes: u64) -> Option<u64> {
+        let now = sample_raw(self.raw_socket, self.baseline, body_bytes, false)?;
+        now.bytes_acked
+            .map(|acked| body_bytes.saturating_sub(acked))
     }
 
     /// Retransmitted data over the probe's life (segments on Linux, bytes on Windows).
@@ -295,6 +312,7 @@ fn sample_raw(
     raw_socket: u64,
     baseline: Option<TcpBaseline>,
     _body_bytes: u64,
+    _may_learn: bool,
 ) -> Option<TcpSample> {
     let (info, len) = read_tcp_info(raw_socket)?;
     let mut sample = info.decode(len)?;
@@ -412,13 +430,23 @@ fn read_baseline(raw_socket: u64) -> Option<TcpBaseline> {
     })
 }
 
+/// Samples the connection. `may_learn` is whether this read may latch
+/// [`BYTES_OUT_COUNTS_RETRANSMITS`]; one that may not works on a copy.
 #[cfg(windows)]
 fn sample_raw(
     raw_socket: u64,
     baseline: Option<TcpBaseline>,
     body_bytes: u64,
+    may_learn: bool,
 ) -> Option<TcpSample> {
     let info = read_tcp_info(raw_socket)?;
+    let scratch;
+    let latch = if may_learn {
+        &BYTES_OUT_COUNTS_RETRANSMITS
+    } else {
+        scratch = AtomicBool::new(BYTES_OUT_COUNTS_RETRANSMITS.load(Ordering::Relaxed));
+        &scratch
+    };
     Some(TcpSample {
         rtt_us: info.RttUs,
         retransmitted: u64::from(info.BytesRetrans),
@@ -429,7 +457,7 @@ fn sample_raw(
                 info.BytesInFlight,
                 info.BytesRetrans.wrapping_sub(before.bytes_retrans),
                 body_bytes,
-                &BYTES_OUT_COUNTS_RETRANSMITS,
+                latch,
             )
         }),
         notsent: None,
@@ -449,6 +477,7 @@ fn sample_raw(
     _raw_socket: u64,
     _baseline: Option<TcpBaseline>,
     _body_bytes: u64,
+    _may_learn: bool,
 ) -> Option<TcpSample> {
     None
 }

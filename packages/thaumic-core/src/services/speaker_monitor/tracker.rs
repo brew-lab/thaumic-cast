@@ -16,12 +16,19 @@
 //! for the estimate's slow trends, but it is exactly the dip that makes the
 //! speaker stutter, so the lowest reserve and the alarms are taken on the
 //! audio the speaker has acknowledged instead.
+//!
+//! A speaker is low when that acknowledged reserve falls below an absolute
+//! floor sized from the speaker head start its connection was sent (see
+//! [`low_floor_ms`]), not below a level learned from the cast: a reserve that
+//! settled at 500 ms and dips to 350 ms is fine, and one that started with
+//! next to nothing is not, whatever it settled at.
 
 use super::bounds::PollObservation;
 use super::clock_fit::{ClockEstimate, ClockFit};
 use super::reserve::{ReserveEstimate, ReserveEstimator};
 use super::rollup::WindowStats;
 use super::segment::{Segment, SegmentBreak};
+use crate::stream::HeadStart;
 
 /// How many standard errors from zero a drain must be before a time to
 /// empty is projected from it, when its error is known exactly. An error
@@ -68,20 +75,29 @@ pub fn drain_threshold_sigmas(dof: usize) -> f64 {
     t0 + (t1 - t0) * (inv(dof) - inv(d0)) / (inv(d1) - inv(d0))
 }
 
-/// Projected time to an empty reserve below which the speaker is reported
-/// as draining.
-pub const DRAINING_WARN_SECS: f64 = 20.0 * 60.0;
+/// Projected time to the low floor (see [`ReserveTracker::time_to_floor_s`])
+/// below which the speaker is reported as draining.
+pub const DRAINING_WARN_SECS: f64 = 30.0 * 60.0;
 
-/// How far below its target the acknowledged reserve's 10th percentile over
-/// a report's window must fall for the speaker to be reported low. The
-/// 10th percentile, not the minimum: a single retransmission stall dips the
-/// minimum by a round trip and a retransmission timeout, and a reserve that
-/// rides it out is not low.
-pub const LOW_BELOW_TARGET_MS: f64 = 150.0;
+/// The acknowledged reserve below which a speaker is low, in ms, given the
+/// speaker head start its connection was actually sent:
+/// `clamp(0.3·H, 40, 150)`, so 150 ms at the default 500 ms head start, 75 ms
+/// at 250 ms and 40 ms with the head start off.
+///
+/// Judged on the acknowledged reserve's 10th percentile over a report's
+/// window, not its minimum: a single retransmission stall dips the minimum
+/// by a round trip and a retransmission timeout, and a reserve that rides it
+/// out is not low.
+pub fn low_floor_ms(head_start_ms: u32) -> f64 {
+    (0.3 * f64::from(head_start_ms)).clamp(40.0, 150.0)
+}
 
-/// How far below its target the acknowledged reserve's 10th percentile must
-/// have recovered to for a low speaker to be reported healthy again.
-pub const LOW_CLEAR_BELOW_TARGET_MS: f64 = 50.0;
+/// The level a low speaker's acknowledged reserve must regain to be healthy
+/// again, in ms: the floor plus `clamp(0.2·H, 30, 100)`, so 250 ms at the
+/// default 500 ms head start and 70 ms with it off.
+pub fn low_clear_ms(head_start_ms: u32) -> f64 {
+    low_floor_ms(head_start_ms) + (0.2 * f64::from(head_start_ms)).clamp(30.0, 100.0)
+}
 
 /// The reserve on audio the speaker has acknowledged, over one report's
 /// window: the estimate less how far the acknowledgements lagged.
@@ -94,6 +110,39 @@ pub struct AckedReserve {
     /// Whether acknowledgements were measured. Where the platform does not
     /// report them this is the delivered-count estimate itself.
     pub measured: bool,
+    /// How far the worst acknowledgement lag of the window stood above its
+    /// median (see [`stall_ms`]), where acknowledgements were measured.
+    pub stall_ms: Option<f64>,
+}
+
+/// How far the worst of a window's acknowledgement lags stood above their
+/// median, in ms: the audio a stall held back, less the steady amount in
+/// flight on a clean link. `None` without lags. Reorders `lags_ms`.
+pub fn stall_ms(lags_ms: &mut [f64]) -> Option<f64> {
+    if lags_ms.is_empty() {
+        return None;
+    }
+    lags_ms.sort_unstable_by(f64::total_cmp);
+    let n = lags_ms.len();
+    let median = if n % 2 == 1 {
+        lags_ms[n / 2]
+    } else {
+        (lags_ms[n / 2 - 1] + lags_ms[n / 2]) / 2.0
+    };
+    Some((lags_ms[n - 1] - median).max(0.0))
+}
+
+/// The acknowledged reserve from the last report before a segment break,
+/// kept so what led up to the break can still be judged once the estimate
+/// it came from has been cleared.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct PreBreak {
+    /// Why the segment broke.
+    pub reason: SegmentBreak,
+    /// The acknowledged reserve over the last report's window before it.
+    pub acked: AckedReserve,
+    /// Whether the estimate behind `acked` was locked.
+    pub locked: bool,
 }
 
 /// The monitor's view of one speaker, for the log.
@@ -103,12 +152,12 @@ pub enum MonitorState {
     Locking,
     /// The estimate is locked.
     Ok,
-    /// The estimate is locked and the reserve is projected to run out
-    /// within [`DRAINING_WARN_SECS`].
+    /// The estimate is locked and the reserve is projected to reach the low
+    /// floor within [`DRAINING_WARN_SECS`].
     Draining,
     /// The estimate is locked and the acknowledged reserve's 10th percentile
-    /// has fallen more than [`LOW_BELOW_TARGET_MS`] below its target (and not
-    /// yet recovered to within [`LOW_CLEAR_BELOW_TARGET_MS`]).
+    /// has fallen below the floor [`low_floor_ms`] sets (and not yet
+    /// regained [`low_clear_ms`]).
     Low,
     /// The speaker is known not to be playing.
     Paused,
@@ -183,6 +232,12 @@ pub struct ReserveTracker {
     segment: Segment,
     /// Whether the current connection's reserve can be measured (PCM).
     pcm: bool,
+    /// The speaker head start the current connection was sent, when known
+    /// (PCM only).
+    head_start: Option<HeadStart>,
+    /// Whether no segment break has happened yet on the current connection:
+    /// the target is learned only in its first segment.
+    first_segment: bool,
     /// Whether any connection has started yet.
     started: bool,
     last: Option<ReserveEstimate>,
@@ -192,17 +247,22 @@ pub struct ReserveTracker {
     last_fresh: bool,
     /// The acknowledged reserve over the latest report's window.
     last_acked: Option<AckedReserve>,
-    /// The reserve the speaker settled at: the mean of the acknowledged
-    /// reserve's 10th percentile over the first two tight windows of a
-    /// segment (the estimate itself where acknowledgements are not
-    /// measured), so a steady acknowledgement lag is on both sides of the
-    /// low alarm's comparison. Learned once per tracker (that is, per
-    /// speaker and stream) and never relearned, so a reconnect midway
-    /// through a drain cannot lower it. The reserve's absolute zero is not
-    /// known, so the low alarm is relative to this.
+    /// How far the worst acknowledgement lag of the latest report's window
+    /// stood above its median, whether or not that report made an estimate.
+    last_stall_ms: Option<f64>,
+    /// The acknowledged reserve before the current connection's latest
+    /// segment break, until the next locked estimate.
+    pre_break: Option<PreBreak>,
+    /// The reserve the current connection settled at once its head start
+    /// had gone out: the mean of the first two tight estimates of its first
+    /// segment. Relearned on every connection, since each gets its own head
+    /// start; a connection whose first segment breaks before two tight
+    /// estimates has none. Not what the low alarm is judged against (that
+    /// is the absolute floor); the log shows it against the head start sent
+    /// as `calib`.
     target_ms: Option<f64>,
-    /// The first tight window's level for the target, while it waits for
-    /// a second.
+    /// The first tight estimate for the target, while it waits for a
+    /// second.
     target_pending: Option<f64>,
     /// Whether the acknowledged reserve is low (with hysteresis).
     low: bool,
@@ -217,19 +277,27 @@ impl ReserveTracker {
 
     /// Starts tracking a new connection. `pcm` is whether its delivered
     /// audio can be counted in milliseconds; a compressed connection only
-    /// gets a clock fit. Every connection after the first ends a segment.
-    pub fn start_connection(&mut self, pcm: bool) {
+    /// gets a clock fit. `head_start` is the speaker head start the
+    /// connection was sent, which sizes the low floor (PCM only; taken as
+    /// none when unknown). Every connection after the first ends a segment.
+    pub fn start_connection(&mut self, pcm: bool, head_start: Option<HeadStart>) {
         if self.started {
             self.segment.start(SegmentBreak::NewConnection);
             self.clear();
         }
         self.started = true;
         self.pcm = pcm;
+        self.head_start = head_start.filter(|_| pcm);
+        self.first_segment = true;
         self.last = None;
         self.last_fresh = false;
         self.last_acked = None;
-        // The alarm is about the connection being measured: a new one earns
-        // it afresh against the target.
+        self.last_stall_ms = None;
+        self.pre_break = None;
+        // Each connection gets its own head start, so it settles at its own
+        // level, and the alarm is about the connection being measured.
+        self.target_ms = None;
+        self.target_pending = None;
         self.low = false;
         self.connection = ConnectionStats {
             breaks_before: SegmentBreak::ALL.map(|r| self.segment.count(r)),
@@ -243,6 +311,21 @@ impl ReserveTracker {
         self.reserve.clear();
         self.clock.break_segment();
         self.target_pending = None;
+        self.first_segment = false;
+    }
+
+    /// Keeps the latest report's acknowledged reserve as the snapshot from
+    /// before a segment break for `reason`, then clears what the break
+    /// invalidates.
+    fn break_segment(&mut self, reason: SegmentBreak) {
+        if let Some(acked) = self.last_acked {
+            self.pre_break = Some(PreBreak {
+                reason,
+                acked,
+                locked: self.last.is_some_and(|e| e.locked()),
+            });
+        }
+        self.clear();
     }
 
     /// Feeds one answered poll about the stream. `not_playing` is whether
@@ -257,8 +340,8 @@ impl ReserveTracker {
         let brk = self
             .segment
             .observe_poll(obs.rel_ms, track_uri, not_playing);
-        if brk.is_some() {
-            self.clear();
+        if let Some(reason) = brk {
+            self.break_segment(reason);
         }
         if not_playing {
             return brk;
@@ -276,7 +359,8 @@ impl ReserveTracker {
     /// two sides of the step.
     pub fn estimate(&mut self, now: f64) -> (Option<ReserveEstimate>, Option<SegmentBreak>) {
         self.last_fresh = false;
-        self.last_acked = None;
+        // Kept until here so an offset step found below can snapshot it.
+        let previous_acked = self.last_acked.take();
         if !self.pcm || self.segment.paused() {
             return (None, None);
         }
@@ -288,13 +372,16 @@ impl ReserveTracker {
             return (None, None);
         };
         if let Some(brk) = self.segment.observe_estimate(&est, ppm) {
-            self.clear();
+            self.last_acked = previous_acked;
+            self.break_segment(brk);
+            self.last_acked = None;
             self.last = None;
             return (None, Some(brk));
         }
         self.last = Some(est);
         self.last_fresh = true;
         if est.locked() {
+            self.pre_break = None;
             let c = &mut self.connection;
             c.reserve_start_ms.get_or_insert(est.reserve_ms);
             c.reserve_end_ms = Some(est.reserve_ms);
@@ -307,10 +394,14 @@ impl ReserveTracker {
     }
 
     /// Combines the estimate just made with how far the speaker's
-    /// acknowledgements lagged the delivered count at each pipeline snapshot
-    /// of the same window, in milliseconds of audio, and steps the low
-    /// alarm. With no lag samples (the platform does not report
-    /// acknowledgements) the delivered-count estimate stands in.
+    /// acknowledgements lagged the delivered count over the same window (at
+    /// each pipeline snapshot and each monitor tick), in milliseconds of
+    /// audio, and steps the low alarm. With no lag samples (the platform
+    /// does not report acknowledgements) the delivered-count estimate stands
+    /// in.
+    ///
+    /// The window's stall (see [`stall_ms`]) is kept whether or not there is
+    /// an estimate, so a window that ended in a segment break still has one.
     ///
     /// Returns the acknowledged reserve, or `None` if the latest call to
     /// [`Self::estimate`] produced no estimate. Only a locked estimate
@@ -319,6 +410,8 @@ impl ReserveTracker {
     /// target. Overwrites `lags_ms`. Call once after each
     /// [`Self::estimate`], with no lags where none were measured.
     pub fn observe_ack_lag(&mut self, lags_ms: &mut [f64]) -> Option<AckedReserve> {
+        let stall = stall_ms(lags_ms);
+        self.last_stall_ms = stall;
         let est = self.last.filter(|_| self.last_fresh)?;
         // The reserve moves by well under a millisecond over a window, so
         // the estimate made at its end holds throughout it.
@@ -330,11 +423,13 @@ impl ReserveTracker {
                 min_ms: r.min,
                 p10_ms: r.p10,
                 measured: true,
+                stall_ms: stall,
             },
             None => AckedReserve {
                 min_ms: est.reserve_ms,
                 p10_ms: est.reserve_ms,
                 measured: false,
+                stall_ms: None,
             },
         };
         self.last_acked = Some(acked);
@@ -346,35 +441,78 @@ impl ReserveTracker {
             );
             c.acked_measured |= acked.measured;
             // A held estimate may be a window straddling a step: it may sound
-            // the alarm, but not teach the level the alarm is measured from.
-            if self.target_ms.is_none() && est.tight() {
+            // the alarm, but not teach the level the speaker settled at.
+            if self.first_segment && self.target_ms.is_none() && est.tight() {
                 match self.target_pending.take() {
-                    Some(first) => self.target_ms = Some((first + acked.p10_ms) / 2.0),
-                    None => self.target_pending = Some(acked.p10_ms),
+                    Some(first) => self.target_ms = Some((first + est.reserve_ms) / 2.0),
+                    None => self.target_pending = Some(est.reserve_ms),
                 }
             }
-            if let Some(target) = self.target_ms {
-                if !self.low && acked.p10_ms < target - LOW_BELOW_TARGET_MS {
-                    self.low = true;
-                } else if self.low && acked.p10_ms >= target - LOW_CLEAR_BELOW_TARGET_MS {
-                    self.low = false;
-                }
+            let head_start = self.head_start_sent_ms();
+            if !self.low && acked.p10_ms < low_floor_ms(head_start) {
+                self.low = true;
+            } else if self.low && acked.p10_ms >= low_clear_ms(head_start) {
+                self.low = false;
             }
         }
         Some(acked)
     }
 
     /// Whether the acknowledged reserve is low on the current connection:
-    /// its 10th percentile over a window fell more than
-    /// [`LOW_BELOW_TARGET_MS`] below the target and has not since recovered
-    /// to within [`LOW_CLEAR_BELOW_TARGET_MS`] of it.
+    /// its 10th percentile over a window fell below [`Self::floor_ms`] and
+    /// has not since regained [`Self::clear_ms`].
     pub fn is_low(&self) -> bool {
         self.low
     }
 
-    /// The reserve the low alarm is measured against, once learned.
+    /// The level the current connection settled at once its head start had
+    /// gone out, once learned.
     pub fn target_ms(&self) -> Option<f64> {
         self.target_ms
+    }
+
+    /// How far the level the connection settled at lies from the head start
+    /// it was sent (`target − H`), once learned: the speaker's own share of
+    /// the reserve, which is not counted as delivered, and the estimate's
+    /// bias. Expected to sit a few tens of ms below zero.
+    pub fn calib_ms(&self) -> Option<f64> {
+        let head_start = self.head_start?;
+        Some(self.target_ms? - f64::from(head_start.sent_ms))
+    }
+
+    /// The speaker head start the current connection was sent, when known.
+    pub fn head_start(&self) -> Option<HeadStart> {
+        self.head_start
+    }
+
+    /// The head start sent, in ms, counting an unknown one as none.
+    fn head_start_sent_ms(&self) -> u32 {
+        self.head_start.map_or(0, |h| h.sent_ms)
+    }
+
+    /// The acknowledged reserve below which the current connection is low
+    /// (see [`low_floor_ms`]), or `None` for a compressed connection.
+    pub fn floor_ms(&self) -> Option<f64> {
+        self.pcm.then(|| low_floor_ms(self.head_start_sent_ms()))
+    }
+
+    /// The level a low connection must regain (see [`low_clear_ms`]), or
+    /// `None` for a compressed connection.
+    pub fn clear_ms(&self) -> Option<f64> {
+        self.pcm.then(|| low_clear_ms(self.head_start_sent_ms()))
+    }
+
+    /// How far the worst acknowledgement lag of the latest report's window
+    /// stood above its median (see [`stall_ms`]), where acknowledgements
+    /// were measured.
+    pub fn stall_ms(&self) -> Option<f64> {
+        self.last_stall_ms
+    }
+
+    /// The acknowledged reserve before the current connection's latest
+    /// segment break, until the next locked estimate.
+    pub fn pre_break(&self) -> Option<PreBreak> {
+        self.pre_break
     }
 
     /// The latest reserve estimate of the current segment.
@@ -430,23 +568,30 @@ impl ReserveTracker {
         self.segment.count(reason) - self.connection.breaks_before[idx]
     }
 
-    /// Seconds until the reserve runs out at the measured clock rate, when
-    /// the estimate is locked and the speaker is draining it by more than
-    /// [`drain_threshold_sigmas`] standard errors.
+    /// Seconds until the reserve reaches the low floor at the net rate the
+    /// speaker drains it, when the estimate is locked and the speaker is
+    /// draining it by more than [`drain_threshold_sigmas`] standard errors;
+    /// zero once it is below the floor.
     ///
     /// Projected from the acknowledged reserve's 10th percentile over the
     /// latest window when there is one, the estimate otherwise: the level
     /// the speaker's reserve really held, not the delivered count's.
     ///
-    /// The reserve's absolute zero is not known exactly (the speaker holds
-    /// some audio of its own past the playhead it reports), so this is an
-    /// approximation that errs towards warning early.
-    pub fn time_to_empty_s(&self) -> Option<f64> {
+    /// The rate is the clock rate shrunk by its uncertainty (see
+    /// [`ClockEstimate::shrunk_ppm`]): a rate pooled from a few short
+    /// segments can clear the drain test at several times its true value,
+    /// and projected unshrunk it would put a speaker hours from the floor
+    /// within the half hour [`DRAINING_WARN_SECS`] warns at. A precise rate
+    /// passes through almost unchanged. The net rate is that less whatever
+    /// audio drift correction adds; nothing adds any yet.
+    pub fn time_to_floor_s(&self) -> Option<f64> {
         let est = self.last.filter(|e| e.locked())?;
         let clock = self.clock().filter(|_| self.clock_drains())?;
+        let floor = self.floor_ms()?;
         let reserve = self.last_acked.map_or(est.reserve_ms, |a| a.p10_ms);
+        let net_ppm = clock.shrunk_ppm();
         // ppm·1e-6 ms per ms is ppm·1e-3 ms per second.
-        Some((reserve.max(0.0)) / (clock.ppm * 1e-3))
+        Some((reserve - floor).max(0.0) / (net_ppm * 1e-3))
     }
 
     /// Whether the speaker plays faster than we deliver by more than
@@ -469,7 +614,7 @@ impl ReserveTracker {
             if self.low {
                 MonitorState::Low
             } else if self
-                .time_to_empty_s()
+                .time_to_floor_s()
                 .is_some_and(|s| s < DRAINING_WARN_SECS)
             {
                 MonitorState::Draining
@@ -490,8 +635,14 @@ mod tests {
 
     const URI: &str = "http://10.0.0.1:49400/stream/s/live.wav";
 
+    /// The default head start, sent in full.
+    const H500: Option<HeadStart> = Some(HeadStart {
+        sent_ms: 500,
+        configured_ms: 500,
+    });
+
     /// Polls and estimates every 30 s from `from` to `to`, and returns the
-    /// shortest time to empty projected meanwhile.
+    /// shortest time to the floor projected meanwhile.
     fn run(tracker: &mut ReserveTracker, gen: &mut PollGen, from: f64, to: f64) -> Option<f64> {
         let mut shortest: Option<f64> = None;
         let mut t = from;
@@ -502,7 +653,7 @@ mod tests {
             });
             tracker.estimate(t);
             tracker.observe_ack_lag(&mut []);
-            if let Some(s) = tracker.time_to_empty_s() {
+            if let Some(s) = tracker.time_to_floor_s() {
                 shortest = Some(shortest.map_or(s, |m| m.min(s)));
             }
         }
@@ -510,25 +661,20 @@ mod tests {
     }
 
     #[test]
-    fn a_draining_speaker_projects_a_time_to_empty() {
+    fn a_draining_speaker_projects_a_time_to_floor() {
         let mut tracker = ReserveTracker::new();
-        tracker.start_connection(true);
+        tracker.start_connection(true, H500);
         let mut gen = PollGen::new(41);
         gen.ppm = 300.0;
-        run(&mut tracker, &mut gen, 0.0, 20.0 * 60_000.0);
-        // Twenty minutes at 300 ppm is 360 ms drained, well past the low
-        // alarm, which the state reports first.
-        assert_eq!(tracker.state(false, false), MonitorState::Low);
-        // Short of the alarm, the projection alone reports draining.
-        tracker.low = false;
+        run(&mut tracker, &mut gen, 0.0, 15.0 * 60_000.0);
+        // Fifteen minutes at 300 ppm is 270 ms drained: about 330 ms left,
+        // above the 150 ms floor but due to reach it within half an hour.
         assert_eq!(tracker.state(false, false), MonitorState::Draining);
         assert!(tracker.clock_drains());
-        let tte = tracker.time_to_empty_s().expect("draining");
-        let truth = gen.reserve(20.0 * 60_000.0) / 0.3;
-        assert!(
-            (tte - truth).abs() < 0.2 * truth,
-            "{tte:.0}s vs {truth:.0}s"
-        );
+        let ttf = tracker.time_to_floor_s().expect("draining");
+        let truth = (gen.reserve(15.0 * 60_000.0) - 150.0) / 0.3;
+        // Within what the estimate's own error (tens of ms) moves it.
+        assert!((ttf - truth).abs() < 60.0 / 0.3, "{ttf:.0}s vs {truth:.0}s");
         let c = tracker.connection();
         assert!(c.reserve_min_ms.unwrap() < c.reserve_start_ms.unwrap());
     }
@@ -536,10 +682,10 @@ mod tests {
     #[test]
     fn a_steady_speaker_projects_nothing() {
         let mut tracker = ReserveTracker::new();
-        tracker.start_connection(true);
+        tracker.start_connection(true, H500);
         let mut gen = PollGen::new(43);
         run(&mut tracker, &mut gen, 0.0, 30.0 * 60_000.0);
-        assert_eq!(tracker.time_to_empty_s(), None);
+        assert_eq!(tracker.time_to_floor_s(), None);
         assert!(!tracker.clock_drains());
         assert_eq!(tracker.state(false, false), MonitorState::Ok);
     }
@@ -547,13 +693,13 @@ mod tests {
     #[test]
     fn a_new_connection_breaks_the_segment_and_resets_its_stats() {
         let mut tracker = ReserveTracker::new();
-        tracker.start_connection(true);
+        tracker.start_connection(true, H500);
         let mut gen = PollGen::new(47);
         run(&mut tracker, &mut gen, 0.0, 10.0 * 60_000.0);
         assert!(tracker.connection().polls > 0);
         assert_eq!(tracker.connection_breaks(SegmentBreak::NewConnection), 0);
         assert!(tracker.connection_estimate_counts().0 > 0);
-        tracker.start_connection(true);
+        tracker.start_connection(true, H500);
         assert_eq!(tracker.connection().polls, 0);
         assert_eq!(tracker.connection_estimate_counts(), (0, 0));
         assert_eq!(tracker.last_estimate(), None);
@@ -566,7 +712,7 @@ mod tests {
     #[test]
     fn a_compressed_connection_is_clock_fitted_but_not_reserve_estimated() {
         let mut tracker = ReserveTracker::new();
-        tracker.start_connection(false);
+        tracker.start_connection(false, None);
         let mut gen = PollGen::new(53);
         gen.ppm = -40.0;
         run(&mut tracker, &mut gen, 0.0, 10.0 * 60_000.0);
@@ -577,7 +723,7 @@ mod tests {
     #[test]
     fn a_paused_speaker_is_not_measured() {
         let mut tracker = ReserveTracker::new();
-        tracker.start_connection(true);
+        tracker.start_connection(true, H500);
         let mut gen = PollGen::new(59);
         run(&mut tracker, &mut gen, 0.0, 5.0 * 60_000.0);
         let polls = tracker.connection().polls;
@@ -594,7 +740,7 @@ mod tests {
     /// A speaker at `ppm` with `tick_jitter_ms` of RelTime jitter that
     /// fetches the stream afresh every `every_min` minutes, `connections`
     /// times, estimated every 30 s. Returns the pooled clock at the end and
-    /// the shortest time to empty ever projected.
+    /// the shortest time to the floor ever projected.
     fn reconnecting(
         seed: u64,
         ppm: f64,
@@ -605,7 +751,7 @@ mod tests {
         let mut tracker = ReserveTracker::new();
         let mut shortest: Option<f64> = None;
         for i in 0..connections {
-            tracker.start_connection(true);
+            tracker.start_connection(true, H500);
             let mut gen = PollGen::new(seed * 1000 + i);
             gen.ppm = ppm;
             gen.tick_jitter_ms = tick_jitter_ms;
@@ -631,11 +777,11 @@ mod tests {
                     outside.push((seed, c));
                 }
                 assert!(c.dof >= 30, "seed {seed}: {c:?}");
-                // +40 ppm drains a 600 ms reserve in about four hours: it
-                // must never be projected inside the 20 minutes the monitor
-                // warns at.
+                // +40 ppm takes a 600 ms reserve to the floor in about three
+                // hours: it must never be projected inside the half hour the
+                // monitor warns at.
                 assert!(
-                    shortest.map_or(true, |s| s > 20.0 * 60.0),
+                    shortest.map_or(true, |s| s > DRAINING_WARN_SECS),
                     "seed {seed} at {ppm} ppm: projected empty in {shortest:?}s"
                 );
             }
@@ -648,7 +794,10 @@ mod tests {
         let mut projected = Vec::new();
         for seed in 0..40 {
             if let (_, Some(s)) = reconnecting(seed, 0.0, 50.0, 5.0, 12) {
-                assert!(s > 20.0 * 60.0, "seed {seed}: projected empty in {s:.0}s");
+                assert!(
+                    s > DRAINING_WARN_SECS,
+                    "seed {seed}: projected at the floor in {s:.0}s"
+                );
                 projected.push((seed, s));
             }
         }
@@ -686,10 +835,10 @@ mod tests {
     }
 
     #[test]
-    fn the_target_is_the_first_two_tight_estimates_and_survives_reconnects() {
+    fn the_target_is_the_first_two_tight_estimates_and_relearned_per_connection() {
         // Unmeasured acknowledgements: the estimates themselves.
         let mut tracker = ReserveTracker::new();
-        tracker.start_connection(true);
+        tracker.start_connection(true, H500);
         let mut gen = PollGen::new(61);
         let mut tight = Vec::new();
         let mut t = 0.0;
@@ -716,24 +865,38 @@ mod tests {
             gen.reserve(t)
         );
 
-        // A reconnect restarts the measurement, not the target.
-        tracker.start_connection(true);
+        assert_eq!(tracker.calib_ms(), Some(target - 500.0));
+
+        // A reconnect gets its own head start, so it learns its own level.
+        tracker.start_connection(
+            true,
+            Some(HeadStart {
+                sent_ms: 250,
+                configured_ms: 500,
+            }),
+        );
+        assert_eq!(tracker.target_ms(), None);
         let mut gen = PollGen::new(62);
         gen.start_ms = 300.0;
         run(&mut tracker, &mut gen, 0.0, 10.0 * 60_000.0);
-        assert_eq!(tracker.target_ms(), Some(target));
+        let second = tracker.target_ms().expect("relearned");
+        assert!((second - 300.0).abs() < 60.0, "{second}");
+        assert_eq!(tracker.calib_ms(), Some(second - 250.0));
     }
 
     #[test]
-    fn a_segment_break_before_the_second_tight_estimate_restarts_the_target() {
+    fn a_segment_break_before_the_second_tight_estimate_leaves_no_target() {
+        // Only the connection's first segment starts from its head start;
+        // a later one starts from wherever the break left the reserve.
         let mut tracker = ReserveTracker::new();
-        tracker.start_connection(true);
+        tracker.start_connection(true, H500);
         tracker.target_pending = Some(10_000.0);
         tracker.clear();
         let mut gen = PollGen::new(63);
         run(&mut tracker, &mut gen, 0.0, 10.0 * 60_000.0);
-        let target = tracker.target_ms().expect("learned");
-        assert!(target < 1_000.0, "the stale half was dropped: {target}");
+        assert_eq!(tracker.target_ms(), None);
+        assert_eq!(tracker.calib_ms(), None);
+        assert!(tracker.last_estimate().is_some_and(|e| e.locked()));
     }
 
     #[test]
@@ -742,7 +905,7 @@ mod tests {
         // as one whose window straddles a step is. It still counts towards
         // the connection's minimum, but must not finish the target.
         let mut tracker = ReserveTracker::new();
-        tracker.start_connection(true);
+        tracker.start_connection(true, H500);
         tracker.target_pending = Some(500.0);
         tracker.last = Some(ReserveEstimate {
             at: 300_000.0,
@@ -776,7 +939,7 @@ mod tests {
     #[test]
     fn acknowledgement_lag_lowers_the_reserve_minimum_but_not_the_estimate() {
         let mut tracker = ReserveTracker::new();
-        tracker.start_connection(true);
+        tracker.start_connection(true, H500);
         let mut gen = PollGen::new(67);
         let reports = run_acked(&mut tracker, &mut gen, 0.0, 10.0 * 60_000.0, |t| {
             let mut lags = clean(t);
@@ -806,7 +969,7 @@ mod tests {
     #[test]
     fn without_acknowledgements_the_delivered_estimate_stands_in() {
         let mut tracker = ReserveTracker::new();
-        tracker.start_connection(true);
+        tracker.start_connection(true, H500);
         let mut gen = PollGen::new(71);
         let reports = run_acked(&mut tracker, &mut gen, 0.0, 5.0 * 60_000.0, |_| Vec::new());
         let est = tracker.last_estimate().copied().unwrap();
@@ -822,10 +985,10 @@ mod tests {
     #[test]
     fn no_estimate_means_no_acknowledged_reserve() {
         let mut tracker = ReserveTracker::new();
-        tracker.start_connection(true);
+        tracker.start_connection(true, H500);
         tracker.estimate(30_000.0);
         assert_eq!(tracker.observe_ack_lag(&mut clean(0.0)), None);
-        tracker.start_connection(false);
+        tracker.start_connection(false, None);
         let mut gen = PollGen::new(73);
         let reports = run_acked(&mut tracker, &mut gen, 0.0, 5.0 * 60_000.0, clean);
         assert!(reports.iter().all(|(a, _)| a.is_none()), "compressed");
@@ -834,10 +997,14 @@ mod tests {
     #[test]
     fn the_low_alarm_follows_the_acknowledged_reserve_with_hysteresis() {
         let mut tracker = ReserveTracker::new();
-        tracker.start_connection(true);
+        tracker.start_connection(true, H500);
         let mut gen = PollGen::new(79);
         run_acked(&mut tracker, &mut gen, 0.0, 6.0 * 60_000.0, clean);
-        let target = tracker.target_ms().expect("learned");
+        let (floor, clear) = (low_floor_ms(500), low_clear_ms(500));
+        assert_eq!(
+            (tracker.floor_ms(), tracker.clear_ms()),
+            (Some(floor), Some(clear))
+        );
         assert_eq!(tracker.state(false, false), MonitorState::Ok);
         // One report 30 s on whose acknowledged reserve dipped to `level`.
         let mut t = 6.0 * 60_000.0;
@@ -858,49 +1025,48 @@ mod tests {
         };
 
         assert!(
-            !dip_to(&mut tracker, target - LOW_BELOW_TARGET_MS + 20.0),
-            "a dip to just above the alarm level is not low"
+            !dip_to(&mut tracker, floor + 20.0),
+            "a dip to just above the floor is not low"
         );
         assert!(
-            dip_to(&mut tracker, target - LOW_BELOW_TARGET_MS - 20.0),
+            dip_to(&mut tracker, floor - 20.0),
             "below it the speaker is low, though the estimate is not"
         );
         assert_eq!(tracker.state(false, false), MonitorState::Low);
         assert!(
-            dip_to(&mut tracker, target - LOW_CLEAR_BELOW_TARGET_MS - 20.0),
+            dip_to(&mut tracker, clear - 20.0),
             "recovering into the hysteresis band is not enough"
         );
         assert!(
-            !dip_to(&mut tracker, target - LOW_CLEAR_BELOW_TARGET_MS + 20.0),
-            "recovering to within the clear level is"
+            !dip_to(&mut tracker, clear + 20.0),
+            "regaining the clear level is"
         );
         assert_eq!(tracker.state(false, false), MonitorState::Ok);
 
         // Low again, then a reconnect: the alarm is the connection's.
-        assert!(dip_to(&mut tracker, target - LOW_BELOW_TARGET_MS - 20.0));
-        tracker.start_connection(true);
+        assert!(dip_to(&mut tracker, floor - 20.0));
+        tracker.start_connection(true, H500);
         assert!(!tracker.is_low());
     }
 
     #[test]
     fn a_single_retransmission_stall_is_not_low() {
         let mut tracker = ReserveTracker::new();
-        tracker.start_connection(true);
+        tracker.start_connection(true, H500);
         let mut gen = PollGen::new(83);
         let reports = run_acked(&mut tracker, &mut gen, 0.0, 10.0 * 60_000.0, |t| {
             let mut lags = clean(t);
-            // One snapshot caught a 400 ms stall five minutes in.
+            // One snapshot caught a 500 ms stall five minutes in.
             if t == 300_000.0 {
-                lags[30] = 400.0;
+                lags[30] = 500.0;
             }
             lags
         });
-        let target = tracker.target_ms().expect("learned");
         let (acked, low) = reports[9];
         let acked = acked.expect("acked");
         assert!(
-            acked.min_ms < target - LOW_BELOW_TARGET_MS,
-            "the stall shows in the minimum: {} vs {target}",
+            acked.min_ms < low_floor_ms(500),
+            "the stall shows in the minimum: {}",
             acked.min_ms
         );
         assert!(!low, "but one snapshot of a window does not make it low");
@@ -911,9 +1077,9 @@ mod tests {
     fn a_steady_acknowledgement_lag_is_not_low() {
         // The speaker's receive window held partly closed throughout: the
         // acknowledged reserve sits 200 ms under the estimate from the start,
-        // and the target, learned on the same basis, with it.
+        // still well above the floor. The target is the estimate's level.
         let mut tracker = ReserveTracker::new();
-        tracker.start_connection(true);
+        tracker.start_connection(true, H500);
         let mut gen = PollGen::new(89);
         let reports = run_acked(&mut tracker, &mut gen, 0.0, 10.0 * 60_000.0, |t| {
             clean(t).into_iter().map(|lag| lag + 200.0).collect()
@@ -921,29 +1087,31 @@ mod tests {
         let est = tracker.last_estimate().copied().expect("estimated");
         let target = tracker.target_ms().expect("learned");
         assert!(
-            (target - (est.reserve_ms - 204.0)).abs() < 60.0,
+            (target - est.reserve_ms).abs() < 60.0,
             "{target} vs {}",
             est.reserve_ms
         );
         assert!(reports.iter().all(|(_, low)| !low), "{reports:?}");
+        let acked = reports.last().unwrap().0.unwrap();
+        assert_eq!(acked.stall_ms, Some(2.0), "the steady lag is no stall");
     }
 
     #[test]
-    fn time_to_empty_is_projected_from_the_acknowledged_reserve() {
+    fn time_to_floor_is_projected_from_the_acknowledged_reserve() {
         let mut tracker = ReserveTracker::new();
-        tracker.start_connection(true);
+        tracker.start_connection(true, H500);
         let mut gen = PollGen::new(41);
         gen.ppm = 300.0;
-        run(&mut tracker, &mut gen, 0.0, 20.0 * 60_000.0);
-        let delivered = tracker.time_to_empty_s().expect("draining");
+        run(&mut tracker, &mut gen, 0.0, 15.0 * 60_000.0);
+        let delivered = tracker.time_to_floor_s().expect("draining");
         // Acknowledgements lag by 100 ms nine tenths of the time.
         let mut lags: Vec<f64> = (0..60).map(|i| if i < 6 { 0.0 } else { 100.0 }).collect();
         let acked = tracker.observe_ack_lag(&mut lags).unwrap();
         let est = tracker.last_estimate().unwrap().reserve_ms;
         assert_eq!(acked.p10_ms, est - 100.0);
-        let projected = tracker.time_to_empty_s().expect("draining");
-        // 100 ms sooner at the measured rate (about 0.3 ms/s).
-        let ppm = tracker.clock().unwrap().ppm;
+        let projected = tracker.time_to_floor_s().expect("draining");
+        // 100 ms sooner at the projected rate (about 0.3 ms/s).
+        let ppm = tracker.clock().unwrap().shrunk_ppm();
         assert!(
             (delivered - projected - 100.0 / (ppm * 1e-3)).abs() < 1e-6,
             "{delivered} vs {projected}"
@@ -980,7 +1148,7 @@ mod tests {
                 gen.steps = vec![(30.0 * 60_000.0, step_ms)];
             }
             let mut tracker = ReserveTracker::new();
-            tracker.start_connection(true);
+            tracker.start_connection(true, H500);
             let mut t = 0.0;
             while t < 60.0 * 60_000.0 {
                 t += 30_000.0;
@@ -1025,5 +1193,190 @@ mod tests {
         for jitter in [0.0, 50.0, 100.0] {
             assert_eq!(steps_seen(0.0, jitter, 20), (0, 0), "±{jitter} ms");
         }
+    }
+
+    /// One report on a locked estimate whose window's acknowledgement lags
+    /// are `lags`, on top of whatever the tracker holds. Returns the
+    /// acknowledged reserve.
+    fn report_with(tracker: &mut ReserveTracker, reserve_ms: f64, lags: &[f64]) -> AckedReserve {
+        tracker.last = Some(ReserveEstimate {
+            at: 300_000.0,
+            reserve_ms,
+            half_width_ms: 60.0,
+            inconsistent: false,
+            jitter_ms: 30.0,
+            polls: 72,
+            lock_reason: LockReason::Tight,
+        });
+        tracker.last_fresh = true;
+        tracker
+            .observe_ack_lag(&mut lags.to_vec())
+            .expect("acknowledged reserve")
+    }
+
+    #[test]
+    fn floor_scales_with_head_start() {
+        assert_eq!(low_floor_ms(0), 40.0);
+        assert_eq!(low_floor_ms(250), 75.0);
+        assert_eq!(low_floor_ms(500), 150.0);
+        assert_eq!(low_floor_ms(2000), 150.0);
+        assert_eq!(low_clear_ms(0), 70.0);
+        assert_eq!(low_clear_ms(250), 125.0);
+        assert_eq!(low_clear_ms(500), 250.0);
+        assert_eq!(low_clear_ms(2000), 250.0);
+
+        // Sized from what was sent, not what was configured; an unknown head
+        // start counts as none, and a compressed connection has no floor.
+        let mut tracker = ReserveTracker::new();
+        tracker.start_connection(
+            true,
+            Some(HeadStart {
+                sent_ms: 250,
+                configured_ms: 500,
+            }),
+        );
+        assert_eq!(tracker.floor_ms(), Some(75.0));
+        tracker.start_connection(true, None);
+        assert_eq!(tracker.floor_ms(), Some(40.0));
+        tracker.start_connection(false, H500);
+        assert_eq!((tracker.floor_ms(), tracker.head_start()), (None, None));
+    }
+
+    #[test]
+    fn low_fires_below_absolute_floor_without_a_target() {
+        let mut tracker = ReserveTracker::new();
+        tracker.start_connection(true, H500);
+        assert_eq!(tracker.target_ms(), None);
+        // The first locked estimate, already below the floor: no settled
+        // level is needed to call that low.
+        report_with(&mut tracker, 120.0, &[0.0; 60]);
+        assert!(tracker.is_low());
+    }
+
+    #[test]
+    fn a_500ms_reserve_dipping_to_350_is_not_low() {
+        // Low against the level it settled at under the old relative alarm;
+        // with 350 ms still in hand it is nowhere near cutting out.
+        let mut tracker = ReserveTracker::new();
+        tracker.start_connection(true, H500);
+        report_with(&mut tracker, 500.0, &[0.0; 60]);
+        report_with(&mut tracker, 500.0, &[0.0; 60]);
+        assert_eq!(tracker.target_ms(), Some(500.0));
+        let lags: Vec<f64> = (0..60).map(|i| if i < 10 { 150.0 } else { 0.0 }).collect();
+        let acked = report_with(&mut tracker, 500.0, &lags);
+        assert_eq!(acked.p10_ms, 350.0);
+        assert!(!tracker.is_low());
+    }
+
+    #[test]
+    fn field_minus_21ms_is_low_with_burst_off() {
+        // The field log of 2026-09-28: burst off, the acknowledged reserve's
+        // 10th percentile at -21 ms, the speaker cutting out.
+        let mut tracker = ReserveTracker::new();
+        tracker.start_connection(
+            true,
+            Some(HeadStart {
+                sent_ms: 0,
+                configured_ms: 0,
+            }),
+        );
+        let lags: Vec<f64> = (0..60).map(|i| if i < 10 { 91.0 } else { 20.0 }).collect();
+        let acked = report_with(&mut tracker, 70.0, &lags);
+        assert_eq!(acked.p10_ms, -21.0);
+        assert!(tracker.is_low());
+        assert_eq!(tracker.floor_ms(), Some(40.0));
+    }
+
+    #[test]
+    fn time_to_floor_not_time_to_zero() {
+        let mut tracker = ReserveTracker::new();
+        tracker.start_connection(true, H500);
+        let mut gen = PollGen::new(41);
+        gen.ppm = 300.0;
+        run(&mut tracker, &mut gen, 0.0, 12.0 * 60_000.0);
+        let ttf = tracker.time_to_floor_s().expect("draining");
+        let reserve = tracker.last_estimate().unwrap().reserve_ms;
+        let ppm = tracker.clock().unwrap().shrunk_ppm();
+        let to_zero = reserve / (ppm * 1e-3);
+        assert!(
+            (to_zero - ttf - 150.0 / (ppm * 1e-3)).abs() < 1e-6,
+            "{ttf} vs {to_zero}"
+        );
+    }
+
+    #[test]
+    fn ttf_clamps_to_zero_below_floor() {
+        let mut tracker = ReserveTracker::new();
+        tracker.start_connection(true, H500);
+        let mut gen = PollGen::new(41);
+        gen.ppm = 300.0;
+        run(&mut tracker, &mut gen, 0.0, 12.0 * 60_000.0);
+        assert!(tracker.time_to_floor_s().is_some_and(|s| s > 0.0));
+        // Acknowledgements lag the estimate by far more than it holds.
+        let est = tracker.last_estimate().unwrap().reserve_ms;
+        tracker.last_fresh = true;
+        tracker.observe_ack_lag(&mut [est; 60]);
+        assert_eq!(tracker.time_to_floor_s(), Some(0.0));
+    }
+
+    #[test]
+    fn stall_ms_excludes_steady_lag() {
+        // 40 ms always in flight, and one snapshot 130 ms behind that.
+        let mut lags = vec![40.0; 60];
+        lags[17] = 170.0;
+        assert_eq!(stall_ms(&mut lags), Some(130.0));
+        assert_eq!(stall_ms(&mut [25.0; 10]), Some(0.0));
+        assert_eq!(stall_ms(&mut []), None);
+
+        // Kept for a window with no estimate too.
+        let mut tracker = ReserveTracker::new();
+        tracker.start_connection(true, H500);
+        tracker.estimate(30_000.0);
+        let mut lags = vec![10.0, 10.0, 10.0, 210.0];
+        assert_eq!(tracker.observe_ack_lag(&mut lags), None);
+        assert_eq!(tracker.stall_ms(), Some(200.0));
+    }
+
+    #[test]
+    fn pre_break_snapshot_survives_segment_break() {
+        let mut tracker = ReserveTracker::new();
+        tracker.start_connection(true, H500);
+        let mut gen = PollGen::new(97);
+        gen.steps = vec![(6.0 * 60_000.0, -300.0)];
+        let mut t = 0.0;
+        let (mut before, mut before_locked) = (None, false);
+        let brk = loop {
+            t += 30_000.0;
+            assert!(t < 12.0 * 60_000.0, "the step breaks the segment");
+            gen.run_until(t, |p| {
+                tracker.observe(p, URI, false);
+            });
+            let (est, brk) = tracker.estimate(t);
+            // A 150 ms stall in every window.
+            let mut lags = clean(t);
+            lags[40] = 150.0;
+            let acked = tracker.observe_ack_lag(&mut lags);
+            if brk.is_some() {
+                assert_eq!(acked, None, "the break clears the estimate");
+                break brk;
+            }
+            before = acked;
+            before_locked = est.is_some_and(|e| e.locked());
+        };
+        assert_eq!(brk, Some(SegmentBreak::OffsetStep));
+        let pre = tracker.pre_break().expect("kept");
+        assert_eq!(pre.reason, SegmentBreak::OffsetStep);
+        assert_eq!(Some(pre.acked), before);
+        assert_eq!(pre.locked, before_locked);
+        assert_eq!(pre.acked.stall_ms, Some(148.0));
+        assert_eq!(tracker.stall_ms(), Some(148.0), "the breaking window's own");
+
+        // Kept until the next locked estimate, and never across connections.
+        run(&mut tracker, &mut gen, t, t + 6.0 * 60_000.0);
+        assert!(tracker.last_estimate().is_some_and(|e| e.locked()));
+        assert_eq!(tracker.pre_break(), None);
+        tracker.pre_break = Some(pre);
+        tracker.start_connection(true, H500);
+        assert_eq!(tracker.pre_break(), None);
     }
 }

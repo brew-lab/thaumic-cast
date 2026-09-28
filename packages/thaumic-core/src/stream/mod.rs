@@ -6,14 +6,15 @@ pub mod wav;
 
 pub use cadence::{
     create_wav_stream_with_cadence, lagged_error, parse_pcm_connect_burst_ms, pcm_connect_burst_ms,
-    CadenceConfig, EpochHook, LoggingStreamGuard, PCM_CONNECT_BURST_ENV,
+    CadenceConfig, EpochHook, FirstConnectionWait, LoggingStreamGuard, FIRST_WAIT_SURVIVAL,
+    PCM_CONNECT_BURST_ENV,
 };
 pub use icy::{IcyMetadataInjector, ICY_METAINT};
 pub use manager::{
     AudioCodec, CleanupOrder, PlaybackEpoch, StreamMetadata, StreamReaderSlot, StreamRegistry,
     StreamState, StreamTiming, MAX_UNLISTED_STREAM_READERS,
 };
-pub use tap::{ConnectionTap, MonitorRegistrar, SpeakerFigures, SpeakerSnapshot};
+pub use tap::{ConnectionTap, HeadStart, MonitorRegistrar, SpeakerFigures, SpeakerSnapshot};
 pub use wav::create_wav_header;
 
 use std::collections::HashMap;

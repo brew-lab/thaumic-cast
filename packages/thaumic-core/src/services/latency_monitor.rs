@@ -185,10 +185,15 @@ const SPEAKER_REPORT_INTERVAL: Duration = Duration::from_secs(30);
 /// between two reports is still counted in the connection's summary.
 const MAX_TOPOLOGY_NOTES: usize = 8;
 
-/// Projected time to an empty reserve above which a draining warning is
+/// Projected time to the low floor above which a draining warning is
 /// re-armed (it fires below
 /// [`DRAINING_WARN_SECS`](crate::services::speaker_monitor::tracker::DRAINING_WARN_SECS)).
-const DRAINING_CLEAR_SECS: f64 = 30.0 * 60.0;
+const DRAINING_CLEAR_SECS: f64 = 45.0 * 60.0;
+
+/// Most acknowledgement-lag samples the monitor ticks add to one report's
+/// window: a 30 s window at the 500 ms tick holds 60, so this only bounds a
+/// window stretched by a stalled monitor.
+const MAX_TICK_LAGS: usize = 256;
 
 /// Polls in a row reporting a track that is not the stream after which the
 /// speaker is left alone until it fetches the stream again. Two, so a single
@@ -484,6 +489,11 @@ struct LatencySession {
     /// Against the speaker's own second this is shifted by a constant, so
     /// the gaps between them are the gaps the reserve bounds see.
     phases_since_report: Vec<f64>,
+    /// How far the speaker's acknowledgements lagged the delivered count at
+    /// each monitor tick since the last report, in ms of audio (PCM, where
+    /// acknowledgements are reported). Joins the pipeline snapshots' lags,
+    /// which a stall that stops the body being polled holds back.
+    tick_lags_ms: Vec<f64>,
     /// Where the last transport verdict came from.
     last_transport_source: TransportSource,
     /// Whether the draining warning has fired. It is re-armed only once the
@@ -550,6 +560,7 @@ impl LatencySession {
             last_report: None,
             polls_since_report: 0,
             phases_since_report: Vec::new(),
+            tick_lags_ms: Vec::new(),
             last_transport_source: TransportSource::None,
             draining_warned: false,
             summary_owed: false,
@@ -605,10 +616,11 @@ impl LatencySession {
         }
         self.pcm = tap.byte_rate > 0;
         self.connected_at = Some(tap.connected_at);
-        self.tracker.start_connection(self.pcm);
+        self.tracker.start_connection(self.pcm, tap.head_start());
         self.last_report = Some(now);
         self.polls_since_report = 0;
         self.phases_since_report.clear();
+        self.tick_lags_ms.clear();
         self.connection_topology_changes = 0;
         self.summary_owed = self.wants_polls();
     }
@@ -639,6 +651,10 @@ impl LatencySession {
         };
         let c = self.tracker.connection();
         let ms = |v: Option<f64>| v.map_or_else(|| "?".to_string(), |v| format!("{v:.0}"));
+        let head_start = self.tracker.head_start().map_or_else(
+            || "\u{2014}".to_string(),
+            |h| format!("{}/{}ms", h.sent_ms, h.configured_ms),
+        );
         let breaks: Vec<String> = SegmentBreak::ALL
             .iter()
             .filter(|r| **r != SegmentBreak::NewConnection)
@@ -646,16 +662,18 @@ impl LatencySession {
             .collect();
         let (estimates, inconsistent) = self.tracker.connection_estimate_counts();
         log::info!(
-            "[SpeakerMonitor] {} stream={} connection ended after {}: reserve start={}ms end={}ms \
-             min={}ms{} clock={} polls={} breaks[{}] underruns_suspected={} incons={}/{} \
-             topology_changes={} reconnect_gap={}",
+            "[SpeakerMonitor] {} stream={} connection ended after {}: head_start={} reserve \
+             start={}ms end={}ms min={}ms{} calib={} clock={} polls={} breaks[{}] \
+             underruns_suspected={} incons={}/{} topology_changes={} reconnect_gap={}",
             speaker_ip,
             stream_id,
             format_duration(now.saturating_duration_since(connected_at)),
+            head_start,
             ms(c.reserve_start_ms),
             ms(c.reserve_end_ms),
             ms(c.reserve_min_ms),
             if c.acked_measured { "(acked)" } else { "" },
+            ms(self.tracker.calib_ms()),
             format_clock(self.tracker.clock()),
             c.polls,
             breaks.join(" "),
@@ -667,6 +685,19 @@ impl LatencySession {
                 .map_or_else(|| "none".to_string(), format_duration),
         );
         true
+    }
+
+    /// Samples how far the speaker's acknowledgements lag the delivered
+    /// count right now, for the next report's window. Called on every
+    /// monitor tick, so the window sees a stall even while it stops the
+    /// connection's pipeline snapshots.
+    fn sample_ack_lag(&mut self, tap: &ConnectionTap) {
+        if self.tick_lags_ms.len() >= MAX_TICK_LAGS {
+            return;
+        }
+        if let Some(lag) = tap.unacked_ms_now() {
+            self.tick_lags_ms.push(lag);
+        }
     }
 
     /// Whether the reserve and clock are due another report.
@@ -713,11 +744,13 @@ impl LatencySession {
         // an await.
         let pipeline = tap.recent_pipeline(window);
         let was_low = self.tracker.is_low();
+        let tick_lags = std::mem::take(&mut self.tick_lags_ms);
         let mut lags_ms: Vec<f64> = if tap.byte_rate > 0 {
             pipeline
                 .iter()
                 .filter_map(|s| s.unacked_bytes)
                 .map(|b| b as f64 * 1000.0 / f64::from(tap.byte_rate))
+                .chain(tick_lags)
                 .collect()
         } else {
             Vec::new()
@@ -741,23 +774,29 @@ impl LatencySession {
             (None, true) => "\u{2014}".to_string(),
             (None, false) => "n/a(compressed)".to_string(),
         };
-        let tte = self.tracker.time_to_empty_s();
+        let ttf = self.tracker.time_to_floor_s();
         let (estimates, inconsistent) = self.tracker.connection_estimate_counts();
         let per_min = f64::from(polls) * 60.0 / window.as_secs_f64().max(1.0);
         let topology = format_topology(&std::mem::take(&mut self.topology_since_report));
+        let opt_ms =
+            |v: Option<f64>| v.map_or_else(|| "\u{2014}".to_string(), |v| format!("{v:.0}"));
         log::info!(
-            "[SpeakerMonitor] {} stream={} state={} reserve={} lock={} clock={} tte={} \
-             polls={}({:.0}/min) phase_gap={} incons={}/{} j={:.0}ms {} transport={}{}",
+            "[SpeakerMonitor] {} stream={} state={} reserve={} lock={} {} stall={} ttf={} \
+             calib={} clock={} polls={}({:.0}/min) phase_gap={} incons={}/{} j={:.0}ms {} \
+             link={} transport={}{}",
             speaker_ip,
             stream_id,
             state,
             reserve,
             estimate.map_or("\u{2014}", |e| e.lock_reason.as_str()),
-            format_clock(clock),
-            tte.map_or_else(
+            format_head_start(&self.tracker),
+            opt_ms(self.tracker.stall_ms()),
+            ttf.map_or_else(
                 || "\u{2014}".to_string(),
                 |s| format_duration(Duration::from_secs_f64(s))
             ),
+            opt_ms(self.tracker.calib_ms()),
+            format_clock(clock),
             polls,
             per_min,
             phase_gap.map_or_else(|| "\u{2014}".to_string(), |g| format!("{g:.0}ms")),
@@ -765,17 +804,21 @@ impl LatencySession {
             estimates,
             self.tracker.jitter_ms(),
             format_pipeline(&pipeline),
+            tap.link_verdict().map_or_else(
+                || "\u{2014}".to_string(),
+                |q| format!("{q:?}").to_lowercase()
+            ),
             self.last_transport_source,
             topology,
         );
 
         let is_low = self.tracker.is_low();
         if is_low && !was_low {
-            if let (Some(a), Some(target)) = (acked, self.tracker.target_ms()) {
+            if let (Some(a), Some(floor)) = (acked, self.tracker.floor_ms()) {
                 log::warn!(
                     "[SpeakerMonitor] {} stream={}: reserve low: the speaker's buffer spent a \
-                     tenth of the last window at or below {:.0}ms of {} audio against the \
-                     {:.0}ms it settled at; below about 100ms it stutters (reserve={})",
+                     tenth of the last window at or below {:.0}ms of {} audio, under the {:.0}ms \
+                     floor for its {}ms head start; it may cut out (reserve={})",
                     speaker_ip,
                     stream_id,
                     a.p10_ms,
@@ -784,7 +827,8 @@ impl LatencySession {
                     } else {
                         "delivered"
                     },
-                    target,
+                    floor,
+                    self.tracker.head_start().map_or(0, |h| h.sent_ms),
                     reserve
                 );
             }
@@ -800,14 +844,14 @@ impl LatencySession {
         let due = draining_warning_due(
             &mut self.draining_warned,
             state,
-            tte,
+            ttf,
             self.tracker.clock_drains(),
         );
-        if let (true, Some(secs)) = (due, tte) {
+        if let (true, Some(secs)) = (due, ttf) {
             log::warn!(
                 "[SpeakerMonitor] {} stream={}: reserve draining: the speaker plays {} faster \
-                 than the audio arrives, leaving about {} before it runs dry (reserve={}). A live \
-                 source cannot catch up; expect dropouts from then until playback is restarted",
+                 than the audio arrives, leaving about {} before it runs low (reserve={}). A live \
+                 source cannot catch up; expect dropouts after that until playback is restarted",
                 speaker_ip,
                 stream_id,
                 format_clock(clock),
@@ -857,6 +901,8 @@ impl LatencySession {
         let acked = self.tracker.last_acked();
         let clock = self.tracker.clock();
         let ms = |v: f64| v.round() as i32;
+        let unsigned_ms = |v: f64| v.max(0.0).round() as u32;
+        let head_start = self.tracker.head_start();
         NetworkEvent::SpeakerHealth {
             stream_id: stream_id.to_string(),
             speaker_ip: speaker_ip.to_string(),
@@ -868,12 +914,13 @@ impl LatencySession {
             reserve_p10_ms: acked.map(|a| ms(a.p10_ms)),
             reserve_acked: acked.is_some_and(|a| a.measured),
             target_ms: self.tracker.target_ms().map(ms),
+            head_start_ms: head_start.map(|h| h.sent_ms),
+            head_start_configured_ms: head_start.map(|h| h.configured_ms),
+            floor_ms: self.tracker.floor_ms().map(unsigned_ms),
+            stall_ms: self.tracker.stall_ms().map(unsigned_ms),
             clock_ppm: clock.map(|c| c.ppm as f32),
             clock_se_ppm: clock.map(|c| c.se_ppm as f32),
-            time_to_empty_s: self
-                .tracker
-                .time_to_empty_s()
-                .map(|s| s.max(0.0).round() as u32),
+            time_to_floor_s: self.tracker.time_to_floor_s().map(unsigned_ms),
             timestamp: now_millis(),
         }
     }
@@ -1330,21 +1377,39 @@ fn format_clock(clock: Option<crate::services::speaker_monitor::ClockEstimate>) 
     )
 }
 
-/// The acknowledged reserve over a report's window and the target it is
-/// held against, for the log: ` (acked min30s=431 p10=470) target=540`.
-/// Empty where acknowledgements are not measured.
+/// The acknowledged reserve over a report's window, for the log, and how
+/// far its 10th percentile has dropped from the level the connection
+/// settled at: ` (acked min30s=431 p10=470) dropped=70`. The acknowledged
+/// part is left out where acknowledgements are not measured, and `dropped`
+/// until the level is learned.
 fn format_acked(
     acked: Option<crate::services::speaker_monitor::AckedReserve>,
     target_ms: Option<f64>,
 ) -> String {
-    let acked = acked
+    let measured = acked
         .filter(|a| a.measured)
         .map(|a| format!(" (acked min30s={:.0} p10={:.0})", a.min_ms, a.p10_ms))
         .unwrap_or_default();
-    let target = target_ms
-        .map(|t| format!(" target={t:.0}"))
+    let dropped = acked
+        .zip(target_ms)
+        .map(|(a, t)| format!(" dropped={:.0}", t - a.p10_ms))
         .unwrap_or_default();
-    format!("{acked}{target}")
+    format!("{measured}{dropped}")
+}
+
+/// The head start the connection was sent and the low floor and clear
+/// levels sized from it, for the log: `H=500 Hcfg=500 floor=150 clear=250`,
+/// with dashes for a compressed connection.
+fn format_head_start(tracker: &ReserveTracker) -> String {
+    let dash = || "\u{2014}".to_string();
+    let head_start = tracker.head_start();
+    format!(
+        "H={} Hcfg={} floor={} clear={}",
+        head_start.map_or_else(dash, |h| h.sent_ms.to_string()),
+        head_start.map_or_else(dash, |h| h.configured_ms.to_string()),
+        tracker.floor_ms().map_or_else(dash, |f| format!("{f:.0}")),
+        tracker.clear_ms().map_or_else(dash, |c| format!("{c:.0}")),
+    )
 }
 
 /// The cadence queue, delivery gaps and retransmissions over a report's
@@ -1784,6 +1849,9 @@ impl LatencyMonitor {
 
                         let Some(tap) = tap else { continue };
                         let Some(epoch) = tap.epoch() else { continue };
+                        if session.wants_polls() && session.pcm {
+                            session.sample_ack_lag(&tap);
+                        }
                         if session.wants_polls() && session.report_due(now) {
                             session.report(stream_id, *speaker_ip, &tap, now, emitter.as_ref());
                         }
@@ -3159,7 +3227,7 @@ mod tests {
         assert!(!step(Locking, None, true));
         assert!(!step(Draining, Some(860.0), true));
         // Between the warning and clearing thresholds nothing changes.
-        assert!(!step(Ok, Some(25.0 * 60.0), true));
+        assert!(!step(Ok, Some(40.0 * 60.0), true));
         assert!(!step(Draining, Some(850.0), true));
         // Recovering past the clearing threshold re-arms it.
         assert!(!step(Ok, Some(DRAINING_CLEAR_SECS), true));
@@ -3174,8 +3242,8 @@ mod tests {
         use MonitorState::{Draining, Low};
         let mut warned = false;
         assert!(
-            !draining_warning_due(&mut warned, Low, Some(25.0 * 60.0), true),
-            "low, but not projected to empty soon"
+            !draining_warning_due(&mut warned, Low, Some(35.0 * 60.0), true),
+            "low, but not projected to reach the floor soon"
         );
         assert!(draining_warning_due(&mut warned, Low, Some(600.0), true));
         assert!(!draining_warning_due(
@@ -3194,13 +3262,14 @@ mod tests {
                 min_ms: 431.4,
                 p10_ms: 470.0,
                 measured,
+                stall_ms: None,
             })
         };
         assert_eq!(
             format_acked(acked(true), Some(540.2)),
-            " (acked min30s=431 p10=470) target=540"
+            " (acked min30s=431 p10=470) dropped=70"
         );
-        assert_eq!(format_acked(acked(false), Some(540.0)), " target=540");
+        assert_eq!(format_acked(acked(false), Some(540.0)), " dropped=70");
         assert_eq!(
             format_acked(acked(true), None),
             " (acked min30s=431 p10=470)"

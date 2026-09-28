@@ -12,7 +12,9 @@ the network buffer only deepened the server's own queue. When a speaker's fetch 
 resume, the server now sends it up to 500 ms of already-captured audio as fast as the connection takes it, then paces
 the rest exactly as before, with the full jitter buffer still queued on the server. A speaker's first connection
 waits, before the response starts, until the stream holds the burst as well as the jitter buffer (700 ms at the
-defaults, counted from the stream's first frame), so a fresh cast gets the whole burst. A resume is never delayed and
+defaults, counted from the stream's first frame), so a fresh cast gets the whole burst. That wait is not capped, so a
+large burst adds as much to it; it is logged, and so is whether the speaker kept its connection through it, which shows
+whether a speaker accepts a long one. A resume is never delayed and
 bursts only what the stream holds beyond the jitter buffer, never padding with silence. End-to-end
 latency grows by the burst; the playback epoch is anchored to the first burst frame, so video sync and the speaker
 monitor's reserve account for it. A PCM stream's ring now holds the largest burst plus the largest jitter buffer, which
