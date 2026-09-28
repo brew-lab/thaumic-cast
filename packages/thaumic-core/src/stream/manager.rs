@@ -654,6 +654,31 @@ impl StreamRegistry {
     pub fn list_stream_ids(&self) -> Vec<String> {
         self.streams.iter().map(|r| r.key().clone()).collect()
     }
+
+    /// Returns the IDs of the streams the speaker at `ip` is fetching for
+    /// playback right now: those whose current epoch for `ip` belongs to a
+    /// connection that is still open.
+    ///
+    /// Epochs are keyed by the peer address as accepted, so an IPv4 speaker
+    /// reached through a dual-stack listener is also looked up in its
+    /// IPv4-mapped form.
+    #[must_use]
+    pub fn streams_fetched_by(&self, ip: IpAddr) -> Vec<String> {
+        let ip = ip.to_canonical();
+        let mapped = match ip {
+            IpAddr::V4(v4) => Some(IpAddr::V6(v4.to_ipv6_mapped())),
+            IpAddr::V6(_) => None,
+        };
+        self.streams
+            .iter()
+            .filter(|r| {
+                let timing = &r.value().timing;
+                timing.current_tap_for(ip).is_some()
+                    || mapped.is_some_and(|m| timing.current_tap_for(m).is_some())
+            })
+            .map(|r| r.key().clone())
+            .collect()
+    }
 }
 
 #[cfg(test)]
@@ -708,6 +733,42 @@ mod tests {
             timing.current_tap_for(ip).is_none(),
             "a closed connection's tap must not be kept alive by the map"
         );
+    }
+
+    /// The topology monitor names the streams a speaker is fetching in its
+    /// change lines, whichever form of the address the listener accepted.
+    #[test]
+    fn streams_fetched_by_names_only_open_connections_from_the_address() {
+        use crate::stream::tap::test_support::started_tap;
+        let registry = StreamRegistry::new(StreamingConfig::default());
+        let fetched = registry
+            .create_stream(AudioCodec::Pcm, AudioFormat::default(), 200, 10)
+            .unwrap();
+        let other = registry
+            .create_stream(AudioCodec::Pcm, AudioFormat::default(), 200, 10)
+            .unwrap();
+        let speaker: IpAddr = "192.168.2.204".parse().unwrap();
+        let mapped: IpAddr = "::ffff:192.168.2.204".parse().unwrap();
+
+        let tap = started_tap(&fetched, "192.168.2.204", true);
+        registry
+            .get_stream(&fetched)
+            .unwrap()
+            .timing
+            .start_new_epoch(None, Instant::now(), mapped, Some(Arc::downgrade(&tap)));
+        let closed = started_tap(&other, "192.168.2.204", true);
+        registry.get_stream(&other).unwrap().timing.start_new_epoch(
+            None,
+            Instant::now(),
+            speaker,
+            Some(Arc::downgrade(&closed)),
+        );
+        drop(closed);
+
+        assert_eq!(registry.streams_fetched_by(speaker), vec![fetched]);
+        assert!(registry
+            .streams_fetched_by("192.168.2.205".parse().unwrap())
+            .is_empty());
     }
 
     #[test]

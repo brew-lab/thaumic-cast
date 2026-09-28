@@ -306,6 +306,23 @@ pub enum TopologyEvent {
         /// Unix timestamp in milliseconds.
         timestamp: u64,
     },
+    /// Something changed in the household between two topology refreshes:
+    /// a home-theatre satellite dropped off or came back, a device rebooted,
+    /// a radio changed, a device vanished, or a group's members changed.
+    ///
+    /// Compared between SOAP answers only, never GENA bodies (which can be
+    /// stale). Names no stream, so it reaches every client; the household is
+    /// shared by everyone casting to it.
+    MemberChanged {
+        /// What changed.
+        change: crate::services::speaker_monitor::MemberChange,
+        /// Address of the device the change is about, when it is still in
+        /// the household.
+        #[serde(rename = "speakerIp", skip_serializing_if = "Option::is_none")]
+        speaker_ip: Option<String>,
+        /// Unix timestamp in milliseconds.
+        timestamp: u64,
+    },
 }
 
 /// Events related to audio latency measurement.
@@ -494,5 +511,31 @@ mod tests {
         assert_eq!(wire(SpeakerHealthState::Paused), "\"paused\"");
         assert_eq!(wire(SpeakerHealthState::Stale), "\"stale\"");
         assert_eq!(wire(SpeakerHealthState::Dormant), "\"dormant\"");
+    }
+
+    /// The member change event rides the topology category with its change
+    /// nested under `change`, tagged by `kind`.
+    #[test]
+    fn member_changed_wire_shape() {
+        let event = BroadcastEvent::Topology(TopologyEvent::MemberChanged {
+            change: crate::services::speaker_monitor::MemberChange::DeviceRebooted {
+                uuid: "RINCON_B".into(),
+                from: 31,
+                to: 32,
+            },
+            speaker_ip: Some("192.168.2.205".into()),
+            timestamp: 7,
+        });
+
+        assert_eq!(
+            serde_json::to_value(&event).unwrap(),
+            serde_json::json!({
+                "category": "topology",
+                "type": "memberChanged",
+                "change": { "kind": "deviceRebooted", "uuid": "RINCON_B", "from": 31, "to": 32 },
+                "speakerIp": "192.168.2.205",
+                "timestamp": 7,
+            })
+        );
     }
 }

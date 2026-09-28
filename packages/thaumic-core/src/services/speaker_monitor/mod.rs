@@ -10,13 +10,16 @@
 //! - [`segment`] decides when measurements stop being continuous;
 //! - [`tracker`] ties the three together for one speaker;
 //! - [`rollup`] reduces a window of samples for the log;
-//! - [`transport_gate`] decides whether the speaker is playing.
+//! - [`transport_gate`] decides whether the speaker is playing;
+//! - [`topology_diff`] names what changed in the household between two
+//!   zone topology snapshots.
 
 pub mod bounds;
 pub mod clock_fit;
 pub mod reserve;
 pub mod rollup;
 pub mod segment;
+pub mod topology_diff;
 pub mod tracker;
 pub mod transport_gate;
 
@@ -30,6 +33,7 @@ pub use clock_fit::{ClockEstimate, ClockFit};
 pub use reserve::{ReserveEstimate, ReserveEstimator};
 pub use rollup::WindowStats;
 pub use segment::{Segment, SegmentBreak};
+pub use topology_diff::{MemberChange, RadioField, TopologyDiff};
 pub use tracker::{AckedReserve, ConnectionStats, MonitorState, ReserveTracker};
 pub use transport_gate::{
     GenaTransport, GenaTransportView, TransportGate, TransportSource, TransportStateView,

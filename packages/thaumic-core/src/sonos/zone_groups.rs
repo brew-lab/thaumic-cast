@@ -1,16 +1,20 @@
 //! Zone group topology parsing and retrieval.
 //!
-//! Handles parsing ZoneGroupState XML into structured `ZoneGroup` data
-//! and fetching topology from Sonos speakers via SOAP.
+//! Handles parsing ZoneGroupState XML into structured `ZoneGroup` data (for
+//! display) and into a `HouseholdTopology` (for comparing refreshes), and
+//! fetching topology from Sonos speakers via SOAP.
 
-use quick_xml::events::Event;
+use quick_xml::events::{BytesStart, Event};
 use quick_xml::reader::Reader;
 use reqwest::Client;
 
 use crate::error::SoapResult;
 use crate::sonos::services::SonosService;
 use crate::sonos::soap::soap_request;
-use crate::sonos::types::{ZoneGroup, ZoneGroupMember};
+use crate::sonos::types::{
+    HouseholdDevice, HouseholdGroup, HouseholdMember, HouseholdTopology, RadioInfo, SatelliteInfo,
+    VanishedDevice, ZoneGroup, ZoneGroupMember, ZoneGroupSnapshot,
+};
 use crate::sonos::utils::{
     extract_ip_from_location, extract_model_from_icon, extract_xml_text, get_channel_role,
     get_xml_attr,
@@ -173,15 +177,128 @@ pub fn parse_zone_group_xml(xml: &str) -> Vec<ZoneGroup> {
     groups
 }
 
-/// Fetches the current zone groups from a Sonos speaker and parses the topology.
+/// Reads one device's attributes from a `ZoneGroupMember` or `Satellite`
+/// element. `None` without a UUID or a usable `Location`.
+fn parse_household_device(e: &BytesStart) -> Option<HouseholdDevice> {
+    let uuid = get_xml_attr(e, b"UUID")?;
+    let ip = extract_ip_from_location(&get_xml_attr(e, b"Location")?)?;
+    let number = |name: &[u8]| get_xml_attr(e, name).and_then(|v| v.trim().parse::<u32>().ok());
+    Some(HouseholdDevice {
+        uuid,
+        ip,
+        zone_name: get_xml_attr(e, b"ZoneName").unwrap_or_default(),
+        boot_seq: number(b"BootSeq"),
+        invisible: get_xml_attr(e, b"Invisible").as_deref() == Some("1"),
+        radio: RadioInfo {
+            channel_freq: number(b"ChannelFreq"),
+            wireless_mode: number(b"WirelessMode"),
+            behind_wifi_extender: number(b"BehindWifiExtender"),
+            eth_link: number(b"EthLink"),
+        },
+    })
+}
+
+/// Parses ZoneGroupState XML into a [`HouseholdTopology`].
+///
+/// Where [`parse_zone_group_xml`] flattens satellites into members and drops
+/// zone bridges for display, this keeps each member's `<Satellite>` elements
+/// under it, keeps zone bridges (flagged), and reads the attributes that say
+/// how each device is doing: `BootSeq`, `Invisible`, `HTSatChanMapSet` and the
+/// radio fields, plus the `VanishedDevices` list. It expects the same input,
+/// the `ZoneGroupState` document already unescaped once.
+pub fn parse_household_topology(xml: &str) -> HouseholdTopology {
+    let mut household = HouseholdTopology::default();
+    let mut reader = Reader::from_str(xml);
+    let mut buf = Vec::new();
+    let mut group: Option<HouseholdGroup> = None;
+    let mut in_vanished = false;
+
+    loop {
+        match reader.read_event_into(&mut buf) {
+            // An empty `<VanishedDevices/>` has no children to collect.
+            Ok(Event::Start(ref e)) if e.name().as_ref() == b"VanishedDevices" => {
+                in_vanished = true;
+            }
+            Ok(Event::Start(ref e)) | Ok(Event::Empty(ref e)) => match e.name().as_ref() {
+                b"ZoneGroup" => {
+                    group = Some(HouseholdGroup {
+                        id: get_xml_attr(e, b"ID").unwrap_or_default(),
+                        coordinator_uuid: get_xml_attr(e, b"Coordinator").unwrap_or_default(),
+                        members: Vec::new(),
+                    });
+                }
+                b"ZoneGroupMember" => {
+                    if let (Some(group), Some(device)) = (group.as_mut(), parse_household_device(e))
+                    {
+                        group.members.push(HouseholdMember {
+                            device,
+                            zone_bridge: get_xml_attr(e, b"IsZoneBridge").as_deref() == Some("1"),
+                            ht_sat_chan_map: get_xml_attr(e, b"HTSatChanMapSet")
+                                .filter(|m| !m.is_empty()),
+                            satellites: Vec::new(),
+                        });
+                    }
+                }
+                b"Satellite" => {
+                    // Satellites are children of the member they are bonded to.
+                    let member = group.as_mut().and_then(|g| g.members.last_mut());
+                    if let (Some(member), Some(device)) = (member, parse_household_device(e)) {
+                        let role = member
+                            .ht_sat_chan_map
+                            .clone()
+                            .or_else(|| get_xml_attr(e, b"HTSatChanMapSet"))
+                            .and_then(|map| channels_for(&map, &device.uuid));
+                        member.satellites.push(SatelliteInfo { device, role });
+                    }
+                }
+                b"Device" if in_vanished => {
+                    if let Some(uuid) = get_xml_attr(e, b"UUID") {
+                        household.vanished.push(VanishedDevice {
+                            uuid,
+                            zone_name: get_xml_attr(e, b"ZoneName"),
+                            reason: get_xml_attr(e, b"Reason"),
+                        });
+                    }
+                }
+                _ => {}
+            },
+            Ok(Event::End(ref e)) => match e.name().as_ref() {
+                b"ZoneGroup" => household.groups.extend(group.take()),
+                b"VanishedDevices" => in_vanished = false,
+                _ => {}
+            },
+            Ok(Event::Eof) => break,
+            Err(e) => {
+                log::warn!("[Sonos] XML parse error in household topology: {}", e);
+                break;
+            }
+            _ => {}
+        }
+        buf.clear();
+    }
+
+    household
+}
+
+/// The raw channels an `HTSatChanMapSet` gives a UUID (`SW`, `LR`, `LF,RF`).
+fn channels_for(map: &str, uuid: &str) -> Option<String> {
+    map.split(';')
+        .filter_map(|entry| entry.split_once(':'))
+        .find(|(u, _)| *u == uuid)
+        .map(|(_, channels)| channels.to_string())
+}
+
+/// Fetches the current zone group state from a Sonos speaker and parses it,
+/// both as display groups and as the household structure.
 ///
 /// # Arguments
 /// * `client` - The HTTP client to use for the request
 /// * `ip` - IP address of any Sonos speaker on the network
 ///
 /// # Returns
-/// A vector of `ZoneGroup` representing the current topology
-pub async fn get_zone_groups(client: &Client, ip: &str) -> SoapResult<Vec<ZoneGroup>> {
+/// The groups and the household read from the same answer; both empty when
+/// the answer carries no `ZoneGroupState`.
+pub async fn get_zone_group_state(client: &Client, ip: &str) -> SoapResult<ZoneGroupSnapshot> {
     let response = soap_request(
         client,
         ip,
@@ -193,15 +310,21 @@ pub async fn get_zone_groups(client: &Client, ip: &str) -> SoapResult<Vec<ZoneGr
 
     // Extract and decode ZoneGroupState from SOAP response
     let Some(decoded_xml) = extract_xml_text(&response, "ZoneGroupState") else {
-        return Ok(vec![]);
+        return Ok(ZoneGroupSnapshot::default());
     };
 
-    Ok(parse_zone_group_xml(&decoded_xml))
+    Ok(ZoneGroupSnapshot {
+        groups: parse_zone_group_xml(&decoded_xml),
+        household: parse_household_topology(&decoded_xml),
+    })
 }
 
 #[cfg(test)]
 mod tests {
-    use super::super::test_fixtures::ZONE_GROUP_STATE_SOAP_RESPONSE;
+    use super::super::test_fixtures::{
+        HT_HOUSEHOLD, HT_HOUSEHOLD_KITCHEN_VANISHED, HT_HOUSEHOLD_LR_MISSING, HT_LR_UUID,
+        HT_PRIMARY_UUID, HT_RR_UUID, HT_SUB_UUID, KITCHEN_UUID, ZONE_GROUP_STATE_SOAP_RESPONSE,
+    };
     use super::*;
 
     /// Helper to build a ZoneGroupMember XML element.
@@ -341,5 +464,92 @@ mod tests {
         assert_eq!(groups[1].members[0].zone_name, "Kitchen & Bar");
         assert_eq!(groups[2].name, "Tom's \"Den\"");
         assert_eq!(groups[2].members[0].zone_name, "Tom's \"Den\"");
+    }
+
+    #[test]
+    fn household_keeps_satellites_under_their_primary() {
+        let household = parse_household_topology(HT_HOUSEHOLD);
+
+        assert_eq!(household.groups.len(), 3);
+        let ht = &household.groups[0];
+        assert_eq!(ht.coordinator_uuid, HT_PRIMARY_UUID);
+        assert_eq!(ht.members.len(), 1, "satellites are not members");
+
+        let primary = &ht.members[0];
+        assert_eq!(primary.device.ip, "192.168.2.204");
+        assert_eq!(primary.device.boot_seq, Some(118));
+        assert_eq!(primary.device.radio.channel_freq, Some(2437));
+        assert!(!primary.device.invisible);
+        assert!(primary.ht_sat_chan_map.is_some());
+
+        let satellites: Vec<(&str, Option<&str>)> = primary
+            .satellites
+            .iter()
+            .map(|s| (s.device.uuid.as_str(), s.role.as_deref()))
+            .collect();
+        assert_eq!(
+            satellites,
+            vec![
+                (HT_SUB_UUID, Some("SW")),
+                (HT_LR_UUID, Some("LR")),
+                (HT_RR_UUID, Some("RR")),
+            ]
+        );
+        assert!(primary.satellites.iter().all(|s| s.device.invisible));
+        assert_eq!(primary.satellites[0].device.radio.channel_freq, Some(5745));
+        assert!(primary.missing_satellites().is_empty());
+    }
+
+    #[test]
+    fn household_keeps_the_zone_bridge_flagged() {
+        let household = parse_household_topology(HT_HOUSEHOLD);
+
+        let boost = &household.groups[1].members[0];
+        assert!(boost.zone_bridge);
+        assert_eq!(boost.device.radio.eth_link, Some(1));
+        // The display groups still leave it out, and fold the satellites in.
+        let groups = parse_zone_group_xml(HT_HOUSEHOLD);
+        assert_eq!(groups.len(), 2);
+        assert_eq!(groups[0].members.len(), 4);
+    }
+
+    #[test]
+    fn a_satellite_in_the_map_but_not_listed_is_missing() {
+        let household = parse_household_topology(HT_HOUSEHOLD_LR_MISSING);
+
+        let primary = &household.groups[0].members[0];
+        assert_eq!(
+            primary.missing_satellites(),
+            vec![(HT_LR_UUID.to_string(), "LR".to_string())]
+        );
+        assert_eq!(household.satellite_counts(), (2, 1));
+    }
+
+    #[test]
+    fn household_reads_vanished_devices() {
+        let household = parse_household_topology(HT_HOUSEHOLD_KITCHEN_VANISHED);
+
+        assert_eq!(
+            household.vanished,
+            vec![VanishedDevice {
+                uuid: KITCHEN_UUID.to_string(),
+                zone_name: Some("Kitchen".to_string()),
+                reason: Some("powered off".to_string()),
+            }]
+        );
+        assert!(parse_household_topology(HT_HOUSEHOLD).vanished.is_empty());
+    }
+
+    #[test]
+    fn household_maps_every_device_address_to_its_uuid() {
+        let household = parse_household_topology(HT_HOUSEHOLD);
+
+        let uuid_by_ip = household.uuid_by_ip();
+        assert_eq!(uuid_by_ip.len(), 6);
+        assert_eq!(uuid_by_ip["192.168.2.206"], HT_LR_UUID);
+        assert_eq!(
+            household.coordinator_of(HT_LR_UUID).map(|d| d.ip.as_str()),
+            Some("192.168.2.204")
+        );
     }
 }

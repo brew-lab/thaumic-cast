@@ -7,7 +7,7 @@ use async_trait::async_trait;
 
 use crate::error::{DiscoveryResult, SoapResult};
 use crate::sonos::discovery::Speaker;
-use crate::sonos::types::{PositionInfo, TransportState, ZoneGroup};
+use crate::sonos::types::{PositionInfo, TransportState, ZoneGroupSnapshot};
 use crate::stream::{AudioCodec, AudioFormat, StreamMetadata};
 
 /// Trait for Sonos playback control operations.
@@ -107,11 +107,12 @@ pub trait SonosPlayback: Send + Sync {
 /// Used by `TopologyMonitor` to fetch zone group information.
 #[async_trait]
 pub trait SonosTopology: Send + Sync {
-    /// Fetches the current zone groups from a Sonos speaker.
+    /// Fetches the current zone group state from a Sonos speaker: the zone
+    /// groups, and the household structure they were read from.
     ///
     /// # Arguments
     /// * `ip` - IP address of any Sonos speaker on the network
-    async fn get_zone_groups(&self, ip: &str) -> SoapResult<Vec<ZoneGroup>>;
+    async fn get_zone_group_state(&self, ip: &str) -> SoapResult<ZoneGroupSnapshot>;
 }
 
 /// Trait for Sonos speaker discovery operations.
