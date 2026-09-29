@@ -9,8 +9,9 @@
  * Wording: a head-start notice names what happened and the head start that
  * would have covered it, then where to change it: in the environment variable
  * when one fixes it, else in the desktop app or the server's config by the
- * companion's type, else neutrally. Restart advice is added only when the
- * companion says a restart refills the speaker.
+ * companion's type, else neutrally. An uncorrected drift offers clock drift
+ * correction where the companion has it and it is not on. Restart advice is
+ * added only when the companion says a restart refills the speaker.
  *
  * Dismissal: a notice is dismissed by `(streamId, speakerIp, noticeId)`, which
  * holds while the companion repeats it and lapses on a new episode or an
@@ -73,6 +74,23 @@ export function headStartWhereLine(suggested: number, ctx: NoticeWordingContext)
 }
 
 /**
+ * Picks the sentence offering clock drift correction for an uncorrected
+ * drift: only when the companion reports its mode, the mode is not already
+ * `on`, the speaker monitor (which correction steers by) is on, and the
+ * companion's type says where correction is turned on.
+ * @param ctx - The wording context
+ * @returns The sentence to append, or null when there is nothing to offer
+ */
+export function driftTurnOnLine(ctx: NoticeWordingContext): NoticeLine | null {
+  const audio = ctx.companionAudio;
+  if (!audio?.speakerMonitor || audio.driftCompensation === undefined) return null;
+  if (audio.driftCompensation === 'on') return null;
+  if (ctx.appType === 'desktop') return { key: 'speaker_notice_drift_turn_on_desktop' };
+  if (ctx.appType === 'server') return { key: 'speaker_notice_drift_turn_on_server' };
+  return null;
+}
+
+/**
  * Words a speaker notice as the sentences the popup joins into one message.
  * @param notice - The companion's notice
  * @param ctx - The wording context
@@ -109,12 +127,15 @@ export function speakerNoticeLines(notice: SpeakerNotice, ctx: NoticeWordingCont
       lines.push({ key: 'speaker_notice_running_low', params: { name, left } });
       break;
     case 'drift_uncorrected':
-    case 'drift_saturated':
+    case 'drift_saturated': {
       lines.push({
         key: `speaker_notice_${notice.kind}`,
         params: { name, minutes: Math.max(1, notice.minutes ?? 1) },
       });
+      const turnOn = notice.kind === 'drift_uncorrected' ? driftTurnOnLine(ctx) : null;
+      if (turnOn) lines.push(turnOn);
       break;
+    }
   }
 
   if (notice.restartHelps) lines.push({ key: 'speaker_notice_restart_refills' });

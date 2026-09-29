@@ -110,6 +110,42 @@ describe('speakerNoticeLines', () => {
     });
   });
 
+  it('should offer drift correction for an uncorrected drift where the companion has it off', () => {
+    const drift: SpeakerNotice = {
+      kind: 'drift_uncorrected',
+      noticeId: 4,
+      minutes: 25,
+      restartHelps: true,
+    };
+    const observing = { ...AUDIO, driftCompensation: 'observe' as const };
+    expect(keys(drift, ctx({ companionAudio: observing }))).toEqual([
+      'speaker_notice_drift_uncorrected',
+      'speaker_notice_drift_turn_on_desktop',
+      'speaker_notice_restart_refills',
+    ]);
+    expect(keys(drift, ctx({ companionAudio: observing, appType: 'server' }))[1]).toBe(
+      'speaker_notice_drift_turn_on_server',
+    );
+    // Not when it is already on, the monitor it steers by is off, the
+    // companion predates it, or where to turn it on is unknown.
+    for (const context of [
+      ctx({ companionAudio: { ...AUDIO, driftCompensation: 'on' } }),
+      ctx({ companionAudio: { ...observing, speakerMonitor: false } }),
+      ctx(),
+      ctx({ companionAudio: observing, appType: null }),
+      ctx({ companionAudio: null }),
+    ]) {
+      expect(keys(drift, context)).not.toContain('speaker_notice_drift_turn_on_desktop');
+      expect(keys(drift, context)).not.toContain('speaker_notice_drift_turn_on_server');
+    }
+    // A saturated drift is one correction is already running for.
+    const saturated: SpeakerNotice = { ...drift, kind: 'drift_saturated' };
+    expect(keys(saturated, ctx({ companionAudio: observing }))).toEqual([
+      'speaker_notice_drift_saturated',
+      'speaker_notice_restart_refills',
+    ]);
+  });
+
   it('should only use keys the locale defines', () => {
     const strings = en as Record<string, string>;
     const notices: SpeakerNotice[] = [
@@ -127,6 +163,8 @@ describe('speakerNoticeLines', () => {
       ctx({ appType: 'server' }),
       ctx({ appType: null }),
       ctx({ companionAudio: { ...AUDIO, headStartFixed: true } }),
+      ctx({ companionAudio: { ...AUDIO, driftCompensation: 'observe' } }),
+      ctx({ companionAudio: { ...AUDIO, driftCompensation: 'off' }, appType: 'server' }),
     ];
     for (const notice of notices) {
       for (const context of contexts) {

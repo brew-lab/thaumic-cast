@@ -533,6 +533,12 @@ export const SpeakerHealthEntrySchema = z.object({
   clockPpm: z.number().optional(),
   clockSePpm: z.number().nonnegative().optional(),
   timeToFloorS: z.number().int().nonnegative().optional(),
+  /** Clock drift correction mode the speaker's connection was made under */
+  driftMode: z.enum(['on', 'observe', 'off']).optional(),
+  /** Drift correction command in ppm: applied with `on`, what it would be with `observe` */
+  commandPpm: z.number().optional(),
+  /** Audio drift correction has inserted (positive) or removed so far, in ms */
+  netInsertedMs: z.number().int().optional(),
   /** What the companion says the user should be told; absent while nothing stands */
   notice: SpeakerNoticeSchema.optional(),
   updatedAt: z.number(),
