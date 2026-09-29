@@ -257,10 +257,11 @@ impl SimSpeaker {
             Instant::now(),
             AudioCodec::Pcm,
             &format,
-            Arc::clone(&guard),
+            crate::stream::ChainStats::for_connection("sim", &guard, WAV_HEADER_BYTES),
             true,
         )
-        .with_drift(self.drift, rate_control.clone());
+        .with_drift(self.drift, rate_control.clone())
+        .with_connection(Arc::clone(&guard));
         let audio = Bytes::from(vec![0x11u8; frame_bytes]);
         let prefill = (0..(JITTER_BUFFER_MS + self.connect_burst_ms) / u64::from(frame_ms))
             .map(|_| TimestampedFrame {
@@ -285,7 +286,7 @@ impl SimSpeaker {
         // nothing to deliver for them.
         let mut burst_left = config.burst_frames.len();
         let mut stream: Pin<Box<dyn Stream<Item = std::io::Result<Bytes>>>> = Box::pin(
-            create_wav_stream_with_cadence(rx, Arc::clone(&guard), config, None, None),
+            create_wav_stream_with_cadence(rx, Arc::clone(tap.stats()), config, None, None),
         );
         // The body sends the WAV header first, and counts it.
         guard

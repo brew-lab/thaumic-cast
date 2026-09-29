@@ -2470,12 +2470,19 @@ fn apply_poll_result(
         stream_id
     );
 
+    // A later segment of a PCM cast is the same item to everything below: its
+    // URL is taken for the stream's own and its RelTime counted from the
+    // playout's start, so a switch of segment is neither a new track nor
+    // RelTime going backwards (see `ConnectionTap::continuous_position`).
+    let (track_uri, rel_time_ms) = match session.live_tap() {
+        Some(tap) => tap.continuous_position(position.track_uri, position.rel_time_ms),
+        None => (position.track_uri, position.rel_time_ms),
+    };
+
     // The speaker answered about our stream, so the position is valid (for
     // stale detection) even if it is not playing.
     session.record_valid_position();
-    session
-        .gate
-        .observe_rel_time(position.rel_time_ms, poll.answered_at);
+    session.gate.observe_rel_time(rel_time_ms, poll.answered_at);
     let (verdict, source) = session.gate.verdict(gena.as_ref(), poll.answered_at);
     session.last_transport_source = source;
 
@@ -2486,14 +2493,11 @@ fn apply_poll_result(
         let obs = PollObservation {
             ts: ms_between(origin, poll.sent_at),
             tr: ms_between(origin, poll.answered_at),
-            rel_ms: position.rel_time_ms,
+            rel_ms: rel_time_ms,
             d_ts_ms: poll.delivered_ms_at_send.unwrap_or(0) as f64,
             d_tr_ms: poll.delivered_ms_at_answer.unwrap_or(0) as f64,
         };
-        if let Some(brk) = session
-            .tracker
-            .observe(&obs, &position.track_uri, not_playing)
-        {
+        if let Some(brk) = session.tracker.observe(&obs, &track_uri, not_playing) {
             log::info!(
                 "[SpeakerMonitor] {} stream={}: segment break ({}); measuring afresh",
                 speaker_ip,
@@ -2514,7 +2518,7 @@ fn apply_poll_result(
          span={}ms transport={:?} ({})",
         stream_id,
         speaker_ip,
-        position.rel_time_ms,
+        rel_time_ms,
         poll.rtt_ms,
         poll.delivered_ms_at_send,
         poll.delivered_ms_at_answer,
@@ -2540,7 +2544,7 @@ fn apply_poll_result(
     // counts as source time: without it video sync would drift by as much.
     let latency_ms = session.calculate_latency(
         elapsed_with_inserted(poll.stream_elapsed_ms, poll.net_inserted_ms),
-        position.rel_time_ms,
+        rel_time_ms,
         poll.rtt_ms,
     );
 
