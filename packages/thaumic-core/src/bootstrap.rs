@@ -190,7 +190,7 @@ pub fn bootstrap_services_with_network(
     })?);
 
     // Create task spawner with explicit handle
-    let spawner = TokioSpawner::new(runtime_handle);
+    let spawner = TokioSpawner::new(runtime_handle.clone());
 
     // Create shared HTTP client for connection pooling
     let http_client = create_http_client();
@@ -241,6 +241,7 @@ pub fn bootstrap_services_with_network(
         Arc::clone(&arbiter),
     );
     stream_coordinator.set_topology_refresh(Arc::clone(&refresh_notify));
+    stream_coordinator.set_control_runtime(runtime_handle);
     let stream_coordinator = Arc::new(stream_coordinator);
 
     // Wire up latency monitor with its dependencies

@@ -16,11 +16,16 @@
 //!   the cast on a STOPPED). For the coordinator and every speaker joined to
 //!   it with `x-rincon`, they are recorded as always but neither broadcast
 //!   nor shown in snapshots until the handoff ends (see
-//!   [`SonosState::hold_transport`]).
+//!   [`SonosState::hold_transport`]). When the coordinator plays the next
+//!   segment, it is released at once; each member stays held until it
+//!   reports PLAYING or PAUSED itself, or for [`MEMBER_GRACE`] at most, as a
+//!   member's own events can lag the coordinator's by seconds and the
+//!   STOPPED it recorded at the segment's end is not news.
 //! - **When to restart:** only on a STOPPED on segment `k` that has lasted
 //!   [`STOP_CONFIRM`] and that `GetTransportInfo` and `GetPositionInfo` then
-//!   confirm, or, with no word from GENA, once the speaker's reserve should
-//!   have played out and a poll says it stopped. `SetAVTransportURI` throws
+//!   confirm. With no word from GENA, the speaker is asked once its reserve
+//!   should have played out, and a STOPPED found then must also last
+//!   [`STOP_CONFIRM`] and be confirmed again. `SetAVTransportURI` throws
 //!   away whatever the speaker still holds, so restarting any earlier would
 //!   skip audio. Nothing is restarted while the speaker is paused or still
 //!   playing.
@@ -69,6 +74,11 @@ pub const RESTART_PLAY_TIMEOUT: Duration = Duration::from_secs(10);
 /// How many times a speaker is told to play the next segment.
 const RESTART_ATTEMPTS: u32 = 2;
 
+/// How long a speaker joined to the coordinator stays held once the
+/// coordinator plays the next segment, if it does not report PLAYING or
+/// PAUSED itself first: a grouped handover was seen to take up to 3.8 s.
+pub const MEMBER_GRACE: Duration = Duration::from_secs(5);
+
 /// How long a handoff lasts after the speaker fetched the next segment, if
 /// it never reports PLAYING.
 const ATTACHED_MAX: Duration = Duration::from_secs(15);
@@ -85,6 +95,10 @@ const WATCH_TICK: Duration = Duration::from_secs(1);
 #[derive(Default)]
 pub(crate) struct Continuations {
     handoffs: Mutex<HashMap<HandoffKey, Handoff>>,
+    /// Members still held after their coordinator's handoff succeeded, until
+    /// they report PLAYING or PAUSED (see [`MEMBER_GRACE`]), each with the
+    /// token of the grace that releases it.
+    lingering: Mutex<HashMap<String, u64>>,
     next_generation: std::sync::atomic::AtomicU64,
 }
 
@@ -171,6 +185,10 @@ enum Confirmation {
     NotYet(Duration),
     /// It is playing something else of ours: no restart is needed.
     Moved,
+    /// It holds no media at all (a cleared queue, or a stop that emptied
+    /// it): nothing of ours to continue, so the handoff ends and the STOPPED
+    /// is shown, as it was before continuation.
+    Gone,
 }
 
 /// Passes a playout's events on to the coordinator, which it must not keep
@@ -382,7 +400,7 @@ impl StreamCoordinator {
         if let Some((generation, notify)) = spawn {
             let coordinator = Arc::clone(self);
             let key = key.clone();
-            tokio::spawn(async move {
+            self.spawn_control(async move {
                 coordinator.watch_handoff(key, generation, notify).await;
             });
         }
@@ -393,13 +411,16 @@ impl StreamCoordinator {
     /// handoff watches for its speaker stopping on the ending segment and
     /// ends once it plays the next one.
     pub fn note_transport_state(
-        &self,
+        self: &Arc<Self>,
         speaker_ip: &str,
         state: TransportState,
         current_uri: Option<&str>,
     ) {
         if state == TransportState::Stopped {
             self.note_speaker_stopped(speaker_ip);
+        }
+        if matches!(state, TransportState::Playing | TransportState::Paused) {
+            self.member_reported(speaker_ip);
         }
         let now = Instant::now();
         let finished = {
@@ -472,21 +493,115 @@ impl StreamCoordinator {
             debt.map_or(0, |d| d.debt_ms),
             handoff.restarts
         );
-        self.finish_handoff(handoff);
+        self.complete_handoff(&key, handoff);
+    }
+
+    /// The speakers some handoff holds.
+    fn held_by_handoffs(&self) -> Vec<String> {
+        self.continuations
+            .handoffs
+            .lock()
+            .values()
+            .flat_map(|h| h.held.iter().cloned())
+            .collect()
     }
 
     /// Ends a handoff taken out of the map: wakes its watch so it stops, and
     /// releases the speakers it held.
     fn finish_handoff(&self, handoff: Handoff) {
         handoff.notify.notify_one();
-        let still_held: Vec<String> = self
-            .continuations
-            .handoffs
-            .lock()
-            .values()
-            .flat_map(|h| h.held.iter().cloned())
-            .collect();
+        let still_held = self.held_by_handoffs();
         for ip in handoff.held.iter().filter(|ip| !still_held.contains(ip)) {
+            self.release_transport(ip);
+        }
+    }
+
+    /// Ends a handoff taken out of the map because its coordinator moved on
+    /// to the next segment: releases the coordinator, and keeps each member
+    /// held until it reports PLAYING or PAUSED itself, or [`MEMBER_GRACE`]
+    /// has passed. A member's own events can lag the coordinator's by
+    /// seconds, and releasing it at once would tell clients the STOPPED it
+    /// recorded at the segment's end, which ends the cast on it.
+    fn complete_handoff(self: &Arc<Self>, key: &HandoffKey, handoff: Handoff) {
+        handoff.notify.notify_one();
+        let still_held = self.held_by_handoffs();
+        let mut members = Vec::new();
+        for ip in handoff
+            .held
+            .into_iter()
+            .filter(|ip| !still_held.contains(ip))
+        {
+            if ip == key.speaker_ip {
+                self.release_transport(&ip);
+            } else {
+                members.push(ip);
+            }
+        }
+        if members.is_empty() {
+            return;
+        }
+        let token = self
+            .continuations
+            .next_generation
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        {
+            let mut lingering = self.continuations.lingering.lock();
+            for ip in &members {
+                lingering.insert(ip.clone(), token);
+            }
+        }
+        let coordinator = Arc::clone(self);
+        self.spawn_control(async move {
+            tokio::time::sleep(MEMBER_GRACE).await;
+            coordinator.end_member_grace(&members, token);
+        });
+    }
+
+    /// Releases a member held after its coordinator's handoff once it
+    /// reports PLAYING or PAUSED: the state it reports is shown as usual,
+    /// so nothing more is told.
+    fn member_reported(&self, speaker_ip: &str) {
+        if self
+            .continuations
+            .lingering
+            .lock()
+            .remove(speaker_ip)
+            .is_none()
+        {
+            return;
+        }
+        if !self.held_by_handoffs().iter().any(|ip| ip == speaker_ip) {
+            self.sonos_state.release_transport(speaker_ip);
+        }
+    }
+
+    /// Releases the members of grace `token` that never reported PLAYING or
+    /// PAUSED, telling clients the state GENA last recorded for each.
+    fn end_member_grace(&self, members: &[String], token: u64) {
+        let expired: Vec<&String> = {
+            let mut lingering = self.continuations.lingering.lock();
+            members
+                .iter()
+                .filter(|ip| {
+                    let ours = lingering.get(ip.as_str()) == Some(&token);
+                    if ours {
+                        lingering.remove(ip.as_str());
+                    }
+                    ours
+                })
+                .collect()
+        };
+        if expired.is_empty() {
+            return;
+        }
+        let still_held = self.held_by_handoffs();
+        for ip in expired.into_iter().filter(|ip| !still_held.contains(ip)) {
+            log::info!(
+                "[Stream] Handoff: speaker {} joined to a coordinator that switched segments did \
+                 not report PLAYING within {} ms; showing its recorded state",
+                ip,
+                MEMBER_GRACE.as_millis()
+            );
             self.release_transport(ip);
         }
     }
@@ -527,6 +642,19 @@ impl StreamCoordinator {
                     }
                 }
                 Step::Confirm(trigger) => match self.confirm_stopped(&key, generation).await {
+                    // With no STOPPED from GENA, one found by asking must
+                    // last as long as GENA's would, and be confirmed again.
+                    Confirmation::Stopped if trigger == Trigger::Timer => {
+                        if let Some(h) = self
+                            .continuations
+                            .handoffs
+                            .lock()
+                            .get_mut(&key)
+                            .filter(|h| h.generation == generation)
+                        {
+                            h.stopped_since.get_or_insert_with(Instant::now);
+                        }
+                    }
                     Confirmation::Stopped => self.restart_part(&key, generation, trigger).await,
                     Confirmation::NotYet(wait) => {
                         tokio::select! {
@@ -535,6 +663,12 @@ impl StreamCoordinator {
                         }
                     }
                     Confirmation::Moved => {
+                        if let Some(handoff) = self.take_handoff(&key, generation) {
+                            self.complete_handoff(&key, handoff);
+                        }
+                        return;
+                    }
+                    Confirmation::Gone => {
                         if let Some(handoff) = self.take_handoff(&key, generation) {
                             self.finish_handoff(handoff);
                         }
@@ -667,7 +801,17 @@ impl StreamCoordinator {
             }
         }
         match self.sonos.get_position_info(ip).await {
-            Ok(position) if position.track_uri.is_empty() => Confirmation::Stopped,
+            // After a clean end a speaker keeps the segment's URI; none at
+            // all is no media, not our segment played out.
+            Ok(position) if position.track_uri.is_empty() => {
+                log::info!(
+                    "[Stream] Handoff ended: stream={} speaker={} is stopped with no media; not \
+                     restarting it",
+                    key.stream_id,
+                    ip
+                );
+                Confirmation::Gone
+            }
             Ok(position) => match url_segment_of(&position.track_uri, &key.stream_id) {
                 Some(segment) if segment == from => Confirmation::Stopped,
                 Some(segment) => {
@@ -829,6 +973,24 @@ impl StreamCoordinator {
         self.finish_handoff(handoff);
     }
 
+    /// Runs a handoff's watch or a member's grace on the control runtime
+    /// when one is set (see [`StreamCoordinator::set_control_runtime`]), so
+    /// its SOAP calls stay off the streaming runtime a playout's events come
+    /// from.
+    fn spawn_control<F>(&self, future: F)
+    where
+        F: std::future::Future<Output = ()> + Send + 'static,
+    {
+        match &self.control_runtime {
+            Some(handle) => {
+                handle.spawn(future);
+            }
+            None => {
+                tokio::spawn(future);
+            }
+        }
+    }
+
     /// Whether `speaker_ip`'s transport state is held by a handoff.
     #[cfg(test)]
     pub(crate) fn in_handoff(&self, speaker_ip: &str) -> bool {
@@ -872,6 +1034,9 @@ mod tests {
         transport: parking_lot::Mutex<Option<TransportState>>,
         track_uri: parking_lot::Mutex<String>,
         played: parking_lot::Mutex<Vec<(String, String)>>,
+        /// When each `play_uri` and `GetTransportInfo` came.
+        played_at: parking_lot::Mutex<Vec<Instant>>,
+        polled_at: parking_lot::Mutex<Vec<Instant>>,
         stops: AtomicUsize,
     }
 
@@ -899,6 +1064,7 @@ mod tests {
             _: &str,
         ) -> SoapResult<()> {
             self.played.lock().push((ip.to_string(), uri.to_string()));
+            self.played_at.lock().push(Instant::now());
             Ok(())
         }
         async fn play(&self, _: &str) -> SoapResult<()> {
@@ -918,6 +1084,7 @@ mod tests {
             })
         }
         async fn get_transport_info(&self, _: &str) -> SoapResult<TransportState> {
+            self.polled_at.lock().push(Instant::now());
             Ok(self.transport.lock().unwrap_or(TransportState::Playing))
         }
         async fn join_group(&self, _: &str, _: &str) -> SoapResult<()> {
@@ -1075,6 +1242,21 @@ mod tests {
             body
         }
 
+        /// The transport states clients were told for `ip`.
+        fn told(&self, ip: &str) -> Vec<TransportState> {
+            self.emitter
+                .sonos
+                .lock()
+                .iter()
+                .filter_map(|e| match e {
+                    SonosEvent::TransportState {
+                        speaker_ip, state, ..
+                    } if speaker_ip == ip => Some(*state),
+                    _ => None,
+                })
+                .collect()
+        }
+
         /// GENA reports `state` on `uri` for `ip`, as the event processor
         /// passes it on; returns whether clients were told.
         fn gena(&self, ip: &str, state: TransportState, uri: Option<&str>) -> bool {
@@ -1139,17 +1321,120 @@ mod tests {
         let _next = rig.fetch(1).await;
         assert!(rig.gena(COORDINATOR, TransportState::Playing, Some(&rig.uri(1))));
         assert!(!rig.coordinator.in_handoff(COORDINATOR));
+        assert!(!rig.state.is_transport_held(COORDINATOR));
+        // The member stays held until it reports PLAYING itself, which is
+        // then shown as usual.
+        assert!(rig.state.is_transport_held(MEMBER));
+        assert!(rig.gena(
+            MEMBER,
+            TransportState::Playing,
+            Some("x-rincon:RINCON_COORD")
+        ));
         assert!(!rig.state.is_transport_held(MEMBER));
-        // The member's held STOPPED is reported now, where it was not shown.
-        assert!(rig.emitter.sonos.lock().iter().any(|e| matches!(
-            e,
-            SonosEvent::TransportState { speaker_ip, state: TransportState::Transitioning, .. }
-                if speaker_ip == MEMBER
-        )));
+        assert!(rig.told(MEMBER).is_empty(), "no held state replayed");
 
         sleep_ms(30_000).await;
         assert_eq!(rig.sonos.played().len(), 1, "no second restart");
         assert!(rig.stop_reasons().is_empty());
+    }
+
+    /// B9: a member whose last recorded state is the STOPPED of the segment's
+    /// end, and whose own events lag the coordinator's, is not shown that
+    /// STOPPED when the coordinator plays the next segment (the extension
+    /// would drop it from the cast); its PLAYING, when it comes, is.
+    #[tokio::test(start_paused = true)]
+    async fn a_lagging_member_is_not_shown_its_stale_stop_after_the_switch() {
+        let rig = Rig::new(true);
+        rig.play_first_segment(PcmContinuation::Restart).await;
+        rig.sonos.stopped_on(&rig.uri(0));
+        rig.gena(COORDINATOR, TransportState::Stopped, Some(&rig.uri(0)));
+        rig.gena(
+            MEMBER,
+            TransportState::Stopped,
+            Some("x-rincon:RINCON_COORD"),
+        );
+        sleep_ms(1_200).await;
+        assert_eq!(rig.sonos.played().len(), 1);
+
+        let _next = rig.fetch(1).await;
+        rig.gena(
+            COORDINATOR,
+            TransportState::Transitioning,
+            Some(&rig.uri(1)),
+        );
+        assert!(rig.gena(COORDINATOR, TransportState::Playing, Some(&rig.uri(1))));
+        sleep_ms(3_800).await;
+        assert!(
+            !rig.told(MEMBER).contains(&TransportState::Stopped),
+            "the member's stale STOPPED must not be shown: {:?}",
+            rig.told(MEMBER)
+        );
+        assert_eq!(rig.state.to_json()["transportStates"][MEMBER], "Playing");
+
+        assert!(!rig.gena(MEMBER, TransportState::Transitioning, None));
+        assert!(rig.gena(
+            MEMBER,
+            TransportState::Playing,
+            Some("x-rincon:RINCON_COORD")
+        ));
+        sleep_ms(10_000).await;
+        assert!(rig.told(MEMBER).is_empty());
+        assert!(!rig.state.is_transport_held(MEMBER));
+        assert!(rig.stop_reasons().is_empty());
+    }
+
+    /// A member that never reports PLAYING after the switch is released
+    /// after [`MEMBER_GRACE`], and its recorded STOPPED is shown then.
+    #[tokio::test(start_paused = true)]
+    async fn a_member_that_never_plays_on_is_shown_its_stop_after_the_grace() {
+        let rig = Rig::new(true);
+        rig.play_first_segment(PcmContinuation::Restart).await;
+        rig.sonos.stopped_on(&rig.uri(0));
+        rig.gena(COORDINATOR, TransportState::Stopped, Some(&rig.uri(0)));
+        rig.gena(
+            MEMBER,
+            TransportState::Stopped,
+            Some("x-rincon:RINCON_COORD"),
+        );
+        sleep_ms(1_200).await;
+        let _next = rig.fetch(1).await;
+        rig.gena(COORDINATOR, TransportState::Playing, Some(&rig.uri(1)));
+
+        sleep_ms(MEMBER_GRACE.as_millis() as u64 - 500).await;
+        assert!(rig.told(MEMBER).is_empty());
+        sleep_ms(1_000).await;
+        assert_eq!(rig.told(MEMBER), vec![TransportState::Stopped]);
+        assert!(!rig.state.is_transport_held(MEMBER));
+    }
+
+    /// With no STOPPED from GENA, a STOPPED found by asking must last
+    /// [`STOP_CONFIRM`] and be confirmed again before the restart, as one
+    /// GENA reports must.
+    #[tokio::test(start_paused = true)]
+    async fn a_stop_found_by_asking_must_last_before_the_restart() {
+        let rig = Rig::new(false);
+        rig.play_first_segment(PcmContinuation::Restart).await;
+        rig.sonos.stopped_on(&rig.uri(0));
+        sleep_ms(10_000).await;
+        let polled = rig.sonos.polled_at.lock().clone();
+        let played = rig.sonos.played_at.lock().clone();
+        assert_eq!(played.len(), 1);
+        assert!(polled.len() >= 2, "confirmed twice: {polled:?}");
+        assert!(played[0] - polled[0] >= STOP_CONFIRM);
+    }
+
+    /// A speaker stopped with no media at all (a cleared queue) has nothing
+    /// of ours to continue: it is not restarted, and its STOPPED is shown.
+    #[tokio::test(start_paused = true)]
+    async fn a_speaker_stopped_with_no_media_is_not_restarted() {
+        let rig = Rig::new(false);
+        rig.play_first_segment(PcmContinuation::Restart).await;
+        rig.sonos.stopped_on("");
+        assert!(!rig.gena(COORDINATOR, TransportState::Stopped, None));
+        sleep_ms(5_000).await;
+        assert!(rig.sonos.played().is_empty());
+        assert!(!rig.coordinator.in_handoff(COORDINATOR));
+        assert_eq!(rig.told(COORDINATOR), vec![TransportState::Stopped]);
     }
 
     /// Nothing is restarted while the speaker is still playing the end of
