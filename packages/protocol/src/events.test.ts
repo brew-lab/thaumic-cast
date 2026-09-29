@@ -324,6 +324,8 @@ describe('NetworkEventSchema', () => {
     floorMs: 150,
     stallMs: 40,
     timeToFloorS: 900,
+    driftMode: 'observe',
+    commandPpm: 38.5,
     notice: {
       kind: 'drift_uncorrected',
       noticeId: 2,
@@ -349,6 +351,21 @@ describe('NetworkEventSchema', () => {
       timestamp: NOW,
     };
     expect(NetworkEventSchema.parse(locking)).toEqual(locking);
+  });
+
+  it('should carry the drift correction figures, and drop a mode it does not know', () => {
+    const correcting = {
+      ...draining,
+      driftMode: 'on' as const,
+      commandPpm: 20.4,
+      netInsertedMs: -12,
+    };
+    expect(NetworkEventSchema.parse(correcting)).toEqual(correcting);
+
+    const parsed = NetworkEventSchema.parse({ ...draining, driftMode: 'turbo' });
+    expect(parsed.type === 'speakerHealth' && parsed.driftMode).toBeUndefined();
+    expect(parsed.type === 'speakerHealth' && parsed.commandPpm).toBe(38.5);
+    expect(NetworkEventSchema.safeParse({ ...draining, netInsertedMs: 1.5 }).success).toBe(false);
   });
 
   it('should accept a reserve below zero and a speaker slower than the companion', () => {

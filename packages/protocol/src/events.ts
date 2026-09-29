@@ -316,8 +316,25 @@ export const NetworkEventSchema = z.discriminatedUnion('type', [
      * median, in milliseconds: the audio a Wi-Fi stall held back
      */
     stallMs: z.number().int().nonnegative().optional(),
-    /** Seconds until the reserve reaches `floorMs`, when the speaker is measurably draining it */
+    /**
+     * Seconds until the reserve reaches `floorMs` at the net rate the speaker
+     * drains it (its clock less any drift correction applied), when it is
+     * measurably draining it
+     */
     timeToFloorS: z.number().int().nonnegative().optional(),
+    /**
+     * Clock drift correction mode the connection was made under (PCM only).
+     * Absent from companions without drift correction; degraded to
+     * `undefined` for a mode this build does not know.
+     */
+    driftMode: z.enum(['on', 'observe', 'off']).optional().catch(undefined),
+    /**
+     * Drift correction command in ppm, positive inserting audio: applied with
+     * `on`, what it would be with `observe`. Absent with `off`.
+     */
+    commandPpm: z.number().optional(),
+    /** Audio drift correction has inserted (positive) or removed so far, in milliseconds; only while it corrects */
+    netInsertedMs: z.number().int().optional(),
     /**
      * What the user should be told about this speaker, decided by the
      * companion. Repeated in every report while it stands, under the same
