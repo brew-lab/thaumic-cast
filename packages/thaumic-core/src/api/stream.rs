@@ -599,7 +599,7 @@ impl ResponseFraming {
     /// 4294967295`, added because Sonos was thought to stutter on chunked WAV;
     /// the stutter was the speaker's thin reserve, which the connect burst
     /// fixed. That length was a real end, and a Playbar caps a declared length
-    /// at 2^31 bytes, so every cast to one stopped after 3h06m. A field
+    /// at 2^31 bytes, so every cast to one stopped after 3h06m at 48 kHz. A field
     /// experiment can still declare a length (`length`, 4294967295 unless told
     /// otherwise), reported as `ended_by=length` when hyper stops there, or
     /// answer as HTTP/1.0 and end the body only by closing the connection. An
