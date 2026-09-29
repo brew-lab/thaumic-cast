@@ -205,6 +205,7 @@
   "speaker_notice_where_fixed": "THAUMIC_PCM_CONNECT_BURST_MS sets the head start where Thaumic Cast runs, so change it there.",
   "speaker_notice_where_unknown": "Change the speaker head start where Thaumic Cast runs. It applies from the speaker's next connection.",
   "speaker_notice_running_low": "{{name}} is down to about {{left}} ms of audio in hand and may cut out.",
+  "speaker_notice_running_low_drift": "It plays slightly faster than the audio arrives.",
   "speaker_notice_drift_uncorrected": "{{name}} plays slightly faster than the audio arrives and will run low in about {{minutes}} min.",
   "speaker_notice_drift_saturated": "The clock in {{name}} is further out than drift correction can make up, so it will run low in about {{minutes}} min.",
   "speaker_notice_drift_turn_on_desktop": "Turning on clock drift correction in the Thaumic Cast desktop app keeps it topped up.",

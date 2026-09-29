@@ -146,6 +146,66 @@ describe('speakerNoticeLines', () => {
     ]);
   });
 
+  describe('running low from clock drift', () => {
+    const low: SpeakerNotice = {
+      kind: 'running_low',
+      noticeId: 5,
+      leftMs: 149,
+      headStartMs: 500,
+      restartHelps: true,
+      cause: 'drift',
+    };
+    const observing = { ...AUDIO, driftCompensation: 'observe' as const };
+    const off = { ...AUDIO, driftCompensation: 'off' as const };
+
+    it('should keep the reason, the fix and the restart advice', () => {
+      expect(speakerNoticeLines(low, ctx({ companionAudio: observing }))).toEqual([
+        { key: 'speaker_notice_running_low', params: { name: 'Kitchen', left: 149 } },
+        { key: 'speaker_notice_running_low_drift' },
+        { key: 'speaker_notice_drift_turn_on_desktop' },
+        { key: 'speaker_notice_restart_refills' },
+      ]);
+      expect(keys(low, ctx({ companionAudio: off, appType: 'server' }))).toEqual([
+        'speaker_notice_running_low',
+        'speaker_notice_running_low_drift',
+        'speaker_notice_drift_turn_on_server',
+        'speaker_notice_restart_refills',
+      ]);
+    });
+
+    it('should leave out restart advice when a restart would not refill', () => {
+      expect(keys({ ...low, restartHelps: false }, ctx({ companionAudio: observing }))).toEqual([
+        'speaker_notice_running_low',
+        'speaker_notice_running_low_drift',
+        'speaker_notice_drift_turn_on_desktop',
+      ]);
+    });
+
+    it('should not offer drift correction when it is on or cannot be offered', () => {
+      for (const context of [
+        ctx({ companionAudio: { ...AUDIO, driftCompensation: 'on' } }),
+        ctx({ companionAudio: { ...observing, speakerMonitor: false } }),
+        ctx(),
+        ctx({ companionAudio: observing, appType: null }),
+        ctx({ companionAudio: null }),
+      ]) {
+        expect(keys(low, context)).toEqual([
+          'speaker_notice_running_low',
+          'speaker_notice_running_low_drift',
+          'speaker_notice_restart_refills',
+        ]);
+      }
+    });
+
+    it('should say nothing of the clock without the cause', () => {
+      const plain: SpeakerNotice = { ...low, cause: undefined };
+      expect(keys(plain, ctx({ companionAudio: observing }))).toEqual([
+        'speaker_notice_running_low',
+        'speaker_notice_restart_refills',
+      ]);
+    });
+  });
+
   it('should only use keys the locale defines', () => {
     const strings = en as Record<string, string>;
     const notices: SpeakerNotice[] = [
@@ -155,6 +215,7 @@ describe('speakerNoticeLines', () => {
       { ...ranOut, kind: 'head_start_close', headStartMs: 0 },
       { ...ranOut, kind: 'head_start_no_remedy', suggestedHeadStartMs: undefined },
       { kind: 'running_low', noticeId: 1, leftMs: 90, restartHelps: true },
+      { kind: 'running_low', noticeId: 1, leftMs: 90, restartHelps: true, cause: 'drift' },
       { kind: 'drift_uncorrected', noticeId: 1, minutes: 20, restartHelps: true },
       { kind: 'drift_saturated', noticeId: 1, minutes: 20, restartHelps: false },
     ];
