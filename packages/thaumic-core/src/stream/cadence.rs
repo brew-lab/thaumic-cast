@@ -44,6 +44,9 @@ pub struct EpochHook {
     connected_at: Instant,
     remote_ip: IpAddr,
     monitor: Option<(Arc<ConnectionTap>, MonitorRegistrar)>,
+    /// Audio the speaker takes to precede the first frame served (see
+    /// [`Self::with_preroll`]).
+    preroll: Duration,
 }
 
 impl EpochHook {
@@ -58,7 +61,18 @@ impl EpochHook {
             connected_at,
             remote_ip,
             monitor: None,
+            preroll: Duration::ZERO,
         }
+    }
+
+    /// Anchors the epoch `preroll` before the first frame served: a speaker
+    /// that fetched part of a PCM segment with `Range` counts its RelTime
+    /// from the segment's start, which lies that much before what it was
+    /// sent (see [`crate::stream::playout::SegmentStart::preroll`]).
+    #[must_use]
+    pub fn with_preroll(mut self, preroll: Duration) -> Self {
+        self.preroll = preroll;
+        self
     }
 
     /// Also registers the connection with the speaker monitor once its epoch
@@ -83,6 +97,13 @@ impl EpochHook {
     pub(crate) fn fire(self, epoch_candidate: Option<Instant>) {
         let Some(state) = self.stream.upgrade() else {
             return;
+        };
+        let preroll = self.preroll;
+        let back = |t: Instant| t.checked_sub(preroll).unwrap_or(t);
+        let epoch_candidate = if preroll.is_zero() {
+            epoch_candidate
+        } else {
+            Some(back(epoch_candidate.unwrap_or(self.connected_at)))
         };
         let epoch = state.timing.start_new_epoch(
             epoch_candidate,
@@ -350,7 +371,10 @@ fn log_lagged(n: u64, last_log: &mut Option<TokioInstant>, context: &str) {
     }
 }
 
-/// Statistics from the cadence stream, written once when the stream ends.
+/// Counters from the cadence stream: kept for the whole playout by its
+/// [`ChainStats`], and reported per connection as what changed while that
+/// connection was served (see [`CadenceStats::since`]).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub(crate) struct CadenceStats {
     /// Number of times silence mode was entered.
     pub silence_events: u64,
@@ -360,6 +384,19 @@ pub(crate) struct CadenceStats {
     pub frames_dropped: u64,
     /// Times playback was held after an underrun until the queue refilled.
     pub rebuffer_events: u64,
+}
+
+impl CadenceStats {
+    /// What the counters gained since `base` was taken.
+    #[must_use]
+    pub(crate) fn since(self, base: Self) -> Self {
+        Self {
+            silence_events: self.silence_events.saturating_sub(base.silence_events),
+            silence_frames: self.silence_frames.saturating_sub(base.silence_frames),
+            frames_dropped: self.frames_dropped.saturating_sub(base.frames_dropped),
+            rebuffer_events: self.rebuffer_events.saturating_sub(base.rebuffer_events),
+        }
+    }
 }
 
 /// Maximum pipeline snapshots to keep (300 entries × 500 ms = 2.5 minutes at
@@ -427,11 +464,16 @@ pub(crate) struct PipelineSample {
     pub unacked_bytes: Option<u64>,
 }
 
-/// Wrapper that logs HTTP audio stream lifecycle and tracks delivery timing.
+/// One HTTP connection's record: logs its lifecycle, tracks its delivery
+/// timing and TCP link, and writes its summary line when it is dropped.
 ///
 /// Delivery gap tracking uses lock-free atomics on the hot path.
-/// Cadence-specific statistics (silence, drops) are tracked locally in
-/// the cadence stream and written here once at stream end.
+///
+/// A PCM cast's audio outlives any one connection: its cadence, the speaker
+/// monitor's figures and the pipeline timeline belong to the playout, in its
+/// [`ChainStats`]. A guard bound to them (see [`ChainStats::attach_connection`])
+/// reports in its summary only what happened while it was the connection
+/// being served.
 pub struct LoggingStreamGuard {
     stream_id: String,
     client_ip: IpAddr,
@@ -446,8 +488,10 @@ pub struct LoggingStreamGuard {
     max_gap_ms: AtomicU64,
     gaps_over_threshold: AtomicU64,
     first_error: parking_lot::Mutex<Option<String>>,
-    /// Cadence-specific stats, set once when the cadence stream ends.
-    cadence_stats: OnceLock<CadenceStats>,
+    /// The playout this connection served, from when it started serving it:
+    /// where its summary finds its share of the cadence counters and of the
+    /// pipeline timeline.
+    binding: OnceLock<ConnBinding>,
     /// Total bytes delivered to HTTP client (for throughput calculation).
     pub(crate) bytes_sent: AtomicU64,
     /// Bytes the body has put on the wire (see [`BodyFraming::wire_len`]).
@@ -463,23 +507,17 @@ pub struct LoggingStreamGuard {
     source_ended: AtomicBool,
     /// Whether a test cap ended the body (see [`Self::mark_server_cap`]).
     server_capped: AtomicBool,
+    /// Whether a PCM segment body ended at its declared data size (see
+    /// [`Self::mark_segment_end`]).
+    segment_ended: AtomicBool,
     /// Per-interval max delivery gap in ms (swapped to 0 on each snapshot).
     interval_max_gap_ms: AtomicU64,
-    /// Pipeline timeline, updated periodically by the cadence stream.
-    /// Uses Mutex (not OnceLock) because the cadence stream may be dropped
-    /// mid-loop when Sonos closes HTTP, before it can write a final value.
-    pipeline_timeline: parking_lot::Mutex<VecDeque<PipelineSnapshot>>,
     /// TCP statistics probe for the client's connection, when available.
     link_probe: Option<crate::api::link::TcpLinkProbe>,
     /// When retransmissions were last reported, to rate-limit the warning.
     last_retransmit_warning: parking_lot::Mutex<Option<Instant>>,
     /// Judges the connection from its samples and logs quality changes.
     link_judge: parking_lot::Mutex<Option<crate::api::link::LinkJudge>>,
-    /// Where the cadence reports audio reaching this machine late (see
-    /// [`crate::stream::ingest_gaps`]). `None` reports nothing.
-    events: Option<Arc<dyn crate::events::EventEmitter>>,
-    /// The speaker monitor's latest figures for this connection.
-    pub(crate) speaker: super::tap::SpeakerCell,
     /// The latest link verdict, as [`link_quality_code`] encodes it (`0`
     /// before the first one).
     link_verdict: AtomicU8,
@@ -524,20 +562,18 @@ impl LoggingStreamGuard {
             max_gap_ms: AtomicU64::new(0),
             gaps_over_threshold: AtomicU64::new(0),
             first_error: parking_lot::Mutex::new(None),
-            cadence_stats: OnceLock::new(),
+            binding: OnceLock::new(),
             bytes_sent: AtomicU64::new(0),
             wire_bytes: AtomicU64::new(0),
             framing: None,
             declared_end: None,
             source_ended: AtomicBool::new(false),
             server_capped: AtomicBool::new(false),
+            segment_ended: AtomicBool::new(false),
             interval_max_gap_ms: AtomicU64::new(0),
-            pipeline_timeline: parking_lot::Mutex::new(VecDeque::new()),
             link_probe: None,
             last_retransmit_warning: parking_lot::Mutex::new(None),
             link_judge: parking_lot::Mutex::new(None),
-            events: None,
-            speaker: super::tap::SpeakerCell::default(),
             link_verdict: AtomicU8::new(0),
             first_wait: None,
             first_wait_survived: AtomicBool::new(false),
@@ -625,6 +661,14 @@ impl LoggingStreamGuard {
         self.server_capped.store(true, Ordering::Relaxed);
     }
 
+    /// Records that a PCM segment body handed over the whole data size its
+    /// WAV header declared and is ending there, so the end is logged as
+    /// `ended_by=length`: the item's own end, not the stream running out.
+    /// Call it before the body yields its end.
+    pub fn mark_segment_end(&self) {
+        self.segment_ended.store(true, Ordering::Relaxed);
+    }
+
     /// Why the body ended, judged from what has been recorded so far. Only
     /// meaningful once the body has been dropped (see [`EndedBy::classify`]).
     pub fn ended_by(&self) -> EndedBy {
@@ -633,6 +677,9 @@ impl LoggingStreamGuard {
 
     /// [`Self::ended_by`] for a known error state.
     fn classify_end(&self, errored: bool) -> EndedBy {
+        if !errored && self.segment_ended.load(Ordering::Relaxed) {
+            return EndedBy::Length;
+        }
         EndedBy::classify(
             errored,
             self.server_capped.load(Ordering::Relaxed),
@@ -693,38 +740,11 @@ impl LoggingStreamGuard {
         self
     }
 
-    /// Attaches the emitter the cadence reports audio reaching this machine
-    /// late to, as a stream event for the stream's owner.
-    pub fn with_events(mut self, emitter: Arc<dyn crate::events::EventEmitter>) -> Self {
-        self.events = Some(emitter);
-        self
-    }
-
-    /// Reports gaps in the audio's arrival to the stream's owner, if an
-    /// emitter is attached.
-    fn report_ingest_gaps(&self, report: super::ingest_gaps::IngestGapsReport) {
-        log::warn!(
-            "[Stream] Audio reached this machine late: stream={}, {} gap(s) in the last minute, \
-             worst {}ms against {}ms of smoothing; every speaker on the stream had a gap{}",
-            self.stream_id,
-            report.gaps_last_minute,
-            report.worst_gap_ms,
-            report.smoothing_ms,
-            report.suggested_smoothing_ms.map_or_else(
-                || ", more than smoothing can cover".to_string(),
-                |ms| format!(", {ms}ms of smoothing would cover it")
-            )
-        );
-        if let Some(emitter) = &self.events {
-            emitter.emit_stream(crate::events::StreamEvent::IngestGaps {
-                stream_id: self.stream_id.clone(),
-                gaps_last_minute: report.gaps_last_minute,
-                worst_gap_ms: report.worst_gap_ms,
-                smoothing_ms: report.smoothing_ms,
-                suggested_smoothing_ms: report.suggested_smoothing_ms,
-                timestamp: crate::utils::now_millis(),
-            });
-        }
+    /// Binds this connection to the playout it serves (see
+    /// [`ChainStats::attach_connection`]). Only the first call has any
+    /// effect: a connection serves one playout.
+    fn bind(&self, binding: ConnBinding) {
+        let _ = self.binding.set(binding);
     }
 
     /// Reads the connection's TCP counters since the last read and warns, at
@@ -850,37 +870,6 @@ impl LoggingStreamGuard {
             *first = Some(err.to_string());
         }
     }
-
-    /// Stores cadence stream statistics. Called once when the cadence stream ends.
-    pub(crate) fn set_cadence_stats(&self, stats: CadenceStats) {
-        let _ = self.cadence_stats.set(stats);
-    }
-
-    /// Appends a snapshot to the pipeline timeline (called every 50 ticks from
-    /// the cadence stream).
-    fn push_pipeline_snapshot(&self, snapshot: PipelineSnapshot) {
-        let mut timeline = self.pipeline_timeline.lock();
-        timeline.push_back(snapshot);
-        if timeline.len() > MAX_PIPELINE_SNAPSHOTS {
-            timeline.pop_front();
-        }
-    }
-
-    /// The pipeline snapshots taken in the last `window`, oldest first.
-    pub(crate) fn recent_pipeline(&self, window: Duration) -> Vec<PipelineSample> {
-        let since_ms = (self.reference_time.elapsed().saturating_sub(window)).as_millis() as u64;
-        self.pipeline_timeline
-            .lock()
-            .iter()
-            .filter(|s| s.elapsed_ms >= since_ms)
-            .map(|s| PipelineSample {
-                queue_len: s.cadence.queue_len,
-                max_gap_ms: s.delivery.max_gap_ms,
-                retransmitted: s.link.map(|l| l.retransmitted),
-                unacked_bytes: s.link.and_then(|l| l.unacked_bytes),
-            })
-            .collect()
-    }
 }
 
 /// What follows "HTTP stream ended normally" (or "with error") on a
@@ -937,7 +926,9 @@ impl Drop for LoggingStreamGuard {
             .map(|end| format!(", declared_end={}", end.bytes()))
             .unwrap_or_default();
 
-        let cadence = self.cadence_stats.get();
+        let binding = self.binding.get();
+        let cadence_delta = binding.map(|b| b.stats.cadence_totals().since(b.cadence_base));
+        let cadence = cadence_delta.as_ref();
 
         // Build silence stats string if any silence was injected
         let silence_info = cadence
@@ -982,13 +973,9 @@ impl Drop for LoggingStreamGuard {
             }
         }
 
-        let timeline = self.pipeline_timeline.lock();
-        let timeline_json = if timeline.is_empty() {
-            String::new()
-        } else {
-            serde_json::to_string(&*timeline).unwrap_or_default()
-        };
-        drop(timeline);
+        let timeline_json = binding
+            .map(|b| b.stats.timeline_json_since(b.since_ms))
+            .unwrap_or_default();
         let timeline_info = if timeline_json.is_empty() {
             String::new()
         } else {
@@ -1050,6 +1037,279 @@ impl Drop for LoggingStreamGuard {
                 timeline_info
             );
         }
+    }
+}
+
+/// Where a connection's guard finds the playout it served (see
+/// [`ChainStats::attach_connection`]).
+struct ConnBinding {
+    /// The playout's statistics.
+    stats: Arc<ChainStats>,
+    /// The playout's clock, in ms, when the connection started serving it:
+    /// its summary carries the pipeline snapshots taken since.
+    since_ms: u64,
+    /// The cadence counters when the connection started serving it.
+    cadence_base: CadenceStats,
+}
+
+/// Statistics of one playout: everything about a speaker's audio that
+/// outlives the HTTP connection it is carried on.
+///
+/// A PCM cast is played as a sequence of segments, each on its own
+/// connection, from one cadence (see [`crate::stream::playout`]). What
+/// belongs to that cadence and to the speaker behind it lives here, once:
+/// the output position the speaker has been handed, the cadence counters,
+/// the pipeline timeline, the speaker monitor's latest figures and where the
+/// cadence reports audio reaching this machine late. What belongs to one
+/// connection (its TCP link, its wire bytes, why it ended, its summary line)
+/// stays on that connection's [`LoggingStreamGuard`], and the guard of the
+/// connection being served is found here through [`Self::current_connection`].
+///
+/// A connection that carries no playout of its own (a compressed codec) is
+/// given one of these too, with itself as the only connection (see
+/// [`Self::for_connection`]), so the speaker monitor reads every connection
+/// the same way.
+pub struct ChainStats {
+    stream_id: String,
+    /// The speaker's address.
+    pub(crate) client_ip: IpAddr,
+    /// When the playout started: the origin of the pipeline timeline.
+    reference_time: Instant,
+    /// Output data bytes handed over up to the end of the last one given to
+    /// a connection (see [`Self::set_position`]): the delivered side of the
+    /// speaker's reserve.
+    position: AtomicU64,
+    /// For a playout that is no more than its one connection: the bytes that
+    /// connection sends before its audio, its position then being read from
+    /// its body count (see [`Self::for_connection`]).
+    follows_connection: Option<u64>,
+    /// The speaker monitor's latest figures for this playout.
+    pub(crate) speaker: super::tap::SpeakerCell,
+    /// Pipeline timeline, updated every 50 cadence ticks.
+    pipeline_timeline: parking_lot::Mutex<VecDeque<PipelineSnapshot>>,
+    /// Where the cadence reports audio reaching this machine late (see
+    /// [`crate::stream::ingest_gaps`]). `None` reports nothing.
+    events: Option<Arc<dyn crate::events::EventEmitter>>,
+    silence_events: AtomicU64,
+    silence_frames: AtomicU64,
+    frames_dropped: AtomicU64,
+    rebuffer_events: AtomicU64,
+    /// The connection being served, held weakly: it belongs to its response
+    /// body.
+    connection: parking_lot::RwLock<std::sync::Weak<LoggingStreamGuard>>,
+    /// Bumped each time another connection starts being served, so the
+    /// cadence can tell its delivery counters apart.
+    connection_seq: AtomicU64,
+    /// What the playout says about its segments, for the speaker monitor.
+    pub(crate) playout: super::playout::PlayoutView,
+}
+
+impl ChainStats {
+    /// Statistics for a new playout to `client_ip` on `stream_id`.
+    pub fn new(stream_id: impl Into<String>, client_ip: IpAddr) -> Self {
+        Self {
+            stream_id: stream_id.into(),
+            client_ip,
+            reference_time: Instant::now(),
+            position: AtomicU64::new(0),
+            follows_connection: None,
+            speaker: super::tap::SpeakerCell::default(),
+            pipeline_timeline: parking_lot::Mutex::new(VecDeque::new()),
+            events: None,
+            silence_events: AtomicU64::new(0),
+            silence_frames: AtomicU64::new(0),
+            frames_dropped: AtomicU64::new(0),
+            rebuffer_events: AtomicU64::new(0),
+            connection: parking_lot::RwLock::new(std::sync::Weak::new()),
+            connection_seq: AtomicU64::new(0),
+            playout: super::playout::PlayoutView::default(),
+        }
+    }
+
+    /// Statistics whose only connection is `guard`, for a connection that
+    /// carries no playout beyond itself: its position is the audio its body
+    /// has handed over, after the first `header_bytes`.
+    pub fn for_connection(
+        stream_id: impl Into<String>,
+        guard: &Arc<LoggingStreamGuard>,
+        header_bytes: u32,
+    ) -> Arc<Self> {
+        Self::new(stream_id, guard.client_ip).following(guard, header_bytes)
+    }
+
+    /// These statistics, with `guard` as their only connection (see
+    /// [`Self::for_connection`]).
+    pub fn following(mut self, guard: &Arc<LoggingStreamGuard>, header_bytes: u32) -> Arc<Self> {
+        self.follows_connection = Some(u64::from(header_bytes));
+        let stats = Arc::new(self);
+        stats.attach_connection(guard);
+        stats
+    }
+
+    /// Attaches the emitter the cadence reports audio reaching this machine
+    /// late to, as a stream event for the stream's owner.
+    #[must_use]
+    pub fn with_events(mut self, emitter: Arc<dyn crate::events::EventEmitter>) -> Self {
+        self.events = Some(emitter);
+        self
+    }
+
+    /// Makes `guard` the connection being served: its link is the one the
+    /// speaker monitor reads acknowledgements from, its delivery counters
+    /// feed the pipeline snapshots, and its summary covers the playout from
+    /// here until it is dropped.
+    pub fn attach_connection(self: &Arc<Self>, guard: &Arc<LoggingStreamGuard>) {
+        guard.bind(ConnBinding {
+            stats: Arc::clone(self),
+            since_ms: self.elapsed_ms(),
+            cadence_base: self.cadence_totals(),
+        });
+        *self.connection.write() = Arc::downgrade(guard);
+        self.connection_seq.fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// The connection being served, or the last one while it lingers.
+    pub(crate) fn connection(&self) -> Option<Arc<LoggingStreamGuard>> {
+        self.connection.read().upgrade()
+    }
+
+    /// The connection being served, while its body is open: the one whose
+    /// socket may be read.
+    pub(crate) fn current_connection(&self) -> Option<Arc<LoggingStreamGuard>> {
+        self.connection
+            .read()
+            .upgrade()
+            .filter(|guard| !guard.body_closed.load(Ordering::Acquire))
+    }
+
+    /// Changes each time another connection starts being served.
+    fn connection_seq(&self) -> u64 {
+        self.connection_seq.load(Ordering::Relaxed)
+    }
+
+    /// Output data bytes handed over, up to the end of the last one given
+    /// to a connection. Headers are not counted, and audio a speaker is sent
+    /// again (see [`crate::stream::playout`]) is counted once.
+    pub fn position(&self) -> u64 {
+        match self.follows_connection {
+            Some(header) => self.connection().map_or(0, |guard| {
+                guard
+                    .bytes_sent
+                    .load(Ordering::Relaxed)
+                    .saturating_sub(header)
+            }),
+            None => self.position.load(Ordering::Relaxed),
+        }
+    }
+
+    /// Records that the last data byte handed to a connection ends at output
+    /// byte `position`.
+    pub(crate) fn set_position(&self, position: u64) {
+        self.position.store(position, Ordering::Relaxed);
+    }
+
+    /// Milliseconds since the playout started.
+    fn elapsed_ms(&self) -> u64 {
+        self.reference_time.elapsed().as_millis() as u64
+    }
+
+    /// The cadence counters so far.
+    pub(crate) fn cadence_totals(&self) -> CadenceStats {
+        CadenceStats {
+            silence_events: self.silence_events.load(Ordering::Relaxed),
+            silence_frames: self.silence_frames.load(Ordering::Relaxed),
+            frames_dropped: self.frames_dropped.load(Ordering::Relaxed),
+            rebuffer_events: self.rebuffer_events.load(Ordering::Relaxed),
+        }
+    }
+
+    /// Counts a silence event (the queue running empty), with its first
+    /// silence frame.
+    fn count_silence_event(&self) {
+        self.silence_events.fetch_add(1, Ordering::Relaxed);
+        self.silence_frames.fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// Counts one more silence frame.
+    fn count_silence_frame(&self) {
+        self.silence_frames.fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// Counts a frame dropped from a full queue.
+    fn count_dropped_frame(&self) {
+        self.frames_dropped.fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// Counts playback held after an underrun until the queue refilled.
+    fn count_rebuffer(&self) {
+        self.rebuffer_events.fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// Reports gaps in the audio's arrival to the stream's owner, if an
+    /// emitter is attached.
+    fn report_ingest_gaps(&self, report: super::ingest_gaps::IngestGapsReport) {
+        log::warn!(
+            "[Stream] Audio reached this machine late: stream={}, {} gap(s) in the last minute, \
+             worst {}ms against {}ms of smoothing; every speaker on the stream had a gap{}",
+            self.stream_id,
+            report.gaps_last_minute,
+            report.worst_gap_ms,
+            report.smoothing_ms,
+            report.suggested_smoothing_ms.map_or_else(
+                || ", more than smoothing can cover".to_string(),
+                |ms| format!(", {ms}ms of smoothing would cover it")
+            )
+        );
+        if let Some(emitter) = &self.events {
+            emitter.emit_stream(crate::events::StreamEvent::IngestGaps {
+                stream_id: self.stream_id.clone(),
+                gaps_last_minute: report.gaps_last_minute,
+                worst_gap_ms: report.worst_gap_ms,
+                smoothing_ms: report.smoothing_ms,
+                suggested_smoothing_ms: report.suggested_smoothing_ms,
+                timestamp: crate::utils::now_millis(),
+            });
+        }
+    }
+
+    /// Appends a snapshot to the pipeline timeline (called every 50 ticks from
+    /// the cadence stream).
+    fn push_pipeline_snapshot(&self, snapshot: PipelineSnapshot) {
+        let mut timeline = self.pipeline_timeline.lock();
+        timeline.push_back(snapshot);
+        if timeline.len() > MAX_PIPELINE_SNAPSHOTS {
+            timeline.pop_front();
+        }
+    }
+
+    /// The pipeline snapshots taken in the last `window`, oldest first.
+    pub(crate) fn recent_pipeline(&self, window: Duration) -> Vec<PipelineSample> {
+        let since_ms = (self.reference_time.elapsed().saturating_sub(window)).as_millis() as u64;
+        self.pipeline_timeline
+            .lock()
+            .iter()
+            .filter(|s| s.elapsed_ms >= since_ms)
+            .map(|s| PipelineSample {
+                queue_len: s.cadence.queue_len,
+                max_gap_ms: s.delivery.max_gap_ms,
+                retransmitted: s.link.map(|l| l.retransmitted),
+                unacked_bytes: s.link.and_then(|l| l.unacked_bytes),
+            })
+            .collect()
+    }
+
+    /// The pipeline snapshots taken since `since_ms` on the playout's clock,
+    /// as JSON, or an empty string if there are none: a connection's share
+    /// of the timeline, for its summary.
+    fn timeline_json_since(&self, since_ms: u64) -> String {
+        let timeline = self.pipeline_timeline.lock();
+        let first = timeline.partition_point(|s| s.elapsed_ms < since_ms);
+        if first == timeline.len() {
+            return String::new();
+        }
+        let (a, b) = timeline.as_slices();
+        let slice: Vec<&PipelineSnapshot> = a.iter().chain(b.iter()).skip(first).collect();
+        serde_json::to_string(&slice).unwrap_or_default()
     }
 }
 
@@ -1372,8 +1632,10 @@ fn trim_prefill<T>(mut prefill_frames: Vec<T>, buffer_depth: usize) -> Vec<T> {
 /// - When entering silence: emits a fade-out frame from the last audio sample to zero
 /// - When exiting silence: applies fade-in to the first audio frame
 ///
-/// Silence and overflow statistics are tracked locally and written to the
-/// guard once at stream end via `set_cadence_stats()`.
+/// Silence and overflow statistics are counted into `stats` as they happen,
+/// so each connection the stream is carried on can report its share (see
+/// [`ChainStats`]). Pipeline snapshots read the delivery counters and TCP
+/// link of whichever connection is being served at the time.
 ///
 /// Epoch tracking (optional): when `epoch_hook` is `Some`, the stream fires
 /// it on the first real audio frame, which starts the epoch anchored to
@@ -1392,7 +1654,7 @@ fn trim_prefill<T>(mut prefill_frames: Vec<T>, buffer_depth: usize) -> Vec<T> {
 /// eliminating pops from abrupt audio/silence boundaries.
 pub fn create_wav_stream_with_cadence(
     mut rx: broadcast::Receiver<Bytes>,
-    guard: Arc<LoggingStreamGuard>,
+    stats: Arc<ChainStats>,
     config: CadenceConfig,
     stream_state: Option<std::sync::Weak<StreamState>>,
     epoch_hook: Option<EpochHook>,
@@ -1488,7 +1750,7 @@ pub fn create_wav_stream_with_cadence(
         // adapter is fed, not what it emits: a fade-out frame goes through
         // the adapter too, and it is the adapter's input that must be
         // continuous for its output to be.
-        let mut drift = rate_control.and_then(|control| DriftHook::new(control, &audio_format, guard.client_ip));
+        let mut drift = rate_control.and_then(|control| DriftHook::new(control, &audio_format, stats.client_ip));
 
         // Rate-limit lagged warnings (max once per second)
         let mut last_lagged_log: Option<TokioInstant> = None;
@@ -1502,6 +1764,8 @@ pub fn create_wav_stream_with_cadence(
         let mut prev_delivery_bytes: u64 = 0;
         let mut prev_delivery_gaps: u64 = 0;
         let mut prev_snapshot_ms: u64 = 0;
+        // Which connection the delivery counters above were read from.
+        let mut delivery_seq = stats.connection_seq();
 
         // Connect burst: already-captured audio, sent as fast as the
         // connection takes it, so the speaker starts with that much in hand.
@@ -1563,6 +1827,7 @@ pub fn create_wav_stream_with_cadence(
                                     if queue.len() >= overflow_cap + catch_up_headroom {
                                         queue.pop_front();
                                         frames_dropped += 1;
+                                        stats.count_dropped_frame();
                                     }
                                     queue.push_back(frame);
                                 }
@@ -1604,7 +1869,7 @@ pub fn create_wav_stream_with_cadence(
                                     .and_then(|w| w.upgrade())
                                     .is_some_and(|ss| ss.ingest_gap_notices.claim(now));
                                 if claimed {
-                                    guard.report_ingest_gaps(report);
+                                    stats.report_ingest_gaps(report);
                                 }
                             }
                         }
@@ -1612,6 +1877,7 @@ pub fn create_wav_stream_with_cadence(
                         if rx_closed || queue.len() >= buffer_depth || waited >= rebuffer_timeout {
                             rebuffering = false;
                             rebuffer_events += 1;
+                            stats.count_rebuffer();
                             log::info!(
                                 "[Cadence] Rebuffered: depth={} after {}ms",
                                 queue.len(),
@@ -1625,6 +1891,7 @@ pub fn create_wav_stream_with_cadence(
 
                     if hold_for_rebuffer {
                         silence_frames += 1;
+                        stats.count_silence_frame();
                         yield Ok(shape(&mut drift, silence_frame.clone()));
                     } else if let Some(frame) = queue.pop_front() {
                         // Real audio available
@@ -1677,6 +1944,7 @@ pub fn create_wav_stream_with_cadence(
                             silence_start = Some(TokioInstant::now());
                             silence_events += 1;
                             silence_frames += 1;
+                            stats.count_silence_event();
                             if !first_yield_logged {
                                 log::warn!("[Cadence] First yield: silence (empty prefill at startup)");
                                 first_yield_logged = true;
@@ -1691,6 +1959,7 @@ pub fn create_wav_stream_with_cadence(
                             yield Ok(shape(&mut drift, crossfade.enter_silence(&silence_frame)));
                         } else {
                             silence_frames += 1;
+                            stats.count_silence_frame();
                             yield Ok(shape(&mut drift, silence_frame.clone()));
                         }
                     }
@@ -1701,7 +1970,17 @@ pub fn create_wav_stream_with_cadence(
                     // Pipeline snapshot every 50 ticks (500 ms at the default 10 ms frame)
                     tick_count += 1;
                     if tick_count % 50 == 0 {
-                        let elapsed_ms = guard.reference_time.elapsed().as_millis() as u64;
+                        let elapsed_ms = stats.elapsed_ms();
+                        let connection = stats.current_connection();
+                        let seq = stats.connection_seq();
+                        if seq != delivery_seq {
+                            // Another connection is being served: its
+                            // counters start from nothing.
+                            delivery_seq = seq;
+                            prev_delivery_frames = 0;
+                            prev_delivery_bytes = 0;
+                            prev_delivery_gaps = 0;
+                        }
 
                         // Receive window: snapshot and reset from StreamState
                         // Uses Weak ref - if StreamState was dropped (channel closing), skip
@@ -1725,11 +2004,18 @@ pub fn create_wav_stream_with_cadence(
                             drops: frames_dropped,
                         };
 
-                        // Delivery window: deltas from guard atomics
-                        let cur_frames = guard.frames_sent.load(Ordering::Relaxed);
-                        let cur_bytes = guard.bytes_sent.load(Ordering::Relaxed);
-                        let cur_gaps = guard.gaps_over_threshold.load(Ordering::Relaxed);
-                        let interval_max = guard.interval_max_gap_ms.swap(0, Ordering::Relaxed);
+                        // Delivery window: deltas from the served
+                        // connection's atomics (none while no connection is).
+                        let (cur_frames, cur_bytes, cur_gaps, interval_max) = connection
+                            .as_ref()
+                            .map_or((prev_delivery_frames, prev_delivery_bytes, prev_delivery_gaps, 0), |guard| {
+                                (
+                                    guard.frames_sent.load(Ordering::Relaxed),
+                                    guard.bytes_sent.load(Ordering::Relaxed),
+                                    guard.gaps_over_threshold.load(Ordering::Relaxed),
+                                    guard.interval_max_gap_ms.swap(0, Ordering::Relaxed),
+                                )
+                            });
 
                         let delta_bytes = cur_bytes.saturating_sub(prev_delivery_bytes);
                         let interval_ms = elapsed_ms.saturating_sub(prev_snapshot_ms);
@@ -1747,7 +2033,7 @@ pub fn create_wav_stream_with_cadence(
                         prev_delivery_gaps = cur_gaps;
                         prev_snapshot_ms = elapsed_ms;
 
-                        guard.push_pipeline_snapshot(PipelineSnapshot {
+                        stats.push_pipeline_snapshot(PipelineSnapshot {
                             elapsed_ms,
                             receive,
                             cadence: cadence_window,
@@ -1758,8 +2044,8 @@ pub fn create_wav_stream_with_cadence(
                             // so a send buffer that stays full takes no
                             // samples: the stall is seen in the first one
                             // after it clears, not while it lasts.
-                            link: guard.sample_link(),
-                            speaker: guard.speaker.snapshot(),
+                            link: connection.as_ref().and_then(|guard| guard.sample_link()),
+                            speaker: stats.speaker.snapshot(),
                         });
                     }
                 }
@@ -1772,6 +2058,7 @@ pub fn create_wav_stream_with_cadence(
                                 // Queue full - drop oldest to maintain bounded latency
                                 queue.pop_front();
                                 frames_dropped += 1;
+                                stats.count_dropped_frame();
                                 log::trace!("[Stream] Queue full, dropped oldest frame");
                             }
                             queue.push_back(frame);
@@ -1788,16 +2075,17 @@ pub fn create_wav_stream_with_cadence(
             }
         }
 
-        guard.set_cadence_stats(CadenceStats {
+        log::debug!(
+            "[Cadence] Ended: silence_events={}, silence_frames={}, frames_dropped={}, rebuffers={}",
             silence_events,
             silence_frames,
             frames_dropped,
-            rebuffer_events,
-        });
+            rebuffer_events
+        );
         if let Some(hook) = drift {
             log::info!(
                 "[Cadence] Drift correction on {}: net {:+} sample frames ({:+.1} ms){}",
-                guard.client_ip,
+                stats.client_ip,
                 hook.adapter.net_frames(),
                 hook.net_ms(),
                 if hook.control.is_pinned() { ", pinned at 0 ppm" } else { "" }
@@ -1833,9 +2121,9 @@ mod tests {
     }
 
     /// Creates a test guard for cadence stream tests.
-    fn test_guard() -> Arc<LoggingStreamGuard> {
-        Arc::new(LoggingStreamGuard::new(
-            "test-stream".to_string(),
+    fn test_guard() -> Arc<ChainStats> {
+        Arc::new(ChainStats::new(
+            "test-stream",
             IpAddr::V4(Ipv4Addr::LOCALHOST),
         ))
     }
@@ -2094,10 +2382,7 @@ mod tests {
         drain_to_end(&mut stream.as_mut()).await;
 
         // Verify that exactly 2 frames were dropped
-        let stats = guard_for_check
-            .cadence_stats
-            .get()
-            .expect("cadence stats should be set after stream ends");
+        let stats = guard_for_check.cadence_totals();
         assert_eq!(
             stats.frames_dropped, 2,
             "should have dropped 2 oldest frames, dropped {}",
@@ -2141,10 +2426,7 @@ mod tests {
         drain_to_end(&mut stream.as_mut()).await;
 
         // Check the cadence stats - should have recorded dropped frames
-        let stats = guard_for_check
-            .cadence_stats
-            .get()
-            .expect("cadence stats should be set after stream ends");
+        let stats = guard_for_check.cadence_totals();
         assert_eq!(
             stats.frames_dropped, overflow_count as u64,
             "guard should track {} dropped frames",
@@ -2384,7 +2666,7 @@ mod tests {
 
         drop(tx);
         drain_to_end(&mut stream.as_mut()).await;
-        let stats = guard_for_check.cadence_stats.get().unwrap();
+        let stats = guard_for_check.cadence_totals();
         assert_eq!(stats.rebuffer_events, 1);
         assert_eq!(
             stats.silence_events, 1,
@@ -2413,7 +2695,7 @@ mod tests {
         let (tx, rx) = broadcast::channel::<Bytes>(16);
         let events = Arc::new(StreamEvents::default());
         let guard = Arc::new(
-            LoggingStreamGuard::new("test-stream".to_string(), IpAddr::V4(Ipv4Addr::LOCALHOST))
+            ChainStats::new("test-stream", IpAddr::V4(Ipv4Addr::LOCALHOST))
                 .with_events(Arc::clone(&events) as Arc<dyn crate::events::EventEmitter>),
         );
         let state = Arc::new(StreamState::new(

@@ -1274,6 +1274,22 @@ impl StreamCoordinator {
         Arc::clone(&self.stream_registry)
     }
 
+    /// Records that `speaker_ip` reported STOPPED with the PCM playout of the
+    /// stream it plays: a playout parked between segments is kept at least
+    /// [`crate::stream::playout::PARK_MAX`] from then, since a speaker may
+    /// still fetch the next segment or be told to.
+    pub fn note_speaker_stopped(&self, speaker_ip: &str) {
+        let Ok(ip) = speaker_ip.parse::<std::net::IpAddr>() else {
+            return;
+        };
+        let Some(session) = self.sessions.get_by_speaker_ip(speaker_ip) else {
+            return;
+        };
+        if let Some(stream) = self.get_stream(&session.stream_id) {
+            stream.playout.note_stopped(ip);
+        }
+    }
+
     /// Handles a source change event for a speaker.
     ///
     /// When a speaker switches to another source (Spotify, AirPlay, etc.),

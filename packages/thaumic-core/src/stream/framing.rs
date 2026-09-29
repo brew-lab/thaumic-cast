@@ -192,8 +192,10 @@ pub enum EndedBy {
     /// before the stream ended: the client closed the connection (or it
     /// failed underneath hyper).
     Client,
-    /// hyper wrote the whole declared `Content-Length` and stopped: the
-    /// response ended itself, whatever the speaker does next.
+    /// The response ended itself at the length it declared, whatever the
+    /// speaker does next: hyper wrote the whole declared `Content-Length`
+    /// and stopped, or a PCM segment body handed over the data size its WAV
+    /// header declared and ended (see [`crate::stream::playout`]).
     Length,
     /// A test cap ended the body on our side after a set number of bytes
     /// (see [`crate::stream::LoggingStreamGuard::mark_server_cap`]).

@@ -9,11 +9,22 @@
 //! bytes, 6h12m50s, where it obeys the header's length and stops; it obeys a
 //! smaller size in the WAV header too (see [`WAV_STREAM_SIZE_MAX`]).
 //!
+//! That 4 GiB length is a real end, so a PCM cast is served as consecutive
+//! segments, each a connection whose WAV header declares a little under
+//! 4 GiB and whose body ends there, carried on by one playout per speaker
+//! (see [`crate::stream::playout`]).
+//!
 //! The switches let a field experiment change one thing at a time without a
 //! rebuild: how the body is delimited, the length it declares, the sizes in
-//! the WAV header, and a clean end from our side after a set number of bytes.
-//! They are read from the environment once per connection, and none of them
-//! is a setting: unset, a PCM stream is served as described above.
+//! the WAV header, a clean end from our side after a set number of bytes, and
+//! the size of a segment. They are read from the environment once per
+//! connection, and none of them is a setting: unset, a PCM stream is served
+//! as described above.
+//!
+//! The older switches that set the WAV header's size, end the body after a
+//! set number of bytes or declare a length each fix one connection's end
+//! themselves, so while any of them is set a PCM stream is served as it was
+//! before segments: on one connection, with no playout carried beyond it.
 
 use std::fmt;
 
@@ -40,13 +51,21 @@ pub const PCM_WAV_DATA_SIZE_ENV: &str = "THAUMIC_PCM_WAV_DATA_SIZE";
 /// short of it instead of ending it cleanly.
 pub const PCM_END_AFTER_BYTES_ENV: &str = "THAUMIC_PCM_END_AFTER_BYTES";
 
+/// Environment variable that sets the data size of each PCM segment, in
+/// bytes, from 1048576 (1 MiB) to 4294901760 (`0xFFFF0000`, the default),
+/// rounded down to whole 10 ms frames. `10485760` gives 54.61 s segments at
+/// 48 kHz stereo, for testing the switch from one to the next. Ignored while
+/// a switch that fixes a connection's end is set (see the module docs).
+pub const PCM_SEGMENT_BYTES_ENV: &str = "THAUMIC_PCM_SEGMENT_BYTES";
+
 /// The environment variables [`PcmHttpSettings::from_env`] reads, in the
 /// order they are reported.
-const SWITCH_VARS: [&str; 4] = [
+const SWITCH_VARS: [&str; 5] = [
     PCM_HTTP_FRAMING_ENV,
     PCM_CONTENT_LENGTH_ENV,
     PCM_WAV_DATA_SIZE_ENV,
     PCM_END_AFTER_BYTES_ENV,
+    PCM_SEGMENT_BYTES_ENV,
 ];
 
 /// How a PCM response body is delimited on the wire.
@@ -116,6 +135,13 @@ pub struct PcmHttpSettings {
     /// Ends the body cleanly after this many bytes, when set. Only ever set
     /// with [`PcmHttpFraming::Chunked`] or [`PcmHttpFraming::Close`].
     pub end_after_bytes: Option<u64>,
+    /// Whether the stream is served in segments carried by a playout (see
+    /// [`crate::stream::playout`]): unless a switch that fixes one
+    /// connection's end is set.
+    pub segments: bool,
+    /// The data size asked for each segment, before it is rounded to the
+    /// stream's frames (see [`crate::stream::SegmentLayout::new`]).
+    pub segment_bytes: u64,
 }
 
 impl Default for PcmHttpSettings {
@@ -126,6 +152,8 @@ impl Default for PcmHttpSettings {
             content_length: u64::from(WAV_STREAM_SIZE_MAX),
             wav_data_size: WAV_STREAM_SIZE_MAX,
             end_after_bytes: None,
+            segments: true,
+            segment_bytes: super::playout::PCM_SEGMENT_BYTES_MAX,
         }
     }
 }
@@ -171,12 +199,13 @@ impl PcmHttpSwitches {
     pub fn from_env() -> Self {
         let mut unreadable = Vec::new();
         let raw = SWITCH_VARS.map(|var| read_switch(var, std::env::var_os(var), &mut unreadable));
-        let [framing, content_length, wav_data_size, end_after_bytes] = raw;
+        let [framing, content_length, wav_data_size, end_after_bytes, segment_bytes] = raw;
         Self::resolve(RawSwitches {
             framing: framing.as_deref(),
             content_length: content_length.as_deref(),
             wav_data_size: wav_data_size.as_deref(),
             end_after_bytes: end_after_bytes.as_deref(),
+            segment_bytes: segment_bytes.as_deref(),
         })
         .with_unreadable(unreadable)
     }
@@ -204,11 +233,13 @@ impl PcmHttpSwitches {
             content_length: set(raw.content_length),
             wav_data_size: set(raw.wav_data_size),
             end_after_bytes: set(raw.end_after_bytes),
+            segment_bytes: set(raw.segment_bytes),
         };
         let any_set = raw.framing.is_some()
             || raw.content_length.is_some()
             || raw.wav_data_size.is_some()
-            || raw.end_after_bytes.is_some();
+            || raw.end_after_bytes.is_some()
+            || raw.segment_bytes.is_some();
 
         let mut ignore = |var: &str, value: &str, why: String| {
             problems.push(format!("Ignoring {var}={value:?}: {why}"));
@@ -220,9 +251,16 @@ impl PcmHttpSwitches {
                 Err(e) => ignore(PCM_HTTP_FRAMING_ENV, value, e),
             }
         }
+        // The first switch in force that fixes a connection's end, which
+        // turns segments off.
+        let mut fixed_end: Option<&str> =
+            (settings.framing == PcmHttpFraming::Length).then_some(PCM_HTTP_FRAMING_ENV);
         if let Some(value) = raw.wav_data_size {
             match parse_wav_data_size(value) {
-                Ok(size) => settings.wav_data_size = size,
+                Ok(size) => {
+                    settings.wav_data_size = size;
+                    fixed_end = fixed_end.or(Some(PCM_WAV_DATA_SIZE_ENV));
+                }
                 Err(e) => ignore(PCM_WAV_DATA_SIZE_ENV, value, e),
             }
         }
@@ -251,8 +289,23 @@ impl PcmHttpSwitches {
                          ending it cleanly"
                     ),
                 ),
-                Ok(n) => settings.end_after_bytes = Some(n),
+                Ok(n) => {
+                    settings.end_after_bytes = Some(n);
+                    fixed_end = fixed_end.or(Some(PCM_END_AFTER_BYTES_ENV));
+                }
                 Err(e) => ignore(PCM_END_AFTER_BYTES_ENV, value, e),
+            }
+        }
+        settings.segments = fixed_end.is_none();
+        if let Some(value) = raw.segment_bytes {
+            match (parse_segment_bytes(value), fixed_end) {
+                (Ok(_), Some(var)) => ignore(
+                    PCM_SEGMENT_BYTES_ENV,
+                    value,
+                    format!("segments are off while {var} is set"),
+                ),
+                (Ok(n), None) => settings.segment_bytes = n,
+                (Err(e), _) => ignore(PCM_SEGMENT_BYTES_ENV, value, e),
             }
         }
 
@@ -290,6 +343,7 @@ struct RawSwitches<'a> {
     content_length: Option<&'a str>,
     wav_data_size: Option<&'a str>,
     end_after_bytes: Option<&'a str>,
+    segment_bytes: Option<&'a str>,
 }
 
 /// Parses a byte count of at least 1.
@@ -298,6 +352,21 @@ fn parse_positive_bytes(value: &str) -> Result<u64, String> {
         Ok(0) => Err("expected at least 1 byte, got 0".to_string()),
         Ok(n) => Ok(n),
         Err(_) => Err(format!("expected a number of bytes, got {value:?}")),
+    }
+}
+
+/// Parses a segment's data size: [`PCM_SEGMENT_BYTES_MIN`] to
+/// [`PCM_SEGMENT_BYTES_MAX`] bytes.
+///
+/// [`PCM_SEGMENT_BYTES_MIN`]: super::playout::PCM_SEGMENT_BYTES_MIN
+/// [`PCM_SEGMENT_BYTES_MAX`]: super::playout::PCM_SEGMENT_BYTES_MAX
+fn parse_segment_bytes(value: &str) -> Result<u64, String> {
+    use super::playout::{PCM_SEGMENT_BYTES_MAX, PCM_SEGMENT_BYTES_MIN};
+    match value.trim().parse::<u64>() {
+        Ok(n) if (PCM_SEGMENT_BYTES_MIN..=PCM_SEGMENT_BYTES_MAX).contains(&n) => Ok(n),
+        _ => Err(format!(
+            "expected bytes from {PCM_SEGMENT_BYTES_MIN} to {PCM_SEGMENT_BYTES_MAX}, got {value:?}"
+        )),
     }
 }
 
@@ -324,6 +393,16 @@ mod tests {
             content_length,
             wav_data_size,
             end_after_bytes,
+            segment_bytes: None,
+        })
+    }
+
+    /// The switches with only [`PCM_SEGMENT_BYTES_ENV`] and `framing` set.
+    fn resolve_segments(framing: Option<&str>, segment_bytes: Option<&str>) -> PcmHttpSwitches {
+        PcmHttpSwitches::resolve(RawSwitches {
+            framing,
+            segment_bytes,
+            ..RawSwitches::default()
         })
     }
 
@@ -337,6 +416,8 @@ mod tests {
                 content_length: 4_294_967_295,
                 wav_data_size: 0xFFFF_FFFF,
                 end_after_bytes: None,
+                segments: true,
+                segment_bytes: 0xFFFF_0000,
             }
         );
         assert!(!switches.any_set);
@@ -493,6 +574,43 @@ mod tests {
             ..small_header
         };
         assert_eq!(capped.declared_end_bytes(), 2_000);
+    }
+
+    /// Segments are on unless a switch fixes a connection's end; their size
+    /// can be set for testing within 1 MiB and just under 4 GiB.
+    #[test]
+    fn segments_follow_their_size_switch_unless_an_end_is_fixed() {
+        let small = resolve_segments(None, Some("10485760"));
+        assert!(small.settings.segments);
+        assert_eq!(small.settings.segment_bytes, 10_485_760);
+        assert!(small.problems.is_empty());
+        assert!(small.any_set);
+
+        for bad in ["1048575", "4294901761", "lots", "0"] {
+            let switches = resolve_segments(None, Some(bad));
+            assert_eq!(switches.settings.segment_bytes, 0xFFFF_0000, "{bad}");
+            assert_eq!(switches.problems.len(), 1, "{bad}");
+        }
+
+        let length = resolve_segments(Some("length"), Some("10485760"));
+        assert!(!length.settings.segments);
+        assert_eq!(length.settings.segment_bytes, 0xFFFF_0000);
+        assert!(length.problems[0].contains("segments are off while THAUMIC_PCM_HTTP_FRAMING"));
+        assert!(
+            !resolve(None, None, Some("10485760"), None)
+                .settings
+                .segments
+        );
+        assert!(
+            !resolve(None, None, None, Some("10485760"))
+                .settings
+                .segments
+        );
+        assert!(resolve(Some("close"), None, None, None).settings.segments);
+        assert!(
+            resolve(None, None, Some("lots"), None).settings.segments,
+            "an ignored size fixes nothing"
+        );
     }
 
     #[test]

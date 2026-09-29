@@ -362,6 +362,9 @@ pub struct StreamState {
     /// Lets the stream's connections raise at most one ingest-gap notice
     /// between them every ten minutes.
     pub ingest_gap_notices: super::ingest_gaps::IngestGapLimiter,
+    /// Each speaker's PCM playout, carried across its segment connections
+    /// (see [`crate::stream::playout`]).
+    pub playout: Arc<super::playout::PlayoutRegistry>,
 }
 
 impl StreamState {
@@ -412,6 +415,7 @@ impl StreamState {
             unlisted_readers: Arc::new(AtomicUsize::new(0)),
             unlisted_reported: parking_lot::Mutex::new(std::collections::HashSet::new()),
             ingest_gap_notices: super::ingest_gaps::IngestGapLimiter::default(),
+            playout: Arc::default(),
         }
     }
 

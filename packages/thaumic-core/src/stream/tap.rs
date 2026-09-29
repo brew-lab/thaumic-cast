@@ -8,11 +8,13 @@
 //! client are therefore all covered, and speakers that never fetch (grouped
 //! slaves, home-theatre satellites) are never polled.
 //!
-//! The handler for each playback-tracking connection creates a
-//! [`ConnectionTap`]; the response body owns it and the monitor holds only a
-//! [`Weak`], so a connection that ends takes its monitoring with it. The tap is
-//! handed to the monitor through a [`MonitorRegistrar`] when the connection
-//! serves its first real frame, which is also when its playback epoch starts.
+//! The handler for each new playback-tracking playout creates a
+//! [`ConnectionTap`]; the playout owns it (for PCM the playout outlives each
+//! segment connection, see [`crate::stream::playout`]; for a compressed codec
+//! the response body is the playout) and the monitor holds only a [`Weak`],
+//! so a playout that ends takes its monitoring with it. The tap is handed to
+//! the monitor through a [`MonitorRegistrar`] when the playout serves its
+//! first real frame, which is also when its playback epoch starts.
 
 use std::net::IpAddr;
 use std::sync::atomic::{AtomicI32, AtomicU32, Ordering};
@@ -22,7 +24,7 @@ use std::time::{Duration, Instant};
 use serde::Serialize;
 use tokio::sync::mpsc;
 
-use super::cadence::{LoggingStreamGuard, PipelineSample};
+use super::cadence::{ChainStats, LoggingStreamGuard, PipelineSample};
 use super::manager::PlaybackEpoch;
 use super::rate_adapter::RateControl;
 use super::{AudioCodec, AudioFormat};
@@ -32,17 +34,28 @@ use crate::services::speaker_monitor::control::DriftMode;
 /// Length of the WAV header every PCM connection starts with.
 pub const WAV_HEADER_BYTES: u32 = 44;
 
+/// Bytes a connection of `codec` sends before its first audio byte: the WAV
+/// header for PCM, nothing for a compressed codec.
+pub fn pcm_header(codec: AudioCodec) -> u32 {
+    match codec {
+        AudioCodec::Pcm => WAV_HEADER_BYTES,
+        AudioCodec::Aac | AudioCodec::Mp3 | AudioCodec::Flac => 0,
+    }
+}
+
 /// How many registrations may wait for the monitor before new ones are
 /// dropped. A registration is one per connection, and the monitor drains them
 /// every loop iteration, so this is only ever reached if the monitor has died.
 pub const MONITOR_REGISTRATION_CAPACITY: usize = 64;
 
-/// State shared between one speaker's HTTP connection and the speaker monitor.
+/// State shared between one speaker's playout and the speaker monitor.
 ///
-/// Created in `api/stream.rs` beside the connection's [`LoggingStreamGuard`]
-/// for readers that track playback (a speaker the stream is for, or this
-/// machine). The response body holds the only strong reference; the monitor
-/// and [`crate::stream::StreamTiming`] hold [`Weak`] ones.
+/// Created in `api/stream.rs` for readers that track playback (a speaker the
+/// stream is for, or this machine), once per playout: a segmented PCM cast's
+/// playout keeps it across its segment connections, and any other
+/// connection is its own playout. That owner (the playout, or the response
+/// body) holds the only strong reference; the monitor and
+/// [`crate::stream::StreamTiming`] hold [`Weak`] ones.
 pub struct ConnectionTap {
     /// The stream this connection serves.
     pub stream_id: String,
@@ -71,9 +84,13 @@ pub struct ConnectionTap {
     /// Where the monitor leaves the connection's rate command, when drift
     /// correction is on for a PCM connection whose format can be resampled.
     rate_control: Option<Arc<RateControl>>,
-    /// The connection's delivery statistics, whose byte counter is the
-    /// delivered side of the speaker's reserve.
-    guard: Arc<LoggingStreamGuard>,
+    /// The playout's statistics: its output position is the delivered side
+    /// of the speaker's reserve, and the connection being served is found
+    /// through it.
+    stats: Arc<ChainStats>,
+    /// The one connection a playout that is no more than that connection
+    /// is carried on, held for the tap's life (see [`Self::with_connection`]).
+    connection: Option<Arc<LoggingStreamGuard>>,
     /// The playback epoch this connection started, set once on its first
     /// real frame, before the tap is registered with the monitor.
     epoch: OnceLock<PlaybackEpoch>,
@@ -126,15 +143,15 @@ impl ConnectionTap {
         connected_at: Instant,
         codec: AudioCodec,
         audio_format: &AudioFormat,
-        guard: Arc<LoggingStreamGuard>,
+        stats: Arc<ChainStats>,
         monitor: bool,
     ) -> Self {
         let (byte_rate, header_bytes) = match codec {
             AudioCodec::Pcm => (
                 audio_format.frame_bytes(1000).min(u32::MAX as usize) as u32,
-                WAV_HEADER_BYTES,
+                pcm_header(codec),
             ),
-            AudioCodec::Aac | AudioCodec::Mp3 | AudioCodec::Flac => (0, 0),
+            AudioCodec::Aac | AudioCodec::Mp3 | AudioCodec::Flac => (0, pcm_header(codec)),
         };
         Self {
             stream_id: stream_id.into(),
@@ -146,7 +163,8 @@ impl ConnectionTap {
             sample_rate: audio_format.sample_rate,
             drift_mode: DriftMode::Off,
             rate_control: None,
-            guard,
+            stats,
+            connection: None,
             epoch: OnceLock::new(),
             head_start: OnceLock::new(),
         }
@@ -160,6 +178,19 @@ impl ConnectionTap {
         self.drift_mode = mode;
         self.rate_control = rate_control;
         self
+    }
+
+    /// The same tap holding `guard`, the one connection its playout is
+    /// carried on, for as long as the tap lives.
+    #[must_use]
+    pub fn with_connection(mut self, guard: Arc<LoggingStreamGuard>) -> Self {
+        self.connection = Some(guard);
+        self
+    }
+
+    /// The playout's statistics.
+    pub fn stats(&self) -> &Arc<ChainStats> {
+        &self.stats
     }
 
     /// The clock drift correction mode the connection was made under.
@@ -211,7 +242,7 @@ impl ConnectionTap {
     /// where the platform does not report them. Read by the speaker monitor
     /// to tell a Wi-Fi stall from other causes of a low reserve.
     pub fn link_verdict(&self) -> Option<LinkQuality> {
-        self.guard.link_verdict()
+        self.stats.connection()?.link_verdict()
     }
 
     /// How far the speaker's acknowledgements lag the audio handed to the
@@ -224,13 +255,13 @@ impl ConnectionTap {
     /// taken only while the connection is being polled for audio: a stall
     /// long enough to stop that is otherwise seen only once it clears.
     ///
-    /// `None` near the connection's declared end (see
-    /// [`Self::near_declared_end`]).
+    /// `None` near the connection's declared end, and at a segment boundary
+    /// (see [`Self::near_declared_end`]).
     pub fn unacked_ms_now(&self) -> Option<f64> {
-        if self.byte_rate == 0 {
+        if self.byte_rate == 0 || self.stats.playout.at_boundary() {
             return None;
         }
-        let bytes = self.guard.unacked_bytes_now()?;
+        let bytes = self.stats.connection()?.unacked_bytes_now()?;
         Some(bytes as f64 * 1000.0 / f64::from(self.byte_rate))
     }
 
@@ -242,34 +273,47 @@ impl ConnectionTap {
     /// What the speaker does there is the item ending, so from a little
     /// before it until the connection closes the monitor reads no stall, and
     /// no notice, into what it sees.
+    ///
+    /// The same holds at a PCM segment boundary: while the playout is parked
+    /// between segment connections, and while the next segment settles (see
+    /// [`crate::stream::playout::BOUNDARY_SETTLE`]).
     pub fn near_declared_end(&self) -> bool {
-        self.guard.near_declared_end()
+        self.stats.playout.at_boundary()
+            || self
+                .stats
+                .connection()
+                .is_some_and(|guard| guard.near_declared_end())
     }
 
     /// Whether the connection has handed over everything up to its declared
-    /// end: if it closes now, it ended with the item.
+    /// end, or the playout is parked after a segment that did: if it closes
+    /// now, it ended with the item.
     pub fn reached_declared_end(&self) -> bool {
-        self.guard.reached_declared_end()
+        self.stats.playout.parked_at_end()
+            || self
+                .stats
+                .connection()
+                .is_some_and(|guard| guard.reached_declared_end())
     }
 
-    /// Audio bytes handed to the connection so far, excluding the header.
+    /// Audio bytes handed over so far: the playout's output position.
     ///
     /// Counts what the body has yielded, so it runs ahead of what the speaker
-    /// has received by whatever sits in the socket's send buffer.
+    /// has received by whatever sits in the socket's send buffer. Headers are
+    /// not counted, nor is audio sent again, and a playout that started with
+    /// a partial fetch counts from the byte the speaker took it to start at.
     pub fn audio_bytes_sent(&self) -> u64 {
-        self.guard
-            .bytes_sent
-            .load(Ordering::Relaxed)
-            .saturating_sub(u64::from(self.header_bytes))
+        self.stats.position()
     }
 
     /// Milliseconds of audio handed to the connection so far, or `None` for a
     /// compressed codec.
     ///
-    /// Starts at the same byte the speaker plays at RelTime 0: every fetch is
-    /// served from the live edge, never from a requested offset, so each
-    /// connection's count starts afresh. Inserted or removed audio would be
-    /// counted too, which is right, since the speaker plays it.
+    /// Starts at the same byte the speaker plays at RelTime 0 on the
+    /// playout's first segment, and runs on across its segments, as RelTime
+    /// does once mapped onto the playout (see
+    /// [`Self::continuous_position`]). Inserted or removed audio is counted
+    /// too, which is right, since the speaker plays it.
     pub fn delivered_ms(&self) -> Option<u64> {
         (self.byte_rate > 0)
             .then(|| self.audio_bytes_sent().saturating_mul(1000) / u64::from(self.byte_rate))
@@ -278,26 +322,45 @@ impl ConnectionTap {
     /// Publishes the monitor's latest figures for this connection, where
     /// the connection's pipeline snapshots pick them up.
     pub fn publish_speaker(&self, figures: SpeakerFigures) {
-        self.guard.speaker.publish(figures);
+        self.stats.speaker.publish(figures);
+    }
+
+    /// Maps a speaker's reported position onto this playout: a URL naming
+    /// any segment of the stream becomes its `live.wav` URL, and RelTime is
+    /// counted from the playout's start rather than the segment's, so a
+    /// segment switch is neither a track change nor RelTime going backwards.
+    /// Anything else is returned as it was.
+    pub fn continuous_position(&self, track_uri: String, rel_ms: u64) -> (String, u64) {
+        match self.stats.playout.continuous_position(
+            &self.stream_id,
+            &track_uri,
+            rel_ms,
+            self.stats.position(),
+        ) {
+            Some(mapped) => mapped,
+            None => (track_uri, rel_ms),
+        }
     }
 
     /// What the connection's pipeline snapshots currently carry from the
     /// monitor.
     #[cfg(test)]
     pub(crate) fn speaker_snapshot(&self) -> Option<SpeakerSnapshot> {
-        self.guard.speaker.snapshot()
+        self.stats.speaker.snapshot()
     }
 
     /// Counts `bytes` more body bytes handed to the connection, as its body
-    /// would.
+    /// would, the WAV header's included.
     #[cfg(test)]
     pub(crate) fn record_body_bytes(&self, bytes: usize) {
-        self.guard.record_body_bytes(bytes);
+        if let Some(guard) = self.stats.connection() {
+            guard.record_body_bytes(bytes);
+        }
     }
 
-    /// The connection's pipeline snapshots from the last `window`.
+    /// The playout's pipeline snapshots from the last `window`.
     pub(crate) fn recent_pipeline(&self, window: Duration) -> Vec<PipelineSample> {
-        self.guard.recent_pipeline(window)
+        self.stats.recent_pipeline(window)
     }
 }
 
@@ -514,8 +577,9 @@ pub(crate) mod test_support {
         declared_end: Option<crate::stream::DeclaredEnd>,
     ) -> Arc<ConnectionTap> {
         let ip: IpAddr = speaker_ip.parse().expect("test address");
-        let guard =
-            LoggingStreamGuard::new(stream_id.to_string(), ip).with_declared_end(declared_end);
+        let guard = Arc::new(
+            LoggingStreamGuard::new(stream_id.to_string(), ip).with_declared_end(declared_end),
+        );
         let tap = Arc::new(
             ConnectionTap::new(
                 stream_id,
@@ -523,10 +587,11 @@ pub(crate) mod test_support {
                 Instant::now(),
                 codec,
                 &AudioFormat::default(),
-                Arc::new(guard),
+                ChainStats::for_connection(stream_id, &guard, pcm_header(codec)),
                 monitor,
             )
-            .with_drift(mode, rate_control),
+            .with_drift(mode, rate_control)
+            .with_connection(guard),
         );
         if codec == AudioCodec::Pcm {
             tap.set_head_start(HeadStart::new(500, 500));
@@ -545,15 +610,17 @@ mod tests {
 
     fn tap(codec: AudioCodec) -> ConnectionTap {
         let ip: IpAddr = "::ffff:192.168.1.50".parse().unwrap();
+        let guard = Arc::new(LoggingStreamGuard::new("s".into(), ip));
         ConnectionTap::new(
             "s",
             ip,
             Instant::now(),
             codec,
             &AudioFormat::default(),
-            Arc::new(LoggingStreamGuard::new("s".into(), ip)),
+            ChainStats::for_connection("s", &guard, pcm_header(codec)),
             true,
         )
+        .with_connection(guard)
     }
 
     #[test]
@@ -569,16 +636,14 @@ mod tests {
         let tap = tap(AudioCodec::Pcm);
         assert_eq!(tap.byte_rate, 192_000);
         assert_eq!(tap.delivered_ms(), Some(0));
-        tap.guard
-            .bytes_sent
-            .store(u64::from(WAV_HEADER_BYTES) + 192_000 / 2, Ordering::Relaxed);
+        tap.record_body_bytes(WAV_HEADER_BYTES as usize + 192_000 / 2);
         assert_eq!(tap.delivered_ms(), Some(500));
     }
 
     #[test]
     fn a_compressed_connection_reports_no_delivered_time() {
         let tap = tap(AudioCodec::Aac);
-        tap.guard.bytes_sent.store(100_000, Ordering::Relaxed);
+        tap.record_body_bytes(100_000);
         assert_eq!(tap.delivered_ms(), None);
         assert_eq!(tap.audio_bytes_sent(), 100_000);
     }

@@ -146,6 +146,19 @@ pub fn pcm_segment_uri(base_url: &str, segment: u32) -> String {
     }
 }
 
+/// Returns `uri`, a PCM URL of one of our streams, as the URL of its segment
+/// 0 (`live.wav`), keeping everything before the resource as it was: the
+/// one URL every segment of a cast is known by. `None` for a URL that names
+/// no PCM segment of ours.
+#[must_use]
+pub fn segment_base_uri(uri: &str) -> Option<String> {
+    let parsed = parse_stream_uri(uri)?;
+    parsed.resource.pcm_segment()?;
+    let marker = format!("/stream/{}/", parsed.stream_id);
+    let at = uri.rfind(&marker)? + marker.len();
+    Some(format!("{}live{SEGMENT_EXTENSION}", &uri[..at]))
+}
+
 /// Returns `true` if a speaker playing `current` is still playing the stream
 /// the companion gave it as `expected`.
 ///
@@ -359,5 +372,28 @@ mod tests {
             "http://192.168.1.100:8080/other.aac",
             "http://192.168.1.100:8080/stream.aac"
         ));
+    }
+
+    #[test]
+    fn every_segment_is_known_by_its_live_wav_url() {
+        let base = "http://192.168.1.5:49400/stream/abc/live.wav";
+        assert_eq!(segment_base_uri(base).as_deref(), Some(base));
+        assert_eq!(
+            segment_base_uri("http://192.168.1.5:49400/stream/abc/live/7.wav").as_deref(),
+            Some(base)
+        );
+        assert_eq!(
+            segment_base_uri("x-file://http://192.168.1.5:49400/stream/abc/live/2.wav").as_deref(),
+            Some("x-file://http://192.168.1.5:49400/stream/abc/live.wav")
+        );
+        assert_eq!(
+            segment_base_uri("http://192.168.1.5:49400/stream/abc/live"),
+            None
+        );
+        assert_eq!(
+            segment_base_uri("http://192.168.1.5:49400/stream/abc/live.flac"),
+            None
+        );
+        assert_eq!(segment_base_uri("x-rincon:RINCON_000E58000000001400"), None);
     }
 }

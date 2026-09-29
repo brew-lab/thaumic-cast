@@ -16,6 +16,7 @@ use crate::services::stream_coordinator::StreamCoordinator;
 use crate::sonos::gena::GenaSubscriptionManager;
 use crate::sonos::gena_parser;
 use crate::sonos::services::SonosService;
+use crate::sonos::types::TransportState;
 use crate::state::SonosState;
 
 /// Dependencies required for event processing.
@@ -119,6 +120,9 @@ impl GenaEventProcessor {
                 );
                 deps.sonos_state
                     .record_transport_state(speaker_ip, *transport_state);
+                if *transport_state == TransportState::Stopped {
+                    deps.stream_coordinator.note_speaker_stopped(speaker_ip);
+                }
             }
             SonosEvent::GroupVolume {
                 speaker_ip,
