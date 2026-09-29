@@ -2,10 +2,26 @@
 //!
 //! A long PCM cast is served in segments (see [`crate::stream::playout`]).
 //! A speaker plays a segment to the length its WAV header declares, plays out
-//! what it holds and reports STOPPED; nothing brings it back on its own. So
-//! once it has stopped on segment `k`, the server tells it to play segment
-//! `k + 1` (`SetAVTransportURI` and `Play`), which continues the playout
-//! where `k` ended: a restart.
+//! what it holds and reports STOPPED; nothing brings it back on its own.
+//! There are two ways on, picked by [`PcmContinuation`]:
+//!
+//! - **Gapless (next):** while segment `k` plays, segment `k + 1` is queued
+//!   as the speaker's next item (`SetNextAVTransportURI`, broadcast DIDL).
+//!   The speaker fetches it the moment `k`'s body ends, plays out what it
+//!   holds of `k` and switches with no gap and no STOPPED (a Playbar about
+//!   1.2 s after the server's end, a Play:1 group about 3.8 s). The next
+//!   segment is queued [`ARM_DELAY`] after the speaker reports PLAYING on
+//!   `k`, and only ever `k + 1` for the `k` it reports: never `k + 2` while
+//!   `k + 1` is still pending, which would skip a segment. A queue that an
+//!   event shows cleared (a `SetAVTransportURI`, a resume) is queued again.
+//! - **Restart:** once the speaker has stopped on segment `k`, the server
+//!   tells it to play segment `k + 1` (`SetAVTransportURI` and `Play`),
+//!   which continues the playout where `k` ended.
+//!
+//! In `auto` (the default) every boundary is gapless, and the restart is the
+//! fallback for one the speaker does not follow: it then restarts that
+//! speaker (by UUID) at every later boundary, for as long as the server runs.
+//! In `next` the segment is queued every time whatever happened before.
 //!
 //! Each speaker's switch is one **handoff**, from
 //! [`HANDOFF_LEAD`](crate::stream::HANDOFF_LEAD) before
@@ -36,7 +52,7 @@
 //!   [`RESTART_PLAY_TIMEOUT`] is told once more; after that the cast ends on
 //!   it with [`SpeakerRemovalReason::ContinuationFailed`].
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::net::IpAddr;
 use std::sync::{Arc, Weak};
 use std::time::Duration;
@@ -47,9 +63,12 @@ use tokio::time::Instant;
 
 use super::StreamCoordinator;
 use crate::events::{SonosEvent, SpeakerRemovalReason};
-use crate::services::playback_session_store::GroupRole;
+use crate::services::playback_session_store::{GroupRole, PlaybackSession};
+use crate::sonos::traits::NextItem;
 use crate::sonos::types::TransportState;
-use crate::stream::{parse_stream_uri, PcmContinuation, PlayoutChain, PlayoutEvent, PlayoutEvents};
+use crate::stream::{
+    parse_stream_uri, PcmContinuation, PcmSegmentDidl, PlayoutChain, PlayoutEvent, PlayoutEvents,
+};
 use crate::utils::now_millis;
 
 /// How long a STOPPED on the segment that ended must last before it is
@@ -91,6 +110,30 @@ const NEAR_MAX: Duration = Duration::from_secs(12);
 /// releases its speakers promptly.
 const WATCH_TICK: Duration = Duration::from_secs(1);
 
+/// How long after a speaker reports PLAYING on a segment the next one is
+/// queued, as in the hardware probe that proved the gapless handover: the
+/// speaker has settled on the segment by then.
+pub const ARM_DELAY: Duration = Duration::from_secs(10);
+
+/// Least audio left to hand over of a segment for the next to be queued. A
+/// Play:1 fetches a queued item at once, gets only its header (the audio does
+/// not exist yet) and closes it after about 10 s; queued any later, that
+/// fetch could still be open at the boundary. A boundary with nothing queued
+/// is left to a restart.
+pub const ARM_MIN_LEFT: Duration = Duration::from_secs(15);
+
+/// How long after the next segment was queued an event saying nothing is
+/// queued is taken for the queue having been cleared, rather than for an
+/// event the speaker sent before it was queued.
+const ARM_SETTLE: Duration = Duration::from_secs(3);
+
+/// How long after a failed attempt to queue the next segment it is tried
+/// again.
+const ARM_RETRY: Duration = Duration::from_secs(5);
+
+/// How many times the next segment is tried for each segment.
+const ARM_ATTEMPTS: u32 = 2;
+
 /// The handoffs in progress, one per speaker playout.
 #[derive(Default)]
 pub(crate) struct Continuations {
@@ -100,6 +143,34 @@ pub(crate) struct Continuations {
     /// token of the grace that releases it.
     lingering: Mutex<HashMap<String, u64>>,
     next_generation: std::sync::atomic::AtomicU64,
+    /// The next segment queued, or about to be, for each speaker playout.
+    arms: Mutex<HashMap<HandoffKey, Arm>>,
+    /// Speakers (by UUID) that did not follow a queued segment in `auto`:
+    /// they are restarted at every later boundary, for the process's life.
+    next_unreliable: Mutex<HashSet<String>>,
+}
+
+/// The next segment queued, or about to be, as a speaker's next item.
+struct Arm {
+    /// Tells its task apart from an earlier arm's.
+    generation: u64,
+    /// The URL segment queued.
+    url_segment: u32,
+    /// Attempts made at queuing it.
+    attempts: u32,
+    state: ArmState,
+}
+
+/// Where queuing a speaker's next segment stands.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ArmState {
+    /// Waiting for [`ARM_DELAY`] to pass.
+    Scheduled,
+    /// Queued at this moment.
+    Armed(Instant),
+    /// Not queued: too little of the segment was left, or the speaker
+    /// refused it. The boundary is left to a restart.
+    Skipped,
 }
 
 /// Which playout a handoff belongs to.
@@ -134,6 +205,11 @@ struct Handoff {
     stopped_since: Option<Instant>,
     /// When the speaker fetched the next segment, or a new playout started.
     attached_at: Option<Instant>,
+    /// The URL segment of that fetch, or of the new playout's first.
+    attached_url_segment: Option<u32>,
+    /// STOPPED events from the coordinator during the handoff: none in a
+    /// gapless handover.
+    stops_seen: u32,
     /// Restarts sent, and when the last one was.
     restarts: u32,
     restarted_at: Option<Instant>,
@@ -262,6 +338,7 @@ impl StreamCoordinator {
                 // itself: no restart, and the handoff ends once it plays.
                 if let Some(handoff) = handoffs.get_mut(&key) {
                     handoff.attached_at.get_or_insert_with(Instant::now);
+                    handoff.attached_url_segment = Some(url_segment);
                     handoff.notify.notify_one();
                     log::info!(
                         "[Stream] Handoff: stream={} speaker={} seg={} fetched as {} \
@@ -279,6 +356,7 @@ impl StreamCoordinator {
                 if let Some(handoff) = handoffs.get_mut(&key) {
                     if handoff.chain_id != chain.id() {
                         handoff.attached_at.get_or_insert_with(Instant::now);
+                        handoff.attached_url_segment = Some(url_segment);
                         handoff.notify.notify_one();
                         log::info!(
                             "[Stream] Handoff: stream={} speaker={} a new playout started on \
@@ -309,7 +387,15 @@ impl StreamCoordinator {
                     self.finish_handoff(handoff);
                 }
             }
-            PlayoutEvent::Retired => {}
+            PlayoutEvent::Retired => {
+                // Nothing left to queue for once no playout carries on.
+                let live = self
+                    .get_stream(&key.stream_id)
+                    .is_some_and(|stream| stream.playout.get(chain.speaker_ip()).is_some());
+                if !live {
+                    self.continuations.arms.lock().remove(&key);
+                }
+            }
         }
     }
 
@@ -373,6 +459,8 @@ impl StreamCoordinator {
                             reserve_floor: Duration::ZERO,
                             stopped_since: None,
                             attached_at: None,
+                            attached_url_segment: None,
+                            stops_seen: 0,
                             restarts: 0,
                             restarted_at: None,
                             notify: Arc::clone(&notify),
@@ -407,14 +495,17 @@ impl StreamCoordinator {
     }
 
     /// Takes in a transport state GENA reported for `speaker_ip`, playing
-    /// `current_uri`: a parked playout counts its life from a STOPPED, and a
-    /// handoff watches for its speaker stopping on the ending segment and
-    /// ends once it plays the next one.
+    /// `current_uri` with `next_uri` queued (`None` when the event did not
+    /// say): a parked playout counts its life from a STOPPED, a handoff
+    /// watches for its speaker stopping on the ending segment and ends once
+    /// it plays the next one, and a speaker playing a segment has the next
+    /// one queued.
     pub fn note_transport_state(
         self: &Arc<Self>,
         speaker_ip: &str,
         state: TransportState,
         current_uri: Option<&str>,
+        next_uri: Option<&str>,
     ) {
         if state == TransportState::Stopped {
             self.note_speaker_stopped(speaker_ip);
@@ -422,6 +513,19 @@ impl StreamCoordinator {
         if matches!(state, TransportState::Playing | TransportState::Paused) {
             self.member_reported(speaker_ip);
         }
+        // The handoff first: PLAYING on the next segment ends it, and only
+        // then is the one after queued.
+        self.note_handoff_state(speaker_ip, state, current_uri);
+        self.consider_arming(speaker_ip, state, current_uri, next_uri);
+    }
+
+    /// [`Self::note_transport_state`] for a handoff of `speaker_ip`.
+    fn note_handoff_state(
+        self: &Arc<Self>,
+        speaker_ip: &str,
+        state: TransportState,
+        current_uri: Option<&str>,
+    ) {
         let now = Instant::now();
         let finished = {
             let mut handoffs = self.continuations.handoffs.lock();
@@ -435,6 +539,7 @@ impl StreamCoordinator {
             let on_ending = current_uri.is_none() || url_segment == Some(handoff.from_url_segment);
             match state {
                 TransportState::Stopped => {
+                    handoff.stops_seen += 1;
                     if on_ending && handoff.ended_at.is_some() {
                         handoff.stopped_since.get_or_insert(now);
                         handoff.notify.notify_one();
@@ -442,12 +547,16 @@ impl StreamCoordinator {
                     None
                 }
                 TransportState::Playing => {
-                    // On the next segment, or on ours at all once the speaker
-                    // has fetched again (a reopen of the ending segment plays
-                    // new audio under its old URL).
+                    // On the next segment, or on the one the speaker fetched
+                    // (a reopen of the ending segment plays new audio under
+                    // its old URL). Still on the ending segment after
+                    // fetching the next is a speaker playing out what it
+                    // holds before a gapless switch: not over yet.
                     let moved = url_segment.is_some_and(|s| s != handoff.from_url_segment);
-                    let fetched = handoff.attached_at.is_some()
-                        && (url_segment.is_some() || current_uri.is_none());
+                    let fetched = handoff.attached_url_segment.is_some_and(|attached| {
+                        url_segment == Some(attached)
+                            || (current_uri.is_none() && attached == handoff.from_url_segment)
+                    });
                     if moved || fetched {
                         Some(key.clone())
                     } else {
@@ -478,22 +587,334 @@ impl StreamCoordinator {
             .and_then(|s| s.playout.get(speaker_ip.parse().ok()?))
             .and_then(|chain| chain.latency_debt())
             .filter(|d| d.seg > handoff.seg);
+        let mode = if handoff.restarts > 0 {
+            "restart"
+        } else if self.armed_for(&key, handoff.from_url_segment.wrapping_add(1)) {
+            "next"
+        } else {
+            "fetched"
+        };
         log::info!(
             "[Stream] Continuation playing: stream={} speaker={} seg={} mode={} \
-             audible_gap_ms={} latency_debt_ms={} restarts={}",
+             audible_gap_ms={} latency_debt_ms={} restarts={} stops_seen={} after_end_ms={}",
             key.stream_id,
             key.speaker_ip,
             handoff.seg.wrapping_add(1),
-            if handoff.restarts > 0 {
-                "restart"
-            } else {
-                "fetched"
-            },
+            mode,
             gap_from.map_or(0, |t| now.saturating_duration_since(t).as_millis()),
             debt.map_or(0, |d| d.debt_ms),
-            handoff.restarts
+            handoff.restarts,
+            handoff.stops_seen,
+            handoff
+                .ended_at
+                .map_or(0, |t| now.saturating_duration_since(t).as_millis())
         );
         self.complete_handoff(&key, handoff);
+    }
+
+    /// Whether URL segment `url_segment` is queued as the next item of
+    /// `key`'s speaker.
+    fn armed_for(&self, key: &HandoffKey, url_segment: u32) -> bool {
+        self.continuations.arms.lock().get(key).is_some_and(|arm| {
+            arm.url_segment == url_segment && matches!(arm.state, ArmState::Armed(_))
+        })
+    }
+
+    /// The live playout of `key`'s speaker.
+    fn chain_for(&self, key: &HandoffKey) -> Option<Arc<PlayoutChain>> {
+        let ip = key.speaker_ip.parse::<IpAddr>().ok()?;
+        self.get_stream(&key.stream_id)?.playout.get(ip)
+    }
+
+    /// The name a speaker is remembered by in the `next_unreliable` cache:
+    /// its UUID, or its address if that is not known.
+    fn speaker_name(session: &PlaybackSession) -> String {
+        session
+            .coordinator_uuid
+            .clone()
+            .unwrap_or_else(|| session.speaker_ip.clone())
+    }
+
+    /// Whether `chain`'s speaker is no longer given queued segments: in
+    /// `auto`, once it has not followed one.
+    fn gives_up_on_next(&self, chain: &PlayoutChain, session: &PlaybackSession) -> bool {
+        chain.continuation() == PcmContinuation::Auto
+            && self
+                .continuations
+                .next_unreliable
+                .lock()
+                .contains(&Self::speaker_name(session))
+    }
+
+    /// Records that `session`'s speaker did not follow a queued segment
+    /// (`why`): in `auto` it is restarted at every later boundary instead.
+    fn mark_next_unreliable(&self, chain: &PlayoutChain, session: &PlaybackSession, why: &str) {
+        if chain.continuation() != PcmContinuation::Auto {
+            return;
+        }
+        let name = Self::speaker_name(session);
+        if self
+            .continuations
+            .next_unreliable
+            .lock()
+            .insert(name.clone())
+        {
+            log::warn!(
+                "[Stream] Continuation next unreliable: speaker={} ({}) reason={}; every later \
+                 boundary restarts it until the server restarts",
+                session.speaker_ip,
+                name,
+                why
+            );
+        }
+    }
+
+    /// Queues the segment after the one a speaker reports PLAYING, once
+    /// [`ARM_DELAY`] has passed, unless it is queued already; queues it again
+    /// if an event shows the queue cleared. Only a coordinator playing one of
+    /// its PCM playout's segments in `auto` or `next`, and never during a
+    /// handoff: it is queued once the speaker plays the new segment.
+    fn consider_arming(
+        self: &Arc<Self>,
+        speaker_ip: &str,
+        state: TransportState,
+        current_uri: Option<&str>,
+        next_uri: Option<&str>,
+    ) {
+        if state != TransportState::Playing {
+            return;
+        }
+        let Some(uri) = current_uri else {
+            return;
+        };
+        let Some(session) = self.sessions.get_by_speaker_ip(speaker_ip) else {
+            return;
+        };
+        if session.role != GroupRole::Coordinator {
+            return;
+        }
+        let Some(playing) = url_segment_of(uri, &session.stream_id) else {
+            return;
+        };
+        let key = HandoffKey {
+            stream_id: session.stream_id.clone(),
+            speaker_ip: speaker_ip.to_string(),
+        };
+        let Some(chain) = self.chain_for(&key) else {
+            return;
+        };
+        if !chain.continuation().queues_next() || self.gives_up_on_next(&chain, &session) {
+            return;
+        }
+        if self.continuations.handoffs.lock().contains_key(&key) {
+            return;
+        }
+        // Always the segment after the one the speaker plays: never two
+        // ahead while the next is still pending.
+        let target = playing.wrapping_add(1);
+        let now = Instant::now();
+        let generation = {
+            let mut arms = self.continuations.arms.lock();
+            if let Some(arm) = arms.get(&key).filter(|arm| arm.url_segment == target) {
+                let cleared = next_uri
+                    .is_some_and(|next| url_segment_of(next, &key.stream_id) != Some(target));
+                let settled = matches!(arm.state, ArmState::Armed(at)
+                    if now.saturating_duration_since(at) >= ARM_SETTLE);
+                if !(cleared && settled) {
+                    return;
+                }
+                log::info!(
+                    "[Stream] Continuation re-arming: stream={} speaker={} url_segment={}: the \
+                     speaker's queued next is now {:?}",
+                    key.stream_id,
+                    key.speaker_ip,
+                    target,
+                    next_uri.unwrap_or_default()
+                );
+            }
+            let generation = self
+                .continuations
+                .next_generation
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            arms.insert(
+                key.clone(),
+                Arm {
+                    generation,
+                    url_segment: target,
+                    attempts: 0,
+                    state: ArmState::Scheduled,
+                },
+            );
+            generation
+        };
+        let coordinator = Arc::clone(self);
+        self.spawn_control(async move {
+            tokio::time::sleep(ARM_DELAY).await;
+            coordinator.send_arm(key, generation).await;
+        });
+    }
+
+    /// Sends the arm of generation `generation` (see
+    /// [`Self::consider_arming`]) if it still applies, and tries once more
+    /// after [`ARM_RETRY`] should the speaker refuse it.
+    async fn send_arm(&self, key: HandoffKey, generation: u64) {
+        loop {
+            let still = |arms: &HashMap<HandoffKey, Arm>| {
+                arms.get(&key)
+                    .filter(|a| a.generation == generation && a.state == ArmState::Scheduled)
+                    .map(|a| a.url_segment)
+            };
+            let Some(target) = still(&self.continuations.arms.lock()) else {
+                return;
+            };
+            let forget = || {
+                let mut arms = self.continuations.arms.lock();
+                if still(&arms).is_some() {
+                    arms.remove(&key);
+                }
+            };
+            let Some(session) = self
+                .sessions
+                .get(&key.stream_id, &key.speaker_ip)
+                .filter(|s| s.role == GroupRole::Coordinator)
+            else {
+                return forget();
+            };
+            let (Some(stream), Ok(ip)) = (
+                self.get_stream(&key.stream_id),
+                key.speaker_ip.parse::<IpAddr>(),
+            ) else {
+                return forget();
+            };
+            let Some(chain) = stream.playout.get(ip) else {
+                return forget();
+            };
+            if !chain.continuation().queues_next() || self.gives_up_on_next(&chain, &session) {
+                return forget();
+            }
+            // Paused meanwhile: queued once it plays again.
+            let playing = self
+                .sonos_state
+                .transport_states
+                .get(&key.speaker_ip)
+                .is_some_and(|s| *s == TransportState::Playing);
+            if !playing {
+                return forget();
+            }
+            let left = chain.serving_left(target.wrapping_sub(1));
+            let in_handoff = self.continuations.handoffs.lock().contains_key(&key);
+            if in_handoff || !left.is_some_and(|left| left >= ARM_MIN_LEFT) {
+                if let Some(arm) = self
+                    .continuations
+                    .arms
+                    .lock()
+                    .get_mut(&key)
+                    .filter(|a| a.generation == generation)
+                {
+                    arm.state = ArmState::Skipped;
+                }
+                log::info!(
+                    "[Stream] Continuation not armed: stream={} speaker={} url_segment={} \
+                     left_ms={}: too close to the boundary, which a restart will handle",
+                    key.stream_id,
+                    key.speaker_ip,
+                    target,
+                    left.map_or_else(|| "\u{2014}".to_string(), |l| l.as_millis().to_string())
+                );
+                return;
+            }
+            let url = format!("{}/{}", session.stream_url, target);
+            let metadata = stream.metadata.read().clone();
+            let artwork_url = self.network.url_builder().artwork_url();
+            let declared_data_bytes = match chain.segment_didl() {
+                PcmSegmentDidl::Track => Some(chain.layout().data_bytes()),
+                PcmSegmentDidl::Broadcast => None,
+            };
+            let result = {
+                let _start = self
+                    .sessions
+                    .lock_speaker_start(&key.stream_id, &key.speaker_ip)
+                    .await;
+                // A new cast may have taken the speaker while this waited.
+                if still(&self.continuations.arms.lock()).is_none()
+                    || self.sessions.get(&key.stream_id, &key.speaker_ip).is_none()
+                {
+                    return;
+                }
+                self.sonos
+                    .set_next_uri(
+                        &key.speaker_ip,
+                        &NextItem {
+                            uri: &url,
+                            codec: session.codec,
+                            audio_format: &stream.audio_format,
+                            metadata: Some(&metadata),
+                            artwork_url: &artwork_url,
+                            declared_data_bytes,
+                        },
+                    )
+                    .await
+            };
+            let retry = {
+                let mut arms = self.continuations.arms.lock();
+                let Some(arm) = arms
+                    .get_mut(&key)
+                    .filter(|a| a.generation == generation && a.state == ArmState::Scheduled)
+                else {
+                    return;
+                };
+                arm.attempts += 1;
+                match &result {
+                    Ok(()) => {
+                        arm.state = ArmState::Armed(Instant::now());
+                        false
+                    }
+                    Err(_) if arm.attempts < ARM_ATTEMPTS => true,
+                    Err(_) => {
+                        arm.state = ArmState::Skipped;
+                        false
+                    }
+                }
+            };
+            match result {
+                Ok(()) => log::info!(
+                    "[Stream] Continuation armed: stream={} speaker={} url_segment={} mode={} \
+                     didl={} left_ms={}",
+                    key.stream_id,
+                    key.speaker_ip,
+                    target,
+                    chain.continuation(),
+                    chain.segment_didl(),
+                    left.map_or(0, |l| l.as_millis())
+                ),
+                Err(e) if retry => {
+                    log::warn!(
+                        "[Stream] Continuation arm failed: stream={} speaker={} url_segment={}: \
+                         {}; trying again in {} ms",
+                        key.stream_id,
+                        key.speaker_ip,
+                        target,
+                        e,
+                        ARM_RETRY.as_millis()
+                    );
+                    tokio::time::sleep(ARM_RETRY).await;
+                    continue;
+                }
+                Err(e) => {
+                    let reason = format!("soap_error({e})");
+                    log::warn!(
+                        "[Stream] Continuation fallback: stream={} speaker={} url_segment={} \
+                         reason={} waited_ms=0; the boundary will restart the speaker",
+                        key.stream_id,
+                        key.speaker_ip,
+                        target,
+                        reason
+                    );
+                    self.mark_next_unreliable(&chain, &session, &reason);
+                }
+            }
+            return;
+        }
     }
 
     /// The speakers some handoff holds.
@@ -614,6 +1035,7 @@ impl StreamCoordinator {
                 speaker_ip: speaker_ip.to_string(),
                 state,
                 current_uri: None,
+                next_uri: None,
                 timestamp: now_millis(),
             });
         }
@@ -900,6 +1322,28 @@ impl StreamCoordinator {
             }
             None => "none (the playout was dropped; the speaker starts again from the live edge)",
         };
+        // A speaker that had the next segment queued and still stopped on
+        // the one that ended did not follow the queue: the restart is its
+        // fallback.
+        if trigger != Trigger::Retry && self.armed_for(key, next) {
+            let reason = match trigger {
+                Trigger::Stopped => "stopped_on_previous",
+                Trigger::Timer | Trigger::Retry => "no_fetch",
+            };
+            log::warn!(
+                "[Stream] Continuation fallback: stream={} speaker={} seg={} url_segment={} \
+                 reason={} waited_ms={}",
+                key.stream_id,
+                key.speaker_ip,
+                seg.wrapping_add(1),
+                next,
+                reason,
+                ended_at.map_or(0, |t| t.elapsed().as_millis())
+            );
+            if let Some(chain) = chain.as_ref() {
+                self.mark_next_unreliable(chain, &session, reason);
+            }
+        }
         let url = format!("{}/{}", session.stream_url, next);
         let metadata = stream.metadata.read().clone();
         let artwork_url = self.network.url_builder().artwork_url();
@@ -1014,8 +1458,8 @@ mod tests {
     use crate::context::NetworkContext;
     use crate::error::SoapResult;
     use crate::events::{EventEmitter, NetworkEvent, StreamEvent, TopologyEvent};
-    use crate::services::playback_session_store::PlaybackSession;
     use crate::sonos::gena::GenaSubscriptionManager;
+    use crate::sonos::soap::SoapError;
     use crate::sonos::subscription_arbiter::SubscriptionArbiter;
     use crate::sonos::traits::SonosPlayback;
     use crate::sonos::types::PositionInfo;
@@ -1038,11 +1482,26 @@ mod tests {
         played_at: parking_lot::Mutex<Vec<Instant>>,
         polled_at: parking_lot::Mutex<Vec<Instant>>,
         stops: AtomicUsize,
+        /// Each item queued as next: speaker, URL, declared data bytes.
+        queued: parking_lot::Mutex<Vec<(String, String, Option<u64>)>>,
+        /// How many attempts to queue an item are refused, and how many
+        /// were made.
+        queue_refusals: AtomicUsize,
+        queue_attempts: AtomicUsize,
     }
 
     impl ScriptedSonos {
         fn played(&self) -> Vec<(String, String)> {
             self.played.lock().clone()
+        }
+
+        /// The URLs queued as next, in order.
+        fn queued(&self) -> Vec<String> {
+            self.queued
+                .lock()
+                .iter()
+                .map(|(_, u, _)| u.clone())
+                .collect()
         }
 
         /// Answers from now on as a speaker stopped on `track_uri`.
@@ -1065,6 +1524,22 @@ mod tests {
         ) -> SoapResult<()> {
             self.played.lock().push((ip.to_string(), uri.to_string()));
             self.played_at.lock().push(Instant::now());
+            Ok(())
+        }
+        async fn set_next_uri(&self, ip: &str, item: &NextItem<'_>) -> SoapResult<()> {
+            self.queue_attempts.fetch_add(1, Ordering::SeqCst);
+            let refuse = self
+                .queue_refusals
+                .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |n| n.checked_sub(1))
+                .is_ok();
+            if refuse {
+                return Err(SoapError::Fault("UPnPError 800".to_string()));
+            }
+            self.queued.lock().push((
+                ip.to_string(),
+                item.uri.to_string(),
+                item.declared_data_bytes,
+            ));
             Ok(())
         }
         async fn play(&self, _: &str) -> SoapResult<()> {
@@ -1125,8 +1600,16 @@ mod tests {
         layout: SegmentLayout,
     }
 
+    /// Data bytes in a minute-long segment at 48 kHz stereo.
+    const MINUTE: u64 = 192_000 * 60;
+
     impl Rig {
         fn new(with_member: bool) -> Self {
+            Self::with_segment(with_member, 96_000)
+        }
+
+        /// A rig whose segments carry `data_bytes` of audio.
+        fn with_segment(with_member: bool, data_bytes: u64) -> Self {
             let sonos = Arc::new(ScriptedSonos::default());
             let emitter = Arc::new(Collector::default());
             let state = Arc::new(SonosState::default());
@@ -1177,7 +1660,7 @@ mod tests {
                 emitter,
                 state,
                 stream_id,
-                layout: SegmentLayout::new(&AudioFormat::default(), 96_000),
+                layout: SegmentLayout::new(&AudioFormat::default(), data_bytes),
             }
         }
 
@@ -1195,13 +1678,25 @@ mod tests {
 
         /// Starts the coordinator's playout, fed a 10 ms frame every 10 ms.
         fn start(&self, continuation: PcmContinuation) -> SegmentBody {
+            self.start_with(continuation, PcmSegmentDidl::Broadcast)
+        }
+
+        /// [`Self::start`], describing queued segments as `didl` says. The
+        /// source is a counter: each 4-byte sample frame carries its index.
+        fn start_with(&self, continuation: PcmContinuation, didl: PcmSegmentDidl) -> SegmentBody {
             let stream = self.coordinator.get_stream(&self.stream_id).unwrap();
             let mut ticks = tokio::time::interval(Duration::from_millis(10));
             ticks.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Burst);
-            let cadence: PcmStream = Box::pin(futures::stream::unfold(ticks, |mut t| async move {
-                t.tick().await;
-                Some((Ok(Bytes::from(vec![1u8; 1920])), t))
-            }));
+            let cadence: PcmStream = Box::pin(futures::stream::unfold(
+                (ticks, 0u32),
+                |(mut t, n)| async move {
+                    t.tick().await;
+                    let frame: Vec<u8> = (n * 480..(n + 1) * 480)
+                        .flat_map(u32::to_le_bytes)
+                        .collect();
+                    Some((Ok(Bytes::from(frame)), (t, n + 1)))
+                },
+            ));
             let guard = Arc::new(LoggingStreamGuard::new(self.stream_id.clone(), Self::ip()));
             PlayoutChain::start(ChainParts {
                 stream_id: self.stream_id.clone(),
@@ -1215,6 +1710,7 @@ mod tests {
                 guard,
                 registry: Some(Arc::clone(&stream.playout)),
                 continuation,
+                segment_didl: didl,
                 head_start: Duration::from_millis(500),
                 events: Some(self.coordinator.playout_events()),
             })
@@ -1226,6 +1722,41 @@ mod tests {
             while let Some(item) = body.next().await {
                 item.unwrap();
             }
+        }
+
+        /// Plays segment 0 to its end in the background, returning its body
+        /// bytes once it has ended.
+        fn play_in_background(
+            &self,
+            continuation: PcmContinuation,
+            didl: PcmSegmentDidl,
+        ) -> tokio::task::JoinHandle<Vec<u8>> {
+            let body = self.start_with(continuation, didl);
+            tokio::spawn(read_to_end(body))
+        }
+
+        /// The speaker fetches segment `n`, and reads it in the background
+        /// until `read_ms` of audio has passed, returning what it read.
+        fn fetch_in_background(&self, n: u32, read_ms: u64) -> tokio::task::JoinHandle<Vec<u8>> {
+            let stream = self.coordinator.get_stream(&self.stream_id).unwrap();
+            let guard = Arc::new(LoggingStreamGuard::new(self.stream_id.clone(), Self::ip()));
+            let route = stream
+                .playout
+                .route(Self::ip(), n, None, &self.layout, move |_| guard);
+            let Route::Attach(mut body) = route else {
+                panic!("segment {n} should continue the playout");
+            };
+            tokio::spawn(async move {
+                let mut data = Vec::new();
+                let until = Instant::now() + Duration::from_millis(read_ms);
+                while Instant::now() < until {
+                    match body.next().await {
+                        Some(item) => data.extend_from_slice(&item.unwrap()),
+                        None => break,
+                    }
+                }
+                data
+            })
         }
 
         /// The speaker fetches segment `n` and reads a little of it.
@@ -1260,9 +1791,25 @@ mod tests {
         /// GENA reports `state` on `uri` for `ip`, as the event processor
         /// passes it on; returns whether clients were told.
         fn gena(&self, ip: &str, state: TransportState, uri: Option<&str>) -> bool {
+            self.gena_next(ip, state, uri, None)
+        }
+
+        /// [`Self::gena`] for an event that also names the queued next URI.
+        fn gena_next(
+            &self,
+            ip: &str,
+            state: TransportState,
+            uri: Option<&str>,
+            next: Option<&str>,
+        ) -> bool {
             self.state.record_transport_state(ip, state);
-            self.coordinator.note_transport_state(ip, state, uri);
+            self.coordinator.note_transport_state(ip, state, uri, next);
             self.state.screen_transport(ip, state)
+        }
+
+        /// The URL a restart or a queued segment names for segment `n`.
+        fn base(&self, n: u32) -> String {
+            format!("http://127.0.0.1:49400/stream/{}/live/{n}", self.stream_id)
         }
 
         fn stop_reasons(&self) -> Vec<(String, Option<SpeakerRemovalReason>)> {
@@ -1282,6 +1829,23 @@ mod tests {
 
     async fn sleep_ms(ms: u64) {
         tokio::time::sleep(Duration::from_millis(ms)).await;
+    }
+
+    /// Reads a body to its end.
+    async fn read_to_end(mut body: SegmentBody) -> Vec<u8> {
+        let mut data = Vec::new();
+        while let Some(item) = body.next().await {
+            data.extend_from_slice(&item.unwrap());
+        }
+        data
+    }
+
+    /// The sample-frame counters in segment body bytes, after the header.
+    fn counters(body: &[u8]) -> Vec<u32> {
+        body[44..]
+            .chunks_exact(4)
+            .map(|c| u32::from_le_bytes([c[0], c[1], c[2], c[3]]))
+            .collect()
     }
 
     /// The whole restart: once the coordinator has played segment 0 out and
@@ -1540,5 +2104,246 @@ mod tests {
         rig.gena(COORDINATOR, TransportState::Stopped, Some(tv));
         sleep_ms(5_000).await;
         assert!(rig.sonos.played().is_empty());
+    }
+
+    /// The gapless handover end to end: ten seconds after the coordinator
+    /// reports PLAYING on segment 0, segment 1 is queued as its next item,
+    /// once; the speaker fetches it the moment segment 0's body ends and
+    /// switches with no STOPPED, so no restart is sent, the sample count runs
+    /// on unbroken from segment 0 into segment 1, nothing is held back from
+    /// clients for good, and segment 2 is queued once it plays segment 1.
+    /// The member joined to it is never queued anything.
+    #[tokio::test(start_paused = true)]
+    async fn a_playing_speaker_has_the_next_segment_queued_and_switches_without_a_restart() {
+        let rig = Rig::with_segment(true, MINUTE);
+        let first = rig.play_in_background(PcmContinuation::Auto, PcmSegmentDidl::Broadcast);
+        sleep_ms(500).await;
+        rig.gena(COORDINATOR, TransportState::Playing, Some(&rig.uri(0)));
+        rig.gena(
+            MEMBER,
+            TransportState::Playing,
+            Some("x-rincon:RINCON_COORD"),
+        );
+        sleep_ms(9_000).await;
+        assert!(rig.sonos.queued().is_empty(), "not before the arm delay");
+        sleep_ms(1_500).await;
+        assert_eq!(rig.sonos.queued(), vec![rig.base(1)]);
+        assert_eq!(rig.sonos.queued.lock()[0].0, COORDINATOR);
+        assert_eq!(rig.sonos.queued.lock()[0].2, None, "a broadcast item");
+        // The speaker confirms it, and says PLAYING again: queued once.
+        rig.gena_next(
+            COORDINATOR,
+            TransportState::Playing,
+            Some(&rig.uri(0)),
+            Some(&rig.uri(1)),
+        );
+
+        let first = first.await.unwrap();
+        assert_eq!(first.len() as u64, rig.layout.total_bytes());
+        let next = rig.fetch_in_background(1, ARM_DELAY.as_millis() as u64 + 5_000);
+        // Still playing out segment 0 after fetching segment 1: not over.
+        rig.gena(COORDINATOR, TransportState::Playing, Some(&rig.uri(0)));
+        assert!(rig.coordinator.in_handoff(COORDINATOR));
+        sleep_ms(1_200).await;
+        rig.gena_next(
+            COORDINATOR,
+            TransportState::Playing,
+            Some(&rig.uri(1)),
+            Some(""),
+        );
+        assert!(!rig.coordinator.in_handoff(COORDINATOR));
+        sleep_ms(ARM_DELAY.as_millis() as u64 + 500).await;
+        assert_eq!(rig.sonos.queued(), vec![rig.base(1), rig.base(2)]);
+
+        let next = next.await.unwrap();
+        let a = counters(&first);
+        let b = counters(&next);
+        assert!(!b.is_empty());
+        assert_eq!(
+            b[0],
+            a[a.len() - 1] + 1,
+            "segment 1 starts at the next sample"
+        );
+        assert!(a.windows(2).chain(b.windows(2)).all(|w| w[1] == w[0] + 1));
+        assert!(rig.sonos.played().is_empty(), "no restart");
+        assert!(!rig.told(COORDINATOR).contains(&TransportState::Stopped));
+        assert!(rig.stop_reasons().is_empty());
+    }
+
+    /// Plays segment 0 of a minute-long rig with `continuation` until its
+    /// end, having reported PLAYING on it: the next segment is queued on the
+    /// way.
+    async fn queue_then_end(rig: &Rig, continuation: PcmContinuation) {
+        let first = rig.play_in_background(continuation, PcmSegmentDidl::Broadcast);
+        sleep_ms(500).await;
+        rig.gena(COORDINATOR, TransportState::Playing, Some(&rig.uri(0)));
+        first.await.unwrap();
+        assert_eq!(rig.sonos.queued(), vec![rig.base(1)]);
+    }
+
+    /// In `auto`, a speaker that stops on segment 0 although segment 1 was
+    /// queued falls back to a restart, and is never queued a segment again:
+    /// later boundaries restart it at once.
+    #[tokio::test(start_paused = true)]
+    async fn a_speaker_that_does_not_follow_the_queue_is_restarted_and_not_queued_again() {
+        let rig = Rig::with_segment(false, MINUTE);
+        queue_then_end(&rig, PcmContinuation::Auto).await;
+        rig.sonos.stopped_on(&rig.uri(0));
+        rig.gena(COORDINATOR, TransportState::Stopped, Some(&rig.uri(0)));
+        sleep_ms(1_200).await;
+        assert_eq!(
+            rig.sonos.played(),
+            vec![(COORDINATOR.to_string(), rig.base(1))]
+        );
+
+        let _next = rig.fetch_in_background(1, 30_000);
+        rig.gena(COORDINATOR, TransportState::Playing, Some(&rig.uri(1)));
+        assert!(!rig.coordinator.in_handoff(COORDINATOR));
+        sleep_ms(20_000).await;
+        assert_eq!(rig.sonos.queued(), vec![rig.base(1)], "not queued again");
+        assert!(rig.stop_reasons().is_empty());
+    }
+
+    /// In `next`, a boundary the speaker did not follow still restarts it,
+    /// but the segment after is queued all the same.
+    #[tokio::test(start_paused = true)]
+    async fn in_next_mode_a_fallback_does_not_stop_the_queueing() {
+        let rig = Rig::with_segment(false, MINUTE);
+        queue_then_end(&rig, PcmContinuation::Next).await;
+        rig.sonos.stopped_on(&rig.uri(0));
+        rig.gena(COORDINATOR, TransportState::Stopped, Some(&rig.uri(0)));
+        sleep_ms(1_200).await;
+        assert_eq!(rig.sonos.played().len(), 1);
+
+        let _next = rig.fetch_in_background(1, 30_000);
+        rig.gena(COORDINATOR, TransportState::Playing, Some(&rig.uri(1)));
+        sleep_ms(ARM_DELAY.as_millis() as u64 + 500).await;
+        assert_eq!(rig.sonos.queued(), vec![rig.base(1), rig.base(2)]);
+    }
+
+    /// A speaker refusing the queued segment is asked once more; refusing
+    /// again, the boundary is left to a restart, and in `auto` it is not
+    /// queued anything again.
+    #[tokio::test(start_paused = true)]
+    async fn a_refused_queue_is_tried_once_more_then_left_to_a_restart() {
+        let rig = Rig::with_segment(false, MINUTE);
+        rig.sonos.queue_refusals.store(2, Ordering::SeqCst);
+        let first = rig.play_in_background(PcmContinuation::Auto, PcmSegmentDidl::Broadcast);
+        sleep_ms(500).await;
+        rig.gena(COORDINATOR, TransportState::Playing, Some(&rig.uri(0)));
+        sleep_ms(ARM_DELAY.as_millis() as u64 + ARM_RETRY.as_millis() as u64 + 500).await;
+        assert_eq!(rig.sonos.queue_attempts.load(Ordering::SeqCst), 2);
+        rig.gena_next(
+            COORDINATOR,
+            TransportState::Playing,
+            Some(&rig.uri(0)),
+            Some(""),
+        );
+        first.await.unwrap();
+        assert_eq!(rig.sonos.queue_attempts.load(Ordering::SeqCst), 2);
+        assert!(rig.sonos.queued().is_empty());
+
+        rig.sonos.stopped_on(&rig.uri(0));
+        rig.gena(COORDINATOR, TransportState::Stopped, Some(&rig.uri(0)));
+        sleep_ms(1_200).await;
+        assert_eq!(rig.sonos.played().len(), 1, "the boundary restarts");
+        let _next = rig.fetch_in_background(1, 30_000);
+        rig.gena(COORDINATOR, TransportState::Playing, Some(&rig.uri(1)));
+        sleep_ms(20_000).await;
+        assert_eq!(rig.sonos.queue_attempts.load(Ordering::SeqCst), 2);
+    }
+
+    /// Only ever the segment after the one the speaker reports: while that
+    /// is pending, nothing further is queued, and an event showing the queue
+    /// cleared (a pause and resume, a `SetAVTransportURI`) queues the same
+    /// segment again, never the one after it.
+    #[tokio::test(start_paused = true)]
+    async fn the_next_segment_is_never_queued_two_ahead() {
+        let rig = Rig::with_segment(false, MINUTE * 2);
+        let _first = rig.play_in_background(PcmContinuation::Next, PcmSegmentDidl::Broadcast);
+        sleep_ms(500).await;
+        rig.gena(COORDINATOR, TransportState::Playing, Some(&rig.uri(0)));
+        sleep_ms(ARM_DELAY.as_millis() as u64 + 500).await;
+        assert_eq!(rig.sonos.queued(), vec![rig.base(1)]);
+
+        // Events from before it was queued, and the speaker paused and
+        // resumed with it still queued: nothing new.
+        rig.gena_next(
+            COORDINATOR,
+            TransportState::Playing,
+            Some(&rig.uri(0)),
+            Some(""),
+        );
+        rig.gena(COORDINATOR, TransportState::Paused, Some(&rig.uri(0)));
+        sleep_ms(5_000).await;
+        rig.gena_next(
+            COORDINATOR,
+            TransportState::Playing,
+            Some(&rig.uri(0)),
+            Some(&rig.uri(1)),
+        );
+        sleep_ms(ARM_DELAY.as_millis() as u64 + 500).await;
+        assert_eq!(rig.sonos.queued(), vec![rig.base(1)]);
+
+        // The queue cleared: segment 1 again.
+        rig.gena_next(
+            COORDINATOR,
+            TransportState::Playing,
+            Some(&rig.uri(0)),
+            Some(""),
+        );
+        sleep_ms(ARM_DELAY.as_millis() as u64 + 500).await;
+        assert_eq!(rig.sonos.queued(), vec![rig.base(1), rig.base(1)]);
+    }
+
+    /// A speaker reporting PLAYING too late in a segment for the queued item
+    /// to be safe is queued nothing: the boundary is a plain restart, which
+    /// does not count against it, and the next segment is queued as usual.
+    #[tokio::test(start_paused = true)]
+    async fn too_close_to_the_end_the_boundary_is_left_to_a_restart() {
+        let rig = Rig::with_segment(false, MINUTE);
+        let first = rig.play_in_background(PcmContinuation::Auto, PcmSegmentDidl::Broadcast);
+        sleep_ms(40_000).await;
+        rig.gena(COORDINATOR, TransportState::Playing, Some(&rig.uri(0)));
+        first.await.unwrap();
+        assert!(rig.sonos.queued().is_empty());
+
+        rig.sonos.stopped_on(&rig.uri(0));
+        rig.gena(COORDINATOR, TransportState::Stopped, Some(&rig.uri(0)));
+        sleep_ms(1_200).await;
+        assert_eq!(rig.sonos.played().len(), 1);
+        let _next = rig.fetch_in_background(1, 30_000);
+        rig.gena(COORDINATOR, TransportState::Playing, Some(&rig.uri(1)));
+        sleep_ms(ARM_DELAY.as_millis() as u64 + 500).await;
+        assert_eq!(rig.sonos.queued(), vec![rig.base(2)]);
+    }
+
+    /// In `restart` nothing is ever queued.
+    #[tokio::test(start_paused = true)]
+    async fn restart_mode_never_queues_a_segment() {
+        let rig = Rig::with_segment(false, MINUTE);
+        let _first = rig.play_in_background(PcmContinuation::Restart, PcmSegmentDidl::Broadcast);
+        sleep_ms(500).await;
+        rig.gena(COORDINATOR, TransportState::Playing, Some(&rig.uri(0)));
+        sleep_ms(30_000).await;
+        assert_eq!(rig.sonos.queue_attempts.load(Ordering::SeqCst), 0);
+    }
+
+    /// The `track` experiment declares the queued segment's data size.
+    #[tokio::test(start_paused = true)]
+    async fn the_track_experiment_declares_the_segment_length() {
+        let rig = Rig::with_segment(false, MINUTE);
+        let _first = rig.play_in_background(PcmContinuation::Auto, PcmSegmentDidl::Track);
+        sleep_ms(500).await;
+        rig.gena(COORDINATOR, TransportState::Playing, Some(&rig.uri(0)));
+        sleep_ms(ARM_DELAY.as_millis() as u64 + 500).await;
+        assert_eq!(
+            rig.sonos.queued.lock().clone(),
+            vec![(
+                COORDINATOR.to_string(),
+                rig.base(1),
+                Some(rig.layout.data_bytes())
+            )]
+        );
     }
 }

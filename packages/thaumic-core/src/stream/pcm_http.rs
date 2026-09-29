@@ -17,9 +17,10 @@
 //! The switches let a field experiment change one thing at a time without a
 //! rebuild: how the body is delimited, the length it declares, the sizes in
 //! the WAV header, a clean end from our side after a set number of bytes, the
-//! size of a segment, and how a speaker is moved on to the next one. They are read from the environment once per
-//! connection, and none of them is a setting: unset, a PCM stream is served
-//! as described above.
+//! size of a segment, how a speaker is moved on to the next one and how a
+//! queued segment is described to it. They are read from the environment once
+//! per connection, and none of them is a setting: unset, a PCM stream is
+//! served as described above.
 //!
 //! The older switches that set the WAV header's size, end the body after a
 //! set number of bytes or declare a length each fix one connection's end
@@ -59,19 +60,25 @@ pub const PCM_END_AFTER_BYTES_ENV: &str = "THAUMIC_PCM_END_AFTER_BYTES";
 pub const PCM_SEGMENT_BYTES_ENV: &str = "THAUMIC_PCM_SEGMENT_BYTES";
 
 /// Environment variable that picks how a speaker is moved on from one PCM
-/// segment to the next: `restart` (the default) or `off`. See
+/// segment to the next: `auto` (the default), `next`, `restart` or `off`. See
 /// [`PcmContinuation`]. Ignored while segments are off.
 pub const PCM_CONTINUATION_ENV: &str = "THAUMIC_PCM_CONTINUATION";
 
+/// Environment variable that picks how a PCM segment queued as a speaker's
+/// next item is described to it: `broadcast` (the default) or `track`. See
+/// [`PcmSegmentDidl`]. Ignored while segments are off.
+pub const PCM_SEGMENT_DIDL_ENV: &str = "THAUMIC_PCM_SEGMENT_DIDL";
+
 /// The environment variables [`PcmHttpSettings::from_env`] reads, in the
 /// order they are reported.
-const SWITCH_VARS: [&str; 6] = [
+const SWITCH_VARS: [&str; 7] = [
     PCM_HTTP_FRAMING_ENV,
     PCM_CONTENT_LENGTH_ENV,
     PCM_WAV_DATA_SIZE_ENV,
     PCM_END_AFTER_BYTES_ENV,
     PCM_SEGMENT_BYTES_ENV,
     PCM_CONTINUATION_ENV,
+    PCM_SEGMENT_DIDL_ENV,
 ];
 
 /// How a PCM response body is delimited on the wire.
@@ -125,11 +132,23 @@ impl fmt::Display for PcmHttpFraming {
 /// played the first to its end.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum PcmContinuation {
+    /// Queue each next segment with `SetNextAVTransportURI`, as [`Self::Next`],
+    /// and fall back to [`Self::Restart`] for a speaker that does not follow
+    /// it: that speaker is then restarted at every later boundary, for as long
+    /// as the server runs. The default: a Playbar and a Play:1 group (S2
+    /// 86.10) both followed the queued segment with no audible switch.
+    #[default]
+    Auto,
+    /// Queue each next segment with `SetNextAVTransportURI` while the current
+    /// one plays: the speaker fetches it the moment the current one's body
+    /// ends and plays on with no gap. A boundary the speaker does not follow
+    /// still falls back to a restart, so the cast goes on, but the next
+    /// segment is queued again every time. For testing the gapless handover.
+    Next,
     /// Once the speaker has played a segment to its end and reported
     /// STOPPED, the server itself tells it to play the next one
-    /// (`SetAVTransportURI` and `Play`): a pause of about a second and a half
-    /// every segment, and nothing the user has to do. The default.
-    #[default]
+    /// (`SetAVTransportURI` and `Play`): a pause of a few seconds every
+    /// segment, and nothing the user has to do.
     Restart,
     /// Nothing moves the speaker on: the cast ends after its first segment,
     /// as it did before continuation existed. For comparison.
@@ -137,25 +156,78 @@ pub enum PcmContinuation {
 }
 
 impl PcmContinuation {
-    /// Parses a continuation name: `restart` or `off`, in any case.
+    /// Parses a continuation name: `auto`, `next`, `restart` or `off`, in any
+    /// case.
     pub fn parse(value: &str) -> Result<Self, String> {
         match value.trim().to_ascii_lowercase().as_str() {
+            "auto" => Ok(Self::Auto),
+            "next" => Ok(Self::Next),
             "restart" => Ok(Self::Restart),
             "off" => Ok(Self::Off),
-            _ => Err(format!("expected restart or off, got {value:?}")),
+            _ => Err(format!(
+                "expected auto, next, restart or off, got {value:?}"
+            )),
         }
     }
 
     /// The name used for this mode in log lines and the environment.
     pub fn label(self) -> &'static str {
         match self {
+            Self::Auto => "auto",
+            Self::Next => "next",
             Self::Restart => "restart",
             Self::Off => "off",
         }
     }
+
+    /// Whether each next segment is queued with `SetNextAVTransportURI`.
+    pub fn queues_next(self) -> bool {
+        matches!(self, Self::Auto | Self::Next)
+    }
 }
 
 impl fmt::Display for PcmContinuation {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.label())
+    }
+}
+
+/// How a PCM segment queued with `SetNextAVTransportURI` is described in its
+/// DIDL-Lite metadata.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum PcmSegmentDidl {
+    /// `object.item.audioItem.audioBroadcast` with no duration or size, as
+    /// every cast is started. The default: a Playbar and a Play:1 group
+    /// followed it gaplessly, and Sonos ignores a declared duration anyway.
+    #[default]
+    Broadcast,
+    /// `object.item.audioItem.musicTrack` declaring the segment's duration
+    /// and size. A Playbar fetched such an item early as soon as it was
+    /// queued, and again past its end at the boundary. For comparison only;
+    /// the first segment and any restart keep the broadcast description.
+    Track,
+}
+
+impl PcmSegmentDidl {
+    /// Parses a description name: `broadcast` or `track`, in any case.
+    pub fn parse(value: &str) -> Result<Self, String> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "broadcast" => Ok(Self::Broadcast),
+            "track" => Ok(Self::Track),
+            _ => Err(format!("expected broadcast or track, got {value:?}")),
+        }
+    }
+
+    /// The name used for this description in log lines and the environment.
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Broadcast => "broadcast",
+            Self::Track => "track",
+        }
+    }
+}
+
+impl fmt::Display for PcmSegmentDidl {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(self.label())
     }
@@ -190,6 +262,8 @@ pub struct PcmHttpSettings {
     pub segment_bytes: u64,
     /// How a speaker is moved on from one segment to the next.
     pub continuation: PcmContinuation,
+    /// How a segment queued as a speaker's next item is described.
+    pub segment_didl: PcmSegmentDidl,
 }
 
 impl Default for PcmHttpSettings {
@@ -202,7 +276,8 @@ impl Default for PcmHttpSettings {
             end_after_bytes: None,
             segments: true,
             segment_bytes: super::playout::PCM_SEGMENT_BYTES_MAX,
-            continuation: PcmContinuation::Restart,
+            continuation: PcmContinuation::Auto,
+            segment_didl: PcmSegmentDidl::Broadcast,
         }
     }
 }
@@ -248,7 +323,7 @@ impl PcmHttpSwitches {
     pub fn from_env() -> Self {
         let mut unreadable = Vec::new();
         let raw = SWITCH_VARS.map(|var| read_switch(var, std::env::var_os(var), &mut unreadable));
-        let [framing, content_length, wav_data_size, end_after_bytes, segment_bytes, continuation] =
+        let [framing, content_length, wav_data_size, end_after_bytes, segment_bytes, continuation, segment_didl] =
             raw;
         Self::resolve(RawSwitches {
             framing: framing.as_deref(),
@@ -257,6 +332,7 @@ impl PcmHttpSwitches {
             end_after_bytes: end_after_bytes.as_deref(),
             segment_bytes: segment_bytes.as_deref(),
             continuation: continuation.as_deref(),
+            segment_didl: segment_didl.as_deref(),
         })
         .with_unreadable(unreadable)
     }
@@ -286,13 +362,15 @@ impl PcmHttpSwitches {
             end_after_bytes: set(raw.end_after_bytes),
             segment_bytes: set(raw.segment_bytes),
             continuation: set(raw.continuation),
+            segment_didl: set(raw.segment_didl),
         };
         let any_set = raw.framing.is_some()
             || raw.content_length.is_some()
             || raw.wav_data_size.is_some()
             || raw.end_after_bytes.is_some()
             || raw.segment_bytes.is_some()
-            || raw.continuation.is_some();
+            || raw.continuation.is_some()
+            || raw.segment_didl.is_some();
 
         let mut ignore = |var: &str, value: &str, why: String| {
             problems.push(format!("Ignoring {var}={value:?}: {why}"));
@@ -372,6 +450,17 @@ impl PcmHttpSwitches {
                 (Err(e), _) => ignore(PCM_CONTINUATION_ENV, value, e),
             }
         }
+        if let Some(value) = raw.segment_didl {
+            match (PcmSegmentDidl::parse(value), fixed_end) {
+                (Ok(_), Some(var)) => ignore(
+                    PCM_SEGMENT_DIDL_ENV,
+                    value,
+                    format!("segments are off while {var} is set"),
+                ),
+                (Ok(didl), None) => settings.segment_didl = didl,
+                (Err(e), _) => ignore(PCM_SEGMENT_DIDL_ENV, value, e),
+            }
+        }
 
         Self {
             settings,
@@ -409,6 +498,7 @@ struct RawSwitches<'a> {
     end_after_bytes: Option<&'a str>,
     segment_bytes: Option<&'a str>,
     continuation: Option<&'a str>,
+    segment_didl: Option<&'a str>,
 }
 
 /// Parses a byte count of at least 1.
@@ -460,6 +550,7 @@ mod tests {
             end_after_bytes,
             segment_bytes: None,
             continuation: None,
+            segment_didl: None,
         })
     }
 
@@ -484,7 +575,8 @@ mod tests {
                 end_after_bytes: None,
                 segments: true,
                 segment_bytes: 0xFFFF_0000,
-                continuation: PcmContinuation::Restart,
+                continuation: PcmContinuation::Auto,
+                segment_didl: PcmSegmentDidl::Broadcast,
             }
         );
         assert!(!switches.any_set);
@@ -680,9 +772,9 @@ mod tests {
         );
     }
 
-    /// Restart is the default way on to the next segment; `off` keeps the
-    /// cast to its first segment for comparison, and neither applies while
-    /// segments are off.
+    /// Auto (queue the next segment, restart a speaker that does not follow
+    /// it) is the default way on to the next segment; `next`, `restart` and
+    /// `off` are there for testing, and none applies while segments are off.
     #[test]
     fn continuation_follows_its_switch_while_segments_are_on() {
         let with = |framing: Option<&str>, continuation: Option<&str>| {
@@ -692,24 +784,70 @@ mod tests {
                 ..RawSwitches::default()
             })
         };
+        assert_eq!(
+            with(None, None).settings.continuation,
+            PcmContinuation::Auto
+        );
         let off = with(None, Some(" OFF "));
         assert_eq!(off.settings.continuation, PcmContinuation::Off);
         assert!(off.any_set);
         assert!(off.problems.is_empty());
-        assert_eq!(
-            with(None, Some("restart")).settings.continuation,
-            PcmContinuation::Restart
-        );
+        for (value, mode) in [
+            ("restart", PcmContinuation::Restart),
+            ("Next", PcmContinuation::Next),
+            ("auto", PcmContinuation::Auto),
+        ] {
+            assert_eq!(with(None, Some(value)).settings.continuation, mode);
+            assert_eq!(mode.to_string(), value.to_ascii_lowercase());
+        }
+        assert!(PcmContinuation::Auto.queues_next());
+        assert!(PcmContinuation::Next.queues_next());
+        assert!(!PcmContinuation::Restart.queues_next());
+        assert!(!PcmContinuation::Off.queues_next());
 
         let unknown = with(None, Some("gapless"));
-        assert_eq!(unknown.settings.continuation, PcmContinuation::Restart);
+        assert_eq!(unknown.settings.continuation, PcmContinuation::Auto);
         assert_eq!(unknown.problems.len(), 1);
-        assert!(unknown.problems[0].contains("expected restart or off"));
+        assert!(unknown.problems[0].contains("expected auto, next, restart or off"));
 
         let length = with(Some("length"), Some("off"));
-        assert_eq!(length.settings.continuation, PcmContinuation::Restart);
+        assert_eq!(length.settings.continuation, PcmContinuation::Auto);
         assert!(length.problems[0].contains("segments are off"));
         assert_eq!(PcmContinuation::Off.to_string(), "off");
+    }
+
+    /// A queued segment is described as a broadcast unless the `track`
+    /// experiment asks otherwise, and not at all while segments are off.
+    #[test]
+    fn the_segment_description_follows_its_switch_while_segments_are_on() {
+        let with = |framing: Option<&str>, segment_didl: Option<&str>| {
+            PcmHttpSwitches::resolve(RawSwitches {
+                framing,
+                segment_didl,
+                ..RawSwitches::default()
+            })
+        };
+        assert_eq!(
+            with(None, None).settings.segment_didl,
+            PcmSegmentDidl::Broadcast
+        );
+        let track = with(None, Some(" Track "));
+        assert_eq!(track.settings.segment_didl, PcmSegmentDidl::Track);
+        assert!(track.any_set);
+        assert!(track.problems.is_empty());
+        assert_eq!(
+            with(None, Some("broadcast")).settings.segment_didl,
+            PcmSegmentDidl::Broadcast
+        );
+
+        let unknown = with(None, Some("music"));
+        assert_eq!(unknown.settings.segment_didl, PcmSegmentDidl::Broadcast);
+        assert!(unknown.problems[0].contains("expected broadcast or track"));
+
+        let length = with(Some("length"), Some("track"));
+        assert_eq!(length.settings.segment_didl, PcmSegmentDidl::Broadcast);
+        assert!(length.problems[0].contains("segments are off"));
+        assert_eq!(PcmSegmentDidl::Track.to_string(), "track");
     }
 
     #[test]

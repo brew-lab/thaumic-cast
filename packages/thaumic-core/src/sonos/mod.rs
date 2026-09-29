@@ -48,7 +48,7 @@ pub(crate) mod test_fixtures;
 pub use services::SonosService;
 
 // Re-export trait abstractions
-pub use traits::{SonosClient, SonosPlayback, SonosTopologyClient};
+pub use traits::{NextItem, SonosClient, SonosPlayback, SonosTopologyClient};
 
 // Re-export concrete implementation
 pub use client::SonosClientImpl;

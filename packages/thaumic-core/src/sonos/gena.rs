@@ -56,6 +56,11 @@ pub enum SonosEvent {
         state: TransportState,
         #[serde(rename = "currentUri", skip_serializing_if = "Option::is_none")]
         current_uri: Option<String>,
+        /// The `NextAVTransportURI` the event carried: `Some("")` when it said
+        /// nothing is queued, `None` when it did not mention it. For the
+        /// server only (a queued PCM segment); never sent to clients.
+        #[serde(skip)]
+        next_uri: Option<String>,
         timestamp: u64,
     },
     /// Group volume changed (from coordinator).

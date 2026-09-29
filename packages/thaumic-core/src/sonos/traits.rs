@@ -10,6 +10,26 @@ use crate::sonos::discovery::Speaker;
 use crate::sonos::types::{PositionInfo, TransportState, ZoneGroupSnapshot};
 use crate::stream::{AudioCodec, AudioFormat, StreamMetadata};
 
+/// An item to queue as a speaker's next with
+/// [`SonosPlayback::set_next_uri`]: the next segment of a PCM cast.
+#[derive(Debug, Clone, Copy)]
+pub struct NextItem<'a> {
+    /// The stream URL, as for [`SonosPlayback::play_uri`] (without the
+    /// extension Sonos is given).
+    pub uri: &'a str,
+    /// The audio codec, for the URI Sonos is given and its DIDL-Lite.
+    pub codec: AudioCodec,
+    /// The audio format.
+    pub audio_format: &'a AudioFormat,
+    /// Stream metadata for display, as for the cast's first item.
+    pub metadata: Option<&'a StreamMetadata>,
+    /// The album art URL.
+    pub artwork_url: &'a str,
+    /// Describe the item as a track of this many data bytes rather than a
+    /// broadcast with no length (see [`crate::stream::PcmSegmentDidl`]).
+    pub declared_data_bytes: Option<u64>,
+}
+
 /// Trait for Sonos playback control operations.
 ///
 /// Used by `StreamCoordinator` to command speakers to play or stop.
@@ -33,6 +53,18 @@ pub trait SonosPlayback: Send + Sync {
         metadata: Option<&StreamMetadata>,
         artwork_url: &str,
     ) -> SoapResult<()>;
+
+    /// Queues an item to play when the current one ends
+    /// (`SetNextAVTransportURI`), without touching what plays now.
+    ///
+    /// A Sonos speaker fetches the queued item the moment the current one's
+    /// body ends and switches to it once it has played out what it holds,
+    /// with no gap. `SetAVTransportURI` clears it.
+    ///
+    /// # Arguments
+    /// * `ip` - IP address of the Sonos speaker (the coordinator of a group)
+    /// * `item` - The item to queue
+    async fn set_next_uri(&self, ip: &str, item: &NextItem<'_>) -> SoapResult<()>;
 
     /// Sends a Play command to resume playback on a Sonos speaker.
     ///

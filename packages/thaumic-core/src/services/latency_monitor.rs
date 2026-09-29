@@ -2909,6 +2909,13 @@ mod tests {
             ) -> SoapResult<()> {
                 Ok(())
             }
+            async fn set_next_uri(
+                &self,
+                _: &str,
+                _: &crate::sonos::traits::NextItem<'_>,
+            ) -> SoapResult<()> {
+                Ok(())
+            }
             async fn play(&self, _: &str) -> SoapResult<()> {
                 Ok(())
             }

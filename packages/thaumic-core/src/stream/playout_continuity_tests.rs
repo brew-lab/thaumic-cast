@@ -166,6 +166,7 @@ impl Rig {
             guard: self.guard(),
             registry: Some(Arc::clone(&self.registry)),
             continuation: PcmContinuation::Restart,
+            segment_didl: PcmSegmentDidl::Broadcast,
             head_start: Duration::from_millis(self.head_start_ms),
             events: self.events.clone(),
         })

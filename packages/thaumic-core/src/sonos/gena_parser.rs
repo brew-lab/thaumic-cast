@@ -14,7 +14,8 @@ use crate::utils::now_millis;
 
 /// Parses an AVTransport NOTIFY event body and builds events.
 ///
-/// Extracts transport state and current track URI from the LastChange element.
+/// Extracts transport state, current track URI and, when the event names it,
+/// the queued next URI (`NextAVTransportURI`) from the LastChange element.
 /// Optionally detects source changes if a callback is provided: a current URI
 /// that is not [`same_stream`] as the expected one is a `SourceChanged`. That
 /// is decided by stream id, so a speaker moving on to the next segment of a
@@ -48,7 +49,10 @@ where
     // whose decoded text contains a quote). The two fields read below happen
     // to survive it today, so this is correctness-by-construction rather than
     // a fix for an observed symptom on this path.
-    let attrs = extract_empty_val_attrs(&last_change, &["TransportState", "CurrentTrackURI"]);
+    let attrs = extract_empty_val_attrs(
+        &last_change,
+        &["TransportState", "CurrentTrackURI", "NextAVTransportURI"],
+    );
 
     let transport_state: Option<TransportState> =
         attrs.get("TransportState").and_then(|val| val.parse().ok());
@@ -58,12 +62,16 @@ where
         .filter(|val| !val.is_empty())
         .cloned();
 
+    // Unlike the current URI, an empty one is news: nothing is queued.
+    let next_uri: Option<String> = attrs.get("NextAVTransportURI").cloned();
+
     // Emit transport state event
     if let Some(state) = transport_state {
         events.push(SonosEvent::TransportState {
             speaker_ip: ip.to_string(),
             state,
             current_uri: current_uri.clone(),
+            next_uri,
             timestamp,
         });
     }
@@ -539,6 +547,60 @@ mod tests {
             }
             other => panic!("expected TransportState, got {other:?}"),
         }
+    }
+
+    /// The next URI a speaker has queued is read when the event names it
+    /// (empty: nothing queued), and not guessed when it does not: Sonos
+    /// leaves it out of events where it did not change.
+    #[test]
+    fn the_queued_next_uri_is_read_only_when_the_event_names_it() {
+        let next_of = |event: &str| {
+            let body = format!(
+                r#"<?xml version="1.0"?><e:propertyset xmlns:e="urn:schemas-upnp-org:event-1-0"><e:property><LastChange>{}</LastChange></e:property></e:propertyset>"#,
+                html_escape::encode_text(event)
+            );
+            match parse_av_transport_events(
+                "192.168.1.50",
+                &body,
+                None::<fn(&str) -> Option<String>>,
+            )
+            .as_slice()
+            {
+                [SonosEvent::TransportState { next_uri, .. }] => next_uri.clone(),
+                other => panic!("expected one TransportState, got {other:?}"),
+            }
+        };
+        let queued = "http://192.168.1.2:49400/stream/abc-123/live/1.wav";
+        assert_eq!(
+            next_of(&format!(
+                r#"<Event xmlns="urn:schemas-upnp-org:metadata-1-0/AVT/"><InstanceID val="0"><TransportState val="PLAYING"/><CurrentTrackURI val="http://192.168.1.2:49400/stream/abc-123/live.wav"/><NextAVTransportURI val="{queued}"/><r:NextTrackURI val=""/></InstanceID></Event>"#
+            ))
+            .as_deref(),
+            Some(queued)
+        );
+        assert_eq!(
+            next_of(
+                r#"<Event xmlns="urn:schemas-upnp-org:metadata-1-0/AVT/"><InstanceID val="0"><TransportState val="PLAYING"/><NextAVTransportURI val=""/></InstanceID></Event>"#
+            )
+            .as_deref(),
+            Some("")
+        );
+        assert_eq!(
+            next_of(&format!(
+                r#"<Event xmlns="urn:schemas-upnp-org:metadata-1-0/AVT/"><InstanceID val="0"><TransportState val="PLAYING"/><CurrentTrackURI val="{queued}"/></InstanceID></Event>"#
+            )),
+            None,
+            "not named: not known"
+        );
+        let full = parse_av_transport_events(
+            "192.168.1.50",
+            AV_TRANSPORT_NOTIFY_WITH_METADATA,
+            None::<fn(&str) -> Option<String>>,
+        );
+        assert!(
+            matches!(&full[0], SonosEvent::TransportState { next_uri: Some(n), .. } if n.is_empty()),
+            "a full event names an empty next URI: {full:?}"
+        );
     }
 
     #[test]
