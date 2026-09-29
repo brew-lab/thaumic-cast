@@ -76,9 +76,10 @@ export function headStartWhereLine(suggested: number, ctx: NoticeWordingContext)
 
 /**
  * Picks the sentence offering clock drift correction for an uncorrected
- * drift, or a speaker running low because of one: only when the companion reports its mode, the mode is not already
- * `on`, the speaker monitor (which correction steers by) is on, and the
- * companion's type says where correction is turned on.
+ * drift, or a speaker running low because of one: only when the companion
+ * reports its mode, the mode is not already `on`, the speaker monitor (which
+ * correction steers by) is on, and the companion's type says where
+ * correction is turned on.
  * @param ctx - The wording context
  * @returns The sentence to append, or null when there is nothing to offer
  */
