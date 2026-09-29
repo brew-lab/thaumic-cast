@@ -8,7 +8,10 @@ import { TransportStateSchema, ZoneGroupSchema } from './sonos.js';
  * - `source_changed`: User switched Sonos to another source (Spotify, AirPlay, etc.)
  * - `playback_stopped`: Playback stopped on the speaker (system/network issue)
  * - `speaker_stopped`: Speaker stopped unexpectedly (e.g., stream killed due to underflow)
+ * - `speaker_taken_over`: Another cast client started its own stream on this speaker
  * - `user_removed`: User explicitly removed the speaker via UI
+ * - `continuation_failed`: A long PCM cast could not be moved on to its next segment
+ *   (the speaker would not start it), so it ended there
  */
 export const SpeakerRemovalReasonSchema = z.enum([
   'source_changed',
@@ -16,6 +19,7 @@ export const SpeakerRemovalReasonSchema = z.enum([
   'speaker_stopped',
   'speaker_taken_over',
   'user_removed',
+  'continuation_failed',
 ]);
 export type SpeakerRemovalReason = z.infer<typeof SpeakerRemovalReasonSchema>;
 
