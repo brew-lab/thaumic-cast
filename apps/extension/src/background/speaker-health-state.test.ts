@@ -76,6 +76,16 @@ describe('applySpeakerHealthEvent', () => {
     expect(snapshot[OFFICE]?.state).toBe('locking');
   });
 
+  it('should carry the drift correction figures through as sent', () => {
+    applySpeakerHealthEvent(
+      healthEvent(KITCHEN, { driftMode: 'on', commandPpm: 19.5, netInsertedMs: 54 }),
+    );
+    const entry = getSpeakerHealth()[KITCHEN];
+    expect(entry?.driftMode).toBe('on');
+    expect(entry?.commandPpm).toBe(19.5);
+    expect(entry?.netInsertedMs).toBe(54);
+  });
+
   it('should carry the companion notice and the head start figures through as sent', () => {
     const notice = {
       kind: 'head_start_close',

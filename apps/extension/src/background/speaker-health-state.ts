@@ -61,6 +61,9 @@ export function applySpeakerHealthEvent(event: SpeakerHealthEvent): void {
     clockPpm: event.clockPpm,
     clockSePpm: event.clockSePpm,
     timeToFloorS: event.timeToFloorS,
+    driftMode: event.driftMode,
+    commandPpm: event.commandPpm,
+    netInsertedMs: event.netInsertedMs,
     notice: event.notice,
     updatedAt: event.timestamp,
   });
@@ -73,6 +76,10 @@ export function applySpeakerHealthEvent(event: SpeakerHealthEvent): void {
     `floor ${event.floorMs ?? '?'} ms, stall ${event.stallMs ?? '?'} ms), ` +
     `head start ${event.headStartMs ?? '?'}/${event.headStartConfiguredMs ?? '?'} ms, ` +
     `clock ${event.clockPpm?.toFixed(1) ?? '?'} ppm, floor in ${event.timeToFloorS ?? '—'} s` +
+    (event.driftMode
+      ? `, drift ${event.driftMode} ${event.commandPpm?.toFixed(1) ?? '?'} ppm` +
+        (event.netInsertedMs !== undefined ? ` (${event.netInsertedMs} ms inserted)` : '')
+      : '') +
     (notice ? `, notice ${notice.kind} #${notice.noticeId}` : '');
   const isNewNotice =
     notice !== undefined &&
