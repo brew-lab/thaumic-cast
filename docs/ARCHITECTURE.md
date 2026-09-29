@@ -65,7 +65,7 @@ We use a Monorepo workspace managed by `bun`.
 4.  **Encoding:** An Offscreen Document reads the Ring Buffer and uses `AudioEncoder` (WebCodecs) to compress (AAC) or format (WAV) the audio.
 5.  **Transport (Network):** Encoded frames are sent via WebSocket to the Desktop App.
 6.  **Buffering:** The Desktop App buffers frames in a `VecDeque` and distributes them via a broadcast channel to HTTP clients. A fixed-cadence delivery system ensures smooth playback with silence frames during gaps.
-7.  **Playback:** The Desktop App serves the buffer as an infinite HTTP stream (using a large `Content-Length` to avoid chunked encoding) to the Sonos speaker.
+7.  **Playback:** The Desktop App serves the buffer as an infinite HTTP stream to the Sonos speaker, chunked with no `Content-Length` (a declared length is a real end: Sonos caps it at 2^31 bytes, 3h06m of PCM). HTTP/1.0 clients get a body that ends only when the connection closes.
 
 ## Multi-Cast Handling
 
