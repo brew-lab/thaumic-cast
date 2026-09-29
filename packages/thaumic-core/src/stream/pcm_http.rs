@@ -17,6 +17,7 @@
 
 use std::fmt;
 
+use super::tap::WAV_HEADER_BYTES;
 use crate::protocol_constants::WAV_STREAM_SIZE_MAX;
 
 /// Environment variable that picks how a PCM response body is delimited:
@@ -126,6 +127,24 @@ impl Default for PcmHttpSettings {
             wav_data_size: WAV_STREAM_SIZE_MAX,
             end_after_bytes: None,
         }
+    }
+}
+
+impl PcmHttpSettings {
+    /// Body bytes a connection served with these settings carries up to its
+    /// declared end (see [`crate::stream::DeclaredEnd`]): the WAV header and
+    /// the data size it declares, or less where a declared `Content-Length`
+    /// or a test cap ends the body sooner. By default 44 + 4294967295, where a
+    /// Playbar stops after 6h12m50s at 48 kHz stereo.
+    pub fn declared_end_bytes(&self) -> u64 {
+        let mut end = u64::from(WAV_HEADER_BYTES) + u64::from(self.wav_data_size);
+        if self.framing == PcmHttpFraming::Length {
+            end = end.min(self.content_length);
+        }
+        if let Some(cap) = self.end_after_bytes {
+            end = end.min(cap);
+        }
+        end
     }
 }
 
@@ -447,6 +466,33 @@ mod tests {
         let quiet = resolve(None, None, None, None).with_unreadable(Vec::new());
         assert!(!quiet.any_set);
         assert!(quiet.problems.is_empty());
+    }
+
+    #[test]
+    fn the_declared_end_is_the_soonest_length_the_body_carries() {
+        let default = PcmHttpSettings::default();
+        assert_eq!(default.declared_end_bytes(), 44 + u64::from(u32::MAX));
+        let small_header = PcmHttpSettings {
+            wav_data_size: 10_000,
+            ..default
+        };
+        assert_eq!(small_header.declared_end_bytes(), 10_044);
+        let length = PcmHttpSettings {
+            framing: PcmHttpFraming::Length,
+            content_length: 5_000,
+            ..small_header
+        };
+        assert_eq!(length.declared_end_bytes(), 5_000);
+        let chunked_ignores_the_length = PcmHttpSettings {
+            framing: PcmHttpFraming::Chunked,
+            ..length
+        };
+        assert_eq!(chunked_ignores_the_length.declared_end_bytes(), 10_044);
+        let capped = PcmHttpSettings {
+            end_after_bytes: Some(2_000),
+            ..small_header
+        };
+        assert_eq!(capped.declared_end_bytes(), 2_000);
     }
 
     #[test]

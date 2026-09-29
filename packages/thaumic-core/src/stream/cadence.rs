@@ -17,7 +17,7 @@ use serde::Serialize;
 use tokio::sync::broadcast;
 use tokio::time::{interval, Instant as TokioInstant, MissedTickBehavior};
 
-use super::framing::{BodyFraming, EndedBy};
+use super::framing::{BodyFraming, DeclaredEnd, EndedBy};
 use super::manager::TimestampedFrame;
 use super::rate_adapter::{RateAdapter, RateControl};
 use super::tap::{ConnectionTap, MonitorRegistrar};
@@ -455,6 +455,10 @@ pub struct LoggingStreamGuard {
     /// How the response body is delimited, where the handler recorded it.
     /// `None` counts wire bytes as payload and declares no length.
     framing: Option<BodyFraming>,
+    /// Where the speaker takes the item to end, where the handler recorded
+    /// it (PCM only): near it the speaker going quiet is the end, not a
+    /// stall (see [`Self::near_declared_end`]).
+    declared_end: Option<DeclaredEnd>,
     /// Whether the body ran out on our side: the stream feeding it ended.
     source_ended: AtomicBool,
     /// Whether a test cap ended the body (see [`Self::mark_server_cap`]).
@@ -524,6 +528,7 @@ impl LoggingStreamGuard {
             bytes_sent: AtomicU64::new(0),
             wire_bytes: AtomicU64::new(0),
             framing: None,
+            declared_end: None,
             source_ended: AtomicBool::new(false),
             server_capped: AtomicBool::new(false),
             interval_max_gap_ms: AtomicU64::new(0),
@@ -557,6 +562,31 @@ impl LoggingStreamGuard {
     pub fn with_framing(mut self, framing: BodyFraming) -> Self {
         self.framing = Some(framing);
         self
+    }
+
+    /// Records where the speaker takes the item to end (see
+    /// [`DeclaredEnd`]), so that near it acknowledgements are no
+    /// longer read as a stall and an end there is logged as the end of the
+    /// item.
+    #[must_use]
+    pub fn with_declared_end(mut self, end: Option<DeclaredEnd>) -> Self {
+        self.declared_end = end;
+        self
+    }
+
+    /// Whether the body is near or at the end the speaker was told of (see
+    /// [`DeclaredEnd::is_near`]). The speaker stops acknowledging
+    /// audio there because the item is over, so no stall is measured.
+    pub(crate) fn near_declared_end(&self) -> bool {
+        self.declared_end
+            .is_some_and(|end| end.is_near(self.bytes_sent.load(Ordering::Relaxed)))
+    }
+
+    /// Whether the body has handed over everything up to the end the speaker
+    /// was told of (see [`DeclaredEnd::is_reached`]).
+    pub(crate) fn reached_declared_end(&self) -> bool {
+        self.declared_end
+            .is_some_and(|end| end.is_reached(self.bytes_sent.load(Ordering::Relaxed)))
     }
 
     /// Counts a body item of `len` bytes handed to the connection, as
@@ -631,8 +661,11 @@ impl LoggingStreamGuard {
     /// The body can close between the check and the read, but only a
     /// socket closed and its handle handed to another in those few
     /// microseconds could make the read wrong, and then only that one.
+    ///
+    /// `None` near the declared end too: the speaker stops reading there
+    /// because the item is over, and the lag that builds up is no stall.
     pub(crate) fn unacked_bytes_now(&self) -> Option<u64> {
-        if self.body_closed.load(Ordering::Acquire) {
+        if self.body_closed.load(Ordering::Acquire) || self.near_declared_end() {
             return None;
         }
         self.link_probe.as_ref()?.unacked_bytes(self.wire_bytes())
@@ -699,13 +732,20 @@ impl LoggingStreamGuard {
     /// The bytes the speaker has acknowledged are counted against
     /// [`Self::wire_bytes`] as it stands, since chunk framing is acknowledged
     /// too.
+    ///
+    /// Near the declared end the window is logged but not judged: a speaker
+    /// that has read the whole item stops acknowledging, which says nothing
+    /// about the link.
     fn sample_link(&self) -> Option<crate::api::link::TcpLinkWindow> {
         let window = self.link_probe.as_ref()?.sample(self.wire_bytes())?;
-        let verdict = self
-            .link_judge
-            .lock()
-            .as_mut()
-            .and_then(|judge| judge.record(Instant::now(), window));
+        let verdict = if self.near_declared_end() {
+            None
+        } else {
+            self.link_judge
+                .lock()
+                .as_mut()
+                .and_then(|judge| judge.record(Instant::now(), window))
+        };
         if let Some(report) = verdict {
             self.report_link(report);
         }
@@ -843,6 +883,24 @@ impl LoggingStreamGuard {
     }
 }
 
+/// What follows "HTTP stream ended normally" (or "with error") on a
+/// connection's end line: that it ended at the end the speaker was told of,
+/// when the speaker hung up there or hyper stopped at the declared length,
+/// else whether delivery had stalled before the end.
+///
+/// A speaker that reads its whole declared length stops reading and hangs up
+/// some seconds later, so the last delivery is long past by then: that is the
+/// end of the item, not a stall.
+fn end_suffix(ended_by: EndedBy, at_declared_end: bool, final_gap_ms: u64) -> &'static str {
+    if at_declared_end && matches!(ended_by, EndedBy::Client | EndedBy::Length) {
+        " at its declared end"
+    } else if final_gap_ms > DELIVERY_GAP_LOG_THRESHOLD_MS {
+        " (stalled)"
+    } else {
+        ""
+    }
+}
+
 impl Drop for LoggingStreamGuard {
     fn drop(&mut self) {
         let frames = self.frames_sent.load(Ordering::Relaxed);
@@ -850,6 +908,7 @@ impl Drop for LoggingStreamGuard {
         let wire_bytes = self.wire_bytes.load(Ordering::Relaxed);
         let errored = self.first_error.get_mut().is_some();
         let ended_by = self.classify_end(errored);
+        let at_declared_end = self.reached_declared_end();
         let first_error = self.first_error.get_mut();
         let max_gap_ms = self.max_gap_ms.load(Ordering::Relaxed);
         let gaps_over_threshold = self.gaps_over_threshold.load(Ordering::Relaxed);
@@ -862,11 +921,11 @@ impl Drop for LoggingStreamGuard {
         } else {
             0
         };
-        let stalled_suffix = if final_gap_ms > DELIVERY_GAP_LOG_THRESHOLD_MS {
-            " (stalled)"
-        } else {
-            ""
-        };
+        let end_note = end_suffix(ended_by, at_declared_end, final_gap_ms);
+        let declared_end_info = self
+            .declared_end
+            .map(|end| format!(", declared_end={}", end.bytes()))
+            .unwrap_or_default();
 
         let cadence = self.cadence_stats.get();
 
@@ -936,15 +995,16 @@ impl Drop for LoggingStreamGuard {
         if let Some(ref err) = *first_error {
             log::warn!(
                 "[Stream] HTTP stream ended with error{}: stream={}, client={}, frames_sent={}, \
-                 bytes_sent={}, wire_bytes={}, ended_by={}, max_gap={}ms, gaps_over_{}ms={}, \
+                 bytes_sent={}, wire_bytes={}, ended_by={}{}, max_gap={}ms, gaps_over_{}ms={}, \
                  final_gap={}ms{}{}{}{}{}, error={}",
-                stalled_suffix,
+                end_note,
                 self.stream_id,
                 self.client_ip,
                 frames,
                 bytes_sent,
                 wire_bytes,
                 ended_by,
+                declared_end_info,
                 max_gap_ms,
                 DELIVERY_GAP_THRESHOLD_MS,
                 gaps_over_threshold,
@@ -959,15 +1019,16 @@ impl Drop for LoggingStreamGuard {
         } else {
             log::info!(
                 "[Stream] HTTP stream ended normally{}: stream={}, client={}, frames_sent={}, \
-                 bytes_sent={}, wire_bytes={}, ended_by={}, max_gap={}ms, gaps_over_{}ms={}, \
+                 bytes_sent={}, wire_bytes={}, ended_by={}{}, max_gap={}ms, gaps_over_{}ms={}, \
                  final_gap={}ms{}{}{}{}{}",
-                stalled_suffix,
+                end_note,
                 self.stream_id,
                 self.client_ip,
                 frames,
                 bytes_sent,
                 wire_bytes,
                 ended_by,
+                declared_end_info,
                 max_gap_ms,
                 DELIVERY_GAP_THRESHOLD_MS,
                 gaps_over_threshold,
@@ -3170,6 +3231,59 @@ mod tests {
         guard.reference_time = Instant::now() - FIRST_WAIT_SURVIVAL;
         guard.record_frame();
         assert!(!guard.first_wait_survived.load(Ordering::Relaxed));
+    }
+
+    /// The 6h12m field end: a Playbar read its 44 + 4294967295 bytes, stopped
+    /// reading, and hung up about 9 s of audio later with the last delivery
+    /// 585 ms old. That was logged as a stall; it was the end of the item.
+    #[test]
+    fn a_speaker_hanging_up_at_its_declared_end_is_not_a_stall() {
+        let end = DeclaredEnd::new(44 + u64::from(u32::MAX), 192_000);
+        let guard =
+            LoggingStreamGuard::new("test-stream".to_string(), IpAddr::V4(Ipv4Addr::LOCALHOST))
+                .with_framing(BodyFraming::Chunked)
+                .with_declared_end(Some(end));
+        assert!(!guard.near_declared_end() && !guard.reached_declared_end());
+        guard.record_body_bytes(4_294_967_339 - 384_000 - 1);
+        assert!(!guard.near_declared_end(), "more than 2 s short");
+        guard.record_body_bytes(1);
+        assert!(guard.near_declared_end(), "2 s short");
+        assert_eq!(
+            guard.unacked_bytes_now(),
+            None,
+            "acknowledgements are not sampled near the end"
+        );
+        guard.record_body_bytes(384_000 + 1_793_025);
+        assert_eq!(guard.bytes_sent.load(Ordering::Relaxed), 4_296_760_364);
+        assert!(guard.reached_declared_end());
+        assert_eq!(guard.ended_by(), EndedBy::Client);
+        assert_eq!(
+            end_suffix(guard.ended_by(), guard.reached_declared_end(), 585),
+            " at its declared end"
+        );
+    }
+
+    #[test]
+    fn an_end_short_of_the_declared_end_can_still_be_a_stall() {
+        assert_eq!(end_suffix(EndedBy::Client, false, 585), " (stalled)");
+        assert_eq!(end_suffix(EndedBy::Client, false, 20), "");
+        assert_eq!(
+            end_suffix(EndedBy::Length, true, 585),
+            " at its declared end",
+            "hyper stopping at a declared length is the same end"
+        );
+        assert_eq!(
+            end_suffix(EndedBy::ServerShutdown, true, 585),
+            " (stalled)",
+            "only the speaker or the length ends an item"
+        );
+        let guard =
+            LoggingStreamGuard::new("test-stream".to_string(), IpAddr::V4(Ipv4Addr::LOCALHOST));
+        guard.record_body_bytes(10_000_000_000);
+        assert!(
+            !guard.near_declared_end() && !guard.reached_declared_end(),
+            "a connection with no declared end never reaches one"
+        );
     }
 
     // ─────────────────────────────────────────────────────────────────────
