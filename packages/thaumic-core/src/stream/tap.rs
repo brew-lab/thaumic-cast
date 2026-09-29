@@ -239,9 +239,9 @@ impl ConnectionTap {
     /// [`crate::stream::DeclaredEnd`]). Always `false` for a compressed
     /// codec, which declares no end.
     ///
-    /// The speaker stops reading there because the item is over, so from a
-    /// little before it until the connection closes the monitor reads no
-    /// stall, and no notice, into what it sees.
+    /// What the speaker does there is the item ending, so from a little
+    /// before it until the connection closes the monitor reads no stall, and
+    /// no notice, into what it sees.
     pub fn near_declared_end(&self) -> bool {
         self.guard.near_declared_end()
     }

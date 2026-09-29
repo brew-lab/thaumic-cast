@@ -707,6 +707,13 @@ impl LatencySession {
             .map(|r| format!("{}={}", r, self.tracker.connection_breaks(*r)))
             .collect();
         let (estimates, inconsistent) = self.tracker.connection_estimate_counts();
+        // Taken out here: the log macro skips its arguments when the level is
+        // off, and the flag must not outlive the connection either way.
+        let end_note = if std::mem::take(&mut self.declared_end_reached) {
+            " at its declared end"
+        } else {
+            ""
+        };
         log::info!(
             "[SpeakerMonitor] {} stream={} connection ended after {}{}: head_start={} reserve \
              start={}ms end={}ms min={}ms{} calib={} clock={} polls={} breaks[{}] \
@@ -714,11 +721,7 @@ impl LatencySession {
             speaker_ip,
             stream_id,
             format_duration(now.saturating_duration_since(connected_at)),
-            if std::mem::take(&mut self.declared_end_reached) {
-                " at its declared end"
-            } else {
-                ""
-            },
+            end_note,
             head_start,
             ms(c.reserve_start_ms),
             ms(c.reserve_end_ms),
@@ -773,8 +776,9 @@ impl LatencySession {
     ///
     /// A window in which the connection came near its declared end is the
     /// end of the item (see [`ConnectionTap::near_declared_end`]): the
-    /// speaker stops reading, plays out and stops, and none of that is a
-    /// stall, a reserve running low or drift. Such a window measures no ack
+    /// speaker reads to about there, plays out and stops, and nothing its
+    /// acknowledgements or reserve do on the way is a stall, a reserve
+    /// running low or drift. Such a window measures no ack
     /// lag, decides no notice and warns of nothing, and the drift controller
     /// holds through it.
     fn report(
@@ -3550,18 +3554,40 @@ mod tests {
         /// stereo.
         const FIELD_DECLARED_END: u64 = 44 + u32::MAX as u64;
 
-        /// The 6h12m field end, reported on: a speaker holding about 250 ms,
-        /// polled for four minutes, whose acknowledgements lagged a steady
-        /// 20 ms until it read the whole of its declared length and stopped
-        /// reading, half a second before the report. The field raised
-        /// `head_start_ran_out` there with a 505 ms stall and -5 ms left;
-        /// the speaker hung up about 18 s later. `tap` is the connection,
-        /// its body `past_end` bytes beyond the declared end (negative:
-        /// short of it). Returns the notice the report left standing and
-        /// the session.
-        fn report_the_field_end(
+        /// A speaker that stops reading at its declared end, reported on: it
+        /// holds about 250 ms, is polled for four minutes, and its
+        /// acknowledgements lag a steady 20 ms until, half a second before
+        /// the report, a single 525 ms lag. Read as a stall that is a 505 ms
+        /// one leaving -5 ms, so `head_start_ran_out`.
+        ///
+        /// A synthetic shape, not the 6h12m field end (see
+        /// `the_field_end_reading_on_past_the_declared_end_gets_no_notice`):
+        /// it is what a speaker might do at a segment end. `tap` is the
+        /// connection, its body `past_end` bytes beyond the declared end
+        /// (negative: short of it). Returns the notice the report left
+        /// standing and the session.
+        fn report_a_stall_at_the_end(
             tap: &Arc<ConnectionTap>,
             past_end: i64,
+        ) -> (
+            Option<crate::services::speaker_monitor::SpeakerNoticeKind>,
+            LatencySession,
+        ) {
+            let mut lags = vec![20.0; 59];
+            lags.push(525.0);
+            report_an_end(tap, past_end, &lags)
+        }
+
+        /// A speaker holding about 250 ms, polled for four minutes and
+        /// reported on every 30 s, whose last window's ticks and pipeline
+        /// snapshots saw acknowledgements lag by `lags_ms`. `tap` is the
+        /// connection, its body `past_end` bytes beyond the declared end
+        /// (negative: short of it) at the last report. Returns the notice
+        /// that report left standing and the session.
+        fn report_an_end(
+            tap: &Arc<ConnectionTap>,
+            past_end: i64,
+            lags_ms: &[f64],
         ) -> (
             Option<crate::services::speaker_monitor::SpeakerNoticeKind>,
             LatencySession,
@@ -3605,20 +3631,84 @@ mod tests {
             let sent = FIELD_DECLARED_END.saturating_add_signed(past_end);
             tap.record_body_bytes(sent as usize);
             // What the window's ticks and pipeline snapshots saw of the
-            // acknowledgements: steady, then the speaker stopped reading.
-            session.tick_lags_ms.extend([20.0; 59]);
-            session.tick_lags_ms.push(525.0);
+            // acknowledgements.
+            session.tick_lags_ms.extend_from_slice(lags_ms);
             // The report's own tick.
             session.sample_ack_lag(tap);
             session.report("stream", ip, tap, at(240_000.0), &NoEvents);
             (session.notices.active().map(|n| n.kind), session)
         }
 
+        /// The 6h12m field end as the log has it. The Playbar was read at
+        /// 192 kB/s with acknowledgements a few kB behind throughout: the
+        /// last report (nothing wrong in its lags here) came with the body
+        /// about 8.2 s short of the 44 + 4294967295 bytes, the body passed
+        /// them and went on being read and acknowledged for 1,793,025 bytes
+        /// (9.3 s), and then the speaker hung up with the last delivery
+        /// 585 ms old. None of that is a notice, and the end is logged as the
+        /// item's.
+        ///
+        /// The field's `head_start_ran_out` ("Wi-Fi held back 505 ms") came
+        /// from that last report, well short of the end, and has another
+        /// cause: one 88 ms ack lag on a reserve drift had drained to 83 ms,
+        /// on a link judged poor. The declared end does not cover it.
+        #[test]
+        fn the_field_end_reading_on_past_the_declared_end_gets_no_notice() {
+            use crate::stream::cadence::end_suffix;
+            use crate::stream::EndedBy;
+
+            const RATE: i64 = 192_000;
+            let tap = started_tap_with_declared_end("stream", HUNG_IP, FIELD_DECLARED_END);
+            // Acknowledgements 1.5 to 3 kB (8 to 16 ms) behind, as sampled.
+            let lags: Vec<f64> = (0..60).map(|i| 8.0 + f64::from(i % 3) * 4.0).collect();
+            let short = -(RATE * 82 / 10);
+            let (notice, mut session) = report_an_end(&tap, short, &lags);
+            assert_eq!(notice, None);
+            assert!(!tap.near_declared_end(), "8.2 s short is measured as usual");
+            assert!(session.tracker.stall_ms().is_some());
+
+            // Half-second ticks carry the body on past the end, still read.
+            let origin = tap.connected_at;
+            let mut sent = FIELD_DECLARED_END.saturating_add_signed(short);
+            let close = FIELD_DECLARED_END + 1_793_025;
+            while sent < close {
+                let step = (RATE as u64 / 2).min(close - sent);
+                tap.record_body_bytes(step as usize);
+                sent += step;
+                session.sample_ack_lag(&tap);
+            }
+            assert!(tap.near_declared_end() && tap.reached_declared_end());
+            assert!(session.declared_end_in_window && session.declared_end_reached);
+            // A report landing in those 9 s decides nothing either.
+            let ip: IpAddr = HUNG_IP.parse().unwrap();
+            session.tick_lags_ms.extend_from_slice(&lags);
+            session.report(
+                "stream",
+                ip,
+                &tap,
+                origin + Duration::from_secs(270),
+                &NoEvents,
+            );
+            assert_eq!(session.notices.active().map(|n| n.kind), None);
+            assert_eq!(session.tracker.stall_ms(), None);
+
+            // The speaker hangs up: the end line and the summary say so.
+            assert_eq!(
+                end_suffix(EndedBy::Client, tap.reached_declared_end(), 585),
+                " at its declared end"
+            );
+            assert!(session.declared_end_reached, "for the summary");
+            // Owed as it is for any speaker being polled.
+            session.summary_owed = true;
+            assert!(session.end_connection("stream", ip, Instant::now()));
+            assert!(!session.declared_end_reached, "taken by the summary");
+        }
+
         #[test]
         fn a_speaker_that_stops_reading_at_its_declared_end_gets_no_notice() {
-            // Half a second of audio past the end, as in the field.
+            // Half a second of audio past the end.
             let tap = started_tap_with_declared_end("stream", HUNG_IP, FIELD_DECLARED_END);
-            let (notice, session) = report_the_field_end(&tap, 96_000);
+            let (notice, session) = report_a_stall_at_the_end(&tap, 96_000);
             assert_eq!(notice, None, "the end of the item is not Wi-Fi trouble");
             assert_eq!(session.tracker.stall_ms(), None, "and no stall");
             assert!(session.tracker.last_estimate().is_some_and(|e| e.locked()));
@@ -3628,7 +3718,7 @@ mod tests {
             // Just short of the end the speaker still has audio to read, but
             // the window is already the end's.
             let tap = started_tap_with_declared_end("stream", HUNG_IP, FIELD_DECLARED_END);
-            let (notice, session) = report_the_field_end(&tap, -96_000);
+            let (notice, session) = report_a_stall_at_the_end(&tap, -96_000);
             assert_eq!(notice, None);
             assert!(!session.declared_end_reached);
         }
@@ -3639,16 +3729,18 @@ mod tests {
 
             // A connection with no declared end, as before.
             let tap = started_tap("stream", HUNG_IP, true);
-            let (notice, _) = report_the_field_end(&tap, 96_000);
+            let (notice, _) = report_a_stall_at_the_end(&tap, 96_000);
             assert_eq!(notice, Some(SpeakerNoticeKind::HeadStartRanOut));
-            // Well before the end: a real stall.
+            // Well before the end: a real stall. The field's notice sat
+            // about as far short of its end, so the declared end is no guard
+            // against it.
             let tap = started_tap_with_declared_end("stream", HUNG_IP, FIELD_DECLARED_END);
-            let (notice, session) = report_the_field_end(&tap, -10 * 192_000);
+            let (notice, session) = report_a_stall_at_the_end(&tap, -10 * 192_000);
             assert_eq!(notice, Some(SpeakerNoticeKind::HeadStartRanOut));
             assert_eq!(session.tracker.stall_ms(), Some(505.0));
             // A speaker still reading a minute past the end is not honouring it.
             let tap = started_tap_with_declared_end("stream", HUNG_IP, FIELD_DECLARED_END);
-            let (notice, _) = report_the_field_end(&tap, 61 * 192_000);
+            let (notice, _) = report_a_stall_at_the_end(&tap, 61 * 192_000);
             assert_eq!(notice, Some(SpeakerNoticeKind::HeadStartRanOut));
         }
 

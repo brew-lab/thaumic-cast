@@ -575,8 +575,8 @@ impl LoggingStreamGuard {
     }
 
     /// Whether the body is near or at the end the speaker was told of (see
-    /// [`DeclaredEnd::is_near`]). The speaker stops acknowledging
-    /// audio there because the item is over, so no stall is measured.
+    /// [`DeclaredEnd::is_near`]). The speaker may stop acknowledging audio
+    /// there because the item is over, so no stall is measured.
     pub(crate) fn near_declared_end(&self) -> bool {
         self.declared_end
             .is_some_and(|end| end.is_near(self.bytes_sent.load(Ordering::Relaxed)))
@@ -662,8 +662,8 @@ impl LoggingStreamGuard {
     /// socket closed and its handle handed to another in those few
     /// microseconds could make the read wrong, and then only that one.
     ///
-    /// `None` near the declared end too: the speaker stops reading there
-    /// because the item is over, and the lag that builds up is no stall.
+    /// `None` near the declared end too: the speaker may stop reading there
+    /// because the item is over, and any lag that builds up is no stall.
     pub(crate) fn unacked_bytes_now(&self) -> Option<u64> {
         if self.body_closed.load(Ordering::Acquire) || self.near_declared_end() {
             return None;
@@ -734,8 +734,8 @@ impl LoggingStreamGuard {
     /// too.
     ///
     /// Near the declared end the window is logged but not judged: a speaker
-    /// that has read the whole item stops acknowledging, which says nothing
-    /// about the link.
+    /// that has read the whole item may stop acknowledging, which says
+    /// nothing about the link.
     fn sample_link(&self) -> Option<crate::api::link::TcpLinkWindow> {
         let window = self.link_probe.as_ref()?.sample(self.wire_bytes())?;
         let verdict = if self.near_declared_end() {
@@ -885,14 +885,24 @@ impl LoggingStreamGuard {
 
 /// What follows "HTTP stream ended normally" (or "with error") on a
 /// connection's end line: that it ended at the end the speaker was told of,
-/// when the speaker hung up there or hyper stopped at the declared length,
-/// else whether delivery had stalled before the end.
+/// when the speaker hung up there, hyper stopped at the declared length or a
+/// test cap (which sets the declared end) ended the body, else whether
+/// delivery had stalled before the end.
 ///
-/// A speaker that reads its whole declared length stops reading and hangs up
-/// some seconds later, so the last delivery is long past by then: that is the
-/// end of the item, not a stall.
-fn end_suffix(ended_by: EndedBy, at_declared_end: bool, final_gap_ms: u64) -> &'static str {
-    if at_declared_end && matches!(ended_by, EndedBy::Client | EndedBy::Length) {
+/// A speaker hangs up some seconds after passing its declared length (a
+/// Playbar about 9 s past the 4 GiB WAV length), and its last reads can be
+/// slow by then: an end there is the end of the item, not a stall.
+pub(crate) fn end_suffix(
+    ended_by: EndedBy,
+    at_declared_end: bool,
+    final_gap_ms: u64,
+) -> &'static str {
+    if at_declared_end
+        && matches!(
+            ended_by,
+            EndedBy::Client | EndedBy::Length | EndedBy::ServerCap
+        )
+    {
         " at its declared end"
     } else if final_gap_ms > DELIVERY_GAP_LOG_THRESHOLD_MS {
         " (stalled)"
@@ -3233,9 +3243,10 @@ mod tests {
         assert!(!guard.first_wait_survived.load(Ordering::Relaxed));
     }
 
-    /// The 6h12m field end: a Playbar read its 44 + 4294967295 bytes, stopped
-    /// reading, and hung up about 9 s of audio later with the last delivery
-    /// 585 ms old. That was logged as a stall; it was the end of the item.
+    /// The 6h12m field end: a Playbar read its 44 + 4294967295 bytes, went on
+    /// reading and acknowledging about 9.3 s (1.79 MB) more, and hung up with
+    /// the last delivery 585 ms old. That was logged as a stall; it was the
+    /// end of the item.
     #[test]
     fn a_speaker_hanging_up_at_its_declared_end_is_not_a_stall() {
         let end = DeclaredEnd::new(44 + u64::from(u32::MAX), 192_000);
@@ -3273,9 +3284,15 @@ mod tests {
             "hyper stopping at a declared length is the same end"
         );
         assert_eq!(
+            end_suffix(EndedBy::ServerCap, true, 585),
+            " at its declared end",
+            "a test cap sets the declared end, so reaching it is the end too"
+        );
+        assert_eq!(end_suffix(EndedBy::ServerCap, false, 585), " (stalled)");
+        assert_eq!(
             end_suffix(EndedBy::ServerShutdown, true, 585),
             " (stalled)",
-            "only the speaker or the length ends an item"
+            "the stream ending on our side is not the item ending"
         );
         let guard =
             LoggingStreamGuard::new("test-stream".to_string(), IpAddr::V4(Ipv4Addr::LOCALHOST));
