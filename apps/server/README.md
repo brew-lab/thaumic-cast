@@ -190,7 +190,11 @@ holds a number from -300 to 300, every monitored speaker's PCM connection stretc
 its audio by exactly that many ppm, whatever the drift correction mode and the controller say. It is read again for
 each speaker connection, each connection it applies to logs a `[Drift] THAUMIC_DRIFT_FORCE_PPM=... forcing the rate
 adapter; for listening tests only` warning, and the 30 s `[SpeakerMonitor]` line shows `forced=+150ppm`. A value that
-is not a number in range is ignored with a warning. The 2 s limit on audio inserted or removed still applies.
+is not a number in range is ignored with a warning, logged once per value. The 2 s limit on audio inserted or removed
+still applies: once it is reached the adapter holds at 0 ppm and the line shows `forced=+150ppm(pinned)`. While a
+rate is forced the drift controller does not learn, so a later cast does not start from what the test did. A negative
+rate drains the speaker's reserve the way a fast speaker clock does, so the drift and running-low notices may appear
+during a test and suggest turning drift correction on; they describe the forced rate, not the speaker.
 
 ## Running as a service (systemd)
 
