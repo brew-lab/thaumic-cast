@@ -343,6 +343,9 @@ pub struct StreamCoordinator {
     sync_group: SyncGroupManager,
     /// Speakers being moved on from one PCM segment to the next.
     continuations: continuation::Continuations,
+    /// Where a PCM handoff's watch runs, off the streaming runtime (see
+    /// [`Self::set_control_runtime`]); the current runtime when unset.
+    control_runtime: Option<tokio::runtime::Handle>,
 }
 
 impl StreamCoordinator {
@@ -383,7 +386,16 @@ impl StreamCoordinator {
             emitter,
             sync_group,
             continuations: continuation::Continuations::default(),
+            control_runtime: None,
         }
+    }
+
+    /// Sets the runtime that moves speakers on from one PCM segment to the
+    /// next. A playout reports its segment's end from the streaming runtime;
+    /// the watch that then polls and restarts the speaker runs here instead,
+    /// keeping control traffic off that latency-sensitive runtime.
+    pub fn set_control_runtime(&mut self, handle: tokio::runtime::Handle) {
+        self.control_runtime = Some(handle);
     }
 
     /// Sets the topology refresh notifier.

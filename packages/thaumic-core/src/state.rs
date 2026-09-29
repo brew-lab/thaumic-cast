@@ -360,6 +360,22 @@ impl SonosState {
         (recorded != shown).then_some(recorded)
     }
 
+    /// Every speaker's transport state as clients are shown it: what GENA
+    /// last reported, except for a speaker moving from one PCM segment to
+    /// the next, which shows its state from before the switch (see
+    /// [`Self::hold_transport`]).
+    pub fn shown_transport_states(&self) -> std::collections::HashMap<String, TransportState> {
+        let mut states: std::collections::HashMap<String, TransportState> = self
+            .transport_states
+            .iter()
+            .map(|entry| (entry.key().clone(), *entry.value()))
+            .collect();
+        for hold in self.transport_holds.iter() {
+            states.insert(hold.key().clone(), *hold.value());
+        }
+        states
+    }
+
     /// Whether `speaker_ip`'s transport is held (see [`Self::hold_transport`]).
     pub fn is_transport_held(&self, speaker_ip: &str) -> bool {
         self.transport_holds.contains_key(speaker_ip)
@@ -546,6 +562,10 @@ mod tests {
         state.record_transport_state(ip, TransportState::Stopped);
         assert!(!state.screen_transport(ip, TransportState::Stopped));
         assert!(!state.screen_transport(ip, TransportState::Transitioning));
+        assert_eq!(
+            state.shown_transport_states().get(ip),
+            Some(&TransportState::Playing)
+        );
         assert_eq!(state.to_json()["transportStates"][ip], "Playing");
         assert_eq!(
             *state.transport_states.get(ip).unwrap(),
