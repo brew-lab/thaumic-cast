@@ -694,6 +694,9 @@ impl StreamCoordinator {
         current_uri: Option<&str>,
         next_uri: Option<&str>,
     ) {
+        if let Some(next) = next_uri {
+            self.drop_cleared_arm(speaker_ip, next);
+        }
         if state != TransportState::Playing {
             return;
         }
@@ -764,6 +767,47 @@ impl StreamCoordinator {
         self.spawn_control(async move {
             tokio::time::sleep(ARM_DELAY).await;
             coordinator.send_arm(key, generation).await;
+        });
+    }
+
+    /// Forgets the next segment queued on `speaker_ip` once an event shows
+    /// its queue naming something else (`next`), so the next PLAYING queues
+    /// it again. Sonos reports the queue a `SetAVTransportURI` cleared only
+    /// on the STOPPED or TRANSITIONING that follows it, never on the PLAYING
+    /// after. Not during a handoff: a queue cleared at a boundary is the
+    /// restart's business, and the arm must stay to tell it the speaker had
+    /// one.
+    fn drop_cleared_arm(&self, speaker_ip: &str, next: &str) {
+        let now = Instant::now();
+        let in_handoff = self
+            .continuations
+            .handoffs
+            .lock()
+            .keys()
+            .any(|key| key.speaker_ip == speaker_ip);
+        if in_handoff {
+            return;
+        }
+        let mut arms = self.continuations.arms.lock();
+        arms.retain(|key, arm| {
+            if key.speaker_ip != speaker_ip {
+                return true;
+            }
+            let settled = matches!(arm.state, ArmState::Armed(at)
+                if now.saturating_duration_since(at) >= ARM_SETTLE);
+            let cleared = url_segment_of(next, &key.stream_id) != Some(arm.url_segment);
+            if settled && cleared {
+                log::info!(
+                    "[Stream] Continuation queue cleared: stream={} speaker={} url_segment={}: \
+                     the speaker's queued next is now {:?}; queuing it again on PLAYING",
+                    key.stream_id,
+                    key.speaker_ip,
+                    arm.url_segment,
+                    next
+                );
+                return false;
+            }
+            true
         });
     }
 
@@ -2305,6 +2349,30 @@ mod tests {
             Some(&rig.uri(0)),
             Some(""),
         );
+        sleep_ms(ARM_DELAY.as_millis() as u64 + 500).await;
+        assert_eq!(rig.sonos.queued(), vec![rig.base(1), rig.base(1)]);
+    }
+
+    /// A `SetAVTransportURI` clears the speaker's queue, and Sonos says so
+    /// only on the STOPPED or TRANSITIONING after it: the PLAYING that
+    /// follows names no next item. The cleared queue is still noticed, and
+    /// the same segment queued again on that PLAYING.
+    #[tokio::test(start_paused = true)]
+    async fn a_queue_cleared_by_a_new_uri_is_queued_again_on_the_next_playing() {
+        let rig = Rig::with_segment(false, MINUTE * 2);
+        let _first = rig.play_in_background(PcmContinuation::Next, PcmSegmentDidl::Broadcast);
+        sleep_ms(500).await;
+        rig.gena(COORDINATOR, TransportState::Playing, Some(&rig.uri(0)));
+        sleep_ms(ARM_DELAY.as_millis() as u64 + ARM_SETTLE.as_millis() as u64 + 500).await;
+        assert_eq!(rig.sonos.queued(), vec![rig.base(1)]);
+
+        rig.gena_next(
+            COORDINATOR,
+            TransportState::Transitioning,
+            Some(&rig.uri(0)),
+            Some(""),
+        );
+        rig.gena(COORDINATOR, TransportState::Playing, Some(&rig.uri(0)));
         sleep_ms(ARM_DELAY.as_millis() as u64 + 500).await;
         assert_eq!(rig.sonos.queued(), vec![rig.base(1), rig.base(1)]);
     }

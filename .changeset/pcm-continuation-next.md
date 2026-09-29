@@ -16,7 +16,8 @@ heard. The playout carries on sample for sample, so nothing is skipped or repeat
 - **Never two ahead.** Only the segment after the one the speaker reports playing is queued, never the one after that
   while the next is still pending (the probe skipped a segment doing that during a pause). A queue that an event shows
   cleared, by a `SetAVTransportURI` or a resume, is queued again; the new `NextAVTransportURI` field of the GENA
-  transport event says what is queued. Nothing is queued while paused, during a switch, or with less than 15 s of the
+  transport event says what is queued. Sonos shows a queue cleared by `SetAVTransportURI` only on the STOPPED or
+  TRANSITIONING after it, so that event drops the queued segment and the PLAYING after it queues it again. Nothing is queued while paused, during a switch, or with less than 15 s of the
   segment left (a Play:1 fetches a queued item at once and holds that fetch about 10 s; it is served just the header
   and takes no audio).
 - **Restart as the fallback.** A speaker that stops on the old segment although the next was queued is restarted exactly
