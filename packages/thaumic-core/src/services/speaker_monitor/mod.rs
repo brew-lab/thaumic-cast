@@ -38,7 +38,7 @@ pub use control::{
     drift_active, drift_compensation_env_override, drift_compensation_mode, ControlHold,
     ControlInput, DriftController, DriftMode, SpeakerControlState, DRIFT_COMPENSATION_ENV,
 };
-pub use notice::{NoticeInput, NoticeState, SpeakerNotice, SpeakerNoticeKind};
+pub use notice::{NoticeInput, NoticeState, SpeakerNotice, SpeakerNoticeCause, SpeakerNoticeKind};
 pub use reserve::{LockReason, ReserveEstimate, ReserveEstimator};
 pub use rollup::WindowStats;
 pub use segment::{Segment, SegmentBreak};

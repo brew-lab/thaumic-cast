@@ -977,7 +977,7 @@ impl LatencySession {
             let opt = |v: Option<u32>| v.map_or_else(|| "\u{2014}".to_string(), |v| v.to_string());
             log::warn!(
                 "[SpeakerMonitor] {} stream={}: notice {} id={}: stall={}ms left={}ms H={}ms \
-                 suggested={}ms minutes={} restart_helps={}",
+                 suggested={}ms minutes={} restart_helps={} cause={}",
                 speaker_ip,
                 stream_id,
                 n.kind,
@@ -988,7 +988,8 @@ impl LatencySession {
                 opt(n.head_start_ms),
                 opt(n.suggested_head_start_ms),
                 opt(n.minutes),
-                n.restart_helps
+                n.restart_helps,
+                n.cause.map_or("\u{2014}", |c| c.as_str())
             );
         } else if notice.is_none() {
             if let Some(id) = before {

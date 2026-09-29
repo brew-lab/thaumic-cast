@@ -23,7 +23,10 @@
 //! - **No remedy** ([`SpeakerNoticeKind::HeadStartNoRemedy`]): the head
 //!   start ran out, but even the longest would not have covered it.
 //! - **Running low** ([`SpeakerNoticeKind::RunningLow`]): the reserve
-//!   itself, not a stall's dip, is below the floor.
+//!   itself, not a stall's dip, is below the floor. When the speaker's clock
+//!   is measurably draining it and no stall explains the loss, the notice
+//!   carries [`SpeakerNoticeCause::Drift`], so a client can keep saying why
+//!   and what fixes it after the drift notice gives way.
 //! - **Drift uncorrected** ([`SpeakerNoticeKind::DriftUncorrected`]): the
 //!   speaker plays faster than audio arrives and will reach the floor
 //!   within half an hour, with nothing correcting it.
@@ -139,6 +142,25 @@ impl std::fmt::Display for SpeakerNoticeKind {
     }
 }
 
+/// Why a notice's speaker is in trouble, where the kind alone does not say.
+/// Wire strings are part of the client protocol: never rename a variant.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SpeakerNoticeCause {
+    /// The speaker's clock runs faster than the audio arrives, net of any
+    /// drift correction, and that, not a stall, drained the reserve.
+    Drift,
+}
+
+impl SpeakerNoticeCause {
+    /// The cause as a log token (its wire string).
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Drift => "drift",
+        }
+    }
+}
+
 /// What the user is told about one speaker, with the figures its wording
 /// needs. Clients pick the words; every value is in ms unless named
 /// otherwise.
@@ -173,6 +195,11 @@ pub struct SpeakerNotice {
     /// not off, since a restart gives a partial one the same partial burst
     /// again and one that is off nothing.
     pub restart_helps: bool,
+    /// Why the speaker is in trouble, when the core can tell and the kind
+    /// does not say (running low: [`SpeakerNoticeCause::Drift`] when the
+    /// clock drained it). Absent otherwise.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cause: Option<SpeakerNoticeCause>,
 }
 
 /// What one report found about a speaker, as the notice decision needs it.
@@ -329,6 +356,23 @@ fn running_low(input: &NoticeInput, floor: f64) -> bool {
             .is_some_and(|a| a.p10_ms < floor && a.median_ms < floor)
 }
 
+/// Why a running-low speaker is low, when it is the clock: the speaker
+/// drains the reserve measurably, net of any correction (the projection
+/// the drift notices use is there at all), and this window's stall is less
+/// than half of what the reserve lost from the head start, so no stall
+/// explains it. Correction running or not, the clock is the cause; whether
+/// turning correction on is the fix is for the client, which knows the mode.
+fn running_low_cause(input: &NoticeInput) -> Option<SpeakerNoticeCause> {
+    input.time_to_floor_s?;
+    let p10 = input.acked?.p10_ms;
+    let head_start = f64::from(input.head_start.map_or(0, |h| h.sent_ms));
+    let lost = head_start - p10;
+    let stalled = input
+        .stall_ms
+        .is_some_and(|s| s >= (0.5 * lost).max(MIN_NOTICE_STALL_MS));
+    (!stalled).then_some(SpeakerNoticeCause::Drift)
+}
+
 fn round_ms(v: f64) -> u32 {
     v.max(0.0).round().min(f64::from(u32::MAX)) as u32
 }
@@ -413,6 +457,7 @@ impl NoticeState {
                             .filter(|_| kind != SpeakerNoticeKind::HeadStartNoRemedy),
                         minutes: None,
                         restart_helps: false,
+                        cause: None,
                     },
                 );
             }
@@ -435,6 +480,16 @@ impl NoticeState {
             let above = input.locked && input.acked.is_some_and(|a| a.p10_ms > clear);
             if !above {
                 self.above_clear_since = None;
+                // A clock that became measurable after the notice was raised
+                // names its cause in place, under the same id: the words
+                // gain a reason, the episode is the same. Once named, the
+                // cause stands for the episode rather than flicker with each
+                // report's projection.
+                if let Some(a) = self.active.as_mut() {
+                    if low && a.cause.is_none() {
+                        a.cause = running_low_cause(input);
+                    }
+                }
                 return self.active;
             }
             let since = *self.above_clear_since.get_or_insert(now);
@@ -456,6 +511,7 @@ impl NoticeState {
                     suggested_head_start_ms: None,
                     minutes: None,
                     restart_helps,
+                    cause: running_low_cause(input),
                 },
             );
             return self.active;
@@ -490,6 +546,7 @@ impl NoticeState {
                     suggested_head_start_ms: None,
                     minutes: Some(((secs / 60.0).ceil() as u32).max(1)),
                     restart_helps,
+                    cause: None,
                 },
             );
             return self.active;
@@ -522,6 +579,7 @@ impl NoticeState {
                     suggested_head_start_ms: None,
                     minutes: Some(((secs / 60.0).ceil() as u32).max(1)),
                     restart_helps,
+                    cause: None,
                 },
             );
         }
@@ -915,6 +973,110 @@ mod tests {
         assert_eq!(n.kind, SpeakerNoticeKind::RunningLow);
     }
 
+    /// A running-low report like the field's: a Playbar hours into a cast at
+    /// +19.6 ppm, down to 130 ms of its 500 ms head start with ordinary lag.
+    fn drained(time_to_floor_s: Option<f64>, drift_active: bool) -> NoticeInput {
+        NoticeInput {
+            time_to_floor_s,
+            drift_active,
+            ..report(100.0, 130.0, 140.0, Some(40.0))
+        }
+    }
+
+    #[test]
+    fn running_low_names_the_clock_when_it_drained_the_reserve() {
+        // Off or observe (not active) and on but pinned (active and still
+        // draining net of the command): the clock is the cause either way.
+        for drift_active in [false, true] {
+            let n = NoticeState::new()
+                .update(Instant::now(), &drained(Some(0.0), drift_active))
+                .expect("running low");
+            assert_eq!(n.kind, SpeakerNoticeKind::RunningLow);
+            assert_eq!(n.cause, Some(SpeakerNoticeCause::Drift), "{drift_active}");
+            assert_eq!(n.left_ms, Some(130));
+            assert!(n.restart_helps);
+        }
+    }
+
+    #[test]
+    fn running_low_without_a_measurable_drain_has_no_cause() {
+        // No projection: the clock is not measurably draining, or correction
+        // matches it, whatever the mode.
+        for drift_active in [false, true] {
+            let n = NoticeState::new()
+                .update(Instant::now(), &drained(None, drift_active))
+                .expect("running low");
+            assert_eq!(n.cause, None, "{drift_active}");
+        }
+    }
+
+    #[test]
+    fn running_low_from_a_stall_is_not_the_clock() {
+        // Draining, but a stall of 250 ms is more than half the 370 ms the
+        // reserve lost from its head start: the stall explains it.
+        let input = NoticeInput {
+            stall_ms: Some(250.0),
+            ..drained(Some(0.0), false)
+        };
+        let n = NoticeState::new()
+            .update(Instant::now(), &input)
+            .expect("running low");
+        assert_eq!(n.kind, SpeakerNoticeKind::RunningLow);
+        assert_eq!(n.cause, None);
+        // A stall well under half of it does not.
+        let input = NoticeInput {
+            stall_ms: Some(150.0),
+            ..drained(Some(0.0), false)
+        };
+        let n = NoticeState::new()
+            .update(Instant::now(), &input)
+            .expect("running low");
+        assert_eq!(n.cause, Some(SpeakerNoticeCause::Drift));
+    }
+
+    #[test]
+    fn running_low_after_drift_uncorrected_keeps_the_cause() {
+        // The field sequence: the drift notice first, then running low
+        // replaces it and stands for the rest of the cast.
+        let mut state = NoticeState::new();
+        let t0 = Instant::now();
+        let drift = state
+            .update(
+                t0,
+                &NoticeInput {
+                    time_to_floor_s: Some(20.0 * 60.0),
+                    ..healthy()
+                },
+            )
+            .expect("drift");
+        assert_eq!(drift.kind, SpeakerNoticeKind::DriftUncorrected);
+        let low = state
+            .update(t0 + Duration::from_secs(30), &drained(Some(0.0), false))
+            .expect("running low");
+        assert_eq!(low.kind, SpeakerNoticeKind::RunningLow);
+        assert!(low.notice_id > drift.notice_id);
+        assert_eq!(low.cause, Some(SpeakerNoticeCause::Drift));
+    }
+
+    #[test]
+    fn running_low_names_a_cause_found_later_in_place() {
+        let mut state = NoticeState::new();
+        let t0 = Instant::now();
+        let first = state.update(t0, &drained(None, false)).expect("low");
+        assert_eq!(first.cause, None);
+        // The clock fit firms up: the same episode, now with its cause.
+        let named = state
+            .update(t0 + Duration::from_secs(30), &drained(Some(0.0), false))
+            .expect("low");
+        assert_eq!(named.notice_id, first.notice_id);
+        assert_eq!(named.cause, Some(SpeakerNoticeCause::Drift));
+        // A report without the projection does not take it away again.
+        let later = state
+            .update(t0 + Duration::from_secs(60), &drained(None, false))
+            .expect("low");
+        assert_eq!(later, named);
+    }
+
     #[test]
     fn running_low_clears_after_a_minute_above_the_clear_level() {
         let mut state = NoticeState::new();
@@ -1136,6 +1298,7 @@ mod tests {
             suggested_head_start_ms: Some(750),
             minutes: None,
             restart_helps: false,
+            cause: None,
         };
         assert_eq!(
             serde_json::to_value(notice).unwrap(),
@@ -1160,5 +1323,31 @@ mod tests {
         ] {
             assert_eq!(wire(kind), format!("\"{}\"", kind.as_str()));
         }
+        let low = SpeakerNotice {
+            kind: SpeakerNoticeKind::RunningLow,
+            notice_id: 4,
+            stall_ms: None,
+            left_ms: Some(149),
+            head_start_ms: Some(500),
+            suggested_head_start_ms: None,
+            minutes: None,
+            restart_helps: true,
+            cause: Some(SpeakerNoticeCause::Drift),
+        };
+        assert_eq!(
+            serde_json::to_value(low).unwrap(),
+            serde_json::json!({
+                "kind": "running_low",
+                "noticeId": 4,
+                "leftMs": 149,
+                "headStartMs": 500,
+                "restartHelps": true,
+                "cause": "drift",
+            })
+        );
+        assert_eq!(
+            serde_json::to_string(&SpeakerNoticeCause::Drift).unwrap(),
+            format!("\"{}\"", SpeakerNoticeCause::Drift.as_str())
+        );
     }
 }
