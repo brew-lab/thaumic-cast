@@ -398,6 +398,10 @@ impl StreamCoordinator {
     /// - MP3/AAC: `x-rincon-mp3radio://...`
     /// - Slaves: `x-rincon:{uuid}` (already in final form)
     ///
+    /// For PCM this is always segment 0's URL. A speaker reporting a later
+    /// segment of the same stream is compared by stream id, not by this exact
+    /// string (see `stream::same_stream`), so it is still the same source.
+    ///
     /// Note: A speaker can only play one stream at a time, so we find the first
     /// session matching the speaker IP.
     #[must_use]
@@ -1753,6 +1757,101 @@ mod tests {
             assert_eq!(sonos.play_uri_count.load(Ordering::SeqCst), 1);
             assert_eq!(sonos.leave_group_count.load(Ordering::SeqCst), 2);
             assert_eq!(sonos.join_group_count.load(Ordering::SeqCst), 1);
+        }
+
+        /// A segmented PCM cast is one session whichever segment the speaker
+        /// is on, and a promotion hands the new coordinator the base URL, so
+        /// it starts on segment 0 and its later segments match too.
+        #[tokio::test]
+        async fn a_promoted_pcm_coordinator_keeps_the_base_url_and_its_segments() {
+            let sonos = Arc::new(TrackingSonosPlayback::new());
+            let sonos_state = create_sonos_state_with_members(&[
+                ("192.168.1.100", "RINCON_COORD"),
+                ("192.168.1.101", "RINCON_SLAVE1"),
+                ("192.168.1.102", "RINCON_SLAVE2"),
+            ]);
+            let emitter = Arc::new(CollectingEventEmitter::new());
+            let coord = create_coordinator_with(
+                Arc::clone(&sonos) as Arc<dyn SonosPlayback>,
+                Arc::clone(&sonos_state),
+                Arc::clone(&emitter) as Arc<dyn EventEmitter>,
+            );
+            let stream_id = coord
+                .create_stream(AudioCodec::Pcm, AudioFormat::default(), 200, 20)
+                .unwrap();
+            let base = format!("http://192.168.1.2:49400/stream/{stream_id}/live");
+            let segment = |n| crate::stream::pcm_segment_uri(&base, n);
+
+            coord.insert_test_session(PlaybackSession {
+                stream_id: stream_id.clone(),
+                speaker_ip: "192.168.1.100".to_string(),
+                stream_url: base.clone(),
+                codec: AudioCodec::Pcm,
+                role: GroupRole::Coordinator,
+                coordinator_ip: None,
+                coordinator_uuid: Some("RINCON_COORD".to_string()),
+                original_coordinator_uuid: None,
+            });
+            for ip in ["192.168.1.101", "192.168.1.102"] {
+                coord.insert_test_session(PlaybackSession {
+                    stream_id: stream_id.clone(),
+                    speaker_ip: ip.to_string(),
+                    stream_url: "x-rincon:RINCON_COORD".to_string(),
+                    codec: AudioCodec::Pcm,
+                    role: GroupRole::Slave,
+                    coordinator_ip: Some("192.168.1.100".to_string()),
+                    coordinator_uuid: Some("RINCON_COORD".to_string()),
+                    original_coordinator_uuid: None,
+                });
+            }
+
+            // Before: the coordinator is expected on segment 0, and any later
+            // segment of the same stream is still that source.
+            let expected = coord.get_expected_stream("192.168.1.100").unwrap();
+            assert_eq!(expected, segment(0));
+            for n in [1, 2, 9] {
+                assert!(crate::stream::same_stream(&segment(n), &expected));
+            }
+
+            coord
+                .stop_playback_speaker(&stream_id, "192.168.1.100", None)
+                .await;
+
+            let sessions = coord.get_all_sessions();
+            let promoted = sessions
+                .iter()
+                .find(|s| s.role == GroupRole::Coordinator)
+                .expect("one session should be promoted to coordinator");
+            // The base URL, never a segment's.
+            assert_eq!(promoted.stream_url, base);
+
+            let expected = coord.get_expected_stream(&promoted.speaker_ip).unwrap();
+            assert_eq!(expected, segment(0));
+            for n in [0, 1, 2, 9] {
+                assert!(crate::stream::same_stream(&segment(n), &expected));
+            }
+            // Another stream, or the TV input, is still a source change.
+            assert!(!crate::stream::same_stream(
+                "http://192.168.1.2:49400/stream/other/live/1.wav",
+                &expected
+            ));
+            assert!(!crate::stream::same_stream(
+                "x-sonos-htastream:RINCON_SLAVE1:spdif",
+                &expected
+            ));
+
+            // The remaining slave follows the promoted coordinator.
+            let remaining = sessions
+                .iter()
+                .find(|s| s.role == GroupRole::Slave)
+                .expect("one session should remain as slave");
+            assert_eq!(
+                coord.get_expected_stream(&remaining.speaker_ip),
+                Some(format!(
+                    "x-rincon:{}",
+                    promoted.coordinator_uuid.as_ref().unwrap()
+                ))
+            );
         }
 
         #[tokio::test]

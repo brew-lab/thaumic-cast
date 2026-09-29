@@ -282,6 +282,7 @@ The server exposes the same HTTP/WebSocket API as the desktop app:
 | `DELETE /api/speakers/manual/:ip`    | Remove a manual speaker                  |
 | `ANY /sonos/gena`                    | GENA event callback (called by Sonos)    |
 | `GET /stream/{id}/live[.wav\|.flac]` | Audio stream endpoint (for Sonos)        |
+| `GET /stream/{id}/live/{n}.wav`      | PCM segment `n` ≥ 1 (for Sonos)          |
 | `GET /artwork.jpg`                   | Album artwork for Sonos display          |
 | `WS /ws`                             | WebSocket for real-time events and audio |
 

@@ -6,6 +6,7 @@ pub mod manager;
 pub mod pcm_http;
 pub mod rate_adapter;
 pub mod tap;
+pub mod uri;
 pub mod wav;
 
 pub use cadence::{
@@ -25,6 +26,9 @@ pub use pcm_http::{
 };
 pub use rate_adapter::{RateAdapter, RateControl};
 pub use tap::{ConnectionTap, HeadStart, MonitorRegistrar, SpeakerFigures, SpeakerSnapshot};
+pub use uri::{
+    parse_segment_file, parse_stream_uri, pcm_segment_uri, same_stream, StreamRef, StreamResource,
+};
 pub use wav::{create_wav_header, create_wav_header_with_data_size};
 
 use std::collections::HashMap;
