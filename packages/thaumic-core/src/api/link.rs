@@ -129,10 +129,14 @@ impl TcpLinkProbe {
     /// Reads the connection's counters and returns the change since the last
     /// read, or `None` where the platform cannot report them.
     ///
-    /// `body_bytes` is how many bytes the response body has handed over so
-    /// far. The bytes acknowledged are counted against it, so they must be
-    /// read in the same breath: the cadence loop samples between frames,
-    /// when nothing else can be yielded.
+    /// `body_bytes` is how many bytes the response body has put on the wire
+    /// so far, chunk framing included (see
+    /// [`crate::stream::BodyFraming::wire_len`]): framing is acknowledged
+    /// like payload, so counting payload alone would let the acknowledged
+    /// count overtake it on a chunked response. The bytes acknowledged are
+    /// counted against it, so they must be read in the same breath: the
+    /// cadence loop samples between frames, when nothing else can be
+    /// yielded.
     pub fn sample(&self, body_bytes: u64) -> Option<TcpLinkWindow> {
         let now = sample_raw(self.raw_socket, self.baseline, body_bytes, true)?;
         let mut last = self.last.lock();

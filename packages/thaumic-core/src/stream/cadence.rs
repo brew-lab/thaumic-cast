@@ -17,6 +17,7 @@ use serde::Serialize;
 use tokio::sync::broadcast;
 use tokio::time::{interval, Instant as TokioInstant, MissedTickBehavior};
 
+use super::framing::{BodyFraming, EndedBy};
 use super::manager::TimestampedFrame;
 use super::tap::{ConnectionTap, MonitorRegistrar};
 use super::{
@@ -388,6 +389,15 @@ pub struct LoggingStreamGuard {
     cadence_stats: OnceLock<CadenceStats>,
     /// Total bytes delivered to HTTP client (for throughput calculation).
     pub(crate) bytes_sent: AtomicU64,
+    /// Bytes the body has put on the wire (see [`BodyFraming::wire_len`]).
+    wire_bytes: AtomicU64,
+    /// How the response body is delimited, where the handler recorded it.
+    /// `None` counts wire bytes as payload and declares no length.
+    framing: Option<BodyFraming>,
+    /// Whether the body ran out on our side: the stream feeding it ended.
+    source_ended: AtomicBool,
+    /// Whether a test cap ended the body (see [`Self::mark_server_cap`]).
+    server_capped: AtomicBool,
     /// Per-interval max delivery gap in ms (swapped to 0 on each snapshot).
     interval_max_gap_ms: AtomicU64,
     /// Pipeline timeline, updated periodically by the cadence stream.
@@ -450,6 +460,10 @@ impl LoggingStreamGuard {
             first_error: parking_lot::Mutex::new(None),
             cadence_stats: OnceLock::new(),
             bytes_sent: AtomicU64::new(0),
+            wire_bytes: AtomicU64::new(0),
+            framing: None,
+            source_ended: AtomicBool::new(false),
+            server_capped: AtomicBool::new(false),
             interval_max_gap_ms: AtomicU64::new(0),
             pipeline_timeline: parking_lot::Mutex::new(VecDeque::new()),
             link_probe: None,
@@ -472,6 +486,68 @@ impl LoggingStreamGuard {
     pub fn with_first_wait(mut self, wait: FirstConnectionWait) -> Self {
         self.first_wait = Some(wait);
         self
+    }
+
+    /// Records how the response body is delimited, so wire bytes include
+    /// the framing and an end at a declared length is told apart from the
+    /// client hanging up.
+    #[must_use]
+    pub fn with_framing(mut self, framing: BodyFraming) -> Self {
+        self.framing = Some(framing);
+        self
+    }
+
+    /// Counts a body item of `len` bytes handed to the connection, as
+    /// payload and as the bytes it puts on the wire.
+    pub(crate) fn record_body_bytes(&self, len: usize) {
+        let len = len as u64;
+        let before = self.bytes_sent.fetch_add(len, Ordering::Relaxed);
+        let wire = self
+            .framing
+            .map_or(len, |framing| framing.wire_len(before, len));
+        self.wire_bytes.fetch_add(wire, Ordering::Relaxed);
+    }
+
+    /// Bytes the body has put on the wire so far: the payload plus any chunk
+    /// framing, and never more than a declared length. What the speaker
+    /// acknowledges is counted against this, not against the payload.
+    pub fn wire_bytes(&self) -> u64 {
+        self.wire_bytes.load(Ordering::Relaxed)
+    }
+
+    /// Records that the stream feeding the body ended, so the body ran out
+    /// on our side. Counts the bytes that end the framing, if any.
+    pub(crate) fn mark_source_ended(&self) {
+        if !self.source_ended.swap(true, Ordering::Relaxed) {
+            if let Some(framing) = self.framing {
+                self.wire_bytes
+                    .fetch_add(framing.end_len(), Ordering::Relaxed);
+            }
+        }
+    }
+
+    /// Records that a test cap is ending the body after a set number of
+    /// bytes, so the end is logged as `ended_by=server_cap` rather than as
+    /// the stream ending. Call it before the body yields its last item.
+    pub fn mark_server_cap(&self) {
+        self.server_capped.store(true, Ordering::Relaxed);
+    }
+
+    /// Why the body ended, judged from what has been recorded so far. Only
+    /// meaningful once the body has been dropped (see [`EndedBy::classify`]).
+    pub fn ended_by(&self) -> EndedBy {
+        self.classify_end(self.first_error.lock().is_some())
+    }
+
+    /// [`Self::ended_by`] for a known error state.
+    fn classify_end(&self, errored: bool) -> EndedBy {
+        EndedBy::classify(
+            errored,
+            self.server_capped.load(Ordering::Relaxed),
+            self.source_ended.load(Ordering::Relaxed),
+            self.framing,
+            self.bytes_sent.load(Ordering::Relaxed),
+        )
     }
 
     /// The latest verdict on the connection's link, or `None` before the
@@ -497,8 +573,7 @@ impl LoggingStreamGuard {
         if self.body_closed.load(Ordering::Acquire) {
             return None;
         }
-        let body_bytes = self.bytes_sent.load(Ordering::Relaxed);
-        self.link_probe.as_ref()?.unacked_bytes(body_bytes)
+        self.link_probe.as_ref()?.unacked_bytes(self.wire_bytes())
     }
 
     /// Records that the response body has been dropped (see
@@ -559,10 +634,11 @@ impl LoggingStreamGuard {
 
     /// Reads the connection's TCP counters since the last read and warns, at
     /// most once every five seconds, when data had to be retransmitted.
-    /// `body_bytes` is [`Self::bytes_sent`] as it stands, against which the
-    /// bytes the speaker has acknowledged are counted.
-    fn sample_link(&self, body_bytes: u64) -> Option<crate::api::link::TcpLinkWindow> {
-        let window = self.link_probe.as_ref()?.sample(body_bytes)?;
+    /// The bytes the speaker has acknowledged are counted against
+    /// [`Self::wire_bytes`] as it stands, since chunk framing is acknowledged
+    /// too.
+    fn sample_link(&self) -> Option<crate::api::link::TcpLinkWindow> {
+        let window = self.link_probe.as_ref()?.sample(self.wire_bytes())?;
         let verdict = self
             .link_judge
             .lock()
@@ -705,6 +781,10 @@ impl LoggingStreamGuard {
 impl Drop for LoggingStreamGuard {
     fn drop(&mut self) {
         let frames = self.frames_sent.load(Ordering::Relaxed);
+        let bytes_sent = self.bytes_sent.load(Ordering::Relaxed);
+        let wire_bytes = self.wire_bytes.load(Ordering::Relaxed);
+        let errored = self.first_error.get_mut().is_some();
+        let ended_by = self.classify_end(errored);
         let first_error = self.first_error.get_mut();
         let max_gap_ms = self.max_gap_ms.load(Ordering::Relaxed);
         let gaps_over_threshold = self.gaps_over_threshold.load(Ordering::Relaxed);
@@ -790,11 +870,15 @@ impl Drop for LoggingStreamGuard {
         if let Some(ref err) = *first_error {
             log::warn!(
                 "[Stream] HTTP stream ended with error{}: stream={}, client={}, frames_sent={}, \
-                 max_gap={}ms, gaps_over_{}ms={}, final_gap={}ms{}{}{}{}{}, error={}",
+                 bytes_sent={}, wire_bytes={}, ended_by={}, max_gap={}ms, gaps_over_{}ms={}, \
+                 final_gap={}ms{}{}{}{}{}, error={}",
                 stalled_suffix,
                 self.stream_id,
                 self.client_ip,
                 frames,
+                bytes_sent,
+                wire_bytes,
+                ended_by,
                 max_gap_ms,
                 DELIVERY_GAP_THRESHOLD_MS,
                 gaps_over_threshold,
@@ -809,11 +893,15 @@ impl Drop for LoggingStreamGuard {
         } else {
             log::info!(
                 "[Stream] HTTP stream ended normally{}: stream={}, client={}, frames_sent={}, \
-                 max_gap={}ms, gaps_over_{}ms={}, final_gap={}ms{}{}{}{}{}",
+                 bytes_sent={}, wire_bytes={}, ended_by={}, max_gap={}ms, gaps_over_{}ms={}, \
+                 final_gap={}ms{}{}{}{}{}",
                 stalled_suffix,
                 self.stream_id,
                 self.client_ip,
                 frames,
+                bytes_sent,
+                wire_bytes,
+                ended_by,
                 max_gap_ms,
                 DELIVERY_GAP_THRESHOLD_MS,
                 gaps_over_threshold,
@@ -1411,7 +1499,7 @@ pub fn create_wav_stream_with_cadence(
                             // so a send buffer that stays full takes no
                             // samples: the stall is seen in the first one
                             // after it clears, not while it lasts.
-                            link: guard.sample_link(cur_bytes),
+                            link: guard.sample_link(),
                             speaker: guard.speaker.snapshot(),
                         });
                     }
