@@ -22,7 +22,7 @@ const STREAM = 'stream-1';
 const NOW = 1_700_000_000_000;
 
 function ctx(fields: Partial<NoticeWordingContext> = {}): NoticeWordingContext {
-  return { speakerName: 'Kitchen', headStartFixed: false, ...fields };
+  return { speakerName: 'Kitchen', headStartFixed: false, offerDriftCorrection: false, ...fields };
 }
 
 const ranOut: SpeakerNotice = {
@@ -109,6 +109,25 @@ describe('speakerNoticeLines', () => {
     expect(keys({ ...low, restartHelps: false })).toEqual(['dashboard.speaker_notice_running_low']);
   });
 
+  it('should offer drift correction for an uncorrected drift only when it can be turned on here', () => {
+    const drift: SpeakerNotice = {
+      kind: 'drift_uncorrected',
+      noticeId: 4,
+      minutes: 25,
+      restartHelps: true,
+    };
+    expect(keys(drift, ctx({ offerDriftCorrection: true }))).toEqual([
+      'dashboard.speaker_notice_drift_uncorrected',
+      'dashboard.speaker_notice_drift_turn_on_desktop',
+      'dashboard.speaker_notice_restart_refills',
+    ]);
+    expect(keys(drift)).not.toContain('dashboard.speaker_notice_drift_turn_on_desktop');
+    const saturated: SpeakerNotice = { ...drift, kind: 'drift_saturated' };
+    expect(keys(saturated, ctx({ offerDriftCorrection: true }))).not.toContain(
+      'dashboard.speaker_notice_drift_turn_on_desktop',
+    );
+  });
+
   it('should have a string for every key it can produce', () => {
     const notices: SpeakerNotice[] = [
       ranOut,
@@ -123,7 +142,8 @@ describe('speakerNoticeLines', () => {
     const strings = en as Record<string, string>;
     for (const notice of notices) {
       for (const fixed of [false, true]) {
-        for (const key of keys(notice, ctx({ headStartFixed: fixed }))) {
+        const context = ctx({ headStartFixed: fixed, offerDriftCorrection: !fixed });
+        for (const key of keys(notice, context)) {
           expect(strings[key]).toBeString();
         }
       }

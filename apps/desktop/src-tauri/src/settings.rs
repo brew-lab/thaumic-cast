@@ -10,6 +10,7 @@ use std::sync::Mutex;
 
 use serde::{Deserialize, Serialize};
 use thaumic_core::protocol_constants::MAX_PCM_CONNECT_BURST_MS;
+use thaumic_core::DriftMode;
 
 /// File name inside the app data directory.
 const SETTINGS_FILE: &str = "settings.json";
@@ -31,6 +32,12 @@ pub struct DesktopSettings {
     /// [`MAX_PCM_CONNECT_BURST_MS`]. See
     /// `thaumic_core::Config::pcm_connect_burst_ms`.
     pub pcm_connect_burst_ms: u64,
+    /// Clock drift correction for PCM streams. The settings view offers only
+    /// on and off, and off saves `observe`: the audio is left exactly as
+    /// captured either way, and the log keeps saying what correction would
+    /// do. `off` itself can only be set by hand or through the environment.
+    /// See `thaumic_core::Config::drift_compensation`.
+    pub drift_compensation: DriftMode,
 }
 
 impl Default for DesktopSettings {
@@ -39,6 +46,7 @@ impl Default for DesktopSettings {
         Self {
             speaker_monitor: core.speaker_monitor,
             pcm_connect_burst_ms: core.pcm_connect_burst_ms,
+            drift_compensation: core.drift_compensation,
         }
     }
 }
@@ -100,6 +108,7 @@ impl DesktopSettings {
     pub fn apply_to(&self, config: &mut thaumic_core::Config) {
         config.speaker_monitor = self.speaker_monitor;
         config.pcm_connect_burst_ms = self.pcm_connect_burst_ms.min(MAX_PCM_CONNECT_BURST_MS);
+        config.drift_compensation = self.drift_compensation;
     }
 }
 
@@ -176,6 +185,31 @@ mod tests {
         let dir = temp_dir("head-start-off");
         DesktopSettings::update(&dir, |s| s.pcm_connect_burst_ms = 0).expect("saves");
         assert_eq!(DesktopSettings::load(&dir).pcm_connect_burst_ms, 0);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn drift_correction_observes_by_default_and_a_saved_mode_reaches_the_core() {
+        let dir = temp_dir("drift");
+        assert_eq!(
+            DesktopSettings::load(&dir).drift_compensation,
+            DriftMode::Observe
+        );
+        DesktopSettings::update(&dir, |s| s.drift_compensation = DriftMode::On).expect("saves");
+        let settings = DesktopSettings::load(&dir);
+        assert_eq!(settings.drift_compensation, DriftMode::On);
+        assert!(settings.speaker_monitor, "the other settings are untouched");
+
+        let mut config = thaumic_core::Config::default();
+        settings.apply_to(&mut config);
+        assert_eq!(config.drift_compensation, DriftMode::On);
+
+        // An older file without the field keeps observing.
+        std::fs::write(dir.join(SETTINGS_FILE), r#"{"speakerMonitor": true}"#).unwrap();
+        assert_eq!(
+            DesktopSettings::load(&dir).drift_compensation,
+            DriftMode::Observe
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 

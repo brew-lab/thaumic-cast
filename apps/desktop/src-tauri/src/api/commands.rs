@@ -397,6 +397,54 @@ pub fn set_pcm_connect_burst_ms(
     Ok(get_pcm_connect_burst_ms(state))
 }
 
+/// The clock drift correction setting as the settings view shows it.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DriftCompensationSetting {
+    /// The saved mode: `on`, `observe` (what the view's off saves) or
+    /// `off` (only set by hand).
+    pub mode: thaumic_core::DriftMode,
+    /// What `THAUMIC_DRIFT_COMPENSATION` forces it to, if set: the saved
+    /// setting then waits until the variable is removed.
+    pub env_override: Option<thaumic_core::DriftMode>,
+}
+
+/// Returns the clock drift correction setting.
+#[tauri::command]
+pub fn get_drift_compensation(state: tauri::State<'_, AppState>) -> DriftCompensationSetting {
+    DriftCompensationSetting {
+        mode: state.config.read().drift_compensation,
+        env_override: thaumic_core::services::drift_compensation_env_override(),
+    }
+}
+
+/// Saves the clock drift correction mode and applies it.
+///
+/// Takes `on`, `observe` or `off`; the settings view sends `observe` for
+/// off. The core reads the mode once per speaker connection, so it takes
+/// effect from each speaker's next connection without a restart.
+#[tauri::command]
+pub fn set_drift_compensation(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+    mode: String,
+) -> Result<DriftCompensationSetting, CommandError> {
+    let mode = thaumic_core::DriftMode::parse(&mode).ok_or_else(|| CommandError {
+        code: "invalid_drift_compensation",
+        message: format!("expected on, observe or off, got {mode:?}"),
+    })?;
+    let app_data_dir = get_app_data_dir(&app)?;
+    let settings = DesktopSettings::update(&app_data_dir, |s| s.drift_compensation = mode)
+        .map_err(|e| CommandError {
+            code: "settings_error",
+            message: e.to_string(),
+        })?;
+    settings.apply_to(&mut state.config.write());
+    log::info!("[Settings] Clock drift correction {}", mode);
+    broadcast_companion_audio(&state);
+    Ok(get_drift_compensation(state))
+}
+
 /// Tells every client the speaker-side audio settings new connections now
 /// get, so what they show about them never goes stale.
 fn broadcast_companion_audio(state: &AppState) {

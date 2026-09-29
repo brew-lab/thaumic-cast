@@ -324,6 +324,34 @@ export const setHeadStart = async (ms: number): Promise<HeadStartSetting> => {
   return invoke<HeadStartSetting>('set_pcm_connect_burst_ms', { ms });
 };
 
+/** A clock drift correction mode, as the backend names it. */
+export type DriftMode = 'on' | 'observe' | 'off';
+
+/** The clock drift correction setting as the backend reports it. */
+export interface DriftCompensationSetting {
+  /** The saved mode; off in the settings view saves `observe`. */
+  mode: DriftMode;
+  /** What THAUMIC_DRIFT_COMPENSATION forces it to, if that variable is set. */
+  envOverride: DriftMode | null;
+}
+
+/**
+ * Gets the clock drift correction setting.
+ * @returns The saved mode and any environment override
+ */
+export const getDriftCompensation = async (): Promise<DriftCompensationSetting> => {
+  return invoke<DriftCompensationSetting>('get_drift_compensation');
+};
+
+/**
+ * Saves the clock drift correction mode. Applies from each speaker's next connection.
+ * @param mode - `on`, or `observe` for off
+ * @returns The setting as saved
+ */
+export const setDriftCompensation = async (mode: DriftMode): Promise<DriftCompensationSetting> => {
+  return invoke<DriftCompensationSetting>('set_drift_compensation', { mode });
+};
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Speaker Notices
 // ─────────────────────────────────────────────────────────────────────────────
