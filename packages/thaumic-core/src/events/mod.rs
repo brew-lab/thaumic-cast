@@ -25,6 +25,8 @@ use serde::{Deserialize, Serialize};
 /// - `SpeakerStopped`: Speaker stopped unexpectedly (e.g., stream killed due to underflow)
 /// - `UserRemoved`: User explicitly removed the speaker via UI
 /// - `SpeakerTakenOver`: Another cast client started its own stream on this speaker
+/// - `ContinuationFailed`: A long PCM cast could not be moved on to its next
+///   segment (the speaker would not start it), so it ended there
 ///
 /// Wire strings are snake_case and are part of the client protocol: never
 /// rename an existing variant.
@@ -36,6 +38,7 @@ pub enum SpeakerRemovalReason {
     SpeakerStopped,
     UserRemoved,
     SpeakerTakenOver,
+    ContinuationFailed,
 }
 
 /// Events broadcast to clients.
@@ -519,6 +522,10 @@ mod tests {
         assert_eq!(
             wire(SpeakerRemovalReason::SpeakerTakenOver),
             "\"speaker_taken_over\""
+        );
+        assert_eq!(
+            wire(SpeakerRemovalReason::ContinuationFailed),
+            "\"continuation_failed\""
         );
     }
 

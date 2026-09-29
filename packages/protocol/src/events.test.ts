@@ -146,6 +146,19 @@ describe('StreamEventSchema', () => {
     expect(parsed.type === 'playbackStopped' && parsed.reason).toBe('speaker_taken_over');
   });
 
+  it('should accept continuation_failed as a playbackStopped reason', () => {
+    const event = {
+      type: 'playbackStopped',
+      streamId: 's1',
+      speakerIp: SPEAKER,
+      reason: 'continuation_failed',
+      timestamp: NOW,
+    };
+
+    const parsed = StreamEventSchema.parse(event);
+    expect(parsed.type === 'playbackStopped' && parsed.reason).toBe('continuation_failed');
+  });
+
   it('should reject a playbackStopped reason it does not know', () => {
     const event = {
       type: 'playbackStopped',
@@ -225,6 +238,7 @@ describe('SpeakerRemovalReasonSchema', () => {
       'speaker_stopped',
       'speaker_taken_over',
       'user_removed',
+      'continuation_failed',
     ]) {
       expect(SpeakerRemovalReasonSchema.safeParse(reason).success).toBe(true);
     }
