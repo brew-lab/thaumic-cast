@@ -6,6 +6,10 @@
 //! was ended on our side, or the body failed. These types let the connection's
 //! guard name which one it was, and count the bytes each body item really puts
 //! on the wire, which chunked framing makes larger than the payload.
+//!
+//! A PCM body also has an end the speaker reads to whatever hyper does: the
+//! length its WAV header declares (see [`DeclaredEnd`]). A speaker that stops
+//! reading there has reached the end of the item, not stalled.
 
 use std::fmt;
 
@@ -93,6 +97,81 @@ impl BodyFraming {
             BodyFraming::Chunked => CHUNKED_TERMINATOR_LEN,
             BodyFraming::Length(_) | BodyFraming::Close | BodyFraming::Http2 => 0,
         }
+    }
+}
+
+/// Audio a connection is treated as being at its declared end for before its
+/// body reaches it, in milliseconds (see [`DeclaredEnd::is_near`]).
+pub const DECLARED_END_LEAD_MS: u64 = 2_000;
+
+/// Audio a connection's body may run past its declared end and still be at
+/// it, in milliseconds (see [`DeclaredEnd::is_near`]).
+///
+/// A speaker that stops reading at its declared end leaves our side writing
+/// only into the socket's buffers until they fill: a Playbar that stopped at
+/// the 4 GiB WAV length was handed about 9 s more before it hung up. A body
+/// that runs well beyond that is being read, so the speaker is not honouring
+/// the length, and its connection is measured as any other again.
+pub const DECLARED_END_GRACE_MS: u64 = 60_000;
+
+/// Where a connection's body ends as the speaker reads it: the byte, counted
+/// in body bytes handed to the connection (a WAV header included), after
+/// which the speaker takes the item to be over.
+///
+/// For PCM that is the WAV header plus the data size it declares, unless a
+/// declared `Content-Length` or a test cap ends the body sooner. A speaker
+/// reads to it, plays out what it holds, and hangs up or goes to STOPPED, so
+/// near and after it the speaker no longer acknowledging audio is the end of
+/// the item: no stall, no running low and no drift should be read into it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DeclaredEnd {
+    /// Body bytes up to and including the last one the speaker reads.
+    bytes: u64,
+    /// Body bytes before `bytes` from which the connection counts as at its
+    /// end ([`DECLARED_END_LEAD_MS`] of audio).
+    lead_bytes: u64,
+    /// Body bytes past `bytes` up to which it still does
+    /// ([`DECLARED_END_GRACE_MS`] of audio).
+    grace_bytes: u64,
+}
+
+impl DeclaredEnd {
+    /// The end after `bytes` body bytes of a connection carrying `byte_rate`
+    /// bytes of audio per second.
+    pub fn new(bytes: u64, byte_rate: u32) -> Self {
+        let audio = |ms: u64| u64::from(byte_rate).saturating_mul(ms) / 1000;
+        Self {
+            bytes,
+            lead_bytes: audio(DECLARED_END_LEAD_MS),
+            grace_bytes: audio(DECLARED_END_GRACE_MS),
+        }
+    }
+
+    /// Body bytes up to the declared end.
+    pub fn bytes(self) -> u64 {
+        self.bytes
+    }
+
+    /// Whether a body that has handed over `sent` bytes is near or at its
+    /// declared end: from [`DECLARED_END_LEAD_MS`] of audio before it until
+    /// [`DECLARED_END_GRACE_MS`] past it. Ack-lag stalls and the notices
+    /// judged from them mean nothing there.
+    pub fn is_near(self, sent: u64) -> bool {
+        sent.saturating_add(self.lead_bytes) >= self.bytes && !self.is_past(sent)
+    }
+
+    /// Whether a body that has handed over `sent` bytes has reached its
+    /// declared end and not run on well past it (see
+    /// [`DECLARED_END_GRACE_MS`]): a connection that ends here ended with
+    /// the item.
+    pub fn is_reached(self, sent: u64) -> bool {
+        sent >= self.bytes && !self.is_past(sent)
+    }
+
+    /// Whether the body ran on further past its declared end than the
+    /// socket's buffers could hold, so the speaker was still reading.
+    fn is_past(self, sent: u64) -> bool {
+        sent >= self.bytes.saturating_add(self.grace_bytes)
     }
 }
 
@@ -291,6 +370,27 @@ mod tests {
         assert_eq!(
             EndedBy::classify(true, true, true, length, 5000),
             EndedBy::Error
+        );
+    }
+
+    /// 48 kHz stereo PCM behind the default 0xFFFFFFFF WAV header: the
+    /// Playbar reads 44 + 4294967295 bytes, 6h12m50s of audio.
+    #[test]
+    fn a_body_is_near_its_declared_end_from_2s_before_until_60s_after() {
+        let end = DeclaredEnd::new(44 + u64::from(u32::MAX), 192_000);
+        let at = end.bytes();
+        assert_eq!(at, 4_294_967_339);
+        assert!(!end.is_near(at - 384_001), "more than 2 s short");
+        assert!(end.is_near(at - 384_000));
+        assert!(!end.is_reached(at - 1));
+        assert!(end.is_near(at) && end.is_reached(at));
+        // The field's end: 1.79 MB handed over past the length before the
+        // speaker hung up.
+        assert!(end.is_near(4_296_760_364) && end.is_reached(4_296_760_364));
+        assert!(end.is_near(at + 11_519_999));
+        assert!(
+            !end.is_near(at + 11_520_000) && !end.is_reached(at + 11_520_000),
+            "a speaker still reading a minute past the end is not honouring it"
         );
     }
 

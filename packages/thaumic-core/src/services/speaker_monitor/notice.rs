@@ -10,6 +10,13 @@
 //! speaker is never a notice on its own: the speaker head start usually
 //! rides it out, and a notice that asks for nothing helps nobody.
 //!
+//! Nor is the end of the item. A speaker reads a PCM connection only up to
+//! the length its WAV header declares, then stops reading, plays out and
+//! hangs up: the acknowledgements stall and its reserve drains because the
+//! item is over. The monitor does not hand a report window that came near a
+//! connection's declared end to [`NoticeState::update`] at all (see
+//! [`crate::stream::DeclaredEnd`]), so whatever stood before it stands.
+//!
 //! The kinds, most urgent first:
 //!
 //! - **Head start ran out** ([`SpeakerNoticeKind::HeadStartRanOut`]): the

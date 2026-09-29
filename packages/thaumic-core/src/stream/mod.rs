@@ -13,7 +13,7 @@ pub use cadence::{
     CadenceConfig, EpochHook, FirstConnectionWait, FirstWaitWatch, LoggingStreamGuard,
     FIRST_WAIT_SURVIVAL, PCM_CONNECT_BURST_ENV,
 };
-pub use framing::{BodyFraming, EndedBy};
+pub use framing::{BodyFraming, DeclaredEnd, EndedBy};
 pub use icy::{IcyMetadataInjector, ICY_METAINT};
 pub use manager::{
     AudioCodec, CleanupOrder, PlaybackEpoch, StreamMetadata, StreamReaderSlot, StreamRegistry,
