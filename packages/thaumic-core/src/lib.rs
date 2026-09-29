@@ -57,6 +57,7 @@ pub use events::{
     NetworkHealth, SonosEvent, SpeakerRemovalReason, StreamEvent, TopologyEvent,
 };
 pub use runtime::TokioSpawner;
+pub use services::DriftMode;
 pub use state::{Config, ManualSpeakerConfig, SonosState, StreamingConfig};
 pub use utils::{
     now_millis, priority_boost_disabled, validate_speaker_ip, IpValidationError,

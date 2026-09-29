@@ -1093,6 +1093,7 @@ impl DriftHook {
         };
         let net_limit_frames =
             (MAX_NET_INSERTED.as_millis() as i64) * i64::from(audio_format.sample_rate) / 1000;
+        control.mark_engaged();
         Some(Self {
             adapter,
             control,

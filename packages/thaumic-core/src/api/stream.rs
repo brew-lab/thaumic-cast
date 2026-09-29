@@ -29,12 +29,14 @@ use crate::api::AppState;
 use crate::error::{ThaumicError, ThaumicResult};
 use crate::protocol_constants::{APP_NAME, ICY_METAINT};
 use crate::services::latency_monitor::speaker_monitor_enabled;
+use crate::services::speaker_monitor::control::{drift_compensation_mode, DriftMode};
 use crate::stream::manager::TimestampedFrame;
 use crate::stream::{
     create_wav_header_with_data_size, create_wav_stream_with_cadence, lagged_error,
     pcm_connect_burst_ms, AudioCodec, BodyFraming, CadenceConfig, ConnectionTap, EpochHook,
     FirstConnectionWait, FirstWaitWatch, HeadStart, IcyMetadataInjector, LoggingStreamGuard,
-    PcmHttpFraming, PcmHttpSettings, PcmHttpSwitches, StreamState, MAX_UNLISTED_STREAM_READERS,
+    PcmHttpFraming, PcmHttpSettings, PcmHttpSwitches, RateAdapter, RateControl, StreamState,
+    MAX_UNLISTED_STREAM_READERS,
 };
 
 /// A single item of an audio body stream.
@@ -169,12 +171,13 @@ pub(super) async fn stream_audio(
     // peer is one of the devices the stream is actually for. Derived per
     // request; see `decide_stream_access`.
     let allowed_ips = state.stream_coordinator.allowed_reader_ips(&id);
-    let (strict, speaker_monitor, connect_burst_ms) = {
+    let (strict, speaker_monitor, connect_burst_ms, drift_compensation) = {
         let config = state.config.read();
         (
             config.strict_stream_access,
             config.speaker_monitor,
             config.pcm_connect_burst_ms,
+            config.drift_compensation,
         )
     };
     let access = decide_stream_access(
@@ -405,16 +408,36 @@ pub(super) async fn stream_audio(
     // the connection, since video sync may need it; whether it polls a
     // speaker nobody asked video sync for follows the speaker-monitor
     // setting as it stands now, so a change applies from the next connection.
+    //
+    // Clock drift correction is decided here too, once per connection: it
+    // steers by the monitor's estimates, so only a monitored speaker's PCM
+    // connection gets a rate control, and only with correction on. Observing
+    // or off, the cadence builds no adapter and sends the captured buffers
+    // themselves.
     let tap = access.monitors_playback().then(|| {
-        Arc::new(ConnectionTap::new(
-            id.clone(),
-            remote_ip,
-            connected_at,
-            stream_state.codec,
-            &stream_state.audio_format,
-            Arc::clone(&guard),
-            speaker_monitor_enabled(speaker_monitor),
-        ))
+        let monitor = speaker_monitor_enabled(speaker_monitor);
+        let drift = drift_compensation_mode(drift_compensation, monitor);
+        let rate_control =
+            connection_rate_control(drift, stream_state.codec, &stream_state.audio_format);
+        if rate_control.is_some() {
+            log::info!(
+                "[Stream] Clock drift correction on for client={}, stream={}",
+                remote_ip,
+                id
+            );
+        }
+        Arc::new(
+            ConnectionTap::new(
+                id.clone(),
+                remote_ip,
+                connected_at,
+                stream_state.codec,
+                &stream_state.audio_format,
+                Arc::clone(&guard),
+                monitor,
+            )
+            .with_drift(drift, rate_control),
+        )
     });
     let epoch_hook: Option<EpochHook> = access.tracks_playback().then(|| {
         let hook = EpochHook::new(Arc::downgrade(&stream_state), connected_at, remote_ip);
@@ -773,6 +796,10 @@ fn pcm_cadence_stream(
         stream_state.audio_format,
         prefill_frames,
     );
+    let config = match tap.and_then(ConnectionTap::rate_control) {
+        Some(control) => config.with_rate_control(Arc::clone(control)),
+        None => config,
+    };
     if let Some(tap) = tap {
         tap.set_head_start(HeadStart::new(config.burst_ms(), burst_ms));
     }
@@ -791,6 +818,19 @@ fn pcm_cadence_stream(
         Some(Arc::downgrade(stream_state)),
         epoch_hook,
     ))
+}
+
+/// The rate control a new connection's drift correction follows: one for a
+/// PCM connection made with correction on whose format the adapter can
+/// resample, none otherwise (observing, off, a compressed codec, or a
+/// format it cannot take), which leaves the stream zero-copy.
+fn connection_rate_control(
+    mode: DriftMode,
+    codec: AudioCodec,
+    audio_format: &crate::stream::AudioFormat,
+) -> Option<Arc<RateControl>> {
+    (mode == DriftMode::On && codec == AudioCodec::Pcm && RateAdapter::supports(audio_format))
+        .then(|| Arc::new(RateControl::new()))
 }
 
 /// Logs how much of a PCM connection's prefill is sent as its connect burst
@@ -1339,19 +1379,35 @@ mod tests {
         remote: IpAddr,
         burst_ms: u64,
     ) -> (AudioStream, Arc<ConnectionTap>) {
+        pcm_connection_with_drift(state, remote, burst_ms, DriftMode::Off)
+    }
+
+    /// [`pcm_connection`] made under drift correction `drift`.
+    fn pcm_connection_with_drift(
+        state: &Arc<StreamState>,
+        remote: IpAddr,
+        burst_ms: u64,
+        drift: DriftMode,
+    ) -> (AudioStream, Arc<ConnectionTap>) {
         use crate::stream::MonitorRegistrar;
         let is_resume = state.timing.current_epoch_for(remote).is_some();
         let (prefill, rx) = state.subscribe();
         let guard = Arc::new(LoggingStreamGuard::new(state.id.clone(), remote));
-        let tap = Arc::new(ConnectionTap::new(
-            state.id.clone(),
-            remote,
-            Instant::now(),
-            AudioCodec::Pcm,
-            &state.audio_format,
-            Arc::clone(&guard),
-            true,
-        ));
+        let tap = Arc::new(
+            ConnectionTap::new(
+                state.id.clone(),
+                remote,
+                Instant::now(),
+                AudioCodec::Pcm,
+                &state.audio_format,
+                Arc::clone(&guard),
+                true,
+            )
+            .with_drift(
+                drift,
+                connection_rate_control(drift, AudioCodec::Pcm, &state.audio_format),
+            ),
+        );
         let (registrar, _registrations) = MonitorRegistrar::channel();
         let hook = EpochHook::new(Arc::downgrade(state), Instant::now(), remote)
             .with_monitor(Arc::clone(&tap), registrar);
@@ -1509,6 +1565,52 @@ mod tests {
 
         let (_body, tap) = pcm_connection(&state, ip("192.168.1.52"), 0);
         assert_eq!(tap.head_start(), Some(HeadStart::new(0, 0)));
+    }
+
+    /// Only a PCM connection made with drift correction on, in a format the
+    /// adapter takes, gets a rate control; observing or off, the cadence
+    /// builds no adapter and every frame, burst included, is the captured
+    /// buffer itself.
+    #[tokio::test(start_paused = true)]
+    async fn drift_on_engages_an_adapter_and_observe_sends_the_captured_frames() {
+        let pcm = AudioFormat::default();
+        assert!(connection_rate_control(DriftMode::On, AudioCodec::Pcm, &pcm).is_some());
+        assert!(connection_rate_control(DriftMode::Observe, AudioCodec::Pcm, &pcm).is_none());
+        assert!(connection_rate_control(DriftMode::Off, AudioCodec::Pcm, &pcm).is_none());
+        assert!(connection_rate_control(DriftMode::On, AudioCodec::Flac, &pcm).is_none());
+        let wide = AudioFormat::new(48_000, 2, 24);
+        assert!(connection_rate_control(DriftMode::On, AudioCodec::Pcm, &wide).is_none());
+
+        let state = Arc::new(StreamState::new(
+            "pcm-stream".to_string(),
+            AudioCodec::Pcm,
+            AudioFormat::default(),
+            crate::protocol_constants::pcm_ring_frames(10),
+            64,
+            200,
+            10,
+        ));
+        let _keepalive = state.tx.subscribe();
+        push_tagged(&state, 0, 100);
+
+        let (mut body, tap) =
+            pcm_connection_with_drift(&state, ip("192.168.1.50"), 500, DriftMode::Observe);
+        assert!(tap.rate_control().is_none());
+        assert_eq!(tap.drift_mode(), DriftMode::Observe);
+        let items = ready_now(&mut body).await;
+        let tags: Vec<u8> = items[1..].iter().map(|f| f[0]).collect();
+        assert_eq!(tags, (30..81).collect::<Vec<u8>>(), "the captured frames");
+        assert_eq!(tap.net_inserted_ms(), None);
+        drop(body);
+
+        let (mut body, tap) =
+            pcm_connection_with_drift(&state, ip("192.168.1.51"), 500, DriftMode::On);
+        let control = Arc::clone(tap.rate_control().expect("a rate control"));
+        assert!(!control.is_engaged(), "until the cadence body runs");
+        let items = ready_now(&mut body).await;
+        assert_eq!(items.len(), 1 + 50 + 1);
+        assert!(control.is_engaged());
+        assert_eq!(tap.net_inserted_ms(), Some(0.0));
     }
 
     /// A speaker fetching 100 ms after the stream's first frame, as a fresh

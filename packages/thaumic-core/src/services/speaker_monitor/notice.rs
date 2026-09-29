@@ -27,6 +27,10 @@
 //! - **Drift uncorrected** ([`SpeakerNoticeKind::DriftUncorrected`]): the
 //!   speaker plays faster than audio arrives and will reach the floor
 //!   within half an hour, with nothing correcting it.
+//! - **Drift saturated** ([`SpeakerNoticeKind::DriftSaturated`]): drift
+//!   correction is running on the connection but has been pinned at its cap
+//!   for five minutes, and what it cannot make up will still reach the floor
+//!   within half an hour.
 //!
 //! Head-start kinds exist only for PCM connections, whose head start is
 //! known, and stand for the rest of the cast once raised, until a
@@ -79,6 +83,9 @@ pub enum SpeakerNoticeKind {
     RunningLow,
     /// The speaker's clock is draining the reserve and nothing corrects it.
     DriftUncorrected,
+    /// Drift correction is running but cannot keep up with the speaker's
+    /// clock.
+    DriftSaturated,
 }
 
 impl SpeakerNoticeKind {
@@ -90,6 +97,7 @@ impl SpeakerNoticeKind {
             Self::HeadStartNoRemedy => "head_start_no_remedy",
             Self::RunningLow => "running_low",
             Self::DriftUncorrected => "drift_uncorrected",
+            Self::DriftSaturated => "drift_saturated",
         }
     }
 
@@ -109,7 +117,7 @@ impl SpeakerNoticeKind {
             Self::HeadStartRanOut => 4,
             Self::HeadStartClose => 3,
             Self::RunningLow => 2,
-            Self::DriftUncorrected => 1,
+            Self::DriftUncorrected | Self::DriftSaturated => 1,
         }
     }
 
@@ -120,6 +128,7 @@ impl SpeakerNoticeKind {
             Self::HeadStartNoRemedy => 2,
             Self::RunningLow => 3,
             Self::DriftUncorrected => 4,
+            Self::DriftSaturated => 5,
         }
     }
 }
@@ -193,10 +202,14 @@ pub struct NoticeInput {
     /// Seconds until the reserve reaches the floor at the net drain rate,
     /// when it is measurably draining.
     pub time_to_floor_s: Option<f64>,
-    /// Whether clock drift correction is running on this connection. Always
-    /// false until drift correction exists; a drift notice is then about
-    /// what correction cannot make up, not about turning it on.
+    /// Whether clock drift correction is running on this connection: made
+    /// with correction on, with its adapter engaged and following the
+    /// command (see [`super::control::drift_active`]). A drift notice is
+    /// then about what correction cannot make up, not about turning it on.
     pub drift_active: bool,
+    /// Whether the correction command has been pinned at its cap for five
+    /// minutes (see [`super::control::DriftController::saturated`]).
+    pub saturated: bool,
 }
 
 /// A head-start notice one report calls for.
@@ -328,7 +341,7 @@ pub struct NoticeState {
     last_id: u64,
     /// When each kind last started an episode, by
     /// [`SpeakerNoticeKind::index`].
-    raised_at: [Option<Instant>; 5],
+    raised_at: [Option<Instant>; 6],
     /// Since when a running-low speaker's 10th percentile has stayed above
     /// the clear level.
     above_clear_since: Option<Instant>,
@@ -470,6 +483,38 @@ impl NoticeState {
                 now,
                 SpeakerNotice {
                     kind: SpeakerNoticeKind::DriftUncorrected,
+                    notice_id: 0,
+                    stall_ms: None,
+                    left_ms: None,
+                    head_start_ms: input.head_start.map(|h| h.sent_ms),
+                    suggested_head_start_ms: None,
+                    minutes: Some(((secs / 60.0).ceil() as u32).max(1)),
+                    restart_helps,
+                },
+            );
+            return self.active;
+        }
+
+        // A drift correction cannot make up. The time to the floor is on the
+        // net rate, so it is what remains beyond the cap.
+        let saturated = input.drift_active && input.saturated;
+        if self
+            .active
+            .is_some_and(|a| a.kind == SpeakerNoticeKind::DriftSaturated)
+        {
+            if !saturated {
+                self.active = None;
+            }
+        } else if saturated
+            && input.time_to_floor_s.is_some_and(|s| s < DRIFT_NOTICE_SECS)
+            && self.active.is_none()
+            && self.may_raise(now, SpeakerNoticeKind::DriftSaturated)
+        {
+            let secs = input.time_to_floor_s.unwrap_or(0.0);
+            self.raise(
+                now,
+                SpeakerNotice {
+                    kind: SpeakerNoticeKind::DriftSaturated,
                     notice_id: 0,
                     stall_ms: None,
                     left_ms: None,
@@ -1027,6 +1072,59 @@ mod tests {
         assert!(ran_out.notice_id > low.notice_id);
     }
 
+    /// Drift notices follow whether correction is actually running on the
+    /// connection, not the mode alone: without it the drift is uncorrected;
+    /// with it, only a correction pinned at its cap is worth a notice.
+    #[test]
+    fn drift_notice_gates_on_adapter_active() {
+        let t0 = Instant::now();
+        let draining = |drift_active, saturated| NoticeInput {
+            time_to_floor_s: Some(20.0 * 60.0),
+            drift_active,
+            saturated,
+            ..healthy()
+        };
+
+        let mut state = NoticeState::new();
+        let n = state.update(t0, &draining(false, false)).expect("drift");
+        assert_eq!(n.kind, SpeakerNoticeKind::DriftUncorrected);
+        // Saturation means nothing without an engaged adapter.
+        let mut state = NoticeState::new();
+        let n = state.update(t0, &draining(false, true)).expect("drift");
+        assert_eq!(n.kind, SpeakerNoticeKind::DriftUncorrected);
+
+        // Correcting within its range: nothing to say.
+        let mut state = NoticeState::new();
+        assert_eq!(state.update(t0, &draining(true, false)), None);
+
+        // Pinned at the cap and still draining: saturated, with the minutes
+        // left on the remainder and restart advice for a full head start.
+        let n = state
+            .update(t0 + Duration::from_secs(30), &draining(true, true))
+            .expect("saturated");
+        assert_eq!(n.kind, SpeakerNoticeKind::DriftSaturated);
+        assert_eq!(n.minutes, Some(20));
+        assert!(n.restart_helps);
+        // It stands while saturated, under the same id...
+        assert_eq!(
+            state.update(t0 + Duration::from_secs(60), &draining(true, true)),
+            Some(n)
+        );
+        // ...and clears once the controller is off the cap.
+        assert_eq!(
+            state.update(t0 + Duration::from_secs(90), &draining(true, false)),
+            None
+        );
+
+        // An uncorrected notice gives way once correction engages.
+        let mut state = NoticeState::new();
+        state.update(t0, &draining(false, false)).expect("drift");
+        assert_eq!(
+            state.update(t0 + Duration::from_secs(30), &draining(true, false)),
+            None
+        );
+    }
+
     #[test]
     fn notice_wire_shape() {
         let notice = SpeakerNotice {
@@ -1058,6 +1156,7 @@ mod tests {
             SpeakerNoticeKind::HeadStartNoRemedy,
             SpeakerNoticeKind::RunningLow,
             SpeakerNoticeKind::DriftUncorrected,
+            SpeakerNoticeKind::DriftSaturated,
         ] {
             assert_eq!(wire(kind), format!("\"{}\"", kind.as_str()));
         }

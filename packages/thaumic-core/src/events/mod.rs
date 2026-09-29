@@ -188,6 +188,9 @@ pub struct CompanionAudio {
     /// Whether the speaker monitor, and with it the speaker notices, is on
     /// for new connections.
     pub speaker_monitor: bool,
+    /// The clock drift correction mode new connections run under, after
+    /// any environment override: `off` whenever the speaker monitor is.
+    pub drift_compensation: crate::services::speaker_monitor::DriftMode,
 }
 
 impl CompanionAudio {
@@ -195,12 +198,15 @@ impl CompanionAudio {
     /// environment overrides applied.
     pub fn from_config(config: &crate::state::Config) -> Self {
         use crate::services::latency_monitor::speaker_monitor_enabled;
+        use crate::services::speaker_monitor::drift_compensation_mode;
         use crate::stream::cadence::{pcm_connect_burst_env_override, pcm_connect_burst_ms};
+        let speaker_monitor = speaker_monitor_enabled(config.speaker_monitor);
         Self {
             head_start_ms: u32::try_from(pcm_connect_burst_ms(config.pcm_connect_burst_ms))
                 .unwrap_or(u32::MAX),
             head_start_fixed: pcm_connect_burst_env_override().is_some(),
-            speaker_monitor: speaker_monitor_enabled(config.speaker_monitor),
+            speaker_monitor,
+            drift_compensation: drift_compensation_mode(config.drift_compensation, speaker_monitor),
         }
     }
 }
@@ -260,8 +266,12 @@ pub enum SpeakerHealthState {
 }
 
 /// Events related to network health and speaker reachability.
+///
+/// The speaker health report dwarfs the other variants, but one goes out per
+/// speaker every 30 s at most, so boxing it would buy nothing.
 #[derive(Debug, Clone, Serialize)]
 #[serde(tag = "type", rename_all = "camelCase")]
+#[allow(clippy::large_enum_variant)]
 pub enum NetworkEvent {
     /// Network health status changed.
     HealthChanged {
@@ -350,10 +360,25 @@ pub enum NetworkEvent {
         /// Standard error of `clock_ppm`.
         #[serde(rename = "clockSePpm", skip_serializing_if = "Option::is_none")]
         clock_se_ppm: Option<f32>,
-        /// Seconds until the reserve reaches `floor_ms` at the rate the
-        /// speaker drains it, when it is measurably draining it.
+        /// Seconds until the reserve reaches `floor_ms` at the net rate the
+        /// speaker drains it (its clock less any drift correction applied),
+        /// when it is measurably draining it.
         #[serde(rename = "timeToFloorS", skip_serializing_if = "Option::is_none")]
         time_to_floor_s: Option<u32>,
+        /// The clock drift correction mode the connection was made under
+        /// (PCM only).
+        #[serde(rename = "driftMode", skip_serializing_if = "Option::is_none")]
+        drift_mode: Option<crate::services::speaker_monitor::DriftMode>,
+        /// The drift correction command, in ppm (positive inserts audio):
+        /// applied with `on`, what it would be with `observe`. Absent with
+        /// `off`.
+        #[serde(rename = "commandPpm", skip_serializing_if = "Option::is_none")]
+        command_ppm: Option<f32>,
+        /// Audio drift correction has inserted into (positive) or removed
+        /// from the connection so far, in ms. Only while it corrects the
+        /// connection.
+        #[serde(rename = "netInsertedMs", skip_serializing_if = "Option::is_none")]
+        net_inserted_ms: Option<i32>,
         /// What the user should be told about this speaker, decided here so
         /// every client says the same thing (see
         /// [`crate::services::speaker_monitor::notice`]). Repeated in every
@@ -520,6 +545,9 @@ mod tests {
             clock_ppm: Some(39.75),
             clock_se_ppm: Some(7.25),
             time_to_floor_s: Some(900),
+            drift_mode: Some(crate::services::speaker_monitor::DriftMode::Observe),
+            command_ppm: Some(38.5),
+            net_inserted_ms: None,
             notice: Some(crate::services::speaker_monitor::SpeakerNotice {
                 kind: crate::services::speaker_monitor::SpeakerNoticeKind::DriftUncorrected,
                 notice_id: 2,
@@ -554,6 +582,8 @@ mod tests {
                 "clockPpm": 39.75,
                 "clockSePpm": 7.25,
                 "timeToFloorS": 900,
+                "driftMode": "observe",
+                "commandPpm": 38.5,
                 "notice": {
                     "kind": "drift_uncorrected",
                     "noticeId": 2,
@@ -583,6 +613,9 @@ mod tests {
             clock_ppm: None,
             clock_se_ppm: None,
             time_to_floor_s: None,
+            drift_mode: None,
+            command_ppm: None,
+            net_inserted_ms: None,
             notice: None,
             timestamp: 1,
         });
@@ -643,6 +676,7 @@ mod tests {
                 head_start_ms: 750,
                 head_start_fixed: true,
                 speaker_monitor: false,
+                drift_compensation: crate::services::speaker_monitor::DriftMode::Off,
             },
             timestamp: 2,
         });
@@ -654,6 +688,7 @@ mod tests {
                 "headStartMs": 750,
                 "headStartFixed": true,
                 "speakerMonitor": false,
+                "driftCompensation": "off",
                 "timestamp": 2,
             })
         );

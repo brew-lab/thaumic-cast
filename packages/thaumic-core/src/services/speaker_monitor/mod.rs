@@ -10,6 +10,7 @@
 //! - [`segment`] decides when measurements stop being continuous;
 //! - [`tracker`] ties the three together for one speaker;
 //! - [`notice`] decides what the user is told about a speaker;
+//! - [`control`] decides how much audio clock drift correction adds;
 //! - [`rollup`] reduces a window of samples for the log;
 //! - [`transport_gate`] decides whether the speaker is playing;
 //! - [`topology_diff`] names what changed in the household between two
@@ -17,6 +18,7 @@
 
 pub mod bounds;
 pub mod clock_fit;
+pub mod control;
 pub mod notice;
 pub mod reserve;
 pub mod rollup;
@@ -32,6 +34,10 @@ pub(crate) mod test_support;
 
 pub use bounds::{PlayheadBound, PollObservation};
 pub use clock_fit::{ClockEstimate, ClockFit};
+pub use control::{
+    drift_active, drift_compensation_env_override, drift_compensation_mode, ControlHold,
+    ControlInput, DriftController, DriftMode, SpeakerControlState, DRIFT_COMPENSATION_ENV,
+};
 pub use notice::{NoticeInput, NoticeState, SpeakerNotice, SpeakerNoticeKind};
 pub use reserve::{LockReason, ReserveEstimate, ReserveEstimator};
 pub use rollup::WindowStats;
