@@ -112,7 +112,9 @@ pub fn refresh_topology(state: tauri::State<'_, AppState>) {
 
 /// Returns the current transport states for all speakers.
 ///
-/// Returns a map of speaker IP to transport state (Playing, Stopped, etc.).
+/// Returns a map of speaker IP to transport state (Playing, Stopped, etc.),
+/// as clients are shown it: a speaker switching PCM segments shows its state
+/// from before the switch.
 #[tauri::command]
 pub fn get_transport_states(
     state: tauri::State<'_, AppState>,
@@ -121,9 +123,9 @@ pub fn get_transport_states(
         .services
         .discovery_service
         .sonos_state()
-        .transport_states
-        .iter()
-        .map(|entry| (entry.key().clone(), entry.value().to_string()))
+        .shown_transport_states()
+        .into_iter()
+        .map(|(ip, state)| (ip, state.to_string()))
         .collect()
 }
 
