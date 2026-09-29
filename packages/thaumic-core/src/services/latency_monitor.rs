@@ -650,7 +650,7 @@ impl LatencySession {
         };
         self.drift
             .start_connection(drift, tap.rate_control().is_some());
-        self.tracker.set_command_ppm(self.drift.applied_ppm());
+        self.tracker.set_command_ppm(self.command_in_force(tap));
         self.last_report = Some(now);
         self.polls_since_report = 0;
         self.phases_since_report.clear();
@@ -763,7 +763,7 @@ impl LatencySession {
 
         let now_ms = ms_between(tap.connected_at, now);
         // The correction in force over the window just ended.
-        self.tracker.set_command_ppm(self.drift.applied_ppm());
+        self.tracker.set_command_ppm(self.command_in_force(tap));
         let (estimate, brk) = self.tracker.estimate(now_ms);
         if brk == Some(SegmentBreak::OffsetStep) {
             log::warn!(
@@ -834,7 +834,11 @@ impl LatencySession {
             ),
             opt_ms(self.tracker.calib_ms()),
             format_clock(clock),
-            format_drift(&self.drift, tap.net_inserted_ms()),
+            format_drift(
+                &self.drift,
+                tap.net_inserted_ms(),
+                tap.rate_control().and_then(|c| c.forced_ppm())
+            ),
             polls,
             per_min,
             phase_gap.map_or_else(|| "\u{2014}".to_string(), |g| format!("{g:.0}ms")),
@@ -933,6 +937,16 @@ impl LatencySession {
             stale,
         });
         self.refresh_rate_command(tap);
+    }
+
+    /// The rate correction in force on `tap`'s audio, in ppm: the rate
+    /// `THAUMIC_DRIFT_FORCE_PPM` fixed its adapter at for a listening test,
+    /// else what the controller applies. The reserve's net drain follows the
+    /// audio actually sent, so a forced rate counts even with the mode off.
+    fn command_in_force(&self, tap: &ConnectionTap) -> f64 {
+        tap.rate_control()
+            .and_then(|c| c.forced_ppm())
+            .unwrap_or_else(|| self.drift.applied_ppm())
     }
 
     /// Writes the drift command into the connection's rate control, if its
@@ -1592,7 +1606,28 @@ fn format_pipeline(samples: &[crate::stream::cadence::PipelineSample]) -> String
 /// would_cmd=+18.0ppm I=+17.6` when it only works out what it would do, and
 /// `drift=off` otherwise. The controller's reason is added when it is not
 /// steering (holding, ramping, no target yet, or a distrusted target).
-fn format_drift(drift: &DriftController, net_inserted_ms: Option<f64>) -> String {
+///
+/// A rate `THAUMIC_DRIFT_FORCE_PPM` fixed the adapter at is shown as
+/// `forced=+150ppm` (with what it has inserted) whatever the mode, since it
+/// is what the audio actually gets.
+fn format_drift(
+    drift: &DriftController,
+    net_inserted_ms: Option<f64>,
+    forced_ppm: Option<f64>,
+) -> String {
+    let base = format_drift_mode(drift, net_inserted_ms.filter(|_| forced_ppm.is_none()));
+    match forced_ppm {
+        Some(ppm) => {
+            let inserted =
+                net_inserted_ms.map_or_else(String::new, |ms| format!(" ins={ms:+.0}ms"));
+            format!("{base} forced={ppm:+}ppm{inserted}")
+        }
+        None => base,
+    }
+}
+
+/// [`format_drift`] without a forced rate.
+fn format_drift_mode(drift: &DriftController, net_inserted_ms: Option<f64>) -> String {
     use crate::services::speaker_monitor::ControlHold;
     let mode = drift.mode();
     if mode == DriftMode::Off {
@@ -3632,5 +3667,21 @@ mod tests {
         register_connection(&mut sessions, &mut kept, &again, Some("RINCON_C".into()));
         assert_eq!(sessions[&key].drift.state(), &learned);
         assert_eq!(sessions[&key].control_key.as_deref(), Some("RINCON_C"));
+    }
+
+    #[test]
+    fn the_report_line_shows_a_forced_rate_in_every_mode() {
+        let mut drift = DriftController::default();
+        drift.start_connection(DriftMode::Off, true);
+        assert_eq!(format_drift(&drift, Some(0.0), None), "drift=off");
+        assert_eq!(
+            format_drift(&drift, Some(12.4), Some(150.0)),
+            "drift=off forced=+150ppm ins=+12ms"
+        );
+        drift.start_connection(DriftMode::Observe, true);
+        let line = format_drift(&drift, Some(-3.0), Some(-42.5));
+        assert!(line.starts_with("drift=observe would_cmd="), "{line}");
+        assert!(line.ends_with(" forced=-42.5ppm ins=-3ms"), "{line}");
+        assert_eq!(line.matches("ins=").count(), 1, "{line}");
     }
 }
