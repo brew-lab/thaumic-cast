@@ -163,11 +163,11 @@ much delay. Both apply from each speaker's next connection.
 | `THAUMIC_PCM_WAV_DATA_SIZE`         | Experimental: the WAV header's data size, 0 to 4294967295 (default `4294967295`)             |
 | `THAUMIC_PCM_END_AFTER_BYTES`       | Experimental: end each PCM body cleanly after this many bytes; `chunked` or `close` only     |
 
-PCM streams are sent chunked, with no `Content-Length`, and 0xFFFFFFFF in both WAV header size fields, which speakers
-take as a stream with no end. A speaker that asks over HTTP/1.0, which cannot take chunks, gets an HTTP/1.0 response
+PCM streams are sent chunked, with no `Content-Length`, and 0xFFFFFFFF in both WAV header size fields, which a Sonos
+Playbar played past 2^31 bytes in a field test (a run past 2^32 is pending). A speaker that asks over HTTP/1.0, which cannot take chunks, gets an HTTP/1.0 response
 whose body ends only when the connection closes (`http=HTTP/1.0, framing=close` on its connection line), as the
-compressed codecs always have. Declaring a length ended every PCM cast to a Playbar after 3h06m, since it caps a
-declared length at 2^31 bytes.
+compressed codecs always have. Declaring a length ended every PCM cast to a Playbar after 3h06m at 48 kHz (about 3h23m at 44.1 kHz), since it
+caps a declared length at 2^31 bytes.
 
 The `length` and `close` framings and the three experimental variables are switches for field experiments into how
 speakers treat a PCM stream, not settings: they are read again for each speaker connection, a connection served with any
