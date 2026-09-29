@@ -424,16 +424,39 @@ pub(crate) mod test_support {
         monitor: bool,
         codec: AudioCodec,
     ) -> Arc<ConnectionTap> {
-        let ip: IpAddr = speaker_ip.parse().expect("test address");
-        let tap = Arc::new(ConnectionTap::new(
+        started_tap_with_drift(
             stream_id,
-            ip,
-            Instant::now(),
-            codec,
-            &AudioFormat::default(),
-            Arc::new(LoggingStreamGuard::new(stream_id.to_string(), ip)),
+            speaker_ip,
             monitor,
-        ));
+            codec,
+            crate::services::speaker_monitor::DriftMode::Off,
+            None,
+        )
+    }
+
+    /// A tap of `codec` for `speaker_ip` on `stream_id` whose epoch has
+    /// started, made under drift correction `mode` with `rate_control`.
+    pub(crate) fn started_tap_with_drift(
+        stream_id: &str,
+        speaker_ip: &str,
+        monitor: bool,
+        codec: AudioCodec,
+        mode: crate::services::speaker_monitor::DriftMode,
+        rate_control: Option<Arc<RateControl>>,
+    ) -> Arc<ConnectionTap> {
+        let ip: IpAddr = speaker_ip.parse().expect("test address");
+        let tap = Arc::new(
+            ConnectionTap::new(
+                stream_id,
+                ip,
+                Instant::now(),
+                codec,
+                &AudioFormat::default(),
+                Arc::new(LoggingStreamGuard::new(stream_id.to_string(), ip)),
+                monitor,
+            )
+            .with_drift(mode, rate_control),
+        );
         if codec == AudioCodec::Pcm {
             tap.set_head_start(HeadStart::new(500, 500));
         }

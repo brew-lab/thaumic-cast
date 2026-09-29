@@ -837,7 +837,8 @@ impl LatencySession {
             format_drift(
                 &self.drift,
                 tap.net_inserted_ms(),
-                tap.rate_control().and_then(|c| c.forced_ppm())
+                tap.rate_control().and_then(|c| c.forced_ppm()),
+                tap.rate_control().is_some_and(|c| c.is_pinned())
             ),
             polls,
             per_min,
@@ -925,6 +926,12 @@ impl LatencySession {
         now: Instant,
         estimate: Option<crate::services::speaker_monitor::ReserveEstimate>,
     ) {
+        // A forced rate drives the reserve for a listening test: the
+        // controller would learn from a level it is not steering and wind its
+        // integral up towards the cap, then hand that to the next connection.
+        if tap.rate_control().is_some_and(|c| c.forced_ppm().is_some()) {
+            return;
+        }
         let stale = self.consecutive_failures >= BACKOFF_AFTER_FAILURES || self.is_stale();
         self.drift.update(&ControlInput {
             now_s: now
@@ -942,11 +949,15 @@ impl LatencySession {
     /// The rate correction in force on `tap`'s audio, in ppm: the rate
     /// `THAUMIC_DRIFT_FORCE_PPM` fixed its adapter at for a listening test,
     /// else what the controller applies. The reserve's net drain follows the
-    /// audio actually sent, so a forced rate counts even with the mode off.
+    /// audio actually sent, so a forced rate counts even with the mode off,
+    /// and nothing counts once the net-insertion guard has pinned the
+    /// adapter at 0 ppm.
     fn command_in_force(&self, tap: &ConnectionTap) -> f64 {
-        tap.rate_control()
-            .and_then(|c| c.forced_ppm())
-            .unwrap_or_else(|| self.drift.applied_ppm())
+        match tap.rate_control() {
+            Some(c) if c.is_pinned() => 0.0,
+            Some(c) => c.forced_ppm().unwrap_or_else(|| self.drift.applied_ppm()),
+            None => self.drift.applied_ppm(),
+        }
     }
 
     /// Writes the drift command into the connection's rate control, if its
@@ -1612,18 +1623,21 @@ fn format_pipeline(samples: &[crate::stream::cadence::PipelineSample]) -> String
 ///
 /// A rate `THAUMIC_DRIFT_FORCE_PPM` fixed the adapter at is shown as
 /// `forced=+150ppm` (with what it has inserted) whatever the mode, since it
-/// is what the audio actually gets.
+/// is what the audio actually gets, and as `forced=+150ppm(pinned)` once
+/// the net-insertion guard (`pinned`) holds the adapter at 0 ppm instead.
 fn format_drift(
     drift: &DriftController,
     net_inserted_ms: Option<f64>,
     forced_ppm: Option<f64>,
+    pinned: bool,
 ) -> String {
     let base = format_drift_mode(drift, net_inserted_ms.filter(|_| forced_ppm.is_none()));
     match forced_ppm {
         Some(ppm) => {
             let inserted =
                 net_inserted_ms.map_or_else(String::new, |ms| format!(" ins={ms:+.0}ms"));
-            format!("{base} forced={ppm:+}ppm{inserted}")
+            let pinned = if pinned { "(pinned)" } else { "" };
+            format!("{base} forced={ppm:+}ppm{pinned}{inserted}")
         }
         None => base,
     }
@@ -2741,7 +2755,9 @@ mod tests {
         use crate::error::SoapResult;
         use crate::events::{NetworkEvent, SonosEvent, StreamEvent, TopologyEvent};
         use crate::state::StreamingConfig;
-        use crate::stream::tap::test_support::{started_tap, started_tap_with_codec};
+        use crate::stream::tap::test_support::{
+            started_tap, started_tap_with_codec, started_tap_with_drift,
+        };
         use crate::stream::{AudioCodec, AudioFormat, StreamMetadata};
         use async_trait::async_trait;
 
@@ -3410,6 +3426,29 @@ mod tests {
         }
 
         #[test]
+        fn a_forced_rate_counts_until_the_guard_pins_it() {
+            use crate::stream::rate_adapter::RateControl;
+            for mode in [DriftMode::Off, DriftMode::Observe, DriftMode::On] {
+                let control = Arc::new(RateControl::forced(150.0));
+                let tap = started_tap_with_drift(
+                    "stream",
+                    HUNG_IP,
+                    true,
+                    AudioCodec::Pcm,
+                    mode,
+                    Some(control.clone()),
+                );
+                let mut session = LatencySession::new(false, 0);
+                session.attach(&tap);
+                assert_eq!(session.tracker.command_ppm(), 150.0, "{mode}");
+                // Once the net-insertion guard holds the adapter at 0 ppm,
+                // the forced rate no longer reaches the audio.
+                control.pin();
+                assert_eq!(session.command_in_force(&tap), 0.0, "{mode}");
+            }
+        }
+
+        #[test]
         fn the_reserve_is_reported_every_30s() {
             let tap = started_tap("stream", HUNG_IP, true);
             let mut session = LatencySession::new(false, 0);
@@ -3676,13 +3715,17 @@ mod tests {
     fn the_report_line_shows_a_forced_rate_in_every_mode() {
         let mut drift = DriftController::default();
         drift.start_connection(DriftMode::Off, true);
-        assert_eq!(format_drift(&drift, Some(0.0), None), "drift=off");
+        assert_eq!(format_drift(&drift, Some(0.0), None, false), "drift=off");
         assert_eq!(
-            format_drift(&drift, Some(12.4), Some(150.0)),
+            format_drift(&drift, Some(12.4), Some(150.0), false),
             "drift=off forced=+150ppm ins=+12ms"
         );
+        assert_eq!(
+            format_drift(&drift, Some(2000.0), Some(150.0), true),
+            "drift=off forced=+150ppm(pinned) ins=+2000ms"
+        );
         drift.start_connection(DriftMode::Observe, true);
-        let line = format_drift(&drift, Some(-3.0), Some(-42.5));
+        let line = format_drift(&drift, Some(-3.0), Some(-42.5), false);
         assert!(line.starts_with("drift=observe would_cmd="), "{line}");
         assert!(line.ends_with(" forced=-42.5ppm ins=-3ms"), "{line}");
         assert_eq!(line.matches("ins=").count(), 1, "{line}");
