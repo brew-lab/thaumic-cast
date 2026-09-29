@@ -128,6 +128,40 @@ describe('speakerNoticeLines', () => {
     );
   });
 
+  it('should keep the reason and the fix when clock drift made a speaker run low', () => {
+    const low: SpeakerNotice = {
+      kind: 'running_low',
+      noticeId: 5,
+      leftMs: 149,
+      headStartMs: 500,
+      restartHelps: true,
+      cause: 'drift',
+    };
+    expect(speakerNoticeLines(low, ctx({ offerDriftCorrection: true }))).toEqual([
+      { key: 'dashboard.speaker_notice_running_low', params: { name: 'Kitchen', left: 149 } },
+      { key: 'dashboard.speaker_notice_running_low_drift' },
+      { key: 'dashboard.speaker_notice_drift_turn_on_desktop' },
+      { key: 'dashboard.speaker_notice_restart_refills' },
+    ]);
+    // Correction already on, or fixed by an environment variable: the
+    // reason stays, the advice to turn it on does not.
+    expect(keys(low)).toEqual([
+      'dashboard.speaker_notice_running_low',
+      'dashboard.speaker_notice_running_low_drift',
+      'dashboard.speaker_notice_restart_refills',
+    ]);
+    expect(keys({ ...low, restartHelps: false }, ctx({ offerDriftCorrection: true }))).toEqual([
+      'dashboard.speaker_notice_running_low',
+      'dashboard.speaker_notice_running_low_drift',
+      'dashboard.speaker_notice_drift_turn_on_desktop',
+    ]);
+    // Without the cause, nothing about the clock.
+    expect(keys({ ...low, cause: undefined }, ctx({ offerDriftCorrection: true }))).toEqual([
+      'dashboard.speaker_notice_running_low',
+      'dashboard.speaker_notice_restart_refills',
+    ]);
+  });
+
   it('should have a string for every key it can produce', () => {
     const notices: SpeakerNotice[] = [
       ranOut,
@@ -136,6 +170,7 @@ describe('speakerNoticeLines', () => {
       { ...ranOut, kind: 'head_start_close', headStartMs: 0 },
       { kind: 'head_start_no_remedy', noticeId: 1, stallMs: 2400, restartHelps: false },
       { kind: 'running_low', noticeId: 1, leftMs: 90, restartHelps: true },
+      { kind: 'running_low', noticeId: 1, leftMs: 90, restartHelps: true, cause: 'drift' },
       { kind: 'drift_uncorrected', noticeId: 1, minutes: 20, restartHelps: true },
       { kind: 'drift_saturated', noticeId: 1, minutes: 20, restartHelps: false },
     ];
