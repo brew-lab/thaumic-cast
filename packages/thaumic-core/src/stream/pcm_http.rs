@@ -5,8 +5,9 @@
 //! both WAV size fields. It used to declare `Content-Length: 4294967295`, and
 //! a Playbar (S2 86.10) stopped every such cast after exactly 2^31 bytes, 3h06m
 //! at 48 kHz stereo: it caps a declared length at 2^31. The same speaker plays
-//! a chunked stream with the 0xFFFFFFFF header past that point, and obeys a
-//! smaller size in the WAV header (see [`WAV_STREAM_SIZE_MAX`]).
+//! a chunked stream with the 0xFFFFFFFF header past that point until 2^32
+//! bytes, 6h12m50s, where it obeys the header's length and stops; it obeys a
+//! smaller size in the WAV header too (see [`WAV_STREAM_SIZE_MAX`]).
 //!
 //! The switches let a field experiment change one thing at a time without a
 //! rebuild: how the body is delimited, the length it declares, the sizes in

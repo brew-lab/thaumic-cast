@@ -171,7 +171,10 @@ startup. All three apply from each speaker's next connection.
 | `THAUMIC_DRIFT_FORCE_PPM`           | Test only: fix every speaker's PCM rate adapter at this many ppm, -300 to 300 (see below)    |
 
 PCM streams are sent chunked, with no `Content-Length`, and 0xFFFFFFFF in both WAV header size fields, which a Sonos
-Playbar played past 2^31 bytes in a field test (a run past 2^32 is pending). A speaker that asks over HTTP/1.0, which cannot take chunks, gets an HTTP/1.0 response
+Playbar played past 2^31 bytes in a field test. That header value is a length, not an unbounded marker: a later run
+stopped at exactly 2^32 bytes (6h12m50s at 48 kHz stereo), where the Playbar hung up and went to STOPPED with no
+reconnect. A cast goes on past that point only through PCM segment continuation, which serves it in segments that each
+stay under 4 GiB. A speaker that asks over HTTP/1.0, which cannot take chunks, gets an HTTP/1.0 response
 whose body ends only when the connection closes (`http=HTTP/1.0, framing=close` on its connection line), as the
 compressed codecs always have. Declaring a length ended every PCM cast to a Playbar after 3h06m at 48 kHz (about 3h23m at 44.1 kHz), since it
 caps a declared length at 2^31 bytes.
