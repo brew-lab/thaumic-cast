@@ -440,6 +440,9 @@ impl SimSpeaker {
                         head_start: tracker.head_start(),
                         stall_ms: tracker.stall_ms(),
                         time_to_floor_s: tracker.time_to_floor_s(),
+                        net_drift_ppm: tracker.net_drain_ppm(),
+                        clock_drained_ms: tracker.clock_drained_ms(),
+                        target_ms: tracker.target_ms(),
                         drift_active: drift_active(self.drift, rate_control.as_deref()),
                         saturated: controller.saturated(),
                         ..NoticeInput::default()

@@ -24,8 +24,8 @@
 //!   start ran out, but even the longest would not have covered it.
 //! - **Running low** ([`SpeakerNoticeKind::RunningLow`]): the reserve
 //!   itself, not a stall's dip, is below the floor. When the speaker's clock
-//!   is measurably draining it and no stall explains the loss, the notice
-//!   carries [`SpeakerNoticeCause::Drift`], so a client can keep saying why
+//!   is measurably draining it, has drained a real share of what the reserve
+//!   lost, and no stall or poor link explains the loss, the notice carries [`SpeakerNoticeCause::Drift`], so a client can keep saying why
 //!   and what fixes it after the drift notice gives way.
 //! - **Drift uncorrected** ([`SpeakerNoticeKind::DriftUncorrected`]): the
 //!   speaker plays faster than audio arrives and will reach the floor
@@ -70,6 +70,25 @@ pub const DRIFT_NOTICE_CLEAR_SECS: f64 = 45.0 * 60.0;
 /// whatever the head start. With the head start off, half of it is nothing,
 /// so a stall must still have been measured and be more than jitter.
 pub const MIN_NOTICE_STALL_MS: f64 = 20.0;
+
+/// Least net drain rate, in ppm, that can name the clock as why a speaker
+/// runs low. A tightly measured clock passes the drain test at a few ppm,
+/// which over an hour drains a few ms: real, but no reason to point the
+/// user at drift correction.
+pub const MIN_DRIFT_CAUSE_PPM: f64 = 5.0;
+
+/// Share of what a running-low reserve lost that the clock must have
+/// drained over the connection for the notice to name it. Half, not all:
+/// the drained figure is on the shrunk rate, which runs a little under the
+/// true one.
+pub const DRIFT_CAUSE_SHARE: f64 = 0.5;
+
+/// Most a connection may settle below its head start and still have the
+/// loss judged from where it settled. Settling is normally a few tens of ms
+/// under the head start; a speaker that settled lower than this lost the
+/// rest to something other than its clock, and is judged from the head
+/// start less this.
+pub const SETTLE_ALLOWANCE_MS: f64 = 100.0;
 
 /// What a notice is about. Wire strings are part of the client protocol:
 /// never rename a variant.
@@ -229,6 +248,16 @@ pub struct NoticeInput {
     /// Seconds until the reserve reaches the floor at the net drain rate,
     /// when it is measurably draining.
     pub time_to_floor_s: Option<f64>,
+    /// The net rate the speaker drains its reserve at, in ppm: its clock
+    /// shrunk by its uncertainty, less the correction in force (see
+    /// [`super::ReserveTracker::net_drain_ppm`]).
+    pub net_drift_ppm: f64,
+    /// How much of the reserve the clock drained over the connection at
+    /// that rate, in ms (see [`super::ReserveTracker::clock_drained_ms`]).
+    pub clock_drained_ms: f64,
+    /// The level the connection settled at once its head start had gone
+    /// out, once learned (see [`super::ReserveTracker::target_ms`]).
+    pub target_ms: Option<f64>,
     /// Whether clock drift correction is running on this connection: made
     /// with correction on, with its adapter engaged and following the
     /// command (see [`super::control::drift_active`]). A drift notice is
@@ -356,21 +385,36 @@ fn running_low(input: &NoticeInput, floor: f64) -> bool {
             .is_some_and(|a| a.p10_ms < floor && a.median_ms < floor)
 }
 
-/// Why a running-low speaker is low, when it is the clock: the speaker
-/// drains the reserve measurably, net of any correction (the projection
-/// the drift notices use is there at all), and this window's stall is less
-/// than half of what the reserve lost from the head start, so no stall
-/// explains it. Correction running or not, the clock is the cause; whether
-/// turning correction on is the fix is for the client, which knows the mode.
+/// Why a running-low speaker is low, when it is the clock. All of:
+///
+/// - the speaker drains the reserve measurably, net of any correction (the
+///   projection the drift notices use is there at all), at no less than
+///   [`MIN_DRIFT_CAUSE_PPM`];
+/// - the clock drained at least [`DRIFT_CAUSE_SHARE`] of what the reserve
+///   lost over the connection, judged from where it settled (never more than
+///   [`SETTLE_ALLOWANCE_MS`] under the head start), so a small drift under a
+///   loss from something else is not named;
+/// - this window's stall is less than half of that loss, and the link is not
+///   poor, so neither explains it.
+///
+/// Correction running or not, the clock is then the cause; whether turning
+/// correction on is the fix is for the client, which knows the mode.
 fn running_low_cause(input: &NoticeInput) -> Option<SpeakerNoticeCause> {
     input.time_to_floor_s?;
+    if input.link_poor || input.net_drift_ppm < MIN_DRIFT_CAUSE_PPM {
+        return None;
+    }
     let p10 = input.acked?.p10_ms;
     let head_start = f64::from(input.head_start.map_or(0, |h| h.sent_ms));
-    let lost = head_start - p10;
+    let settled = input.target_ms.map_or(head_start, |t| {
+        t.clamp(head_start - SETTLE_ALLOWANCE_MS, head_start)
+    });
+    let lost = (settled - p10).max(0.0);
     let stalled = input
         .stall_ms
         .is_some_and(|s| s >= (0.5 * lost).max(MIN_NOTICE_STALL_MS));
-    (!stalled).then_some(SpeakerNoticeCause::Drift)
+    let drained = input.clock_drained_ms >= DRIFT_CAUSE_SHARE * lost;
+    (!stalled && drained).then_some(SpeakerNoticeCause::Drift)
 }
 
 fn round_ms(v: f64) -> u32 {
@@ -973,12 +1017,24 @@ mod tests {
         assert_eq!(n.kind, SpeakerNoticeKind::RunningLow);
     }
 
-    /// A running-low report like the field's: a Playbar hours into a cast at
-    /// +19.6 ppm, down to 130 ms of its 500 ms head start with ordinary lag.
+    /// The field's clock: +19.6 ppm on a Playbar.
+    const FIELD_PPM: f64 = 19.6;
+
+    /// What `ppm` drains over `hours` of playing, in ms.
+    fn drained_over(ppm: f64, hours: f64) -> f64 {
+        ppm * 1e-6 * hours * 3_600_000.0
+    }
+
+    /// A running-low report like the field's: a Playbar five hours into a
+    /// cast at +19.6 ppm (about 350 ms drained), settled at 470 ms of its
+    /// 500 ms head start and now down to 130 ms with ordinary lag.
     fn drained(time_to_floor_s: Option<f64>, drift_active: bool) -> NoticeInput {
         NoticeInput {
             time_to_floor_s,
             drift_active,
+            net_drift_ppm: FIELD_PPM,
+            clock_drained_ms: drained_over(FIELD_PPM, 5.0),
+            target_ms: Some(470.0),
             ..report(100.0, 130.0, 140.0, Some(40.0))
         }
     }
@@ -1012,8 +1068,8 @@ mod tests {
 
     #[test]
     fn running_low_from_a_stall_is_not_the_clock() {
-        // Draining, but a stall of 250 ms is more than half the 370 ms the
-        // reserve lost from its head start: the stall explains it.
+        // Draining, but a stall of 250 ms is more than half the 340 ms the
+        // reserve lost from where it settled: the stall explains it.
         let input = NoticeInput {
             stall_ms: Some(250.0),
             ..drained(Some(0.0), false)
@@ -1026,6 +1082,88 @@ mod tests {
         // A stall well under half of it does not.
         let input = NoticeInput {
             stall_ms: Some(150.0),
+            ..drained(Some(0.0), false)
+        };
+        let n = NoticeState::new()
+            .update(Instant::now(), &input)
+            .expect("running low");
+        assert_eq!(n.cause, Some(SpeakerNoticeCause::Drift));
+    }
+
+    #[test]
+    fn a_small_drift_under_a_large_loss_is_not_the_cause() {
+        // +2 ppm measured tightly after six hours drains about 43 ms of the
+        // 340 ms the reserve lost from where it settled: something else did
+        // it, and drift correction would not help.
+        let input = NoticeInput {
+            net_drift_ppm: 2.0,
+            clock_drained_ms: drained_over(2.0, 6.0),
+            ..drained(Some(0.0), false)
+        };
+        let n = NoticeState::new()
+            .update(Instant::now(), &input)
+            .expect("running low");
+        assert_eq!(n.kind, SpeakerNoticeKind::RunningLow);
+        assert_eq!(n.cause, None);
+        // A rate above the floor that still drained too little of the loss
+        // is not named either: 8 ppm over an hour is about 29 ms.
+        let input = NoticeInput {
+            net_drift_ppm: 8.0,
+            clock_drained_ms: drained_over(8.0, 1.0),
+            ..drained(Some(0.0), false)
+        };
+        let n = NoticeState::new()
+            .update(Instant::now(), &input)
+            .expect("running low");
+        assert_eq!(n.cause, None);
+    }
+
+    #[test]
+    fn running_low_after_an_earlier_stall_is_not_the_clock() {
+        // A stall in an earlier window took the reserve down; this window's
+        // lag is ordinary. The clock drains measurably, but twenty minutes at
+        // +19.6 ppm is about 24 ms of the 340 ms lost.
+        let input = NoticeInput {
+            clock_drained_ms: drained_over(FIELD_PPM, 20.0 / 60.0),
+            ..drained(Some(0.0), false)
+        };
+        let n = NoticeState::new()
+            .update(Instant::now(), &input)
+            .expect("running low");
+        assert_eq!(n.cause, None);
+    }
+
+    #[test]
+    fn running_low_on_a_poor_link_is_not_the_clock() {
+        let input = NoticeInput {
+            link_poor: true,
+            ..drained(Some(0.0), false)
+        };
+        let n = NoticeState::new()
+            .update(Instant::now(), &input)
+            .expect("running low");
+        assert_eq!(n.cause, None);
+    }
+
+    #[test]
+    fn a_speaker_that_settled_low_is_judged_from_the_head_start() {
+        // Settled at 200 ms of a 500 ms head start (far more than settling
+        // takes): the loss is judged from 400 ms, so the 60 ms the clock
+        // drained since does not name it, though it is most of the loss
+        // from where it settled.
+        let input = NoticeInput {
+            target_ms: Some(200.0),
+            clock_drained_ms: 60.0,
+            ..drained(Some(0.0), false)
+        };
+        let n = NoticeState::new()
+            .update(Instant::now(), &input)
+            .expect("running low");
+        assert_eq!(n.cause, None);
+        // Without a learned target the head start is the reference, and the
+        // field's drain still names the clock.
+        let input = NoticeInput {
+            target_ms: None,
             ..drained(Some(0.0), false)
         };
         let n = NoticeState::new()
