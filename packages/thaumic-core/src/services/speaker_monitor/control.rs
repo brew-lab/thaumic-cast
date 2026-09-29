@@ -53,6 +53,11 @@ use crate::stream::RateControl;
 /// `observe` or `off`.
 pub const DRIFT_COMPENSATION_ENV: &str = "THAUMIC_DRIFT_COMPENSATION";
 
+/// Environment variable that, for blind listening tests only, fixes every
+/// monitored PCM connection's rate adapter at a number of ppm, whatever
+/// the drift mode and the controller say. Read per connection.
+pub const DRIFT_FORCE_PPM_ENV: &str = "THAUMIC_DRIFT_FORCE_PPM";
+
 /// Largest command the controller gives, in ppm either way. At 150 ppm a
 /// sample is added or dropped in every 6 667, spread across all of them,
 /// far too little to hear; the adapter itself accepts twice as much.
@@ -184,6 +189,48 @@ pub fn drift_compensation_env_override() -> Option<DriftMode> {
         });
     }
     parsed
+}
+
+/// Reads a [`DRIFT_FORCE_PPM_ENV`] value: `Ok(None)` when it is empty,
+/// the ppm when it is a finite number within the adapter's
+/// ±[`crate::stream::rate_adapter::MAX_RATE_PPM`], and why not otherwise.
+pub fn parse_drift_force_ppm(raw: &str) -> Result<Option<f64>, String> {
+    let raw = raw.trim();
+    if raw.is_empty() {
+        return Ok(None);
+    }
+    let max = crate::stream::rate_adapter::MAX_RATE_PPM;
+    match raw.parse::<f64>() {
+        Ok(ppm) if ppm.is_finite() && ppm.abs() <= max => Ok(Some(ppm)),
+        Ok(_) => Err(format!(
+            "expected a number of ppm from -{max:.0} to {max:.0}"
+        )),
+        Err(_) => Err("expected a number of ppm".to_string()),
+    }
+}
+
+/// The rate [`DRIFT_FORCE_PPM_ENV`] fixes a new connection's adapter at,
+/// if it is set to a usable value; read afresh for each connection. A
+/// value that is not is ignored with a warning, and the connection gets
+/// the drift correction it would have had.
+pub fn drift_force_ppm() -> Option<f64> {
+    drift_force_ppm_from(std::env::var(DRIFT_FORCE_PPM_ENV).ok().as_deref())
+}
+
+/// [`drift_force_ppm`] for a given raw value (`None` when unset).
+pub fn drift_force_ppm_from(raw: Option<&str>) -> Option<f64> {
+    match parse_drift_force_ppm(raw?) {
+        Ok(ppm) => ppm,
+        Err(why) => {
+            log::warn!(
+                "[Drift] Ignoring {}={:?}: {}",
+                DRIFT_FORCE_PPM_ENV,
+                raw.unwrap_or_default(),
+                why
+            );
+            None
+        }
+    }
 }
 
 /// The drift correction mode a new connection runs under, given the
@@ -647,6 +694,23 @@ mod tests {
         assert_eq!(resolve_drift_mode(On, Some(Off), true), Off);
         assert_eq!(resolve_drift_mode(On, None, false), Off);
         assert_eq!(resolve_drift_mode(On, Some(On), false), Off);
+    }
+
+    #[test]
+    fn a_forced_rate_must_be_a_number_the_adapter_takes() {
+        assert_eq!(parse_drift_force_ppm("150"), Ok(Some(150.0)));
+        assert_eq!(parse_drift_force_ppm(" -150 "), Ok(Some(-150.0)));
+        assert_eq!(parse_drift_force_ppm("+300"), Ok(Some(300.0)));
+        assert_eq!(parse_drift_force_ppm("0"), Ok(Some(0.0)));
+        assert_eq!(parse_drift_force_ppm("  "), Ok(None));
+        for bad in ["300.5", "-301", "fast", "150ppm", "NaN", "inf", "1e9"] {
+            assert!(parse_drift_force_ppm(bad).is_err(), "{bad}");
+            // Ignored, with a warning, rather than forcing anything.
+            assert_eq!(drift_force_ppm_from(Some(bad)), None, "{bad}");
+        }
+        // Unset forces nothing.
+        assert_eq!(drift_force_ppm_from(None), None);
+        assert_eq!(drift_force_ppm_from(Some("-42.5")), Some(-42.5));
     }
 
     #[test]
