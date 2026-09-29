@@ -9,12 +9,17 @@ use crate::sonos::utils::{
     extract_empty_val_attrs, extract_master_channel_attrs, extract_xml_text,
 };
 use crate::sonos::zone_groups::{parse_household_topology, parse_zone_group_xml};
+use crate::stream::same_stream;
 use crate::utils::now_millis;
 
 /// Parses an AVTransport NOTIFY event body and builds events.
 ///
 /// Extracts transport state and current track URI from the LastChange element.
-/// Optionally detects source changes if a callback is provided.
+/// Optionally detects source changes if a callback is provided: a current URI
+/// that is not [`same_stream`] as the expected one is a `SourceChanged`. That
+/// is decided by stream id, so a speaker moving on to the next segment of a
+/// PCM cast (`live.wav` to `live/1.wav`) is still on our stream, while the TV
+/// input or another app taking the speaker over is not.
 ///
 /// # Arguments
 /// * `ip` - The speaker IP address
@@ -66,7 +71,7 @@ where
     // Check for source change (only if callback provided)
     if let (Some(ref uri), Some(ref get_expected)) = (&current_uri, &get_expected_stream) {
         if let Some(expected) = get_expected(ip) {
-            if !is_matching_stream_url(uri, &expected) {
+            if !same_stream(uri, &expected) {
                 log::info!(
                     "[GENA] Source changed on {}: expected={}, current={}",
                     ip,
@@ -236,63 +241,9 @@ fn household_shape(zone_state: &str) -> String {
     )
 }
 
-/// Checks if the current URI matches the expected stream URL.
-///
-/// Handles various URI schemes used by Sonos (x-rincon-mp3radio://, aac://, etc.)
-/// by comparing just the host+path portion.
-#[must_use]
-pub fn is_matching_stream_url(current_uri: &str, expected_uri: &str) -> bool {
-    // Extract everything after the last "://" to get host+path
-    // This handles nested schemes like "aac://http://host/path" -> "host/path"
-    fn extract_host_path(url: &str) -> &str {
-        match url.rfind("://") {
-            Some(idx) => &url[idx + 3..],
-            None => url,
-        }
-    }
-
-    extract_host_path(current_uri).eq_ignore_ascii_case(extract_host_path(expected_uri))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    // ─────────────────────────────────────────────────────────────────────────────
-    // is_matching_stream_url tests
-    // ─────────────────────────────────────────────────────────────────────────────
-
-    #[test]
-    fn test_is_matching_stream_url_same() {
-        assert!(is_matching_stream_url(
-            "http://192.168.1.100:8080/stream.aac",
-            "http://192.168.1.100:8080/stream.aac"
-        ));
-    }
-
-    #[test]
-    fn test_is_matching_stream_url_nested_scheme() {
-        assert!(is_matching_stream_url(
-            "aac://http://192.168.1.100:8080/stream.aac",
-            "http://192.168.1.100:8080/stream.aac"
-        ));
-    }
-
-    #[test]
-    fn test_is_matching_stream_url_case_insensitive() {
-        assert!(is_matching_stream_url(
-            "http://192.168.1.100:8080/Stream.AAC",
-            "http://192.168.1.100:8080/stream.aac"
-        ));
-    }
-
-    #[test]
-    fn test_is_matching_stream_url_different() {
-        assert!(!is_matching_stream_url(
-            "http://192.168.1.100:8080/other.aac",
-            "http://192.168.1.100:8080/stream.aac"
-        ));
-    }
 
     // ─────────────────────────────────────────────────────────────────────────────
     // parse_rendering_control_events tests
@@ -523,6 +474,114 @@ mod tests {
                 )
             })
             .collect()
+    }
+
+    /// An AVTransport NOTIFY body carrying only `TransportState` and
+    /// `CurrentTrackURI`, escaped once into `LastChange` as Sonos sends it.
+    fn av_transport_notify(state: &str, current_uri: &str) -> String {
+        let event = format!(
+            r#"<Event xmlns="urn:schemas-upnp-org:metadata-1-0/AVT/"><InstanceID val="0"><TransportState val="{state}"/><CurrentTrackURI val="{current_uri}"/></InstanceID></Event>"#
+        );
+        format!(
+            r#"<?xml version="1.0"?><e:propertyset xmlns:e="urn:schemas-upnp-org:event-1-0"><e:property><LastChange>{}</LastChange></e:property></e:propertyset>"#,
+            html_escape::encode_text(&event)
+        )
+    }
+
+    /// The source changes reported for a speaker told to play `expected` that
+    /// says it is playing `current`.
+    fn source_changes(expected: &str, current: &str) -> Vec<SonosEvent> {
+        let body = av_transport_notify("PLAYING", current);
+        let expected = expected.to_string();
+        parse_av_transport_events(
+            "192.168.1.50",
+            &body,
+            Some(move |_: &str| Some(expected.clone())),
+        )
+        .into_iter()
+        .filter(|event| matches!(event, SonosEvent::SourceChanged { .. }))
+        .collect()
+    }
+
+    const EXPECTED_PCM: &str = "http://192.168.1.2:49400/stream/abc-123/live.wav";
+
+    #[test]
+    fn moving_on_to_a_later_segment_is_not_a_source_change() {
+        for current in [
+            EXPECTED_PCM,
+            "http://192.168.1.2:49400/stream/abc-123/live/1.wav",
+            "http://192.168.1.2:49400/stream/abc-123/live/2.wav",
+            "http://192.168.1.2:49400/stream/abc-123/live/57.wav",
+        ] {
+            assert!(
+                source_changes(EXPECTED_PCM, current).is_empty(),
+                "{current} is still our stream"
+            );
+        }
+    }
+
+    #[test]
+    fn a_segment_switch_still_reports_the_transport_state_and_uri() {
+        let segment = "http://192.168.1.2:49400/stream/abc-123/live/1.wav";
+        let body = av_transport_notify("PLAYING", segment);
+        let events = parse_av_transport_events(
+            "192.168.1.50",
+            &body,
+            Some(|_: &str| Some(EXPECTED_PCM.to_string())),
+        );
+        assert_eq!(events.len(), 1);
+        match &events[0] {
+            SonosEvent::TransportState {
+                state, current_uri, ..
+            } => {
+                assert_eq!(*state, TransportState::Playing);
+                assert_eq!(current_uri.as_deref(), Some(segment));
+            }
+            other => panic!("expected TransportState, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_foreign_source_is_still_a_source_change() {
+        for current in [
+            // The TV input takes a Playbar over when a stream ends.
+            "x-sonos-htastream:RINCON_000E58000000001400:spdif",
+            "x-sonos-spotify:spotify%3atrack%3a4uLU6hMCjMI75M1A2tKUQC",
+            "x-rincon-queue:RINCON_000E58000000001400#0",
+            // Another client's cast, and our id on another server.
+            "http://192.168.1.2:49400/stream/other/live/1.wav",
+            "http://192.168.1.9:49400/stream/abc-123/live/1.wav",
+        ] {
+            let changes = source_changes(EXPECTED_PCM, current);
+            assert_eq!(changes.len(), 1, "{current} must end the session");
+            match &changes[0] {
+                SonosEvent::SourceChanged {
+                    speaker_ip,
+                    current_uri,
+                    expected_uri,
+                    ..
+                } => {
+                    assert_eq!(speaker_ip, "192.168.1.50");
+                    assert_eq!(current_uri, current);
+                    assert_eq!(expected_uri.as_deref(), Some(EXPECTED_PCM));
+                }
+                other => panic!("expected SourceChanged, got {other:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn a_grouped_slave_is_matched_on_its_rincon_uri() {
+        let expected = "x-rincon:RINCON_000E58000000001400";
+        assert!(source_changes(expected, expected).is_empty());
+        assert_eq!(
+            source_changes(
+                expected,
+                "x-sonos-htastream:RINCON_000E58000000001401:spdif"
+            )
+            .len(),
+            1
+        );
     }
 
     #[test]

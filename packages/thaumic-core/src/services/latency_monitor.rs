@@ -2439,6 +2439,7 @@ fn apply_poll_result(
 
     // Verify Sonos is playing OUR stream (not previous content)
     // Our stream URLs look like: http://192.168.x.x:port/stream/{stream_id}/live.wav
+    // (or .../live/{n}.wav for a later segment of a PCM cast, the same stream).
     // A speaker playing something else is left alone until it fetches the
     // stream again, which starts a new epoch and re-arms the session.
     if !position.track_uri.contains(stream_id.as_str()) {

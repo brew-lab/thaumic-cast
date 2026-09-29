@@ -35,10 +35,10 @@ use crate::services::speaker_monitor::control::{
 use crate::stream::manager::TimestampedFrame;
 use crate::stream::{
     create_wav_header_with_data_size, create_wav_stream_with_cadence, lagged_error,
-    pcm_connect_burst_ms, AudioCodec, BodyFraming, CadenceConfig, ConnectionTap, DeclaredEnd,
-    EpochHook, FirstConnectionWait, FirstWaitWatch, HeadStart, IcyMetadataInjector,
-    LoggingStreamGuard, PcmHttpFraming, PcmHttpSettings, PcmHttpSwitches, RateAdapter, RateControl,
-    StreamState, MAX_UNLISTED_STREAM_READERS,
+    parse_segment_file, pcm_connect_burst_ms, AudioCodec, BodyFraming, CadenceConfig,
+    ConnectionTap, DeclaredEnd, EpochHook, FirstConnectionWait, FirstWaitWatch, HeadStart,
+    IcyMetadataInjector, LoggingStreamGuard, PcmHttpFraming, PcmHttpSettings, PcmHttpSwitches,
+    RateAdapter, RateControl, StreamState, MAX_UNLISTED_STREAM_READERS,
 };
 
 /// A single item of an audio body stream.
@@ -172,6 +172,8 @@ fn decide_stream_access(
     }
 }
 
+/// Serves `/stream/{id}/live`, `/stream/{id}/live.wav` and
+/// `/stream/{id}/live.flac`: the stream from its live edge.
 pub(super) async fn stream_audio(
     Path(id): Path<String>,
     State(state): State<AppState>,
@@ -179,10 +181,50 @@ pub(super) async fn stream_audio(
     version: Version,
     headers: HeaderMap,
 ) -> ThaumicResult<Response> {
+    serve_stream(id, None, state, remote_addr, version, headers).await
+}
+
+/// Serves `/stream/{id}/live/{n}.wav`, segment `n` (n ≥ 1) of a PCM cast.
+///
+/// A WAV header can declare at most 4 GiB, so a long PCM cast is served as
+/// consecutive segments, each under its own URL (see [`crate::stream::uri`]).
+/// A file name that is not a canonical `{n}.wav`, or a stream that is not
+/// PCM, answers 404 exactly as an unknown stream does. Until segments are
+/// carried across connections, a segment is served like `live.wav`: from the
+/// live edge, under the same header, through the same access check (which is
+/// keyed by stream id, so every segment of a stream admits the same readers).
+pub(super) async fn stream_audio_segment(
+    Path((id, file)): Path<(String, String)>,
+    State(state): State<AppState>,
+    ConnectInfo(remote_addr): ConnectInfo<SocketAddr>,
+    version: Version,
+    headers: HeaderMap,
+) -> ThaumicResult<Response> {
+    let Some(segment) = parse_segment_file(&file) else {
+        return Err(ThaumicError::StreamNotFound(id));
+    };
+    serve_stream(id, Some(segment), state, remote_addr, version, headers).await
+}
+
+/// Serves one fetch of stream `id`; `segment` is the PCM segment a
+/// `live/{n}.wav` URL asked for, `None` for the stream's own URL.
+async fn serve_stream(
+    id: String,
+    segment: Option<u32>,
+    state: AppState,
+    remote_addr: SocketAddr,
+    version: Version,
+    headers: HeaderMap,
+) -> ThaumicResult<Response> {
     let stream_state = state
         .stream_coordinator
         .get_stream(&id)
         .ok_or_else(|| ThaumicError::StreamNotFound(id.clone()))?;
+    if segment.is_some() && stream_state.codec != AudioCodec::Pcm {
+        // Only PCM has a length to run out of; a segment of anything else is a
+        // URL no server hands out.
+        return Err(ThaumicError::StreamNotFound(id));
+    }
 
     let remote_ip = remote_addr.ip();
 
@@ -286,6 +328,7 @@ pub(super) async fn stream_audio(
         connection_line(
             remote_ip,
             &id,
+            segment,
             stream_state.codec,
             version,
             framing,
@@ -598,12 +641,13 @@ pub(super) async fn stream_audio(
         .map_err(|e| ThaumicError::Internal(e.to_string()))
 }
 
-/// The `[Stream] New connection` line: who is fetching, with which HTTP
-/// version, how the body will be delimited and the length it declares, and
-/// the range asked for, if any.
+/// The `[Stream] New connection` line: who is fetching, which PCM segment if
+/// the URL named one, with which HTTP version, how the body will be delimited
+/// and the length it declares, and the range asked for, if any.
 fn connection_line(
     remote_ip: IpAddr,
     stream_id: &str,
+    segment: Option<u32>,
     codec: AudioCodec,
     version: Version,
     framing: BodyFraming,
@@ -612,10 +656,13 @@ fn connection_line(
     let declared_len = framing
         .declared_len()
         .map_or_else(|| "none".to_string(), |len| len.to_string());
+    let segment = segment
+        .map(|n| format!(", segment={n}"))
+        .unwrap_or_default();
     let range = range.map(|r| format!(", range='{r}'")).unwrap_or_default();
     format!(
-        "[Stream] New connection: client={remote_ip}, stream={stream_id}, codec={codec:?}, \
-         http={version:?}, framing={}, declared_len={declared_len}{range}",
+        "[Stream] New connection: client={remote_ip}, stream={stream_id}{segment}, \
+         codec={codec:?}, http={version:?}, framing={}, declared_len={declared_len}{range}",
         framing.label()
     )
 }
@@ -1914,6 +1961,7 @@ mod tests {
         let pcm = connection_line(
             ip("192.168.1.50"),
             "s1",
+            None,
             AudioCodec::Pcm,
             Version::HTTP_11,
             BodyFraming::Length(4_294_967_295),
@@ -1927,6 +1975,7 @@ mod tests {
         let ranged = connection_line(
             ip("192.168.1.50"),
             "s1",
+            None,
             AudioCodec::Flac,
             Version::HTTP_10,
             BodyFraming::Close,
@@ -1936,6 +1985,25 @@ mod tests {
             ranged,
             "[Stream] New connection: client=192.168.1.50, stream=s1, codec=Flac, \
              http=HTTP/1.0, framing=close, declared_len=none, range='bytes=0-'"
+        );
+    }
+
+    /// A fetch of `live/{n}.wav` says which segment it asked for.
+    #[test]
+    fn the_connection_line_names_the_segment_asked_for() {
+        let line = connection_line(
+            ip("192.168.1.50"),
+            "s1",
+            Some(3),
+            AudioCodec::Pcm,
+            Version::HTTP_11,
+            BodyFraming::Chunked,
+            Some("bytes=1000-"),
+        );
+        assert_eq!(
+            line,
+            "[Stream] New connection: client=192.168.1.50, stream=s1, segment=3, codec=Pcm, \
+             http=HTTP/1.1, framing=chunked, declared_len=none, range='bytes=1000-'"
         );
     }
 
