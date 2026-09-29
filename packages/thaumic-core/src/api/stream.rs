@@ -10,14 +10,13 @@
 
 use std::net::{IpAddr, SocketAddr};
 use std::pin::Pin;
-use std::sync::atomic::Ordering;
 use std::sync::{Arc, Weak};
 use std::time::{Duration, Instant};
 
 use axum::{
     body::Body,
     extract::{connect_info::ConnectInfo, Path, State},
-    http::{header, HeaderMap},
+    http::{header, HeaderMap, Version},
     response::Response,
 };
 use bytes::Bytes;
@@ -33,8 +32,9 @@ use crate::services::latency_monitor::speaker_monitor_enabled;
 use crate::stream::manager::TimestampedFrame;
 use crate::stream::{
     create_wav_header, create_wav_stream_with_cadence, lagged_error, pcm_connect_burst_ms,
-    AudioCodec, CadenceConfig, ConnectionTap, EpochHook, FirstConnectionWait, FirstWaitWatch,
-    HeadStart, IcyMetadataInjector, LoggingStreamGuard, StreamState, MAX_UNLISTED_STREAM_READERS,
+    AudioCodec, BodyFraming, CadenceConfig, ConnectionTap, EpochHook, FirstConnectionWait,
+    FirstWaitWatch, HeadStart, IcyMetadataInjector, LoggingStreamGuard, StreamState,
+    MAX_UNLISTED_STREAM_READERS,
 };
 
 /// A single item of an audio body stream.
@@ -154,6 +154,7 @@ pub(super) async fn stream_audio(
     Path(id): Path<String>,
     State(state): State<AppState>,
     ConnectInfo(remote_addr): ConnectInfo<SocketAddr>,
+    version: Version,
     headers: HeaderMap,
 ) -> ThaumicResult<Response> {
     let stream_state = state
@@ -245,22 +246,28 @@ pub(super) async fn stream_audio(
         .and_then(|v| v.to_str().ok())
         .map(|s| s.to_string());
 
-    if let Some(ref range) = range_header {
-        log::debug!(
-            "[Stream] Range request: client={}, stream={}, codec={:?}, range='{}'",
+    // How hyper will delimit the body. Only PCM declares a length (see the
+    // Content-Length below); everything else is chunked for an HTTP/1.1
+    // client and close-delimited for an HTTP/1.0 one. Logged so that every
+    // end of the connection can be explained, and recorded on the guard so
+    // wire bytes include the framing.
+    let content_length =
+        (stream_state.codec == AudioCodec::Pcm).then_some(u64::from(WAV_STREAM_SIZE_MAX));
+    let framing = BodyFraming::for_response(version, content_length);
+
+    // A Range request is served from the live edge like any other, so it is
+    // a new connection too, and logged as one.
+    log::info!(
+        "{}",
+        connection_line(
             remote_ip,
-            id,
+            &id,
             stream_state.codec,
-            range
-        );
-    } else {
-        log::info!(
-            "[Stream] New connection: client={}, stream={}, codec={:?}",
-            remote_ip,
-            id,
-            stream_state.codec
-        );
-    }
+            version,
+            framing,
+            range_header.as_deref()
+        )
+    );
 
     // Detect resume: this specific IP had a previous HTTP connection.
     // Uses per-IP epoch tracking (not global counter) to avoid misclassifying
@@ -366,7 +373,9 @@ pub(super) async fn stream_audio(
         .tracks_playback()
         .then(|| state.link_registry.claim(remote_addr))
         .flatten();
-    let mut guard = LoggingStreamGuard::new(id.to_string(), remote_ip).with_link_probe(link_probe);
+    let mut guard = LoggingStreamGuard::new(id.to_string(), remote_ip)
+        .with_link_probe(link_probe)
+        .with_framing(framing);
     // Likewise only a speaker's connection reports audio reaching this
     // machine late: an unlisted reader that falls behind could run its own
     // queue dry and raise a notice about gaps no speaker heard.
@@ -485,10 +494,11 @@ pub(super) async fn stream_audio(
 
     // PCM: Use fixed Content-Length to avoid chunked transfer encoding.
     // Some renderers (including Sonos) stutter or disconnect with chunked encoding.
-    // The stream will end before reaching this length, but it signals "file-like"
-    // behavior to the renderer.
-    if stream_state.codec == AudioCodec::Pcm {
-        builder = builder.header(header::CONTENT_LENGTH, WAV_STREAM_SIZE_MAX.to_string());
+    // It signals "file-like" behavior to the renderer, but it is also a real
+    // end: hyper stops the body once this many bytes are written, which the
+    // end line reports as `ended_by=length`.
+    if let Some(len) = content_length {
+        builder = builder.header(header::CONTENT_LENGTH, len.to_string());
     }
 
     // Apply ICY injection or PCM/WAV header
@@ -526,6 +536,28 @@ pub(super) async fn stream_audio(
     builder
         .body(Body::from_stream(final_stream))
         .map_err(|e| ThaumicError::Internal(e.to_string()))
+}
+
+/// The `[Stream] New connection` line: who is fetching, with which HTTP
+/// version, how the body will be delimited and the length it declares, and
+/// the range asked for, if any.
+fn connection_line(
+    remote_ip: IpAddr,
+    stream_id: &str,
+    codec: AudioCodec,
+    version: Version,
+    framing: BodyFraming,
+    range: Option<&str>,
+) -> String {
+    let declared_len = framing
+        .declared_len()
+        .map_or_else(|| "none".to_string(), |len| len.to_string());
+    let range = range.map(|r| format!(", range='{r}'")).unwrap_or_default();
+    format!(
+        "[Stream] New connection: client={remote_ip}, stream={stream_id}, codec={codec:?}, \
+         http={version:?}, framing={}, declared_len={declared_len}{range}",
+        framing.label()
+    )
 }
 
 /// How long a new (not resuming) PCM connection waits before subscribing,
@@ -653,8 +685,10 @@ fn log_connect_burst(
 
 /// Counts every item the body yields into `guard`: frames and bytes
 /// delivered, which the speaker monitor reads as the delivered side of the
-/// speaker's reserve (so a connect burst counts in full), and the first
-/// error.
+/// speaker's reserve (so a connect burst counts in full), the bytes they put
+/// on the wire, and the first error. Also records the body running out on
+/// our side, when `stream` ends, so the end line can tell that apart from
+/// the client hanging up or hyper stopping at a declared length.
 ///
 /// `owned` is whatever else the response body must own for its lifetime: the
 /// connection's monitoring tap (the monitor holds it weakly, so dropping the
@@ -670,14 +704,19 @@ where
     O: Send,
 {
     let closed_on_drop = BodyClosedOnDrop(Arc::clone(&guard));
-    stream.map(move |res: FrameResult| {
+    let end_guard = Arc::clone(&guard);
+    // Polled only once `stream` has ended, and never if hyper drops the body
+    // first (at a declared length, or because the client went away).
+    let source_end = futures::stream::poll_fn(move |_| {
+        end_guard.mark_source_ended();
+        std::task::Poll::Ready(None)
+    });
+    stream.chain(source_end).map(move |res: FrameResult| {
         let _owned = (&owned, &closed_on_drop);
         match &res {
             Ok(bytes) => {
                 guard.record_frame();
-                guard
-                    .bytes_sent
-                    .fetch_add(bytes.len() as u64, Ordering::Relaxed);
+                guard.record_body_bytes(bytes.len());
             }
             Err(e) => guard.record_error(&e.to_string()),
         }
@@ -1349,6 +1388,300 @@ mod tests {
         assert!(!guard.body_closed());
         drop(body);
         assert!(guard.body_closed());
+    }
+
+    /// The new-connection line names the HTTP version, the framing and the
+    /// declared length, and a Range request gets the same line with its range.
+    #[test]
+    fn the_connection_line_says_how_the_body_is_framed() {
+        let pcm = connection_line(
+            ip("192.168.1.50"),
+            "s1",
+            AudioCodec::Pcm,
+            Version::HTTP_11,
+            BodyFraming::Length(4_294_967_295),
+            None,
+        );
+        assert_eq!(
+            pcm,
+            "[Stream] New connection: client=192.168.1.50, stream=s1, codec=Pcm, \
+             http=HTTP/1.1, framing=length, declared_len=4294967295"
+        );
+        let ranged = connection_line(
+            ip("192.168.1.50"),
+            "s1",
+            AudioCodec::Flac,
+            Version::HTTP_10,
+            BodyFraming::Close,
+            Some("bytes=0-"),
+        );
+        assert_eq!(
+            ranged,
+            "[Stream] New connection: client=192.168.1.50, stream=s1, codec=Flac, \
+             http=HTTP/1.0, framing=close, declared_len=none, range='bytes=0-'"
+        );
+    }
+
+    /// A guard with no framing recorded counts wire bytes as payload.
+    #[tokio::test]
+    async fn without_framing_wire_bytes_are_the_payload() {
+        let guard = Arc::new(LoggingStreamGuard::new("s".into(), test_ip()));
+        let items = futures::stream::iter(vec![Ok(Bytes::from(vec![1u8; 1000]))]);
+        let mut body = Box::pin(with_delivery_record(items, Arc::clone(&guard), ()));
+        while body.next().await.is_some() {}
+        assert_eq!(guard.wire_bytes(), 1000);
+        assert_eq!(guard.ended_by(), crate::stream::EndedBy::ServerShutdown);
+    }
+
+    /// Where a loopback test's server hands back the connection's guard.
+    type GuardSlot = Arc<parking_lot::Mutex<Option<Arc<LoggingStreamGuard>>>>;
+
+    /// Serves `items` once on loopback through axum and hyper, framed the way
+    /// `stream_audio` frames a body: the framing is worked out from the
+    /// request's HTTP version and `content_length`, recorded on the guard,
+    /// and the length, if any, is declared. Returns the address and where the
+    /// guard appears once the request arrives.
+    async fn serve_once(
+        items: AudioStream,
+        content_length: Option<u64>,
+    ) -> (SocketAddr, GuardSlot) {
+        let items = Arc::new(parking_lot::Mutex::new(Some(items)));
+        let slot: GuardSlot = Arc::default();
+        let handler_slot = Arc::clone(&slot);
+        let app = axum::Router::new().route(
+            "/",
+            axum::routing::get(move |version: Version| {
+                let items = items.lock().take().expect("one request per test");
+                let slot = Arc::clone(&handler_slot);
+                async move {
+                    let framing = BodyFraming::for_response(version, content_length);
+                    let guard = Arc::new(
+                        LoggingStreamGuard::new("s".into(), test_ip()).with_framing(framing),
+                    );
+                    *slot.lock() = Some(Arc::clone(&guard));
+                    let mut builder = Response::builder();
+                    if let Some(len) = content_length {
+                        builder = builder.header(header::CONTENT_LENGTH, len.to_string());
+                    }
+                    builder
+                        .body(Body::from_stream(with_delivery_record(items, guard, ())))
+                        .expect("response")
+                }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind loopback");
+        let addr = listener.local_addr().expect("address");
+        tokio::spawn(async move { axum::serve(listener, app).await });
+        (addr, slot)
+    }
+
+    /// Sends `request` and reads the response head, returning the connection,
+    /// the head and whatever body bytes arrived with it.
+    async fn request(addr: SocketAddr, request: &str) -> (tokio::net::TcpStream, String, Vec<u8>) {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let mut conn = tokio::net::TcpStream::connect(addr).await.expect("connect");
+        conn.write_all(request.as_bytes()).await.expect("send");
+        let mut received = Vec::new();
+        let mut buf = [0u8; 8192];
+        loop {
+            if let Some(end) = received.windows(4).position(|w| w == b"\r\n\r\n") {
+                let body = received.split_off(end + 4);
+                let head = String::from_utf8(received).expect("ascii head");
+                return (conn, head.to_ascii_lowercase(), body);
+            }
+            let n = conn.read(&mut buf).await.expect("read head");
+            assert!(n > 0, "connection closed before the head");
+            received.extend_from_slice(&buf[..n]);
+        }
+    }
+
+    /// Reads until `done` says the body is complete or the peer closes.
+    async fn read_body(
+        conn: &mut tokio::net::TcpStream,
+        mut body: Vec<u8>,
+        done: impl Fn(&[u8]) -> bool,
+    ) -> Vec<u8> {
+        use tokio::io::AsyncReadExt;
+        let mut buf = [0u8; 8192];
+        while !done(&body) {
+            match conn.read(&mut buf).await {
+                Ok(0) | Err(_) => break,
+                Ok(n) => body.extend_from_slice(&buf[..n]),
+            }
+        }
+        body
+    }
+
+    /// Waits for the server to drop the body, and returns its guard.
+    async fn closed_guard(slot: &GuardSlot) -> Arc<LoggingStreamGuard> {
+        tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                if let Some(guard) = slot.lock().as_ref().filter(|g| g.body_closed()) {
+                    return Arc::clone(guard);
+                }
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+        })
+        .await
+        .expect("the server drops the body")
+    }
+
+    /// Items of these sizes, then the end of the stream.
+    fn finite_items(sizes: &[usize]) -> AudioStream {
+        let items: Vec<FrameResult> = sizes
+            .iter()
+            .map(|&n| Ok(Bytes::from(vec![7u8; n])))
+            .collect();
+        Box::pin(futures::stream::iter(items))
+    }
+
+    /// An endless body of 1000-byte items.
+    fn endless_items() -> AudioStream {
+        Box::pin(futures::stream::repeat_with(|| {
+            Ok(Bytes::from(vec![7u8; 1000]))
+        }))
+    }
+
+    /// With a declared length hyper stops the body once that many bytes are
+    /// written, though the stream would go on, and drops it without error.
+    /// That is an end at the length, not the client hanging up, and the
+    /// wire carried exactly the length though the last item counted in full.
+    #[tokio::test]
+    async fn a_body_stopped_at_its_declared_length_ends_by_length() {
+        let (addr, slot) = serve_once(endless_items(), Some(4096)).await;
+        let (mut conn, head, body) = request(addr, "GET / HTTP/1.1\r\nHost: t\r\n\r\n").await;
+        assert!(head.contains("content-length: 4096"), "{head}");
+        let body = read_body(&mut conn, body, |b| b.len() >= 4096).await;
+        assert_eq!(body.len(), 4096);
+
+        // The connection is kept alive; the body is dropped all the same.
+        let guard = closed_guard(&slot).await;
+        assert_eq!(guard.ended_by(), crate::stream::EndedBy::Length);
+        assert_eq!(guard.wire_bytes(), 4096);
+        assert!(guard.bytes_sent.load(std::sync::atomic::Ordering::Relaxed) >= 4096);
+        drop(conn);
+    }
+
+    /// Chunked framing adds each chunk's hex length and two CRLFs, and a
+    /// terminating chunk when the stream ends on our side: the guard's wire
+    /// bytes match what arrived byte for byte, and the end is ours.
+    #[tokio::test]
+    async fn a_chunked_body_counts_its_framing_and_ends_by_the_server() {
+        let (addr, slot) = serve_once(finite_items(&[1000, 1000, 44, 7]), None).await;
+        let (mut conn, head, body) = request(addr, "GET / HTTP/1.1\r\nHost: t\r\n\r\n").await;
+        assert!(head.contains("transfer-encoding: chunked"), "{head}");
+        let body = read_body(&mut conn, body, |b| b.ends_with(b"0\r\n\r\n")).await;
+
+        let guard = closed_guard(&slot).await;
+        assert_eq!(
+            guard.bytes_sent.load(std::sync::atomic::Ordering::Relaxed),
+            2051
+        );
+        assert_eq!(guard.wire_bytes(), body.len() as u64);
+        assert_eq!(body.len(), 2051 + 2 * (3 + 4) + (2 + 4) + (1 + 4) + 5);
+        assert_eq!(guard.ended_by(), crate::stream::EndedBy::ServerShutdown);
+    }
+
+    /// An HTTP/1.0 client is answered as HTTP/1.0 with a close-delimited
+    /// body, which carries the payload alone.
+    #[tokio::test]
+    async fn an_http10_client_gets_a_close_delimited_body() {
+        let (addr, slot) = serve_once(finite_items(&[1000, 1000, 44, 7]), None).await;
+        let (mut conn, head, body) = request(addr, "GET / HTTP/1.0\r\n\r\n").await;
+        assert!(head.starts_with("http/1.0 200"), "{head}");
+        assert!(!head.contains("transfer-encoding"), "{head}");
+        assert!(!head.contains("content-length"), "{head}");
+        let body = read_body(&mut conn, body, |_| false).await;
+
+        let guard = closed_guard(&slot).await;
+        assert_eq!(body.len(), 2051);
+        assert_eq!(guard.wire_bytes(), 2051);
+        assert_eq!(guard.ended_by(), crate::stream::EndedBy::ServerShutdown);
+    }
+
+    /// A client that hangs up mid-stream is the client ending it.
+    #[tokio::test]
+    async fn a_client_that_hangs_up_ends_by_client() {
+        let (addr, slot) = serve_once(endless_items(), None).await;
+        let (mut conn, _head, body) = request(addr, "GET / HTTP/1.1\r\nHost: t\r\n\r\n").await;
+        read_body(&mut conn, body, |b| b.len() >= 10_000).await;
+        drop(conn);
+
+        let guard = closed_guard(&slot).await;
+        assert_eq!(guard.ended_by(), crate::stream::EndedBy::Client);
+    }
+
+    /// A body that yields an error is aborted, and says so.
+    #[tokio::test]
+    async fn a_body_that_fails_ends_by_error() {
+        let items: Vec<FrameResult> = vec![
+            Ok(Bytes::from(vec![7u8; 1000])),
+            Err(std::io::Error::other("lagged")),
+        ];
+        let (addr, slot) = serve_once(Box::pin(futures::stream::iter(items)), None).await;
+        // hyper may abort before the head is even flushed, so read raw.
+        let mut conn = tokio::net::TcpStream::connect(addr).await.expect("connect");
+        tokio::io::AsyncWriteExt::write_all(&mut conn, b"GET / HTTP/1.1\r\nHost: t\r\n\r\n")
+            .await
+            .expect("send");
+        read_body(&mut conn, Vec::new(), |_| false).await;
+
+        let guard = closed_guard(&slot).await;
+        assert_eq!(guard.ended_by(), crate::stream::EndedBy::Error);
+    }
+
+    /// The speaker monitor's ack lag counts what the speaker has acknowledged
+    /// against the bytes on the wire. On a chunked body the framing is
+    /// acknowledged too, 7 bytes per 1920-byte frame, so counted against the
+    /// payload the acknowledged count overtakes it within a few hundred
+    /// frames and the lag reads zero however much is really outstanding.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_chunked_connection_reports_its_real_ack_lag() {
+        use std::io::{Read, Write};
+        use std::os::fd::AsRawFd;
+
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
+        let mut peer =
+            std::net::TcpStream::connect(listener.local_addr().unwrap()).expect("connect");
+        let (mut accepted, _) = listener.accept().expect("accept");
+        let registry = crate::api::link::TcpLinkRegistry::new();
+        let peer_addr = accepted.peer_addr().unwrap();
+        registry.register(peer_addr, accepted.as_raw_fd() as u64);
+        let guard = LoggingStreamGuard::new("s".into(), test_ip())
+            .with_link_probe(registry.claim(peer_addr))
+            .with_framing(BodyFraming::Chunked);
+
+        // 1000 frames handed over, framed and written as hyper would, and read.
+        let frame = vec![7u8; 1920];
+        let mut wire = Vec::new();
+        for _ in 0..1000 {
+            guard.record_body_bytes(frame.len());
+            wire.extend_from_slice(format!("{:X}\r\n", frame.len()).as_bytes());
+            wire.extend_from_slice(&frame);
+            wire.extend_from_slice(b"\r\n");
+        }
+        accepted.write_all(&wire).expect("write");
+        let mut received = vec![0u8; wire.len()];
+        peer.read_exact(&mut received).expect("read");
+        assert_eq!(guard.wire_bytes(), wire.len() as u64);
+
+        // One more frame handed over but not yet written: that is the lag.
+        guard.record_body_bytes(frame.len());
+        let deadline = Instant::now() + Duration::from_secs(2);
+        loop {
+            let unacked = guard.unacked_bytes_now().expect("kernel 4.1 or later");
+            if unacked == 1920 + 7 {
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "ack lag stuck at {unacked} bytes, not the one frame outstanding"
+            );
+            std::thread::sleep(Duration::from_millis(10));
+        }
     }
 
     /// Without the burst a connection starts exactly as before: one frame

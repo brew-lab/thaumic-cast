@@ -1,4 +1,5 @@
 pub mod cadence;
+pub mod framing;
 pub mod icy;
 pub mod ingest_gaps;
 pub mod manager;
@@ -10,6 +11,7 @@ pub use cadence::{
     CadenceConfig, EpochHook, FirstConnectionWait, FirstWaitWatch, LoggingStreamGuard,
     FIRST_WAIT_SURVIVAL, PCM_CONNECT_BURST_ENV,
 };
+pub use framing::{BodyFraming, EndedBy};
 pub use icy::{IcyMetadataInjector, ICY_METAINT};
 pub use manager::{
     AudioCodec, CleanupOrder, PlaybackEpoch, StreamMetadata, StreamReaderSlot, StreamRegistry,
