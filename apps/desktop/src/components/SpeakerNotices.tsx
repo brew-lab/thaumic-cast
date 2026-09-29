@@ -6,6 +6,7 @@ import { createLogger } from '@thaumic-cast/shared';
 import {
   castingStreams,
   dismissSpeakerNotice,
+  getDriftCompensation,
   getHeadStart,
   groups,
   speakerNoticeDismissals,
@@ -18,6 +19,7 @@ import {
   noticeOffersSettings,
   speakerNoticeLines,
 } from '../lib/speaker-notices';
+import { offersDriftCorrection } from '../lib/drift-setting';
 import styles from './SpeakerNotices.module.css';
 
 const log = createLogger('SpeakerNotices');
@@ -41,18 +43,24 @@ function speakerName(speakerIp: string, zoneGroups: ZoneGroup[]): string {
 /**
  * The core's speaker notices for the speakers playing a stream, one card per
  * speaker, each dismissible. A head-start notice with a suggestion offers a
- * button to Settings > Speakers, where the head start is changed.
+ * button to Settings > Speakers, where the head start is changed; an
+ * uncorrected drift says drift correction would keep the speaker topped up
+ * when it is off here.
  * @returns The notice cards, or nothing when none stands
  */
 export function SpeakerNotices() {
   const { t } = useTranslation();
   const [, navigate] = useLocation();
   const [headStartFixed, setHeadStartFixed] = useState(false);
+  const [offerDriftCorrection, setOfferDriftCorrection] = useState(false);
 
   useEffect(() => {
     getHeadStart()
       .then((setting) => setHeadStartFixed(setting.envOverride !== null))
       .catch((error) => log.error('Failed to read the speaker head start setting:', error));
+    getDriftCompensation()
+      .then((setting) => setOfferDriftCorrection(offersDriftCorrection(setting)))
+      .catch((error) => log.error('Failed to read the drift correction setting:', error));
   }, []);
 
   const now = Date.now();
@@ -67,6 +75,7 @@ export function SpeakerNotices() {
     const lines = speakerNoticeLines(notice, {
       speakerName: speakerName(speakerIp, groups.value),
       headStartFixed,
+      offerDriftCorrection,
     });
     return [
       {

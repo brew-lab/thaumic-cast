@@ -263,6 +263,18 @@ impl AppState {
                         settings.pcm_connect_burst_ms
                     ),
                 }
+                match thaumic_core::services::drift_compensation_env_override() {
+                    Some(mode) => log::info!(
+                        "Clock drift correction: {} from THAUMIC_DRIFT_COMPENSATION (setting {}; \
+                         PCM streams only)",
+                        mode,
+                        settings.drift_compensation
+                    ),
+                    None => log::info!(
+                        "Clock drift correction: {} (PCM streams only)",
+                        settings.drift_compensation
+                    ),
+                }
                 self.services
                     .discovery_service
                     .set_app_data_dir(path.clone());

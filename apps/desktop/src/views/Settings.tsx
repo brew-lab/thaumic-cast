@@ -9,10 +9,14 @@ import {
   setSpeakerMonitor,
   getHeadStart,
   setHeadStart,
+  getDriftCompensation,
+  setDriftCompensation,
+  type DriftCompensationSetting,
   type HeadStartSetting,
   type SpeakerMonitorSetting,
 } from '../state/store';
 import { headStartOptions } from '../lib/speaker-notices';
+import { driftModeForToggle, driftToggleState } from '../lib/drift-setting';
 import { useTranslation } from 'react-i18next';
 import { ExternalLink, X } from 'lucide-preact';
 import { getVersion } from '@tauri-apps/api/app';
@@ -39,7 +43,8 @@ const LANGUAGE_NAMES: Record<SupportedLocale, string> = {
  * - Autostart on login
  * - Language selection
  * - Theme (auto/light/dark)
- * - Speaker monitoring, the speaker head start and hand-added speakers
+ * - Speaker monitoring, the speaker head start, clock drift correction and
+ *   hand-added speakers
  * @returns The rendered Settings page
  */
 export function Settings() {
@@ -47,6 +52,7 @@ export function Settings() {
   const [autostart, setAutostart] = useState<boolean | null>(null);
   const [speakerMonitor, setSpeakerMonitorState] = useState<SpeakerMonitorSetting | null>(null);
   const [headStart, setHeadStartState] = useState<HeadStartSetting | null>(null);
+  const [drift, setDriftState] = useState<DriftCompensationSetting | null>(null);
   const [currentLanguage, setCurrentLanguage] = useState<SupportedLocale>(
     i18n.language as SupportedLocale,
   );
@@ -80,6 +86,10 @@ export function Settings() {
     getHeadStart()
       .then(setHeadStartState)
       .catch((error) => log.error('Failed to read the speaker head start setting:', error));
+
+    getDriftCompensation()
+      .then(setDriftState)
+      .catch((error) => log.error('Failed to read the drift correction setting:', error));
 
     getVersion()
       .then(setAppVersion)
@@ -142,6 +152,18 @@ export function Settings() {
     }
   };
 
+  const handleDriftChange = async (checked: boolean) => {
+    try {
+      setDriftState(await setDriftCompensation(driftModeForToggle(checked)));
+    } catch (error) {
+      log.error('Failed to set drift correction:', error);
+      // Re-read so the toggle stops showing a value that was not saved.
+      getDriftCompensation()
+        .then(setDriftState)
+        .catch(() => {});
+    }
+  };
+
   const handleLanguageChange = (locale: SupportedLocale) => {
     i18n.changeLanguage(locale);
     setCurrentLanguage(locale);
@@ -155,6 +177,8 @@ export function Settings() {
 
   const availableLanguages = Object.keys(resources) as SupportedLocale[];
   const headStartMs = headStart?.envOverride ?? headStart?.ms ?? null;
+  const monitorOn = speakerMonitor ? (speakerMonitor.envOverride ?? speakerMonitor.enabled) : null;
+  const driftToggle = driftToggleState(drift, monitorOn, t);
 
   return (
     <div className={styles.settings}>
@@ -283,6 +307,27 @@ export function Settings() {
                 {headStart.envOverride === 0
                   ? t('settings.head_start_env_off')
                   : t('settings.head_start_env', { value: headStart.envOverride })}
+              </span>
+            )}
+          </div>
+
+          <div className={styles.field}>
+            <label className={styles.toggle}>
+              <div className={styles.toggleInfo}>
+                <h4 className={styles.toggleLabel}>{t('settings.drift')}</h4>
+                <p className={styles.toggleDescription}>{t('settings.drift_description')}</p>
+              </div>
+              <input
+                type="checkbox"
+                checked={driftToggle.checked}
+                onChange={(e) => handleDriftChange(e.currentTarget.checked)}
+                disabled={driftToggle.disabled}
+                className={styles.checkbox}
+              />
+            </label>
+            {driftToggle.hint && (
+              <span className={styles.hint}>
+                {t(driftToggle.hint.key, driftToggle.hint.params)}
               </span>
             )}
           </div>
