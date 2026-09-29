@@ -14,7 +14,6 @@ info level with its range instead of a debug line. Both `HTTP stream ended` line
 (`bytes_sent=`), the bytes that put on the wire including chunk framing (`wire_bytes=`), and who ended it (`ended_by=`):
 `client` when the speaker went away, `length` when hyper wrote the whole declared length, `server_shutdown` when the
 stream ended on our side, `error` when the body failed, and `server_cap` for a test cap that a later field experiment
-adds. These are diagnostics for field experiments; what is served is unchanged, and PCM still declares a 4294967295-byte
-`Content-Length`. The speaker monitor's acknowledged-bytes lag is now counted against the bytes on the wire, which only
-differs on a chunked body (the compressed codecs today): counted against the payload, the chunk framing let the
-acknowledged count overtake it within minutes and the lag read zero.
+adds. These are diagnostics for field experiments; they do not change what is served. The speaker monitor's
+acknowledged-bytes lag is now counted against the bytes on the wire, which only differs on a chunked body: counted
+against the payload, the chunk framing let the acknowledged count overtake it within minutes and the lag read zero.
