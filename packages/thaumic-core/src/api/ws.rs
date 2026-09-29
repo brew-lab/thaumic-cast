@@ -878,10 +878,15 @@ const REDACTED_URI: &str = "<redacted>";
 
 /// Returns the stream id named by a companion stream URL, if it names one.
 ///
-/// Stream URLs look like `http://<host>:<port>/stream/{id}/live.wav`, and Sonos
+/// Stream URLs look like `http://<host>:<port>/stream/{id}/live.wav`, or
+/// `…/stream/{id}/live/{n}.wav` for a later segment of a PCM cast, and Sonos
 /// quotes them back verbatim in its GENA notifications. Any other URI (a radio
 /// stream, a Spotify track, `x-rincon:` group membership) has no `/stream/`
 /// segment and yields `None`.
+///
+/// Deliberately looser than [`crate::stream::parse_stream_uri`], which only
+/// accepts the exact paths we serve: redaction has to fail closed, so any URI
+/// with a `/stream/{id}` in it is treated as naming that stream.
 fn stream_id_in_uri(uri: &str) -> Option<&str> {
     let after = uri.split("/stream/").nth(1)?;
     let id = after.split('/').next().unwrap_or(after);
@@ -2689,6 +2694,15 @@ mod tests {
             stream_id_in_uri("http://192.168.1.5:49400/stream/abc-123/live.wav"),
             Some("abc-123")
         );
+        // A later segment of a PCM cast names the same stream.
+        assert_eq!(
+            stream_id_in_uri("http://192.168.1.5:49400/stream/abc-123/live/7.wav"),
+            Some("abc-123")
+        );
+        assert_eq!(
+            stream_id_in_uri("x-rincon-mp3radio://192.168.1.5:49400/stream/abc-123/live"),
+            Some("abc-123")
+        );
         // Anything that is not one of our stream URLs names no stream.
         assert_eq!(stream_id_in_uri("x-sonos-spotify:track%3a4uLU6"), None);
         assert_eq!(stream_id_in_uri("x-rincon:RINCON_0000"), None);
@@ -2706,10 +2720,15 @@ mod tests {
         let stream_id = "11111111-2222-4333-8444-555555555555";
         owner.claim_stream(stream_id);
         let url = format!("http://192.168.1.5:49400/stream/{stream_id}/live.wav");
+        // A later segment's URL is just as much a fetch URL for the stream.
+        let segment_url = format!("http://192.168.1.5:49400/stream/{stream_id}/live/3.wav");
 
         for mut event in [
             transport_state(Some(&url)),
             source_changed(&url, Some(&url)),
+            transport_state(Some(&segment_url)),
+            source_changed("x-sonos-htastream:RINCON_0000:spdif", Some(&segment_url)),
+            source_changed(&segment_url, Some(&url)),
         ] {
             redact_foreign_streams(&stranger, &mut event);
             let json = serde_json::to_string(&event).expect("serializable");
@@ -2731,6 +2750,15 @@ mod tests {
         redact_foreign_streams(&owner, &mut event);
         let json = serde_json::to_string(&event).expect("serializable");
         assert!(json.contains(&url), "owner lost its own URI: {json}");
+
+        let segment_url = format!("http://192.168.1.5:49400/stream/{stream_id}/live/3.wav");
+        let mut event = transport_state(Some(&segment_url));
+        redact_foreign_streams(&owner, &mut event);
+        let json = serde_json::to_string(&event).expect("serializable");
+        assert!(
+            json.contains(&segment_url),
+            "owner lost its own segment URI: {json}"
+        );
     }
 
     #[test]

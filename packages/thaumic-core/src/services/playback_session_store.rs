@@ -53,7 +53,12 @@ pub struct PlaybackSession {
     /// The speaker IP address receiving the stream.
     pub speaker_ip: String,
     /// The full URL the speaker is fetching audio from.
-    /// For coordinators: the actual stream URL.
+    /// For coordinators: the stream's base URL (`…/stream/{id}/live`), which
+    /// `build_sonos_stream_uri` turns into the URI Sonos is given. A segmented
+    /// PCM cast keeps this at the base URL for its whole life: the segment a
+    /// speaker is on (`live.wav`, `live/1.wav`, …) is not session state, and
+    /// every segment matches this URL by stream id (`stream::same_stream`), so
+    /// a promotion that copies it starts the new coordinator on segment 0.
     /// For slaves: the x-rincon:{uuid} URI.
     pub stream_url: String,
     /// The codec being used (for Sonos URI formatting).

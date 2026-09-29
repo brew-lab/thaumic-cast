@@ -17,7 +17,7 @@ use axum::{
 use serde::Deserialize;
 use serde_json::json;
 
-use super::stream::stream_audio;
+use super::stream::{stream_audio, stream_audio_segment};
 use crate::api::response::{api_error, api_ok, api_success};
 use crate::api::ws::ws_handler;
 use crate::api::AppState;
@@ -100,6 +100,22 @@ struct ManualSpeakerRequest {
 // Router
 // ─────────────────────────────────────────────────────────────────────────────
 
+/// The routes a stream is served under from its live edge: `live` (MP3 and
+/// AAC), `live.wav` (PCM, and segment 0 of a segmented PCM cast) and
+/// `live.flac` (FLAC). See [`crate::stream::uri`].
+const STREAM_ROUTES: [&str; 3] = [
+    "/stream/{id}/live",
+    "/stream/{id}/live.wav",
+    "/stream/{id}/live.flac",
+];
+
+/// The route of PCM segment `n` (n ≥ 1), `/stream/{id}/live/{n}.wav`.
+///
+/// The whole file name is captured and parsed by the handler
+/// ([`crate::stream::parse_segment_file`]), which answers 404 for anything but
+/// a canonical `{n}.wav`.
+const STREAM_SEGMENT_ROUTE: &str = "/stream/{id}/live/{file}";
+
 /// Creates the Axum router with all routes.
 pub fn create_router(state: AppState) -> Router {
     Router::new()
@@ -125,9 +141,10 @@ pub fn create_router(state: AppState) -> Router {
             axum::routing::delete(remove_manual_speaker),
         )
         .route("/sonos/gena", any(handle_gena_notify))
-        .route("/stream/{id}/live", get(stream_audio))
-        .route("/stream/{id}/live.wav", get(stream_audio))
-        .route("/stream/{id}/live.flac", get(stream_audio))
+        .route(STREAM_ROUTES[0], get(stream_audio))
+        .route(STREAM_ROUTES[1], get(stream_audio))
+        .route(STREAM_ROUTES[2], get(stream_audio))
+        .route(STREAM_SEGMENT_ROUTE, get(stream_audio_segment))
         .route("/artwork.jpg", get(serve_artwork))
         .route("/ws", get(ws_handler))
         .with_state(state)
@@ -492,6 +509,101 @@ async fn handle_gena_notify(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    mod stream_routes {
+        use super::*;
+        use crate::stream::{parse_segment_file, pcm_segment_uri};
+
+        /// Serves the stream route table with handlers that answer which route
+        /// matched and what it captured, and returns its address.
+        async fn serve_route_table() -> SocketAddr {
+            let mut app = Router::new();
+            for route in STREAM_ROUTES {
+                app = app.route(
+                    route,
+                    get(move |Path(id): Path<String>| async move { format!("{route} id={id}") }),
+                );
+            }
+            let app = app.route(
+                STREAM_SEGMENT_ROUTE,
+                get(|Path((id, file)): Path<(String, String)>| async move {
+                    match parse_segment_file(&file) {
+                        Some(n) => (StatusCode::OK, format!("segment id={id} n={n}")),
+                        None => (StatusCode::NOT_FOUND, String::new()),
+                    }
+                }),
+            );
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+                .await
+                .expect("bind loopback");
+            let addr = listener.local_addr().expect("address");
+            tokio::spawn(async move { axum::serve(listener, app).await });
+            addr
+        }
+
+        /// Fetches `path` and returns the status code and body.
+        async fn fetch(addr: SocketAddr, path: &str) -> (u16, String) {
+            use tokio::io::{AsyncReadExt, AsyncWriteExt};
+            let mut conn = tokio::net::TcpStream::connect(addr).await.expect("connect");
+            let request = format!("GET {path} HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n");
+            conn.write_all(request.as_bytes()).await.expect("send");
+            let mut response = String::new();
+            conn.read_to_string(&mut response).await.expect("read");
+            let status = response[9..12].parse().expect("status code");
+            let body = response
+                .split_once("\r\n\r\n")
+                .map(|(_, body)| body.to_string())
+                .unwrap_or_default();
+            (status, body)
+        }
+
+        #[tokio::test]
+        async fn the_old_stream_urls_still_resolve() {
+            let addr = serve_route_table().await;
+            for (path, route) in [
+                ("/stream/abc-123/live", "/stream/{id}/live"),
+                ("/stream/abc-123/live.wav", "/stream/{id}/live.wav"),
+                ("/stream/abc-123/live.flac", "/stream/{id}/live.flac"),
+            ] {
+                assert_eq!(
+                    fetch(addr, path).await,
+                    (200, format!("{route} id=abc-123")),
+                    "{path}"
+                );
+            }
+        }
+
+        #[tokio::test]
+        async fn every_segment_url_resolves_to_its_segment() {
+            let addr = serve_route_table().await;
+            let base = format!("http://{addr}/stream/abc-123/live");
+            for n in [1, 2, 10, 4_096] {
+                let uri = pcm_segment_uri(&base, n);
+                let path = uri
+                    .strip_prefix(&format!("http://{addr}"))
+                    .expect("our host");
+                assert_eq!(
+                    fetch(addr, path).await,
+                    (200, format!("segment id=abc-123 n={n}")),
+                    "{path}"
+                );
+            }
+        }
+
+        #[tokio::test]
+        async fn a_segment_url_no_server_hands_out_is_not_found() {
+            let addr = serve_route_table().await;
+            for path in [
+                "/stream/abc-123/live/0.wav",
+                "/stream/abc-123/live/01.wav",
+                "/stream/abc-123/live/1.flac",
+                "/stream/abc-123/live/x.wav",
+                "/stream/abc-123/live/1.wav/2.wav",
+            ] {
+                assert_eq!(fetch(addr, path).await.0, 404, "{path}");
+            }
+        }
+    }
 
     mod manual_speaker_handlers {
         use super::*;
