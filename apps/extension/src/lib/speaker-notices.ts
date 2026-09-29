@@ -9,8 +9,9 @@
  * Wording: a head-start notice names what happened and the head start that
  * would have covered it, then where to change it: in the environment variable
  * when one fixes it, else in the desktop app or the server's config by the
- * companion's type, else neutrally. An uncorrected drift offers clock drift
- * correction where the companion has it and it is not on. Restart advice is
+ * companion's type, else neutrally. An uncorrected drift, and a speaker
+ * running low because its clock drained it, offer clock drift correction where
+ * the companion has it and it is not on. Restart advice is
  * added only when the companion says a restart refills the speaker.
  *
  * Dismissal: a notice is dismissed by `(streamId, speakerIp, noticeId)`, which
@@ -75,7 +76,7 @@ export function headStartWhereLine(suggested: number, ctx: NoticeWordingContext)
 
 /**
  * Picks the sentence offering clock drift correction for an uncorrected
- * drift: only when the companion reports its mode, the mode is not already
+ * drift, or a speaker running low because of one: only when the companion reports its mode, the mode is not already
  * `on`, the speaker monitor (which correction steers by) is on, and the
  * companion's type says where correction is turned on.
  * @param ctx - The wording context
@@ -123,9 +124,16 @@ export function speakerNoticeLines(notice: SpeakerNotice, ctx: NoticeWordingCont
     case 'head_start_no_remedy':
       lines.push({ key: 'speaker_notice_head_start_no_remedy', params: { stall, name } });
       break;
-    case 'running_low':
+    case 'running_low': {
       lines.push({ key: 'speaker_notice_running_low', params: { name, left } });
+      // When the clock drained it, keep the reason and the fix the drift
+      // notice it replaced gave.
+      if (notice.cause !== 'drift') break;
+      lines.push({ key: 'speaker_notice_running_low_drift' });
+      const turnOn = driftTurnOnLine(ctx);
+      if (turnOn) lines.push(turnOn);
       break;
+    }
     case 'drift_uncorrected':
     case 'drift_saturated': {
       lines.push({
