@@ -29,7 +29,9 @@ use crate::api::AppState;
 use crate::error::{ThaumicError, ThaumicResult};
 use crate::protocol_constants::{APP_NAME, ICY_METAINT};
 use crate::services::latency_monitor::speaker_monitor_enabled;
-use crate::services::speaker_monitor::control::{drift_compensation_mode, DriftMode};
+use crate::services::speaker_monitor::control::{
+    drift_compensation_mode, drift_force_ppm, DriftMode, DRIFT_FORCE_PPM_ENV,
+};
 use crate::stream::manager::TimestampedFrame;
 use crate::stream::{
     create_wav_header_with_data_size, create_wav_stream_with_cadence, lagged_error,
@@ -413,13 +415,28 @@ pub(super) async fn stream_audio(
     // steers by the monitor's estimates, so only a monitored speaker's PCM
     // connection gets a rate control, and only with correction on. Observing
     // or off, the cadence builds no adapter and sends the captured buffers
-    // themselves.
+    // themselves. THAUMIC_DRIFT_FORCE_PPM, for listening tests, overrides
+    // all of that with a fixed rate.
     let tap = access.monitors_playback().then(|| {
         let monitor = speaker_monitor_enabled(speaker_monitor);
         let drift = drift_compensation_mode(drift_compensation, monitor);
-        let rate_control =
-            connection_rate_control(drift, stream_state.codec, &stream_state.audio_format);
-        if rate_control.is_some() {
+        let rate_control = connection_rate_control(
+            drift,
+            stream_state.codec,
+            &stream_state.audio_format,
+            drift_force_ppm(),
+        );
+        if let Some(ppm) = rate_control.as_ref().and_then(|c| c.forced_ppm()) {
+            log::warn!(
+                "[Drift] {}={:+} forcing the rate adapter; for listening tests only \
+                 (client={}, stream={}, mode={})",
+                DRIFT_FORCE_PPM_ENV,
+                ppm,
+                remote_ip,
+                id,
+                drift
+            );
+        } else if rate_control.is_some() {
             log::info!(
                 "[Stream] Clock drift correction on for client={}, stream={}",
                 remote_ip,
@@ -824,13 +841,23 @@ fn pcm_cadence_stream(
 /// PCM connection made with correction on whose format the adapter can
 /// resample, none otherwise (observing, off, a compressed codec, or a
 /// format it cannot take), which leaves the stream zero-copy.
+///
+/// With `forced` (from [`drift_force_ppm`], for listening tests) every PCM
+/// connection whose format the adapter takes gets a control fixed at that
+/// rate instead, whatever the mode.
 fn connection_rate_control(
     mode: DriftMode,
     codec: AudioCodec,
     audio_format: &crate::stream::AudioFormat,
+    forced: Option<f64>,
 ) -> Option<Arc<RateControl>> {
-    (mode == DriftMode::On && codec == AudioCodec::Pcm && RateAdapter::supports(audio_format))
-        .then(|| Arc::new(RateControl::new()))
+    if codec != AudioCodec::Pcm || !RateAdapter::supports(audio_format) {
+        return None;
+    }
+    match forced {
+        Some(ppm) => Some(Arc::new(RateControl::forced(ppm))),
+        None => (mode == DriftMode::On).then(|| Arc::new(RateControl::new())),
+    }
 }
 
 /// Logs how much of a PCM connection's prefill is sent as its connect burst
@@ -1379,15 +1406,17 @@ mod tests {
         remote: IpAddr,
         burst_ms: u64,
     ) -> (AudioStream, Arc<ConnectionTap>) {
-        pcm_connection_with_drift(state, remote, burst_ms, DriftMode::Off)
+        pcm_connection_with_drift(state, remote, burst_ms, DriftMode::Off, None)
     }
 
-    /// [`pcm_connection`] made under drift correction `drift`.
+    /// [`pcm_connection`] made under drift correction `drift`, with the
+    /// adapter forced to `forced` ppm when given.
     fn pcm_connection_with_drift(
         state: &Arc<StreamState>,
         remote: IpAddr,
         burst_ms: u64,
         drift: DriftMode,
+        forced: Option<f64>,
     ) -> (AudioStream, Arc<ConnectionTap>) {
         use crate::stream::MonitorRegistrar;
         let is_resume = state.timing.current_epoch_for(remote).is_some();
@@ -1405,7 +1434,7 @@ mod tests {
             )
             .with_drift(
                 drift,
-                connection_rate_control(drift, AudioCodec::Pcm, &state.audio_format),
+                connection_rate_control(drift, AudioCodec::Pcm, &state.audio_format, forced),
             ),
         );
         let (registrar, _registrations) = MonitorRegistrar::channel();
@@ -1574,12 +1603,19 @@ mod tests {
     #[tokio::test(start_paused = true)]
     async fn drift_on_engages_an_adapter_and_observe_sends_the_captured_frames() {
         let pcm = AudioFormat::default();
-        assert!(connection_rate_control(DriftMode::On, AudioCodec::Pcm, &pcm).is_some());
-        assert!(connection_rate_control(DriftMode::Observe, AudioCodec::Pcm, &pcm).is_none());
-        assert!(connection_rate_control(DriftMode::Off, AudioCodec::Pcm, &pcm).is_none());
-        assert!(connection_rate_control(DriftMode::On, AudioCodec::Flac, &pcm).is_none());
+        let control =
+            |mode, codec, fmt: &AudioFormat| connection_rate_control(mode, codec, fmt, None);
+        assert!(control(DriftMode::On, AudioCodec::Pcm, &pcm).is_some());
+        assert!(control(DriftMode::Observe, AudioCodec::Pcm, &pcm).is_none());
+        assert!(control(DriftMode::Off, AudioCodec::Pcm, &pcm).is_none());
+        assert!(control(DriftMode::On, AudioCodec::Flac, &pcm).is_none());
         let wide = AudioFormat::new(48_000, 2, 24);
-        assert!(connection_rate_control(DriftMode::On, AudioCodec::Pcm, &wide).is_none());
+        assert!(control(DriftMode::On, AudioCodec::Pcm, &wide).is_none());
+        assert_eq!(
+            control(DriftMode::On, AudioCodec::Pcm, &pcm).and_then(|c| c.forced_ppm()),
+            None,
+            "unset forces nothing"
+        );
 
         let state = Arc::new(StreamState::new(
             "pcm-stream".to_string(),
@@ -1594,7 +1630,7 @@ mod tests {
         push_tagged(&state, 0, 100);
 
         let (mut body, tap) =
-            pcm_connection_with_drift(&state, ip("192.168.1.50"), 500, DriftMode::Observe);
+            pcm_connection_with_drift(&state, ip("192.168.1.50"), 500, DriftMode::Observe, None);
         assert!(tap.rate_control().is_none());
         assert_eq!(tap.drift_mode(), DriftMode::Observe);
         let items = ready_now(&mut body).await;
@@ -1604,13 +1640,63 @@ mod tests {
         drop(body);
 
         let (mut body, tap) =
-            pcm_connection_with_drift(&state, ip("192.168.1.51"), 500, DriftMode::On);
+            pcm_connection_with_drift(&state, ip("192.168.1.51"), 500, DriftMode::On, None);
         let control = Arc::clone(tap.rate_control().expect("a rate control"));
         assert!(!control.is_engaged(), "until the cadence body runs");
         let items = ready_now(&mut body).await;
         assert_eq!(items.len(), 1 + 50 + 1);
         assert!(control.is_engaged());
         assert_eq!(tap.net_inserted_ms(), Some(0.0));
+    }
+
+    /// THAUMIC_DRIFT_FORCE_PPM engages the adapter at exactly its rate on
+    /// every PCM connection, whatever the drift mode, and no controller
+    /// write moves it; a compressed connection or a format the adapter
+    /// cannot take is left alone.
+    #[tokio::test(start_paused = true)]
+    async fn a_forced_rate_engages_the_adapter_in_every_mode() {
+        let pcm = AudioFormat::default();
+        for mode in [DriftMode::Off, DriftMode::Observe, DriftMode::On] {
+            let control = connection_rate_control(mode, AudioCodec::Pcm, &pcm, Some(150.0))
+                .expect("a forced rate control");
+            assert_eq!(control.forced_ppm(), Some(150.0), "{mode}");
+            control.set_ppm(0.0);
+            assert_eq!(control.command_ppm(), 150.0, "{mode}");
+        }
+        assert!(
+            connection_rate_control(DriftMode::Off, AudioCodec::Flac, &pcm, Some(150.0)).is_none()
+        );
+        let wide = AudioFormat::new(48_000, 2, 24);
+        assert!(
+            connection_rate_control(DriftMode::On, AudioCodec::Pcm, &wide, Some(150.0)).is_none()
+        );
+
+        let state = Arc::new(StreamState::new(
+            "pcm-stream".to_string(),
+            AudioCodec::Pcm,
+            AudioFormat::default(),
+            crate::protocol_constants::pcm_ring_frames(10),
+            64,
+            200,
+            10,
+        ));
+        let _keepalive = state.tx.subscribe();
+        push_tagged(&state, 0, 100);
+        for (i, mode) in [DriftMode::Off, DriftMode::Observe, DriftMode::On]
+            .into_iter()
+            .enumerate()
+        {
+            let remote = IpAddr::from([192, 168, 1, 60 + i as u8]);
+            let (mut body, tap) =
+                pcm_connection_with_drift(&state, remote, 500, mode, Some(-150.0));
+            assert_eq!(tap.drift_mode(), mode);
+            let control = Arc::clone(tap.rate_control().expect("a rate control"));
+            let items = ready_now(&mut body).await;
+            assert!(items.len() > 1);
+            assert!(control.is_engaged(), "{mode}");
+            assert_eq!(control.command_ppm(), -150.0, "{mode}");
+            assert!(tap.net_inserted_ms().is_some(), "{mode}");
+        }
     }
 
     /// A speaker fetching 100 ms after the stream's first frame, as a fresh

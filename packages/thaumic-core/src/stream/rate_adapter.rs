@@ -276,6 +276,10 @@ pub struct RateControl {
     /// Whether the connection's cadence built an adapter that follows this
     /// control.
     engaged: AtomicBool,
+    /// A command fixed for the connection's life, in thousandths of a ppm,
+    /// for listening tests (see [`Self::forced`]): no controller write
+    /// changes it and the watchdog never lapses it.
+    forced_ppm_milli: Option<i32>,
 }
 
 impl Default for RateControl {
@@ -294,7 +298,29 @@ impl RateControl {
             net_inserted_frames: AtomicI64::new(0),
             pinned: AtomicBool::new(false),
             engaged: AtomicBool::new(false),
+            forced_ppm_milli: None,
         }
+    }
+
+    /// A control whose command is fixed at `ppm` (clamped to
+    /// ±[`MAX_RATE_PPM`], anything not finite counting as 0) for the
+    /// connection's life, whatever a controller writes and however long ago:
+    /// for listening tests only. The net-insertion guard still applies.
+    pub fn forced(ppm: f64) -> Self {
+        let ppm = if ppm.is_finite() {
+            ppm.clamp(-MAX_RATE_PPM, MAX_RATE_PPM)
+        } else {
+            0.0
+        };
+        Self {
+            forced_ppm_milli: Some((ppm * 1000.0).round() as i32),
+            ..Self::new()
+        }
+    }
+
+    /// The fixed command of a [`Self::forced`] control, in ppm.
+    pub fn forced_ppm(&self) -> Option<f64> {
+        self.forced_ppm_milli.map(|m| f64::from(m) / 1000.0)
     }
 
     /// Sets the command to `ppm` (clamped to ±[`MAX_RATE_PPM`]) and marks
@@ -305,6 +331,9 @@ impl RateControl {
     }
 
     fn set_ppm_at(&self, ppm: f64, now: Instant) {
+        if self.forced_ppm_milli.is_some() {
+            return;
+        }
         let ppm = if ppm.is_finite() {
             ppm.clamp(-MAX_RATE_PPM, MAX_RATE_PPM)
         } else {
@@ -317,13 +346,17 @@ impl RateControl {
             .store(at.min(NEVER_WRITTEN - 1), Ordering::Relaxed);
     }
 
-    /// The command in force now: 0 if none was ever written or the last one
-    /// is older than [`RATE_COMMAND_WATCHDOG`].
+    /// The command in force now: the fixed one of a [`Self::forced`]
+    /// control, else 0 if none was ever written or the last one is older
+    /// than [`RATE_COMMAND_WATCHDOG`].
     pub fn command_ppm(&self) -> f64 {
         self.command_ppm_at(Instant::now())
     }
 
     fn command_ppm_at(&self, now: Instant) -> f64 {
+        if let Some(forced) = self.forced_ppm() {
+            return forced;
+        }
         if self.written_at_ms.load(Ordering::Relaxed) == NEVER_WRITTEN
             || self.watchdog_lapsed_at(now)
         {
@@ -373,6 +406,9 @@ impl RateControl {
     }
 
     fn watchdog_lapsed_at(&self, now: Instant) -> bool {
+        if self.forced_ppm_milli.is_some() {
+            return false;
+        }
         let written = self.written_at_ms.load(Ordering::Relaxed);
         if written == NEVER_WRITTEN {
             return false;
@@ -762,6 +798,31 @@ mod tests {
         );
         control.set_ppm_at(f64::NAN, t0 + Duration::from_secs(31));
         assert_eq!(control.command_ppm_at(t0 + Duration::from_secs(31)), 0.0);
+    }
+
+    #[test]
+    fn a_forced_command_ignores_writes_and_never_lapses() {
+        let control = RateControl::forced(-150.0);
+        let t0 = Instant::now();
+        assert_eq!(control.forced_ppm(), Some(-150.0));
+        assert_eq!(control.command_ppm_at(t0), -150.0);
+        control.set_ppm_at(20.0, t0);
+        assert_eq!(
+            control.command_ppm_at(t0),
+            -150.0,
+            "a controller cannot move it"
+        );
+        assert_eq!(
+            control.command_ppm_at(t0 + Duration::from_secs(3_600)),
+            -150.0
+        );
+        control.mark_engaged();
+        assert!(control.is_following());
+        assert_eq!(RateControl::new().forced_ppm(), None);
+        assert_eq!(
+            RateControl::forced(1_000.0).forced_ppm(),
+            Some(MAX_RATE_PPM)
+        );
     }
 
     #[test]
