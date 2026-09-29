@@ -32,15 +32,18 @@ pub const DEFAULT_SAMPLE_RATE: u32 = 48000;
 /// Default number of audio channels (stereo).
 pub const DEFAULT_CHANNELS: u16 = 2;
 
-/// Maximum size indicator for WAV streams (4,294,967,295 bytes / ~4.3 GB).
+/// Largest size a WAV header can declare (4,294,967,295 bytes, 4 GiB - 1).
 ///
 /// Written into both WAV header size fields (RIFF size and data size) of a
-/// PCM stream, the conventional way to mark a WAV stream as unbounded. A
-/// Playbar (S2 86.10) takes it that way when the response declares no
-/// `Content-Length`: a chunked stream with this header played on past 2^31
-/// bytes. It does obey a smaller header size, hanging up once that much audio
-/// has arrived (and at once for a size of 0), so the field must stay at the
-/// maximum.
+/// PCM stream. It is often read as a marker for an unbounded stream, but a
+/// Playbar (S2 86.10) takes it as a length: a chunked stream with this header,
+/// declaring no `Content-Length`, played on past 2^31 bytes and then stopped
+/// at exactly 2^32 bytes (6h12m50s at 48 kHz stereo), hanging up
+/// (`ended_by=client`) and going to STOPPED with no reconnect and no `Range`
+/// request. It obeys a smaller header size the same way, hanging up once that
+/// much audio has arrived (and at once for a size of 0), so one connection
+/// can never carry more than this. A cast goes on past it only by continuing
+/// in a new segment connection, which the PCM segment continuation adds.
 ///
 /// It is also the `Content-Length` declared by the experimental `length`
 /// framing, which is not a real "infinite" length: hyper stops the body once
@@ -173,7 +176,8 @@ pub const MAX_CADENCE_QUEUE_SIZE: usize =
 /// Default PCM connect burst (ms): audio handed to a speaker as fast as TCP
 /// takes it when its GET starts, ahead of real-time pacing.
 ///
-/// A Sonos speaker playing an endless WAV holds only the audio that reached
+/// A Sonos speaker playing a live WAV (no HTTP length; the WAV header caps it
+/// at 4 GiB) holds only the audio that reached
 /// it ahead of its playhead. Paced from the first frame, that is a few tens
 /// of milliseconds, which a Wi-Fi retransmission burst outlasts. HTTP
 /// renderers expect a large first portion on GET and regulate the rest with

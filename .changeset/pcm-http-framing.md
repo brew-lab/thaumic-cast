@@ -16,6 +16,6 @@ body cleanly from our side after that many bytes, logged as `ended_by=server_cap
 where ending early would abort the connection. A connection served with any of them set logs a `[Stream] PCM HTTP
 switches` line, and an invalid value (including one that is not valid UTF-8), or one that does not apply to the chosen
 framing, is ignored with a warning. These switches are for field experiments only; the WAV header keeps 0xFFFFFFFF in
-both size fields unless one says otherwise, and every stream response keeps its headers in the same order as before. The
+both size fields (a 4 GiB length, not an unbounded marker) unless one says otherwise, and every stream response keeps its headers in the same order as before. The
 experiments found the 3h06m stop, and PCM is now chunked by default (see the change that serves PCM chunked). The
 speaker monitor's acknowledged-bytes lag already counts chunk framing, so it stays right on a chunked PCM connection.

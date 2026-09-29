@@ -3,8 +3,9 @@ use bytes::{BufMut, Bytes, BytesMut};
 use super::pcm_http::riff_size_for;
 use crate::protocol_constants::WAV_STREAM_SIZE_MAX;
 
-/// Generates a standard 44-byte WAVE header for an infinite LPCM stream,
-/// with [`WAV_STREAM_SIZE_MAX`] in both size fields.
+/// Generates a standard 44-byte WAVE header for a live LPCM stream, with
+/// [`WAV_STREAM_SIZE_MAX`] in both size fields: the largest length a WAV
+/// header can declare (4 GiB - 1), not an unbounded marker.
 ///
 /// @param sample_rate - Typically 44100 or 48000.
 /// @param channels - 1 (mono) or 2 (stereo).
@@ -41,7 +42,7 @@ pub fn create_wav_header_with_data_size(
 
     // RIFF header
     header.put_slice(b"RIFF");
-    header.put_u32_le(riff_size_for(data_size)); // File size (infinite stream by default)
+    header.put_u32_le(riff_size_for(data_size)); // File size (4 GiB - 1 by default)
     header.put_slice(b"WAVE");
 
     // fmt chunk
@@ -56,7 +57,7 @@ pub fn create_wav_header_with_data_size(
 
     // data chunk
     header.put_slice(b"data");
-    header.put_u32_le(data_size); // Data size (infinite stream by default)
+    header.put_u32_le(data_size); // Data size (4 GiB - 1 by default)
 
     header.freeze()
 }
