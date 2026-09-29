@@ -202,6 +202,30 @@ describe('stream events for this client’s own cast', () => {
     });
   });
 
+  it('should stop the cast with its own reason when its speaker cannot continue', async () => {
+    const speakerIp = freshIp();
+    registerOwnCast(1, 'own-stream', [speakerIp]);
+    notifications.length = 0;
+
+    await handleSonosEvent(
+      streamEvent({
+        type: 'playbackStopped',
+        streamId: 'own-stream',
+        speakerIp,
+        reason: 'continuation_failed',
+      }),
+    );
+
+    expect(hasSession(1)).toBe(false);
+    expect(broker.stoppedTabs).toEqual([1]);
+    expect(notifications).toContainEqual({
+      type: 'CAST_AUTO_STOPPED',
+      tabId: 1,
+      speakerIp,
+      reason: 'continuation_failed',
+    });
+  });
+
   it('should degrade a reason this build does not know to playback_stopped', async () => {
     const speakerIp = freshIp();
     registerOwnCast(1, 'own-stream', [speakerIp, freshIp()]);

@@ -125,6 +125,24 @@ describe('removal reasons', () => {
     expect(SpeakerRemovedMessageSchema.safeParse(removed).success).toBe(true);
   });
 
+  it('should accept continuation_failed on both removal messages', () => {
+    const autoStopped = {
+      type: 'CAST_AUTO_STOPPED',
+      tabId: 4,
+      speakerIp: SPEAKER,
+      reason: 'continuation_failed',
+    };
+    const removed = {
+      type: 'SPEAKER_REMOVED',
+      tabId: 4,
+      speakerIp: SPEAKER,
+      reason: 'continuation_failed',
+    };
+
+    expect(CastAutoStoppedMessageSchema.safeParse(autoStopped).success).toBe(true);
+    expect(SpeakerRemovedMessageSchema.safeParse(removed).success).toBe(true);
+  });
+
   it('should reject a reason neither message knows', () => {
     const removed = { type: 'SPEAKER_REMOVED', tabId: 4, speakerIp: SPEAKER, reason: 'gremlins' };
 
