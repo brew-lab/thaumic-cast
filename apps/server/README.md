@@ -158,19 +158,25 @@ much delay. Both apply from each speaker's next connection.
 | `THAUMIC_SPEAKER_MONITOR`           | `on` or `off`: poll each speaker's playback position and send speaker notices                |
 | `THAUMIC_PCM_CONNECT_BURST_MS`      | Speaker head start for PCM casts in ms, 0 (off) to 2000; adds that much delay                |
 | `THAUMIC_STRICT_STREAM_ACCESS`      | `true` refuses audio fetches from addresses a stream is not playing on                       |
-| `THAUMIC_PCM_HTTP_FRAMING`          | Experimental: `length` (default), `chunked` or `close`: how a PCM stream's body is delimited |
+| `THAUMIC_PCM_HTTP_FRAMING`          | `chunked` (default); experimental: `length` or `close`: how a PCM stream's body is delimited |
 | `THAUMIC_PCM_CONTENT_LENGTH`        | Experimental: the `Content-Length` PCM declares with `length` framing (default `4294967295`) |
 | `THAUMIC_PCM_WAV_DATA_SIZE`         | Experimental: the WAV header's data size, 0 to 4294967295 (default `4294967295`)             |
 | `THAUMIC_PCM_END_AFTER_BYTES`       | Experimental: end each PCM body cleanly after this many bytes; `chunked` or `close` only     |
 
-The four experimental variables are switches for field experiments into why a PCM cast stops after hours on some
-speakers, not settings: they are read again for each speaker connection, a connection served with any of them set logs
-a `[Stream] PCM HTTP switches` line, and an invalid value (including one that is not valid UTF-8), or one that does not
-apply to the chosen framing, is ignored with a warning. Left unset, PCM is served exactly as before. `close` answers as
-HTTP/1.0 with `Connection: close`, so the body ends only when the connection closes; `THAUMIC_PCM_END_AFTER_BYTES` is
-refused with `length` framing, where ending the body early would abort the connection rather than end it cleanly. With
-`chunked`, a speaker that asks over HTTP/1.0 gets a close-delimited body (`http=HTTP/1.0, framing=close` on its
-connection line), as the compressed codecs already do.
+PCM streams are sent chunked, with no `Content-Length`, and 0xFFFFFFFF in both WAV header size fields, which speakers
+take as a stream with no end. A speaker that asks over HTTP/1.0, which cannot take chunks, gets an HTTP/1.0 response
+whose body ends only when the connection closes (`http=HTTP/1.0, framing=close` on its connection line), as the
+compressed codecs always have. Declaring a length ended every PCM cast to a Playbar after 3h06m, since it caps a
+declared length at 2^31 bytes.
+
+The `length` and `close` framings and the three experimental variables are switches for field experiments into how
+speakers treat a PCM stream, not settings: they are read again for each speaker connection, a connection served with any
+of them set logs a `[Stream] PCM HTTP switches` line, and an invalid value (including one that is not valid UTF-8), or
+one that does not apply to the chosen framing, is ignored with a warning. `length` declares a `Content-Length`
+(4294967295 unless `THAUMIC_PCM_CONTENT_LENGTH` says otherwise), as PCM was served before, and so stops after 3h06m on a
+Playbar. `close` answers as HTTP/1.0 with `Connection: close`, so the body ends only when the connection closes.
+`THAUMIC_PCM_END_AFTER_BYTES` is refused with `length` framing, where ending the body early would abort the connection
+rather than end it cleanly.
 
 ## Running as a service (systemd)
 
