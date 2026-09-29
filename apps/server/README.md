@@ -178,7 +178,7 @@ PCM streams are sent chunked, with no `Content-Length`. A WAV header's size is a
 connection's WAV header declares 4294901760 data bytes (6h12m49.28s at 48 kHz stereo) and its body ends there, and the
 next segment, `/stream/{id}/live/{n}.wav`, carries on from the exact sample the previous one ended at, however long the
 speaker takes to fetch it. Once a speaker has played a segment to its end and reported STOPPED on it for a second
-(confirmed by asking it), the server tells it to play the next one: a pause of about a second and a half every 6h12m,
+(confirmed by asking it), the server tells it to play the next one: a short pause (a few seconds) every 6h12m,
 with no notice and no change in the extension, which is not shown the STOPPED of the switch for the speaker or any
 speaker grouped with it. Unless drift correction is steering the speaker, it rejoins with just its head start, so the
 pause adds no lasting latency; with drift correction on, up to 2 s of it is kept and paid back. A speaker that will not
