@@ -116,6 +116,7 @@ impl GenaEventProcessor {
                 speaker_ip,
                 state: transport_state,
                 current_uri,
+                next_uri,
                 ..
             } => {
                 deps.sonos_state
@@ -124,6 +125,7 @@ impl GenaEventProcessor {
                     speaker_ip,
                     *transport_state,
                     current_uri.as_deref(),
+                    next_uri.as_deref(),
                 );
                 broadcast = deps
                     .sonos_state

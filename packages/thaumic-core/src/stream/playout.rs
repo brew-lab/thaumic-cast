@@ -37,9 +37,11 @@
 //!
 //! What moves the speaker on to the next segment lives outside the playout:
 //! it tells a [`PlayoutEvents`] when a segment nears its end, ends, is
-//! continued or is closed part way, and the continuation service restarts
-//! the speaker on the next segment once it has played the last one out (see
-//! [`PlayoutChain::prepare_restart`] and [`Rejoin`]).
+//! continued or is closed part way. The continuation service queues each
+//! next segment as the speaker's next item, which it fetches the moment the
+//! current body ends (an ordinary continuation here), and restarts a speaker
+//! that did not on the next segment once it has played the last one out
+//! (see [`PlayoutChain::prepare_restart`] and [`Rejoin`]).
 
 use std::collections::{HashMap, VecDeque};
 use std::net::IpAddr;
@@ -54,7 +56,7 @@ use futures::Stream;
 use tokio::time::Instant;
 
 use super::cadence::{ChainStats, LoggingStreamGuard};
-use super::pcm_http::PcmContinuation;
+use super::pcm_http::{PcmContinuation, PcmSegmentDidl};
 use super::tap::{ConnectionTap, WAV_HEADER_BYTES};
 use super::uri::{parse_stream_uri, segment_base_uri};
 use super::AudioFormat;
@@ -860,6 +862,8 @@ pub struct ChainParts {
     pub registry: Option<Arc<PlayoutRegistry>>,
     /// How its speaker is moved on from one segment to the next.
     pub continuation: PcmContinuation,
+    /// How a segment queued as its speaker's next item is described.
+    pub segment_didl: PcmSegmentDidl,
     /// The head start its first connection was configured to: what a
     /// trimmed rejoin keeps (see [`Rejoin::Trim`]).
     pub head_start: Duration,
@@ -884,6 +888,7 @@ pub struct PlayoutChain {
     runtime: tokio::runtime::Handle,
     registry: Option<Weak<PlayoutRegistry>>,
     continuation: PcmContinuation,
+    segment_didl: PcmSegmentDidl,
     head_start: Duration,
     events: Option<Arc<dyn PlayoutEvents>>,
     inner: parking_lot::Mutex<Inner>,
@@ -1060,6 +1065,7 @@ impl PlayoutChain {
             guard,
             registry,
             continuation,
+            segment_didl,
             head_start,
             events,
         } = parts;
@@ -1081,6 +1087,7 @@ impl PlayoutChain {
             runtime: tokio::runtime::Handle::current(),
             registry: registry.as_ref().map(Arc::downgrade),
             continuation,
+            segment_didl,
             head_start,
             events,
             inner: parking_lot::Mutex::new(Inner {
@@ -1124,7 +1131,7 @@ impl PlayoutChain {
         });
         log::info!(
             "[Stream] Segments: stream={} speaker={} chain={} D={} ({}) segment={} first_byte={} \
-             continuation={}{}",
+             continuation={} didl={}{}",
             chain.stream_id,
             chain.speaker_ip,
             chain.id,
@@ -1133,6 +1140,7 @@ impl PlayoutChain {
             start.url_segment,
             start.first_byte(),
             chain.continuation,
+            chain.segment_didl,
             if registry.is_some() { "" } else { " untracked" }
         );
         if let Some(registry) = &registry {
@@ -1174,6 +1182,32 @@ impl PlayoutChain {
     /// How its speaker is moved on from one segment to the next.
     pub fn continuation(&self) -> PcmContinuation {
         self.continuation
+    }
+
+    /// How a segment queued as its speaker's next item is described.
+    pub fn segment_didl(&self) -> PcmSegmentDidl {
+        self.segment_didl
+    }
+
+    /// How much audio is left to hand over of the segment being served, if
+    /// the connection serving it is one of URL segment `url_segment`.
+    /// `None` while no such connection is served: the playout is parked, has
+    /// moved on to a later segment, or is gone.
+    pub fn serving_left(&self, url_segment: u32) -> Option<Duration> {
+        let inner = self.inner.lock();
+        if inner.retired || inner.cadence_ended {
+            return None;
+        }
+        inner
+            .current
+            .as_ref()
+            .filter(|slot| slot.url_segment == url_segment)
+            .map(|_| {
+                Duration::from_millis(
+                    self.layout
+                        .ms(self.layout.data_bytes.saturating_sub(inner.seg.sent)),
+                )
+            })
     }
 
     /// The latency its last restart left for the drift controller to pay

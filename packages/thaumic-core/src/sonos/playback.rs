@@ -9,10 +9,11 @@ use reqwest::Client;
 
 use crate::error::SoapResult;
 use crate::protocol_constants::POSITION_POLL_TIMEOUT_MS;
-use crate::sonos::didl::format_didl_lite;
+use crate::sonos::didl::{format_didl_lite, format_didl_lite_as};
 use crate::sonos::retry::with_retry;
 use crate::sonos::services::SonosService;
 use crate::sonos::soap::{soap_request, soap_request_with, SoapError, SoapOptions};
+use crate::sonos::traits::NextItem;
 use crate::sonos::types::{PositionInfo, TransportState};
 use crate::sonos::utils::{build_sonos_stream_uri, extract_xml_text};
 use crate::stream::{AudioCodec, AudioFormat, StreamMetadata};
@@ -71,6 +72,50 @@ pub async fn play_uri(
 
     log::info!("[Sonos] Play command succeeded");
 
+    Ok(())
+}
+
+/// Queues an item as a Sonos speaker's next (`SetNextAVTransportURI`),
+/// leaving what it plays now alone.
+///
+/// Retries transient SOAP faults (701, 714, 716) with exponential backoff.
+///
+/// # Arguments
+/// * `client` - The HTTP client to use for the request
+/// * `ip` - IP address of the Sonos speaker (coordinator for grouped speakers)
+/// * `item` - The item to queue
+pub async fn set_next_uri(client: &Client, ip: &str, item: &NextItem<'_>) -> SoapResult<()> {
+    let sonos_uri = build_sonos_stream_uri(item.uri, item.codec);
+    let didl_metadata = format_didl_lite_as(
+        item.uri,
+        item.codec,
+        item.audio_format,
+        item.metadata,
+        item.artwork_url,
+        item.declared_data_bytes,
+    );
+
+    log::info!(
+        "[Sonos] SetNextAVTransportURI: ip={}, uri={}",
+        ip,
+        sonos_uri
+    );
+
+    let args = [
+        ("InstanceID", "0"),
+        ("NextURI", sonos_uri.as_str()),
+        ("NextURIMetaData", didl_metadata.as_str()),
+    ];
+    with_retry("SetNextAVTransportURI", || {
+        soap_request(
+            client,
+            ip,
+            SonosService::AVTransport,
+            "SetNextAVTransportURI",
+            &args,
+        )
+    })
+    .await?;
     Ok(())
 }
 

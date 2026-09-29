@@ -2675,6 +2675,7 @@ mod tests {
             speaker_ip: "192.168.1.31".into(),
             state: crate::sonos::types::TransportState::Paused,
             current_uri: current_uri.map(str::to_string),
+            next_uri: None,
             timestamp: 0,
         })
     }

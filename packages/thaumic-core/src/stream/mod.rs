@@ -22,9 +22,9 @@ pub use manager::{
     StreamState, StreamTiming, MAX_UNLISTED_STREAM_READERS,
 };
 pub use pcm_http::{
-    PcmContinuation, PcmHttpFraming, PcmHttpSettings, PcmHttpSwitches, PCM_CONTENT_LENGTH_ENV,
-    PCM_CONTINUATION_ENV, PCM_END_AFTER_BYTES_ENV, PCM_HTTP_FRAMING_ENV, PCM_SEGMENT_BYTES_ENV,
-    PCM_WAV_DATA_SIZE_ENV,
+    PcmContinuation, PcmHttpFraming, PcmHttpSettings, PcmHttpSwitches, PcmSegmentDidl,
+    PCM_CONTENT_LENGTH_ENV, PCM_CONTINUATION_ENV, PCM_END_AFTER_BYTES_ENV, PCM_HTTP_FRAMING_ENV,
+    PCM_SEGMENT_BYTES_ENV, PCM_SEGMENT_DIDL_ENV, PCM_WAV_DATA_SIZE_ENV,
 };
 pub use playout::{
     side_body, AttachKind, ChainParts, LatencyDebt, NewReason, PcmStream, PlayoutChain,
