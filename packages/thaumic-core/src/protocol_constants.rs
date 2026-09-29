@@ -34,9 +34,11 @@ pub const DEFAULT_CHANNELS: u16 = 2;
 
 /// Maximum size indicator for WAV streams (4,294,967,295 bytes / ~4.3 GB).
 ///
-/// Used in WAV headers (RIFF file size, data chunk size) and HTTP Content-Length
-/// to signal an "infinite" stream. This prevents chunked transfer encoding,
-/// which some renderers (including Sonos) handle poorly for WAV.
+/// Used in WAV headers (RIFF file size, data chunk size) and, by default, as
+/// the HTTP Content-Length of a PCM response, to signal an "infinite" stream.
+/// As a Content-Length it is also a real end: hyper stops the body once this
+/// many bytes are written. Field experiments can change both (see
+/// [`crate::stream::pcm_http`]).
 pub const WAV_STREAM_SIZE_MAX: u32 = u32::MAX;
 
 // ─────────────────────────────────────────────────────────────────────────────
