@@ -40,6 +40,26 @@ pub(crate) fn format_didl_lite(
     metadata: Option<&StreamMetadata>,
     artwork_url: &str,
 ) -> String {
+    format_didl_lite_as(stream_url, codec, audio_format, metadata, artwork_url, None)
+}
+
+/// [`format_didl_lite`], describing the item as a track of
+/// `declared_data_bytes` of audio when that is set.
+///
+/// With `None` the item is an `object.item.audioItem.audioBroadcast` with no
+/// duration or size, as every cast is started. With a data size it is an
+/// `object.item.audioItem.musicTrack` whose `<res>` declares the duration of
+/// that much audio in `audio_format` (`H:MM:SS.mmm`) and a size of the data
+/// plus its 44-byte WAV header: an experiment for queued PCM segments (see
+/// [`crate::stream::PcmSegmentDidl::Track`]).
+pub(crate) fn format_didl_lite_as(
+    stream_url: &str,
+    codec: AudioCodec,
+    audio_format: &AudioFormat,
+    metadata: Option<&StreamMetadata>,
+    artwork_url: &str,
+    declared_data_bytes: Option<u64>,
+) -> String {
     log::debug!(
         "[DIDL] Incoming metadata: {:?}, codec={}, format={:?}",
         metadata.map(|m| format!(
@@ -96,12 +116,20 @@ pub(crate) fn format_didl_lite(
         escape_xml(artwork_url)
     ));
 
-    didl.push_str("<upnp:class>object.item.audioItem.audioBroadcast</upnp:class>");
+    let (class, length) = match declared_data_bytes {
+        Some(data_bytes) => (
+            "object.item.audioItem.musicTrack",
+            track_length_attrs(data_bytes, audio_format),
+        ),
+        None => ("object.item.audioItem.audioBroadcast", String::new()),
+    };
+    didl.push_str(&format!("<upnp:class>{class}</upnp:class>"));
 
     // Build <res> element with audio format attributes for proper Sonos configuration
     didl.push_str(&format!(
-        r#"<res protocolInfo="http-get:*:{}:*" sampleFrequency="{}" nrAudioChannels="{}" bitsPerSample="{}">{}</res>"#,
+        r#"<res protocolInfo="http-get:*:{}:*"{} sampleFrequency="{}" nrAudioChannels="{}" bitsPerSample="{}">{}</res>"#,
         mime_type,
+        length,
         audio_format.sample_rate,
         audio_format.channels,
         audio_format.bits_per_sample,
@@ -111,4 +139,78 @@ pub(crate) fn format_didl_lite(
     didl.push_str("</DIDL-Lite>");
 
     didl
+}
+
+/// The ` duration="H:MM:SS.mmm" size="…"` attributes of a track holding
+/// `data_bytes` of audio in `audio_format`, behind a 44-byte WAV header.
+fn track_length_attrs(data_bytes: u64, audio_format: &AudioFormat) -> String {
+    let byte_rate = (u64::from(audio_format.sample_rate)
+        * u64::from(audio_format.channels)
+        * audio_format.bytes_per_sample() as u64)
+        .max(1);
+    let ms = data_bytes.saturating_mul(1000) / byte_rate;
+    format!(
+        r#" duration="{}:{:02}:{:02}.{:03}" size="{}""#,
+        ms / 3_600_000,
+        ms / 60_000 % 60,
+        ms / 1000 % 60,
+        ms % 1000,
+        data_bytes.saturating_add(44)
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const URL: &str = "http://192.168.1.50:49400/stream/abc/live/1";
+
+    /// Every cast, and every queued segment by default, is a broadcast with
+    /// no duration or size.
+    #[test]
+    fn an_item_is_a_broadcast_with_no_length_by_default() {
+        let didl = format_didl_lite(URL, AudioCodec::Pcm, &AudioFormat::default(), None, "art");
+        assert_eq!(
+            didl,
+            format_didl_lite_as(
+                URL,
+                AudioCodec::Pcm,
+                &AudioFormat::default(),
+                None,
+                "art",
+                None
+            )
+        );
+        assert!(didl.contains("<upnp:class>object.item.audioItem.audioBroadcast</upnp:class>"));
+        assert!(didl.contains(r#"<res protocolInfo="http-get:*:audio/wav:*" sampleFrequency"#));
+        assert!(!didl.contains("duration="));
+        assert!(!didl.contains("size="));
+    }
+
+    /// The track experiment declares a segment's duration and its size on
+    /// the wire: 10485120 data bytes at 48 kHz stereo are 54.61 s.
+    #[test]
+    fn a_track_declares_its_duration_and_size() {
+        let didl = format_didl_lite_as(
+            URL,
+            AudioCodec::Pcm,
+            &AudioFormat::default(),
+            None,
+            "art",
+            Some(10_485_120),
+        );
+        assert!(didl.contains("<upnp:class>object.item.audioItem.musicTrack</upnp:class>"));
+        assert!(didl.contains(
+            r#"<res protocolInfo="http-get:*:audio/wav:*" duration="0:00:54.610" size="10485164" "#
+        ));
+        let full = format_didl_lite_as(
+            URL,
+            AudioCodec::Pcm,
+            &AudioFormat::default(),
+            None,
+            "art",
+            Some(0xFFFF_0000),
+        );
+        assert!(full.contains(r#"duration="6:12:49.280" size="4294901804""#));
+    }
 }
