@@ -109,6 +109,13 @@ const DELIVERY_GAP_LOG_THRESHOLD_MS: u64 = 500;
 /// two of the response starting; one still being fed after this has taken it.
 pub const FIRST_WAIT_SURVIVAL: Duration = Duration::from_secs(5);
 
+/// A connection that waited before its response and then ended this soon
+/// after its first bytes (the WAV header and connect burst) is not blamed on
+/// the wait: the speaker had already sat through the wait and taken the
+/// response, so ending at once looks more like it rejected what it received.
+/// A Playbar sent a WAV header declaring 0 bytes of audio hangs up at once.
+pub const FIRST_WAIT_QUICK_END: Duration = Duration::from_millis(100);
+
 /// How long a speaker's first connection waited before its response
 /// started, and why: the smoothing (jitter buffer) plus the configured
 /// speaker head start, less how long the stream had already been running.
@@ -186,6 +193,56 @@ impl Drop for FirstWaitWatch {
             self.wait.smoothing_ms,
             self.wait.head_start_ms
         );
+    }
+}
+
+/// The warning for a connection that waited before its response and ended
+/// before [`FIRST_WAIT_SURVIVAL`]: `ended_after` the response started, and
+/// `after_first_bytes` its first bytes went out (`None` if none did), having
+/// sent `frames` body items.
+///
+/// Only an end that leaves the speaker time to have played some of the
+/// stream points at the wait. One within [`FIRST_WAIT_QUICK_END`] of the
+/// first bytes (or of the response starting, when nothing was sent) says the
+/// speaker ended the connection right after the stream started, which more
+/// likely means it rejected the stream than the wait.
+fn first_wait_not_survived_line(
+    client_ip: IpAddr,
+    stream_id: &str,
+    wait: FirstConnectionWait,
+    ended_after: Duration,
+    after_first_bytes: Option<Duration>,
+    frames: u64,
+) -> String {
+    let quick = after_first_bytes.unwrap_or(ended_after) <= FIRST_WAIT_QUICK_END;
+    if quick {
+        let when = match after_first_bytes {
+            Some(d) => format!("{}ms after its first bytes", d.as_millis()),
+            None => format!(
+                "{}ms after the response started, before any bytes were sent",
+                ended_after.as_millis()
+            ),
+        };
+        format!(
+            "[Stream] Speaker ended the connection right after the stream started: \
+             client={client_ip}, stream={stream_id}, the connection ended {when}, having sent \
+             {frames} frames, after a {}ms wait (smoothing {}ms + head start {}ms); unless the \
+             cast was stopped or regrouped, this can mean the speaker rejected the stream (for \
+             example an invalid WAV header) rather than the wait",
+            wait.waited_ms, wait.smoothing_ms, wait.head_start_ms
+        )
+    } else {
+        format!(
+            "[Stream] First-connection wait not survived: client={client_ip}, \
+             stream={stream_id}, the connection ended {}ms after a {}ms wait (smoothing {}ms + \
+             head start {}ms), having sent {frames} frames; unless the cast was stopped or \
+             regrouped, if this repeats the speaker may not accept a wait this long, so try a \
+             shorter speaker head start",
+            ended_after.as_millis(),
+            wait.waited_ms,
+            wait.smoothing_ms,
+            wait.head_start_ms
+        )
     }
 }
 
@@ -382,6 +439,9 @@ pub struct LoggingStreamGuard {
     frames_sent: AtomicU64,
     /// Elapsed nanos since `reference_time` of the last delivered frame (0 = none).
     last_delivery_nanos: AtomicU64,
+    /// Elapsed nanos since `reference_time` of the first delivered frame
+    /// (0 = none), which for PCM is the WAV header.
+    first_delivery_nanos: AtomicU64,
     max_gap_ms: AtomicU64,
     gaps_over_threshold: AtomicU64,
     first_error: parking_lot::Mutex<Option<String>>,
@@ -455,6 +515,7 @@ impl LoggingStreamGuard {
             reference_time: Instant::now(),
             frames_sent: AtomicU64::new(0),
             last_delivery_nanos: AtomicU64::new(0),
+            first_delivery_nanos: AtomicU64::new(0),
             max_gap_ms: AtomicU64::new(0),
             gaps_over_threshold: AtomicU64::new(0),
             first_error: parking_lot::Mutex::new(None),
@@ -716,7 +777,10 @@ impl LoggingStreamGuard {
         let now_nanos = elapsed.as_nanos() as u64;
         let prev_nanos = self.last_delivery_nanos.swap(now_nanos, Ordering::Relaxed);
 
-        if prev_nanos > 0 {
+        if prev_nanos == 0 {
+            self.first_delivery_nanos
+                .store(now_nanos.max(1), Ordering::Relaxed);
+        } else {
             let gap_ms = now_nanos.saturating_sub(prev_nanos) / 1_000_000;
 
             self.max_gap_ms.fetch_max(gap_ms, Ordering::Relaxed);
@@ -830,19 +894,20 @@ impl Drop for LoggingStreamGuard {
 
         if let Some(wait) = self.first_wait {
             if !self.first_wait_survived.load(Ordering::Relaxed) {
+                let ended_after = self.reference_time.elapsed();
+                let first_nanos = self.first_delivery_nanos.load(Ordering::Relaxed);
+                let after_first_bytes = (first_nanos > 0)
+                    .then(|| ended_after.saturating_sub(Duration::from_nanos(first_nanos)));
                 log::warn!(
-                    "[Stream] First-connection wait not survived: client={}, stream={}, the \
-                     connection ended {}ms after a {}ms wait (smoothing {}ms + head start {}ms), \
-                     having sent {} frames; unless the cast was stopped or regrouped, if this \
-                     repeats the speaker may not accept a wait this long, so try a shorter \
-                     speaker head start",
-                    self.client_ip,
-                    self.stream_id,
-                    self.reference_time.elapsed().as_millis(),
-                    wait.waited_ms,
-                    wait.smoothing_ms,
-                    wait.head_start_ms,
-                    frames
+                    "{}",
+                    first_wait_not_survived_line(
+                        self.client_ip,
+                        &self.stream_id,
+                        wait,
+                        ended_after,
+                        after_first_bytes,
+                        frames
+                    )
                 );
             }
         }
@@ -2870,6 +2935,98 @@ mod tests {
         guard.reference_time = Instant::now() - FIRST_WAIT_SURVIVAL;
         guard.record_frame();
         assert!(guard.first_wait_survived.load(Ordering::Relaxed));
+    }
+
+    /// A connection that ends within [`FIRST_WAIT_QUICK_END`] of its first
+    /// bytes is reported as the speaker ending it right after the stream
+    /// started, which may be a rejected stream, not as the wait failing.
+    #[test]
+    fn a_connection_ended_right_after_its_first_bytes_does_not_blame_the_wait() {
+        let ip = IpAddr::V4(Ipv4Addr::new(192, 168, 1, 50));
+        let line = first_wait_not_survived_line(
+            ip,
+            "s1",
+            test_wait(),
+            Duration::from_millis(30),
+            Some(Duration::from_millis(25)),
+            26,
+        );
+        assert_eq!(
+            line,
+            "[Stream] Speaker ended the connection right after the stream started: \
+             client=192.168.1.50, stream=s1, the connection ended 25ms after its first bytes, \
+             having sent 26 frames, after a 2300ms wait (smoothing 300ms + head start 2000ms); \
+             unless the cast was stopped or regrouped, this can mean the speaker rejected the \
+             stream (for example an invalid WAV header) rather than the wait"
+        );
+        assert!(!line.contains("shorter speaker head start"));
+
+        // Nothing sent at all: timed from the response starting.
+        let line =
+            first_wait_not_survived_line(ip, "s1", test_wait(), Duration::from_millis(40), None, 0);
+        assert!(line.starts_with("[Stream] Speaker ended the connection right after"));
+        assert!(line.contains("40ms after the response started, before any bytes were sent"));
+    }
+
+    /// An end that leaves the speaker time to have played some of the stream
+    /// keeps the wait-specific warning.
+    #[test]
+    fn a_connection_ended_later_blames_the_wait() {
+        let ip = IpAddr::V4(Ipv4Addr::new(192, 168, 1, 50));
+        let line = first_wait_not_survived_line(
+            ip,
+            "s1",
+            test_wait(),
+            Duration::from_millis(1800),
+            Some(Duration::from_millis(1795)),
+            110,
+        );
+        assert_eq!(
+            line,
+            "[Stream] First-connection wait not survived: client=192.168.1.50, stream=s1, the \
+             connection ended 1800ms after a 2300ms wait (smoothing 300ms + head start 2000ms), \
+             having sent 110 frames; unless the cast was stopped or regrouped, if this repeats \
+             the speaker may not accept a wait this long, so try a shorter speaker head start"
+        );
+
+        let just_over = first_wait_not_survived_line(
+            ip,
+            "s1",
+            test_wait(),
+            FIRST_WAIT_QUICK_END + Duration::from_millis(6),
+            Some(FIRST_WAIT_QUICK_END + Duration::from_millis(1)),
+            8,
+        );
+        assert!(just_over.starts_with("[Stream] First-connection wait not survived"));
+        let no_bytes = first_wait_not_survived_line(
+            ip,
+            "s1",
+            test_wait(),
+            Duration::from_millis(900),
+            None,
+            0,
+        );
+        assert!(no_bytes.starts_with("[Stream] First-connection wait not survived"));
+    }
+
+    /// The guard times an end from its first delivered item, the WAV header,
+    /// not from when it was created.
+    #[test]
+    fn the_guard_records_when_its_first_bytes_went_out() {
+        let mut guard =
+            LoggingStreamGuard::new("test-stream".to_string(), IpAddr::V4(Ipv4Addr::LOCALHOST))
+                .with_first_wait(test_wait());
+        assert_eq!(guard.first_delivery_nanos.load(Ordering::Relaxed), 0);
+        guard.reference_time = Instant::now() - Duration::from_millis(500);
+        guard.record_frame();
+        let first = guard.first_delivery_nanos.load(Ordering::Relaxed);
+        assert!(first >= 500_000_000, "{first}");
+        guard.record_frame();
+        assert_eq!(
+            guard.first_delivery_nanos.load(Ordering::Relaxed),
+            first,
+            "later frames leave it alone"
+        );
     }
 
     #[test]
