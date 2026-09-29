@@ -2299,9 +2299,10 @@ mod tests {
 
     /// With no switch set a PCM response is chunked with no Content-Length,
     /// and the WAV header in its first chunk declares 0xFFFFFFFF in both size
-    /// fields: the combination a Playbar plays past 2^31 bytes.
+    /// fields: the combination a Playbar plays past 2^31 bytes, up to the
+    /// header's 4 GiB length.
     #[tokio::test]
-    async fn default_pcm_is_chunked_with_an_unbounded_wav_header() {
+    async fn default_pcm_is_chunked_with_a_max_length_wav_header() {
         let (addr, slot) = serve_once(default_pcm_items(), Some(PcmHttpSettings::default())).await;
         let (mut conn, head, body) = request(addr, "GET / HTTP/1.1\r\nHost: t\r\n\r\n").await;
         assert!(head.starts_with("http/1.1 200"), "{head}");
