@@ -413,12 +413,14 @@ export type TransportStateUpdateMessage = z.infer<typeof TransportStateUpdateMes
  * Includes all speaker removal reasons plus stream-level events.
  * - `stream_ended`: The stream ended on the server side
  * - `user_removed`: User removed the last speaker via UI
+ * - `continuation_failed`: A long cast could not be moved on to its next part
  */
 export const CastAutoStopReasonSchema = z.enum([
   'source_changed',
   'playback_stopped',
   'speaker_stopped',
   'speaker_taken_over',
+  'continuation_failed',
   'stream_ended',
   'user_removed',
   ...CaptureErrorReasons,
