@@ -138,8 +138,12 @@ pub struct PcmHttpSwitches {
 impl PcmHttpSwitches {
     /// Reads the switches from the environment. Called once per connection,
     /// so a change applies from the next one.
+    ///
+    /// A value that is not valid UTF-8 is ignored like any other invalid one,
+    /// and reported, rather than being taken for unset.
     pub fn from_env() -> Self {
-        let raw = SWITCH_VARS.map(|var| std::env::var(var).ok());
+        let mut unreadable = Vec::new();
+        let raw = SWITCH_VARS.map(|var| read_switch(var, std::env::var_os(var), &mut unreadable));
         let [framing, content_length, wav_data_size, end_after_bytes] = raw;
         Self::resolve(RawSwitches {
             framing: framing.as_deref(),
@@ -147,6 +151,18 @@ impl PcmHttpSwitches {
             wav_data_size: wav_data_size.as_deref(),
             end_after_bytes: end_after_bytes.as_deref(),
         })
+        .with_unreadable(unreadable)
+    }
+
+    /// Adds the problems of switches whose values could not be read at all
+    /// (see [`read_switch`]), first: such a switch was still set, so the
+    /// connection is part of an experiment.
+    fn with_unreadable(mut self, unreadable: Vec<String>) -> Self {
+        if !unreadable.is_empty() {
+            self.any_set = true;
+            self.problems.splice(0..0, unreadable);
+        }
+        self
     }
 
     /// [`Self::from_env`] without the environment.
@@ -217,6 +233,25 @@ impl PcmHttpSwitches {
             settings,
             any_set,
             problems,
+        }
+    }
+}
+
+/// The value of switch `var` as the environment gave it: `None` when unset,
+/// and also when it is not valid UTF-8, which adds a line to `unreadable`.
+fn read_switch(
+    var: &str,
+    value: Option<std::ffi::OsString>,
+    unreadable: &mut Vec<String>,
+) -> Option<String> {
+    match value?.into_string() {
+        Ok(value) => Some(value),
+        Err(value) => {
+            unreadable.push(format!(
+                "Ignoring {var}={:?}: not valid UTF-8",
+                value.to_string_lossy()
+            ));
+            None
         }
     }
 }
@@ -352,6 +387,40 @@ mod tests {
         assert!(switches.any_set);
         assert_eq!(switches.problems.len(), 4, "{:?}", switches.problems);
         assert!(switches.problems[0].starts_with("Ignoring THAUMIC_PCM_HTTP_FRAMING=\"chunky\""));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_value_that_is_not_utf8_is_reported_not_taken_for_unset() {
+        use std::os::unix::ffi::OsStringExt;
+
+        let mut unreadable = Vec::new();
+        let bad = std::ffi::OsString::from_vec(vec![b'c', 0xFF]);
+        assert_eq!(
+            read_switch(PCM_HTTP_FRAMING_ENV, Some(bad), &mut unreadable),
+            None
+        );
+        assert_eq!(
+            read_switch(PCM_WAV_DATA_SIZE_ENV, Some("10".into()), &mut unreadable),
+            Some("10".to_string())
+        );
+        assert_eq!(
+            read_switch(PCM_CONTENT_LENGTH_ENV, None, &mut unreadable),
+            None
+        );
+        assert_eq!(unreadable.len(), 1, "{unreadable:?}");
+        assert!(unreadable[0].starts_with("Ignoring THAUMIC_PCM_HTTP_FRAMING="));
+        assert!(unreadable[0].ends_with("not valid UTF-8"));
+
+        let switches = resolve(None, None, None, Some("lots")).with_unreadable(unreadable);
+        assert!(switches.any_set);
+        assert_eq!(switches.settings, PcmHttpSettings::default());
+        assert_eq!(switches.problems.len(), 2, "{:?}", switches.problems);
+        assert!(switches.problems[0].ends_with("not valid UTF-8"));
+
+        let quiet = resolve(None, None, None, None).with_unreadable(Vec::new());
+        assert!(!quiet.any_set);
+        assert!(quiet.problems.is_empty());
     }
 
     #[test]
