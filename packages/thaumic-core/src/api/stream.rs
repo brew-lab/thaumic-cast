@@ -81,20 +81,38 @@ impl StreamAccess {
         }
     }
 
-    /// Whether this reader's connections count as speaker playback.
+    /// Whether this reader's connections count as playback.
     ///
     /// Playback bookkeeping is per source address: a connection starts an
     /// epoch for its address, and a later connection from the same address is
-    /// treated as the speaker resuming (prefill skipped, `Play` re-sent). Both
-    /// are meaningless for a reader that is not a speaker, and harmful: the
-    /// epoch map is a bounded LRU sized for a household's speakers, so a
-    /// handful of unlisted readers would evict a real speaker's entry and turn
-    /// its next reconnect into a mis-timed cold start, and a reconnecting
-    /// unlisted reader would have a SOAP `Play` sent to its own address.
+    /// treated as a resume (prefill skipped). Both are meaningless for an
+    /// unlisted reader, and harmful: the epoch map is a bounded LRU sized for
+    /// a household's speakers, so a handful of unlisted readers would evict a
+    /// real speaker's entry and turn its next reconnect into a mis-timed cold
+    /// start. A player on this machine is one reader the stream is for, and
+    /// its reconnects are real resumes, so it keeps its own epoch; but it is
+    /// no speaker, so a resume never sends it `Play` (see
+    /// [`Self::resumes_speaker`]).
     fn tracks_playback(self) -> bool {
         match self {
             StreamAccess::Speaker | StreamAccess::CompanionHost => true,
             StreamAccess::UnlistedServed | StreamAccess::UnlistedRefused => false,
+        }
+    }
+
+    /// Whether a resume from this reader is a Sonos speaker coming back, to
+    /// be sent a SOAP `Play` if it is not already playing.
+    ///
+    /// Only a speaker the stream is playing on. A player on this machine
+    /// (VLC, say) reconnecting is a resume too, but its address is this
+    /// computer's, which answers no SOAP: a `Play` sent there only fails, and
+    /// an unlisted reader's address is no speaker's either.
+    fn resumes_speaker(self) -> bool {
+        match self {
+            StreamAccess::Speaker => true,
+            StreamAccess::CompanionHost
+            | StreamAccess::UnlistedServed
+            | StreamAccess::UnlistedRefused => false,
         }
     }
 
@@ -280,11 +298,14 @@ pub(super) async fn stream_audio(
 
     // Detect resume: this specific IP had a previous HTTP connection.
     // Uses per-IP epoch tracking (not global counter) to avoid misclassifying
-    // new speakers as resumes after the first speaker connects. Readers that
-    // are not speakers never start an epoch (see `tracks_playback`), so they
-    // can never look like one resuming either.
-    let is_resume =
-        access.tracks_playback() && stream_state.timing.current_epoch_for(remote_ip).is_some();
+    // new speakers as resumes after the first speaker connects. Unlisted
+    // readers never start an epoch (see `tracks_playback`), so they can never
+    // look like one resuming either, and only a speaker's resume sends `Play`
+    // (see `resumes_speaker`).
+    let ResumeDecision {
+        is_resume,
+        play_ip: resume_play_ip,
+    } = decide_resume(access, &stream_state, remote_ip);
 
     // Upfront buffering delay for PCM streams BEFORE subscribing.
     // Lets the ring buffer accumulate frames so the prefill snapshot returned
@@ -349,11 +370,11 @@ pub(super) async fn stream_audio(
             "[Stream] Skipping prefill delay on resume for {}",
             remote_ip
         );
-
+    }
+    if let Some(ip) = resume_play_ip {
         // Delegate playback control to coordinator (SoC: HTTP serves audio,
         // coordinator controls playback). Fire-and-forget.
         let coordinator = Arc::clone(&state.stream_coordinator);
-        let ip = remote_ip.to_string();
         tokio::spawn(async move {
             coordinator.on_http_resume(&ip).await;
         });
@@ -837,6 +858,33 @@ fn pcm_cadence_stream(
     ))
 }
 
+/// What a new connection means for playback, from its access and the
+/// epochs its address has started.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ResumeDecision {
+    /// The address already started an epoch on this stream: its reader is
+    /// coming back, so a PCM connection skips the prefill wait.
+    is_resume: bool,
+    /// The speaker to send `Play` to, if it is not already playing: a PCM
+    /// speaker's resume only, never a player on this machine or an unlisted
+    /// reader, whose addresses answer no SOAP.
+    play_ip: Option<String>,
+}
+
+/// Decides whether a connection from `remote_ip` resumes playback on
+/// `stream_state`, and whether a speaker is to be told to play again.
+fn decide_resume(
+    access: StreamAccess,
+    stream_state: &StreamState,
+    remote_ip: IpAddr,
+) -> ResumeDecision {
+    let is_resume =
+        access.tracks_playback() && stream_state.timing.current_epoch_for(remote_ip).is_some();
+    let play_ip = (is_resume && stream_state.codec == AudioCodec::Pcm && access.resumes_speaker())
+        .then(|| remote_ip.to_string());
+    ResumeDecision { is_resume, play_ip }
+}
+
 /// The rate control a new connection's drift correction follows: one for a
 /// PCM connection made with correction on whose format the adapter can
 /// resample, none otherwise (observing, off, a compressed codec, or a
@@ -1162,6 +1210,98 @@ mod tests {
         assert!(state.acquire_unlisted_reader().is_some());
     }
 
+    /// A PCM stream on this machine's own address (192.168.2.169) and a
+    /// speaker (192.168.2.50), each connected once before.
+    fn pcm_stream_with_epochs(host: IpAddr, speaker: IpAddr) -> Arc<StreamState> {
+        let state = Arc::new(StreamState::new(
+            "pcm-stream".to_string(),
+            AudioCodec::Pcm,
+            AudioFormat::default(),
+            8,
+            16,
+            200,
+            20,
+        ));
+        for ip in [host, speaker] {
+            state.timing.start_new_epoch(None, Instant::now(), ip, None);
+        }
+        state
+    }
+
+    /// The field case: VLC on the desktop machine reconnected, and the resume
+    /// sent a Sonos `Play` to the computer's own address, which failed. It is
+    /// still a resume (prefill skipped, its epoch kept), but no `Play` goes
+    /// out; a speaker reconnecting still gets one.
+    #[test]
+    fn a_companion_host_reconnect_sends_no_resume_play() {
+        let host = ip("192.168.2.169");
+        let speaker = ip("192.168.2.50");
+        let state = pcm_stream_with_epochs(host, speaker);
+        let speakers = speakers(&["192.168.2.50"]);
+
+        let access = decide_stream_access(host, &speakers, "192.168.2.169", false);
+        assert_eq!(access, StreamAccess::CompanionHost);
+        let decision = decide_resume(access, &state, host);
+        assert!(decision.is_resume, "a local player's reconnect is a resume");
+        assert_eq!(decision.play_ip, None, "but this machine is sent no Play");
+        // Loopback is this machine too.
+        let loopback = ip("127.0.0.1");
+        state
+            .timing
+            .start_new_epoch(None, Instant::now(), loopback, None);
+        let access = decide_stream_access(loopback, &speakers, "192.168.2.169", false);
+        assert_eq!(decide_resume(access, &state, loopback).play_ip, None);
+    }
+
+    #[test]
+    fn a_speaker_reconnect_still_sends_resume_play() {
+        let host = ip("192.168.2.169");
+        let speaker = ip("192.168.2.50");
+        let state = pcm_stream_with_epochs(host, speaker);
+        let access = decide_stream_access(
+            speaker,
+            &speakers(&["192.168.2.50"]),
+            "192.168.2.169",
+            false,
+        );
+        assert_eq!(access, StreamAccess::Speaker);
+        assert_eq!(
+            decide_resume(access, &state, speaker),
+            ResumeDecision {
+                is_resume: true,
+                play_ip: Some("192.168.2.50".to_string()),
+            }
+        );
+        // Its first connection is no resume, and sends nothing.
+        let fresh = ip("192.168.2.51");
+        let access = decide_stream_access(
+            fresh,
+            &speakers(&["192.168.2.50", "192.168.2.51"]),
+            "192.168.2.169",
+            false,
+        );
+        assert_eq!(
+            decide_resume(access, &state, fresh),
+            ResumeDecision {
+                is_resume: false,
+                play_ip: None,
+            }
+        );
+        // An unlisted reader never counts as resuming, epoch or not.
+        let stranger = ip("192.168.2.99");
+        state
+            .timing
+            .start_new_epoch(None, Instant::now(), stranger, None);
+        let access = decide_stream_access(
+            stranger,
+            &speakers(&["192.168.2.50"]),
+            "192.168.2.169",
+            false,
+        );
+        assert_eq!(access, StreamAccess::UnlistedServed);
+        assert!(!decide_resume(access, &state, stranger).is_resume);
+    }
+
     /// The cap must never be able to refuse a device the stream is actually
     /// for. An unsynced cast legitimately has one reader per speaker, each
     /// routine reconnect double-counts until the replaced connection is reaped,
@@ -1177,6 +1317,10 @@ mod tests {
         assert!(!StreamAccess::UnlistedServed.tracks_playback());
         assert!(!StreamAccess::UnlistedRefused.tracks_playback());
         assert!(StreamAccess::Speaker.monitors_playback());
+        assert!(StreamAccess::Speaker.resumes_speaker());
+        assert!(!StreamAccess::CompanionHost.resumes_speaker());
+        assert!(!StreamAccess::UnlistedServed.resumes_speaker());
+        assert!(!StreamAccess::UnlistedRefused.resumes_speaker());
         assert!(
             !StreamAccess::CompanionHost.monitors_playback(),
             "this machine is not a Sonos speaker and cannot be polled"
