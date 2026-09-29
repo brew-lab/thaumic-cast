@@ -22,12 +22,14 @@ pub use manager::{
     StreamState, StreamTiming, MAX_UNLISTED_STREAM_READERS,
 };
 pub use pcm_http::{
-    PcmHttpFraming, PcmHttpSettings, PcmHttpSwitches, PCM_CONTENT_LENGTH_ENV,
-    PCM_END_AFTER_BYTES_ENV, PCM_HTTP_FRAMING_ENV, PCM_SEGMENT_BYTES_ENV, PCM_WAV_DATA_SIZE_ENV,
+    PcmContinuation, PcmHttpFraming, PcmHttpSettings, PcmHttpSwitches, PCM_CONTENT_LENGTH_ENV,
+    PCM_CONTINUATION_ENV, PCM_END_AFTER_BYTES_ENV, PCM_HTTP_FRAMING_ENV, PCM_SEGMENT_BYTES_ENV,
+    PCM_WAV_DATA_SIZE_ENV,
 };
 pub use playout::{
-    side_body, ChainParts, NewReason, PcmStream, PlayoutChain, PlayoutRegistry, Route, SegmentBody,
-    SegmentLayout, SegmentStart, PCM_SEGMENT_BYTES_MAX, PCM_SEGMENT_BYTES_MIN,
+    side_body, AttachKind, ChainParts, LatencyDebt, NewReason, PcmStream, PlayoutChain,
+    PlayoutEvent, PlayoutEvents, PlayoutRegistry, Rejoin, Route, SegmentBody, SegmentLayout,
+    SegmentStart, HANDOFF_LEAD, PCM_SEGMENT_BYTES_MAX, PCM_SEGMENT_BYTES_MIN,
 };
 pub use rate_adapter::{RateAdapter, RateControl};
 pub use tap::{ConnectionTap, HeadStart, MonitorRegistrar, SpeakerFigures, SpeakerSnapshot};

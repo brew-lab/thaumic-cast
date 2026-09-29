@@ -16,7 +16,6 @@ use crate::services::stream_coordinator::StreamCoordinator;
 use crate::sonos::gena::GenaSubscriptionManager;
 use crate::sonos::gena_parser;
 use crate::sonos::services::SonosService;
-use crate::sonos::types::TransportState;
 use crate::state::SonosState;
 
 /// Dependencies required for event processing.
@@ -106,23 +105,39 @@ impl GenaEventProcessor {
     }
 
     /// Core event processing logic shared between sync and async contexts.
+    ///
+    /// A transport state that is only a speaker switching from one PCM
+    /// segment of a cast to the next is recorded and acted on like any other,
+    /// but not broadcast (see `SonosState::screen_transport`).
     fn process_event_with_deps(deps: &EventProcessorDeps, event: &SonosEvent) {
+        let mut broadcast = true;
         match event {
             SonosEvent::TransportState {
                 speaker_ip,
                 state: transport_state,
+                current_uri,
                 ..
             } => {
-                log::info!(
-                    "[GenaEventProcessor] Transport state: {} -> {:?}",
-                    speaker_ip,
-                    transport_state
-                );
                 deps.sonos_state
                     .record_transport_state(speaker_ip, *transport_state);
-                if *transport_state == TransportState::Stopped {
-                    deps.stream_coordinator.note_speaker_stopped(speaker_ip);
-                }
+                deps.stream_coordinator.note_transport_state(
+                    speaker_ip,
+                    *transport_state,
+                    current_uri.as_deref(),
+                );
+                broadcast = deps
+                    .sonos_state
+                    .screen_transport(speaker_ip, *transport_state);
+                log::info!(
+                    "[GenaEventProcessor] Transport state: {} -> {:?}{}",
+                    speaker_ip,
+                    transport_state,
+                    if broadcast {
+                        ""
+                    } else {
+                        " (held back: switching segments)"
+                    }
+                );
             }
             SonosEvent::GroupVolume {
                 speaker_ip,
@@ -200,7 +215,9 @@ impl GenaEventProcessor {
         }
 
         // Emit event to listeners
-        deps.emitter.emit_sonos(event.clone());
+        if broadcast {
+            deps.emitter.emit_sonos(event.clone());
+        }
     }
 
     /// Spawns a task to forward internal GENA events (e.g., SubscriptionLost) to WebSocket clients.

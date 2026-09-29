@@ -169,6 +169,7 @@ startup. All three apply from each speaker's next connection.
 | `THAUMIC_PCM_WAV_DATA_SIZE`         | Experimental: the WAV header's data size, 0 to 4294967295 (default `4294967295`)             |
 | `THAUMIC_PCM_END_AFTER_BYTES`       | Experimental: end each PCM body cleanly after this many bytes; `chunked` or `close` only     |
 | `THAUMIC_PCM_SEGMENT_BYTES`         | Test only: data bytes per PCM segment, 1048576 to 4294901760 (default), whole 10 ms frames   |
+| `THAUMIC_PCM_CONTINUATION`          | `restart` (default) or `off`: how a speaker is moved on to the next PCM segment              |
 | `THAUMIC_DRIFT_FORCE_PPM`           | Test only: fix every speaker's PCM rate adapter at this many ppm, -300 to 300 (see below)    |
 
 PCM streams are sent chunked, with no `Content-Length`. A WAV header's size is a length, not an unbounded marker: with
@@ -176,9 +177,14 @@ PCM streams are sent chunked, with no `Content-Length`. A WAV header's size is a
 48 kHz stereo), where it hung up and went to STOPPED with no reconnect. So a PCM cast is served in segments: each
 connection's WAV header declares 4294901760 data bytes (6h12m49.28s at 48 kHz stereo) and its body ends there, and the
 next segment, `/stream/{id}/live/{n}.wav`, carries on from the exact sample the previous one ended at, however long the
-speaker takes to fetch it (nothing moves a speaker on to that next segment yet, so for now a cast still ends after the
-first). A fetch that resumes a segment with `Range: bytes=X-` (a speaker coming back from a pause)
-is answered `206` with exactly the rest of that segment. `THAUMIC_PCM_SEGMENT_BYTES` shortens segments for testing
+speaker takes to fetch it. Once a speaker has played a segment to its end and reported STOPPED on it for a second
+(confirmed by asking it), the server tells it to play the next one: a pause of about a second and a half every 6h12m,
+with no notice and no change in the extension, which is not shown the STOPPED of the switch for the speaker or any
+speaker grouped with it. Unless drift correction is steering the speaker, it rejoins with just its head start, so the
+pause adds no lasting latency; with drift correction on, up to 2 s of it is kept and paid back. A speaker that will not
+play the next segment is told once more, then the cast ends on it with a gentle message. `THAUMIC_PCM_CONTINUATION=off`
+turns this off, and a cast then ends after its first segment. A fetch that resumes a segment with `Range: bytes=X-` (a
+speaker coming back from a pause) is answered `206` with exactly the rest of that segment. `THAUMIC_PCM_SEGMENT_BYTES` shortens segments for testing
 (`10485760` gives 54.61 s at 48 kHz stereo); it is ignored with a warning while a switch that fixes a connection's end
 (`length` framing, `THAUMIC_PCM_WAV_DATA_SIZE` or `THAUMIC_PCM_END_AFTER_BYTES`) is set, and those serve PCM on one
 connection as before. A speaker that asks over HTTP/1.0, which cannot take chunks, gets an HTTP/1.0 response

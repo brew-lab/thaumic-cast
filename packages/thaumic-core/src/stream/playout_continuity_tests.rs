@@ -38,6 +38,10 @@ struct Rig {
     head_start_ms: u64,
     /// Milliseconds of audio in each cadence frame.
     tick_ms: u32,
+    /// Whether playouts are made with the drift controller steering them.
+    drift_on: bool,
+    /// Where playouts tell their events.
+    events: Option<Arc<dyn PlayoutEvents>>,
 }
 
 /// One cadence frame of `tick_ms` whose sample frames count on from the
@@ -73,6 +77,8 @@ impl Rig {
             next_tick,
             head_start_ms: 0,
             tick_ms,
+            drift_on: false,
+            events: None,
         };
         let tx = rig.tx.clone();
         let next = Arc::clone(&rig.next_tick);
@@ -120,7 +126,7 @@ impl Rig {
         );
         let stats = Arc::new(ChainStats::new("s", self.ip));
         let tap = (self.head_start_ms > 0).then(|| {
-            let tap = Arc::new(ConnectionTap::new(
+            let mut tap = ConnectionTap::new(
                 "s",
                 self.ip,
                 StdInstant::now(),
@@ -128,7 +134,16 @@ impl Rig {
                 &self.format,
                 Arc::clone(&stats),
                 true,
-            ));
+            );
+            if self.drift_on {
+                let control = Arc::new(crate::stream::RateControl::new());
+                control.mark_engaged();
+                tap = tap.with_drift(
+                    crate::services::speaker_monitor::DriftMode::On,
+                    Some(control),
+                );
+            }
+            let tap = Arc::new(tap);
             tap.set_head_start(HeadStart::new(self.head_start_ms, self.head_start_ms));
             tap
         });
@@ -150,6 +165,9 @@ impl Rig {
             start,
             guard: self.guard(),
             registry: Some(Arc::clone(&self.registry)),
+            continuation: PcmContinuation::Restart,
+            head_start: Duration::from_millis(self.head_start_ms),
+            events: self.events.clone(),
         })
     }
 
@@ -560,4 +578,175 @@ async fn a_playout_parked_too_long_is_dropped() {
         rig.route(1, None),
         Route::New(NewReason::NoPlayout, _)
     ));
+}
+
+/// Sample frames the rejoin fade covers at 48 kHz (5 ms).
+const FADE_FRAMES: usize = 240;
+
+/// Reads the rest of segment 0 and the whole of segment 1 after a restart
+/// `gap` after segment 0's end, readied with `prepare_restart`. Returns the
+/// last counter of segment 0, segment 1's data and the playout.
+async fn restart_after(rig: &Rig, gap: Duration) -> (u32, Vec<u8>, Arc<PlayoutChain>) {
+    let mut body = rig.first();
+    let seg0 = read_to_end(&mut body).await;
+    drop(body);
+    let last0 = *counters(segment_data(&seg0, &rig.layout)).last().unwrap();
+    sleep(gap).await;
+    let chain = rig.registry.get(rig.ip).expect("parked");
+    assert!(chain.awaiting_after(0));
+    let expected = if rig.drift_on {
+        Rejoin::Exact
+    } else {
+        Rejoin::Trim
+    };
+    assert_eq!(chain.prepare_restart(1), Some(expected));
+    let mut next = rig.attach(1);
+    let seg1 = read_to_end(&mut next).await;
+    (last0, segment_data(&seg1, &rig.layout).to_vec(), chain)
+}
+
+/// With nothing to pay back the latency a restart adds (drift correction
+/// not steering), the speaker rejoins with only its head start of what
+/// built up while it stopped and restarted: the oldest is dropped, which the
+/// speaker's silence covers, and the rest fades in and then counts on
+/// exactly. Without the trim the whole 2.5 s would be sent and kept as
+/// latency for the rest of the cast.
+#[tokio::test(start_paused = true)]
+async fn a_restart_with_nothing_to_repay_it_rejoins_with_the_head_start() {
+    let mut rig = Rig::new(384_000); // 2 s segments
+    rig.head_start_ms = 500;
+    let (last0, seg1, chain) = restart_after(&rig, Duration::from_millis(2_500)).await;
+
+    let values = counters(&seg1);
+    assert_eq!(values[0], 0, "faded in from silence");
+    let (first, _) = assert_contiguous(&seg1[FADE_FRAMES * FRAME..], "after the fade");
+    let dropped_ms = (first - FADE_FRAMES as u32 - (last0 + 1)) / PER_MS;
+    assert!(
+        (1_900..=2_100).contains(&dropped_ms),
+        "about 2.5 s less the 500 ms head start dropped, got {dropped_ms} ms"
+    );
+    assert_eq!(chain.latency_debt(), None, "nothing left to repay");
+
+    // The next segment, fetched by the speaker itself, carries on exactly.
+    let mut body = rig.attach(2);
+    let seg2 = read_to_end(&mut body).await;
+    let mut all = seg1[FADE_FRAMES * FRAME..].to_vec();
+    all.extend_from_slice(segment_data(&seg2, &rig.layout));
+    assert_contiguous(&all, "into the segment after");
+}
+
+/// With drift correction steering the speaker, a restart that added no more
+/// than two seconds keeps every sample and records the latency owed, for
+/// the controller to pay back.
+#[tokio::test(start_paused = true)]
+async fn a_steered_restart_keeps_every_sample_and_owes_the_pause() {
+    let mut rig = Rig::new(384_000);
+    rig.head_start_ms = 500;
+    rig.drift_on = true;
+    let (last0, seg1, chain) = restart_after(&rig, Duration::from_millis(2_000)).await;
+
+    let (first, _) = assert_contiguous(&seg1, "exact rejoin");
+    assert_eq!(first, last0 + 1);
+    let debt = chain.latency_debt().expect("owed");
+    assert!(
+        (1_400..=1_600).contains(&debt.debt_ms),
+        "about 2 s less the head start owed, got {} ms",
+        debt.debt_ms
+    );
+}
+
+/// Even when steered, a restart that added more than the controller could
+/// repay within hours is trimmed.
+#[tokio::test(start_paused = true)]
+async fn a_steered_restart_owing_too_much_is_trimmed_after_all() {
+    let mut rig = Rig::new(384_000);
+    rig.head_start_ms = 500;
+    rig.drift_on = true;
+    let (last0, seg1, chain) = restart_after(&rig, Duration::from_millis(4_000)).await;
+    let (first, _) = assert_contiguous(&seg1[FADE_FRAMES * FRAME..], "after the fade");
+    assert!(first - FADE_FRAMES as u32 > last0 + 1 + 3_000 * PER_MS);
+    assert_eq!(chain.latency_debt(), None);
+}
+
+/// A restart is readied only while the playout waits for exactly the
+/// segment after the one its speaker took whole.
+#[tokio::test(start_paused = true)]
+async fn a_restart_is_readied_only_while_the_next_segment_is_awaited() {
+    let rig = Rig::new(96_000);
+    let mut body = rig.first();
+    let chain = Arc::clone(body.playout());
+    let _ = read_at_least(&mut body, 44 + 1_920).await;
+    assert_eq!(chain.prepare_restart(1), None, "still serving segment 0");
+    let _ = read_to_end(&mut body).await;
+    drop(body);
+    assert_eq!(chain.prepare_restart(2), None, "not the next segment");
+    assert_eq!(chain.prepare_restart(0), None);
+    assert!(chain.prepare_restart(1).is_some());
+    chain.cancel_restart();
+
+    // Once the speaker fetched the next segment itself, there is nothing to
+    // restart.
+    let mut next = rig.attach(1);
+    let _ = read_at_least(&mut next, 44).await;
+    assert!(!chain.awaiting_after(0));
+    assert_eq!(chain.prepare_restart(1), None);
+}
+
+/// A playout tells its events in order: the segment nearing its end, its
+/// end, and the fetch that continued it.
+#[tokio::test(start_paused = true)]
+async fn a_playout_tells_its_boundaries() {
+    #[derive(Default)]
+    struct Recorder(parking_lot::Mutex<Vec<PlayoutEvent>>);
+    impl PlayoutEvents for Recorder {
+        fn playout_event(&self, _: &Arc<PlayoutChain>, event: PlayoutEvent) {
+            self.0.lock().push(event);
+        }
+    }
+    let recorder = Arc::new(Recorder::default());
+    let mut rig = Rig::new(576_000); // 3 s
+    rig.events = Some(Arc::clone(&recorder) as Arc<dyn PlayoutEvents>);
+    let mut body = rig.first();
+    let _ = read_at_least(&mut body, 44 + 96_000).await;
+    assert_eq!(
+        *recorder.0.lock(),
+        vec![PlayoutEvent::Started { url_segment: 0 }]
+    );
+    let _ = read_to_end(&mut body).await;
+    drop(body);
+    let mut next = rig.attach(1);
+    let _ = read_at_least(&mut next, 44 + 1_920).await;
+    drop(next);
+    let events = recorder.0.lock().clone();
+    assert_eq!(
+        events[1],
+        PlayoutEvent::HandoffNear {
+            seg: 0,
+            url_segment: 0
+        }
+    );
+    assert!(matches!(
+        events[2],
+        PlayoutEvent::SegmentEnded {
+            seg: 0,
+            url_segment: 0,
+            ..
+        }
+    ));
+    assert_eq!(
+        events[3],
+        PlayoutEvent::Continued {
+            seg: 1,
+            url_segment: 1,
+            kind: AttachKind::Continuation
+        }
+    );
+    assert_eq!(
+        events[4],
+        PlayoutEvent::ClosedMid {
+            seg: 1,
+            url_segment: 1
+        }
+    );
+    assert_eq!(events.len(), 5, "{events:?}");
 }

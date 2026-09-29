@@ -34,6 +34,12 @@
 //! be. A fetch with `Range: bytes=X-` resuming a segment is answered `206`
 //! with exactly the rest of that segment, so it still ends where its header
 //! said and the next segment stays aligned.
+//!
+//! What moves the speaker on to the next segment lives outside the playout:
+//! it tells a [`PlayoutEvents`] when a segment nears its end, ends, is
+//! continued or is closed part way, and the continuation service restarts
+//! the speaker on the next segment once it has played the last one out (see
+//! [`PlayoutChain::prepare_restart`] and [`Rejoin`]).
 
 use std::collections::{HashMap, VecDeque};
 use std::net::IpAddr;
@@ -48,9 +54,11 @@ use futures::Stream;
 use tokio::time::Instant;
 
 use super::cadence::{ChainStats, LoggingStreamGuard};
+use super::pcm_http::PcmContinuation;
 use super::tap::{ConnectionTap, WAV_HEADER_BYTES};
 use super::uri::{parse_stream_uri, segment_base_uri};
 use super::AudioFormat;
+use crate::services::speaker_monitor::control::drift_active;
 
 /// A body stream of audio bytes, as the cadence produces it.
 pub type PcmStream = Pin<Box<dyn Stream<Item = Result<Bytes, std::io::Error>> + Send>>;
@@ -90,6 +98,21 @@ pub const BOUNDARY_SETTLE: Duration = Duration::from_secs(15);
 /// ended, should its speaker not close it first (Sonos closes one after about
 /// 10 s).
 pub const SIDE_HOLD_MAX: Duration = Duration::from_secs(60);
+
+/// How long before a segment's end its handoff begins (see
+/// [`PlayoutEvent::HandoffNear`]): from then until the speaker plays the
+/// next segment, a transport state that is only the switch is kept from
+/// clients.
+pub const HANDOFF_LEAD: Duration = Duration::from_secs(2);
+
+/// Most latency a restart adds that is kept, rather than trimmed, when the
+/// drift controller can pay it back (see [`Rejoin`]). At the controller's
+/// 150 ppm, 2 s takes almost four hours to repay.
+pub const REJOIN_EXACT_MAX: Duration = Duration::from_secs(2);
+
+/// How long the audio fades in after a trimmed rejoin, so the cut does not
+/// click.
+const REJOIN_FADE: Duration = Duration::from_millis(5);
 
 /// Chain ids, unique for the process, for log lines.
 static NEXT_CHAIN_ID: AtomicU64 = AtomicU64::new(1);
@@ -265,6 +288,20 @@ struct ViewInner {
     /// Until when the segment being served is still settling after its
     /// boundary (see [`BOUNDARY_SETTLE`]).
     settle_until: Option<Instant>,
+    /// Latency the last restart left to pay back, until the monitor sees it
+    /// repaid.
+    debt: Option<LatencyDebt>,
+}
+
+/// Latency a restart left for the drift controller to pay back.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LatencyDebt {
+    /// The playout's segment the restart continued into.
+    pub seg: u32,
+    /// Audio the speaker was sent beyond its head start when it rejoined.
+    pub debt_ms: u64,
+    /// When it rejoined.
+    pub since: Instant,
 }
 
 /// Where one connection's segment data started in the playout's output.
@@ -331,6 +368,23 @@ impl PlayoutView {
     /// end of its segment: the speaker has the whole item.
     pub fn parked_at_end(&self) -> bool {
         self.inner.lock().parked == Some(true)
+    }
+
+    /// Records the latency a restart left for the drift controller to pay
+    /// back.
+    fn set_debt(&self, debt: LatencyDebt) {
+        self.inner.lock().debt = Some(debt);
+    }
+
+    /// The latency the last restart left to pay back, if it is not yet
+    /// repaid.
+    pub fn debt(&self) -> Option<LatencyDebt> {
+        self.inner.lock().debt
+    }
+
+    /// Records that the speaker monitor saw the debt repaid.
+    pub fn clear_debt(&self) {
+        self.inner.lock().debt = None;
     }
 
     /// Whether a position poll has reported the speaker on the segment whose
@@ -455,6 +509,103 @@ impl AttachKind {
             Self::Early => "early",
         }
     }
+}
+
+/// Something a playout tells whatever moves its speaker between segments
+/// (see [`PlayoutEvents`]). Segment numbers are the playout's own; URL
+/// segments are those of the fetches that carry them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PlayoutEvent {
+    /// The segment being served has [`HANDOFF_LEAD`] or less left to hand
+    /// over.
+    HandoffNear {
+        /// The segment.
+        seg: u32,
+        /// The URL segment of the connection serving it.
+        url_segment: u32,
+    },
+    /// A segment handed over its last byte and no fetch of the next one was
+    /// waiting: the playout is parked until the speaker fetches it.
+    SegmentEnded {
+        /// The segment that ended.
+        seg: u32,
+        /// The URL segment of the connection that carried it; the speaker
+        /// is expected to fetch the one after.
+        url_segment: u32,
+        /// A lower bound on what the speaker still held to play when it
+        /// ended.
+        reserve_floor_ms: u64,
+    },
+    /// A fetch continued the playout.
+    Continued {
+        /// The segment it carries.
+        seg: u32,
+        /// Its URL segment.
+        url_segment: u32,
+        /// How it continued the playout.
+        kind: AttachKind,
+    },
+    /// The speaker closed the connection being served part way through its
+    /// segment: a pause, a skip or a network drop, not a boundary.
+    ClosedMid {
+        /// The segment it carried.
+        seg: u32,
+        /// Its URL segment.
+        url_segment: u32,
+    },
+    /// A new playout started for the speaker, from the live edge.
+    Started {
+        /// The URL segment of its first fetch.
+        url_segment: u32,
+    },
+    /// The playout was dropped.
+    Retired,
+}
+
+/// Receives a playout's [`PlayoutEvent`]s. Called with no lock held, from
+/// the streaming runtime, so it must not block.
+pub trait PlayoutEvents: Send + Sync {
+    /// `chain` did what `event` says.
+    fn playout_event(&self, chain: &Arc<PlayoutChain>, event: PlayoutEvent);
+}
+
+/// How a speaker that is restarted on the next segment rejoins the playout
+/// (see [`PlayoutChain::prepare_restart`]).
+///
+/// Between the previous segment's end and the fetch that follows the
+/// restart, the playout keeps producing audio into its backlog: the speaker
+/// played out its reserve, stopped, was told to play and fetched. Sending
+/// that backlog whole keeps the sample stream exact but adds the pause to the
+/// cast's latency for good, unless something pays it back.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Rejoin {
+    /// Send the whole backlog: the drift controller is steering this speaker
+    /// and pays the extra latency back, as long as it is no more than
+    /// [`REJOIN_EXACT_MAX`]; more than that is trimmed after all.
+    Exact,
+    /// Keep only the configured head start of the backlog, the newest, and
+    /// drop the rest: nothing would pay back more. The speaker was silent
+    /// across the restart, so the dropped audio is heard as part of that
+    /// pause, never as a skip.
+    Trim,
+}
+
+impl Rejoin {
+    /// The name used for this policy in log lines.
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Exact => "exact",
+            Self::Trim => "trim",
+        }
+    }
+}
+
+/// A restart the continuation service has told the speaker to make.
+#[derive(Debug, Clone, Copy)]
+struct RestartPlan {
+    /// The URL segment the speaker was told to play.
+    url_segment: u32,
+    rejoin: Rejoin,
 }
 
 /// What to do with one fetch of a PCM segment.
@@ -707,6 +858,13 @@ pub struct ChainParts {
     /// for a reader whose fetches are not tracked: its playout ends with
     /// its connection.
     pub registry: Option<Arc<PlayoutRegistry>>,
+    /// How its speaker is moved on from one segment to the next.
+    pub continuation: PcmContinuation,
+    /// The head start its first connection was configured to: what a
+    /// trimmed rejoin keeps (see [`Rejoin::Trim`]).
+    pub head_start: Duration,
+    /// Who is told what happens to it (see [`PlayoutEvent`]).
+    pub events: Option<Arc<dyn PlayoutEvents>>,
 }
 
 /// One speaker's PCM playout of a stream, carried across the connections of
@@ -725,6 +883,9 @@ pub struct PlayoutChain {
     /// Where the park pump is spawned: the streaming runtime.
     runtime: tokio::runtime::Handle,
     registry: Option<Weak<PlayoutRegistry>>,
+    continuation: PcmContinuation,
+    head_start: Duration,
+    events: Option<Arc<dyn PlayoutEvents>>,
     inner: parking_lot::Mutex<Inner>,
 }
 
@@ -764,6 +925,11 @@ struct Inner {
     pump: Pump,
     replay: Replay,
     next_gen: u64,
+    /// The segment whose nearing end has been told (see
+    /// [`PlayoutEvent::HandoffNear`]).
+    near_told: Option<u32>,
+    /// The restart the speaker was told to make, until its fetch arrives.
+    restart: Option<RestartPlan>,
 }
 
 /// Where the playout is in its current segment.
@@ -833,9 +999,21 @@ struct Deferred {
     spawn_pump: bool,
     unregister: bool,
     cadence: Option<PcmStream>,
+    /// Events to tell, in order.
+    events: [Option<PlayoutEvent>; 3],
 }
 
 impl Deferred {
+    /// Queues `event` to be told. There are never more than three at once
+    /// (a retirement follows at most a segment's end and a continuation).
+    fn tell(&mut self, event: PlayoutEvent) {
+        if let Some(slot) = self.events.iter_mut().find(|e| e.is_none()) {
+            *slot = Some(event);
+        } else {
+            debug_assert!(false, "more playout events than slots");
+        }
+    }
+
     /// Queues `waker` to be woken.
     fn wake(&mut self, waker: Option<Waker>) {
         let Some(waker) = waker else {
@@ -881,6 +1059,9 @@ impl PlayoutChain {
             start,
             guard,
             registry,
+            continuation,
+            head_start,
+            events,
         } = parts;
         let speaker_ip = speaker_ip.to_canonical();
         let now = Instant::now();
@@ -899,6 +1080,9 @@ impl PlayoutChain {
             tap,
             runtime: tokio::runtime::Handle::current(),
             registry: registry.as_ref().map(Arc::downgrade),
+            continuation,
+            head_start,
+            events,
             inner: parking_lot::Mutex::new(Inner {
                 cadence: Some(cadence),
                 cadence_ended: false,
@@ -934,10 +1118,13 @@ impl PlayoutChain {
                     complete: start.consumed == 0,
                 },
                 next_gen: 1,
+                near_told: None,
+                restart: None,
             }),
         });
         log::info!(
-            "[Stream] Segments: stream={} speaker={} chain={} D={} ({}) segment={} first_byte={}{}",
+            "[Stream] Segments: stream={} speaker={} chain={} D={} ({}) segment={} first_byte={} \
+             continuation={}{}",
             chain.stream_id,
             chain.speaker_ip,
             chain.id,
@@ -945,10 +1132,21 @@ impl PlayoutChain {
             layout.duration_label(),
             start.url_segment,
             start.first_byte(),
+            chain.continuation,
             if registry.is_some() { "" } else { " untracked" }
         );
         if let Some(registry) = &registry {
             registry.register(&chain);
+        }
+        if chain.moves_on() {
+            if let Some(events) = &chain.events {
+                events.playout_event(
+                    &chain,
+                    PlayoutEvent::Started {
+                        url_segment: start.url_segment,
+                    },
+                );
+            }
         }
         SegmentBody::new(Arc::clone(&chain), 0, start, guard)
     }
@@ -956,6 +1154,92 @@ impl PlayoutChain {
     /// How the playout is cut into segments.
     pub fn layout(&self) -> SegmentLayout {
         self.layout
+    }
+
+    /// Its id, unique for the process.
+    pub fn id(&self) -> u64 {
+        self.id
+    }
+
+    /// The stream it plays.
+    pub fn stream_id(&self) -> &str {
+        &self.stream_id
+    }
+
+    /// The speaker it plays to.
+    pub fn speaker_ip(&self) -> IpAddr {
+        self.speaker_ip
+    }
+
+    /// How its speaker is moved on from one segment to the next.
+    pub fn continuation(&self) -> PcmContinuation {
+        self.continuation
+    }
+
+    /// The latency its last restart left for the drift controller to pay
+    /// back, if not yet repaid.
+    pub fn latency_debt(&self) -> Option<LatencyDebt> {
+        self.stats.playout.debt()
+    }
+
+    /// Whether something moves its speaker on to later segments, and so is
+    /// told what happens to it.
+    fn moves_on(&self) -> bool {
+        self.continues() && self.continuation != PcmContinuation::Off && self.events.is_some()
+    }
+
+    /// Whether the playout is parked after its speaker took the whole of the
+    /// segment carried under URL segment `url_segment`, with no fetch since:
+    /// the speaker has yet to fetch the one after.
+    pub fn awaiting_after(&self, url_segment: u32) -> bool {
+        let inner = self.inner.lock();
+        Self::waiting_after(&inner, url_segment)
+    }
+
+    /// [`Self::awaiting_after`] under the lock.
+    fn waiting_after(inner: &Inner, url_segment: u32) -> bool {
+        !inner.retired
+            && !inner.cadence_ended
+            && inner.current.is_none()
+            && inner.pending.is_none()
+            && inner
+                .ended
+                .is_some_and(|e| e.kind == EndKind::Length && e.url_segment == url_segment)
+    }
+
+    /// Readies the playout for its speaker being told to play URL segment
+    /// `url_segment`, the one after the segment it took whole, and says how
+    /// the fetch that follows will rejoin (see [`Rejoin`]). `None`, and
+    /// nothing readied, if the playout is no longer parked waiting for that
+    /// segment: the speaker fetched it after all, or the playout is gone.
+    ///
+    /// The fetch is then continued as usual, except that its backlog may be
+    /// trimmed to the head start, and the latency it adds is recorded for
+    /// the speaker monitor.
+    pub fn prepare_restart(&self, url_segment: u32) -> Option<Rejoin> {
+        // Only the drift controller pays latency back: a forced rate is a
+        // listening test that steers nothing.
+        let steered = self.tap.as_ref().is_some_and(|tap| {
+            let control = tap.rate_control().map(|c| &**c);
+            drift_active(tap.drift_mode(), control)
+                && control.is_some_and(|c| c.forced_ppm().is_none())
+        });
+        let rejoin = if steered { Rejoin::Exact } else { Rejoin::Trim };
+        let mut inner = self.inner.lock();
+        if url_segment == 0 || !Self::waiting_after(&inner, url_segment - 1) {
+            return None;
+        }
+        inner.restart = Some(RestartPlan {
+            url_segment,
+            rejoin,
+        });
+        Some(rejoin)
+    }
+
+    /// Forgets a restart readied by [`Self::prepare_restart`] that was not
+    /// sent after all.
+    pub fn cancel_restart(&self) {
+        self.inner.lock().restart = None;
     }
 
     /// Whether the playout can no longer be continued.
@@ -971,7 +1255,7 @@ impl PlayoutChain {
     }
 
     /// Drops the playout: its cadence goes, and every body of it ends.
-    pub fn retire(&self, reason: &str) {
+    pub fn retire(self: &Arc<Self>, reason: &str) {
         let mut deferred = Deferred::default();
         {
             let mut inner = self.inner.lock();
@@ -986,6 +1270,10 @@ impl PlayoutChain {
     /// [`Self::retire`] under the lock.
     fn retire_locked(&self, inner: &mut Inner, reason: &str, deferred: &mut Deferred) {
         inner.retired = true;
+        inner.restart = None;
+        if self.moves_on() {
+            deferred.tell(PlayoutEvent::Retired);
+        }
         deferred.cadence = inner.cadence.take();
         inner.backlog.clear();
         inner.backlog_bytes = 0;
@@ -1017,14 +1305,22 @@ impl PlayoutChain {
         );
     }
 
-    /// Does the work collected under the lock, except spawning the pump.
-    fn run_deferred(&self, deferred: Deferred) {
+    /// Does the work collected under the lock: spawning the pump, dropping
+    /// the cadence, unregistering, waking tasks and telling events.
+    fn run_deferred(self: &Arc<Self>, deferred: Deferred) {
         let Deferred {
             wakers,
-            spawn_pump: _,
+            spawn_pump,
             unregister,
             cadence,
+            events,
         } = deferred;
+        if spawn_pump {
+            let chain = Arc::clone(self);
+            self.runtime.spawn(async move {
+                std::future::poll_fn(|cx| chain.poll_pump(cx)).await;
+            });
+        }
         drop(cadence);
         if unregister {
             if let Some(registry) = self.registry.as_ref().and_then(Weak::upgrade) {
@@ -1034,18 +1330,11 @@ impl PlayoutChain {
         for waker in wakers.into_iter().flatten() {
             waker.wake();
         }
-    }
-
-    /// Does the work collected under the lock, spawning the pump if it was
-    /// asked for.
-    fn run_deferred_arc(self: &Arc<Self>, mut deferred: Deferred) {
-        if std::mem::take(&mut deferred.spawn_pump) {
-            let chain = Arc::clone(self);
-            self.runtime.spawn(async move {
-                std::future::poll_fn(|cx| chain.poll_pump(cx)).await;
-            });
+        if let Some(sink) = &self.events {
+            for event in events.into_iter().flatten() {
+                sink.playout_event(self, event);
+            }
         }
-        self.run_deferred(deferred);
     }
 
     /// Asks the park pump to poll the cadence, spawning it if needed.
@@ -1202,7 +1491,7 @@ impl PlayoutChain {
                 }
             }
         };
-        self.run_deferred_arc(deferred);
+        self.run_deferred(deferred);
         route
     }
 
@@ -1229,8 +1518,17 @@ impl PlayoutChain {
             now.saturating_duration_since(e.at).as_millis() as i64
         });
         let mut replayed = 0;
+        let restart = inner.restart.take();
+        let mut rejoined = None;
         let expected = match kind {
-            AttachKind::Continuation | AttachKind::Reopen | AttachKind::Early => inner.seg.start,
+            AttachKind::Continuation => {
+                let expected = inner.seg.start;
+                if let Some(plan) = restart.filter(|p| p.url_segment == url_segment) {
+                    rejoined = Some(self.rejoin_locked(inner, plan.rejoin, now));
+                }
+                expected
+            }
+            AttachKind::Reopen | AttachKind::Early => inner.seg.start,
             AttachKind::UserNext => {
                 // The previous segment stopped short; this one starts at the
                 // first byte its connection did not take.
@@ -1272,13 +1570,95 @@ impl PlayoutChain {
         });
         // The pump keeps the cadence until the backlog is drained.
         Self::start_pump(inner, deferred);
-        self.log_joined(inner, kind, after_end_ms, first_byte, expected, replayed);
+        self.log_joined(
+            inner,
+            kind,
+            after_end_ms,
+            first_byte,
+            expected,
+            replayed,
+            rejoined,
+        );
+        if self.moves_on() {
+            deferred.tell(PlayoutEvent::Continued {
+                seg: inner.seg.logical,
+                url_segment,
+                kind,
+            });
+        }
         gen
+    }
+
+    /// Rejoins a speaker restarted on the next segment: sends the backlog
+    /// whole, or trims it to the head start (see [`Rejoin`]), and records
+    /// the latency the rejoin adds. The segment then starts at the first
+    /// byte sent, so RelTime on it maps onto what the speaker plays.
+    fn rejoin_locked(&self, inner: &mut Inner, policy: Rejoin, now: Instant) -> RejoinOutcome {
+        let keep = self.layout.bytes_in(self.head_start);
+        let debt = inner.backlog_bytes.saturating_sub(keep);
+        let trim = match policy {
+            Rejoin::Trim => debt > 0,
+            Rejoin::Exact => debt > self.layout.bytes_in(REJOIN_EXACT_MAX),
+        };
+        let dropped = if trim {
+            self.trim_backlog(inner, keep)
+        } else {
+            0
+        };
+        inner.seg.start += dropped;
+        let debt_ms = self.layout.ms(debt.saturating_sub(dropped));
+        if debt_ms > 0 {
+            self.stats.playout.set_debt(LatencyDebt {
+                seg: inner.seg.logical,
+                debt_ms,
+                since: now,
+            });
+        }
+        RejoinOutcome {
+            policy: if trim { Rejoin::Trim } else { Rejoin::Exact },
+            dropped,
+            debt_ms,
+        }
+    }
+
+    /// Drops the oldest of the backlog until `keep` bytes are left, whole
+    /// sample frames, and fades the rest in. Returns the bytes dropped.
+    fn trim_backlog(&self, inner: &mut Inner, keep: u64) -> u64 {
+        let block = self.layout.block_align;
+        let keep = keep / block * block;
+        let mut dropped = 0;
+        while inner.backlog_bytes > keep {
+            let Some(mut frame) = inner.backlog.pop_front() else {
+                break;
+            };
+            let excess = inner.backlog_bytes - keep;
+            let len = frame.len() as u64;
+            if len <= excess {
+                inner.backlog_bytes -= len;
+                dropped += len;
+            } else {
+                let cut = excess / block * block;
+                let tail = frame.split_off(cut as usize);
+                inner.backlog_bytes -= cut;
+                dropped += cut;
+                inner.backlog.push_front(tail);
+                break;
+            }
+        }
+        if let Some(first) = inner.backlog.pop_front() {
+            inner.backlog.push_front(fade_in(
+                first,
+                &self.format,
+                self.layout.bytes_in(REJOIN_FADE),
+            ));
+        }
+        dropped
     }
 
     /// Logs a fetch continuing the playout. The first byte it is sent must
     /// be the one the previous segment's end left off at; anything else,
     /// apart from a segment the user skipped out of, is logged as an error.
+    #[allow(clippy::too_many_arguments)]
     fn log_joined(
         &self,
         inner: &Inner,
@@ -1287,6 +1667,7 @@ impl PlayoutChain {
         first_byte: u64,
         expected: u64,
         replayed: u64,
+        rejoined: Option<RejoinOutcome>,
     ) {
         log::info!(
             "[Stream] Continuation fetch: stream={} speaker={} chain={} seg={} url_segment={} \
@@ -1298,9 +1679,18 @@ impl PlayoutChain {
             inner.seg.url_segment,
             after_end_ms
         );
+        let rejoin = rejoined.map_or_else(String::new, |r| {
+            format!(
+                " mode=restart rejoin={} dropped_ms={} latency_debt_ms={}",
+                r.policy.label(),
+                self.layout.ms(r.dropped),
+                r.debt_ms
+            )
+        });
+        let dropped = rejoined.map_or(0, |r| r.dropped);
         let line = format!(
             "[Stream] Continuation joined: stream={} speaker={} chain={} seg={} reason={} \
-             first_byte={} expected_byte={} backlog_ms={}{}",
+             first_byte={} expected_byte={} backlog_ms={}{}{}",
             self.stream_id,
             self.speaker_ip,
             self.id,
@@ -1313,9 +1703,11 @@ impl PlayoutChain {
                 format!(" replayed_ms={}", self.layout.ms(replayed))
             } else {
                 String::new()
-            }
+            },
+            rejoin
         );
-        if first_byte == expected || kind == AttachKind::UserNext {
+        // A trimmed rejoin starts that much later, on purpose.
+        if first_byte == expected + dropped || kind == AttachKind::UserNext {
             log::info!("{}", line);
         } else {
             log::error!("{}", line);
@@ -1329,7 +1721,7 @@ impl PlayoutChain {
             let mut inner = self.inner.lock();
             self.poll_body_locked(&mut inner, gen, cx, &mut deferred)
         };
-        self.run_deferred_arc(deferred);
+        self.run_deferred(deferred);
         result
     }
 
@@ -1418,6 +1810,17 @@ impl PlayoutChain {
             }
         }
         self.stats.set_position(inner.seg.start + inner.seg.sent);
+        if inner.near_told != Some(inner.seg.logical)
+            && self.layout.data_bytes - inner.seg.sent <= self.layout.bytes_in(HANDOFF_LEAD)
+        {
+            inner.near_told = Some(inner.seg.logical);
+            if self.moves_on() {
+                deferred.tell(PlayoutEvent::HandoffNear {
+                    seg: inner.seg.logical,
+                    url_segment: inner.seg.url_segment,
+                });
+            }
+        }
         if inner.seg.sent == self.layout.data_bytes {
             self.end_segment(inner, gen, deferred);
         }
@@ -1496,7 +1899,15 @@ impl PlayoutChain {
                     first_byte,
                     expected,
                     0,
+                    None,
                 );
+                if self.moves_on() {
+                    deferred.tell(PlayoutEvent::Continued {
+                        seg: inner.seg.logical,
+                        url_segment: inner.seg.url_segment,
+                        kind: AttachKind::Early,
+                    });
+                }
             }
             None => {
                 inner.ended = Some(SegmentEnd {
@@ -1508,6 +1919,13 @@ impl PlayoutChain {
                 inner.parked_at = Some(now);
                 self.stats.playout.set_parked(true);
                 Self::start_pump(inner, deferred);
+                if self.moves_on() {
+                    deferred.tell(PlayoutEvent::SegmentEnded {
+                        seg: ended_logical,
+                        url_segment,
+                        reserve_floor_ms: self.reserve_floor().as_millis() as u64,
+                    });
+                }
             }
         }
     }
@@ -1560,18 +1978,24 @@ impl PlayoutChain {
                     inner.parked_at = Some(now);
                     self.stats.playout.set_parked(false);
                     Self::start_pump(&mut inner, &mut deferred);
+                    if self.moves_on() {
+                        deferred.tell(PlayoutEvent::ClosedMid {
+                            seg: inner.seg.logical,
+                            url_segment: inner.seg.url_segment,
+                        });
+                    }
                 } else {
                     self.retire_locked(&mut inner, "untracked_reader", &mut deferred);
                 }
             }
         }
-        self.run_deferred_arc(deferred);
+        self.run_deferred(deferred);
     }
 
     /// One poll of the park pump: moves whatever the cadence has into the
     /// backlog, and ends the pump once a body has the cadence back or the
     /// playout has been parked too long.
-    fn poll_pump(&self, cx: &mut Context<'_>) -> Poll<()> {
+    fn poll_pump(self: &Arc<Self>, cx: &mut Context<'_>) -> Poll<()> {
         let now = Instant::now();
         let mut deferred = Deferred::default();
         let result = {
@@ -1646,6 +2070,31 @@ impl PlayoutChain {
     pub(crate) fn produced(&self) -> u64 {
         self.inner.lock().produced
     }
+}
+
+/// What a restart's rejoin did (see [`PlayoutChain::rejoin_locked`]).
+#[derive(Debug, Clone, Copy)]
+struct RejoinOutcome {
+    /// The policy applied: an exact rejoin whose debt was too large is
+    /// trimmed after all.
+    policy: Rejoin,
+    /// Bytes of backlog dropped.
+    dropped: u64,
+    /// Latency the rejoin adds beyond the head start, in ms.
+    debt_ms: u64,
+}
+
+/// `frame` with its first `fade_bytes` faded in from silence (see
+/// [`super::apply_fade_in`]). Only 16-bit PCM is faded, as the cadence's own
+/// crossfades are; any other depth is returned as it is.
+fn fade_in(frame: Bytes, format: &AudioFormat, fade_bytes: u64) -> Bytes {
+    let block = format.bytes_per_sample() * usize::from(format.channels.max(1));
+    if format.bits_per_sample != 16 || frame.len() < block {
+        return frame;
+    }
+    let mut out = frame.to_vec();
+    super::apply_fade_in(&mut out, format.channels, fade_bytes as usize / block);
+    Bytes::from(out)
 }
 
 /// The body of one PCM segment connection: its lead-in (the WAV header, or

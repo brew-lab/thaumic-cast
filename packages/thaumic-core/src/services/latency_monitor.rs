@@ -838,6 +838,15 @@ impl LatencySession {
         let clock = self.tracker.clock();
         // Nothing near the end says where the reserve is heading: hold.
         self.step_drift(tap, now, estimate.filter(|_| !at_declared_end));
+        if !at_declared_end {
+            note_debt_repaid(
+                stream_id,
+                speaker_ip,
+                tap,
+                estimate,
+                self.tracker.target_ms(),
+            );
+        }
         tap.publish_speaker(SpeakerFigures {
             reserve: estimate.map(|e| (e.reserve_ms, e.half_width_ms)),
             clock_ppm: clock.map(|c| (c.ppm, c.se_ppm)),
@@ -1741,6 +1750,41 @@ fn keep_control_state(
                 state: session.drift.state().clone(),
                 kept_at: now,
             },
+        );
+    }
+}
+
+/// How close to its target a reserve must come back for the latency a PCM
+/// restart added to count as repaid, in ms.
+const DEBT_REPAID_MS: f64 = 50.0;
+
+/// Logs, once, that the latency a PCM restart added (see
+/// [`crate::stream::Rejoin`]) has been paid back: the locked reserve is
+/// back within [`DEBT_REPAID_MS`] of the target the connection settled at
+/// before the restart.
+fn note_debt_repaid(
+    stream_id: &str,
+    speaker_ip: IpAddr,
+    tap: &ConnectionTap,
+    estimate: Option<crate::services::speaker_monitor::ReserveEstimate>,
+    target_ms: Option<f64>,
+) {
+    let Some(debt) = tap.stats().playout.debt() else {
+        return;
+    };
+    let (Some(est), Some(target)) = (estimate.filter(|e| e.locked()), target_ms) else {
+        return;
+    };
+    if est.reserve_ms - target < DEBT_REPAID_MS {
+        tap.stats().playout.clear_debt();
+        log::info!(
+            "[Stream] Continuation debt repaid: stream={} speaker={} seg={} debt_ms={} \
+             after_s={}",
+            stream_id,
+            speaker_ip,
+            debt.seg,
+            debt.debt_ms,
+            debt.since.elapsed().as_secs()
         );
     }
 }
