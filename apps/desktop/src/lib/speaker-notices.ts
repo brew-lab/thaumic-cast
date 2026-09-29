@@ -98,8 +98,8 @@ export interface NoticeWordingContext {
   headStartFixed: boolean;
   /**
    * Whether to offer clock drift correction with an uncorrected drift (or a
-   * speaker running low because of one): it is not on, and the user can turn it on here (no environment variable fixes
-   * it).
+   * speaker running low because of one): it is not on, and the user can turn
+   * it on here (no environment variable fixes it).
    */
   offerDriftCorrection: boolean;
 }
