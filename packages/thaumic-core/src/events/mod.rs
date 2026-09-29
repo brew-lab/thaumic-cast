@@ -557,6 +557,7 @@ mod tests {
                 suggested_head_start_ms: None,
                 minutes: Some(15),
                 restart_helps: true,
+                cause: None,
             }),
             timestamp: 1,
         });
