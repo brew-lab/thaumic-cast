@@ -274,6 +274,9 @@ pub struct ReserveTracker {
     target_pending: Option<f64>,
     /// Whether the acknowledged reserve is low (with hysteresis).
     low: bool,
+    /// The drift correction applied to the delivered audio, in ppm: how
+    /// much faster than our clock it is handed over.
+    command_ppm: f64,
     connection: ConnectionStats,
 }
 
@@ -312,6 +315,26 @@ impl ReserveTracker {
             estimates_before: self.reserve.counts(),
             ..ConnectionStats::default()
         };
+    }
+
+    /// Sets the drift correction applied to the delivered audio from now
+    /// on, in ppm (positive inserts audio). The reserve then drains at the
+    /// clock rate less this, which is what the estimate carries older bounds
+    /// forward by and what the time to the floor is projected on.
+    pub fn set_command_ppm(&mut self, ppm: f64) {
+        self.command_ppm = if ppm.is_finite() { ppm } else { 0.0 };
+    }
+
+    /// The drift correction applied to the delivered audio, in ppm.
+    pub fn command_ppm(&self) -> f64 {
+        self.command_ppm
+    }
+
+    /// How much faster than delivery the speaker drains its reserve, in
+    /// ppm: its clock rate shrunk by its uncertainty (see
+    /// [`ClockEstimate::shrunk_ppm`]), less the correction applied.
+    fn net_ppm(&self) -> f64 {
+        self.clock.estimate().map_or(0.0, |c| c.shrunk_ppm()) - self.command_ppm
     }
 
     /// Clears what a segment break invalidates.
@@ -374,8 +397,9 @@ impl ReserveTracker {
         }
         // Shrunk, so a rate from a few short segments (whose error can be
         // hundreds of ppm) cannot drag the older bounds, or the step
-        // baseline, far.
-        let ppm = self.clock.estimate().map_or(0.0, |c| c.shrunk_ppm());
+        // baseline, far. Net of the correction applied: inserted audio
+        // raises the reserve as the speaker's clock lowers it.
+        let ppm = self.net_ppm();
         let Some(est) = self.reserve.estimate(now, ppm) else {
             return (None, None);
         };
@@ -594,24 +618,33 @@ impl ReserveTracker {
     /// segments can clear the drain test at several times its true value,
     /// and projected unshrunk it would put a speaker hours from the floor
     /// within the half hour [`DRAINING_WARN_SECS`] warns at. A precise rate
-    /// passes through almost unchanged. The net rate is that less whatever
-    /// audio drift correction adds; nothing adds any yet.
+    /// passes through almost unchanged. The net rate is that less the audio
+    /// drift correction adds (see [`Self::set_command_ppm`]), so a
+    /// correction that matches the clock projects nothing, and one pinned at
+    /// its cap projects the remainder it cannot make up.
     pub fn time_to_floor_s(&self) -> Option<f64> {
         let est = self.last.filter(|e| e.locked())?;
-        let clock = self.clock().filter(|_| self.clock_drains())?;
+        if !self.clock_drains() {
+            return None;
+        }
         let floor = self.floor_ms()?;
         let reserve = self.last_acked.map_or(est.reserve_ms, |a| a.p10_ms);
-        let net_ppm = clock.shrunk_ppm();
+        let net_ppm = self.net_ppm();
+        if net_ppm <= 0.0 {
+            return None;
+        }
         // ppm·1e-6 ms per ms is ppm·1e-3 ms per second.
         Some((reserve - floor).max(0.0) / (net_ppm * 1e-3))
     }
 
-    /// Whether the speaker plays faster than we deliver by more than
-    /// [`drain_threshold_sigmas`] standard errors, whatever the reserve
-    /// estimate is doing.
+    /// Whether the speaker plays faster than we deliver, net of any drift
+    /// correction applied, by more than [`drain_threshold_sigmas`] standard
+    /// errors, whatever the reserve estimate is doing.
     pub fn clock_drains(&self) -> bool {
-        self.clock()
-            .is_some_and(|c| c.ppm > 0.0 && c.ppm > drain_threshold_sigmas(c.dof) * c.se_ppm)
+        self.clock().is_some_and(|c| {
+            let net = c.ppm - self.command_ppm;
+            net > 0.0 && net > drain_threshold_sigmas(c.dof) * c.se_ppm
+        })
     }
 
     /// The state to report, given what the monitor knows beyond the polls.
@@ -700,6 +733,52 @@ mod tests {
         assert_eq!(tracker.time_to_floor_s(), None);
         assert!(!tracker.clock_drains());
         assert_eq!(tracker.state(false, false), MonitorState::Ok);
+    }
+
+    /// A speaker 300 ppm fast whose delivery drift correction speeds up by
+    /// the same: its reserve holds level, so nothing drains and nothing is
+    /// projected, and the estimate follows the flat reserve rather than
+    /// carrying older bounds down the clock rate.
+    #[test]
+    fn ttf_is_none_when_correction_matches_the_clock() {
+        let mut tracker = ReserveTracker::new();
+        tracker.start_connection(true, H500);
+        tracker.set_command_ppm(300.0);
+        let mut gen = PollGen::new(47);
+        gen.ppm = 300.0;
+        gen.inserted_per_ms = 300e-6;
+        run(&mut tracker, &mut gen, 0.0, 30.0 * 60_000.0);
+        let clock = tracker.clock().expect("clock");
+        assert!((clock.ppm - 300.0).abs() < 60.0, "{clock:?}");
+        assert!(!tracker.clock_drains());
+        assert_eq!(tracker.time_to_floor_s(), None);
+        assert_eq!(tracker.state(false, false), MonitorState::Ok);
+        let est = tracker.last_estimate().expect("estimate");
+        let truth = gen.reserve(30.0 * 60_000.0);
+        assert!(
+            (est.reserve_ms - truth).abs() < 50.0,
+            "{est:?} vs {truth:.0}"
+        );
+    }
+
+    /// A speaker 400 ppm fast with the correction pinned at 150 ppm drains
+    /// at the 250 ppm it cannot make up, and the time to the floor is
+    /// projected on that.
+    #[test]
+    fn saturated_ttf_uses_the_uncorrected_remainder() {
+        let mut tracker = ReserveTracker::new();
+        tracker.start_connection(true, H500);
+        tracker.set_command_ppm(150.0);
+        let mut gen = PollGen::new(53);
+        gen.ppm = 400.0;
+        gen.inserted_per_ms = 150e-6;
+        run(&mut tracker, &mut gen, 0.0, 15.0 * 60_000.0);
+        let ttf = tracker.time_to_floor_s().expect("draining");
+        let truth = (gen.reserve(15.0 * 60_000.0) - 150.0) / 0.25;
+        assert!(
+            (ttf - truth).abs() < 60.0 / 0.25,
+            "{ttf:.0}s vs {truth:.0}s"
+        );
     }
 
     #[test]

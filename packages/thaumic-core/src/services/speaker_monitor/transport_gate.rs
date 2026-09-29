@@ -70,6 +70,14 @@ pub struct GenaTransport {
 pub trait TransportStateView: Send + Sync {
     /// What GENA last said about `speaker_ip`'s transport, if anything.
     fn gena_transport(&self, speaker_ip: &str) -> Option<GenaTransport>;
+
+    /// The RINCON UUID of the speaker at `speaker_ip`, where the topology
+    /// knows it. What drift correction learns about a speaker is kept under
+    /// it, so a DHCP-reassigned address never inherits another speaker's
+    /// correction.
+    fn speaker_uuid(&self, _speaker_ip: &str) -> Option<String> {
+        None
+    }
 }
 
 /// [`TransportStateView`] over the live GENA state.
@@ -97,6 +105,10 @@ impl TransportStateView for GenaTransportView {
                 .gena
                 .is_subscribed(speaker_ip, SonosService::AVTransport),
         })
+    }
+
+    fn speaker_uuid(&self, speaker_ip: &str) -> Option<String> {
+        self.sonos_state.get_member_uuid_by_ip(speaker_ip)
     }
 }
 

@@ -24,8 +24,10 @@ use tokio::sync::mpsc;
 
 use super::cadence::{LoggingStreamGuard, PipelineSample};
 use super::manager::PlaybackEpoch;
+use super::rate_adapter::RateControl;
 use super::{AudioCodec, AudioFormat};
 use crate::events::LinkQuality;
+use crate::services::speaker_monitor::control::DriftMode;
 
 /// Length of the WAV header every PCM connection starts with.
 pub const WAV_HEADER_BYTES: u32 = 44;
@@ -60,6 +62,15 @@ pub struct ConnectionTap {
     /// made. Read once per connection, so a change of the setting applies to
     /// the next connection and never flips a session mid-way.
     pub monitor: bool,
+    /// Sample frames per second of the connection's audio.
+    sample_rate: u32,
+    /// The clock drift correction mode the connection was made under, read
+    /// once per connection like `monitor` (see
+    /// [`crate::services::speaker_monitor::control::drift_compensation_mode`]).
+    drift_mode: DriftMode,
+    /// Where the monitor leaves the connection's rate command, when drift
+    /// correction is on for a PCM connection whose format can be resampled.
+    rate_control: Option<Arc<RateControl>>,
     /// The connection's delivery statistics, whose byte counter is the
     /// delivered side of the speaker's reserve.
     guard: Arc<LoggingStreamGuard>,
@@ -132,10 +143,42 @@ impl ConnectionTap {
             byte_rate,
             header_bytes,
             monitor,
+            sample_rate: audio_format.sample_rate,
+            drift_mode: DriftMode::Off,
+            rate_control: None,
             guard,
             epoch: OnceLock::new(),
             head_start: OnceLock::new(),
         }
+    }
+
+    /// The same tap made under drift correction `mode`, with the
+    /// `rate_control` its cadence resamples by (only when `mode` is on and
+    /// the connection can be corrected).
+    #[must_use]
+    pub fn with_drift(mut self, mode: DriftMode, rate_control: Option<Arc<RateControl>>) -> Self {
+        self.drift_mode = mode;
+        self.rate_control = rate_control;
+        self
+    }
+
+    /// The clock drift correction mode the connection was made under.
+    pub fn drift_mode(&self) -> DriftMode {
+        self.drift_mode
+    }
+
+    /// Where the monitor leaves the connection's rate command, if its audio
+    /// is being corrected.
+    pub fn rate_control(&self) -> Option<&Arc<RateControl>> {
+        self.rate_control.as_ref()
+    }
+
+    /// Milliseconds of audio drift correction has inserted into (positive)
+    /// or removed from the connection so far, or `None` if it corrects
+    /// nothing.
+    pub fn net_inserted_ms(&self) -> Option<f64> {
+        let control = self.rate_control.as_ref()?;
+        Some(control.net_inserted_frames() as f64 * 1000.0 / f64::from(self.sample_rate.max(1)))
     }
 
     /// The playback epoch this connection started, once it has served a

@@ -13,6 +13,7 @@ use parking_lot::{Mutex, RwLock};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
+use crate::services::speaker_monitor::control::DriftMode;
 use crate::sonos::types::{TransportState, ZoneGroup};
 
 /// Configuration for audio streaming behavior.
@@ -181,6 +182,19 @@ pub struct Config {
     /// [`MAX_PCM_CONNECT_BURST_MS`]: crate::protocol_constants::MAX_PCM_CONNECT_BURST_MS
     #[serde(default = "default_pcm_connect_burst_ms")]
     pub pcm_connect_burst_ms: u64,
+
+    /// Clock drift correction for PCM streams: `on` stretches or squeezes
+    /// each speaker's audio by at most 150 ppm to hold its head start level
+    /// over long casts, `observe` works out and logs what it would do while
+    /// leaving the audio byte for byte as captured, `off` does neither.
+    ///
+    /// Defaults to [`DriftMode::Observe`]. Correction steers by the speaker
+    /// monitor, so with [`Self::speaker_monitor`] off it is off. Read once
+    /// per connection, so a change applies from each speaker's next
+    /// connection; `THAUMIC_DRIFT_COMPENSATION=on|observe|off` overrides it
+    /// (see [`crate::services::speaker_monitor::control::drift_compensation_mode`]).
+    #[serde(default)]
+    pub drift_compensation: DriftMode,
 }
 
 /// Speaker monitoring is on unless switched off.
@@ -202,6 +216,7 @@ impl Default for Config {
             strict_stream_access: false,
             speaker_monitor: default_speaker_monitor(),
             pcm_connect_burst_ms: default_pcm_connect_burst_ms(),
+            drift_compensation: DriftMode::default(),
         }
     }
 }
@@ -505,6 +520,22 @@ mod tests {
         )
         .expect("parses");
         assert_eq!(config.pcm_connect_burst_ms, 0);
+    }
+
+    /// Drift correction ships observing, including for a config written
+    /// before the field existed, and a config can set it.
+    #[test]
+    fn drift_compensation_defaults_to_observe_when_absent() {
+        assert_eq!(Config::default().drift_compensation, DriftMode::Observe);
+        let config: Config =
+            serde_json::from_str(r#"{"preferred_port":0,"topology_refresh_interval":30}"#)
+                .expect("parses");
+        assert_eq!(config.drift_compensation, DriftMode::Observe);
+        let config: Config = serde_json::from_str(
+            r#"{"preferred_port":0,"topology_refresh_interval":30,"drift_compensation":"on"}"#,
+        )
+        .expect("parses");
+        assert_eq!(config.drift_compensation, DriftMode::On);
     }
 
     #[test]

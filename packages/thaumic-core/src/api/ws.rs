@@ -2597,6 +2597,9 @@ mod tests {
             clock_ppm: Some(40.0),
             clock_se_ppm: Some(6.0),
             time_to_floor_s: Some(4_500),
+            drift_mode: Some(crate::services::speaker_monitor::DriftMode::On),
+            command_ppm: Some(20.0),
+            net_inserted_ms: Some(54),
             notice: None,
             timestamp: 0,
         });
@@ -2637,6 +2640,7 @@ mod tests {
                 head_start_ms: 500,
                 head_start_fixed: false,
                 speaker_monitor: true,
+                drift_compensation: crate::services::speaker_monitor::DriftMode::Observe,
             },
             timestamp: 0,
         });
