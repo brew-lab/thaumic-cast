@@ -982,6 +982,9 @@ impl LatencySession {
             stall_ms: self.tracker.stall_ms(),
             link_poor: tap.link_verdict() == Some(LinkQuality::Poor),
             time_to_floor_s,
+            net_drift_ppm: self.tracker.net_drain_ppm(),
+            clock_drained_ms: self.tracker.clock_drained_ms(),
+            target_ms: self.tracker.target_ms(),
             drift_active: drift_active(self.drift.mode(), tap.rate_control().map(|c| &**c)),
             saturated: self.drift.saturated(),
         };

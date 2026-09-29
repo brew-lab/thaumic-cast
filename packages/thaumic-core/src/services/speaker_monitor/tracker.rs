@@ -230,7 +230,17 @@ pub struct ConnectionStats {
     /// Reserve estimates made and how many were inconsistent, as counted
     /// when the connection started.
     estimates_before: (u64, u64),
+    /// How long the connection has been measured playing, in ms: the gaps
+    /// between its measured polls, each up to [`PLAYING_GAP_MAX_MS`].
+    playing_ms: f64,
+    /// When the latest measured poll was sent.
+    last_measured_ts: Option<f64>,
 }
+
+/// Longest gap between two measured polls counted as time spent playing, in
+/// ms. The monitor polls every 2 s (5 s when backing off), so a longer gap
+/// is a pause or an outage, over which the clock drains nothing.
+const PLAYING_GAP_MAX_MS: f64 = 30_000.0;
 
 /// Reserve and clock tracking for one speaker, across its connections.
 #[derive(Debug, Clone, Default)]
@@ -337,6 +347,30 @@ impl ReserveTracker {
         self.clock.estimate().map_or(0.0, |c| c.shrunk_ppm()) - self.command_ppm
     }
 
+    /// How much faster than delivery the speaker drains its reserve, in
+    /// ppm, net of the correction applied (see [`Self::set_command_ppm`]):
+    /// its clock rate shrunk by its uncertainty, less the correction. Zero
+    /// before the clock is estimated.
+    pub fn net_drain_ppm(&self) -> f64 {
+        self.net_ppm()
+    }
+
+    /// How much of the reserve the speaker's clock has drained over the
+    /// current connection, in ms: the net rate (see [`Self::net_drain_ppm`])
+    /// over the time the connection has been measured playing. Zero unless
+    /// the clock measurably drains the reserve (see [`Self::clock_drains`]).
+    ///
+    /// An approximation: the rate is the latest estimate applied to the whole
+    /// connection and the correction the one in force now. Enough to tell
+    /// whether the clock explains a real share of a running-low reserve,
+    /// which is all it is used for.
+    pub fn clock_drained_ms(&self) -> f64 {
+        if !self.clock_drains() {
+            return 0.0;
+        }
+        (self.net_ppm() * 1e-6 * self.connection.playing_ms).max(0.0)
+    }
+
     /// Clears what a segment break invalidates.
     fn clear(&mut self) {
         self.reserve.clear();
@@ -381,7 +415,14 @@ impl ReserveTracker {
             self.reserve.add(obs);
         }
         self.clock.add(obs, self.reserve.jitter_ms());
-        self.connection.polls += 1;
+        let c = &mut self.connection;
+        c.polls += 1;
+        if let Some(gap) = c.last_measured_ts.map(|prev| obs.ts - prev) {
+            if gap > 0.0 && gap <= PLAYING_GAP_MAX_MS {
+                c.playing_ms += gap;
+            }
+        }
+        c.last_measured_ts = Some(obs.ts);
         brk
     }
 
@@ -722,6 +763,10 @@ mod tests {
         assert!((ttf - truth).abs() < 60.0 / 0.3, "{ttf:.0}s vs {truth:.0}s");
         let c = tracker.connection();
         assert!(c.reserve_min_ms.unwrap() < c.reserve_start_ms.unwrap());
+        // What the clock drained over the connection: about the 270 ms the
+        // reserve lost, less what shrinking the rate takes off it.
+        let drained = tracker.clock_drained_ms();
+        assert!((200.0..=300.0).contains(&drained), "{drained:.0}ms");
     }
 
     #[test]
@@ -732,6 +777,7 @@ mod tests {
         run(&mut tracker, &mut gen, 0.0, 30.0 * 60_000.0);
         assert_eq!(tracker.time_to_floor_s(), None);
         assert!(!tracker.clock_drains());
+        assert_eq!(tracker.clock_drained_ms(), 0.0);
         assert_eq!(tracker.state(false, false), MonitorState::Ok);
     }
 
