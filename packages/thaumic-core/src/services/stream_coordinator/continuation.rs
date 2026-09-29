@@ -217,6 +217,24 @@ struct Handoff {
     notify: Arc<Notify>,
 }
 
+impl Handoff {
+    /// How long the speaker was silent, as far as the server can tell, when
+    /// it plays the next segment at `now`: since the STOPPED on the ending
+    /// segment, or for a restart without one, since its reserve should have
+    /// played out. A switch with no STOPPED and no restart is a gapless one,
+    /// however long the speaker took to report it (a group's coordinator
+    /// takes about 3.8 s while it plays out what it holds).
+    fn audible_gap(&self, now: Instant) -> Duration {
+        let from = self.stopped_since.or_else(|| {
+            if self.restarts == 0 {
+                return None;
+            }
+            self.ended_at.map(|t| t + self.reserve_floor + TIMER_MARGIN)
+        });
+        from.map_or(Duration::ZERO, |t| now.saturating_duration_since(t))
+    }
+}
+
 /// What the watch does next.
 enum Step {
     /// The handoff is over.
@@ -577,11 +595,6 @@ impl StreamCoordinator {
         let Some(handoff) = self.continuations.handoffs.lock().remove(&key) else {
             return;
         };
-        let gap_from = handoff.stopped_since.or_else(|| {
-            handoff
-                .ended_at
-                .map(|t| t + handoff.reserve_floor + TIMER_MARGIN)
-        });
         let debt = self
             .get_stream(&key.stream_id)
             .and_then(|s| s.playout.get(speaker_ip.parse().ok()?))
@@ -601,7 +614,7 @@ impl StreamCoordinator {
             key.speaker_ip,
             handoff.seg.wrapping_add(1),
             mode,
-            gap_from.map_or(0, |t| now.saturating_duration_since(t).as_millis()),
+            handoff.audible_gap(now).as_millis(),
             debt.map_or(0, |d| d.debt_ms),
             handoff.restarts,
             handoff.stops_seen,
@@ -2294,6 +2307,50 @@ mod tests {
         );
         sleep_ms(ARM_DELAY.as_millis() as u64 + 500).await;
         assert_eq!(rig.sonos.queued(), vec![rig.base(1), rig.base(1)]);
+    }
+
+    /// A handoff built for [`Handoff::audible_gap`], its segment having
+    /// ended at `ended_at` with 300 ms still held.
+    fn handoff_ended(ended_at: Instant) -> Handoff {
+        Handoff {
+            generation: 0,
+            chain_id: 0,
+            seg: 0,
+            from_url_segment: 0,
+            held: Vec::new(),
+            began_at: ended_at,
+            ended_at: Some(ended_at),
+            reserve_floor: Duration::from_millis(300),
+            stopped_since: None,
+            attached_at: None,
+            attached_url_segment: None,
+            stops_seen: 0,
+            restarts: 0,
+            restarted_at: None,
+            notify: Arc::new(Notify::new()),
+        }
+    }
+
+    /// A gapless switch reported late, as a group's is, has no audible gap;
+    /// a restart is measured from the STOPPED, or without one, from when the
+    /// reserve should have played out.
+    #[tokio::test(start_paused = true)]
+    async fn only_a_stop_or_a_restart_counts_as_an_audible_gap() {
+        let ended = Instant::now();
+        let now = ended + Duration::from_millis(3_800);
+        let mut handoff = handoff_ended(ended);
+        assert_eq!(handoff.audible_gap(now), Duration::ZERO, "gapless");
+
+        handoff.restarts = 1;
+        assert_eq!(
+            handoff.audible_gap(now),
+            Duration::from_millis(3_800 - 300) - TIMER_MARGIN
+        );
+
+        handoff.stopped_since = Some(ended + Duration::from_millis(1_200));
+        assert_eq!(handoff.audible_gap(now), Duration::from_millis(2_600));
+        handoff.restarts = 0;
+        assert_eq!(handoff.audible_gap(now), Duration::from_millis(2_600));
     }
 
     /// A speaker reporting PLAYING too late in a segment for the queued item

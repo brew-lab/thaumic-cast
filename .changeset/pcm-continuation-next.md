@@ -37,3 +37,9 @@ queued segment as an `object.item.audioItem.musicTrack` with its duration and si
 fetches it early and past its end, and Sonos ignores the duration anyway. Each boundary logs `Continuation armed`,
 `Continuation fetch`, `Continuation joined` and `Continuation playing` with `mode=next` and `stops_seen`, the number of
 STOPPED events the switch showed (0 when gapless).
+`audible_gap_ms` in `Continuation playing` is 0 for a switch with no STOPPED and no restart, however long the speaker
+took to report PLAYING on the next segment (a group's coordinator takes about 3.8 s while it plays out what it holds);
+it is measured only from a STOPPED, or for a restart without one, from when the speaker's reserve should have run out.
+
+With a segment queued, the Sonos app may show a next item and enable its skip button. A skip there jumps the cast to the
+live edge, as any skip does, and the segment after is queued as usual.
