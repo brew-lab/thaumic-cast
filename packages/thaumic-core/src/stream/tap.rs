@@ -223,12 +223,33 @@ impl ConnectionTap {
     /// frame. It is taken on every monitor tick because the snapshots are
     /// taken only while the connection is being polled for audio: a stall
     /// long enough to stop that is otherwise seen only once it clears.
+    ///
+    /// `None` near the connection's declared end (see
+    /// [`Self::near_declared_end`]).
     pub fn unacked_ms_now(&self) -> Option<f64> {
         if self.byte_rate == 0 {
             return None;
         }
         let bytes = self.guard.unacked_bytes_now()?;
         Some(bytes as f64 * 1000.0 / f64::from(self.byte_rate))
+    }
+
+    /// Whether the connection is near or at the end its speaker was told of:
+    /// the length in the WAV header, or a declared `Content-Length` (see
+    /// [`crate::stream::DeclaredEnd`]). Always `false` for a compressed
+    /// codec, which declares no end.
+    ///
+    /// The speaker stops reading there because the item is over, so from a
+    /// little before it until the connection closes the monitor reads no
+    /// stall, and no notice, into what it sees.
+    pub fn near_declared_end(&self) -> bool {
+        self.guard.near_declared_end()
+    }
+
+    /// Whether the connection has handed over everything up to its declared
+    /// end: if it closes now, it ended with the item.
+    pub fn reached_declared_end(&self) -> bool {
+        self.guard.reached_declared_end()
     }
 
     /// Audio bytes handed to the connection so far, excluding the header.
@@ -265,6 +286,13 @@ impl ConnectionTap {
     #[cfg(test)]
     pub(crate) fn speaker_snapshot(&self) -> Option<SpeakerSnapshot> {
         self.guard.speaker.snapshot()
+    }
+
+    /// Counts `bytes` more body bytes handed to the connection, as its body
+    /// would.
+    #[cfg(test)]
+    pub(crate) fn record_body_bytes(&self, bytes: usize) {
+        self.guard.record_body_bytes(bytes);
     }
 
     /// The connection's pipeline snapshots from the last `window`.
@@ -444,7 +472,50 @@ pub(crate) mod test_support {
         mode: crate::services::speaker_monitor::DriftMode,
         rate_control: Option<Arc<RateControl>>,
     ) -> Arc<ConnectionTap> {
+        started_tap_with_guard(
+            stream_id,
+            speaker_ip,
+            monitor,
+            codec,
+            mode,
+            rate_control,
+            None,
+        )
+    }
+
+    /// A PCM tap for `speaker_ip` on `stream_id` whose epoch has started and
+    /// whose body declares its end after `declared_end` bytes.
+    pub(crate) fn started_tap_with_declared_end(
+        stream_id: &str,
+        speaker_ip: &str,
+        declared_end: u64,
+    ) -> Arc<ConnectionTap> {
+        let byte_rate = AudioFormat::default().frame_bytes(1000) as u32;
+        started_tap_with_guard(
+            stream_id,
+            speaker_ip,
+            true,
+            AudioCodec::Pcm,
+            crate::services::speaker_monitor::DriftMode::Off,
+            None,
+            Some(crate::stream::DeclaredEnd::new(declared_end, byte_rate)),
+        )
+    }
+
+    /// A tap as [`started_tap_with_drift`] makes it, whose guard records
+    /// `declared_end`.
+    fn started_tap_with_guard(
+        stream_id: &str,
+        speaker_ip: &str,
+        monitor: bool,
+        codec: AudioCodec,
+        mode: crate::services::speaker_monitor::DriftMode,
+        rate_control: Option<Arc<RateControl>>,
+        declared_end: Option<crate::stream::DeclaredEnd>,
+    ) -> Arc<ConnectionTap> {
         let ip: IpAddr = speaker_ip.parse().expect("test address");
+        let guard =
+            LoggingStreamGuard::new(stream_id.to_string(), ip).with_declared_end(declared_end);
         let tap = Arc::new(
             ConnectionTap::new(
                 stream_id,
@@ -452,7 +523,7 @@ pub(crate) mod test_support {
                 Instant::now(),
                 codec,
                 &AudioFormat::default(),
-                Arc::new(LoggingStreamGuard::new(stream_id.to_string(), ip)),
+                Arc::new(guard),
                 monitor,
             )
             .with_drift(mode, rate_control),

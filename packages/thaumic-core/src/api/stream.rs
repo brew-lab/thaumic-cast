@@ -35,10 +35,10 @@ use crate::services::speaker_monitor::control::{
 use crate::stream::manager::TimestampedFrame;
 use crate::stream::{
     create_wav_header_with_data_size, create_wav_stream_with_cadence, lagged_error,
-    pcm_connect_burst_ms, AudioCodec, BodyFraming, CadenceConfig, ConnectionTap, EpochHook,
-    FirstConnectionWait, FirstWaitWatch, HeadStart, IcyMetadataInjector, LoggingStreamGuard,
-    PcmHttpFraming, PcmHttpSettings, PcmHttpSwitches, RateAdapter, RateControl, StreamState,
-    MAX_UNLISTED_STREAM_READERS,
+    pcm_connect_burst_ms, AudioCodec, BodyFraming, CadenceConfig, ConnectionTap, DeclaredEnd,
+    EpochHook, FirstConnectionWait, FirstWaitWatch, HeadStart, IcyMetadataInjector,
+    LoggingStreamGuard, PcmHttpFraming, PcmHttpSettings, PcmHttpSwitches, RateAdapter, RateControl,
+    StreamState, MAX_UNLISTED_STREAM_READERS,
 };
 
 /// A single item of an audio body stream.
@@ -403,9 +403,20 @@ pub(super) async fn stream_audio(
         .tracks_playback()
         .then(|| state.link_registry.claim(remote_addr))
         .flatten();
+    // A PCM body has an end the speaker reads to, whatever hyper does: the
+    // WAV header's length. Near it the speaker going quiet is the end of the
+    // item, which the guard and the speaker monitor must not take for a stall.
+    let byte_rate = stream_state
+        .audio_format
+        .frame_bytes(1000)
+        .min(u32::MAX as usize) as u32;
+    let declared_end = pcm_http
+        .as_ref()
+        .map(|settings| DeclaredEnd::new(settings.declared_end_bytes(), byte_rate));
     let mut guard = LoggingStreamGuard::new(id.to_string(), remote_ip)
         .with_link_probe(link_probe)
-        .with_framing(framing);
+        .with_framing(framing)
+        .with_declared_end(declared_end);
     // Likewise only a speaker's connection reports audio reaching this
     // machine late: an unlisted reader that falls behind could run its own
     // queue dry and raise a notice about gaps no speaker heard.

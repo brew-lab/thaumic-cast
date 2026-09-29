@@ -579,6 +579,15 @@ impl ReserveTracker {
         self.pcm.then(|| low_clear_ms(self.head_start_sent_ms()))
     }
 
+    /// Stands in for [`Self::observe_ack_lag`] on a window in which the
+    /// connection reached, or came near, the end its speaker was told of
+    /// (see [`crate::stream::DeclaredEnd`]). The speaker stops reading there
+    /// because the item is over, so the window has no stall, and neither
+    /// the low alarm, the connection's minimum nor its target moves.
+    pub fn observe_declared_end(&mut self) {
+        self.last_stall_ms = None;
+    }
+
     /// How far the worst acknowledgement lag of the latest report's window
     /// stood above its median (see [`stall_ms`]), where acknowledgements
     /// were measured.
