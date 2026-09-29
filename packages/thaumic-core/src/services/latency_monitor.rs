@@ -72,9 +72,10 @@ use crate::protocol_constants::POSITION_POLL_TIMEOUT_MS;
 use crate::runtime::TokioSpawner;
 use crate::services::speaker_monitor::reserve::{HOLD_MIN_POLLS, RESERVE_WINDOW_MS};
 use crate::services::speaker_monitor::{
-    GenaTransport, MemberChange, MonitorState, NoticeInput, NoticeState, PollObservation,
-    ReserveTracker, SegmentBreak, TransportGate, TransportSource, TransportStateView,
-    TransportVerdict, WindowStats,
+    drift_active, ControlInput, DriftController, DriftMode, GenaTransport, MemberChange,
+    MonitorState, NoticeInput, NoticeState, PollObservation, ReserveTracker, SegmentBreak,
+    SpeakerControlState, TransportGate, TransportSource, TransportStateView, TransportVerdict,
+    WindowStats,
 };
 use crate::sonos::traits::SonosPlayback;
 use crate::sonos::types::{PositionInfo, TransportState};
@@ -205,6 +206,10 @@ const DORMANT_AFTER_MISMATCHES: u32 = 2;
 /// speaker's next fetch (the routine reconnect, or a resume) to take it over.
 const CONNECTION_LOST_GRACE: Duration = Duration::from_secs(60);
 
+/// How long what drift correction learned about a speaker is kept after its
+/// last session ends, for its next cast.
+const CONTROL_STATE_IDLE: Duration = Duration::from_secs(60 * 60);
+
 /// Random delay added to every poll, in milliseconds.
 ///
 /// The speaker reports its position in whole seconds, so each sample of the
@@ -328,6 +333,9 @@ struct PollResult {
     /// sent and when it was answered; `None` for a compressed codec.
     delivered_ms_at_send: Option<u64>,
     delivered_ms_at_answer: Option<u64>,
+    /// Audio drift correction had inserted (positive) or removed when the
+    /// answer arrived, in ms; 0 when it corrects nothing.
+    net_inserted_ms: f64,
     /// The speaker's answer, or why there was none.
     outcome: Result<PositionInfo, String>,
     /// The speaker's transport state, when the poll also asked for it.
@@ -522,6 +530,14 @@ struct LatencySession {
     /// and kept for the rest of the cast (the session's life), so notice
     /// ids count per stream and speaker.
     notices: NoticeState,
+    /// Clock drift correction for the speaker, stepped at each report.
+    drift: DriftController,
+    /// Origin of the drift controller's clock, which runs on across the
+    /// session's connections.
+    drift_origin: Instant,
+    /// What the drift controller's state is kept under between sessions:
+    /// the speaker's UUID, or its address until the topology knows it.
+    control_key: Option<String>,
 }
 
 impl LatencySession {
@@ -575,6 +591,9 @@ impl LatencySession {
             topology_since_report: Vec::new(),
             connection_topology_changes: 0,
             notices: NoticeState::new(),
+            drift: DriftController::default(),
+            drift_origin: Instant::now(),
+            control_key: None,
         }
     }
 
@@ -623,6 +642,15 @@ impl LatencySession {
         self.pcm = tap.byte_rate > 0;
         self.connected_at = Some(tap.connected_at);
         self.tracker.start_connection(self.pcm, tap.head_start());
+        // Only a PCM connection's reserve can be steered.
+        let drift = if self.pcm {
+            tap.drift_mode()
+        } else {
+            DriftMode::Off
+        };
+        self.drift
+            .start_connection(drift, tap.rate_control().is_some());
+        self.tracker.set_command_ppm(self.drift.applied_ppm());
         self.last_report = Some(now);
         self.polls_since_report = 0;
         self.phases_since_report.clear();
@@ -734,6 +762,8 @@ impl LatencySession {
         self.phases_since_report.clear();
 
         let now_ms = ms_between(tap.connected_at, now);
+        // The correction in force over the window just ended.
+        self.tracker.set_command_ppm(self.drift.applied_ppm());
         let (estimate, brk) = self.tracker.estimate(now_ms);
         if brk == Some(SegmentBreak::OffsetStep) {
             log::warn!(
@@ -763,6 +793,7 @@ impl LatencySession {
         };
         let acked = self.tracker.observe_ack_lag(&mut lags_ms);
         let clock = self.tracker.clock();
+        self.step_drift(tap, now, estimate);
         tap.publish_speaker(SpeakerFigures {
             reserve: estimate.map(|e| (e.reserve_ms, e.half_width_ms)),
             clock_ppm: clock.map(|c| (c.ppm, c.se_ppm)),
@@ -788,7 +819,7 @@ impl LatencySession {
             |v: Option<f64>| v.map_or_else(|| "\u{2014}".to_string(), |v| format!("{v:.0}"));
         log::info!(
             "[SpeakerMonitor] {} stream={} state={} reserve={} lock={} {} stall={} ttf={} \
-             calib={} clock={} polls={}({:.0}/min) phase_gap={} incons={}/{} j={:.0}ms {} \
+             calib={} clock={} {} polls={}({:.0}/min) phase_gap={} incons={}/{} j={:.0}ms {} \
              link={} transport={}{}",
             speaker_ip,
             stream_id,
@@ -803,6 +834,7 @@ impl LatencySession {
             ),
             opt_ms(self.tracker.calib_ms()),
             format_clock(clock),
+            format_drift(&self.drift, tap.net_inserted_ms()),
             polls,
             per_min,
             phase_gap.map_or_else(|| "\u{2014}".to_string(), |g| format!("{g:.0}ms")),
@@ -880,6 +912,39 @@ impl LatencySession {
         self.emit_health(stream_id, speaker_ip, state, emitter);
     }
 
+    /// Steps the drift controller with this report's estimate and hands the
+    /// connection's adapter the command at once, rather than at the next
+    /// monitor tick.
+    fn step_drift(
+        &mut self,
+        tap: &ConnectionTap,
+        now: Instant,
+        estimate: Option<crate::services::speaker_monitor::ReserveEstimate>,
+    ) {
+        let stale = self.consecutive_failures >= BACKOFF_AFTER_FAILURES || self.is_stale();
+        self.drift.update(&ControlInput {
+            now_s: now
+                .saturating_duration_since(self.drift_origin)
+                .as_secs_f64(),
+            estimate,
+            target_ms: self.tracker.target_ms(),
+            head_start_ms: self.tracker.head_start().map(|h| h.sent_ms),
+            clock: self.tracker.clock(),
+            stale,
+        });
+        self.refresh_rate_command(tap);
+    }
+
+    /// Writes the drift command into the connection's rate control, if its
+    /// audio is corrected. Called on every monitor tick as well as each
+    /// report, so the cadence's watchdog only lapses the command if the
+    /// monitor has stopped.
+    fn refresh_rate_command(&self, tap: &ConnectionTap) {
+        if let Some(control) = tap.rate_control() {
+            control.set_ppm(self.drift.applied_ppm());
+        }
+    }
+
     /// Steps the speaker's notice with what this report found, and logs a
     /// new or escalated one.
     #[allow(clippy::too_many_arguments)]
@@ -903,8 +968,8 @@ impl LatencySession {
             stall_ms: self.tracker.stall_ms(),
             link_poor: tap.link_verdict() == Some(LinkQuality::Poor),
             time_to_floor_s,
-            // Drift correction does not exist yet.
-            drift_active: false,
+            drift_active: drift_active(self.drift.mode(), tap.rate_control().map(|c| &**c)),
+            saturated: self.drift.saturated(),
         };
         let before = self.notices.active().map(|n| n.notice_id);
         let notice = self.notices.update(now, &input);
@@ -995,6 +1060,10 @@ impl LatencySession {
             clock_ppm: clock.map(|c| c.ppm as f32),
             clock_se_ppm: clock.map(|c| c.se_ppm as f32),
             time_to_floor_s: self.tracker.time_to_floor_s().map(unsigned_ms),
+            drift_mode: self.pcm.then(|| self.drift.mode()),
+            command_ppm: (self.pcm && self.drift.mode() != DriftMode::Off)
+                .then(|| self.drift.command_ppm() as f32),
+            net_inserted_ms: self.live_tap().and_then(|t| t.net_inserted_ms()).map(ms),
             notice: self.notices.active(),
             timestamp: now_millis(),
         }
@@ -1388,6 +1457,15 @@ fn monitor_capacity_exceeded(monitor_only_sessions: usize) -> bool {
     monitor_polls_per_window(monitor_only_sessions) < HOLD_MIN_POLLS as f64
 }
 
+/// Time since a connection's audio epoch, counting audio drift correction
+/// inserted (or removed) as if it had been captured: the speaker's playhead
+/// runs through it, so the latency is measured against it too.
+fn elapsed_with_inserted(stream_elapsed_ms: u64, net_inserted_ms: f64) -> u64 {
+    (stream_elapsed_ms as f64 + net_inserted_ms)
+        .round()
+        .max(0.0) as u64
+}
+
 /// Milliseconds from `origin` to `at`, zero if `at` is earlier.
 fn ms_between(origin: Instant, at: Instant) -> f64 {
     at.saturating_duration_since(origin).as_secs_f64() * 1000.0
@@ -1506,6 +1584,60 @@ fn format_pipeline(samples: &[crate::stream::cadence::PipelineSample]) -> String
         gap_max.map_or_else(|| "\u{2014}".to_string(), |g| format!("{g}ms")),
         retransmitted.map_or_else(|| "\u{2014}".to_string(), |r| r.to_string()),
     )
+}
+
+/// What drift correction is doing, for the log: `drift=on cmd=+18.0ppm
+/// I=+17.6 ins=+54ms` when it corrects the audio, `drift=observe
+/// would_cmd=+18.0ppm I=+17.6` when it only works out what it would do, and
+/// `drift=off` otherwise. The controller's reason is added when it is not
+/// steering (holding, ramping, no target yet, or a distrusted target).
+fn format_drift(drift: &DriftController, net_inserted_ms: Option<f64>) -> String {
+    use crate::services::speaker_monitor::ControlHold;
+    let mode = drift.mode();
+    if mode == DriftMode::Off {
+        return "drift=off".to_string();
+    }
+    let label = if mode == DriftMode::On {
+        "cmd"
+    } else {
+        "would_cmd"
+    };
+    let hold = match drift.hold() {
+        ControlHold::Steering => String::new(),
+        other => format!("({})", other.as_str()),
+    };
+    let saturated = if drift.saturated() { " saturated" } else { "" };
+    let inserted = net_inserted_ms.map_or_else(String::new, |ms| format!(" ins={ms:+.0}ms"));
+    format!(
+        "drift={mode} {label}={:+.1}ppm{hold} I={:+.1}{saturated}{inserted}",
+        drift.command_ppm(),
+        drift.integral_ppm(),
+    )
+}
+
+/// What the drift controller learned about a speaker, kept after its session
+/// ends so its next cast starts from it.
+struct KeptControlState {
+    state: SpeakerControlState,
+    kept_at: Instant,
+}
+
+/// Keeps what a finished session's drift controller learned about its
+/// speaker, under the session's key.
+fn keep_control_state(
+    kept: &mut HashMap<String, KeptControlState>,
+    session: &LatencySession,
+    now: Instant,
+) {
+    if let Some(key) = &session.control_key {
+        kept.insert(
+            key.clone(),
+            KeptControlState {
+                state: session.drift.state().clone(),
+                kept_at: now,
+            },
+        );
+    }
 }
 
 /// Household changes noted since the last report, for the end of its line:
@@ -1742,6 +1874,9 @@ impl LatencyMonitor {
             spawner,
         } = deps;
         let mut sessions: HashMap<SessionKey, LatencySession> = HashMap::new();
+        // What drift correction learned about speakers whose sessions have
+        // ended, by UUID (or address), for their next cast.
+        let mut kept_control: HashMap<String, KeptControlState> = HashMap::new();
         // Unbounded is safe: each session has at most one poll in flight.
         let (result_tx, mut result_rx) = mpsc::unbounded_channel::<PollResult>();
         let mut next_poll_id: u64 = 0;
@@ -1767,7 +1902,8 @@ impl LatencyMonitor {
                     // A connection that closed before its registration was read
                     // has nothing left to monitor.
                     if let Some(tap) = tap.upgrade() {
-                        register_connection(&mut sessions, &tap);
+                        let uuid = transport_view.speaker_uuid(&tap.speaker_ip.to_string());
+                        register_connection(&mut sessions, &mut kept_control, &tap, uuid);
                     }
                 }
 
@@ -1798,7 +1934,9 @@ impl LatencyMonitor {
                         MonitorCommand::StopSpeaker { stream_id, speaker_ip } => {
                             let key = (stream_id.clone(), speaker_ip);
                             if let Some(mut session) = sessions.remove(&key) {
-                                session.end_connection(&stream_id, speaker_ip, Instant::now());
+                                let now = Instant::now();
+                                session.end_connection(&stream_id, speaker_ip, now);
+                                keep_control_state(&mut kept_control, &session, now);
                                 log::info!(
                                     "[LatencyMonitor] Stopped monitoring: stream={}, speaker={}",
                                     stream_id, speaker_ip
@@ -1812,6 +1950,7 @@ impl LatencyMonitor {
                                     return true;
                                 }
                                 session.end_connection(&k.0, k.1, now);
+                                keep_control_state(&mut kept_control, session, now);
                                 false
                             });
                             log::info!(
@@ -1860,6 +1999,9 @@ impl LatencyMonitor {
                         );
                     }
                     let mut finished: Option<Vec<(SessionKey, &'static str)>> = None;
+                    kept_control.retain(|_, kept| {
+                        now.saturating_duration_since(kept.kept_at) < CONTROL_STATE_IDLE
+                    });
 
                     for (key, session) in sessions.iter_mut() {
                         let (stream_id, speaker_ip) = key;
@@ -1923,6 +2065,9 @@ impl LatencyMonitor {
                         }
 
                         let Some(tap) = tap else { continue };
+                        // Every tick, so the cadence's watchdog lapses the
+                        // command only if this loop stops.
+                        session.refresh_rate_command(&tap);
                         let Some(epoch) = tap.epoch() else { continue };
                         if session.wants_polls() && session.pcm {
                             session.sample_ack_lag(&tap);
@@ -1983,6 +2128,7 @@ impl LatencyMonitor {
                         for (key, reason) in keys {
                             if let Some(mut session) = sessions.remove(&key) {
                                 session.end_connection(&key.0, key.1, now);
+                                keep_control_state(&mut kept_control, &session, now);
                             }
                             log::info!(
                                 "[LatencyMonitor] Ended monitoring ({}): stream={}, speaker={}",
@@ -2009,14 +2155,35 @@ struct MonitorDeps {
 
 /// Hands a connection that has started its epoch to its speaker's session,
 /// creating the session on the speaker's first fetch.
+///
+/// `uuid` is the speaker's RINCON UUID where the topology knows it. What
+/// drift correction learned about the speaker is kept under it (under its
+/// address until then): a new session starts from what `kept` holds for it,
+/// and a session whose key has changed hands over what it had.
 fn register_connection(
     sessions: &mut HashMap<SessionKey, LatencySession>,
+    kept: &mut HashMap<String, KeptControlState>,
     tap: &Arc<ConnectionTap>,
+    uuid: Option<String>,
 ) {
     let key = (tap.stream_id.clone(), tap.speaker_ip);
     let session = sessions
         .entry(key)
         .or_insert_with_key(|key| LatencySession::new(false, dither_seed(key)));
+    let control_key = uuid.unwrap_or_else(|| tap.speaker_ip.to_string());
+    if session.control_key.as_deref() != Some(control_key.as_str()) {
+        let state = match session.control_key.take() {
+            // The topology has named a speaker known so far by address: it
+            // is the same speaker, so it keeps what it has learned.
+            Some(_) if kept.get(&control_key).is_none() => session.drift.state().clone(),
+            _ => kept
+                .remove(&control_key)
+                .map(|k| k.state)
+                .unwrap_or_default(),
+        };
+        session.drift = DriftController::new(state);
+        session.control_key = Some(control_key);
+    }
     session.attach(tap);
     let polling = if session.emit_events {
         "video sync"
@@ -2066,6 +2233,7 @@ async fn poll_position(
     };
     let answered_at = Instant::now();
     let delivered_ms_at_answer = tap.delivered_ms();
+    let net_inserted_ms = tap.net_inserted_ms().unwrap_or(0.0);
     let rtt_ms = answered_at.duration_since(sent_at).as_millis() as u32;
     drop(tap);
 
@@ -2092,6 +2260,7 @@ async fn poll_position(
         answered_at,
         delivered_ms_at_send,
         delivered_ms_at_answer,
+        net_inserted_ms,
         outcome,
         transport,
     });
@@ -2260,9 +2429,14 @@ fn apply_poll_result(
         return;
     }
 
-    // Calculate absolute latency (handles track restarts via offset)
-    let latency_ms =
-        session.calculate_latency(poll.stream_elapsed_ms, position.rel_time_ms, poll.rtt_ms);
+    // Calculate absolute latency (handles track restarts via offset). Audio
+    // drift correction inserted is played but was never captured, so it
+    // counts as source time: without it video sync would drift by as much.
+    let latency_ms = session.calculate_latency(
+        elapsed_with_inserted(poll.stream_elapsed_ms, poll.net_inserted_ms),
+        position.rel_time_ms,
+        poll.rtt_ms,
+    );
 
     session.record_latency(latency_ms);
     // The wall-clock cushion is inflated by our own queue and by the epoch's
@@ -2936,6 +3110,7 @@ mod tests {
                 answered_at: Instant::now(),
                 delivered_ms_at_send: None,
                 delivered_ms_at_answer: None,
+                net_inserted_ms: 0.0,
                 outcome,
                 transport: None,
             }
@@ -3051,6 +3226,26 @@ mod tests {
             assert_eq!(session.sample_count, 1);
         }
 
+        /// Audio drift correction inserted is played by the speaker but was
+        /// never captured: without counting it, video sync would read the
+        /// latency that much too low, drifting by about 70 ms an hour at the
+        /// field's 20 ppm.
+        #[test]
+        fn video_sync_counts_the_audio_drift_correction_inserted() {
+            let measure = |net_inserted_ms: f64| {
+                let mut session = LatencySession::new(true, 0);
+                session.in_flight = Some(1);
+                let mut answered = poll(1, Ok(ours(4000)));
+                answered.net_inserted_ms = net_inserted_ms;
+                apply_poll_result(&mut session, answered, &NoEvents, None);
+                assert_eq!(session.sample_count, 1);
+                session.last_raw_ms
+            };
+            assert_eq!(measure(54.0) - measure(0.0), 54);
+            assert_eq!(measure(-20.0) - measure(0.0), -20);
+            assert_eq!(elapsed_with_inserted(10, -50.0), 0);
+        }
+
         #[test]
         fn a_pcm_session_estimates_the_reserve_and_publishes_it() {
             use crate::services::speaker_monitor::test_support::PollGen;
@@ -3079,6 +3274,7 @@ mod tests {
                     answered_at: at(p.tr),
                     delivered_ms_at_send: Some(p.d_ts_ms as u64),
                     delivered_ms_at_answer: Some(p.d_tr_ms as u64),
+                    net_inserted_ms: 0.0,
                     outcome: Ok(ours(p.rel_ms)),
                     transport: None,
                 };
@@ -3388,5 +3584,52 @@ mod tests {
         assert!(trend.fit().is_none(), "no spread in time");
         trend.add(60.0, 400.0);
         assert!(trend.fit().is_some());
+    }
+
+    /// What drift correction learns is the speaker's, kept under its UUID:
+    /// its next cast starts from it even from a new address, and another
+    /// speaker given the old address starts afresh.
+    #[test]
+    fn control_state_keyed_by_uuid_not_ip() {
+        use crate::stream::tap::test_support::started_tap;
+        let mut sessions = HashMap::new();
+        let mut kept = HashMap::new();
+        let now = Instant::now();
+
+        let tap = started_tap("cast-1", "192.168.1.60", true);
+        register_connection(&mut sessions, &mut kept, &tap, Some("RINCON_A".into()));
+        let key = ("cast-1".to_string(), tap.speaker_ip);
+        let learned = SpeakerControlState {
+            integral_ppm: 18.5,
+            seeded: true,
+            ..SpeakerControlState::default()
+        };
+        sessions.get_mut(&key).unwrap().drift = DriftController::new(learned.clone());
+        let session = sessions.remove(&key).unwrap();
+        keep_control_state(&mut kept, &session, now);
+
+        // Another speaker takes the address: it learns its own clock.
+        let other = started_tap("cast-2", "192.168.1.60", true);
+        register_connection(&mut sessions, &mut kept, &other, Some("RINCON_B".into()));
+        let session = &sessions[&("cast-2".to_string(), other.speaker_ip)];
+        assert_eq!(session.drift.integral_ppm(), 0.0);
+
+        // The first speaker comes back from a new address.
+        let moved = started_tap("cast-3", "192.168.1.61", true);
+        register_connection(&mut sessions, &mut kept, &moved, Some("RINCON_A".into()));
+        let session = &sessions[&("cast-3".to_string(), moved.speaker_ip)];
+        assert_eq!(session.drift.state(), &learned);
+        assert!(kept.is_empty(), "handed over, not copied");
+
+        // Known by address until the topology names it, then it keeps what
+        // it learned under the address.
+        let unnamed = started_tap("cast-4", "192.168.1.62", true);
+        register_connection(&mut sessions, &mut kept, &unnamed, None);
+        let key = ("cast-4".to_string(), unnamed.speaker_ip);
+        sessions.get_mut(&key).unwrap().drift = DriftController::new(learned.clone());
+        let again = started_tap("cast-4", "192.168.1.62", true);
+        register_connection(&mut sessions, &mut kept, &again, Some("RINCON_C".into()));
+        assert_eq!(sessions[&key].drift.state(), &learned);
+        assert_eq!(sessions[&key].control_key.as_deref(), Some("RINCON_C"));
     }
 }

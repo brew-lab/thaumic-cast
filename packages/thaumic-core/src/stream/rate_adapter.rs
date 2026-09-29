@@ -22,7 +22,11 @@
 
 use std::sync::atomic::{AtomicBool, AtomicI32, AtomicI64, AtomicU64, Ordering};
 use std::sync::OnceLock;
-use std::time::{Duration, Instant};
+use std::time::Duration;
+
+// Tokio's clock, which in production is the monotonic clock itself, so the
+// watchdog can be tested (and simulated) on paused time.
+use tokio::time::Instant;
 
 use bytes::{BufMut, Bytes, BytesMut};
 
@@ -139,10 +143,16 @@ pub struct RateAdapter {
 }
 
 impl RateAdapter {
+    /// Whether an adapter can be built for `fmt`: 16-bit PCM with one or
+    /// two channels.
+    pub fn supports(fmt: &AudioFormat) -> bool {
+        is_crossfade_compatible(fmt) && fmt.channels > 0
+    }
+
     /// An adapter for `fmt`, or `None` if it is not 16-bit PCM with one or
     /// two channels.
     pub fn new(fmt: &AudioFormat) -> Option<Self> {
-        if !is_crossfade_compatible(fmt) || fmt.channels == 0 {
+        if !Self::supports(fmt) {
             return None;
         }
         let channels = usize::from(fmt.channels);
@@ -263,6 +273,9 @@ pub struct RateControl {
     /// Whether the cadence has pinned the adapter at 0 ppm because the net
     /// insertion passed its limit.
     pinned: AtomicBool,
+    /// Whether the connection's cadence built an adapter that follows this
+    /// control.
+    engaged: AtomicBool,
 }
 
 impl Default for RateControl {
@@ -280,6 +293,7 @@ impl RateControl {
             written_at_ms: AtomicU64::new(NEVER_WRITTEN),
             net_inserted_frames: AtomicI64::new(0),
             pinned: AtomicBool::new(false),
+            engaged: AtomicBool::new(false),
         }
     }
 
@@ -310,12 +324,9 @@ impl RateControl {
     }
 
     fn command_ppm_at(&self, now: Instant) -> f64 {
-        let written = self.written_at_ms.load(Ordering::Relaxed);
-        if written == NEVER_WRITTEN {
-            return 0.0;
-        }
-        let now_ms = now.saturating_duration_since(self.origin).as_millis() as u64;
-        if now_ms.saturating_sub(written) > RATE_COMMAND_WATCHDOG.as_millis() as u64 {
+        if self.written_at_ms.load(Ordering::Relaxed) == NEVER_WRITTEN
+            || self.watchdog_lapsed_at(now)
+        {
             return 0.0;
         }
         f64::from(self.ppm_milli.load(Ordering::Relaxed)) / 1000.0
@@ -340,6 +351,34 @@ impl RateControl {
 
     pub(crate) fn pin(&self) {
         self.pinned.store(true, Ordering::Relaxed);
+    }
+
+    /// Whether the connection's cadence built an adapter that follows this
+    /// control. False until the cadence body is built, and for good if the
+    /// format could not be resampled.
+    pub fn is_engaged(&self) -> bool {
+        self.engaged.load(Ordering::Relaxed)
+    }
+
+    pub(crate) fn mark_engaged(&self) {
+        self.engaged.store(true, Ordering::Relaxed);
+    }
+
+    /// Whether the command is being followed right now: the adapter is
+    /// engaged, not pinned at 0 ppm, and the command has been refreshed
+    /// within [`RATE_COMMAND_WATCHDOG`] (a command never written counts as
+    /// refreshed, since it reads as 0 anyway).
+    pub fn is_following(&self) -> bool {
+        self.is_engaged() && !self.is_pinned() && !self.watchdog_lapsed_at(Instant::now())
+    }
+
+    fn watchdog_lapsed_at(&self, now: Instant) -> bool {
+        let written = self.written_at_ms.load(Ordering::Relaxed);
+        if written == NEVER_WRITTEN {
+            return false;
+        }
+        let now_ms = now.saturating_duration_since(self.origin).as_millis() as u64;
+        now_ms.saturating_sub(written) > RATE_COMMAND_WATCHDOG.as_millis() as u64
     }
 }
 

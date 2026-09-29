@@ -18,5 +18,8 @@ pub use latency_monitor::{
     speaker_diagnostics_enabled, speaker_monitor_enabled, LatencyMonitor, SPEAKER_MONITOR_ENV,
 };
 pub use playback_session_store::{GroupRole, PlaybackResult, PlaybackSession};
+pub use speaker_monitor::control::{
+    drift_compensation_env_override, drift_compensation_mode, DriftMode, DRIFT_COMPENSATION_ENV,
+};
 pub use stream_coordinator::{CaptureStreamSession, StreamCoordinator};
 pub use topology_monitor::{TopologyMonitor, TopologyMonitorConfig};
