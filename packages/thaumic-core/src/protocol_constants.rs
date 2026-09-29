@@ -34,11 +34,19 @@ pub const DEFAULT_CHANNELS: u16 = 2;
 
 /// Maximum size indicator for WAV streams (4,294,967,295 bytes / ~4.3 GB).
 ///
-/// Used in WAV headers (RIFF file size, data chunk size) and, by default, as
-/// the HTTP Content-Length of a PCM response, to signal an "infinite" stream.
-/// As a Content-Length it is also a real end: hyper stops the body once this
-/// many bytes are written. Field experiments can change both (see
-/// [`crate::stream::pcm_http`]).
+/// Written into both WAV header size fields (RIFF size and data size) of a
+/// PCM stream, the conventional way to mark a WAV stream as unbounded. A
+/// Playbar (S2 86.10) takes it that way when the response declares no
+/// `Content-Length`: a chunked stream with this header played on past 2^31
+/// bytes. It does obey a smaller header size, hanging up once that much audio
+/// has arrived (and at once for a size of 0), so the field must stay at the
+/// maximum.
+///
+/// It is also the `Content-Length` declared by the experimental `length`
+/// framing, which is not a real "infinite" length: hyper stops the body once
+/// this many bytes are written, and a Playbar caps a declared length at 2^31
+/// bytes, ending a cast after 3h06m at 48 kHz stereo. That is why PCM is
+/// served chunked by default (see [`crate::stream::pcm_http`]).
 pub const WAV_STREAM_SIZE_MAX: u32 = u32::MAX;
 
 // ─────────────────────────────────────────────────────────────────────────────
