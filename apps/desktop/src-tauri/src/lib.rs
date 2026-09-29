@@ -23,12 +23,12 @@ use tauri_plugin_log::{RotationStrategy, Target, TargetKind};
 
 use crate::api::commands::{
     add_manual_speaker_ip, clear_all_connections, clear_all_streams, get_autostart_enabled,
-    get_capture_capabilities, get_groups, get_manual_speaker_ips, get_network_health,
-    get_pcm_connect_burst_ms, get_platform, get_playback_sessions, get_server_port,
-    get_speaker_monitor, get_speakers, get_stats, get_transport_states, probe_speaker_ip,
-    refresh_topology, remove_manual_speaker_ip, restart_server, set_autostart_enabled,
-    set_pcm_connect_burst_ms, set_speaker_monitor, show_main_window, start_network_services,
-    start_playback,
+    get_capture_capabilities, get_drift_compensation, get_groups, get_manual_speaker_ips,
+    get_network_health, get_pcm_connect_burst_ms, get_platform, get_playback_sessions,
+    get_server_port, get_speaker_monitor, get_speakers, get_stats, get_transport_states,
+    probe_speaker_ip, refresh_topology, remove_manual_speaker_ip, restart_server,
+    set_autostart_enabled, set_drift_compensation, set_pcm_connect_burst_ms, set_speaker_monitor,
+    show_main_window, start_network_services, start_playback,
 };
 use crate::api::AppState;
 
@@ -84,6 +84,8 @@ pub fn run() {
             set_speaker_monitor,
             get_pcm_connect_burst_ms,
             set_pcm_connect_burst_ms,
+            get_drift_compensation,
+            set_drift_compensation,
             probe_speaker_ip,
             add_manual_speaker_ip,
             remove_manual_speaker_ip,
