@@ -80,6 +80,23 @@ struct Args {
         value_parser = thaumic_core::stream::parse_pcm_connect_burst_ms
     )]
     pcm_connect_burst_ms: Option<u64>,
+
+    /// Clock drift correction for PCM streams: on, observe or off (overrides
+    /// config file). Observe by default: work out and log what it would do,
+    /// leaving the audio untouched. Needs speaker monitoring.
+    #[arg(
+        long,
+        value_name = "on|observe|off",
+        env = thaumic_core::services::DRIFT_COMPENSATION_ENV,
+        value_parser = parse_drift_compensation
+    )]
+    drift_compensation: Option<thaumic_core::DriftMode>,
+}
+
+/// Parses `--drift-compensation` / `THAUMIC_DRIFT_COMPENSATION`.
+fn parse_drift_compensation(value: &str) -> Result<thaumic_core::DriftMode, String> {
+    thaumic_core::DriftMode::parse(value)
+        .ok_or_else(|| format!("expected on, observe or off, got {value:?}"))
 }
 
 /// Parses `--speaker-monitor` / `THAUMIC_SPEAKER_MONITOR`.
@@ -129,6 +146,9 @@ async fn main() -> Result<()> {
     if let Some(burst) = args.pcm_connect_burst_ms {
         config.pcm_connect_burst_ms = burst;
     }
+    if let Some(mode) = args.drift_compensation {
+        config.drift_compensation = mode;
+    }
 
     // CLI/env overrides can introduce invalid values (e.g. --port 0), so
     // validate the merged configuration before anything is started.
@@ -148,6 +168,14 @@ async fn main() -> Result<()> {
         );
     } else {
         log::info!("PCM connect burst: off");
+    }
+    let speaker_monitor = thaumic_core::services::speaker_monitor_enabled(config.speaker_monitor);
+    match config.drift_warning(speaker_monitor) {
+        Some(warning) => log::warn!("{warning}"),
+        None => log::info!(
+            "Clock drift correction: {} (PCM streams only)",
+            config.drift_compensation
+        ),
     }
 
     // Resolve advertise IP: use explicit config, or fall back to auto-detection
@@ -369,6 +397,14 @@ mod tests {
         with_env("THAUMIC_PCM_CONNECT_BURST_MS", "1000", || {
             let args = Args::try_parse_from(["thaumic-server"]).expect("valid env value");
             assert_eq!(args.pcm_connect_burst_ms, Some(1000));
+        });
+
+        with_env("THAUMIC_DRIFT_COMPENSATION", "sometimes", || {
+            assert!(Args::try_parse_from(["thaumic-server"]).is_err());
+        });
+        with_env("THAUMIC_DRIFT_COMPENSATION", "on", || {
+            let args = Args::try_parse_from(["thaumic-server"]).expect("valid env value");
+            assert_eq!(args.drift_compensation, Some(thaumic_core::DriftMode::On));
         });
 
         with_env(
