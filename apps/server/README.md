@@ -147,17 +147,28 @@ much delay. Both apply from each speaker's next connection.
 
 ### Environment variables
 
-| Variable                            | Description                                                                   |
-| ----------------------------------- | ----------------------------------------------------------------------------- |
-| `THAUMIC_BIND_PORT`                 | HTTP server port                                                              |
-| `THAUMIC_ADVERTISE_IP`              | Advertise IP address                                                          |
-| `THAUMIC_TOPOLOGY_REFRESH_INTERVAL` | Topology refresh interval (seconds)                                           |
-| `THAUMIC_DATA_DIR`                  | Directory for persistent data                                                 |
-| `THAUMIC_ARTWORK_URL`               | Custom artwork URL for Sonos                                                  |
-| `THAUMIC_LOG_LEVEL`                 | Log level                                                                     |
-| `THAUMIC_SPEAKER_MONITOR`           | `on` or `off`: poll each speaker's playback position and send speaker notices |
-| `THAUMIC_PCM_CONNECT_BURST_MS`      | Speaker head start for PCM casts in ms, 0 (off) to 2000; adds that much delay |
-| `THAUMIC_STRICT_STREAM_ACCESS`      | `true` refuses audio fetches from addresses a stream is not playing on        |
+| Variable                            | Description                                                                                  |
+| ----------------------------------- | -------------------------------------------------------------------------------------------- |
+| `THAUMIC_BIND_PORT`                 | HTTP server port                                                                             |
+| `THAUMIC_ADVERTISE_IP`              | Advertise IP address                                                                         |
+| `THAUMIC_TOPOLOGY_REFRESH_INTERVAL` | Topology refresh interval (seconds)                                                          |
+| `THAUMIC_DATA_DIR`                  | Directory for persistent data                                                                |
+| `THAUMIC_ARTWORK_URL`               | Custom artwork URL for Sonos                                                                 |
+| `THAUMIC_LOG_LEVEL`                 | Log level                                                                                    |
+| `THAUMIC_SPEAKER_MONITOR`           | `on` or `off`: poll each speaker's playback position and send speaker notices                |
+| `THAUMIC_PCM_CONNECT_BURST_MS`      | Speaker head start for PCM casts in ms, 0 (off) to 2000; adds that much delay                |
+| `THAUMIC_STRICT_STREAM_ACCESS`      | `true` refuses audio fetches from addresses a stream is not playing on                       |
+| `THAUMIC_PCM_HTTP_FRAMING`          | Experimental: `length` (default), `chunked` or `close`: how a PCM stream's body is delimited |
+| `THAUMIC_PCM_CONTENT_LENGTH`        | Experimental: the `Content-Length` PCM declares with `length` framing (default `4294967295`) |
+| `THAUMIC_PCM_WAV_DATA_SIZE`         | Experimental: the WAV header's data size, 0 to 4294967295 (default `4294967295`)             |
+| `THAUMIC_PCM_END_AFTER_BYTES`       | Experimental: end each PCM body cleanly after this many bytes; `chunked` or `close` only     |
+
+The four experimental variables are switches for field experiments into why a PCM cast stops after hours on some
+speakers, not settings: they are read again for each speaker connection, a connection
+served with any of them set logs a `[Stream] PCM HTTP switches` line, and an invalid value, or one that does not apply
+to the chosen framing, is ignored with a warning. Left unset, PCM is served exactly as before. `close` answers as
+HTTP/1.0 with `Connection: close`, so the body ends only when the connection closes; `THAUMIC_PCM_END_AFTER_BYTES` is
+refused with `length` framing, where ending the body early would abort the connection rather than end it cleanly.
 
 ## Running as a service (systemd)
 
