@@ -168,6 +168,7 @@ startup. All three apply from each speaker's next connection.
 | `THAUMIC_PCM_CONTENT_LENGTH`        | Experimental: the `Content-Length` PCM declares with `length` framing (default `4294967295`) |
 | `THAUMIC_PCM_WAV_DATA_SIZE`         | Experimental: the WAV header's data size, 0 to 4294967295 (default `4294967295`)             |
 | `THAUMIC_PCM_END_AFTER_BYTES`       | Experimental: end each PCM body cleanly after this many bytes; `chunked` or `close` only     |
+| `THAUMIC_DRIFT_FORCE_PPM`           | Test only: fix every speaker's PCM rate adapter at this many ppm, -300 to 300 (see below)    |
 
 PCM streams are sent chunked, with no `Content-Length`, and 0xFFFFFFFF in both WAV header size fields, which a Sonos
 Playbar played past 2^31 bytes in a field test (a run past 2^32 is pending). A speaker that asks over HTTP/1.0, which cannot take chunks, gets an HTTP/1.0 response
@@ -183,6 +184,13 @@ one that does not apply to the chosen framing, is ignored with a warning. `lengt
 Playbar. `close` answers as HTTP/1.0 with `Connection: close`, so the body ends only when the connection closes.
 `THAUMIC_PCM_END_AFTER_BYTES` is refused with `length` framing, where ending the body early would abort the connection
 rather than end it cleanly.
+
+`THAUMIC_DRIFT_FORCE_PPM` exists for blind listening tests of the rate adapter and should never be left set. While it
+holds a number from -300 to 300, every monitored speaker's PCM connection stretches (positive) or squeezes (negative)
+its audio by exactly that many ppm, whatever the drift correction mode and the controller say. It is read again for
+each speaker connection, each connection it applies to logs a `[Drift] THAUMIC_DRIFT_FORCE_PPM=... forcing the rate
+adapter; for listening tests only` warning, and the 30 s `[SpeakerMonitor]` line shows `forced=+150ppm`. A value that
+is not a number in range is ignored with a warning. The 2 s limit on audio inserted or removed still applies.
 
 ## Running as a service (systemd)
 
