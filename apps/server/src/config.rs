@@ -10,6 +10,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{bail, Context, Result};
 use serde::Deserialize;
+use thaumic_core::DriftMode;
 
 /// Server configuration loaded from YAML with environment overrides.
 #[derive(Debug, Deserialize)]
@@ -79,6 +80,17 @@ pub struct ServerConfig {
     /// each speaker's next connection. See `thaumic_core::Config`.
     /// Override: `THAUMIC_PCM_CONNECT_BURST_MS`
     pub pcm_connect_burst_ms: u64,
+
+    /// Clock drift correction for PCM streams: `on` stretches or squeezes
+    /// each speaker's audio by at most 150 ppm to hold its head start level
+    /// over long casts, `observe` measures and logs what it would do, `off`
+    /// does neither.
+    ///
+    /// Defaults to `observe`. Needs `speaker_monitor`: with the monitor off
+    /// it runs as `off`, and startup warns once. Applies from each speaker's
+    /// next connection. See `thaumic_core::Config`.
+    /// Override: `THAUMIC_DRIFT_COMPENSATION` (`on`, `observe` or `off`)
+    pub drift_compensation: DriftMode,
 }
 
 impl Default for ServerConfig {
@@ -92,6 +104,7 @@ impl Default for ServerConfig {
             strict_stream_access: false,
             speaker_monitor: true,
             pcm_connect_burst_ms: thaumic_core::protocol_constants::DEFAULT_PCM_CONNECT_BURST_MS,
+            drift_compensation: DriftMode::default(),
         }
     }
 }
@@ -151,8 +164,23 @@ impl ServerConfig {
             strict_stream_access: self.strict_stream_access,
             speaker_monitor: self.speaker_monitor,
             pcm_connect_burst_ms: self.pcm_connect_burst_ms,
+            drift_compensation: self.drift_compensation,
             ..Default::default()
         }
+    }
+
+    /// The warning to log when drift correction is asked for but cannot
+    /// run, because `speaker_monitor` (whether speaker monitoring is on,
+    /// environment included) is off: correction steers by the monitor, so
+    /// it runs as `off`. `None` when there is nothing to warn about.
+    pub fn drift_warning(&self, speaker_monitor: bool) -> Option<String> {
+        (!speaker_monitor && self.drift_compensation != DriftMode::Off).then(|| {
+            format!(
+                "drift_compensation is {} but speaker_monitor is off; clock drift correction \
+                 steers by the speaker monitor, so it runs as off",
+                self.drift_compensation
+            )
+        })
     }
 
     /// Converts to thaumic-core's ArtworkConfig type.
@@ -230,6 +258,36 @@ mod tests {
 
         let config = ServerConfig::from_yaml("speaker_monitor: false\n").expect("should parse");
         assert!(!config.to_core_config().speaker_monitor);
+    }
+
+    /// Drift correction ships observing, reaches core, and a config file can
+    /// set it.
+    #[test]
+    fn drift_compensation_defaults_to_observe_and_is_forwarded_to_core() {
+        assert_eq!(
+            ServerConfig::default().to_core_config().drift_compensation,
+            DriftMode::Observe
+        );
+        let config = ServerConfig::from_yaml("drift_compensation: on\n").expect("should parse");
+        assert_eq!(config.to_core_config().drift_compensation, DriftMode::On);
+        assert!(ServerConfig::from_yaml("drift_compensation: sometimes\n").is_err());
+    }
+
+    /// Correction asked for with the monitor off is warned about once at
+    /// startup; with it off, or the monitor on, there is nothing to say.
+    #[test]
+    fn server_warns_when_monitor_off() {
+        let observe = ServerConfig::default();
+        let warning = observe.drift_warning(false).expect("a warning");
+        assert!(
+            warning.contains("drift_compensation is observe"),
+            "{warning}"
+        );
+        assert!(warning.contains("runs as off"), "{warning}");
+        assert_eq!(observe.drift_warning(true), None);
+
+        let off = ServerConfig::from_yaml("drift_compensation: off\n").expect("should parse");
+        assert_eq!(off.drift_warning(false), None);
     }
 
     /// The connect burst ships on at 500 ms, reaches core, can be switched
