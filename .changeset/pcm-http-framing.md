@@ -13,8 +13,9 @@ for each speaker connection, let a field experiment change one of these at a tim
 `Connection: close`, ended only by closing the connection). `THAUMIC_PCM_CONTENT_LENGTH` sets the length declared with
 `length` framing. `THAUMIC_PCM_WAV_DATA_SIZE` sets the WAV header's data size (0 to 4294967295), with the RIFF size to
 match. `THAUMIC_PCM_END_AFTER_BYTES` ends each body cleanly from our side after that many bytes, logged as
-`ended_by=server_cap`; it is refused with `length` framing, where ending early would abort the connection. A connection
-served with any of them set logs a `[Stream] PCM HTTP switches` line, and an invalid value, or one that does not apply
-to the chosen framing, is ignored with a warning. These switches are for field experiments only: unset, PCM is served
-exactly as before, with a 4294967295-byte `Content-Length` and 0xFFFFFFFF in both WAV size fields. The speaker
-monitor's acknowledged-bytes lag already counts chunk framing, so it stays right on a chunked PCM connection.
+`ended_by=server_cap`; it is refused with `length` framing, where ending early would abort the connection. A
+connection served with any of them set logs a `[Stream] PCM HTTP switches` line, and an invalid value (including one
+that is not valid UTF-8), or one that does not apply to the chosen framing, is ignored with a warning. These switches
+are for field experiments only: unset, PCM is served exactly as before, with a 4294967295-byte `Content-Length` and
+0xFFFFFFFF in both WAV size fields, and every stream response keeps its headers in the same order as before. The
+speaker monitor's acknowledged-bytes lag already counts chunk framing, so it stays right on a chunked PCM connection.

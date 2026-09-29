@@ -164,11 +164,13 @@ much delay. Both apply from each speaker's next connection.
 | `THAUMIC_PCM_END_AFTER_BYTES`       | Experimental: end each PCM body cleanly after this many bytes; `chunked` or `close` only     |
 
 The four experimental variables are switches for field experiments into why a PCM cast stops after hours on some
-speakers, not settings: they are read again for each speaker connection, a connection
-served with any of them set logs a `[Stream] PCM HTTP switches` line, and an invalid value, or one that does not apply
-to the chosen framing, is ignored with a warning. Left unset, PCM is served exactly as before. `close` answers as
+speakers, not settings: they are read again for each speaker connection, a connection served with any of them set logs
+a `[Stream] PCM HTTP switches` line, and an invalid value (including one that is not valid UTF-8), or one that does not
+apply to the chosen framing, is ignored with a warning. Left unset, PCM is served exactly as before. `close` answers as
 HTTP/1.0 with `Connection: close`, so the body ends only when the connection closes; `THAUMIC_PCM_END_AFTER_BYTES` is
-refused with `length` framing, where ending the body early would abort the connection rather than end it cleanly.
+refused with `length` framing, where ending the body early would abort the connection rather than end it cleanly. With
+`chunked`, a speaker that asks over HTTP/1.0 gets a close-delimited body (`http=HTTP/1.0, framing=close` on its
+connection line), as the compressed codecs already do.
 
 ## Running as a service (systemd)
 
