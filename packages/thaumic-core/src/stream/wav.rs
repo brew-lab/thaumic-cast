@@ -3,7 +3,8 @@ use bytes::{BufMut, Bytes, BytesMut};
 use super::pcm_http::riff_size_for;
 use crate::protocol_constants::WAV_STREAM_SIZE_MAX;
 
-/// Generates a standard 44-byte WAVE header for an infinite LPCM stream.
+/// Generates a standard 44-byte WAVE header for an infinite LPCM stream,
+/// with [`WAV_STREAM_SIZE_MAX`] in both size fields.
 ///
 /// @param sample_rate - Typically 44100 or 48000.
 /// @param channels - 1 (mono) or 2 (stereo).

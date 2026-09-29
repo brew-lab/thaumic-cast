@@ -1,23 +1,25 @@
-//! Test-only switches for how a PCM stream is served over HTTP.
+//! How a PCM stream is served over HTTP, and the switches that change it for
+//! a field experiment.
 //!
-//! A PCM cast to a Playbar stopped after exactly 2^31 bytes. The response
-//! declares `Content-Length: 4294967295` and the WAV header declares the same
-//! size in its RIFF and data fields, so the speaker may be obeying either, or
-//! a counter of its own. These switches let a field experiment change one
-//! thing at a time without a rebuild: how the body is delimited, the length it
-//! declares, the sizes in the WAV header, and a clean end from our side after
-//! a set number of bytes.
+//! A PCM stream is sent chunked, with no `Content-Length`, and 0xFFFFFFFF in
+//! both WAV size fields. It used to declare `Content-Length: 4294967295`, and
+//! a Playbar (S2 86.10) stopped every such cast after exactly 2^31 bytes, 3h06m
+//! at 48 kHz stereo: it caps a declared length at 2^31. The same speaker plays
+//! a chunked stream with the 0xFFFFFFFF header past that point, and obeys a
+//! smaller size in the WAV header (see [`WAV_STREAM_SIZE_MAX`]).
 //!
+//! The switches let a field experiment change one thing at a time without a
+//! rebuild: how the body is delimited, the length it declares, the sizes in
+//! the WAV header, and a clean end from our side after a set number of bytes.
 //! They are read from the environment once per connection, and none of them
-//! is a setting: unset, a PCM stream is served exactly as it always was, with
-//! `Content-Length: 4294967295` and 0xFFFFFFFF in both WAV size fields.
+//! is a setting: unset, a PCM stream is served as described above.
 
 use std::fmt;
 
 use crate::protocol_constants::WAV_STREAM_SIZE_MAX;
 
 /// Environment variable that picks how a PCM response body is delimited:
-/// `length` (the default), `chunked` or `close`. See [`PcmHttpFraming`].
+/// `chunked` (the default), `length` or `close`. See [`PcmHttpFraming`].
 pub const PCM_HTTP_FRAMING_ENV: &str = "THAUMIC_PCM_HTTP_FRAMING";
 
 /// Environment variable that sets the `Content-Length` a PCM response
@@ -31,8 +33,8 @@ pub const PCM_CONTENT_LENGTH_ENV: &str = "THAUMIC_PCM_CONTENT_LENGTH";
 pub const PCM_WAV_DATA_SIZE_ENV: &str = "THAUMIC_PCM_WAV_DATA_SIZE";
 
 /// Environment variable that ends a PCM response body cleanly from our side
-/// after this many bytes, WAV header included. Honoured only in `chunked` and
-/// `close` framing: with a declared length, hyper aborts a body that ends
+/// after this many bytes, WAV header included. Honoured only in `chunked` (the
+/// default) and `close` framing: with a declared length, hyper aborts a body that ends
 /// short of it instead of ending it cleanly.
 pub const PCM_END_AFTER_BYTES_ENV: &str = "THAUMIC_PCM_END_AFTER_BYTES";
 
@@ -48,27 +50,31 @@ const SWITCH_VARS: [&str; 4] = [
 /// How a PCM response body is delimited on the wire.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum PcmHttpFraming {
+    /// Declare no length: hyper sends the body chunked to an HTTP/1.1 client,
+    /// with no end of its own. An HTTP/1.0 client cannot take chunks, so hyper
+    /// answers it as HTTP/1.0 with a body that ends only when the connection
+    /// closes. The default.
+    #[default]
+    Chunked,
     /// Declare a `Content-Length` (4294967295 unless
     /// [`PCM_CONTENT_LENGTH_ENV`] says otherwise). hyper stops the body once
-    /// that many bytes are written. What PCM has always been served with.
-    #[default]
+    /// that many bytes are written, and a Playbar stops at 2^31 bytes whatever
+    /// larger length is declared. What PCM was served with before chunked, kept
+    /// for comparison.
     Length,
-    /// Declare no length: hyper sends the body chunked to an HTTP/1.1 client
-    /// (and close-delimited to an HTTP/1.0 one), with no end of its own.
-    Chunked,
     /// Answer as HTTP/1.0 with `Connection: close` and no length: the body
     /// ends only when the connection is closed.
     Close,
 }
 
 impl PcmHttpFraming {
-    /// Parses a framing name: `length`, `chunked` or `close`, in any case.
+    /// Parses a framing name: `chunked`, `length` or `close`, in any case.
     pub fn parse(value: &str) -> Result<Self, String> {
         match value.trim().to_ascii_lowercase().as_str() {
-            "length" => Ok(Self::Length),
             "chunked" => Ok(Self::Chunked),
+            "length" => Ok(Self::Length),
             "close" => Ok(Self::Close),
-            _ => Err(format!("expected length, chunked or close, got {value:?}")),
+            _ => Err(format!("expected chunked, length or close, got {value:?}")),
         }
     }
 
@@ -100,7 +106,8 @@ pub fn riff_size_for(data_size: u32) -> u32 {
 pub struct PcmHttpSettings {
     /// How the response body is delimited.
     pub framing: PcmHttpFraming,
-    /// The `Content-Length` declared in [`PcmHttpFraming::Length`] framing.
+    /// The `Content-Length` declared in [`PcmHttpFraming::Length`] framing,
+    /// and unused in the others.
     pub content_length: u64,
     /// The data size written into the WAV header.
     pub wav_data_size: u32,
@@ -113,7 +120,7 @@ impl Default for PcmHttpSettings {
     /// What PCM is served with when no switch is set.
     fn default() -> Self {
         Self {
-            framing: PcmHttpFraming::Length,
+            framing: PcmHttpFraming::Chunked,
             content_length: u64::from(WAV_STREAM_SIZE_MAX),
             wav_data_size: WAV_STREAM_SIZE_MAX,
             end_after_bytes: None,
@@ -301,12 +308,12 @@ mod tests {
     }
 
     #[test]
-    fn unset_switches_serve_pcm_as_before() {
+    fn unset_switches_serve_pcm_chunked_with_the_largest_wav_sizes() {
         let switches = resolve(None, None, None, None);
         assert_eq!(
             switches.settings,
             PcmHttpSettings {
-                framing: PcmHttpFraming::Length,
+                framing: PcmHttpFraming::Chunked,
                 content_length: 4_294_967_295,
                 wav_data_size: 0xFFFF_FFFF,
                 end_after_bytes: None,
@@ -331,16 +338,34 @@ mod tests {
 
     #[test]
     fn an_explicit_default_still_marks_the_connection_as_an_experiment() {
-        let switches = resolve(Some("length"), None, None, None);
+        let switches = resolve(Some("chunked"), None, None, None);
         assert_eq!(switches.settings, PcmHttpSettings::default());
         assert!(switches.any_set);
     }
 
+    /// Length framing is still there for comparison, and by default declares
+    /// the length PCM was served with before chunked.
+    #[test]
+    fn explicit_length_framing_declares_the_largest_length() {
+        let switches = resolve(Some("length"), None, None, None);
+        assert_eq!(switches.settings.framing, PcmHttpFraming::Length);
+        assert_eq!(switches.settings.content_length, 4_294_967_295);
+        assert_eq!(switches.settings.wav_data_size, 0xFFFF_FFFF);
+        assert!(switches.problems.is_empty());
+    }
+
     #[test]
     fn a_content_length_applies_in_length_framing_only() {
-        let length = resolve(None, Some("10485760"), None, None);
+        let length = resolve(Some("length"), Some("10485760"), None, None);
         assert_eq!(length.settings.content_length, 10_485_760);
         assert!(length.problems.is_empty());
+
+        // Unset framing is chunked, which declares no length.
+        let default = resolve(None, Some("10485760"), None, None);
+        assert_eq!(default.settings.framing, PcmHttpFraming::Chunked);
+        assert_eq!(default.settings.content_length, 4_294_967_295);
+        assert_eq!(default.problems.len(), 1);
+        assert!(default.problems[0].contains("the framing is chunked"));
 
         // Above u32::MAX too: H2 declares 2^32 + 10 MiB.
         let wide = resolve(Some("length"), Some("4305453056"), None, None);
@@ -368,15 +393,15 @@ mod tests {
 
     #[test]
     fn an_early_end_is_refused_with_a_declared_length() {
-        let length = resolve(None, None, None, Some("10485760"));
+        let length = resolve(Some("length"), None, None, Some("10485760"));
         assert_eq!(length.settings.end_after_bytes, None);
         assert_eq!(length.problems.len(), 1);
         assert!(length.problems[0].contains("aborts the connection"));
 
-        for framing in ["chunked", "close"] {
-            let switches = resolve(Some(framing), None, None, Some("10485760"));
+        for framing in [None, Some("chunked"), Some("close")] {
+            let switches = resolve(framing, None, None, Some("10485760"));
             assert_eq!(switches.settings.end_after_bytes, Some(10_485_760));
-            assert!(switches.problems.is_empty());
+            assert!(switches.problems.is_empty(), "{framing:?}");
         }
     }
 

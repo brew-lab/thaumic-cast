@@ -246,10 +246,10 @@ pub(super) async fn stream_audio(
         .and_then(|v| v.to_str().ok())
         .map(|s| s.to_string());
 
-    // How hyper will delimit the body. Only PCM declares a length (see
-    // `ResponseFraming`), unless a field experiment's switches say otherwise;
-    // everything else is chunked for an HTTP/1.1 client and close-delimited
-    // for an HTTP/1.0 one. Logged so that every end of the connection can be
+    // How hyper will delimit the body. No codec declares a length unless a
+    // field experiment's switches say so for PCM (see `ResponseFraming`):
+    // every body is chunked for an HTTP/1.1 client and close-delimited for an
+    // HTTP/1.0 one. Logged so that every end of the connection can be
     // explained, and recorded on the guard so wire bytes include the framing.
     let pcm_switches = (stream_state.codec == AudioCodec::Pcm).then(PcmHttpSwitches::from_env);
     let pcm_http = pcm_switches.as_ref().map(|switches| switches.settings);
@@ -552,9 +552,9 @@ fn connection_line(
 /// for a close-delimited body the HTTP/1.0 status line.
 ///
 /// The order is the one every response has always had: a field experiment
-/// studies how a speaker reacts to exactly these bytes, so by default they
-/// must not move. Only `Connection` and, for PCM, `Content-Length` follow the
-/// framing.
+/// studies how a speaker reacts to exactly these bytes, so they must not
+/// move. Only `Connection` and, for PCM with `length` framing,
+/// `Content-Length` follow the framing.
 fn response_head(
     content_type: &str,
     wants_icy: bool,
@@ -574,7 +574,7 @@ fn response_head(
         builder = builder.header("icy-metaint", ICY_METAINT.to_string());
     }
 
-    // For PCM the Content-Length, or the HTTP/1.0 status line.
+    // A declared Content-Length, or the HTTP/1.0 status line.
     framing.apply(builder)
 }
 
@@ -593,14 +593,18 @@ impl ResponseFraming {
     /// The framing for a response to a request of `request_version`: `pcm`
     /// is the PCM switches for a PCM stream, `None` for any other codec.
     ///
-    /// By default PCM declares a fixed `Content-Length` of 4294967295, first
-    /// added because Sonos was thought to stutter on chunked WAV. It signals
-    /// "file-like" behaviour to the renderer, but it is also a real end: hyper
-    /// stops the body once that many bytes are written, which the end line
-    /// reports as `ended_by=length`. A field experiment can declare another
-    /// length, none (chunked), or answer as HTTP/1.0 and end the body only by
-    /// closing the connection. An HTTP/2 request has no close-delimited body,
-    /// so there `close` declares no length, as `chunked` does.
+    /// By default PCM declares no length, like every other codec: hyper sends
+    /// it chunked to an HTTP/1.1 client and close-delimited to an HTTP/1.0 one,
+    /// answering that as HTTP/1.0. PCM used to declare `Content-Length:
+    /// 4294967295`, added because Sonos was thought to stutter on chunked WAV;
+    /// the stutter was the speaker's thin reserve, which the connect burst
+    /// fixed. That length was a real end, and a Playbar caps a declared length
+    /// at 2^31 bytes, so every cast to one stopped after 3h06m. A field
+    /// experiment can still declare a length (`length`, 4294967295 unless told
+    /// otherwise), reported as `ended_by=length` when hyper stops there, or
+    /// answer as HTTP/1.0 and end the body only by closing the connection. An
+    /// HTTP/2 request has no close-delimited body, so there `close` declares no
+    /// length, as `chunked` does.
     fn new(request_version: Version, pcm: Option<&PcmHttpSettings>) -> Self {
         let (content_length, close) = match pcm.map(|p| (p.framing, p.content_length)) {
             None | Some((PcmHttpFraming::Chunked, _)) => (None, false),
@@ -621,7 +625,7 @@ impl ResponseFraming {
 
     /// Sets what this framing adds to a head `builder` that already carries
     /// the `Connection` header (see [`response_head`]): the declared
-    /// `Content-Length`, last, as it always was.
+    /// `Content-Length`, if any, last, where it always was.
     ///
     /// A close-delimited body can only end by the connection closing, so it
     /// goes out as HTTP/1.0 (and `response_head` says `Connection: close`):
@@ -1709,6 +1713,7 @@ mod tests {
     /// PCM switches for `length` framing declaring `len` bytes.
     fn pcm_length(len: u64) -> PcmHttpSettings {
         PcmHttpSettings {
+            framing: PcmHttpFraming::Length,
             content_length: len,
             ..PcmHttpSettings::default()
         }
@@ -1847,14 +1852,14 @@ mod tests {
             .collect()
     }
 
-    /// With no switch set PCM is served exactly as before, header for header
-    /// and in the same order: a 4294967295-byte Content-Length, last, on a
-    /// keep-alive connection. A compressed codec declares no length, and
-    /// neither is affected by the switches.
+    /// With no switch set PCM declares no length, like a compressed codec,
+    /// so hyper sends it chunked on a keep-alive connection, and the other
+    /// headers keep their order.
     #[test]
-    fn by_default_pcm_declares_the_largest_length_and_compressed_codecs_none() {
+    fn by_default_no_codec_declares_a_length() {
         let pcm = ResponseFraming::new(Version::HTTP_11, Some(&PcmHttpSettings::default()));
-        assert_eq!(pcm.framing, BodyFraming::Length(4_294_967_295));
+        assert_eq!(pcm.framing, BodyFraming::Chunked);
+        assert_eq!(pcm.content_length, None);
         let (version, headers) = head_headers(AudioCodec::Pcm, false, pcm);
         assert_eq!(version, Version::HTTP_11);
         assert_eq!(
@@ -1865,8 +1870,12 @@ mod tests {
                 ("connection", "keep-alive"),
                 ("transfermode.dlna.org", "Streaming"),
                 ("icy-name", APP_NAME),
-                ("content-length", "4294967295"),
             ])
+        );
+        assert_eq!(
+            ResponseFraming::new(Version::HTTP_10, Some(&PcmHttpSettings::default())).framing,
+            BodyFraming::Close,
+            "an HTTP/1.0 client gets a close-delimited body"
         );
 
         let compressed = ResponseFraming::new(Version::HTTP_11, None);
@@ -1886,6 +1895,28 @@ mod tests {
         assert_eq!(
             ResponseFraming::new(Version::HTTP_10, None).framing,
             BodyFraming::Close
+        );
+    }
+
+    /// Explicit `length` framing still serves PCM as it was served before
+    /// chunked, header for header and in the same order: a 4294967295-byte
+    /// Content-Length, last, on a keep-alive connection.
+    #[test]
+    fn explicit_length_framing_declares_the_largest_length() {
+        let pcm = ResponseFraming::new(Version::HTTP_11, Some(&pcm_framed(PcmHttpFraming::Length)));
+        assert_eq!(pcm.framing, BodyFraming::Length(4_294_967_295));
+        let (version, headers) = head_headers(AudioCodec::Pcm, false, pcm);
+        assert_eq!(version, Version::HTTP_11);
+        assert_eq!(
+            headers,
+            pairs(&[
+                ("content-type", "audio/wav"),
+                ("cache-control", "no-cache"),
+                ("connection", "keep-alive"),
+                ("transfermode.dlna.org", "Streaming"),
+                ("icy-name", APP_NAME),
+                ("content-length", "4294967295"),
+            ])
         );
     }
 
@@ -1921,6 +1952,65 @@ mod tests {
         let h2 = ResponseFraming::new(Version::HTTP_2, Some(&pcm_framed(PcmHttpFraming::Close)));
         assert_eq!(h2.framing, BodyFraming::Http2);
         assert!(!h2.close);
+    }
+
+    /// A default PCM body, WAV header first, as `stream_audio` builds it.
+    fn default_pcm_items() -> AudioStream {
+        let header = crate::stream::create_wav_header_with_data_size(
+            48_000,
+            2,
+            16,
+            PcmHttpSettings::default().wav_data_size,
+        );
+        Box::pin(futures::stream::once(async move { Ok(header) }).chain(finite_items(&[1920; 3])))
+    }
+
+    /// With no switch set a PCM response is chunked with no Content-Length,
+    /// and the WAV header in its first chunk declares 0xFFFFFFFF in both size
+    /// fields: the combination a Playbar plays past 2^31 bytes.
+    #[tokio::test]
+    async fn default_pcm_is_chunked_with_an_unbounded_wav_header() {
+        let (addr, slot) = serve_once(default_pcm_items(), Some(PcmHttpSettings::default())).await;
+        let (mut conn, head, body) = request(addr, "GET / HTTP/1.1\r\nHost: t\r\n\r\n").await;
+        assert!(head.starts_with("http/1.1 200"), "{head}");
+        assert!(head.contains("transfer-encoding: chunked"), "{head}");
+        assert!(!head.contains("content-length"), "{head}");
+        let body = read_body(&mut conn, body, |b| b.ends_with(b"0\r\n\r\n")).await;
+
+        // The first chunk is the 44-byte (0x2C) header.
+        assert!(body.starts_with(b"2C\r\nRIFF"), "{:?}", &body[..8]);
+        let header = &body[4..48];
+        assert_eq!(&header[36..40], b"data");
+        assert_eq!(header[4..8], [0xFF; 4], "RIFF size");
+        assert_eq!(header[40..44], [0xFF; 4], "data size");
+
+        let guard = closed_guard(&slot).await;
+        assert_eq!(guard.wire_bytes(), body.len() as u64);
+        assert_eq!(guard.ended_by(), crate::stream::EndedBy::ServerShutdown);
+    }
+
+    /// With no switch set an HTTP/1.0 client still gets PCM, answered as
+    /// HTTP/1.0 with neither a length nor chunking: hyper ends the body by
+    /// closing the connection.
+    #[tokio::test]
+    async fn default_pcm_to_an_http10_client_is_close_delimited() {
+        let (addr, slot) = serve_once(default_pcm_items(), Some(PcmHttpSettings::default())).await;
+        let (mut conn, head, body) = request(addr, "GET / HTTP/1.0\r\n\r\n").await;
+        assert!(head.starts_with("http/1.0 200"), "{head}");
+        assert!(!head.contains("transfer-encoding"), "{head}");
+        assert!(!head.contains("content-length"), "{head}");
+        let body = tokio::time::timeout(
+            Duration::from_secs(5),
+            read_body(&mut conn, body, |_| false),
+        )
+        .await
+        .expect("the server closes the connection");
+        assert_eq!(body.len(), 44 + 3 * 1920);
+        assert_eq!(&body[..4], b"RIFF");
+
+        let guard = closed_guard(&slot).await;
+        assert_eq!(guard.wire_bytes(), body.len() as u64);
+        assert_eq!(guard.ended_by(), crate::stream::EndedBy::ServerShutdown);
     }
 
     /// Chunked PCM has no length and so no end of its own: the body goes on
@@ -2096,13 +2186,14 @@ mod tests {
     }
 
     /// The speaker monitor's ack lag counts what the speaker has acknowledged
-    /// against the bytes on the wire. On a chunked body the framing is
-    /// acknowledged too, 7 bytes per 1920-byte frame, so counted against the
-    /// payload the acknowledged count overtakes it within a few hundred
-    /// frames and the lag reads zero however much is really outstanding.
+    /// against the bytes on the wire. On a chunked body, which is how PCM is
+    /// served by default, the framing is acknowledged too, 7 bytes per
+    /// 1920-byte frame, so counted against the payload the acknowledged count
+    /// overtakes it within a few hundred frames and the lag reads zero however
+    /// much is really outstanding.
     #[cfg(target_os = "linux")]
     #[test]
-    fn a_chunked_connection_reports_its_real_ack_lag() {
+    fn a_default_pcm_connection_reports_its_real_ack_lag() {
         use std::io::{Read, Write};
         use std::os::fd::AsRawFd;
 
@@ -2113,9 +2204,13 @@ mod tests {
         let registry = crate::api::link::TcpLinkRegistry::new();
         let peer_addr = accepted.peer_addr().unwrap();
         registry.register(peer_addr, accepted.as_raw_fd() as u64);
+        // Framed as a PCM connection is with no switch set.
+        let framing =
+            ResponseFraming::new(Version::HTTP_11, Some(&PcmHttpSettings::default())).framing;
+        assert_eq!(framing, BodyFraming::Chunked);
         let guard = LoggingStreamGuard::new("s".into(), test_ip())
             .with_link_probe(registry.claim(peer_addr))
-            .with_framing(BodyFraming::Chunked);
+            .with_framing(framing);
 
         // 1000 frames handed over, framed and written as hyper would, and read.
         let frame = vec![7u8; 1920];
