@@ -211,8 +211,9 @@ pub fn parse_drift_force_ppm(raw: &str) -> Result<Option<f64>, String> {
 
 /// The rate [`DRIFT_FORCE_PPM_ENV`] fixes a new connection's adapter at,
 /// if it is set to a usable value; read afresh for each connection. A
-/// value that is not is ignored with a warning, and the connection gets
-/// the drift correction it would have had.
+/// value that is not is ignored with a warning (once per distinct value, not
+/// on every connection), and the connection gets the drift correction it
+/// would have had.
 pub fn drift_force_ppm() -> Option<f64> {
     drift_force_ppm_from(std::env::var(DRIFT_FORCE_PPM_ENV).ok().as_deref())
 }
@@ -222,15 +223,32 @@ pub fn drift_force_ppm_from(raw: Option<&str>) -> Option<f64> {
     match parse_drift_force_ppm(raw?) {
         Ok(ppm) => ppm,
         Err(why) => {
-            log::warn!(
-                "[Drift] Ignoring {}={:?}: {}",
-                DRIFT_FORCE_PPM_ENV,
-                raw.unwrap_or_default(),
-                why
-            );
+            let raw = raw.unwrap_or_default();
+            static WARNED: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
+            if first_warning_for(&WARNED, raw) {
+                log::warn!(
+                    "[Drift] Ignoring {}={:?}: {}",
+                    DRIFT_FORCE_PPM_ENV,
+                    raw,
+                    why
+                );
+            }
             None
         }
     }
+}
+
+/// Whether `raw` differs from the last unusable value warned about, as kept
+/// in `warned`, noting it as that value if so.
+fn first_warning_for(warned: &std::sync::Mutex<Option<String>>, raw: &str) -> bool {
+    let mut warned = warned
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    if warned.as_deref() == Some(raw) {
+        return false;
+    }
+    *warned = Some(raw.to_string());
+    true
 }
 
 /// The drift correction mode a new connection runs under, given the
@@ -711,6 +729,15 @@ mod tests {
         // Unset forces nothing.
         assert_eq!(drift_force_ppm_from(None), None);
         assert_eq!(drift_force_ppm_from(Some("-42.5")), Some(-42.5));
+    }
+
+    #[test]
+    fn an_unusable_forced_rate_is_warned_about_once_per_value() {
+        let warned = std::sync::Mutex::new(None);
+        assert!(first_warning_for(&warned, "fast"));
+        assert!(!first_warning_for(&warned, "fast"));
+        assert!(first_warning_for(&warned, "1e9"));
+        assert!(!first_warning_for(&warned, "1e9"));
     }
 
     #[test]
