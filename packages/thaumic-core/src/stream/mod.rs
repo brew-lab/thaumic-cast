@@ -4,6 +4,7 @@ pub mod icy;
 pub mod ingest_gaps;
 pub mod manager;
 pub mod pcm_http;
+pub mod rate_adapter;
 pub mod tap;
 pub mod wav;
 
@@ -22,6 +23,7 @@ pub use pcm_http::{
     PcmHttpFraming, PcmHttpSettings, PcmHttpSwitches, PCM_CONTENT_LENGTH_ENV,
     PCM_END_AFTER_BYTES_ENV, PCM_HTTP_FRAMING_ENV, PCM_WAV_DATA_SIZE_ENV,
 };
+pub use rate_adapter::{RateAdapter, RateControl};
 pub use tap::{ConnectionTap, HeadStart, MonitorRegistrar, SpeakerFigures, SpeakerSnapshot};
 pub use wav::{create_wav_header, create_wav_header_with_data_size};
 

@@ -19,6 +19,7 @@ use tokio::time::{interval, Instant as TokioInstant, MissedTickBehavior};
 
 use super::framing::{BodyFraming, EndedBy};
 use super::manager::TimestampedFrame;
+use super::rate_adapter::{RateAdapter, RateControl};
 use super::tap::{ConnectionTap, MonitorRegistrar};
 use super::{
     apply_fade_in, create_fade_out_frame, crossfade_samples, extract_last_sample_pair,
@@ -1049,6 +1050,99 @@ impl CrossfadeState {
     }
 }
 
+/// Most audio drift correction may insert into or remove from one
+/// connection. Past it the command is no longer followed: something is
+/// wrong with the controller or the speaker, and a few seconds of speed
+/// change would start to be felt in lip sync and grouped playback.
+pub const MAX_NET_INSERTED: Duration = Duration::from_secs(2);
+
+/// Drift correction on one connection's cadence.
+///
+/// Every frame the cadence emits passes through the adapter: connect-burst,
+/// metronome, rebuffer-hold silence, fade-out and fade-in frames alike, so
+/// the filter state runs on unbroken from the first byte to the last and
+/// its group delay never steps. Silence costs nothing audible to filter.
+struct DriftHook {
+    adapter: RateAdapter,
+    control: Arc<RateControl>,
+    /// Sample frames per second.
+    sample_rate: u32,
+    /// [`MAX_NET_INSERTED`] in sample frames.
+    net_limit_frames: i64,
+    /// The net insertion last published to `control`.
+    published: i64,
+}
+
+impl DriftHook {
+    /// The hook for a connection with `control`, or `None` (logged) if the
+    /// format cannot be resampled, which leaves the stream as it was.
+    fn new(
+        control: Arc<RateControl>,
+        audio_format: &AudioFormat,
+        client_ip: IpAddr,
+    ) -> Option<Self> {
+        let Some(adapter) = RateAdapter::new(audio_format) else {
+            log::info!(
+                "[Cadence] Drift correction unavailable for {}: needs 16-bit PCM with at most 2 \
+                 channels, got {}-bit with {} channels",
+                client_ip,
+                audio_format.bits_per_sample,
+                audio_format.channels
+            );
+            return None;
+        };
+        let net_limit_frames =
+            (MAX_NET_INSERTED.as_millis() as i64) * i64::from(audio_format.sample_rate) / 1000;
+        Some(Self {
+            adapter,
+            control,
+            sample_rate: audio_format.sample_rate.max(1),
+            net_limit_frames,
+            published: 0,
+        })
+    }
+
+    /// Resamples one emitted frame at the command in force.
+    fn apply(&mut self, frame: &Bytes) -> Bytes {
+        let ppm = if self.control.is_pinned() {
+            0.0
+        } else {
+            self.control.command_ppm()
+        };
+        let out = self.adapter.process(frame, ppm);
+        let net = self.adapter.net_frames();
+        if net != self.published {
+            self.control.publish_net_frames(net);
+            self.published = net;
+            if net.abs() > self.net_limit_frames && !self.control.is_pinned() {
+                self.control.pin();
+                log::warn!(
+                    "[Cadence] Drift correction has {} {:.0} ms, more than the {} ms limit; holding \
+                     at 0 ppm for the rest of this connection",
+                    if net > 0 { "inserted" } else { "removed" },
+                    self.net_ms().abs(),
+                    MAX_NET_INSERTED.as_millis()
+                );
+            }
+        }
+        out
+    }
+
+    /// The audio inserted (positive) or removed so far, in milliseconds.
+    fn net_ms(&self) -> f64 {
+        self.adapter.net_frames() as f64 * 1000.0 / f64::from(self.sample_rate)
+    }
+}
+
+/// Passes an emitted frame through the connection's drift correction, or
+/// returns it untouched (the same buffer, zero-copy) when there is none.
+fn shape(drift: &mut Option<DriftHook>, frame: Bytes) -> Bytes {
+    match drift {
+        Some(hook) => hook.apply(&frame),
+        None => frame,
+    }
+}
+
 /// Configuration for the cadence streaming pipeline.
 pub struct CadenceConfig {
     /// Silence frame emitted when no audio is queued.
@@ -1092,6 +1186,12 @@ pub struct CadenceConfig {
     /// frame served by seconds on a reconnect, and an epoch anchored there
     /// reads every later latency and cushion that much too high.
     pub epoch_candidate: Option<Instant>,
+    /// Where the connection's drift correction reads its rate command. With
+    /// `Some`, every frame the stream emits is resampled by a
+    /// [`RateAdapter`] built before the connect burst; with `None` (drift
+    /// correction off or only observing) no adapter exists and frames go
+    /// out as the very buffers that were captured.
+    pub rate_control: Option<Arc<RateControl>>,
 }
 
 impl CadenceConfig {
@@ -1153,7 +1253,16 @@ impl CadenceConfig {
             burst_frames,
             prefill_frames,
             epoch_candidate,
+            rate_control: None,
         }
+    }
+
+    /// Resamples every frame this connection emits, following the command
+    /// left in `control`.
+    #[must_use]
+    pub fn with_rate_control(mut self, control: Arc<RateControl>) -> Self {
+        self.rate_control = Some(control);
+        self
     }
 
     /// Milliseconds of audio in the connect burst.
@@ -1202,6 +1311,11 @@ fn trim_prefill<T>(mut prefill_frames: Vec<T>, buffer_depth: usize) -> Vec<T> {
 /// `StreamState` (and with it the broadcast sender) alive; if the upgrade
 /// fails the stream has been removed and the hook is dropped unfired.
 ///
+/// Drift correction (optional): with [`CadenceConfig::rate_control`] set,
+/// every frame the stream emits, connect burst and silence included, is
+/// resampled by one [`RateAdapter`] at the command in force. Without it the
+/// stream yields the captured buffers themselves.
+///
 /// This ensures Sonos always receives continuous data with smooth transitions,
 /// eliminating pops from abrupt audio/silence boundaries.
 pub fn create_wav_stream_with_cadence(
@@ -1221,6 +1335,7 @@ pub fn create_wav_stream_with_cadence(
             burst_frames,
             prefill_frames,
             epoch_candidate,
+            rate_control,
         } = config;
         let cadence_duration = Duration::from_millis(frame_duration_ms as u64);
         // Upper bound on holding playback after an underrun: twice the jitter
@@ -1296,6 +1411,13 @@ pub fn create_wav_stream_with_cadence(
 
         let mut crossfade = CrossfadeState::new(&audio_format, frame_duration_ms);
 
+        // Built before the connect burst, so burst and metronome frames share
+        // one filter state. The crossfade keeps tracking the frames the
+        // adapter is fed, not what it emits: a fade-out frame goes through
+        // the adapter too, and it is the adapter's input that must be
+        // continuous for its output to be.
+        let mut drift = rate_control.and_then(|control| DriftHook::new(control, &audio_format, guard.client_ip));
+
         // Rate-limit lagged warnings (max once per second)
         let mut last_lagged_log: Option<TokioInstant> = None;
 
@@ -1324,7 +1446,7 @@ pub fn create_wav_stream_with_cadence(
             has_played_audio = true;
             for frame in burst_frames {
                 crossfade.track_frame(&frame);
-                yield Ok(frame);
+                yield Ok(shape(&mut drift, frame));
             }
             // One frame arrives per missed tick, plus the immediate first
             // tick, which has not fired yet either.
@@ -1431,7 +1553,7 @@ pub fn create_wav_stream_with_cadence(
 
                     if hold_for_rebuffer {
                         silence_frames += 1;
-                        yield Ok(silence_frame.clone());
+                        yield Ok(shape(&mut drift, silence_frame.clone()));
                     } else if let Some(frame) = queue.pop_front() {
                         // Real audio available
                         let was_in_silence = in_silence;
@@ -1471,9 +1593,9 @@ pub fn create_wav_stream_with_cadence(
                         has_played_audio = true;
 
                         if was_in_silence {
-                            yield Ok(crossfade.maybe_fade_in(frame));
+                            yield Ok(shape(&mut drift, crossfade.maybe_fade_in(frame)));
                         } else {
-                            yield Ok(frame);
+                            yield Ok(shape(&mut drift, frame));
                         }
                     } else if !rx_closed {
                         // No frame available, emit silence
@@ -1494,10 +1616,10 @@ pub fn create_wav_stream_with_cadence(
                                 rebuffering = true;
                                 rebuffer_started = None;
                             }
-                            yield Ok(crossfade.enter_silence(&silence_frame));
+                            yield Ok(shape(&mut drift, crossfade.enter_silence(&silence_frame)));
                         } else {
                             silence_frames += 1;
-                            yield Ok(silence_frame.clone());
+                            yield Ok(shape(&mut drift, silence_frame.clone()));
                         }
                     }
                     // If rx_closed and queue empty, don't yield - loop will break
@@ -1600,6 +1722,15 @@ pub fn create_wav_stream_with_cadence(
             frames_dropped,
             rebuffer_events,
         });
+        if let Some(hook) = drift {
+            log::info!(
+                "[Cadence] Drift correction on {}: net {:+} sample frames ({:+.1} ms){}",
+                guard.client_ip,
+                hook.adapter.net_frames(),
+                hook.net_ms(),
+                if hook.control.is_pinned() { ", pinned at 0 ppm" } else { "" }
+            );
+        }
     }
 }
 
@@ -1648,6 +1779,7 @@ mod tests {
             burst_frames: vec![],
             prefill_frames: vec![],
             epoch_candidate: None,
+            rate_control: None,
         }
     }
 
@@ -2124,6 +2256,7 @@ mod tests {
             burst_frames: vec![],
             prefill_frames: prefill,
             epoch_candidate: None,
+            rate_control: None,
         }
     }
 
@@ -3036,5 +3169,242 @@ mod tests {
         guard.reference_time = Instant::now() - FIRST_WAIT_SURVIVAL;
         guard.record_frame();
         assert!(!guard.first_wait_survived.load(Ordering::Relaxed));
+    }
+
+    // ─────────────────────────────────────────────────────────────────────
+    // Drift correction
+    // ─────────────────────────────────────────────────────────────────────
+
+    /// Sample frames in 10 ms of 48 kHz audio.
+    const PCM_FRAME_SAMPLES: usize = 480;
+
+    /// Frame `i` of one continuous two-tone signal, 10 ms of 48 kHz stereo,
+    /// the right channel the left inverted.
+    fn pcm_frame(i: usize) -> Bytes {
+        let mut out = Vec::with_capacity(PCM_FRAME_SAMPLES * 4);
+        for n in 0..PCM_FRAME_SAMPLES {
+            let t = (i * PCM_FRAME_SAMPLES + n) as f64 / 48_000.0;
+            let tone = |f: f64, a: f64| a * (2.0 * std::f64::consts::PI * f * t).sin();
+            let v = (tone(1_000.0, 9_000.0) + tone(6_000.0, 4_000.0)).round() as i16;
+            out.extend_from_slice(&v.to_le_bytes());
+            out.extend_from_slice(&(-v).to_le_bytes());
+        }
+        Bytes::from(out)
+    }
+
+    fn pcm_silence() -> Bytes {
+        Bytes::from(vec![0u8; PCM_FRAME_SAMPLES * 4])
+    }
+
+    /// The samples of `frames`, end to end.
+    fn samples(frames: &[Bytes]) -> Vec<i16> {
+        frames
+            .iter()
+            .flat_map(|f| f.chunks_exact(2).map(|b| i16::from_le_bytes([b[0], b[1]])))
+            .collect()
+    }
+
+    /// What one adapter fed `frames` in order at `ppm` emits for each.
+    fn through_one_adapter(frames: &[Bytes], ppm: f64) -> Vec<Bytes> {
+        let mut adapter = RateAdapter::new(&test_audio_format()).unwrap();
+        frames.iter().map(|f| adapter.process(f, ppm)).collect()
+    }
+
+    fn control_at(ppm: f64) -> Arc<RateControl> {
+        let control = Arc::new(RateControl::new());
+        control.set_ppm(ppm);
+        control
+    }
+
+    /// Ten frames of ring, a 30 ms jitter buffer and a 50 ms connect burst:
+    /// frames 2..=6 are burst, 7..=9 queued.
+    fn pcm_burst_config(control: Option<Arc<RateControl>>) -> (CadenceConfig, Vec<Bytes>) {
+        let ring: Vec<Bytes> = (0..10).map(pcm_frame).collect();
+        let config = CadenceConfig::new(
+            pcm_silence(),
+            30,
+            50,
+            SILENCE_FRAME_DURATION_MS,
+            test_audio_format(),
+            timestamped(ring.clone(), 10),
+        );
+        let config = match control {
+            Some(control) => config.with_rate_control(control),
+            None => config,
+        };
+        (config, ring)
+    }
+
+    /// The connect burst, the first tick, then three more ticks with one
+    /// live frame (10) sent: everything the stream emits for frames 2..=10.
+    async fn burst_then_ticks(config: CadenceConfig) -> Vec<Bytes> {
+        let (tx, rx) = broadcast::channel::<Bytes>(16);
+        let mut stream = Box::pin(create_wav_stream_with_cadence(
+            rx,
+            test_guard(),
+            config,
+            None,
+            None,
+        ));
+        let mut out = ready_now(&mut stream.as_mut()).await;
+        assert_eq!(out.len(), 6, "five burst frames and the first tick");
+        tx.send(pcm_frame(10)).unwrap();
+        for _ in 0..3 {
+            out.push(next_tick(&mut stream.as_mut()).await);
+        }
+        drop(tx);
+        out
+    }
+
+    /// The adapter is built before the burst: burst and metronome frames go
+    /// through one filter, so at 0 ppm the whole connection is the input
+    /// delayed by the adapter's 16 samples, once, with nothing lost, added
+    /// or restarted at the handover.
+    #[tokio::test(start_paused = true)]
+    async fn burst_and_tick_frames_share_filter_state() {
+        let (config, ring) = pcm_burst_config(Some(control_at(0.0)));
+        let out = burst_then_ticks(config).await;
+
+        let mut sent: Vec<Bytes> = ring[2..].to_vec();
+        sent.push(pcm_frame(10));
+        let input = samples(&sent);
+        let output = samples(&out);
+        assert_eq!(output.len(), input.len());
+        let delay = 2 * crate::stream::rate_adapter::RATE_ADAPTER_DELAY_FRAMES;
+        assert!(output[..delay].iter().all(|&s| s == 0));
+        assert_eq!(
+            &output[delay..],
+            &input[..input.len() - delay],
+            "one continuous filter from the first burst frame to the last tick"
+        );
+
+        // At a real rate the stream matches one adapter fed the same frames.
+        let (config, _) = pcm_burst_config(Some(control_at(150.0)));
+        let out = burst_then_ticks(config).await;
+        assert_eq!(out, through_one_adapter(&sent, 150.0));
+    }
+
+    /// Runs an underrun and recovery through a 3-frame jitter buffer and
+    /// returns every frame emitted: prefill, the fade-out that starts the
+    /// silence, held silence while rebuffering, the faded-in frame that
+    /// resumes, and the fade-out after it.
+    async fn underrun_and_recovery(control: Option<Arc<RateControl>>) -> Vec<Bytes> {
+        let (tx, rx) = broadcast::channel::<Bytes>(16);
+        let config = CadenceConfig {
+            silence_frame: pcm_silence(),
+            overflow_cap: 6,
+            buffer_depth: 3,
+            frame_duration_ms: SILENCE_FRAME_DURATION_MS,
+            audio_format: test_audio_format(),
+            burst_frames: vec![],
+            prefill_frames: (0..3).map(pcm_frame).collect(),
+            epoch_candidate: None,
+            rate_control: control,
+        };
+        let mut stream = Box::pin(create_wav_stream_with_cadence(
+            rx,
+            test_guard(),
+            config,
+            None,
+            None,
+        ));
+        let mut out = ready_now(&mut stream.as_mut()).await;
+        for _ in 0..3 {
+            out.push(next_tick(&mut stream.as_mut()).await);
+        }
+        for i in 10..13 {
+            tx.send(pcm_frame(i)).unwrap();
+            out.push(next_tick(&mut stream.as_mut()).await);
+        }
+        for _ in 0..4 {
+            out.push(next_tick(&mut stream.as_mut()).await);
+        }
+        drop(tx);
+        out
+    }
+
+    /// Silence, fade-out and fade-in frames pass the adapter like audio
+    /// does, in order, through the same filter state: the corrected stream
+    /// is exactly the uncorrected one fed through one adapter.
+    #[tokio::test(start_paused = true)]
+    async fn silence_and_fade_frames_pass_the_adapter() {
+        let plain = underrun_and_recovery(None).await;
+        let first = |f: &Bytes| i16::from_le_bytes([f[0], f[1]]);
+        let last = |f: &Bytes| i16::from_le_bytes([f[f.len() - 4], f[f.len() - 3]]);
+        // The scenario covers every kind of frame the cadence makes.
+        assert_eq!(&plain[..3], &(0..3).map(pcm_frame).collect::<Vec<_>>()[..]);
+        assert!(first(&plain[3]) != 0 && last(&plain[3]) == 0, "fade-out");
+        assert!(
+            plain[4..6].iter().all(|f| f == &pcm_silence()),
+            "held silence"
+        );
+        let fade_in = &plain[6];
+        assert!(first(fade_in) == 0 && fade_in != &pcm_frame(10), "fade-in");
+        assert_eq!(
+            fade_in[fade_in.len() - 4..],
+            pcm_frame(10)[pcm_frame(10).len() - 4..]
+        );
+        assert!(
+            first(&plain[9]) != 0 && last(&plain[9]) == 0,
+            "second fade-out"
+        );
+        assert_eq!(plain[10], pcm_silence());
+
+        let shaped = underrun_and_recovery(Some(control_at(200.0))).await;
+        assert_eq!(shaped.len(), plain.len());
+        assert_eq!(shaped, through_one_adapter(&plain, 200.0));
+    }
+
+    /// Drift correction off, or only observing, builds no adapter: every
+    /// frame, connect burst included, goes out as the very buffer that was
+    /// captured. An adapter, even at 0 ppm, would change every byte.
+    #[tokio::test(start_paused = true)]
+    async fn observe_output_byte_identical_including_burst() {
+        let (config, ring) = pcm_burst_config(None);
+        let out = burst_then_ticks(config).await;
+        let mut sent: Vec<Bytes> = ring[2..].to_vec();
+        sent.push(pcm_frame(10));
+        assert_eq!(out, sent);
+        for (got, want) in out.iter().zip(&ring[2..]) {
+            assert_eq!(got.as_ptr(), want.as_ptr(), "zero-copy");
+        }
+
+        let (config, _) = pcm_burst_config(Some(control_at(0.0)));
+        assert_ne!(burst_then_ticks(config).await, sent);
+    }
+
+    /// Past the net-insertion limit the adapter holds at 0 ppm for the rest
+    /// of the connection, still engaged, and says so on the control.
+    #[test]
+    fn net_insertion_past_the_limit_pins_the_adapter_at_0ppm() {
+        let control = control_at(300.0);
+        let mut hook = DriftHook::new(
+            Arc::clone(&control),
+            &test_audio_format(),
+            IpAddr::V4(Ipv4Addr::LOCALHOST),
+        )
+        .unwrap();
+        assert_eq!(hook.net_limit_frames, 96_000, "two seconds at 48 kHz");
+        hook.net_limit_frames = 10;
+        let frame = pcm_frame(0);
+        for _ in 0..100 {
+            hook.apply(&frame);
+        }
+        assert!(control.is_pinned());
+        let net = control.net_inserted_frames();
+        assert_eq!(net, hook.adapter.net_frames());
+        assert!(net > 10 && net <= 12, "{net}");
+        for _ in 0..100 {
+            let out = hook.apply(&frame);
+            assert_eq!(out.len(), frame.len(), "0 ppm once pinned");
+        }
+        assert_eq!(control.net_inserted_frames(), net);
+    }
+
+    #[test]
+    fn a_format_the_adapter_cannot_take_gets_no_drift_correction() {
+        let ip = IpAddr::V4(Ipv4Addr::LOCALHOST);
+        assert!(DriftHook::new(control_at(100.0), &AudioFormat::new(48_000, 2, 24), ip).is_none());
+        assert!(DriftHook::new(control_at(100.0), &AudioFormat::new(48_000, 6, 16), ip).is_none());
     }
 }
