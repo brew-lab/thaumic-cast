@@ -27,14 +27,14 @@ use tokio_stream::wrappers::BroadcastStream;
 use crate::api::ws::is_companion_host;
 use crate::api::AppState;
 use crate::error::{ThaumicError, ThaumicResult};
-use crate::protocol_constants::{APP_NAME, ICY_METAINT, WAV_STREAM_SIZE_MAX};
+use crate::protocol_constants::{APP_NAME, ICY_METAINT};
 use crate::services::latency_monitor::speaker_monitor_enabled;
 use crate::stream::manager::TimestampedFrame;
 use crate::stream::{
-    create_wav_header, create_wav_stream_with_cadence, lagged_error, pcm_connect_burst_ms,
-    AudioCodec, BodyFraming, CadenceConfig, ConnectionTap, EpochHook, FirstConnectionWait,
-    FirstWaitWatch, HeadStart, IcyMetadataInjector, LoggingStreamGuard, StreamState,
-    MAX_UNLISTED_STREAM_READERS,
+    create_wav_header_with_data_size, create_wav_stream_with_cadence, lagged_error,
+    pcm_connect_burst_ms, AudioCodec, BodyFraming, CadenceConfig, ConnectionTap, EpochHook,
+    FirstConnectionWait, FirstWaitWatch, HeadStart, IcyMetadataInjector, LoggingStreamGuard,
+    PcmHttpFraming, PcmHttpSettings, PcmHttpSwitches, StreamState, MAX_UNLISTED_STREAM_READERS,
 };
 
 /// A single item of an audio body stream.
@@ -246,14 +246,15 @@ pub(super) async fn stream_audio(
         .and_then(|v| v.to_str().ok())
         .map(|s| s.to_string());
 
-    // How hyper will delimit the body. Only PCM declares a length (see the
-    // Content-Length below); everything else is chunked for an HTTP/1.1
-    // client and close-delimited for an HTTP/1.0 one. Logged so that every
-    // end of the connection can be explained, and recorded on the guard so
-    // wire bytes include the framing.
-    let content_length =
-        (stream_state.codec == AudioCodec::Pcm).then_some(u64::from(WAV_STREAM_SIZE_MAX));
-    let framing = BodyFraming::for_response(version, content_length);
+    // How hyper will delimit the body. Only PCM declares a length (see
+    // `ResponseFraming`), unless a field experiment's switches say otherwise;
+    // everything else is chunked for an HTTP/1.1 client and close-delimited
+    // for an HTTP/1.0 one. Logged so that every end of the connection can be
+    // explained, and recorded on the guard so wire bytes include the framing.
+    let pcm_switches = (stream_state.codec == AudioCodec::Pcm).then(PcmHttpSwitches::from_env);
+    let pcm_http = pcm_switches.as_ref().map(|switches| switches.settings);
+    let response_framing = ResponseFraming::new(version, pcm_http.as_ref());
+    let framing = response_framing.framing;
 
     // A Range request is served from the live edge like any other, so it is
     // a new connection too, and logged as one.
@@ -268,6 +269,9 @@ pub(super) async fn stream_audio(
             range_header.as_deref()
         )
     );
+    if let Some(switches) = &pcm_switches {
+        log_pcm_switches(remote_ip, &id, switches);
+    }
 
     // Detect resume: this specific IP had a previous HTTP connection.
     // Uses per-IP epoch tracking (not global counter) to avoid misclassifying
@@ -482,7 +486,6 @@ pub(super) async fn stream_audio(
     let mut builder = Response::builder()
         .header(header::CONTENT_TYPE, content_type)
         .header(header::CACHE_CONTROL, "no-cache")
-        .header(header::CONNECTION, "keep-alive")
         // DLNA streaming header: indicates real-time playback vs download-first
         .header("TransferMode.dlna.org", "Streaming")
         // Stream identification for renderers that display station name
@@ -492,14 +495,8 @@ pub(super) async fn stream_audio(
         builder = builder.header("icy-metaint", ICY_METAINT.to_string());
     }
 
-    // PCM: Use fixed Content-Length to avoid chunked transfer encoding.
-    // Some renderers (including Sonos) stutter or disconnect with chunked encoding.
-    // It signals "file-like" behavior to the renderer, but it is also a real
-    // end: hyper stops the body once this many bytes are written, which the
-    // end line reports as `ended_by=length`.
-    if let Some(len) = content_length {
-        builder = builder.header(header::CONTENT_LENGTH, len.to_string());
-    }
+    // Connection, and for PCM the Content-Length or the HTTP/1.0 status line.
+    builder = response_framing.apply(builder);
 
     // Apply ICY injection or PCM/WAV header
     let inner_stream: AudioStream = if wants_icy {
@@ -510,10 +507,11 @@ pub(super) async fn stream_audio(
     } else if stream_state.codec == AudioCodec::Pcm {
         // PCM streams need WAV header prepended per-connection (Sonos may reconnect)
         let audio_format = stream_state.audio_format;
-        let wav_header = create_wav_header(
+        let wav_header = create_wav_header_with_data_size(
             audio_format.sample_rate,
             audio_format.channels,
             audio_format.bits_per_sample,
+            pcm_http.unwrap_or_default().wav_data_size,
         );
         Box::pin(futures::StreamExt::chain(
             futures::stream::once(async move { Ok(wav_header) }),
@@ -522,6 +520,9 @@ pub(super) async fn stream_audio(
     } else {
         Box::pin(combined_stream)
     };
+
+    // A field experiment may end the body cleanly after a set number of bytes.
+    let inner_stream = with_optional_server_cap(inner_stream, pcm_http.as_ref(), &guard);
 
     // Wrap stream with logging guard to track delivery timing and errors.
     // The guard logs summary stats on drop when the stream ends. The body
@@ -558,6 +559,150 @@ fn connection_line(
          http={version:?}, framing={}, declared_len={declared_len}{range}",
         framing.label()
     )
+}
+
+/// How a response body is delimited, and the headers that say so.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct ResponseFraming {
+    /// How hyper will delimit the body, as logged and recorded on the guard.
+    framing: BodyFraming,
+    /// The `Content-Length` to declare, if any.
+    content_length: Option<u64>,
+    /// Answer as HTTP/1.0 with `Connection: close` rather than keep-alive.
+    close: bool,
+}
+
+impl ResponseFraming {
+    /// The framing for a response to a request of `request_version`: `pcm`
+    /// is the PCM switches for a PCM stream, `None` for any other codec.
+    ///
+    /// By default PCM declares a fixed `Content-Length` of 4294967295, first
+    /// added because Sonos was thought to stutter on chunked WAV. It signals
+    /// "file-like" behaviour to the renderer, but it is also a real end: hyper
+    /// stops the body once that many bytes are written, which the end line
+    /// reports as `ended_by=length`. A field experiment can declare another
+    /// length, none (chunked), or answer as HTTP/1.0 and end the body only by
+    /// closing the connection. An HTTP/2 request has no close-delimited body,
+    /// so there `close` declares no length, as `chunked` does.
+    fn new(request_version: Version, pcm: Option<&PcmHttpSettings>) -> Self {
+        let (content_length, close) = match pcm.map(|p| (p.framing, p.content_length)) {
+            None | Some((PcmHttpFraming::Chunked, _)) => (None, false),
+            Some((PcmHttpFraming::Length, len)) => (Some(len), false),
+            Some((PcmHttpFraming::Close, _)) => (None, request_version < Version::HTTP_2),
+        };
+        let response_version = if close {
+            Version::HTTP_10
+        } else {
+            request_version
+        };
+        Self {
+            framing: BodyFraming::for_response(response_version, content_length),
+            content_length,
+            close,
+        }
+    }
+
+    /// Adds the headers that go with this framing to `builder`.
+    ///
+    /// A close-delimited body can only end by the connection closing, so it
+    /// says `Connection: close` rather than keep-alive, and goes out as
+    /// HTTP/1.0: hyper then sends it with neither a length nor chunking.
+    fn apply(self, builder: axum::http::response::Builder) -> axum::http::response::Builder {
+        if self.close {
+            return builder
+                .version(Version::HTTP_10)
+                .header(header::CONNECTION, "close");
+        }
+        let builder = builder.header(header::CONNECTION, "keep-alive");
+        match self.content_length {
+            Some(len) => builder.header(header::CONTENT_LENGTH, len.to_string()),
+            None => builder,
+        }
+    }
+}
+
+/// Logs the PCM HTTP switches a connection is served with, and each one that
+/// was ignored, when any is set. Nothing is logged when none is: the
+/// connection line already shows the default framing and length.
+fn log_pcm_switches(remote_ip: IpAddr, stream_id: &str, switches: &PcmHttpSwitches) {
+    if !switches.any_set {
+        return;
+    }
+    for problem in &switches.problems {
+        log::warn!(
+            "[Stream] {} (client={}, stream={})",
+            problem,
+            remote_ip,
+            stream_id
+        );
+    }
+    log::info!(
+        "{}",
+        pcm_switches_line(remote_ip, stream_id, &switches.settings)
+    );
+}
+
+/// The `[Stream] PCM HTTP switches` line: the settings a PCM connection is
+/// served with while a field experiment's switches are set.
+fn pcm_switches_line(remote_ip: IpAddr, stream_id: &str, settings: &PcmHttpSettings) -> String {
+    let content_length = if settings.framing == PcmHttpFraming::Length {
+        settings.content_length.to_string()
+    } else {
+        "none".to_string()
+    };
+    let end_after = settings
+        .end_after_bytes
+        .map_or_else(|| "none".to_string(), |n| n.to_string());
+    format!(
+        "[Stream] PCM HTTP switches: client={remote_ip}, stream={stream_id}, framing={}, \
+         content_length={content_length}, wav_data_size={}, end_after_bytes={end_after}",
+        settings.framing, settings.wav_data_size
+    )
+}
+
+/// Ends `stream` cleanly after `pcm`'s `end_after_bytes`, when set, and
+/// returns it unchanged otherwise (see [`with_server_cap`]).
+fn with_optional_server_cap(
+    stream: AudioStream,
+    pcm: Option<&PcmHttpSettings>,
+    guard: &Arc<LoggingStreamGuard>,
+) -> AudioStream {
+    match pcm.and_then(|p| p.end_after_bytes) {
+        Some(cap) => with_server_cap(stream, cap, Arc::clone(guard)),
+        None => stream,
+    }
+}
+
+/// Ends `stream` after `cap` bytes, cutting the item that reaches the cap
+/// short, and records on `guard` that the cap ended it, so the end line says
+/// `ended_by=server_cap`. The body then ends as its framing allows: a last
+/// zero-length chunk, or closing the connection. A test switch (see
+/// [`crate::stream::PCM_END_AFTER_BYTES_ENV`]), never used with a declared
+/// length, which hyper would abort the connection over.
+fn with_server_cap(
+    mut stream: AudioStream,
+    cap: u64,
+    guard: Arc<LoggingStreamGuard>,
+) -> AudioStream {
+    let mut remaining = cap;
+    Box::pin(futures::stream::poll_fn(move |cx| {
+        if remaining == 0 {
+            // Without waiting for another item: ends the body at once.
+            guard.mark_server_cap();
+            return std::task::Poll::Ready(None);
+        }
+        match stream.as_mut().poll_next(cx) {
+            std::task::Poll::Ready(Some(Ok(mut bytes))) => {
+                if bytes.len() as u64 >= remaining {
+                    bytes.truncate(remaining as usize);
+                    guard.mark_server_cap();
+                }
+                remaining -= bytes.len() as u64;
+                std::task::Poll::Ready(Some(Ok(bytes)))
+            }
+            other => other,
+        }
+    }))
 }
 
 /// How long a new (not resuming) PCM connection waits before subscribing,
@@ -1197,7 +1342,11 @@ mod tests {
             is_resume,
         );
         let format = state.audio_format;
-        let header = create_wav_header(format.sample_rate, format.channels, format.bits_per_sample);
+        let header = crate::stream::create_wav_header(
+            format.sample_rate,
+            format.channels,
+            format.bits_per_sample,
+        );
         let body =
             futures::StreamExt::chain(futures::stream::once(async move { Ok(header) }), cadence);
         let body: AudioStream = Box::pin(with_delivery_record(body, guard, Arc::clone(&tap)));
@@ -1438,12 +1587,13 @@ mod tests {
 
     /// Serves `items` once on loopback through axum and hyper, framed the way
     /// `stream_audio` frames a body: the framing is worked out from the
-    /// request's HTTP version and `content_length`, recorded on the guard,
-    /// and the length, if any, is declared. Returns the address and where the
-    /// guard appears once the request arrives.
+    /// request's HTTP version and `pcm` (the PCM switches, `None` for a
+    /// compressed codec), recorded on the guard, its headers are set, and a
+    /// server cap, if any, is applied. Returns the address and where the guard
+    /// appears once the request arrives.
     async fn serve_once(
         items: AudioStream,
-        content_length: Option<u64>,
+        pcm: Option<PcmHttpSettings>,
     ) -> (SocketAddr, GuardSlot) {
         let items = Arc::new(parking_lot::Mutex::new(Some(items)));
         let slot: GuardSlot = Arc::default();
@@ -1454,16 +1604,15 @@ mod tests {
                 let items = items.lock().take().expect("one request per test");
                 let slot = Arc::clone(&handler_slot);
                 async move {
-                    let framing = BodyFraming::for_response(version, content_length);
+                    let response_framing = ResponseFraming::new(version, pcm.as_ref());
                     let guard = Arc::new(
-                        LoggingStreamGuard::new("s".into(), test_ip()).with_framing(framing),
+                        LoggingStreamGuard::new("s".into(), test_ip())
+                            .with_framing(response_framing.framing),
                     );
                     *slot.lock() = Some(Arc::clone(&guard));
-                    let mut builder = Response::builder();
-                    if let Some(len) = content_length {
-                        builder = builder.header(header::CONTENT_LENGTH, len.to_string());
-                    }
-                    builder
+                    let items = with_optional_server_cap(items, pcm.as_ref(), &guard);
+                    response_framing
+                        .apply(Response::builder())
                         .body(Body::from_stream(with_delivery_record(items, guard, ())))
                         .expect("response")
                 }
@@ -1537,6 +1686,22 @@ mod tests {
         Box::pin(futures::stream::iter(items))
     }
 
+    /// PCM switches for `length` framing declaring `len` bytes.
+    fn pcm_length(len: u64) -> PcmHttpSettings {
+        PcmHttpSettings {
+            content_length: len,
+            ..PcmHttpSettings::default()
+        }
+    }
+
+    /// PCM switches for `framing`, with nothing else changed.
+    fn pcm_framed(framing: PcmHttpFraming) -> PcmHttpSettings {
+        PcmHttpSettings {
+            framing,
+            ..PcmHttpSettings::default()
+        }
+    }
+
     /// An endless body of 1000-byte items.
     fn endless_items() -> AudioStream {
         Box::pin(futures::stream::repeat_with(|| {
@@ -1550,7 +1715,7 @@ mod tests {
     /// wire carried exactly the length though the last item counted in full.
     #[tokio::test]
     async fn a_body_stopped_at_its_declared_length_ends_by_length() {
-        let (addr, slot) = serve_once(endless_items(), Some(4096)).await;
+        let (addr, slot) = serve_once(endless_items(), Some(pcm_length(4096))).await;
         let (mut conn, head, body) = request(addr, "GET / HTTP/1.1\r\nHost: t\r\n\r\n").await;
         assert!(head.contains("content-length: 4096"), "{head}");
         let body = read_body(&mut conn, body, |b| b.len() >= 4096).await;
@@ -1630,6 +1795,255 @@ mod tests {
 
         let guard = closed_guard(&slot).await;
         assert_eq!(guard.ended_by(), crate::stream::EndedBy::Error);
+    }
+
+    /// The headers a response carries for a framing, read off a built
+    /// response.
+    fn framing_headers(framing: ResponseFraming) -> (Version, Vec<(String, String)>) {
+        let response = framing
+            .apply(Response::builder())
+            .body(Body::empty())
+            .expect("response");
+        let headers = response
+            .headers()
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_str().unwrap().to_string()))
+            .collect();
+        (response.version(), headers)
+    }
+
+    /// With no switch set PCM is served exactly as before: a 4294967295-byte
+    /// Content-Length on a keep-alive connection. A compressed codec declares
+    /// no length, and neither is affected by the switches.
+    #[test]
+    fn by_default_pcm_declares_the_largest_length_and_compressed_codecs_none() {
+        let pcm = ResponseFraming::new(Version::HTTP_11, Some(&PcmHttpSettings::default()));
+        assert_eq!(pcm.framing, BodyFraming::Length(4_294_967_295));
+        let (version, headers) = framing_headers(pcm);
+        assert_eq!(version, Version::HTTP_11);
+        assert_eq!(
+            headers,
+            [
+                ("connection".to_string(), "keep-alive".to_string()),
+                ("content-length".to_string(), "4294967295".to_string()),
+            ]
+        );
+
+        let compressed = ResponseFraming::new(Version::HTTP_11, None);
+        assert_eq!(compressed.framing, BodyFraming::Chunked);
+        let (_, headers) = framing_headers(compressed);
+        assert_eq!(
+            headers,
+            [("connection".to_string(), "keep-alive".to_string())]
+        );
+        assert_eq!(
+            ResponseFraming::new(Version::HTTP_10, None).framing,
+            BodyFraming::Close
+        );
+    }
+
+    /// `length` framing declares the length it is given; `chunked` declares
+    /// none; `close` answers as HTTP/1.0 with `Connection: close`, except to
+    /// an HTTP/2 request, which has no close-delimited body.
+    #[test]
+    fn each_pcm_framing_sets_its_own_headers() {
+        let length = ResponseFraming::new(Version::HTTP_11, Some(&pcm_length(10_485_760)));
+        assert_eq!(length.framing, BodyFraming::Length(10_485_760));
+        assert!(framing_headers(length)
+            .1
+            .contains(&("content-length".to_string(), "10485760".to_string())));
+
+        let chunked =
+            ResponseFraming::new(Version::HTTP_11, Some(&pcm_framed(PcmHttpFraming::Chunked)));
+        assert_eq!(chunked.framing, BodyFraming::Chunked);
+        let (_, headers) = framing_headers(chunked);
+        assert_eq!(
+            headers,
+            [("connection".to_string(), "keep-alive".to_string())]
+        );
+
+        let close =
+            ResponseFraming::new(Version::HTTP_11, Some(&pcm_framed(PcmHttpFraming::Close)));
+        assert_eq!(close.framing, BodyFraming::Close);
+        let (version, headers) = framing_headers(close);
+        assert_eq!(version, Version::HTTP_10);
+        assert_eq!(headers, [("connection".to_string(), "close".to_string())]);
+
+        let h2 = ResponseFraming::new(Version::HTTP_2, Some(&pcm_framed(PcmHttpFraming::Close)));
+        assert_eq!(h2.framing, BodyFraming::Http2);
+        assert!(!h2.close);
+    }
+
+    /// Chunked PCM has no length and so no end of its own: the body goes on
+    /// well past where a declared length would have stopped it, and its wire
+    /// bytes count the chunk framing.
+    #[tokio::test]
+    async fn chunked_pcm_is_sent_chunked_with_no_end() {
+        let (addr, slot) =
+            serve_once(endless_items(), Some(pcm_framed(PcmHttpFraming::Chunked))).await;
+        let (mut conn, head, body) = request(addr, "GET / HTTP/1.1\r\nHost: t\r\n\r\n").await;
+        assert!(head.contains("transfer-encoding: chunked"), "{head}");
+        assert!(!head.contains("content-length"), "{head}");
+        assert!(head.contains("connection: keep-alive"), "{head}");
+        let body = read_body(&mut conn, body, |b| b.len() > 3 * 4096).await;
+        assert!(
+            body.len() > 3 * 4096,
+            "the body ended after {} bytes",
+            body.len()
+        );
+        drop(conn);
+
+        let guard = closed_guard(&slot).await;
+        assert_eq!(guard.ended_by(), crate::stream::EndedBy::Client);
+        let payload = guard.bytes_sent.load(std::sync::atomic::Ordering::Relaxed);
+        assert_eq!(
+            guard.wire_bytes(),
+            payload + payload / 1000 * (3 + 4),
+            "each 1000-byte chunk costs 3 hex digits and two CRLFs"
+        );
+    }
+
+    /// Close framing answers even an HTTP/1.1 client as HTTP/1.0, says
+    /// `Connection: close` rather than keep-alive, declares neither a length
+    /// nor chunking, and ends the body by closing the connection.
+    #[tokio::test]
+    async fn close_framed_pcm_is_http10_and_ends_by_closing() {
+        let (addr, slot) = serve_once(
+            finite_items(&[1000, 1000, 44, 7]),
+            Some(pcm_framed(PcmHttpFraming::Close)),
+        )
+        .await;
+        let (mut conn, head, body) = request(addr, "GET / HTTP/1.1\r\nHost: t\r\n\r\n").await;
+        assert!(head.starts_with("http/1.0 200"), "{head}");
+        assert!(head.contains("connection: close"), "{head}");
+        assert!(!head.contains("keep-alive"), "{head}");
+        assert!(!head.contains("transfer-encoding"), "{head}");
+        assert!(!head.contains("content-length"), "{head}");
+        let body = tokio::time::timeout(
+            Duration::from_secs(5),
+            read_body(&mut conn, body, |_| false),
+        )
+        .await
+        .expect("the server closes the connection");
+        assert_eq!(body.len(), 2051);
+
+        let guard = closed_guard(&slot).await;
+        assert_eq!(guard.wire_bytes(), 2051);
+        assert_eq!(guard.ended_by(), crate::stream::EndedBy::ServerShutdown);
+    }
+
+    /// A server cap on chunked PCM cuts the item that reaches it short and
+    /// ends the body with a last zero-length chunk, and the end is logged as
+    /// the cap's.
+    #[tokio::test]
+    async fn a_server_cap_ends_a_chunked_body_cleanly() {
+        let pcm = PcmHttpSettings {
+            end_after_bytes: Some(2500),
+            ..pcm_framed(PcmHttpFraming::Chunked)
+        };
+        let (addr, slot) = serve_once(endless_items(), Some(pcm)).await;
+        let (mut conn, head, body) = request(addr, "GET / HTTP/1.1\r\nHost: t\r\n\r\n").await;
+        assert!(head.contains("transfer-encoding: chunked"), "{head}");
+        let body = tokio::time::timeout(
+            Duration::from_secs(5),
+            read_body(&mut conn, body, |b| b.ends_with(b"0\r\n\r\n")),
+        )
+        .await
+        .expect("the body ends");
+        assert_eq!(body.len(), 2500 + 2 * (3 + 4) + (3 + 4) + 5);
+        assert!(
+            body.windows(5).any(|w| w == b"1F4\r\n"),
+            "the last item is cut to 500 bytes"
+        );
+
+        let guard = closed_guard(&slot).await;
+        assert_eq!(
+            guard.bytes_sent.load(std::sync::atomic::Ordering::Relaxed),
+            2500
+        );
+        assert_eq!(guard.wire_bytes(), body.len() as u64);
+        assert_eq!(guard.ended_by(), crate::stream::EndedBy::ServerCap);
+        drop(conn);
+    }
+
+    /// A server cap on close-framed PCM ends the body by closing the
+    /// connection after exactly that many bytes.
+    #[tokio::test]
+    async fn a_server_cap_ends_a_close_framed_body_by_closing() {
+        let pcm = PcmHttpSettings {
+            end_after_bytes: Some(5000),
+            ..pcm_framed(PcmHttpFraming::Close)
+        };
+        let (addr, slot) = serve_once(endless_items(), Some(pcm)).await;
+        let (mut conn, _head, body) = request(addr, "GET / HTTP/1.1\r\nHost: t\r\n\r\n").await;
+        let body = tokio::time::timeout(
+            Duration::from_secs(5),
+            read_body(&mut conn, body, |_| false),
+        )
+        .await
+        .expect("the server closes the connection");
+        assert_eq!(body.len(), 5000);
+
+        let guard = closed_guard(&slot).await;
+        assert_eq!(guard.wire_bytes(), 5000);
+        assert_eq!(guard.ended_by(), crate::stream::EndedBy::ServerCap);
+    }
+
+    /// A cap that falls exactly on an item boundary still ends the body at
+    /// once, without waiting for another item, and still says so.
+    #[tokio::test]
+    async fn a_cap_on_an_item_boundary_ends_without_waiting() {
+        let guard = Arc::new(LoggingStreamGuard::new("s".into(), test_ip()));
+        let items: AudioStream = Box::pin(
+            futures::stream::iter(vec![Ok(Bytes::from(vec![7u8; 1000]))])
+                .chain(futures::stream::pending()),
+        );
+        let capped = with_server_cap(items, 1000, Arc::clone(&guard));
+        let collected: Vec<_> = tokio::time::timeout(Duration::from_secs(1), capped.collect())
+            .await
+            .expect("the cap ends the body");
+        assert_eq!(collected.len(), 1);
+        assert_eq!(guard.ended_by(), crate::stream::EndedBy::ServerCap);
+    }
+
+    /// Without `end_after_bytes` the body is left alone.
+    #[tokio::test]
+    async fn no_cap_leaves_the_body_alone() {
+        let guard = Arc::new(LoggingStreamGuard::new("s".into(), test_ip()));
+        let body = with_optional_server_cap(
+            finite_items(&[1000, 1000]),
+            Some(&pcm_framed(PcmHttpFraming::Chunked)),
+            &guard,
+        );
+        let collected: Vec<_> = body.collect().await;
+        assert_eq!(collected.len(), 2);
+        assert_ne!(guard.ended_by(), crate::stream::EndedBy::ServerCap);
+    }
+
+    /// The switches line gives every setting a connection is served with.
+    #[test]
+    fn the_switches_line_names_every_setting() {
+        let line = pcm_switches_line(
+            ip("192.168.1.50"),
+            "s1",
+            &PcmHttpSettings {
+                framing: PcmHttpFraming::Chunked,
+                content_length: 10_485_760,
+                wav_data_size: 10_485_760,
+                end_after_bytes: Some(2_000_000),
+            },
+        );
+        assert_eq!(
+            line,
+            "[Stream] PCM HTTP switches: client=192.168.1.50, stream=s1, framing=chunked, \
+             content_length=none, wav_data_size=10485760, end_after_bytes=2000000"
+        );
+        let line = pcm_switches_line(ip("192.168.1.50"), "s1", &pcm_length(10_485_760));
+        assert_eq!(
+            line,
+            "[Stream] PCM HTTP switches: client=192.168.1.50, stream=s1, framing=length, \
+             content_length=10485760, wav_data_size=4294967295, end_after_bytes=none"
+        );
     }
 
     /// The speaker monitor's ack lag counts what the speaker has acknowledged
