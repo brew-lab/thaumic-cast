@@ -38,6 +38,8 @@ use super::playback_session_store::{
 use super::sync_group_manager::SyncGroupManager;
 use super::volume_router::VolumeRouter;
 
+mod continuation;
+
 // ─────────────────────────────────────────────────────────────────────────────
 // StreamSinkBridge — Float32 → PCM16 conversion for capture sources
 // ─────────────────────────────────────────────────────────────────────────────
@@ -339,6 +341,8 @@ pub struct StreamCoordinator {
     emitter: Arc<dyn EventEmitter>,
     /// Sync group lifecycle manager.
     sync_group: SyncGroupManager,
+    /// Speakers being moved on from one PCM segment to the next.
+    continuations: continuation::Continuations,
 }
 
 impl StreamCoordinator {
@@ -378,6 +382,7 @@ impl StreamCoordinator {
             sessions,
             emitter,
             sync_group,
+            continuations: continuation::Continuations::default(),
         }
     }
 

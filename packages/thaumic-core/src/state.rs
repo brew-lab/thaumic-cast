@@ -255,16 +255,26 @@ pub struct SonosState {
     /// Map of coordinator IP to their fixed volume status.
     /// True indicates volume cannot be adjusted (line-level output).
     pub group_volume_fixed: DashMap<String, bool>,
+    /// Speakers moving from one PCM segment of a cast to the next, and the
+    /// transport state shown for each meanwhile (see
+    /// [`Self::hold_transport`]). `transport_states` keeps what GENA said.
+    transport_holds: DashMap<String, TransportState>,
 }
 
 impl SonosState {
     /// Serializes the current state to JSON.
     ///
     /// Returns a JSON object containing groups, transport states, volumes, and mute states.
+    /// A speaker moving from one PCM segment to the next shows the state it
+    /// was in before the switch (see [`Self::hold_transport`]).
     pub fn to_json(&self) -> serde_json::Value {
+        let mut transport_states = dashmap_to_json(&self.transport_states);
+        for hold in self.transport_holds.iter() {
+            transport_states.insert(hold.key().clone(), json!(*hold.value()));
+        }
         json!({
             "groups": *self.groups.read(),
-            "transportStates": dashmap_to_json(&self.transport_states),
+            "transportStates": transport_states,
             "groupVolumes": dashmap_to_json(&self.group_volumes),
             "groupMutes": dashmap_to_json(&self.group_mutes),
             "groupVolumeFixed": dashmap_to_json(&self.group_volume_fixed),
@@ -282,6 +292,8 @@ impl SonosState {
         self.transport_states
             .retain(|ip, _| valid_speaker_ips.contains(ip));
         self.transport_state_received
+            .retain(|ip, _| valid_speaker_ips.contains(ip));
+        self.transport_holds
             .retain(|ip, _| valid_speaker_ips.contains(ip));
 
         // Retain volume/mute data for any speaker still in the topology, not just
@@ -303,6 +315,54 @@ impl SonosState {
         self.transport_states.insert(speaker_ip.to_string(), state);
         self.transport_state_received
             .insert(speaker_ip.to_string(), Instant::now());
+    }
+
+    /// Starts showing clients `speaker_ip`'s transport as it is now while it
+    /// moves from one PCM segment of a cast to the next: until
+    /// [`Self::release_transport`], a STOPPED or TRANSITIONING that is only
+    /// the switch is recorded but not shown (see [`Self::screen_transport`]).
+    /// A speaker already in one of those states shows PLAYING, which it was
+    /// in before the switch began. Holding a speaker already held keeps its
+    /// state.
+    pub fn hold_transport(&self, speaker_ip: &str) {
+        let now = self.transport_states.get(speaker_ip).map(|s| *s);
+        self.transport_holds
+            .entry(speaker_ip.to_string())
+            .or_insert(match now {
+                Some(state @ (TransportState::Playing | TransportState::Paused)) => state,
+                _ => TransportState::Playing,
+            });
+    }
+
+    /// Whether a transport state `speaker_ip` reported is shown to clients:
+    /// not while the speaker is held (see [`Self::hold_transport`]) and the
+    /// state is STOPPED or TRANSITIONING. A state that is shown while held
+    /// becomes the one snapshots show.
+    pub fn screen_transport(&self, speaker_ip: &str, state: TransportState) -> bool {
+        let Some(mut shown) = self.transport_holds.get_mut(speaker_ip) else {
+            return true;
+        };
+        match state {
+            TransportState::Stopped | TransportState::Transitioning => false,
+            TransportState::Playing | TransportState::Paused => {
+                *shown = state;
+                true
+            }
+        }
+    }
+
+    /// Stops holding `speaker_ip`'s transport. Returns the state GENA last
+    /// reported for it if that differs from the one shown, so the caller
+    /// can tell clients.
+    pub fn release_transport(&self, speaker_ip: &str) -> Option<TransportState> {
+        let (_, shown) = self.transport_holds.remove(speaker_ip)?;
+        let recorded = self.transport_states.get(speaker_ip).map(|s| *s)?;
+        (recorded != shown).then_some(recorded)
+    }
+
+    /// Whether `speaker_ip`'s transport is held (see [`Self::hold_transport`]).
+    pub fn is_transport_held(&self, speaker_ip: &str) -> bool {
+        self.transport_holds.contains_key(speaker_ip)
     }
 
     /// Looks up a coordinator's UUID by their IP address.
@@ -470,6 +530,51 @@ impl ManualSpeakerConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// While a speaker moves from one PCM segment to the next, the STOPPED
+    /// and TRANSITIONING of the switch are recorded but neither broadcast
+    /// nor shown in snapshots; releasing it reports what GENA last said if
+    /// that differs from what was shown.
+    #[test]
+    fn a_held_speaker_shows_its_state_from_before_the_switch() {
+        let state = SonosState::default();
+        let ip = "192.168.1.10";
+        state.record_transport_state(ip, TransportState::Playing);
+        state.hold_transport(ip);
+        assert!(state.is_transport_held(ip));
+
+        state.record_transport_state(ip, TransportState::Stopped);
+        assert!(!state.screen_transport(ip, TransportState::Stopped));
+        assert!(!state.screen_transport(ip, TransportState::Transitioning));
+        assert_eq!(state.to_json()["transportStates"][ip], "Playing");
+        assert_eq!(
+            *state.transport_states.get(ip).unwrap(),
+            TransportState::Stopped,
+            "still recorded"
+        );
+        assert!(state.screen_transport("192.168.1.99", TransportState::Stopped));
+
+        // A pause is shown, and becomes what snapshots show.
+        assert!(state.screen_transport(ip, TransportState::Paused));
+        assert_eq!(state.to_json()["transportStates"][ip], "PAUSED_PLAYBACK");
+
+        assert_eq!(state.release_transport(ip), Some(TransportState::Stopped));
+        assert!(!state.is_transport_held(ip));
+        assert_eq!(state.to_json()["transportStates"][ip], "Stopped");
+        assert!(state.screen_transport(ip, TransportState::Stopped));
+        assert_eq!(state.release_transport(ip), None, "not held");
+
+        // Released on the state it showed: nothing to report.
+        state.record_transport_state(ip, TransportState::Playing);
+        state.hold_transport(ip);
+        state.record_transport_state(ip, TransportState::Playing);
+        assert_eq!(state.release_transport(ip), None);
+
+        // Held while already stopped shows playing.
+        state.record_transport_state(ip, TransportState::Transitioning);
+        state.hold_transport(ip);
+        assert_eq!(state.to_json()["transportStates"][ip], "Playing");
+    }
 
     #[test]
     fn streaming_config_default_is_valid() {
