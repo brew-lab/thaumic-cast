@@ -16,8 +16,8 @@
 //!
 //! The switches let a field experiment change one thing at a time without a
 //! rebuild: how the body is delimited, the length it declares, the sizes in
-//! the WAV header, a clean end from our side after a set number of bytes, and
-//! the size of a segment. They are read from the environment once per
+//! the WAV header, a clean end from our side after a set number of bytes, the
+//! size of a segment, and how a speaker is moved on to the next one. They are read from the environment once per
 //! connection, and none of them is a setting: unset, a PCM stream is served
 //! as described above.
 //!
@@ -58,14 +58,20 @@ pub const PCM_END_AFTER_BYTES_ENV: &str = "THAUMIC_PCM_END_AFTER_BYTES";
 /// a switch that fixes a connection's end is set (see the module docs).
 pub const PCM_SEGMENT_BYTES_ENV: &str = "THAUMIC_PCM_SEGMENT_BYTES";
 
+/// Environment variable that picks how a speaker is moved on from one PCM
+/// segment to the next: `restart` (the default) or `off`. See
+/// [`PcmContinuation`]. Ignored while segments are off.
+pub const PCM_CONTINUATION_ENV: &str = "THAUMIC_PCM_CONTINUATION";
+
 /// The environment variables [`PcmHttpSettings::from_env`] reads, in the
 /// order they are reported.
-const SWITCH_VARS: [&str; 5] = [
+const SWITCH_VARS: [&str; 6] = [
     PCM_HTTP_FRAMING_ENV,
     PCM_CONTENT_LENGTH_ENV,
     PCM_WAV_DATA_SIZE_ENV,
     PCM_END_AFTER_BYTES_ENV,
     PCM_SEGMENT_BYTES_ENV,
+    PCM_CONTINUATION_ENV,
 ];
 
 /// How a PCM response body is delimited on the wire.
@@ -115,6 +121,46 @@ impl fmt::Display for PcmHttpFraming {
     }
 }
 
+/// How a speaker is moved on from one PCM segment to the next once it has
+/// played the first to its end.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum PcmContinuation {
+    /// Once the speaker has played a segment to its end and reported
+    /// STOPPED, the server itself tells it to play the next one
+    /// (`SetAVTransportURI` and `Play`): a pause of about a second and a half
+    /// every segment, and nothing the user has to do. The default.
+    #[default]
+    Restart,
+    /// Nothing moves the speaker on: the cast ends after its first segment,
+    /// as it did before continuation existed. For comparison.
+    Off,
+}
+
+impl PcmContinuation {
+    /// Parses a continuation name: `restart` or `off`, in any case.
+    pub fn parse(value: &str) -> Result<Self, String> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "restart" => Ok(Self::Restart),
+            "off" => Ok(Self::Off),
+            _ => Err(format!("expected restart or off, got {value:?}")),
+        }
+    }
+
+    /// The name used for this mode in log lines and the environment.
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Restart => "restart",
+            Self::Off => "off",
+        }
+    }
+}
+
+impl fmt::Display for PcmContinuation {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.label())
+    }
+}
+
 /// The RIFF chunk size that goes with a WAV data size: the data plus the 36
 /// bytes of the header that follow the RIFF size field, capped at
 /// 0xFFFFFFFF (so the default data size keeps the default RIFF size).
@@ -142,6 +188,8 @@ pub struct PcmHttpSettings {
     /// The data size asked for each segment, before it is rounded to the
     /// stream's frames (see [`crate::stream::SegmentLayout::new`]).
     pub segment_bytes: u64,
+    /// How a speaker is moved on from one segment to the next.
+    pub continuation: PcmContinuation,
 }
 
 impl Default for PcmHttpSettings {
@@ -154,6 +202,7 @@ impl Default for PcmHttpSettings {
             end_after_bytes: None,
             segments: true,
             segment_bytes: super::playout::PCM_SEGMENT_BYTES_MAX,
+            continuation: PcmContinuation::Restart,
         }
     }
 }
@@ -199,13 +248,15 @@ impl PcmHttpSwitches {
     pub fn from_env() -> Self {
         let mut unreadable = Vec::new();
         let raw = SWITCH_VARS.map(|var| read_switch(var, std::env::var_os(var), &mut unreadable));
-        let [framing, content_length, wav_data_size, end_after_bytes, segment_bytes] = raw;
+        let [framing, content_length, wav_data_size, end_after_bytes, segment_bytes, continuation] =
+            raw;
         Self::resolve(RawSwitches {
             framing: framing.as_deref(),
             content_length: content_length.as_deref(),
             wav_data_size: wav_data_size.as_deref(),
             end_after_bytes: end_after_bytes.as_deref(),
             segment_bytes: segment_bytes.as_deref(),
+            continuation: continuation.as_deref(),
         })
         .with_unreadable(unreadable)
     }
@@ -234,12 +285,14 @@ impl PcmHttpSwitches {
             wav_data_size: set(raw.wav_data_size),
             end_after_bytes: set(raw.end_after_bytes),
             segment_bytes: set(raw.segment_bytes),
+            continuation: set(raw.continuation),
         };
         let any_set = raw.framing.is_some()
             || raw.content_length.is_some()
             || raw.wav_data_size.is_some()
             || raw.end_after_bytes.is_some()
-            || raw.segment_bytes.is_some();
+            || raw.segment_bytes.is_some()
+            || raw.continuation.is_some();
 
         let mut ignore = |var: &str, value: &str, why: String| {
             problems.push(format!("Ignoring {var}={value:?}: {why}"));
@@ -308,6 +361,17 @@ impl PcmHttpSwitches {
                 (Err(e), _) => ignore(PCM_SEGMENT_BYTES_ENV, value, e),
             }
         }
+        if let Some(value) = raw.continuation {
+            match (PcmContinuation::parse(value), fixed_end) {
+                (Ok(_), Some(var)) => ignore(
+                    PCM_CONTINUATION_ENV,
+                    value,
+                    format!("segments are off while {var} is set"),
+                ),
+                (Ok(mode), None) => settings.continuation = mode,
+                (Err(e), _) => ignore(PCM_CONTINUATION_ENV, value, e),
+            }
+        }
 
         Self {
             settings,
@@ -344,6 +408,7 @@ struct RawSwitches<'a> {
     wav_data_size: Option<&'a str>,
     end_after_bytes: Option<&'a str>,
     segment_bytes: Option<&'a str>,
+    continuation: Option<&'a str>,
 }
 
 /// Parses a byte count of at least 1.
@@ -394,6 +459,7 @@ mod tests {
             wav_data_size,
             end_after_bytes,
             segment_bytes: None,
+            continuation: None,
         })
     }
 
@@ -418,6 +484,7 @@ mod tests {
                 end_after_bytes: None,
                 segments: true,
                 segment_bytes: 0xFFFF_0000,
+                continuation: PcmContinuation::Restart,
             }
         );
         assert!(!switches.any_set);
@@ -611,6 +678,38 @@ mod tests {
             resolve(None, None, Some("lots"), None).settings.segments,
             "an ignored size fixes nothing"
         );
+    }
+
+    /// Restart is the default way on to the next segment; `off` keeps the
+    /// cast to its first segment for comparison, and neither applies while
+    /// segments are off.
+    #[test]
+    fn continuation_follows_its_switch_while_segments_are_on() {
+        let with = |framing: Option<&str>, continuation: Option<&str>| {
+            PcmHttpSwitches::resolve(RawSwitches {
+                framing,
+                continuation,
+                ..RawSwitches::default()
+            })
+        };
+        let off = with(None, Some(" OFF "));
+        assert_eq!(off.settings.continuation, PcmContinuation::Off);
+        assert!(off.any_set);
+        assert!(off.problems.is_empty());
+        assert_eq!(
+            with(None, Some("restart")).settings.continuation,
+            PcmContinuation::Restart
+        );
+
+        let unknown = with(None, Some("gapless"));
+        assert_eq!(unknown.settings.continuation, PcmContinuation::Restart);
+        assert_eq!(unknown.problems.len(), 1);
+        assert!(unknown.problems[0].contains("expected restart or off"));
+
+        let length = with(Some("length"), Some("off"));
+        assert_eq!(length.settings.continuation, PcmContinuation::Restart);
+        assert!(length.problems[0].contains("segments are off"));
+        assert_eq!(PcmContinuation::Off.to_string(), "off");
     }
 
     #[test]

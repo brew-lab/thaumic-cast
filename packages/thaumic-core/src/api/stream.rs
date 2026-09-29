@@ -38,9 +38,9 @@ use crate::stream::{
     create_wav_header_with_data_size, create_wav_stream_with_cadence, lagged_error,
     parse_segment_file, pcm_connect_burst_ms, side_body, AudioCodec, BodyFraming, CadenceConfig,
     ChainParts, ChainStats, ConnectionTap, DeclaredEnd, EpochHook, FirstConnectionWait,
-    FirstWaitWatch, HeadStart, IcyMetadataInjector, LoggingStreamGuard, NewReason, PcmHttpFraming,
-    PcmHttpSettings, PcmHttpSwitches, PlayoutChain, RateAdapter, RateControl, Route, SegmentLayout,
-    SegmentStart, StreamState, MAX_UNLISTED_STREAM_READERS,
+    FirstWaitWatch, HeadStart, IcyMetadataInjector, LoggingStreamGuard, NewReason, PcmContinuation,
+    PcmHttpFraming, PcmHttpSettings, PcmHttpSwitches, PlayoutChain, RateAdapter, RateControl,
+    Route, SegmentLayout, SegmentStart, StreamState, MAX_UNLISTED_STREAM_READERS,
 };
 
 /// A single item of an audio body stream.
@@ -753,6 +753,13 @@ async fn serve_stream(
             registry: access
                 .tracks_playback()
                 .then(|| Arc::clone(&stream_state.playout)),
+            continuation: pcm_http
+                .as_ref()
+                .map_or_else(PcmContinuation::default, |settings| settings.continuation),
+            head_start: Duration::from_millis(connect_burst_ms),
+            events: access
+                .tracks_playback()
+                .then(|| state.stream_coordinator.playout_events()),
         });
         let final_stream: AudioStream = Box::pin(with_delivery_record(body, guard, reader_slot));
         return builder
@@ -982,15 +989,18 @@ fn pcm_switches_line(remote_ip: IpAddr, stream_id: &str, settings: &PcmHttpSetti
     let end_after = settings
         .end_after_bytes
         .map_or_else(|| "none".to_string(), |n| n.to_string());
-    let segments = if settings.segments {
-        settings.segment_bytes.to_string()
+    let (segments, continuation) = if settings.segments {
+        (
+            settings.segment_bytes.to_string(),
+            settings.continuation.label(),
+        )
     } else {
-        "off".to_string()
+        ("off".to_string(), "off")
     };
     format!(
         "[Stream] PCM HTTP switches: client={remote_ip}, stream={stream_id}, framing={}, \
          content_length={content_length}, wav_data_size={}, end_after_bytes={end_after}, \
-         segment_bytes={segments}",
+         segment_bytes={segments}, continuation={continuation}",
         settings.framing, settings.wav_data_size
     )
 }
@@ -2821,27 +2831,28 @@ mod tests {
                 end_after_bytes: Some(2_000_000),
                 segments: false,
                 segment_bytes: 0xFFFF_0000,
+                continuation: PcmContinuation::Restart,
             },
         );
         assert_eq!(
             line,
             "[Stream] PCM HTTP switches: client=192.168.1.50, stream=s1, framing=chunked, \
              content_length=none, wav_data_size=10485760, end_after_bytes=2000000, \
-             segment_bytes=off"
+             segment_bytes=off, continuation=off"
         );
         let line = pcm_switches_line(ip("192.168.1.50"), "s1", &pcm_length(10_485_760));
         assert_eq!(
             line,
             "[Stream] PCM HTTP switches: client=192.168.1.50, stream=s1, framing=length, \
              content_length=10485760, wav_data_size=4294967295, end_after_bytes=none, \
-             segment_bytes=off"
+             segment_bytes=off, continuation=off"
         );
         let segmented = PcmHttpSettings {
             segment_bytes: 10_485_760,
             ..PcmHttpSettings::default()
         };
         assert!(pcm_switches_line(ip("192.168.1.50"), "s1", &segmented)
-            .ends_with("end_after_bytes=none, segment_bytes=10485760"));
+            .ends_with("end_after_bytes=none, segment_bytes=10485760, continuation=restart"));
     }
 
     /// The speaker monitor's ack lag counts what the speaker has acknowledged
