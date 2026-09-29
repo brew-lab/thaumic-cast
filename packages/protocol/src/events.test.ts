@@ -8,6 +8,7 @@ import {
   StreamEventSchema,
   NetworkEventSchema,
   SpeakerHealthStateSchema,
+  SpeakerNoticeCauseSchema,
   SpeakerNoticeKindSchema,
   type LatencyEvent,
   type NetworkEvent,
@@ -413,6 +414,34 @@ describe('NetworkEventSchema', () => {
       },
     } satisfies NetworkEvent;
     expect(NetworkEventSchema.parse(ranOut)).toEqual(ranOut);
+  });
+
+  it('should round-trip a running-low notice the clock caused', () => {
+    // Mirrors the cause in thaumic-core's notice wire test.
+    const low = {
+      ...draining,
+      state: 'low',
+      notice: {
+        kind: 'running_low',
+        noticeId: 4,
+        leftMs: 149,
+        headStartMs: 500,
+        restartHelps: true,
+        cause: 'drift',
+      },
+    } satisfies NetworkEvent;
+    const parsed = NetworkEventSchema.parse(JSON.parse(JSON.stringify(low)));
+    expect(parsed).toEqual(low);
+    expect(SpeakerNoticeCauseSchema.options).toEqual(['drift']);
+  });
+
+  it('should keep a notice whose cause it does not know, without the cause', () => {
+    const parsed = NetworkEventSchema.parse({
+      ...draining,
+      notice: { kind: 'running_low', noticeId: 1, restartHelps: false, cause: 'gremlins' },
+    });
+    expect(parsed.type === 'speakerHealth' && parsed.notice?.kind).toBe('running_low');
+    expect(parsed.type === 'speakerHealth' && parsed.notice?.cause).toBeUndefined();
   });
 
   it('should drop a notice it cannot read and keep the rest of the report', () => {

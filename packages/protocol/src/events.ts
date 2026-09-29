@@ -231,6 +231,17 @@ export const SpeakerNoticeKindSchema = z.enum([
 export type SpeakerNoticeKind = z.infer<typeof SpeakerNoticeKindSchema>;
 
 /**
+ * Why a notice's speaker is in trouble, where the kind alone does not say.
+ * Mirrors `SpeakerNoticeCause` in thaumic-core's speaker monitor.
+ *
+ * - `drift`: the speaker's clock runs faster than the audio arrives, net of any
+ *   drift correction, and that (not a Wi-Fi stall) drained its reserve. Sent
+ *   with `running_low`.
+ */
+export const SpeakerNoticeCauseSchema = z.enum(['drift']);
+export type SpeakerNoticeCause = z.infer<typeof SpeakerNoticeCauseSchema>;
+
+/**
  * What the user is told about one speaker, with the figures its wording needs.
  * The companion decides; clients pick the words. Values are in milliseconds
  * unless named otherwise.
@@ -254,6 +265,13 @@ export const SpeakerNoticeSchema = z.object({
   minutes: z.number().int().nonnegative().optional(),
   /** Whether stopping and restarting the cast refills the speaker */
   restartHelps: z.boolean(),
+  /**
+   * Why the speaker is in trouble, when the companion can tell and the kind
+   * does not say (`running_low`: `drift` when the clock drained it). Absent
+   * otherwise, and from companions that predate it. A cause this client does
+   * not know is dropped rather than failing the notice.
+   */
+  cause: SpeakerNoticeCauseSchema.optional().catch(undefined),
 });
 export type SpeakerNotice = z.infer<typeof SpeakerNoticeSchema>;
 
