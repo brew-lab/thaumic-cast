@@ -168,13 +168,20 @@ startup. All three apply from each speaker's next connection.
 | `THAUMIC_PCM_CONTENT_LENGTH`        | Experimental: the `Content-Length` PCM declares with `length` framing (default `4294967295`) |
 | `THAUMIC_PCM_WAV_DATA_SIZE`         | Experimental: the WAV header's data size, 0 to 4294967295 (default `4294967295`)             |
 | `THAUMIC_PCM_END_AFTER_BYTES`       | Experimental: end each PCM body cleanly after this many bytes; `chunked` or `close` only     |
+| `THAUMIC_PCM_SEGMENT_BYTES`         | Test only: data bytes per PCM segment, 1048576 to 4294901760 (default), whole 10 ms frames   |
 | `THAUMIC_DRIFT_FORCE_PPM`           | Test only: fix every speaker's PCM rate adapter at this many ppm, -300 to 300 (see below)    |
 
-PCM streams are sent chunked, with no `Content-Length`, and 0xFFFFFFFF in both WAV header size fields, which a Sonos
-Playbar played past 2^31 bytes in a field test. That header value is a length, not an unbounded marker: a later run
-stopped at exactly 2^32 bytes (6h12m50s at 48 kHz stereo), where the Playbar hung up and went to STOPPED with no
-reconnect. A cast goes on past that point only through PCM segment continuation, which serves it in segments that each
-stay under 4 GiB. A speaker that asks over HTTP/1.0, which cannot take chunks, gets an HTTP/1.0 response
+PCM streams are sent chunked, with no `Content-Length`. A WAV header's size is a length, not an unbounded marker: with
+0xFFFFFFFF there a Sonos Playbar played past 2^31 bytes in a field test, then stopped at exactly 2^32 bytes (6h12m50s at
+48 kHz stereo), where it hung up and went to STOPPED with no reconnect. So a PCM cast is served in segments: each
+connection's WAV header declares 4294901760 data bytes (6h12m49.28s at 48 kHz stereo) and its body ends there, and the
+next segment, `/stream/{id}/live/{n}.wav`, carries on from the exact sample the previous one ended at, however long the
+speaker takes to fetch it (nothing moves a speaker on to that next segment yet, so for now a cast still ends after the
+first). A fetch that resumes a segment with `Range: bytes=X-` (a speaker coming back from a pause)
+is answered `206` with exactly the rest of that segment. `THAUMIC_PCM_SEGMENT_BYTES` shortens segments for testing
+(`10485760` gives 54.61 s at 48 kHz stereo); it is ignored with a warning while a switch that fixes a connection's end
+(`length` framing, `THAUMIC_PCM_WAV_DATA_SIZE` or `THAUMIC_PCM_END_AFTER_BYTES`) is set, and those serve PCM on one
+connection as before. A speaker that asks over HTTP/1.0, which cannot take chunks, gets an HTTP/1.0 response
 whose body ends only when the connection closes (`http=HTTP/1.0, framing=close` on its connection line), as the
 compressed codecs always have. Declaring a length ended every PCM cast to a Playbar after 3h06m at 48 kHz (about 3h23m at 44.1 kHz), since it
 caps a declared length at 2^31 bytes.

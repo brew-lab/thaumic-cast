@@ -4,6 +4,7 @@ pub mod icy;
 pub mod ingest_gaps;
 pub mod manager;
 pub mod pcm_http;
+pub mod playout;
 pub mod rate_adapter;
 pub mod tap;
 pub mod uri;
@@ -11,7 +12,7 @@ pub mod wav;
 
 pub use cadence::{
     create_wav_stream_with_cadence, lagged_error, parse_pcm_connect_burst_ms, pcm_connect_burst_ms,
-    CadenceConfig, EpochHook, FirstConnectionWait, FirstWaitWatch, LoggingStreamGuard,
+    CadenceConfig, ChainStats, EpochHook, FirstConnectionWait, FirstWaitWatch, LoggingStreamGuard,
     FIRST_WAIT_SURVIVAL, PCM_CONNECT_BURST_ENV,
 };
 pub use framing::{BodyFraming, DeclaredEnd, EndedBy};
@@ -22,12 +23,17 @@ pub use manager::{
 };
 pub use pcm_http::{
     PcmHttpFraming, PcmHttpSettings, PcmHttpSwitches, PCM_CONTENT_LENGTH_ENV,
-    PCM_END_AFTER_BYTES_ENV, PCM_HTTP_FRAMING_ENV, PCM_WAV_DATA_SIZE_ENV,
+    PCM_END_AFTER_BYTES_ENV, PCM_HTTP_FRAMING_ENV, PCM_SEGMENT_BYTES_ENV, PCM_WAV_DATA_SIZE_ENV,
+};
+pub use playout::{
+    side_body, ChainParts, NewReason, PcmStream, PlayoutChain, PlayoutRegistry, Route, SegmentBody,
+    SegmentLayout, SegmentStart, PCM_SEGMENT_BYTES_MAX, PCM_SEGMENT_BYTES_MIN,
 };
 pub use rate_adapter::{RateAdapter, RateControl};
 pub use tap::{ConnectionTap, HeadStart, MonitorRegistrar, SpeakerFigures, SpeakerSnapshot};
 pub use uri::{
-    parse_segment_file, parse_stream_uri, pcm_segment_uri, same_stream, StreamRef, StreamResource,
+    parse_segment_file, parse_stream_uri, pcm_segment_uri, same_stream, segment_base_uri,
+    StreamRef, StreamResource,
 };
 pub use wav::{create_wav_header, create_wav_header_with_data_size};
 

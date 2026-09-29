@@ -33,12 +33,14 @@ use crate::services::speaker_monitor::control::{
     drift_compensation_mode, drift_force_ppm, DriftMode, DRIFT_FORCE_PPM_ENV,
 };
 use crate::stream::manager::TimestampedFrame;
+use crate::stream::tap::pcm_header;
 use crate::stream::{
     create_wav_header_with_data_size, create_wav_stream_with_cadence, lagged_error,
-    parse_segment_file, pcm_connect_burst_ms, AudioCodec, BodyFraming, CadenceConfig,
-    ConnectionTap, DeclaredEnd, EpochHook, FirstConnectionWait, FirstWaitWatch, HeadStart,
-    IcyMetadataInjector, LoggingStreamGuard, PcmHttpFraming, PcmHttpSettings, PcmHttpSwitches,
-    RateAdapter, RateControl, StreamState, MAX_UNLISTED_STREAM_READERS,
+    parse_segment_file, pcm_connect_burst_ms, side_body, AudioCodec, BodyFraming, CadenceConfig,
+    ChainParts, ChainStats, ConnectionTap, DeclaredEnd, EpochHook, FirstConnectionWait,
+    FirstWaitWatch, HeadStart, IcyMetadataInjector, LoggingStreamGuard, NewReason, PcmHttpFraming,
+    PcmHttpSettings, PcmHttpSwitches, PlayoutChain, RateAdapter, RateControl, Route, SegmentLayout,
+    SegmentStart, StreamState, MAX_UNLISTED_STREAM_READERS,
 };
 
 /// A single item of an audio body stream.
@@ -189,10 +191,10 @@ pub(super) async fn stream_audio(
 /// A WAV header can declare at most 4 GiB, so a long PCM cast is served as
 /// consecutive segments, each under its own URL (see [`crate::stream::uri`]).
 /// A file name that is not a canonical `{n}.wav`, or a stream that is not
-/// PCM, answers 404 exactly as an unknown stream does. Until segments are
-/// carried across connections, a segment is served like `live.wav`: from the
-/// live edge, under the same header, through the same access check (which is
-/// keyed by stream id, so every segment of a stream admits the same readers).
+/// PCM, answers 404 exactly as an unknown stream does. A segment goes through
+/// the same access check as `live.wav` (keyed by stream id, so every segment
+/// of a stream admits the same readers), and continues the speaker's playout
+/// where the previous segment ended (see [`crate::stream::playout`]).
 pub(super) async fn stream_audio_segment(
     Path((id, file)): Path<(String, String)>,
     State(state): State<AppState>,
@@ -321,8 +323,9 @@ async fn serve_stream(
     let response_framing = ResponseFraming::new(version, pcm_http.as_ref());
     let framing = response_framing.framing;
 
-    // A Range request is served from the live edge like any other, so it is
-    // a new connection too, and logged as one.
+    // Every fetch is logged with the range it asked for: a PCM segment
+    // answers one with the rest of the segment, anything else from the live
+    // edge like any other fetch.
     log::info!(
         "{}",
         connection_line(
@@ -337,6 +340,113 @@ async fn serve_stream(
     );
     if let Some(switches) = &pcm_switches {
         log_pcm_switches(remote_ip, &id, switches);
+    }
+
+    // A PCM cast is served in segments carried by one playout per speaker,
+    // unless a field experiment's switch fixes a connection's end itself.
+    // What a fetch is to that playout is decided first, before anything
+    // treats it as a new connection or a resume: a continuation needs no
+    // prefill wait, starts no epoch and sends no resume `Play` (the speaker
+    // is between items, and a `Play` then would race its own switch).
+    let segment_layout = pcm_http
+        .as_ref()
+        .filter(|settings| settings.segments)
+        .map(|settings| SegmentLayout::new(&stream_state.audio_format, settings.segment_bytes));
+    let mut new_segment: Option<(SegmentLayout, SegmentStart)> = None;
+    if let Some(layout) = segment_layout {
+        let url_segment = segment.unwrap_or(0);
+        let range_start = range_header.as_deref().and_then(parse_range_start);
+        let route = if access.tracks_playback() {
+            stream_state
+                .playout
+                .route(remote_ip, url_segment, range_start, &layout, |body_bytes| {
+                    Arc::new(
+                        LoggingStreamGuard::new(id.to_string(), remote_ip)
+                            .with_link_probe(state.link_registry.claim(remote_addr))
+                            .with_framing(framing)
+                            .with_declared_end(Some(DeclaredEnd::new(
+                                body_bytes,
+                                layout.byte_rate().min(u64::from(u32::MAX)) as u32,
+                            ))),
+                    )
+                })
+        } else {
+            // A reader the stream is not for gets a playout of its own that
+            // ends with its connection.
+            match SegmentStart::new(url_segment, range_start, &layout) {
+                Some(start) => Route::New(NewReason::NoPlayout, start),
+                None => Route::Unsatisfiable(layout.total_bytes()),
+            }
+        };
+        let content_type = stream_state.codec.mime_type();
+        match route {
+            Route::Attach(body) => {
+                let start = body.start();
+                let guard = Arc::clone(body.guard());
+                let builder = segment_head(
+                    response_head(content_type, false, response_framing),
+                    &start,
+                    &layout,
+                );
+                let final_stream: AudioStream =
+                    Box::pin(with_delivery_record(body, guard, reader_slot));
+                return builder
+                    .body(Body::from_stream(final_stream))
+                    .map_err(|e| ThaumicError::Internal(e.to_string()));
+            }
+            Route::Side(start) => {
+                let guard = Arc::new(
+                    LoggingStreamGuard::new(id.to_string(), remote_ip).with_framing(framing),
+                );
+                let builder = segment_head(
+                    response_head(content_type, false, response_framing),
+                    &start,
+                    &layout,
+                );
+                let body = side_body(start, &layout, &stream_state.audio_format);
+                let final_stream: AudioStream =
+                    Box::pin(with_delivery_record(body, guard, reader_slot));
+                return builder
+                    .body(Body::from_stream(final_stream))
+                    .map_err(|e| ThaumicError::Internal(e.to_string()));
+            }
+            Route::Unsatisfiable(total) => {
+                log::info!(
+                    "[Stream] Range past the end of a segment: client={}, stream={}, \
+                     segment={}, range={:?}, segment_bytes={}; answering 416",
+                    remote_ip,
+                    id,
+                    url_segment,
+                    range_header.as_deref().unwrap_or(""),
+                    total
+                );
+                return Response::builder()
+                    .status(axum::http::StatusCode::RANGE_NOT_SATISFIABLE)
+                    .header(header::CONTENT_RANGE, format!("bytes */{total}"))
+                    .body(Body::empty())
+                    .map_err(|e| ThaumicError::Internal(e.to_string()));
+            }
+            Route::New(reason, start) => {
+                let level = if reason == NewReason::NoPlayout && url_segment > 0 {
+                    // No playout to continue into a later segment: this
+                    // server restarted, or the playout was dropped.
+                    log::Level::Warn
+                } else {
+                    log::Level::Info
+                };
+                log::log!(
+                    level,
+                    "[Stream] New playout: client={}, stream={}, segment={}, reason={}, \
+                     first_byte={}",
+                    remote_ip,
+                    id,
+                    url_segment,
+                    reason.label(),
+                    start.first_byte()
+                );
+                new_segment = Some((layout, start));
+            }
+        }
     }
 
     // Detect resume: this specific IP had a previous HTTP connection.
@@ -453,24 +563,39 @@ async fn serve_stream(
         .audio_format
         .frame_bytes(1000)
         .min(u32::MAX as usize) as u32;
-    let declared_end = pcm_http
-        .as_ref()
-        .map(|settings| DeclaredEnd::new(settings.declared_end_bytes(), byte_rate));
+    // A segment's end is its own: the rest of its header and data from
+    // where the fetch started.
+    let declared_end = match &new_segment {
+        Some((layout, start)) => Some(DeclaredEnd::new(start.body_bytes(layout), byte_rate)),
+        None => pcm_http
+            .as_ref()
+            .map(|settings| DeclaredEnd::new(settings.declared_end_bytes(), byte_rate)),
+    };
     let mut guard = LoggingStreamGuard::new(id.to_string(), remote_ip)
         .with_link_probe(link_probe)
         .with_framing(framing)
         .with_declared_end(declared_end);
-    // Likewise only a speaker's connection reports audio reaching this
-    // machine late: an unlisted reader that falls behind could run its own
-    // queue dry and raise a notice about gaps no speaker heard.
-    if access.tracks_playback() {
-        guard = guard
-            .with_events(Arc::clone(&state.event_bridge) as Arc<dyn crate::events::EventEmitter>);
-    }
     if let Some(wait) = first_wait {
         guard = guard.with_first_wait(wait);
     }
     let guard = Arc::new(guard);
+
+    // What outlives this connection: for a segmented PCM cast, the playout's
+    // statistics, which every later segment of it reports into; otherwise
+    // the connection is the whole playout. Only a speaker's playout reports
+    // audio reaching this machine late: an unlisted reader that falls behind
+    // could run its own queue dry and raise a notice about gaps no speaker
+    // heard.
+    let mut stats = ChainStats::new(id.to_string(), remote_ip);
+    if access.tracks_playback() {
+        stats = stats
+            .with_events(Arc::clone(&state.event_bridge) as Arc<dyn crate::events::EventEmitter>);
+    }
+    let stats = if new_segment.is_some() {
+        Arc::new(stats)
+    } else {
+        stats.following(&guard, pcm_header(stream_state.codec))
+    };
 
     // One-shot epoch hook for whichever pipeline is built below. None for a
     // reader that is not a speaker: its connection must not enter the
@@ -518,21 +643,31 @@ async fn serve_stream(
                 id
             );
         }
-        Arc::new(
-            ConnectionTap::new(
-                id.clone(),
-                remote_ip,
-                connected_at,
-                stream_state.codec,
-                &stream_state.audio_format,
-                Arc::clone(&guard),
-                monitor,
-            )
-            .with_drift(drift, rate_control),
+        let tap = ConnectionTap::new(
+            id.clone(),
+            remote_ip,
+            connected_at,
+            stream_state.codec,
+            &stream_state.audio_format,
+            Arc::clone(&stats),
+            monitor,
         )
+        .with_drift(drift, rate_control);
+        // A connection that is its own playout holds its record for as long
+        // as the tap lives; a segmented playout finds the connection it is
+        // serving through its statistics.
+        Arc::new(if new_segment.is_some() {
+            tap
+        } else {
+            tap.with_connection(Arc::clone(&guard))
+        })
     });
     let epoch_hook: Option<EpochHook> = access.tracks_playback().then(|| {
-        let hook = EpochHook::new(Arc::downgrade(&stream_state), connected_at, remote_ip);
+        let preroll = new_segment
+            .as_ref()
+            .map_or(Duration::ZERO, |(layout, start)| start.preroll(layout));
+        let hook = EpochHook::new(Arc::downgrade(&stream_state), connected_at, remote_ip)
+            .with_preroll(preroll);
         match &tap {
             Some(tap) => hook.with_monitor(Arc::clone(tap), state.latency_monitor.registrar()),
             None => hook,
@@ -566,7 +701,7 @@ async fn serve_stream(
             connect_burst_ms,
             prefill_frames,
             rx,
-            Arc::clone(&guard),
+            Arc::clone(&stats),
             epoch_hook,
             tap.as_deref(),
             remote_ip,
@@ -599,6 +734,31 @@ async fn serve_stream(
         supports_icy && headers.get("icy-metadata").and_then(|v| v.to_str().ok()) == Some("1");
 
     let builder = response_head(content_type, wants_icy, response_framing);
+
+    // A segmented PCM playout: its first connection's body is made by the
+    // playout, which writes the segment's header and ends at its size, and
+    // it holds the tap for as long as it lasts, across its segments.
+    if let Some((layout, start)) = new_segment {
+        let builder = segment_head(builder, &start, &layout);
+        let body = PlayoutChain::start(ChainParts {
+            stream_id: id.clone(),
+            speaker_ip: remote_ip,
+            format: stream_state.audio_format,
+            layout,
+            cadence: combined_stream,
+            stats,
+            tap,
+            start,
+            guard: Arc::clone(&guard),
+            registry: access
+                .tracks_playback()
+                .then(|| Arc::clone(&stream_state.playout)),
+        });
+        let final_stream: AudioStream = Box::pin(with_delivery_record(body, guard, reader_slot));
+        return builder
+            .body(Body::from_stream(final_stream))
+            .map_err(|e| ThaumicError::Internal(e.to_string()));
+    }
 
     // Apply ICY injection or PCM/WAV header
     let inner_stream: AudioStream = if wants_icy {
@@ -639,6 +799,36 @@ async fn serve_stream(
     builder
         .body(Body::from_stream(final_stream))
         .map_err(|e| ThaumicError::Internal(e.to_string()))
+}
+
+/// Adds to a PCM segment response's head what a fetch of part of the
+/// segment needs: `206` and the `Content-Range` it carries, from the first
+/// byte asked for to the segment's end.
+fn segment_head(
+    builder: axum::http::response::Builder,
+    start: &SegmentStart,
+    layout: &SegmentLayout,
+) -> axum::http::response::Builder {
+    if !start.is_partial() {
+        return builder;
+    }
+    let total = layout.total_bytes();
+    builder
+        .status(axum::http::StatusCode::PARTIAL_CONTENT)
+        .header(
+            header::CONTENT_RANGE,
+            format!("bytes {}-{}/{}", start.first_byte(), total - 1, total),
+        )
+}
+
+/// The first byte a `Range` header asks for (`bytes=X-` or `bytes=X-Y`; of
+/// several ranges, the first), or `None` for anything else, which is served
+/// as a fetch of the whole resource.
+fn parse_range_start(range: &str) -> Option<u64> {
+    let spec = range.trim().strip_prefix("bytes=")?;
+    let first = spec.split(',').next()?.trim();
+    let (start, _) = first.split_once('-')?;
+    start.trim().parse().ok()
 }
 
 /// The `[Stream] New connection` line: who is fetching, which PCM segment if
@@ -792,9 +982,15 @@ fn pcm_switches_line(remote_ip: IpAddr, stream_id: &str, settings: &PcmHttpSetti
     let end_after = settings
         .end_after_bytes
         .map_or_else(|| "none".to_string(), |n| n.to_string());
+    let segments = if settings.segments {
+        settings.segment_bytes.to_string()
+    } else {
+        "off".to_string()
+    };
     format!(
         "[Stream] PCM HTTP switches: client={remote_ip}, stream={stream_id}, framing={}, \
-         content_length={content_length}, wav_data_size={}, end_after_bytes={end_after}",
+         content_length={content_length}, wav_data_size={}, end_after_bytes={end_after}, \
+         segment_bytes={segments}",
         settings.framing, settings.wav_data_size
     )
 }
@@ -876,7 +1072,7 @@ fn pcm_cadence_stream(
     burst_ms: u64,
     prefill_frames: Vec<TimestampedFrame>,
     rx: tokio::sync::broadcast::Receiver<Bytes>,
-    guard: Arc<LoggingStreamGuard>,
+    stats: Arc<ChainStats>,
     epoch_hook: Option<EpochHook>,
     tap: Option<&ConnectionTap>,
     remote_ip: IpAddr,
@@ -909,7 +1105,7 @@ fn pcm_cadence_stream(
     );
     Box::pin(create_wav_stream_with_cadence(
         rx,
-        guard,
+        stats,
         config,
         Some(Arc::downgrade(stream_state)),
         epoch_hook,
@@ -1486,7 +1682,7 @@ mod tests {
             Instant::now(),
             AudioCodec::Aac,
             &AudioFormat::default(),
-            Arc::new(LoggingStreamGuard::new("test-stream".into(), test_ip())),
+            Arc::new(ChainStats::new("test-stream", test_ip())),
             true,
         ));
         let hook = hook_for(&state).with_monitor(Arc::clone(&tap), registrar);
@@ -1624,6 +1820,8 @@ mod tests {
         let is_resume = state.timing.current_epoch_for(remote).is_some();
         let (prefill, rx) = state.subscribe();
         let guard = Arc::new(LoggingStreamGuard::new(state.id.clone(), remote));
+        let stats =
+            ChainStats::for_connection(state.id.clone(), &guard, pcm_header(AudioCodec::Pcm));
         let tap = Arc::new(
             ConnectionTap::new(
                 state.id.clone(),
@@ -1631,13 +1829,14 @@ mod tests {
                 Instant::now(),
                 AudioCodec::Pcm,
                 &state.audio_format,
-                Arc::clone(&guard),
+                Arc::clone(&stats),
                 true,
             )
             .with_drift(
                 drift,
                 connection_rate_control(drift, AudioCodec::Pcm, &state.audio_format, forced),
-            ),
+            )
+            .with_connection(Arc::clone(&guard)),
         );
         let (registrar, _registrations) = MonitorRegistrar::channel();
         let hook = EpochHook::new(Arc::downgrade(state), Instant::now(), remote)
@@ -1647,7 +1846,7 @@ mod tests {
             burst_ms,
             prefill,
             rx,
-            Arc::clone(&guard),
+            stats,
             Some(hook),
             Some(&tap),
             remote,
@@ -2126,6 +2325,8 @@ mod tests {
         PcmHttpSettings {
             framing: PcmHttpFraming::Length,
             content_length: len,
+            // A declared length fixes the connection's end: no segments.
+            segments: false,
             ..PcmHttpSettings::default()
         }
     }
@@ -2572,6 +2773,42 @@ mod tests {
     }
 
     /// The switches line gives every setting a connection is served with.
+    /// The first byte of a `Range` header, as a Sonos speaker sends it after
+    /// a pause (`bytes=4227072-`) or past a segment's end.
+    #[test]
+    fn a_range_header_gives_its_first_byte() {
+        assert_eq!(parse_range_start("bytes=4227072-"), Some(4_227_072));
+        assert_eq!(parse_range_start(" bytes=0-99 "), Some(0));
+        assert_eq!(parse_range_start("bytes=10-20, 30-40"), Some(10));
+        assert_eq!(parse_range_start("bytes=-500"), None, "a suffix range");
+        assert_eq!(parse_range_start("items=1-"), None);
+        assert_eq!(parse_range_start("bytes=x-"), None);
+    }
+
+    /// A fetch of part of a segment is answered `206` with the range it
+    /// carries, to the segment's end; a whole one keeps `200`.
+    #[test]
+    fn a_partial_segment_fetch_is_answered_206() {
+        let layout = SegmentLayout::new(&AudioFormat::default(), 10_485_760);
+        let head = |range: Option<u64>| {
+            let start = SegmentStart::new(1, range, &layout).expect("inside the segment");
+            let framing = ResponseFraming::new(Version::HTTP_11, None);
+            segment_head(response_head("audio/wav", false, framing), &start, &layout)
+                .body(Body::empty())
+                .expect("response")
+        };
+        let whole = head(None);
+        assert_eq!(whole.status(), axum::http::StatusCode::OK);
+        assert!(whole.headers().get(header::CONTENT_RANGE).is_none());
+
+        let partial = head(Some(4_227_072));
+        assert_eq!(partial.status(), axum::http::StatusCode::PARTIAL_CONTENT);
+        assert_eq!(
+            partial.headers()[header::CONTENT_RANGE],
+            "bytes 4227072-10485163/10485164"
+        );
+    }
+
     #[test]
     fn the_switches_line_names_every_setting() {
         let line = pcm_switches_line(
@@ -2582,19 +2819,29 @@ mod tests {
                 content_length: 10_485_760,
                 wav_data_size: 10_485_760,
                 end_after_bytes: Some(2_000_000),
+                segments: false,
+                segment_bytes: 0xFFFF_0000,
             },
         );
         assert_eq!(
             line,
             "[Stream] PCM HTTP switches: client=192.168.1.50, stream=s1, framing=chunked, \
-             content_length=none, wav_data_size=10485760, end_after_bytes=2000000"
+             content_length=none, wav_data_size=10485760, end_after_bytes=2000000, \
+             segment_bytes=off"
         );
         let line = pcm_switches_line(ip("192.168.1.50"), "s1", &pcm_length(10_485_760));
         assert_eq!(
             line,
             "[Stream] PCM HTTP switches: client=192.168.1.50, stream=s1, framing=length, \
-             content_length=10485760, wav_data_size=4294967295, end_after_bytes=none"
+             content_length=10485760, wav_data_size=4294967295, end_after_bytes=none, \
+             segment_bytes=off"
         );
+        let segmented = PcmHttpSettings {
+            segment_bytes: 10_485_760,
+            ..PcmHttpSettings::default()
+        };
+        assert!(pcm_switches_line(ip("192.168.1.50"), "s1", &segmented)
+            .ends_with("end_after_bytes=none, segment_bytes=10485760"));
     }
 
     /// The speaker monitor's ack lag counts what the speaker has acknowledged
