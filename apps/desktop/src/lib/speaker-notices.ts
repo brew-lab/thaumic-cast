@@ -6,8 +6,9 @@
  * dismissed. It follows the extension's rules (`apps/extension/src/lib/
  * speaker-notices.ts`), with one difference in wording: the head start is
  * changed right here, so a head-start notice points at Settings > Speakers
- * rather than naming the desktop app. An uncorrected drift offers clock drift
- * correction when it is not on and no environment variable fixes it.
+ * rather than naming the desktop app. An uncorrected drift, and a speaker
+ * running low because its clock drained it, offer clock drift correction when
+ * it is not on and no environment variable fixes it.
  *
  * Dismissal: a notice is dismissed by `(streamId, speakerIp, noticeId)`, which
  * holds while the core repeats it and lapses on a new episode or an
@@ -96,8 +97,8 @@ export interface NoticeWordingContext {
   /** Whether THAUMIC_PCM_CONNECT_BURST_MS fixes the head start. */
   headStartFixed: boolean;
   /**
-   * Whether to offer clock drift correction with an uncorrected drift: it is
-   * not on, and the user can turn it on here (no environment variable fixes
+   * Whether to offer clock drift correction with an uncorrected drift (or a
+   * speaker running low because of one): it is not on, and the user can turn it on here (no environment variable fixes
    * it).
    */
   offerDriftCorrection: boolean;
@@ -160,6 +161,13 @@ export function speakerNoticeLines(notice: SpeakerNotice, ctx: NoticeWordingCont
       break;
     case 'running_low':
       lines.push({ key: 'dashboard.speaker_notice_running_low', params: { name, left } });
+      // When the clock drained it, keep the reason and the fix the drift
+      // notice it replaced gave.
+      if (notice.cause !== 'drift') break;
+      lines.push({ key: 'dashboard.speaker_notice_running_low_drift' });
+      if (ctx.offerDriftCorrection) {
+        lines.push({ key: 'dashboard.speaker_notice_drift_turn_on_desktop' });
+      }
       break;
     case 'drift_uncorrected':
     case 'drift_saturated':
