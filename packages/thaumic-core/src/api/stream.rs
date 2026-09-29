@@ -483,20 +483,7 @@ pub(super) async fn stream_audio(
     let wants_icy =
         supports_icy && headers.get("icy-metadata").and_then(|v| v.to_str().ok()) == Some("1");
 
-    let mut builder = Response::builder()
-        .header(header::CONTENT_TYPE, content_type)
-        .header(header::CACHE_CONTROL, "no-cache")
-        // DLNA streaming header: indicates real-time playback vs download-first
-        .header("TransferMode.dlna.org", "Streaming")
-        // Stream identification for renderers that display station name
-        .header("icy-name", APP_NAME);
-
-    if wants_icy {
-        builder = builder.header("icy-metaint", ICY_METAINT.to_string());
-    }
-
-    // Connection, and for PCM the Content-Length or the HTTP/1.0 status line.
-    builder = response_framing.apply(builder);
+    let builder = response_head(content_type, wants_icy, response_framing);
 
     // Apply ICY injection or PCM/WAV header
     let inner_stream: AudioStream = if wants_icy {
@@ -561,6 +548,36 @@ fn connection_line(
     )
 }
 
+/// The head of a stream response: its headers, in the order they go out, and
+/// for a close-delimited body the HTTP/1.0 status line.
+///
+/// The order is the one every response has always had: a field experiment
+/// studies how a speaker reacts to exactly these bytes, so by default they
+/// must not move. Only `Connection` and, for PCM, `Content-Length` follow the
+/// framing.
+fn response_head(
+    content_type: &str,
+    wants_icy: bool,
+    framing: ResponseFraming,
+) -> axum::http::response::Builder {
+    let connection = if framing.close { "close" } else { "keep-alive" };
+    let mut builder = Response::builder()
+        .header(header::CONTENT_TYPE, content_type)
+        .header(header::CACHE_CONTROL, "no-cache")
+        .header(header::CONNECTION, connection)
+        // DLNA streaming header: indicates real-time playback vs download-first
+        .header("TransferMode.dlna.org", "Streaming")
+        // Stream identification for renderers that display station name
+        .header("icy-name", APP_NAME);
+
+    if wants_icy {
+        builder = builder.header("icy-metaint", ICY_METAINT.to_string());
+    }
+
+    // For PCM the Content-Length, or the HTTP/1.0 status line.
+    framing.apply(builder)
+}
+
 /// How a response body is delimited, and the headers that say so.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct ResponseFraming {
@@ -602,18 +619,17 @@ impl ResponseFraming {
         }
     }
 
-    /// Adds the headers that go with this framing to `builder`.
+    /// Sets what this framing adds to a head `builder` that already carries
+    /// the `Connection` header (see [`response_head`]): the declared
+    /// `Content-Length`, last, as it always was.
     ///
     /// A close-delimited body can only end by the connection closing, so it
-    /// says `Connection: close` rather than keep-alive, and goes out as
-    /// HTTP/1.0: hyper then sends it with neither a length nor chunking.
+    /// goes out as HTTP/1.0 (and `response_head` says `Connection: close`):
+    /// hyper then sends it with neither a length nor chunking.
     fn apply(self, builder: axum::http::response::Builder) -> axum::http::response::Builder {
         if self.close {
-            return builder
-                .version(Version::HTTP_10)
-                .header(header::CONNECTION, "close");
+            return builder.version(Version::HTTP_10);
         }
-        let builder = builder.header(header::CONNECTION, "keep-alive");
         match self.content_length {
             Some(len) => builder.header(header::CONTENT_LENGTH, len.to_string()),
             None => builder,
@@ -679,6 +695,11 @@ fn with_optional_server_cap(
 /// zero-length chunk, or closing the connection. A test switch (see
 /// [`crate::stream::PCM_END_AFTER_BYTES_ENV`]), never used with a declared
 /// length, which hyper would abort the connection over.
+///
+/// The cap is marked when the item that reaches it is handed to hyper, just
+/// before hyper writes it: should the speaker hang up in that moment, the end
+/// is reported as `server_cap` rather than `client`. Only ever seen in an
+/// experiment, and only for that last write.
 fn with_server_cap(
     mut stream: AudioStream,
     cap: u64,
@@ -1611,8 +1632,7 @@ mod tests {
                     );
                     *slot.lock() = Some(Arc::clone(&guard));
                     let items = with_optional_server_cap(items, pcm.as_ref(), &guard);
-                    response_framing
-                        .apply(Response::builder())
+                    response_head("audio/wav", false, response_framing)
                         .body(Body::from_stream(with_delivery_record(items, guard, ())))
                         .expect("response")
                 }
@@ -1797,11 +1817,19 @@ mod tests {
         assert_eq!(guard.ended_by(), crate::stream::EndedBy::Error);
     }
 
-    /// The headers a response carries for a framing, read off a built
-    /// response.
+    /// The headers, in order, that `stream_audio` gives a response for a
+    /// framing (without ICY metadata), read off a built response.
     fn framing_headers(framing: ResponseFraming) -> (Version, Vec<(String, String)>) {
-        let response = framing
-            .apply(Response::builder())
+        head_headers(AudioCodec::Pcm, false, framing)
+    }
+
+    /// The version and headers, in order, of the head `stream_audio` builds.
+    fn head_headers(
+        codec: AudioCodec,
+        wants_icy: bool,
+        framing: ResponseFraming,
+    ) -> (Version, Vec<(String, String)>) {
+        let response = response_head(codec.mime_type(), wants_icy, framing)
             .body(Body::empty())
             .expect("response");
         let headers = response
@@ -1812,29 +1840,48 @@ mod tests {
         (response.version(), headers)
     }
 
-    /// With no switch set PCM is served exactly as before: a 4294967295-byte
-    /// Content-Length on a keep-alive connection. A compressed codec declares
-    /// no length, and neither is affected by the switches.
+    /// `(name, value)` pairs as owned strings, to compare with a head.
+    fn pairs(list: &[(&str, &str)]) -> Vec<(String, String)> {
+        list.iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect()
+    }
+
+    /// With no switch set PCM is served exactly as before, header for header
+    /// and in the same order: a 4294967295-byte Content-Length, last, on a
+    /// keep-alive connection. A compressed codec declares no length, and
+    /// neither is affected by the switches.
     #[test]
     fn by_default_pcm_declares_the_largest_length_and_compressed_codecs_none() {
         let pcm = ResponseFraming::new(Version::HTTP_11, Some(&PcmHttpSettings::default()));
         assert_eq!(pcm.framing, BodyFraming::Length(4_294_967_295));
-        let (version, headers) = framing_headers(pcm);
+        let (version, headers) = head_headers(AudioCodec::Pcm, false, pcm);
         assert_eq!(version, Version::HTTP_11);
         assert_eq!(
             headers,
-            [
-                ("connection".to_string(), "keep-alive".to_string()),
-                ("content-length".to_string(), "4294967295".to_string()),
-            ]
+            pairs(&[
+                ("content-type", "audio/wav"),
+                ("cache-control", "no-cache"),
+                ("connection", "keep-alive"),
+                ("transfermode.dlna.org", "Streaming"),
+                ("icy-name", APP_NAME),
+                ("content-length", "4294967295"),
+            ])
         );
 
         let compressed = ResponseFraming::new(Version::HTTP_11, None);
         assert_eq!(compressed.framing, BodyFraming::Chunked);
-        let (_, headers) = framing_headers(compressed);
+        let (_, headers) = head_headers(AudioCodec::Mp3, true, compressed);
         assert_eq!(
             headers,
-            [("connection".to_string(), "keep-alive".to_string())]
+            pairs(&[
+                ("content-type", "audio/mpeg"),
+                ("cache-control", "no-cache"),
+                ("connection", "keep-alive"),
+                ("transfermode.dlna.org", "Streaming"),
+                ("icy-name", APP_NAME),
+                ("icy-metaint", &ICY_METAINT.to_string()),
+            ])
         );
         assert_eq!(
             ResponseFraming::new(Version::HTTP_10, None).framing,
@@ -1857,17 +1904,19 @@ mod tests {
             ResponseFraming::new(Version::HTTP_11, Some(&pcm_framed(PcmHttpFraming::Chunked)));
         assert_eq!(chunked.framing, BodyFraming::Chunked);
         let (_, headers) = framing_headers(chunked);
-        assert_eq!(
-            headers,
-            [("connection".to_string(), "keep-alive".to_string())]
-        );
+        assert!(headers.contains(&("connection".to_string(), "keep-alive".to_string())));
+        assert!(!headers.iter().any(|(k, _)| k == "content-length"));
 
         let close =
             ResponseFraming::new(Version::HTTP_11, Some(&pcm_framed(PcmHttpFraming::Close)));
         assert_eq!(close.framing, BodyFraming::Close);
         let (version, headers) = framing_headers(close);
         assert_eq!(version, Version::HTTP_10);
-        assert_eq!(headers, [("connection".to_string(), "close".to_string())]);
+        assert!(headers.contains(&("connection".to_string(), "close".to_string())));
+        assert!(!headers.iter().any(|(k, _)| k == "content-length"));
+        assert!(!headers
+            .iter()
+            .any(|(k, v)| k == "connection" && v == "keep-alive"));
 
         let h2 = ResponseFraming::new(Version::HTTP_2, Some(&pcm_framed(PcmHttpFraming::Close)));
         assert_eq!(h2.framing, BodyFraming::Http2);
