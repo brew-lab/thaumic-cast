@@ -107,11 +107,11 @@ pub const DECLARED_END_LEAD_MS: u64 = 2_000;
 /// Audio a connection's body may run past its declared end and still be at
 /// it, in milliseconds (see [`DeclaredEnd::is_near`]).
 ///
-/// A speaker that stops reading at its declared end leaves our side writing
-/// only into the socket's buffers until they fill: a Playbar that stopped at
-/// the 4 GiB WAV length was handed about 9 s more before it hung up. A body
-/// that runs well beyond that is being read, so the speaker is not honouring
-/// the length, and its connection is measured as any other again.
+/// A speaker does not hang up the moment its body passes the declared end: a
+/// Playbar at the 4 GiB WAV length went on reading, and acknowledging, about
+/// 9.3 s (1.79 MB) more before it closed the connection. A body that runs a
+/// minute past the end is still being played, so the speaker is not
+/// honouring the length, and its connection is measured as any other again.
 pub const DECLARED_END_GRACE_MS: u64 = 60_000;
 
 /// Where a connection's body ends as the speaker reads it: the byte, counted
@@ -120,9 +120,10 @@ pub const DECLARED_END_GRACE_MS: u64 = 60_000;
 ///
 /// For PCM that is the WAV header plus the data size it declares, unless a
 /// declared `Content-Length` or a test cap ends the body sooner. A speaker
-/// reads to it, plays out what it holds, and hangs up or goes to STOPPED, so
-/// near and after it the speaker no longer acknowledging audio is the end of
-/// the item: no stall, no running low and no drift should be read into it.
+/// reads to it (or a little past it), plays out what it holds, and hangs up
+/// or goes to STOPPED. Whether it stops acknowledging audio before it hangs
+/// up is its own business, so near and after the end neither that nor the
+/// reserve it plays out says anything about a stall, running low or drift.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct DeclaredEnd {
     /// Body bytes up to and including the last one the speaker reads.
@@ -168,8 +169,9 @@ impl DeclaredEnd {
         sent >= self.bytes && !self.is_past(sent)
     }
 
-    /// Whether the body ran on further past its declared end than the
-    /// socket's buffers could hold, so the speaker was still reading.
+    /// Whether the body ran on further past its declared end than a speaker
+    /// reads before hanging up (see [`DECLARED_END_GRACE_MS`]), so the
+    /// speaker is not honouring it.
     fn is_past(self, sent: u64) -> bool {
         sent >= self.bytes.saturating_add(self.grace_bytes)
     }
@@ -384,8 +386,8 @@ mod tests {
         assert!(end.is_near(at - 384_000));
         assert!(!end.is_reached(at - 1));
         assert!(end.is_near(at) && end.is_reached(at));
-        // The field's end: 1.79 MB handed over past the length before the
-        // speaker hung up.
+        // The field's end: 1.79 MB handed over, and acknowledged, past the
+        // length before the speaker hung up.
         assert!(end.is_near(4_296_760_364) && end.is_reached(4_296_760_364));
         assert!(end.is_near(at + 11_519_999));
         assert!(
