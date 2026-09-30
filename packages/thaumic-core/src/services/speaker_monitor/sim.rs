@@ -1044,7 +1044,8 @@ mod tests {
     /// for good after 80 minutes in 29% of them (82% at +60 ppm), and as late
     /// as 110. Drawn towards the clock fit once that is precise, the
     /// integral is a median 2.9 ppm off an hour in (90th percentile 7.0, the
-    /// worst 13.9, 6% over 8), and the reserve is within 40 ms of its target
+    /// worst 13.9, 6% over 8; 720 more casts on other seeds
+    /// reached 19.0), and the reserve is within 40 ms of its target
     /// for good by 80 minutes in all but 1.5% of casts, by 90 in all. Past
     /// its target the reserve swings back by at most 21 ms, within the
     /// deadband.
@@ -1052,7 +1053,7 @@ mod tests {
     /// Judged over 36 of those casts, with bounds that leave room for a
     /// sample that size: a median within 5 ppm an hour in and no more than
     /// one cast in six over 8 (without the pull: 14 ppm and four in five),
-    /// every one within 16; the reserve in for good by 80 minutes in all
+    /// every one within 24; the reserve in for good by 80 minutes in all
     /// but one in ten and by 100 in all; and never past its target by more
     /// than the deadband.
     #[test]
@@ -1122,7 +1123,7 @@ mod tests {
             casts.len()
         );
         let worst = off_at_hour.iter().copied().fold(0.0, f64::max);
-        assert!(worst <= 16.0, "an integral {worst:.1} ppm off an hour in");
+        assert!(worst <= 24.0, "an integral {worst:.1} ppm off an hour in");
         let middle = median(&mut off_at_hour);
         assert!(
             middle <= 5.0,
