@@ -53,6 +53,21 @@ use crate::stream::HeadStart;
 /// most the true rate over the window: 20 ppm over 180 s is 3.6 ms.
 pub const CLOCK_SHIFT_MAX_SE_PPM: f64 = 50.0;
 
+/// Standard error, in ppm, the clock fit must be within before a reporting
+/// offset absorbed with a less precise clock is corrected for it (see
+/// [`SwitchOutcome::Reclocked`]).
+///
+/// The correction is the rate times the six and a half minutes the offset
+/// was measured over, about 16 ms on a 45 ppm speaker, so a rate good only
+/// to the [`CLOCK_SHIFT_MAX_SE_PPM`] that moves the reserve is no better
+/// than none: corrected at the first such fit, the offsets of twenty
+/// simulated -45 ppm speakers in ten-minute segments moved by +9 to -50 ms
+/// and came no nearer the truth (29 ms RMS off, against 30). Within 20 ppm,
+/// half an hour in, a hundred of them moved by -37 to +29 ms, and their
+/// error went from +17 ms on average to +3 (from 28 ms RMS to 24, the worst
+/// from 64 ms to 59).
+pub const RECLOCK_MAX_SE_PPM: f64 = 20.0;
+
 /// Largest step at the first continuation switch after the speaker was told
 /// to play, in ms, taken for the speaker counting RelTime differently on the
 /// new item and absorbed (about 110 ms on a Playbar and 210 ms on a Play:1
@@ -93,8 +108,9 @@ pub const CONTINUATION_MIN_SEGMENT_MS: f64 = RESERVE_WINDOW_MS;
 /// truth, the worst of forty runs 46 ms (at a switch hours into a cast; at
 /// one in its first half hour the clock is not yet precise enough to carry
 /// the reserve across, and on a 45 ppm speaker the offset read up to 60 ms
-/// off). The drift controller steers by the reserve before the switch,
-/// carried on, for this long after it (see [`ReserveTracker::carry`]).
+/// off until corrected; see [`RECLOCK_MAX_SE_PPM`]). The drift controller
+/// steers by the reserve before the switch, carried on, for this long after
+/// it (see [`ReserveTracker::carry`]).
 pub const CONTINUATION_MEASURE_MS: f64 = 2.0 * RESERVE_WINDOW_MS;
 
 /// How long the estimate from before a continuation switch is carried while
@@ -224,6 +240,29 @@ pub enum SwitchOutcome {
     },
     /// Nothing was measured, and nothing absorbed.
     Unmeasured(SwitchUnmeasured),
+    /// The offset absorbed earlier was measured before the speaker's clock
+    /// was known well enough to carry the reserve across the switch, so it
+    /// was carried along a rate of 0 (or a rough one); now the clock is
+    /// within [`RECLOCK_MAX_SE_PPM`], the offset is corrected by what that
+    /// rate would have carried it. A second outcome for the same switch.
+    Reclocked {
+        /// The offset now absorbed, in ms.
+        offset_ms: f64,
+        /// How much it moved, in ms.
+        by_ms: f64,
+    },
+}
+
+/// An absorbed reporting offset measured before the clock was within
+/// [`RECLOCK_MAX_SE_PPM`], awaiting correction (see
+/// [`SwitchOutcome::Reclocked`]).
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct UnclockedOffset {
+    /// The clock rate the reserve before the switch was carried along, in
+    /// ppm.
+    clock_ppm: f64,
+    /// How long it was carried, in ms.
+    span_ms: f64,
 }
 
 /// A continuation switch whose offset is being measured.
@@ -521,6 +560,10 @@ pub struct ReserveTracker {
     /// the current playout segment, in ms: the reporting offset absorbed at
     /// the first continuation switch since the speaker was last told to play.
     reserve_offset_ms: f64,
+    /// The offset in [`Self::reserve_offset_ms`], if it was measured before
+    /// the clock was within [`RECLOCK_MAX_SE_PPM`] and has not been
+    /// corrected yet.
+    unclocked: Option<UnclockedOffset>,
     /// A continuation switch whose offset is being measured.
     switch: Option<PendingSwitch>,
     /// The current segment's polls over the last
@@ -566,6 +609,7 @@ impl ReserveTracker {
         self.reference = self.reserve.fresh(CONTINUATION_MEASURE_MS);
         self.timeline = None;
         self.reserve_offset_ms = 0.0;
+        self.unclocked = None;
         self.switch_outcome = None;
         self.connection = ConnectionStats {
             breaks_before: SegmentBreak::ALL.map(|r| self.segment.count(r)),
@@ -609,6 +653,48 @@ impl ReserveTracker {
             .estimate()
             .filter(|c| c.se_ppm <= CLOCK_SHIFT_MAX_SE_PPM)
             .map_or(0.0, |c| c.shrunk_ppm())
+    }
+
+    /// Whether the clock fit's standard error is within `se_ppm`.
+    fn clock_within(&self, se_ppm: f64) -> bool {
+        self.clock.estimate().is_some_and(|c| c.se_ppm <= se_ppm)
+    }
+
+    /// Corrects an offset absorbed with an imprecise clock (see
+    /// [`SwitchOutcome::Reclocked`]) once the clock is within
+    /// [`RECLOCK_MAX_SE_PPM`].
+    ///
+    /// The reserve before the switch was carried across the measuring span
+    /// along the rate the clock was taken at then (0 until it is within
+    /// [`CLOCK_SHIFT_MAX_SE_PPM`]), so the offset read the true rate's
+    /// difference from it times that span off. The first switch on a real
+    /// cast comes hours in, with a precise clock; with segments of ten
+    /// minutes it comes before one. The correction waits while another
+    /// switch is being measured, whose polls have the offset in force taken
+    /// off them already, and while an outcome waits to be taken.
+    fn reclock_offset(&mut self) {
+        if self.switch.is_some()
+            || self.switch_outcome.is_some()
+            || !self.clock_within(RECLOCK_MAX_SE_PPM)
+        {
+            return;
+        }
+        let Some(unclocked) = self.unclocked.take() else {
+            return;
+        };
+        // Carried along a faster clock, the reserve would have been expected
+        // lower, and the step read that much larger.
+        let by_ms = (self.clock_shift_ppm() - unclocked.clock_ppm) * 1e-6 * unclocked.span_ms;
+        self.reserve_offset_ms += by_ms;
+        self.reserve.shift(-by_ms);
+        self.reference.shift(-by_ms);
+        if let Some(last) = self.last_tight.as_mut() {
+            last.reserve_ms -= by_ms;
+        }
+        self.switch_outcome = Some(SwitchOutcome::Reclocked {
+            offset_ms: self.reserve_offset_ms,
+            by_ms,
+        });
     }
 
     /// How much faster than delivery the speaker drains its reserve, in
@@ -806,6 +892,7 @@ impl ReserveTracker {
                 self.reserve.shift(self.reserve_offset_ms);
                 self.reference.shift(self.reserve_offset_ms);
                 self.reserve_offset_ms = 0.0;
+                self.unclocked = None;
             }
             TimelineEntry::Other => self.cancel_switch(SwitchUnmeasured::Superseded),
         }
@@ -950,6 +1037,7 @@ impl ReserveTracker {
         previous_acked: Option<AckedReserve>,
     ) -> Option<(Option<ReserveEstimate>, Option<SegmentBreak>)> {
         let (clock_ppm, command_ppm) = (self.clock_shift_ppm(), self.command_ppm);
+        let reclocked = self.clock_within(RECLOCK_MAX_SE_PPM);
         let switch = self.switch.as_mut()?;
         let probe = switch.probe.estimate(now, ppm);
         // Delivery runs at our clock and the playhead at the speaker's. The
@@ -986,6 +1074,10 @@ impl ReserveTracker {
                     ..probe
                 });
                 self.reserve_offset_ms += offset_ms;
+                self.unclocked = (!reclocked).then_some(UnclockedOffset {
+                    clock_ppm,
+                    span_ms: now - carried.at,
+                });
                 self.switch_outcome = Some(SwitchOutcome::Absorbed { offset_ms });
                 return None;
             }
@@ -1054,11 +1146,7 @@ impl ReserveTracker {
     pub fn carry(&self) -> EstimateCarry {
         if !self.settling() {
             EstimateCarry::Measured
-        } else if self
-            .clock
-            .estimate()
-            .is_some_and(|c| c.se_ppm <= CLOCK_SHIFT_MAX_SE_PPM)
-        {
+        } else if self.clock_within(CLOCK_SHIFT_MAX_SE_PPM) {
             EstimateCarry::Teaches
         } else {
             EstimateCarry::Steers
@@ -1104,6 +1192,7 @@ impl ReserveTracker {
         // (whose error can be hundreds of ppm) cannot drag the older bounds,
         // or the step baseline, far. Net of the correction applied: inserted
         // audio raises the reserve as the speaker's clock lowers it.
+        self.reclock_offset();
         let ppm = self.shift_ppm();
         if let Some(settling) = self.step_switch(now, ppm, previous_acked) {
             return settling;
@@ -2676,6 +2765,73 @@ mod tests {
             held_before_break |= seg_tracker.control_hold();
         }
         assert!(held_before_break, "the first jumped estimate holds");
+    }
+
+    #[test]
+    fn an_offset_measured_before_the_clock_is_precise_is_reclocked() {
+        // A -45 ppm speaker moving on ten minutes in, before its clock is
+        // known: the reserve before the switch is carried across it at a
+        // rate of 0 while it rises 45 ppm, so the offset reads about 17 ms
+        // high. Once the clock is within RECLOCK_MAX_SE_PPM the offset is
+        // corrected by that much, and the reserve reads on from it.
+        const MINUTE: f64 = 60_000.0;
+        const OFFSET_MS: f64 = 190.0;
+        let switch_at = 10.0 * MINUTE + 5_000.0;
+        let (mut measured, mut corrected) = (Vec::new(), Vec::new());
+        for seed in 1300..1316 {
+            let mut gen = PollGen::new(seed);
+            gen.start_ms = 500.0;
+            gen.ppm = -45.0;
+            gen.steps = vec![(switch_at, -OFFSET_MS)];
+            let mut tracker = ReserveTracker::new();
+            tracker.start_connection(true, H500);
+            let mut outcomes = Vec::new();
+            let mut t = 0.0;
+            while t < 60.0 * MINUTE {
+                t += 30_000.0;
+                gen.run_until(t, |p| {
+                    let tl = if p.ts >= switch_at {
+                        next(1 << 32)
+                    } else {
+                        SEG0
+                    };
+                    tracker.observe_on(p, URI, false, Some(tl));
+                });
+                let (_, brk) = tracker.estimate(t);
+                assert_eq!(brk, None, "seed {seed} at {t}");
+                tracker.observe_ack_lag(&mut []);
+                if let Some(o) = tracker.take_switch_outcome() {
+                    let clock = tracker.clock().expect("clock");
+                    outcomes.push((o, clock.se_ppm));
+                }
+            }
+            let [(SwitchOutcome::Absorbed { offset_ms }, se_then), (
+                SwitchOutcome::Reclocked {
+                    offset_ms: now,
+                    by_ms,
+                },
+                se_now,
+            )] = outcomes[..]
+            else {
+                panic!("seed {seed}: {outcomes:?}");
+            };
+            assert!(
+                se_then > RECLOCK_MAX_SE_PPM && se_now <= RECLOCK_MAX_SE_PPM,
+                "seed {seed}: {outcomes:?}"
+            );
+            // 45 ppm over about 6.5 min, give or take the clock's error.
+            assert!((-32.0..=-2.0).contains(&by_ms), "seed {seed}: {by_ms:.1}");
+            assert!((now - offset_ms - by_ms).abs() < 1e-9);
+            assert_eq!(tracker.reserve_offset_ms, now);
+            measured.push(offset_ms - OFFSET_MS);
+            corrected.push(now - OFFSET_MS);
+        }
+        // Measured 21 ms high on average, and 4 once corrected: what is left
+        // is each measurement's own error, ±20 ms or so.
+        let mean = |v: &[f64]| v.iter().sum::<f64>() / v.len() as f64;
+        let (measured, corrected) = (mean(&measured), mean(&corrected));
+        assert!(measured > 12.0, "{measured:+.1}");
+        assert!(corrected.abs() < 8.0, "{measured:+.1} then {corrected:+.1}");
     }
 
     #[test]
