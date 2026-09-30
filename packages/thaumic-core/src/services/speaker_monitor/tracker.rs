@@ -807,9 +807,9 @@ impl ReserveTracker {
     /// much more reserve against the target learnt before, and reaches the
     /// drift controller once the estimate locks again. The log says which
     /// switches went unmeasured. So does a switch after a segment shorter
-    /// than [`CONTINUATION_MIN_SEGMENT_MS`], and the clock fit is not broken
-    /// there either (segments that short would never give it a block): the
-    /// fit sees the step, which on a real cast happens once.
+    /// than [`CONTINUATION_MIN_SEGMENT_MS`]; the clock fit is broken there
+    /// all the same when RelTime steps, away from the item the speaker was
+    /// told to play.
     pub fn observe_on(
         &mut self,
         obs: &PollObservation,
@@ -912,20 +912,25 @@ impl ReserveTracker {
         if !self.pcm {
             return;
         }
+        // RelTime steps at a switch away from an item the speaker did not
+        // move on to by itself, whether or not the step is measured, and
+        // however short the item was: the step is how the speaker reports,
+        // not how it plays. Left in the fit after a two-minute first item,
+        // it put the slope a mean 10-12 ppm off at 40 minutes in simulation,
+        // and the clock fit draws the integral from about then. Between two
+        // items it moved on to, both count from the audio and nothing
+        // steps; broken there anyway, the fit's segments are one playout
+        // segment long (ten minutes in a test configuration), and a slope
+        // pinned only within each was up to 60 ppm off after 2.5 hours in
+        // simulation, claiming ±18, where one unbroken line was within 3. A
+        // step that does come at a later switch breaks the segment, and the
+        // fit, as an offset step.
+        if left != TimelineEntry::Next {
+            self.clock.break_segment();
+        }
         if lasted < CONTINUATION_MIN_SEGMENT_MS {
             self.switch_outcome = Some(SwitchOutcome::Unmeasured(SwitchUnmeasured::ShortSegment));
             return;
-        }
-        // RelTime steps at a switch away from an item the speaker did not
-        // move on to by itself, whether or not the step is measured. Between
-        // two it did, both count from the audio and nothing steps; broken
-        // there anyway, the fit's segments are one playout segment long (ten
-        // minutes in a test configuration), and a slope pinned only within
-        // each was up to 60 ppm off after 2.5 hours in simulation, claiming
-        // ±18, where one unbroken line was within 3. A step that does come at a
-        // later switch breaks the segment, and the fit, as an offset step.
-        if left != TimelineEntry::Next {
-            self.clock.break_segment();
         }
         let Some(carried) = self.switch_reference(ts) else {
             self.switch_outcome = Some(SwitchOutcome::Unmeasured(SwitchUnmeasured::NoReference));
@@ -2850,6 +2855,45 @@ mod tests {
             .filter_map(|r| r.outcome)
             .all(|o| o == SwitchOutcome::Unmeasured(SwitchUnmeasured::ShortSegment)));
         assert!(reports.last().unwrap().est.is_some_and(|e| e.locked()));
+    }
+
+    #[test]
+    fn a_first_switch_after_a_short_segment_still_breaks_the_clock_fit() {
+        // Two-minute segments, the first reporting 190 ms ahead of the audio:
+        // RelTime steps back at the first switch, and nothing is measured.
+        // Left in the fit, the step read as a slope for most of an hour.
+        const MINUTE: f64 = 60_000.0;
+        const PPM: f64 = 20.0;
+        let mut errors = Vec::new();
+        for seed in 1400..1412 {
+            let mut gen = PollGen::new(seed);
+            gen.start_ms = 500.0;
+            gen.ppm = PPM;
+            gen.tick_jitter_ms = 50.0;
+            gen.steps = vec![(2.0 * MINUTE, -190.0)];
+            let mut tracker = ReserveTracker::new();
+            tracker.start_connection(true, H500);
+            gen.run_until(40.0 * MINUTE, |p| {
+                let n = (p.ts / (2.0 * MINUTE)).floor() as u64;
+                let timeline = if n == 0 { SEG0 } else { next(n << 32) };
+                tracker.observe_on(p, URI, false, Some(timeline));
+            });
+            assert_eq!(
+                tracker.take_switch_outcome(),
+                Some(SwitchOutcome::Unmeasured(SwitchUnmeasured::ShortSegment))
+            );
+            let clock = tracker.clock().expect("clock");
+            assert!(
+                (clock.ppm - PPM).abs() <= 3.0 * clock.se_ppm,
+                "seed {seed}: {clock:?}"
+            );
+            errors.push(clock.ppm - PPM);
+        }
+        let mean = errors.iter().sum::<f64>() / errors.len() as f64;
+        assert!(
+            mean.abs() <= 3.0,
+            "{mean:+.1} ppm off on average: {errors:?}"
+        );
     }
 
     /// Runs a speaker 30 min on segment 0 and moves it on to segment 1 with
