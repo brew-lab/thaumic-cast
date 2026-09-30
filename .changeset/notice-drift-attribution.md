@@ -11,9 +11,11 @@ acknowledgement lag of about 88 ms on its always-poor link then put the acknowle
 was told "Wi-Fi trouble held back 505 ms of audio" with a 750 ms head start as the fix. Both were wrong: 505 ms was the
 head start less the minimum, most of it taken by the clock over hours, and a longer head start drains the same way.
 
-- **Drift first.** A speaker whose reserve itself was already below the floor, with the clock explaining the loss by
-  the rule running low's drift cause uses, gets no head-start notice for a stall that tips it under. Running low, with
-  `cause: "drift"`, says what happened and offers drift correction and a restart.
+- **Drift first.** A speaker whose clock drained at least half of what its reserve lost before a stall came, by the
+  rule running low's drift cause uses and judged from the reserve's median rather than a minimum the stall pulled down,
+  gets no head-start notice for a stall that runs it out, whether or not the reserve was below the floor yet. Running
+  low, with `cause: "drift"`, says what happened and offers drift correction and a restart. An underrun seen only as
+  an offset step is judged the same way from the window before the break, when that was already running low.
 - **Unless the stall alone was too much.** A stall that would have run the speaker out from a full reserve too (more
   than the head start less its floor) is still a head-start notice, and on a drift-drained speaker it reports the
   stall measured, never the head start less the minimum.
@@ -23,3 +25,5 @@ head start less the minimum, most of it taken by the clock over hours, and a lon
 
 A thin reserve hit by a loss burst the clock does not explain (the 2026-09-28 Playbar underrun) is a head-start notice
 as before.
+
+A standing notice that gains its cause in place is now logged, under the same id.
