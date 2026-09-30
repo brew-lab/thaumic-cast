@@ -1640,6 +1640,13 @@ fn log_switch_outcome(stream_id: &str, speaker_ip: IpAddr, outcome: SwitchOutcom
             stream_id,
             offset_ms
         ),
+        SwitchOutcome::Steady { offset_ms } => log::info!(
+            "[SpeakerMonitor] {} stream={}: continuation switch: the reserve carries on \
+             ({:+.0}ms measured, within measuring error); nothing absorbed",
+            speaker_ip,
+            stream_id,
+            offset_ms
+        ),
         SwitchOutcome::Rejected { offset_ms } => log::info!(
             "[SpeakerMonitor] {} stream={}: continuation switch: the reserve stepped {:+.0}ms, \
              too far for a reporting offset; not absorbed",
