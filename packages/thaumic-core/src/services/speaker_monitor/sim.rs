@@ -1037,31 +1037,47 @@ mod tests {
         assert!(slow.underruns.is_empty());
     }
 
-    /// On its own the integral learns a speaker's clock over hours: an hour
-    /// in it was a median 12-13 ppm short of a −45 ppm speaker and 19-23
-    /// short of a +60 ppm one, and the reserve took about 90 minutes to come
-    /// within 40 ms of its target for good on the latter. Drawn towards the
-    /// clock fit once that is precise, the integral is within 8 ppm by the
-    /// hour and the reserve within 40 ms of its target from 80 minutes on,
-    /// and past its target the reserve never swings further than the
+    /// On its own the integral learns a speaker's clock over hours. Over 600
+    /// simulated casts at ±50 ms tick jitter (+20, −45 and +60 ppm, 200
+    /// seeds each) it was a median 14 ppm off an hour in, and 79% of casts
+    /// were more than 8 ppm off; the reserve came within 40 ms of its target
+    /// for good after 80 minutes in 29% of them (82% at +60 ppm), and as late
+    /// as 110. Drawn towards the clock fit once that is precise, the
+    /// integral is a median 2.9 ppm off an hour in (90th percentile 7.0, the
+    /// worst 13.9, 6% over 8), and the reserve is within 40 ms of its target
+    /// for good by 80 minutes in all but 1.5% of casts, by 90 in all. Past
+    /// its target the reserve swings back by at most 21 ms, within the
     /// deadband.
-    #[tokio::test(start_paused = true)]
-    async fn a_precise_clock_brings_the_integral_in_within_the_hour() {
-        for (clock_ppm, seed) in [(20.0, 51), (-45.0, 52), (60.0, 53)] {
-            let report = playbar(clock_ppm, DriftMode::On, seed)
-                .run(150.0, false)
-                .await;
-            assert!(report.underruns.is_empty(), "{clock_ppm} ppm");
+    ///
+    /// Judged over 36 of those casts, with bounds that leave room for a
+    /// sample that size: a median within 5 ppm an hour in and no more than
+    /// one cast in six over 8 (without the pull: 14 ppm and four in five),
+    /// every one within 16; the reserve in for good by 80 minutes in all
+    /// but one in ten and by 100 in all; and never past its target by more
+    /// than the deadband.
+    #[test]
+    fn a_precise_clock_brings_the_integral_in_within_the_hour() {
+        let casts: Vec<(f64, u64)> = [20.0_f64, -45.0, 60.0]
+            .into_iter()
+            .flat_map(|ppm| (0..12).map(move |k| (ppm, 9_000 + k * 7 + ppm.abs() as u64)))
+            .collect();
+        let reports = run_all(
+            casts
+                .iter()
+                .map(|&(ppm, seed)| playbar(ppm, DriftMode::On, seed))
+                .collect(),
+            150.0,
+        );
+        let mut off_at_hour = Vec::new();
+        let mut late = 0;
+        for (&(clock_ppm, seed), report) in casts.iter().zip(&reports) {
+            assert!(report.underruns.is_empty(), "{clock_ppm} ppm, seed {seed}");
             let at_hour = report
                 .estimates
                 .iter()
                 .find(|e| e.at >= 60.0 * MINUTE)
                 .expect("an estimate an hour in");
-            assert!(
-                (at_hour.integral_ppm - clock_ppm).abs() <= 8.0,
-                "{clock_ppm} ppm: integral {:+.1} an hour in",
-                at_hour.integral_ppm
-            );
+            off_at_hour.push((at_hour.integral_ppm - clock_ppm).abs());
             let target = report
                 .estimates
                 .iter()
@@ -1070,25 +1086,48 @@ mod tests {
             // The reserve drains (or fills) away from its target first; past
             // it, it must not swing further than the deadband.
             let away = -clock_ppm.signum();
-            for e in &report.estimates {
+            let mut out_until = 0.0;
+            for e in report.estimates.iter().filter(|e| e.target_ms.is_some()) {
                 let off = e.true_reserve_ms - target;
-                if e.at >= 80.0 * MINUTE {
-                    assert!(
-                        off.abs() <= 40.0,
-                        "{clock_ppm} ppm: {off:+.0} ms off at {:.1} min",
-                        e.at / MINUTE
-                    );
+                if off.abs() > 40.0 {
+                    out_until = e.at;
                 }
                 if e.at >= 30.0 * MINUTE {
                     assert!(
                         -off * away <= DEADBAND_FLOOR_MS,
-                        "{clock_ppm} ppm: overshot by {:.0} ms at {:.1} min",
+                        "{clock_ppm} ppm, seed {seed}: overshot by {:.0} ms at {:.1} min",
                         -off * away,
                         e.at / MINUTE
                     );
                 }
             }
+            assert!(
+                out_until < 100.0 * MINUTE,
+                "{clock_ppm} ppm, seed {seed}: 40 ms off at {:.1} min",
+                out_until / MINUTE
+            );
+            if out_until >= 80.0 * MINUTE {
+                late += 1;
+            }
         }
+        assert!(
+            late * 10 <= casts.len(),
+            "{late} of {} casts 40 ms off after 80 min",
+            casts.len()
+        );
+        let far = off_at_hour.iter().filter(|&&off| off > 8.0).count();
+        assert!(
+            far * 6 <= casts.len(),
+            "{far} of {} integrals more than 8 ppm off an hour in",
+            casts.len()
+        );
+        let worst = off_at_hour.iter().copied().fold(0.0, f64::max);
+        assert!(worst <= 16.0, "an integral {worst:.1} ppm off an hour in");
+        let middle = median(&mut off_at_hour);
+        assert!(
+            middle <= 5.0,
+            "integrals a median {middle:.1} ppm off an hour in"
+        );
     }
 
     /// With the proportional term shut out of the deadband, the loop inside
