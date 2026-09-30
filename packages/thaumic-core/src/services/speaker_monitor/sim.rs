@@ -1100,13 +1100,14 @@ mod tests {
     ///
     /// - The first switch comes before the clock is known well enough to
     ///   carry the reserve across it, so its offset reads the slow clock's
-    ///   rise over the measuring span high (about 16 ms). It is measured
-    ///   against the true 190 ms: over a hundred seeds it came within 64 ms
-    ///   (28 RMS).
+    ///   rise over the measuring span high (about 16 ms), until the clock is
+    ///   within [`super::super::tracker::RECLOCK_MAX_SE_PPM`] half an hour
+    ///   in and corrects it. It is measured against the true 190 ms: over a
+    ///   hundred seeds it came within 59 ms (24 RMS; 64 and 28 uncorrected).
     /// - From 100 min on the controller holds the true reserve where the
-    ///   offset absorbed says the target is, within 48 ms over a hundred
+    ///   offset absorbed says the target is, within 43 ms over a hundred
     ///   seeds. Against the truth that is the offset's error on top: the true
-    ///   reserve less the true offset is within 34 ms RMS of the target over
+    ///   reserve less the true offset is within 31 ms RMS of the target over
     ///   all of them.
     /// - Later switches are left alone. One is measured Steady (its reading
     ///   within measuring error), or now and then not measured at all when
@@ -1148,8 +1149,11 @@ mod tests {
             let SwitchOutcome::Absorbed { .. } = outcomes[0] else {
                 panic!("seed {seed}: {outcomes:?}");
             };
+            let later = outcomes[1..]
+                .iter()
+                .filter(|o| !matches!(o, SwitchOutcome::Reclocked { .. }));
             let mut unmeasured = 0;
-            for o in &outcomes[1..] {
+            for o in later {
                 match o {
                     SwitchOutcome::Steady { offset_ms } if offset_ms.abs() <= 100.0 => {}
                     SwitchOutcome::Unmeasured(SwitchUnmeasured::NoReference) => unmeasured += 1,
@@ -1158,20 +1162,24 @@ mod tests {
             }
             assert!(unmeasured <= 1, "seed {seed}: {outcomes:?}");
 
-            // The offset absorbed, at each report.
+            // The offset absorbed, corrected for the clock, at each report.
             let mut absorbed = 0.0;
             let absorbed_at: Vec<f64> = report
                 .estimates
                 .iter()
                 .map(|e| {
-                    if let Some(SwitchOutcome::Absorbed { offset_ms }) = e.switch_outcome {
+                    if let Some(
+                        SwitchOutcome::Absorbed { offset_ms }
+                        | SwitchOutcome::Reclocked { offset_ms, .. },
+                    ) = e.switch_outcome
+                    {
                         absorbed = offset_ms;
                     }
                     absorbed
                 })
                 .collect();
             assert!(
-                (absorbed - OFFSET_MS).abs() <= 70.0,
+                (absorbed - OFFSET_MS).abs() <= 65.0,
                 "seed {seed}: {outcomes:?}"
             );
 

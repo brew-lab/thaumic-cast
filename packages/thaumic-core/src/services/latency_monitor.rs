@@ -1655,6 +1655,14 @@ fn log_switch_outcome(stream_id: &str, speaker_ip: IpAddr, outcome: SwitchOutcom
             stream_id,
             offset_ms
         ),
+        SwitchOutcome::Reclocked { offset_ms, by_ms } => log::info!(
+            "[SpeakerMonitor] {} stream={}: continuation switch: offset corrected {:+.0}ms \
+             for the speaker's clock, now precise; {:+.0}ms absorbed",
+            speaker_ip,
+            stream_id,
+            by_ms,
+            offset_ms
+        ),
         SwitchOutcome::Unmeasured(SwitchUnmeasured::ShortSegment) => log::debug!(
             "[SpeakerMonitor] {} stream={}: continuation switch after a short segment; \
              offset not measured",
