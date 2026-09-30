@@ -20,8 +20,21 @@
 //! I += 0.0069·e per estimate, tight estimates only (or ones carried across
 //!      a continuation switch along a precise clock), not while u is pinned
 //!      at the cap in the sign of e
+//! I += clamp(0.1·s²/(s² + se²)·(clock − I), ±0.5) on the same estimates,
+//!      once the clock fit's se is under 10 ppm, where
+//!      s = max(40·exp(−taught/60 min), 2) ppm
 //! u  = clamp(I + P, ±150) ppm, moving at most 10 ppm per estimate
 //! ```
+//!
+//! On its own the integral learns the clock with a time constant of about an
+//! hour, and meanwhile the proportional term carries the difference with the
+//! reserve off its target. Once the clock fit is precise it measures the same
+//! rate independently, so each estimate that teaches the integral also draws
+//! it a little way towards the fit: a fusion of the two, each weighed by how
+//! far off it may be, `s` for the integral (from how long the loop has taught
+//! it) and the standard error for the fit. It is a pull, never a jump (see
+//! [`FIT_PULL_PER_ESTIMATE`]), and the error term goes on teaching alongside
+//! it, so a fit a standard error off costs little.
 //!
 //! The deadband follows the estimate's own uncertainty, so noise inside it
 //! never meets the full proportional gain; inside it a gentler damping term
@@ -104,6 +117,53 @@ pub const DAMPING_PPM_PER_MS: f64 = 0.5;
 /// Standard error, in ppm, below which the clock fit seeds the integral of
 /// a speaker the controller has not learned yet.
 pub const SEED_MAX_SE_PPM: f64 = 10.0;
+
+/// Standard error, in ppm, below which the clock fit draws the integral
+/// towards it (see [`FIT_PULL_PER_ESTIMATE`]).
+///
+/// In simulation a single-segment fit gets there 35-45 minutes in, with the
+/// integral still 10-40 ppm short on a speaker 20-60 ppm off. A fit over
+/// 600 s test segments, an intercept for each, stays wider than this for
+/// hours, and is left out.
+pub const FIT_PULL_MAX_SE_PPM: f64 = 10.0;
+
+/// How far off the integral of a speaker the loop has not taught yet is
+/// taken to be, in ppm, when weighing it against the clock fit.
+pub const FIT_PULL_UNTAUGHT_SD_PPM: f64 = 40.0;
+
+/// How far off the integral is taken to be at least, in ppm, however long
+/// the loop has taught it: it wanders a few ppm on estimate noise.
+pub const FIT_PULL_TAUGHT_SD_PPM: f64 = 2.0;
+
+/// How long the loop takes to teach the integral `e` times closer, the
+/// integral's own time constant (see [`INTEGRAL_PPM_PER_MS`]).
+pub const INTEGRAL_LEARNING_TIME: Duration = Duration::from_secs(60 * 60);
+
+/// Share of the gap between the integral and a clock fit it closes each
+/// estimate that teaches it, for a fit infinitely precise; weighted down by
+/// `s² / (s² + se²)`, `s` being how far off the integral is taken to be:
+/// [`FIT_PULL_UNTAUGHT_SD_PPM`] decaying over [`INTEGRAL_LEARNING_TIME`] of
+/// teaching to [`FIT_PULL_TAUGHT_SD_PPM`].
+///
+/// At 0.1 the integral of a speaker new to the loop closes on a fit 5 ppm
+/// precise in about six minutes. Over 288 simulated casts (+20, −45, +60 and
+/// 0 ppm, ±25 to ±100 ms tick jitter) its median error falls from 10.5 to
+/// 2.8 ppm at an hour and from 3.7 to 1.1 at two, the reserve comes within
+/// 40 ms of its target for good by 71 minutes where it took 92 (90th
+/// percentile), and it overshoots its target by 12 ms where it did by 18.
+/// With every fit a standard error off the way that overshoots, it still
+/// overshoots less (14 ms). A speaker taught for hours already is drawn only
+/// as far as a precise fit and its error allow.
+pub const FIT_PULL_PER_ESTIMATE: f64 = 0.1;
+
+/// Most the clock fit moves the integral per estimate, in ppm, so that no
+/// one estimate jumps it (the error term alone moves it 0.28 ppm at 40 ms).
+pub const FIT_PULL_MAX_PPM: f64 = 0.5;
+
+/// Most one estimate counts towards how long the integral has been taught,
+/// in seconds: estimates come every 30 s, and a gap between them teaches
+/// nothing.
+const TAUGHT_STEP_MAX_S: f64 = 60.0;
 
 /// How long the estimate may stay unlocked before the command ramps to 0.
 pub const RAMP_AFTER_UNLOCKED: Duration = Duration::from_secs(30 * 60);
@@ -307,6 +367,10 @@ pub struct SpeakerControlState {
     /// long after its standard error says otherwise, while the integral
     /// only moves on tight estimates of the reserve itself.
     pub seeded: bool,
+    /// How long the loop has taught the integral, in seconds of estimates
+    /// that taught it: the longer, the less a clock fit draws it (see
+    /// [`FIT_PULL_PER_ESTIMATE`]).
+    pub taught_s: f64,
     /// Where each past connection settled relative to the head start it
     /// was sent (`target − H`), newest last.
     pub calibs_ms: VecDeque<f64>,
@@ -500,6 +564,9 @@ impl DriftController {
             return 0.0;
         }
         let now = input.now_s;
+        let since_last = self
+            .last_update_s
+            .map_or(0.0, |last| (now - last).clamp(0.0, TAUGHT_STEP_MAX_S));
         // What the observed commands since the last update would have added.
         if let Some(last) = self.last_update_s {
             if self.mode == DriftMode::Observe {
@@ -549,9 +616,15 @@ impl DriftController {
                         && error.signum() == self.command_ppm.signum();
                     let teaches = est.tight() || input.carry == EstimateCarry::Teaches;
                     if teaches && !pinned_same_way {
-                        self.state.integral_ppm = (self.state.integral_ppm
-                            + INTEGRAL_PPM_PER_MS * error)
-                            .clamp(-MAX_COMMAND_PPM, MAX_COMMAND_PPM);
+                        let learned = self.state.integral_ppm + INTEGRAL_PPM_PER_MS * error;
+                        let learned = match input.clock {
+                            Some(clock) if clock.se_ppm < FIT_PULL_MAX_SE_PPM => {
+                                pulled_towards(learned, clock, self.state.taught_s)
+                            }
+                            _ => learned,
+                        };
+                        self.state.integral_ppm = learned.clamp(-MAX_COMMAND_PPM, MAX_COMMAND_PPM);
+                        self.state.taught_s += since_last;
                         self.state.seeded = true;
                     }
                     let hold = match input.carry {
@@ -688,6 +761,16 @@ impl DriftController {
     pub fn state(&self) -> &SpeakerControlState {
         &self.state
     }
+}
+
+/// `integral`, taught for `taught_s`, drawn a step towards a precise clock
+/// fit: a share of the gap that grows as the fit's standard error shrinks and
+/// as the integral's own grows, never more than [`FIT_PULL_MAX_PPM`].
+fn pulled_towards(integral: f64, clock: ClockEstimate, taught_s: f64) -> f64 {
+    let decay = (-taught_s / INTEGRAL_LEARNING_TIME.as_secs_f64()).exp();
+    let sd = (FIT_PULL_UNTAUGHT_SD_PPM * decay).max(FIT_PULL_TAUGHT_SD_PPM);
+    let weight = FIT_PULL_PER_ESTIMATE * sd * sd / (sd * sd + clock.se_ppm * clock.se_ppm);
+    integral + (weight * (clock.ppm - integral)).clamp(-FIT_PULL_MAX_PPM, FIT_PULL_MAX_PPM)
 }
 
 /// How long a condition has held, advancing its start marker: 0 while it
@@ -880,6 +963,61 @@ mod tests {
         };
         assert_eq!(carried(EstimateCarry::Steers), 0.0, "teaches nothing");
         assert!((carried(EstimateCarry::Teaches) - 0.0069 * 60.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn a_precise_clock_fit_draws_the_integral_a_step_at_a_time() {
+        // On target, so the error teaches nothing and only the fit moves I.
+        let pull = |fit: ClockEstimate, lock_reason| {
+            let mut c = steering(DriftMode::On, SpeakerControlState::default());
+            let before = c.integral_ppm();
+            let mut i = input(30.0, Some(estimate(450.0, 30.0, lock_reason)));
+            i.clock = Some(fit);
+            c.update(&i);
+            c.integral_ppm() - before
+        };
+        // 2 ppm off at ±5 ppm, to an integral not taught yet: 0.1 × 40²/(40² +
+        // 5²) of the gap.
+        let share = 0.1 * 1600.0 / 1625.0;
+        assert!((pull(clock(2.0, 5.0), LockReason::Tight) - share * 2.0).abs() < 1e-9);
+        // Far off, a capped step either way.
+        assert_eq!(pull(clock(40.0, 5.0), LockReason::Tight), FIT_PULL_MAX_PPM);
+        assert_eq!(
+            pull(clock(-40.0, 5.0), LockReason::Tight),
+            -FIT_PULL_MAX_PPM
+        );
+        // Not precise enough, or on an estimate that teaches nothing: no step.
+        assert_eq!(pull(clock(40.0, 10.0), LockReason::Tight), 0.0);
+        assert_eq!(pull(clock(40.0, 5.0), LockReason::Held), 0.0);
+
+        // Step by step it closes on the fit, and never passes it.
+        let mut c = steering(DriftMode::On, SpeakerControlState::default());
+        let mut last = c.integral_ppm();
+        for n in 1..=240 {
+            let mut i = input(
+                30.0 * f64::from(n),
+                Some(estimate(450.0, 30.0, LockReason::Tight)),
+            );
+            i.clock = Some(clock(20.0, 2.0));
+            c.update(&i);
+            assert!(c.integral_ppm() > last && c.integral_ppm() < 20.0);
+            last = c.integral_ppm();
+        }
+        assert!(last > 19.9, "{last}");
+
+        // An integral taught for hours is weighed against the fit as 2 ppm
+        // off: a fit as precise gets half the share, one at ±5 ppm under a
+        // seventh.
+        let taught = SpeakerControlState {
+            taught_s: 8.0 * 3600.0,
+            ..SpeakerControlState::default()
+        };
+        let mut c = steering(DriftMode::On, taught);
+        let mut i = input(30.0, Some(estimate(450.0, 30.0, LockReason::Tight)));
+        i.clock = Some(clock(2.0, 5.0));
+        c.update(&i);
+        assert!((c.integral_ppm() - 0.1 * 4.0 / 29.0 * 2.0).abs() < 1e-9);
+        assert!((c.state().taught_s - 8.0 * 3600.0 - 30.0).abs() < 1e-9);
     }
 
     #[test]
