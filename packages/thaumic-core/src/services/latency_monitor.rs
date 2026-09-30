@@ -4137,7 +4137,7 @@ mod tests {
         });
         assert_eq!(
             format_drift(&drift, Some(431.0), None, false),
-            "drift=on cmd=+10.0ppm(settle) I=+19.0 ins=+431ms"
+            "drift=on cmd=+19.0ppm(settle) I=+19.0 ins=+431ms"
         );
     }
 }

@@ -36,7 +36,9 @@
 //! ramp to 0. It holds the same way while the
 //! monitor says the reserve has stepped for a reason that is not drift (a
 //! continuation switch being measured, or a jump that may be an offset step;
-//! see [`ControlInput::settling`]), so the step is never integrated.
+//! see [`ControlInput::settling`]), so the step is never integrated; there
+//! the command goes to the integral at once rather than at the slew limit, so
+//! no proportional push is left in it for the estimates a slew would take.
 //!
 //! In [`DriftMode::Observe`] the controller runs exactly the same way but its
 //! command is never applied: the reserve it steers by is the measured one
@@ -67,7 +69,9 @@ pub const DRIFT_FORCE_PPM_ENV: &str = "THAUMIC_DRIFT_FORCE_PPM";
 /// far too little to hear; the adapter itself accepts twice as much.
 pub const MAX_COMMAND_PPM: f64 = 150.0;
 
-/// Most the command moves per estimate, in ppm.
+/// Most the command moves per estimate, in ppm, except when it drops to the
+/// integral because the reserve may have stepped (see
+/// [`ControlHold::Settling`]).
 pub const MAX_SLEW_PPM: f64 = 10.0;
 
 /// Proportional gain, ppm per ms of error beyond the deadband (τ ≈ 20 min).
@@ -365,7 +369,7 @@ pub enum ControlHold {
     /// The estimate is not locked: holding the integral.
     Unlocked,
     /// The reserve may have stepped for a reason that is not drift: holding
-    /// the integral.
+    /// the integral, which the command goes to at once.
     Settling,
     /// Unlocked or unanswered for too long: ramping to 0.
     Ramping,
@@ -530,9 +534,15 @@ impl DriftController {
             (integral, 0.0, ControlHold::Unlocked)
         };
         let wanted = wanted.clamp(-MAX_COMMAND_PPM, MAX_COMMAND_PPM);
-        self.command_ppm = (self.command_ppm
-            + (wanted - self.command_ppm).clamp(-MAX_SLEW_PPM, MAX_SLEW_PPM))
-        .clamp(-MAX_COMMAND_PPM, MAX_COMMAND_PPM);
+        self.command_ppm = if hold == ControlHold::Settling {
+            // Whatever the proportional term was pushing at came from a level
+            // that may have stepped: none of it is left in the command, not
+            // even for the estimates a slew would take to shed it.
+            wanted
+        } else {
+            (self.command_ppm + (wanted - self.command_ppm).clamp(-MAX_SLEW_PPM, MAX_SLEW_PPM))
+                .clamp(-MAX_COMMAND_PPM, MAX_COMMAND_PPM)
+        };
         self.proportional_ppm = proportional;
         self.hold = hold;
         self.step_saturation(now);
@@ -796,19 +806,23 @@ mod tests {
             t += 30.0;
         }
         let integral = c.integral_ppm();
-        assert!(c.command_ppm() > integral, "steering up on P");
+        assert!(
+            c.command_ppm() > integral + MAX_SLEW_PPM,
+            "steering up on P, by more than a slew"
+        );
         // The reserve reads 110 ms high across a switch, tight: held, with
-        // neither the integral learning it nor P kicking.
+        // neither the integral learning it nor P kicking, from the first
+        // report that says so. Its output is the integral exactly, not a
+        // slew's worth of the proportional term from before.
         for _ in 0..6 {
             let mut i = input(t, Some(estimate(560.0, 30.0, LockReason::Tight)));
             i.settling = true;
-            c.update(&i);
+            assert_eq!(c.update(&i), integral);
             assert_eq!(c.integral_ppm(), integral);
             assert_eq!(c.hold(), ControlHold::Settling);
             assert_eq!(c.proportional_ppm(), 0.0);
             t += 30.0;
         }
-        assert_eq!(c.command_ppm(), integral, "slewed to the integral");
         // Steering again once it has settled.
         c.update(&input(t, Some(estimate(450.0, 30.0, LockReason::Tight))));
         assert_eq!(c.hold(), ControlHold::Steering);
