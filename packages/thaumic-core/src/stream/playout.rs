@@ -61,6 +61,7 @@ use super::tap::{ConnectionTap, WAV_HEADER_BYTES};
 use super::uri::{parse_stream_uri, segment_base_uri};
 use super::AudioFormat;
 use crate::services::speaker_monitor::control::drift_active;
+use crate::services::speaker_monitor::{PlayoutTimeline, TimelineEntry};
 
 /// A body stream of audio bytes, as the cadence produces it.
 pub type PcmStream = Pin<Box<dyn Stream<Item = Result<Bytes, std::io::Error>> + Send>>;
@@ -313,8 +314,23 @@ struct StartRecord {
     url_segment: u32,
     /// Output byte of the segment's data byte 0.
     start: u64,
+    /// How the speaker came to be playing the segment.
+    entry: TimelineEntry,
     /// Whether a position poll has reported the speaker on this segment.
     observed: bool,
+}
+
+/// A speaker's reported position, mapped onto its playout (see
+/// [`PlayoutView::continuous_position`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MappedPosition {
+    /// The stream's `live.wav` URL, whichever segment the speaker named.
+    pub track_uri: String,
+    /// RelTime counted from the playout's start.
+    pub rel_ms: u64,
+    /// The segment the position was counted on, when the playout has a
+    /// record of it.
+    pub timeline: Option<PlayoutTimeline>,
 }
 
 /// How many segment starts are remembered for mapping positions.
@@ -332,8 +348,8 @@ impl PlayoutView {
     }
 
     /// Records that segment `url_segment`'s data starts at output byte
-    /// `start`.
-    fn push_start(&self, url_segment: u32, start: u64) {
+    /// `start`, the speaker having come to it by `entry`.
+    fn push_start(&self, url_segment: u32, start: u64, entry: TimelineEntry) {
         let mut inner = self.inner.lock();
         if inner.starts.len() >= MAX_STARTS {
             inner.starts.pop_front();
@@ -341,6 +357,7 @@ impl PlayoutView {
         inner.starts.push_back(StartRecord {
             url_segment,
             start,
+            entry,
             observed: false,
         });
     }
@@ -406,14 +423,14 @@ impl PlayoutView {
     /// `position` is the output byte the playout has handed over up to. A
     /// URL naming another stream, or none of this stream's segments, gives
     /// `None`; one naming a segment this playout has no record of keeps its
-    /// RelTime.
+    /// RelTime, and has no timeline.
     pub fn continuous_position(
         &self,
         stream_id: &str,
         track_uri: &str,
         rel_ms: u64,
         position: u64,
-    ) -> Option<(String, u64)> {
+    ) -> Option<MappedPosition> {
         let parsed = parse_stream_uri(track_uri)?;
         if !parsed.stream_id.eq_ignore_ascii_case(stream_id) {
             return None;
@@ -422,8 +439,13 @@ impl PlayoutView {
         let base = segment_base_uri(track_uri)?;
         let mut inner = self.inner.lock();
         let byte_rate = inner.byte_rate;
+        let unmapped = |track_uri| MappedPosition {
+            track_uri,
+            rel_ms,
+            timeline: None,
+        };
         if byte_rate == 0 {
-            return Some((base, rel_ms));
+            return Some(unmapped(base));
         }
         let ms = |bytes: u64| bytes.saturating_mul(1000) / byte_rate;
         let position_ms = ms(position);
@@ -444,11 +466,18 @@ impl PlayoutView {
             }
         }
         let Some(i) = chosen else {
-            return Some((base, rel_ms));
+            return Some(unmapped(base));
         };
         let record = &mut inner.starts[i];
         record.observed = true;
-        Some((base, ms(record.start) + rel_ms))
+        Some(MappedPosition {
+            track_uri: base,
+            rel_ms: ms(record.start) + rel_ms,
+            timeline: Some(PlayoutTimeline {
+                start: record.start,
+                entry: record.entry,
+            }),
+        })
     }
 }
 
@@ -1072,7 +1101,9 @@ impl PlayoutChain {
         let speaker_ip = speaker_ip.to_canonical();
         let now = Instant::now();
         stats.playout.set_byte_rate(layout.byte_rate);
-        stats.playout.push_start(start.url_segment, 0);
+        stats
+            .playout
+            .push_start(start.url_segment, 0, TimelineEntry::Played);
         stats.playout.set_serving(None);
         stats.set_position(start.consumed);
         stats.attach_connection(&guard);
@@ -1591,7 +1622,16 @@ impl PlayoutChain {
         inner.seg.url_segment = url_segment;
         let first_byte = inner.produced - inner.backlog_bytes;
         self.stats.attach_connection(guard);
-        self.stats.playout.push_start(url_segment, inner.seg.start);
+        // A restart is told to play; only a gapless move to the next item
+        // counts RelTime from the audio.
+        let entry = match kind {
+            _ if rejoined.is_some() => TimelineEntry::Played,
+            AttachKind::Continuation | AttachKind::Early => TimelineEntry::Next,
+            AttachKind::Reopen | AttachKind::UserNext | AttachKind::Replay => TimelineEntry::Other,
+        };
+        self.stats
+            .playout
+            .push_start(url_segment, inner.seg.start, entry);
         self.stats.playout.set_serving(Some(now + BOUNDARY_SETTLE));
         self.stats.set_position(first_byte);
         inner.current = Some(Slot {
@@ -1917,9 +1957,11 @@ impl PlayoutChain {
                 let first_byte = inner.produced - inner.backlog_bytes;
                 inner.seg.url_segment = slot.url_segment;
                 self.stats.attach_connection(&slot.guard);
-                self.stats
-                    .playout
-                    .push_start(slot.url_segment, inner.seg.start);
+                self.stats.playout.push_start(
+                    slot.url_segment,
+                    inner.seg.start,
+                    TimelineEntry::Next,
+                );
                 self.stats.playout.set_serving(Some(now + BOUNDARY_SETTLE));
                 deferred.wake(slot.waker.take());
                 slot.early = true;
@@ -2437,22 +2479,29 @@ mod tests {
         let view = PlayoutView::default();
         let layout = layout();
         view.set_byte_rate(layout.byte_rate());
-        view.push_start(0, 0);
-        view.push_start(1, layout.data_bytes());
+        view.push_start(0, 0, TimelineEntry::Played);
+        view.push_start(1, layout.data_bytes(), TimelineEntry::Next);
         let uri = |tail: &str| format!("http://10.0.0.5:49400/stream/abc/{tail}");
         let base = uri("live.wav");
         let d_ms = layout.data_bytes() * 1000 / layout.byte_rate();
         let position = layout.data_bytes() + 192_000 * 3;
+        let mapped = |rel_ms, start, entry| {
+            Some(MappedPosition {
+                track_uri: base.clone(),
+                rel_ms,
+                timeline: Some(PlayoutTimeline { start, entry }),
+            })
+        };
 
         assert_eq!(
             view.continuous_position("abc", &uri("live/1.wav"), 2_000, position),
-            Some((base.clone(), d_ms + 2_000))
+            mapped(d_ms + 2_000, layout.data_bytes(), TimelineEntry::Next)
         );
         assert!(view.observed(1, layout.data_bytes()));
         assert!(!view.observed(0, 0));
         assert_eq!(
             view.continuous_position("abc", &uri("live.wav"), 54_000, position),
-            Some((base.clone(), 54_000)),
+            mapped(54_000, 0, TimelineEntry::Played),
             "a poll still on the previous segment keeps its own start"
         );
         assert_eq!(
@@ -2463,18 +2512,31 @@ mod tests {
             view.continuous_position("abc", "x-sonos-htastream:RINCON_1:spdif", 0, position),
             None
         );
+        assert_eq!(
+            view.continuous_position("abc", &uri("live/7.wav"), 3_000, position),
+            Some(MappedPosition {
+                track_uri: base.clone(),
+                rel_ms: 3_000,
+                timeline: None,
+            }),
+            "a segment with no record keeps its RelTime and has no timeline"
+        );
 
         // Reopened under the same URL: the new start, unless the position
         // cannot have been reached on it yet.
-        view.push_start(1, layout.data_bytes() * 2);
+        view.push_start(1, layout.data_bytes() * 2, TimelineEntry::Other);
         let reopened_position = layout.data_bytes() * 2 + 192_000;
         assert_eq!(
             view.continuous_position("abc", &uri("live/1.wav"), 500, reopened_position),
-            Some((base.clone(), 2 * d_ms + 500))
+            mapped(
+                2 * d_ms + 500,
+                layout.data_bytes() * 2,
+                TimelineEntry::Other
+            )
         );
         assert_eq!(
             view.continuous_position("abc", &uri("live/1.wav"), 54_000, reopened_position),
-            Some((base, d_ms + 54_000))
+            mapped(d_ms + 54_000, layout.data_bytes(), TimelineEntry::Next)
         );
     }
 }

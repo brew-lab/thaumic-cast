@@ -27,9 +27,9 @@ pub use pcm_http::{
     PCM_SEGMENT_BYTES_ENV, PCM_SEGMENT_DIDL_ENV, PCM_WAV_DATA_SIZE_ENV,
 };
 pub use playout::{
-    side_body, AttachKind, ChainParts, LatencyDebt, NewReason, PcmStream, PlayoutChain,
-    PlayoutEvent, PlayoutEvents, PlayoutRegistry, Rejoin, Route, SegmentBody, SegmentLayout,
-    SegmentStart, HANDOFF_LEAD, PCM_SEGMENT_BYTES_MAX, PCM_SEGMENT_BYTES_MIN,
+    side_body, AttachKind, ChainParts, LatencyDebt, MappedPosition, NewReason, PcmStream,
+    PlayoutChain, PlayoutEvent, PlayoutEvents, PlayoutRegistry, Rejoin, Route, SegmentBody,
+    SegmentLayout, SegmentStart, HANDOFF_LEAD, PCM_SEGMENT_BYTES_MAX, PCM_SEGMENT_BYTES_MIN,
 };
 pub use rate_adapter::{RateAdapter, RateControl};
 pub use tap::{ConnectionTap, HeadStart, MonitorRegistrar, SpeakerFigures, SpeakerSnapshot};

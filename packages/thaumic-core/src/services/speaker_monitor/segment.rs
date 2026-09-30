@@ -136,9 +136,22 @@ impl Segment {
         self.counts[reason.index()]
     }
 
+    /// Records a break for `reason` decided elsewhere without forgetting the
+    /// playhead: an offset step found by comparing two stretches of polls
+    /// rather than by [`Self::observe_estimate`].
+    pub fn record_break(&mut self, reason: SegmentBreak) {
+        self.record(reason);
+    }
+
     /// Whether the speaker is known not to be playing.
     pub fn paused(&self) -> bool {
         self.paused
+    }
+
+    /// Whether the latest estimate jumped from its baseline and the jump has
+    /// yet to persist, or fade, before an offset step is decided.
+    pub fn step_pending(&self) -> bool {
+        self.step_pending > 0
     }
 
     /// Checks one answered poll. `not_playing` is whether the speaker is
