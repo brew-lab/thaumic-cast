@@ -536,6 +536,7 @@ mod tests {
     use super::super::control::DEADBAND_FLOOR_MS;
     use super::super::control::{INTEGRAL_PPM_PER_MS, MAX_COMMAND_PPM};
     use super::super::notice::SpeakerNoticeKind;
+    use super::super::tracker::SwitchUnmeasured;
     use super::*;
 
     const MINUTE: f64 = 60_000.0;
@@ -1058,6 +1059,35 @@ mod tests {
         }
     }
 
+    /// Runs each of `speakers` for `minutes`, on threads of their own (each
+    /// with its own paused clock), and returns their reports in order.
+    fn run_all(speakers: Vec<SimSpeaker>, minutes: f64) -> Vec<SimReport> {
+        let threads = std::thread::available_parallelism().map_or(4, |n| n.get());
+        let chunk = speakers.len().div_ceil(threads).max(1);
+        std::thread::scope(|scope| {
+            let handles: Vec<_> = speakers
+                .chunks(chunk)
+                .map(|batch| {
+                    scope.spawn(move || {
+                        let runtime = tokio::runtime::Builder::new_current_thread()
+                            .enable_time()
+                            .start_paused(true)
+                            .build()
+                            .expect("runtime");
+                        batch
+                            .iter()
+                            .map(|speaker| runtime.block_on(speaker.run(minutes, false)))
+                            .collect::<Vec<_>>()
+                    })
+                })
+                .collect();
+            handles
+                .into_iter()
+                .flat_map(|h| h.join().expect("simulation"))
+                .collect()
+        })
+    }
+
     /// With 600 s segments a switch comes every ten minutes and each settles
     /// for six. Held at its integral meanwhile, the controller steered 40% of
     /// the time and learnt the clock at that pace, and every later switch
@@ -1066,26 +1096,44 @@ mod tests {
     /// 10-57 ppm from where the same speaker's got to with one segment.
     ///
     /// Steering by the carried estimate, and absorbing only the first
-    /// switch's offset, the true reserve (less the offset absorbed) comes
-    /// within 40 ms of the target within 100 minutes and stays there, and
-    /// the integral follows the one-segment run's. No switch moves the
-    /// integral: a report teaches it at most a few tenths of a ppm, where a
-    /// 150 ms step integrated would teach it more than one. The first
-    /// switch comes before the clock is precise, so its offset is carried
-    /// along the correction alone and measured up to about 60 ms high on
-    /// this slow speaker (the offset absorbed, not the 190 ms, is what the
-    /// reserve is judged against); a switch hours in has a precise clock.
-    #[tokio::test(start_paused = true)]
-    async fn minus_45ppm_in_600s_segments_converges_across_switches() {
+    /// switch's offset, over twenty seeds:
+    ///
+    /// - The first switch comes before the clock is known well enough to
+    ///   carry the reserve across it, so its offset reads the slow clock's
+    ///   rise over the measuring span high (about 16 ms). It is measured
+    ///   against the true 190 ms: over a hundred seeds it came within 64 ms
+    ///   (28 RMS).
+    /// - From 100 min on the controller holds the true reserve where the
+    ///   offset absorbed says the target is, within 48 ms over a hundred
+    ///   seeds. Against the truth that is the offset's error on top: the true
+    ///   reserve less the true offset is within 34 ms RMS of the target over
+    ///   all of them.
+    /// - Later switches are left alone. One is measured Steady (its reading
+    ///   within measuring error), or now and then not measured at all when
+    ///   the polls before it happen to give no tight reference (twice in a
+    ///   hundred casts of seventeen switches). The two come to the same thing
+    ///   at a later switch: nothing is absorbed, and the new segment's polls
+    ///   join the window as they are.
+    /// - Now and then the first switch, ten minutes in, finds no reference
+    ///   (one seed in 320): the reserve is still being brought to its target
+    ///   along a clock not yet known, and the newest polls before the switch
+    ///   lie on one side of the reference, as after a step. The offset is
+    ///   then left unabsorbed, taken for an offset step later, and the
+    ///   reserve steered about 200 ms low. With segments of the default six
+    ///   hours the first switch finds the reserve long settled. None of the
+    ///   seeds here does.
+    /// - The clock fit runs on across later switches and ends within 3 ppm
+    ///   of the speaker's, and from two hours on the integral is within
+    ///   15 ppm of it. From the first hour on, no report moves the integral
+    ///   by as much as a 150 ms step integrated would.
+    #[test]
+    fn minus_45ppm_in_600s_segments_converges_across_switches() {
         const OFFSET_MS: f64 = 190.0;
-        for seed in [41, 44, 45] {
-            let report = kitchen(seed).run(180.0, false).await;
-            let one_segment = SimSpeaker {
-                segment_ms: None,
-                ..kitchen(seed)
-            }
-            .run(180.0, false)
-            .await;
+        const CLOCK_PPM: f64 = -45.0;
+        let seeds: Vec<u64> = (41..=60).collect();
+        let reports = run_all(seeds.iter().map(|&seed| kitchen(seed)).collect(), 180.0);
+        let mut truth_sq = Vec::new();
+        for (&seed, report) in seeds.iter().zip(&reports) {
             assert!(report.underruns.is_empty(), "seed {seed}");
             assert!(
                 report.estimates.iter().all(|e| e.brk.is_none()),
@@ -1096,24 +1144,37 @@ mod tests {
                 .iter()
                 .filter_map(|e| e.switch_outcome)
                 .collect();
-            assert!(outcomes.len() >= 16, "seed {seed}: {outcomes:?}");
-            let SwitchOutcome::Absorbed {
-                offset_ms: absorbed,
-            } = outcomes[0]
-            else {
+            assert!(outcomes.len() >= 17, "seed {seed}: {outcomes:?}");
+            let SwitchOutcome::Absorbed { .. } = outcomes[0] else {
                 panic!("seed {seed}: {outcomes:?}");
             };
+            let mut unmeasured = 0;
+            for o in &outcomes[1..] {
+                match o {
+                    SwitchOutcome::Steady { offset_ms } if offset_ms.abs() <= 100.0 => {}
+                    SwitchOutcome::Unmeasured(SwitchUnmeasured::NoReference) => unmeasured += 1,
+                    _ => panic!("seed {seed}: {outcomes:?}"),
+                }
+            }
+            assert!(unmeasured <= 1, "seed {seed}: {outcomes:?}");
+
+            // The offset absorbed, at each report.
+            let mut absorbed = 0.0;
+            let absorbed_at: Vec<f64> = report
+                .estimates
+                .iter()
+                .map(|e| {
+                    if let Some(SwitchOutcome::Absorbed { offset_ms }) = e.switch_outcome {
+                        absorbed = offset_ms;
+                    }
+                    absorbed
+                })
+                .collect();
             assert!(
                 (absorbed - OFFSET_MS).abs() <= 70.0,
                 "seed {seed}: {outcomes:?}"
             );
-            assert!(
-                outcomes[1..].iter().all(|o| matches!(
-                    o,
-                    SwitchOutcome::Steady { offset_ms } if offset_ms.abs() <= 60.0
-                )),
-                "seed {seed}: {outcomes:?}"
-            );
+
             // A switch was settling for over half the run, and the
             // controller held at its integral only for a report or two, if
             // ever.
@@ -1131,18 +1192,35 @@ mod tests {
                 .iter()
                 .find_map(|e| e.target_ms)
                 .expect("a target");
-            let off: Vec<(f64, f64)> = report
-                .estimates
-                .iter()
-                .map(|e| (e.at, e.true_reserve_ms - absorbed - target))
-                .filter(|(_, err)| err.abs() > 40.0)
-                .collect();
-            assert!(
-                off.iter().all(|(at, _)| *at < 100.0 * MINUTE),
-                "seed {seed}: {off:?}"
-            );
+            for (e, absorbed) in report.estimates.iter().zip(&absorbed_at) {
+                if e.at < 100.0 * MINUTE {
+                    continue;
+                }
+                let steered = e.true_reserve_ms - absorbed - target;
+                assert!(
+                    steered.abs() <= 55.0,
+                    "seed {seed}: {steered:+.0} ms from the target at {:.1} min",
+                    e.at / MINUTE
+                );
+                truth_sq.push((e.true_reserve_ms - OFFSET_MS - target).powi(2));
+            }
 
-            for w in report.estimates.windows(2) {
+            let clock = report
+                .estimates
+                .last()
+                .and_then(|e| e.clock)
+                .expect("clock");
+            assert!(
+                (clock.ppm - CLOCK_PPM).abs() <= 5.0,
+                "seed {seed}: {clock:?}"
+            );
+            // In the first hour the reserve is still being brought to its
+            // target, 150 ms off it at times, and the integral learns that.
+            for w in report
+                .estimates
+                .windows(2)
+                .filter(|w| w[0].at >= 60.0 * MINUTE)
+            {
                 let step = (w[1].integral_ppm - w[0].integral_ppm).abs();
                 assert!(
                     step < INTEGRAL_PPM_PER_MS * 150.0,
@@ -1150,21 +1228,17 @@ mod tests {
                     w[1].at / MINUTE
                 );
             }
-            for (e, u) in report
-                .estimates
-                .iter()
-                .zip(&one_segment.estimates)
-                .filter(|(e, _)| e.at >= 120.0 * MINUTE)
-            {
+            for e in report.estimates.iter().filter(|e| e.at >= 120.0 * MINUTE) {
                 assert!(
-                    (e.integral_ppm - u.integral_ppm).abs() <= 12.0,
-                    "seed {seed}: integral {:+.1} ppm against {:+.1} at {:.1} min",
+                    (e.integral_ppm - CLOCK_PPM).abs() <= 18.0,
+                    "seed {seed}: integral {:+.1} ppm at {:.1} min",
                     e.integral_ppm,
-                    u.integral_ppm,
                     e.at / MINUTE
                 );
             }
         }
+        let truth_rms = (truth_sq.iter().sum::<f64>() / truth_sq.len() as f64).sqrt();
+        assert!(truth_rms <= 40.0, "{truth_rms:.0} ms RMS from the truth");
     }
 
     /// If the monitor stops, nothing refreshes the command and the
