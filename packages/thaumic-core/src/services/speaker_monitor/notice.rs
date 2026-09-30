@@ -25,8 +25,10 @@
 //!   reserve stepped as an underrun makes it), and a Wi-Fi stall or a poor
 //!   link caused it. Suggests the smallest step of
 //!   [`HEAD_START_LADDER_MS`] that would have covered it. A speaker whose
-//!   clock had already drained it low is not one: unless the stall measured
-//!   would have beaten a full reserve too, it is running low, for the clock.
+//!   clock had drained most of what its reserve lost before the stall came,
+//!   low yet or not, is not one: unless the stall measured would have beaten
+//!   a full reserve too, it is running low, for the clock, and a head-start
+//!   notice it does get reports that stall, not what the clock took.
 //! - **Head start close** ([`SpeakerNoticeKind::HeadStartClose`]): a stall
 //!   left less than half the floor in hand, without an underrun, and a
 //!   longer step would have left room to spare.
@@ -305,19 +307,20 @@ pub fn suggest_head_start_ms(needed_ms: f64, current_ms: u32) -> Option<u32> {
 
 /// The head-start notice this report calls for, if any.
 ///
-/// A speaker whose clock had already drained its reserve low (see
-/// [`drift_drained`]) and that a stall then tipped under is judged on the
-/// stall alone: the head start covered everything but the clock, so a
-/// head-start notice stands only when the measured stall would have beaten
-/// a full reserve too (see [`beats_a_full_reserve`]), and then reports that
-/// stall, never what the clock took. Otherwise nothing here: running low,
-/// with the clock as its cause, says what happened and what fixes it. A poor
-/// link never makes a drift-drained speaker a head-start notice.
+/// A speaker whose clock had drained most of what its reserve lost before a
+/// stall came (see [`clock_took_reserve`]) is judged on the stall alone,
+/// however low the clock had left it: the head start covered everything but
+/// the clock, so a head-start notice stands only when the measured stall
+/// would have beaten a full reserve too (see [`beats_a_full_reserve`]), and
+/// then reports that stall, never what the clock took. Otherwise nothing
+/// here: if the speaker underran, running low with the clock as its cause
+/// says what happened and what fixes it (see [`clock_underran`]). A poor
+/// link never makes such a speaker a head-start notice.
 fn find_head_start(input: &NoticeInput) -> Option<HeadStartFinding> {
     let h = input.head_start?;
     let head_start = f64::from(h.sent_ms);
     let floor = low_floor_ms(h.sent_ms);
-    let by_clock = drift_drained(input);
+    let by_clock = clock_took_reserve(input);
     // Whether a stall of at least `share` (never less than the minimum)
     // was measured, or, with a head start to lose, the link was poor.
     let caused = |stall: Option<f64>, share: f64| {
@@ -358,13 +361,7 @@ fn find_head_start(input: &NoticeInput) -> Option<HeadStartFinding> {
         _ if input.offset_step => {
             // The reserve stepped: judged on the stall, the window's or the
             // one before the break, whichever was worse.
-            let stall = match (
-                input.stall_ms,
-                input.pre_break.and_then(|p| p.acked.stall_ms),
-            ) {
-                (Some(a), Some(b)) => Some(a.max(b)),
-                (a, b) => a.or(b),
-            };
+            let stall = step_stall_ms(input);
             if !caused(stall, 0.5 * head_start) {
                 return None;
             }
@@ -462,15 +459,88 @@ fn reserve_lost_ms(input: &NoticeInput, level: f64) -> f64 {
     (settled - level).max(0.0)
 }
 
-/// Whether the clock had already drained the reserve low when this window
-/// found it: the reserve itself, not a stall's dip, is below the floor (see
-/// [`running_low`]), and the clock explains the loss (see
-/// [`clock_explains_loss`]). A stall that then tips such a speaker under is
-/// the last straw, not the reason: running low with the clock as its cause
-/// is the notice, unless the stall would have beaten a full reserve too.
-fn drift_drained(input: &NoticeInput) -> bool {
-    let sent_ms = input.head_start.map_or(0, |h| h.sent_ms);
-    running_low(input, low_floor_ms(sent_ms)) && clock_explains_loss(input)
+/// The stall an offset step is judged on: this window's or the one before
+/// the break, whichever was worse.
+fn step_stall_ms(input: &NoticeInput) -> Option<f64> {
+    match (
+        input.stall_ms,
+        input.pre_break.and_then(|p| p.acked.stall_ms),
+    ) {
+        (Some(a), Some(b)) => Some(a.max(b)),
+        (a, b) => a.or(b),
+    }
+}
+
+/// Whether the speaker's clock, not the stall this report measured, took
+/// most of what the reserve had lost before that stall came: the speaker
+/// drains the reserve at no less than [`MIN_DRIFT_CAUSE_PPM`] net of any
+/// correction, and the clock drained at least [`DRIFT_CAUSE_SHARE`] of what
+/// the reserve lost over the connection (see [`reserve_lost_ms`]) down to
+/// the level the stall found it at. The reserve need not be running low
+/// yet: a clock that drained 510 ms to 200 ms explains an underrun that a
+/// 210 ms stall then caused as surely as one it drained to 83 ms.
+///
+/// The level the stall found it at is a median, never a 10th percentile or
+/// minimum the stall itself pulled down:
+///
+/// - with a locked estimate this window, its acknowledged median, and the
+///   drain measurable (the projection the drift notices use is there);
+/// - on an offset step, which leaves no estimate this window, the locked
+///   window before the break, and only when that was already running low
+///   (its 10th percentile and median under the floor): a step is not always
+///   an underrun, and only a reserve the clock had drained that low makes
+///   one of a small stall. Right after a break the projection is not back
+///   yet, so only the rate and the drain are asked for.
+///
+/// The rate is net of correction: with correction running and keeping up,
+/// what the clock drained earlier no longer counts, and the loss is judged
+/// as a stall's. Drift mode is fixed per connection, so turning it on takes
+/// a restart, which refills the reserve anyway. The drain and the settled
+/// level are per connection, so on a cast made of declared-length segments
+/// each segment only sees its own drain, and this rarely holds there.
+///
+/// The state of the link does not enter into it.
+fn clock_took_reserve(input: &NoticeInput) -> bool {
+    if input.net_drift_ppm < MIN_DRIFT_CAUSE_PPM {
+        return false;
+    }
+    let level = match (input.locked, input.acked) {
+        (true, Some(a)) => {
+            if input.time_to_floor_s.is_none() {
+                return false;
+            }
+            a.median_ms
+        }
+        _ if input.offset_step => {
+            let floor = low_floor_ms(input.head_start.map_or(0, |h| h.sent_ms));
+            match input.pre_break.filter(|p| p.locked) {
+                Some(p) if p.acked.p10_ms < floor && p.acked.median_ms < floor => p.acked.median_ms,
+                _ => return false,
+            }
+        }
+        _ => return false,
+    };
+    input.clock_drained_ms >= DRIFT_CAUSE_SHARE * reserve_lost_ms(input, level)
+}
+
+/// Whether the speaker underran on a reserve its clock had drained (see
+/// [`clock_took_reserve`]) to a stall a full reserve would have covered (see
+/// [`beats_a_full_reserve`]): its locked acknowledged reserve went below
+/// zero this window, or its reserve stepped. No head-start notice follows,
+/// since a longer head start is not the fix; running low, with the clock as
+/// its cause, is the notice, whatever the reserve's level, since the speaker
+/// cut out and a restart or drift correction is what refills it.
+fn clock_underran(input: &NoticeInput) -> bool {
+    let Some(h) = input.head_start else {
+        return false;
+    };
+    let stall = match input.acked.filter(|_| input.locked) {
+        Some(a) if a.min_ms < 0.0 => input.stall_ms,
+        Some(_) => return false,
+        None if input.offset_step => step_stall_ms(input),
+        None => return false,
+    };
+    clock_took_reserve(input) && !stall.is_some_and(|s| beats_a_full_reserve(s, h.sent_ms))
 }
 
 /// Whether a stall of `stall_ms` would have run a speaker out even from a
@@ -599,13 +669,24 @@ impl NoticeState {
         // connection has no head start, so it is judged as one with the head
         // start off.
         let sent_ms = input.head_start.map_or(0, |h| h.sent_ms);
-        let low = running_low(input, low_floor_ms(sent_ms));
+        // A speaker its clock drained that a stall then ran out is running
+        // low for the clock, whatever its reserve's level.
+        let clock_underran = clock_underran(input);
+        let low = clock_underran || running_low(input, low_floor_ms(sent_ms));
+        let cause = || {
+            if clock_underran {
+                Some(SpeakerNoticeCause::Drift)
+            } else {
+                running_low_cause(input)
+            }
+        };
         if self
             .active
             .is_some_and(|a| a.kind == SpeakerNoticeKind::RunningLow)
         {
             let clear = low_clear_ms(sent_ms);
-            let above = input.locked && input.acked.is_some_and(|a| a.p10_ms > clear);
+            let above =
+                !clock_underran && input.locked && input.acked.is_some_and(|a| a.p10_ms > clear);
             if !above {
                 self.above_clear_since = None;
                 // A clock that became measurable after the notice was raised
@@ -615,7 +696,7 @@ impl NoticeState {
                 // report's projection.
                 if let Some(a) = self.active.as_mut() {
                     if low && a.cause.is_none() {
-                        a.cause = running_low_cause(input);
+                        a.cause = cause();
                     }
                 }
                 return self.active;
@@ -634,12 +715,15 @@ impl NoticeState {
                     kind: SpeakerNoticeKind::RunningLow,
                     notice_id: 0,
                     stall_ms: None,
-                    left_ms: input.acked.map(|a| a.p10_ms.round() as i32),
+                    left_ms: input
+                        .acked
+                        .or(input.pre_break.map(|p| p.acked))
+                        .map(|a| a.p10_ms.round() as i32),
                     head_start_ms: input.head_start.map(|h| h.sent_ms),
                     suggested_head_start_ms: None,
                     minutes: None,
                     restart_helps,
-                    cause: running_low_cause(input),
+                    cause: cause(),
                 },
             );
             return self.active;
@@ -1376,6 +1460,148 @@ mod tests {
             assert_eq!(n.cause, Some(SpeakerNoticeCause::Drift), "min {min}");
             assert_eq!(n.stall_ms, None);
         }
+    }
+
+    /// A Playbar at the 500 ms head start that settled at about 510 ms and
+    /// that its clock (+18.8 ppm for five hours, about 338 ms) had drained
+    /// to `level` ms, not yet running low, when a stall of `stall` ms took
+    /// it to `level - stall`.
+    fn clock_drained_to(level: f64, stall: f64, link_poor: bool) -> NoticeInput {
+        NoticeInput {
+            locked: true,
+            acked: acked(level - stall, level - 10.0, level, Some(stall)),
+            head_start: full(500),
+            stall_ms: Some(stall),
+            link_poor,
+            time_to_floor_s: Some((level - 150.0) / (END_PPM * 1e-6)),
+            net_drift_ppm: END_PPM,
+            clock_drained_ms: drained_over(END_PPM, 5.0),
+            target_ms: Some(510.0),
+            ..NoticeInput::default()
+        }
+    }
+
+    #[test]
+    fn a_speaker_the_clock_drained_before_it_ran_low_is_not_the_head_start() {
+        // Drained to 200 ms (not yet under the 150 ms floor) and run out by a
+        // 210 ms stall on a poor link, or to 250 ms and run out by 260 ms on
+        // a good one: the clock took two thirds of the 510 ms lost, and
+        // either stall would have left a full reserve 240-290 ms. Not
+        // "Wi-Fi held back 510 ms", and no longer head start: the speaker
+        // cut out for the clock, which a restart or correction fixes.
+        for (level, stall, poor) in [(200.0, 210.0, true), (250.0, 260.0, false)] {
+            let n = NoticeState::new()
+                .update(Instant::now(), &clock_drained_to(level, stall, poor))
+                .expect("running low");
+            assert_eq!(n.kind, SpeakerNoticeKind::RunningLow, "at {level}");
+            assert_eq!(n.cause, Some(SpeakerNoticeCause::Drift), "at {level}");
+            assert_eq!(n.stall_ms, None);
+            assert_eq!(n.suggested_head_start_ms, None);
+            assert!(n.restart_helps);
+        }
+
+        // A close call the same way (30 ms left after a 240 ms stall from
+        // 270 ms) is no head-start notice either, and not running low.
+        let input = clock_drained_to(270.0, 240.0, false);
+        assert_eq!(NoticeState::new().update(Instant::now(), &input), None);
+
+        // A stall that beats a full reserve from the same level is the head
+        // start, reported as the stall measured, not the 510 ms lost.
+        let n = NoticeState::new()
+            .update(Instant::now(), &clock_drained_to(200.0, 400.0, true))
+            .expect("ran out");
+        assert_eq!(n.kind, SpeakerNoticeKind::HeadStartRanOut);
+        assert_eq!(n.stall_ms, Some(400));
+        assert_eq!(n.suggested_head_start_ms, Some(750));
+    }
+
+    #[test]
+    fn a_mid_sized_stall_on_a_drift_drained_speaker_keeps_the_clock() {
+        // The 07:59:25 shape with a 300 ms stall: more than half of what the
+        // reserve lost to its 10th percentile, but under the 350 ms a full
+        // reserve covers. The speaker still cut out for the clock.
+        let input = NoticeInput {
+            acked: acked(-5.0, -5.0, 295.0, Some(300.0)),
+            stall_ms: Some(300.0),
+            ..field_0759()
+        };
+        let n = NoticeState::new()
+            .update(Instant::now(), &input)
+            .expect("running low");
+        assert_eq!(n.kind, SpeakerNoticeKind::RunningLow);
+        assert_eq!(n.cause, Some(SpeakerNoticeCause::Drift));
+    }
+
+    /// An offset step on the field's speaker after its clock (+18.8 ppm for
+    /// seven hours) drained it to a 10 ms 10th percentile, with `stall` ms
+    /// measured on a poor link.
+    fn drift_drained_step(stall: f64) -> NoticeInput {
+        NoticeInput {
+            locked: false,
+            acked: None,
+            offset_step: true,
+            pre_break: Some(PreBreak {
+                reason: SegmentBreak::OffsetStep,
+                acked: AckedReserve {
+                    min_ms: 5.0,
+                    p10_ms: 10.0,
+                    median_ms: 20.0,
+                    measured: true,
+                    stall_ms: Some(stall),
+                },
+                locked: true,
+            }),
+            head_start: full(500),
+            stall_ms: Some(stall),
+            link_poor: true,
+            net_drift_ppm: END_PPM,
+            clock_drained_ms: drained_over(END_PPM, 7.0),
+            target_ms: Some(510.0),
+            ..NoticeInput::default()
+        }
+    }
+
+    #[test]
+    fn a_step_on_a_drift_drained_speaker_is_not_a_wifi_notice() {
+        // Running low for the clock stood when the speaker underran on an
+        // offset step with an 8 ms stall on its always-poor link: the clock
+        // is still the reason, and no head-start notice replaces it.
+        let mut state = NoticeState::new();
+        let t0 = Instant::now();
+        let low = NoticeInput {
+            acked: acked(5.0, 10.0, 20.0, Some(8.0)),
+            locked: true,
+            time_to_floor_s: Some(0.0),
+            offset_step: false,
+            pre_break: None,
+            ..drift_drained_step(8.0)
+        };
+        let first = state.update(t0, &low).expect("running low");
+        assert_eq!(first.kind, SpeakerNoticeKind::RunningLow);
+        assert_eq!(first.cause, Some(SpeakerNoticeCause::Drift));
+        let later = state
+            .update(t0 + Duration::from_secs(30), &drift_drained_step(8.0))
+            .expect("running low");
+        assert_eq!(later.kind, SpeakerNoticeKind::RunningLow);
+        assert_eq!(later.notice_id, first.notice_id);
+        assert_eq!(later.cause, Some(SpeakerNoticeCause::Drift));
+
+        // With nothing standing, the step raises running low for the clock.
+        let n = NoticeState::new()
+            .update(t0, &drift_drained_step(8.0))
+            .expect("running low");
+        assert_eq!(n.kind, SpeakerNoticeKind::RunningLow);
+        assert_eq!(n.cause, Some(SpeakerNoticeCause::Drift));
+        assert_eq!(n.left_ms, Some(10));
+
+        // A stall that beats a full reserve is still the head start, at the
+        // stall measured rather than the whole head start.
+        let n = NoticeState::new()
+            .update(t0, &drift_drained_step(600.0))
+            .expect("ran out");
+        assert_eq!(n.kind, SpeakerNoticeKind::HeadStartRanOut);
+        assert_eq!(n.stall_ms, Some(600));
+        assert_eq!(n.suggested_head_start_ms, Some(750));
     }
 
     #[test]
