@@ -301,15 +301,29 @@ impl LocalIpDetector {
 /// container, VM and cluster bridges (`cni0`, `flannel.1`, `lxcbr0`, `podman0`)
 /// sit in 10.0.0.0/8 and carry numerically *lower* addresses — so a plain
 /// numeric order would advertise a pod network to the speakers on any machine
-/// that runs containers. Anything routable but not private (CGNAT, public)
-/// ranks last: a speaker can almost never reach it.
+/// that runs containers. Anything routable but not private (public) ranks
+/// next, and shared address space (CGNAT, see [`is_shared_address_space`])
+/// last: a speaker can almost never reach either.
 fn address_rank(ip: Ipv4Addr) -> u8 {
     match ip.octets() {
         [192, 168, ..] => 0,
         [172, second, ..] if (16..=31).contains(&second) => 1,
         [10, ..] => 2,
+        _ if is_shared_address_space(ip) => 4,
         _ => 3,
     }
+}
+
+/// Whether an address is in 100.64.0.0/10, the shared address space of RFC 6598.
+///
+/// Carriers use it behind CGNAT, which never reaches a home LAN, and overlay
+/// VPNs hand it to their tunnel adapters: Cloudflare WARP (100.96.x.x) and
+/// Tailscale (100.64-127.x.x) both do. A speaker cannot reach an address in it,
+/// so it never gets the default route's preference: a VPN whose adapter name the
+/// filter does not know still owns the default route while connected.
+fn is_shared_address_space(ip: Ipv4Addr) -> bool {
+    let [first, second, ..] = ip.octets();
+    first == 100 && (64..=127).contains(&second)
 }
 
 /// Whether an address is one a speaker could ever be told to connect to.
@@ -381,9 +395,13 @@ pub(crate) fn shares_subnet_with_speaker(
 ///    tunnel it is the LAN address the speakers know. Honouring it means this detector never second-guesses a
 ///    working setup — including multi-homed ones (docked laptop, host-only
 ///    adapter, container bridge) where the kernel's own choice is better
-///    informed than any ranking we could invent.
+///    informed than any ranking we could invent. The one exception is an
+///    address in shared address space ([`is_shared_address_space`]): an
+///    overlay VPN's adapter owns the default route while it is connected, and
+///    no speaker can reach it, so it gets no preference even when its adapter
+///    name gets past the filter.
 /// 3. The RFC 1918 block ([`address_rank`]: 192.168/16 first, then 172.16/12,
-///    then 10/8, then anything else routable). This is what decides at first
+///    then 10/8, then anything else routable, shared address space last). This is what decides at first
 ///    launch, when no speaker has been discovered yet and the default route
 ///    points through an interface the filter rejects — the full-tunnel VPN case.
 /// 4. The numeric value of the address, lowest first.
@@ -417,7 +435,7 @@ fn select_advertise_address(
         .min_by_key(|v4| {
             (
                 u8::from(!shares_subnet_with_speaker(*v4, known_speaker_ips)),
-                u8::from(Some(*v4) != routed),
+                u8::from(Some(*v4) != routed || is_shared_address_space(*v4)),
                 address_rank(*v4),
                 u32::from(*v4),
             )
@@ -940,13 +958,48 @@ mod tests {
         assert!(is_usable_advertise_address(Ipv4Addr::new(192, 168, 1, 50)));
     }
 
-    /// A Windows laptop with Cloudflare WARP connected: the tunnel adapter has a
-    /// name the virtual-interface filter does not catch, carries a CGNAT address,
-    /// and owns the default route. The speakers are on the Wi-Fi LAN.
-    fn warp_detector() -> Arc<dyn IpDetector> {
-        Arc::new(FakeInterfaceDetector::new(
+    #[test]
+    fn warp_never_wins_the_launch_address() {
+        // Cloudflare WARP connected on Windows: its adapter owns the default
+        // route with a CGNAT address, and nothing has been discovered yet.
+        let warp = FakeInterfaceDetector::new(
             &[("CloudflareWARP", "100.96.0.12"), ("Wi-Fi", "192.168.2.50")],
             Some("100.96.0.12"),
+        );
+        let ctx = NetworkContext::auto_detect(0, Arc::new(warp)).unwrap();
+        assert_eq!(ctx.get_local_ip(), "192.168.2.50");
+
+        // Under a name the filter does not know, the shared address space
+        // still gives up the default route's preference.
+        let renamed = ifaces(&[("Ethernet 3", "100.96.0.12"), ("Wi-Fi", "192.168.2.50")]);
+        assert_eq!(
+            select_advertise_address(renamed, route("100.96.0.12"), &[]),
+            Some(Ipv4Addr::new(192, 168, 2, 50))
+        );
+    }
+
+    #[test]
+    fn a_shared_address_is_still_advertised_when_it_is_all_there_is() {
+        // Losing the preference is not a filter: a machine whose only address
+        // is in 100.64.0.0/10 keeps advertising it rather than failing.
+        let only = ifaces(&[("Ethernet", "100.70.1.2")]);
+        assert_eq!(
+            select_advertise_address(only, route("100.70.1.2"), &[]),
+            Some(Ipv4Addr::new(100, 70, 1, 2))
+        );
+        assert!(is_shared_address_space(Ipv4Addr::new(100, 64, 0, 1)));
+        assert!(is_shared_address_space(Ipv4Addr::new(100, 127, 255, 254)));
+        assert!(!is_shared_address_space(Ipv4Addr::new(100, 63, 0, 1)));
+        assert!(!is_shared_address_space(Ipv4Addr::new(100, 128, 0, 1)));
+    }
+
+    /// A Windows laptop on a full-tunnel VPN the filter cannot recognise: the
+    /// client's adapter has a generic friendly name and a private address, and
+    /// owns the default route. The speakers are on the Wi-Fi LAN.
+    fn tunnel_detector() -> Arc<dyn IpDetector> {
+        Arc::new(FakeInterfaceDetector::new(
+            &[("Ethernet 2", "10.8.0.2"), ("Wi-Fi", "192.168.2.50")],
+            Some("10.8.0.2"),
         ))
     }
 
@@ -954,15 +1007,15 @@ mod tests {
     fn with_no_speakers_known_the_launch_address_is_unchanged() {
         // Nothing has been discovered at launch, so the default route decides,
         // exactly as it did before discovery could correct it.
-        let ctx = NetworkContext::auto_detect(0, warp_detector()).unwrap();
-        assert_eq!(ctx.get_local_ip(), "100.96.0.12");
+        let ctx = NetworkContext::auto_detect(0, tunnel_detector()).unwrap();
+        assert_eq!(ctx.get_local_ip(), "10.8.0.2");
         assert_eq!(ctx.prefer_address_reachable_from(&[]), None);
-        assert_eq!(ctx.get_local_ip(), "100.96.0.12");
+        assert_eq!(ctx.get_local_ip(), "10.8.0.2");
     }
 
     #[test]
     fn a_speaker_about_to_be_handed_a_url_pulls_the_address_onto_its_subnet() {
-        let ctx = NetworkContext::auto_detect(8080, warp_detector()).unwrap();
+        let ctx = NetworkContext::auto_detect(8080, tunnel_detector()).unwrap();
         let speakers = [Ipv4Addr::new(192, 168, 2, 204)];
 
         assert_eq!(
@@ -979,12 +1032,12 @@ mod tests {
 
     #[test]
     fn a_speaker_on_a_subnet_we_do_not_have_leaves_the_address_alone() {
-        let ctx = NetworkContext::auto_detect(0, warp_detector()).unwrap();
+        let ctx = NetworkContext::auto_detect(0, tunnel_detector()).unwrap();
         assert_eq!(
             ctx.prefer_address_reachable_from(&[Ipv4Addr::new(10, 1, 2, 3)]),
             None
         );
-        assert_eq!(ctx.get_local_ip(), "100.96.0.12");
+        assert_eq!(ctx.get_local_ip(), "10.8.0.2");
     }
 
     #[test]

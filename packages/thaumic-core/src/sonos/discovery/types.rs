@@ -289,6 +289,10 @@ pub const VIRTUAL_INTERFACE_PREFIXES: &[&str] = &[
     "wg",
     "tailscale",
     "zt",
+    // Cloudflare WARP's Windows adapter. It owns the default route while
+    // connected, so an unfiltered WARP adapter was advertised to the speakers
+    // until the first discovery corrected it.
+    "cloudflarewarp",
     // macOS tunnels: utun covers VPNs, WireGuard and Tailscale there; ipsec and
     // ppp cover IKEv2/L2TP. None of them is ever a LAN interface on a client,
     // and "utun" does not match the "tun" prefix above.
@@ -396,6 +400,7 @@ mod tests {
         assert!(is_virtual_interface("wg0"));
         assert!(is_virtual_interface("tailscale0"));
         assert!(is_virtual_interface("zt1234abcd"));
+        assert!(is_virtual_interface("CloudflareWARP"));
         assert!(is_virtual_interface("utun0"));
         assert!(is_virtual_interface("utun3"));
         assert!(is_virtual_interface("ipsec0"));
