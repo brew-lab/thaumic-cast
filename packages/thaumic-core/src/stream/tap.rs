@@ -26,6 +26,7 @@ use tokio::sync::mpsc;
 
 use super::cadence::{ChainStats, LoggingStreamGuard, PipelineSample};
 use super::manager::PlaybackEpoch;
+use super::playout::MappedPosition;
 use super::rate_adapter::RateControl;
 use super::{AudioCodec, AudioFormat};
 use crate::events::LinkQuality;
@@ -330,7 +331,10 @@ impl ConnectionTap {
     /// counted from the playout's start rather than the segment's, so a
     /// segment switch is neither a track change nor RelTime going backwards.
     /// Anything else is returned as it was.
-    pub fn continuous_position(&self, track_uri: String, rel_ms: u64) -> (String, u64) {
+    ///
+    /// The mapped position names the playout segment it was counted on,
+    /// when the playout has a record of it (see [`MappedPosition`]).
+    pub fn continuous_position(&self, track_uri: String, rel_ms: u64) -> MappedPosition {
         match self.stats.playout.continuous_position(
             &self.stream_id,
             &track_uri,
@@ -338,7 +342,11 @@ impl ConnectionTap {
             self.stats.position(),
         ) {
             Some(mapped) => mapped,
-            None => (track_uri, rel_ms),
+            None => MappedPosition {
+                track_uri,
+                rel_ms,
+                timeline: None,
+            },
         }
     }
 

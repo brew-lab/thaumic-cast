@@ -426,6 +426,7 @@ impl SimSpeaker {
                         head_start_ms: tracker.head_start().map(|h| h.sent_ms),
                         clock: tracker.clock(),
                         stale: false,
+                        settling: tracker.control_hold(),
                     });
                     if let Some(control) = &rate_control {
                         control.set_ppm(controller.applied_ppm());
