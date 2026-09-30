@@ -69,10 +69,13 @@ pub const CONTINUATION_OFFSET_MIN_MS: f64 = -OFFSET_STEP_MIN_MS;
 
 /// Largest step either way at a continuation switch away from a segment the
 /// speaker moved on to gaplessly (or came to any other way but being told to
-/// play it), in ms, that is absorbed. Both items count RelTime from the
-/// audio, so the offset should be nil (it was within 10 ms on a Play:1): what
-/// is absorbed is measuring noise, and anything the step detector would call
-/// a step is one, an underrun at the handover included.
+/// play it), in ms, that is not taken for an underrun or a skip. Both items
+/// count RelTime from the audio, so the offset should be nil (it was within
+/// 10 ms on a Play:1): a step this small is measuring error, and is left
+/// alone rather than absorbed, since absorbed at every switch it would add up
+/// (by up to 130 ms over three hours of 600 s segments in simulation).
+/// Anything the step detector would call a step is one, an underrun at the
+/// handover included.
 pub const LATER_SWITCH_OFFSET_MAX_MS: f64 = OFFSET_STEP_MIN_MS;
 
 /// How long a segment must have been played before a switch away from it is
@@ -193,6 +196,15 @@ pub enum SwitchOutcome {
         /// The step, in ms; positive when the reserve read higher after it.
         offset_ms: f64,
     },
+    /// The segment switched away from was one the speaker moved on to by
+    /// itself, so both count RelTime from the audio and no reporting offset
+    /// is expected, and the step measured was within what measuring allows:
+    /// nothing is absorbed and the new segment's polls join the window as
+    /// they are.
+    Steady {
+        /// The step measured, in ms: measuring error.
+        offset_ms: f64,
+    },
     /// The step was too large to be a reporting offset: it ended the segment
     /// as an offset step.
     Rejected {
@@ -208,9 +220,13 @@ pub enum SwitchOutcome {
 struct PendingSwitch {
     /// When the first poll on the new segment was sent.
     at: f64,
-    /// The steps, in ms, that are absorbed as a reporting offset: which
+    /// The steps, in ms, that are not taken for an underrun or a skip: which
     /// depends on how the speaker came to the segment it left.
     bounds: (f64, f64),
+    /// Whether a step within `bounds` is a reporting offset, absorbed, or
+    /// measuring error, left alone: only a switch away from the item the
+    /// speaker was told to play can have an offset.
+    absorbs: bool,
     /// The reserve just before the switch, over the
     /// [`CONTINUATION_MEASURE_MS`] of polls before it.
     carried: ReserveEstimate,
@@ -486,8 +502,8 @@ pub struct ReserveTracker {
     /// when the first poll on it was sent.
     timeline: Option<(PlayoutTimeline, f64)>,
     /// How much lower than their RelTime alone says the reserve is taken on
-    /// the current playout segment, in ms: the reporting offsets absorbed at
-    /// the continuation switches since the speaker was last told to play.
+    /// the current playout segment, in ms: the reporting offset absorbed at
+    /// the first continuation switch since the speaker was last told to play.
     reserve_offset_ms: f64,
     /// A continuation switch whose offset is being measured.
     switch: Option<PendingSwitch>,
@@ -649,11 +665,12 @@ impl ReserveTracker {
     /// carried forward along the clock, held (and [`Self::settling`] says
     /// so). Once it is tight, the offset between the two, if it is within
     /// [`CONTINUATION_OFFSET_MIN_MS`]..=[`CONTINUATION_OFFSET_MAX_MS`] at the
-    /// first switch after the speaker was told to play, or within
-    /// ±[`LATER_SWITCH_OFFSET_MAX_MS`] at a later one (where no reporting
-    /// offset is expected), is taken off the new segment's polls (these and
-    /// all later ones), they join the old window and the reserve carries on
-    /// as if nothing had happened; a larger one ends the segment as an
+    /// first switch after the speaker was told to play, is taken off the new
+    /// segment's polls (these and all later ones), they join the old window
+    /// and the reserve carries on as if nothing had happened. At a later
+    /// switch no reporting offset is expected, and one within
+    /// ±[`LATER_SWITCH_OFFSET_MAX_MS`] is measuring error: the polls join the
+    /// window as they are. A larger one, at either, ends the segment as an
     /// offset step. The clock fit starts a new segment of its own at the
     /// switch, since RelTime steps there. [`Self::take_switch_outcome`] says
     /// what each switch came to.
@@ -795,15 +812,20 @@ impl ReserveTracker {
         };
         // Only the item the speaker was told to play reports ahead of the
         // audio; between items it moved on to gaplessly nothing should step.
-        let bounds = match left {
-            TimelineEntry::Played => (CONTINUATION_OFFSET_MIN_MS, CONTINUATION_OFFSET_MAX_MS),
-            TimelineEntry::Next | TimelineEntry::Other => {
-                (-LATER_SWITCH_OFFSET_MAX_MS, LATER_SWITCH_OFFSET_MAX_MS)
-            }
+        let (bounds, absorbs) = match left {
+            TimelineEntry::Played => (
+                (CONTINUATION_OFFSET_MIN_MS, CONTINUATION_OFFSET_MAX_MS),
+                true,
+            ),
+            TimelineEntry::Next | TimelineEntry::Other => (
+                (-LATER_SWITCH_OFFSET_MAX_MS, LATER_SWITCH_OFFSET_MAX_MS),
+                false,
+            ),
         };
         self.switch = Some(PendingSwitch {
             at: ts,
             bounds,
+            absorbs,
             carried,
             probe: self.reserve.fresh(CONTINUATION_MEASURE_MS),
             overdue: false,
@@ -893,6 +915,14 @@ impl ReserveTracker {
             let switch = self.switch.take()?;
             let offset_ms = probe.reserve_ms - expected;
             if (switch.bounds.0..=switch.bounds.1).contains(&offset_ms) {
+                if !switch.absorbs {
+                    // Measuring error, a few tens of ms either way: absorbed
+                    // at every switch it would add up, a switch at a time.
+                    self.reserve.absorb(&switch.probe, 0.0);
+                    self.reference.absorb(&switch.probe, 0.0);
+                    self.switch_outcome = Some(SwitchOutcome::Steady { offset_ms });
+                    return None;
+                }
                 self.reserve.absorb(&switch.probe, -offset_ms);
                 self.reference.absorb(&switch.probe, -offset_ms);
                 self.reserve_offset_ms += offset_ms;
@@ -2318,7 +2348,9 @@ mod tests {
         );
         let outcomes: Vec<SwitchOutcome> = reports.iter().filter_map(|r| r.outcome).collect();
         assert_eq!(outcomes.len(), 2, "{outcomes:?}");
-        let SwitchOutcome::Absorbed { offset_ms } = outcomes[1] else {
+        // Measuring error, and left alone: absorbed at every switch it would
+        // add up.
+        let SwitchOutcome::Steady { offset_ms } = outcomes[1] else {
             panic!("{outcomes:?}");
         };
         assert!(offset_ms.abs() < 50.0, "measured {offset_ms:.0}");
