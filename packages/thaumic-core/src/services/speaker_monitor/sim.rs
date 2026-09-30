@@ -1034,6 +1034,60 @@ mod tests {
         assert!(slow.underruns.is_empty());
     }
 
+    /// On its own the integral learns a speaker's clock over hours: an hour
+    /// in it was a median 12-13 ppm short of a −45 ppm speaker and 19-23
+    /// short of a +60 ppm one, and the reserve took about 90 minutes to come
+    /// within 40 ms of its target for good on the latter. Drawn towards the
+    /// clock fit once that is precise, the integral is within 8 ppm by the
+    /// hour and the reserve within 40 ms of its target from 80 minutes on,
+    /// and past its target the reserve never swings further than the
+    /// deadband.
+    #[tokio::test(start_paused = true)]
+    async fn a_precise_clock_brings_the_integral_in_within_the_hour() {
+        for (clock_ppm, seed) in [(20.0, 51), (-45.0, 52), (60.0, 53)] {
+            let report = playbar(clock_ppm, DriftMode::On, seed)
+                .run(150.0, false)
+                .await;
+            assert!(report.underruns.is_empty(), "{clock_ppm} ppm");
+            let at_hour = report
+                .estimates
+                .iter()
+                .find(|e| e.at >= 60.0 * MINUTE)
+                .expect("an estimate an hour in");
+            assert!(
+                (at_hour.integral_ppm - clock_ppm).abs() <= 8.0,
+                "{clock_ppm} ppm: integral {:+.1} an hour in",
+                at_hour.integral_ppm
+            );
+            let target = report
+                .estimates
+                .iter()
+                .find_map(|e| e.target_ms)
+                .expect("a target");
+            // The reserve drains (or fills) away from its target first; past
+            // it, it must not swing further than the deadband.
+            let away = -clock_ppm.signum();
+            for e in &report.estimates {
+                let off = e.true_reserve_ms - target;
+                if e.at >= 80.0 * MINUTE {
+                    assert!(
+                        off.abs() <= 40.0,
+                        "{clock_ppm} ppm: {off:+.0} ms off at {:.1} min",
+                        e.at / MINUTE
+                    );
+                }
+                if e.at >= 30.0 * MINUTE {
+                    assert!(
+                        -off * away <= DEADBAND_FLOOR_MS,
+                        "{clock_ppm} ppm: overshot by {:.0} ms at {:.1} min",
+                        -off * away,
+                        e.at / MINUTE
+                    );
+                }
+            }
+        }
+    }
+
     /// With the proportional term shut out of the deadband, the loop inside
     /// it could swing slowly for ever; over six hours the true reserve must
     /// stay within 60 ms of where it sits.
