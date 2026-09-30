@@ -2581,7 +2581,7 @@ mod tests {
     }
 
     #[test]
-    fn a_switch_slow_to_measure_keeps_the_controller_holding() {
+    fn a_switch_slow_to_measure_steers_until_overdue_then_holds() {
         use super::super::control::ControlHold;
         const MINUTE: f64 = 60_000.0;
         let switch_at = 30.0 * MINUTE + 5_000.0;
