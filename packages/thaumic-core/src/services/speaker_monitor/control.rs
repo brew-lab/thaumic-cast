@@ -17,7 +17,8 @@
 //! e  = target − reserve
 //! db = max(40, half_width)
 //! P  = 0.5·clamp(e, ±db) + 0.833·sign(e)·max(0, |e| − db)
-//! I += 0.0069·e per estimate, tight estimates only, not while u is pinned
+//! I += 0.0069·e per estimate, tight estimates only (or ones carried across
+//!      a continuation switch along a precise clock), not while u is pinned
 //!      at the cap in the sign of e
 //! u  = clamp(I + P, ±150) ppm, moving at most 10 ppm per estimate
 //! ```
@@ -34,11 +35,14 @@
 //! the command holds at the integral with no proportional term, and only
 //! after 30 min unlocked, or 10 min with the speaker not answering, does it
 //! ramp to 0. It holds the same way while the
-//! monitor says the reserve has stepped for a reason that is not drift (a
-//! continuation switch being measured, or a jump that may be an offset step;
-//! see [`ControlInput::settling`]), so the step is never integrated; there
-//! the command goes to the integral at once rather than at the slew limit, so
-//! no proportional push is left in it for the estimates a slew would take.
+//! monitor says the reserve may have stepped for a reason that is not drift (a
+//! jump that may be an offset step, or a continuation switch that has taken
+//! too long to measure; see [`ControlInput::settling`]), so the step is never
+//! integrated; there the command goes to the integral at once rather than at
+//! the slew limit, so no proportional push is left in it for the estimates a
+//! slew would take. While a continuation switch is measured it steers by the
+//! reserve from before the switch, carried on, which has no step in it (see
+//! [`EstimateCarry`]).
 //!
 //! In [`DriftMode::Observe`] the controller runs exactly the same way but its
 //! command is never applied: the reserve it steers by is the measured one
@@ -354,6 +358,25 @@ pub struct ControlInput {
     /// the command holds at the integral, which learns nothing, until the
     /// monitor has a tight estimate it trusts again.
     pub settling: bool,
+    /// Whether the estimate was measured or carried across a continuation
+    /// switch (see [`crate::services::speaker_monitor::ReserveTracker::carry`]).
+    pub carry: EstimateCarry,
+}
+
+/// Whether a [`ControlInput`]'s estimate was measured, or carried across a
+/// continuation switch while the new segment's reporting offset is measured.
+/// A carried estimate is held, not fresh, but no offset is in it.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum EstimateCarry {
+    /// Measured from the current segment's polls, as usual.
+    #[default]
+    Measured,
+    /// Carried along the correction alone, the clock being too uncertain to
+    /// carry it: it steers, as any held estimate does, and teaches nothing.
+    Steers,
+    /// Carried along a precise clock and the correction: it steers, and
+    /// teaches the integral as a tight estimate does.
+    Teaches,
 }
 
 /// Why the controller is doing what it does, for the log.
@@ -361,6 +384,9 @@ pub struct ControlInput {
 pub enum ControlHold {
     /// Steering on a locked estimate against the connection's target.
     Steering,
+    /// Steering on an estimate carried across a continuation switch (see
+    /// [`EstimateCarry`]).
+    Carried,
     /// No target yet on this connection: holding the integral.
     NoTarget,
     /// The connection settled too far from where the speaker usually does:
@@ -380,6 +406,7 @@ impl ControlHold {
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Steering => "steer",
+            Self::Carried => "carried",
             Self::NoTarget => "no_target",
             Self::CalibOutlier => "calib_outlier",
             Self::Unlocked => "hold",
@@ -515,17 +542,23 @@ impl DriftController {
                             * error.signum()
                             * (error.abs() - deadband).max(0.0);
                     // A held estimate may straddle a step: it steers, but
-                    // does not teach the integral.
+                    // does not teach the integral. One carried across a
+                    // switch along a precise clock straddles nothing.
                     let pinned_same_way = self.command_ppm.abs()
                         >= MAX_COMMAND_PPM - CAP_EPSILON_PPM
                         && error.signum() == self.command_ppm.signum();
-                    if est.tight() && !pinned_same_way {
+                    let teaches = est.tight() || input.carry == EstimateCarry::Teaches;
+                    if teaches && !pinned_same_way {
                         self.state.integral_ppm = (self.state.integral_ppm
                             + INTEGRAL_PPM_PER_MS * error)
                             .clamp(-MAX_COMMAND_PPM, MAX_COMMAND_PPM);
                         self.state.seeded = true;
                     }
-                    (self.state.integral_ppm + p, p, ControlHold::Steering)
+                    let hold = match input.carry {
+                        EstimateCarry::Measured => ControlHold::Steering,
+                        EstimateCarry::Steers | EstimateCarry::Teaches => ControlHold::Carried,
+                    };
+                    (self.state.integral_ppm + p, p, hold)
                 }
                 Some(_) => (integral, 0.0, ControlHold::CalibOutlier),
                 None => (integral, 0.0, ControlHold::NoTarget),
@@ -713,6 +746,7 @@ mod tests {
             clock: None,
             stale: false,
             settling: false,
+            carry: EstimateCarry::Measured,
         }
     }
 
@@ -826,6 +860,26 @@ mod tests {
         // Steering again once it has settled.
         c.update(&input(t, Some(estimate(450.0, 30.0, LockReason::Tight))));
         assert_eq!(c.hold(), ControlHold::Steering);
+    }
+
+    #[test]
+    fn a_carried_estimate_steers_and_teaches_only_along_a_precise_clock() {
+        // 60 ms below target on a held estimate carried across a switch.
+        let carried = |carry| {
+            let mut c = steering(DriftMode::On, SpeakerControlState::default());
+            let before = c.integral_ppm();
+            let mut i = input(30.0, Some(estimate(390.0, 60.0, LockReason::Held)));
+            i.carry = carry;
+            c.update(&i);
+            assert_eq!(c.hold(), ControlHold::Carried);
+            assert!(
+                (c.proportional_ppm() - 0.5 * 60.0).abs() < 1e-9,
+                "steers on it"
+            );
+            c.integral_ppm() - before
+        };
+        assert_eq!(carried(EstimateCarry::Steers), 0.0, "teaches nothing");
+        assert!((carried(EstimateCarry::Teaches) - 0.0069 * 60.0).abs() < 1e-9);
     }
 
     #[test]

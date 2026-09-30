@@ -32,11 +32,12 @@
 //! audio itself. So at the first continuation switch the reserve reads that
 //! much higher though nothing was heard, and a window straddling the switch
 //! ramps across the step. The tracker measures the step instead (see
-//! [`ReserveTracker::observe_on`]) and absorbs it, holding the drift
-//! controller meanwhile.
+//! [`ReserveTracker::observe_on`]) and absorbs it, the drift controller
+//! steering meanwhile by the reserve from before the switch, carried on.
 
 use super::bounds::PollObservation;
 use super::clock_fit::{ClockEstimate, ClockFit};
+use super::control::EstimateCarry;
 use super::reserve::{LockReason, ReserveEstimate, ReserveEstimator, RESERVE_WINDOW_MS, TRIM_RANK};
 use super::rollup::WindowStats;
 use super::segment::{Segment, SegmentBreak, OFFSET_STEP_LAG_MS, OFFSET_STEP_MIN_MS};
@@ -89,8 +90,11 @@ pub const CONTINUATION_MIN_SEGMENT_MS: f64 = RESERVE_WINDOW_MS;
 /// and the difference of two single estimates was off by up to 80 ms in
 /// simulation; over twice the polls on each side (see
 /// [`ReserveEstimator::fresh`]) the offset came within about ±20 ms of the
-/// truth, the worst of forty runs 46 ms. The drift controller holds for this
-/// long after a switch, which at its integral costs nothing.
+/// truth, the worst of forty runs 46 ms (at a switch hours into a cast; at
+/// one in its first half hour the clock is not yet precise enough to carry
+/// the reserve across, and on a 45 ppm speaker the offset read up to 60 ms
+/// off). The drift controller steers by the reserve before the switch,
+/// carried on, for this long after it (see [`ReserveTracker::carry`]).
 pub const CONTINUATION_MEASURE_MS: f64 = 2.0 * RESERVE_WINDOW_MS;
 
 /// How long the estimate from before a continuation switch is carried while
@@ -230,6 +234,11 @@ struct PendingSwitch {
     /// The reserve just before the switch, over the
     /// [`CONTINUATION_MEASURE_MS`] of polls before it.
     carried: ReserveEstimate,
+    /// Audio the drift correction has inserted since `carried` was made, in
+    /// ms, counted a report at a time at the correction in force over each.
+    inserted_ms: f64,
+    /// Up to when `inserted_ms` has been counted.
+    inserted_at: f64,
     /// The polls since the switch, on their own.
     probe: ReserveEstimator,
     /// Whether they have taken longer than [`CONTINUATION_SETTLE_MAX_MS`]
@@ -582,11 +591,17 @@ impl ReserveTracker {
     /// as [`Self::net_ppm`], but with the clock left out until its standard
     /// error is within [`CLOCK_SHIFT_MAX_SE_PPM`].
     fn shift_ppm(&self) -> f64 {
+        self.clock_shift_ppm() - self.command_ppm
+    }
+
+    /// The speaker's clock rate as [`Self::shift_ppm`] counts it, in ppm:
+    /// shrunk, and 0 until its standard error is within
+    /// [`CLOCK_SHIFT_MAX_SE_PPM`].
+    fn clock_shift_ppm(&self) -> f64 {
         self.clock
             .estimate()
             .filter(|c| c.se_ppm <= CLOCK_SHIFT_MAX_SE_PPM)
             .map_or(0.0, |c| c.shrunk_ppm())
-            - self.command_ppm
     }
 
     /// How much faster than delivery the speaker drains its reserve, in
@@ -661,9 +676,10 @@ impl ReserveTracker {
     /// segment from a different origin (see the module docs). So the window
     /// holding the old segment's polls stops taking any, and the new
     /// segment's polls are estimated on their own. Until that estimate is
-    /// tight, the latest tight estimate before the switch is reported,
-    /// carried forward along the clock, held (and [`Self::settling`] says
-    /// so). Once it is tight, the offset between the two, if it is within
+    /// tight, the reserve before the switch is reported, carried forward
+    /// along the clock and the correction, held (and [`Self::settling`] says
+    /// so); the drift controller steers by it (see [`Self::carry`]). Once it
+    /// is tight, the offset between the two, if it is within
     /// [`CONTINUATION_OFFSET_MIN_MS`]..=[`CONTINUATION_OFFSET_MAX_MS`] at the
     /// first switch after the speaker was told to play, is taken off the new
     /// segment's polls (these and all later ones), they join the old window
@@ -826,6 +842,8 @@ impl ReserveTracker {
             at: ts,
             bounds,
             absorbs,
+            inserted_ms: 0.0,
+            inserted_at: carried.at,
             carried,
             probe: self.reserve.fresh(CONTINUATION_MEASURE_MS),
             overdue: false,
@@ -905,11 +923,18 @@ impl ReserveTracker {
         ppm: f64,
         previous_acked: Option<AckedReserve>,
     ) -> Option<(Option<ReserveEstimate>, Option<SegmentBreak>)> {
+        let (clock_ppm, command_ppm) = (self.clock_shift_ppm(), self.command_ppm);
         let switch = self.switch.as_mut()?;
         let probe = switch.probe.estimate(now, ppm);
+        // Delivery runs at our clock and the playhead at the speaker's. The
+        // drift controller steers by the carried estimate meanwhile, so the
+        // correction moves: what it inserted is counted as it went, and the
+        // clock, which does not move, is taken at its best estimate yet.
+        switch.inserted_ms += command_ppm * 1e-6 * (now - switch.inserted_at).max(0.0);
+        switch.inserted_at = switch.inserted_at.max(now);
         let carried = switch.carried;
-        // Delivery runs at our clock and the playhead at the speaker's.
-        let expected = carried.reserve_ms - ppm * 1e-6 * (now - carried.at);
+        let expected =
+            carried.reserve_ms - clock_ppm * 1e-6 * (now - carried.at) + switch.inserted_ms;
         let measured = now - switch.at >= CONTINUATION_MEASURE_MS;
         if let Some(probe) = probe.filter(|p| measured && p.tight()) {
             let switch = self.switch.take()?;
@@ -972,17 +997,47 @@ impl ReserveTracker {
 
     /// Whether a continuation switch is being measured and the estimate is
     /// the one from before it, carried forward, which says nothing new.
-    /// Nothing should be decided from it. Not once the switch has taken
-    /// longer than [`CONTINUATION_SETTLE_MAX_MS`] to measure, when the new
-    /// segment's own estimate is reported instead.
+    /// No notice or alarm should be decided from it. Not once the switch has
+    /// taken longer than [`CONTINUATION_SETTLE_MAX_MS`] to measure, when the
+    /// new segment's own estimate is reported instead.
     pub fn settling(&self) -> bool {
         self.switch.as_ref().is_some_and(|s| !s.overdue)
     }
 
-    /// Whether the drift controller should hold: a continuation switch is
-    /// being measured (however long that takes), or the reserve has jumped
-    /// from its baseline and may be an offset step. Neither is drift, and a
-    /// step integrated would wind the controller up for hours.
+    /// How the drift controller may use the estimate: as measured, or, while
+    /// a switch settles, as carried across it (see [`EstimateCarry`]).
+    ///
+    /// The carried estimate is the reserve before the switch carried along
+    /// the clock and the correction, so nothing of the new segment's offset
+    /// is in it, and the controller steers by it: with segments of ten
+    /// minutes a switch settles for six of every ten, and a controller held
+    /// at its integral meanwhile never caught up with a 45 ppm speaker. It
+    /// teaches the integral too, but only once the clock carrying it is
+    /// precise (within [`CLOCK_SHIFT_MAX_SE_PPM`]): before that it is carried
+    /// along the correction alone, and would teach the integral the opposite
+    /// of the speaker's clock.
+    pub fn carry(&self) -> EstimateCarry {
+        if !self.settling() {
+            EstimateCarry::Measured
+        } else if self
+            .clock
+            .estimate()
+            .is_some_and(|c| c.se_ppm <= CLOCK_SHIFT_MAX_SE_PPM)
+        {
+            EstimateCarry::Teaches
+        } else {
+            EstimateCarry::Steers
+        }
+    }
+
+    /// Whether the drift controller should hold: a continuation switch has
+    /// been measuring for longer than [`CONTINUATION_SETTLE_MAX_MS`], so the
+    /// estimate is the new segment's own, reporting offset and all, or the
+    /// reserve has jumped from its baseline and may be an offset step.
+    /// Neither is drift, and a step integrated would wind the controller up
+    /// for hours. A switch settling within that time does not hold it: the
+    /// estimate is the one from before the switch, carried (see
+    /// [`Self::carry`]).
     ///
     /// The second covers the estimates before an offset step is confirmed:
     /// the first jumped estimate can be tight, and would teach the integral
@@ -991,7 +1046,7 @@ impl ReserveTracker {
     /// anyway. A jump that fades holds it for a report or two, at its
     /// integral, which costs nothing.
     pub fn control_hold(&self) -> bool {
-        self.switch.is_some() || self.segment.step_pending()
+        self.switch.as_ref().is_some_and(|s| s.overdue) || self.segment.step_pending()
     }
 
     /// What the latest continuation switch came to, once, as soon as it is
@@ -2209,6 +2264,7 @@ mod tests {
                 clock: tracker.clock(),
                 stale: false,
                 settling: tracker.control_hold(),
+                carry: tracker.carry(),
             });
             tracker.set_command_ppm(controller.applied_ppm());
             gen.inserted_changes
@@ -2285,9 +2341,10 @@ mod tests {
                     "{ctx}: {after:.0} against {level:.0} unswitched"
                 );
 
-                // The controller holds, its integral untouched and its
-                // command at it, until the new segment's estimate is tight
-                // and corrected, and learns nothing from the step after.
+                // Until the new segment's estimate is tight and corrected, the
+                // controller steers by the estimate from before the switch,
+                // carried on, which has none of the step in it; and it learns
+                // nothing from the step after.
                 let last_before = reports
                     .iter()
                     .rposition(|r| r.at <= switch_at)
@@ -2297,16 +2354,22 @@ mod tests {
                     .position(|r| r.at > switch_at && !r.settling)
                     .expect("settles");
                 assert!(settled > last_before + 1, "{ctx}: settled at once");
+                // The speaker's clock is matched, so the carried estimate
+                // barely moves, and it stays at the level before the switch,
+                // not the one the step would read.
+                let before = mean_reserve(&reports, switch_at - 6.0 * MINUTE, switch_at);
+                let first = reports[last_before + 1].est.expect("carried").reserve_ms;
                 for r in &reports[last_before + 1..settled] {
                     assert!(r.settling, "{ctx}: {r:?}");
-                    assert_eq!(r.hold, ControlHold::Settling, "{ctx}");
-                    assert_eq!(r.integral, reports[last_before].integral, "{ctx}");
+                    assert_eq!(r.hold, ControlHold::Carried, "{ctx}");
+                    let carried = r.est.expect("carried");
+                    assert_eq!(carried.lock_reason, LockReason::Held, "{ctx}");
+                    assert!(
+                        (carried.reserve_ms - before).abs() < offset / 2.0
+                            && (carried.reserve_ms - first).abs() < 10.0,
+                        "{ctx}: carried {carried:?} against {before:.0} before"
+                    );
                 }
-                let held = &reports[settled - 1];
-                assert!(
-                    (held.command - held.integral).abs() < 1e-9,
-                    "{ctx}: the command holds at the integral: {held:?}"
-                );
                 // Nor after: over the next 10 min the integral keeps within a
                 // few ppm of the unswitched run's (at most 3.5 in these runs;
                 // with the step integrated it was 17-41 ppm off 20 min after
@@ -2420,17 +2483,24 @@ mod tests {
         assert!((offset_ms - 110.0).abs() < 50.0, "measured {offset_ms:.0}");
         assert!(reports.iter().all(|r| r.brk.is_none()), "{reports:?}");
 
-        let before = reports.iter().rposition(|r| r.at <= switch_at).unwrap();
+        // The controller steers by the carried estimate until the switch is
+        // overdue; then the new segment's own estimate, offset and all, is
+        // reported, and the controller holds at its integral, the command
+        // at it from the first report, learning nothing until the offset is
+        // measured.
+        let last_carried = reports.iter().rposition(|r| r.at < overdue_at).unwrap();
+        let frozen = reports[last_carried].integral;
         for r in reports
             .iter()
             .filter(|r| r.at > switch_at && r.at < measured_at)
         {
-            // The controller holds throughout, learning nothing; the carried
-            // estimate stops standing in once the switch is overdue.
-            assert_eq!(r.hold, ControlHold::Settling, "{r:?}");
-            assert_eq!(r.integral, reports[before].integral, "{r:?}");
             assert_eq!(r.settling, r.at < overdue_at, "{r:?}");
-            if r.at >= overdue_at {
+            if r.at < overdue_at {
+                assert_eq!(r.hold, ControlHold::Carried, "{r:?}");
+            } else {
+                assert_eq!(r.hold, ControlHold::Settling, "{r:?}");
+                assert_eq!(r.integral, frozen, "{r:?}");
+                assert_eq!(r.command, frozen, "{r:?}");
                 assert!(r.est.is_none_or(|e| !e.tight()), "{r:?}");
             }
         }
