@@ -1758,10 +1758,13 @@ fn format_pipeline(samples: &[crate::stream::cadence::PipelineSample]) -> String
 }
 
 /// What drift correction is doing, for the log: `drift=on cmd=+18.0ppm
-/// I=+17.6 ins=+54ms` when it corrects the audio, `drift=observe
-/// would_cmd=+18.0ppm I=+17.6` when it only works out what it would do, and
-/// `drift=off` otherwise. The controller's reason is added when it is not
-/// steering (holding, ramping, no target yet, or a distrusted target).
+/// I=+17.6 taught=93m pull=+0.12ppm ins=+54ms` when it corrects the audio,
+/// `drift=observe would_cmd=+18.0ppm I=+17.6 taught=93m pull=+0.12ppm` when
+/// it only works out what it would do, and `drift=off` otherwise. `taught`
+/// is how long the loop has taught the speaker's integral, over every cast,
+/// and `pull` how far the clock fit drew it on this report (`pull=—` when it
+/// did not). The controller's reason is added when it is not steering
+/// (holding, ramping, no target yet, or a distrusted target).
 ///
 /// A rate `THAUMIC_DRIFT_FORCE_PPM` fixed the adapter at is shown as
 /// `forced=+150ppm` (with what it has inserted) whatever the mode, since it
@@ -1803,10 +1806,14 @@ fn format_drift_mode(drift: &DriftController, net_inserted_ms: Option<f64>) -> S
     };
     let saturated = if drift.saturated() { " saturated" } else { "" };
     let inserted = net_inserted_ms.map_or_else(String::new, |ms| format!(" ins={ms:+.0}ms"));
+    let pull = drift
+        .pull_ppm()
+        .map_or_else(|| "\u{2014}".to_string(), |ppm| format!("{ppm:+.2}ppm"));
     format!(
-        "drift={mode} {label}={:+.1}ppm{hold} I={:+.1}{saturated}{inserted}",
+        "drift={mode} {label}={:+.1}ppm{hold} I={:+.1} taught={:.0}m pull={pull}{saturated}{inserted}",
         drift.command_ppm(),
         drift.integral_ppm(),
+        drift.state().taught_s / 60.0,
     )
 }
 
@@ -4153,7 +4160,7 @@ mod tests {
         });
         assert_eq!(
             format_drift(&drift, Some(431.0), None, false),
-            "drift=on cmd=+19.0ppm(settle) I=+19.0 ins=+431ms"
+            "drift=on cmd=+19.0ppm(settle) I=+19.0 taught=0m pull=\u{2014} ins=+431ms"
         );
         // Steering by the estimate carried across a switch.
         drift.update(&ControlInput {
@@ -4174,7 +4181,61 @@ mod tests {
         });
         assert_eq!(
             format_drift(&drift, Some(431.0), None, false),
-            "drift=on cmd=+19.0ppm(carried) I=+19.0 ins=+431ms"
+            "drift=on cmd=+19.0ppm(carried) I=+19.0 taught=0m pull=\u{2014} ins=+431ms"
+        );
+    }
+
+    #[test]
+    fn the_report_line_shows_how_long_the_integral_was_taught_and_the_clock_fit_drawing_it() {
+        use crate::services::speaker_monitor::{ClockEstimate, LockReason, ReserveEstimate};
+        let mut drift = DriftController::new(SpeakerControlState {
+            integral_ppm: 17.6,
+            seeded: true,
+            taught_s: 93.0 * 60.0,
+            ..SpeakerControlState::default()
+        });
+        drift.start_connection(DriftMode::On, true);
+        let tight = ReserveEstimate {
+            at: 0.0,
+            reserve_ms: 450.0,
+            half_width_ms: 30.0,
+            inconsistent: false,
+            jitter_ms: 25.0,
+            polls: 72,
+            lock_reason: LockReason::Tight,
+        };
+        let report = |now_s: f64, clock: Option<ClockEstimate>| ControlInput {
+            now_s,
+            estimate: Some(tight),
+            target_ms: Some(450.0),
+            head_start_ms: Some(500),
+            clock,
+            ..ControlInput::default()
+        };
+        // On target, so only the fit moves the integral: taught for 93 min
+        // it is weighed as 8.5 ppm off, the fit's ±2 ppm as ±3, and 0.089 of
+        // the 1.4 ppm gap is drawn.
+        drift.update(&report(
+            0.0,
+            Some(ClockEstimate {
+                ppm: 19.0,
+                se_ppm: 2.0,
+                span_ms: 90.0 * 60_000.0,
+                dof: 85,
+            }),
+        ));
+        assert_eq!(
+            format_drift(&drift, Some(54.0), None, false),
+            "drift=on cmd=+10.0ppm I=+17.7 taught=93m pull=+0.12ppm ins=+54ms"
+        );
+        // With no fit precise enough, nothing is drawn.
+        drift.update(&report(30.0, None));
+        drift.start_connection(DriftMode::Observe, true);
+        drift.update(&report(60.0, None));
+        let line = format_drift(&drift, None, None, false);
+        assert!(
+            line.ends_with(" I=+17.7 taught=94m pull=\u{2014}"),
+            "{line}"
         );
     }
 }
