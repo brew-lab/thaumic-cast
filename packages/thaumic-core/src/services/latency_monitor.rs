@@ -1060,9 +1060,22 @@ impl LatencySession {
             drift_active: drift_active(self.drift.mode(), tap.rate_control().map(|c| &**c)),
             saturated: self.drift.saturated(),
         };
-        let before = self.notices.active().map(|n| n.notice_id);
+        let before = self.notices.active();
         let notice = self.notices.update(now, &input);
-        if let Some(n) = notice.filter(|n| Some(n.notice_id) != before) {
+        let before_cause = before.and_then(|n| n.cause);
+        let before = before.map(|n| n.notice_id);
+        if let Some(n) = notice.filter(|n| Some(n.notice_id) == before && n.cause != before_cause) {
+            // A standing notice that gained its cause in place keeps its id,
+            // so a client does not show it again; the log still says why.
+            log::info!(
+                "[SpeakerMonitor] {} stream={}: notice {} id={} cause={}",
+                speaker_ip,
+                stream_id,
+                n.kind,
+                n.notice_id,
+                n.cause.map_or("\u{2014}", |c| c.as_str())
+            );
+        } else if let Some(n) = notice.filter(|n| Some(n.notice_id) != before) {
             let opt = |v: Option<u32>| v.map_or_else(|| "\u{2014}".to_string(), |v| v.to_string());
             log::warn!(
                 "[SpeakerMonitor] {} stream={}: notice {} id={}: stall={}ms left={}ms H={}ms \
