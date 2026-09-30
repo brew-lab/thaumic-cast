@@ -1014,6 +1014,7 @@ impl LatencySession {
             clock: self.tracker.clock(),
             stale,
             settling: self.tracker.control_hold(),
+            carry: self.tracker.carry(),
         });
         self.refresh_rate_command(tap);
     }
@@ -4131,7 +4132,7 @@ mod tests {
     }
 
     #[test]
-    fn the_report_line_shows_the_controller_holding_through_a_switch() {
+    fn the_report_line_shows_the_controller_holding_or_steering_by_a_carried_estimate() {
         let mut drift = DriftController::new(SpeakerControlState {
             integral_ppm: 19.0,
             seeded: true,
@@ -4145,6 +4146,27 @@ mod tests {
         assert_eq!(
             format_drift(&drift, Some(431.0), None, false),
             "drift=on cmd=+19.0ppm(settle) I=+19.0 ins=+431ms"
+        );
+        // Steering by the estimate carried across a switch.
+        drift.update(&ControlInput {
+            now_s: 30.0,
+            estimate: Some(crate::services::speaker_monitor::ReserveEstimate {
+                at: 30_000.0,
+                reserve_ms: 500.0,
+                half_width_ms: 60.0,
+                inconsistent: false,
+                jitter_ms: 25.0,
+                polls: 12,
+                lock_reason: crate::services::speaker_monitor::LockReason::Held,
+            }),
+            target_ms: Some(500.0),
+            head_start_ms: Some(500),
+            carry: crate::services::speaker_monitor::EstimateCarry::Teaches,
+            ..ControlInput::default()
+        });
+        assert_eq!(
+            format_drift(&drift, Some(431.0), None, false),
+            "drift=on cmd=+19.0ppm(carried) I=+19.0 ins=+431ms"
         );
     }
 }

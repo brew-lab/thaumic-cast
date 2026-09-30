@@ -17,6 +17,10 @@
 //! the loop closes through the same arithmetic as in the field. The drift
 //! scenarios run at a low sample rate: the filter's cost scales with it and
 //! nothing the controller sees does.
+//!
+//! Cast in segments, the speaker moves on gaplessly from one to the next,
+//! and reports RelTime ahead of the audio on the first, as one told to play
+//! it does, so the tracker sees continuation switches as in the field.
 
 use std::hash::{Hash, Hasher};
 use std::net::IpAddr;
@@ -36,7 +40,9 @@ use super::notice::{NoticeInput, NoticeState, SpeakerNotice};
 use super::reserve::ReserveEstimate;
 use super::segment::SegmentBreak;
 use super::test_support::Lcg;
-use super::tracker::{ReserveTracker, DRAINING_WARN_SECS};
+use super::tracker::{
+    PlayoutTimeline, ReserveTracker, SwitchOutcome, TimelineEntry, DRAINING_WARN_SECS,
+};
 use crate::stream::cadence::{create_wav_stream_with_cadence, CadenceConfig, LoggingStreamGuard};
 use crate::stream::manager::TimestampedFrame;
 use crate::stream::tap::WAV_HEADER_BYTES;
@@ -112,6 +118,16 @@ pub(crate) struct SimSpeaker {
     /// When the simulated monitor stops, ms after the connection starts:
     /// from then on nothing updates or refreshes the rate command.
     pub monitor_dies_at: Option<f64>,
+    /// How much audio each PCM segment of the playout carries, in ms: the
+    /// speaker moves on gaplessly to the next one (a continuation switch)
+    /// each time its playhead crosses a multiple of this. `None` plays one
+    /// segment throughout, and no poll says which segment it was counted on.
+    pub segment_ms: Option<f64>,
+    /// How far ahead of the audio the speaker reports RelTime on the first
+    /// segment, the one it was told to play, in ms (about 110 on a Playbar,
+    /// 210 on a Play:1). On the segments it moves on to, RelTime counts from
+    /// the audio.
+    pub reporting_offset_ms: f64,
 }
 
 impl Default for SimSpeaker {
@@ -133,6 +149,8 @@ impl Default for SimSpeaker {
             drift: DriftMode::Off,
             control_state: SpeakerControlState::default(),
             monitor_dies_at: None,
+            segment_ms: None,
+            reporting_offset_ms: 0.0,
         }
     }
 }
@@ -169,6 +187,14 @@ pub(crate) struct SimEstimate {
     pub saturated: bool,
     /// Audio the adapter has inserted so far, ms.
     pub net_inserted_ms: f64,
+    /// Whether the tracker had the controller hold (see
+    /// [`ReserveTracker::control_hold`]) at the estimate.
+    pub control_hold: bool,
+    /// Whether a continuation switch was settling at the estimate (see
+    /// [`ReserveTracker::settling`]).
+    pub settling: bool,
+    /// What a continuation switch came to at the estimate, if one did.
+    pub switch_outcome: Option<SwitchOutcome>,
 }
 
 /// What a simulation run saw.
@@ -235,6 +261,8 @@ struct PendingPoll {
     tr: f64,
     d_ts_ms: f64,
     rel_ms: Option<u64>,
+    /// The segment the position was counted on, once read.
+    timeline: Option<PlayoutTimeline>,
 }
 
 impl SimSpeaker {
@@ -348,7 +376,27 @@ impl SimSpeaker {
             if let Some(p) = pending.as_mut() {
                 if p.rel_ms.is_none() && p.read_at <= now {
                     let jitter = rng.range(-self.tick_jitter_ms, self.tick_jitter_ms.max(1e-9));
-                    let head = (playback.playhead_at(p.read_at) + jitter) / 1000.0;
+                    let playhead = playback.playhead_at(p.read_at);
+                    // RelTime on the segment the speaker was told to play
+                    // runs ahead of the audio; the monitor counts it on
+                    // from the playout's start either way.
+                    let segment = self
+                        .segment_ms
+                        .map(|len| (playhead / len).floor().max(0.0) as u64);
+                    p.timeline = segment.map(|n| PlayoutTimeline {
+                        start: n,
+                        entry: if n == 0 {
+                            TimelineEntry::Played
+                        } else {
+                            TimelineEntry::Next
+                        },
+                    });
+                    let ahead = if segment.unwrap_or(0) == 0 {
+                        self.reporting_offset_ms
+                    } else {
+                        0.0
+                    };
+                    let head = (playhead + ahead + jitter) / 1000.0;
                     let secs = if self.round_reltime {
                         head.round()
                     } else {
@@ -379,7 +427,7 @@ impl SimSpeaker {
                     d_tr_ms: delivered,
                 };
                 if !lost {
-                    tracker.observe(&obs, TRACK_URI, false);
+                    tracker.observe_on(&obs, TRACK_URI, false, p.timeline);
                     polls += 1;
                 }
                 if self.estimate_at_polls.contains(&polls) {
@@ -395,6 +443,7 @@ impl SimSpeaker {
                     tr: now + rtt,
                     d_ts_ms: delivered,
                     rel_ms: None,
+                    timeline: None,
                 });
                 let dither = match self.dither {
                     SimDither::Random => rng.unit() * 1000.0,
@@ -417,6 +466,7 @@ impl SimSpeaker {
             if now >= next_estimate {
                 tracker.set_command_ppm(controller.applied_ppm());
                 let (reserve, brk) = tracker.estimate(now);
+                let switch_outcome = tracker.take_switch_outcome();
                 let acked = tracker.observe_ack_lag(&mut []);
                 if monitor_alive {
                     controller.update(&ControlInput {
@@ -427,6 +477,7 @@ impl SimSpeaker {
                         clock: tracker.clock(),
                         stale: false,
                         settling: tracker.control_hold(),
+                        carry: tracker.carry(),
                     });
                     if let Some(control) = &rate_control {
                         control.set_ppm(controller.applied_ppm());
@@ -465,6 +516,9 @@ impl SimSpeaker {
                     integral_ppm: controller.integral_ppm(),
                     saturated: controller.saturated(),
                     net_inserted_ms: tap.net_inserted_ms().unwrap_or(0.0),
+                    control_hold: tracker.control_hold(),
+                    settling: tracker.settling(),
+                    switch_outcome,
                 });
                 next_estimate += ESTIMATE_EVERY_MS;
             }
@@ -480,7 +534,7 @@ impl SimSpeaker {
 #[cfg(test)]
 mod tests {
     use super::super::control::DEADBAND_FLOOR_MS;
-    use super::super::control::MAX_COMMAND_PPM;
+    use super::super::control::{INTEGRAL_PPM_PER_MS, MAX_COMMAND_PPM};
     use super::super::notice::SpeakerNoticeKind;
     use super::*;
 
@@ -991,6 +1045,126 @@ mod tests {
         let middle = median(&mut truth);
         let worst = truth.iter().map(|t| (t - middle).abs()).fold(0.0, f64::max);
         assert!(worst <= 60.0, "swung {worst:.0} ms");
+    }
+
+    /// The field's Kitchen Play:1 of 2026-09-30: 45 ppm slow, reporting
+    /// RelTime 190 ms ahead on the segment it was told to play, cast in
+    /// 600 s test segments, so a continuation switch every ten minutes.
+    fn kitchen(seed: u64) -> SimSpeaker {
+        SimSpeaker {
+            segment_ms: Some(10.0 * MINUTE),
+            reporting_offset_ms: 190.0,
+            ..playbar(-45.0, DriftMode::On, seed)
+        }
+    }
+
+    /// With 600 s segments a switch comes every ten minutes and each settles
+    /// for six. Held at its integral meanwhile, the controller steered 40% of
+    /// the time and learnt the clock at that pace, and every later switch
+    /// absorbed its measuring error, which added up: after two hours the
+    /// true reserve stood 130-510 ms from where it should, and the integral
+    /// 10-57 ppm from where the same speaker's got to with one segment.
+    ///
+    /// Steering by the carried estimate, and absorbing only the first
+    /// switch's offset, the true reserve (less the offset absorbed) comes
+    /// within 40 ms of the target within 100 minutes and stays there, and
+    /// the integral follows the one-segment run's. No switch moves the
+    /// integral: a report teaches it at most a few tenths of a ppm, where a
+    /// 150 ms step integrated would teach it more than one. The first
+    /// switch comes before the clock is precise, so its offset is carried
+    /// along the correction alone and measured up to about 60 ms high on
+    /// this slow speaker (the offset absorbed, not the 190 ms, is what the
+    /// reserve is judged against); a switch hours in has a precise clock.
+    #[tokio::test(start_paused = true)]
+    async fn minus_45ppm_in_600s_segments_converges_across_switches() {
+        const OFFSET_MS: f64 = 190.0;
+        for seed in [41, 44, 45] {
+            let report = kitchen(seed).run(180.0, false).await;
+            let one_segment = SimSpeaker {
+                segment_ms: None,
+                ..kitchen(seed)
+            }
+            .run(180.0, false)
+            .await;
+            assert!(report.underruns.is_empty(), "seed {seed}");
+            assert!(
+                report.estimates.iter().all(|e| e.brk.is_none()),
+                "seed {seed}"
+            );
+            let outcomes: Vec<SwitchOutcome> = report
+                .estimates
+                .iter()
+                .filter_map(|e| e.switch_outcome)
+                .collect();
+            assert!(outcomes.len() >= 16, "seed {seed}: {outcomes:?}");
+            let SwitchOutcome::Absorbed {
+                offset_ms: absorbed,
+            } = outcomes[0]
+            else {
+                panic!("seed {seed}: {outcomes:?}");
+            };
+            assert!(
+                (absorbed - OFFSET_MS).abs() <= 70.0,
+                "seed {seed}: {outcomes:?}"
+            );
+            assert!(
+                outcomes[1..].iter().all(|o| matches!(
+                    o,
+                    SwitchOutcome::Steady { offset_ms } if offset_ms.abs() <= 60.0
+                )),
+                "seed {seed}: {outcomes:?}"
+            );
+            // A switch was settling for over half the run, and the
+            // controller held at its integral only for a report or two, if
+            // ever.
+            let settling = report.estimates.iter().filter(|e| e.settling).count();
+            assert!(
+                settling * 2 >= report.estimates.len(),
+                "seed {seed}: settling for {settling} of {} reports",
+                report.estimates.len()
+            );
+            let held = report.estimates.iter().filter(|e| e.control_hold).count();
+            assert!(held <= 4, "seed {seed}: held for {held} reports");
+
+            let target = report
+                .estimates
+                .iter()
+                .find_map(|e| e.target_ms)
+                .expect("a target");
+            let off: Vec<(f64, f64)> = report
+                .estimates
+                .iter()
+                .map(|e| (e.at, e.true_reserve_ms - absorbed - target))
+                .filter(|(_, err)| err.abs() > 40.0)
+                .collect();
+            assert!(
+                off.iter().all(|(at, _)| *at < 100.0 * MINUTE),
+                "seed {seed}: {off:?}"
+            );
+
+            for w in report.estimates.windows(2) {
+                let step = (w[1].integral_ppm - w[0].integral_ppm).abs();
+                assert!(
+                    step < INTEGRAL_PPM_PER_MS * 150.0,
+                    "seed {seed}: the integral moved {step:.2} ppm at {:.1} min",
+                    w[1].at / MINUTE
+                );
+            }
+            for (e, u) in report
+                .estimates
+                .iter()
+                .zip(&one_segment.estimates)
+                .filter(|(e, _)| e.at >= 120.0 * MINUTE)
+            {
+                assert!(
+                    (e.integral_ppm - u.integral_ppm).abs() <= 12.0,
+                    "seed {seed}: integral {:+.1} ppm against {:+.1} at {:.1} min",
+                    e.integral_ppm,
+                    u.integral_ppm,
+                    e.at / MINUTE
+                );
+            }
+        }
     }
 
     /// If the monitor stops, nothing refreshes the command and the

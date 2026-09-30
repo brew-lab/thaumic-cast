@@ -36,7 +36,8 @@ pub use bounds::{PlayheadBound, PollObservation};
 pub use clock_fit::{ClockEstimate, ClockFit};
 pub use control::{
     drift_active, drift_compensation_env_override, drift_compensation_mode, ControlHold,
-    ControlInput, DriftController, DriftMode, SpeakerControlState, DRIFT_COMPENSATION_ENV,
+    ControlInput, DriftController, DriftMode, EstimateCarry, SpeakerControlState,
+    DRIFT_COMPENSATION_ENV,
 };
 pub use notice::{NoticeInput, NoticeState, SpeakerNotice, SpeakerNoticeCause, SpeakerNoticeKind};
 pub use reserve::{LockReason, ReserveEstimate, ReserveEstimator};
