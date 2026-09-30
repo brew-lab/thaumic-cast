@@ -30,9 +30,13 @@
 //! speaker, not the connection, and is kept across reconnects and casts (see
 //! [`SpeakerControlState`]). A speaker the loop has learned nothing about
 //! yet (its connection has no target, or a distrusted one) has it seeded
-//! from the clock fit once that is precise. While the estimate is unlocked the command holds at the integral
-//! with no proportional term, and only after 30 min unlocked, or 10 min with
-//! the speaker not answering, does it ramp to 0.
+//! from the clock fit once that is precise. While the estimate is unlocked
+//! the command holds at the integral with no proportional term, and only
+//! after 30 min unlocked, or 10 min with the speaker not answering, does it
+//! ramp to 0. It holds the same way while the
+//! monitor says the reserve has stepped for a reason that is not drift (a
+//! continuation switch being measured, or a jump that may be an offset step;
+//! see [`ControlInput::settling`]), so the step is never integrated.
 //!
 //! In [`DriftMode::Observe`] the controller runs exactly the same way but its
 //! command is never applied: the reserve it steers by is the measured one
@@ -341,6 +345,11 @@ pub struct ControlInput {
     pub clock: Option<ClockEstimate>,
     /// Whether the speaker has stopped answering.
     pub stale: bool,
+    /// Whether the reserve may have stepped for a reason that is not drift
+    /// (see [`crate::services::speaker_monitor::ReserveTracker::control_hold`]):
+    /// the command holds at the integral, which learns nothing, until the
+    /// monitor has a tight estimate it trusts again.
+    pub settling: bool,
 }
 
 /// Why the controller is doing what it does, for the log.
@@ -355,6 +364,9 @@ pub enum ControlHold {
     CalibOutlier,
     /// The estimate is not locked: holding the integral.
     Unlocked,
+    /// The reserve may have stepped for a reason that is not drift: holding
+    /// the integral.
+    Settling,
     /// Unlocked or unanswered for too long: ramping to 0.
     Ramping,
 }
@@ -367,6 +379,7 @@ impl ControlHold {
             Self::NoTarget => "no_target",
             Self::CalibOutlier => "calib_outlier",
             Self::Unlocked => "hold",
+            Self::Settling => "settle",
             Self::Ramping => "ramp",
         }
     }
@@ -482,6 +495,8 @@ impl DriftController {
         let integral = self.state.integral_ppm;
         let (wanted, proportional, hold) = if ramp {
             (0.0, 0.0, ControlHold::Ramping)
+        } else if input.settling {
+            (integral, 0.0, ControlHold::Settling)
         } else if let Some(est) = locked {
             match self.target_ms {
                 Some(target) if !self.calib_outlier => {
@@ -687,6 +702,7 @@ mod tests {
             head_start_ms: Some(500),
             clock: None,
             stale: false,
+            settling: false,
         }
     }
 
@@ -769,6 +785,33 @@ mod tests {
         i.now_s = 60.0;
         c.update(&i);
         assert_eq!(c.integral_ppm(), 20.0);
+    }
+
+    #[test]
+    fn settling_holds_the_integral_and_the_command() {
+        let mut c = steering(DriftMode::On, SpeakerControlState::default());
+        let mut t = 30.0;
+        for _ in 0..10 {
+            c.update(&input(t, Some(estimate(420.0, 30.0, LockReason::Tight))));
+            t += 30.0;
+        }
+        let integral = c.integral_ppm();
+        assert!(c.command_ppm() > integral, "steering up on P");
+        // The reserve reads 110 ms high across a switch, tight: held, with
+        // neither the integral learning it nor P kicking.
+        for _ in 0..6 {
+            let mut i = input(t, Some(estimate(560.0, 30.0, LockReason::Tight)));
+            i.settling = true;
+            c.update(&i);
+            assert_eq!(c.integral_ppm(), integral);
+            assert_eq!(c.hold(), ControlHold::Settling);
+            assert_eq!(c.proportional_ppm(), 0.0);
+            t += 30.0;
+        }
+        assert_eq!(c.command_ppm(), integral, "slewed to the integral");
+        // Steering again once it has settled.
+        c.update(&input(t, Some(estimate(450.0, 30.0, LockReason::Tight))));
+        assert_eq!(c.hold(), ControlHold::Steering);
     }
 
     #[test]

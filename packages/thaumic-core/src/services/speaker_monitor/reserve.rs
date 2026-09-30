@@ -182,6 +182,9 @@ impl ReserveEstimate {
 pub struct ReserveEstimator {
     /// Un-widened reserve bounds of the polls in the window, oldest first.
     window: VecDeque<PlayheadBound>,
+    /// How far back polls count, in ms: [`RESERVE_WINDOW_MS`] unless made
+    /// with [`Self::fresh`].
+    window_ms: f64,
     /// When the current segment's first poll was taken.
     segment_start: Option<f64>,
     /// Smoothed disagreement between the un-widened bounds.
@@ -209,6 +212,7 @@ impl ReserveEstimator {
     pub fn new() -> Self {
         Self {
             window: VecDeque::with_capacity(96),
+            window_ms: RESERVE_WINDOW_MS,
             segment_start: None,
             disagreement_ms: INITIAL_JITTER_MS - JITTER_MARGIN_MS,
             recent: VecDeque::with_capacity(LOCK_RECENT_ESTIMATES + 1),
@@ -219,10 +223,23 @@ impl ReserveEstimator {
         }
     }
 
-    /// Adds a poll.
+    /// Adds a poll, forgetting any that have fallen out of the window.
     pub fn add(&mut self, obs: &PollObservation) {
         self.segment_start.get_or_insert(obs.ts);
-        self.window.push_back(obs.reserve_bound());
+        let bound = obs.reserve_bound();
+        self.prune(bound.at);
+        self.window.push_back(bound);
+    }
+
+    /// Forgets the polls that have fallen out of the window by `now`.
+    fn prune(&mut self, now: f64) {
+        while self
+            .window
+            .front()
+            .is_some_and(|b| now - b.at > self.window_ms)
+        {
+            self.window.pop_front();
+        }
     }
 
     /// Forgets every poll and drops the lock: the reserve is measured afresh
@@ -234,6 +251,44 @@ impl ReserveEstimator {
         self.recent.clear();
         self.lock_width_ms = None;
         self.held_fails = 0;
+    }
+
+    /// An estimator with no polls and no lock that starts from the jitter
+    /// this one has learnt and counts polls over the last `window_ms`, for
+    /// measuring one stretch of polls on its own. The estimate's precision
+    /// comes from how closely the polls' phases (and tick jitter) approach
+    /// either edge of the speaker's second, which improves with the number
+    /// of polls: a longer window measures a level more finely than averaging
+    /// the estimates of overlapping shorter ones.
+    pub fn fresh(&self, window_ms: f64) -> Self {
+        Self {
+            disagreement_ms: self.disagreement_ms,
+            window_ms,
+            ..Self::new()
+        }
+    }
+
+    /// Appends `other`'s polls, each bound moved by `shift_ms`, after this
+    /// one's; the lock and learnt jitter stay this estimator's. `other`'s
+    /// polls must all be newer than this one's.
+    pub fn absorb(&mut self, other: &Self, shift_ms: f64) {
+        if self.segment_start.is_none() {
+            self.segment_start = other.segment_start;
+        }
+        self.window
+            .extend(other.window.iter().map(|b| PlayheadBound {
+                lo: b.lo + shift_ms,
+                hi: b.hi + shift_ms,
+                at: b.at,
+            }));
+    }
+
+    /// Moves every poll's bound in the window by `shift_ms`.
+    pub fn shift(&mut self, shift_ms: f64) {
+        for b in &mut self.window {
+            b.lo += shift_ms;
+            b.hi += shift_ms;
+        }
     }
 
     /// Consecutive locked estimates that have failed the hold test.
@@ -275,13 +330,7 @@ impl ReserveEstimator {
     ///
     /// Returns `None` until the window holds [`MIN_POLLS_FOR_ESTIMATE`] polls.
     pub fn estimate(&mut self, now: f64, clock_ppm: f64) -> Option<ReserveEstimate> {
-        while self
-            .window
-            .front()
-            .is_some_and(|b| now - b.at > RESERVE_WINDOW_MS)
-        {
-            self.window.pop_front();
-        }
+        self.prune(now);
         let n = self.window.len();
         if n < MIN_POLLS_FOR_ESTIMATE {
             return None;

@@ -74,8 +74,8 @@ use crate::services::speaker_monitor::reserve::{HOLD_MIN_POLLS, RESERVE_WINDOW_M
 use crate::services::speaker_monitor::{
     drift_active, ControlInput, DriftController, DriftMode, GenaTransport, MemberChange,
     MonitorState, NoticeInput, NoticeState, PollObservation, ReserveTracker, SegmentBreak,
-    SpeakerControlState, TransportGate, TransportSource, TransportStateView, TransportVerdict,
-    WindowStats,
+    SpeakerControlState, SwitchOutcome, SwitchUnmeasured, TransportGate, TransportSource,
+    TransportStateView, TransportVerdict, WindowStats,
 };
 use crate::sonos::traits::SonosPlayback;
 use crate::sonos::types::{PositionInfo, TransportState};
@@ -803,6 +803,12 @@ impl LatencySession {
         // The correction in force over the window just ended.
         self.tracker.set_command_ppm(self.command_in_force(tap));
         let (estimate, brk) = self.tracker.estimate(now_ms);
+        if let Some(outcome) = self.tracker.take_switch_outcome() {
+            log_switch_outcome(stream_id, speaker_ip, outcome);
+        }
+        // Measuring a continuation switch: the estimate is the one from
+        // before it, carried forward, and decides nothing.
+        let settling = self.tracker.settling();
         if brk == Some(SegmentBreak::OffsetStep) && !at_declared_end {
             log::warn!(
                 "[SpeakerMonitor] {} stream={}: underrun suspected: the reserve stepped and \
@@ -873,7 +879,7 @@ impl LatencySession {
         log::info!(
             "[SpeakerMonitor] {} stream={} state={} reserve={} lock={} {} stall={} ttf={} \
              calib={} clock={} {} polls={}({:.0}/min) phase_gap={} incons={}/{} j={:.0}ms {} \
-             link={} transport={}{}{}",
+             link={} transport={}{}{}{}",
             speaker_ip,
             stream_id,
             state,
@@ -907,6 +913,7 @@ impl LatencySession {
             self.last_transport_source,
             topology,
             if at_declared_end { " end=declared" } else { "" },
+            if settling { " switch=settling" } else { "" },
         );
 
         // The end of the item: the notice stands as it was, and the low,
@@ -916,16 +923,19 @@ impl LatencySession {
             return;
         }
 
-        self.decide_notice(
-            stream_id,
-            speaker_ip,
-            tap,
-            now,
-            estimate.is_some_and(|e| e.locked()),
-            acked,
-            brk,
-            ttf,
-        );
+        // While a switch settles the notice stands as it was too.
+        if !settling {
+            self.decide_notice(
+                stream_id,
+                speaker_ip,
+                tap,
+                now,
+                estimate.is_some_and(|e| e.locked()),
+                acked,
+                brk,
+                ttf,
+            );
+        }
 
         let is_low = self.tracker.is_low();
         if is_low && !was_low {
@@ -1003,6 +1013,7 @@ impl LatencySession {
             head_start_ms: self.tracker.head_start().map(|h| h.sent_ms),
             clock: self.tracker.clock(),
             stale,
+            settling: self.tracker.control_hold(),
         });
         self.refresh_rate_command(tap);
     }
@@ -1614,6 +1625,40 @@ fn draining_warning_due(
             false
         }
         _ => false,
+    }
+}
+
+/// Logs what a continuation switch came to: one line per switch, at info
+/// (debug for a switch between segments too short to measure, which comes
+/// round every few seconds in a test configuration).
+fn log_switch_outcome(stream_id: &str, speaker_ip: IpAddr, outcome: SwitchOutcome) {
+    match outcome {
+        SwitchOutcome::Absorbed { offset_ms } => log::info!(
+            "[SpeakerMonitor] {} stream={}: continuation switch: the speaker counts RelTime \
+             {:+.0}ms differently on the new segment; absorbed, the reserve carries on",
+            speaker_ip,
+            stream_id,
+            offset_ms
+        ),
+        SwitchOutcome::Rejected { offset_ms } => log::info!(
+            "[SpeakerMonitor] {} stream={}: continuation switch: the reserve stepped {:+.0}ms, \
+             too far for a reporting offset; not absorbed",
+            speaker_ip,
+            stream_id,
+            offset_ms
+        ),
+        SwitchOutcome::Unmeasured(SwitchUnmeasured::ShortSegment) => log::debug!(
+            "[SpeakerMonitor] {} stream={}: continuation switch after a short segment; \
+             offset not measured",
+            speaker_ip,
+            stream_id
+        ),
+        SwitchOutcome::Unmeasured(why) => log::info!(
+            "[SpeakerMonitor] {} stream={}: continuation switch: offset not measured ({})",
+            speaker_ip,
+            stream_id,
+            why.as_str()
+        ),
     }
 }
 
@@ -2531,9 +2576,14 @@ fn apply_poll_result(
     // URL is taken for the stream's own and its RelTime counted from the
     // playout's start, so a switch of segment is neither a new track nor
     // RelTime going backwards (see `ConnectionTap::continuous_position`).
-    let (track_uri, rel_time_ms) = match session.live_tap() {
-        Some(tap) => tap.continuous_position(position.track_uri, position.rel_time_ms),
-        None => (position.track_uri, position.rel_time_ms),
+    // The segment it was counted on tells the tracker when the speaker moves
+    // on to the next one.
+    let (track_uri, rel_time_ms, timeline) = match session.live_tap() {
+        Some(tap) => {
+            let mapped = tap.continuous_position(position.track_uri, position.rel_time_ms);
+            (mapped.track_uri, mapped.rel_ms, mapped.timeline)
+        }
+        None => (position.track_uri, position.rel_time_ms, None),
     };
 
     // The speaker answered about our stream, so the position is valid (for
@@ -2554,7 +2604,10 @@ fn apply_poll_result(
             d_ts_ms: poll.delivered_ms_at_send.unwrap_or(0) as f64,
             d_tr_ms: poll.delivered_ms_at_answer.unwrap_or(0) as f64,
         };
-        if let Some(brk) = session.tracker.observe(&obs, &track_uri, not_playing) {
+        if let Some(brk) = session
+            .tracker
+            .observe_on(&obs, &track_uri, not_playing, timeline)
+        {
             log::info!(
                 "[SpeakerMonitor] {} stream={}: segment break ({}); measuring afresh",
                 speaker_ip,
@@ -4061,5 +4114,23 @@ mod tests {
         assert!(line.starts_with("drift=observe would_cmd="), "{line}");
         assert!(line.ends_with(" forced=-42.5ppm ins=-3ms"), "{line}");
         assert_eq!(line.matches("ins=").count(), 1, "{line}");
+    }
+
+    #[test]
+    fn the_report_line_shows_the_controller_holding_through_a_switch() {
+        let mut drift = DriftController::new(SpeakerControlState {
+            integral_ppm: 19.0,
+            seeded: true,
+            ..SpeakerControlState::default()
+        });
+        drift.start_connection(DriftMode::On, true);
+        drift.update(&ControlInput {
+            settling: true,
+            ..ControlInput::default()
+        });
+        assert_eq!(
+            format_drift(&drift, Some(431.0), None, false),
+            "drift=on cmd=+10.0ppm(settle) I=+19.0 ins=+431ms"
+        );
     }
 }

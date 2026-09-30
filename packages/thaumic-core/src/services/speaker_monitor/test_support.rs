@@ -51,6 +51,9 @@ pub(crate) struct PollGen {
     /// Audio inserted into the delivered stream per millisecond, as a drift
     /// compensator would (the speaker plays it too, from its own clock).
     pub inserted_per_ms: f64,
+    /// Changes of that rate: from each time on, audio is inserted at the
+    /// rate given instead, as a drift controller's new command would.
+    pub inserted_changes: Vec<(f64, f64)>,
     /// Playhead jumps: at each time, the playhead moves by the amount (an
     /// underrun stalls it, which is a negative jump).
     pub steps: Vec<(f64, f64)>,
@@ -71,6 +74,7 @@ impl PollGen {
             tick_jitter_ms: 0.0,
             round: false,
             inserted_per_ms: 0.0,
+            inserted_changes: Vec::new(),
             steps: Vec::new(),
             outliers: Vec::new(),
             rng: Lcg::new(seed),
@@ -81,7 +85,13 @@ impl PollGen {
 
     /// Audio handed over by `t`.
     pub(crate) fn delivered(&self, t: f64) -> f64 {
-        (t / 10.0).floor() * 10.0 + self.inserted_per_ms * t
+        let mut rate = self.inserted_per_ms;
+        let mut inserted = rate * t;
+        for (at, next) in &self.inserted_changes {
+            inserted += (next - rate) * (t - at).max(0.0);
+            rate = *next;
+        }
+        (t / 10.0).floor() * 10.0 + inserted
     }
 
     /// The speaker's true playhead at `t`.
