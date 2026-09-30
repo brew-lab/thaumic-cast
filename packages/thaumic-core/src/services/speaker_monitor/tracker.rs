@@ -688,8 +688,10 @@ impl ReserveTracker {
     /// ±[`LATER_SWITCH_OFFSET_MAX_MS`] is measuring error: the polls join the
     /// window as they are. A larger one, at either, ends the segment as an
     /// offset step. The clock fit starts a new segment of its own at the
-    /// switch, since RelTime steps there. [`Self::take_switch_outcome`] says
-    /// what each switch came to.
+    /// switch away from the item the speaker was told to play, since RelTime
+    /// steps there, but runs on across a switch between items it moved on to
+    /// by itself (see [`Self::begin_switch`]). [`Self::take_switch_outcome`]
+    /// says what each switch came to.
     ///
     /// The reference kept is the first segment's: the reserve measured while
     /// the speaker plays the item it was told to play reads the reporting
@@ -820,8 +822,17 @@ impl ReserveTracker {
             self.switch_outcome = Some(SwitchOutcome::Unmeasured(SwitchUnmeasured::ShortSegment));
             return;
         }
-        // RelTime steps at the switch, whether or not the step is measured.
-        self.clock.break_segment();
+        // RelTime steps at a switch away from an item the speaker did not
+        // move on to by itself, whether or not the step is measured. Between
+        // two it did, both count from the audio and nothing steps; broken
+        // there anyway, the fit's segments are one playout segment long (ten
+        // minutes in a test configuration), and a slope pinned only within
+        // each was up to 60 ppm off after 2.5 hours in simulation, claiming
+        // ±18, where one unbroken line was within 3. A step that does come at a
+        // later switch breaks the segment, and the fit, as an offset step.
+        if left != TimelineEntry::Next {
+            self.clock.break_segment();
+        }
         let Some(carried) = self.switch_reference(ts) else {
             self.switch_outcome = Some(SwitchOutcome::Unmeasured(SwitchUnmeasured::NoReference));
             return;
