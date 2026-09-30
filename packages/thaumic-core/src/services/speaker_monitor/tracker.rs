@@ -2356,6 +2356,7 @@ mod tests {
         let mut controller = DriftController::new(SpeakerControlState {
             integral_ppm: 19.0,
             seeded: true,
+            taught_s: 8.0 * 3600.0,
             ..SpeakerControlState::default()
         });
         controller.start_connection(DriftMode::On, true);
