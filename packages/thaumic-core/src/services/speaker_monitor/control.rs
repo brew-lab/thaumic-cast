@@ -20,8 +20,9 @@
 //! I += 0.0069·e per estimate, tight estimates only (or ones carried across
 //!      a continuation switch along a precise clock), not while u is pinned
 //!      at the cap in the sign of e
-//! I += clamp(0.1·s²/(s² + se²)·(clock − I), ±0.5) on the same estimates,
-//!      once the clock fit's se is under 10 ppm, where
+//! I += clamp(0.1·s²/(s² + max(se, 3)²)·(clock − I), ±0.5) on the same
+//!      estimates, once the clock fit's se is under 10 ppm over at least
+//!      30 min and 20 degrees of freedom, where
 //!      s = max(40·exp(−taught/60 min), 2) ppm
 //! u  = clamp(I + P, ±150) ppm, moving at most 10 ppm per estimate
 //! ```
@@ -32,9 +33,11 @@
 //! rate independently, so each estimate that teaches the integral also draws
 //! it a little way towards the fit: a fusion of the two, each weighed by how
 //! far off it may be, `s` for the integral (from how long the loop has taught
-//! it) and the standard error for the fit. It is a pull, never a jump (see
-//! [`FIT_PULL_PER_ESTIMATE`]), and the error term goes on teaching alongside
-//! it, so a fit a standard error off costs little.
+//! it) and the fit's standard error for the fit. That error says how much the
+//! fit scatters, not how far off it is, and it claims too little late in a
+//! cast, so it is floored (see [`FIT_PULL_SE_FLOOR_PPM`]). It is a pull,
+//! never a jump (see [`FIT_PULL_PER_ESTIMATE`]), and the error term goes on
+//! teaching alongside it, so a fit a few ppm off costs little.
 //!
 //! The deadband follows the estimate's own uncertainty, so noise inside it
 //! never meets the full proportional gain; inside it a gentler damping term
@@ -126,6 +129,39 @@ pub const SEED_MAX_SE_PPM: f64 = 10.0;
 /// 600 s test segments, an intercept for each, stays wider than this for
 /// hours, and is left out.
 pub const FIT_PULL_MAX_SE_PPM: f64 = 10.0;
+
+/// Least span, in time, a clock fit must cover to draw the integral, and
+/// fewest degrees of freedom its standard error must rest on: fewer blocks
+/// may happen to line up and claim a precision the fit does not have.
+///
+/// A single-segment fit gets under [`FIT_PULL_MAX_SE_PPM`] 35-45 minutes
+/// in, with 30-40 degrees of freedom, so in simulation neither binds on an
+/// honest fit; they keep out one pooled from a few short pieces.
+pub const FIT_PULL_MIN_SPAN: Duration = Duration::from_secs(30 * 60);
+
+/// See [`FIT_PULL_MIN_SPAN`].
+pub const FIT_PULL_MIN_DOF: usize = 20;
+
+/// Least standard error, in ppm, the clock fit is weighed by against the
+/// integral, however small the fit claims its own.
+///
+/// The fit's standard error comes from its blocks' scatter about the line,
+/// taken as independent, and successive blocks are not quite: it keeps
+/// shrinking for as long as playback runs, while the fit itself wanders by
+/// more. In the field a Playbar's fit claimed ±0.5 ppm from the fourth
+/// hour on, while it moved from +19.2 ppm at 5.7 hours to +15.7 at 7.5.
+/// Floored, a fit is weighed as no better than this against an integral
+/// the loop has taught for hours (see [`FIT_PULL_TAUGHT_SD_PPM`]), so one a
+/// few ppm off draws it only part of the way; before that, the integral is
+/// taken as too far off for the floor to matter.
+///
+/// In simulation, with every fit 4 ppm off the way that overshoots and its
+/// error as small as it claims, a speaker already taught ended four hours
+/// a median 3.0 ppm off its clock where it was 3.7 unfloored (5 ppm: 2.2),
+/// its reserve overshooting by a median 12.5 ms where it did by 13.1. With
+/// honest fits the floor costs little: the median overshoot of 288 casts to
+/// new speakers went from 3.8 ms to 4.2 (5 ppm: 4.8).
+pub const FIT_PULL_SE_FLOOR_PPM: f64 = 3.0;
 
 /// How far off the integral of a speaker the loop has not taught yet is
 /// taken to be, in ppm, when weighing it against the clock fit.
@@ -514,6 +550,9 @@ pub struct DriftController {
     saturated: bool,
     /// Why the latest update did what it did.
     hold: ControlHold,
+    /// How far the clock fit drew the integral on the latest update, in
+    /// ppm, if it did.
+    pull_ppm: Option<f64>,
 }
 
 impl Default for DriftController {
@@ -541,6 +580,7 @@ impl DriftController {
             off_cap_since: None,
             saturated: false,
             hold: ControlHold::NoTarget,
+            pull_ppm: None,
         }
     }
 
@@ -564,6 +604,7 @@ impl DriftController {
             return 0.0;
         }
         let now = input.now_s;
+        self.pull_ppm = None;
         let since_last = self
             .last_update_s
             .map_or(0.0, |last| (now - last).clamp(0.0, TAUGHT_STEP_MAX_S));
@@ -617,12 +658,12 @@ impl DriftController {
                     let teaches = est.tight() || input.carry == EstimateCarry::Teaches;
                     if teaches && !pinned_same_way {
                         let learned = self.state.integral_ppm + INTEGRAL_PPM_PER_MS * error;
-                        let learned = match input.clock {
-                            Some(clock) if clock.se_ppm < FIT_PULL_MAX_SE_PPM => {
-                                pulled_towards(learned, clock, self.state.taught_s)
-                            }
-                            _ => learned,
-                        };
+                        let pull = input
+                            .clock
+                            .filter(pulls)
+                            .map(|clock| fit_pull(learned, clock, self.state.taught_s));
+                        self.pull_ppm = pull;
+                        let learned = learned + pull.unwrap_or(0.0);
                         self.state.integral_ppm = learned.clamp(-MAX_COMMAND_PPM, MAX_COMMAND_PPM);
                         self.state.taught_s += since_last;
                         self.state.seeded = true;
@@ -752,6 +793,13 @@ impl DriftController {
         self.hold
     }
 
+    /// How far the clock fit drew the integral on the latest update, in
+    /// ppm, if it did: only an estimate that teaches the integral draws it,
+    /// and only once the fit is precise (see [`FIT_PULL_PER_ESTIMATE`]).
+    pub fn pull_ppm(&self) -> Option<f64> {
+        self.pull_ppm
+    }
+
     /// The mode the current connection was made under.
     pub fn mode(&self) -> DriftMode {
         self.mode
@@ -763,14 +811,24 @@ impl DriftController {
     }
 }
 
-/// `integral`, taught for `taught_s`, drawn a step towards a precise clock
-/// fit: a share of the gap that grows as the fit's standard error shrinks and
-/// as the integral's own grows, never more than [`FIT_PULL_MAX_PPM`].
-fn pulled_towards(integral: f64, clock: ClockEstimate, taught_s: f64) -> f64 {
+/// Whether a clock fit is precise enough, and rests on enough, to draw the
+/// integral (see [`FIT_PULL_MAX_SE_PPM`] and [`FIT_PULL_MIN_SPAN`]).
+fn pulls(clock: &ClockEstimate) -> bool {
+    clock.se_ppm < FIT_PULL_MAX_SE_PPM
+        && clock.span_ms >= FIT_PULL_MIN_SPAN.as_secs_f64() * 1000.0
+        && clock.dof >= FIT_PULL_MIN_DOF
+}
+
+/// The step, in ppm, that draws `integral`, taught for `taught_s`, towards a
+/// precise clock fit: a share of the gap that grows as the fit's standard
+/// error (floored at [`FIT_PULL_SE_FLOOR_PPM`]) shrinks and as the
+/// integral's own grows, never more than [`FIT_PULL_MAX_PPM`].
+fn fit_pull(integral: f64, clock: ClockEstimate, taught_s: f64) -> f64 {
     let decay = (-taught_s / INTEGRAL_LEARNING_TIME.as_secs_f64()).exp();
     let sd = (FIT_PULL_UNTAUGHT_SD_PPM * decay).max(FIT_PULL_TAUGHT_SD_PPM);
-    let weight = FIT_PULL_PER_ESTIMATE * sd * sd / (sd * sd + clock.se_ppm * clock.se_ppm);
-    integral + (weight * (clock.ppm - integral)).clamp(-FIT_PULL_MAX_PPM, FIT_PULL_MAX_PPM)
+    let se = clock.se_ppm.max(FIT_PULL_SE_FLOOR_PPM);
+    let weight = FIT_PULL_PER_ESTIMATE * sd * sd / (sd * sd + se * se);
+    (weight * (clock.ppm - integral)).clamp(-FIT_PULL_MAX_PPM, FIT_PULL_MAX_PPM)
 }
 
 /// How long a condition has held, advancing its start marker: 0 while it
@@ -989,6 +1047,18 @@ mod tests {
         // Not precise enough, or on an estimate that teaches nothing: no step.
         assert_eq!(pull(clock(40.0, 10.0), LockReason::Tight), 0.0);
         assert_eq!(pull(clock(40.0, 5.0), LockReason::Held), 0.0);
+        // Nor from a fit over too short a span, or with too few degrees of
+        // freedom to trust its error, however small it claims that.
+        let short = ClockEstimate {
+            span_ms: FIT_PULL_MIN_SPAN.as_secs_f64() * 1000.0 - 1.0,
+            ..clock(40.0, 1.0)
+        };
+        assert_eq!(pull(short, LockReason::Tight), 0.0);
+        let few = ClockEstimate {
+            dof: FIT_PULL_MIN_DOF - 1,
+            ..clock(40.0, 1.0)
+        };
+        assert_eq!(pull(few, LockReason::Tight), 0.0);
 
         // Step by step it closes on the fit, and never passes it.
         let mut c = steering(DriftMode::On, SpeakerControlState::default());
@@ -1006,18 +1076,28 @@ mod tests {
         assert!(last > 19.9, "{last}");
 
         // An integral taught for hours is weighed against the fit as 2 ppm
-        // off: a fit as precise gets half the share, one at ±5 ppm under a
-        // seventh.
+        // off: a fit at ±5 ppm gets under a seventh of the share.
         let taught = SpeakerControlState {
             taught_s: 8.0 * 3600.0,
             ..SpeakerControlState::default()
         };
-        let mut c = steering(DriftMode::On, taught);
+        let mut c = steering(DriftMode::On, taught.clone());
         let mut i = input(30.0, Some(estimate(450.0, 30.0, LockReason::Tight)));
         i.clock = Some(clock(2.0, 5.0));
         c.update(&i);
         assert!((c.integral_ppm() - 0.1 * 4.0 / 29.0 * 2.0).abs() < 1e-9);
+        assert_eq!(c.pull_ppm(), Some(c.integral_ppm()));
         assert!((c.state().taught_s - 8.0 * 3600.0 - 30.0).abs() < 1e-9);
+        // A fit claiming ±0.5 ppm is weighed as ±3: under a third of the
+        // share, not nine tenths.
+        let mut c = steering(DriftMode::On, taught);
+        let mut i = input(30.0, Some(estimate(450.0, 30.0, LockReason::Tight)));
+        i.clock = Some(clock(4.0, 0.5));
+        c.update(&i);
+        assert!((c.integral_ppm() - 0.1 * 4.0 / 13.0 * 4.0).abs() < 1e-9);
+        // An estimate that draws nothing says so.
+        c.update(&input(60.0, Some(estimate(450.0, 30.0, LockReason::Tight))));
+        assert_eq!(c.pull_ppm(), None);
     }
 
     #[test]

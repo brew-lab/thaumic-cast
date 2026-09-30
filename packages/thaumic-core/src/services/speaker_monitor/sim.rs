@@ -183,6 +183,8 @@ pub(crate) struct SimEstimate {
     pub applied_ppm: f64,
     /// The controller's integral term.
     pub integral_ppm: f64,
+    /// How far the clock fit drew the integral at the estimate, if it did.
+    pub pull_ppm: Option<f64>,
     /// Whether the controller counts as saturated.
     pub saturated: bool,
     /// Audio the adapter has inserted so far, ms.
@@ -514,6 +516,7 @@ impl SimSpeaker {
                     command_ppm: controller.command_ppm(),
                     applied_ppm: rate_control.as_ref().map_or(0.0, |c| c.command_ppm()),
                     integral_ppm: controller.integral_ppm(),
+                    pull_ppm: controller.pull_ppm(),
                     saturated: controller.saturated(),
                     net_inserted_ms: tap.net_inserted_ms().unwrap_or(0.0),
                     control_hold: tracker.control_hold(),
@@ -1179,8 +1182,9 @@ mod tests {
     ///   seeds here does.
     /// - The clock fit runs on across later switches and ends within 3 ppm
     ///   of the speaker's, and from two hours on the integral is within
-    ///   15 ppm of it. From the first hour on, no report moves the integral
-    ///   by as much as a 150 ms step integrated would.
+    ///   15 ppm of it. From the first hour on, no report's error moves the
+    ///   integral by as much as a 150 ms step integrated would; the clock
+    ///   fit, once precise, draws it by up to 0.5 ppm more.
     #[test]
     fn minus_45ppm_in_600s_segments_converges_across_switches() {
         const OFFSET_MS: f64 = 190.0;
@@ -1278,15 +1282,17 @@ mod tests {
             );
             // In the first hour the reserve is still being brought to its
             // target, 150 ms off it at times, and the integral learns that.
+            // What the clock fit draws it by comes on top.
             for w in report
                 .estimates
                 .windows(2)
                 .filter(|w| w[0].at >= 60.0 * MINUTE)
             {
-                let step = (w[1].integral_ppm - w[0].integral_ppm).abs();
+                let pull = w[1].pull_ppm.unwrap_or(0.0);
+                let step = (w[1].integral_ppm - w[0].integral_ppm - pull).abs();
                 assert!(
                     step < INTEGRAL_PPM_PER_MS * 150.0,
-                    "seed {seed}: the integral moved {step:.2} ppm at {:.1} min",
+                    "seed {seed}: the error moved the integral {step:.2} ppm at {:.1} min",
                     w[1].at / MINUTE
                 );
             }
