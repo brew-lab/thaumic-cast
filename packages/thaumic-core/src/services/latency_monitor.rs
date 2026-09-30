@@ -1653,6 +1653,13 @@ fn log_switch_outcome(stream_id: &str, speaker_ip: IpAddr, outcome: SwitchOutcom
             speaker_ip,
             stream_id
         ),
+        SwitchOutcome::Unmeasured(SwitchUnmeasured::NotTight) => log::info!(
+            "[SpeakerMonitor] {} stream={}: continuation switch: offset not measured yet \
+             (not_tight); reporting the new segment's own reserve, the drift controller \
+             holds until it is measured",
+            speaker_ip,
+            stream_id
+        ),
         SwitchOutcome::Unmeasured(why) => log::info!(
             "[SpeakerMonitor] {} stream={}: continuation switch: offset not measured ({})",
             speaker_ip,

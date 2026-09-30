@@ -283,6 +283,36 @@ impl ReserveEstimator {
             }));
     }
 
+    /// Of the polls sent from `since` on whose bounds, carried to `now`
+    /// along `clock_ppm` (see [`Self::estimate`]), lie wholly to one side of
+    /// `level`, how many of the newest are all on the same side: counted back
+    /// from the newest until one lies on the other side.
+    pub fn newest_beyond(&self, now: f64, clock_ppm: f64, since: f64, level: f64) -> usize {
+        let rate = -clock_ppm * 1e-6;
+        let mut side = None;
+        let mut run = 0;
+        for b in self
+            .window
+            .iter()
+            .rev()
+            .take_while(|b| b.at >= since)
+            .map(|b| b.shifted_to(now, rate))
+        {
+            let beyond = if b.lo > level {
+                true
+            } else if b.hi < level {
+                false
+            } else {
+                continue;
+            };
+            if *side.get_or_insert(beyond) != beyond {
+                break;
+            }
+            run += 1;
+        }
+        run
+    }
+
     /// Moves every poll's bound in the window by `shift_ms`.
     pub fn shift(&mut self, shift_ms: f64) {
         for b in &mut self.window {

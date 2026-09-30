@@ -15,10 +15,14 @@ learned clock rate from +20 to +11 ppm, which would have taken hours to win back
 - **The step is measured and absorbed.** At a switch the monitor measures the reserve on the new segment on its own,
   compares it with the reserve just before, and takes a difference of up to 400 ms off the new segment's readings, so
   the reserve carries on where it was. The log says how big the step was. A bigger step is treated as an underrun, as
-  before, and a speaker restarted onto a segment is measured as it always was.
+  before, and a speaker restarted onto a segment is measured as it always was. Only the first switch after the speaker
+  was told to play has such an offset: at later switches anything over 150 ms is treated as an underrun. A switch
+  that follows an underrun by a few minutes is not measured, so the underrun is still reported.
 - **Drift correction holds meanwhile.** Until the new segment is measured (about six minutes), and whenever the
   reserve has jumped in a way that may be an underrun, drift correction holds at the clock rate it has learned and
   learns nothing from the jump; the log shows `cmd=...(settle)`. Notices stand as they were during the measurement.
+  On a link too poor to measure the new segment within 15 minutes, the reserve is reported as read again, and drift
+  correction keeps holding until the step is measured.
 - **A first rough clock estimate no longer moves the reserve.** In the first minutes of a cast the clock rate was
   estimated at -465±161 ppm for a +19 ppm speaker, and even discounted it pushed the reserve up 24 ms and drift
   correction briefly removed audio. The clock rate now only moves the reserve estimate once its error is within 50 ppm.

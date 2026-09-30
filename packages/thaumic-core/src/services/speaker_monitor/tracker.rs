@@ -37,9 +37,9 @@
 
 use super::bounds::PollObservation;
 use super::clock_fit::{ClockEstimate, ClockFit};
-use super::reserve::{LockReason, ReserveEstimate, ReserveEstimator, RESERVE_WINDOW_MS};
+use super::reserve::{LockReason, ReserveEstimate, ReserveEstimator, RESERVE_WINDOW_MS, TRIM_RANK};
 use super::rollup::WindowStats;
-use super::segment::{Segment, SegmentBreak, OFFSET_STEP_MIN_MS};
+use super::segment::{Segment, SegmentBreak, OFFSET_STEP_LAG_MS, OFFSET_STEP_MIN_MS};
 use crate::stream::HeadStart;
 
 /// Standard error, in ppm, above which the clock fit moves nothing: not the
@@ -52,19 +52,28 @@ use crate::stream::HeadStart;
 /// most the true rate over the window: 20 ppm over 180 s is 3.6 ms.
 pub const CLOCK_SHIFT_MAX_SE_PPM: f64 = 50.0;
 
-/// Largest step at a continuation switch, in ms, taken for the speaker
-/// counting RelTime differently on the new item and absorbed (about 110 ms on
-/// a Playbar and 210 ms on a Play:1 were measured). A larger one is taken
-/// for something heard, an underrun or a skip, and ends the segment as an
-/// offset step.
+/// Largest step at the first continuation switch after the speaker was told
+/// to play, in ms, taken for the speaker counting RelTime differently on the
+/// new item and absorbed (about 110 ms on a Playbar and 210 ms on a Play:1
+/// were measured). A larger one is taken for something heard, an underrun or
+/// a skip, and ends the segment as an offset step.
 pub const CONTINUATION_OFFSET_MAX_MS: f64 = 400.0;
 
-/// Most the reserve may read lower after a continuation switch, in ms, and
-/// the step still be absorbed. The first item reports ahead of the audio, so
-/// a genuine reporting offset only ever raises the reserve; one this small
-/// either way is within what two estimates' errors allow, and the step
-/// detector would not tell it from noise either.
+/// Most the reserve may read lower after the first continuation switch, in
+/// ms, and the step still be absorbed. The first item reports ahead of the
+/// audio, so a genuine reporting offset only ever raises the reserve, as an
+/// underrun does too; a reserve reading lower is the playhead jumping
+/// forward, a skip. A step down this small is within what two estimates'
+/// errors allow, and the step detector would not tell it from noise either.
 pub const CONTINUATION_OFFSET_MIN_MS: f64 = -OFFSET_STEP_MIN_MS;
+
+/// Largest step either way at a continuation switch away from a segment the
+/// speaker moved on to gaplessly (or came to any other way but being told to
+/// play it), in ms, that is absorbed. Both items count RelTime from the
+/// audio, so the offset should be nil (it was within 10 ms on a Play:1): what
+/// is absorbed is measuring noise, and anything the step detector would call
+/// a step is one, an underrun at the handover included.
+pub const LATER_SWITCH_OFFSET_MAX_MS: f64 = OFFSET_STEP_MIN_MS;
 
 /// How long a segment must have been played before a switch away from it is
 /// measured: a window's worth, so there are enough of its polls to measure
@@ -81,10 +90,44 @@ pub const CONTINUATION_MIN_SEGMENT_MS: f64 = RESERVE_WINDOW_MS;
 /// long after a switch, which at its integral costs nothing.
 pub const CONTINUATION_MEASURE_MS: f64 = 2.0 * RESERVE_WINDOW_MS;
 
-/// How long the polls after a continuation switch have to give a tight
-/// estimate over [`CONTINUATION_MEASURE_MS`] before the offset is given up
-/// as unmeasurable, in ms.
+/// How long the estimate from before a continuation switch is carried while
+/// the polls after it give no tight estimate over [`CONTINUATION_MEASURE_MS`],
+/// in ms. After that the new segment's own estimate is reported, and the
+/// offset is measured once it is tight; the drift controller holds until
+/// then.
 pub const CONTINUATION_SETTLE_MAX_MS: f64 = 15.0 * 60_000.0;
+
+/// Most the reserve window's latest tight estimate may be older than a
+/// continuation switch, in ms, for the reserve before the switch to be
+/// measured: a window's worth. A window that has not been tight for longer
+/// may be straddling something.
+pub const SWITCH_REFERENCE_MAX_AGE_MS: f64 = RESERVE_WINDOW_MS;
+
+/// Most the reserve over the [`CONTINUATION_MEASURE_MS`] before a
+/// continuation switch may differ from the reserve window's latest tight
+/// estimate, in ms, for it to be the reference the switch is measured from.
+/// The two agreed within 25 ms in simulation at 25 ms of tick jitter.
+pub const SWITCH_REFERENCE_MAX_DISAGREEMENT_MS: f64 = OFFSET_STEP_MIN_MS / 2.0;
+
+/// The stretch before a continuation switch, in ms, whose polls are checked
+/// for a step the reserve windows have not turned over to yet: as long as the
+/// step detector takes to confirm one (see [`OFFSET_STEP_LAG_MS`]), so every
+/// step before a switch is either found by it or caught here.
+///
+/// A window straddling a step reads somewhere between its two levels, often
+/// consistent and tight, and the reserve window just before the switch
+/// agrees with it: an underrun a minute before a switch moved them both by
+/// only a third of the step, or nothing, in simulation. What gives the step
+/// away is the few polls the trimmed estimate sets aside. For a steady
+/// speaker those disagree with it on either side, scattered through the
+/// window; after a step the newest of them all lie on the side of the new
+/// level. [`TRIM_RANK`] of the newest in a row on one side is taken for a
+/// step. In simulation that caught every underrun of 200 ms or more from 60
+/// to 240 s before a switch, and no steady speaker at 25 or 50 ms of tick
+/// jitter (200 runs each); at 100 ms, one switch in thirteen was left
+/// unmeasured. An underrun in the last half minute before a switch leaves
+/// too few polls to tell from one at the switch.
+pub const SWITCH_REFERENCE_RECENT_MS: f64 = OFFSET_STEP_LAG_MS;
 
 /// How the speaker came to be playing the playout segment a position was
 /// counted on, which decides how it counts RelTime there.
@@ -123,7 +166,8 @@ pub enum SwitchUnmeasured {
     /// Another switch came first.
     Superseded,
     /// The polls after the switch gave no tight estimate within
-    /// [`CONTINUATION_SETTLE_MAX_MS`].
+    /// [`CONTINUATION_SETTLE_MAX_MS`]: not measured yet. The offset is
+    /// measured once they do, and the switch then comes to one more outcome.
     NotTight,
 }
 
@@ -164,11 +208,17 @@ pub enum SwitchOutcome {
 struct PendingSwitch {
     /// When the first poll on the new segment was sent.
     at: f64,
+    /// The steps, in ms, that are absorbed as a reporting offset: which
+    /// depends on how the speaker came to the segment it left.
+    bounds: (f64, f64),
     /// The reserve just before the switch, over the
     /// [`CONTINUATION_MEASURE_MS`] of polls before it.
     carried: ReserveEstimate,
     /// The polls since the switch, on their own.
     probe: ReserveEstimator,
+    /// Whether they have taken longer than [`CONTINUATION_SETTLE_MAX_MS`]
+    /// to give a tight estimate.
+    overdue: bool,
 }
 
 /// How many standard errors from zero a drain must be before a time to
@@ -400,6 +450,9 @@ pub struct ReserveTracker {
     /// Whether any connection has started yet.
     started: bool,
     last: Option<ReserveEstimate>,
+    /// The latest tight estimate the reserve window made on the current
+    /// segment.
+    last_tight: Option<ReserveEstimate>,
     /// Whether [`Self::last`] was made by the latest call to
     /// [`Self::estimate`], and so may be combined with the acknowledgement
     /// lag of the same window.
@@ -467,6 +520,7 @@ impl ReserveTracker {
         self.head_start = head_start.filter(|_| pcm);
         self.first_segment = true;
         self.last = None;
+        self.last_tight = None;
         self.last_fresh = false;
         self.last_acked = None;
         self.last_stall_ms = None;
@@ -549,6 +603,7 @@ impl ReserveTracker {
         self.clock.break_segment();
         self.target_pending = None;
         self.first_segment = false;
+        self.last_tight = None;
         self.reference.clear();
         if self.switch.take().is_some() {
             self.switch_outcome = Some(SwitchOutcome::Unmeasured(SwitchUnmeasured::SegmentBreak));
@@ -593,12 +648,15 @@ impl ReserveTracker {
     /// tight, the latest tight estimate before the switch is reported,
     /// carried forward along the clock, held (and [`Self::settling`] says
     /// so). Once it is tight, the offset between the two, if it is within
-    /// [`CONTINUATION_OFFSET_MIN_MS`]..=[`CONTINUATION_OFFSET_MAX_MS`], is
-    /// taken off the new segment's polls (these and all later ones), they
-    /// join the old window and the reserve carries on as if nothing had
-    /// happened; a larger one ends the segment as an offset step. The clock
-    /// fit starts a new segment of its own at the switch, since RelTime steps
-    /// there. [`Self::take_switch_outcome`] says what each switch came to.
+    /// [`CONTINUATION_OFFSET_MIN_MS`]..=[`CONTINUATION_OFFSET_MAX_MS`] at the
+    /// first switch after the speaker was told to play, or within
+    /// ±[`LATER_SWITCH_OFFSET_MAX_MS`] at a later one (where no reporting
+    /// offset is expected), is taken off the new segment's polls (these and
+    /// all later ones), they join the old window and the reserve carries on
+    /// as if nothing had happened; a larger one ends the segment as an
+    /// offset step. The clock fit starts a new segment of its own at the
+    /// switch, since RelTime steps there. [`Self::take_switch_outcome`] says
+    /// what each switch came to.
     ///
     /// The reference kept is the first segment's: the reserve measured while
     /// the speaker plays the item it was told to play reads the reporting
@@ -609,9 +667,21 @@ impl ReserveTracker {
     /// restart onto a later segment ([`TimelineEntry::Played`]) returns to
     /// counting RelTime as it is.
     ///
-    /// A real underrun or skip at the switch that is no larger than a
-    /// reporting offset is absorbed with it; one that happens while the new
-    /// segment's polls settle is measured into the offset.
+    /// A real underrun or skip at the first switch (or in the half minute
+    /// before it) that is no larger than a reporting offset is absorbed with
+    /// it; one that happens while the new segment's polls settle is measured
+    /// into the offset. One in the minutes before the switch leaves no
+    /// reference to measure from (see [`SWITCH_REFERENCE_RECENT_MS`]).
+    ///
+    /// A switch left unmeasured (no reference, or a pause or other segment
+    /// break while it settles) is left as it always was: the new segment's
+    /// polls keep their RelTime as it is, so a reporting offset reads as that
+    /// much more reserve against the target learnt before, and reaches the
+    /// drift controller once the estimate locks again. The log says which
+    /// switches went unmeasured. So does a switch after a segment shorter
+    /// than [`CONTINUATION_MIN_SEGMENT_MS`], and the clock fit is not broken
+    /// there either (segments that short would never give it a block): the
+    /// fit sees the step, which on a real cast happens once.
     pub fn observe_on(
         &mut self,
         obs: &PollObservation,
@@ -673,12 +743,20 @@ impl ReserveTracker {
         if next.start == current.start {
             return true;
         }
+        // A segment's start names it and only grows along the playout, so
+        // an older one is a late answer. A segment reopened under the same
+        // URL gets a record of its own, and a poll whose RelTime could not
+        // have been reached on the reopened one yet is mapped onto the old
+        // record (see `PlayoutView::continuous_position`). That is dropped
+        // too: a late answer from before the reopen, or, were the reserve on
+        // the reopened record ever to fall below the mapping's slack, one of
+        // its polls lost rather than measured against the wrong start.
         if next.start < current.start {
             return false;
         }
         self.timeline = Some((next, ts));
         match next.entry {
-            TimelineEntry::Next => self.begin_switch(ts, ts - since),
+            TimelineEntry::Next => self.begin_switch(ts, ts - since, current.entry),
             TimelineEntry::Played => {
                 // Told to play afresh: RelTime is counted as on the first
                 // segment again.
@@ -693,8 +771,9 @@ impl ReserveTracker {
     }
 
     /// Starts measuring a continuation switch whose first poll was sent at
-    /// `ts`, after the previous segment was played for `lasted` ms.
-    fn begin_switch(&mut self, ts: f64, lasted: f64) {
+    /// `ts`, after the previous segment, which the speaker came to by
+    /// `left`, was played for `lasted` ms.
+    fn begin_switch(&mut self, ts: f64, lasted: f64, left: TimelineEntry) {
         if self.switch.is_some() {
             // The previous switch's polls are all that was measured of the
             // segment just left, and they are not offset-corrected.
@@ -710,19 +789,78 @@ impl ReserveTracker {
         }
         // RelTime steps at the switch, whether or not the step is measured.
         self.clock.break_segment();
-        // Estimated afresh at the jitter the reserve window has learnt.
-        let mut reference = self.reserve.fresh(CONTINUATION_MEASURE_MS);
-        reference.absorb(&self.reference, 0.0);
-        let reference = reference.estimate(ts, self.shift_ppm());
-        let Some(carried) = reference.filter(ReserveEstimate::tight) else {
+        let Some(carried) = self.switch_reference(ts) else {
             self.switch_outcome = Some(SwitchOutcome::Unmeasured(SwitchUnmeasured::NoReference));
             return;
         };
+        // Only the item the speaker was told to play reports ahead of the
+        // audio; between items it moved on to gaplessly nothing should step.
+        let bounds = match left {
+            TimelineEntry::Played => (CONTINUATION_OFFSET_MIN_MS, CONTINUATION_OFFSET_MAX_MS),
+            TimelineEntry::Next | TimelineEntry::Other => {
+                (-LATER_SWITCH_OFFSET_MAX_MS, LATER_SWITCH_OFFSET_MAX_MS)
+            }
+        };
         self.switch = Some(PendingSwitch {
             at: ts,
+            bounds,
             carried,
             probe: self.reserve.fresh(CONTINUATION_MEASURE_MS),
+            overdue: false,
         });
+    }
+
+    /// The reserve just before a continuation switch whose first poll was
+    /// sent at `ts`, measured over the last [`CONTINUATION_MEASURE_MS`] of
+    /// the segment's polls, if it can be trusted as the level the new
+    /// segment's polls are compared with.
+    ///
+    /// Its own lock says little: it is made once, by an estimator with no
+    /// history, so a window straddling a step (whose bounds cross, and whose
+    /// half-width is then only the jitter allowance) would pass as tight. An
+    /// underrun in the last few minutes before the switch is exactly that,
+    /// and the step detector would not have confirmed it yet (it compares
+    /// with an estimate [`OFFSET_STEP_LAG_MS`] old). Taken as the reference,
+    /// its midpoint would put most of the underrun into the offset and never
+    /// report it. So no jump may be awaiting confirmation, the reference must
+    /// be consistent, its newest set-aside polls must not crowd onto one side
+    /// (see [`SWITCH_REFERENCE_RECENT_MS`]), and it must agree with the
+    /// reserve window's latest tight estimate, made within
+    /// [`SWITCH_REFERENCE_MAX_AGE_MS`], to within
+    /// [`SWITCH_REFERENCE_MAX_DISAGREEMENT_MS`]. Otherwise the switch is
+    /// left unmeasured and its polls join the window as they are, where a
+    /// step shows up as it always did (and a reporting offset too small for
+    /// the step detector reaches the drift controller, as before).
+    fn switch_reference(&self, ts: f64) -> Option<ReserveEstimate> {
+        if self.segment.step_pending() {
+            return None;
+        }
+        let ppm = self.shift_ppm();
+        let last = self
+            .last_tight
+            .filter(|e| ts - e.at <= SWITCH_REFERENCE_MAX_AGE_MS)?;
+        // Estimated afresh at the jitter the reserve window has learnt.
+        let mut reference = self.reserve.fresh(CONTINUATION_MEASURE_MS);
+        reference.absorb(&self.reference, 0.0);
+        let reference = reference
+            .estimate(ts, ppm)
+            .filter(|e| e.tight() && !e.inconsistent)?;
+        // The trimmed estimate ignores a few polls that disagree with it,
+        // scattered outliers; as many crowded into the last stretch, all on
+        // one side, are a new level the window has not turned over to yet.
+        let crowded = self.reference.newest_beyond(
+            ts,
+            ppm,
+            ts - SWITCH_REFERENCE_RECENT_MS,
+            reference.reserve_ms,
+        );
+        if crowded >= TRIM_RANK {
+            return None;
+        }
+        // Delivery runs at our clock and the playhead at the speaker's.
+        let expected = last.reserve_ms - ppm * 1e-6 * (ts - last.at);
+        ((reference.reserve_ms - expected).abs() <= SWITCH_REFERENCE_MAX_DISAGREEMENT_MS)
+            .then_some(reference)
     }
 
     /// Gives up measuring the pending continuation switch, if any, for
@@ -754,7 +892,7 @@ impl ReserveTracker {
         if let Some(probe) = probe.filter(|p| measured && p.tight()) {
             let switch = self.switch.take()?;
             let offset_ms = probe.reserve_ms - expected;
-            if (CONTINUATION_OFFSET_MIN_MS..=CONTINUATION_OFFSET_MAX_MS).contains(&offset_ms) {
+            if (switch.bounds.0..=switch.bounds.1).contains(&offset_ms) {
                 self.reserve.absorb(&switch.probe, -offset_ms);
                 self.reference.absorb(&switch.probe, -offset_ms);
                 self.reserve_offset_ms += offset_ms;
@@ -774,16 +912,19 @@ impl ReserveTracker {
             return Some((None, Some(SegmentBreak::OffsetStep)));
         }
         if now - switch.at > CONTINUATION_SETTLE_MAX_MS {
-            // Measured afresh from the polls since; the window before the
-            // switch has long aged out.
-            let switch = self.switch.take()?;
-            self.switch_outcome = Some(SwitchOutcome::Unmeasured(SwitchUnmeasured::NotTight));
-            self.reserve.clear();
-            self.reserve.absorb(&switch.probe, 0.0);
-            self.reference.clear();
-            self.reference.absorb(&switch.probe, 0.0);
-            self.first_segment = false;
-            return None;
+            // The carried estimate has stood long enough: the new segment's
+            // own estimate is reported from here on, uncorrected (and never
+            // tight, or it would have been measured), so the alarms and
+            // notices watch the speaker again. The drift controller holds on
+            // until the offset is measured, since the level it would steer
+            // by has a reporting offset in it.
+            if !switch.overdue {
+                switch.overdue = true;
+                self.switch_outcome = Some(SwitchOutcome::Unmeasured(SwitchUnmeasured::NotTight));
+            }
+            self.last = probe;
+            self.last_fresh = probe.is_some();
+            return Some((probe, None));
         }
         let est = ReserveEstimate {
             at: now,
@@ -799,19 +940,28 @@ impl ReserveTracker {
         Some((Some(est), None))
     }
 
-    /// Whether a continuation switch is being measured: the estimate is the
-    /// one from before it, carried forward, and says nothing new. Nothing
-    /// should be decided from it.
+    /// Whether a continuation switch is being measured and the estimate is
+    /// the one from before it, carried forward, which says nothing new.
+    /// Nothing should be decided from it. Not once the switch has taken
+    /// longer than [`CONTINUATION_SETTLE_MAX_MS`] to measure, when the new
+    /// segment's own estimate is reported instead.
     pub fn settling(&self) -> bool {
-        self.switch.is_some()
+        self.switch.as_ref().is_some_and(|s| !s.overdue)
     }
 
     /// Whether the drift controller should hold: a continuation switch is
-    /// being measured, or the reserve has jumped from its baseline and may
-    /// be an offset step. Neither is drift, and a step integrated would wind
-    /// the controller up for hours.
+    /// being measured (however long that takes), or the reserve has jumped
+    /// from its baseline and may be an offset step. Neither is drift, and a
+    /// step integrated would wind the controller up for hours.
+    ///
+    /// The second covers the estimates before an offset step is confirmed:
+    /// the first jumped estimate can be tight, and would teach the integral
+    /// part of the step. Once the step is confirmed the segment
+    /// breaks and the estimate is unlocked, which holds the controller
+    /// anyway. A jump that fades holds it for a report or two, at its
+    /// integral, which costs nothing.
     pub fn control_hold(&self) -> bool {
-        self.settling() || self.segment.step_pending()
+        self.switch.is_some() || self.segment.step_pending()
     }
 
     /// What the latest continuation switch came to, once, as soon as it is
@@ -850,6 +1000,9 @@ impl ReserveTracker {
         }
         self.last = Some(est);
         self.last_fresh = true;
+        if est.tight() {
+            self.last_tight = Some(est);
+        }
         if est.locked() {
             self.pre_break = None;
             let c = &mut self.connection;
@@ -1965,6 +2118,17 @@ mod tests {
         switches: &[(f64, PlayoutTimeline, f64)],
         minutes: f64,
     ) -> Vec<SwitchReport> {
+        switching_answered(seed, switches, minutes, |_, _| true)
+    }
+
+    /// [`switching`], with only the polls `answered` keeps (by when they
+    /// were sent and their index) reaching the tracker.
+    fn switching_answered(
+        seed: u64,
+        switches: &[(f64, PlayoutTimeline, f64)],
+        minutes: f64,
+        answered: impl Fn(f64, usize) -> bool,
+    ) -> Vec<SwitchReport> {
         use super::super::control::{
             ControlInput, DriftController, DriftMode, SpeakerControlState,
         };
@@ -1988,9 +2152,14 @@ mod tests {
         controller.start_connection(DriftMode::On, true);
         let mut out = Vec::new();
         let mut t = 0.0;
+        let mut index = 0;
         while t < minutes * 60_000.0 {
             t += 30_000.0;
             gen.run_until(t, |p| {
+                index += 1;
+                if !answered(p.ts, index) {
+                    return;
+                }
                 // The segment a poll lands on is the one the speaker was
                 // playing when it read its playhead, about when it was sent.
                 let timeline = switches
@@ -2108,6 +2277,24 @@ mod tests {
                     (held.command - held.integral).abs() < 1e-9,
                     "{ctx}: the command holds at the integral: {held:?}"
                 );
+                // Nor after: over the next 10 min the integral keeps within a
+                // few ppm of the unswitched run's (at most 3.5 in these runs;
+                // with the step integrated it was 17-41 ppm off 20 min after
+                // the switch). By the end it may be further off, since an
+                // error in measuring the offset (up to about 35 ms) is a
+                // step to the controller too, which it steers out over the
+                // following 40 min (at most 12 ppm here; 23-56 unfixed).
+                for (r, u) in reports.iter().zip(&unswitched).filter(|(r, _)| {
+                    r.at > switch_at && r.at <= reports[settled].at + 10.0 * MINUTE
+                }) {
+                    assert!(
+                        (r.integral - u.integral).abs() < 5.0,
+                        "{ctx}: integral {:+.1} ppm against {:+.1} unswitched at {}",
+                        r.integral,
+                        u.integral,
+                        r.at
+                    );
+                }
                 let (i, unswitched_i) = (
                     reports.last().unwrap().integral,
                     unswitched.last().unwrap().integral,
@@ -2171,6 +2358,136 @@ mod tests {
                 (after.reserve_ms - before - offset).abs() < 60.0,
                 "{offset}: {before:.0} then {after:?}"
             );
+        }
+    }
+
+    #[test]
+    fn a_switch_slow_to_measure_keeps_the_controller_holding() {
+        use super::super::control::ControlHold;
+        const MINUTE: f64 = 60_000.0;
+        let switch_at = 30.0 * MINUTE + 5_000.0;
+        let answered_again = switch_at + 20.0 * MINUTE;
+        // After the switch most polls go unanswered for 20 min, so the new
+        // segment's polls give no tight estimate in time.
+        let reports =
+            switching_answered(1200, &[(switch_at, next(1 << 32), 110.0)], 60.0, |ts, i| {
+                ts < switch_at || ts >= answered_again || i % 12 == 0
+            });
+        let unswitched = switching(1200, &[], 60.0);
+        let outcomes: Vec<(f64, SwitchOutcome)> = reports
+            .iter()
+            .filter_map(|r| r.outcome.map(|o| (r.at, o)))
+            .collect();
+        let [(overdue_at, SwitchOutcome::Unmeasured(SwitchUnmeasured::NotTight)), (measured_at, SwitchOutcome::Absorbed { offset_ms })] =
+            outcomes[..]
+        else {
+            panic!("{outcomes:?}");
+        };
+        assert!(overdue_at > switch_at + CONTINUATION_SETTLE_MAX_MS);
+        assert!(measured_at > answered_again, "{measured_at}");
+        assert!((offset_ms - 110.0).abs() < 50.0, "measured {offset_ms:.0}");
+        assert!(reports.iter().all(|r| r.brk.is_none()), "{reports:?}");
+
+        let before = reports.iter().rposition(|r| r.at <= switch_at).unwrap();
+        for r in reports
+            .iter()
+            .filter(|r| r.at > switch_at && r.at < measured_at)
+        {
+            // The controller holds throughout, learning nothing; the carried
+            // estimate stops standing in once the switch is overdue.
+            assert_eq!(r.hold, ControlHold::Settling, "{r:?}");
+            assert_eq!(r.integral, reports[before].integral, "{r:?}");
+            assert_eq!(r.settling, r.at < overdue_at, "{r:?}");
+            if r.at >= overdue_at {
+                assert!(r.est.is_none_or(|e| !e.tight()), "{r:?}");
+            }
+        }
+        let after = mean_reserve(&reports, measured_at + 5.0 * MINUTE, 60.0 * MINUTE);
+        let level = mean_reserve(&unswitched, measured_at + 5.0 * MINUTE, 60.0 * MINUTE);
+        assert!(
+            (after - level).abs() < 35.0,
+            "{after:.0} against {level:.0}"
+        );
+    }
+
+    #[test]
+    fn a_step_at_a_later_switch_is_not_taken_for_a_reporting_offset() {
+        // Only the first switch after the speaker was told to play has a
+        // reporting offset; at a later one an underrun (which raises the
+        // reserve, as the offset does) is an offset step.
+        const MINUTE: f64 = 60_000.0;
+        let (first, second) = (30.0 * MINUTE + 3_000.0, 60.0 * MINUTE + 11_000.0);
+        for seed in 1000..1006 {
+            let reports = switching(
+                seed,
+                &[
+                    (first, next(1 << 32), 110.0),
+                    (second, next(2 << 32), 300.0),
+                ],
+                80.0,
+            );
+            let outcomes: Vec<SwitchOutcome> = reports.iter().filter_map(|r| r.outcome).collect();
+            assert!(
+                matches!(
+                    outcomes[..],
+                    [SwitchOutcome::Absorbed { .. }, SwitchOutcome::Rejected { offset_ms }]
+                        if (offset_ms - 300.0).abs() < 60.0
+                ),
+                "seed {seed}: {outcomes:?}"
+            );
+            let breaks: Vec<(f64, SegmentBreak)> = reports
+                .iter()
+                .filter_map(|r| r.brk.map(|b| (r.at, b)))
+                .collect();
+            assert!(
+                matches!(breaks[..], [(at, SegmentBreak::OffsetStep)] if at > second),
+                "seed {seed}: {breaks:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn an_underrun_just_before_a_switch_is_still_an_offset_step() {
+        // An underrun in the minutes before the first switch, too recent for
+        // the step detector to have confirmed it: the reserve over the polls
+        // before the switch straddles it and is no reference, so the switch
+        // is left unmeasured and the step is found as it always was. Once the
+        // detector has confirmed it (after about 4 min), the switch is
+        // measured afresh after the break, and only the reporting offset is
+        // absorbed. Either way the underrun is reported.
+        const MINUTE: f64 = 60_000.0;
+        let switch_at = 40.0 * MINUTE + 7_000.0;
+        for lead_s in [60.0, 120.0, 180.0, 240.0, 300.0] {
+            for step in [200.0, 250.0] {
+                for seed in 1100..1106 {
+                    let reports = switching(
+                        seed,
+                        &[
+                            (switch_at - lead_s * 1000.0, SEG0, step),
+                            (switch_at, next(1 << 32), 110.0),
+                        ],
+                        60.0,
+                    );
+                    let ctx = format!("{step} ms {lead_s} s before, seed {seed}");
+                    let outcomes: Vec<SwitchOutcome> =
+                        reports.iter().filter_map(|r| r.outcome).collect();
+                    assert!(
+                        outcomes.iter().all(|o| match o {
+                            SwitchOutcome::Absorbed { offset_ms } => {
+                                (offset_ms - 110.0).abs() < 60.0
+                            }
+                            _ => true,
+                        }),
+                        "{ctx}: {outcomes:?}"
+                    );
+                    let breaks: Vec<SegmentBreak> = reports.iter().filter_map(|r| r.brk).collect();
+                    // The detector itself misses this one 200 ms underrun,
+                    // switch or none (see `most_200ms_underruns_are_suspected`).
+                    if (lead_s, step, seed) != (300.0, 200.0, 1102) {
+                        assert_eq!(breaks, [SegmentBreak::OffsetStep], "{ctx}: {outcomes:?}");
+                    }
+                }
+            }
         }
     }
 
@@ -2353,18 +2670,47 @@ mod tests {
 
     #[test]
     fn an_uncertain_clock_moves_no_bounds() {
-        // Five minutes of a jittery speaker: the first clock fit is far too
-        // uncertain to carry older bounds, or a step baseline, along.
+        // Five minutes of a +19 ppm speaker whose first clock fit came out at
+        // +340±117 ppm, as wild and as uncertain as the field's first one:
+        // far too uncertain to carry older bounds, or a step baseline, along.
         let mut tracker = ReserveTracker::new();
         tracker.start_connection(true, H500);
         tracker.set_command_ppm(10.0);
-        let mut gen = PollGen::new(992);
-        gen.tick_jitter_ms = 100.0;
-        gen.ppm = -400.0;
-        run(&mut tracker, &mut gen, 0.0, 5.0 * 60_000.0);
+        let mut gen = PollGen::new(7);
+        gen.tick_jitter_ms = 25.0;
+        gen.ppm = 19.0;
+        // The same polls, estimated with and without the clock.
+        let (mut plain, mut clocked) = (ReserveEstimator::new(), ReserveEstimator::new());
+        let mut t = 0.0;
+        while t < 5.0 * 60_000.0 {
+            t += 30_000.0;
+            gen.run_until(t, |p| {
+                tracker.observe(p, URI, false);
+                plain.add(p);
+                clocked.add(p);
+            });
+            tracker.estimate(t);
+            tracker.observe_ack_lag(&mut []);
+        }
         let clock = tracker.clock().expect("a first fit");
         assert!(clock.se_ppm > CLOCK_SHIFT_MAX_SE_PPM, "{clock:?}");
         assert_eq!(tracker.shift_ppm(), -10.0);
+        t += 30_000.0;
+        gen.run_until(t, |p| {
+            tracker.observe(p, URI, false);
+            plain.add(p);
+            clocked.add(p);
+        });
+        let (est, _) = tracker.estimate(t);
+        let est = est.expect("an estimate");
+        let plain = plain.estimate(t, -10.0).unwrap();
+        let clocked = clocked.estimate(t, clock.shrunk_ppm() - 10.0).unwrap();
+        // The estimate is the one made without the clock, to the bit.
+        assert_eq!(est.reserve_ms, plain.reserve_ms);
+        assert!(
+            (clocked.reserve_ms - plain.reserve_ms).abs() > 1.0,
+            "the clock would have moved it: {clocked:?} against {plain:?}"
+        );
         // A precise one does, shrunk as before.
         let mut gen = PollGen::new(993);
         gen.ppm = 40.0;
