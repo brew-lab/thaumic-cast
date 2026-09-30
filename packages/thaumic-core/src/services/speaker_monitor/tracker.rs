@@ -2855,9 +2855,19 @@ mod tests {
     /// a 110 ms reporting offset, returning the tracker once the switch has
     /// been seen (and the generator and time, to carry on).
     fn switched_tracker(seed: u64) -> (ReserveTracker, PollGen, f64) {
+        switched_tracker_at(seed, 30.0 * 60_000.0 + 5_000.0, 0.0)
+    }
+
+    /// [`switched_tracker`], moving on at `switch_at`, with RelTime ticks
+    /// jittered by up to `tick_jitter_ms`.
+    fn switched_tracker_at(
+        seed: u64,
+        switch_at: f64,
+        tick_jitter_ms: f64,
+    ) -> (ReserveTracker, PollGen, f64) {
         let mut gen = PollGen::new(seed);
         gen.start_ms = 500.0;
-        let switch_at = 30.0 * 60_000.0 + 5_000.0;
+        gen.tick_jitter_ms = tick_jitter_ms;
         gen.steps = vec![(switch_at, -110.0)];
         let mut tracker = ReserveTracker::new();
         tracker.start_connection(true, H500);
@@ -2877,6 +2887,39 @@ mod tests {
         }
         assert!(tracker.settling());
         (tracker, gen, t)
+    }
+
+    #[test]
+    fn a_carried_estimate_teaches_only_along_a_precise_clock() {
+        // Eight minutes in, at the field's tick jitter, the clock is too
+        // uncertain to carry the reserve across the switch: the estimate is
+        // carried along the correction alone, and would teach the integral
+        // the opposite of the clock.
+        let (tracker, _, _) = switched_tracker_at(994, 8.0 * 60_000.0 + 5_000.0, 50.0);
+        let clock = tracker.clock();
+        assert!(
+            clock.is_none_or(|c| c.se_ppm > CLOCK_SHIFT_MAX_SE_PPM),
+            "{clock:?}"
+        );
+        assert_eq!(tracker.carry(), EstimateCarry::Steers);
+
+        // Half an hour in it is precise, and the carried estimate teaches.
+        let (mut tracker, mut gen, mut t) = switched_tracker(994);
+        let clock = tracker.clock().expect("clock");
+        assert!(clock.se_ppm <= CLOCK_SHIFT_MAX_SE_PPM, "{clock:?}");
+        assert_eq!(tracker.carry(), EstimateCarry::Teaches);
+
+        // Measured, the estimate is the new segment's own again.
+        while tracker.settling() {
+            t += 30_000.0;
+            assert!(t < 50.0 * 60_000.0, "the switch is measured");
+            gen.run_until(t, |p| {
+                tracker.observe_on(p, URI, false, Some(next(1 << 32)));
+            });
+            tracker.estimate(t);
+            tracker.observe_ack_lag(&mut []);
+        }
+        assert_eq!(tracker.carry(), EstimateCarry::Measured);
     }
 
     #[test]
