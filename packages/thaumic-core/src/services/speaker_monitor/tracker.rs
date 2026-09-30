@@ -106,9 +106,16 @@ pub const CONTINUATION_SETTLE_MAX_MS: f64 = 15.0 * 60_000.0;
 
 /// Most the reserve window's latest tight estimate may be older than a
 /// continuation switch, in ms, for the reserve before the switch to be
-/// measured: a window's worth. A window that has not been tight for longer
-/// may be straddling something.
-pub const SWITCH_REFERENCE_MAX_AGE_MS: f64 = RESERVE_WINDOW_MS;
+/// measured: as long as the reference itself spans. A window that has not
+/// been tight for longer may be straddling something.
+///
+/// It was a window's worth, and a steady speaker's window went that long
+/// without a tight estimate about once in 350 reports in simulation (at
+/// 25-100 ms of tick jitter), which would have left a first switch
+/// unmeasured; it never went six minutes. An older tight estimate lets no
+/// step through: made before the step, it disagrees with the reference by
+/// more, not less.
+pub const SWITCH_REFERENCE_MAX_AGE_MS: f64 = CONTINUATION_MEASURE_MS;
 
 /// Most the reserve over the [`CONTINUATION_MEASURE_MS`] before a
 /// continuation switch may differ from the reserve window's latest tight
@@ -476,7 +483,7 @@ pub struct ReserveTracker {
     started: bool,
     last: Option<ReserveEstimate>,
     /// The latest tight estimate the reserve window made on the current
-    /// segment.
+    /// segment, or the one a continuation switch was measured by.
     last_tight: Option<ReserveEstimate>,
     /// Whether [`Self::last`] was made by the latest call to
     /// [`Self::estimate`], and so may be combined with the acknowledgement
@@ -882,6 +889,14 @@ impl ReserveTracker {
     /// left unmeasured and its polls join the window as they are, where a
     /// step shows up as it always did (and a reporting offset too small for
     /// the step detector reaches the drift controller, as before).
+    ///
+    /// A steady speaker is refused now and then too: its six minutes of
+    /// polls may come out too wide to be tight, as any estimate may. That
+    /// left one switch in 340 unmeasured in simulation (twenty three-hour
+    /// casts in ten-minute segments at 50 ms of tick jitter). At a later
+    /// switch it costs nothing, since a measured one absorbs nothing either;
+    /// a first switch it leaves unabsorbed, with its reporting offset read
+    /// as surplus reserve.
     fn switch_reference(&self, ts: f64) -> Option<ReserveEstimate> {
         if self.segment.step_pending() {
             return None;
@@ -951,16 +966,25 @@ impl ReserveTracker {
             let switch = self.switch.take()?;
             let offset_ms = probe.reserve_ms - expected;
             if (switch.bounds.0..=switch.bounds.1).contains(&offset_ms) {
+                // The probe's estimate is a tight one of the level the window
+                // carries on at: with ten-minute segments the window itself
+                // may make none in the four minutes before the next switch,
+                // which would then find no reference to measure from.
                 if !switch.absorbs {
                     // Measuring error, a few tens of ms either way: absorbed
                     // at every switch it would add up, a switch at a time.
                     self.reserve.absorb(&switch.probe, 0.0);
                     self.reference.absorb(&switch.probe, 0.0);
+                    self.last_tight = Some(probe);
                     self.switch_outcome = Some(SwitchOutcome::Steady { offset_ms });
                     return None;
                 }
                 self.reserve.absorb(&switch.probe, -offset_ms);
                 self.reference.absorb(&switch.probe, -offset_ms);
+                self.last_tight = Some(ReserveEstimate {
+                    reserve_ms: probe.reserve_ms - offset_ms,
+                    ..probe
+                });
                 self.reserve_offset_ms += offset_ms;
                 self.switch_outcome = Some(SwitchOutcome::Absorbed { offset_ms });
                 return None;
