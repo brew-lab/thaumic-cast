@@ -297,6 +297,19 @@ impl PlayoutEvents for EventsBridge {
     }
 }
 
+/// The level a member's grace ending is logged at, given the transport
+/// state GENA last recorded for it. A member joined to its coordinator
+/// reports nothing at all through a gapless switch, and its recorded state
+/// is still PLAYING: the normal path, logged at debug. Any other state (say
+/// STOPPED after a restart), or none, is what clients are now shown instead
+/// of PLAYING, and is logged at info.
+fn member_grace_log_level(recorded: Option<TransportState>) -> log::Level {
+    match recorded {
+        Some(TransportState::Playing) => log::Level::Debug,
+        _ => log::Level::Info,
+    }
+}
+
 /// The URL segment `uri` names, if it is one of stream `stream_id`'s PCM
 /// URLs.
 fn url_segment_of(uri: &str, stream_id: &str) -> Option<u32> {
@@ -1074,11 +1087,18 @@ impl StreamCoordinator {
         }
         let still_held = self.held_by_handoffs();
         for ip in expired.into_iter().filter(|ip| !still_held.contains(ip)) {
-            log::info!(
+            let recorded = self
+                .sonos_state
+                .transport_states
+                .get(ip.as_str())
+                .map(|s| *s);
+            log::log!(
+                member_grace_log_level(recorded),
                 "[Stream] Handoff: speaker {} joined to a coordinator that switched segments did \
-                 not report PLAYING within {} ms; showing its recorded state",
+                 not report PLAYING within {} ms; showing its recorded state ({})",
                 ip,
-                MEMBER_GRACE.as_millis()
+                MEMBER_GRACE.as_millis(),
+                recorded.map_or_else(|| "none".to_string(), |s| s.to_string())
             );
             self.release_transport(ip);
         }
@@ -1528,6 +1548,29 @@ mod tests {
 
     const COORDINATOR: &str = "192.168.1.100";
     const MEMBER: &str = "192.168.1.101";
+
+    #[test]
+    fn a_member_still_recorded_playing_ends_its_grace_at_debug() {
+        // Members of a gapless handover report no change at all: the normal
+        // path, not worth an info line after every switch.
+        assert_eq!(
+            member_grace_log_level(Some(TransportState::Playing)),
+            log::Level::Debug
+        );
+        // Anything else is what clients are shown now instead of PLAYING.
+        for recorded in [
+            Some(TransportState::Stopped),
+            Some(TransportState::Paused),
+            Some(TransportState::Transitioning),
+            None,
+        ] {
+            assert_eq!(
+                member_grace_log_level(recorded),
+                log::Level::Info,
+                "{recorded:?}"
+            );
+        }
+    }
 
     /// A speaker whose answers the test sets, recording what it is told.
     #[derive(Default)]
