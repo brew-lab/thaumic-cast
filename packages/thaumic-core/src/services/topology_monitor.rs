@@ -1830,13 +1830,14 @@ mod tests {
         );
     }
 
-    /// A Windows laptop with Cloudflare WARP connected at launch: the tunnel
-    /// adapter's name is not one the virtual-interface filter knows, its CGNAT
-    /// address owns the default route, and the speakers are on the Wi-Fi LAN.
-    fn warp_network() -> NetworkContext {
+    /// A Windows laptop on a full-tunnel VPN at launch: the client's adapter
+    /// has a generic friendly name the virtual-interface filter cannot know,
+    /// its private address owns the default route, and the speakers are on the
+    /// Wi-Fi LAN.
+    fn tunnel_network() -> NetworkContext {
         let detector = Arc::new(crate::context::FakeInterfaceDetector::new(
-            &[("CloudflareWARP", "100.96.0.12"), ("Wi-Fi", "192.168.2.50")],
-            Some("100.96.0.12"),
+            &[("Ethernet 2", "10.8.0.2"), ("Wi-Fi", "192.168.2.50")],
+            Some("10.8.0.2"),
         ));
         NetworkContext::auto_detect(0, detector).unwrap()
     }
@@ -1852,9 +1853,9 @@ mod tests {
 
     #[tokio::test]
     async fn the_first_discovery_moves_the_address_onto_the_speakers_lan_before_subscribing() {
-        let network = warp_network();
+        let network = tunnel_network();
         // Nothing is known at launch, so the default route decides.
-        assert_eq!(network.get_local_ip(), "100.96.0.12");
+        assert_eq!(network.get_local_ip(), "10.8.0.2");
 
         let mut client = StubTopologyClient::new(
             vec![group("192.168.2.204", "RINCON_A")],
@@ -1884,7 +1885,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_refresh_that_discovers_nothing_keeps_the_launch_address() {
-        let network = warp_network();
+        let network = tunnel_network();
         let monitor = create_monitor_with_client(
             StubTopologyClient::new(
                 Vec::new(),
@@ -1896,14 +1897,14 @@ mod tests {
         );
 
         assert!(monitor.refresh_topology().await.is_err());
-        assert_eq!(network.get_local_ip(), "100.96.0.12");
+        assert_eq!(network.get_local_ip(), "10.8.0.2");
     }
 
     #[tokio::test]
     async fn a_rejected_subscription_is_retried_on_the_speakers_subnet() {
         // A speaker refused SUBSCRIBE with 412 while we still advertised the
         // tunnel: the retry must carry a callback on the LAN address.
-        let network = warp_network();
+        let network = tunnel_network();
         let monitor = create_monitor_with_client(
             StubTopologyClient::new(
                 Vec::new(),
