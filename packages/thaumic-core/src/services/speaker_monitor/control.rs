@@ -125,9 +125,8 @@ pub const SEED_MAX_SE_PPM: f64 = 10.0;
 /// towards it (see [`FIT_PULL_PER_ESTIMATE`]).
 ///
 /// In simulation a single-segment fit gets there 35-45 minutes in, with the
-/// integral still 10-40 ppm short on a speaker 20-60 ppm off. A fit over
-/// 600 s test segments, an intercept for each, stays wider than this for
-/// hours, and is left out.
+/// integral still 10-40 ppm short on a speaker 20-60 ppm off. One run on
+/// across 600 s test segments gets there by the hour.
 pub const FIT_PULL_MAX_SE_PPM: f64 = 10.0;
 
 /// Least span, in time, a clock fit must cover to draw the integral, and
@@ -181,15 +180,21 @@ pub const INTEGRAL_LEARNING_TIME: Duration = Duration::from_secs(60 * 60);
 /// [`FIT_PULL_UNTAUGHT_SD_PPM`] decaying over [`INTEGRAL_LEARNING_TIME`] of
 /// teaching to [`FIT_PULL_TAUGHT_SD_PPM`].
 ///
-/// At 0.1 the integral of a speaker new to the loop closes on a fit 5 ppm
-/// precise in about six minutes. Over 288 simulated casts (+20, −45, +60 and
-/// 0 ppm, ±25 to ±100 ms tick jitter) its median error falls from 10.5 to
-/// 2.8 ppm at an hour and from 3.7 to 1.1 at two, the reserve comes within
-/// 40 ms of its target for good by 71 minutes where it took 92 (90th
-/// percentile), and it overshoots its target by 12 ms where it did by 18.
-/// With every fit a standard error off the way that overshoots, it still
-/// overshoots less (14 ms). A speaker taught for hours already is drawn only
-/// as far as a precise fit and its error allow.
+/// At 0.1 the integral of a speaker new to the loop closes a gap of up to
+/// 5 ppm to a fit 5 ppm precise by `e` about every five minutes. A wider gap
+/// closes at [`FIT_PULL_MAX_PPM`] per estimate, 1 ppm a minute, so 20 ppm
+/// takes about 20 minutes (the error term helps). Over 288 simulated casts
+/// (+20, −45, +60 and 0 ppm, ±25 to ±100 ms tick jitter) the integral's
+/// median error falls from 10.8 to 3.2 ppm at an hour and from 3.7 to 1.2 at
+/// two, and the reserve comes within 40 ms of its target for good by 72
+/// minutes where it took 92 (90th percentile). On the 216 casts to a
+/// speaker that drifts, the reserve overshoots its target after the first
+/// half hour by a median 4.2 ms where it did by 10.2 (90th percentile 13.0
+/// where 19.2, the worst 20.8 where 28.4). Not every cast gains: of 504
+/// such casts over three sets of seeds, 5% overshoot by more than they did,
+/// by up to 9 ms, and of 432 to a speaker already taught or partly taught,
+/// 10%, by up to 10 ms. A speaker taught for hours already is drawn only as
+/// far as a precise fit and its error allow.
 pub const FIT_PULL_PER_ESTIMATE: f64 = 0.1;
 
 /// Most the clock fit moves the integral per estimate, in ppm, so that no
