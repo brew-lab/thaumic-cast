@@ -236,8 +236,10 @@ enum WsOutgoing {
         payload: HandshakePayload,
     },
     HeartbeatAck,
+    /// A request was refused. The text travels in `payload.message`, the
+    /// shape the protocol package's `WsErrorMessageSchema` requires.
     Error {
-        message: String,
+        payload: ErrorPayload,
     },
     InitialState {
         payload: serde_json::Value,
@@ -290,6 +292,14 @@ struct StreamReadyPayload {
     buffer_size: usize,
 }
 
+/// Payload of an `ERROR` message.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ErrorPayload {
+    /// Why the request was refused, in words the client can show.
+    message: String,
+}
+
 /// Payload for playback error notification.
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -322,6 +332,15 @@ struct WsMutePayload {
 }
 
 impl WsOutgoing {
+    /// Builds an `ERROR` message carrying `message` for the client to show.
+    fn error(message: impl Into<String>) -> Self {
+        Self::Error {
+            payload: ErrorPayload {
+                message: message.into(),
+            },
+        }
+    }
+
     /// Serializes the message to a WebSocket text message.
     fn to_message(&self) -> Option<Message> {
         serde_json::to_string(self)
@@ -353,9 +372,7 @@ where
 {
     match result {
         Ok(value) => response_fn(value),
-        Err(e) => WsOutgoing::Error {
-            message: e.to_string(),
-        },
+        Err(e) => WsOutgoing::error(e.to_string()),
     }
 }
 
@@ -745,7 +762,7 @@ fn dispatch_control_command(
             }
         };
         log::warn!("[WS] Control command dropped: {}", message);
-        WsOutgoing::Error { message }
+        WsOutgoing::error(message)
     })
 }
 
@@ -1158,23 +1175,41 @@ enum HandshakeResult {
     Error(String),
 }
 
-/// Resolves input codec string to output codec.
+/// Codec names a current client offers, in the order the error message lists
+/// them. `packages/protocol/fixtures/codecs.json` pins the same set from the
+/// protocol side.
+const OFFERED_CODECS: &[&str] = &["pcm", "aac-lc", "he-aac", "he-aac-v2", "flac"];
+
+/// Resolves the codec a client states in its handshake to the codec served.
 ///
 /// Maps extension codec names to the `AudioCodec` enum used for HTTP Content-Type
-/// and Sonos transport configuration.
-fn resolve_codec(codec_str: Option<&str>) -> AudioCodec {
+/// and Sonos transport configuration. A handshake that names no codec is a
+/// legacy client and gets PCM; `aac`, `wav` and `mp3` are names older clients
+/// sent and stay accepted.
+///
+/// A name this server has no stream for is an error, never a guess: serving
+/// PCM headers over another codec's frames plays as noise or not at all.
+fn resolve_codec(codec_str: Option<&str>) -> Result<AudioCodec, String> {
     match codec_str {
+        None => {
+            log::info!("[WS] No codec in handshake, using PCM");
+            Ok(AudioCodec::Pcm)
+        }
         Some("pcm") => {
             log::info!("[WS] PCM codec selected");
-            AudioCodec::Pcm
+            Ok(AudioCodec::Pcm)
         }
-        Some("aac") | Some("aac-lc") | Some("he-aac") | Some("he-aac-v2") => AudioCodec::Aac,
-        Some("mp3") => AudioCodec::Mp3,
-        Some("flac") => AudioCodec::Flac,
-        Some("wav") => AudioCodec::Pcm, // Legacy alias
-        _ => {
-            log::warn!("[WS] Unknown codec {:?}, defaulting to PCM", codec_str);
-            AudioCodec::Pcm
+        Some("aac" | "aac-lc" | "he-aac" | "he-aac-v2") => Ok(AudioCodec::Aac),
+        Some("mp3") => Ok(AudioCodec::Mp3),
+        Some("flac") => Ok(AudioCodec::Flac),
+        Some("wav") => Ok(AudioCodec::Pcm), // Legacy alias
+        Some(other) => {
+            log::error!("[WS] Unsupported codec {:?}, refusing the stream", other);
+            Err(format!(
+                "Unsupported codec \"{}\". This companion can stream: {}.",
+                other,
+                OFFERED_CODECS.join(", ")
+            ))
         }
     }
 }
@@ -1198,7 +1233,7 @@ fn parse_stream_config(payload: &HandshakeRequest) -> Result<StreamConfig, Strin
         .map(|c| c.codec.as_str())
         .or(payload.codec.as_deref());
 
-    let codec = resolve_codec(codec_str);
+    let codec = resolve_codec(codec_str)?;
 
     let sample_rate = payload
         .encoder_config
@@ -1388,10 +1423,9 @@ async fn handle_start_browser_capture(
             conn.remote_addr(),
             conn.id()
         );
-        let msg = WsOutgoing::Error {
-            message: "Browser capture is only available to clients on the companion's machine"
-                .into(),
-        };
+        let msg = WsOutgoing::error(
+            "Browser capture is only available to clients on the companion's machine",
+        );
         if let Some(msg) = msg.to_message() {
             let _ = sender.send(msg).await;
         }
@@ -1400,9 +1434,7 @@ async fn handle_start_browser_capture(
 
     // Reject if already capturing
     if capture.session.is_some() {
-        let msg = WsOutgoing::Error {
-            message: "Browser capture already active on this connection".into(),
-        };
+        let msg = WsOutgoing::error("Browser capture already active on this connection");
         if let Some(msg) = msg.to_message() {
             let _ = sender.send(msg).await;
         }
@@ -1413,9 +1445,7 @@ async fn handle_start_browser_capture(
     let factory = match &state.capture_factory {
         Some(f) if f.available() => f,
         _ => {
-            let msg = WsOutgoing::Error {
-                message: "Browser capture is not available on this platform".into(),
-            };
+            let msg = WsOutgoing::error("Browser capture is not available on this platform");
             if let Some(msg) = msg.to_message() {
                 let _ = sender.send(msg).await;
             }
@@ -1427,9 +1457,7 @@ async fn handle_start_browser_capture(
     let source = match factory.create_source(payload.browser_name.as_deref()) {
         Ok(s) => s,
         Err(e) => {
-            let msg = WsOutgoing::Error {
-                message: format!("Failed to create capture source: {}", e),
-            };
+            let msg = WsOutgoing::error(format!("Failed to create capture source: {}", e));
             if let Some(msg) = msg.to_message() {
                 let _ = sender.send(msg).await;
             }
@@ -1444,9 +1472,7 @@ async fn handle_start_browser_capture(
     }) {
         Ok(c) => c,
         Err(e) => {
-            let msg = WsOutgoing::Error {
-                message: format!("Invalid encoder config: {}", e),
-            };
+            let msg = WsOutgoing::error(format!("Invalid encoder config: {}", e));
             if let Some(msg) = msg.to_message() {
                 let _ = sender.send(msg).await;
             }
@@ -1520,16 +1546,15 @@ async fn handle_start_browser_capture(
                 }
             } else {
                 log::warn!("[WS] Browser capture: timeout waiting for first audio frame");
-                let msg = WsOutgoing::Error {
-                    message: "Timeout waiting for audio from browser. Is audio playing?".into(),
-                };
+                let msg =
+                    WsOutgoing::error("Timeout waiting for audio from browser. Is audio playing?");
                 if let Some(msg) = msg.to_message() {
                     let _ = sender.send(msg).await;
                 }
             }
         }
         Err(e) => {
-            let msg = WsOutgoing::Error { message: e };
+            let msg = WsOutgoing::error(e);
             if let Some(msg) = msg.to_message() {
                 let _ = sender.send(msg).await;
             }
@@ -1562,9 +1587,7 @@ async fn handle_stop_browser_capture(
             guard.disarm();
         }
     } else {
-        let msg = WsOutgoing::Error {
-            message: "No active browser capture to stop".into(),
-        };
+        let msg = WsOutgoing::error("No active browser capture to stop");
         if let Some(msg) = msg.to_message() {
             let _ = sender.send(msg).await;
         }
@@ -1867,7 +1890,7 @@ async fn handle_ws(
                                         }
                                     }
                                     HandshakeResult::Error(e) => {
-                                        let err = WsOutgoing::Error { message: e };
+                                        let err = WsOutgoing::error(e);
                                         if let Some(msg) = err.to_message() {
                                             let _ = sender.send(msg).await;
                                         }
@@ -2204,6 +2227,105 @@ mod tests {
             coordinator_uuid: None,
             original_coordinator_uuid: None,
         }
+    }
+
+    // ─────────────────────────────────────────────────────────────────────
+    // Codec contract with the protocol package
+    // ─────────────────────────────────────────────────────────────────────
+
+    /// The codecs the extension can offer, written by the protocol package's
+    /// tests from `IMPLEMENTED_CODECS`.
+    const PROTOCOL_CODECS: &str = include_str!("../../../protocol/fixtures/codecs.json");
+
+    /// The `ERROR` message as the protocol package's schema accepts it.
+    const PROTOCOL_WS_ERROR: &str = include_str!("../../../protocol/fixtures/ws-error.json");
+
+    fn handshake_for(codec: &str) -> HandshakeRequest {
+        serde_json::from_value(serde_json::json!({ "encoderConfig": { "codec": codec } }))
+            .expect("valid handshake")
+    }
+
+    #[test]
+    fn resolve_codec_maps_every_accepted_name() {
+        for (name, codec) in [
+            (Some("pcm"), AudioCodec::Pcm),
+            (Some("aac-lc"), AudioCodec::Aac),
+            (Some("he-aac"), AudioCodec::Aac),
+            (Some("he-aac-v2"), AudioCodec::Aac),
+            (Some("flac"), AudioCodec::Flac),
+            // Names older clients sent.
+            (Some("aac"), AudioCodec::Aac),
+            (Some("wav"), AudioCodec::Pcm),
+            (Some("mp3"), AudioCodec::Mp3),
+            // A handshake with no codec at all is a legacy client.
+            (None, AudioCodec::Pcm),
+        ] {
+            assert_eq!(resolve_codec(name), Ok(codec), "{name:?}");
+        }
+    }
+
+    #[test]
+    fn resolve_codec_refuses_a_name_it_has_no_stream_for() {
+        for name in ["vorbis", "opus", "", "PCM", "aac-lc "] {
+            let error = resolve_codec(Some(name)).expect_err(name);
+            assert!(
+                error.contains(&format!("\"{name}\"")),
+                "the error must name the codec: {error}"
+            );
+        }
+    }
+
+    #[test]
+    fn every_codec_the_protocol_offers_is_one_core_serves() {
+        let offered: Vec<String> =
+            serde_json::from_str(PROTOCOL_CODECS).expect("codecs.json is a list of names");
+        assert!(!offered.is_empty());
+
+        for name in &offered {
+            assert!(
+                resolve_codec(Some(name)).is_ok(),
+                "the extension offers {name:?} but core has no stream for it"
+            );
+        }
+        // The list core names in its refusal is the same list.
+        assert_eq!(offered, OFFERED_CODECS);
+    }
+
+    #[test]
+    fn a_handshake_naming_an_unknown_codec_is_refused_with_its_name() {
+        let error = match parse_stream_config(&handshake_for("vorbis")) {
+            Ok(_) => panic!("vorbis must not be served as another codec"),
+            Err(error) => error,
+        };
+        assert!(error.contains("\"vorbis\""), "{error}");
+
+        // The legacy top-level field is held to the same rule.
+        let legacy: HandshakeRequest =
+            serde_json::from_value(serde_json::json!({ "codec": "opus" })).unwrap();
+        assert!(parse_stream_config(&legacy).is_err());
+    }
+
+    #[test]
+    fn a_handshake_naming_no_codec_is_still_pcm() {
+        let legacy: HandshakeRequest = serde_json::from_value(serde_json::json!({})).unwrap();
+        let config = parse_stream_config(&legacy)
+            .ok()
+            .expect("a handshake without a codec is a legacy client");
+        assert_eq!(config.codec, AudioCodec::Pcm);
+    }
+
+    #[test]
+    fn error_messages_carry_their_text_in_the_payload() {
+        let expected: serde_json::Value =
+            serde_json::from_str(PROTOCOL_WS_ERROR).expect("ws-error.json is JSON");
+        let message = expected["payload"]["message"]
+            .as_str()
+            .expect("the fixture has payload.message");
+
+        let sent: serde_json::Value =
+            serde_json::from_str(&json(&WsOutgoing::error(message))).unwrap();
+
+        assert_eq!(sent, expected);
     }
 
     // ─────────────────────────────────────────────────────────────────────
@@ -2803,9 +2925,10 @@ mod tests {
     #[track_caller]
     fn assert_error_contains(reply: &WsOutgoing, needle: &str) {
         match reply {
-            WsOutgoing::Error { message } => assert!(
-                message.contains(needle),
-                "expected ERROR containing {needle:?}, got {message:?}"
+            WsOutgoing::Error { payload } => assert!(
+                payload.message.contains(needle),
+                "expected ERROR containing {needle:?}, got {:?}",
+                payload.message
             ),
             other => panic!("expected an ERROR reply, got {other:?}"),
         }

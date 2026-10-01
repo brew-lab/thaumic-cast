@@ -1,4 +1,6 @@
 import { describe, expect, it } from 'bun:test';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 
 import {
   WsControlCommandSchema,
@@ -39,6 +41,23 @@ describe('WsMessageSchema', () => {
     expect(WsMessageSchema.safeParse({ type: 'ERROR', payload: { message: 'x' } }).success).toBe(
       true,
     );
+  });
+
+  it('should accept the ERROR message exactly as core serialises it', () => {
+    // A thaumic-core test builds its ERROR message and compares it with this
+    // same file, so the two sides cannot drift apart unnoticed.
+    const fixture: unknown = JSON.parse(
+      readFileSync(join(import.meta.dir, '../fixtures/ws-error.json'), 'utf8'),
+    );
+
+    const parsed = WsMessageSchema.parse(fixture);
+
+    expect(parsed).toEqual(fixture as WsMessage);
+    expect(parsed.type === 'ERROR' && parsed.payload.message).toBe('Unsupported codec "opus"');
+  });
+
+  it('should reject the ERROR shape core used to send', () => {
+    expect(WsMessageSchema.safeParse({ type: 'ERROR', message: 'x' }).success).toBe(false);
   });
 
   it('should reject a message type it does not know', () => {
