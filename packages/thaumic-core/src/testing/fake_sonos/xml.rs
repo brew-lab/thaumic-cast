@@ -166,20 +166,28 @@ fn property_set(properties: &str) -> String {
     )
 }
 
-/// An AVTransport NOTIFY body: a `LastChange` event with the transport state
-/// and current track URI, escaped once as element text like hardware does.
-pub(super) fn av_transport_notify(state: TransportState, current_uri: &str) -> String {
+/// An AVTransport NOTIFY body: a `LastChange` event with the transport
+/// state, the current track URI and the queued next URI (empty when nothing
+/// is queued), escaped once as element text like hardware does.
+pub(super) fn av_transport_notify(
+    state: TransportState,
+    current_uri: &str,
+    next_uri: &str,
+) -> String {
     let uri = escape_xml(current_uri);
+    let next = escape_xml(next_uri);
     let event = format!(
         concat!(
             r#"<Event xmlns="urn:schemas-upnp-org:metadata-1-0/AVT/" "#,
             r#"xmlns:r="urn:schemas-rinconnetworks-com:metadata-1-0/"><InstanceID val="0">"#,
             r#"<TransportState val="{state}"/><CurrentPlayMode val="NORMAL"/>"#,
             r#"<CurrentTrackURI val="{uri}"/><AVTransportURI val="{uri}"/>"#,
+            r#"<NextAVTransportURI val="{next}"/>"#,
             "</InstanceID></Event>"
         ),
         state = transport_state_str(state),
-        uri = uri
+        uri = uri,
+        next = next
     );
     property_set(&format!(
         "<e:property><LastChange>{}</LastChange></e:property>",

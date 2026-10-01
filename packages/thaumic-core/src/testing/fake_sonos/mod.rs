@@ -30,6 +30,13 @@
 //!   headers, which is the earliest moment a real speaker could be fetching,
 //!   so a test can assert on the fetch the instant `play_uri` returns.
 //!   `x-rincon:` and `x-rincon-queue:` URIs never fetch.
+//! * `SetNextAVTransportURI` queues one next item. When the body of the
+//!   stream being played ends on its own (the server closed a segment at its
+//!   declared length), the speaker moves to the queued item and fetches it
+//!   the same way, staying `PLAYING`; with nothing queued it stays as it is.
+//!   A `SetAVTransportURI` or leaving a group empties the queue, and the
+//!   AVTransport NOTIFY reports it as `NextAVTransportURI`, empty when
+//!   nothing is queued.
 //! * Every SOAP action and GENA request is appended to one ordered call log
 //!   for the household. Unknown actions answer with a SOAP fault (UPnP 401)
 //!   so a test fails loudly instead of silently succeeding.
@@ -42,7 +49,10 @@
 //!   ZoneGroupTopology, built from the current model.
 //!
 //! Not modelled: satellites and bridges, group volume propagation to members,
-//! transport transitions over time, and the 1400/1410 device-description
+//! transport transitions over time (a speaker that plays a stream out never
+//! reports `STOPPED` by itself, and its position does not advance), the
+//! header-only fetch a Play:1 makes of a queued item the moment it is queued,
+//! and the 1400/1410 device-description
 //! probe (`probe_speaker_by_ip` hard-codes those ports, so the description
 //! this serves is only reachable through the port-aware client).
 
@@ -158,6 +168,8 @@ type FetchObserver = Box<dyn Fn(&FakeSpeaker, &str) + Send + Sync>;
 struct SpeakerState {
     transport: TransportState,
     current_uri: String,
+    /// The item queued with `SetNextAVTransportURI`; empty when none is.
+    next_uri: String,
     coordinator_uuid: String,
     volume: u8,
     mute: bool,
@@ -202,6 +214,7 @@ impl FakeSpeaker {
             state: Mutex::new(SpeakerState {
                 transport: TransportState::Stopped,
                 current_uri: String::new(),
+                next_uri: String::new(),
                 coordinator_uuid: String::new(),
                 volume: 25,
                 mute: false,
@@ -225,6 +238,11 @@ impl FakeSpeaker {
 
     pub fn current_uri(&self) -> String {
         self.state.lock().current_uri.clone()
+    }
+
+    /// The URI queued as this speaker's next item; empty when none is.
+    pub fn next_uri(&self) -> String {
+        self.state.lock().next_uri.clone()
     }
 
     /// UUID of the coordinator this speaker follows; its own when standalone.
@@ -262,8 +280,21 @@ impl FakeSpeaker {
 
     /// Fetches `url` from this speaker's own address, records the outcome,
     /// and keeps the connection open (discarding the body) until aborted.
-    async fn start_fetch(&self, system: &FakeSonosSystem, url: String) {
+    ///
+    /// A body that ends on its own hands over to the queued next item, if
+    /// there is one: see [`Self::drain_and_follow_queue`].
+    async fn start_fetch(self: &Arc<Self>, system: &Arc<FakeSonosSystem>, url: String) {
         self.abort_fetch();
+        let response = self.fetch_once(system, url).await;
+        let drain = response.map(|response| {
+            tokio::spawn(Arc::clone(self).drain_and_follow_queue(Arc::downgrade(system), response))
+        });
+        self.state.lock().fetch = drain;
+    }
+
+    /// Issues one stream fetch and records its outcome. Returns the response
+    /// when the server answered, with its body still unread.
+    async fn fetch_once(&self, system: &FakeSonosSystem, url: String) -> Option<reqwest::Response> {
         system.observe_fetch(self, &url);
 
         let response = self.fetcher.get(&url).send().await;
@@ -280,25 +311,69 @@ impl FakeSpeaker {
             }
         };
 
-        let drain = body.map(|mut response| {
-            tokio::spawn(async move { while let Ok(Some(_)) = response.chunk().await {} })
-        });
-
-        let mut state = self.state.lock();
-        state.fetches.push(FetchRecord {
+        self.state.lock().fetches.push(FetchRecord {
             url,
             local_ip: IpAddr::V4(self.ip),
             status,
         });
-        state.fetch = drain;
+        body
+    }
+
+    /// Discards a stream body for as long as it lasts. When it ends on its
+    /// own and an item is queued, moves on to that item as hardware does at
+    /// the end of a track: it becomes the current URI, the queue empties, and
+    /// its stream is fetched and drained in turn.
+    ///
+    /// Runs as the speaker's fetch task, so `Stop` or a new URI ends it at
+    /// whichever point it has reached.
+    async fn drain_and_follow_queue(
+        self: Arc<Self>,
+        system: SystemHandle,
+        mut response: reqwest::Response,
+    ) {
+        loop {
+            loop {
+                match response.chunk().await {
+                    Ok(Some(_)) => {}
+                    Ok(None) => break,
+                    // The connection broke: not the end of the track.
+                    Err(_) => return,
+                }
+            }
+
+            let Some(next) = self.advance_to_queued() else {
+                return;
+            };
+            let Some(url) = stream_fetch_url(&next) else {
+                return;
+            };
+            let Some(system) = system.upgrade() else {
+                return;
+            };
+            match self.fetch_once(&system, url).await {
+                Some(next_response) => response = next_response,
+                None => return,
+            }
+        }
+    }
+
+    /// Makes the queued item the current one, if the speaker is playing and
+    /// has one queued, and returns its URI.
+    fn advance_to_queued(&self) -> Option<String> {
+        let mut state = self.state.lock();
+        if state.transport != TransportState::Playing || state.next_uri.is_empty() {
+            return None;
+        }
+        state.current_uri = std::mem::take(&mut state.next_uri);
+        Some(state.current_uri.clone())
     }
 
     /// Applies one SOAP action to this speaker's state.
     ///
     /// Returns the response arguments, or the UPnP error code of a fault.
     async fn apply(
-        &self,
-        system: &FakeSonosSystem,
+        self: &Arc<Self>,
+        system: &Arc<FakeSonosSystem>,
         service: SonosService,
         action: &str,
         args: &[(String, String)],
@@ -327,6 +402,11 @@ impl FakeSpeaker {
                     None => self.uuid.clone(),
                 };
                 state.current_uri = uri;
+                state.next_uri.clear();
+                vec![]
+            }
+            (SonosService::AVTransport, "SetNextAVTransportURI") => {
+                self.state.lock().next_uri = arg("NextURI").to_string();
                 vec![]
             }
             (SonosService::AVTransport, "Play") => {
@@ -355,6 +435,7 @@ impl FakeSpeaker {
                 state.transport = TransportState::Stopped;
                 state.coordinator_uuid = self.uuid.clone();
                 state.current_uri.clear();
+                state.next_uri.clear();
                 vec![]
             }
             (SonosService::AVTransport, "GetPositionInfo") => {
@@ -856,7 +937,8 @@ impl FakeSonosSystem {
     }
 
     /// Pushes an AVTransport NOTIFY for the speaker at `speaker_ip` and
-    /// returns the HTTP status the callback answered with.
+    /// returns the HTTP status the callback answered with. The event names
+    /// the item the speaker has queued as its next, empty when none is.
     pub async fn notify_av_transport(
         &self,
         speaker_ip: &str,
@@ -864,8 +946,12 @@ impl FakeSonosSystem {
         current_uri: &str,
     ) -> u16 {
         let sub = self.required_subscription(speaker_ip, SonosService::AVTransport);
-        self.push_notify(&sub, xml::av_transport_notify(state, current_uri))
-            .await
+        let next_uri = self.speaker_at(speaker_ip).next_uri();
+        self.push_notify(
+            &sub,
+            xml::av_transport_notify(state, current_uri, &next_uri),
+        )
+        .await
     }
 
     /// Pushes a RenderingControl NOTIFY (per-speaker volume and mute).
@@ -920,6 +1006,11 @@ impl Drop for FakeSonosSystem {
     fn drop(&mut self) {
         for server in self.servers.lock().drain(..) {
             server.abort();
+        }
+        // A fetch task keeps its speaker alive, so the speaker's own drop
+        // cannot be what ends it.
+        for speaker in &self.speakers {
+            speaker.abort_fetch();
         }
     }
 }
