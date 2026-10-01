@@ -1,75 +1,32 @@
 import type { EncoderConfig } from '@thaumic-cast/protocol';
 import { CODEC_METADATA } from '@thaumic-cast/protocol';
 import { BaseAudioEncoder, type ChromeAudioEncoderConfig } from './base-encoder';
+import { ADTS_HEADER_LENGTH, adtsParamsForCodec, buildAdtsHeader, type AdtsParams } from './adts';
 import type { LatencyMode } from './types';
-
-/**
- * ADTS (Audio Data Transport Stream) frame header constants.
- * ADTS provides framing for AAC audio, enabling streaming without container formats.
- * See ISO/IEC 13818-7 for full specification.
- */
-const ADTS = {
-  /** AAC-LC profile identifier (Low Complexity) */
-  PROFILE_AAC_LC: 1,
-  /** HE-AAC profile identifier (High Efficiency, uses SBR) */
-  PROFILE_HE_AAC: 4,
-  /** Sync word byte 0: always 0xFF */
-  SYNC_BYTE_0: 0xff,
-  /** Sync word byte 1: 0xF1 = sync(4) + MPEG-4(1) + Layer(2) + no CRC(1) */
-  SYNC_BYTE_1: 0xf1,
-  /** VBR indicator for buffer fullness field (5 bits, all 1s = 0x1F) */
-  BUFFER_FULLNESS_VBR_5BIT: 0x1f,
-  /** Byte 6: VBR fullness end (6 bits = 0x3F << 2) + 1 frame (0b00) = 0xFC */
-  BYTE_6_VBR_ONE_FRAME: 0xfc,
-} as const;
-
-/**
- * Sample rate index table for ADTS header.
- */
-const SAMPLE_RATE_INDEX: Record<number, number> = {
-  96000: 0,
-  88200: 1,
-  64000: 2,
-  48000: 3,
-  44100: 4,
-  32000: 5,
-  24000: 6,
-  22050: 7,
-  16000: 8,
-  12000: 9,
-  11025: 10,
-  8000: 11,
-  7350: 12,
-};
 
 /**
  * AAC encoder using WebCodecs AudioEncoder API.
  * Outputs ADTS-wrapped frames suitable for streaming.
  */
 export class AacEncoder extends BaseAudioEncoder {
-  private readonly profile: number;
-  private readonly sampleRateIndex: number;
+  /** What the ADTS header declares, fixed for the life of the encoder */
+  private readonly adtsParams: AdtsParams;
 
   /** Pre-allocated 7-byte ADTS header to avoid per-frame allocation */
-  private readonly adtsHeader = new Uint8Array(7);
+  private readonly adtsHeader = new Uint8Array(ADTS_HEADER_LENGTH);
 
   /**
    * Creates a new AAC encoder instance.
    * @param config - The encoder configuration
+   * @throws {RangeError} If ADTS cannot describe the configured rate or channels
    */
   constructor(config: EncoderConfig) {
     super(config);
 
-    // HE-AAC and HE-AAC v2 both use the same ADTS profile (SBR signaling).
-    // For HE-AAC v2, Parametric Stereo (PS) is detected in-band by the decoder.
-    this.profile = config.codec.startsWith('he-aac') ? ADTS.PROFILE_HE_AAC : ADTS.PROFILE_AAC_LC;
-    this.sampleRateIndex = SAMPLE_RATE_INDEX[config.sampleRate] ?? 3;
-
-    // Pre-compute static ADTS header fields (bytes 0-2 are mostly static)
-    this.adtsHeader[0] = ADTS.SYNC_BYTE_0;
-    this.adtsHeader[1] = ADTS.SYNC_BYTE_1;
-    this.adtsHeader[2] =
-      ((this.profile - 1) << 6) | (this.sampleRateIndex << 2) | ((config.channels >> 2) & 0x01);
+    this.adtsParams = adtsParamsForCodec(config.codec, config.sampleRate, config.channels);
+    // Build one header now so a stream ADTS cannot describe fails here, at
+    // cast start, and not on the first encoded frame.
+    this.writeAdtsHeader(0);
   }
 
   /**
@@ -119,29 +76,27 @@ export class AacEncoder extends BaseAudioEncoder {
   }
 
   /**
+   * Writes the ADTS header for a frame into the pre-allocated buffer.
+   * @param payloadLength - Length of the raw AAC frame in bytes
+   * @returns The pre-allocated header buffer
+   */
+  private writeAdtsHeader(payloadLength: number): Uint8Array {
+    const { objectType, sampleRate, channels } = this.adtsParams;
+    return buildAdtsHeader(objectType, sampleRate, channels, payloadLength, this.adtsHeader);
+  }
+
+  /**
    * Wraps raw AAC data with an ADTS header.
-   * Uses pre-allocated header buffer; only bytes 3-6 vary per frame.
    * @param rawAac - The raw AAC frame data
    * @returns ADTS-wrapped frame
    */
   private wrapWithAdts(rawAac: Uint8Array): Uint8Array<ArrayBuffer> {
-    const frameLength = rawAac.byteLength + 7;
-    const h = this.adtsHeader;
-
-    // Bytes 0-2 are pre-computed in constructor (static per encoder instance)
-    // Byte 3: Channel config end (2 bits) + Original/Home/Copyright (4 bits) + Frame length start (2 bits)
-    h[3] = ((this.config.channels & 0x03) << 6) | ((frameLength >> 11) & 0x03);
-    // Byte 4: Frame length middle (8 bits)
-    h[4] = (frameLength >> 3) & 0xff;
-    // Byte 5: Frame length end (3 bits) + Buffer fullness start (5 bits, VBR indicator)
-    h[5] = ((frameLength & 0x07) << 5) | ADTS.BUFFER_FULLNESS_VBR_5BIT;
-    // Byte 6: Buffer fullness end (6 bits, VBR) + Number of AAC frames - 1 (2 bits, = 1 frame)
-    h[6] = ADTS.BYTE_6_VBR_ONE_FRAME;
+    const header = this.writeAdtsHeader(rawAac.byteLength);
 
     // Still need to allocate the output frame (unavoidable - data must be copied)
-    const adtsFrame = new Uint8Array(frameLength);
-    adtsFrame.set(h);
-    adtsFrame.set(rawAac, 7);
+    const adtsFrame = new Uint8Array(header.byteLength + rawAac.byteLength);
+    adtsFrame.set(header);
+    adtsFrame.set(rawAac, header.byteLength);
 
     return adtsFrame;
   }
