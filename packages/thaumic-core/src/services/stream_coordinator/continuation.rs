@@ -679,17 +679,16 @@ impl StreamCoordinator {
             return;
         }
         let name = Self::speaker_name(session);
-        if self
-            .continuations
-            .next_unreliable
-            .lock()
-            .insert(name.clone())
-        {
+        if self.continuations.next_unreliable.lock().insert(name) {
             log::warn!(
-                "[Stream] Continuation next unreliable: speaker={} ({}) reason={}; every later \
-                 boundary restarts it until the server restarts",
+                "[Stream] Continuation next unreliable: speaker={} (remembered by {}) reason={}; \
+                 every later boundary restarts it until the server restarts",
                 session.speaker_ip,
-                name,
+                if session.coordinator_uuid.is_some() {
+                    "uuid"
+                } else {
+                    "address"
+                },
                 why
             );
         }
