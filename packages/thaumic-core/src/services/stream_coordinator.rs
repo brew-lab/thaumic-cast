@@ -806,18 +806,26 @@ impl StreamCoordinator {
             return vec![];
         }
 
-        // Get stream state for codec and audio format
-        let stream_state = self.get_stream(stream_id);
-
-        let codec = stream_state
-            .as_ref()
-            .map(|s| s.codec)
-            .unwrap_or(AudioCodec::Aac);
-
-        let audio_format = stream_state
-            .as_ref()
-            .map(|s| s.audio_format)
-            .unwrap_or_default();
+        // The codec and format decide the URI and metadata a speaker is given,
+        // so a stream that no longer exists is refused, not guessed at.
+        let Some(stream_state) = self.get_stream(stream_id) else {
+            log::warn!(
+                "[Playback] Stream {} not found, refusing playback on {} speaker(s)",
+                stream_id,
+                speaker_ips.len()
+            );
+            return speaker_ips
+                .iter()
+                .map(|speaker_ip| PlaybackResult {
+                    speaker_ip: speaker_ip.clone(),
+                    success: false,
+                    stream_url: None,
+                    error: Some(format!("Stream not found: {stream_id}")),
+                })
+                .collect();
+        };
+        let codec = stream_state.codec;
+        let audio_format = stream_state.audio_format;
 
         // Never hand a speaker a URL on an address it cannot reach when one it
         // can is available. The artwork URL was built by the caller from the
@@ -2271,6 +2279,45 @@ mod tests {
                     .stream_id,
                 taker
             );
+        }
+
+        #[tokio::test]
+        async fn playback_of_a_stream_that_does_not_exist_is_refused_per_speaker() {
+            // The codec decides the URI a speaker is handed. With no stream to
+            // read it from, nothing may be sent to a speaker on a guess.
+            let sonos = Arc::new(TrackingSonosPlayback::new());
+            let coord = create_coordinator_with(
+                Arc::clone(&sonos) as Arc<dyn SonosPlayback>,
+                create_sonos_state_with_members(&[
+                    ("192.168.1.100", "RINCON_A"),
+                    ("192.168.1.101", "RINCON_B"),
+                ]),
+                Arc::new(CollectingEventEmitter::new()) as Arc<dyn EventEmitter>,
+            );
+
+            for speakers in [
+                vec!["192.168.1.100".to_string()],
+                vec!["192.168.1.100".to_string(), "192.168.1.101".to_string()],
+            ] {
+                let results = coord
+                    .start_playback_multi(&speakers, "no-such-stream", None, "", true)
+                    .await;
+
+                assert_eq!(results.len(), speakers.len());
+                for (result, speaker) in results.iter().zip(&speakers) {
+                    assert_eq!(&result.speaker_ip, speaker);
+                    assert!(!result.success);
+                    assert_eq!(result.stream_url, None);
+                    assert_eq!(
+                        result.error.as_deref(),
+                        Some("Stream not found: no-such-stream")
+                    );
+                }
+            }
+
+            assert_eq!(sonos.play_uri_count.load(Ordering::SeqCst), 0);
+            assert_eq!(sonos.stop_count.load(Ordering::SeqCst), 0);
+            assert_eq!(sonos.join_group_count.load(Ordering::SeqCst), 0);
         }
 
         #[tokio::test]
