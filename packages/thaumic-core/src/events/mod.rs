@@ -252,6 +252,10 @@ pub enum LinkQuality {
 pub enum SpeakerHealthState {
     /// Measuring, but the estimate is not yet precise or settled.
     Locking,
+    /// The stream's codec gives no reserve to measure (any compressed
+    /// codec): the speaker is polled and nothing is known to be wrong, but
+    /// no reserve figures will come.
+    Unmeasured,
     /// The reserve is measured and healthy.
     Ok,
     /// The speaker plays faster than the audio arrives and its reserve is
@@ -646,6 +650,7 @@ mod tests {
     fn speaker_health_state_wire_strings() {
         let wire = |s: SpeakerHealthState| serde_json::to_string(&s).unwrap();
         assert_eq!(wire(SpeakerHealthState::Locking), "\"locking\"");
+        assert_eq!(wire(SpeakerHealthState::Unmeasured), "\"unmeasured\"");
         assert_eq!(wire(SpeakerHealthState::Ok), "\"ok\"");
         assert_eq!(wire(SpeakerHealthState::Draining), "\"draining\"");
         assert_eq!(wire(SpeakerHealthState::Low), "\"low\"");

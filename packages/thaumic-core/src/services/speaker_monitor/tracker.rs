@@ -420,6 +420,11 @@ pub struct PreBreak {
 pub enum MonitorState {
     /// Measuring, but the estimate is not yet precise or settled.
     Locking,
+    /// The connection's codec gives no reserve to measure: a compressed
+    /// stream's delivered bytes say nothing exact about playback time, so
+    /// only the speaker's clock is fitted. Nothing is known to be wrong, and
+    /// no estimate will ever lock.
+    Unmeasured,
     /// The estimate is locked.
     Ok,
     /// The estimate is locked and the reserve is projected to reach the low
@@ -442,6 +447,7 @@ impl MonitorState {
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Locking => "locking",
+            Self::Unmeasured => "unmeasured",
             Self::Ok => "ok",
             Self::Draining => "draining",
             Self::Low => "low",
@@ -456,6 +462,7 @@ impl From<MonitorState> for crate::events::SpeakerHealthState {
     fn from(state: MonitorState) -> Self {
         match state {
             MonitorState::Locking => Self::Locking,
+            MonitorState::Unmeasured => Self::Unmeasured,
             MonitorState::Ok => Self::Ok,
             MonitorState::Draining => Self::Draining,
             MonitorState::Low => Self::Low,
@@ -1465,6 +1472,13 @@ impl ReserveTracker {
     }
 
     /// The state to report, given what the monitor knows beyond the polls.
+    ///
+    /// A compressed connection is [`MonitorState::Unmeasured`] whenever a PCM
+    /// one would be locking, healthy, draining or low: its reserve is never
+    /// estimated (see [`Self::estimate`]), so "locking" would be a wait for
+    /// something that cannot come. What the polls show without a reserve
+    /// (not playing, not answering, playing something else) is reported for
+    /// either codec.
     pub fn state(&self, dormant: bool, stale: bool) -> MonitorState {
         if dormant {
             MonitorState::Dormant
@@ -1472,6 +1486,8 @@ impl ReserveTracker {
             MonitorState::Stale
         } else if self.paused() {
             MonitorState::Paused
+        } else if self.started && !self.pcm {
+            MonitorState::Unmeasured
         } else if self.last.is_some_and(|e| e.locked()) {
             if self.low {
                 MonitorState::Low
@@ -1631,6 +1647,73 @@ mod tests {
         run(&mut tracker, &mut gen, 0.0, 10.0 * 60_000.0);
         assert_eq!(tracker.last_estimate(), None);
         assert!(tracker.clock().is_some());
+    }
+
+    #[test]
+    fn a_compressed_connection_reports_unmeasured_and_never_locking() {
+        let mut tracker = ReserveTracker::new();
+        tracker.start_connection(false, None);
+        assert_eq!(
+            tracker.state(false, false),
+            MonitorState::Unmeasured,
+            "from the first tick, before any poll"
+        );
+
+        // A speaker fast enough that a PCM connection would be draining.
+        let mut gen = PollGen::new(53);
+        gen.ppm = 120.0;
+        for minute in 0..10 {
+            let from = f64::from(minute) * 60_000.0;
+            run(&mut tracker, &mut gen, from, from + 60_000.0);
+            assert_eq!(tracker.state(false, false), MonitorState::Unmeasured);
+        }
+        assert_eq!(tracker.last_estimate(), None);
+        assert_eq!(tracker.time_to_floor_s(), None);
+    }
+
+    #[test]
+    fn a_compressed_connection_still_reports_what_the_polls_show() {
+        let mut tracker = ReserveTracker::new();
+        tracker.start_connection(false, None);
+        let mut gen = PollGen::new(59);
+        run(&mut tracker, &mut gen, 0.0, 60_000.0);
+
+        assert_eq!(tracker.state(true, false), MonitorState::Dormant);
+        assert_eq!(tracker.state(false, true), MonitorState::Stale);
+
+        let p = gen.next_poll();
+        tracker.observe(&p, URI, true);
+        assert_eq!(tracker.state(false, false), MonitorState::Paused);
+    }
+
+    #[test]
+    fn a_pcm_connection_is_locking_until_its_estimate_locks() {
+        let mut tracker = ReserveTracker::new();
+        assert_eq!(
+            tracker.state(false, false),
+            MonitorState::Locking,
+            "before any connection"
+        );
+        tracker.start_connection(true, H500);
+        assert_eq!(tracker.state(false, false), MonitorState::Locking);
+
+        let mut gen = PollGen::new(61);
+        run(&mut tracker, &mut gen, 0.0, 10.0 * 60_000.0);
+        assert!(tracker.last_estimate().is_some_and(|e| e.locked()));
+        assert_eq!(tracker.state(false, false), MonitorState::Ok);
+    }
+
+    #[test]
+    fn a_connection_after_a_compressed_one_is_judged_by_its_own_codec() {
+        let mut tracker = ReserveTracker::new();
+        tracker.start_connection(false, None);
+        assert_eq!(tracker.state(false, false), MonitorState::Unmeasured);
+
+        tracker.start_connection(true, H500);
+        assert_eq!(tracker.state(false, false), MonitorState::Locking);
+
+        tracker.start_connection(false, None);
+        assert_eq!(tracker.state(false, false), MonitorState::Unmeasured);
     }
 
     #[test]
