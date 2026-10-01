@@ -368,6 +368,22 @@ describe('NetworkEventSchema', () => {
     expect(NetworkEventSchema.parse(locking)).toEqual(locking);
   });
 
+  it('should parse the health of a speaker on a compressed stream', () => {
+    // No reserve is measured for a compressed codec; the clock still is.
+    const unmeasured: NetworkEvent = {
+      type: 'speakerHealth',
+      streamId: 's1',
+      speakerIp: SPEAKER,
+      epochId: 3,
+      state: 'unmeasured',
+      reserveAcked: false,
+      clockPpm: 12.5,
+      clockSePpm: 3,
+      timestamp: NOW,
+    };
+    expect(NetworkEventSchema.parse(unmeasured)).toEqual(unmeasured);
+  });
+
   it('should carry the drift correction figures, and drop a mode it does not know', () => {
     const correcting = {
       ...draining,
@@ -402,6 +418,7 @@ describe('NetworkEventSchema', () => {
     // Mirrors SpeakerHealthState in thaumic-core's events module.
     expect(SpeakerHealthStateSchema.options).toEqual([
       'locking',
+      'unmeasured',
       'ok',
       'draining',
       'low',
