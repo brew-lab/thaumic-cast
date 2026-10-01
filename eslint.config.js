@@ -4,7 +4,7 @@ import prettierConfig from 'eslint-config-prettier';
 
 export default [
   {
-    ignores: ['**/node_modules/**', '**/dist/**', '**/target/**', 'old/**'],
+    ignores: ['**/node_modules/**', '**/dist/**', '**/target/**', 'old/**', '.claude/worktrees/**'],
   },
   ...typescriptEslint.configs.recommended,
   prettierConfig,
