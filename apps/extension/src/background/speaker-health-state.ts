@@ -69,6 +69,15 @@ export function applySpeakerHealthEvent(event: SpeakerHealthEvent): void {
   });
 
   const notice = event.notice;
+  if (event.state === 'unmeasured') {
+    // A compressed stream has no reserve to measure, so the figures below
+    // would all read as unknown; say what is known instead.
+    log.debug(
+      `Speaker ${event.speakerIp} buffer not measured for this codec, ` +
+        `clock ${event.clockPpm?.toFixed(1) ?? '?'} ppm`,
+    );
+    return;
+  }
   const line =
     `Speaker ${event.speakerIp} buffer ${event.state}: ` +
     `reserve ${event.reserveMs ?? '?'}±${event.reservePrecisionMs ?? '?'} ms ` +

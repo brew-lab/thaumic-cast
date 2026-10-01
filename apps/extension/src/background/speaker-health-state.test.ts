@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, it, spyOn } from 'bun:test';
 import { createEncoderConfig } from '@thaumic-cast/protocol';
 
 import type { BackgroundToPopupMessage, SpeakerHealthEvent } from '../lib/messages';
@@ -74,6 +74,36 @@ describe('applySpeakerHealthEvent', () => {
       updatedAt: NOW + REPORT_MS,
     });
     expect(snapshot[OFFICE]?.state).toBe('locking');
+  });
+
+  it('should keep a compressed cast as unmeasured, with no reserve and no notice', () => {
+    const debug = spyOn(console, 'debug').mockImplementation(() => {});
+    const warn = spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      applySpeakerHealthEvent({
+        type: 'speakerHealth',
+        streamId: 'stream-1',
+        speakerIp: OFFICE,
+        epochId: 1,
+        state: 'unmeasured',
+        reserveAcked: false,
+        clockPpm: 12.5,
+        timestamp: NOW,
+      });
+
+      expect(getSpeakerHealth()[OFFICE]).toEqual({
+        streamId: 'stream-1',
+        epochId: 1,
+        state: 'unmeasured',
+        reserveAcked: false,
+        clockPpm: 12.5,
+        updatedAt: NOW,
+      });
+      expect(warn).not.toHaveBeenCalled();
+    } finally {
+      debug.mockRestore();
+      warn.mockRestore();
+    }
   });
 
   it('should carry the drift correction figures through as sent', () => {

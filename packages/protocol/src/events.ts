@@ -189,6 +189,10 @@ export type LatencyEvent = z.infer<typeof LatencyEventSchema>;
  * The companion's verdict on the buffer of a speaker fetching one of its streams.
  *
  * - `locking`: measuring, but the estimate is not yet precise or settled.
+ * - `unmeasured`: the stream's codec gives no reserve to measure (any
+ *   compressed codec). The speaker is polled and nothing is known to be wrong,
+ *   but no reserve figures will come. Sent by companions that know the state;
+ *   older ones report `locking` for the whole of a compressed cast.
  * - `ok`: the reserve is measured and healthy.
  * - `draining`: the speaker plays faster than the audio arrives and its reserve
  *   is projected to reach the low floor within thirty minutes.
@@ -200,6 +204,7 @@ export type LatencyEvent = z.infer<typeof LatencyEventSchema>;
  */
 export const SpeakerHealthStateSchema = z.enum([
   'locking',
+  'unmeasured',
   'ok',
   'draining',
   'low',
