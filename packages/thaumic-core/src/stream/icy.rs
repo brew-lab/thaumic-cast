@@ -8,6 +8,23 @@ use bytes::{Bytes, BytesMut};
 use super::StreamMetadata;
 pub use crate::protocol_constants::ICY_METAINT;
 
+/// Size in bytes of the blocks an ICY metadata length byte counts.
+const ICY_BLOCK_SIZE: usize = 16;
+
+/// Most bytes one ICY metadata block can carry: the length byte is a `u8`
+/// counting 16-byte blocks.
+pub const ICY_MAX_METADATA_BYTES: usize = u8::MAX as usize * ICY_BLOCK_SIZE;
+
+/// What precedes the title inside a metadata block.
+const ICY_TITLE_PREFIX: &str = "StreamTitle='";
+
+/// What follows the title inside a metadata block.
+const ICY_TITLE_SUFFIX: &str = "';";
+
+/// Most bytes of title that fit in one metadata block beside its wrapper.
+const ICY_MAX_TITLE_BYTES: usize =
+    ICY_MAX_METADATA_BYTES - ICY_TITLE_PREFIX.len() - ICY_TITLE_SUFFIX.len();
+
 /// Formats stream metadata into ICY protocol format.
 ///
 /// This struct provides stateless metadata formatting according to the
@@ -20,6 +37,10 @@ impl IcyFormatter {
     /// Per ICY spec, a single zero byte indicates no metadata change.
     /// Otherwise, the first byte is the number of 16-byte blocks, followed
     /// by the metadata string padded to that length.
+    ///
+    /// A title too long for the 255 blocks the length byte can count is cut
+    /// short on a character boundary, so the block never exceeds
+    /// [`ICY_MAX_METADATA_BYTES`] and the length byte never wraps.
     ///
     /// # Arguments
     /// * `metadata` - The stream metadata to format
@@ -53,12 +74,29 @@ impl IcyFormatter {
         // ICY metadata uses single quotes as delimiters. Instead of backslash
         // escaping (which Sonos displays literally as "It\'s"), replace with
         // Unicode RIGHT SINGLE QUOTATION MARK (U+2019) which looks identical.
-        let title = title.replace('\'', "\u{2019}");
-        let meta_str = format!("StreamTitle='{}';", title);
+        let mut title = title.replace('\'', "\u{2019}");
+
+        // The length byte counts 16-byte blocks, so a block holds 4080 bytes at
+        // most. Cut here, after the replacement: each apostrophe grew from one
+        // byte to three, so a title that fitted before it may not fit now.
+        if title.len() > ICY_MAX_TITLE_BYTES {
+            let mut end = ICY_MAX_TITLE_BYTES;
+            while !title.is_char_boundary(end) {
+                end -= 1;
+            }
+            log::debug!(
+                "[ICY] StreamTitle of {} bytes cut to {} to fit one metadata block",
+                title.len(),
+                end
+            );
+            title.truncate(end);
+        }
+
+        let meta_str = format!("{ICY_TITLE_PREFIX}{title}{ICY_TITLE_SUFFIX}");
         let meta_bytes = meta_str.as_bytes();
 
-        let num_blocks = meta_bytes.len().div_ceil(16);
-        let padded_len = num_blocks * 16;
+        let num_blocks = meta_bytes.len().div_ceil(ICY_BLOCK_SIZE);
+        let padded_len = num_blocks * ICY_BLOCK_SIZE;
 
         let mut result = Vec::with_capacity(padded_len + 1);
         result.push(num_blocks as u8);
@@ -233,6 +271,96 @@ mod tests {
         // ASCII apostrophe (U+0027) should be replaced with Unicode RIGHT SINGLE QUOTATION MARK (U+2019)
         assert!(content.contains("It\u{2019}s a Test")); // Unicode apostrophe
         assert!(!content.contains("It\u{0027}s a Test")); // NOT ASCII apostrophe
+    }
+
+    /// Splits a formatted block into its declared length and its text, checking
+    /// the block is exactly as long as its length byte says.
+    fn block_text(block: &[u8]) -> &str {
+        let declared = block[0] as usize * 16;
+        assert_eq!(
+            block.len(),
+            declared + 1,
+            "the length byte must describe the whole block"
+        );
+        std::str::from_utf8(&block[1..])
+            .expect("a cut title must still be UTF-8")
+            .trim_end_matches('\0')
+    }
+
+    fn title_block(title: String) -> Vec<u8> {
+        IcyFormatter::format_metadata(&StreamMetadata {
+            title: Some(title),
+            artist: None,
+            source: None,
+        })
+    }
+
+    #[test]
+    fn the_longest_title_that_fits_is_sent_whole() {
+        // 4,065 title bytes + the 15-byte wrapper = 4,080 = 255 blocks exactly.
+        let block = title_block("a".repeat(4065));
+
+        assert_eq!(block[0], 255);
+        assert_eq!(
+            block_text(&block),
+            format!("StreamTitle='{}';", "a".repeat(4065))
+        );
+    }
+
+    #[test]
+    fn a_title_one_byte_too_long_is_cut_not_wrapped() {
+        // 4,066 bytes would need 256 blocks, which a u8 writes as 0: "no
+        // metadata", followed by 4,096 bytes the speaker would play as audio.
+        let block = title_block("a".repeat(4066));
+
+        assert_eq!(block[0], 255);
+        assert_eq!(block.len(), ICY_MAX_METADATA_BYTES + 1);
+        assert_eq!(
+            block_text(&block),
+            format!("StreamTitle='{}';", "a".repeat(4065))
+        );
+    }
+
+    #[test]
+    fn a_title_of_apostrophes_is_cut_after_they_are_replaced() {
+        // 2,000 one-byte apostrophes become 6,000 bytes of U+2019. Cutting
+        // before the replacement would let all of them through.
+        let block = title_block("'".repeat(2000));
+
+        assert_eq!(block[0], 255);
+        assert_eq!(block.len(), ICY_MAX_METADATA_BYTES + 1);
+        // 4,065 / 3 = 1,355 whole characters, with no partial one after them.
+        assert_eq!(
+            block_text(&block),
+            format!("StreamTitle='{}';", "\u{2019}".repeat(1355))
+        );
+    }
+
+    #[test]
+    fn a_long_title_is_cut_on_a_character_boundary() {
+        // Two ASCII bytes, then 4-byte characters: the 1,016th of them would
+        // end at byte 4,066, one past the limit, and must go whole.
+        let block = title_block(format!("ab{}", "\u{1F3B5}".repeat(2000)));
+
+        // 2 + 4 * 1,015 = 4,062 is the last boundary at or under 4,065.
+        assert_eq!(
+            block_text(&block),
+            format!("StreamTitle='ab{}';", "\u{1F3B5}".repeat(1015))
+        );
+        assert_eq!(block[0], 255);
+    }
+
+    #[test]
+    fn an_artist_counts_towards_the_limit() {
+        let block = IcyFormatter::format_metadata(&StreamMetadata {
+            title: Some("t".repeat(4000)),
+            artist: Some("a".repeat(4000)),
+            source: None,
+        });
+
+        assert_eq!(block[0], 255);
+        assert_eq!(block.len(), ICY_MAX_METADATA_BYTES + 1);
+        assert!(block_text(&block).ends_with("';"));
     }
 
     #[test]
