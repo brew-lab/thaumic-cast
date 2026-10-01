@@ -47,6 +47,10 @@ export interface CodecMetadata {
 /**
  * Codecs that have encoder implementations in the extension.
  * When adding a new encoder, add the codec here to enable it in the UI.
+ *
+ * This is what the extension can offer in a handshake, so the companion must
+ * have a stream for every entry: `fixtures/codecs.json` pins this list, and a
+ * thaumic-core test resolves each name in it.
  */
 export const IMPLEMENTED_CODECS: ReadonlySet<AudioCodec> = new Set([
   'pcm',
@@ -54,7 +58,6 @@ export const IMPLEMENTED_CODECS: ReadonlySet<AudioCodec> = new Set([
   'he-aac',
   'he-aac-v2',
   'flac',
-  'vorbis',
 ]);
 
 /**
@@ -115,15 +118,6 @@ export const CODEC_METADATA: Record<AudioCodec, CodecMetadata> = {
     webCodecsId: 'flac',
     efficiency: 10.0, // Lossless - highest possible quality
     supportedBitDepths: [16, 24] as const,
-  },
-  vorbis: {
-    label: 'Ogg Vorbis',
-    description: 'Open source, good quality',
-    validBitrates: [128, 160, 192, 256, 320] as const,
-    defaultBitrate: 192,
-    webCodecsId: 'vorbis',
-    efficiency: 1.1, // Slightly better than AAC-LC
-    supportedBitDepths: [16] as const,
   },
 } as const;
 

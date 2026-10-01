@@ -54,7 +54,6 @@ import {
  * Frame size is codec-aware for optimal efficiency:
  * - AAC: 1024 samples (spec-mandated per ISO/IEC 14496-3)
  * - FLAC: 4096 samples (larger frames improve compression ratio)
- * - Vorbis: 2048 samples (good balance for VBR encoding)
  * - PCM: Configurable duration (10ms, 20ms, or 40ms) - see frameDurationMs
  *
  * Frame duration varies by sample rate (e.g., AAC 1024 samples = 21ms at 48kHz, 128ms at 8kHz).
@@ -80,9 +79,6 @@ function getOptimalFrameSizeSamples(
     case 'flac':
       // Larger frames improve FLAC compression ratio
       return 4096;
-    case 'vorbis':
-      // Vorbis uses variable block sizes internally; 2048 is a good batching choice
-      return 2048;
     case 'pcm':
     default:
       // PCM: configurable frame duration for balancing latency vs. stability

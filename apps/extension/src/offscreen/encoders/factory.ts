@@ -5,7 +5,6 @@ import type { AudioEncoder } from './types';
 import { AacEncoder } from './aac-encoder';
 import { FlacEncoder } from './flac-encoder';
 import { PcmEncoder } from './pcm-encoder';
-import { VorbisEncoder } from './vorbis-encoder';
 
 const log = createLogger('EncoderFactory');
 
@@ -64,8 +63,6 @@ export async function createEncoder(config: EncoderConfig): Promise<AudioEncoder
       return new AacEncoder(config);
     case 'flac':
       return new FlacEncoder(config);
-    case 'vorbis':
-      return new VorbisEncoder(config);
     default:
       throw new Error(`No encoder implementation for ${config.codec}`);
   }

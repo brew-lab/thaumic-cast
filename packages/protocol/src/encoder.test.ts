@@ -1,4 +1,6 @@
 import { describe, expect, it } from 'bun:test';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 
 import { AudioCodecSchema } from './audio.js';
 import {
@@ -7,6 +9,7 @@ import {
   getDefaultBitrate,
   getValidBitrates,
   hasEncoderImplementation,
+  IMPLEMENTED_CODECS,
   isValidBitDepthForCodec,
   isValidBitrateForCodec,
 } from './encoder.js';
@@ -17,7 +20,7 @@ describe('createEncoderConfig', () => {
   });
 
   it('should keep a bitrate the codec supports', () => {
-    expect(createEncoderConfig({ codec: 'vorbis', bitrate: 320 }).bitrate).toBe(320);
+    expect(createEncoderConfig({ codec: 'aac-lc', bitrate: 256 }).bitrate).toBe(256);
   });
 
   it('should replace a bitrate the codec does not support with its default', () => {
@@ -113,6 +116,24 @@ describe('codec metadata helpers', () => {
   it('should have an encoder implementation for every codec the schema allows', () => {
     for (const codec of AudioCodecSchema.options) {
       expect(hasEncoderImplementation(codec)).toBe(true);
+    }
+  });
+});
+
+describe('IMPLEMENTED_CODECS', () => {
+  it('should match the codec list the companion is tested against', () => {
+    // fixtures/codecs.json is what a thaumic-core test resolves, name by name.
+    // A codec added here must be added there, and core must then serve it.
+    const fixture: unknown = JSON.parse(
+      readFileSync(join(import.meta.dir, '../fixtures/codecs.json'), 'utf8'),
+    );
+
+    expect(fixture).toEqual([...IMPLEMENTED_CODECS]);
+  });
+
+  it('should offer nothing the codec schema does not know', () => {
+    for (const codec of IMPLEMENTED_CODECS) {
+      expect(AudioCodecSchema.safeParse(codec).success).toBe(true);
     }
   });
 });
