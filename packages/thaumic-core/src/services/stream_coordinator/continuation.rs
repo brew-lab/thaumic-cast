@@ -1628,10 +1628,22 @@ mod tests {
         }
         async fn set_next_uri(&self, ip: &str, item: &NextItem<'_>) -> SoapResult<()> {
             self.queue_attempts.fetch_add(1, Ordering::SeqCst);
-            let refuse = self
-                .queue_refusals
-                .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |n| n.checked_sub(1))
-                .is_ok();
+            // Take one refusal if any are left.
+            let mut left = self.queue_refusals.load(Ordering::SeqCst);
+            let refuse = loop {
+                let Some(next) = left.checked_sub(1) else {
+                    break false;
+                };
+                match self.queue_refusals.compare_exchange(
+                    left,
+                    next,
+                    Ordering::SeqCst,
+                    Ordering::SeqCst,
+                ) {
+                    Ok(_) => break true,
+                    Err(current) => left = current,
+                }
+            };
             if refuse {
                 return Err(SoapError::Fault("UPnPError 800".to_string()));
             }
