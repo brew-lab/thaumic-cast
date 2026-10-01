@@ -29,9 +29,8 @@ export const DEFAULT_MAX_CONCURRENT_STREAMS = 10;
  * - `he-aac`: High-Efficiency AAC (mp4a.40.5) - best for low bitrates
  * - `he-aac-v2`: High-Efficiency AAC v2 (mp4a.40.29) - best for very low bitrates, stereo
  * - `flac`: Free Lossless Audio Codec - lossless compression (requires browser support)
- * - `vorbis`: Ogg Vorbis - open source lossy codec
  */
-export const AudioCodecSchema = z.enum(['pcm', 'aac-lc', 'he-aac', 'he-aac-v2', 'flac', 'vorbis']);
+export const AudioCodecSchema = z.enum(['pcm', 'aac-lc', 'he-aac', 'he-aac-v2', 'flac']);
 export type AudioCodec = z.infer<typeof AudioCodecSchema>;
 
 /**

@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import {
+  type AudioCodec,
   AudioCodecSchema,
   BitrateSchema,
   SampleRateSchema,
@@ -419,6 +420,35 @@ function parseFieldsLeniently<T extends Record<string, unknown>>(
 }
 
 /**
+ * Codecs an earlier version let the user pick and this one no longer offers,
+ * with the codec a stored choice of each becomes.
+ *
+ * Ogg Vorbis was offered although the companion has no stream for it; AAC-LC
+ * is the nearest codec it does serve.
+ */
+const RETIRED_CODEC_REPLACEMENTS: Readonly<Record<string, AudioCodec>> = {
+  vorbis: 'aac-lc',
+};
+
+/**
+ * Replaces a stored custom codec that is no longer offered with its successor,
+ * so the choice does not silently reset to the default codec.
+ * @param data - Raw stored settings
+ * @returns The settings, with a retired custom codec replaced
+ */
+function replaceRetiredCodec(data: Record<string, unknown>): Record<string, unknown> {
+  const custom = asRecord(data.customAudioSettings);
+  const stored = custom?.codec;
+  if (!custom || typeof stored !== 'string' || !Object.hasOwn(RETIRED_CODEC_REPLACEMENTS, stored)) {
+    return data;
+  }
+
+  const replacement = RETIRED_CODEC_REPLACEMENTS[stored];
+  log.info(`Stored codec ${stored} is no longer offered, using ${replacement}`);
+  return { ...data, customAudioSettings: { ...custom, codec: replacement } };
+}
+
+/**
  * Parses stored extension settings field by field, keeping every valid field
  * and replacing only the invalid ones with their defaults. Also normalises
  * values that are valid in isolation but unusable on this machine. Settings
@@ -431,7 +461,7 @@ function parseExtensionSettingsLeniently(data: Record<string, unknown>): Extensi
   const dropped: string[] = [];
   const settings = parseFieldsLeniently(
     ExtensionSettingsSchema,
-    migrateAudioSettingsV2(data),
+    replaceRetiredCodec(migrateAudioSettingsV2(data)),
     DEFAULT_EXTENSION_SETTINGS,
     dropped,
   );

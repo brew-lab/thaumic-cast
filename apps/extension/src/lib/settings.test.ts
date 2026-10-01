@@ -120,6 +120,30 @@ describe('loadExtensionSettings', () => {
     expect((await loadExtensionSettings()).customAudioSettings.bitsPerSample).toBe(24);
   });
 
+  it('should move a stored Vorbis choice to AAC-LC and keep a bitrate both support', async () => {
+    storeSettings({
+      audioMode: 'custom',
+      customAudioSettings: customAudio({ codec: 'vorbis', bitrate: 256, channels: 1 }),
+    });
+
+    const settings = await loadExtensionSettings();
+
+    expect(settings.audioMode).toBe('custom');
+    expect(settings.customAudioSettings).toMatchObject({
+      codec: 'aac-lc',
+      bitrate: 256,
+      channels: 1,
+    });
+  });
+
+  it('should give a stored Vorbis bitrate AAC-LC lacks the AAC-LC default', async () => {
+    storeSettings({ customAudioSettings: customAudio({ codec: 'vorbis', bitrate: 320 }) });
+
+    const settings = await loadExtensionSettings();
+
+    expect(settings.customAudioSettings).toMatchObject({ codec: 'aac-lc', bitrate: 192 });
+  });
+
   it('should replace custom audio settings wholesale when they are not an object', async () => {
     storeSettings({ customAudioSettings: 'high' });
 
@@ -189,7 +213,7 @@ describe('saveExtensionSettings', () => {
   });
 
   it('should normalise the bitrate when the codec changes underneath it', async () => {
-    storeSettings({ customAudioSettings: customAudio({ codec: 'vorbis', bitrate: 320 }) });
+    storeSettings({ customAudioSettings: customAudio({ codec: 'aac-lc', bitrate: 256 }) });
 
     const saved = await saveExtensionSettings({
       customAudioSettings: { codec: 'he-aac-v2' } as ExtensionSettings['customAudioSettings'],

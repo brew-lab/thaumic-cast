@@ -83,7 +83,7 @@ describe('isCodecSupported', () => {
       throw new TypeError('bad config');
     });
 
-    expect(await isCodecSupported('vorbis', 192)).toBe(false);
+    expect(await isCodecSupported('aac-lc', 192)).toBe(false);
   });
 });
 
@@ -127,12 +127,12 @@ describe('getSupportedBitrates / getSupportedSampleRates', () => {
       [
         ['aac-lc', 128],
         ['aac-lc', 256, false],
-        ['vorbis', 192],
+        ['he-aac', 96],
       ],
       [
         ['aac-lc', 48000, true],
         ['aac-lc', 44100, false],
-        ['vorbis', 44100, true],
+        ['he-aac', 44100, true],
       ],
     );
 
@@ -174,7 +174,7 @@ describe('generateDynamicPresets', () => {
       support([
         ['aac-lc', 256],
         ['flac', 0],
-        ['vorbis', 320],
+        ['he-aac', 128],
       ]),
     );
 
@@ -185,11 +185,11 @@ describe('generateDynamicPresets', () => {
     const presets = generateDynamicPresets(
       support([
         ['aac-lc', 256],
-        ['vorbis', 320],
+        ['he-aac', 128],
       ]),
     );
 
-    expect(presets.high).toMatchObject({ codec: 'vorbis', bitrate: 320 });
+    expect(presets.high).toMatchObject({ codec: 'aac-lc', bitrate: 256 });
   });
 
   it('should pick the lowest bitrate for the low tier and never a lossless option', () => {
