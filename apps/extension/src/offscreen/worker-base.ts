@@ -545,6 +545,33 @@ function stopHeartbeat(s: WorkerState): void {
 }
 
 /**
+ * Reads one JSON message from the server on the streaming socket.
+ *
+ * Broadcast events and `INITIAL_STATE` also arrive on this socket and are not
+ * for the worker. A companion older than the one that fixed its `ERROR`
+ * message sends the text beside `type` and not in `payload`; that shape is
+ * read too, so its refusals are shown and not dropped.
+ *
+ * @param raw - The parsed JSON value
+ * @returns The message, or null when it is not one the worker handles
+ */
+export function parseServerMessage(raw: unknown): WsMessage | null {
+  if (typeof raw !== 'object' || raw === null) return null;
+  const record = raw as Record<string, unknown>;
+
+  // Skip broadcast events
+  if ('category' in record || record.type === 'INITIAL_STATE') return null;
+
+  const candidate =
+    record.type === 'ERROR' && record.payload === undefined && typeof record.message === 'string'
+      ? { type: 'ERROR', payload: { message: record.message } }
+      : record;
+
+  const parsed = WsMessageSchema.safeParse(candidate);
+  return parsed.success ? parsed.data : null;
+}
+
+/**
  * Handles incoming WebSocket messages after handshake.
  * Dispatches server messages (STREAM_READY, PLAYBACK_STARTED, errors, etc.) to main thread.
  * @param s - Worker state
@@ -554,15 +581,8 @@ function handleWsMessage(s: WorkerState, event: MessageEvent): void {
   if (typeof event.data !== 'string') return;
 
   try {
-    const raw = JSON.parse(event.data);
-
-    // Skip broadcast events
-    if ('category' in raw || raw.type === 'INITIAL_STATE') return;
-
-    const parsed = WsMessageSchema.safeParse(raw);
-    if (!parsed.success) return;
-
-    const message: WsMessage = parsed.data;
+    const message = parseServerMessage(JSON.parse(event.data));
+    if (!message) return;
 
     switch (message.type) {
       case 'HEARTBEAT_ACK':
@@ -701,15 +721,8 @@ export async function connectWebSocket(
         if (typeof event.data !== 'string') return;
 
         try {
-          const raw = JSON.parse(event.data);
-
-          // Skip broadcast events
-          if ('category' in raw || raw.type === 'INITIAL_STATE') return;
-
-          const parsed = WsMessageSchema.safeParse(raw);
-          if (!parsed.success) return;
-
-          const message = parsed.data;
+          const message = parseServerMessage(JSON.parse(event.data));
+          if (!message) return;
 
           if (message.type === 'HANDSHAKE_ACK') {
             clearTimeout(handshakeTimeout);
@@ -731,8 +744,11 @@ export async function connectWebSocket(
 
             resolve(message.payload.streamId);
           } else if (message.type === 'ERROR') {
+            // The server closes the socket straight after refusing. Its own
+            // words are what the user needs, so they win over the close code.
             clearTimeout(handshakeTimeout);
             ws.removeEventListener('message', handshakeHandler);
+            s.log.error(`Server refused the stream: ${message.payload.message}`);
             reject(new Error(message.payload.message));
           }
         } catch {
