@@ -424,14 +424,25 @@ impl StreamState {
     /// frees the slot.
     #[must_use]
     pub fn acquire_unlisted_reader(&self) -> Option<StreamReaderSlot> {
-        self.unlisted_readers
-            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |readers| {
-                (readers < MAX_UNLISTED_STREAM_READERS).then_some(readers + 1)
-            })
-            .ok()
-            .map(|_| StreamReaderSlot {
-                readers: Arc::clone(&self.unlisted_readers),
-            })
+        let mut readers = self.unlisted_readers.load(Ordering::Acquire);
+        loop {
+            if readers >= MAX_UNLISTED_STREAM_READERS {
+                return None;
+            }
+            match self.unlisted_readers.compare_exchange_weak(
+                readers,
+                readers + 1,
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            ) {
+                Ok(_) => {
+                    return Some(StreamReaderSlot {
+                        readers: Arc::clone(&self.unlisted_readers),
+                    })
+                }
+                Err(current) => readers = current,
+            }
+        }
     }
 
     /// Records that `peer` fetched this stream without being on its list.
