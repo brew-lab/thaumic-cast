@@ -57,7 +57,9 @@
 //! snapshots. When a connection ends, a summary line reports what it saw.
 //! Compressed codecs, whose
 //! delivered bytes say nothing exact about playback time, get the clock
-//! rate and keep the older wall-clock cushion line instead.
+//! rate and keep the older wall-clock cushion line instead; their speakers
+//! are reported as unmeasured, never as locking, since no reserve estimate
+//! will ever come.
 
 use std::collections::HashMap;
 use std::net::IpAddr;
@@ -3333,6 +3335,77 @@ mod tests {
                 harness.events.health_states(PLAIN).is_empty(),
                 "a speaker that is not polled has no health to report"
             );
+        }
+
+        /// A compressed connection's reserve is never measured, so its
+        /// speaker is reported unmeasured from the first tick; "locking"
+        /// would stand for the whole cast.
+        #[tokio::test]
+        async fn a_monitored_speaker_on_a_compressed_stream_reports_unmeasured() {
+            use crate::events::SpeakerHealthState;
+            const COMPRESSED: &str = "192.168.1.42";
+            const PCM: &str = "192.168.1.43";
+            let cancel = CancellationToken::new();
+            let harness = Harness::start(&cancel).await;
+            let compressed =
+                started_tap_with_codec(&harness.stream_id, COMPRESSED, true, AudioCodec::Aac);
+            harness.monitor.registrar().register(&compressed);
+            let _pcm = harness.fetch(PCM, true);
+
+            tokio::time::sleep(Duration::from_millis(1200)).await;
+            cancel.cancel();
+
+            assert_eq!(
+                harness.events.health_states(COMPRESSED),
+                vec![SpeakerHealthState::Unmeasured],
+            );
+            assert_eq!(
+                harness.events.health_states(PCM),
+                vec![SpeakerHealthState::Locking],
+                "a PCM connection beside it is reported as before"
+            );
+        }
+
+        /// The unmeasured event carries no reserve figures and no drift mode:
+        /// there is no reserve to report or to steer.
+        #[test]
+        fn an_unmeasured_speaker_reports_no_reserve_figures() {
+            let aac = started_tap_with_codec("stream", HUNG_IP, true, AudioCodec::Aac);
+            let mut session = LatencySession::new(false, 0);
+            session.attach(&aac);
+            answer_polls(&mut session, &aac, 10);
+
+            assert_eq!(session.health_state(), MonitorState::Unmeasured);
+            match session.health_event("stream", HUNG_IP.parse().unwrap(), session.health_state()) {
+                NetworkEvent::SpeakerHealth {
+                    state,
+                    reserve_ms,
+                    reserve_acked,
+                    floor_ms,
+                    head_start_ms,
+                    time_to_floor_s,
+                    drift_mode,
+                    notice,
+                    ..
+                } => {
+                    assert_eq!(state, crate::events::SpeakerHealthState::Unmeasured);
+                    assert_eq!(reserve_ms, None);
+                    assert!(!reserve_acked);
+                    assert_eq!(floor_ms, None);
+                    assert_eq!(head_start_ms, None);
+                    assert_eq!(time_to_floor_s, None);
+                    assert_eq!(drift_mode, None);
+                    assert!(notice.is_none());
+                }
+                other => panic!("not a speaker health event: {other:?}"),
+            }
+
+            // The same polls on a PCM connection: still locking, as before.
+            let pcm = started_tap("stream", HUNG_IP, true);
+            let mut session = LatencySession::new(false, 0);
+            session.attach(&pcm);
+            answer_polls(&mut session, &pcm, 10);
+            assert_eq!(session.health_state(), MonitorState::Locking);
         }
 
         /// A speaker found playing something else is reported dormant without
