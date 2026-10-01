@@ -93,19 +93,18 @@ describe('adtsParamsForCodec', () => {
     });
   });
 
-  it('should declare the half-rate AAC-LC core of HE-AAC', () => {
+  it('should declare the HE-AAC ids as the full-rate AAC-LC the browser encodes', () => {
+    // Chromium's encoder ignores the profile: all three ids give AAC-LC at
+    // the stream's own rate, so a half-rate (implicit SBR) label is wrong.
     expect(adtsParamsForCodec('he-aac', 48000, 2)).toEqual({
       objectType: AOT_AAC_LC,
-      sampleRate: 24000,
+      sampleRate: 48000,
       channels: 2,
     });
-  });
-
-  it('should declare the half-rate mono AAC-LC core of HE-AAC v2', () => {
     expect(adtsParamsForCodec('he-aac-v2', 44100, 2)).toEqual({
       objectType: AOT_AAC_LC,
-      sampleRate: 22050,
-      channels: 1,
+      sampleRate: 44100,
+      channels: 2,
     });
   });
 });

@@ -152,37 +152,29 @@ export function buildAdtsHeader(
 /**
  * Chooses what the ADTS header declares for a codec's frames.
  *
- * AAC-LC declares itself: object type 2 at the stream's own rate and channels.
+ * Every AAC id declares AAC-LC (object type 2) at the stream's own rate and
+ * channels, because that is what the browser's encoder produces for all of
+ * them. Chromium's `AudioEncoder` ignores the profile in the codec string:
+ * measured on Chrome and Edge 154 on Windows, `mp4a.40.2`, `mp4a.40.5` and
+ * `mp4a.40.29` give byte-identical AAC-LC at the full rate, with an
+ * AudioSpecificConfig naming object type 2 and no SBR or PS extension, and the
+ * macOS and Android encoders are LC-only in Chromium's source.
  *
- * HE-AAC and HE-AAC v2 cannot be declared, because the profile field has no
- * value for SBR or PS. ADTS carries them by implicit signalling
- * (ISO/IEC 14496-3, 1.6.5): the header describes the AAC-LC core alone, and a
- * decoder that knows SBR or PS finds the extension data inside the frame. The
- * core of HE-AAC runs at half the output rate (dual-rate SBR), and the core of
- * HE-AAC v2 is also mono, PS rebuilding the stereo image. So both declare
- * AAC-LC at half the rate, and v2 declares one channel.
+ * Real HE-AAC in ADTS is labelled differently, by implicit signalling
+ * (ISO/IEC 14496-3, 1.6.5): the header names the AAC-LC core at half the output
+ * rate, and one channel for v2. Applied to these frames that label is wrong:
+ * a decoder then parses full-rate frames with the half-rate band tables and
+ * fails. Use it only if an encoder that really emits SBR is ever adopted.
  *
- * The HE-AAC rows follow the specification and what reference encoders write.
- * They have not been checked against the frames a browser's encoder produces:
- * an encoder using down-sampled SBR (core at the full rate) would need the
- * full rate here.
- *
- * @param codec - The AAC variant being encoded
+ * @param _codec - The AAC variant requested (all are encoded as AAC-LC)
  * @param sampleRate - Output sample rate of the stream, in Hz
  * @param channels - Output channel count of the stream
  * @returns The object type, sample rate and channels to put in the header
  */
 export function adtsParamsForCodec(
-  codec: AudioCodec,
+  _codec: AudioCodec,
   sampleRate: number,
   channels: number,
 ): AdtsParams {
-  switch (codec) {
-    case 'he-aac':
-      return { objectType: AOT_AAC_LC, sampleRate: sampleRate / 2, channels };
-    case 'he-aac-v2':
-      return { objectType: AOT_AAC_LC, sampleRate: sampleRate / 2, channels: 1 };
-    default:
-      return { objectType: AOT_AAC_LC, sampleRate, channels };
-  }
+  return { objectType: AOT_AAC_LC, sampleRate, channels };
 }
