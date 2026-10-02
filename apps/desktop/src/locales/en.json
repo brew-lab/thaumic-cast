@@ -98,7 +98,7 @@
   "dashboard.speaker_notice_running_low_drift": "The clock in {{name}} runs a little fast, and that is where the reserve has been going.",
   "dashboard.speaker_notice_drift_uncorrected": "The clock in {{name}} runs a little fast, so it gets through audio quicker than audio arrives, and will run low in about {{minutes}} min.",
   "dashboard.speaker_notice_drift_saturated": "The clock in {{name}} is further out than clock drift correction is permitted to correct, so it will run low in about {{minutes}} min.",
-  "dashboard.speaker_notice_drift_turn_on_desktop": "Turn on clock drift correction in the desktop app, under Settings > Speakers; it starts work when the speaker next connects.",
+  "dashboard.speaker_notice_drift_turn_on_desktop": "Turn on clock drift correction under Settings > Speakers; it starts work when the speaker next connects.",
   "dashboard.speaker_notice_restart_refills": "Stop the cast and start it again; that refills the reserve.",
   "dashboard.speaker_notice_open_settings": "Open Settings",
   "dashboard.speaker_notice_dismiss": "Dismiss",

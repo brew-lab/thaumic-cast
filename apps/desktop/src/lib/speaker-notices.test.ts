@@ -217,6 +217,7 @@ describe('speakerNoticeLines', () => {
         key.startsWith('dashboard.speaker_notice_') &&
         key !== 'dashboard.speaker_notice_where' &&
         key !== 'dashboard.speaker_notice_where_fixed' &&
+        key !== 'dashboard.speaker_notice_drift_turn_on_desktop' &&
         !key.endsWith('_open_settings'),
     );
     expect(shared.length).toBeGreaterThan(0);
