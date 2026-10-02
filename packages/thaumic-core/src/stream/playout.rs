@@ -297,6 +297,14 @@ struct ViewInner {
     debt: Option<LatencyDebt>,
 }
 
+impl ViewInner {
+    /// Whether the view has been laid out for a playout, so a byte position
+    /// converts to time: its `byte_rate` is known.
+    fn rate_known(&self) -> bool {
+        self.byte_rate > 0
+    }
+}
+
 /// Latency a restart left for the drift controller to pay back.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct LatencyDebt {
@@ -445,7 +453,7 @@ impl PlayoutView {
             rel_ms,
             timeline: None,
         };
-        if byte_rate == 0 {
+        if !inner.rate_known() {
             return Some(unmapped(base));
         }
         let ms = |bytes: u64| bytes.saturating_mul(1000) / byte_rate;

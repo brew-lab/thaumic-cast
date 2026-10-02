@@ -243,6 +243,20 @@ impl ConnectionTap {
         self.stats.connection()?.link_verdict()
     }
 
+    /// Whether bytes delivered on this connection convert to playback time:
+    /// its [`byte_rate`](Self::byte_rate) is known. So for PCM, and for
+    /// nothing whose rate is zero, whatever its codec.
+    pub fn measurable(&self) -> bool {
+        self.byte_rate > 0
+    }
+
+    /// Whether the reserve on this connection can be steered, so its drift
+    /// mode applies and a rate control may be in force: only where the
+    /// reserve can be measured.
+    pub fn steerable(&self) -> bool {
+        self.measurable()
+    }
+
     /// How far the speaker's acknowledgements lag the audio handed to the
     /// connection right now, in milliseconds of audio, where the platform
     /// reports acknowledged bytes (PCM only).
@@ -256,7 +270,7 @@ impl ConnectionTap {
     /// `None` near the connection's declared end, and at a segment boundary
     /// (see [`Self::near_declared_end`]).
     pub fn unacked_ms_now(&self) -> Option<f64> {
-        if self.byte_rate == 0 || self.stats.playout.at_boundary() {
+        if !self.measurable() || self.stats.playout.at_boundary() {
             return None;
         }
         let bytes = self.stats.connection()?.unacked_bytes_now()?;
@@ -313,7 +327,7 @@ impl ConnectionTap {
     /// [`Self::continuous_position`]). Inserted or removed audio is counted
     /// too, which is right, since the speaker plays it.
     pub fn delivered_ms(&self) -> Option<u64> {
-        (self.byte_rate > 0)
+        self.measurable()
             .then(|| self.audio_bytes_sent().saturating_mul(1000) / u64::from(self.byte_rate))
     }
 

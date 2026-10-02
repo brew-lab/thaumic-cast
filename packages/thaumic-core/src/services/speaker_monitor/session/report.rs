@@ -91,7 +91,7 @@ impl SpeakerSession {
         let pipeline = tap.recent_pipeline(window);
         let was_low = self.tracker.is_low();
         let tick_lags = std::mem::take(&mut self.tick_lags_ms);
-        let mut lags_ms: Vec<f64> = if tap.byte_rate > 0 && !at_declared_end {
+        let mut lags_ms: Vec<f64> = if tap.measurable() && !at_declared_end {
             pipeline
                 .iter()
                 .filter_map(|s| s.unacked_bytes)
