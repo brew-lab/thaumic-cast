@@ -1384,14 +1384,15 @@ fn handle_handshake(
 
     log::info!(
         "[WS] Creating stream: codec={:?}, format={:?}, bitrate={}, buffer={}ms, frame={}ms, \
-         conn={}, remote={}",
+         conn={}, remote={}, clientId={}",
         config.codec,
         config.audio_format,
         describe_bitrate(payload.encoder_config.as_ref().and_then(|c| c.bitrate)),
         config.jitter_buffer_ms,
         config.frame_duration_ms,
         conn.id(),
-        conn.remote_addr()
+        conn.remote_addr(),
+        conn.state().client_id().unwrap_or("<none>")
     );
 
     match state.stream_coordinator.create_stream(
@@ -1684,14 +1685,6 @@ async fn handle_start_playback(
             },
         };
     };
-
-    if payload.uses_legacy_speaker_ip() {
-        log::warn!(
-            "[WS] START_PLAYBACK for stream {} used the legacy `speakerIp` field; \
-             current clients send `speakerIps`",
-            stream_id
-        );
-    }
 
     let speaker_ips = payload.get_speaker_ips();
 
@@ -2039,8 +2032,18 @@ async fn handle_ws(
                                 if payload.video_sync_enabled {
                                     latency_monitoring = true;
                                 }
+                                let stream_id = stream_guard.as_ref().map(|g| g.id().to_string());
+                                if payload.uses_legacy_speaker_ip() {
+                                    log::warn!(
+                                        "[WS] START_PLAYBACK from {} ({}) for stream {} used the \
+                                         legacy `speakerIp` field; current clients send `speakerIps`",
+                                        conn_guard.remote_addr(),
+                                        conn_guard.id(),
+                                        stream_id.as_deref().unwrap_or("<none>")
+                                    );
+                                }
                                 let command = ControlCommand::StartPlayback {
-                                    stream_id: stream_guard.as_ref().map(|g| g.id().to_string()),
+                                    stream_id,
                                     latency_monitoring,
                                     payload,
                                 };
