@@ -98,6 +98,20 @@ pub struct ServerConfig {
     speaker_keys: SpeakerKeys,
 }
 
+/// Every key a config file may set: the fields of [`ServerConfig`], as they
+/// are spelt in YAML. A key outside this list is warned about and ignored.
+const KNOWN_KEYS: [&str; 9] = [
+    "bind_port",
+    "advertise_ip",
+    "topology_refresh_interval",
+    "data_dir",
+    "artwork_url",
+    "strict_stream_access",
+    "speaker_monitor",
+    "pcm_connect_burst_ms",
+    "drift_compensation",
+];
+
 /// Which of the three speaker keys a config file has. Presence only: the
 /// values are the ones [`ServerConfig`] itself parsed and validated. Any
 /// other key, a camelCase spelling of these included, is not looked at.
@@ -110,6 +124,81 @@ struct SpeakerKeys {
     pcm_connect_burst_ms: bool,
     #[serde(deserialize_with = "present")]
     drift_compensation: bool,
+}
+
+/// The top-level keys of a YAML document that are not in [`KNOWN_KEYS`], in
+/// the order the file has them. A document that is not a mapping has none.
+fn unknown_keys(content: &str) -> Vec<String> {
+    let Ok(serde_yaml::Value::Mapping(mapping)) = serde_yaml::from_str(content) else {
+        return Vec::new();
+    };
+    mapping
+        .keys()
+        .map(|key| match key {
+            serde_yaml::Value::String(name) => name.clone(),
+            other => serde_yaml::to_string(other)
+                .map(|text| text.trim().to_string())
+                .unwrap_or_else(|_| format!("{other:?}")),
+        })
+        .filter(|name| !KNOWN_KEYS.contains(&name.as_str()))
+        .collect()
+}
+
+/// The known key an unknown one was most likely meant to be: the same
+/// letters in another spelling (`bindPort`, `bind-port`), or within two
+/// slips of the keyboard (`bind_prot`). `None` when nothing is that close.
+fn nearest_known_key(unknown: &str) -> Option<&'static str> {
+    let letters = |key: &str| -> Vec<char> {
+        key.chars()
+            .filter(|c| !matches!(c, '_' | '-'))
+            .flat_map(char::to_lowercase)
+            .collect()
+    };
+    let unknown = letters(unknown);
+    KNOWN_KEYS
+        .iter()
+        .map(|known| (edit_distance(&unknown, &letters(known)), *known))
+        .filter(|(distance, _)| *distance <= 2)
+        .min_by_key(|(distance, _)| *distance)
+        .map(|(_, known)| known)
+}
+
+/// How many letters must be added, dropped, changed or swapped with a
+/// neighbour to turn `a` into `b`.
+fn edit_distance(a: &[char], b: &[char]) -> usize {
+    let mut rows = vec![vec![0usize; b.len() + 1]; a.len() + 1];
+    for (i, row) in rows.iter_mut().enumerate() {
+        row[0] = i;
+    }
+    for (j, cell) in rows[0].iter_mut().enumerate() {
+        *cell = j;
+    }
+    for i in 1..=a.len() {
+        for j in 1..=b.len() {
+            let change = usize::from(a[i - 1] != b[j - 1]);
+            let mut best = (rows[i - 1][j] + 1)
+                .min(rows[i][j - 1] + 1)
+                .min(rows[i - 1][j - 1] + change);
+            if i > 1 && j > 1 && a[i - 1] == b[j - 2] && a[i - 2] == b[j - 1] {
+                best = best.min(rows[i - 2][j - 2] + 1);
+            }
+            rows[i][j] = best;
+        }
+    }
+    rows[a.len()][b.len()]
+}
+
+/// The warning for one key the config file at `path` has and the server
+/// does not read.
+fn unknown_key_warning(key: &str, path: &Path) -> String {
+    let mut warning = format!(
+        "{key} in {} is not a key the server reads, so it was ignored.",
+        path.display()
+    );
+    if let Some(known) = nearest_known_key(key) {
+        warning.push_str(&format!(" If {known} was meant, it has not been set."));
+    }
+    warning
 }
 
 /// Reads any value at all and says the key was there.
@@ -138,13 +227,19 @@ impl ServerConfig {
     /// Loads and validates configuration from a YAML file.
     ///
     /// Without a path the defaults are used. Returns an error if the file
-    /// cannot be read or parsed, or if any value is out of range.
+    /// cannot be read or parsed, or if any value is out of range. A key the
+    /// server does not read is no error: each one is warned about in the log
+    /// and ignored, so a misspelt key cannot keep the server from starting.
     pub fn load(path: Option<&Path>) -> Result<Self> {
         let config = if let Some(path) = path {
             let content = std::fs::read_to_string(path)
                 .with_context(|| format!("Could not read the config file {}", path.display()))?;
-            Self::from_yaml(&content)
-                .with_context(|| format!("The config file {} cannot be used", path.display()))?
+            let config = Self::from_yaml(&content)
+                .with_context(|| format!("The config file {} cannot be used", path.display()))?;
+            for key in unknown_keys(&content) {
+                log::warn!("{}", unknown_key_warning(&key, path));
+            }
+            config
         } else {
             Self::default()
         };
@@ -469,6 +564,127 @@ mod tests {
                 "config.example.yaml should set `{key}` uncommented"
             );
         }
+    }
+
+    /// Hands back the field names serde was given for a struct, and nothing
+    /// else: enough to see which keys `ServerConfig` reads.
+    struct FieldNames;
+
+    impl<'de> serde::Deserializer<'de> for FieldNames {
+        type Error = serde::de::value::Error;
+
+        fn deserialize_any<V: serde::de::Visitor<'de>>(
+            self,
+            _: V,
+        ) -> Result<V::Value, Self::Error> {
+            Err(serde::de::Error::custom("not a struct"))
+        }
+
+        fn deserialize_struct<V: serde::de::Visitor<'de>>(
+            self,
+            _name: &'static str,
+            fields: &'static [&'static str],
+            _: V,
+        ) -> Result<V::Value, Self::Error> {
+            Err(serde::de::Error::custom(fields.join(",")))
+        }
+
+        serde::forward_to_deserialize_any! {
+            bool i8 i16 i32 i64 i128 u8 u16 u32 u64 u128 f32 f64 char str string
+            bytes byte_buf option unit unit_struct newtype_struct seq tuple
+            tuple_struct map enum identifier ignored_any
+        }
+    }
+
+    /// The list of known keys is written by hand beside the struct. A field
+    /// added to one and not the other would be warned about as unknown, or
+    /// never warned about at all.
+    #[test]
+    fn the_known_keys_are_the_fields_the_config_reads() {
+        let fields = ServerConfig::deserialize(FieldNames)
+            .expect_err("FieldNames only reports the fields")
+            .to_string();
+        assert_eq!(fields, KNOWN_KEYS.join(","));
+    }
+
+    #[test]
+    fn an_unknown_key_is_reported_and_the_file_still_loads() {
+        let content = "bind_port: 8080\ncolour: blue\nspeaker_monitor: false\n";
+        assert_eq!(unknown_keys(content), ["colour"]);
+
+        let config = ServerConfig::from_yaml(content).expect("should parse");
+        config.validate().expect("should validate");
+        assert_eq!(config.bind_port, 8080);
+        assert!(!config.speaker_monitor);
+
+        let warning = unknown_key_warning("colour", Path::new("/etc/thaumic-server/config.yaml"));
+        assert_eq!(
+            warning,
+            "colour in /etc/thaumic-server/config.yaml is not a key the server reads, so it was \
+             ignored."
+        );
+    }
+
+    #[test]
+    fn a_file_of_known_keys_reports_nothing() {
+        assert!(unknown_keys(include_str!("../config.example.yaml")).is_empty());
+        assert!(unknown_keys("").is_empty());
+        assert!(unknown_keys("- a list\n- not a mapping\n").is_empty());
+        let every_key: String = KNOWN_KEYS.iter().map(|key| format!("{key}: 1\n")).collect();
+        assert!(unknown_keys(&every_key).is_empty());
+    }
+
+    /// The dangerous unknown key is the misspelt real one: the setting it
+    /// was meant for quietly keeps its old value.
+    #[test]
+    fn a_misspelt_key_is_reported_with_the_key_it_resembles() {
+        let content = "bind_prot: 8080\n";
+        assert_eq!(unknown_keys(content), ["bind_prot"]);
+        let config = ServerConfig::from_yaml(content).expect("should parse");
+        assert_eq!(config.bind_port, ServerConfig::default().bind_port);
+
+        let warning = unknown_key_warning("bind_prot", Path::new("config.yaml"));
+        assert_eq!(
+            warning,
+            "bind_prot in config.yaml is not a key the server reads, so it was ignored. If \
+             bind_port was meant, it has not been set."
+        );
+
+        assert_eq!(
+            nearest_known_key("pcmConnectBurstMs"),
+            Some("pcm_connect_burst_ms")
+        );
+        assert_eq!(
+            nearest_known_key("speaker-monitor"),
+            Some("speaker_monitor")
+        );
+        assert_eq!(nearest_known_key("artwork_uri"), Some("artwork_url"));
+        assert_eq!(nearest_known_key("colour"), None);
+        assert_eq!(nearest_known_key("port"), None);
+    }
+
+    /// An unknown key is tolerated; a bad value for a known key is not, with
+    /// or without an unknown key beside it.
+    #[test]
+    fn a_bad_value_for_a_known_key_still_fails_beside_an_unknown_key() {
+        assert!(ServerConfig::from_yaml("colour: blue\nbind_port: 70000\n").is_err());
+        assert!(ServerConfig::from_yaml("colour: blue\ndrift_compensation: sometimes\n").is_err());
+
+        let dir = std::env::temp_dir().join(format!("thaumic-config-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("config.yaml");
+
+        std::fs::write(&path, "colour: blue\nbind_prot: 1\nbind_port: 8080\n").unwrap();
+        let config = ServerConfig::load(Some(&path)).expect("unknown keys do not stop a start");
+        assert_eq!(config.bind_port, 8080);
+
+        std::fs::write(&path, "colour: blue\npcm_connect_burst_ms: 2001\n").unwrap();
+        let err = ServerConfig::load(Some(&path)).expect_err("above the maximum");
+        assert!(err.to_string().contains("pcm_connect_burst_ms"));
+
+        std::fs::write(&path, "colour: blue\ntopology_refresh_interval: 0\n").unwrap();
+        assert!(ServerConfig::load(Some(&path)).is_err());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
