@@ -16,5 +16,5 @@ the Wi-Fi delay was longer than the head start.
 
 Counts now read correctly for one: "1 speaker", "+1 other", "late 1 time". The button on a connection error reads
 "Try again" when nothing was found and "Reconnect" only when a connection was lost. The tray tooltip after Stop All
-Streams is two plain sentences. A settings or codec-detection failure in the extension now shows its translated
-message, not the raw error.
+Streams is two plain sentences, and appears only when a cast from another machine was stopped. A settings or
+codec-detection failure in the extension now shows its translated message, not the raw error.
