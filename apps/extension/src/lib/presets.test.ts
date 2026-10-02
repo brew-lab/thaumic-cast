@@ -110,6 +110,26 @@ describe('resolveAudioMode with AAC-LC', () => {
     }
   });
 
+  it('should keep PCM, FLAC and the lowest AAC-LC bitrate as the presets where FLAC encodes', () => {
+    const support: SupportedCodecsResult = {
+      ...UP_TO_192,
+      supported: [...UP_TO_192.supported, { codec: 'flac', bitrate: 0, supported: true }],
+      sampleRateSupport: [
+        ...UP_TO_192.sampleRateSupport,
+        { codec: 'flac', sampleRate: 48000, supported: true },
+        { codec: 'flac', sampleRate: 44100, supported: true },
+      ],
+      availableCodecs: ['pcm', 'aac-lc', 'flac'],
+    };
+
+    expect(resolveAudioMode('high', support, custom)).toMatchObject({ codec: 'pcm', bitrate: 0 });
+    expect(resolveAudioMode('mid', support, custom)).toMatchObject({ codec: 'flac', bitrate: 0 });
+    expect(resolveAudioMode('low', support, custom)).toMatchObject({
+      codec: 'aac-lc',
+      bitrate: 96,
+    });
+  });
+
   it('should keep a custom AAC-LC choice at a bitrate the platform encodes', () => {
     const settings = { ...custom, codec: 'aac-lc' as const, bitrate: 160 as const };
 

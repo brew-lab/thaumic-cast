@@ -159,6 +159,32 @@ export function getSupportedBitrates(
 }
 
 /**
+ * Picks the bitrate to start a codec at when the user selects it: the codec's
+ * default when this machine encodes it, otherwise the supported bitrate
+ * nearest the default (the higher of two equally near).
+ * @param codec - The audio codec
+ * @param supportInfo - Previously detected support info
+ * @returns The starting bitrate; the codec's default when none is supported
+ */
+export function getPreferredBitrate(
+  codec: AudioCodec,
+  supportInfo: SupportedCodecsResult,
+): Bitrate {
+  const preferred = CODEC_METADATA[codec].defaultBitrate;
+  let best: Bitrate | null = null;
+  for (const bitrate of getSupportedBitrates(codec, supportInfo)) {
+    if (best === null) {
+      best = bitrate;
+      continue;
+    }
+    const gap = Math.abs(bitrate - preferred);
+    const bestGap = Math.abs(best - preferred);
+    if (gap < bestGap || (gap === bestGap && bitrate > best)) best = bitrate;
+  }
+  return best ?? preferred;
+}
+
+/**
  * Gets supported sample rates for a codec based on runtime detection.
  * @param codec - The audio codec
  * @param supportInfo - Previously detected support info
@@ -295,26 +321,13 @@ export function generateDynamicPresets(supportInfo: SupportedCodecsResult): Dyna
   // Find the best-scoring option that's different from both high and low
   let mid: ScoredCodecOption | null = null;
 
-  // First, try to find an option with a different codec than high and low
+  // allOptions is sorted by score, so the first match is the best one
   for (const opt of allOptions) {
     const isHigh = opt.codec === high?.codec && opt.bitrate === high?.bitrate;
     const isLow = opt.codec === low?.codec && opt.bitrate === low?.bitrate;
     if (!isHigh && !isLow) {
       mid = opt;
       break;
-    }
-  }
-
-  // If no distinct option found and we have at least 2 options, use a fallback
-  if (!mid && allOptions.length >= 2) {
-    // Use the second-best by score that isn't low
-    for (const opt of allOptions) {
-      const isHigh = opt.codec === high?.codec && opt.bitrate === high?.bitrate;
-      const isLow = opt.codec === low?.codec && opt.bitrate === low?.bitrate;
-      if (!isHigh && !isLow) {
-        mid = opt;
-        break;
-      }
     }
   }
 
