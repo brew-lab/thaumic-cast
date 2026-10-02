@@ -258,45 +258,6 @@ export function resolveAudioMode(
 }
 
 /**
- * Gets the display configuration for a mode (for UI preview).
- *
- * @param mode - The audio quality mode
- * @param codecSupport - Runtime codec support info
- * @param customSettings - Custom settings (for custom mode)
- * @param pcm - Smoothing and frame size, which apply in every mode
- * @returns The resolved encoder config for display purposes
- */
-export function getResolvedConfigForDisplay(
-  mode: AudioMode,
-  codecSupport: SupportedCodecsResult,
-  customSettings?: CustomAudioSettings,
-  pcm: PcmStreamOptions = DEFAULT_PCM_OPTIONS,
-): EncoderConfig | null {
-  const dynamicPresets = generateDynamicPresets(codecSupport);
-
-  if (mode === 'custom' && customSettings) {
-    const isSupported = dynamicPresets.allOptions.some(
-      (opt) => opt.codec === customSettings.codec && opt.bitrate === customSettings.bitrate,
-    );
-
-    if (isSupported) {
-      return buildConfigFromCustomSettings(customSettings, pcm);
-    }
-    return null;
-  }
-
-  const presetMode = mode as Exclude<AudioMode, 'custom'>;
-  const option = getPresetForMode(presetMode, dynamicPresets);
-
-  if (option) {
-    const latencyMode: LatencyMode = presetMode === 'low' ? 'realtime' : 'quality';
-    return buildConfigFromOption(option, codecSupport, presetMode, latencyMode, pcm);
-  }
-
-  return getFallbackConfig(codecSupport, pcm);
-}
-
-/**
  * Gets dynamic presets for the current device capabilities.
  * Used by UI to show what each quality tier resolves to.
  *
