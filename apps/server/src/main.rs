@@ -161,10 +161,10 @@ async fn main() -> Result<()> {
 
     // Apply CLI overrides
     let speaker = speaker_settings(
-        config.speaker_file,
+        config.speaker_file_values(),
         &args,
         &matches,
-        SpeakerEnv::read().legacy_diagnostics,
+        SpeakerEnv::read_legacy_diagnostics(),
     );
     if let Some(port) = args.port {
         config.bind_port = port;
@@ -374,6 +374,36 @@ mod tests {
             .expect("valid arguments");
         let args = Args::from_arg_matches(&matches).expect("valid arguments");
         speaker_settings(file, &args, &matches, legacy)
+    }
+
+    /// The real `THAUMIC_SPEAKER_DIAGNOSTICS`, read as `main` reads it,
+    /// reaches the resolved settings, and a config file's camelCase key does
+    /// not.
+    #[test]
+    fn the_real_legacy_variable_and_the_real_file_reach_the_settings() {
+        let file = crate::config::ServerConfig::load(None)
+            .expect("defaults load")
+            .speaker_file_values();
+        let real = |argv: &[&str]| {
+            resolve(
+                argv,
+                file,
+                thaumic_core::SpeakerEnv::read_legacy_diagnostics(),
+            )
+        };
+        let off = ["thaumic-server", "--speaker-monitor", "off"];
+        with_env("THAUMIC_SPEAKER_DIAGNOSTICS", "1", || {
+            let settings = real(&off);
+            assert!(settings.speaker_monitor.value);
+            assert_eq!(settings.speaker_monitor.origin, SettingOrigin::LegacyEnv);
+        });
+        for unset in ["0", ""] {
+            with_env("THAUMIC_SPEAKER_DIAGNOSTICS", unset, || {
+                let settings = real(&off);
+                assert!(!settings.speaker_monitor.value);
+                assert_eq!(settings.speaker_monitor.origin, SettingOrigin::Flag);
+            });
+        }
     }
 
     /// The three speaker variables, each set to something other than the

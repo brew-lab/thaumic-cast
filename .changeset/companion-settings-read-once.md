@@ -17,7 +17,7 @@ read again each time a speaker connected, and there they beat both the flag and 
   connection, as before.
 - **Both:** restart to apply a changed variable. Changing one while the app runs no longer does anything.
 - The log says, once at start-up, what each of the three is and where it came from, for example
-  `pcm_connect_burst_ms = 500 (default)` or `speaker_monitor = off (--speaker-monitor)`.
+  `pcm_connect_burst_ms = 500 ms (default)` or `speaker_monitor = off (--speaker-monitor)`.
 - `THAUMIC_SPEAKER_DIAGNOSTICS` still works, and still turns speaker monitoring on over everything else, an explicit
   off included. It now warns at start-up that `THAUMIC_SPEAKER_MONITOR=on` replaces it, and the desktop checkbox shows
   ticked and locked while it is set, where it used to show unticked.

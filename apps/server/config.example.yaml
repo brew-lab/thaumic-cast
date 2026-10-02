@@ -2,6 +2,8 @@
 #
 # Copy this file to config.yaml and adjust values for your environment.
 # All settings can be overridden with environment variables.
+# The file, the variables and the flags are all read once, when the server
+# starts: restart the server to apply a change to any of them.
 
 # Port to bind the HTTP server to (default: 49400)
 # Environment: THAUMIC_BIND_PORT

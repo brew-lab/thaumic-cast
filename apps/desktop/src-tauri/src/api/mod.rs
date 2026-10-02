@@ -188,6 +188,19 @@ impl AppState {
         resolved
     }
 
+    /// [`Self::apply_settings`], and the start-up lines that say what each
+    /// speaker setting is and where it came from.
+    fn apply_settings_at_startup(&self, settings: &DesktopSettings) {
+        let resolved = self.apply_settings(settings);
+        if let Some(warning) = resolved.legacy_warning(false) {
+            log::warn!("{warning}");
+        }
+        log::info!("Speaker settings, read once at start-up:");
+        for line in resolved.startup_lines(SettingNames::DESKTOP) {
+            log::info!("  {line}");
+        }
+    }
+
     /// Returns whether the app was started in minimized/tray-only mode.
     pub fn is_started_minimized(&self) -> bool {
         self.started_minimized
@@ -253,23 +266,19 @@ impl AppState {
         // saved settings before the server starts reading them.
         match handle.path().app_data_dir() {
             Ok(path) => {
-                let settings = DesktopSettings::load(&path);
-                let resolved = self.apply_settings(&settings);
-                if let Some(warning) = resolved.legacy_warning(false) {
-                    log::warn!("{warning}");
-                }
-                log::info!("Speaker settings, read once at start-up:");
-                for line in resolved.startup_lines(SettingNames::DESKTOP) {
-                    log::info!("  {line}");
-                }
+                self.apply_settings_at_startup(&DesktopSettings::load(&path));
                 self.services
                     .discovery_service
                     .set_app_data_dir(path.clone());
             }
-            Err(e) => log::warn!(
-                "Failed to get app data dir, manual speakers and settings will not persist: {}",
-                e
-            ),
+            Err(e) => {
+                log::warn!(
+                    "Failed to get app data dir, manual speakers and settings will not persist: {}",
+                    e
+                );
+                // No settings file to read, but the environment still counts.
+                self.apply_settings_at_startup(&DesktopSettings::default());
+            }
         }
 
         // Resolve and cache artwork source (avoids disk I/O on every playback).
