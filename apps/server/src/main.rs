@@ -316,13 +316,21 @@ mod tests {
         result
     }
 
+    /// Parses `args` while no other test has the environment changed: clap
+    /// reads the `THAUMIC_*` variables on every parse, so a parse that runs
+    /// beside [`with_env`] would see that test's value.
+    fn parse(args: &[&str]) -> Result<Args, clap::Error> {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|err| err.into_inner());
+        Args::try_parse_from(args)
+    }
+
     /// Every override is a real clap flag, so unparsable values are reported
     /// rather than silently ignored.
     #[test]
     fn unparsable_override_values_are_rejected() {
-        assert!(Args::try_parse_from(["thaumic-server", "--port", "not-a-port"]).is_err());
-        assert!(Args::try_parse_from(["thaumic-server", "--advertise-ip", "not-an-ip"]).is_err());
-        assert!(Args::try_parse_from([
+        assert!(parse(&["thaumic-server", "--port", "not-a-port"]).is_err());
+        assert!(parse(&["thaumic-server", "--advertise-ip", "not-an-ip"]).is_err());
+        assert!(parse(&[
             "thaumic-server",
             "--topology-refresh-interval",
             "not-a-number",
@@ -334,7 +342,7 @@ mod tests {
     /// clap flags that actually reach `Args`.
     #[test]
     fn override_flags_are_parsed() {
-        let args = Args::try_parse_from([
+        let args = parse(&[
             "thaumic-server",
             "--topology-refresh-interval",
             "5",
