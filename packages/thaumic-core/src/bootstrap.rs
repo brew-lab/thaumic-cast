@@ -22,7 +22,7 @@ use crate::mdns_advertise::{advertiser_handle, MdnsAdvertiserHandle};
 use crate::protocol_constants::{EVENT_CHANNEL_CAPACITY, SOAP_TIMEOUT_SECS};
 use crate::runtime::TokioSpawner;
 use crate::services::speaker_monitor::GenaTransportView;
-use crate::services::{DiscoveryService, LatencyMonitor, StreamCoordinator};
+use crate::services::{DiscoveryService, SpeakerMonitor, StreamCoordinator};
 use crate::sonos::gena::GenaSubscriptionManager;
 use crate::sonos::subscription_arbiter::SubscriptionArbiter;
 use crate::sonos::utils::SONOS_PORT;
@@ -53,7 +53,7 @@ pub struct BootstrappedServices {
     /// Manages WebSocket connections.
     pub ws_manager: Arc<WsConnectionManager>,
     /// Latency monitoring service.
-    pub latency_monitor: Arc<LatencyMonitor>,
+    pub latency_monitor: Arc<SpeakerMonitor>,
     /// Dedicated high-priority runtime for HTTP streaming.
     pub streaming_runtime: Arc<StreamingRuntime>,
     /// Shared HTTP client for connection pooling.
@@ -274,7 +274,7 @@ pub(crate) fn bootstrap_services_with_speaker_port(
     let stream_coordinator = Arc::new(stream_coordinator);
 
     // Wire up latency monitor with its dependencies
-    let latency_monitor = Arc::new(LatencyMonitor::new(
+    let latency_monitor = Arc::new(SpeakerMonitor::new(
         Arc::clone(&sonos_impl) as Arc<dyn SonosPlayback>,
         stream_coordinator.stream_registry(),
         Arc::clone(&event_bridge) as Arc<dyn EventEmitter>,
