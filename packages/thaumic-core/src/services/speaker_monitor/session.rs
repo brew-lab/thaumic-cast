@@ -402,11 +402,11 @@ impl SpeakerSession {
         if let Some(epoch) = tap.epoch() {
             self.sync_epoch(epoch);
         }
-        self.pcm = tap.byte_rate > 0;
+        self.pcm = tap.measurable();
         self.connected_at = Some(tap.connected_at);
         self.tracker.start_connection(self.pcm, tap.head_start());
         // Only a PCM connection's reserve can be steered.
-        let drift = if self.pcm {
+        let drift = if tap.steerable() {
             tap.drift_mode()
         } else {
             DriftMode::Off
