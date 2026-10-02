@@ -953,7 +953,7 @@ fn playback_hooks(
         let hook = EpochHook::new(Arc::downgrade(stream_state), connected_at, remote_ip)
             .with_preroll(preroll);
         match &tap {
-            Some(tap) => hook.with_monitor(Arc::clone(tap), state.latency_monitor.registrar()),
+            Some(tap) => hook.with_monitor(Arc::clone(tap), state.speaker_monitor.registrar()),
             None => hook,
         }
     });

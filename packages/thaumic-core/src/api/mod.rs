@@ -101,8 +101,8 @@ pub struct AppState {
     pub network: NetworkContext,
     /// Manages WebSocket connections.
     pub ws_manager: Arc<WsConnectionManager>,
-    /// Latency monitoring service.
-    pub latency_monitor: Arc<SpeakerMonitor>,
+    /// Speaker monitoring service.
+    pub speaker_monitor: Arc<SpeakerMonitor>,
     /// Application configuration.
     pub config: Arc<RwLock<Config>>,
     /// Whether network services have been started.
@@ -145,7 +145,7 @@ impl AppState {
             event_bridge: Arc::clone(&services.event_bridge),
             network: services.network.clone(),
             ws_manager: Arc::clone(&services.ws_manager),
-            latency_monitor: Arc::clone(&services.latency_monitor),
+            speaker_monitor: Arc::clone(&services.speaker_monitor),
             config,
             services_started: Arc::new(AtomicBool::new(false)),
             artwork: artwork_config.resolve(),
