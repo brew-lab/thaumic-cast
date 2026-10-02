@@ -121,7 +121,7 @@ pub struct AppState {
     pub app_info: AppInfo,
     /// Sockets of accepted connections, so the stream handler can read TCP
     /// statistics for the connection a speaker fetches over.
-    pub link_registry: Arc<link::TcpLinkRegistry>,
+    pub link_registry: Arc<crate::stream::link::TcpLinkRegistry>,
 }
 
 impl AppState {
@@ -152,7 +152,7 @@ impl AppState {
             mdns_advertiser: Arc::clone(&services.mdns_advertiser),
             capture_factory: None,
             app_info,
-            link_registry: link::TcpLinkRegistry::new(),
+            link_registry: crate::stream::link::TcpLinkRegistry::new(),
         }
     }
 

@@ -131,7 +131,7 @@ impl TcpLinkProbe {
     ///
     /// `body_bytes` is how many bytes the response body has put on the wire
     /// so far, chunk framing included (see
-    /// [`crate::stream::BodyFraming::wire_len`]): framing is acknowledged
+    /// [`super::BodyFraming::wire_len`]): framing is acknowledged
     /// like payload, so counting payload alone would let the acknowledged
     /// count overtake it on a chunked response. The bytes acknowledged are
     /// counted against it, so they must be read in the same breath: the
@@ -758,7 +758,7 @@ pub struct LinkReport {
 /// poor. The verdict is reported only when it changes.
 ///
 /// The verdict is logged and kept on the connection for the speaker monitor
-/// (see [`crate::stream::ConnectionTap::link_verdict`]), which counts a poor
+/// (see [`super::ConnectionTap::link_verdict`]), which counts a poor
 /// link as a cause when a speaker's head start ran out. It is never a notice
 /// on its own: the speaker head start usually rides such trouble out, and
 /// the stream's jitter buffer (smoothing) does nothing for this link, since

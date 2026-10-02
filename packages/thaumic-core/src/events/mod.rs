@@ -228,7 +228,7 @@ pub enum NetworkHealth {
 
 /// Quality of the network path between this machine and one speaker, judged
 /// from the TCP counters of the connection the speaker fetches audio over
-/// (see [`crate::api::link::LinkJudge`]).
+/// (see [`crate::stream::link::LinkJudge`]).
 ///
 /// For the log and as one input to the speaker notices: trouble on the link
 /// alone is never a notice, since the speaker head start usually rides it

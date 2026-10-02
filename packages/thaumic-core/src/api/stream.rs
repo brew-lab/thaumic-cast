@@ -2879,7 +2879,7 @@ mod tests {
         let mut peer =
             std::net::TcpStream::connect(listener.local_addr().unwrap()).expect("connect");
         let (mut accepted, _) = listener.accept().expect("accept");
-        let registry = crate::api::link::TcpLinkRegistry::new();
+        let registry = crate::stream::link::TcpLinkRegistry::new();
         let peer_addr = accepted.peer_addr().unwrap();
         registry.register(peer_addr, accepted.as_raw_fd() as u64);
         // Framed as a PCM connection is with no switch set.

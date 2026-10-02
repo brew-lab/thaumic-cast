@@ -364,7 +364,7 @@ struct PipelineSnapshot {
     /// where the platform reports them. This is the only window that can see
     /// a Wi-Fi stall: the kernel's send buffer hides it from `delivery`.
     #[serde(skip_serializing_if = "Option::is_none")]
-    link: Option<crate::api::link::TcpLinkWindow>,
+    link: Option<super::link::TcpLinkWindow>,
     /// What the speaker monitor last concluded about the speaker at the
     /// other end: its reserve and its clock against ours.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -435,11 +435,11 @@ pub struct LoggingStreamGuard {
     /// Per-interval max delivery gap in ms (swapped to 0 on each snapshot).
     interval_max_gap_ms: AtomicU64,
     /// TCP statistics probe for the client's connection, when available.
-    link_probe: Option<crate::api::link::TcpLinkProbe>,
+    link_probe: Option<super::link::TcpLinkProbe>,
     /// When retransmissions were last reported, to rate-limit the warning.
     last_retransmit_warning: parking_lot::Mutex<Option<Instant>>,
     /// Judges the connection from its samples and logs quality changes.
-    link_judge: parking_lot::Mutex<Option<crate::api::link::LinkJudge>>,
+    link_judge: parking_lot::Mutex<Option<super::link::LinkJudge>>,
     /// The latest link verdict, as [`link_quality_code`] encodes it (`0`
     /// before the first one).
     link_verdict: AtomicU8,
@@ -654,9 +654,9 @@ impl LoggingStreamGuard {
 
     /// Attaches the TCP statistics probe for the client's connection, whose
     /// counters are logged, judged and read for acknowledged bytes.
-    pub fn with_link_probe(mut self, probe: Option<crate::api::link::TcpLinkProbe>) -> Self {
+    pub fn with_link_probe(mut self, probe: Option<super::link::TcpLinkProbe>) -> Self {
         if probe.is_some() {
-            *self.link_judge.lock() = Some(crate::api::link::LinkJudge::new());
+            *self.link_judge.lock() = Some(super::link::LinkJudge::new());
         }
         self.link_probe = probe;
         self
@@ -678,7 +678,7 @@ impl LoggingStreamGuard {
     /// Near the declared end the window is logged but not judged: a speaker
     /// that has read the whole item may stop acknowledging, which says
     /// nothing about the link.
-    fn sample_link(&self) -> Option<crate::api::link::TcpLinkWindow> {
+    fn sample_link(&self) -> Option<super::link::TcpLinkWindow> {
         let window = self.link_probe.as_ref()?.sample(self.wire_bytes())?;
         let verdict = if self.near_declared_end() {
             None
@@ -713,8 +713,8 @@ impl LoggingStreamGuard {
 
     /// Logs a change in the connection's quality and keeps the verdict for
     /// the speaker monitor. Never sent to clients: link trouble alone is not
-    /// a notice (see [`crate::api::link::LinkJudge`]).
-    fn report_link(&self, report: crate::api::link::LinkReport) {
+    /// a notice (see [`super::link::LinkJudge`]).
+    fn report_link(&self, report: super::link::LinkReport) {
         use crate::events::LinkQuality;
         self.link_verdict
             .store(link_quality_code(report.quality), Ordering::Relaxed);
