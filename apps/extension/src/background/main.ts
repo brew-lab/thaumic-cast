@@ -15,7 +15,11 @@
 
 import { createLogger } from '@thaumic-cast/shared';
 import type { BackgroundInboundMessage } from '../lib/messages';
-import { ExtensionSettingsSchema, loadExtensionSettings } from '../lib/settings';
+import {
+  ExtensionSettingsSchema,
+  loadExtensionSettings,
+  parseStoredExtensionSettings,
+} from '../lib/settings';
 import { permissionChangeCovers } from '../lib/hostPermission';
 
 // State management modules (these register themselves with persistenceManager on import)
@@ -181,10 +185,12 @@ async function reapplyServerConfig(): Promise<void> {
 chrome.storage.local.onChanged.addListener(async (changes) => {
   if (!changes['extensionSettings']) return;
 
-  const oldParsed = ExtensionSettingsSchema.safeParse(changes['extensionSettings'].oldValue);
+  // The old value may have been stored by an earlier version (a codec since
+  // retired, say). Read it as the loader does, so that replacing it is not
+  // mistaken for a change of server and does not drop the connection.
+  const oldSettings = parseStoredExtensionSettings(changes['extensionSettings'].oldValue);
   const newParsed = ExtensionSettingsSchema.safeParse(changes['extensionSettings'].newValue);
 
-  const oldSettings = oldParsed.success ? oldParsed.data : undefined;
   const newSettings = newParsed.success ? newParsed.data : undefined;
 
   const serverUrlChanged = oldSettings?.serverUrl !== newSettings?.serverUrl;
