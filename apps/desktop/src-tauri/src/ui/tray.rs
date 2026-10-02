@@ -217,7 +217,7 @@ fn format_status_text(stream_count: usize) -> String {
     }
 }
 
-/// Builds the tray tooltip shown after "Stop All Streams".
+/// Builds the tray tooltip shown after "Stop all casts".
 ///
 /// Names the blast radius when the stop ended a cast from another machine, and
 /// returns the plain tooltip when it did not, so the ordinary stop of this
@@ -693,7 +693,7 @@ mod tests {
         let plain = t!("tray.tooltip").to_string();
         assert_eq!(
             tooltip,
-            format!("{plain} - stopped 3 streams. 2 of them were not from this machine.")
+            format!("{plain}: stopped 3 casts. 2 of them were not started on this computer.")
         );
     }
 
@@ -712,7 +712,7 @@ mod tests {
         let plain = t!("tray.tooltip").to_string();
         assert_eq!(
             format_stop_all_tooltip(&impact, 1),
-            format!("{plain} - stopped 1 stream. 1 of them was not from this machine.")
+            format!("{plain}: stopped 1 cast. 1 of them was not started on this computer.")
         );
     }
 
@@ -732,7 +732,7 @@ mod tests {
         let plain = t!("tray.tooltip").to_string();
         assert_eq!(
             format_stop_all_tooltip(&impact, 2),
-            format!("{plain} - stopped 2 streams. 2 of them were not from this machine.")
+            format!("{plain}: stopped 2 casts. 2 of them were not started on this computer.")
         );
     }
 

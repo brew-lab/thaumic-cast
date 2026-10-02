@@ -80,13 +80,13 @@ describe('desktop en.json', () => {
         streams: i18n.t('speakers.summary_streaming', { count: streams }),
       });
 
-    expect(summary(1, 0)).toBe('1 speaker, 0 streaming');
-    expect(summary(4, 2)).toBe('4 speakers, 2 streaming');
+    expect(summary(1, 0)).toBe('1 speaker, 0 casting');
+    expect(summary(4, 2)).toBe('4 speakers, 2 casting');
     expect(i18n.t('device.others', { count: 1 })).toBe('+1 other');
     expect(i18n.t('device.others', { count: 2 })).toBe('+2 others');
-    expect(i18n.t('onboarding.speakers.found', { count: 1 })).toStartWith('Found 1 speaker.');
-    expect(i18n.t('onboarding.speakers.found', { count: 5 })).toStartWith('Found 5 speakers.');
-    expect(i18n.t('onboarding.ready.summary_speakers', { count: 1 })).toBe('Speakers: 1 found');
+    expect(i18n.t('onboarding.speakers.found', { count: 1 })).toBe('1 speaker answered.');
+    expect(i18n.t('onboarding.speakers.found', { count: 5 })).toBe('5 speakers answered.');
+    expect(i18n.t('onboarding.ready.summary_speakers', { count: 1 })).toBe('Speakers: 1 answered');
     expect(i18n.t('onboarding.step_of', { current: 1, total: 5 })).toBe('Step 1 of 5');
   });
 });
