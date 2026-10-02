@@ -1,3 +1,6 @@
+//! The session's audio clock drift correction: stepping the controller with
+//! each report's estimate and handing its rate command to the connection.
+
 use std::net::IpAddr;
 use std::time::Instant;
 

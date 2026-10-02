@@ -1,3 +1,10 @@
+//! The session's report: the `[SpeakerMonitor]` line written every 30 s.
+//!
+//! [`SpeakerSession::report`] estimates the reserve and clock, publishes them,
+//! steps drift correction and the speaker's notice, and writes the line. The
+//! helpers here format the line's parts; the end-of-connection summary in the
+//! parent module uses some of them too.
+
 use std::net::IpAddr;
 use std::time::{Duration, Instant};
 
