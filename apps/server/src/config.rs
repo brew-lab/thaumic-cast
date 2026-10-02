@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{bail, Context, Result};
 use serde::Deserialize;
-use thaumic_core::DriftMode;
+use thaumic_core::{DriftMode, SpeakerSettingValues};
 
 /// Server configuration loaded from YAML with environment overrides.
 #[derive(Debug, Deserialize)]
@@ -91,6 +91,11 @@ pub struct ServerConfig {
     /// next connection. See `thaumic_core::Config`.
     /// Override: `THAUMIC_DRIFT_COMPENSATION` (`on`, `observe` or `off`)
     pub drift_compensation: DriftMode,
+
+    /// Which of the three speaker settings above the file itself set, so
+    /// that start-up can say where each value came from. Not a key.
+    #[serde(skip)]
+    pub speaker_file: SpeakerSettingValues,
 }
 
 impl Default for ServerConfig {
@@ -105,6 +110,7 @@ impl Default for ServerConfig {
             speaker_monitor: true,
             pcm_connect_burst_ms: thaumic_core::protocol_constants::DEFAULT_PCM_CONNECT_BURST_MS,
             drift_compensation: DriftMode::default(),
+            speaker_file: SpeakerSettingValues::default(),
         }
     }
 }
@@ -130,7 +136,11 @@ impl ServerConfig {
 
     /// Parses configuration from a YAML document.
     fn from_yaml(content: &str) -> Result<Self> {
-        serde_yaml::from_str(content).context("It was read, and this is where it went wrong")
+        let mut config: Self = serde_yaml::from_str(content)
+            .context("It was read, and this is where it went wrong")?;
+        // The same document again, for which of the speaker settings it sets.
+        config.speaker_file = serde_yaml::from_str(content).unwrap_or_default();
+        Ok(config)
     }
 
     /// Checks that all values are usable at runtime.
@@ -292,6 +302,31 @@ mod tests {
 
         let off = ServerConfig::from_yaml("drift_compensation: off\n").expect("should parse");
         assert_eq!(off.drift_warning(false), None);
+    }
+
+    /// A file records which of the three speaker settings it sets, and only
+    /// those.
+    #[test]
+    fn the_file_says_which_speaker_settings_it_sets() {
+        assert_eq!(
+            ServerConfig::default().speaker_file,
+            SpeakerSettingValues::default()
+        );
+        let config = ServerConfig::from_yaml("bind_port: 49400\n").expect("should parse");
+        assert_eq!(config.speaker_file, SpeakerSettingValues::default());
+
+        let config = ServerConfig::from_yaml(
+            "speaker_monitor: true\npcm_connect_burst_ms: 750\ndrift_compensation: observe\n",
+        )
+        .expect("should parse");
+        assert_eq!(
+            config.speaker_file,
+            SpeakerSettingValues {
+                speaker_monitor: Some(true),
+                pcm_connect_burst_ms: Some(750),
+                drift_compensation: Some(DriftMode::Observe),
+            }
+        );
     }
 
     /// The connect burst ships on at 500 ms, reaches core, can be switched

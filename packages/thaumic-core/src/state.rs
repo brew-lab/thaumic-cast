@@ -155,8 +155,8 @@ pub struct Config {
     /// client asked for video sync, which needs the polls and keeps them
     /// whatever this says. The setting is read once per speaker connection,
     /// so a change applies from each speaker's next connection without a
-    /// restart. `THAUMIC_SPEAKER_MONITOR=on|off` overrides it (see
-    /// [`crate::services::latency_monitor::speaker_monitor_enabled`]).
+    /// restart. The value here is the one in effect: the environment was
+    /// settled at start-up (see [`crate::companion_settings`]).
     #[serde(default = "default_speaker_monitor")]
     pub speaker_monitor: bool,
 
@@ -174,9 +174,9 @@ pub struct Config {
     /// so a stream whose ring does not yet hold both (a connection moments
     /// after the stream starts) bursts only what it has beyond the jitter
     /// buffer. Values above [`MAX_PCM_CONNECT_BURST_MS`] are clamped. Compressed
-    /// codecs are unaffected. Read once per connection;
-    /// `THAUMIC_PCM_CONNECT_BURST_MS` overrides it (see
-    /// [`crate::stream::pcm_connect_burst_ms`]).
+    /// codecs are unaffected. Read once per connection. The
+    /// value here is the one in effect: the environment was settled at
+    /// start-up (see [`crate::companion_settings`]).
     ///
     /// [`DEFAULT_PCM_CONNECT_BURST_MS`]: crate::protocol_constants::DEFAULT_PCM_CONNECT_BURST_MS
     /// [`MAX_PCM_CONNECT_BURST_MS`]: crate::protocol_constants::MAX_PCM_CONNECT_BURST_MS
@@ -191,10 +191,16 @@ pub struct Config {
     /// Defaults to [`DriftMode::On`]. Correction steers by the speaker
     /// monitor, so with [`Self::speaker_monitor`] off it is off. Read once
     /// per connection, so a change applies from each speaker's next
-    /// connection; `THAUMIC_DRIFT_COMPENSATION=on|observe|off` overrides it
-    /// (see [`crate::services::speaker_monitor::control::drift_compensation_mode`]).
+    /// connection. The value here is the one asked for, the environment
+    /// included, which was settled at start-up (see
+    /// [`crate::companion_settings`]).
     #[serde(default)]
     pub drift_compensation: DriftMode,
+
+    /// Where the three settings above came from, as recorded when they were
+    /// resolved at start-up. Never read from or written to a file.
+    #[serde(skip)]
+    pub setting_origins: crate::companion_settings::SettingOrigins,
 }
 
 /// Speaker monitoring is on unless switched off.
@@ -217,6 +223,7 @@ impl Default for Config {
             speaker_monitor: default_speaker_monitor(),
             pcm_connect_burst_ms: default_pcm_connect_burst_ms(),
             drift_compensation: DriftMode::default(),
+            setting_origins: crate::companion_settings::SettingOrigins::default(),
         }
     }
 }

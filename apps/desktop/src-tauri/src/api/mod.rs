@@ -10,7 +10,7 @@ use parking_lot::RwLock;
 use tauri::{AppHandle, Manager};
 use thaumic_core::{
     bootstrap_services, AppInfo, AppState as CoreAppState, AppType, ArtworkConfig, ArtworkSource,
-    BootstrappedServices, Config,
+    BootstrappedServices, CompanionSettings, Config, SettingNames, SpeakerEnv,
 };
 #[cfg(windows)]
 use thaumic_core::{AudioSource, CaptureError, CaptureSourceFactory};
@@ -115,6 +115,9 @@ pub struct AppState {
     pub services: BootstrappedServices,
     /// Application configuration.
     pub config: Arc<RwLock<Config>>,
+    /// What the environment said about the speaker settings when the app
+    /// started. Read once: a variable changed later waits for a restart.
+    speaker_env: SpeakerEnv,
     /// Tauri event emitter for frontend notifications.
     pub tauri_emitter: Arc<TauriEventEmitter>,
     /// Tauri app handle for restart functionality.
@@ -168,12 +171,21 @@ impl AppState {
         Self {
             services,
             config: Arc::new(RwLock::new(config)),
+            speaker_env: SpeakerEnv::read(),
             tauri_emitter,
             app_handle: Arc::new(RwLock::new(None)),
             services_started: Arc::new(AtomicBool::new(false)),
             started_minimized,
             cached_artwork_source: Arc::new(RwLock::new(None)),
         }
+    }
+
+    /// Puts `settings` into effect for each speaker's next connection, under
+    /// the environment as it was at start-up, which outranks them.
+    pub fn apply_settings(&self, settings: &DesktopSettings) -> CompanionSettings {
+        let resolved = settings.resolved(self.speaker_env);
+        resolved.apply_to(&mut self.config.write());
+        resolved
     }
 
     /// Returns whether the app was started in minimized/tray-only mode.
@@ -242,38 +254,13 @@ impl AppState {
         match handle.path().app_data_dir() {
             Ok(path) => {
                 let settings = DesktopSettings::load(&path);
-                settings.apply_to(&mut self.config.write());
-                log::info!(
-                    "Speaker monitoring: {}",
-                    if settings.speaker_monitor {
-                        "on"
-                    } else {
-                        "off (video sync only)"
-                    }
-                );
-                match thaumic_core::stream::cadence::pcm_connect_burst_env_override() {
-                    Some(ms) => log::info!(
-                        "Speaker head start: {} ms from THAUMIC_PCM_CONNECT_BURST_MS \
-                         (setting {} ms; PCM streams only)",
-                        ms,
-                        settings.pcm_connect_burst_ms
-                    ),
-                    None => log::info!(
-                        "Speaker head start: {} ms (PCM streams only)",
-                        settings.pcm_connect_burst_ms
-                    ),
+                let resolved = self.apply_settings(&settings);
+                if let Some(warning) = resolved.legacy_warning(false) {
+                    log::warn!("{warning}");
                 }
-                match thaumic_core::services::drift_compensation_env_override() {
-                    Some(mode) => log::info!(
-                        "Clock drift correction: {} from THAUMIC_DRIFT_COMPENSATION (setting {}; \
-                         PCM streams only)",
-                        mode,
-                        settings.drift_compensation
-                    ),
-                    None => log::info!(
-                        "Clock drift correction: {} (PCM streams only)",
-                        settings.drift_compensation
-                    ),
+                log::info!("Speaker settings, read once at start-up:");
+                for line in resolved.startup_lines(SettingNames::DESKTOP) {
+                    log::info!("  {line}");
                 }
                 self.services
                     .discovery_service

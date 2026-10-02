@@ -183,7 +183,7 @@ pub enum StreamEvent {
 #[serde(rename_all = "camelCase")]
 pub struct CompanionAudio {
     /// The speaker head start (PCM connect burst) each speaker is sent when
-    /// it connects, in ms, after any environment override. `0` is off.
+    /// it connects, in ms, as resolved at start-up. `0` is off.
     pub head_start_ms: u32,
     /// Whether an environment variable fixes the head start, so it can only
     /// be changed there.
@@ -191,23 +191,24 @@ pub struct CompanionAudio {
     /// Whether the speaker monitor, and with it the speaker notices, is on
     /// for new connections.
     pub speaker_monitor: bool,
-    /// The clock drift correction mode new connections run under, after
-    /// any environment override: `off` whenever the speaker monitor is.
+    /// The clock drift correction mode new connections run under: `off`
+    /// whenever the speaker monitor is.
     pub drift_compensation: crate::services::speaker_monitor::DriftMode,
 }
 
 impl CompanionAudio {
-    /// The settings new connections get under `config`, with the
-    /// environment overrides applied.
+    /// The settings new connections get under `config`. The environment is
+    /// not read here: `config` holds what was resolved at start-up, and
+    /// where each value came from.
     pub fn from_config(config: &crate::state::Config) -> Self {
-        use crate::services::latency_monitor::speaker_monitor_enabled;
+        use crate::companion_settings::SettingOrigin;
         use crate::services::speaker_monitor::drift_compensation_mode;
-        use crate::stream::cadence::{pcm_connect_burst_env_override, pcm_connect_burst_ms};
-        let speaker_monitor = speaker_monitor_enabled(config.speaker_monitor);
+        use crate::stream::cadence::pcm_connect_burst_ms;
+        let speaker_monitor = config.speaker_monitor;
         Self {
             head_start_ms: u32::try_from(pcm_connect_burst_ms(config.pcm_connect_burst_ms))
                 .unwrap_or(u32::MAX),
-            head_start_fixed: pcm_connect_burst_env_override().is_some(),
+            head_start_fixed: config.setting_origins.pcm_connect_burst_ms == SettingOrigin::Env,
             speaker_monitor,
             drift_compensation: drift_compensation_mode(config.drift_compensation, speaker_monitor),
         }

@@ -268,8 +268,9 @@ fn first_wait_not_survived_line(
     }
 }
 
-/// Environment variable that overrides the PCM connect burst setting, in
-/// milliseconds (`0` turns it off). See [`crate::Config::pcm_connect_burst_ms`].
+/// Environment variable that sets the PCM connect burst, in milliseconds
+/// (`0` turns it off). Read once at start-up (see
+/// [`crate::companion_settings`] and [`crate::Config::pcm_connect_burst_ms`]).
 pub const PCM_CONNECT_BURST_ENV: &str = "THAUMIC_PCM_CONNECT_BURST_MS";
 
 /// Parses a PCM connect burst in milliseconds: a whole number from `0` to
@@ -289,53 +290,15 @@ pub fn parse_pcm_connect_burst_ms(value: &str) -> Result<u64, String> {
     Ok(ms)
 }
 
-/// The value [`PCM_CONNECT_BURST_ENV`] forces the setting to, if it is set to
-/// something valid. An invalid value is ignored, with a warning the first
-/// time it is seen.
-pub fn pcm_connect_burst_env_override() -> Option<u64> {
-    static WARNED: std::sync::Once = std::sync::Once::new();
-    let raw = std::env::var(PCM_CONNECT_BURST_ENV).ok()?;
-    match pcm_connect_burst_override_from(&raw) {
-        Ok(ms) => ms,
-        Err(e) => {
-            WARNED.call_once(|| {
-                log::warn!(
-                    "[Stream] Ignoring {}={:?}: {}",
-                    PCM_CONNECT_BURST_ENV,
-                    raw,
-                    e
-                );
-            });
-            None
-        }
-    }
-}
-
-/// The override a raw [`PCM_CONNECT_BURST_ENV`] value asks for: `None` when it
-/// is blank, the parsed value when it is valid.
-fn pcm_connect_burst_override_from(raw: &str) -> Result<Option<u64>, String> {
-    if raw.trim().is_empty() {
-        return Ok(None);
-    }
-    parse_pcm_connect_burst_ms(raw).map(Some)
-}
-
 /// The PCM connect burst for a new connection, in milliseconds, given the
-/// configured setting.
-///
-/// [`PCM_CONNECT_BURST_ENV`] overrides `configured` when set to a valid
-/// value, and the result is clamped to [`MAX_PCM_CONNECT_BURST_MS`]. Read
-/// once per connection.
+/// configured setting: `configured`, held to [`MAX_PCM_CONNECT_BURST_MS`].
+/// The environment plays no part here; it was settled at start-up (see
+/// [`crate::companion_settings`]).
 ///
 /// [`MAX_PCM_CONNECT_BURST_MS`]: crate::protocol_constants::MAX_PCM_CONNECT_BURST_MS
 pub fn pcm_connect_burst_ms(configured: u64) -> u64 {
-    resolve_pcm_connect_burst_ms(configured, pcm_connect_burst_env_override())
-}
-
-/// [`pcm_connect_burst_ms`] without the environment.
-fn resolve_pcm_connect_burst_ms(configured: u64, env_override: Option<u64>) -> u64 {
     use crate::protocol_constants::MAX_PCM_CONNECT_BURST_MS;
-    let ms = env_override.unwrap_or(configured);
+    let ms = configured;
     if ms > MAX_PCM_CONNECT_BURST_MS {
         static WARNED: std::sync::Once = std::sync::Once::new();
         WARNED.call_once(|| {
@@ -3308,31 +3271,9 @@ mod tests {
         assert!(parse_pcm_connect_burst_ms("-1").is_err());
         assert!(parse_pcm_connect_burst_ms("half a second").is_err());
 
-        assert_eq!(resolve_pcm_connect_burst_ms(500, None), 500);
-        assert_eq!(
-            resolve_pcm_connect_burst_ms(500, Some(0)),
-            0,
-            "the env wins"
-        );
-        assert_eq!(resolve_pcm_connect_burst_ms(9000, None), 2000, "clamped");
-    }
-
-    #[test]
-    fn connect_burst_env_value_is_read_as_an_override() {
-        assert_eq!(pcm_connect_burst_override_from("1500"), Ok(Some(1500)));
-        assert_eq!(
-            pcm_connect_burst_override_from(" 0 "),
-            Ok(Some(0)),
-            "0 turns it off"
-        );
-        assert_eq!(pcm_connect_burst_override_from("2000"), Ok(Some(2000)));
-        assert_eq!(
-            pcm_connect_burst_override_from("  "),
-            Ok(None),
-            "blank is unset"
-        );
-        assert!(pcm_connect_burst_override_from("2001").is_err());
-        assert!(pcm_connect_burst_override_from("lots").is_err());
+        assert_eq!(pcm_connect_burst_ms(500), 500);
+        assert_eq!(pcm_connect_burst_ms(0), 0);
+        assert_eq!(pcm_connect_burst_ms(9000), 2000, "clamped");
     }
 
     #[test]

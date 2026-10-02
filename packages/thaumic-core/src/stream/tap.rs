@@ -137,7 +137,7 @@ impl ConnectionTap {
     ///
     /// `speaker_ip` is canonicalised here. `monitor` is whether speaker
     /// monitoring is on for this connection (see
-    /// [`crate::services::latency_monitor::speaker_monitor_enabled`]).
+    /// [`crate::Config::speaker_monitor`]).
     pub fn new(
         stream_id: impl Into<String>,
         speaker_ip: IpAddr,

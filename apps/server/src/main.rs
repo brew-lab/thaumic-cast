@@ -10,11 +10,12 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use anyhow::{anyhow, Context, Result};
-use clap::Parser;
+use clap::parser::ValueSource;
+use clap::{ArgMatches, CommandFactory, FromArgMatches, Parser};
 use parking_lot::RwLock;
 use thaumic_core::{
-    bootstrap_services_with_network, start_server, AppInfo, AppState, AppType, LocalIpDetector,
-    NetworkContext,
+    bootstrap_services_with_network, start_server, AppInfo, AppState, AppType, CompanionSettings,
+    LocalIpDetector, NetworkContext, SettingNames, SpeakerEnv, SpeakerSettingValues,
 };
 use tokio::signal;
 
@@ -110,9 +111,41 @@ fn parse_speaker_monitor(value: &str) -> Result<bool, String> {
         .ok_or_else(|| format!("expected on or off, got {value:?}"))
 }
 
+/// Resolves the three speaker settings, once: a flag beats an environment
+/// variable, which beats the config file, which beats the default.
+///
+/// clap has already read and checked both the flags and the environment;
+/// `matches` says which of the two each value came from. `legacy_diagnostics`
+/// is whether `THAUMIC_SPEAKER_DIAGNOSTICS` is set, which turns speaker
+/// monitoring on over all of them.
+fn speaker_settings(
+    file: SpeakerSettingValues,
+    args: &Args,
+    matches: &ArgMatches,
+    legacy_diagnostics: bool,
+) -> CompanionSettings {
+    let from = |source: ValueSource| {
+        let is = |id: &str| matches.value_source(id) == Some(source);
+        SpeakerSettingValues {
+            speaker_monitor: args.speaker_monitor.filter(|_| is("speaker_monitor")),
+            pcm_connect_burst_ms: args
+                .pcm_connect_burst_ms
+                .filter(|_| is("pcm_connect_burst_ms")),
+            drift_compensation: args.drift_compensation.filter(|_| is("drift_compensation")),
+        }
+    };
+    let env = SpeakerEnv {
+        values: from(ValueSource::EnvVariable),
+        legacy_diagnostics,
+    };
+    CompanionSettings::load(file, env, from(ValueSource::CommandLine))
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
-    let args = Args::parse();
+    // The flags and the environment are read here, once.
+    let matches = Args::command().get_matches();
+    let args = Args::from_arg_matches(&matches).unwrap_or_else(|err| err.exit());
 
     // Initialize logging
     env_logger::Builder::new()
@@ -127,6 +160,12 @@ async fn main() -> Result<()> {
         .context("Nothing was started: the configuration could not be loaded")?;
 
     // Apply CLI overrides
+    let speaker = speaker_settings(
+        config.speaker_file,
+        &args,
+        &matches,
+        SpeakerEnv::read().legacy_diagnostics,
+    );
     if let Some(port) = args.port {
         config.bind_port = port;
     }
@@ -145,44 +184,24 @@ async fn main() -> Result<()> {
     if let Some(strict) = args.strict_stream_access {
         config.strict_stream_access = strict;
     }
-    if let Some(monitor) = args.speaker_monitor {
-        config.speaker_monitor = monitor;
-    }
-    if let Some(burst) = args.pcm_connect_burst_ms {
-        config.pcm_connect_burst_ms = burst;
-    }
-    if let Some(mode) = args.drift_compensation {
-        config.drift_compensation = mode;
-    }
+    config.speaker_monitor = speaker.speaker_monitor.value;
+    config.pcm_connect_burst_ms = speaker.pcm_connect_burst_ms.value;
+    config.drift_compensation = speaker.drift_compensation.value;
 
     // CLI/env overrides can introduce invalid values (e.g. --port 0), so
     // validate the merged configuration before anything is started.
     config
         .validate()
         .context("The configuration cannot be used, and nothing was started")?;
-    log::info!(
-        "Speaker monitoring: {}",
-        if config.speaker_monitor {
-            "on"
-        } else {
-            "off (casts with video sync are still asked)"
-        }
-    );
-    if config.pcm_connect_burst_ms > 0 {
-        log::info!(
-            "Speaker head start: {} ms (pcm_connect_burst_ms; each speaker starts that far ahead)",
-            config.pcm_connect_burst_ms
-        );
-    } else {
-        log::info!("Speaker head start: off (pcm_connect_burst_ms is 0)");
+    if let Some(warning) = speaker.legacy_warning(true) {
+        log::warn!("{warning}");
     }
-    let speaker_monitor = thaumic_core::services::speaker_monitor_enabled(config.speaker_monitor);
-    match config.drift_warning(speaker_monitor) {
-        Some(warning) => log::warn!("{warning}"),
-        None => log::info!(
-            "Clock drift correction: {} (PCM casts only)",
-            config.drift_compensation
-        ),
+    log::info!("Speaker settings, read once at start-up:");
+    for line in speaker.startup_lines(SettingNames::SERVER) {
+        log::info!("  {line}");
+    }
+    if let Some(warning) = config.drift_warning(config.speaker_monitor) {
+        log::warn!("{warning}");
     }
 
     // Resolve advertise IP: use explicit config, or fall back to auto-detection
@@ -206,7 +225,8 @@ async fn main() -> Result<()> {
     };
 
     // Bootstrap services with explicit network configuration
-    let core_config = config.to_core_config();
+    let mut core_config = config.to_core_config();
+    speaker.apply_to(&mut core_config);
     let handle = tokio::runtime::Handle::current();
     let services = bootstrap_services_with_network(&core_config, network, handle)
         .context("The services did not start")?;
@@ -309,8 +329,10 @@ async fn shutdown_signal() {
 mod tests {
     use std::sync::Mutex;
 
-    use super::Args;
-    use clap::Parser;
+    use super::{speaker_settings, Args};
+    use clap::{CommandFactory, FromArgMatches, Parser};
+    use thaumic_core::events::CompanionAudio;
+    use thaumic_core::{CompanionSettings, DriftMode, SettingOrigin, SpeakerSettingValues};
 
     /// Serialises the tests that mutate the process-global environment, which
     /// clap reads while parsing.
@@ -318,15 +340,214 @@ mod tests {
 
     /// Runs `f` with `key` set to `value`, restoring the previous value after.
     fn with_env<T>(key: &str, value: &str, f: impl FnOnce() -> T) -> T {
+        with_envs(&[(key, value)], f)
+    }
+
+    /// Runs `f` with every variable in `vars` set, restoring the previous
+    /// values after.
+    fn with_envs<T>(vars: &[(&str, &str)], f: impl FnOnce() -> T) -> T {
         let _guard = ENV_LOCK.lock().unwrap_or_else(|err| err.into_inner());
-        let previous = std::env::var_os(key);
-        std::env::set_var(key, value);
+        let previous: Vec<_> = vars
+            .iter()
+            .map(|(key, value)| {
+                let previous = std::env::var_os(key);
+                std::env::set_var(key, value);
+                (key, previous)
+            })
+            .collect();
         let result = f();
-        match previous {
-            Some(previous) => std::env::set_var(key, previous),
-            None => std::env::remove_var(key),
+        for (key, previous) in previous {
+            match previous {
+                Some(previous) => std::env::set_var(key, previous),
+                None => std::env::remove_var(key),
+            }
         }
         result
+    }
+
+    /// The speaker settings `argv` resolves to over `file`, as `main` works
+    /// them out. Call with the environment lock held, or inside
+    /// [`with_envs`].
+    fn resolve(argv: &[&str], file: SpeakerSettingValues, legacy: bool) -> CompanionSettings {
+        let matches = Args::command()
+            .try_get_matches_from(argv)
+            .expect("valid arguments");
+        let args = Args::from_arg_matches(&matches).expect("valid arguments");
+        speaker_settings(file, &args, &matches, legacy)
+    }
+
+    /// The three speaker variables, each set to something other than the
+    /// default.
+    const SPEAKER_ENV: [(&str, &str); 3] = [
+        ("THAUMIC_SPEAKER_MONITOR", "off"),
+        ("THAUMIC_PCM_CONNECT_BURST_MS", "1000"),
+        ("THAUMIC_DRIFT_COMPENSATION", "observe"),
+    ];
+
+    /// A file that sets all three, to values no other source in these tests
+    /// uses.
+    const SPEAKER_FILE: SpeakerSettingValues = SpeakerSettingValues {
+        speaker_monitor: Some(false),
+        pcm_connect_burst_ms: Some(250),
+        drift_compensation: Some(DriftMode::Off),
+    };
+
+    fn in_effect(settings: &CompanionSettings) -> (bool, u64, DriftMode) {
+        (
+            settings.speaker_monitor.value,
+            settings.pcm_connect_burst_ms.value,
+            settings.drift_compensation.value,
+        )
+    }
+
+    fn origins(settings: &CompanionSettings) -> [SettingOrigin; 3] {
+        let origins = settings.origins();
+        [
+            origins.speaker_monitor,
+            origins.pcm_connect_burst_ms,
+            origins.drift_compensation,
+        ]
+    }
+
+    /// Flag, then environment, then config file, then default, for each of
+    /// the three speaker settings.
+    #[test]
+    fn speaker_settings_take_flag_then_env_then_file_then_default() {
+        let flags = [
+            "thaumic-server",
+            "--speaker-monitor",
+            "on",
+            "--pcm-connect-burst-ms",
+            "1500",
+            "--drift-compensation",
+            "on",
+        ];
+        let none = SpeakerSettingValues::default();
+
+        let default = {
+            let _guard = ENV_LOCK.lock().unwrap_or_else(|err| err.into_inner());
+            resolve(&["thaumic-server"], none, false)
+        };
+        assert_eq!(in_effect(&default), (true, 500, DriftMode::On));
+        assert_eq!(origins(&default), [SettingOrigin::Default; 3]);
+
+        let file = {
+            let _guard = ENV_LOCK.lock().unwrap_or_else(|err| err.into_inner());
+            resolve(&["thaumic-server"], SPEAKER_FILE, false)
+        };
+        assert_eq!(in_effect(&file), (false, 250, DriftMode::Off));
+        assert_eq!(origins(&file), [SettingOrigin::File; 3]);
+
+        with_envs(&SPEAKER_ENV, || {
+            let env = resolve(&["thaumic-server"], SPEAKER_FILE, false);
+            assert_eq!(in_effect(&env), (false, 1000, DriftMode::Observe));
+            assert_eq!(origins(&env), [SettingOrigin::Env; 3]);
+
+            let flag = resolve(&flags, SPEAKER_FILE, false);
+            assert_eq!(in_effect(&flag), (true, 1500, DriftMode::On), "a flag wins");
+            assert_eq!(origins(&flag), [SettingOrigin::Flag; 3]);
+
+            let mixed = resolve(
+                &["thaumic-server", "--pcm-connect-burst-ms", "0"],
+                none,
+                false,
+            );
+            assert_eq!(in_effect(&mixed), (false, 0, DriftMode::Observe));
+            assert_eq!(
+                origins(&mixed),
+                [SettingOrigin::Env, SettingOrigin::Flag, SettingOrigin::Env]
+            );
+        });
+    }
+
+    /// `THAUMIC_SPEAKER_DIAGNOSTICS` turns monitoring on by itself, and over
+    /// an explicit off from the flag, the variable or the file; it warns
+    /// either way and leaves the other two settings alone.
+    #[test]
+    fn the_legacy_variable_turns_monitoring_on_over_an_explicit_off() {
+        let alone = {
+            let _guard = ENV_LOCK.lock().unwrap_or_else(|err| err.into_inner());
+            resolve(&["thaumic-server"], SpeakerSettingValues::default(), true)
+        };
+        assert!(alone.speaker_monitor.value);
+        assert_eq!(alone.speaker_monitor.origin, SettingOrigin::LegacyEnv);
+        assert!(alone.legacy_warning(true).is_some());
+
+        with_env("THAUMIC_SPEAKER_MONITOR", "off", || {
+            let settings = resolve(
+                &["thaumic-server", "--speaker-monitor", "off"],
+                SPEAKER_FILE,
+                true,
+            );
+            assert!(settings.speaker_monitor.value);
+            assert_eq!(settings.speaker_monitor.origin, SettingOrigin::LegacyEnv);
+            assert_eq!(settings.pcm_connect_burst_ms.origin, SettingOrigin::File);
+            let warning = settings.legacy_warning(true).expect("warns");
+            assert!(warning.contains("THAUMIC_SPEAKER_DIAGNOSTICS"), "{warning}");
+            assert!(warning.contains("explicit off"), "{warning}");
+
+            let without = resolve(
+                &["thaumic-server", "--speaker-monitor", "off"],
+                SPEAKER_FILE,
+                false,
+            );
+            assert!(!without.speaker_monitor.value);
+            assert_eq!(without.legacy_warning(true), None);
+        });
+    }
+
+    /// The environment is read once: what a speaker connection gets is
+    /// worked out from the resolved configuration alone, so a variable set
+    /// after start-up changes nothing.
+    #[test]
+    fn an_environment_change_after_startup_changes_nothing() {
+        let settings = {
+            let _guard = ENV_LOCK.lock().unwrap_or_else(|err| err.into_inner());
+            resolve(&["thaumic-server"], SPEAKER_FILE, false)
+        };
+        let mut config = thaumic_core::Config::default();
+        settings.apply_to(&mut config);
+        let before = CompanionAudio::from_config(&config);
+        assert_eq!(before.head_start_ms, 250);
+        assert!(!before.head_start_fixed);
+        assert!(!before.speaker_monitor);
+
+        let changed = [
+            ("THAUMIC_SPEAKER_MONITOR", "on"),
+            ("THAUMIC_PCM_CONNECT_BURST_MS", "2000"),
+            ("THAUMIC_DRIFT_COMPENSATION", "on"),
+            ("THAUMIC_SPEAKER_DIAGNOSTICS", "1"),
+        ];
+        with_envs(&changed, || {
+            assert_eq!(CompanionAudio::from_config(&config), before);
+            assert_eq!(
+                thaumic_core::stream::pcm_connect_burst_ms(config.pcm_connect_burst_ms),
+                250
+            );
+            assert_eq!(
+                thaumic_core::services::drift_compensation_mode(config.drift_compensation, true),
+                DriftMode::Off
+            );
+        });
+    }
+
+    /// The wire flag that says the head start can only be changed in the
+    /// environment is true when the variable fixed it, and only then.
+    #[test]
+    fn the_head_start_is_fixed_only_when_the_variable_set_it() {
+        let fixed = |settings: CompanionSettings| {
+            let mut config = thaumic_core::Config::default();
+            settings.apply_to(&mut config);
+            CompanionAudio::from_config(&config).head_start_fixed
+        };
+        with_env("THAUMIC_PCM_CONNECT_BURST_MS", "1000", || {
+            assert!(fixed(resolve(&["thaumic-server"], SPEAKER_FILE, false)));
+            assert!(!fixed(resolve(
+                &["thaumic-server", "--pcm-connect-burst-ms", "750"],
+                SPEAKER_FILE,
+                false
+            )));
+        });
     }
 
     /// Parses `args` while no other test has the environment changed: clap

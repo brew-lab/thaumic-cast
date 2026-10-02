@@ -34,7 +34,7 @@
 //! its first frame, however the cast was started, so only the device that
 //! actually pulls the audio is ever polled; grouped slaves and home-theatre
 //! satellites never are. A speaker is polled when speaker monitoring was on
-//! for its connection (see [`speaker_monitor_enabled`]), or when a client
+//! for its connection (see [`crate::Config::speaker_monitor`]), or when a client
 //! asked for video sync on it, which works whatever the setting says. A
 //! video-sync request that arrives before the speaker's first fetch leaves a
 //! pending session that the fetch completes.
@@ -92,16 +92,13 @@ const POLL_INTERVAL_MS: u64 = 500;
 
 /// Environment variable that forces speaker monitoring on for this process,
 /// whatever the configuration says. Kept from before monitoring was on by
-/// default, for anyone whose setup already sets it.
+/// default, for anyone whose setup already sets it. Read once at start-up
+/// (see [`crate::companion_settings`]).
 pub const SPEAKER_DIAGNOSTICS_ENV: &str = "THAUMIC_SPEAKER_DIAGNOSTICS";
 
-/// Whether the diagnostics switch is set for this process.
-pub fn speaker_diagnostics_enabled() -> bool {
-    std::env::var_os(SPEAKER_DIAGNOSTICS_ENV).is_some_and(|v| !v.is_empty() && v != "0")
-}
-
-/// Environment variable that overrides the speaker-monitor setting:
-/// `on` or `off` (also `true`/`false`, `1`/`0`, `yes`/`no`).
+/// Environment variable that sets speaker monitoring: `on` or `off` (also
+/// `true`/`false`, `1`/`0`, `yes`/`no`). Read once at start-up (see
+/// [`crate::companion_settings`]).
 pub const SPEAKER_MONITOR_ENV: &str = "THAUMIC_SPEAKER_MONITOR";
 
 /// Parses a speaker-monitor switch value, or `None` if it is not one.
@@ -111,51 +108,6 @@ pub fn parse_speaker_monitor_switch(value: &str) -> Option<bool> {
         "off" | "false" | "0" | "no" => Some(false),
         _ => None,
     }
-}
-
-/// The value [`SPEAKER_MONITOR_ENV`] forces the setting to, if it is set to
-/// something recognisable. An unrecognisable value is ignored, with a
-/// warning the first time it is seen.
-pub fn speaker_monitor_env_override() -> Option<bool> {
-    static WARNED: std::sync::Once = std::sync::Once::new();
-    let raw = std::env::var(SPEAKER_MONITOR_ENV).ok()?;
-    if raw.trim().is_empty() {
-        return None;
-    }
-    let parsed = parse_speaker_monitor_switch(&raw);
-    if parsed.is_none() {
-        WARNED.call_once(|| {
-            log::warn!(
-                "[LatencyMonitor] Ignoring {}={:?}: expected on or off",
-                SPEAKER_MONITOR_ENV,
-                raw
-            );
-        });
-    }
-    parsed
-}
-
-/// Whether speaker monitoring is on, given the configured setting.
-///
-/// [`SPEAKER_MONITOR_ENV`] overrides `configured` when set, and the older
-/// [`SPEAKER_DIAGNOSTICS_ENV`] switch turns monitoring on regardless. Read
-/// once per speaker connection. Video sync does not depend on this: a speaker
-/// a client asked video sync for is polled either way.
-pub fn speaker_monitor_enabled(configured: bool) -> bool {
-    resolve_speaker_monitor(
-        configured,
-        speaker_monitor_env_override(),
-        speaker_diagnostics_enabled(),
-    )
-}
-
-/// [`speaker_monitor_enabled`] without the environment.
-fn resolve_speaker_monitor(
-    configured: bool,
-    env_override: Option<bool>,
-    diagnostics: bool,
-) -> bool {
-    env_override.unwrap_or(configured) || diagnostics
 }
 
 /// Base polling interval for a speaker that is monitored but not driving
@@ -4037,18 +3989,6 @@ mod tests {
             assert_eq!(parse_speaker_monitor_switch(off), Some(false), "{off:?}");
         }
         assert_eq!(parse_speaker_monitor_switch("sometimes"), None);
-    }
-
-    #[test]
-    fn the_environment_overrides_the_setting_and_diagnostics_force_it_on() {
-        assert!(resolve_speaker_monitor(true, None, false));
-        assert!(!resolve_speaker_monitor(false, None, false));
-        assert!(!resolve_speaker_monitor(true, Some(false), false));
-        assert!(resolve_speaker_monitor(false, Some(true), false));
-        assert!(
-            resolve_speaker_monitor(false, Some(false), true),
-            "the diagnostics switch still opts in"
-        );
     }
 
     #[test]
