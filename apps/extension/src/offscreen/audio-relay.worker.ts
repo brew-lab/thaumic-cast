@@ -7,8 +7,11 @@
  * crossing that causes zero-filled blocks (crackling) in the SAB path.
  *
  * Nothing here resamples, so the handshake declares the rate the capture
- * delivers: the first AudioData is read before the handshake is sent, and its
- * sample rate is the one declared. The rate in the encoder config is ignored.
+ * delivers: the first AudioData is waited for briefly before the handshake is
+ * sent, and its sample rate is the one declared. A silent or paused tab may
+ * deliver none, so after the wait the cast declares the rate the track reports
+ * and stops if the audio then arrives at another. The rate in the encoder
+ * config is ignored.
  */
 
 import {
@@ -37,12 +40,22 @@ import {
   FRAME_DURATION_MS_DEFAULT,
   getStreamingPolicy,
   type EncoderConfig,
+  type SupportedSampleRate,
 } from '@thaumic-cast/protocol';
 import type { WorkerInboundMessage } from './worker-messages';
 import { exponentialBackoff } from '../lib/backoff';
 import { errorParamsOf } from '../lib/keyed-error';
 import { convertPlanarToInt16 } from './pcm-convert';
-import { pcmFrameSizeInterleaved, resolvePcmDeclaredRate } from './pcm-rate';
+import {
+  PCM_FIRST_FRAME_WAIT_MS,
+  pcmFrameSizeInterleaved,
+  pcmRateMismatch,
+  readFirstWithin,
+  resolvePcmDeclaredRate,
+  resolvePcmSilentStartRate,
+  type PcmRateMismatch,
+  type ReadOutcome,
+} from './pcm-rate';
 
 const s: WorkerState = createWorkerState('AudioRelayWorker');
 
@@ -50,7 +63,10 @@ let running = false;
 let frameSizeInterleaved = 0;
 let audioReader: ReadableStreamDefaultReader<AudioData> | null = null;
 let channels = 2;
-/** Sample rate declared in the handshake: the rate of the first AudioData. */
+/**
+ * Sample rate declared in the handshake: the rate of the first AudioData, or
+ * the track's reported rate when none arrived within the wait.
+ */
 let declaredSampleRate = 0;
 
 let ch0Temp: Float32Array | null = null;
@@ -158,18 +174,18 @@ function sendOrQueue(frameView: Uint8Array<ArrayBuffer>): void {
 }
 
 /**
- * Ends the cast because the capture no longer delivers the rate the handshake
+ * Ends the cast because the capture does not deliver the rate the handshake
  * declared. Carrying on would play at the wrong speed, since nothing resamples.
- * @param rate - The rate the capture now delivers, in Hz
+ * The session stops the cast and passes the reason on for the popup to show.
+ * @param mismatch - The rate delivered, the rate declared, and which message that calls for
  */
-function stopForRateChange(rate: number): void {
-  const message =
-    `Capture rate changed: AudioData is ${rate}Hz, the handshake declared ` +
-    `${declaredSampleRate}Hz. Stopping the cast.`;
-  s.log.error(message);
+function stopForRateMismatch(mismatch: PcmRateMismatch): void {
+  s.log.error(
+    `Capture rate mismatch (${mismatch.reason}): AudioData is ${mismatch.params.rate}Hz, ` +
+      `the handshake declared ${mismatch.params.declared}Hz. Stopping the cast.`,
+  );
   running = false;
-  postToMain({ type: 'ERROR', message });
-  postToMain({ type: 'DISCONNECTED', reason: 'capture sample rate changed' });
+  postToMain({ type: 'CAPTURE_RATE_ERROR', reason: mismatch.reason, params: mismatch.params });
 }
 
 /**
@@ -192,10 +208,12 @@ function processAudioData(audioData: AudioData): void {
       );
     }
 
-    // The declared rate came from the first frame, so this only fires if the
-    // capture changes rate partway through a cast.
-    if (sr !== declaredSampleRate && sr > 0) {
-      stopForRateChange(sr);
+    // Fires when a cast that started from a silent tab declared the track's
+    // rate and the audio arrives at another, or when the capture changes rate
+    // partway through a cast.
+    const mismatch = pcmRateMismatch(sr, declaredSampleRate);
+    if (mismatch) {
+      stopForRateMismatch(mismatch);
       return;
     }
 
@@ -226,10 +244,19 @@ function processAudioData(audioData: AudioData): void {
   }
 }
 
-/** Main loop: reads AudioData from the MSTP reader, handles backpressure, and posts periodic stats. */
-async function consumeLoopMSTP(): Promise<void> {
-  if (!audioReader) return;
+/**
+ * Main loop: reads AudioData from the MSTP reader, handles backpressure, and posts periodic stats.
+ * @param outstandingRead - A read already started and not yet consumed, taken before any new one
+ */
+async function consumeLoopMSTP(
+  outstandingRead: Promise<ReadOutcome<AudioData>> | null,
+): Promise<void> {
+  if (!audioReader) {
+    closeWhenRead(outstandingRead);
+    return;
+  }
   s.lastStatsTime = performance.now();
+  let carriedRead = outstandingRead;
 
   while (running) {
     if (!s.policy?.dropOnBackpressure && s.frameQueue.length > 0) {
@@ -258,7 +285,11 @@ async function consumeLoopMSTP(): Promise<void> {
 
     consecutiveBackpressureCycles = 0;
 
-    const { value: audioData, done } = await audioReader.read();
+    // A read left outstanding by the first-frame wait is consumed here, once.
+    // Starting another beside it would queue behind it and is never needed.
+    const nextRead = carriedRead ?? audioReader.read();
+    carriedRead = null;
+    const { value: audioData, done } = await nextRead;
     if (done) break;
     if (!running) {
       audioData.close();
@@ -270,6 +301,22 @@ async function consumeLoopMSTP(): Promise<void> {
 
     maybePostStats(s, null, 0, getCustomMetrics, resetCustomCounters);
   }
+
+  // Stopped during a backoff with the first read still outstanding.
+  closeWhenRead(carriedRead);
+}
+
+/**
+ * Closes the AudioData of a read nobody will consume, whenever it settles.
+ * @param read - The outstanding read, or null when there is none
+ */
+function closeWhenRead(read: Promise<ReadOutcome<AudioData>> | null): void {
+  read?.then(
+    (result) => result.value?.close(),
+    () => {
+      /* the reader was cancelled or the capture failed; nothing to close */
+    },
+  );
 }
 
 /**
@@ -368,27 +415,40 @@ self.onmessage = async (event: MessageEvent<WorkerInboundMessage>) => {
       const reader = msg.readable.getReader();
       audioReader = reader;
 
-      // The first frame states the rate the capture really runs at. Wait for
-      // it before the handshake, so the rate declared is the rate delivered.
-      // The companion needs this frame before it can report the stream ready
-      // in any case, so a cast that never delivers one fails either way.
-      const first = await reader.read();
+      // The first frame states the rate the capture really runs at, so it is
+      // waited for before the handshake. The wait is bounded: Chrome may
+      // deliver no frames while the tab is silent or paused, and a cast
+      // started from such a tab must still start.
+      const first = await readFirstWithin(reader, PCM_FIRST_FRAME_WAIT_MS);
       if (audioReader !== reader) {
-        // Stopped while waiting; cleanup has already run.
-        first.value?.close();
+        // Stopped while waiting; cleanup has already cancelled the reader.
+        first.settled?.value?.close();
+        if (!first.settled) closeWhenRead(first.read);
         return;
       }
-      if (first.done) {
+      if (first.settled?.done) {
         throw new Error('Capture ended before any audio arrived');
       }
-      const firstFrame = first.value;
+      const firstFrame = first.settled?.value ?? null;
+      // With no frame yet, the read is still outstanding and the loop takes it.
+      const outstandingRead = first.settled ? null : first.read;
 
       let id: string;
       try {
-        if (!firstFrame.sampleRate) {
-          s.log.warn('The first AudioData stated no sample rate; declaring the fallback rate');
+        let captureRate: SupportedSampleRate;
+        if (firstFrame) {
+          if (!firstFrame.sampleRate) {
+            s.log.warn('The first AudioData stated no sample rate; declaring the fallback rate');
+          }
+          captureRate = resolvePcmDeclaredRate(firstFrame.sampleRate);
+        } else {
+          captureRate = resolvePcmSilentStartRate(msg.trackSampleRate);
+          s.log.info(
+            `No AudioData within ${PCM_FIRST_FRAME_WAIT_MS}ms (the tab may be silent); ` +
+              `declaring ${captureRate}Hz from the track's report of ` +
+              `${msg.trackSampleRate ? `${msg.trackSampleRate}Hz` : 'no sample rate'}`,
+          );
         }
-        const captureRate = resolvePcmDeclaredRate(firstFrame.sampleRate);
         declaredSampleRate = captureRate;
         if (captureRate !== encoderConfig.sampleRate) {
           s.log.info(
@@ -420,7 +480,8 @@ self.onmessage = async (event: MessageEvent<WorkerInboundMessage>) => {
           payload: { encoderConfig: declaredConfig },
         });
       } catch (err) {
-        firstFrame.close();
+        firstFrame?.close();
+        closeWhenRead(outstandingRead);
         throw err;
       }
 
@@ -428,9 +489,9 @@ self.onmessage = async (event: MessageEvent<WorkerInboundMessage>) => {
       s.streamStartTime = performance.now();
       postToMain({ type: 'CONNECTED', streamId: id });
 
-      processAudioData(firstFrame);
+      if (firstFrame) processAudioData(firstFrame);
 
-      consumeLoopMSTP().catch((err) => {
+      consumeLoopMSTP(outstandingRead).catch((err) => {
         s.log.error('consumeLoopMSTP error:', err);
         postToMain({ type: 'ERROR', message: String(err) });
       });

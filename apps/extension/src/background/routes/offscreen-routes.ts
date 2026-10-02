@@ -116,7 +116,7 @@ export function registerOffscreenRoutes(): void {
     'BROWSER_CAPTURE_ERROR',
     BrowserCaptureErrorMessageSchema,
     async (validated) => {
-      const { tabId, error, reason: serverReason } = validated;
+      const { tabId, error, reason: serverReason, params } = validated;
 
       if (hasSession(tabId)) {
         log.warn(`Browser capture error for tab ${tabId}: ${error}`);
@@ -134,7 +134,12 @@ export function registerOffscreenRoutes(): void {
           tabId,
           speakerIp,
           reason,
+          params,
         });
+      } else if (clearCaptureHealthForTab(tabId)) {
+        // The cast stopped before it reached START_PLAYBACK, so there is no
+        // session to stop; drop its capture-health state as a disconnect does.
+        notifyPopup(captureHealthBroadcast());
       }
 
       return { success: true };
