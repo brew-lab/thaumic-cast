@@ -16,11 +16,11 @@ old to say, the control is as it was.
 
 Keep the tab awake is disabled under browser-wide capture, where it does nothing, and says so; the choice is kept.
 
-Video sync controls appear in the popup only on a cast that was started with Video sync controls turned on. Turning
+Video sync controls appear in the popup only on a cast that was started with Video sync turned on. Turning
 the setting on during a cast used to show controls that never locked; the setting now says a change applies from the
 next cast.
 
-Choosing "Specify manually" for the server without a saved address now shows a line saying no address is saved and
+Choosing "Enter the address" for the companion without a saved address now shows a line saying no address is saved and
 that the extension is still looking on this machine, instead of nothing.
 
 No stored setting or default has changed.

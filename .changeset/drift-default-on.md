@@ -18,7 +18,7 @@ speaker lost about 85 ms in the first hour.
 - **Server:** a config file without `drift_compensation` now gets `on`. A config file that sets it keeps its value;
   write `drift_compensation: observe` (or `off`) to go back.
 - `THAUMIC_DRIFT_COMPENSATION` still outranks both.
-- Correction needs speaker monitoring ("Keep an eye on speakers" / `speaker_monitor`), which is also on by default.
+- Correction needs speaker monitoring ("Speaker monitoring" / `speaker_monitor`), which is also on by default.
   With monitoring off, correction is off, as before.
 - PCM casts only, as before.
 - With correction on, a PCM cast that has to restart at a segment boundary keeps up to 2 s of the pause as extra delay

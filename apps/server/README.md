@@ -12,7 +12,7 @@ HTTP/WebSocket API as the desktop app, so the extension can cast through it from
 - Any headless Linux box, running as a system service
 
 Left to itself, the extension looks for a companion on its own machine and nowhere else. When the server is somewhere
-else, the extension has to be told: **Settings → Companion → Enter the address → enter `http://<server-ip>:49400` →
+else, the extension has to be told: **Settings → Companion → Enter the address → `http://<server-ip>:49400` →
 Connect**, then say yes when Chrome asks whether the extension may use that address.
 
 ## Network requirements
@@ -305,7 +305,7 @@ exact command is printed at the end).
    ```
 
 5. **Point the extension at it.** Settings → Companion → Enter the address → `http://<container-ip>:49400` → Connect.
-   Chrome asks once whether the extension may "read and change your data" at that address. That is its standard
+   Chrome asks whether the extension may "read and change your data" at that address. That is its standard
    wording for access to any site, and here it covers that one host and no other; say yes.
 
 No speakers in the list? Go back to the [network requirements](#network-requirements): same VLAN, or mDNS reflected

@@ -194,7 +194,7 @@ for _ in $(seq 1 20); do
     IP="$(hostname -I 2>/dev/null | awk '{print $1}')"
     echo
     log "thaumic-server $NEW_VERSION is running"
-    echo "    Extension server URL:  http://${IP:-<this-host-ip>}:$PORT"
+    echo "    Server address:        http://${IP:-<this-host-ip>}:$PORT"
     echo "    Config:                $CONFIG_DIR/config.yaml"
     echo "    Logs:                  journalctl -u thaumic-server -f"
     echo "    Update:                re-run this script"

@@ -3,51 +3,44 @@ import { describe, expect, it } from 'bun:test';
 import en from '../locales/en.json';
 import {
   driftModeForToggle,
-  driftModeLabelKey,
+  driftEnvKey,
   driftToggleState,
   offersDriftCorrection,
 } from './drift-setting';
 
 const strings = en as Record<string, string>;
-const translate = (key: string): string => strings[key] ?? key;
 
 describe('driftToggleState', () => {
   it('should tick the toggle only for on, and leave it free while the monitor is on', () => {
-    expect(driftToggleState({ mode: 'on', envOverride: null }, true, translate)).toEqual({
+    expect(driftToggleState({ mode: 'on', envOverride: null }, true)).toEqual({
       checked: true,
       disabled: false,
       hint: null,
     });
-    expect(driftToggleState({ mode: 'observe', envOverride: null }, true, translate).checked).toBe(
-      false,
-    );
-    expect(driftToggleState({ mode: 'off', envOverride: null }, true, translate).checked).toBe(
-      false,
-    );
+    expect(driftToggleState({ mode: 'observe', envOverride: null }, true).checked).toBe(false);
+    expect(driftToggleState({ mode: 'off', envOverride: null }, true).checked).toBe(false);
   });
 
   it('should disable the toggle without the monitor, and say why', () => {
-    const state = driftToggleState({ mode: 'on', envOverride: null }, false, translate);
+    const state = driftToggleState({ mode: 'on', envOverride: null }, false);
     expect(state.disabled).toBe(true);
     expect(state.checked).toBe(false);
     expect(state.hint?.key).toBe('settings.drift_needs_monitor');
   });
 
   it('should disable the toggle while its settings load', () => {
-    expect(driftToggleState(null, true, translate).disabled).toBe(true);
-    expect(driftToggleState({ mode: 'on', envOverride: null }, null, translate).disabled).toBe(
-      true,
-    );
+    expect(driftToggleState(null, true).disabled).toBe(true);
+    expect(driftToggleState({ mode: 'on', envOverride: null }, null).disabled).toBe(true);
   });
 
   it('should show what the environment variable set, by name', () => {
-    const state = driftToggleState({ mode: 'on', envOverride: 'observe' }, true, translate);
+    const state = driftToggleState({ mode: 'on', envOverride: 'observe' }, true);
     expect(state).toEqual({
       checked: false,
       disabled: true,
-      hint: { key: 'settings.drift_env', params: { label: 'watch only' } },
+      hint: { key: 'settings.drift_env_observe' },
     });
-    const forced = driftToggleState({ mode: 'observe', envOverride: 'on' }, true, translate);
+    const forced = driftToggleState({ mode: 'observe', envOverride: 'on' }, true);
     expect(forced.checked).toBe(true);
   });
 });
@@ -72,9 +65,9 @@ describe('offersDriftCorrection', () => {
 describe('strings', () => {
   it('should have every string the toggle uses', () => {
     for (const mode of ['on', 'observe', 'off'] as const) {
-      expect(strings[driftModeLabelKey(mode)]).toBeString();
+      expect(strings[driftEnvKey(mode)]).toBeString();
     }
-    for (const key of ['settings.drift', 'settings.drift_description', 'settings.drift_env']) {
+    for (const key of ['settings.drift', 'settings.drift_description']) {
       expect(strings[key]).toBeString();
     }
     expect(strings['settings.drift_needs_monitor']).toBeString();
