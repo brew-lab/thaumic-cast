@@ -24,7 +24,7 @@
 
   "transport.playing": "Playing",
   "transport.paused": "Paused",
-  "transport.stopped": "Idle",
+  "transport.stopped": "Not playing",
   "transport.transitioning": "Loading",
 
   "server.running": "Running",
@@ -39,7 +39,7 @@
   "server.disconnect_all": "Disconnect extensions",
   "server.disconnect": "Disconnect",
   "server.disconnecting": "Disconnecting…",
-  "server.disconnect_description": "Hangs up on every extension. Each one rings back by itself within a few seconds.",
+  "server.disconnect_description": "Hangs up on every extension, which ends every cast. The extensions ring back by themselves in a few seconds; the casts need starting again.",
   "server.stop_streams": "Stop all casts",
   "server.stop": "Stop",
   "server.stopping": "Stopping…",
@@ -134,7 +134,7 @@
   "onboarding.firewall.subtitle_linux": "Your firewall may need telling",
   "onboarding.firewall.prompt_windows": "Windows is about to ask whether this app may use the network. Say yes: the speakers come to this computer to fetch the audio, and a firewall that turns them away gets you silence.",
   "onboarding.firewall.prompt_macos": "macOS, or a firewall such as Little Snitch, may ask about addresses beginning 224. That is multicast, which is how one asks a whole network a question without knowing anybody's name. Allow it.",
-  "onboarding.firewall.prompt_linux": "If this machine runs a firewall, it needs to allow incoming connections on ports 49400-49410. Nobody will ask; a Linux firewall expects you to know.",
+  "onboarding.firewall.prompt_linux": "If this computer runs a firewall, it needs to allow incoming connections on ports 49400-49410. Nobody will ask; a Linux firewall expects you to know.",
   "onboarding.firewall.reason_1": "The extension sends the audio to this app.",
   "onboarding.firewall.reason_2": "This app tells the speakers where to fetch it, and they do.",
   "onboarding.firewall.reason_3": "All of it stays on your own network. None of it has business elsewhere.",
@@ -154,8 +154,8 @@
   "onboarding.speakers.manual_add": "Add speaker",
   "onboarding.speakers.manual_error_unreachable": "Nothing answered at that address. Check the speaker is switched on, and that the address is its own.",
   "onboarding.speakers.manual_error_not_sonos": "Something answered at that address, and it was not a Sonos speaker. Check the address.",
-  "onboarding.speakers.manual_error_invalid": "That is not an IP address. They look like 192.168.1.100.",
-  "onboarding.speakers.manual_error_generic": "The speaker could not be added, and no reason came back. Try again.",
+  "onboarding.speakers.manual_error_invalid": "That is not an address a Sonos speaker can have. Theirs look like 192.168.1.100.",
+  "onboarding.speakers.manual_error_generic": "The speaker could not be added, and the reason did not make it this far. Check the address, then try again.",
 
   "onboarding.extension.title": "The extension",
   "onboarding.extension.subtitle": "The half that lives in Chrome",
@@ -167,7 +167,7 @@
   "onboarding.extension.skip_hint": "It can be installed later. This app will wait; it has nothing else on.",
 
   "onboarding.ready.title": "Ready to cast",
-  "onboarding.ready.subtitle": "Nothing further is required of you",
+  "onboarding.ready.subtitle": "The rest happens in the browser",
   "onboarding.ready.intro": "Up to {{maxStreams}} browser tabs can be cast at once. The number was chosen, not discovered.",
   "onboarding.ready.summary_app": "Desktop app: running",
   "onboarding.ready.summary_speakers_one": "Speakers: {{count}} answered",

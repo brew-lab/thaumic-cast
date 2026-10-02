@@ -9,7 +9,7 @@ tray:
   status_streaming_one: 1 cast running
   status_streaming_many: '%{count} casts running'
 
-  # Tooltip after "Stop all casts" ended a cast from another machine: the
+  # Tooltip after "Stop all casts" ended a cast from another computer: the
   # first sentence, a space, then the second. The second counts casts, and
   # one other computer can own several, so it must not name a number of computers
   stop_all_stopped_one: '%{app}: stopped 1 cast.'
