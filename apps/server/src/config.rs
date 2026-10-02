@@ -130,7 +130,7 @@ impl ServerConfig {
 
     /// Parses configuration from a YAML document.
     fn from_yaml(content: &str) -> Result<Self> {
-        serde_yaml::from_str(content).context("The YAML did not parse")
+        serde_yaml::from_str(content).context("It was read, and this is where it went wrong")
     }
 
     /// Checks that all values are usable at runtime.
@@ -177,8 +177,9 @@ impl ServerConfig {
         (!speaker_monitor && self.drift_compensation != DriftMode::Off).then(|| {
             format!(
                 "drift_compensation is {} but speaker monitoring is off. Clock drift correction \
-                 steers by what the monitoring reports and has nothing to steer by, so it runs \
-                 as off. Turn speaker_monitor on, or set drift_compensation to off.",
+                 steers by what the monitoring reports, so it runs as off. Turn speaker \
+                 monitoring on (speaker_monitor, --speaker-monitor or \
+                 THAUMIC_SPEAKER_MONITOR), or set drift_compensation to off.",
                 self.drift_compensation
             )
         })
