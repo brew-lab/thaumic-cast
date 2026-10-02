@@ -423,7 +423,7 @@ fn format_head_start(tracker: &ReserveTracker) -> String {
 
 /// The cadence queue, delivery gaps and retransmissions over a report's
 /// window, for the log.
-fn format_pipeline(samples: &[crate::stream::cadence::PipelineSample]) -> String {
+fn format_pipeline(samples: &[crate::stream::delivery::PipelineSample]) -> String {
     let mut queue: Vec<f64> = samples.iter().map(|s| s.queue_len as f64).collect();
     let queue = WindowStats::of(&mut queue).map_or_else(
         || "\u{2014}".to_string(),

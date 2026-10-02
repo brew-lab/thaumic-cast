@@ -21,13 +21,10 @@ pub use crate::model::head_start::{
     parse_pcm_connect_burst_ms, pcm_connect_burst_ms, PCM_CONNECT_BURST_ENV,
 };
 
-#[cfg(test)]
-pub(crate) use super::delivery::end_suffix;
 use super::delivery::{
-    CadenceWindow, ConnBinding, DeliveryWindow, PipelineSnapshot, ReceiveWindow,
-    MAX_PIPELINE_SNAPSHOTS,
+    CadenceWindow, ConnBinding, DeliveryWindow, EpochHook, LoggingStreamGuard, PipelineSample,
+    PipelineSnapshot, ReceiveWindow, MAX_PIPELINE_SNAPSHOTS,
 };
-pub(crate) use super::delivery::{EpochHook, LoggingStreamGuard, PipelineSample};
 use super::manager::TimestampedFrame;
 use super::rate_adapter::{RateAdapter, RateControl};
 use super::{

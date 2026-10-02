@@ -24,7 +24,8 @@ use std::time::{Duration, Instant};
 use serde::Serialize;
 use tokio::sync::mpsc;
 
-use super::cadence::{ChainStats, LoggingStreamGuard, PipelineSample};
+use super::cadence::ChainStats;
+use super::delivery::{LoggingStreamGuard, PipelineSample};
 use super::manager::PlaybackEpoch;
 use super::playout::MappedPosition;
 use super::rate_adapter::RateControl;

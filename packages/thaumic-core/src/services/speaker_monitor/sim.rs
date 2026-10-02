@@ -43,7 +43,8 @@ use super::test_support::Lcg;
 use super::tracker::{
     PlayoutTimeline, ReserveTracker, SwitchOutcome, TimelineEntry, DRAINING_WARN_SECS,
 };
-use crate::stream::cadence::{create_wav_stream_with_cadence, CadenceConfig, LoggingStreamGuard};
+use crate::stream::cadence::{create_wav_stream_with_cadence, CadenceConfig};
+use crate::stream::delivery::LoggingStreamGuard;
 use crate::stream::manager::TimestampedFrame;
 use crate::stream::tap::WAV_HEADER_BYTES;
 use crate::stream::{AudioCodec, AudioFormat, ConnectionTap, HeadStart, RateControl};
