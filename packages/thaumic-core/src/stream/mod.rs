@@ -17,7 +17,7 @@ pub use cadence::{
     create_wav_stream_with_cadence, parse_pcm_connect_burst_ms, pcm_connect_burst_ms,
     CadenceConfig, ChainStats, PCM_CONNECT_BURST_ENV,
 };
-pub use codec::{AudioCodec, CleanupOrder};
+pub use codec::{AudioCodec, CleanupOrder, CodecFacts, CodecUri};
 pub use delivery::{
     lagged_error, EpochHook, FirstConnectionWait, FirstWaitWatch, LoggingStreamGuard,
     FIRST_WAIT_SURVIVAL,
