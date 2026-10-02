@@ -36,8 +36,6 @@ interface ActiveCastCardProps {
   onControl?: (action: MediaAction) => void;
   /** Callback when a speaker remove button is clicked */
   onRemoveSpeaker?: (speakerIp: string) => void;
-  /** Whether video sync controls should be shown (from global settings) */
-  videoSyncEnabled?: boolean;
   /** Callback when sync group volume changes (all speakers at once) */
   onSyncGroupVolumeChange: (speakerIps: string[], volume: number) => void;
   /** Callback when sync group mute is toggled (all speakers at once) */
@@ -46,6 +44,8 @@ interface ActiveCastCardProps {
 
 /**
  * Displays an active cast session with volume controls and stop button.
+ * Video sync controls show only for a cast that was started with video sync
+ * on: the companion measures for it from the start of playback or not at all.
  * @param props - Component props
  * @param props.cast
  * @param props.getTransportState
@@ -57,7 +57,6 @@ interface ActiveCastCardProps {
  * @param props.onStop
  * @param props.onControl
  * @param props.onRemoveSpeaker
- * @param props.videoSyncEnabled
  * @param props.onSyncGroupVolumeChange
  * @param props.onSyncGroupMuteToggle
  * @returns The rendered ActiveCastCard component
@@ -73,7 +72,6 @@ export function ActiveCastCard({
   onStop,
   onControl,
   onRemoveSpeaker,
-  videoSyncEnabled: showVideoSync = false,
   onSyncGroupVolumeChange,
   onSyncGroupMuteToggle,
 }: ActiveCastCardProps): JSX.Element {
@@ -120,7 +118,8 @@ export function ActiveCastCard({
   // Extract dominant color from artwork for backdrop tinting
   const dominantColor = useDominantColor(stagedImage);
 
-  // Video sync state and controls
+  // Video sync state and controls, for a cast started with video sync on
+  const showVideoSync = cast.videoSync;
   const videoSync = useVideoSyncState(showVideoSync ? cast.tabId : undefined);
 
   // Sync group volume: show group control when sync is active with multiple speakers

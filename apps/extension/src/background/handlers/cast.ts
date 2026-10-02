@@ -31,6 +31,7 @@ import { loadExtensionSettings } from '../../lib/settings';
 import { getCachedCodecSupport } from '../../lib/codec-cache';
 import { describeEncoderConfig } from '../../lib/presets';
 import { resolveAudio } from '../../lib/audio-resolver';
+import { companionCapability } from '../../lib/capture-capability';
 import { getCachedState, updateCache } from '../metadata-cache';
 import {
   registerSession,
@@ -115,7 +116,19 @@ export async function handleStartCast(msg: StartCastMessage): Promise<ExtensionR
 
     // Resolve the config this cast sends, through the resolver the options
     // page renders from. PCM is always supported, so this will always succeed.
-    const { config: encoderConfig } = resolveAudio(settings, codecSupport);
+    // What discovery just learned about the companion answers for it here,
+    // whether or not the control connection is up yet.
+    const { appType, browserCapture } = getConnectionState();
+    const { config: encoderConfig, captureRefused } = resolveAudio(
+      settings,
+      codecSupport,
+      companionCapability({ connected: true, appType, browserCapture }),
+    );
+    if (captureRefused) {
+      // Not stopped here: what the companion said at discovery may be out of
+      // date, and its own refusal is the one that counts.
+      log.warn('Browser-wide capture is on, and the companion reported it cannot capture');
+    }
     log.info(
       `Encoder config (${settings.audioMode} mode, ${settings.captureMode} capture): ` +
         describeEncoderConfig(encoderConfig),
@@ -246,6 +259,7 @@ export async function handleStartCast(msg: StartCastMessage): Promise<ExtensionR
         encoderConfig,
         settings.syncSpeakers,
         captureMode,
+        settings.videoSyncEnabled,
       );
 
       return { success: true };

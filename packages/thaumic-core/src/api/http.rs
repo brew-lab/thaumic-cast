@@ -19,8 +19,9 @@ use serde_json::json;
 
 use super::stream::{stream_audio, stream_audio_segment};
 use crate::api::response::{api_error, api_ok, api_success};
-use crate::api::ws::ws_handler;
-use crate::api::AppState;
+use crate::api::ws::{is_companion_host, ws_handler};
+use crate::api::{AppState, AppType};
+use crate::capture::CaptureSourceFactory;
 use crate::error::{ErrorCode, ThaumicError, ThaumicResult};
 use crate::protocol_constants::{MAX_GENA_BODY_SIZE, SERVICE_ID};
 use crate::sonos::discovery::probe_speaker_by_ip;
@@ -162,16 +163,50 @@ pub fn create_router(state: AppState) -> Router {
 /// `appType` lets the extension tailor update-prompt copy ("Update Desktop
 /// App" vs. "Update Server") immediately at discovery time, without waiting
 /// for the WebSocket `INITIAL_STATE` to arrive.
-async fn health_check(State(state): State<AppState>) -> impl IntoResponse {
+///
+/// `browserCapture` says whether a `START_BROWSER_CAPTURE` from this caller
+/// would be accepted, so the extension can say so before a cast is tried.
+async fn health_check(
+    State(state): State<AppState>,
+    ConnectInfo(remote_addr): ConnectInfo<SocketAddr>,
+) -> impl IntoResponse {
     let max_streams = state.config.read().streaming.max_concurrent_streams;
-    api_success(json!({
+    let browser_capture = can_capture_browser(
+        state.capture_factory.as_deref(),
+        &state.network.get_local_ip(),
+        remote_addr.ip(),
+    );
+    api_success(health_body(
+        state.app_info.app_type,
+        max_streams,
+        browser_capture,
+    ))
+}
+
+/// Whether this companion can capture the whole browser for the client at
+/// `peer`: it has a capture factory that works on this platform, and the
+/// client is on the companion's own machine. These are the two conditions
+/// `handle_start_browser_capture` refuses on.
+fn can_capture_browser(
+    factory: Option<&dyn CaptureSourceFactory>,
+    local_ip: &str,
+    peer: IpAddr,
+) -> bool {
+    factory.is_some_and(CaptureSourceFactory::available) && is_companion_host(local_ip, peer)
+}
+
+/// Builds the `/health` body. Fields are only ever added: an older extension
+/// ignores the ones it does not know.
+fn health_body(app_type: AppType, max_streams: usize, browser_capture: bool) -> serde_json::Value {
+    json!({
         "status": "ok",
         "service": SERVICE_ID,
-        "appType": state.app_info.app_type,
+        "appType": app_type,
+        "browserCapture": browser_capture,
         "limits": {
             "maxStreams": max_streams
         }
-    }))
+    })
 }
 
 /// Serves the static artwork for Sonos album art display.
@@ -509,6 +544,90 @@ async fn handle_gena_notify(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    mod health {
+        use std::sync::Arc;
+
+        use super::*;
+        use crate::capture::{AudioSource, CaptureError};
+
+        /// A capture factory that only answers whether capture is available.
+        struct FakeFactory(bool);
+
+        impl CaptureSourceFactory for FakeFactory {
+            fn available(&self) -> bool {
+                self.0
+            }
+
+            fn create_source(
+                &self,
+                _browser_name: Option<&str>,
+            ) -> Result<Arc<dyn AudioSource>, CaptureError> {
+                Err(CaptureError::Platform("not used".into()))
+            }
+        }
+
+        const LOCAL_IP: &str = "192.168.1.5";
+
+        fn ip(s: &str) -> IpAddr {
+            s.parse().expect("ip")
+        }
+
+        #[test]
+        fn body_carries_every_field_the_extension_reads() {
+            assert_eq!(
+                health_body(AppType::Desktop, 10, true),
+                json!({
+                    "status": "ok",
+                    "service": SERVICE_ID,
+                    "appType": "desktop",
+                    "browserCapture": true,
+                    "limits": { "maxStreams": 10 }
+                })
+            );
+            assert_eq!(
+                health_body(AppType::Server, 4, false),
+                json!({
+                    "status": "ok",
+                    "service": SERVICE_ID,
+                    "appType": "server",
+                    "browserCapture": false,
+                    "limits": { "maxStreams": 4 }
+                })
+            );
+        }
+
+        #[test]
+        fn capture_is_offered_to_a_client_on_the_companion_machine() {
+            let factory = FakeFactory(true);
+            assert!(can_capture_browser(
+                Some(&factory),
+                LOCAL_IP,
+                ip("127.0.0.1")
+            ));
+            assert!(can_capture_browser(Some(&factory), LOCAL_IP, ip(LOCAL_IP)));
+        }
+
+        #[test]
+        fn capture_is_not_offered_to_a_client_on_another_machine() {
+            let factory = FakeFactory(true);
+            assert!(!can_capture_browser(
+                Some(&factory),
+                LOCAL_IP,
+                ip("192.168.1.50")
+            ));
+        }
+
+        #[test]
+        fn capture_is_not_offered_without_a_working_factory() {
+            assert!(!can_capture_browser(None, LOCAL_IP, ip("127.0.0.1")));
+            assert!(!can_capture_browser(
+                Some(&FakeFactory(false)),
+                LOCAL_IP,
+                ip("127.0.0.1")
+            ));
+        }
+    }
 
     mod stream_routes {
         use super::*;

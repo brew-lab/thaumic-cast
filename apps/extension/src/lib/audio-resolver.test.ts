@@ -235,6 +235,28 @@ describe('resolveAudio under browser-wide capture', () => {
     expect(resolved.controls.bitDepth).toBe(true);
   });
 
+  it('should say the cast will be refused only when the companion is known not to capture', () => {
+    const browser = stored({ captureMode: 'browser' });
+    const tab = stored({ captureMode: 'tab' });
+
+    expect(resolveAudio(browser, SUPPORT.aac, { browserCapture: false }).captureRefused).toBe(true);
+    expect(resolveAudio(browser, SUPPORT.aac, { browserCapture: true }).captureRefused).toBe(false);
+    expect(resolveAudio(browser, SUPPORT.aac, {}).captureRefused).toBe(false);
+    expect(resolveAudio(browser, SUPPORT.aac).captureRefused).toBe(false);
+    expect(resolveAudio(tab, SUPPORT.aac, { browserCapture: false }).captureRefused).toBe(false);
+  });
+
+  it('should send the same config whatever the companion can do', () => {
+    const settings = stored({ audioMode: 'high', captureMode: 'browser' });
+    const unknown = resolveAudio(settings, SUPPORT.aac);
+
+    for (const browserCapture of [true, false]) {
+      const resolved = resolveAudio(settings, SUPPORT.aac, { browserCapture });
+      expect(resolved.config).toEqual(unknown.config);
+      expect(resolved.controls).toEqual(unknown.controls);
+    }
+  });
+
   it('should leave the stored settings as they were', () => {
     const settings = stored({
       audioMode: 'custom',

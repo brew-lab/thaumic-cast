@@ -37,6 +37,8 @@ export interface ConnectionStatus {
   networkHealthReason: string | null;
   /** Companion type from `/health` (null on pre-0.4.0 builds). */
   appType: AppType | null;
+  /** Whether the companion says it can capture the whole browser (null when it does not say). */
+  browserCapture: boolean | null;
   /** Companion app semver from `INITIAL_STATE` (null on pre-0.4.0 builds). */
   appVersion: string | null;
   /** Wire-protocol semver from `INITIAL_STATE` (null on pre-0.4.0 builds). */
@@ -57,6 +59,7 @@ interface ConnectionState {
   networkHealth: NetworkHealthStatus;
   networkHealthReason: string | null;
   appType: AppType | null;
+  browserCapture: boolean | null;
   appVersion: string | null;
   protocolVersion: string | null;
   companionAudio: CompanionAudio | null;
@@ -83,6 +86,7 @@ const initialState: ConnectionState = {
   networkHealth: 'ok',
   networkHealthReason: null,
   appType: null,
+  browserCapture: null,
   appVersion: null,
   protocolVersion: null,
   companionAudio: null,
@@ -121,6 +125,7 @@ function connectionReducer(state: ConnectionState, action: ConnectionAction): Co
         networkHealth,
         networkHealthReason,
         appType,
+        browserCapture,
         appVersion,
         protocolVersion,
         companionAudio,
@@ -136,6 +141,7 @@ function connectionReducer(state: ConnectionState, action: ConnectionAction): Co
         networkHealth: networkHealth ?? 'ok',
         networkHealthReason: networkHealthReason ?? null,
         appType: appType ?? null,
+        browserCapture: browserCapture ?? null,
         appVersion: appVersion ?? null,
         protocolVersion: protocolVersion ?? null,
         companionAudio: companionAudio ?? null,

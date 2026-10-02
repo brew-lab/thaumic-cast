@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 import {
+  HealthResponseSchema,
   WsControlCommandSchema,
   WsInitialStateMessageSchema,
   WsMessageSchema,
@@ -111,5 +112,56 @@ describe('WsControlCommandSchema', () => {
     expect(WsControlCommandSchema.safeParse(command()).success).toBe(true);
     expect(WsControlCommandSchema.safeParse(command('speaker_taken_over')).success).toBe(true);
     expect(WsControlCommandSchema.safeParse(command('because')).success).toBe(false);
+  });
+});
+
+describe('HealthResponseSchema', () => {
+  it('should read the capture capability a companion reports', () => {
+    const parsed = HealthResponseSchema.parse({
+      status: 'ok',
+      service: 'thaumic-cast',
+      appType: 'desktop',
+      browserCapture: true,
+      limits: { maxStreams: 10 },
+    });
+
+    expect(parsed).toMatchObject({
+      service: 'thaumic-cast',
+      appType: 'desktop',
+      browserCapture: true,
+      limits: { maxStreams: 10 },
+    });
+  });
+
+  it('should leave the capability unknown for a companion that predates it', () => {
+    const parsed = HealthResponseSchema.parse({
+      status: 'ok',
+      service: 'thaumic-cast',
+      appType: 'server',
+      limits: { maxStreams: 10 },
+    });
+
+    expect(parsed.browserCapture).toBeUndefined();
+    expect(parsed.appType).toBe('server');
+  });
+
+  it('should degrade a field it does not recognise instead of failing', () => {
+    const parsed = HealthResponseSchema.safeParse({
+      service: 'thaumic-cast',
+      appType: 'cli',
+      browserCapture: 'yes',
+      limits: { maxStreams: 0 },
+    });
+
+    expect(parsed.success).toBe(true);
+    expect(parsed.success && parsed.data.appType).toBeUndefined();
+    expect(parsed.success && parsed.data.browserCapture).toBeUndefined();
+    expect(parsed.success && parsed.data.limits?.maxStreams).toBeUndefined();
+  });
+
+  it('should accept the body of a companion from before appType and limits', () => {
+    expect(HealthResponseSchema.safeParse({ status: 'ok', service: 'thaumic-cast' }).success).toBe(
+      true,
+    );
   });
 });

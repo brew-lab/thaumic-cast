@@ -14,7 +14,11 @@
  * - WebSocket lifecycle (handled by offscreen-manager.ts)
  */
 
-import { DEFAULT_MAX_CONCURRENT_STREAMS, type AppType } from '@thaumic-cast/protocol';
+import {
+  DEFAULT_MAX_CONCURRENT_STREAMS,
+  HealthResponseSchema,
+  type AppType,
+} from '@thaumic-cast/protocol';
 import { createLogger } from '@thaumic-cast/shared';
 import { hasHostPermission } from '../lib/hostPermission';
 import { loadExtensionSettings } from '../lib/settings';
@@ -40,6 +44,11 @@ export interface DiscoveredApp {
    * predates `/health` reporting `appType` (pre-0.4.0).
    */
   appType?: AppType;
+  /**
+   * Whether the companion would capture the whole browser for this extension.
+   * Absent when the companion predates `/health` reporting it: unknown.
+   */
+  browserCapture?: boolean;
 }
 
 /**
@@ -80,15 +89,14 @@ async function probeUrl(url: string): Promise<DiscoveredApp | null> {
     });
 
     if (response.ok) {
-      const data = await response.json();
+      const health = HealthResponseSchema.safeParse(await response.json());
 
-      if (data.service === 'thaumic-cast') {
-        const appType: AppType | undefined =
-          data.appType === 'desktop' || data.appType === 'server' ? data.appType : undefined;
+      if (health.success && health.data.service === 'thaumic-cast') {
         return {
           url,
-          maxStreams: data.limits?.maxStreams || DEFAULT_MAX_CONCURRENT_STREAMS,
-          appType,
+          maxStreams: health.data.limits?.maxStreams ?? DEFAULT_MAX_CONCURRENT_STREAMS,
+          appType: health.data.appType,
+          browserCapture: health.data.browserCapture,
         };
       }
     }
@@ -122,7 +130,7 @@ export async function discoverDesktopApp(force = false): Promise<DiscoveredApp |
     const app = await probeUrl(settings.serverUrl);
 
     if (app) {
-      setDesktopApp(app.url, app.maxStreams, app.appType);
+      setDesktopApp(app.url, app.maxStreams, app.appType, app.browserCapture);
       return app;
     }
 
@@ -146,6 +154,7 @@ export async function discoverDesktopApp(force = false): Promise<DiscoveredApp |
             url: connState.desktopAppUrl,
             maxStreams: connState.maxStreams ?? DEFAULT_MAX_CONCURRENT_STREAMS,
             appType: connState.appType ?? undefined,
+            browserCapture: connState.browserCapture ?? undefined,
           };
         }
       } catch {
@@ -166,7 +175,7 @@ export async function discoverDesktopApp(force = false): Promise<DiscoveredApp |
 
   if (foundApp) {
     log.info(`Desktop App discovered at: ${foundApp.url} (Limit: ${foundApp.maxStreams})`);
-    setDesktopApp(foundApp.url, foundApp.maxStreams, foundApp.appType);
+    setDesktopApp(foundApp.url, foundApp.maxStreams, foundApp.appType, foundApp.browserCapture);
     return foundApp;
   }
 

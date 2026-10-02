@@ -10,6 +10,7 @@ import { AboutSection } from './components/AboutSection';
 import { useExtensionSettings } from './hooks/useExtensionSettings';
 import { useCodecSupport } from './hooks/useCodecSupport';
 import { useConnectionStatus } from '../popup/hooks/useConnectionStatus';
+import { companionCapability } from '../lib/capture-capability';
 import styles from './Options.module.css';
 
 /**
@@ -25,6 +26,18 @@ export function Options(): JSX.Element {
   const companion = useMemo(
     () => ({ companionAudio: connection.companionAudio, appType: connection.appType }),
     [connection.companionAudio, connection.appType],
+  );
+  // Nothing is known about a companion that is not connected, whatever the
+  // last one said
+  const connected = connection.phase === 'connected';
+  const capability = useMemo(
+    () =>
+      companionCapability({
+        connected,
+        appType: connection.appType,
+        browserCapture: connection.browserCapture,
+      }),
+    [connected, connection.appType, connection.browserCapture],
   );
 
   if (settingsLoading) {
@@ -54,9 +67,15 @@ export function Options(): JSX.Element {
         codecSupport={codecSupport}
         codecLoading={codecLoading}
         companion={companion}
+        capability={capability}
       />
 
-      <AdvancedSection settings={settings} onUpdate={updateSettings} />
+      <AdvancedSection
+        settings={settings}
+        onUpdate={updateSettings}
+        appType={connected ? connection.appType : null}
+        capability={capability}
+      />
 
       <AboutSection connection={connection} />
     </div>
