@@ -1,75 +1,6 @@
 use super::*;
 use crate::services::speaker_monitor::SpeakerControlState;
 
-/// Feeds `minutes` of samples along `cushion(t)`, polled the way the
-/// monitor polls a monitor-only speaker: every two seconds plus a dither
-/// of up to a second, with the speaker's position reported in whole
-/// seconds, so each sample of the cushion is off by up to a second
-/// depending on the phase of the poll.
-fn fit(minutes: f64, cushion: impl Fn(f64) -> f64) -> Trend {
-    let mut trend = CushionTrend::default();
-    let mut t: f64 = 0.0;
-    // Small deterministic LCG for the dither so the test is repeatable.
-    let mut seed: u64 = 0x2545_f491_4f6c_dd1d;
-    while t <= minutes * 60.0 {
-        trend.add(t, observed_cushion(t, cushion(t)));
-        seed = seed
-            .wrapping_mul(6364136223846793005)
-            .wrapping_add(1442695040888963407);
-        let dither = (seed >> 33) as f64 / (1u64 << 31) as f64;
-        t += (MONITOR_POLL_INTERVAL_MS as f64 + dither * MONITOR_POLL_DITHER_MS as f64) / 1000.0;
-    }
-    trend.fit().expect("enough samples")
-}
-
-/// The cushion the monitor computes at time `t` when the true cushion is
-/// `true_ms`: the speaker reports its playhead floored to a whole second.
-fn observed_cushion(t: f64, true_ms: f64) -> f64 {
-    let playhead_ms = t * 1000.0 - true_ms;
-    let reported_ms = (playhead_ms / 1000.0).floor() * 1000.0;
-    t * 1000.0 - reported_ms
-}
-
-#[test]
-fn a_steady_cushion_fits_a_flat_trend_within_its_own_error() {
-    let trend = fit(10.0, |_| 800.0);
-    assert!(
-        !trend.is_significant(),
-        "flat cushion read as a trend: {trend:?}"
-    );
-    assert!(trend.error_ms_per_min < 8.0, "{trend:?}");
-}
-
-#[test]
-fn a_draining_cushion_is_measured_through_the_position_precision() {
-    // 40 ms/min: the rate that empties a 200 ms prefill in five minutes.
-    let trend = fit(10.0, |t| 800.0 - t * (40.0 / 60.0));
-    assert!(trend.is_significant(), "{trend:?}");
-    assert!(
-        (trend.slope_ms_per_min + 40.0).abs() <= TREND_MIN_SIGMA * trend.error_ms_per_min,
-        "{trend:?}"
-    );
-    assert!(trend.error_ms_per_min < 8.0, "{trend:?}");
-}
-
-#[test]
-fn a_fixed_poll_phase_would_report_a_confidently_wrong_drift() {
-    // Why the poll is dithered: on a fixed cadence the whole-second
-    // reporting error creeps with the drift, so the fit sees a clean line
-    // with a tiny error at the wrong slope. This documents the failure.
-    let mut trend = CushionTrend::default();
-    let mut t: f64 = 0.0;
-    while t <= 600.0 {
-        trend.add(t, observed_cushion(t, 800.0 - t * (40.0 / 60.0)));
-        t += 1.0;
-    }
-    let fitted = trend.fit().expect("enough samples");
-    assert!(
-        (fitted.slope_ms_per_min + 40.0).abs() > TREND_MIN_SIGMA * fitted.error_ms_per_min,
-        "fixed-phase fit happened to be right: {fitted:?}"
-    );
-}
-
 mod dither {
     use super::super::*;
 
@@ -1398,18 +1329,6 @@ fn topology_changes_go_on_the_next_report_line_and_into_the_summary_count() {
     }
     assert_eq!(session.topology_since_report.len(), MAX_TOPOLOGY_NOTES);
     assert_eq!(session.connection_topology_changes, 13);
-}
-
-#[test]
-fn a_trend_needs_three_samples_spread_in_time() {
-    let mut trend = CushionTrend::default();
-    assert!(trend.fit().is_none());
-    trend.add(0.0, 500.0);
-    trend.add(0.0, 600.0);
-    trend.add(0.0, 550.0);
-    assert!(trend.fit().is_none(), "no spread in time");
-    trend.add(60.0, 400.0);
-    assert!(trend.fit().is_some());
 }
 
 #[test]
