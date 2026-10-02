@@ -24,8 +24,8 @@ describe('createEncoderConfig', () => {
   });
 
   it('should replace a bitrate the codec does not support with its default', () => {
-    expect(createEncoderConfig({ codec: 'he-aac-v2', bitrate: 320 }).bitrate).toBe(
-      getDefaultBitrate('he-aac-v2'),
+    expect(createEncoderConfig({ codec: 'aac-lc', bitrate: 320 }).bitrate).toBe(
+      getDefaultBitrate('aac-lc'),
     );
   });
 
@@ -117,6 +117,19 @@ describe('codec metadata helpers', () => {
     for (const codec of AudioCodecSchema.options) {
       expect(hasEncoderImplementation(codec)).toBe(true);
     }
+  });
+});
+
+describe('AAC', () => {
+  it('should offer AAC-LC from 96 to 256 kbps', () => {
+    expect(getValidBitrates('aac-lc')).toEqual([96, 128, 160, 192, 256]);
+  });
+
+  it('should no longer know the HE-AAC names', () => {
+    // The browser encodes AAC-LC for every AAC profile, so both were AAC-LC
+    // under another name. Core still accepts them from an older extension.
+    expect(AudioCodecSchema.safeParse('he-aac').success).toBe(false);
+    expect(AudioCodecSchema.safeParse('he-aac-v2').success).toBe(false);
   });
 });
 

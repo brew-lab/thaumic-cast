@@ -6,6 +6,7 @@ import {
   getDefaultExtensionSettings,
   loadExtensionSettings,
   migrateAudioSettingsV2,
+  nearestBitrateForCodec,
   saveExtensionSettings,
   snapToSmoothingOption,
   type ExtensionSettings,
@@ -136,12 +137,88 @@ describe('loadExtensionSettings', () => {
     });
   });
 
-  it('should give a stored Vorbis bitrate AAC-LC lacks the AAC-LC default', async () => {
+  it('should give a stored Vorbis bitrate AAC-LC lacks the nearest AAC-LC one', async () => {
     storeSettings({ customAudioSettings: customAudio({ codec: 'vorbis', bitrate: 320 }) });
 
     const settings = await loadExtensionSettings();
 
+    expect(settings.customAudioSettings).toMatchObject({ codec: 'aac-lc', bitrate: 256 });
+  });
+
+  it('should move a stored HE-AAC choice to AAC-LC at the same bitrate', async () => {
+    for (const bitrate of [96, 128]) {
+      storeSettings({
+        audioMode: 'custom',
+        customAudioSettings: customAudio({ codec: 'he-aac', bitrate, channels: 1 }),
+      });
+
+      const settings = await loadExtensionSettings();
+
+      expect(settings.audioMode).toBe('custom');
+      expect(settings.customAudioSettings).toMatchObject({ codec: 'aac-lc', bitrate, channels: 1 });
+    }
+  });
+
+  it('should move a stored HE-AAC v2 choice to AAC-LC and keep 96 kbps', async () => {
+    storeSettings({
+      audioMode: 'custom',
+      customAudioSettings: customAudio({ codec: 'he-aac-v2', bitrate: 96, sampleRate: 44100 }),
+    });
+
+    const settings = await loadExtensionSettings();
+
+    expect(settings.audioMode).toBe('custom');
+    expect(settings.customAudioSettings).toMatchObject({
+      codec: 'aac-lc',
+      bitrate: 96,
+      sampleRate: 44100,
+    });
+  });
+
+  it('should raise a stored 64 kbps HE-AAC choice to 96 kbps, the lowest AAC-LC has', async () => {
+    for (const codec of ['he-aac', 'he-aac-v2']) {
+      storeSettings({
+        audioMode: 'custom',
+        customAudioSettings: customAudio({ codec, bitrate: 64 }),
+      });
+
+      const settings = await loadExtensionSettings();
+
+      expect(settings.audioMode).toBe('custom');
+      expect(settings.customAudioSettings).toMatchObject({ codec: 'aac-lc', bitrate: 96 });
+    }
+  });
+
+  it('should give a stored HE-AAC choice with no usable bitrate the AAC-LC default', async () => {
+    storeSettings({ customAudioSettings: customAudio({ codec: 'he-aac', bitrate: 'lots' }) });
+
+    const settings = await loadExtensionSettings();
+
     expect(settings.customAudioSettings).toMatchObject({ codec: 'aac-lc', bitrate: 192 });
+  });
+
+  it('should leave a preset choice alone when the unused custom codec is retired', async () => {
+    storeSettings({
+      audioMode: 'low',
+      customAudioSettings: customAudio({ codec: 'he-aac-v2', bitrate: 64 }),
+    });
+
+    const settings = await loadExtensionSettings();
+
+    expect(settings.audioMode).toBe('low');
+    expect(settings.customAudioSettings).toMatchObject({ codec: 'aac-lc', bitrate: 96 });
+  });
+
+  it('should settle on the same settings when a migrated profile is loaded again', async () => {
+    storeSettings({
+      audioMode: 'custom',
+      customAudioSettings: customAudio({ codec: 'he-aac-v2', bitrate: 64 }),
+    });
+
+    const first = await loadExtensionSettings();
+    storeSettings(first);
+
+    expect(await loadExtensionSettings()).toEqual(first);
   });
 
   it('should replace custom audio settings wholesale when they are not an object', async () => {
@@ -216,10 +293,32 @@ describe('saveExtensionSettings', () => {
     storeSettings({ customAudioSettings: customAudio({ codec: 'aac-lc', bitrate: 256 }) });
 
     const saved = await saveExtensionSettings({
-      customAudioSettings: { codec: 'he-aac-v2' } as ExtensionSettings['customAudioSettings'],
+      customAudioSettings: { codec: 'flac' } as ExtensionSettings['customAudioSettings'],
     });
 
-    expect(saved.customAudioSettings.bitrate).toBe(64);
+    expect(saved.customAudioSettings.bitrate).toBe(0);
+  });
+});
+
+describe('nearestBitrateForCodec', () => {
+  it('should keep a bitrate the codec lists', () => {
+    for (const bitrate of [96, 128, 160, 192, 256]) {
+      expect(nearestBitrateForCodec('aac-lc', bitrate)).toBe(bitrate);
+    }
+  });
+
+  it('should clamp to the ends of the list', () => {
+    expect(nearestBitrateForCodec('aac-lc', 64)).toBe(96);
+    expect(nearestBitrateForCodec('aac-lc', 320)).toBe(256);
+  });
+
+  it('should send a bitrate halfway between two up', () => {
+    expect(nearestBitrateForCodec('aac-lc', 112)).toBe(128);
+    expect(nearestBitrateForCodec('aac-lc', 100)).toBe(96);
+  });
+
+  it('should fall back to the default for a codec that lists no bitrate', () => {
+    expect(nearestBitrateForCodec('pcm', 128)).toBe(0);
   });
 });
 

@@ -72,9 +72,9 @@ describe('isCodecSupported', () => {
   it('should ask WebCodecs with the codec id and the bitrate in bits per second', async () => {
     const calls = installFakeAudioEncoder(() => true);
 
-    expect(await isCodecSupported('he-aac', 96, 44100, 1)).toBe(true);
+    expect(await isCodecSupported('aac-lc', 96, 44100, 1)).toBe(true);
     expect(calls).toEqual([
-      { codec: 'mp4a.40.5', sampleRate: 44100, numberOfChannels: 1, bitrate: 96_000 },
+      { codec: 'mp4a.40.2', sampleRate: 44100, numberOfChannels: 1, bitrate: 96_000 },
     ]);
   });
 
@@ -121,18 +121,48 @@ describe('detectSupportedCodecs', () => {
   });
 });
 
+describe('detectSupportedCodecs on AAC', () => {
+  it('should only ever ask for AAC-LC, never an HE-AAC profile', async () => {
+    const calls = installFakeAudioEncoder(() => true);
+
+    await detectSupportedCodecs();
+
+    const ids = new Set(calls.map((c) => c.codec));
+    expect(ids.has('mp4a.40.2')).toBe(true);
+    expect(ids.has('mp4a.40.5')).toBe(false);
+    expect(ids.has('mp4a.40.29')).toBe(false);
+  });
+
+  it('should offer only the AAC-LC bitrates the platform accepts', async () => {
+    // Windows encodes AAC at 96, 128, 160 and 192 kbps and refuses 256.
+    installFakeAudioEncoder((config) => config.codec === 'mp4a.40.2' && config.bitrate <= 192_000);
+
+    const result = await detectSupportedCodecs();
+
+    expect(getSupportedBitrates('aac-lc', result)).toEqual([96, 128, 160, 192]);
+  });
+
+  it('should offer 256 kbps where the platform accepts it', async () => {
+    installFakeAudioEncoder((config) => config.codec === 'mp4a.40.2');
+
+    const result = await detectSupportedCodecs();
+
+    expect(getSupportedBitrates('aac-lc', result)).toEqual([96, 128, 160, 192, 256]);
+  });
+});
+
 describe('getSupportedBitrates / getSupportedSampleRates', () => {
   it('should return only the supported entries for the requested codec', () => {
     const info = support(
       [
         ['aac-lc', 128],
         ['aac-lc', 256, false],
-        ['he-aac', 96],
+        ['flac', 0, false],
       ],
       [
         ['aac-lc', 48000, true],
         ['aac-lc', 44100, false],
-        ['he-aac', 44100, true],
+        ['pcm', 44100, true],
       ],
     );
 
@@ -143,9 +173,9 @@ describe('getSupportedBitrates / getSupportedSampleRates', () => {
 });
 
 describe('quality scoring and labels', () => {
-  it('should scale the bitrate by the codec efficiency', () => {
+  it('should score a lossy option by its bitrate', () => {
     expect(calculateQualityScore('aac-lc', 128)).toBe(128);
-    expect(calculateQualityScore('he-aac', 64)).toBe(96);
+    expect(calculateQualityScore('aac-lc', 96)).toBe(96);
   });
 
   it('should give lossless options a fixed top score', () => {
@@ -174,7 +204,7 @@ describe('generateDynamicPresets', () => {
       support([
         ['aac-lc', 256],
         ['flac', 0],
-        ['he-aac', 128],
+        ['aac-lc', 128],
       ]),
     );
 
@@ -184,8 +214,9 @@ describe('generateDynamicPresets', () => {
   it('should pick the highest bitrate for the high tier when nothing is lossless', () => {
     const presets = generateDynamicPresets(
       support([
+        ['aac-lc', 128],
         ['aac-lc', 256],
-        ['he-aac', 128],
+        ['aac-lc', 192],
       ]),
     );
 
@@ -197,11 +228,11 @@ describe('generateDynamicPresets', () => {
       support([
         ['pcm', 0],
         ['aac-lc', 128],
-        ['he-aac', 64],
+        ['aac-lc', 96],
       ]),
     );
 
-    expect(presets.low).toMatchObject({ codec: 'he-aac', bitrate: 64 });
+    expect(presets.low).toMatchObject({ codec: 'aac-lc', bitrate: 96 });
   });
 
   it('should skip every lossless option for the low tier, not just the one used for high', () => {
@@ -218,24 +249,12 @@ describe('generateDynamicPresets', () => {
     expect(presets.low).toMatchObject({ codec: 'aac-lc', bitrate: 128 });
   });
 
-  it('should break a low-tier bitrate tie in favour of the more efficient codec', () => {
-    const presets = generateDynamicPresets(
-      support([
-        ['aac-lc', 256],
-        ['he-aac', 64],
-        ['he-aac-v2', 64],
-      ]),
-    );
-
-    expect(presets.low).toMatchObject({ codec: 'he-aac-v2', bitrate: 64 });
-  });
-
   it('should choose a mid option distinct from both high and low', () => {
     const presets = generateDynamicPresets(
       support([
         ['flac', 0],
         ['aac-lc', 192],
-        ['he-aac', 64],
+        ['aac-lc', 96],
       ]),
     );
 
@@ -266,16 +285,37 @@ describe('generateDynamicPresets', () => {
   it('should sort all options by quality score, highest first', () => {
     const presets = generateDynamicPresets(
       support([
+        ['aac-lc', 96],
         ['aac-lc', 128],
-        ['he-aac', 96],
         ['flac', 0],
       ]),
     );
 
     expect(presets.allOptions.map((o) => o.label)).toEqual([
       'FLAC Lossless',
-      'HE-AAC 96kbps',
       'AAC-LC 128kbps',
+      'AAC-LC 96kbps',
     ]);
+  });
+
+  describe('with the AAC-LC bitrates a platform encodes', () => {
+    const pcmAndAac = (bitrates: Bitrate[]): SupportedCodecsResult =>
+      support([['pcm', 0], ...bitrates.map((bitrate): Option => ['aac-lc', bitrate])]);
+
+    it('should resolve the tiers on a platform that stops at 192 kbps', () => {
+      const presets = generateDynamicPresets(pcmAndAac([96, 128, 160, 192]));
+
+      expect(presets.high).toMatchObject({ codec: 'pcm', bitrate: 0 });
+      expect(presets.mid).toMatchObject({ codec: 'aac-lc', bitrate: 192 });
+      expect(presets.low).toMatchObject({ codec: 'aac-lc', bitrate: 96 });
+    });
+
+    it('should resolve the tiers on a platform that reaches 256 kbps', () => {
+      const presets = generateDynamicPresets(pcmAndAac([96, 128, 160, 192, 256]));
+
+      expect(presets.high).toMatchObject({ codec: 'pcm', bitrate: 0 });
+      expect(presets.mid).toMatchObject({ codec: 'aac-lc', bitrate: 256 });
+      expect(presets.low).toMatchObject({ codec: 'aac-lc', bitrate: 96 });
+    });
   });
 });

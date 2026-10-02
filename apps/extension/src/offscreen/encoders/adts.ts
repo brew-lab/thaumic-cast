@@ -1,5 +1,3 @@
-import type { AudioCodec } from '@thaumic-cast/protocol';
-
 /**
  * ADTS (Audio Data Transport Stream) framing for AAC.
  *
@@ -97,7 +95,7 @@ export interface AdtsParams {
  *
  * The 2-bit profile field holds the audio object type minus one, so it can
  * only name Main, LC, SSR and LTP. SBR (object type 5) and PS (29) cannot be
- * named here at all; see {@link adtsParamsForCodec}.
+ * named here at all; see {@link aacLcAdtsParams}.
  *
  * @param objectType - MPEG-4 audio object type of the frame (1 to 4; AAC-LC is 2)
  * @param sampleRate - Sample rate to declare, in Hz
@@ -150,15 +148,16 @@ export function buildAdtsHeader(
 }
 
 /**
- * Chooses what the ADTS header declares for a codec's frames.
+ * What the ADTS header declares for the frames the browser's AAC encoder gives.
  *
- * Every AAC id declares AAC-LC (object type 2) at the stream's own rate and
- * channels, because that is what the browser's encoder produces for all of
- * them. Chromium's `AudioEncoder` ignores the profile in the codec string:
- * measured on Chrome and Edge 154 on Windows, `mp4a.40.2`, `mp4a.40.5` and
- * `mp4a.40.29` give byte-identical AAC-LC at the full rate, with an
- * AudioSpecificConfig naming object type 2 and no SBR or PS extension, and the
- * macOS and Android encoders are LC-only in Chromium's source.
+ * Always AAC-LC (object type 2) at the stream's own rate and channels, because
+ * that is all Chromium's `AudioEncoder` produces. It ignores the profile in the
+ * codec string: measured on Chrome and Edge 154 on Windows, `mp4a.40.2`,
+ * `mp4a.40.5` and `mp4a.40.29` give byte-identical AAC-LC at the full rate,
+ * with an AudioSpecificConfig naming object type 2 and no SBR or PS extension,
+ * and the macOS and Android encoders are LC-only in Chromium's source. That is
+ * why the HE-AAC and HE-AAC v2 options were removed: they were AAC-LC under
+ * another name.
  *
  * Real HE-AAC in ADTS is labelled differently, by implicit signalling
  * (ISO/IEC 14496-3, 1.6.5): the header names the AAC-LC core at half the output
@@ -166,15 +165,10 @@ export function buildAdtsHeader(
  * a decoder then parses full-rate frames with the half-rate band tables and
  * fails. Use it only if an encoder that really emits SBR is ever adopted.
  *
- * @param _codec - The AAC variant requested (all are encoded as AAC-LC)
  * @param sampleRate - Output sample rate of the stream, in Hz
  * @param channels - Output channel count of the stream
  * @returns The object type, sample rate and channels to put in the header
  */
-export function adtsParamsForCodec(
-  _codec: AudioCodec,
-  sampleRate: number,
-  channels: number,
-): AdtsParams {
+export function aacLcAdtsParams(sampleRate: number, channels: number): AdtsParams {
   return { objectType: AOT_AAC_LC, sampleRate, channels };
 }

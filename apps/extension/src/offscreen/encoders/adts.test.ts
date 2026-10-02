@@ -8,7 +8,7 @@ import {
   AOT_AAC_LC,
   AOT_AAC_LTP,
   AOT_AAC_MAIN,
-  adtsParamsForCodec,
+  aacLcAdtsParams,
   buildAdtsHeader,
 } from './adts';
 
@@ -79,32 +79,19 @@ describe('buildAdtsHeader', () => {
   });
 });
 
-describe('adtsParamsForCodec', () => {
-  it('should declare AAC-LC as it is', () => {
-    expect(adtsParamsForCodec('aac-lc', 48000, 2)).toEqual({
+describe('aacLcAdtsParams', () => {
+  it('should declare AAC-LC at the rate and channels of the stream', () => {
+    // Chromium's encoder only gives AAC-LC at the stream's own rate, so a
+    // half-rate (implicit SBR) label is never right for its frames.
+    expect(aacLcAdtsParams(48000, 2)).toEqual({
       objectType: AOT_AAC_LC,
       sampleRate: 48000,
       channels: 2,
     });
-    expect(adtsParamsForCodec('aac-lc', 44100, 1)).toEqual({
+    expect(aacLcAdtsParams(44100, 1)).toEqual({
       objectType: AOT_AAC_LC,
       sampleRate: 44100,
       channels: 1,
-    });
-  });
-
-  it('should declare the HE-AAC ids as the full-rate AAC-LC the browser encodes', () => {
-    // Chromium's encoder ignores the profile: all three ids give AAC-LC at
-    // the stream's own rate, so a half-rate (implicit SBR) label is wrong.
-    expect(adtsParamsForCodec('he-aac', 48000, 2)).toEqual({
-      objectType: AOT_AAC_LC,
-      sampleRate: 48000,
-      channels: 2,
-    });
-    expect(adtsParamsForCodec('he-aac-v2', 44100, 2)).toEqual({
-      objectType: AOT_AAC_LC,
-      sampleRate: 44100,
-      channels: 2,
     });
   });
 });
