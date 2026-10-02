@@ -42,10 +42,9 @@ function speakerName(speakerIp: string, zoneGroups: ZoneGroup[]): string {
 
 /**
  * The core's speaker notices for the speakers playing a stream, one card per
- * speaker, each dismissible. A head-start notice with a suggestion offers a
- * button to Settings > Speakers, where the head start is changed; an
- * uncorrected drift says drift correction would keep the speaker topped up
- * when it is off here.
+ * speaker, each dismissible. A notice whose remedy is a control under
+ * Settings > Speakers (a head start to pick, clock drift correction to turn
+ * on) offers a button that goes there, in place of a sentence saying where.
  * @returns The notice cards, or nothing when none stands
  */
 export function SpeakerNotices() {
@@ -72,15 +71,16 @@ export function SpeakerNotices() {
     const notice = reading.notice;
     if (!notice) return [];
     if (isNoticeDismissed(dismissals, reading.streamId, speakerIp, notice, now)) return [];
-    const lines = speakerNoticeLines(notice, {
+    const ctx = {
       speakerName: speakerName(speakerIp, groups.value),
       headStartFixed,
       offerDriftCorrection,
-    });
+    };
+    const lines = speakerNoticeLines(notice, ctx);
     return [
       {
         speakerIp,
-        offersSettings: noticeOffersSettings(notice, headStartFixed),
+        offersSettings: noticeOffersSettings(notice, ctx),
         message: lines.map((line) => t(line.key, line.params)).join(' '),
       },
     ];

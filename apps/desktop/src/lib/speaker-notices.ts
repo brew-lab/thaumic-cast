@@ -4,11 +4,13 @@
  * The core decides every speaker notice and sends the figures its wording
  * needs; this module only picks the words and remembers what the user
  * dismissed. It follows the extension's rules (`apps/extension/src/lib/
- * speaker-notices.ts`), with one difference in wording: the head start is
- * changed right here, so a head-start notice points at Settings > Speakers
- * rather than naming the desktop app. An uncorrected drift, and a speaker
- * running low because its clock drained it, offer clock drift correction when
- * it is not on and no environment variable fixes it.
+ * speaker-notices.ts`), with one difference: the head start and clock drift
+ * correction are changed right here, so where the extension has a sentence
+ * saying where the control is, the notice has a button that opens
+ * Settings > Speakers (`noticeOffersSettings`), and its sentence says only what
+ * the button cannot: when the change takes effect. An uncorrected drift, and a
+ * speaker running low because its clock drained it, offer clock drift
+ * correction when it is not on and no environment variable fixes it.
  *
  * Dismissal: a notice is dismissed by `(streamId, speakerIp, noticeId)`, which
  * holds while the core repeats it and lapses on a new episode or an
@@ -105,21 +107,6 @@ export interface NoticeWordingContext {
 }
 
 /**
- * Whether a notice suggests a head start the user can pick in Settings, so
- * the notice offers a button that goes there.
- * @param notice - The core's notice
- * @param headStartFixed - Whether an environment variable fixes the head start
- * @returns True for a head-start notice with a suggestion, unless the setting is fixed
- */
-export function noticeOffersSettings(notice: SpeakerNotice, headStartFixed: boolean): boolean {
-  return (
-    !headStartFixed &&
-    (notice.kind === 'head_start_ran_out' || notice.kind === 'head_start_close') &&
-    notice.suggestedHeadStartMs !== undefined
-  );
-}
-
-/**
  * Words a speaker notice as the sentences the dashboard joins into one message.
  * @param notice - The core's notice
  * @param ctx - The wording context
@@ -189,6 +176,28 @@ export function speakerNoticeLines(notice: SpeakerNotice, ctx: NoticeWordingCont
 
   if (notice.restartHelps) lines.push({ key: 'dashboard.speaker_notice_restart_refills' });
   return lines;
+}
+
+/**
+ * The sentences whose remedy is a control under Settings > Speakers. A notice
+ * that carries one gets the button that goes there, so none of them says where
+ * the control is.
+ */
+const SETTINGS_REMEDY_KEYS: readonly string[] = [
+  'dashboard.speaker_notice_where',
+  'dashboard.speaker_notice_drift_turn_on_desktop',
+];
+
+/**
+ * Whether a notice's remedy is a control under Settings > Speakers, so the
+ * notice offers a button that goes there: a head start to pick, unless an
+ * environment variable fixes it, or clock drift correction to turn on.
+ * @param notice - The core's notice
+ * @param ctx - The wording context
+ * @returns True when one of the notice's sentences names a control in Settings
+ */
+export function noticeOffersSettings(notice: SpeakerNotice, ctx: NoticeWordingContext): boolean {
+  return speakerNoticeLines(notice, ctx).some((line) => SETTINGS_REMEDY_KEYS.includes(line.key));
 }
 
 /** Dismissed notices, kept for the app run. */
