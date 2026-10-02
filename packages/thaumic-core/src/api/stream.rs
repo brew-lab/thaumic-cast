@@ -375,82 +375,19 @@ async fn serve_stream(
         &stream_state,
     );
 
-    // One-shot epoch hook for whichever pipeline is built below. None for a
-    // reader that is not a speaker: its connection must not enter the
-    // per-address playback bookkeeping (see `tracks_playback`).
-    //
-    // The epoch's content T0 is the first frame each pipeline serves: the PCM
-    // cadence trims the prefill first, so it supplies its own.
-    //
-    // A speaker's connection is also handed to the speaker monitor once its
-    // epoch starts: whoever actually fetches is the device whose playback can
-    // be measured, however the cast was started. The monitor always learns of
-    // the connection, since video sync may need it; whether it polls a
-    // speaker nobody asked video sync for follows the speaker-monitor
-    // setting as it stands now, so a change applies from the next connection.
-    //
-    // Clock drift correction is decided here too, once per connection: it
-    // steers by the monitor's estimates, so only a monitored speaker's PCM
-    // connection gets a rate control, and only with correction on. Observing
-    // or off, the cadence builds no adapter and sends the captured buffers
-    // themselves. THAUMIC_DRIFT_FORCE_PPM, for listening tests, overrides
-    // all of that with a fixed rate.
-    let tap = access.monitors_playback().then(|| {
-        let monitor = speaker_monitor;
-        let drift = drift_compensation_mode(drift_compensation, monitor);
-        let rate_control = connection_rate_control(
-            drift,
-            stream_state.codec,
-            &stream_state.audio_format,
-            drift_force_ppm(),
-        );
-        if let Some(ppm) = rate_control.as_ref().and_then(|c| c.forced_ppm()) {
-            log::warn!(
-                "[Drift] {}={:+} forcing the rate adapter; for listening tests only \
-                 (client={}, stream={}, mode={})",
-                DRIFT_FORCE_PPM_ENV,
-                ppm,
-                remote_ip,
-                id,
-                drift
-            );
-        } else if rate_control.is_some() {
-            log::info!(
-                "[Stream] Clock drift correction on for client={}, stream={}",
-                remote_ip,
-                id
-            );
-        }
-        let tap = ConnectionTap::new(
-            id.clone(),
-            remote_ip,
-            connected_at,
-            stream_state.codec,
-            &stream_state.audio_format,
-            Arc::clone(&stats),
-            monitor,
-        )
-        .with_drift(drift, rate_control);
-        // A connection that is its own playout holds its record for as long
-        // as the tap lives; a segmented playout finds the connection it is
-        // serving through its statistics.
-        Arc::new(if new_segment.is_some() {
-            tap
-        } else {
-            tap.with_connection(Arc::clone(&guard))
-        })
-    });
-    let epoch_hook: Option<EpochHook> = access.tracks_playback().then(|| {
-        let preroll = new_segment
-            .as_ref()
-            .map_or(Duration::ZERO, |(layout, start)| start.preroll(layout));
-        let hook = EpochHook::new(Arc::downgrade(&stream_state), connected_at, remote_ip)
-            .with_preroll(preroll);
-        match &tap {
-            Some(tap) => hook.with_monitor(Arc::clone(tap), state.latency_monitor.registrar()),
-            None => hook,
-        }
-    });
+    let PlaybackHooks { tap, epoch_hook } = playback_hooks(
+        access,
+        speaker_monitor,
+        drift_compensation,
+        &stream_state,
+        remote_ip,
+        &id,
+        connected_at,
+        &stats,
+        &new_segment,
+        &guard,
+        &state,
+    );
 
     // Build combined stream - PCM gets cadence-based streaming, compressed codecs don't.
     //
@@ -1016,6 +953,114 @@ fn playout_stats(
     } else {
         stats.following(guard, pcm_header(stream_state.codec))
     }
+}
+
+/// What a connection's playback is watched and timed through. See
+/// [`playback_hooks`].
+struct PlaybackHooks {
+    /// The speaker monitor's tap on the connection; `None` for a reader
+    /// whose playback cannot be polled.
+    tap: Option<Arc<ConnectionTap>>,
+    /// The one-shot hook that starts the address's playback epoch; `None`
+    /// for a reader that is not a speaker.
+    epoch_hook: Option<EpochHook>,
+}
+
+/// The tap and the epoch hook, a phase of [`serve_stream`]: builds both for
+/// the pipeline that follows, and decides the connection's clock drift
+/// correction.
+#[allow(clippy::too_many_arguments)]
+fn playback_hooks(
+    access: StreamAccess,
+    speaker_monitor: bool,
+    drift_compensation: DriftMode,
+    stream_state: &Arc<StreamState>,
+    remote_ip: IpAddr,
+    id: &str,
+    connected_at: Instant,
+    stats: &Arc<ChainStats>,
+    new_segment: &Option<(SegmentLayout, SegmentStart)>,
+    guard: &Arc<LoggingStreamGuard>,
+    state: &AppState,
+) -> PlaybackHooks {
+    // One-shot epoch hook for whichever pipeline is built below. None for a
+    // reader that is not a speaker: its connection must not enter the
+    // per-address playback bookkeeping (see `tracks_playback`).
+    //
+    // The epoch's content T0 is the first frame each pipeline serves: the PCM
+    // cadence trims the prefill first, so it supplies its own.
+    //
+    // A speaker's connection is also handed to the speaker monitor once its
+    // epoch starts: whoever actually fetches is the device whose playback can
+    // be measured, however the cast was started. The monitor always learns of
+    // the connection, since video sync may need it; whether it polls a
+    // speaker nobody asked video sync for follows the speaker-monitor
+    // setting as it stands now, so a change applies from the next connection.
+    //
+    // Clock drift correction is decided here too, once per connection: it
+    // steers by the monitor's estimates, so only a monitored speaker's PCM
+    // connection gets a rate control, and only with correction on. Observing
+    // or off, the cadence builds no adapter and sends the captured buffers
+    // themselves. THAUMIC_DRIFT_FORCE_PPM, for listening tests, overrides
+    // all of that with a fixed rate.
+    let tap = access.monitors_playback().then(|| {
+        let monitor = speaker_monitor;
+        let drift = drift_compensation_mode(drift_compensation, monitor);
+        let rate_control = connection_rate_control(
+            drift,
+            stream_state.codec,
+            &stream_state.audio_format,
+            drift_force_ppm(),
+        );
+        if let Some(ppm) = rate_control.as_ref().and_then(|c| c.forced_ppm()) {
+            log::warn!(
+                "[Drift] {}={:+} forcing the rate adapter; for listening tests only \
+                 (client={}, stream={}, mode={})",
+                DRIFT_FORCE_PPM_ENV,
+                ppm,
+                remote_ip,
+                id,
+                drift
+            );
+        } else if rate_control.is_some() {
+            log::info!(
+                "[Stream] Clock drift correction on for client={}, stream={}",
+                remote_ip,
+                id
+            );
+        }
+        let tap = ConnectionTap::new(
+            id.to_string(),
+            remote_ip,
+            connected_at,
+            stream_state.codec,
+            &stream_state.audio_format,
+            Arc::clone(stats),
+            monitor,
+        )
+        .with_drift(drift, rate_control);
+        // A connection that is its own playout holds its record for as long
+        // as the tap lives; a segmented playout finds the connection it is
+        // serving through its statistics.
+        Arc::new(if new_segment.is_some() {
+            tap
+        } else {
+            tap.with_connection(Arc::clone(guard))
+        })
+    });
+    let epoch_hook: Option<EpochHook> = access.tracks_playback().then(|| {
+        let preroll = new_segment
+            .as_ref()
+            .map_or(Duration::ZERO, |(layout, start)| start.preroll(layout));
+        let hook = EpochHook::new(Arc::downgrade(stream_state), connected_at, remote_ip)
+            .with_preroll(preroll);
+        match &tap {
+            Some(tap) => hook.with_monitor(Arc::clone(tap), state.latency_monitor.registrar()),
+            None => hook,
+        }
+    });
+
+    PlaybackHooks { tap, epoch_hook }
 }
 
 /// Adds to a PCM segment response's head what a fetch of part of the
