@@ -5,6 +5,7 @@ import type {
   CastAutoStopReason,
   SpeakerRemovedMessage,
 } from '../../lib/messages';
+import { autoStopMessageKey } from '../../lib/auto-stop-message';
 import { useChromeMessage } from './useChromeMessage';
 
 /**
@@ -17,6 +18,8 @@ interface AutoStopNotification {
   speakerIp: string;
   /** The reason for auto-stop */
   reason: CastAutoStopReason;
+  /** True when only this speaker left and the cast carries on with the others */
+  castCarriesOn: boolean;
 }
 
 /**
@@ -65,13 +68,13 @@ export function useAutoStopNotification(
    * Shows a notification and starts the auto-dismiss timer.
    */
   const showNotification = useCallback(
-    (tabId: number, speakerIp: string, reason: CastAutoStopReason) => {
+    (tabId: number, speakerIp: string, reason: CastAutoStopReason, castCarriesOn: boolean) => {
       // Cancel previous timer before setting new notification
       if (timerRef.current) {
         clearTimeout(timerRef.current);
       }
 
-      setNotification({ tabId, speakerIp, reason });
+      setNotification({ tabId, speakerIp, reason, castCarriesOn });
 
       timerRef.current = setTimeout(() => {
         setNotification(null);
@@ -89,7 +92,7 @@ export function useAutoStopNotification(
     if (msg.type === 'CAST_AUTO_STOPPED') {
       const stopMsg = message as CastAutoStoppedMessage;
       if (stopMsg.reason !== 'user_removed') {
-        showNotification(stopMsg.tabId, stopMsg.speakerIp, stopMsg.reason);
+        showNotification(stopMsg.tabId, stopMsg.speakerIp, stopMsg.reason, false);
       }
       return;
     }
@@ -99,7 +102,7 @@ export function useAutoStopNotification(
     if (msg.type === 'SPEAKER_REMOVED') {
       const removedMsg = message as SpeakerRemovedMessage;
       if (removedMsg.reason !== 'user_removed') {
-        showNotification(removedMsg.tabId, removedMsg.speakerIp, removedMsg.reason);
+        showNotification(removedMsg.tabId, removedMsg.speakerIp, removedMsg.reason, true);
       }
     }
   });
@@ -114,7 +117,9 @@ export function useAutoStopNotification(
   }, []);
 
   const message = notification
-    ? t(`auto_stop_${notification.reason}`, { name: nameFor(notification.speakerIp) })
+    ? t(autoStopMessageKey(notification.reason, notification.castCarriesOn), {
+        name: nameFor(notification.speakerIp),
+      })
     : null;
 
   return { notification, message, dismiss };
