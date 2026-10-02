@@ -120,9 +120,9 @@ From the top down: `api`, then `services`, then `stream` and `sonos`, then `mode
   `StreamMetadata`, `same_stream`) and nothing from `services`, `events`, `state` or `api`.
 - **`events`** imports `model` and `sonos` (`SonosEvent` is defined in `sonos::gena` and re-exported
   here). `CompanionAudio::from_config` also reads `state::Config`.
-- **`model`** is a leaf. Its rule, stated in `model/mod.rs`: only `std`, `serde`, `log`,
-  `protocol_constants` and `sonos::types`. Types moved here are still re-exported from the modules
-  they came from, so older paths resolve.
+- **`model`** is a leaf. Its rule, stated in `model/mod.rs`: only `std`, `serde`, `log` and
+  `protocol_constants`. Types moved here are still re-exported from the modules they came from, so
+  older paths resolve.
 - **`capture`** imports only `AudioFormat` from `stream`.
 
 `companion_settings` takes the environment variable names and value parsers for its settings from
