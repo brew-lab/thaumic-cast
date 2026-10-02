@@ -138,7 +138,7 @@ export function SpeakerStep({ onSpeakersFound }: SpeakerStepProps): preact.JSX.E
       {networkHealth.value.health === 'degraded' && (
         <Alert variant="warning">
           {t(`network.${networkHealth.value.reason}`, {
-            defaultValue: t('network.speakers_unreachable'),
+            defaultValue: t('network.speakers_not_responding'),
           })}
         </Alert>
       )}
