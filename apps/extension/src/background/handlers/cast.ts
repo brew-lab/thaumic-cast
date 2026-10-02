@@ -219,6 +219,11 @@ export async function handleStartCast(msg: StartCastMessage): Promise<ExtensionR
       if (successfulResults.length === 0) {
         // The catch block below stops the offscreen session
         log.error('All playback attempts failed, cleaning up capture');
+        // A session that stopped itself says why, with the values its message
+        // prints (a PCM rate stop); anything else is the general failure.
+        if (playbackResponse.error && playbackResponse.errorParams) {
+          throw new KeyedError(playbackResponse.error, playbackResponse.errorParams);
+        }
         throw new Error('error_playback_failed');
       }
 

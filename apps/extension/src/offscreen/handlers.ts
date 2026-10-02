@@ -437,6 +437,7 @@ export function setupMessageHandlers(): void {
               success: false,
               results: [],
               error: err instanceof Error ? err.message : String(err),
+              errorParams: errorParamsOf(err),
             };
             sendResponse(response);
           });

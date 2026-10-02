@@ -156,6 +156,8 @@ export const StartPlaybackResponseSchema = z.object({
   results: z.array(PlaybackResultSchema),
   /** Overall error (if all speakers failed). */
   error: z.string().optional(),
+  /** Interpolation values, when `error` is a message key that prints some. */
+  errorParams: z.record(z.string(), z.union([z.string(), z.number()])).optional(),
 });
 export type StartPlaybackResponse = z.infer<typeof StartPlaybackResponseSchema>;
 
