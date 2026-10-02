@@ -65,7 +65,7 @@ describe('headStartOptions', () => {
 });
 
 describe('speakerNoticeLines', () => {
-  it('should word a head start that ran out and point at Settings > Speakers', () => {
+  it('should word a head start that ran out and say when a new value takes effect', () => {
     expect(speakerNoticeLines(ranOut, ctx())).toEqual([
       {
         key: 'dashboard.speaker_notice_head_start_ran_out',
@@ -229,21 +229,55 @@ describe('speakerNoticeLines', () => {
 
 describe('noticeOffersSettings', () => {
   it('should offer settings for head-start advice the user can act on here', () => {
-    expect(noticeOffersSettings(ranOut, false)).toBe(true);
-    expect(noticeOffersSettings({ ...ranOut, kind: 'head_start_close' }, false)).toBe(true);
+    expect(noticeOffersSettings(ranOut, ctx())).toBe(true);
+    expect(noticeOffersSettings({ ...ranOut, kind: 'head_start_close' }, ctx())).toBe(true);
   });
 
   it('should not offer settings when the environment fixes the head start or there is no step', () => {
-    expect(noticeOffersSettings(ranOut, true)).toBe(false);
+    expect(noticeOffersSettings(ranOut, ctx({ headStartFixed: true }))).toBe(false);
     expect(
       noticeOffersSettings(
         { ...ranOut, kind: 'head_start_no_remedy', suggestedHeadStartMs: undefined },
-        false,
+        ctx(),
       ),
     ).toBe(false);
     expect(
-      noticeOffersSettings({ kind: 'running_low', noticeId: 1, restartHelps: true }, false),
+      noticeOffersSettings({ kind: 'running_low', noticeId: 1, restartHelps: true }, ctx()),
     ).toBe(false);
+  });
+
+  it('should offer settings when the notice says to turn on clock drift correction', () => {
+    const drift: SpeakerNotice = {
+      kind: 'drift_uncorrected',
+      noticeId: 4,
+      minutes: 25,
+      restartHelps: true,
+    };
+    const low: SpeakerNotice = {
+      kind: 'running_low',
+      noticeId: 5,
+      leftMs: 149,
+      restartHelps: false,
+      cause: 'drift',
+    };
+    const offering = ctx({ offerDriftCorrection: true });
+    expect(noticeOffersSettings(drift, offering)).toBe(true);
+    expect(noticeOffersSettings(low, offering)).toBe(true);
+    // Nothing to turn on: correction is on already, fixed elsewhere, or saturated.
+    expect(noticeOffersSettings(drift, ctx())).toBe(false);
+    expect(noticeOffersSettings(low, ctx())).toBe(false);
+    expect(noticeOffersSettings({ ...drift, kind: 'drift_saturated' }, offering)).toBe(false);
+  });
+
+  it('should leave where the control is to the button, in every sentence that has one', () => {
+    const strings = en as Record<string, string>;
+    for (const key of [
+      'dashboard.speaker_notice_where',
+      'dashboard.speaker_notice_drift_turn_on_desktop',
+    ]) {
+      expect(strings[key]).not.toContain('Settings');
+    }
+    expect(strings['dashboard.speaker_notice_open_settings']).toBe('Open Settings');
   });
 });
 
