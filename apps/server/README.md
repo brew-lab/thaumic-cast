@@ -132,10 +132,13 @@ thaumic-server --log-level debug
 | `--drift-compensation <on\|observe\|off>` | `THAUMIC_DRIFT_COMPENSATION`   | Clock drift correction (default `on`)                                      |
 | `--strict-stream-access <BOOL>`           | `THAUMIC_STRICT_STREAM_ACCESS` | Refuse fetches from addresses the cast is not playing on (default `false`) |
 
-A flag overrides an environment variable, which overrides the config file. There are two exceptions.
-`THAUMIC_SPEAKER_MONITOR`, `THAUMIC_PCM_CONNECT_BURST_MS` and `THAUMIC_DRIFT_COMPENSATION` are read again each time a
-speaker connects, and there they win over both the flag and the config file. And `THAUMIC_SPEAKER_DIAGNOSTICS` turns
-speaker monitoring on whatever anything else says.
+A flag overrides an environment variable, which overrides the config file, which overrides the default. All of them
+are read once, when the server starts, and the log then says where each of the three speaker settings came from;
+restart the server to apply a changed variable.
+
+`THAUMIC_SPEAKER_DIAGNOSTICS`, a variable from before speaker monitoring was on by default, still works: set, it turns
+speaker monitoring on over everything else, an explicit `off` included, and the server warns at start-up for as long
+as it is set. `THAUMIC_SPEAKER_MONITOR=on` replaces it, as does `--speaker-monitor on` or `speaker_monitor: true`.
 
 ## Configuration
 
@@ -145,7 +148,8 @@ one network interface. A host with several (a VPN, Docker, ...) should have `adv
 speakers can reach: auto-detection has to settle on one of them, when it can settle at all, and it is not always that
 one. Set `data_dir` if you mean to add speakers by IP address. Without it they cannot be added.
 
-Three settings concern the speakers themselves, and all three take effect when a speaker next connects.
+Three settings concern the speakers themselves. The server reads them when it starts, and each speaker gets them when
+it next connects.
 
 `speaker_monitor` (on by default) asks each speaker that is playing a cast how much audio it has in reserve. The
 speaker notices the apps show are made from the answers.

@@ -274,12 +274,20 @@ export const setAutostartEnabled = async (enabled: boolean): Promise<void> => {
   await invoke('set_autostart_enabled', { enabled });
 };
 
+/**
+ * Where a speaker setting's value came from. `legacyEnv` is
+ * THAUMIC_SPEAKER_DIAGNOSTICS, which only ever turns speaker monitoring on.
+ */
+export type SettingOrigin = 'default' | 'file' | 'env' | 'flag' | 'legacyEnv';
+
 /** The speaker-monitor setting as the backend reports it. */
 export interface SpeakerMonitorSetting {
-  /** The saved setting. */
+  /** The setting in effect. */
   enabled: boolean;
-  /** What THAUMIC_SPEAKER_MONITOR forces it to, if that variable is set. */
+  /** What an environment variable fixed it at when the app started, if one did. */
   envOverride: boolean | null;
+  /** Where the value came from, which says which variable fixed it. */
+  origin: SettingOrigin;
 }
 
 /**
@@ -301,9 +309,9 @@ export const setSpeakerMonitor = async (enabled: boolean): Promise<SpeakerMonito
 
 /** The speaker head start setting as the backend reports it. */
 export interface HeadStartSetting {
-  /** The saved head start, in ms (0 is off). */
+  /** The head start in effect, in ms (0 is off). */
   ms: number;
-  /** What THAUMIC_PCM_CONNECT_BURST_MS forces it to, if that variable is set. */
+  /** What THAUMIC_PCM_CONNECT_BURST_MS fixed it at when the app started, if it was set. */
   envOverride: number | null;
 }
 
@@ -329,9 +337,9 @@ export type DriftMode = 'on' | 'observe' | 'off';
 
 /** The clock drift correction setting as the backend reports it. */
 export interface DriftCompensationSetting {
-  /** The saved mode; off in the settings view saves `observe`. */
+  /** The mode in effect; off in the settings view saves `observe`. */
   mode: DriftMode;
-  /** What THAUMIC_DRIFT_COMPENSATION forces it to, if that variable is set. */
+  /** What THAUMIC_DRIFT_COMPENSATION fixed it at when the app started, if it was set. */
   envOverride: DriftMode | null;
 }
 

@@ -10,7 +10,7 @@ use std::sync::Mutex;
 
 use serde::{Deserialize, Serialize};
 use thaumic_core::protocol_constants::MAX_PCM_CONNECT_BURST_MS;
-use thaumic_core::DriftMode;
+use thaumic_core::{CompanionSettings, DriftMode, SpeakerEnv, SpeakerSettingValues};
 
 /// File name inside the app data directory.
 const SETTINGS_FILE: &str = "settings.json";
@@ -39,6 +39,10 @@ pub struct DesktopSettings {
     /// or through the environment.
     /// See `thaumic_core::Config::drift_compensation`.
     pub drift_compensation: DriftMode,
+    /// Which of the settings above the file itself set when it was loaded,
+    /// so that start-up can say where each value came from. Not saved.
+    #[serde(skip)]
+    in_file: SpeakerSettingValues,
 }
 
 impl Default for DesktopSettings {
@@ -48,6 +52,7 @@ impl Default for DesktopSettings {
             speaker_monitor: core.speaker_monitor,
             pcm_connect_burst_ms: core.pcm_connect_burst_ms,
             drift_compensation: core.drift_compensation,
+            in_file: SpeakerSettingValues::default(),
         }
     }
 }
@@ -59,14 +64,21 @@ impl DesktopSettings {
     pub fn load(app_data_dir: &Path) -> Self {
         let path = app_data_dir.join(SETTINGS_FILE);
         let settings: Self = match std::fs::read_to_string(&path) {
-            Ok(contents) => serde_json::from_str(&contents).unwrap_or_else(|e| {
-                log::warn!(
-                    "[Settings] {} is not valid ({}); using defaults",
-                    path.display(),
-                    e
-                );
-                Self::default()
-            }),
+            Ok(contents) => match serde_json::from_str::<Self>(&contents) {
+                // The same document again, for which settings it sets.
+                Ok(settings) => Self {
+                    in_file: serde_json::from_str(&contents).unwrap_or_default(),
+                    ..settings
+                },
+                Err(e) => {
+                    log::warn!(
+                        "[Settings] {} is not valid ({}); using defaults",
+                        path.display(),
+                        e
+                    );
+                    Self::default()
+                }
+            },
             Err(_) => Self::default(),
         };
         settings.clamped()
@@ -96,7 +108,13 @@ impl DesktopSettings {
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         let mut settings = Self::load(app_data_dir);
         change(&mut settings);
-        let settings = settings.clamped();
+        let mut settings = settings.clamped();
+        // Every key is written, so from here the file sets all three.
+        settings.in_file = SpeakerSettingValues {
+            speaker_monitor: Some(settings.speaker_monitor),
+            pcm_connect_burst_ms: Some(settings.pcm_connect_burst_ms),
+            drift_compensation: Some(settings.drift_compensation),
+        };
         std::fs::create_dir_all(app_data_dir)?;
         let path = app_data_dir.join(SETTINGS_FILE);
         let temp_path = app_data_dir.join(format!("{SETTINGS_FILE}.tmp"));
@@ -105,11 +123,26 @@ impl DesktopSettings {
         Ok(settings)
     }
 
-    /// Applies the settings to the core configuration.
-    pub fn apply_to(&self, config: &mut thaumic_core::Config) {
-        config.speaker_monitor = self.speaker_monitor;
-        config.pcm_connect_burst_ms = self.pcm_connect_burst_ms.min(MAX_PCM_CONNECT_BURST_MS);
-        config.drift_compensation = self.drift_compensation;
+    /// What the settings file said about each setting: the value held here
+    /// for every key the file had, nothing for a key it lacked.
+    fn file_values(&self) -> SpeakerSettingValues {
+        SpeakerSettingValues {
+            speaker_monitor: self.in_file.speaker_monitor.map(|_| self.speaker_monitor),
+            pcm_connect_burst_ms: self
+                .in_file
+                .pcm_connect_burst_ms
+                .map(|_| self.pcm_connect_burst_ms),
+            drift_compensation: self
+                .in_file
+                .drift_compensation
+                .map(|_| self.drift_compensation),
+        }
+    }
+
+    /// The settings in effect: an environment variable, as read when the app
+    /// started, beats the settings file, which beats the default.
+    pub fn resolved(&self, env: SpeakerEnv) -> CompanionSettings {
+        CompanionSettings::load(self.file_values(), env, SpeakerSettingValues::default())
     }
 }
 
@@ -137,7 +170,9 @@ mod tests {
         assert!(!DesktopSettings::load(&dir).speaker_monitor);
 
         let mut config = thaumic_core::Config::default();
-        DesktopSettings::load(&dir).apply_to(&mut config);
+        DesktopSettings::load(&dir)
+            .resolved(SpeakerEnv::default())
+            .apply_to(&mut config);
         assert!(!config.speaker_monitor);
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -161,7 +196,9 @@ mod tests {
         assert!(settings.speaker_monitor);
 
         let mut config = thaumic_core::Config::default();
-        settings.apply_to(&mut config);
+        settings
+            .resolved(SpeakerEnv::default())
+            .apply_to(&mut config);
         assert_eq!(config.pcm_connect_burst_ms, 1500);
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -203,7 +240,9 @@ mod tests {
         assert!(settings.speaker_monitor, "the other settings are untouched");
 
         let mut config = thaumic_core::Config::default();
-        settings.apply_to(&mut config);
+        settings
+            .resolved(SpeakerEnv::default())
+            .apply_to(&mut config);
         assert_eq!(config.drift_compensation, DriftMode::Observe);
 
         // An older file without the field gets the default.
@@ -236,6 +275,117 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join(SETTINGS_FILE), "{ not json").unwrap();
         assert_eq!(DesktopSettings::load(&dir), DesktopSettings::default());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    fn env(pairs: &[(&str, &str)]) -> SpeakerEnv {
+        SpeakerEnv::from_lookup(|name| {
+            pairs
+                .iter()
+                .find(|(key, _)| *key == name)
+                .map(|(_, value)| value.to_string())
+        })
+    }
+
+    #[test]
+    fn each_setting_takes_the_variable_then_the_file_then_the_default() {
+        use thaumic_core::SettingOrigin::{Default, Env, File};
+        let dir = temp_dir("precedence");
+        let none = SpeakerEnv::default();
+        let all = env(&[
+            ("THAUMIC_SPEAKER_MONITOR", "on"),
+            ("THAUMIC_PCM_CONNECT_BURST_MS", "0"),
+            ("THAUMIC_DRIFT_COMPENSATION", "off"),
+        ]);
+
+        // No file: the defaults, and a variable over them.
+        let missing = DesktopSettings::load(&dir);
+        let resolved = missing.resolved(none);
+        assert_eq!(resolved.speaker_monitor.origin, Default);
+        assert_eq!(resolved.pcm_connect_burst_ms.origin, Default);
+        assert_eq!(resolved.drift_compensation.origin, Default);
+        assert_eq!(missing.resolved(all).pcm_connect_burst_ms.origin, Env);
+
+        // A hand-written file with one key: that key is the file's, the
+        // rest stay defaults.
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join(SETTINGS_FILE), r#"{"pcmConnectBurstMs": 1000}"#).unwrap();
+        let resolved = DesktopSettings::load(&dir).resolved(none);
+        assert_eq!(resolved.pcm_connect_burst_ms.value, 1000);
+        assert_eq!(resolved.pcm_connect_burst_ms.origin, File);
+        assert_eq!(resolved.speaker_monitor.origin, Default);
+
+        // A saved file sets all three; a variable still beats each.
+        DesktopSettings::update(&dir, |s| {
+            s.speaker_monitor = false;
+            s.drift_compensation = DriftMode::Observe;
+        })
+        .expect("saves");
+        let saved = DesktopSettings::load(&dir);
+        let resolved = saved.resolved(none);
+        assert!(!resolved.speaker_monitor.value);
+        assert_eq!(resolved.pcm_connect_burst_ms.value, 1000);
+        assert_eq!(resolved.drift_compensation.value, DriftMode::Observe);
+        assert_eq!(
+            resolved.origins(),
+            thaumic_core::SettingOrigins {
+                speaker_monitor: File,
+                pcm_connect_burst_ms: File,
+                drift_compensation: File,
+            }
+        );
+        let resolved = saved.resolved(all);
+        assert!(resolved.speaker_monitor.value);
+        assert_eq!(resolved.pcm_connect_burst_ms.value, 0);
+        assert_eq!(resolved.drift_compensation.value, DriftMode::Off);
+        assert_eq!(
+            resolved.origins(),
+            thaumic_core::SettingOrigins {
+                speaker_monitor: Env,
+                pcm_connect_burst_ms: Env,
+                drift_compensation: Env,
+            }
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_setting_saved_under_a_variable_waits_for_the_variable_to_go() {
+        let dir = temp_dir("saved-under-env");
+        let fixed = env(&[("THAUMIC_PCM_CONNECT_BURST_MS", "2000")]);
+        let saved = DesktopSettings::update(&dir, |s| s.pcm_connect_burst_ms = 250).expect("saves");
+        assert_eq!(saved.resolved(fixed).pcm_connect_burst_ms.value, 2000);
+        assert_eq!(
+            saved
+                .resolved(SpeakerEnv::default())
+                .pcm_connect_burst_ms
+                .value,
+            250
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn the_legacy_variable_turns_monitoring_on_over_a_saved_off() {
+        let dir = temp_dir("legacy");
+        let saved = DesktopSettings::update(&dir, |s| s.speaker_monitor = false).expect("saves");
+        for vars in [
+            &[("THAUMIC_SPEAKER_DIAGNOSTICS", "1")][..],
+            &[
+                ("THAUMIC_SPEAKER_DIAGNOSTICS", "1"),
+                ("THAUMIC_SPEAKER_MONITOR", "off"),
+            ][..],
+        ] {
+            let resolved = saved.resolved(env(vars));
+            assert!(resolved.speaker_monitor.value);
+            assert_eq!(
+                resolved.speaker_monitor.origin,
+                thaumic_core::SettingOrigin::LegacyEnv
+            );
+            assert!(resolved.legacy_warning(false).is_some());
+        }
+        let resolved = saved.resolved(env(&[("THAUMIC_SPEAKER_DIAGNOSTICS", "0")]));
+        assert!(!resolved.speaker_monitor.value);
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

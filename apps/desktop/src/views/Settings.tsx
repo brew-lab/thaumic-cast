@@ -17,6 +17,7 @@ import {
 } from '../state/store';
 import { headStartOptions } from '../lib/speaker-notices';
 import { driftModeForToggle, driftToggleState } from '../lib/drift-setting';
+import { speakerMonitorOverrideKey } from '../lib/speaker-monitor-setting';
 import { useTranslation } from 'react-i18next';
 import { ExternalLink, X } from 'lucide-preact';
 import { getVersion } from '@tauri-apps/api/app';
@@ -179,6 +180,7 @@ export function Settings() {
   const availableLanguages = Object.keys(resources) as SupportedLocale[];
   const headStartMs = headStart?.envOverride ?? headStart?.ms ?? null;
   const monitorOn = speakerMonitor ? (speakerMonitor.envOverride ?? speakerMonitor.enabled) : null;
+  const monitorOverrideKey = speakerMonitorOverrideKey(speakerMonitor);
   const driftToggle = driftToggleState(drift, monitorOn, t);
 
   return (
@@ -276,14 +278,8 @@ export function Settings() {
                 className={styles.checkbox}
               />
             </label>
-            {speakerMonitor?.envOverride != null && (
-              <span className={styles.hint}>
-                {t(
-                  speakerMonitor.envOverride
-                    ? 'settings.speaker_monitor_env_on'
-                    : 'settings.speaker_monitor_env_off',
-                )}
-              </span>
+            {monitorOverrideKey !== null && (
+              <span className={styles.hint}>{t(monitorOverrideKey)}</span>
             )}
           </div>
 

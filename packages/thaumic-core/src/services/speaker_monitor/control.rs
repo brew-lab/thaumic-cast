@@ -75,8 +75,8 @@ use super::clock_fit::ClockEstimate;
 use super::reserve::ReserveEstimate;
 use crate::stream::RateControl;
 
-/// Environment variable that overrides the drift correction setting: `on`,
-/// `observe` or `off`.
+/// Environment variable that sets drift correction: `on`, `observe` or
+/// `off`. Read once at start-up (see [`crate::companion_settings`]).
 pub const DRIFT_COMPENSATION_ENV: &str = "THAUMIC_DRIFT_COMPENSATION";
 
 /// Environment variable that, for blind listening tests only, fixes every
@@ -282,28 +282,6 @@ impl std::fmt::Display for DriftMode {
     }
 }
 
-/// The mode [`DRIFT_COMPENSATION_ENV`] forces the setting to, if it is set
-/// to something recognisable. An unrecognisable value is ignored, with a
-/// warning the first time it is seen.
-pub fn drift_compensation_env_override() -> Option<DriftMode> {
-    static WARNED: std::sync::Once = std::sync::Once::new();
-    let raw = std::env::var(DRIFT_COMPENSATION_ENV).ok()?;
-    if raw.trim().is_empty() {
-        return None;
-    }
-    let parsed = DriftMode::parse(&raw);
-    if parsed.is_none() {
-        WARNED.call_once(|| {
-            log::warn!(
-                "[DriftControl] Ignoring {}={:?}: expected on, observe or off",
-                DRIFT_COMPENSATION_ENV,
-                raw
-            );
-        });
-    }
-    parsed
-}
-
 /// Reads a [`DRIFT_FORCE_PPM_ENV`] value: `Ok(None)` when it is empty,
 /// the ppm when it is a finite number within the adapter's
 /// ±[`crate::stream::rate_adapter::MAX_RATE_PPM`], and why not otherwise.
@@ -367,21 +345,12 @@ fn first_warning_for(warned: &std::sync::Mutex<Option<String>>, raw: &str) -> bo
 /// The drift correction mode a new connection runs under, given the
 /// configured setting and whether speaker monitoring is on for it.
 ///
-/// [`DRIFT_COMPENSATION_ENV`] overrides `configured` when set. Correction
-/// steers by the speaker monitor's estimates, so with monitoring off it is
-/// off whatever the setting says. Read once per connection.
+/// Correction steers by the speaker monitor's estimates, so with monitoring
+/// off it is off whatever the setting says. The environment plays no part
+/// here; it was settled at start-up (see [`crate::companion_settings`]).
 pub fn drift_compensation_mode(configured: DriftMode, monitor: bool) -> DriftMode {
-    resolve_drift_mode(configured, drift_compensation_env_override(), monitor)
-}
-
-/// [`drift_compensation_mode`] without the environment.
-pub fn resolve_drift_mode(
-    configured: DriftMode,
-    env_override: Option<DriftMode>,
-    monitor: bool,
-) -> DriftMode {
     if monitor {
-        env_override.unwrap_or(configured)
+        configured
     } else {
         DriftMode::Off
     }
@@ -911,13 +880,12 @@ mod tests {
     }
 
     #[test]
-    fn the_environment_outranks_the_setting_and_no_monitor_means_off() {
+    fn no_monitor_means_off_whatever_the_setting() {
         use DriftMode::*;
-        assert_eq!(resolve_drift_mode(Observe, None, true), Observe);
-        assert_eq!(resolve_drift_mode(Observe, Some(On), true), On);
-        assert_eq!(resolve_drift_mode(On, Some(Off), true), Off);
-        assert_eq!(resolve_drift_mode(On, None, false), Off);
-        assert_eq!(resolve_drift_mode(On, Some(On), false), Off);
+        assert_eq!(drift_compensation_mode(Observe, true), Observe);
+        assert_eq!(drift_compensation_mode(On, true), On);
+        assert_eq!(drift_compensation_mode(On, false), Off);
+        assert_eq!(drift_compensation_mode(Observe, false), Off);
     }
 
     #[test]

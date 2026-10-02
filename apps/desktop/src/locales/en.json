@@ -61,6 +61,7 @@
   "settings.speaker_monitor_description": "Works out every few seconds, from each speaker's playback position, how much audio it has in hand. This is what warns you before a speaker runs out, and what drift correction steers by. Turning it off also turns off speaker notices. Takes effect from each speaker's next connection.",
   "settings.speaker_monitor_env_on": "THAUMIC_SPEAKER_MONITOR has insisted on this being on, and it outranks the checkbox.",
   "settings.speaker_monitor_env_off": "THAUMIC_SPEAKER_MONITOR has insisted on this being off, and it outranks the checkbox.",
+  "settings.speaker_monitor_legacy_env": "THAUMIC_SPEAKER_DIAGNOSTICS sets this to on, and an environment variable outranks a setting.",
   "settings.head_start": "Speaker head start",
   "settings.head_start_description": "Audio sent to each speaker as fast as it will take it when it starts playing, so it can ride out Wi-Fi hiccups. It adds the same delay, which video sync allows for. 500 ms suits most homes; raise it if one speaker on a weak Wi-Fi link cuts out. Applies from each speaker's next connection. PCM casts only.",
   "settings.head_start_off": "Off",

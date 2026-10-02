@@ -28,7 +28,6 @@ use crate::api::ws::is_companion_host;
 use crate::api::AppState;
 use crate::error::{ThaumicError, ThaumicResult};
 use crate::protocol_constants::{APP_NAME, ICY_METAINT};
-use crate::services::latency_monitor::speaker_monitor_enabled;
 use crate::services::speaker_monitor::control::{
     drift_compensation_mode, drift_force_ppm, DriftMode, DRIFT_FORCE_PPM_ENV,
 };
@@ -618,7 +617,7 @@ async fn serve_stream(
     // themselves. THAUMIC_DRIFT_FORCE_PPM, for listening tests, overrides
     // all of that with a fixed rate.
     let tap = access.monitors_playback().then(|| {
-        let monitor = speaker_monitor_enabled(speaker_monitor);
+        let monitor = speaker_monitor;
         let drift = drift_compensation_mode(drift_compensation, monitor);
         let rate_control = connection_rate_control(
             drift,

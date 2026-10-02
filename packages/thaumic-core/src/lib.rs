@@ -35,6 +35,7 @@ pub mod api;
 pub mod artwork;
 pub mod bootstrap;
 pub mod capture;
+pub mod companion_settings;
 pub mod context;
 pub mod error;
 pub mod events;
@@ -52,6 +53,10 @@ pub mod utils;
 
 // Re-export commonly used types at the crate root
 pub use artwork::{ArtworkConfig, ArtworkSource};
+pub use companion_settings::{
+    CompanionSettings, SettingNames, SettingOrigin, SettingOrigins, SpeakerEnv,
+    SpeakerSettingValues,
+};
 pub use context::{IpDetector, LocalIpDetector, NetworkContext, NetworkError, UrlBuilder};
 pub use error::{DiscoveryResult, ErrorCode, GenaResult, SoapResult, ThaumicError, ThaumicResult};
 pub use events::{

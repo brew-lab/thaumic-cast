@@ -7,7 +7,8 @@ use tauri::{Manager, WebviewWindow};
 use thaumic_core::api::ws_connection::RemotePeers;
 use thaumic_core::{
     now_millis, probe_speaker_by_ip, validate_speaker_ip, CompanionAudio, ErrorCode, EventEmitter,
-    ManualSpeakerConfig, NetworkHealth, PlaybackSession, Speaker, StreamEvent, ZoneGroup,
+    ManualSpeakerConfig, NetworkHealth, PlaybackSession, SettingOrigin, Speaker, StreamEvent,
+    ZoneGroup,
 };
 
 use crate::api::AppState;
@@ -307,24 +308,42 @@ pub fn set_autostart_enabled(app: tauri::AppHandle, enabled: bool) -> Result<(),
     })
 }
 
+/// The value an environment variable fixed a setting at, if one did.
+fn env_override<T>(value: T, origin: SettingOrigin) -> Option<T> {
+    origin.is_env().then_some(value)
+}
+
 /// The speaker-monitor setting as the settings view shows it.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct SpeakerMonitorSetting {
-    /// The saved setting.
+    /// The setting in effect.
     pub enabled: bool,
-    /// What `THAUMIC_SPEAKER_MONITOR` forces it to, if set: the saved setting
-    /// then waits until the variable is removed.
+    /// What an environment variable fixed it at when the app started, if one
+    /// did: the saved setting then waits until the variable is removed and
+    /// the app restarted.
     pub env_override: Option<bool>,
+    /// Where the value came from. `legacyEnv` is
+    /// `THAUMIC_SPEAKER_DIAGNOSTICS`, which only ever turns it on.
+    pub origin: SettingOrigin,
+}
+
+impl SpeakerMonitorSetting {
+    /// The setting as `config` holds it.
+    fn from_config(config: &thaumic_core::Config) -> Self {
+        let origin = config.setting_origins.speaker_monitor;
+        Self {
+            enabled: config.speaker_monitor,
+            env_override: env_override(config.speaker_monitor, origin),
+            origin,
+        }
+    }
 }
 
 /// Returns the speaker-monitor setting.
 #[tauri::command]
 pub fn get_speaker_monitor(state: tauri::State<'_, AppState>) -> SpeakerMonitorSetting {
-    SpeakerMonitorSetting {
-        enabled: state.config.read().speaker_monitor,
-        env_override: thaumic_core::services::latency_monitor::speaker_monitor_env_override(),
-    }
+    SpeakerMonitorSetting::from_config(&state.config.read())
 }
 
 /// Saves the speaker-monitor setting and applies it.
@@ -344,7 +363,7 @@ pub fn set_speaker_monitor(
             code: "settings_error",
             message: e.to_string(),
         })?;
-    settings.apply_to(&mut state.config.write());
+    state.apply_settings(&settings);
     log::info!(
         "[Settings] Speaker monitoring {}",
         if enabled { "on" } else { "off" }
@@ -354,23 +373,34 @@ pub fn set_speaker_monitor(
 }
 
 /// The speaker head start setting as the settings view shows it.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct HeadStartSetting {
-    /// The saved head start, in ms (`0` is off).
+    /// The head start in effect, in ms (`0` is off).
     pub ms: u64,
-    /// What `THAUMIC_PCM_CONNECT_BURST_MS` forces it to, if set: the saved
-    /// setting then waits until the variable is removed.
+    /// What `THAUMIC_PCM_CONNECT_BURST_MS` fixed it at when the app started,
+    /// if it was set: the saved setting then waits until the variable is
+    /// removed and the app restarted.
     pub env_override: Option<u64>,
+}
+
+impl HeadStartSetting {
+    /// The setting as `config` holds it.
+    fn from_config(config: &thaumic_core::Config) -> Self {
+        Self {
+            ms: config.pcm_connect_burst_ms,
+            env_override: env_override(
+                config.pcm_connect_burst_ms,
+                config.setting_origins.pcm_connect_burst_ms,
+            ),
+        }
+    }
 }
 
 /// Returns the speaker head start setting.
 #[tauri::command]
 pub fn get_pcm_connect_burst_ms(state: tauri::State<'_, AppState>) -> HeadStartSetting {
-    HeadStartSetting {
-        ms: state.config.read().pcm_connect_burst_ms,
-        env_override: thaumic_core::stream::cadence::pcm_connect_burst_env_override(),
-    }
+    HeadStartSetting::from_config(&state.config.read())
 }
 
 /// Saves the speaker head start (the PCM connect burst) and applies it.
@@ -390,7 +420,7 @@ pub fn set_pcm_connect_burst_ms(
             code: "settings_error",
             message: e.to_string(),
         })?;
-    settings.apply_to(&mut state.config.write());
+    state.apply_settings(&settings);
     log::info!(
         "[Settings] Speaker head start {} ms",
         settings.pcm_connect_burst_ms
@@ -400,24 +430,35 @@ pub fn set_pcm_connect_burst_ms(
 }
 
 /// The clock drift correction setting as the settings view shows it.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct DriftCompensationSetting {
-    /// The saved mode: `on`, `observe` (what the view's off saves) or
+    /// The mode in effect: `on`, `observe` (what the view's off saves) or
     /// `off` (only set by hand).
     pub mode: thaumic_core::DriftMode,
-    /// What `THAUMIC_DRIFT_COMPENSATION` forces it to, if set: the saved
-    /// setting then waits until the variable is removed.
+    /// What `THAUMIC_DRIFT_COMPENSATION` fixed it at when the app started,
+    /// if it was set: the saved setting then waits until the variable is
+    /// removed and the app restarted.
     pub env_override: Option<thaumic_core::DriftMode>,
+}
+
+impl DriftCompensationSetting {
+    /// The setting as `config` holds it.
+    fn from_config(config: &thaumic_core::Config) -> Self {
+        Self {
+            mode: config.drift_compensation,
+            env_override: env_override(
+                config.drift_compensation,
+                config.setting_origins.drift_compensation,
+            ),
+        }
+    }
 }
 
 /// Returns the clock drift correction setting.
 #[tauri::command]
 pub fn get_drift_compensation(state: tauri::State<'_, AppState>) -> DriftCompensationSetting {
-    DriftCompensationSetting {
-        mode: state.config.read().drift_compensation,
-        env_override: thaumic_core::services::drift_compensation_env_override(),
-    }
+    DriftCompensationSetting::from_config(&state.config.read())
 }
 
 /// Saves the clock drift correction mode and applies it.
@@ -441,7 +482,7 @@ pub fn set_drift_compensation(
             code: "settings_error",
             message: e.to_string(),
         })?;
-    settings.apply_to(&mut state.config.write());
+    state.apply_settings(&settings);
     log::info!("[Settings] Clock drift correction {}", mode);
     broadcast_companion_audio(&state);
     Ok(get_drift_compensation(state))
@@ -839,6 +880,105 @@ mod tests {
             summary.contains("5 connection(s) and 3 active stream(s)"),
             "{}",
             summary
+        );
+    }
+
+    /// A config resolved from a settings file that turns everything down,
+    /// under the environment `vars` describe.
+    fn config_under(vars: &[(&str, &str)]) -> thaumic_core::Config {
+        let file = thaumic_core::SpeakerSettingValues {
+            speaker_monitor: Some(false),
+            pcm_connect_burst_ms: Some(250),
+            drift_compensation: Some(thaumic_core::DriftMode::Observe),
+        };
+        let env = thaumic_core::SpeakerEnv::from_lookup(|name| {
+            vars.iter()
+                .find(|(key, _)| *key == name)
+                .map(|(_, value)| value.to_string())
+        });
+        let mut config = thaumic_core::Config::default();
+        thaumic_core::CompanionSettings::load(file, env, Default::default()).apply_to(&mut config);
+        config
+    }
+
+    #[test]
+    fn a_saved_setting_reports_no_override() {
+        let config = config_under(&[]);
+        assert_eq!(
+            SpeakerMonitorSetting::from_config(&config),
+            SpeakerMonitorSetting {
+                enabled: false,
+                env_override: None,
+                origin: SettingOrigin::File,
+            }
+        );
+        assert_eq!(
+            HeadStartSetting::from_config(&config),
+            HeadStartSetting {
+                ms: 250,
+                env_override: None,
+            }
+        );
+        assert_eq!(
+            DriftCompensationSetting::from_config(&config),
+            DriftCompensationSetting {
+                mode: thaumic_core::DriftMode::Observe,
+                env_override: None,
+            }
+        );
+    }
+
+    #[test]
+    fn a_variable_set_at_startup_is_reported_as_the_override() {
+        let config = config_under(&[
+            ("THAUMIC_SPEAKER_MONITOR", "on"),
+            ("THAUMIC_PCM_CONNECT_BURST_MS", "0"),
+            ("THAUMIC_DRIFT_COMPENSATION", "off"),
+        ]);
+        assert_eq!(
+            SpeakerMonitorSetting::from_config(&config),
+            SpeakerMonitorSetting {
+                enabled: true,
+                env_override: Some(true),
+                origin: SettingOrigin::Env,
+            }
+        );
+        assert_eq!(
+            HeadStartSetting::from_config(&config),
+            HeadStartSetting {
+                ms: 0,
+                env_override: Some(0),
+            }
+        );
+        assert_eq!(
+            DriftCompensationSetting::from_config(&config),
+            DriftCompensationSetting {
+                mode: thaumic_core::DriftMode::Off,
+                env_override: Some(thaumic_core::DriftMode::Off),
+            }
+        );
+    }
+
+    /// The checkbox shows ticked and locked under the legacy variable, and
+    /// the view is told which variable did it.
+    #[test]
+    fn the_legacy_variable_is_reported_as_an_override_that_is_on() {
+        let config = config_under(&[
+            ("THAUMIC_SPEAKER_DIAGNOSTICS", "1"),
+            ("THAUMIC_SPEAKER_MONITOR", "off"),
+        ]);
+        let setting = SpeakerMonitorSetting::from_config(&config);
+        assert_eq!(
+            setting,
+            SpeakerMonitorSetting {
+                enabled: true,
+                env_override: Some(true),
+                origin: SettingOrigin::LegacyEnv,
+            }
+        );
+        assert_eq!(
+            serde_json::to_value(&setting).unwrap(),
+            serde_json::json!({ "enabled": true, "envOverride": true, "origin": "legacyEnv" })
         );
     }
 }
