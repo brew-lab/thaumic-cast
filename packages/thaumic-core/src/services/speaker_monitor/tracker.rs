@@ -43,6 +43,8 @@ use super::rollup::WindowStats;
 use super::segment::{Segment, SegmentBreak, OFFSET_STEP_LAG_MS, OFFSET_STEP_MIN_MS};
 use crate::stream::HeadStart;
 
+pub use crate::model::timeline::{PlayoutTimeline, TimelineEntry};
+
 /// Standard error, in ppm, above which the clock fit moves nothing: not the
 /// reserve window's older bounds, the step baseline, nor an estimate carried
 /// across a continuation switch. A rate from the first few blocks can be
@@ -158,30 +160,6 @@ pub const SWITCH_REFERENCE_MAX_DISAGREEMENT_MS: f64 = OFFSET_STEP_MIN_MS / 2.0;
 /// unmeasured. An underrun in the last half minute before a switch leaves
 /// too few polls to tell from one at the switch.
 pub const SWITCH_REFERENCE_RECENT_MS: f64 = OFFSET_STEP_LAG_MS;
-
-/// How the speaker came to be playing the playout segment a position was
-/// counted on, which decides how it counts RelTime there.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum TimelineEntry {
-    /// Told to play it: the playout's first segment, or a restart onto a
-    /// later one. RelTime runs a little ahead of the audio.
-    Played,
-    /// Moved on to it gaplessly as its next item. RelTime counts from the
-    /// audio.
-    Next,
-    /// Any other way (the user skipped to it, or it reopened a segment):
-    /// left as it always was.
-    Other,
-}
-
-/// Which segment of a PCM playout a position poll was counted on.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct PlayoutTimeline {
-    /// Output byte the segment's data starts at, which names it.
-    pub start: u64,
-    /// How the speaker came to be playing it.
-    pub entry: TimelineEntry,
-}
 
 /// Why a continuation switch's offset was not measured.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

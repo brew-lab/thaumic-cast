@@ -31,6 +31,7 @@ use tokio::time::Instant;
 use bytes::{BufMut, Bytes, BytesMut};
 
 use super::{is_crossfade_compatible, AudioFormat};
+use crate::model::DriftMode;
 
 /// Filter length in input samples. 16 taps would miss 70 dB at 15 kHz and
 /// vary in treble response with the fractional phase; 32 does neither.
@@ -416,6 +417,14 @@ impl RateControl {
         let now_ms = now.saturating_duration_since(self.origin).as_millis() as u64;
         now_ms.saturating_sub(written) > RATE_COMMAND_WATCHDOG.as_millis() as u64
     }
+}
+
+/// Whether drift correction is actually running on a connection: made
+/// under [`DriftMode::On`], with an adapter built that follows `control`,
+/// not pinned by the net-insertion guard and not lapsed by the watchdog.
+/// A notice about drift is about what correction cannot make up only then.
+pub fn drift_active(mode: DriftMode, control: Option<&RateControl>) -> bool {
+    mode == DriftMode::On && control.is_some_and(RateControl::is_following)
 }
 
 #[cfg(test)]
@@ -837,5 +846,17 @@ mod tests {
         assert_eq!(a.net_frames(), b.net_frames());
         let mut c = RateAdapter::new(&stereo()).unwrap();
         assert_eq!(c.process(&[0u8; 480 * 4], f64::NAN).len(), 480 * 4);
+    }
+
+    #[test]
+    fn drift_is_active_only_when_an_engaged_adapter_follows() {
+        let control = RateControl::new();
+        assert!(!drift_active(DriftMode::On, None));
+        assert!(!drift_active(DriftMode::On, Some(&control)), "not engaged");
+        control.mark_engaged();
+        assert!(drift_active(DriftMode::On, Some(&control)));
+        assert!(!drift_active(DriftMode::Observe, Some(&control)));
+        control.pin();
+        assert!(!drift_active(DriftMode::On, Some(&control)), "pinned");
     }
 }
