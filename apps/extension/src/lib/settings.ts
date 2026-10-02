@@ -129,9 +129,17 @@ export type AudioMode = z.infer<typeof AudioModeSchema>;
  * Supported languages for the extension UI.
  * Uses the locales defined in i18n.ts.
  */
-export { type SupportedLocale, SUPPORTED_LOCALES } from './i18n';
-import { SUPPORTED_LOCALES } from './i18n';
-const SupportedLocaleSchema = z.enum(SUPPORTED_LOCALES as [string, ...string[]]);
+export { type SupportedLocale, type LanguagePreference, SUPPORTED_LOCALES } from './i18n';
+import { AUTO_LANGUAGE, SUPPORTED_LOCALES } from './i18n';
+
+/**
+ * The stored language: one of the supported locales, or 'auto' to follow the
+ * browser.
+ */
+const LanguagePreferenceSchema = z.enum([AUTO_LANGUAGE, ...SUPPORTED_LOCALES] as [
+  string,
+  ...string[],
+]);
 
 /**
  * Theme mode for the extension UI.
@@ -157,7 +165,9 @@ export const CustomAudioSettingsSchema = z.object({
 export type CustomAudioSettings = z.infer<typeof CustomAudioSettingsSchema>;
 
 /**
- * Version of the stored audio settings layout.
+ * Version of the stored settings layout. It began with the audio settings and
+ * keeps their name (it is stored as `audioSettingsVersion`), but it is the one
+ * version counter for every stored setting.
  *
  * - Version 2 moved smoothing and frame size out of the custom settings into
  *   standalone PCM settings that apply in every mode (see
@@ -165,11 +175,17 @@ export type CustomAudioSettings = z.infer<typeof CustomAudioSettingsSchema>;
  * - Version 3 resets a fall-behind choice of Realtime that a custom PCM
  *   setting carried over from another codec (see
  *   {@link migrateAudioSettingsV3}).
+ * - Version 4 lets the language follow the browser: a stored English, which
+ *   was the default and the only choice, becomes 'auto' (see
+ *   {@link migrateSettingsV4}).
  */
-export const AUDIO_SETTINGS_VERSION = 3;
+export const AUDIO_SETTINGS_VERSION = 4;
 
 /** The layout version {@link migrateAudioSettingsV2} produces. */
 const AUDIO_SETTINGS_V2 = 2;
+
+/** The layout version {@link migrateAudioSettingsV3} produces. */
+const AUDIO_SETTINGS_V3 = 3;
 
 /**
  * Records a smoothing value the version 2 migration changed, so the options
@@ -194,8 +210,8 @@ export const ExtensionSettingsSchema = z.object({
   // Appearance
   theme: ThemeModeSchema.default('auto'),
 
-  // Language
-  language: SupportedLocaleSchema.default('en'),
+  // Language: 'auto' follows the browser, a locale code is an explicit choice
+  language: LanguagePreferenceSchema.default(AUTO_LANGUAGE),
 
   // Audio mode (default to high for lossless - lower CPU, just needs bandwidth)
   audioMode: AudioModeSchema.default('high'),
@@ -246,7 +262,7 @@ const DEFAULT_EXTENSION_SETTINGS: ExtensionSettings = {
   serverUrl: null,
   useAutoDiscover: true,
   theme: 'auto',
-  language: 'en',
+  language: AUTO_LANGUAGE,
   audioMode: 'high',
   customAudioSettings: {
     codec: 'pcm',
@@ -381,14 +397,41 @@ export function migrateAudioSettingsV2(data: Record<string, unknown>): Record<st
  */
 export function migrateAudioSettingsV3(data: Record<string, unknown>): Record<string, unknown> {
   const version = data.audioSettingsVersion;
-  if (typeof version === 'number' && version >= AUDIO_SETTINGS_VERSION) return data;
+  if (typeof version === 'number' && version >= AUDIO_SETTINGS_V3) return data;
 
-  const migrated = { ...data, audioSettingsVersion: AUDIO_SETTINGS_VERSION };
+  const migrated = { ...data, audioSettingsVersion: AUDIO_SETTINGS_V3 };
   const custom = asRecord(data.customAudioSettings);
   if (custom?.codec !== 'pcm' || custom.latencyMode !== 'realtime') return migrated;
 
   log.info('Stored fall-behind choice for PCM was carried over from another codec: now quality');
   return { ...migrated, customAudioSettings: { ...custom, latencyMode: 'quality' } };
+}
+
+/**
+ * Moves stored settings from version 3 to version 4, where the language can
+ * follow the browser.
+ *
+ * Before version 4 the language was stored as English by default, and English
+ * was the only one on offer, so a stored 'en' was never a choice. It becomes
+ * 'auto', and the browser's language is used once a translation for it ships.
+ * From version 4 on a stored 'en' can only come from the language picker, so
+ * it is the user's choice and this leaves it alone: the migration is tied to
+ * the version, not to how many locales ship. Any other stored language, and
+ * every other setting, is left as it is.
+ *
+ * @param data - Raw stored settings on version 3 or later (run
+ *   {@link migrateAudioSettingsV3} first); returned untouched when already on
+ *   version 4
+ * @returns The settings in the version 4 layout (still raw, not validated)
+ */
+export function migrateSettingsV4(data: Record<string, unknown>): Record<string, unknown> {
+  const version = data.audioSettingsVersion;
+  if (typeof version === 'number' && version >= AUDIO_SETTINGS_VERSION) return data;
+
+  const migrated = { ...data, audioSettingsVersion: AUDIO_SETTINGS_VERSION };
+  if (data.language !== 'en') return migrated;
+
+  return { ...migrated, language: AUTO_LANGUAGE };
 }
 
 /**
@@ -555,7 +598,7 @@ function parseExtensionSettingsLeniently(data: Record<string, unknown>): Extensi
   const dropped: string[] = [];
   const settings = parseFieldsLeniently(
     ExtensionSettingsSchema,
-    replaceRetiredCodec(migrateAudioSettingsV3(migrateAudioSettingsV2(data))),
+    replaceRetiredCodec(migrateSettingsV4(migrateAudioSettingsV3(migrateAudioSettingsV2(data)))),
     DEFAULT_EXTENSION_SETTINGS,
     dropped,
   );
@@ -638,7 +681,7 @@ export async function loadExtensionSettings(): Promise<ExtensionSettings> {
     }
 
     // Persist a layout migration (any version below the current one, so the
-    // version 3 reset too) or a replaced codec straight away, so it (and its
+    // version 3 reset and the version 4 language too) or a replaced codec straight away, so it (and its
     // log line) runs once and storage stops holding a value the strict schema
     // rejects.
     const storedVersion = asRecord(data)?.audioSettingsVersion;

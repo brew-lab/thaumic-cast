@@ -25,6 +25,7 @@ import { Button, Card } from '@thaumic-cast/ui';
 import { PROTOCOL_VERSION } from '@thaumic-cast/protocol';
 import { createLogger, GITHUB_RELEASES_URL } from '@thaumic-cast/shared';
 import i18n, { resources, SupportedLocale } from '../lib/i18n';
+import { hasLanguageChoice } from '../lib/language-choice';
 import { type ThemeMode, getTheme, saveTheme, applyTheme } from '../lib/theme';
 import { ManualSpeakerForm } from '../components/ManualSpeakerForm';
 import styles from './Settings.module.css';
@@ -41,7 +42,7 @@ const LANGUAGE_NAMES: Record<SupportedLocale, string> = {
  *
  * Allows users to configure app preferences:
  * - Autostart on login
- * - Language selection
+ * - Language selection, once there is more than one language
  * - Theme (auto/light/dark)
  * - Speaker monitoring, the speaker head start, clock drift correction and
  *   hand-added speakers
@@ -203,25 +204,32 @@ export function Settings() {
         </div>
       </Card>
 
-      {/* Language Section */}
-      <Card id="language" title={t('settings.language')} titleLevel="h3" className={styles.section}>
-        <div className={styles.sectionContent}>
-          <div className={styles.field}>
-            <label className={styles.fieldLabel}>{t('settings.display_language')}</label>
-            <select
-              value={currentLanguage}
-              onChange={(e) => handleLanguageChange(e.currentTarget.value as SupportedLocale)}
-              className={styles.select}
-            >
-              {availableLanguages.map((locale) => (
-                <option key={locale} value={locale}>
-                  {LANGUAGE_NAMES[locale]}
-                </option>
-              ))}
-            </select>
+      {/* Language Section: shown once there is a second language to pick */}
+      {hasLanguageChoice(availableLanguages) && (
+        <Card
+          id="language"
+          title={t('settings.language')}
+          titleLevel="h3"
+          className={styles.section}
+        >
+          <div className={styles.sectionContent}>
+            <div className={styles.field}>
+              <label className={styles.fieldLabel}>{t('settings.display_language')}</label>
+              <select
+                value={currentLanguage}
+                onChange={(e) => handleLanguageChange(e.currentTarget.value as SupportedLocale)}
+                className={styles.select}
+              >
+                {availableLanguages.map((locale) => (
+                  <option key={locale} value={locale}>
+                    {LANGUAGE_NAMES[locale]}
+                  </option>
+                ))}
+              </select>
+            </div>
           </div>
-        </div>
-      </Card>
+        </Card>
+      )}
 
       {/* Appearance Section */}
       <Card

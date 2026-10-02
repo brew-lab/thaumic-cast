@@ -3,7 +3,7 @@ import { useCallback } from 'preact/hooks';
 import { useTranslation } from 'react-i18next';
 import { Card } from '@thaumic-cast/ui';
 import type { ExtensionSettings, SupportedLocale } from '../../lib/settings';
-import { changeLanguage } from '../../lib/i18n';
+import { SUPPORTED_LOCALES, changeLanguage, getInitialLanguage } from '../../lib/i18n';
 import styles from '../Options.module.css';
 
 interface LanguageSectionProps {
@@ -12,8 +12,11 @@ interface LanguageSectionProps {
 }
 
 /**
- * Language selection section.
- * Currently only English is available.
+ * Language selection section. The options page shows it only when there is
+ * more than one language to choose between (see `hasLanguageChoice`).
+ *
+ * The stored language may be 'auto' (follow the browser); the picker then
+ * shows the language in use. Picking one stores it as an explicit choice.
  * @param root0
  * @param root0.settings
  * @param root0.onUpdate
@@ -40,12 +43,16 @@ export function LanguageSection({ settings, onUpdate }: LanguageSectionProps): J
           <select
             id="language-select"
             className={styles.select}
-            value={settings.language}
+            value={getInitialLanguage(settings.language)}
             onChange={(e) =>
               handleLanguageChange((e.target as HTMLSelectElement).value as SupportedLocale)
             }
           >
-            <option value="en">{t('language_en')}</option>
+            {SUPPORTED_LOCALES.map((locale) => (
+              <option key={locale} value={locale}>
+                {t(`language_${locale}`)}
+              </option>
+            ))}
           </select>
           <span className={styles.hint}>{t('language_coming_soon')}</span>
         </div>
