@@ -401,90 +401,23 @@ async fn serve_stream(
         is_resume,
     );
 
-    // Content-Type based on output codec
-    let content_type = stream_state.codec.mime_type();
-
-    // ICY metadata only supported for MP3/AAC streams (not PCM/FLAC)
-    let supports_icy = matches!(stream_state.codec, AudioCodec::Mp3 | AudioCodec::Aac);
-    let wants_icy =
-        supports_icy && headers.get("icy-metadata").and_then(|v| v.to_str().ok()) == Some("1");
-
-    let builder = response_head(content_type, wants_icy, response_framing);
-
-    // A segmented PCM playout: its first connection's body is made by the
-    // playout, which writes the segment's header and ends at its size, and
-    // it holds the tap for as long as it lasts, across its segments.
-    if let Some((layout, start)) = new_segment {
-        let builder = segment_head(builder, &start, &layout);
-        let body = PlayoutChain::start(ChainParts {
-            stream_id: id.clone(),
-            speaker_ip: remote_ip,
-            format: stream_state.audio_format,
-            layout,
-            cadence: combined_stream,
-            stats,
-            tap,
-            start,
-            guard: Arc::clone(&guard),
-            registry: access
-                .tracks_playback()
-                .then(|| Arc::clone(&stream_state.playout)),
-            continuation: pcm_http
-                .as_ref()
-                .map_or_else(PcmContinuation::default, |settings| settings.continuation),
-            segment_didl: pcm_http
-                .as_ref()
-                .map_or_else(PcmSegmentDidl::default, |settings| settings.segment_didl),
-            head_start: Duration::from_millis(connect_burst_ms),
-            events: access
-                .tracks_playback()
-                .then(|| state.stream_coordinator.playout_events()),
-        });
-        let final_stream: AudioStream = Box::pin(with_delivery_record(body, guard, reader_slot));
-        return builder
-            .body(Body::from_stream(final_stream))
-            .map_err(|e| ThaumicError::Internal(e.to_string()));
-    }
-
-    // Apply ICY injection or PCM/WAV header
-    let inner_stream: AudioStream = if wants_icy {
-        Box::pin(with_icy_metadata(
-            combined_stream,
-            Arc::downgrade(&stream_state),
-        ))
-    } else if stream_state.codec == AudioCodec::Pcm {
-        // PCM streams need WAV header prepended per-connection (Sonos may reconnect)
-        let audio_format = stream_state.audio_format;
-        let wav_header = create_wav_header_with_data_size(
-            audio_format.sample_rate,
-            audio_format.channels,
-            audio_format.bits_per_sample,
-            pcm_http.unwrap_or_default().wav_data_size,
-        );
-        Box::pin(futures::StreamExt::chain(
-            futures::stream::once(async move { Ok(wav_header) }),
-            combined_stream,
-        ))
-    } else {
-        Box::pin(combined_stream)
-    };
-
-    // A field experiment may end the body cleanly after a set number of bytes.
-    let inner_stream = with_optional_server_cap(inner_stream, pcm_http.as_ref(), &guard);
-
-    // Wrap stream with logging guard to track delivery timing and errors.
-    // The guard logs summary stats on drop when the stream ends. The body
-    // also owns the connection's tap and, for an unlisted reader, its budget
-    // slot (see `with_delivery_record`).
-    let final_stream: AudioStream = Box::pin(with_delivery_record(
-        inner_stream,
+    assemble_response(
+        &stream_state,
+        &headers,
+        response_framing,
+        new_segment,
+        &id,
+        remote_ip,
+        combined_stream,
+        stats,
+        tap,
         guard,
-        (tap, reader_slot),
-    ));
-
-    builder
-        .body(Body::from_stream(final_stream))
-        .map_err(|e| ThaumicError::Internal(e.to_string()))
+        access,
+        pcm_http,
+        connect_burst_ms,
+        &state,
+        reader_slot,
+    )
 }
 
 /// A fetch that passed admission: the stream it is for, who is asking, and
@@ -1089,6 +1022,115 @@ fn body_pipeline(
             None => Box::pin(raw_stream),
         }
     }
+}
+
+/// Response assembly, the last phase of [`serve_stream`]: the response head,
+/// and the body that goes with it. A segmented PCM playout's first connection
+/// gets the playout's body; anything else gets the audio with ICY metadata or
+/// a WAV header as its codec needs. Either way the body takes the guard, the
+/// tap and the unlisted-reader slot, and holds them until it is dropped.
+#[allow(clippy::too_many_arguments)]
+fn assemble_response(
+    stream_state: &Arc<StreamState>,
+    headers: &HeaderMap,
+    response_framing: ResponseFraming,
+    new_segment: Option<(SegmentLayout, SegmentStart)>,
+    id: &str,
+    remote_ip: IpAddr,
+    combined_stream: AudioStream,
+    stats: Arc<ChainStats>,
+    tap: Option<Arc<ConnectionTap>>,
+    guard: Arc<LoggingStreamGuard>,
+    access: StreamAccess,
+    pcm_http: Option<PcmHttpSettings>,
+    connect_burst_ms: u64,
+    state: &AppState,
+    reader_slot: Option<StreamReaderSlot>,
+) -> ThaumicResult<Response> {
+    // Content-Type based on output codec
+    let content_type = stream_state.codec.mime_type();
+
+    // ICY metadata only supported for MP3/AAC streams (not PCM/FLAC)
+    let supports_icy = matches!(stream_state.codec, AudioCodec::Mp3 | AudioCodec::Aac);
+    let wants_icy =
+        supports_icy && headers.get("icy-metadata").and_then(|v| v.to_str().ok()) == Some("1");
+
+    let builder = response_head(content_type, wants_icy, response_framing);
+
+    // A segmented PCM playout: its first connection's body is made by the
+    // playout, which writes the segment's header and ends at its size, and
+    // it holds the tap for as long as it lasts, across its segments.
+    if let Some((layout, start)) = new_segment {
+        let builder = segment_head(builder, &start, &layout);
+        let body = PlayoutChain::start(ChainParts {
+            stream_id: id.to_string(),
+            speaker_ip: remote_ip,
+            format: stream_state.audio_format,
+            layout,
+            cadence: combined_stream,
+            stats,
+            tap,
+            start,
+            guard: Arc::clone(&guard),
+            registry: access
+                .tracks_playback()
+                .then(|| Arc::clone(&stream_state.playout)),
+            continuation: pcm_http
+                .as_ref()
+                .map_or_else(PcmContinuation::default, |settings| settings.continuation),
+            segment_didl: pcm_http
+                .as_ref()
+                .map_or_else(PcmSegmentDidl::default, |settings| settings.segment_didl),
+            head_start: Duration::from_millis(connect_burst_ms),
+            events: access
+                .tracks_playback()
+                .then(|| state.stream_coordinator.playout_events()),
+        });
+        let final_stream: AudioStream = Box::pin(with_delivery_record(body, guard, reader_slot));
+        return builder
+            .body(Body::from_stream(final_stream))
+            .map_err(|e| ThaumicError::Internal(e.to_string()));
+    }
+
+    // Apply ICY injection or PCM/WAV header
+    let inner_stream: AudioStream = if wants_icy {
+        Box::pin(with_icy_metadata(
+            combined_stream,
+            Arc::downgrade(stream_state),
+        ))
+    } else if stream_state.codec == AudioCodec::Pcm {
+        // PCM streams need WAV header prepended per-connection (Sonos may reconnect)
+        let audio_format = stream_state.audio_format;
+        let wav_header = create_wav_header_with_data_size(
+            audio_format.sample_rate,
+            audio_format.channels,
+            audio_format.bits_per_sample,
+            pcm_http.unwrap_or_default().wav_data_size,
+        );
+        Box::pin(futures::StreamExt::chain(
+            futures::stream::once(async move { Ok(wav_header) }),
+            combined_stream,
+        ))
+    } else {
+        Box::pin(combined_stream)
+    };
+
+    // A field experiment may end the body cleanly after a set number of bytes.
+    let inner_stream = with_optional_server_cap(inner_stream, pcm_http.as_ref(), &guard);
+
+    // Wrap stream with logging guard to track delivery timing and errors.
+    // The guard logs summary stats on drop when the stream ends. The body
+    // also owns the connection's tap and, for an unlisted reader, its budget
+    // slot (see `with_delivery_record`).
+    let final_stream: AudioStream = Box::pin(with_delivery_record(
+        inner_stream,
+        guard,
+        (tap, reader_slot),
+    ));
+
+    builder
+        .body(Body::from_stream(final_stream))
+        .map_err(|e| ThaumicError::Internal(e.to_string()))
 }
 
 /// Adds to a PCM segment response's head what a fetch of part of the
