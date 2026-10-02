@@ -3,10 +3,12 @@ import { afterEach, beforeEach, describe, expect, it, spyOn } from 'bun:test';
 import { chromeStorageData, resetChromeStub } from '../test-support/chrome-stub';
 import {
   AUDIO_SETTINGS_VERSION,
+  ExtensionSettingsSchema,
   getDefaultExtensionSettings,
   loadExtensionSettings,
   migrateAudioSettingsV2,
   nearestBitrateForCodec,
+  parseStoredExtensionSettings,
   saveExtensionSettings,
   snapToSmoothingOption,
   type ExtensionSettings,
@@ -137,12 +139,38 @@ describe('loadExtensionSettings', () => {
     });
   });
 
-  it('should give a stored Vorbis bitrate AAC-LC lacks the nearest AAC-LC one', async () => {
+  it('should give a stored Vorbis bitrate AAC-LC lacks the AAC-LC default', async () => {
     storeSettings({ customAudioSettings: customAudio({ codec: 'vorbis', bitrate: 320 }) });
 
     const settings = await loadExtensionSettings();
 
-    expect(settings.customAudioSettings).toMatchObject({ codec: 'aac-lc', bitrate: 256 });
+    expect(settings.customAudioSettings).toMatchObject({ codec: 'aac-lc', bitrate: 192 });
+  });
+
+  it('should store the replacement so a retired codec is gone after one load', async () => {
+    for (const codec of ['he-aac', 'he-aac-v2', 'vorbis']) {
+      storeSettings({
+        audioMode: 'low',
+        audioSettingsVersion: AUDIO_SETTINGS_VERSION,
+        customAudioSettings: customAudio({ codec, bitrate: 96 }),
+      });
+
+      const settings = await loadExtensionSettings();
+
+      const stored = chromeStorageData.local[SETTINGS_KEY];
+      expect(stored).toEqual(settings);
+      expect(ExtensionSettingsSchema.safeParse(stored).success).toBe(true);
+      expect((stored as ExtensionSettings).customAudioSettings.codec).toBe('aac-lc');
+    }
+  });
+
+  it('should not rewrite storage when nothing was migrated', async () => {
+    const stored = { ...getDefaultExtensionSettings(), theme: 'dark' };
+    storeSettings(stored);
+
+    await loadExtensionSettings();
+
+    expect(chromeStorageData.local[SETTINGS_KEY]).toBe(stored);
   });
 
   it('should move a stored HE-AAC choice to AAC-LC at the same bitrate', async () => {
@@ -297,6 +325,30 @@ describe('saveExtensionSettings', () => {
     });
 
     expect(saved.customAudioSettings.bitrate).toBe(0);
+  });
+});
+
+describe('parseStoredExtensionSettings', () => {
+  it('should read settings an earlier version stored with a retired codec', () => {
+    const old = {
+      ...getDefaultExtensionSettings(),
+      serverUrl: 'http://192.168.1.5:49400',
+      useAutoDiscover: false,
+      customAudioSettings: customAudio({ codec: 'he-aac', bitrate: 96 }),
+    };
+
+    // The strict schema rejects it, which a storage listener would read as "no old settings".
+    expect(ExtensionSettingsSchema.safeParse(old).success).toBe(false);
+    expect(parseStoredExtensionSettings(old)).toMatchObject({
+      serverUrl: 'http://192.168.1.5:49400',
+      useAutoDiscover: false,
+      customAudioSettings: { codec: 'aac-lc', bitrate: 96 },
+    });
+  });
+
+  it('should give undefined for a value that is not an object', () => {
+    expect(parseStoredExtensionSettings(undefined)).toBeUndefined();
+    expect(parseStoredExtensionSettings('high')).toBeUndefined();
   });
 });
 

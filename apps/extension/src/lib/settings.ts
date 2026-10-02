@@ -436,6 +436,25 @@ const RETIRED_CODEC_REPLACEMENTS: Readonly<Record<string, AudioCodec>> = {
 };
 
 /**
+ * Retired codecs whose stored bitrate moves to the nearest one the successor
+ * lists. These played as AAC-LC at the stored bitrate, so the nearest AAC-LC
+ * bitrate is the closest thing to what the user heard. Vorbis never played, so
+ * a Vorbis bitrate AAC-LC lacks takes the AAC-LC default instead (320 kbps
+ * would otherwise become 256, which Windows does not encode).
+ */
+const RETIRED_CODECS_KEEPING_BITRATE: ReadonlySet<string> = new Set(['he-aac', 'he-aac-v2']);
+
+/**
+ * Tells whether stored settings name a custom codec that is no longer offered.
+ * @param data - Raw stored settings
+ * @returns True when {@link replaceRetiredCodec} would replace the codec
+ */
+function holdsRetiredCodec(data: unknown): boolean {
+  const stored = asRecord(asRecord(data)?.customAudioSettings)?.codec;
+  return typeof stored === 'string' && Object.hasOwn(RETIRED_CODEC_REPLACEMENTS, stored);
+}
+
+/**
  * Picks the bitrate a codec lists that is nearest to a stored one. A stored
  * bitrate halfway between two listed ones takes the higher.
  * @param codec - The codec whose bitrates to choose from
@@ -453,13 +472,16 @@ export function nearestBitrateForCodec(codec: AudioCodec, bitrate: number): numb
 
 /**
  * Replaces a stored custom codec that is no longer offered with its successor,
- * so the choice does not silently reset to the default codec. The stored
- * bitrate moves to the nearest one the successor lists (HE-AAC v2 at 64 kbps
- * becomes AAC-LC at 96 kbps), so the choice stays as close to what was picked
- * as the successor allows.
+ * so the choice does not silently reset to the default codec. A stored HE-AAC
+ * bitrate moves to the nearest one AAC-LC lists (HE-AAC v2 at 64 kbps becomes
+ * AAC-LC at 96 kbps), so the choice stays as close to what was picked as
+ * AAC-LC allows. The nearest bitrate comes from the listed ones, not from what
+ * this machine encodes: a bitrate the browser refuses falls back to the
+ * Sensible preset when a cast starts, as for any other custom setting.
  *
- * This runs on every load and needs no settings version: a replaced codec is
- * no longer in the table, so a second pass changes nothing. Only custom
+ * This needs no settings version: a replaced codec is no longer in the table,
+ * so a second pass changes nothing, and {@link loadExtensionSettings} stores
+ * the result so the retired name does not stay in storage. Only custom
  * settings name a codec; the Economical, Sensible and Luxurious presets are
  * resolved from what the browser can encode each time they are used.
  *
@@ -469,15 +491,15 @@ export function nearestBitrateForCodec(codec: AudioCodec, bitrate: number): numb
 function replaceRetiredCodec(data: Record<string, unknown>): Record<string, unknown> {
   const custom = asRecord(data.customAudioSettings);
   const stored = custom?.codec;
-  if (!custom || typeof stored !== 'string' || !Object.hasOwn(RETIRED_CODEC_REPLACEMENTS, stored)) {
-    return data;
-  }
+  if (!custom || typeof stored !== 'string' || !holdsRetiredCodec(data)) return data;
 
   const replacement = RETIRED_CODEC_REPLACEMENTS[stored];
   const storedBitrate = custom.bitrate;
   // A missing or unreadable bitrate is left for the loader to repair with the default.
   const bitrate =
-    typeof storedBitrate === 'number' && Number.isFinite(storedBitrate)
+    RETIRED_CODECS_KEEPING_BITRATE.has(stored) &&
+    typeof storedBitrate === 'number' &&
+    Number.isFinite(storedBitrate)
       ? nearestBitrateForCodec(replacement, storedBitrate)
       : storedBitrate;
   log.info(`Stored codec ${stored} is no longer offered, using ${replacement}`);
@@ -543,6 +565,20 @@ const LenientExtensionSettingsSchema: z.ZodType<ExtensionSettings> = z
   .transform(parseExtensionSettingsLeniently);
 
 /**
+ * Parses a stored settings value the way {@link loadExtensionSettings} does:
+ * field by field, migrating an older layout and a retired codec. Use it for a
+ * value that may have been stored by an earlier version (the `oldValue` of a
+ * storage change, say), which the strict {@link ExtensionSettingsSchema} would
+ * reject outright.
+ * @param data - A raw stored settings value
+ * @returns The settings, or undefined when the value is not an object
+ */
+export function parseStoredExtensionSettings(data: unknown): ExtensionSettings | undefined {
+  const parsed = LenientExtensionSettingsSchema.safeParse(data);
+  return parsed.success ? parsed.data : undefined;
+}
+
+/**
  * Loads extension settings from chrome.storage.local.
  * Performs one-time migration from sync storage if needed.
  * Falls back to defaults if not set. Invalid fields are replaced with their
@@ -565,9 +601,15 @@ export async function loadExtensionSettings(): Promise<ExtensionSettings> {
       return { ...DEFAULT_EXTENSION_SETTINGS };
     }
 
-    // Persist a layout migration straight away, so it (and its log line) runs once.
+    // Persist a layout migration or a replaced codec straight away, so it (and
+    // its log line) runs once and storage stops holding a value the strict
+    // schema rejects.
     const storedVersion = asRecord(data)?.audioSettingsVersion;
-    if (typeof storedVersion !== 'number' || storedVersion < AUDIO_SETTINGS_VERSION) {
+    if (
+      typeof storedVersion !== 'number' ||
+      storedVersion < AUDIO_SETTINGS_VERSION ||
+      holdsRetiredCodec(data)
+    ) {
       await chrome.storage.local
         .set({ [EXTENSION_SETTINGS_KEY]: parsed.data })
         .catch((err) => log.warn('Failed to save migrated extension settings:', err));
