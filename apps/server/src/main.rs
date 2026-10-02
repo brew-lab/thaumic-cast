@@ -245,7 +245,8 @@ async fn main() -> Result<()> {
     // runtime, as the desktop app does. Its workers raise their scheduling
     // priority (CAP_SYS_NICE on Linux), which keeps audio cadence steady when
     // the host is under load; the main runtime keeps discovery and GENA work.
-    // start_server logs "Server listening" once the bind succeeds.
+    // start_server logs "Listening on port", with the address the extension is
+    // given, once the bind succeeds.
     let mut server_handle = services.streaming_runtime.spawn(start_server(app_state));
 
     // Run until a shutdown signal arrives or the HTTP server stops. A server

@@ -194,6 +194,21 @@ async fn find_available_port(
     Err(ServerError::NoAvailablePort { start, end })
 }
 
+/// The line logged once the HTTP server is bound.
+///
+/// A server's extensions are on other machines and have to be given its
+/// address, so the server's line carries the address to enter: the one the
+/// speakers fetch audio from, which is the one the machine answers on. The
+/// desktop app's extension finds it on this computer without being told, so
+/// its line gives the port alone, as does a server whose address is not known.
+fn listening_line(app_type: AppType, advertise_ip: &str, port: u16) -> String {
+    if matches!(app_type, AppType::Server) && !advertise_ip.is_empty() {
+        format!("Listening on port {port}. The extension wants http://{advertise_ip}:{port}")
+    } else {
+        format!("Listening on port {port}")
+    }
+}
+
 /// Starts the HTTP server on the configured or auto-discovered port.
 pub async fn start_server(state: AppState) -> Result<(), ServerError> {
     let preferred_port = state.config.read().preferred_port;
@@ -211,7 +226,10 @@ pub async fn start_server(state: AppState) -> Result<(), ServerError> {
     // The topology monitor calls the same helper when the local address changes.
     mdns_advertise::advertise(&state.mdns_advertiser, &state.network.get_local_ip(), port);
 
-    log::info!("Server listening on http://0.0.0.0:{}", port);
+    log::info!(
+        "{}",
+        listening_line(state.app_info.app_type, &state.network.get_local_ip(), port)
+    );
     let link_registry = Arc::clone(&state.link_registry);
     let app = http::create_router(state);
 
@@ -265,4 +283,33 @@ fn raw_socket(stream: &tokio::net::TcpStream) -> u64 {
 fn raw_socket(stream: &tokio::net::TcpStream) -> u64 {
     use std::os::windows::io::AsRawSocket;
     stream.as_raw_socket() as u64
+}
+
+#[cfg(test)]
+mod listening_line_tests {
+    use super::{listening_line, AppType};
+
+    #[test]
+    fn server_line_gives_the_address_the_extension_is_set_to() {
+        assert_eq!(
+            listening_line(AppType::Server, "192.168.1.20", 49400),
+            "Listening on port 49400. The extension wants http://192.168.1.20:49400"
+        );
+    }
+
+    #[test]
+    fn desktop_line_gives_the_port_alone() {
+        assert_eq!(
+            listening_line(AppType::Desktop, "192.168.1.20", 49401),
+            "Listening on port 49401"
+        );
+    }
+
+    #[test]
+    fn server_line_claims_no_address_when_none_is_known() {
+        assert_eq!(
+            listening_line(AppType::Server, "", 49400),
+            "Listening on port 49400"
+        );
+    }
 }
