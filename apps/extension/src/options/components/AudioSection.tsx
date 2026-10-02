@@ -18,6 +18,7 @@ import {
   FRAME_DURATION_MS_DEFAULT,
   PCM_SMOOTHING_DEFAULT_MS,
   PCM_SMOOTHING_OPTIONS,
+  getPreferredBitrate,
   getSupportedBitrates,
   getSupportedSampleRates,
   getSupportedBitDepths,
@@ -151,8 +152,7 @@ export function AudioSection({
    */
   const handleCodecChange = useCallback(
     async (codec: AudioCodec) => {
-      const bitrates = getSupportedBitrates(codec, codecSupport);
-      const defaultBitrate = bitrates[0] ?? CODEC_METADATA[codec].defaultBitrate;
+      const defaultBitrate = getPreferredBitrate(codec, codecSupport);
 
       const sampleRates = getSupportedSampleRates(codec, codecSupport);
       const currentSampleRate = settings.customAudioSettings.sampleRate;

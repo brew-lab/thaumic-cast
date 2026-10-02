@@ -6,6 +6,7 @@ import {
   detectSupportedCodecs,
   generateDynamicPresets,
   getCodecBitrateLabel,
+  getPreferredBitrate,
   getSupportedBitrates,
   getSupportedSampleRates,
   isCodecSupported,
@@ -169,6 +170,39 @@ describe('getSupportedBitrates / getSupportedSampleRates', () => {
     expect(getSupportedBitrates('aac-lc', info)).toEqual([128]);
     expect(getSupportedSampleRates('aac-lc', info)).toEqual([48000]);
     expect(getSupportedBitrates('flac', info)).toEqual([]);
+  });
+});
+
+describe('getPreferredBitrate', () => {
+  it('should start AAC-LC at its default bitrate, not the lowest one', () => {
+    const info = support([
+      ['aac-lc', 96],
+      ['aac-lc', 128],
+      ['aac-lc', 160],
+      ['aac-lc', 192],
+      ['aac-lc', 256, false],
+    ]);
+
+    expect(getPreferredBitrate('aac-lc', info)).toBe(192);
+  });
+
+  it('should take the supported bitrate nearest the default when the default is refused', () => {
+    const info = support([
+      ['aac-lc', 96],
+      ['aac-lc', 128],
+      ['aac-lc', 192, false],
+      ['aac-lc', 256],
+    ]);
+
+    // 128 and 256 are equally far from 192; the higher wins.
+    expect(getPreferredBitrate('aac-lc', info)).toBe(256);
+    expect(getPreferredBitrate('aac-lc', support([['aac-lc', 96]]))).toBe(96);
+  });
+
+  it('should give the codec default when detection supports no bitrate', () => {
+    expect(getPreferredBitrate('aac-lc', support([['aac-lc', 192, false]]))).toBe(192);
+    expect(getPreferredBitrate('pcm', support([['pcm', 0]]))).toBe(0);
+    expect(getPreferredBitrate('flac', support([['flac', 0]]))).toBe(0);
   });
 });
 
