@@ -115,8 +115,18 @@ export class StreamSession {
   /** Resolver for the stream ready promise. */
   private streamReadyResolve: (() => void) | null = null;
 
-  /** Promise that resolves when STREAM_READY is received. */
+  /** Rejecter for the stream ready promise, for a stop that comes before STREAM_READY. */
+  private streamReadyReject: ((error: Error) => void) | null = null;
+
+  /** Promise that resolves when STREAM_READY is received, or rejects with {@link fatalError}. */
   private streamReadyPromise: Promise<void>;
+
+  /**
+   * The reason the session stopped itself, once it has. The companion sends
+   * STREAM_READY only after the first audio frame, so a rate stop on that frame
+   * lands while the start is still waiting; the start then fails with this.
+   */
+  private fatalError: KeyedError | null = null;
 
   /** Resolver for the connection promise. */
   private connectionResolver: {
@@ -287,9 +297,12 @@ export class StreamSession {
     this.keepTabAudible = config.keepTabAudible ?? false;
     this.browserName = config.browserName;
 
-    this.streamReadyPromise = new Promise<void>((resolve) => {
+    this.streamReadyPromise = new Promise<void>((resolve, reject) => {
       this.streamReadyResolve = resolve;
+      this.streamReadyReject = reject;
     });
+    // A stop can come before anything waits on this; waitForReady still sees it.
+    this.streamReadyPromise.catch(noop);
   }
 
   /**
@@ -683,10 +696,14 @@ export class StreamSession {
 
         case 'CAPTURE_RATE_ERROR': {
           // The cast's audio is at a rate it did not declare. A start still in
-          // flight fails with the reason; a running cast is stopped with it.
+          // flight fails with the reason, whether it is waiting for STREAM_READY
+          // or for the speakers; a running cast is stopped with it.
           const key = `auto_stop_${msg.reason}`;
           log.error(`Capture rate error: ${key} ${JSON.stringify(msg.params)}`);
-          this.playbackResultsResolver?.reject(new KeyedError(key, msg.params));
+          const rateError = new KeyedError(key, msg.params);
+          this.fatalError = rateError;
+          this.streamReadyReject?.(rateError);
+          this.playbackResultsResolver?.reject(rateError);
           this.playbackResultsResolver = null;
           if (this.onError) {
             this.onError(key, msg.reason, msg.params);
@@ -936,16 +953,26 @@ export class StreamSession {
    * Waits for the stream to be ready (first frame received by server).
    * @param timeoutMs - Maximum time to wait in milliseconds
    * @returns Promise that resolves when stream is ready
+   * @throws {KeyedError} If the session stopped itself first, with the reason and its values
    * @throws Error if timeout expires before stream is ready
    */
   public async waitForReady(timeoutMs = 10000): Promise<void> {
+    if (this.fatalError) throw this.fatalError;
     if (this.isReady) return;
 
+    let timer: ReturnType<typeof setTimeout> | undefined;
     const timeoutPromise = new Promise<never>((_, reject) => {
-      setTimeout(() => reject(new Error('Timeout waiting for stream to be ready')), timeoutMs);
+      timer = setTimeout(
+        () => reject(new Error('Timeout waiting for stream to be ready')),
+        timeoutMs,
+      );
     });
 
-    await Promise.race([this.streamReadyPromise, timeoutPromise]);
+    try {
+      await Promise.race([this.streamReadyPromise, timeoutPromise]);
+    } finally {
+      clearTimeout(timer);
+    }
   }
 
   /**
@@ -958,6 +985,7 @@ export class StreamSession {
    * @param videoSyncEnabled - Whether client has video sync enabled (gates server-side latency monitoring)
    * @param timeoutMs - Timeout in milliseconds
    * @returns Promise resolving with per-speaker playback results
+   * @throws {KeyedError} If the session stopped itself, with the reason and its values
    * @throws Error if all playback attempts fail or timeout
    */
   public async startPlayback(
@@ -974,6 +1002,8 @@ export class StreamSession {
       error?: string;
     }>
   > {
+    if (this.fatalError) throw this.fatalError;
+
     if (!this.consumerWorker) {
       throw new Error('Worker not running');
     }
