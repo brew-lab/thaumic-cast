@@ -24,7 +24,8 @@ use super::StreamState;
 ///
 /// The epoch's content T0 is not part of the hook. It is the capture time of
 /// the first frame the connection actually serves, which only the pipeline
-/// knows once it has trimmed the prefill (see [`CadenceConfig::epoch_candidate`]).
+/// knows once it has trimmed the prefill (see
+/// [`super::cadence::CadenceConfig::epoch_candidate`]).
 ///
 /// Holds a [`std::sync::Weak`] reference to the stream on purpose. The response
 /// body outlives the handler, so a strong `Arc` here would keep the
