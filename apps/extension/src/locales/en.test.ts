@@ -28,6 +28,7 @@ const FILES_THAT_SEND_ERROR_KEYS = [
   'lib/capture-denied.ts',
   'background/connection-state.ts',
   'offscreen/handlers.ts',
+  'offscreen/pcm-rate.ts',
   'offscreen/stream-session.ts',
   'popup/hooks/useConnectionStatus.ts',
 ];
@@ -59,6 +60,7 @@ describe('extension en.json', () => {
     const sent = FILES_THAT_SEND_ERROR_KEYS.flatMap((file) => errorKeysIn(join(SRC, file)));
     expect(sent).toContain('error_offscreen_unavailable');
     expect(sent).toContain('error_unsupported_sample_rate');
+    expect(sent).toContain('error_pcm_rate_unsupported');
     expect(sent).toContain('error_capture_denied_reason');
     expect(sent.filter((key) => !hasEntry(strings, key))).toEqual([]);
   });

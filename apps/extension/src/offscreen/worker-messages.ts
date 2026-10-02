@@ -9,6 +9,7 @@
  */
 
 import type { EncoderConfig, StreamMetadata } from '@thaumic-cast/protocol';
+import type { ErrorParams } from '../lib/keyed-error';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Inbound Messages (StreamSession → Worker)
@@ -21,6 +22,7 @@ import type { EncoderConfig, StreamMetadata } from '@thaumic-cast/protocol';
  * - **SAB path** (compressed codecs): `sab` is provided. Worker reads from SharedArrayBuffer.
  * - **MSTP path** (PCM codec): `readable` is provided. Worker reads AudioData from
  *   a transferred ReadableStream, performs Float32→Int16 conversion, sends via WebSocket.
+ *   It declares the rate of the first AudioData and ignores `sampleRate` here.
  */
 export interface WorkerInitMessage {
   type: 'INIT';
@@ -37,8 +39,6 @@ export interface WorkerInitMessage {
   wsUrl: string;
   /** Pipeline mode. Defaults to 'passthrough' for backward compatibility. */
   mode?: 'encode' | 'passthrough';
-  /** Number of interleaved Int16 samples per frame. Required when mode is 'encode'. */
-  frameSizeInterleaved?: number;
   /** Transferred ReadableStream from MediaStreamTrackProcessor (MSTP path only). */
   readable?: ReadableStream<AudioData>;
   /** Number of audio channels (MSTP path only, default 2). */
@@ -102,7 +102,10 @@ export interface WorkerDisconnectedMessage {
 /** Error occurred in the worker. */
 export interface WorkerErrorMessage {
   type: 'ERROR';
+  /** The error text, or an i18n key when `params` is present. */
   message: string;
+  /** Interpolation values, when `message` is an i18n key that takes them. */
+  params?: ErrorParams;
 }
 
 /** Stream is ready for playback (buffer threshold reached). */

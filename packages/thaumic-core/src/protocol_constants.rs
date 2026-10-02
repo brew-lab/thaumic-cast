@@ -32,6 +32,14 @@ pub const DEFAULT_SAMPLE_RATE: u32 = 48000;
 /// Default number of audio channels (stereo).
 pub const DEFAULT_CHANNELS: u16 = 2;
 
+/// Sample rates (Hz) a stream may declare.
+///
+/// The same list as `SUPPORTED_SAMPLE_RATES` in the protocol package, which
+/// pins it in `fixtures/sample-rates.json`; a test in `api::ws` holds the two
+/// together. A handshake declaring any other rate is refused.
+pub const SUPPORTED_SAMPLE_RATES: [u32; 8] =
+    [48000, 44100, 32000, 24000, 22050, 16000, 11025, 8000];
+
 /// Largest size a WAV header can declare (4,294,967,295 bytes, 4 GiB - 1).
 ///
 /// Written into both WAV header size fields (RIFF size and data size) of a

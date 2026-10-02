@@ -5,6 +5,10 @@
  * f32-planar → interleaved Int16 with TPDF dither, and sends fixed-size
  * frames over WebSocket. Bypasses AudioContext to avoid the clock-domain
  * crossing that causes zero-filled blocks (crackling) in the SAB path.
+ *
+ * Nothing here resamples, so the handshake declares the rate the capture
+ * delivers: the first AudioData is read before the handshake is sent, and its
+ * sample rate is the one declared. The rate in the encoder config is ignored.
  */
 
 import {
@@ -29,10 +33,16 @@ import {
   FRAME_QUEUE_MAX_BYTES,
   AUDIO_GAP_THRESHOLD_US,
 } from './worker-base';
-import { getStreamingPolicy, type EncoderConfig } from '@thaumic-cast/protocol';
+import {
+  FRAME_DURATION_MS_DEFAULT,
+  getStreamingPolicy,
+  type EncoderConfig,
+} from '@thaumic-cast/protocol';
 import type { WorkerInboundMessage } from './worker-messages';
 import { exponentialBackoff } from '../lib/backoff';
+import { errorParamsOf } from '../lib/keyed-error';
 import { convertPlanarToInt16 } from './pcm-convert';
+import { pcmFrameSizeInterleaved, resolvePcmDeclaredRate } from './pcm-rate';
 
 const s: WorkerState = createWorkerState('AudioRelayWorker');
 
@@ -40,7 +50,7 @@ let running = false;
 let frameSizeInterleaved = 0;
 let audioReader: ReadableStreamDefaultReader<AudioData> | null = null;
 let channels = 2;
-/** Sample rate declared in the handshake, kept to compare with what capture delivers. */
+/** Sample rate declared in the handshake: the rate of the first AudioData. */
 let declaredSampleRate = 0;
 
 let ch0Temp: Float32Array | null = null;
@@ -148,6 +158,21 @@ function sendOrQueue(frameView: Uint8Array<ArrayBuffer>): void {
 }
 
 /**
+ * Ends the cast because the capture no longer delivers the rate the handshake
+ * declared. Carrying on would play at the wrong speed, since nothing resamples.
+ * @param rate - The rate the capture now delivers, in Hz
+ */
+function stopForRateChange(rate: number): void {
+  const message =
+    `Capture rate changed: AudioData is ${rate}Hz, the handshake declared ` +
+    `${declaredSampleRate}Hz. Stopping the cast.`;
+  s.log.error(message);
+  running = false;
+  postToMain({ type: 'ERROR', message });
+  postToMain({ type: 'DISCONNECTED', reason: 'capture sample rate changed' });
+}
+
+/**
  * Processes a single AudioData frame: extracts planar f32, tracks timestamp gaps, and emits to the framing pipeline.
  * @param audioData
  */
@@ -165,12 +190,13 @@ function processAudioData(audioData: AudioData): void {
           `duration=${audioData.duration}µs, timestamp=${ts}µs, ` +
           `declaredSampleRate=${declaredSampleRate}`,
       );
-      if (sr !== declaredSampleRate) {
-        s.log.warn(
-          `Capture rate differs from the handshake: AudioData is ${sr}Hz, ` +
-            `the handshake declared ${declaredSampleRate}Hz`,
-        );
-      }
+    }
+
+    // The declared rate came from the first frame, so this only fires if the
+    // capture changes rate partway through a cast.
+    if (sr !== declaredSampleRate && sr > 0) {
+      stopForRateChange(sr);
+      return;
     }
 
     if (expectedNextTimestamp >= 0 && ts > 0) {
@@ -233,7 +259,11 @@ async function consumeLoopMSTP(): Promise<void> {
     consecutiveBackpressureCycles = 0;
 
     const { value: audioData, done } = await audioReader.read();
-    if (done || !running) break;
+    if (done) break;
+    if (!running) {
+      audioData.close();
+      break;
+    }
 
     processAudioData(audioData);
     wakeupCount++;
@@ -304,18 +334,13 @@ self.onmessage = async (event: MessageEvent<WorkerInboundMessage>) => {
 
   if (msg.type === 'INIT') {
     try {
-      const { encoderConfig, wsUrl, frameSizeInterleaved: initFrameSize } = msg;
+      const { encoderConfig, wsUrl } = msg;
 
-      if (!initFrameSize || initFrameSize <= 0) {
-        throw new Error('frameSizeInterleaved required for relay worker');
-      }
       if (!msg.readable) {
         throw new Error('readable stream required for relay worker');
       }
 
-      frameSizeInterleaved = initFrameSize;
       channels = msg.channels ?? 2;
-      declaredSampleRate = encoderConfig.sampleRate;
 
       s.policy = getStreamingPolicy(encoderConfig.latencyMode);
       s.log.info(
@@ -340,27 +365,70 @@ self.onmessage = async (event: MessageEvent<WorkerInboundMessage>) => {
       ch0Temp = new Float32Array(maxFrameSamples);
       ch1Temp = new Float32Array(maxFrameSamples);
 
-      // 4x frame headroom for variable AudioData sizes
-      accumBuffer = new ArrayBuffer(frameSizeInterleaved * 4 * Int16Array.BYTES_PER_ELEMENT);
-      accum = new Int16Array(accumBuffer);
-      accumOffset = 0;
-      accumView = new Uint8Array(accumBuffer);
+      const reader = msg.readable.getReader();
+      audioReader = reader;
 
-      audioReader = msg.readable.getReader();
+      // The first frame states the rate the capture really runs at. Wait for
+      // it before the handshake, so the rate declared is the rate delivered.
+      // The companion needs this frame before it can report the stream ready
+      // in any case, so a cast that never delivers one fails either way.
+      const first = await reader.read();
+      if (audioReader !== reader) {
+        // Stopped while waiting; cleanup has already run.
+        first.value?.close();
+        return;
+      }
+      if (first.done) {
+        throw new Error('Capture ended before any audio arrived');
+      }
+      const firstFrame = first.value;
 
-      const configWithFrameSize: EncoderConfig = {
-        ...encoderConfig,
-        frameSizeSamples: frameSizeInterleaved / channels,
-      };
+      let id: string;
+      try {
+        if (!firstFrame.sampleRate) {
+          s.log.warn('The first AudioData stated no sample rate; declaring the fallback rate');
+        }
+        const captureRate = resolvePcmDeclaredRate(firstFrame.sampleRate);
+        declaredSampleRate = captureRate;
+        if (captureRate !== encoderConfig.sampleRate) {
+          s.log.info(
+            `Declaring the capture rate ${captureRate}Hz ` +
+              `(configured ${encoderConfig.sampleRate}Hz)`,
+          );
+        }
 
-      const id = await connectWebSocket(s, wsUrl, {
-        type: 'HANDSHAKE',
-        payload: { encoderConfig: configWithFrameSize },
-      });
+        frameSizeInterleaved = pcmFrameSizeInterleaved(
+          captureRate,
+          encoderConfig.frameDurationMs ?? FRAME_DURATION_MS_DEFAULT,
+          channels,
+        );
+
+        // 4x frame headroom for variable AudioData sizes
+        accumBuffer = new ArrayBuffer(frameSizeInterleaved * 4 * Int16Array.BYTES_PER_ELEMENT);
+        accum = new Int16Array(accumBuffer);
+        accumOffset = 0;
+        accumView = new Uint8Array(accumBuffer);
+
+        const declaredConfig: EncoderConfig = {
+          ...encoderConfig,
+          sampleRate: captureRate,
+          frameSizeSamples: frameSizeInterleaved / channels,
+        };
+
+        id = await connectWebSocket(s, wsUrl, {
+          type: 'HANDSHAKE',
+          payload: { encoderConfig: declaredConfig },
+        });
+      } catch (err) {
+        firstFrame.close();
+        throw err;
+      }
 
       running = true;
       s.streamStartTime = performance.now();
       postToMain({ type: 'CONNECTED', streamId: id });
+
+      processAudioData(firstFrame);
 
       consumeLoopMSTP().catch((err) => {
         s.log.error('consumeLoopMSTP error:', err);
@@ -369,7 +437,7 @@ self.onmessage = async (event: MessageEvent<WorkerInboundMessage>) => {
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       s.log.error('Initialization failed:', message);
-      postToMain({ type: 'ERROR', message });
+      postToMain({ type: 'ERROR', message, params: errorParamsOf(err) });
     }
   }
 };

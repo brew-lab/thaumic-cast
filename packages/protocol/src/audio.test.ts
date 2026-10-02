@@ -1,6 +1,21 @@
 import { describe, expect, it } from 'bun:test';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 
-import { clampSample, isSupportedSampleRate, tpdfDither } from './audio.js';
+import { SUPPORTED_SAMPLE_RATES, clampSample, isSupportedSampleRate, tpdfDither } from './audio.js';
+
+describe('SUPPORTED_SAMPLE_RATES', () => {
+  it('should match the rate list the companion is tested against', () => {
+    // fixtures/sample-rates.json is what a thaumic-core test compares with the
+    // rates its handshake accepts. A rate added here must be added there, and
+    // core must then serve it.
+    const fixture: unknown = JSON.parse(
+      readFileSync(join(import.meta.dir, '../fixtures/sample-rates.json'), 'utf8'),
+    );
+
+    expect(fixture).toEqual([...SUPPORTED_SAMPLE_RATES]);
+  });
+});
 
 describe('isSupportedSampleRate', () => {
   it('should accept both the 48kHz and 44.1kHz families', () => {
