@@ -1,6 +1,6 @@
 //! Pure building blocks for the speaker monitor.
 //!
-//! The monitor loop itself lives in [`crate::services::latency_monitor`];
+//! The monitor loop itself lives in [`crate::services::speaker_monitor::monitor`];
 //! what it decides from its polls lives here, free of I/O, so each decision
 //! can be tested on its own:
 //!
@@ -19,6 +19,7 @@
 pub mod bounds;
 pub mod clock_fit;
 pub mod control;
+pub mod monitor;
 pub mod notice;
 pub mod reserve;
 pub mod rollup;
