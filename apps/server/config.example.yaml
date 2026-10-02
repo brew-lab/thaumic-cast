@@ -70,8 +70,8 @@ speaker_monitor: true
 # Environment: THAUMIC_PCM_CONNECT_BURST_MS
 pcm_connect_burst_ms: 500
 
-# Clock drift correction for PCM streams (default: observe).
+# Clock drift correction for PCM streams (default: on).
 # on: stretch or squeeze each speaker's audio by at most 150 ppm to hold its
 # head start level over long casts. observe: measure and log what it would
 # do. off: nothing. Needs speaker_monitor. Env: THAUMIC_DRIFT_COMPENSATION.
-drift_compensation: observe
+drift_compensation: on

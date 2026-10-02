@@ -86,7 +86,7 @@ pub struct ServerConfig {
     /// over long casts, `observe` measures and logs what it would do, `off`
     /// does neither.
     ///
-    /// Defaults to `observe`. Needs `speaker_monitor`: with the monitor off
+    /// Defaults to `on`. Needs `speaker_monitor`: with the monitor off
     /// it runs as `off`, and startup warns once. Applies from each speaker's
     /// next connection. See `thaumic_core::Config`.
     /// Override: `THAUMIC_DRIFT_COMPENSATION` (`on`, `observe` or `off`)
@@ -260,16 +260,21 @@ mod tests {
         assert!(!config.to_core_config().speaker_monitor);
     }
 
-    /// Drift correction ships observing, reaches core, and a config file can
-    /// set it.
+    /// Drift correction ships on, reaches core, a config file that leaves
+    /// the key out gets the default, and one that sets it keeps its value.
     #[test]
-    fn drift_compensation_defaults_to_observe_and_is_forwarded_to_core() {
+    fn drift_compensation_defaults_to_on_and_is_forwarded_to_core() {
         assert_eq!(
             ServerConfig::default().to_core_config().drift_compensation,
-            DriftMode::Observe
+            DriftMode::On
         );
-        let config = ServerConfig::from_yaml("drift_compensation: on\n").expect("should parse");
+        let config = ServerConfig::from_yaml("bind_port: 49400\n").expect("should parse");
         assert_eq!(config.to_core_config().drift_compensation, DriftMode::On);
+        for (saved, mode) in [("observe", DriftMode::Observe), ("off", DriftMode::Off)] {
+            let config = ServerConfig::from_yaml(&format!("drift_compensation: {saved}\n"))
+                .expect("should parse");
+            assert_eq!(config.to_core_config().drift_compensation, mode);
+        }
         assert!(ServerConfig::from_yaml("drift_compensation: sometimes\n").is_err());
     }
 
@@ -277,14 +282,11 @@ mod tests {
     /// startup; with it off, or the monitor on, there is nothing to say.
     #[test]
     fn server_warns_when_monitor_off() {
-        let observe = ServerConfig::default();
-        let warning = observe.drift_warning(false).expect("a warning");
-        assert!(
-            warning.contains("drift_compensation is observe"),
-            "{warning}"
-        );
+        let default = ServerConfig::default();
+        let warning = default.drift_warning(false).expect("a warning");
+        assert!(warning.contains("drift_compensation is on"), "{warning}");
         assert!(warning.contains("runs as off"), "{warning}");
-        assert_eq!(observe.drift_warning(true), None);
+        assert_eq!(default.drift_warning(true), None);
 
         let off = ServerConfig::from_yaml("drift_compensation: off\n").expect("should parse");
         assert_eq!(off.drift_warning(false), None);

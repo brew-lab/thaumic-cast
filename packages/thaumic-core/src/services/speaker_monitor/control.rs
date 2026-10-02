@@ -247,10 +247,10 @@ pub enum DriftMode {
     Off,
     /// The controller runs and logs what it would command; the audio is
     /// left exactly as captured.
-    #[default]
     Observe,
     /// Every PCM connection's audio is stretched or squeezed to hold its
-    /// speaker's reserve level.
+    /// speaker's reserve level. The default.
+    #[default]
     On,
 }
 
@@ -907,7 +907,7 @@ mod tests {
         }
         assert_eq!(DriftMode::parse(" ON "), Some(DriftMode::On));
         assert_eq!(DriftMode::parse("sometimes"), None);
-        assert_eq!(DriftMode::default(), DriftMode::Observe);
+        assert_eq!(DriftMode::default(), DriftMode::On);
     }
 
     #[test]

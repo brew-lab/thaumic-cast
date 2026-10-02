@@ -32,10 +32,11 @@ pub struct DesktopSettings {
     /// [`MAX_PCM_CONNECT_BURST_MS`]. See
     /// `thaumic_core::Config::pcm_connect_burst_ms`.
     pub pcm_connect_burst_ms: u64,
-    /// Clock drift correction for PCM streams. The settings view offers only
-    /// on and off, and off saves `observe`: the audio is left exactly as
-    /// captured either way, and the log keeps saying what correction would
-    /// do. `off` itself can only be set by hand or through the environment.
+    /// Clock drift correction for PCM streams, on unless the file says
+    /// otherwise. The settings view offers only on and off, and off saves
+    /// `observe`: the audio is left exactly as captured, and the log keeps
+    /// saying what correction would do. `off` itself can only be set by hand
+    /// or through the environment.
     /// See `thaumic_core::Config::drift_compensation`.
     pub drift_compensation: DriftMode,
 }
@@ -189,27 +190,43 @@ mod tests {
     }
 
     #[test]
-    fn drift_correction_observes_by_default_and_a_saved_mode_reaches_the_core() {
+    fn drift_correction_is_on_by_default_and_a_saved_mode_reaches_the_core() {
         let dir = temp_dir("drift");
         assert_eq!(
             DesktopSettings::load(&dir).drift_compensation,
-            DriftMode::Observe
+            DriftMode::On
         );
-        DesktopSettings::update(&dir, |s| s.drift_compensation = DriftMode::On).expect("saves");
+        DesktopSettings::update(&dir, |s| s.drift_compensation = DriftMode::Observe)
+            .expect("saves");
         let settings = DesktopSettings::load(&dir);
-        assert_eq!(settings.drift_compensation, DriftMode::On);
+        assert_eq!(settings.drift_compensation, DriftMode::Observe);
         assert!(settings.speaker_monitor, "the other settings are untouched");
 
         let mut config = thaumic_core::Config::default();
         settings.apply_to(&mut config);
-        assert_eq!(config.drift_compensation, DriftMode::On);
+        assert_eq!(config.drift_compensation, DriftMode::Observe);
 
-        // An older file without the field keeps observing.
+        // An older file without the field gets the default.
         std::fs::write(dir.join(SETTINGS_FILE), r#"{"speakerMonitor": true}"#).unwrap();
         assert_eq!(
             DesktopSettings::load(&dir).drift_compensation,
-            DriftMode::Observe
+            DriftMode::On
         );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_saved_drift_mode_is_kept_whatever_the_default() {
+        let dir = temp_dir("drift-saved");
+        std::fs::create_dir_all(&dir).unwrap();
+        for (saved, mode) in [("observe", DriftMode::Observe), ("off", DriftMode::Off)] {
+            std::fs::write(
+                dir.join(SETTINGS_FILE),
+                format!(r#"{{"driftCompensation": "{saved}"}}"#),
+            )
+            .unwrap();
+            assert_eq!(DesktopSettings::load(&dir).drift_compensation, mode);
+        }
         let _ = std::fs::remove_dir_all(&dir);
     }
 

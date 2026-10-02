@@ -82,8 +82,8 @@ struct Args {
     pcm_connect_burst_ms: Option<u64>,
 
     /// Clock drift correction for PCM streams: on, observe or off (overrides
-    /// config file). Observe by default: work out and log what it would do,
-    /// leaving the audio untouched. Needs speaker monitoring.
+    /// config file). On by default; observe works out and logs what it
+    /// would do, leaving the audio untouched. Needs speaker monitoring.
     #[arg(
         long,
         value_name = "on|observe|off",
