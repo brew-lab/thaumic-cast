@@ -297,7 +297,7 @@ async fn serve_stream(
         since_first_frame,
     );
     let mut first_wait = None;
-    if stream_state.codec == AudioCodec::Pcm && !prefill_delay.is_zero() && !is_resume {
+    if stream_state.codec.facts().paced && !prefill_delay.is_zero() && !is_resume {
         let wait = FirstConnectionWait {
             waited_ms: prefill_delay.as_millis() as u64,
             smoothing_ms: stream_state.jitter_buffer_ms,
@@ -323,7 +323,7 @@ async fn serve_stream(
         let watch = FirstWaitWatch::arm(wait, remote_ip, &id);
         tokio::time::sleep(prefill_delay).await;
         watch.completed();
-    } else if is_resume && stream_state.codec == AudioCodec::Pcm {
+    } else if is_resume && stream_state.codec.facts().paced {
         log::info!(
             "[Stream] Skipping prefill delay on resume for {}",
             remote_ip
@@ -457,7 +457,7 @@ fn admit(
         .stream_coordinator
         .get_stream(&id)
         .ok_or_else(|| ThaumicError::StreamNotFound(id.clone()))?;
-    if segment.is_some() && stream_state.codec != AudioCodec::Pcm {
+    if segment.is_some() && !stream_state.codec.facts().paced {
         // Only PCM has a length to run out of; a segment of anything else is a
         // URL no server hands out.
         return Err(ThaumicError::StreamNotFound(id));
@@ -589,7 +589,11 @@ fn fetch_framing(
     // every body is chunked for an HTTP/1.1 client and close-delimited for an
     // HTTP/1.0 one. Logged so that every end of the connection can be
     // explained, and recorded on the guard so wire bytes include the framing.
-    let pcm_switches = (stream_state.codec == AudioCodec::Pcm).then(PcmHttpSwitches::from_env);
+    let pcm_switches = stream_state
+        .codec
+        .facts()
+        .paced
+        .then(PcmHttpSwitches::from_env);
     let pcm_http = pcm_switches.as_ref().map(|switches| switches.settings);
     let response_framing = ResponseFraming::new(version, pcm_http.as_ref());
     let framing = response_framing.framing;
@@ -981,7 +985,7 @@ fn body_pipeline(
     // Compressed codecs (AAC, MP3, FLAC) have their own framing and silence
     // representation - raw zeros would corrupt the stream. These codecs also
     // tend to be more resilient to jitter due to their buffering behavior.
-    if stream_state.codec == AudioCodec::Pcm {
+    if stream_state.codec.facts().paced {
         // PCM: fixed-cadence streaming with silence injection on underrun.
         // Prefill frames are pre-populated in the queue to eliminate the
         // handoff gap; `CadenceConfig::new` trims them so the initial queue
@@ -1051,7 +1055,7 @@ fn assemble_response(
     let content_type = stream_state.codec.mime_type();
 
     // ICY metadata only supported for MP3/AAC streams (not PCM/FLAC)
-    let supports_icy = matches!(stream_state.codec, AudioCodec::Mp3 | AudioCodec::Aac);
+    let supports_icy = stream_state.codec.facts().icy;
     let wants_icy =
         supports_icy && headers.get("icy-metadata").and_then(|v| v.to_str().ok()) == Some("1");
 
@@ -1098,7 +1102,7 @@ fn assemble_response(
             combined_stream,
             Arc::downgrade(stream_state),
         ))
-    } else if stream_state.codec == AudioCodec::Pcm {
+    } else if stream_state.codec.facts().container_header_bytes > 0 {
         // PCM streams need WAV header prepended per-connection (Sonos may reconnect)
         let audio_format = stream_state.audio_format;
         let wav_header = create_wav_header_with_data_size(
@@ -1470,7 +1474,7 @@ fn decide_resume(
 ) -> ResumeDecision {
     let is_resume =
         access.tracks_playback() && stream_state.timing.current_epoch_for(remote_ip).is_some();
-    let play_ip = (is_resume && stream_state.codec == AudioCodec::Pcm && access.resumes_speaker())
+    let play_ip = (is_resume && stream_state.codec.facts().paced && access.resumes_speaker())
         .then(|| remote_ip.to_string());
     ResumeDecision { is_resume, play_ip }
 }
@@ -1489,7 +1493,7 @@ fn connection_rate_control(
     audio_format: &crate::stream::AudioFormat,
     forced: Option<f64>,
 ) -> Option<Arc<RateControl>> {
-    if codec != AudioCodec::Pcm || !RateAdapter::supports(audio_format) {
+    if !codec.facts().paced || !RateAdapter::supports(audio_format) {
         return None;
     }
     match forced {

@@ -1327,7 +1327,7 @@ fn parse_stream_config(payload: &HandshakeRequest) -> Result<StreamConfig, Strin
         .and_then(|c| c.bits_per_sample)
         .unwrap_or(16)
     {
-        24 if codec == AudioCodec::Flac => 24,
+        24 if codec.facts().allows_24_bit => 24,
         24 => {
             log::warn!(
                 "[WS] 24-bit audio requested but codec is {:?}, falling back to 16-bit",
