@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'bun:test';
+import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import i18next from 'i18next';
 
@@ -15,8 +16,18 @@ const strings = en as Record<string, string>;
 const SRC = join(import.meta.dir, '..');
 const REPO = join(SRC, '../../..');
 
-/** The transport states the core sends, as `TransportState`'s `Display` writes them. */
-const TRANSPORT_STATES = ['Playing', 'Paused', 'Stopped', 'Transitioning'];
+/**
+ * Reads the transport states the core sends from `TransportState`'s `Display`
+ * in the core's source, so a state added there fails this test until it has a
+ * label.
+ * @returns The state names as `Display` writes them
+ */
+function transportStates(): string[] {
+  const source = readFileSync(join(REPO, 'packages/thaumic-core/src/sonos/types.rs'), 'utf8');
+  const display = /impl std::fmt::Display for TransportState \{[\s\S]*?\n\}/.exec(source);
+  if (!display) throw new Error('TransportState has no Display impl in sonos/types.rs');
+  return [...display[0].matchAll(/Self::\w+ => write!\(f, "([^"]+)"\)/g)].map((m) => m[1]!);
+}
 
 /**
  * Entries nothing uses that are left alone on purpose: they belong to the
@@ -26,7 +37,9 @@ const KNOWN_UNUSED = ['settings.manual_speakers_empty'];
 
 describe('desktop en.json', () => {
   it('should have a label for every transport state the core sends', () => {
-    for (const state of TRANSPORT_STATES) {
+    const states = transportStates();
+    expect(states).toContain('Playing');
+    for (const state of states) {
       expect(strings[`transport.${state.toLowerCase()}`]).toBeString();
     }
   });

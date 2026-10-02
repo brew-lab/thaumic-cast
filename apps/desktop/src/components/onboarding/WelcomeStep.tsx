@@ -17,7 +17,11 @@ export function WelcomeStep(): preact.JSX.Element {
   const [platform, setPlatform] = useState<Platform | null>(null);
 
   useEffect(() => {
-    getPlatform().then(setPlatform);
+    // A failed lookup falls back to 'unknown', which shows the Windows copy,
+    // so the step is never left without its platform text.
+    getPlatform()
+      .then(setPlatform)
+      .catch(() => setPlatform('unknown'));
   }, []);
 
   // Platform-specific translations, with windows for unknown. Null until the

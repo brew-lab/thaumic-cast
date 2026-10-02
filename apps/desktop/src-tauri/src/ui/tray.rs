@@ -219,14 +219,18 @@ fn format_status_text(stream_count: usize) -> String {
 
 /// Builds the tray tooltip shown after "Stop All Streams".
 ///
-/// Names the blast radius when the stop reached another machine, and returns
-/// the plain tooltip when it did not, so the ordinary stop of this machine's
-/// own casts leaves no trace.
+/// Names the blast radius when the stop ended a cast from another machine, and
+/// returns the plain tooltip when it did not, so the ordinary stop of this
+/// machine's own casts leaves no trace. Another machine that is connected but
+/// casting nothing loses nothing to a stop, so it counts as "did not".
+///
+/// The second sentence counts streams, not machines: one other machine can own
+/// several of them, so the wording says only that they were not from here.
 ///
 /// rust-i18n has no plural rules, so each sentence has an explicit singular
 /// and plural key, chosen here as [`format_status_text`] does.
 fn format_stop_all_tooltip(impact: &ClearAllImpact, streams_cleared: usize) -> String {
-    if !impact.affects_others() {
+    if !impact.affects_others() || impact.remote.streams == 0 {
         return t!("tray.tooltip").to_string();
     }
     let stopped = match streams_cleared {
@@ -689,7 +693,7 @@ mod tests {
         let plain = t!("tray.tooltip").to_string();
         assert_eq!(
             tooltip,
-            format!("{plain} - stopped 3 streams. 2 of them were on other machines.")
+            format!("{plain} - stopped 3 streams. 2 of them were not from this machine.")
         );
     }
 
@@ -708,7 +712,47 @@ mod tests {
         let plain = t!("tray.tooltip").to_string();
         assert_eq!(
             format_stop_all_tooltip(&impact, 1),
-            format!("{plain} - stopped 1 stream. 1 of them was on another machine.")
+            format!("{plain} - stopped 1 stream. 1 of them was not from this machine.")
+        );
+    }
+
+    #[test]
+    fn tooltip_counts_streams_not_machines_when_one_machine_casts_two_tabs() {
+        // Nothing cast here; one other machine casting two tabs. The sentence
+        // must not suggest two machines.
+        let impact = ClearAllImpact::measure(
+            3,
+            2,
+            RemotePeers {
+                machines: 1,
+                connections: 3,
+                streams: 2,
+            },
+        );
+        let plain = t!("tray.tooltip").to_string();
+        assert_eq!(
+            format_stop_all_tooltip(&impact, 2),
+            format!("{plain} - stopped 2 streams. 2 of them were not from this machine.")
+        );
+    }
+
+    #[test]
+    fn tooltip_stays_plain_when_the_other_machine_was_casting_nothing() {
+        // This machine casting two tabs; another machine connected with only
+        // its control socket. The stop ended nothing of theirs.
+        let impact = ClearAllImpact::measure(
+            4,
+            2,
+            RemotePeers {
+                machines: 1,
+                connections: 1,
+                streams: 0,
+            },
+        );
+        assert!(impact.affects_others());
+        assert_eq!(
+            format_stop_all_tooltip(&impact, 2),
+            t!("tray.tooltip").to_string()
         );
     }
 

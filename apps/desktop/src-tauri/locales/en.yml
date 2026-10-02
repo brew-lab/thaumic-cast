@@ -9,12 +9,13 @@ tray:
   status_streaming_one: 1 active ritual
   status_streaming_many: '%{count} active rituals'
 
-  # Tooltip after "Stop All Streams" reached another machine: the first
-  # sentence, a space, then the second
+  # Tooltip after "Stop All Streams" ended a cast from another machine: the
+  # first sentence, a space, then the second. The second counts streams, and
+  # one other machine can own several, so it must not name a number of machines
   stop_all_stopped_one: '%{app} - stopped 1 stream.'
   stop_all_stopped_many: '%{app} - stopped %{count} streams.'
-  stop_all_remote_one: '1 of them was on another machine.'
-  stop_all_remote_many: '%{count} of them were on other machines.'
+  stop_all_remote_one: '1 of them was not from this machine.'
+  stop_all_remote_many: '%{count} of them were not from this machine.'
 
   # Menu items
   dashboard: Dashboard
