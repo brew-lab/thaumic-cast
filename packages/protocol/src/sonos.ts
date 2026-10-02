@@ -165,16 +165,6 @@ export type InitialStatePayload = z.infer<typeof InitialStatePayloadSchema>;
 export type SpeakerAvailability = 'available' | 'in_use' | 'casting' | 'remote_cast';
 
 /**
- * User-friendly labels for speaker availability status.
- */
-export const SPEAKER_AVAILABILITY_LABELS: Record<SpeakerAvailability, string> = {
-  available: 'Available',
-  in_use: 'In Use',
-  casting: 'Casting',
-  remote_cast: 'Casting Elsewhere',
-} as const;
-
-/**
  * Checks whether a playback session belongs to another client of the companion.
  *
  * The companion redacts other clients' sessions, so a redacted `streamId` is an

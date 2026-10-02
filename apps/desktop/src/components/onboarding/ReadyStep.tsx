@@ -16,7 +16,6 @@ export function ReadyStep(): preact.JSX.Element {
   const { t } = useTranslation();
   const speakerCount = groups.value.length;
   const connectionCount = stats.value?.connectionCount ?? 0;
-  const extensionStatus = connectionCount > 0 ? 'Connected' : 'Pending';
   const [autostartEnabled, setAutostartState] = useState(true);
 
   useEffect(() => {
@@ -45,11 +44,11 @@ export function ReadyStep(): preact.JSX.Element {
       <div className={styles.summaryBox}>
         <div className={styles.summaryItem}>
           <Check size={16} className={styles.checkIcon} />
-          <span>Desktop App: Running</span>
+          <span>{t('onboarding.ready.summary_app')}</span>
         </div>
         <div className={styles.summaryItem}>
           <Check size={16} className={styles.checkIcon} />
-          <span>Speakers: {speakerCount} found</span>
+          <span>{t('onboarding.ready.summary_speakers', { count: speakerCount })}</span>
         </div>
         <div className={styles.summaryItem}>
           {connectionCount > 0 ? (
@@ -57,7 +56,11 @@ export function ReadyStep(): preact.JSX.Element {
           ) : (
             <Timer size={16} className={styles.pendingIcon} />
           )}
-          <span>Extension: {extensionStatus}</span>
+          <span>
+            {connectionCount > 0
+              ? t('onboarding.ready.summary_extension_connected')
+              : t('onboarding.ready.summary_extension_pending')}
+          </span>
         </div>
       </div>
 

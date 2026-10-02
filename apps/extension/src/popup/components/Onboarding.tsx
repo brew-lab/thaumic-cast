@@ -76,6 +76,11 @@ export function Onboarding({ onComplete, onSkip }: OnboardingProps): preact.JSX.
     t('onboarding.step_ready'),
   ];
 
+  const stepOfLabel = (current: number, total: number, label?: string): string =>
+    label
+      ? t('onboarding.step_of_named', { current, total, label })
+      : t('onboarding.step_of', { current, total });
+
   const renderStep = () => {
     switch (currentStep) {
       case 0:
@@ -104,6 +109,7 @@ export function Onboarding({ onComplete, onSkip }: OnboardingProps): preact.JSX.
         nextDisabled={isNextDisabled}
         isFinal={isLastStep}
         stepLabels={stepLabels}
+        stepOfLabel={stepOfLabel}
         compact
       >
         {renderStep()}

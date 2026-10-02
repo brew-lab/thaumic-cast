@@ -100,8 +100,8 @@ impl TrayState {
     /// Puts the outcome of a server-wide stop-all in the tray tooltip.
     ///
     /// The tray has no dialog to confirm with, so the tooltip is where the
-    /// blast radius becomes visible: how many streams ended and how many other
-    /// machines lost one. A stop that only reached this machine restores the
+    /// blast radius becomes visible: how many streams ended and how many of
+    /// them were on other machines. A stop that only reached this machine restores the
     /// plain tooltip instead, leaving that case silent.
     ///
     /// Linux tray tooltips are unsupported by the platform, so there the
@@ -222,18 +222,26 @@ fn format_status_text(stream_count: usize) -> String {
 /// Names the blast radius when the stop reached another machine, and returns
 /// the plain tooltip when it did not, so the ordinary stop of this machine's
 /// own casts leaves no trace.
+///
+/// rust-i18n has no plural rules, so each sentence has an explicit singular
+/// and plural key, chosen here as [`format_status_text`] does.
 fn format_stop_all_tooltip(impact: &ClearAllImpact, streams_cleared: usize) -> String {
-    if impact.affects_others() {
-        format!(
-            "{} - stopped {} stream(s), {} of them on {} other machine(s)",
-            t!("tray.tooltip"),
-            streams_cleared,
-            impact.remote.streams,
-            impact.remote.machines
-        )
-    } else {
-        t!("tray.tooltip").to_string()
+    if !impact.affects_others() {
+        return t!("tray.tooltip").to_string();
     }
+    let stopped = match streams_cleared {
+        1 => t!("tray.stop_all_stopped_one", app = t!("tray.tooltip")),
+        n => t!(
+            "tray.stop_all_stopped_many",
+            app = t!("tray.tooltip"),
+            count = n
+        ),
+    };
+    let remote = match impact.remote.streams {
+        1 => t!("tray.stop_all_remote_one"),
+        n => t!("tray.stop_all_remote_many", count = n),
+    };
+    format!("{stopped} {remote}")
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -360,7 +368,12 @@ pub fn setup_tray(app: &tauri::App) -> Result<(), TrayError> {
 
     // Get app version from config
     let version = app.config().version.clone().unwrap_or_default();
-    let app_name_label = format!("{} v{}", t!("tray.app_name"), version);
+    let app_name_label = t!(
+        "tray.version_line",
+        name = t!("tray.app_name"),
+        version = version
+    )
+    .to_string();
 
     // Build menu items
     let app_name = MenuItemBuilder::with_id(MenuItemId::AppName.id(), &app_name_label)
@@ -674,9 +687,40 @@ mod tests {
         );
         let tooltip = format_stop_all_tooltip(&impact, 3);
         let plain = t!("tray.tooltip").to_string();
-        assert!(tooltip.contains("3 stream(s)"), "{}", tooltip);
-        assert!(tooltip.contains("2 of them"), "{}", tooltip);
-        assert!(tooltip.contains("2 other machine(s)"), "{}", tooltip);
-        assert!(tooltip.starts_with(&plain), "{}", tooltip);
+        assert_eq!(
+            tooltip,
+            format!("{plain} - stopped 3 streams. 2 of them were on other machines.")
+        );
+    }
+
+    #[test]
+    fn tooltip_uses_the_singular_for_one_stream_on_another_machine() {
+        // Nothing cast here; one other machine casting one tab.
+        let impact = ClearAllImpact::measure(
+            2,
+            1,
+            RemotePeers {
+                machines: 1,
+                connections: 2,
+                streams: 1,
+            },
+        );
+        let plain = t!("tray.tooltip").to_string();
+        assert_eq!(
+            format_stop_all_tooltip(&impact, 1),
+            format!("{plain} - stopped 1 stream. 1 of them was on another machine.")
+        );
+    }
+
+    #[test]
+    fn version_line_names_the_app_and_its_version() {
+        assert_eq!(
+            t!(
+                "tray.version_line",
+                name = t!("tray.app_name"),
+                version = "1.2.3"
+            ),
+            "Thaumic Cast v1.2.3"
+        );
     }
 }

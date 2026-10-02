@@ -1,7 +1,7 @@
 import type { JSX } from 'preact';
 import { useState, useEffect, useCallback, useMemo } from 'preact/hooks';
 import { useTranslation } from 'react-i18next';
-import { SPEAKER_AVAILABILITY_LABELS, MediaAction } from '@thaumic-cast/protocol';
+import { MediaAction } from '@thaumic-cast/protocol';
 import { getSpeakerAvailability } from '@thaumic-cast/protocol';
 import { GITHUB_RELEASES_URL } from '@thaumic-cast/shared';
 import { Radio, Settings } from 'lucide-preact';
@@ -294,10 +294,10 @@ function MainPopup(): JSX.Element {
         sonosState,
         castingSpeakerIps,
       );
-      const label = SPEAKER_AVAILABILITY_LABELS[availability];
+      const label = t(`speaker_availability_${availability}`);
       return `${group.name} • ${label}`;
     },
-    [sonosState, castingSpeakerIps],
+    [sonosState, castingSpeakerIps, t],
   );
 
   return (
@@ -313,7 +313,12 @@ function MainPopup(): JSX.Element {
       </div>
 
       {error && (
-        <Alert variant="error" className={styles.alert} onDismiss={() => setError(null)}>
+        <Alert
+          variant="error"
+          className={styles.alert}
+          onDismiss={() => setError(null)}
+          dismissLabel={t('dismiss')}
+        >
           {error}
         </Alert>
       )}
@@ -331,6 +336,7 @@ function MainPopup(): JSX.Element {
           action={t(mismatchActionKey)}
           onAction={handleOpenReleases}
           onDismiss={dismissMismatchWarning}
+          dismissLabel={t('dismiss')}
         >
           {companion.appVersion
             ? t('version_mismatch_message', {
@@ -373,6 +379,7 @@ function MainPopup(): JSX.Element {
           action={t('capture_health_action_open_settings')}
           onAction={openSettings}
           onDismiss={dismissCaptureHealthAlert}
+          dismissLabel={t('dismiss')}
         >
           {t('capture_health_frame_drops_message')}
         </Alert>

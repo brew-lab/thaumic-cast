@@ -2,12 +2,20 @@ tray:
   # App info
   tooltip: Thaumic Cast
   app_name: Thaumic Cast
+  version_line: '%{name} v%{version}'
 
   # Status line (dynamic)
   status_idle: No active rituals
   status_streaming_one: 1 active ritual
   status_streaming_many: '%{count} active rituals'
   status_no_speakers: No speakers found
+
+  # Tooltip after "Stop All Streams" reached another machine: the first
+  # sentence, a space, then the second
+  stop_all_stopped_one: '%{app} - stopped 1 stream.'
+  stop_all_stopped_many: '%{app} - stopped %{count} streams.'
+  stop_all_remote_one: '1 of them was on another machine.'
+  stop_all_remote_many: '%{count} of them were on other machines.'
 
   # Menu items
   dashboard: Dashboard
