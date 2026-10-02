@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-import { EncoderConfigSchema } from './encoder.js';
+import { WireEncoderConfigSchema } from './encoder.js';
 import { SpeakerRemovalReasonSchema } from './events.js';
 import { InitialStatePayloadSchema } from './sonos.js';
 import { StreamMetadataSchema } from './stream.js';
@@ -60,7 +60,7 @@ export type HealthResponse = z.infer<typeof HealthResponseSchema>;
  * WebSocket Message Payloads
  */
 export const WsHandshakePayloadSchema = z.object({
-  encoderConfig: EncoderConfigSchema,
+  encoderConfig: WireEncoderConfigSchema,
 });
 export type WsHandshakePayload = z.infer<typeof WsHandshakePayloadSchema>;
 

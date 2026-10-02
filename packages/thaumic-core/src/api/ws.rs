@@ -2487,6 +2487,158 @@ mod tests {
     }
 
     // ─────────────────────────────────────────────────────────────────────
+    // Cast limits and the handshake, as the protocol package states them
+    // ─────────────────────────────────────────────────────────────────────
+
+    /// The limits and defaults the extension works to, written by the protocol
+    /// package's tests from the constants in `src/audio.ts`.
+    const PROTOCOL_CAST_LIMITS: &str = include_str!("../../../protocol/fixtures/cast-limits.json");
+
+    /// The handshake the extension sends, written by the protocol package's
+    /// tests from `toWireEncoderConfig`.
+    const PROTOCOL_HANDSHAKE: &str = include_str!("../../../protocol/fixtures/handshake.json");
+
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase", deny_unknown_fields)]
+    struct CastLimits {
+        smoothing_ms: Limit,
+        frame_duration_ms: Limit,
+        head_start_ms: Limit,
+    }
+
+    #[derive(Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct Limit {
+        min: Option<u64>,
+        max: u64,
+        default: Option<u64>,
+    }
+
+    fn cast_limits() -> CastLimits {
+        serde_json::from_str(PROTOCOL_CAST_LIMITS).expect("cast-limits.json has the three limits")
+    }
+
+    fn handshake_with_smoothing(jitter_buffer_ms: u64) -> HandshakeRequest {
+        serde_json::from_value(serde_json::json!({
+            "encoderConfig": { "codec": "pcm", "jitterBufferMs": jitter_buffer_ms }
+        }))
+        .expect("valid handshake")
+    }
+
+    fn stream_config(request: &HandshakeRequest) -> StreamConfig {
+        match parse_stream_config(request) {
+            Ok(config) => config,
+            Err(error) => panic!("the handshake must be accepted: {error}"),
+        }
+    }
+
+    #[test]
+    fn core_enforces_the_smoothing_limits_the_protocol_declares() {
+        let smoothing = cast_limits().smoothing_ms;
+        assert_eq!(smoothing.min, Some(MIN_JITTER_BUFFER_MS));
+        assert_eq!(smoothing.max, MAX_JITTER_BUFFER_MS);
+        assert_eq!(smoothing.default, Some(DEFAULT_JITTER_BUFFER_MS));
+
+        // And the handshake applies them: the default when none is stated,
+        // either end unchanged, anything past an end brought back to it.
+        let (min, max) = (MIN_JITTER_BUFFER_MS, MAX_JITTER_BUFFER_MS);
+        assert_eq!(
+            stream_config(&handshake_for("pcm")).jitter_buffer_ms,
+            DEFAULT_JITTER_BUFFER_MS
+        );
+        for (stated, used) in [(min, min), (max, max), (min - 1, min), (max + 1, max)] {
+            assert_eq!(
+                stream_config(&handshake_with_smoothing(stated)).jitter_buffer_ms,
+                used
+            );
+        }
+    }
+
+    #[test]
+    fn core_takes_every_frame_duration_the_protocol_declares() {
+        let frame = cast_limits().frame_duration_ms;
+        let min = frame.min.expect("frameDurationMs has a min");
+        // Core's bounds are wider, for the fixed frames of AAC and FLAC; the
+        // extension's range for PCM must sit inside them or it would be clamped.
+        assert!(u64::from(MIN_FRAME_DURATION_MS) <= min);
+        assert!(frame.max <= u64::from(MAX_FRAME_DURATION_MS));
+        assert_eq!(frame.default, Some(u64::from(SILENCE_FRAME_DURATION_MS)));
+
+        // A handshake with no frame size gets the default, and each end of the
+        // range, stated in samples at 48 kHz, comes through as it was sent.
+        assert_eq!(
+            stream_config(&handshake_for("pcm")).frame_duration_ms,
+            SILENCE_FRAME_DURATION_MS
+        );
+        for duration_ms in [min, frame.max] {
+            let request: HandshakeRequest = serde_json::from_value(serde_json::json!({
+                "encoderConfig": { "codec": "pcm", "frameSizeSamples": duration_ms * 48 }
+            }))
+            .expect("valid handshake");
+            assert_eq!(
+                u64::from(stream_config(&request).frame_duration_ms),
+                duration_ms
+            );
+        }
+    }
+
+    #[test]
+    fn core_caps_the_head_start_where_the_protocol_declares() {
+        let head_start = cast_limits().head_start_ms;
+        assert_eq!(
+            head_start.max,
+            crate::protocol_constants::MAX_PCM_CONNECT_BURST_MS
+        );
+    }
+
+    #[test]
+    fn the_handshake_the_extension_sends_parses() {
+        let message: serde_json::Value =
+            serde_json::from_str(PROTOCOL_HANDSHAKE).expect("handshake.json is a message");
+        assert_eq!(message["type"], "HANDSHAKE");
+        let request: HandshakeRequest =
+            serde_json::from_value(message["payload"].clone()).expect("valid handshake");
+
+        assert!(!request.uses_legacy_codec());
+        let config = stream_config(&request);
+        assert_eq!(config.codec, AudioCodec::Pcm);
+        assert_eq!(config.audio_format.sample_rate, 48000);
+        assert_eq!(config.jitter_buffer_ms, 300);
+        assert_eq!(config.frame_duration_ms, 20);
+    }
+
+    #[test]
+    fn a_handshake_from_an_older_extension_parses_to_the_same_stream() {
+        // Extensions before the wire config sent `frameDurationMs` and
+        // `latencyMode` as well. Core reads neither, whatever they say.
+        let mut message: serde_json::Value =
+            serde_json::from_str(PROTOCOL_HANDSHAKE).expect("handshake.json is a message");
+        let current: HandshakeRequest =
+            serde_json::from_value(message["payload"].clone()).expect("valid handshake");
+        let encoder_config = message["payload"]["encoderConfig"]
+            .as_object_mut()
+            .expect("encoderConfig is an object");
+        encoder_config.insert("frameDurationMs".into(), 40.into());
+        encoder_config.insert("latencyMode".into(), "realtime".into());
+        let older: HandshakeRequest =
+            serde_json::from_value(message["payload"].clone()).expect("extra fields are ignored");
+
+        let (current, older) = (stream_config(&current), stream_config(&older));
+        assert_eq!(older.codec, current.codec);
+        assert_eq!(
+            older.audio_format.sample_rate,
+            current.audio_format.sample_rate
+        );
+        assert_eq!(older.audio_format.channels, current.audio_format.channels);
+        assert_eq!(
+            older.audio_format.bits_per_sample,
+            current.audio_format.bits_per_sample
+        );
+        assert_eq!(older.jitter_buffer_ms, current.jitter_buffer_ms);
+        assert_eq!(older.frame_duration_ms, current.frame_duration_ms);
+    }
+
+    // ─────────────────────────────────────────────────────────────────────
     // Legacy fields: still read, and reported when they are
     // ─────────────────────────────────────────────────────────────────────
 

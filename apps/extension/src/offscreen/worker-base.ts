@@ -7,7 +7,7 @@
  * (MediaStreamTrackProcessor) relay worker.
  */
 
-import type { WsMessage } from '@thaumic-cast/protocol';
+import type { WireEncoderConfig, WsMessage } from '@thaumic-cast/protocol';
 import type {
   WorkerInboundMessage,
   WorkerOutboundMessage,
@@ -142,11 +142,16 @@ export interface WorkerState {
   browserCaptureMode: boolean;
 }
 
-/** Handshake message to send on WS connect. */
-interface HandshakeMessage {
-  type: string;
-  payload: Record<string, unknown>;
-}
+/**
+ * Handshake message to send on WS connect. The encoder config in it is the
+ * wire one: build it with `toWireEncoderConfig`.
+ */
+type HandshakeMessage =
+  | { type: 'HANDSHAKE'; payload: { encoderConfig: WireEncoderConfig } }
+  | {
+      type: 'START_BROWSER_CAPTURE';
+      payload: { browserName: string | null; encoderConfig: WireEncoderConfig };
+    };
 
 // ─────────────────────────────────────────────────────────────────────────────
 // State Factory

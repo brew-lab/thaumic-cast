@@ -12,6 +12,8 @@ import {
   IMPLEMENTED_CODECS,
   isValidBitDepthForCodec,
   isValidBitrateForCodec,
+  toWireEncoderConfig,
+  WireEncoderConfigSchema,
 } from './encoder.js';
 
 describe('createEncoderConfig', () => {
@@ -148,5 +150,79 @@ describe('IMPLEMENTED_CODECS', () => {
     for (const codec of IMPLEMENTED_CODECS) {
       expect(AudioCodecSchema.safeParse(codec).success).toBe(true);
     }
+  });
+});
+
+describe('toWireEncoderConfig', () => {
+  const config = createEncoderConfig({
+    codec: 'pcm',
+    latencyMode: 'realtime',
+    jitterBufferMs: 300,
+    frameDurationMs: 20,
+    frameSizeSamples: 960,
+  });
+
+  it('should strip frameDurationMs and latencyMode and nothing else', () => {
+    const wire = toWireEncoderConfig(config);
+
+    expect(wire).not.toHaveProperty('frameDurationMs');
+    expect(wire).not.toHaveProperty('latencyMode');
+    expect<unknown>({ ...wire, frameDurationMs: 20, latencyMode: 'realtime' }).toEqual(config);
+  });
+
+  it('should keep the bitrate and the frame size the companion reads', () => {
+    const wire = toWireEncoderConfig(
+      createEncoderConfig({ codec: 'aac-lc', bitrate: 192, frameSizeSamples: 1024 }),
+    );
+
+    expect(wire.bitrate).toBe(192);
+    expect(wire.frameSizeSamples).toBe(1024);
+  });
+
+  it('should leave the config it was given untouched', () => {
+    toWireEncoderConfig(config);
+
+    expect(config.frameDurationMs).toBe(20);
+    expect(config.latencyMode).toBe('realtime');
+  });
+
+  it('should send the handshake the companion is tested against', () => {
+    // fixtures/handshake.json is what a thaumic-core test parses. JSON drops
+    // nothing here, so the fixture is the message byte for byte in meaning.
+    const fixture: unknown = JSON.parse(
+      readFileSync(join(import.meta.dir, '../fixtures/handshake.json'), 'utf8'),
+    );
+    const sent: unknown = JSON.parse(
+      JSON.stringify({
+        type: 'HANDSHAKE',
+        payload: { encoderConfig: toWireEncoderConfig(config) },
+      }),
+    );
+
+    expect(sent).toEqual(fixture);
+  });
+});
+
+describe('WireEncoderConfigSchema', () => {
+  it('should drop the two fields from a config that still carries them', () => {
+    const parsed = WireEncoderConfigSchema.parse({
+      codec: 'pcm',
+      bitrate: 0,
+      latencyMode: 'realtime',
+      frameDurationMs: 20,
+    });
+
+    expect(parsed).not.toHaveProperty('latencyMode');
+    expect(parsed).not.toHaveProperty('frameDurationMs');
+  });
+
+  it('should still refuse a bit depth the codec cannot carry', () => {
+    const result = WireEncoderConfigSchema.safeParse({
+      codec: 'aac-lc',
+      bitrate: 192,
+      bitsPerSample: 24,
+    });
+
+    expect(result.success).toBe(false);
   });
 });

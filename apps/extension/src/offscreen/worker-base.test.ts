@@ -1,7 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, spyOn } from 'bun:test';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { getStreamingPolicy } from '@thaumic-cast/protocol';
+import {
+  createEncoderConfig,
+  getStreamingPolicy,
+  toWireEncoderConfig,
+} from '@thaumic-cast/protocol';
 
 import {
   connectWebSocket,
@@ -325,7 +329,10 @@ class HandshakeSocket {
 
 describe('connectWebSocket handshake', () => {
   const realWebSocket = globalThis.WebSocket;
-  const handshake = { type: 'HANDSHAKE', payload: { encoderConfig: { codec: 'aac-lc' } } };
+  const handshake = {
+    type: 'HANDSHAKE' as const,
+    payload: { encoderConfig: toWireEncoderConfig(createEncoderConfig({ codec: 'aac-lc' })) },
+  };
   let state: WorkerState;
 
   /** Starts a connection and returns the socket once it has sent its handshake. */

@@ -1,7 +1,7 @@
 import type { EncoderConfig, LatencyMode } from '@thaumic-cast/protocol';
 import { CODEC_METADATA } from '@thaumic-cast/protocol';
 import { createLogger, type Logger } from '@thaumic-cast/shared';
-import type { AudioEncoder, ReconfigureOptions } from './types';
+import type { AudioEncoder } from './types';
 
 /**
  * Extended interface for AudioEncoderConfig to include non-standard Chrome properties.
@@ -35,7 +35,7 @@ export abstract class BaseAudioEncoder implements AudioEncoder {
   protected readonly webCodecsId: string;
 
   /** Current latency mode */
-  private _latencyMode: LatencyMode;
+  private readonly _latencyMode: LatencyMode;
 
   /** Pre-allocated planar conversion buffer (explicitly ArrayBuffer-backed for BufferSource compatibility) */
   protected planarBuffer: Float32Array<ArrayBuffer>;
@@ -124,14 +124,6 @@ export abstract class BaseAudioEncoder implements AudioEncoder {
    * Logs the encoder configuration after initialization.
    */
   protected abstract logConfiguration(): void;
-
-  /**
-   * Called after reconfiguration to allow subclasses to reset state.
-   * Override this to reset codec-specific state like header flags.
-   */
-  protected onReconfigure(): void {
-    // Default: no-op. Subclasses can override.
-  }
 
   /**
    * Ensures planar buffer is large enough for the given sample count.
@@ -276,55 +268,6 @@ export abstract class BaseAudioEncoder implements AudioEncoder {
    */
   advanceTimestamp(frameCount: number): void {
     this.timestamp += (frameCount / this.config.sampleRate) * 1_000_000;
-  }
-
-  /**
-   * Reconfigures the encoder with new settings at runtime.
-   * Flushes pending data, closes the current encoder, and creates a new one.
-   *
-   * @param options - New configuration options
-   * @returns Flushed data from the old encoder, or null if nothing was buffered
-   */
-  reconfigure(options: ReconfigureOptions): Uint8Array<ArrayBuffer> | null {
-    if (this.isClosed) return null;
-
-    // Check if there's actually anything to change
-    const newLatencyMode = options.latencyMode ?? this._latencyMode;
-    if (newLatencyMode === this._latencyMode) {
-      return null; // No change needed
-    }
-
-    this.log.info(`Reconfiguring encoder: latencyMode ${this._latencyMode} -> ${newLatencyMode}`);
-
-    // Flush and collect any pending output
-    let flushedData: Uint8Array<ArrayBuffer> | null = null;
-    try {
-      // Synchronously trigger flush (async completion handled by output callback)
-      this.encoder.flush().catch(() => {
-        // Ignore - we're closing anyway
-      });
-      flushedData = this.consolidateOutput();
-    } catch {
-      // Encoder may be in error state
-    }
-
-    // Close old encoder
-    try {
-      this.encoder.close();
-    } catch {
-      // Already closed
-    }
-
-    // Update latency mode
-    this._latencyMode = newLatencyMode;
-
-    // Create new encoder with updated config
-    this.encoder = this.createEncoder();
-
-    // Allow subclasses to reset their state
-    this.onReconfigure();
-
-    return flushedData;
   }
 
   /**

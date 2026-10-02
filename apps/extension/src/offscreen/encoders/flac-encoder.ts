@@ -65,14 +65,6 @@ export class FlacEncoder extends BaseAudioEncoder {
   }
 
   /**
-   * Resets header state after reconfiguration.
-   * New encoder instance needs to send headers again.
-   */
-  protected onReconfigure(): void {
-    this.headerSent = false;
-  }
-
-  /**
    * Ensures the Int32 planar buffer is large enough.
    * @param sampleCount - Total samples needed
    */

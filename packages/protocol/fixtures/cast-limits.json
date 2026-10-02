@@ -1,0 +1,5 @@
+{
+  "smoothingMs": { "min": 100, "max": 1000, "default": 200 },
+  "frameDurationMs": { "min": 10, "max": 40, "default": 10 },
+  "headStartMs": { "max": 2000 }
+}

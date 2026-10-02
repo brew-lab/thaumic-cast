@@ -1,0 +1,14 @@
+{
+  "type": "HANDSHAKE",
+  "payload": {
+    "encoderConfig": {
+      "codec": "pcm",
+      "bitrate": 0,
+      "sampleRate": 48000,
+      "channels": 2,
+      "bitsPerSample": 16,
+      "jitterBufferMs": 300,
+      "frameSizeSamples": 960
+    }
+  }
+}

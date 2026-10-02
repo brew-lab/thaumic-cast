@@ -39,6 +39,7 @@ import {
 import {
   FRAME_DURATION_MS_DEFAULT,
   getStreamingPolicy,
+  toWireEncoderConfig,
   type EncoderConfig,
   type SupportedSampleRate,
 } from '@thaumic-cast/protocol';
@@ -477,7 +478,7 @@ self.onmessage = async (event: MessageEvent<WorkerInboundMessage>) => {
 
         id = await connectWebSocket(s, wsUrl, {
           type: 'HANDSHAKE',
-          payload: { encoderConfig: declaredConfig },
+          payload: { encoderConfig: toWireEncoderConfig(declaredConfig) },
         });
       } catch (err) {
         firstFrame?.close();
