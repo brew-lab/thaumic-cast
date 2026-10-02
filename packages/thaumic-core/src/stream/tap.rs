@@ -145,6 +145,13 @@ impl ConnectionTap {
         stats: Arc<ChainStats>,
         monitor: bool,
     ) -> Self {
+        // `paced` decides two things at once: the codec takes the PCM serving
+        // path, and the bytes a connection sends are raw samples in
+        // `audio_format`, so they convert to playback time at the format's
+        // rate. The second is what makes a tap measurable and steerable. A
+        // codec that is paced but whose bytes are not raw samples needs its
+        // own fact here, or the monitor would read its byte count as PCM
+        // time; `paced_is_exactly_measurable` fails until it has one.
         let byte_rate = if codec.facts().paced {
             audio_format.frame_bytes(1000).min(u32::MAX as usize) as u32
         } else {
@@ -657,6 +664,44 @@ mod tests {
         assert_eq!(tap.delivered_ms(), Some(0));
         tap.record_body_bytes(WAV_HEADER_BYTES as usize + 192_000 / 2);
         assert_eq!(tap.delivered_ms(), Some(500));
+    }
+
+    /// Pins the coupling the tap's byte rate relies on: a codec is paced
+    /// exactly when its connections are measurable and steerable, and a paced
+    /// codec's bytes are raw samples, measured at the format's own rate.
+    /// The match is exhaustive, so a new codec does not compile until it is
+    /// placed here.
+    #[test]
+    fn paced_is_exactly_measurable() {
+        fn sends_raw_samples(codec: AudioCodec) -> bool {
+            match codec {
+                AudioCodec::Pcm => true,
+                AudioCodec::Aac | AudioCodec::Mp3 | AudioCodec::Flac => false,
+            }
+        }
+        for codec in [
+            AudioCodec::Pcm,
+            AudioCodec::Aac,
+            AudioCodec::Mp3,
+            AudioCodec::Flac,
+        ] {
+            let raw_samples = sends_raw_samples(codec);
+            let paced = codec.facts().paced;
+            assert_eq!(
+                paced, raw_samples,
+                "{codec:?}: paced but its bytes are not raw samples (or the reverse); \
+                 give the tap its own fact for the byte rate"
+            );
+            let tap = tap(codec);
+            assert_eq!(tap.measurable(), paced, "{codec:?} measurable");
+            assert_eq!(tap.steerable(), paced, "{codec:?} steerable");
+            let want = if paced {
+                AudioFormat::default().frame_bytes(1000) as u32
+            } else {
+                0
+            };
+            assert_eq!(tap.byte_rate, want, "{codec:?} byte rate");
+        }
     }
 
     #[test]
