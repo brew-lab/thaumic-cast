@@ -31,6 +31,21 @@ const KNOWN_KEYS: [&str; 3] = [
     DRIFT_COMPENSATION_KEY,
 ];
 
+/// The most of a value that cannot be used that a warning quotes, in
+/// characters. A whole object under a known key is not copied into the log.
+const QUOTED_VALUE_CHARS: usize = 40;
+
+/// `value` as a warning quotes it: as the file has it, cut at
+/// [`QUOTED_VALUE_CHARS`] characters with a mark to say so.
+fn quoted(value: &serde_json::Value) -> String {
+    let text = value.to_string();
+    if text.chars().count() <= QUOTED_VALUE_CHARS {
+        return text;
+    }
+    let start: String = text.chars().take(QUOTED_VALUE_CHARS).collect();
+    format!("{start}… (cut short)")
+}
+
 /// Persisted desktop settings.
 ///
 /// Every field has a default, so a missing or older file loads as the
@@ -94,7 +109,8 @@ impl Default for DesktopSettings {
 ///
 /// Returns the file's value, or `None` when the key is missing or its value
 /// is not `wanted` (what a usable value is, for the warning). The warning
-/// names the key and says that `default` is used instead.
+/// names the key, says that `default` is used instead, and says what the
+/// next save does to the value in the file.
 fn take_key<T: serde::de::DeserializeOwned>(
     file: &mut serde_json::Map<String, serde_json::Value>,
     key: &str,
@@ -108,9 +124,10 @@ fn take_key<T: serde::de::DeserializeOwned>(
         Ok(parsed) => Some(parsed),
         Err(_) => {
             warnings.push(format!(
-                "{key} in {} is {value}, which is not {wanted}. It was ignored, and the default, \
-                 {default}, is used.",
-                path.display()
+                "{key} in {} is {}, which is not {wanted}. It was ignored, and the default, \
+                 {default}, is used. The next save of any setting replaces it in the file.",
+                path.display(),
+                quoted(&value)
             ));
             None
         }
@@ -127,16 +144,24 @@ impl DesktopSettings {
     /// A key this app does not read is warned about and ignored. It is not
     /// carried over: [`Self::update`] writes the three known keys and
     /// nothing else, so the first save drops it from the file.
+    ///
+    /// A key written twice takes the later value, as JSON readers do.
     pub fn load(app_data_dir: &Path) -> Self {
-        let path = app_data_dir.join(SETTINGS_FILE);
-        let Ok(contents) = std::fs::read_to_string(&path) else {
-            return Self::default();
-        };
-        let (settings, warnings) = Self::from_json(&contents, &path);
+        let (settings, warnings) = Self::read(app_data_dir);
         for warning in warnings {
             log::warn!("[Settings] {warning}");
         }
         settings.clamped()
+    }
+
+    /// The settings as the file in `app_data_dir` has them, not yet clamped,
+    /// with the warnings about what could not be used. Logs nothing.
+    fn read(app_data_dir: &Path) -> (Self, Vec<String>) {
+        let path = app_data_dir.join(SETTINGS_FILE);
+        match std::fs::read_to_string(&path) {
+            Ok(contents) => Self::from_json(&contents, &path),
+            Err(_) => (Self::default(), Vec::new()),
+        }
     }
 
     /// Reads the settings out of the text of the file at `path`, with the
@@ -219,11 +244,15 @@ impl DesktopSettings {
     ///
     /// Writes a temporary file and renames it over the old one, so a crash
     /// mid-write cannot leave a half-written file.
+    ///
+    /// What the file had that could not be used was warned about when the
+    /// app started, in words about the next save. This is that save, so it
+    /// is not said again here.
     pub fn update(app_data_dir: &Path, change: impl FnOnce(&mut Self)) -> std::io::Result<Self> {
         let _guard = SETTINGS_LOCK
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        let mut settings = Self::load(app_data_dir);
+        let (mut settings, _already_warned) = Self::read(app_data_dir);
         change(&mut settings);
         let mut settings = settings.clamped();
         // Every key is written, so from here the file sets all three.
@@ -430,7 +459,8 @@ mod tests {
             warnings,
             [
                 "pcmConnectBurstMs in /data/settings.json is \"lots\", which is not a whole \
-                 number of milliseconds, 0 or more. It was ignored, and the default, 500, is used."
+                 number of milliseconds, 0 or more. It was ignored, and the default, 500, is used. \
+                 The next save of any setting replaces it in the file."
             ]
         );
 
@@ -462,11 +492,14 @@ mod tests {
             warnings,
             [
                 "speakerMonitor in /data/settings.json is \"yes\", which is not true or false. \
-                 It was ignored, and the default, true, is used.",
+                 It was ignored, and the default, true, is used. The next save of any setting \
+                 replaces it in the file.",
                 "pcmConnectBurstMs in /data/settings.json is -250, which is not a whole number \
-                 of milliseconds, 0 or more. It was ignored, and the default, 500, is used.",
+                 of milliseconds, 0 or more. It was ignored, and the default, 500, is used. The \
+                 next save of any setting replaces it in the file.",
                 "driftCompensation in /data/settings.json is true, which is not \"on\", \
-                 \"observe\" or \"off\". It was ignored, and the default, \"on\", is used.",
+                 \"observe\" or \"off\". It was ignored, and the default, \"on\", is used. The \
+                 next save of any setting replaces it in the file.",
             ]
         );
 
@@ -478,6 +511,65 @@ mod tests {
         assert_eq!(settings.pcm_connect_burst_ms, 750);
         assert_eq!(settings.drift_compensation, DriftMode::On);
         assert_eq!(warnings.len(), 1);
+    }
+
+    /// A whole object or list under a known key is quoted only as far as it
+    /// takes to recognise it.
+    #[test]
+    fn a_long_bad_value_is_cut_short_in_the_warning() {
+        let list: Vec<u32> = (0..500).collect();
+        let (settings, warnings) = parse(&format!(r#"{{"speakerMonitor": {list:?}}}"#));
+        assert!(settings.speaker_monitor);
+        assert_eq!(
+            warnings,
+            ["speakerMonitor in /data/settings.json is \
+                 [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,1… (cut short), which is not true or \
+                 false. It was ignored, and the default, true, is used. The next save of any \
+                 setting replaces it in the file."]
+        );
+
+        // A value of exactly the limit is quoted whole.
+        let exact = serde_json::Value::String("a".repeat(QUOTED_VALUE_CHARS - 2));
+        assert_eq!(quoted(&exact), exact.to_string());
+        let over = serde_json::Value::String("é".repeat(QUOTED_VALUE_CHARS));
+        assert!(quoted(&over).ends_with("é… (cut short)"));
+    }
+
+    /// A known key written twice takes the later value and costs nothing
+    /// else, as it does for any JSON reader.
+    #[test]
+    fn a_key_written_twice_takes_the_later_value() {
+        let (settings, warnings) = parse(
+            r#"{"pcmConnectBurstMs": 250, "speakerMonitor": false, "pcmConnectBurstMs": 750}"#,
+        );
+        assert_eq!(settings.pcm_connect_burst_ms, 750);
+        assert!(!settings.speaker_monitor);
+        assert_eq!(warnings, Vec::<String>::new());
+    }
+
+    /// The warning says the next save replaces the bad value, and it does:
+    /// the default is written, and the file then reads as setting it.
+    #[test]
+    fn a_save_writes_the_default_over_a_bad_value() {
+        let dir = temp_dir("bad-value-saved");
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join(SETTINGS_FILE);
+        std::fs::write(
+            &path,
+            r#"{"speakerMonitor": "no", "pcmConnectBurstMs": 750}"#,
+        )
+        .unwrap();
+        let (_, warnings) = DesktopSettings::read(&dir);
+        assert_eq!(warnings.len(), 1);
+
+        DesktopSettings::update(&dir, |s| s.drift_compensation = DriftMode::Observe)
+            .expect("saves");
+        let (saved, warnings) = DesktopSettings::read(&dir);
+        assert_eq!(warnings, Vec::<String>::new());
+        assert!(saved.speaker_monitor);
+        assert_eq!(saved.pcm_connect_burst_ms, 750);
+        assert_eq!(saved.in_file, KeysInFile::ALL);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

@@ -126,13 +126,17 @@ struct SpeakerKeys {
     drift_compensation: bool,
 }
 
-/// The top-level keys of a YAML document that are not in [`KNOWN_KEYS`], in
-/// the order the file has them. A document that is not a mapping has none.
-fn unknown_keys(content: &str) -> Vec<String> {
-    let Ok(serde_yaml::Value::Mapping(mapping)) = serde_yaml::from_str(content) else {
-        return Vec::new();
+/// The top-level keys of a YAML document, in the order the file has them.
+/// A document that is not a mapping has none.
+///
+/// Fails where the document cannot be read as plain YAML values although
+/// [`ServerConfig`] read it: a key the server does not read, written twice,
+/// is skipped by the struct and refused here.
+fn file_keys(content: &str) -> Result<Vec<String>, serde_yaml::Error> {
+    let serde_yaml::Value::Mapping(mapping) = serde_yaml::from_str(content)? else {
+        return Ok(Vec::new());
     };
-    mapping
+    Ok(mapping
         .keys()
         .map(|key| match key {
             serde_yaml::Value::String(name) => name.clone(),
@@ -140,13 +144,36 @@ fn unknown_keys(content: &str) -> Vec<String> {
                 .map(|text| text.trim().to_string())
                 .unwrap_or_else(|_| format!("{other:?}")),
         })
-        .filter(|name| !KNOWN_KEYS.contains(&name.as_str()))
-        .collect()
+        .collect())
 }
 
+/// The warnings to log about the keys of the config file at `path`: one for
+/// each key the server does not read, or one line saying the keys could not
+/// be checked. `content` is a document [`ServerConfig`] has already read.
+fn key_warnings(content: &str, path: &Path) -> Vec<String> {
+    match file_keys(content) {
+        Ok(keys) => keys
+            .iter()
+            .filter(|key| !KNOWN_KEYS.contains(&key.as_str()))
+            .map(|key| unknown_key_warning(key, &keys, path))
+            .collect(),
+        Err(e) => vec![format!(
+            "{} was read, but could not be checked for keys the server does not read: {e}.",
+            path.display()
+        )],
+    }
+}
+
+/// A known key with at least this many letters, separators aside, may be two
+/// slips away from a misspelling of it. A shorter one may be one: at two,
+/// `bind_host` would pass for `bind_port`.
+const LONG_KEY_LETTERS: usize = 12;
+
 /// The known key an unknown one was most likely meant to be: the same
-/// letters in another spelling (`bindPort`, `bind-port`), or within two
-/// slips of the keyboard (`bind_prot`). `None` when nothing is that close.
+/// letters in another spelling (`bindPort`, `bind-port`), or within a slip
+/// of the keyboard (`bind_prot`): one for a short key, two for a key of
+/// [`LONG_KEY_LETTERS`] letters or more, where two slips still leave it
+/// recognisable. `None` when nothing is that close.
 fn nearest_known_key(unknown: &str) -> Option<&'static str> {
     let letters = |key: &str| -> Vec<char> {
         key.chars()
@@ -157,8 +184,16 @@ fn nearest_known_key(unknown: &str) -> Option<&'static str> {
     let unknown = letters(unknown);
     KNOWN_KEYS
         .iter()
-        .map(|known| (edit_distance(&unknown, &letters(known)), *known))
-        .filter(|(distance, _)| *distance <= 2)
+        .filter_map(|known| {
+            let known_letters = letters(known);
+            let allowed = if known_letters.len() >= LONG_KEY_LETTERS {
+                2
+            } else {
+                1
+            };
+            let distance = edit_distance(&unknown, &known_letters);
+            (distance <= allowed).then_some((distance, *known))
+        })
         .min_by_key(|(distance, _)| *distance)
         .map(|(_, known)| known)
 }
@@ -189,14 +224,20 @@ fn edit_distance(a: &[char], b: &[char]) -> usize {
 }
 
 /// The warning for one key the config file at `path` has and the server
-/// does not read.
-fn unknown_key_warning(key: &str, path: &Path) -> String {
+/// does not read. `file_keys` is every key of that file.
+///
+/// A key spelt nearly as a real one gets a second sentence naming the real
+/// one, unless the file has the real one as well. The sentence speaks only
+/// of this line: the setting may still be set by a flag or a variable.
+fn unknown_key_warning(key: &str, file_keys: &[String], path: &Path) -> String {
     let mut warning = format!(
         "{key} in {} is not a key the server reads, so it was ignored.",
         path.display()
     );
     if let Some(known) = nearest_known_key(key) {
-        warning.push_str(&format!(" If {known} was meant, it has not been set."));
+        if !file_keys.iter().any(|file_key| file_key == known) {
+            warning.push_str(&format!(" If {known} was meant, this line did not set it."));
+        }
     }
     warning
 }
@@ -236,8 +277,8 @@ impl ServerConfig {
                 .with_context(|| format!("Could not read the config file {}", path.display()))?;
             let config = Self::from_yaml(&content)
                 .with_context(|| format!("The config file {} cannot be used", path.display()))?;
-            for key in unknown_keys(&content) {
-                log::warn!("{}", unknown_key_warning(&key, path));
+            for warning in key_warnings(&content, path) {
+                log::warn!("{warning}");
             }
             config
         } else {
@@ -610,28 +651,29 @@ mod tests {
     #[test]
     fn an_unknown_key_is_reported_and_the_file_still_loads() {
         let content = "bind_port: 8080\ncolour: blue\nspeaker_monitor: false\n";
-        assert_eq!(unknown_keys(content), ["colour"]);
 
         let config = ServerConfig::from_yaml(content).expect("should parse");
         config.validate().expect("should validate");
         assert_eq!(config.bind_port, 8080);
         assert!(!config.speaker_monitor);
 
-        let warning = unknown_key_warning("colour", Path::new("/etc/thaumic-server/config.yaml"));
         assert_eq!(
-            warning,
-            "colour in /etc/thaumic-server/config.yaml is not a key the server reads, so it was \
-             ignored."
+            key_warnings(content, Path::new("/etc/thaumic-server/config.yaml")),
+            [
+                "colour in /etc/thaumic-server/config.yaml is not a key the server reads, so it \
+                 was ignored."
+            ]
         );
     }
 
     #[test]
     fn a_file_of_known_keys_reports_nothing() {
-        assert!(unknown_keys(include_str!("../config.example.yaml")).is_empty());
-        assert!(unknown_keys("").is_empty());
-        assert!(unknown_keys("- a list\n- not a mapping\n").is_empty());
+        let path = Path::new("config.yaml");
+        assert!(key_warnings(include_str!("../config.example.yaml"), path).is_empty());
+        assert!(key_warnings("", path).is_empty());
+        assert!(key_warnings("- a list\n- not a mapping\n", path).is_empty());
         let every_key: String = KNOWN_KEYS.iter().map(|key| format!("{key}: 1\n")).collect();
-        assert!(unknown_keys(&every_key).is_empty());
+        assert!(key_warnings(&every_key, path).is_empty());
     }
 
     /// The dangerous unknown key is the misspelt real one: the setting it
@@ -639,15 +681,15 @@ mod tests {
     #[test]
     fn a_misspelt_key_is_reported_with_the_key_it_resembles() {
         let content = "bind_prot: 8080\n";
-        assert_eq!(unknown_keys(content), ["bind_prot"]);
         let config = ServerConfig::from_yaml(content).expect("should parse");
         assert_eq!(config.bind_port, ServerConfig::default().bind_port);
 
-        let warning = unknown_key_warning("bind_prot", Path::new("config.yaml"));
         assert_eq!(
-            warning,
-            "bind_prot in config.yaml is not a key the server reads, so it was ignored. If \
-             bind_port was meant, it has not been set."
+            key_warnings(content, Path::new("config.yaml")),
+            [
+                "bind_prot in config.yaml is not a key the server reads, so it was ignored. If \
+                 bind_port was meant, this line did not set it."
+            ]
         );
 
         assert_eq!(
@@ -659,8 +701,58 @@ mod tests {
             Some("speaker_monitor")
         );
         assert_eq!(nearest_known_key("artwork_uri"), Some("artwork_url"));
+        assert_eq!(
+            nearest_known_key("drift_compansatoin"),
+            Some("drift_compensation")
+        );
         assert_eq!(nearest_known_key("colour"), None);
         assert_eq!(nearest_known_key("port"), None);
+    }
+
+    /// A short key two letters from a real one is another word, not a slip.
+    #[test]
+    fn a_short_key_two_letters_from_a_real_one_is_not_taken_for_it() {
+        assert_eq!(nearest_known_key("bind_host"), None);
+        assert_eq!(nearest_known_key("data_dirs"), Some("data_dir"));
+        assert_eq!(nearest_known_key("data_file"), None);
+    }
+
+    /// The file has the misspelt key and the real one: the real one is set,
+    /// so the warning must not say otherwise.
+    #[test]
+    fn a_misspelt_key_beside_the_real_one_does_not_say_the_real_one_is_unset() {
+        let content = "colour: blue\nbind_prot: 1\nbind_port: 8080\n";
+        let config = ServerConfig::from_yaml(content).expect("should parse");
+        assert_eq!(config.bind_port, 8080);
+        assert_eq!(
+            key_warnings(content, Path::new("config.yaml")),
+            [
+                "colour in config.yaml is not a key the server reads, so it was ignored.",
+                "bind_prot in config.yaml is not a key the server reads, so it was ignored.",
+            ]
+        );
+    }
+
+    /// An unread key written twice is skipped by the struct and refused by
+    /// the plain parse the key check uses. The file still loads, and one
+    /// line says the check did not happen.
+    #[test]
+    fn a_file_whose_keys_cannot_be_checked_says_so_once() {
+        let content = "colour: blue\ncolour: red\nbind_prot: 1\nbind_port: 8080\n";
+        let config = ServerConfig::from_yaml(content).expect("should parse");
+        assert_eq!(config.bind_port, 8080);
+
+        let warnings = key_warnings(content, Path::new("config.yaml"));
+        assert_eq!(warnings.len(), 1, "{warnings:?}");
+        assert!(
+            warnings[0].starts_with(
+                "config.yaml was read, but could not be checked for keys the server does not \
+                 read: "
+            ),
+            "{}",
+            warnings[0]
+        );
+        assert!(warnings[0].contains("colour"), "{}", warnings[0]);
     }
 
     /// An unknown key is tolerated; a bad value for a known key is not, with
