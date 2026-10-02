@@ -229,39 +229,12 @@ async fn serve_stream(
         reader_slot,
     } = admit(id, segment, &state, remote_addr)?;
 
-    let range_header = headers
-        .get(header::RANGE)
-        .and_then(|v| v.to_str().ok())
-        .map(|s| s.to_string());
-
-    // How hyper will delimit the body. No codec declares a length unless a
-    // field experiment's switches say so for PCM (see `ResponseFraming`):
-    // every body is chunked for an HTTP/1.1 client and close-delimited for an
-    // HTTP/1.0 one. Logged so that every end of the connection can be
-    // explained, and recorded on the guard so wire bytes include the framing.
-    let pcm_switches = (stream_state.codec == AudioCodec::Pcm).then(PcmHttpSwitches::from_env);
-    let pcm_http = pcm_switches.as_ref().map(|switches| switches.settings);
-    let response_framing = ResponseFraming::new(version, pcm_http.as_ref());
-    let framing = response_framing.framing;
-
-    // Every fetch is logged with the range it asked for: a PCM segment
-    // answers one with the rest of the segment, anything else from the live
-    // edge like any other fetch.
-    log::info!(
-        "{}",
-        connection_line(
-            remote_ip,
-            &id,
-            segment,
-            stream_state.codec,
-            version,
-            framing,
-            range_header.as_deref()
-        )
-    );
-    if let Some(switches) = &pcm_switches {
-        log_pcm_switches(remote_ip, &id, switches);
-    }
+    let FetchFraming {
+        range_header,
+        pcm_http,
+        response_framing,
+        framing,
+    } = fetch_framing(&headers, &stream_state, version, remote_ip, &id, segment);
 
     // A PCM cast is served in segments carried by one playout per speaker,
     // unless a field experiment's switch fixes a connection's end itself.
@@ -865,6 +838,72 @@ fn admit(
         access,
         reader_slot,
     })
+}
+
+/// How a fetch's response is framed, and what it asked for. See
+/// [`fetch_framing`].
+struct FetchFraming {
+    /// The `Range` header the fetch carried, if any.
+    range_header: Option<String>,
+    /// The PCM field-experiment settings; `None` for any other codec.
+    pcm_http: Option<PcmHttpSettings>,
+    /// The response's framing headers and the body framing they imply.
+    response_framing: ResponseFraming,
+    /// How hyper will delimit the body.
+    framing: BodyFraming,
+}
+
+/// Framing and the fetch log, the second phase of [`serve_stream`]: reads the
+/// `Range` header and the PCM switches, decides the response framing, and
+/// logs the fetch and the switches in force.
+fn fetch_framing(
+    headers: &HeaderMap,
+    stream_state: &StreamState,
+    version: Version,
+    remote_ip: IpAddr,
+    id: &str,
+    segment: Option<u32>,
+) -> FetchFraming {
+    let range_header = headers
+        .get(header::RANGE)
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.to_string());
+
+    // How hyper will delimit the body. No codec declares a length unless a
+    // field experiment's switches say so for PCM (see `ResponseFraming`):
+    // every body is chunked for an HTTP/1.1 client and close-delimited for an
+    // HTTP/1.0 one. Logged so that every end of the connection can be
+    // explained, and recorded on the guard so wire bytes include the framing.
+    let pcm_switches = (stream_state.codec == AudioCodec::Pcm).then(PcmHttpSwitches::from_env);
+    let pcm_http = pcm_switches.as_ref().map(|switches| switches.settings);
+    let response_framing = ResponseFraming::new(version, pcm_http.as_ref());
+    let framing = response_framing.framing;
+
+    // Every fetch is logged with the range it asked for: a PCM segment
+    // answers one with the rest of the segment, anything else from the live
+    // edge like any other fetch.
+    log::info!(
+        "{}",
+        connection_line(
+            remote_ip,
+            id,
+            segment,
+            stream_state.codec,
+            version,
+            framing,
+            range_header.as_deref()
+        )
+    );
+    if let Some(switches) = &pcm_switches {
+        log_pcm_switches(remote_ip, id, switches);
+    }
+
+    FetchFraming {
+        range_header,
+        pcm_http,
+        response_framing,
+        framing,
+    }
 }
 
 /// Adds to a PCM segment response's head what a fetch of part of the
