@@ -159,7 +159,7 @@ mod polling {
     use tokio_util::sync::CancellationToken;
 
     use crate::error::SoapResult;
-    use crate::events::LatencyEvent;
+    use crate::events::{EventEmitter, LatencyEvent};
     use crate::events::{NetworkEvent, SonosEvent, StreamEvent, TopologyEvent};
     use crate::protocol_constants::POSITION_POLL_TIMEOUT_MS;
     use crate::runtime::TokioSpawner;
