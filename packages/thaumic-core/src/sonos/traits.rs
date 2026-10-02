@@ -93,7 +93,7 @@ pub trait SonosPlayback: Send + Sync {
 
     /// Gets the current playback position from a Sonos speaker.
     ///
-    /// Used by `LatencyMonitor` to measure the delay between stream source
+    /// Used by `SpeakerMonitor` to measure the delay between stream source
     /// and speaker playback. Returns position info including RelTime which
     /// indicates current playback position within the track.
     ///

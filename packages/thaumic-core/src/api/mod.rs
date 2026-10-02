@@ -18,7 +18,7 @@ use crate::capture::CaptureSourceFactory;
 use crate::context::NetworkContext;
 use crate::events::BroadcastEventBridge;
 use crate::mdns_advertise::{self, MdnsAdvertiserHandle};
-use crate::services::{DiscoveryService, LatencyMonitor, StreamCoordinator};
+use crate::services::{DiscoveryService, SpeakerMonitor, StreamCoordinator};
 use crate::sonos::SonosClient;
 use crate::state::{Config, SonosState};
 
@@ -102,7 +102,7 @@ pub struct AppState {
     /// Manages WebSocket connections.
     pub ws_manager: Arc<WsConnectionManager>,
     /// Latency monitoring service.
-    pub latency_monitor: Arc<LatencyMonitor>,
+    pub latency_monitor: Arc<SpeakerMonitor>,
     /// Application configuration.
     pub config: Arc<RwLock<Config>>,
     /// Whether network services have been started.

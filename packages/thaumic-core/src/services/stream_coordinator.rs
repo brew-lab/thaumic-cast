@@ -1300,7 +1300,7 @@ impl StreamCoordinator {
     /// Returns a reference to the stream registry.
     ///
     /// Used by services that need access to stream timing information
-    /// (e.g., LatencyMonitor).
+    /// (e.g., SpeakerMonitor).
     #[must_use]
     pub fn stream_registry(&self) -> Arc<StreamRegistry> {
         Arc::clone(&self.stream_registry)

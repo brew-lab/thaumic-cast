@@ -367,7 +367,7 @@ impl CushionTrend {
 }
 
 /// Tracks latency measurement state for a single speaker.
-struct LatencySession {
+struct SpeakerSession {
     /// Whether measurements are sent to clients (video sync). Every session
     /// is logged; only these emit events.
     emit_events: bool,
@@ -502,7 +502,7 @@ struct LatencySession {
     control_key: Option<String>,
 }
 
-impl LatencySession {
+impl SpeakerSession {
     /// Creates a new monitoring session with no connection yet, drawing its
     /// poll dither from `dither_seed` (see [`dither_seed`]).
     fn new(emit_events: bool, dither_seed: u64) -> Self {
@@ -1782,7 +1782,7 @@ struct KeptControlState {
 /// speaker, under the session's key.
 fn keep_control_state(
     kept: &mut HashMap<String, KeptControlState>,
-    session: &LatencySession,
+    session: &SpeakerSession,
     now: Instant,
 ) {
     if let Some(key) = &session.control_key {
@@ -1901,7 +1901,7 @@ impl MemberChangeSink {
 /// Sonos-reported playback position. Uses high-frequency polling and
 /// statistical enhancement to achieve sub-second accuracy despite
 /// `RelTime` only having second precision.
-pub struct LatencyMonitor {
+pub struct SpeakerMonitor {
     /// Command sender for the background task.
     command_tx: mpsc::Sender<MonitorCommand>,
     /// Command receiver (taken when start() is called).
@@ -1920,8 +1920,8 @@ pub struct LatencyMonitor {
     spawner: TokioSpawner,
 }
 
-impl LatencyMonitor {
-    /// Creates a new LatencyMonitor.
+impl SpeakerMonitor {
+    /// Creates a new SpeakerMonitor.
     ///
     /// Note: Call `start()` to spawn the background monitoring task.
     /// This must be done from within an async context (Tokio runtime).
@@ -2064,7 +2064,7 @@ impl LatencyMonitor {
             transport_view,
             spawner,
         } = deps;
-        let mut sessions: HashMap<SessionKey, LatencySession> = HashMap::new();
+        let mut sessions: HashMap<SessionKey, SpeakerSession> = HashMap::new();
         // What drift correction learned about speakers whose sessions have
         // ended, by UUID (or address), for their next cast.
         let mut kept_control: HashMap<String, KeptControlState> = HashMap::new();
@@ -2118,7 +2118,7 @@ impl LatencyMonitor {
                                         stream_id, speaker_ip
                                     );
                                     let seed = dither_seed(&key);
-                                    sessions.insert(key, LatencySession::new(true, seed));
+                                    sessions.insert(key, SpeakerSession::new(true, seed));
                                 }
                             }
                         }
@@ -2352,7 +2352,7 @@ struct MonitorDeps {
 /// address until then): a new session starts from what `kept` holds for it,
 /// and a session whose key has changed hands over what it had.
 fn register_connection(
-    sessions: &mut HashMap<SessionKey, LatencySession>,
+    sessions: &mut HashMap<SessionKey, SpeakerSession>,
     kept: &mut HashMap<String, KeptControlState>,
     tap: &Arc<ConnectionTap>,
     uuid: Option<String>,
@@ -2360,7 +2360,7 @@ fn register_connection(
     let key = (tap.stream_id.clone(), tap.speaker_ip);
     let session = sessions
         .entry(key)
-        .or_insert_with_key(|key| LatencySession::new(false, dither_seed(key)));
+        .or_insert_with_key(|key| SpeakerSession::new(false, dither_seed(key)));
     let control_key = uuid.unwrap_or_else(|| tap.speaker_ip.to_string());
     if session.control_key.as_deref() != Some(control_key.as_str()) {
         let state = match session.control_key.take() {
@@ -2462,7 +2462,7 @@ async fn poll_position(
 ///
 /// `gena` is what GENA currently says about the speaker's transport.
 fn apply_poll_result(
-    session: &mut LatencySession,
+    session: &mut SpeakerSession,
     poll: PollResult,
     emitter: &dyn EventEmitter,
     gena: Option<GenaTransport>,
@@ -2774,7 +2774,7 @@ mod tests {
         /// Sends `count` polls from `session` the way the monitor loop does,
         /// each at its own dithered moment and the first `start_ms` into the
         /// second, and returns where in the second each one went.
-        fn poll_phases(session: &mut LatencySession, start_ms: u64, count: usize) -> Vec<f64> {
+        fn poll_phases(session: &mut SpeakerSession, start_ms: u64, count: usize) -> Vec<f64> {
             let origin = Instant::now();
             let mut sent_ms = start_ms;
             (0..count)
@@ -2807,7 +2807,7 @@ mod tests {
         fn dither_draws_cover_the_second() {
             let critical = ks_critical(500);
             for start_ms in [0, 250, 500] {
-                let mut session = LatencySession::new(false, 42);
+                let mut session = SpeakerSession::new(false, 42);
                 let mut phases = poll_phases(&mut session, start_ms, 500);
                 let d = ks_uniform(&mut phases, 1000.0);
                 assert!(
@@ -2815,7 +2815,7 @@ mod tests {
                     "monitor-only polls from phase {start_ms}: D={d:.3}"
                 );
 
-                let mut video = LatencySession::new(true, 42);
+                let mut video = SpeakerSession::new(true, 42);
                 let mut phases = poll_phases(&mut video, start_ms, 500);
                 let d = ks_uniform(&mut phases, 1000.0);
                 assert!(
@@ -2823,7 +2823,7 @@ mod tests {
                     "video sync polls from phase {start_ms}: D={d:.3}"
                 );
             }
-            let mut session = LatencySession::new(false, 7);
+            let mut session = SpeakerSession::new(false, 7);
             let mut draws: Vec<f64> = (0..500)
                 .map(|_| session.next_dither_ms(1000) as f64)
                 .collect();
@@ -2837,8 +2837,8 @@ mod tests {
         fn dither_is_independent_of_wall_clock_phase() {
             // The draws depend on the seed alone: the same seed gives the
             // same intervals whenever they are drawn.
-            let mut straight = LatencySession::new(false, 99);
-            let mut paused = LatencySession::new(false, 99);
+            let mut straight = SpeakerSession::new(false, 99);
+            let mut paused = SpeakerSession::new(false, 99);
             for i in 0..40 {
                 straight.mark_polled(1);
                 if i % 10 == 0 {
@@ -2857,7 +2857,7 @@ mod tests {
                     old_gap >= 245.0,
                     "offset {wall_offset_ms}: the old dither left {old_gap:.0} ms"
                 );
-                let mut session = LatencySession::new(false, wall_offset_ms);
+                let mut session = SpeakerSession::new(false, wall_offset_ms);
                 let mut new = poll_phases(&mut session, wall_offset_ms, 72);
                 let new_gap = largest_phase_gap_ms(&mut new).expect("polls");
                 assert!(
@@ -2870,7 +2870,7 @@ mod tests {
         #[test]
         fn phase_gap_reported_under_120ms_at_72_polls() {
             for seed in 1..=20 {
-                let mut session = LatencySession::new(false, seed);
+                let mut session = SpeakerSession::new(false, seed);
                 let mut phases = poll_phases(&mut session, 0, 72);
                 let gap = largest_phase_gap_ms(&mut phases).expect("polls");
                 assert!(gap < 120.0, "seed {seed}: {gap:.0} ms");
@@ -3047,7 +3047,7 @@ mod tests {
 
         /// A running monitor over a live stream, and the speaker double it polls.
         struct Harness {
-            monitor: LatencyMonitor,
+            monitor: SpeakerMonitor,
             speakers: Arc<FakeSpeakers>,
             events: Arc<NetworkEvents>,
             stream_id: String,
@@ -3061,7 +3061,7 @@ mod tests {
                     .expect("stream");
                 let speakers = FakeSpeakers::new(&stream_id);
                 let events = Arc::new(NetworkEvents::default());
-                let monitor = LatencyMonitor::new(
+                let monitor = SpeakerMonitor::new(
                     Arc::clone(&speakers) as Arc<dyn SonosPlayback>,
                     registry,
                     Arc::clone(&events) as Arc<dyn EventEmitter>,
@@ -3323,7 +3323,7 @@ mod tests {
         #[test]
         fn an_unmeasured_speaker_reports_no_reserve_figures() {
             let aac = started_tap_with_codec("stream", HUNG_IP, true, AudioCodec::Aac);
-            let mut session = LatencySession::new(false, 0);
+            let mut session = SpeakerSession::new(false, 0);
             session.attach(&aac);
             answer_polls(&mut session, &aac, 10);
 
@@ -3354,7 +3354,7 @@ mod tests {
 
             // The same polls on a PCM connection: still locking, as before.
             let pcm = started_tap("stream", HUNG_IP, true);
-            let mut session = LatencySession::new(false, 0);
+            let mut session = SpeakerSession::new(false, 0);
             session.attach(&pcm);
             answer_polls(&mut session, &pcm, 10);
             assert_eq!(session.health_state(), MonitorState::Locking);
@@ -3364,7 +3364,7 @@ mod tests {
         /// the figures of a reserve it is no longer building.
         #[test]
         fn a_dormant_speaker_reports_dormant() {
-            let mut session = LatencySession::new(false, 0);
+            let mut session = SpeakerSession::new(false, 0);
             session.monitor = true;
             session.dormant = true;
             assert!(session.reports_health());
@@ -3410,7 +3410,7 @@ mod tests {
 
         #[test]
         fn three_failed_polls_back_off_until_the_speaker_answers() {
-            let mut session = LatencySession::new(true, 0);
+            let mut session = SpeakerSession::new(true, 0);
             for poll_id in 1..=BACKOFF_AFTER_FAILURES as u64 {
                 session.mark_polled(0);
                 assert!(session.next_poll_after < Duration::from_millis(BACKOFF_POLL_INTERVAL_MS));
@@ -3442,7 +3442,7 @@ mod tests {
 
         #[test]
         fn an_answer_to_a_poll_the_session_no_longer_awaits_is_ignored() {
-            let mut session = LatencySession::new(true, 0);
+            let mut session = SpeakerSession::new(true, 0);
             session.in_flight = Some(2);
             apply_poll_result(
                 &mut session,
@@ -3456,7 +3456,7 @@ mod tests {
 
         #[test]
         fn a_speaker_playing_another_track_is_left_alone_until_it_fetches_again() {
-            let mut session = LatencySession::new(false, 0);
+            let mut session = SpeakerSession::new(false, 0);
             let tap = started_tap("stream", HUNG_IP, true);
             session.attach(&tap);
             assert!(session.wants_polls());
@@ -3489,7 +3489,7 @@ mod tests {
 
         #[test]
         fn a_poll_while_the_speaker_is_known_paused_is_not_measured() {
-            let mut session = LatencySession::new(true, 0);
+            let mut session = SpeakerSession::new(true, 0);
             session.in_flight = Some(1);
             let mut paused = poll(1, Ok(ours(4000)));
             paused.transport = Some(Ok(TransportState::Paused));
@@ -3518,7 +3518,7 @@ mod tests {
         #[test]
         fn video_sync_counts_the_audio_drift_correction_inserted() {
             let measure = |net_inserted_ms: f64| {
-                let mut session = LatencySession::new(true, 0);
+                let mut session = SpeakerSession::new(true, 0);
                 session.in_flight = Some(1);
                 let mut answered = poll(1, Ok(ours(4000)));
                 answered.net_inserted_ms = net_inserted_ms;
@@ -3536,7 +3536,7 @@ mod tests {
             use crate::services::speaker_monitor::test_support::PollGen;
 
             let tap = started_tap("stream", HUNG_IP, true);
-            let mut session = LatencySession::new(false, 0);
+            let mut session = SpeakerSession::new(false, 0);
             session.attach(&tap);
             let epoch_id = tap.epoch().expect("started").id;
             let origin = tap.connected_at;
@@ -3613,7 +3613,7 @@ mod tests {
 
         /// Answers `count` polls of `session` on `tap`'s connection, a
         /// second apart, from a speaker holding 600 ms.
-        fn answer_polls(session: &mut LatencySession, tap: &ConnectionTap, count: u64) {
+        fn answer_polls(session: &mut SpeakerSession, tap: &ConnectionTap, count: u64) {
             let epoch_id = tap.epoch().expect("started").id;
             for poll_id in 1..=count {
                 let ts = poll_id * 1000;
@@ -3636,7 +3636,7 @@ mod tests {
         #[test]
         fn the_wall_clock_cushion_is_logged_only_for_compressed_codecs() {
             let pcm = started_tap("stream", HUNG_IP, true);
-            let mut session = LatencySession::new(false, 0);
+            let mut session = SpeakerSession::new(false, 0);
             session.attach(&pcm);
             answer_polls(&mut session, &pcm, 10);
             assert!(session.sample_count >= 10);
@@ -3646,7 +3646,7 @@ mod tests {
             );
 
             let aac = started_tap_with_codec("stream", HUNG_IP, true, AudioCodec::Aac);
-            let mut session = LatencySession::new(false, 0);
+            let mut session = SpeakerSession::new(false, 0);
             session.attach(&aac);
             answer_polls(&mut session, &aac, 10);
             assert!(
@@ -3668,7 +3668,7 @@ mod tests {
                     mode,
                     Some(control.clone()),
                 );
-                let mut session = LatencySession::new(false, 0);
+                let mut session = SpeakerSession::new(false, 0);
                 session.attach(&tap);
                 assert_eq!(session.tracker.command_ppm(), 150.0, "{mode}");
                 // Once the net-insertion guard holds the adapter at 0 ppm,
@@ -3681,7 +3681,7 @@ mod tests {
         #[test]
         fn the_reserve_is_reported_every_30s() {
             let tap = started_tap("stream", HUNG_IP, true);
-            let mut session = LatencySession::new(false, 0);
+            let mut session = SpeakerSession::new(false, 0);
             session.attach(&tap);
             let attached = session.last_report.expect("attaching starts the clock");
             assert!(!session.report_due(attached + Duration::from_secs(29)));
@@ -3695,7 +3695,7 @@ mod tests {
         #[test]
         fn a_connection_is_summarised_once_when_it_ends_or_is_replaced() {
             let ip: IpAddr = HUNG_IP.parse().unwrap();
-            let mut session = LatencySession::new(false, 0);
+            let mut session = SpeakerSession::new(false, 0);
             let first = started_tap("stream", HUNG_IP, true);
             session.attach(&first);
             // Replaced before a tick noticed it closing: attaching the next
@@ -3717,11 +3717,11 @@ mod tests {
         fn no_summary_is_owed_while_the_speaker_is_not_polled() {
             let ip: IpAddr = HUNG_IP.parse().unwrap();
             // Monitoring off and no video sync: never polled, never summarised.
-            let mut session = LatencySession::new(false, 0);
+            let mut session = SpeakerSession::new(false, 0);
             session.attach(&started_tap("stream", HUNG_IP, false));
             assert!(!session.end_connection("stream", ip, Instant::now()));
             // Video sync polls whatever the setting, so it is summarised.
-            let mut session = LatencySession::new(true, 0);
+            let mut session = SpeakerSession::new(true, 0);
             session.attach(&started_tap("stream", HUNG_IP, false));
             assert!(session.end_connection("stream", ip, Instant::now()));
         }
@@ -3748,7 +3748,7 @@ mod tests {
             past_end: i64,
         ) -> (
             Option<crate::services::speaker_monitor::SpeakerNoticeKind>,
-            LatencySession,
+            SpeakerSession,
         ) {
             let mut lags = vec![20.0; 59];
             lags.push(525.0);
@@ -3767,11 +3767,11 @@ mod tests {
             lags_ms: &[f64],
         ) -> (
             Option<crate::services::speaker_monitor::SpeakerNoticeKind>,
-            LatencySession,
+            SpeakerSession,
         ) {
             use crate::services::speaker_monitor::test_support::PollGen;
 
-            let mut session = LatencySession::new(false, 0);
+            let mut session = SpeakerSession::new(false, 0);
             session.attach(tap);
             let epoch_id = tap.epoch().expect("started").id;
             let origin = tap.connected_at;
@@ -3924,7 +3924,7 @@ mod tests {
         #[test]
         fn a_window_that_came_near_the_declared_end_stays_the_ends() {
             let tap = started_tap_with_declared_end("stream", HUNG_IP, FIELD_DECLARED_END);
-            let mut session = LatencySession::new(false, 0);
+            let mut session = SpeakerSession::new(false, 0);
             session.attach(&tap);
             tap.record_body_bytes(FIELD_DECLARED_END as usize);
             session.sample_ack_lag(&tap);
@@ -3938,7 +3938,7 @@ mod tests {
 
         #[test]
         fn a_poll_with_no_trustworthy_transport_state_is_still_measured() {
-            let mut session = LatencySession::new(true, 0);
+            let mut session = SpeakerSession::new(true, 0);
             session.in_flight = Some(1);
             apply_poll_result(&mut session, poll(1, Ok(ours(4000))), &NoEvents, None);
             assert_eq!(session.sample_count, 1);
@@ -4062,7 +4062,7 @@ mod tests {
             from: 31,
             to,
         };
-        let mut session = LatencySession::new(false, 0);
+        let mut session = SpeakerSession::new(false, 0);
         assert_eq!(format_topology(&session.topology_since_report), "");
 
         session.note_topology(rebooted(32));

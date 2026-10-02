@@ -16,7 +16,7 @@ pub use discovery_service::DiscoveryService;
 pub use playback_session_store::{GroupRole, PlaybackResult, PlaybackSession};
 pub use speaker_monitor::control::{drift_compensation_mode, DriftMode, DRIFT_COMPENSATION_ENV};
 pub use speaker_monitor::monitor::{
-    parse_speaker_monitor_switch, LatencyMonitor, SPEAKER_DIAGNOSTICS_ENV, SPEAKER_MONITOR_ENV,
+    parse_speaker_monitor_switch, SpeakerMonitor, SPEAKER_DIAGNOSTICS_ENV, SPEAKER_MONITOR_ENV,
 };
 pub use stream_coordinator::{CaptureStreamSession, StreamCoordinator};
 pub use topology_monitor::{TopologyMonitor, TopologyMonitorConfig};
