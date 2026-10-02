@@ -4,7 +4,7 @@
 
 fix(extension): show each audio setting only where it does something
 
-The Audio Quality settings now show a control only for casts it affects. With browser-wide capture on, casts go out
+The Audio settings now show a control only for casts it affects. With browser-wide capture on, casts go out
 as PCM whatever Quality is chosen, and the page now says so; the choice is kept for when browser-wide capture is off.
 Smoothing is shown for every PCM cast, which includes any cast under browser-wide capture: it was hidden there with a
 compressed Quality while still being applied, and the popup's link to it led nowhere. Frame size is hidden under

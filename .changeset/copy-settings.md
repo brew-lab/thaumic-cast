@@ -1,6 +1,7 @@
 ---
 '@thaumic-cast/extension': patch
 '@thaumic-cast/desktop': patch
+'@thaumic-cast/server': patch
 ---
 
 fix(extension,desktop): reword the settings pages
@@ -15,9 +16,11 @@ The settings use the same words as the notices: reserve, speaker head start, smo
 Some labels have changed, so here is where things went:
 
 - Extension: "Server" is now "Companion", with "Find it automatically" and "Enter the address". "Audio Quality" is
-  "Audio". "Here Be Dragons" is "Finer points". "Video sync controls" is "Video sync". "Synchronize speakers" is "Keep
-  speakers in step".
+  "Audio". "Here Be Dragons" is "Finer points". "Video sync controls" is "Video sync". "Synchronize speakers" is "Play
+  speakers as one group".
 - Desktop app: "Keep an eye on speakers" is "Speaker monitoring". "Hand-added" is "Added by IP address", and its
   button says "Remove speaker".
 
 The Quality names (Economical, Sensible, Luxurious, Bespoke) are the same. No setting behaves differently.
+
+The server's install script now prints "Server address", the name of the field the address goes in.

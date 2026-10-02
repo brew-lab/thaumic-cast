@@ -18,47 +18,42 @@ export interface DriftToggleState {
   checked: boolean;
   /** Whether the checkbox cannot be changed. */
   disabled: boolean;
-  /** Why it is disabled, as an i18n key with its values; null when it is not. */
-  hint: { key: string; params?: Record<string, string> } | null;
+  /** Why it is disabled, as an i18n key; null when it is not. */
+  hint: { key: string } | null;
 }
 
-/** The i18n key naming each mode in the environment notice. */
-const MODE_LABEL_KEYS: Record<DriftMode, string> = {
-  on: 'settings.drift_label_on',
-  observe: 'settings.drift_label_observe',
-  off: 'settings.drift_label_off',
+/** The whole sentence, one key per mode, saying what the environment variable set. */
+const ENV_KEYS: Record<DriftMode, string> = {
+  on: 'settings.drift_env_on',
+  observe: 'settings.drift_env_observe',
+  off: 'settings.drift_env_off',
 };
 
 /**
- * The i18n key naming a drift correction mode.
- * @param mode - The mode
- * @returns The key of its label
+ * The i18n key of the line saying THAUMIC_DRIFT_COMPENSATION set a mode.
+ * @param mode - The mode the environment variable set
+ * @returns The key of the whole sentence
  */
-export function driftModeLabelKey(mode: DriftMode): string {
-  return MODE_LABEL_KEYS[mode];
+export function driftEnvKey(mode: DriftMode): string {
+  return ENV_KEYS[mode];
 }
 
 /**
  * Works out what the drift toggle shows.
  * @param drift - The drift setting, or null while it loads
  * @param monitorOn - Whether the speaker monitor is on in effect, or null while it loads
- * @param translate - Turns an i18n key into its text, for the mode's label
  * @returns The toggle's state
  */
 export function driftToggleState(
   drift: DriftCompensationSetting | null,
   monitorOn: boolean | null,
-  translate: (key: string) => string,
 ): DriftToggleState {
   if (drift === null || monitorOn === null) return { checked: false, disabled: true, hint: null };
   if (drift.envOverride !== null) {
     return {
       checked: monitorOn && drift.envOverride === 'on',
       disabled: true,
-      hint: {
-        key: 'settings.drift_env',
-        params: { label: translate(driftModeLabelKey(drift.envOverride)) },
-      },
+      hint: { key: driftEnvKey(drift.envOverride) },
     };
   }
   if (!monitorOn) {

@@ -24,6 +24,6 @@ will still run low, and an uncorrected drift notice now adds that turning correc
 
 The mode is `on`, `observe` or `off`, read per connection and `off` whenever speaker monitoring is. With `observe`
 the controller works out and logs what it would command while the audio goes out byte for byte as captured; the
-default is set in the `drift-default-on` changeset. The desktop app offers an On/Off toggle under Settings > Speakers (Off keeps observing), disabled while "Keep an eye on
-speakers" is off; the server takes `drift_compensation` in its config or `--drift-compensation`, and warns at startup
+default is set in the `drift-default-on` changeset. The desktop app offers an On/Off toggle under Settings > Speakers (Off keeps observing), disabled while
+"Speaker monitoring" is off; the server takes `drift_compensation` in its config or `--drift-compensation`, and warns at startup
 when it is set but the speaker monitor is off. `THAUMIC_DRIFT_COMPENSATION` outranks both.

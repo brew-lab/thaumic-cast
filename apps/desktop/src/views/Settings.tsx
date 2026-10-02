@@ -46,7 +46,7 @@ const LANGUAGE_NAMES: Record<SupportedLocale, string> = {
  * - Language selection, once there is more than one language
  * - Theme (auto/light/dark)
  * - Speaker monitoring, the speaker head start, clock drift correction and
- *   hand-added speakers
+ *   speakers added by IP address
  * @returns The rendered Settings page
  */
 export function Settings() {
@@ -181,7 +181,7 @@ export function Settings() {
   const headStartMs = headStart?.envOverride ?? headStart?.ms ?? null;
   const monitorOn = speakerMonitor ? (speakerMonitor.envOverride ?? speakerMonitor.enabled) : null;
   const monitorOverrideKey = speakerMonitorOverrideKey(speakerMonitor);
-  const driftToggle = driftToggleState(drift, monitorOn, t);
+  const driftToggle = driftToggleState(drift, monitorOn);
 
   return (
     <div className={styles.settings}>
@@ -329,11 +329,7 @@ export function Settings() {
                 className={styles.checkbox}
               />
             </label>
-            {driftToggle.hint && (
-              <span className={styles.hint}>
-                {t(driftToggle.hint.key, driftToggle.hint.params)}
-              </span>
-            )}
+            {driftToggle.hint && <span className={styles.hint}>{t(driftToggle.hint.key)}</span>}
           </div>
 
           {manualIps.length > 0 && (
