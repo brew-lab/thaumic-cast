@@ -16,13 +16,12 @@
 
 use serde::Serialize;
 
-use crate::protocol_constants::{DEFAULT_PCM_CONNECT_BURST_MS, MAX_PCM_CONNECT_BURST_MS};
-use crate::services::speaker_monitor::control::{DriftMode, DRIFT_COMPENSATION_ENV};
-use crate::services::speaker_monitor::monitor::{
-    parse_speaker_monitor_switch, SPEAKER_DIAGNOSTICS_ENV, SPEAKER_MONITOR_ENV,
+use crate::model::{
+    parse_pcm_connect_burst_ms, parse_speaker_monitor_switch, DriftMode, DRIFT_COMPENSATION_ENV,
+    PCM_CONNECT_BURST_ENV, SPEAKER_DIAGNOSTICS_ENV, SPEAKER_MONITOR_ENV,
 };
+use crate::protocol_constants::{DEFAULT_PCM_CONNECT_BURST_MS, MAX_PCM_CONNECT_BURST_MS};
 use crate::state::Config;
-use crate::stream::cadence::{parse_pcm_connect_burst_ms, PCM_CONNECT_BURST_ENV};
 
 /// The server flag that sets speaker monitoring.
 pub const SPEAKER_MONITOR_FLAG: &str = "--speaker-monitor";

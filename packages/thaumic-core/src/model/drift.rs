@@ -2,6 +2,10 @@
 
 use serde::{Deserialize, Serialize};
 
+/// Environment variable that sets drift correction: `on`, `observe` or
+/// `off`. Read once at start-up (see [`crate::companion_settings`]).
+pub const DRIFT_COMPENSATION_ENV: &str = "THAUMIC_DRIFT_COMPENSATION";
+
 /// Clock drift correction for PCM streams.
 ///
 /// Read once per connection, so a change never engages or releases an
