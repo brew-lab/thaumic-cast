@@ -19,6 +19,7 @@ import {
   isValidBitrateForCodec,
   isValidBitDepthForCodec,
   getDefaultBitrate,
+  getValidBitrates,
 } from '@thaumic-cast/protocol';
 import { createLogger } from '@thaumic-cast/shared';
 
@@ -424,15 +425,44 @@ function parseFieldsLeniently<T extends Record<string, unknown>>(
  * with the codec a stored choice of each becomes.
  *
  * Ogg Vorbis was offered although the companion has no stream for it; AAC-LC
- * is the nearest codec it does serve.
+ * is the nearest codec it does serve. HE-AAC and HE-AAC v2 were AAC-LC under
+ * another name (the browser encodes AAC-LC whatever profile is asked for), so
+ * a stored choice of either already played as AAC-LC.
  */
 const RETIRED_CODEC_REPLACEMENTS: Readonly<Record<string, AudioCodec>> = {
   vorbis: 'aac-lc',
+  'he-aac': 'aac-lc',
+  'he-aac-v2': 'aac-lc',
 };
 
 /**
+ * Picks the bitrate a codec lists that is nearest to a stored one. A stored
+ * bitrate halfway between two listed ones takes the higher.
+ * @param codec - The codec whose bitrates to choose from
+ * @param bitrate - The stored bitrate, in kbps
+ * @returns The nearest listed bitrate, or the codec's default if it lists none
+ */
+export function nearestBitrateForCodec(codec: AudioCodec, bitrate: number): number {
+  const listed = getValidBitrates(codec);
+  let best: number | null = null;
+  for (const option of listed) {
+    if (best === null || Math.abs(option - bitrate) <= Math.abs(best - bitrate)) best = option;
+  }
+  return best ?? getDefaultBitrate(codec);
+}
+
+/**
  * Replaces a stored custom codec that is no longer offered with its successor,
- * so the choice does not silently reset to the default codec.
+ * so the choice does not silently reset to the default codec. The stored
+ * bitrate moves to the nearest one the successor lists (HE-AAC v2 at 64 kbps
+ * becomes AAC-LC at 96 kbps), so the choice stays as close to what was picked
+ * as the successor allows.
+ *
+ * This runs on every load and needs no settings version: a replaced codec is
+ * no longer in the table, so a second pass changes nothing. Only custom
+ * settings name a codec; the Economical, Sensible and Luxurious presets are
+ * resolved from what the browser can encode each time they are used.
+ *
  * @param data - Raw stored settings
  * @returns The settings, with a retired custom codec replaced
  */
@@ -444,8 +474,14 @@ function replaceRetiredCodec(data: Record<string, unknown>): Record<string, unkn
   }
 
   const replacement = RETIRED_CODEC_REPLACEMENTS[stored];
+  const storedBitrate = custom.bitrate;
+  // A missing or unreadable bitrate is left for the loader to repair with the default.
+  const bitrate =
+    typeof storedBitrate === 'number' && Number.isFinite(storedBitrate)
+      ? nearestBitrateForCodec(replacement, storedBitrate)
+      : storedBitrate;
   log.info(`Stored codec ${stored} is no longer offered, using ${replacement}`);
-  return { ...data, customAudioSettings: { ...custom, codec: replacement } };
+  return { ...data, customAudioSettings: { ...custom, codec: replacement, bitrate } };
 }
 
 /**

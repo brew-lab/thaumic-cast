@@ -1178,7 +1178,7 @@ enum HandshakeResult {
 /// Codec names a current client offers, in the order the error message lists
 /// them. `packages/protocol/fixtures/codecs.json` pins the same set from the
 /// protocol side.
-const OFFERED_CODECS: &[&str] = &["pcm", "aac-lc", "he-aac", "he-aac-v2", "flac"];
+const OFFERED_CODECS: &[&str] = &["pcm", "aac-lc", "flac"];
 
 /// Resolves the codec a client states in its handshake to the codec served.
 ///
@@ -1186,6 +1186,11 @@ const OFFERED_CODECS: &[&str] = &["pcm", "aac-lc", "he-aac", "he-aac-v2", "flac"
 /// and Sonos transport configuration. A handshake that names no codec is a
 /// legacy client and gets PCM; `aac`, `wav` and `mp3` are names older clients
 /// sent and stay accepted.
+///
+/// So are `he-aac` and `he-aac-v2`. The extension offered them until it was
+/// measured that the browser encodes plain AAC-LC whatever profile is asked
+/// for, so both always arrived as AAC-LC in ADTS. An extension that has not
+/// updated still sends them, and they are served as the AAC they are.
 ///
 /// A name this server has no stream for is an error, never a guess: serving
 /// PCM headers over another codec's frames plays as noise or not at all.
@@ -1199,6 +1204,7 @@ fn resolve_codec(codec_str: Option<&str>) -> Result<AudioCodec, String> {
             log::info!("[WS] PCM codec selected");
             Ok(AudioCodec::Pcm)
         }
+        // `he-aac` and `he-aac-v2` are no longer offered; see the doc comment.
         Some("aac" | "aac-lc" | "he-aac" | "he-aac-v2") => Ok(AudioCodec::Aac),
         Some("mp3") => Ok(AudioCodec::Mp3),
         Some("flac") => Ok(AudioCodec::Flac),
@@ -2250,8 +2256,6 @@ mod tests {
         for (name, codec) in [
             (Some("pcm"), AudioCodec::Pcm),
             (Some("aac-lc"), AudioCodec::Aac),
-            (Some("he-aac"), AudioCodec::Aac),
-            (Some("he-aac-v2"), AudioCodec::Aac),
             (Some("flac"), AudioCodec::Flac),
             // Names older clients sent.
             (Some("aac"), AudioCodec::Aac),
@@ -2261,6 +2265,24 @@ mod tests {
             (None, AudioCodec::Pcm),
         ] {
             assert_eq!(resolve_codec(name), Ok(codec), "{name:?}");
+        }
+    }
+
+    #[test]
+    fn retired_he_aac_names_are_still_served_as_aac() {
+        // The extension stopped offering both (the browser encodes AAC-LC for
+        // every AAC profile), but one that has not updated still sends them.
+        for name in ["he-aac", "he-aac-v2"] {
+            assert_eq!(resolve_codec(Some(name)), Ok(AudioCodec::Aac), "{name}");
+            assert!(
+                !OFFERED_CODECS.contains(&name),
+                "{name} is accepted but must not be listed as offered"
+            );
+            let config = match parse_stream_config(&handshake_for(name)) {
+                Ok(config) => config,
+                Err(error) => panic!("{name} must still start a stream: {error}"),
+            };
+            assert_eq!(config.codec, AudioCodec::Aac, "{name}");
         }
     }
 

@@ -25,12 +25,15 @@ export const DEFAULT_MAX_CONCURRENT_STREAMS = 10;
  * Runtime detection filters this list to codecs the browser actually supports.
  *
  * - `pcm`: Raw PCM passthrough - wrapped in WAV container server-side for lossless streaming
- * - `aac-lc`: AAC Low Complexity (mp4a.40.2) - balanced quality
- * - `he-aac`: High-Efficiency AAC (mp4a.40.5) - best for low bitrates
- * - `he-aac-v2`: High-Efficiency AAC v2 (mp4a.40.29) - best for very low bitrates, stereo
+ * - `aac-lc`: AAC Low Complexity (mp4a.40.2) - the only AAC the browser encodes
  * - `flac`: Free Lossless Audio Codec - lossless compression (requires browser support)
+ *
+ * `he-aac` and `he-aac-v2` were offered once and are gone: Chromium's encoder
+ * ignores the profile in the codec id and gives AAC-LC for all three (see
+ * `aacLcAdtsParams` in the extension's ADTS helper for what was measured). The
+ * companion still accepts both names from an extension that has not updated.
  */
-export const AudioCodecSchema = z.enum(['pcm', 'aac-lc', 'he-aac', 'he-aac-v2', 'flac']);
+export const AudioCodecSchema = z.enum(['pcm', 'aac-lc', 'flac']);
 export type AudioCodec = z.infer<typeof AudioCodecSchema>;
 
 /**

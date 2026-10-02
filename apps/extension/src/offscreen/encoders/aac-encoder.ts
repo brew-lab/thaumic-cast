@@ -1,7 +1,7 @@
 import type { EncoderConfig } from '@thaumic-cast/protocol';
 import { CODEC_METADATA } from '@thaumic-cast/protocol';
 import { BaseAudioEncoder, type ChromeAudioEncoderConfig } from './base-encoder';
-import { ADTS_HEADER_LENGTH, adtsParamsForCodec, buildAdtsHeader, type AdtsParams } from './adts';
+import { ADTS_HEADER_LENGTH, aacLcAdtsParams, buildAdtsHeader, type AdtsParams } from './adts';
 import type { LatencyMode } from './types';
 
 /**
@@ -23,7 +23,7 @@ export class AacEncoder extends BaseAudioEncoder {
   constructor(config: EncoderConfig) {
     super(config);
 
-    this.adtsParams = adtsParamsForCodec(config.codec, config.sampleRate, config.channels);
+    this.adtsParams = aacLcAdtsParams(config.sampleRate, config.channels);
     // Build one header now so a stream ADTS cannot describe fails here, at
     // cast start, and not on the first encoded frame.
     this.writeAdtsHeader(0);

@@ -31,13 +31,6 @@ export interface CodecMetadata {
   defaultBitrate: Bitrate;
   webCodecsId: string | null;
   /**
-   * Efficiency multiplier for quality scoring.
-   * Higher values mean the codec achieves better quality at the same bitrate.
-   * AAC-LC is the baseline at 1.0.
-   * Example: HE-AAC at 64kbps ≈ AAC-LC at 96kbps (efficiency = 1.5)
-   */
-  efficiency: number;
-  /**
    * Supported bit depths for this codec.
    * Most codecs only support 16-bit, FLAC supports both 16 and 24-bit.
    */
@@ -52,13 +45,7 @@ export interface CodecMetadata {
  * have a stream for every entry: `fixtures/codecs.json` pins this list, and a
  * thaumic-core test resolves each name in it.
  */
-export const IMPLEMENTED_CODECS: ReadonlySet<AudioCodec> = new Set([
-  'pcm',
-  'aac-lc',
-  'he-aac',
-  'he-aac-v2',
-  'flac',
-]);
+export const IMPLEMENTED_CODECS: ReadonlySet<AudioCodec> = new Set(['pcm', 'aac-lc', 'flac']);
 
 /**
  * Checks if we have an encoder implementation for the given codec.
@@ -80,34 +67,16 @@ export const CODEC_METADATA: Record<AudioCodec, CodecMetadata> = {
     validBitrates: [] as const,
     defaultBitrate: 0, // 0 indicates lossless/variable bitrate
     webCodecsId: null, // No WebCodecs - raw PCM passthrough
-    efficiency: 10.0, // Lossless - uncompressed
     supportedBitDepths: [16] as const,
   },
   'aac-lc': {
     label: 'AAC-LC',
     description: 'Balanced quality and efficiency',
-    validBitrates: [128, 192, 256] as const,
+    // Not every platform encodes every bitrate: Windows takes 96 to 192 and
+    // refuses 256. Detection is per bitrate, so a refused one is not offered.
+    validBitrates: [96, 128, 160, 192, 256] as const,
     defaultBitrate: 192,
     webCodecsId: 'mp4a.40.2',
-    efficiency: 1.0, // Baseline
-    supportedBitDepths: [16] as const,
-  },
-  'he-aac': {
-    label: 'HE-AAC',
-    description: 'High efficiency, best for low bandwidth',
-    validBitrates: [64, 96, 128] as const,
-    defaultBitrate: 96,
-    webCodecsId: 'mp4a.40.5',
-    efficiency: 1.5, // ~50% more efficient than AAC-LC
-    supportedBitDepths: [16] as const,
-  },
-  'he-aac-v2': {
-    label: 'HE-AAC v2',
-    description: 'Best for very low bandwidth stereo',
-    validBitrates: [64, 96] as const,
-    defaultBitrate: 64,
-    webCodecsId: 'mp4a.40.29',
-    efficiency: 2.0, // ~100% more efficient (uses Parametric Stereo)
     supportedBitDepths: [16] as const,
   },
   flac: {
@@ -116,7 +85,6 @@ export const CODEC_METADATA: Record<AudioCodec, CodecMetadata> = {
     validBitrates: [0] as const,
     defaultBitrate: 0,
     webCodecsId: 'flac',
-    efficiency: 10.0, // Lossless - highest possible quality
     supportedBitDepths: [16, 24] as const,
   },
 } as const;

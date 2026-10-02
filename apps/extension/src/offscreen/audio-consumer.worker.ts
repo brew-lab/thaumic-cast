@@ -72,8 +72,6 @@ function getOptimalFrameSizeSamples(
 ): number {
   switch (codec) {
     case 'aac-lc':
-    case 'he-aac':
-    case 'he-aac-v2':
       // AAC's native frame size is always 1024 samples (spec-mandated)
       return 1024;
     case 'flac':

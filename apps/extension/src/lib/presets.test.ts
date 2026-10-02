@@ -52,6 +52,83 @@ describe('resolveAudioMode', () => {
   });
 });
 
+describe('resolveAudioMode with AAC-LC', () => {
+  /** Codec support for PCM plus AAC-LC at the given bitrates, at both rates. */
+  function withAac(bitrates: (96 | 128 | 160 | 192 | 256)[]): SupportedCodecsResult {
+    return {
+      supported: [
+        { codec: 'pcm', bitrate: 0, supported: true },
+        ...([96, 128, 160, 192, 256] as const).map((bitrate) => ({
+          codec: 'aac-lc' as const,
+          bitrate,
+          supported: bitrates.includes(bitrate),
+        })),
+      ],
+      sampleRateSupport: [
+        ...PCM_ONLY.sampleRateSupport,
+        { codec: 'aac-lc', sampleRate: 48000, supported: true },
+        { codec: 'aac-lc', sampleRate: 44100, supported: true },
+      ],
+      availableCodecs: ['pcm', 'aac-lc'],
+      defaultCodec: 'pcm',
+      defaultBitrate: 0,
+    };
+  }
+
+  /** What Windows encodes: 256 kbps is refused. */
+  const UP_TO_192 = withAac([96, 128, 160, 192]);
+  const UP_TO_256 = withAac([96, 128, 160, 192, 256]);
+
+  it('should resolve the low preset to AAC-LC at 96 kbps, mono, 44.1 kHz', () => {
+    for (const support of [UP_TO_192, UP_TO_256]) {
+      expect(resolveAudioMode('low', support, custom)).toMatchObject({
+        codec: 'aac-lc',
+        bitrate: 96,
+        channels: 1,
+        sampleRate: 44100,
+        latencyMode: 'realtime',
+      });
+    }
+  });
+
+  it('should resolve the mid preset to the highest AAC-LC bitrate the platform encodes', () => {
+    expect(resolveAudioMode('mid', UP_TO_192, custom)).toMatchObject({
+      codec: 'aac-lc',
+      bitrate: 192,
+      channels: 2,
+    });
+    expect(resolveAudioMode('mid', UP_TO_256, custom)).toMatchObject({
+      codec: 'aac-lc',
+      bitrate: 256,
+      channels: 2,
+    });
+  });
+
+  it('should resolve the high preset to PCM', () => {
+    for (const support of [UP_TO_192, UP_TO_256]) {
+      expect(resolveAudioMode('high', support, custom)).toMatchObject({ codec: 'pcm', bitrate: 0 });
+    }
+  });
+
+  it('should keep a custom AAC-LC choice at a bitrate the platform encodes', () => {
+    const settings = { ...custom, codec: 'aac-lc' as const, bitrate: 160 as const };
+
+    expect(resolveAudioMode('custom', UP_TO_192, settings)).toMatchObject({
+      codec: 'aac-lc',
+      bitrate: 160,
+    });
+  });
+
+  it('should fall back to the mid preset for a custom bitrate the platform refuses', () => {
+    const settings = { ...custom, codec: 'aac-lc' as const, bitrate: 256 as const };
+
+    expect(resolveAudioMode('custom', UP_TO_192, settings)).toMatchObject({
+      codec: 'aac-lc',
+      bitrate: 192,
+    });
+  });
+});
+
 describe('getResolvedConfigForDisplay', () => {
   it('should show the smoothing the stream will run with', () => {
     const config = getResolvedConfigForDisplay('mid', PCM_ONLY, custom, {

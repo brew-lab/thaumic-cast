@@ -58,8 +58,6 @@ export async function createEncoder(config: EncoderConfig): Promise<AudioEncoder
     case 'pcm':
       return new PcmEncoder(config);
     case 'aac-lc':
-    case 'he-aac':
-    case 'he-aac-v2':
       return new AacEncoder(config);
     case 'flac':
       return new FlacEncoder(config);

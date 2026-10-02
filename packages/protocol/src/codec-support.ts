@@ -201,18 +201,17 @@ export interface DynamicPresets {
 
 /**
  * Calculates a quality score for a codec/bitrate combination.
- * Score = bitrate * efficiency (with special handling for lossless).
- * @param codec - The audio codec
+ *
+ * A lossy option scores its bitrate: AAC-LC is the only lossy codec offered,
+ * so there is nothing to weigh one codec against another. A lossless option
+ * (bitrate 0) scores above any of them.
+ *
+ * @param _codec - The audio codec (every lossy codec scores alike)
  * @param bitrate - The bitrate in kbps
  * @returns Quality score (higher = better)
  */
-export function calculateQualityScore(codec: AudioCodec, bitrate: Bitrate): number {
-  const meta = CODEC_METADATA[codec];
-  // FLAC is lossless, give it a very high score
-  if (bitrate === 0) {
-    return 1000;
-  }
-  return bitrate * meta.efficiency;
+export function calculateQualityScore(_codec: AudioCodec, bitrate: Bitrate): number {
+  return bitrate === 0 ? 1000 : bitrate;
 }
 
 /**
@@ -236,8 +235,8 @@ export function getCodecBitrateLabel(codec: AudioCodec, bitrate: Bitrate): strin
  *
  * Tier selection logic:
  * - HIGH: Best quality → highest bitrate (FLAC preferred if available)
- * - LOW: Lowest bandwidth → lowest bitrate with efficient codec
- * - BALANCED: Middle ground → moderate bitrate with good efficiency
+ * - LOW: Lowest bandwidth → lowest lossy bitrate
+ * - BALANCED: Middle ground → the best option that is neither of the others
  *
  * @param supportInfo - Runtime codec support detection results
  * @returns Dynamic presets with scored options
@@ -278,19 +277,11 @@ export function generateDynamicPresets(supportInfo: SupportedCodecsResult): Dyna
   });
   const high = highSorted[0] ?? null;
 
-  // === LOW TIER: Lowest bandwidth (lowest bitrate, prefer efficient codecs) ===
+  // === LOW TIER: Lowest bandwidth (lowest bitrate) ===
   // Filter out lossless options (bitrate 0) - they use MORE bandwidth, not less
-  // Sort by: bitrate ascending, then by efficiency descending (for ties)
   const lowSorted = [...allOptions]
     .filter((opt) => opt.bitrate > 0)
-    .sort((a, b) => {
-      // Lowest bitrate first
-      if (a.bitrate !== b.bitrate) return a.bitrate - b.bitrate;
-      // For same bitrate, prefer more efficient codec
-      const effA = CODEC_METADATA[a.codec].efficiency;
-      const effB = CODEC_METADATA[b.codec].efficiency;
-      return effB - effA;
-    });
+    .sort((a, b) => a.bitrate - b.bitrate);
   // Pick the lowest bitrate option, but not the same as high
   let low: ScoredCodecOption | null = null;
   for (const opt of lowSorted) {
@@ -301,8 +292,7 @@ export function generateDynamicPresets(supportInfo: SupportedCodecsResult): Dyna
   }
 
   // === BALANCED TIER: Middle ground ===
-  // Find an option that's different from both high and low
-  // Prefer efficient codecs (HE-AAC family) at moderate bitrates
+  // Find the best-scoring option that's different from both high and low
   let mid: ScoredCodecOption | null = null;
 
   // First, try to find an option with a different codec than high and low
