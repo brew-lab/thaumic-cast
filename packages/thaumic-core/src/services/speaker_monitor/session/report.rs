@@ -3,7 +3,8 @@ use std::time::{Duration, Instant};
 
 use crate::events::EventEmitter;
 use crate::services::speaker_monitor::monitor::ms_between;
-use crate::services::speaker_monitor::session::{note_debt_repaid, SpeakerSession};
+use crate::services::speaker_monitor::session::drift::note_debt_repaid;
+use crate::services::speaker_monitor::session::SpeakerSession;
 use crate::services::speaker_monitor::{
     DriftController, DriftMode, MemberChange, MonitorState, ReserveTracker, SegmentBreak,
     SwitchOutcome, SwitchUnmeasured, WindowStats,
