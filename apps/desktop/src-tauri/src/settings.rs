@@ -42,7 +42,35 @@ pub struct DesktopSettings {
     /// Which of the settings above the file itself set when it was loaded,
     /// so that start-up can say where each value came from. Not saved.
     #[serde(skip)]
-    in_file: SpeakerSettingValues,
+    in_file: KeysInFile,
+}
+
+/// Which of the three keys a settings file has. Presence only: the values
+/// are the ones [`DesktopSettings`] itself parsed. Any other key, a
+/// snake_case spelling of these included, is not looked at.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+struct KeysInFile {
+    #[serde(deserialize_with = "present")]
+    speaker_monitor: bool,
+    #[serde(deserialize_with = "present")]
+    pcm_connect_burst_ms: bool,
+    #[serde(deserialize_with = "present")]
+    drift_compensation: bool,
+}
+
+impl KeysInFile {
+    /// Every key, as a file this app has just saved has them.
+    const ALL: Self = Self {
+        speaker_monitor: true,
+        pcm_connect_burst_ms: true,
+        drift_compensation: true,
+    };
+}
+
+/// Reads any value at all and says the key was there.
+fn present<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<bool, D::Error> {
+    serde::de::IgnoredAny::deserialize(deserializer).map(|_| true)
 }
 
 impl Default for DesktopSettings {
@@ -52,7 +80,7 @@ impl Default for DesktopSettings {
             speaker_monitor: core.speaker_monitor,
             pcm_connect_burst_ms: core.pcm_connect_burst_ms,
             drift_compensation: core.drift_compensation,
-            in_file: SpeakerSettingValues::default(),
+            in_file: KeysInFile::default(),
         }
     }
 }
@@ -65,9 +93,17 @@ impl DesktopSettings {
         let path = app_data_dir.join(SETTINGS_FILE);
         let settings: Self = match std::fs::read_to_string(&path) {
             Ok(contents) => match serde_json::from_str::<Self>(&contents) {
-                // The same document again, for which settings it sets.
+                // The same document again, only for which keys it has.
                 Ok(settings) => Self {
-                    in_file: serde_json::from_str(&contents).unwrap_or_default(),
+                    in_file: serde_json::from_str(&contents).unwrap_or_else(|e| {
+                        log::warn!(
+                            "[Settings] Could not tell which settings {} sets ({}); the log \
+                             will give their source as default",
+                            path.display(),
+                            e
+                        );
+                        KeysInFile::default()
+                    }),
                     ..settings
                 },
                 Err(e) => {
@@ -110,11 +146,7 @@ impl DesktopSettings {
         change(&mut settings);
         let mut settings = settings.clamped();
         // Every key is written, so from here the file sets all three.
-        settings.in_file = SpeakerSettingValues {
-            speaker_monitor: Some(settings.speaker_monitor),
-            pcm_connect_burst_ms: Some(settings.pcm_connect_burst_ms),
-            drift_compensation: Some(settings.drift_compensation),
-        };
+        settings.in_file = KeysInFile::ALL;
         std::fs::create_dir_all(app_data_dir)?;
         let path = app_data_dir.join(SETTINGS_FILE);
         let temp_path = app_data_dir.join(format!("{SETTINGS_FILE}.tmp"));
@@ -126,16 +158,13 @@ impl DesktopSettings {
     /// What the settings file said about each setting: the value held here
     /// for every key the file had, nothing for a key it lacked.
     fn file_values(&self) -> SpeakerSettingValues {
+        let keys = self.in_file;
         SpeakerSettingValues {
-            speaker_monitor: self.in_file.speaker_monitor.map(|_| self.speaker_monitor),
-            pcm_connect_burst_ms: self
-                .in_file
+            speaker_monitor: keys.speaker_monitor.then_some(self.speaker_monitor),
+            pcm_connect_burst_ms: keys
                 .pcm_connect_burst_ms
-                .map(|_| self.pcm_connect_burst_ms),
-            drift_compensation: self
-                .in_file
-                .drift_compensation
-                .map(|_| self.drift_compensation),
+                .then_some(self.pcm_connect_burst_ms),
+            drift_compensation: keys.drift_compensation.then_some(self.drift_compensation),
         }
     }
 
@@ -345,6 +374,30 @@ mod tests {
                 pcm_connect_burst_ms: Env,
                 drift_compensation: Env,
             }
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The file's keys are camelCase. A snake_case spelling is not a key, so
+    /// it neither sets the value nor counts as the file setting it.
+    #[test]
+    fn a_snake_case_key_is_not_read() {
+        let dir = temp_dir("snake-case");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join(SETTINGS_FILE),
+            r#"{"speaker_monitor": false, "pcmConnectBurstMs": 1000}"#,
+        )
+        .unwrap();
+        let resolved = DesktopSettings::load(&dir).resolved(SpeakerEnv::default());
+        assert!(resolved.speaker_monitor.value);
+        assert_eq!(
+            resolved.speaker_monitor.origin,
+            thaumic_core::SettingOrigin::Default
+        );
+        assert_eq!(
+            resolved.pcm_connect_burst_ms.origin,
+            thaumic_core::SettingOrigin::File
         );
         let _ = std::fs::remove_dir_all(&dir);
     }

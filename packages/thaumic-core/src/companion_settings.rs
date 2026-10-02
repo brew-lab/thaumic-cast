@@ -14,7 +14,7 @@
 //! [`SPEAKER_DIAGNOSTICS_ENV`] is the one exception, kept as it was: set, it
 //! turns speaker monitoring on whatever anything else says.
 
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 
 use crate::protocol_constants::{DEFAULT_PCM_CONNECT_BURST_MS, MAX_PCM_CONNECT_BURST_MS};
 use crate::services::latency_monitor::{
@@ -70,19 +70,16 @@ pub struct SettingOrigins {
 /// What one source (a file, the environment, the flags) says about the three
 /// settings; `None` where it says nothing.
 ///
-/// Deserialises from either app's file: the server's `snake_case` keys or
-/// the desktop's `camelCase` ones. Other keys are ignored.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize)]
-#[serde(default)]
+/// It is never read from a file directly. Each app parses its own file, with
+/// its own key names, and fills this in from the values that parse settled
+/// on, so no key is honoured here that the app's file does not document.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct SpeakerSettingValues {
     /// Speaker monitoring.
-    #[serde(alias = "speakerMonitor")]
     pub speaker_monitor: Option<bool>,
     /// Speaker head start, in ms.
-    #[serde(alias = "pcmConnectBurstMs")]
     pub pcm_connect_burst_ms: Option<u64>,
     /// Clock drift correction.
-    #[serde(alias = "driftCompensation")]
     pub drift_compensation: Option<DriftMode>,
 }
 
@@ -101,7 +98,17 @@ impl SpeakerEnv {
     /// A value that cannot be used is ignored with a warning, and a blank
     /// one counts as unset.
     pub fn read() -> Self {
-        Self::from_lookup(|name| std::env::var(name).ok())
+        Self {
+            legacy_diagnostics: Self::read_legacy_diagnostics(),
+            ..Self::from_lookup(|name| std::env::var(name).ok())
+        }
+    }
+
+    /// Whether [`SPEAKER_DIAGNOSTICS_ENV`] is set in the process environment
+    /// (not empty, not `0`), and nothing else. For the server, where clap
+    /// has already read the settings' own variables.
+    pub fn read_legacy_diagnostics() -> bool {
+        std::env::var_os(SPEAKER_DIAGNOSTICS_ENV).is_some_and(|raw| !raw.is_empty() && raw != "0")
     }
 
     /// [`Self::read`] over any lookup, so tests need no real environment.
@@ -267,6 +274,10 @@ impl CompanionSettings {
     }
 
     /// The start-up lines, one per setting: `key = value (source)`.
+    ///
+    /// Speaker monitoring that is off says what is still asked, a head start
+    /// of 0 says it is off, and drift correction that cannot run because
+    /// monitoring is off says so on its own line.
     pub fn startup_lines(&self, names: SettingNames) -> [String; 3] {
         let source = |origin: SettingOrigin, env: &'static str, flag: &'static str| match origin {
             SettingOrigin::Default => "default",
@@ -275,25 +286,30 @@ impl CompanionSettings {
             SettingOrigin::Flag => flag,
             SettingOrigin::LegacyEnv => SPEAKER_DIAGNOSTICS_ENV,
         };
+        let monitor = self.speaker_monitor.value;
+        let ms = self.pcm_connect_burst_ms.value;
+        let drift = self.drift_compensation.value;
         [
             format!(
-                "{} = {} ({})",
+                "{} = {} ({}){}",
                 names.speaker_monitor,
-                if self.speaker_monitor.value {
-                    "on"
-                } else {
-                    "off"
-                },
+                if monitor { "on" } else { "off" },
                 source(
                     self.speaker_monitor.origin,
                     SPEAKER_MONITOR_ENV,
                     SPEAKER_MONITOR_FLAG
-                )
+                ),
+                if monitor {
+                    ""
+                } else {
+                    "; casts with video sync are still asked"
+                }
             ),
             format!(
-                "{} = {} ({})",
+                "{} = {} ms{} ({})",
                 names.pcm_connect_burst_ms,
-                self.pcm_connect_burst_ms.value,
+                ms,
+                if ms == 0 { ", off" } else { "" },
                 source(
                     self.pcm_connect_burst_ms.origin,
                     PCM_CONNECT_BURST_ENV,
@@ -301,14 +317,19 @@ impl CompanionSettings {
                 )
             ),
             format!(
-                "{} = {} ({})",
+                "{} = {} ({}){}",
                 names.drift_compensation,
-                self.drift_compensation.value,
+                drift,
                 source(
                     self.drift_compensation.origin,
                     DRIFT_COMPENSATION_ENV,
                     DRIFT_COMPENSATION_FLAG
-                )
+                ),
+                if !monitor && drift != DriftMode::Off {
+                    format!("; runs as off while {} is off", names.speaker_monitor)
+                } else {
+                    String::new()
+                }
             ),
         ]
     }
@@ -591,9 +612,9 @@ mod tests {
         assert_eq!(
             settings.startup_lines(SettingNames::SERVER),
             [
-                "speaker_monitor = off (--speaker-monitor)",
-                "pcm_connect_burst_ms = 0 (THAUMIC_PCM_CONNECT_BURST_MS)",
-                "drift_compensation = observe (config file)",
+                "speaker_monitor = off (--speaker-monitor); casts with video sync are still asked",
+                "pcm_connect_burst_ms = 0 ms, off (THAUMIC_PCM_CONNECT_BURST_MS)",
+                "drift_compensation = observe (config file); runs as off while speaker_monitor is off",
             ]
         );
 
@@ -602,21 +623,9 @@ mod tests {
             legacy.startup_lines(SettingNames::DESKTOP),
             [
                 "speakerMonitor = on (THAUMIC_SPEAKER_DIAGNOSTICS)",
-                "pcmConnectBurstMs = 500 (default)",
+                "pcmConnectBurstMs = 500 ms (default)",
                 "driftCompensation = on (default)",
             ]
         );
-    }
-
-    #[test]
-    fn both_files_key_styles_are_read() {
-        let yaml: SpeakerSettingValues =
-            serde_json::from_str(r#"{"speaker_monitor":false,"bind_port":49400}"#).expect("reads");
-        assert_eq!(yaml, values(Some(false), None, None));
-        let json: SpeakerSettingValues = serde_json::from_str(
-            r#"{"speakerMonitor":true,"pcmConnectBurstMs":250,"driftCompensation":"off"}"#,
-        )
-        .expect("reads");
-        assert_eq!(json, values(Some(true), Some(250), Some(DriftMode::Off)));
     }
 }

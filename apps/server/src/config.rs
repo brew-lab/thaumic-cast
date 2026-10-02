@@ -95,7 +95,26 @@ pub struct ServerConfig {
     /// Which of the three speaker settings above the file itself set, so
     /// that start-up can say where each value came from. Not a key.
     #[serde(skip)]
-    pub speaker_file: SpeakerSettingValues,
+    speaker_keys: SpeakerKeys,
+}
+
+/// Which of the three speaker keys a config file has. Presence only: the
+/// values are the ones [`ServerConfig`] itself parsed and validated. Any
+/// other key, a camelCase spelling of these included, is not looked at.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize)]
+#[serde(default)]
+struct SpeakerKeys {
+    #[serde(deserialize_with = "present")]
+    speaker_monitor: bool,
+    #[serde(deserialize_with = "present")]
+    pcm_connect_burst_ms: bool,
+    #[serde(deserialize_with = "present")]
+    drift_compensation: bool,
+}
+
+/// Reads any value at all and says the key was there.
+fn present<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<bool, D::Error> {
+    serde::de::IgnoredAny::deserialize(deserializer).map(|_| true)
 }
 
 impl Default for ServerConfig {
@@ -110,7 +129,7 @@ impl Default for ServerConfig {
             speaker_monitor: true,
             pcm_connect_burst_ms: thaumic_core::protocol_constants::DEFAULT_PCM_CONNECT_BURST_MS,
             drift_compensation: DriftMode::default(),
-            speaker_file: SpeakerSettingValues::default(),
+            speaker_keys: SpeakerKeys::default(),
         }
     }
 }
@@ -138,9 +157,31 @@ impl ServerConfig {
     fn from_yaml(content: &str) -> Result<Self> {
         let mut config: Self = serde_yaml::from_str(content)
             .context("It was read, and this is where it went wrong")?;
-        // The same document again, for which of the speaker settings it sets.
-        config.speaker_file = serde_yaml::from_str(content).unwrap_or_default();
+        // The same document again, only for which of the speaker keys it has.
+        config.speaker_keys = serde_yaml::from_str(content)
+            .context("It was read, and this is where it went wrong")?;
         Ok(config)
+    }
+
+    /// What the config file said about the three speaker settings: the value
+    /// held here for every key the file had, nothing for a key it lacked.
+    ///
+    /// Call it before a flag or a variable is written over these fields.
+    pub fn speaker_file_values(&self) -> SpeakerSettingValues {
+        SpeakerSettingValues {
+            speaker_monitor: self
+                .speaker_keys
+                .speaker_monitor
+                .then_some(self.speaker_monitor),
+            pcm_connect_burst_ms: self
+                .speaker_keys
+                .pcm_connect_burst_ms
+                .then_some(self.pcm_connect_burst_ms),
+            drift_compensation: self
+                .speaker_keys
+                .drift_compensation
+                .then_some(self.drift_compensation),
+        }
     }
 
     /// Checks that all values are usable at runtime.
@@ -309,22 +350,55 @@ mod tests {
     #[test]
     fn the_file_says_which_speaker_settings_it_sets() {
         assert_eq!(
-            ServerConfig::default().speaker_file,
+            ServerConfig::default().speaker_file_values(),
             SpeakerSettingValues::default()
         );
         let config = ServerConfig::from_yaml("bind_port: 49400\n").expect("should parse");
-        assert_eq!(config.speaker_file, SpeakerSettingValues::default());
+        assert_eq!(
+            config.speaker_file_values(),
+            SpeakerSettingValues::default()
+        );
 
         let config = ServerConfig::from_yaml(
             "speaker_monitor: true\npcm_connect_burst_ms: 750\ndrift_compensation: observe\n",
         )
         .expect("should parse");
         assert_eq!(
-            config.speaker_file,
+            config.speaker_file_values(),
             SpeakerSettingValues {
                 speaker_monitor: Some(true),
                 pcm_connect_burst_ms: Some(750),
                 drift_compensation: Some(DriftMode::Observe),
+            }
+        );
+    }
+
+    /// The file's keys are snake_case. A camelCase spelling is not a key: it
+    /// is ignored as any unknown key is, alone or beside the real one.
+    #[test]
+    fn a_camel_case_speaker_key_is_not_read() {
+        let config = ServerConfig::from_yaml(
+            "speakerMonitor: false\npcmConnectBurstMs: 1000\ndriftCompensation: off\n",
+        )
+        .expect("should parse");
+        assert!(config.speaker_monitor);
+        assert_eq!(config.pcm_connect_burst_ms, 500);
+        assert_eq!(config.drift_compensation, DriftMode::On);
+        assert_eq!(
+            config.speaker_file_values(),
+            SpeakerSettingValues::default()
+        );
+
+        let both = ServerConfig::from_yaml(
+            "speakerMonitor: true\nspeaker_monitor: false\npcm_connect_burst_ms: 750\n",
+        )
+        .expect("should parse");
+        assert_eq!(
+            both.speaker_file_values(),
+            SpeakerSettingValues {
+                speaker_monitor: Some(false),
+                pcm_connect_burst_ms: Some(750),
+                drift_compensation: None,
             }
         );
     }
