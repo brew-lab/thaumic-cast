@@ -352,38 +352,18 @@ async fn serve_stream(
         prefill_frames.len()
     );
 
-    // Create logging guard early so we can pass it to the cadence stream for internal tracking.
-    // Uses Arc so it can be shared between cadence stream and final frame recording.
-    // The connection's TCP counters judge the network path to this speaker;
-    // only a reader the stream is for is worth judging, and reporting on an
-    // unlisted reader would name an address that is not a speaker.
-    let link_probe = access
-        .tracks_playback()
-        .then(|| state.link_registry.claim(remote_addr))
-        .flatten();
-    // A PCM body has an end the speaker reads to, whatever hyper does: the
-    // WAV header's length. Near it the speaker going quiet is the end of the
-    // item, which the guard and the speaker monitor must not take for a stall.
-    let byte_rate = stream_state
-        .audio_format
-        .frame_bytes(1000)
-        .min(u32::MAX as usize) as u32;
-    // A segment's end is its own: the rest of its header and data from
-    // where the fetch started.
-    let declared_end = match &new_segment {
-        Some((layout, start)) => Some(DeclaredEnd::new(start.body_bytes(layout), byte_rate)),
-        None => pcm_http
-            .as_ref()
-            .map(|settings| DeclaredEnd::new(settings.declared_end_bytes(), byte_rate)),
-    };
-    let mut guard = LoggingStreamGuard::new(id.to_string(), remote_ip)
-        .with_link_probe(link_probe)
-        .with_framing(framing)
-        .with_declared_end(declared_end);
-    if let Some(wait) = first_wait {
-        guard = guard.with_first_wait(wait);
-    }
-    let guard = Arc::new(guard);
+    let guard = connection_guard(
+        access,
+        &state,
+        remote_addr,
+        &stream_state,
+        &new_segment,
+        pcm_http,
+        &id,
+        remote_ip,
+        framing,
+        first_wait,
+    );
 
     // What outlives this connection: for a segmented PCM cast, the playout's
     // statistics, which every later segment of it reports into; otherwise
@@ -962,6 +942,57 @@ fn route_segment(
     }
 
     SegmentRouting::Proceed(new_segment)
+}
+
+/// Guard construction, a phase of [`serve_stream`] that follows
+/// `subscribe()`: claims the connection's link probe, works out where the
+/// body's declared end is, and builds the connection's delivery guard with
+/// the first-connection wait it sat through, if any.
+#[allow(clippy::too_many_arguments)]
+fn connection_guard(
+    access: StreamAccess,
+    state: &AppState,
+    remote_addr: SocketAddr,
+    stream_state: &StreamState,
+    new_segment: &Option<(SegmentLayout, SegmentStart)>,
+    pcm_http: Option<PcmHttpSettings>,
+    id: &str,
+    remote_ip: IpAddr,
+    framing: BodyFraming,
+    first_wait: Option<FirstConnectionWait>,
+) -> Arc<LoggingStreamGuard> {
+    // Create logging guard early so we can pass it to the cadence stream for internal tracking.
+    // Uses Arc so it can be shared between cadence stream and final frame recording.
+    // The connection's TCP counters judge the network path to this speaker;
+    // only a reader the stream is for is worth judging, and reporting on an
+    // unlisted reader would name an address that is not a speaker.
+    let link_probe = access
+        .tracks_playback()
+        .then(|| state.link_registry.claim(remote_addr))
+        .flatten();
+    // A PCM body has an end the speaker reads to, whatever hyper does: the
+    // WAV header's length. Near it the speaker going quiet is the end of the
+    // item, which the guard and the speaker monitor must not take for a stall.
+    let byte_rate = stream_state
+        .audio_format
+        .frame_bytes(1000)
+        .min(u32::MAX as usize) as u32;
+    // A segment's end is its own: the rest of its header and data from
+    // where the fetch started.
+    let declared_end = match &new_segment {
+        Some((layout, start)) => Some(DeclaredEnd::new(start.body_bytes(layout), byte_rate)),
+        None => pcm_http
+            .as_ref()
+            .map(|settings| DeclaredEnd::new(settings.declared_end_bytes(), byte_rate)),
+    };
+    let mut guard = LoggingStreamGuard::new(id.to_string(), remote_ip)
+        .with_link_probe(link_probe)
+        .with_framing(framing)
+        .with_declared_end(declared_end);
+    if let Some(wait) = first_wait {
+        guard = guard.with_first_wait(wait);
+    }
+    Arc::new(guard)
 }
 
 /// Adds to a PCM segment response's head what a fetch of part of the
