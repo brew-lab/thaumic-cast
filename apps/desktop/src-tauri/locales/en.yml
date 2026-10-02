@@ -5,21 +5,21 @@ tray:
   version_line: '%{name} v%{version}'
 
   # Status line (dynamic)
-  status_idle: No active rituals
-  status_streaming_one: 1 active ritual
-  status_streaming_many: '%{count} active rituals'
+  status_idle: Nothing casting
+  status_streaming_one: 1 cast running
+  status_streaming_many: '%{count} casts running'
 
-  # Tooltip after "Stop All Streams" ended a cast from another machine: the
-  # first sentence, a space, then the second. The second counts streams, and
-  # one other machine can own several, so it must not name a number of machines
-  stop_all_stopped_one: '%{app} - stopped 1 stream.'
-  stop_all_stopped_many: '%{app} - stopped %{count} streams.'
-  stop_all_remote_one: '1 of them was not from this machine.'
-  stop_all_remote_many: '%{count} of them were not from this machine.'
+  # Tooltip after "Stop all casts" ended a cast from another machine: the
+  # first sentence, a space, then the second. The second counts casts, and
+  # one other computer can own several, so it must not name a number of computers
+  stop_all_stopped_one: '%{app}: stopped 1 cast.'
+  stop_all_stopped_many: '%{app}: stopped %{count} casts.'
+  stop_all_remote_one: '1 of them was not started on this computer.'
+  stop_all_remote_many: '%{count} of them were not started on this computer.'
 
   # Menu items
-  dashboard: Dashboard
-  launch_at_startup: Launch at Startup
-  stop_all_streams: Stop All Streams
-  restart_server: Restart Server
+  dashboard: Open Thaumic Cast
+  launch_at_startup: Launch at login
+  stop_all_streams: Stop all casts
+  restart_server: Restart Thaumic Cast
   quit: Quit
