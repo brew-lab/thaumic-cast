@@ -87,6 +87,7 @@
   "settings.check_for_updates_description": "Opens the releases page in your browser",
 
   "dashboard.speaker_notice_head_start_ran_out": "Wi-Fi trouble held back {{stall}} ms of audio from {{name}}, more than its {{current}} ms head start covers, so it cut out for a moment. A {{suggested}} ms head start would have covered it.",
+  "dashboard.speaker_notice_head_start_ran_out_drained": "Wi-Fi trouble held back {{stall}} ms of audio from {{name}}, and what was left of its {{current}} ms head start did not cover it, so it cut out for a moment. A {{suggested}} ms head start would have covered it.",
   "dashboard.speaker_notice_head_start_ran_out_off": "Wi-Fi trouble held back {{stall}} ms of audio from {{name}}, and with the speaker head start off it cut out for a moment. A {{suggested}} ms head start would have covered it.",
   "dashboard.speaker_notice_head_start_close": "Wi-Fi trouble held back {{stall}} ms of audio from {{name}}, leaving {{left}} ms of its {{current}} ms head start. A {{suggested}} ms head start would leave room to spare.",
   "dashboard.speaker_notice_head_start_close_off": "Wi-Fi trouble held back {{stall}} ms of audio from {{name}}, and with the speaker head start off it nearly cut out. A {{suggested}} ms head start would leave room to spare.",

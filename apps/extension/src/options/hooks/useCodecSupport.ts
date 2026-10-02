@@ -1,7 +1,10 @@
 import { useState, useEffect } from 'preact/hooks';
 import { useTranslation } from 'react-i18next';
+import { createLogger } from '@thaumic-cast/shared';
 import { detectSupportedCodecs, type SupportedCodecsResult } from '@thaumic-cast/protocol';
 import { getCachedCodecSupport, setCachedCodecSupport } from '../../lib/codec-cache';
+
+const log = createLogger('CodecSupport');
 
 /**
  * Default empty codec support result.
@@ -61,7 +64,8 @@ export function useCodecSupport(): {
       setCodecSupport(result);
       setLoading(false);
     } catch (err) {
-      setError(err instanceof Error ? err.message : t('error_codec_detection'));
+      log.error('Codec detection failed:', err);
+      setError(t('error_codec_detection'));
       setLoading(false);
     }
   }
@@ -77,7 +81,8 @@ export function useCodecSupport(): {
       setCodecSupport(result);
       setLoading(false);
     } catch (err) {
-      setError(err instanceof Error ? err.message : t('error_codec_detection'));
+      log.error('Codec detection failed:', err);
+      setError(t('error_codec_detection'));
       setLoading(false);
     }
   }

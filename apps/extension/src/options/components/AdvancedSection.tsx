@@ -2,7 +2,7 @@ import type { JSX } from 'preact';
 import { useCallback } from 'preact/hooks';
 import { useTranslation } from 'react-i18next';
 import { Card } from '@thaumic-cast/ui';
-import type { ExtensionSettings } from '../../lib/settings';
+import { isWindowsPlatform, type ExtensionSettings } from '../../lib/settings';
 import styles from '../Options.module.css';
 
 interface AdvancedSectionProps {
@@ -11,7 +11,7 @@ interface AdvancedSectionProps {
 }
 
 /** Browser capture requires WASAPI (Windows only). */
-const isWindows = navigator.userAgent.includes('Windows');
+const isWindows = isWindowsPlatform();
 
 /**
  * Advanced settings section for experimental features.

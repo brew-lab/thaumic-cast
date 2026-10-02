@@ -106,6 +106,11 @@ export function speakerNoticeLines(notice: SpeakerNotice, ctx: NoticeWordingCont
   const left = Math.max(0, notice.leftMs ?? 0);
   const suggested = notice.suggestedHeadStartMs;
   const off = current === 0 ? '_off' : '';
+  // When drift had already drained part of the head start, a stall shorter
+  // than the head start is enough to run out, and the core reports only the
+  // stall. Saying it was "more than the head start covers" would then be false.
+  const drained =
+    notice.kind === 'head_start_ran_out' && current > 0 && stall < current ? '_drained' : '';
 
   switch (notice.kind) {
     case 'head_start_ran_out':
@@ -117,7 +122,7 @@ export function speakerNoticeLines(notice: SpeakerNotice, ctx: NoticeWordingCont
         break;
       }
       lines.push({
-        key: `speaker_notice_${notice.kind}${off}`,
+        key: `speaker_notice_${notice.kind}${off || drained}`,
         params: { stall, name, current, left, suggested },
       });
       lines.push(headStartWhereLine(suggested, ctx));

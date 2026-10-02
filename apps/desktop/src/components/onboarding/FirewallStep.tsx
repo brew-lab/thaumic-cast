@@ -14,22 +14,25 @@ import styles from './FirewallStep.module.css';
  */
 export function FirewallStep(): preact.JSX.Element {
   const { t } = useTranslation();
-  const [platform, setPlatform] = useState<Platform>('windows');
+  const [platform, setPlatform] = useState<Platform | null>(null);
 
   useEffect(() => {
     getPlatform().then(setPlatform);
   }, []);
 
-  // Use platform-specific translations, fallback to windows for unknown
+  // Platform-specific translations, with windows for unknown. Null until the
+  // platform is known, so another platform's copy never flashes first.
   const platformKey = platform === 'unknown' ? 'windows' : platform;
 
   return (
     <WizardStep
       title={t('onboarding.firewall.title')}
-      subtitle={t(`onboarding.firewall.subtitle_${platformKey}`)}
+      subtitle={platformKey ? t(`onboarding.firewall.subtitle_${platformKey}`) : undefined}
       icon={Shield}
     >
-      <Alert variant="info">{t(`onboarding.firewall.prompt_${platformKey}`)}</Alert>
+      {platformKey && (
+        <Alert variant="info">{t(`onboarding.firewall.prompt_${platformKey}`)}</Alert>
+      )}
 
       <ul className={styles.reasonList}>
         <li>{t('onboarding.firewall.reason_1')}</li>

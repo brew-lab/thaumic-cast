@@ -57,7 +57,7 @@ export function useAddManualSpeaker(
       const [result] = await Promise.all([
         probeSpeakerIp(trimmedIp)
           .then((speaker) => ({ success: true as const, ip: speaker.ip }))
-          .catch((e) => ({ success: false as const, ip: '', error: String(e) })),
+          .catch((e) => ({ success: false as const, ip: '', error: probeErrorCode(e) })),
         new Promise((resolve) => setTimeout(resolve, 400)),
       ]);
 
@@ -90,6 +90,20 @@ export function useAddManualSpeaker(
     addSpeaker,
     clearError,
   };
+}
+
+/**
+ * Reads the error code off a rejected probe. A Tauri command rejects with
+ * `{ code, message }`, which `String()` would turn into "[object Object]".
+ *
+ * @param e - Whatever the probe rejected with
+ * @returns The machine-readable code when there is one, else the value as text
+ */
+export function probeErrorCode(e: unknown): string {
+  if (typeof e === 'object' && e !== null && 'code' in e && typeof e.code === 'string') {
+    return e.code;
+  }
+  return String(e);
 }
 
 /**

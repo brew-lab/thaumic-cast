@@ -260,10 +260,10 @@ const DEFAULT_EXTENSION_SETTINGS: ExtensionSettings = {
 
 /**
  * Detects whether the extension is running on Windows, the only platform that
- * supports browser-wide (WASAPI) capture. Mirrors the check used by the options page.
+ * supports browser-wide (WASAPI) capture.
  * @returns True when the user agent reports Windows
  */
-function isWindowsPlatform(): boolean {
+export function isWindowsPlatform(): boolean {
   return typeof navigator !== 'undefined' && navigator.userAgent.includes('Windows');
 }
 
