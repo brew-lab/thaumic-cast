@@ -49,7 +49,8 @@ interface AudioSectionProps {
  * Audio quality settings section.
  * Allows user to select quality mode and custom settings. Which controls show
  * comes from the same resolver the cast uses: smoothing for any PCM cast, frame
- * size for a PCM tab cast, bit depth where the codec offers a choice. For PCM
+ * size for a PCM tab cast, bit depth where the codec offers a choice, and the
+ * fall-behind choice in the one place the resolver names for it. For PCM
  * the summary shows the speaker head start the companion adds and the delay
  * the two add together.
  * @param root0
@@ -110,6 +111,7 @@ export function AudioSection({
   const showSmoothing = resolved?.controls.smoothing ?? false;
   const showFrameSize = resolved?.controls.frameSize ?? false;
   const showBitDepth = resolved?.controls.bitDepth ?? false;
+  const fallBehindPlacement = resolved?.controls.fallBehind ?? null;
 
   // Ask the browser about the exact combination a tab cast would encode.
   const combinationSupported = useCombinationSupport(resolvedConfig);
@@ -375,16 +377,15 @@ export function AudioSection({
       });
     }
 
-    if (CODEC_METADATA[resolvedConfig.codec].webCodecsId !== null) {
-      rows.push({
-        key: 'latency-mode',
-        label: t('audio_latency_mode'),
-        value:
-          resolvedConfig.latencyMode === 'quality'
-            ? t('audio_latency_quality')
-            : t('audio_latency_realtime'),
-      });
-    }
+    // The preset decides this for every codec, PCM included: the relay obeys it too.
+    rows.push({
+      key: 'latency-mode',
+      label: t('audio_latency_mode'),
+      value:
+        resolvedConfig.latencyMode === 'quality'
+          ? t('audio_latency_quality')
+          : t('audio_latency_realtime'),
+    });
 
     rows.push({
       key: 'bit-depth',
@@ -395,6 +396,27 @@ export function AudioSection({
 
     return [...rows, ...pcmRows];
   }, [resolvedConfig, isPcm, pcmRows, t]);
+
+  // The fall-behind choice, placed once: the resolver says where.
+  const fallBehindField = (
+    <div className={styles.field}>
+      <label htmlFor="audio-latency-mode" className={styles.label}>
+        {t('audio_latency_mode')}
+      </label>
+      <select
+        id="audio-latency-mode"
+        className={styles.select}
+        value={settings.customAudioSettings.latencyMode}
+        onChange={(e) =>
+          handleLatencyModeChange((e.target as HTMLSelectElement).value as LatencyMode)
+        }
+      >
+        <option value="quality">{t('audio_latency_quality')}</option>
+        <option value="realtime">{t('audio_latency_realtime')}</option>
+      </select>
+      <span className={styles.hint}>{t('audio_latency_mode_hint')}</span>
+    </div>
+  );
 
   return (
     <Card title={t('audio_section_title')}>
@@ -545,27 +567,8 @@ export function AudioSection({
                       </div>
                     )}
 
-                  {/* Latency Mode - only show for codecs that use WebCodecs encoding */}
-                  {CODEC_METADATA[settings.customAudioSettings.codec].webCodecsId !== null && (
-                    <div className={styles.field}>
-                      <label htmlFor="audio-latency-mode" className={styles.label}>
-                        {t('audio_latency_mode')}
-                      </label>
-                      <select
-                        id="audio-latency-mode"
-                        className={styles.select}
-                        value={settings.customAudioSettings.latencyMode}
-                        onChange={(e) =>
-                          handleLatencyModeChange(
-                            (e.target as HTMLSelectElement).value as LatencyMode,
-                          )
-                        }
-                      >
-                        <option value="quality">{t('audio_latency_quality')}</option>
-                        <option value="realtime">{t('audio_latency_realtime')}</option>
-                      </select>
-                    </div>
-                  )}
+                  {/* Falling behind - here for the codecs the browser encodes */}
+                  {fallBehindPlacement === 'format' && fallBehindField}
 
                   {/* Bit Depth - only where the codec offers a choice */}
                   {showBitDepth && (
@@ -638,7 +641,7 @@ export function AudioSection({
               </Alert>
             )}
 
-            {/* Advanced: smoothing for any PCM cast, frame size for a PCM tab cast */}
+            {/* Advanced: smoothing for any PCM cast; frame size and, in Bespoke, falling behind for a PCM tab cast */}
             {showSmoothing && (
               <div id="audio-advanced" ref={advancedRef} className={styles.advancedAnchor}>
                 <Disclosure
@@ -694,6 +697,9 @@ export function AudioSection({
                         <span className={styles.hint}>{t('audio_frame_size_hint')}</span>
                       </div>
                     )}
+
+                    {/* Falling behind - here for Bespoke PCM on a tab cast */}
+                    {fallBehindPlacement === 'advanced' && fallBehindField}
                   </div>
                 </Disclosure>
               </div>

@@ -8,7 +8,11 @@
  */
 
 import type { EncoderConfig, SupportedCodecsResult } from '@thaumic-cast/protocol';
-import { DEFAULT_BITS_PER_SAMPLE, getSupportedBitDepths } from '@thaumic-cast/protocol';
+import {
+  CODEC_METADATA,
+  DEFAULT_BITS_PER_SAMPLE,
+  getSupportedBitDepths,
+} from '@thaumic-cast/protocol';
 import type { ExtensionSettings } from './settings';
 import { resolveAudioMode } from './presets';
 
@@ -34,6 +38,16 @@ export interface CompanionCapability {
   browserCapture?: boolean;
 }
 
+/**
+ * Where the fall-behind choice (`latencyMode`) is edited:
+ * - `format`: with the other Bespoke format choices, for a codec the browser
+ *   encodes (AAC, FLAC).
+ * - `advanced`: under Advanced, for Bespoke PCM.
+ * - `null`: nowhere. A preset decides it, or browser-wide capture bypasses the
+ *   browser's own queue and the choice does nothing.
+ */
+export type FallBehindPlacement = 'format' | 'advanced' | null;
+
 /** Which audio controls do something for the cast the settings produce. */
 export interface AudioControls {
   /** Smoothing: any PCM cast, including one browser-wide capture forces to PCM. */
@@ -42,6 +56,8 @@ export interface AudioControls {
   frameSize: boolean;
   /** Bit depth: Bespoke with a codec that offers more than one depth. */
   bitDepth: boolean;
+  /** The fall-behind choice: the one place it is edited, or null for none. */
+  fallBehind: FallBehindPlacement;
 }
 
 /** The outcome of resolving stored audio settings. */
@@ -59,6 +75,21 @@ export interface ResolvedAudio {
   captureRefused: boolean;
   /** The controls that apply to this cast. */
   controls: AudioControls;
+}
+
+/**
+ * Says where the fall-behind choice is edited for the stored settings. Only
+ * Bespoke edits it: a preset sets its own (`presets.ts`). An encoded codec
+ * keeps it among the format choices, which stay on the page under browser-wide
+ * capture for when it is turned off. PCM has it under Advanced, and only for a
+ * tab cast, since browser-wide capture never runs the browser's queue.
+ * @param settings - The stored audio settings and capture mode
+ * @returns The single place the control belongs, or null
+ */
+function fallBehindPlacement(settings: AudioResolverSettings): FallBehindPlacement {
+  if (settings.audioMode !== 'custom') return null;
+  if (CODEC_METADATA[settings.customAudioSettings.codec].webCodecsId !== null) return 'format';
+  return settings.captureMode === 'browser' ? null : 'advanced';
 }
 
 /**
@@ -117,6 +148,7 @@ export function resolveAudio(
       bitDepth:
         settings.audioMode === 'custom' &&
         getSupportedBitDepths(settings.customAudioSettings.codec).length > 1,
+      fallBehind: fallBehindPlacement(settings),
     },
   };
 }

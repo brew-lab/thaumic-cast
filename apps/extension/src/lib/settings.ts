@@ -157,11 +157,19 @@ export const CustomAudioSettingsSchema = z.object({
 export type CustomAudioSettings = z.infer<typeof CustomAudioSettingsSchema>;
 
 /**
- * Version of the stored audio settings layout. Version 2 moved smoothing and
- * frame size out of the custom settings into standalone PCM settings that
- * apply in every mode (see {@link migrateAudioSettingsV2}).
+ * Version of the stored audio settings layout.
+ *
+ * - Version 2 moved smoothing and frame size out of the custom settings into
+ *   standalone PCM settings that apply in every mode (see
+ *   {@link migrateAudioSettingsV2}).
+ * - Version 3 resets a fall-behind choice of Realtime that a custom PCM
+ *   setting carried over from another codec (see
+ *   {@link migrateAudioSettingsV3}).
  */
-export const AUDIO_SETTINGS_VERSION = 2;
+export const AUDIO_SETTINGS_VERSION = 3;
+
+/** The layout version {@link migrateAudioSettingsV2} produces. */
+const AUDIO_SETTINGS_V2 = 2;
 
 /**
  * Records a smoothing value the version 2 migration changed, so the options
@@ -312,7 +320,7 @@ function asRecord(value: unknown): Record<string, unknown> | null {
  */
 export function migrateAudioSettingsV2(data: Record<string, unknown>): Record<string, unknown> {
   const version = data.audioSettingsVersion;
-  if (typeof version === 'number' && version >= AUDIO_SETTINGS_VERSION) return data;
+  if (typeof version === 'number' && version >= AUDIO_SETTINGS_V2) return data;
 
   const parsedMode = AudioModeSchema.safeParse(data.audioMode);
   const mode: AudioMode = parsedMode.success
@@ -350,9 +358,37 @@ export function migrateAudioSettingsV2(data: Record<string, unknown>): Record<st
     ...data,
     pcmSmoothingMs: to,
     pcmFrameDurationMs: frameDurationMs,
-    audioSettingsVersion: AUDIO_SETTINGS_VERSION,
+    audioSettingsVersion: AUDIO_SETTINGS_V2,
     smoothingMigrationNotice: notice,
   };
+}
+
+/**
+ * Moves stored settings from version 2 to version 3, which shows the
+ * fall-behind choice (`latencyMode`) for a custom PCM setting.
+ *
+ * Before version 3 the choice was offered only for AAC and FLAC, yet a custom
+ * PCM setting kept whatever was last chosen for one of them and the cast
+ * obeyed it. A stored Realtime on custom PCM was therefore never chosen for
+ * PCM, so it goes back to Quality, the default. From version 3 on the control
+ * is on the page, a Realtime stored for PCM is the user's choice, and this
+ * leaves it alone. Nothing else is changed.
+ *
+ * @param data - Raw stored settings on version 2 or later (run
+ *   {@link migrateAudioSettingsV2} first); returned untouched when already on
+ *   version 3
+ * @returns The settings in the version 3 layout (still raw, not validated)
+ */
+export function migrateAudioSettingsV3(data: Record<string, unknown>): Record<string, unknown> {
+  const version = data.audioSettingsVersion;
+  if (typeof version === 'number' && version >= AUDIO_SETTINGS_VERSION) return data;
+
+  const migrated = { ...data, audioSettingsVersion: AUDIO_SETTINGS_VERSION };
+  const custom = asRecord(data.customAudioSettings);
+  if (custom?.codec !== 'pcm' || custom.latencyMode !== 'realtime') return migrated;
+
+  log.info('Stored fall-behind choice for PCM was carried over from another codec: now quality');
+  return { ...migrated, customAudioSettings: { ...custom, latencyMode: 'quality' } };
 }
 
 /**
@@ -519,7 +555,7 @@ function parseExtensionSettingsLeniently(data: Record<string, unknown>): Extensi
   const dropped: string[] = [];
   const settings = parseFieldsLeniently(
     ExtensionSettingsSchema,
-    replaceRetiredCodec(migrateAudioSettingsV2(data)),
+    replaceRetiredCodec(migrateAudioSettingsV3(migrateAudioSettingsV2(data))),
     DEFAULT_EXTENSION_SETTINGS,
     dropped,
   );
@@ -601,9 +637,10 @@ export async function loadExtensionSettings(): Promise<ExtensionSettings> {
       return { ...DEFAULT_EXTENSION_SETTINGS };
     }
 
-    // Persist a layout migration or a replaced codec straight away, so it (and
-    // its log line) runs once and storage stops holding a value the strict
-    // schema rejects.
+    // Persist a layout migration (any version below the current one, so the
+    // version 3 reset too) or a replaced codec straight away, so it (and its
+    // log line) runs once and storage stops holding a value the strict schema
+    // rejects.
     const storedVersion = asRecord(data)?.audioSettingsVersion;
     if (
       typeof storedVersion !== 'number' ||
