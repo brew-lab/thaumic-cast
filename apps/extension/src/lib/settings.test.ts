@@ -7,6 +7,7 @@ import {
   getDefaultExtensionSettings,
   loadExtensionSettings,
   migrateAudioSettingsV2,
+  migrateAudioSettingsV3,
   nearestBitrateForCodec,
   parseStoredExtensionSettings,
   saveExtensionSettings,
@@ -452,6 +453,55 @@ describe('migrateAudioSettingsV2', () => {
   });
 });
 
+describe('migrateAudioSettingsV3', () => {
+  /** A version 2 profile with the given custom codec and fall-behind choice. */
+  function customV2(codec: string, latencyMode: string, audioSettingsVersion = 2) {
+    return {
+      audioMode: 'custom',
+      audioSettingsVersion,
+      pcmSmoothingMs: 300,
+      customAudioSettings: customAudio({ codec, latencyMode, channels: 1 }),
+    };
+  }
+
+  it('should reset Realtime on custom PCM, which nobody could have chosen', () => {
+    const before = customV2('pcm', 'realtime');
+
+    expect(migrateAudioSettingsV3(before)).toEqual({
+      ...before,
+      audioSettingsVersion: 3,
+      customAudioSettings: { ...before.customAudioSettings, latencyMode: 'quality' },
+    });
+  });
+
+  it('should leave Realtime on AAC and FLAC alone', () => {
+    for (const codec of ['aac-lc', 'flac']) {
+      const before = customV2(codec, 'realtime');
+
+      expect(migrateAudioSettingsV3(before)).toEqual({ ...before, audioSettingsVersion: 3 });
+    }
+  });
+
+  it('should leave Quality on custom PCM alone', () => {
+    const before = customV2('pcm', 'quality');
+
+    expect(migrateAudioSettingsV3(before)).toEqual({ ...before, audioSettingsVersion: 3 });
+  });
+
+  it('should keep Realtime on custom PCM once on version 3, where it is a choice', () => {
+    const current = customV2('pcm', 'realtime', 3);
+
+    expect(migrateAudioSettingsV3(current)).toBe(current);
+  });
+
+  it('should only stamp the version when there are no custom settings', () => {
+    expect(migrateAudioSettingsV3({ audioMode: 'high', audioSettingsVersion: 2 })).toEqual({
+      audioMode: 'high',
+      audioSettingsVersion: 3,
+    });
+  });
+});
+
 describe('snapToSmoothingOption', () => {
   it('should take the nearest step, going up on ties and clamping at both ends', () => {
     expect(snapToSmoothingOption(50)).toBe(100);
@@ -506,5 +556,118 @@ describe('loadExtensionSettings audio migration', () => {
 
     expect(settings.pcmSmoothingMs).toBe(200);
     expect(settings.smoothingMigrationNotice).toBeNull();
+  });
+});
+
+describe('loadExtensionSettings fall-behind migration', () => {
+  /** Stores a version 2 custom profile with the given codec and fall-behind choice. */
+  function storeV2(custom: Record<string, unknown>, audioSettingsVersion = 2): void {
+    storeSettings({
+      ...getDefaultExtensionSettings(),
+      audioMode: 'custom',
+      theme: 'dark',
+      pcmSmoothingMs: 300,
+      audioSettingsVersion,
+      customAudioSettings: customAudio(custom),
+    });
+  }
+
+  it('should reset Realtime on custom PCM and store it with the new version', async () => {
+    storeV2({ codec: 'pcm', bitrate: 0, latencyMode: 'realtime', channels: 1 });
+
+    const settings = await loadExtensionSettings();
+
+    expect(settings.customAudioSettings).toEqual({
+      ...getDefaultExtensionSettings().customAudioSettings,
+      channels: 1,
+      latencyMode: 'quality',
+    });
+    expect(settings).toMatchObject({ audioMode: 'custom', theme: 'dark', pcmSmoothingMs: 300 });
+    expect(settings.audioSettingsVersion).toBe(3);
+    expect(settings.smoothingMigrationNotice).toBeNull();
+    expect(chromeStorageData.local[SETTINGS_KEY]).toEqual(settings);
+  });
+
+  it('should leave Realtime on AAC alone and still store the new version', async () => {
+    storeV2({ codec: 'aac-lc', bitrate: 192, latencyMode: 'realtime' });
+
+    const settings = await loadExtensionSettings();
+
+    expect(settings.customAudioSettings).toMatchObject({
+      codec: 'aac-lc',
+      latencyMode: 'realtime',
+    });
+    expect(settings.audioSettingsVersion).toBe(3);
+    expect(chromeStorageData.local[SETTINGS_KEY]).toEqual(settings);
+  });
+
+  it('should leave Quality on custom PCM alone', async () => {
+    storeV2({ codec: 'pcm', bitrate: 0, latencyMode: 'quality' });
+
+    const settings = await loadExtensionSettings();
+
+    expect(settings.customAudioSettings.latencyMode).toBe('quality');
+    expect(settings.audioSettingsVersion).toBe(3);
+  });
+
+  it('should keep Realtime on custom PCM stored on version 3 and not rewrite storage', async () => {
+    storeV2({ codec: 'pcm', bitrate: 0, latencyMode: 'realtime' }, 3);
+    const stored = chromeStorageData.local[SETTINGS_KEY];
+
+    const settings = await loadExtensionSettings();
+
+    expect(settings.customAudioSettings.latencyMode).toBe('realtime');
+    expect(chromeStorageData.local[SETTINGS_KEY]).toBe(stored);
+  });
+
+  it('should run both migrations on a version 1 profile and keep the smoothing notice', async () => {
+    storeSettings({
+      audioMode: 'custom',
+      customAudioSettings: customAudio({
+        codec: 'pcm',
+        bitrate: 0,
+        latencyMode: 'realtime',
+        jitterBufferMs: 1000,
+        frameDurationMs: 20,
+      }),
+    });
+
+    const settings = await loadExtensionSettings();
+
+    expect(settings.pcmSmoothingMs).toBe(500);
+    expect(settings.pcmFrameDurationMs).toBe(20);
+    expect(settings.smoothingMigrationNotice).toEqual({ from: 1000, to: 500 });
+    expect(settings.customAudioSettings.latencyMode).toBe('quality');
+    expect(settings.audioSettingsVersion).toBe(3);
+    expect(chromeStorageData.local[SETTINGS_KEY]).toEqual(settings);
+  });
+
+  it('should not reset a Realtime chosen for PCM after the migration has run', async () => {
+    storeV2({ codec: 'pcm', bitrate: 0, latencyMode: 'realtime' });
+    expect((await loadExtensionSettings()).customAudioSettings.latencyMode).toBe('quality');
+
+    await saveExtensionSettings({
+      customAudioSettings: {
+        ...getDefaultExtensionSettings().customAudioSettings,
+        latencyMode: 'realtime',
+      },
+    });
+
+    expect((await loadExtensionSettings()).customAudioSettings.latencyMode).toBe('realtime');
+    expect((await loadExtensionSettings()).customAudioSettings.latencyMode).toBe('realtime');
+  });
+
+  it('should move a retired codec with Realtime to AAC-LC and leave Realtime alone', async () => {
+    storeV2({ codec: 'he-aac', bitrate: 96, latencyMode: 'realtime' });
+
+    const first = await loadExtensionSettings();
+
+    expect(first.customAudioSettings).toMatchObject({
+      codec: 'aac-lc',
+      bitrate: 96,
+      latencyMode: 'realtime',
+    });
+    expect(await loadExtensionSettings()).toEqual(first);
+    expect(chromeStorageData.local[SETTINGS_KEY]).toEqual(first);
   });
 });

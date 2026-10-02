@@ -4,7 +4,7 @@ import { EncoderConfigSchema } from '@thaumic-cast/protocol';
 
 import { getDefaultExtensionSettings, type AudioMode } from './settings';
 import { resolveAudioMode } from './presets';
-import { resolveAudio, type AudioResolverSettings } from './audio-resolver';
+import { resolveAudio, type AudioControls, type AudioResolverSettings } from './audio-resolver';
 
 const AAC_BITRATES = [96, 128, 160, 192, 256] as const;
 
@@ -136,18 +136,16 @@ describe('resolveAudio for a tab cast', () => {
         smoothing: codec === 'pcm',
         frameSize: codec === 'pcm',
         bitDepth: false,
+        fallBehind: null,
       });
     }
   });
 
   it('should show the Bespoke controls that the chosen codec has', () => {
-    const cases: [
-      keyof typeof CUSTOM,
-      { smoothing: boolean; frameSize: boolean; bitDepth: boolean },
-    ][] = [
-      ['pcm', { smoothing: true, frameSize: true, bitDepth: false }],
-      ['aac', { smoothing: false, frameSize: false, bitDepth: false }],
-      ['flac', { smoothing: false, frameSize: false, bitDepth: true }],
+    const cases: [keyof typeof CUSTOM, AudioControls][] = [
+      ['pcm', { smoothing: true, frameSize: true, bitDepth: false, fallBehind: 'advanced' }],
+      ['aac', { smoothing: false, frameSize: false, bitDepth: false, fallBehind: 'format' }],
+      ['flac', { smoothing: false, frameSize: false, bitDepth: true, fallBehind: 'format' }],
     ];
 
     for (const [codec, expected] of cases) {
@@ -219,7 +217,64 @@ describe('resolveAudio under browser-wide capture', () => {
     const resolved = resolveAudio(settings, SUPPORT.aac);
 
     expect(resolved.tabConfig.codec).toBe('aac-lc');
-    expect(resolved.controls).toEqual({ smoothing: true, frameSize: false, bitDepth: false });
+    expect(resolved.controls).toEqual({
+      smoothing: true,
+      frameSize: false,
+      bitDepth: false,
+      fallBehind: null,
+    });
+  });
+
+  it('should leave the fall-behind choice to the preset, whatever codec it resolves to', () => {
+    for (const support of Object.values(SUPPORT)) {
+      for (const audioMode of ['high', 'mid', 'low'] as const) {
+        for (const captureMode of ['tab', 'browser'] as const) {
+          const settings = stored({
+            audioMode,
+            captureMode,
+            customAudioSettings: { ...CUSTOM.pcm, latencyMode: 'realtime' },
+          });
+          const resolved = resolveAudio(settings, support);
+
+          expect(resolved.controls.fallBehind).toBeNull();
+          const untouched = resolveAudio(stored({ audioMode, captureMode }), support);
+          expect(resolved.config.latencyMode).toBe(untouched.config.latencyMode);
+        }
+      }
+    }
+  });
+
+  it('should hide the fall-behind choice for Bespoke PCM under browser-wide capture', () => {
+    const settings = stored({
+      audioMode: 'custom',
+      customAudioSettings: CUSTOM.pcm,
+      captureMode: 'browser',
+    });
+
+    expect(resolveAudio(settings, SUPPORT.flac).controls.fallBehind).toBeNull();
+  });
+
+  it('should keep the fall-behind choice with the Bespoke format under browser-wide capture', () => {
+    for (const codec of ['aac', 'flac'] as const) {
+      const settings = stored({
+        audioMode: 'custom',
+        customAudioSettings: CUSTOM[codec],
+        captureMode: 'browser',
+      });
+
+      expect(resolveAudio(settings, SUPPORT.flac).controls.fallBehind).toBe('format');
+    }
+  });
+
+  it('should send the stored fall-behind choice for Bespoke PCM', () => {
+    for (const latencyMode of ['quality', 'realtime'] as const) {
+      const settings = stored({
+        audioMode: 'custom',
+        customAudioSettings: { ...CUSTOM.pcm, latencyMode },
+      });
+
+      expect(resolveAudio(settings, SUPPORT.pcm).config.latencyMode).toBe(latencyMode);
+    }
   });
 
   it('should still offer bit depth for Bespoke FLAC, which a tab cast would use', () => {
