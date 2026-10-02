@@ -12,7 +12,7 @@ HTTP/WebSocket API as the desktop app, so the extension can cast through it from
 - Any headless Linux box, running as a system service
 
 Left to itself, the extension looks for a companion on its own machine and nowhere else. When the server is somewhere
-else, the extension has to be told: **Settings → Server → Specify manually → enter `http://<server-ip>:49400` →
+else, the extension has to be told: **Settings → Companion → Enter the address → enter `http://<server-ip>:49400` →
 Connect**, then say yes when Chrome asks whether the extension may use that address.
 
 ## Network requirements
@@ -304,7 +304,7 @@ exact command is printed at the end).
    curl http://<container-ip>:49400/api/speakers # should list your Sonos devices
    ```
 
-5. **Point the extension at it.** Settings → Server → Specify manually → `http://<container-ip>:49400` → Connect.
+5. **Point the extension at it.** Settings → Companion → Enter the address → `http://<container-ip>:49400` → Connect.
    Chrome asks once whether the extension may "read and change your data" at that address. That is its standard
    wording for access to any site, and here it covers that one host and no other; say yes.
 

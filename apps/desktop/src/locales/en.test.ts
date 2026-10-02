@@ -29,12 +29,6 @@ function transportStates(): string[] {
   return [...display[0].matchAll(/Self::\w+ => write!\(f, "([^"]+)"\)/g)].map((m) => m[1]!);
 }
 
-/**
- * Entries nothing uses that are left alone on purpose: they belong to the
- * settings pages, whose copy is being redesigned separately.
- */
-const KNOWN_UNUSED = ['settings.manual_speakers_empty'];
-
 describe('desktop en.json', () => {
   it('should have a label for every transport state the core sends', () => {
     const states = transportStates();
@@ -57,9 +51,7 @@ describe('desktop en.json', () => {
   });
 
   it('should have no entry that nothing looks up', () => {
-    expect(entriesWithoutReference(strings, scanSourceKeys(SRC)).sort()).toEqual(
-      [...KNOWN_UNUSED].sort(),
-    );
+    expect(entriesWithoutReference(strings, scanSourceKeys(SRC))).toEqual([]);
   });
 
   it('should have both forms of every plural', () => {
