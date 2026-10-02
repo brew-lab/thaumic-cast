@@ -138,10 +138,7 @@ impl Rig {
             if self.drift_on {
                 let control = Arc::new(crate::stream::RateControl::new());
                 control.mark_engaged();
-                tap = tap.with_drift(
-                    crate::services::speaker_monitor::DriftMode::On,
-                    Some(control),
-                );
+                tap = tap.with_drift(crate::model::DriftMode::On, Some(control));
             }
             let tap = Arc::new(tap);
             tap.set_head_start(HeadStart::new(self.head_start_ms, self.head_start_ms));

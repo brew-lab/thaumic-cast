@@ -30,7 +30,7 @@ use super::playout::MappedPosition;
 use super::rate_adapter::RateControl;
 use super::{AudioCodec, AudioFormat};
 use crate::events::LinkQuality;
-use crate::services::speaker_monitor::control::DriftMode;
+use crate::model::DriftMode;
 
 /// Length of the WAV header every PCM connection starts with.
 pub const WAV_HEADER_BYTES: u32 = 44;
@@ -80,7 +80,7 @@ pub struct ConnectionTap {
     sample_rate: u32,
     /// The clock drift correction mode the connection was made under, read
     /// once per connection like `monitor` (see
-    /// [`crate::services::speaker_monitor::control::drift_compensation_mode`]).
+    /// [`crate::model::drift_compensation_mode`]).
     drift_mode: DriftMode,
     /// Where the monitor leaves the connection's rate command, when drift
     /// correction is on for a PCM connection whose format can be resampled.
@@ -528,7 +528,7 @@ pub(crate) mod test_support {
             speaker_ip,
             monitor,
             codec,
-            crate::services::speaker_monitor::DriftMode::Off,
+            crate::model::DriftMode::Off,
             None,
         )
     }
@@ -540,7 +540,7 @@ pub(crate) mod test_support {
         speaker_ip: &str,
         monitor: bool,
         codec: AudioCodec,
-        mode: crate::services::speaker_monitor::DriftMode,
+        mode: crate::model::DriftMode,
         rate_control: Option<Arc<RateControl>>,
     ) -> Arc<ConnectionTap> {
         started_tap_with_guard(
@@ -567,7 +567,7 @@ pub(crate) mod test_support {
             speaker_ip,
             true,
             AudioCodec::Pcm,
-            crate::services::speaker_monitor::DriftMode::Off,
+            crate::model::DriftMode::Off,
             None,
             Some(crate::stream::DeclaredEnd::new(declared_end, byte_rate)),
         )
@@ -580,7 +580,7 @@ pub(crate) mod test_support {
         speaker_ip: &str,
         monitor: bool,
         codec: AudioCodec,
-        mode: crate::services::speaker_monitor::DriftMode,
+        mode: crate::model::DriftMode,
         rate_control: Option<Arc<RateControl>>,
         declared_end: Option<crate::stream::DeclaredEnd>,
     ) -> Arc<ConnectionTap> {

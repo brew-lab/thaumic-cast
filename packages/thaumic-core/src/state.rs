@@ -13,7 +13,7 @@ use parking_lot::{Mutex, RwLock};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
-use crate::services::speaker_monitor::control::DriftMode;
+use crate::model::DriftMode;
 use crate::sonos::types::{TransportState, ZoneGroup};
 
 /// Configuration for audio streaming behavior.
