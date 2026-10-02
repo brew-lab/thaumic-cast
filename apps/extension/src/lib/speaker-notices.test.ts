@@ -2,6 +2,7 @@ import { describe, expect, it } from 'bun:test';
 import type { CompanionAudio, SpeakerNotice } from '@thaumic-cast/protocol';
 
 import en from '../locales/en.json';
+import { hasEntry } from '../test-support/locale-keys';
 import {
   HEAD_START_NOTICE_MEMORY_MS,
   dismissNotice,
@@ -161,7 +162,7 @@ describe('speakerNoticeLines', () => {
     it('should keep the reason, the fix and the restart advice', () => {
       expect(speakerNoticeLines(low, ctx({ companionAudio: observing }))).toEqual([
         { key: 'speaker_notice_running_low', params: { name: 'Kitchen', left: 149 } },
-        { key: 'speaker_notice_running_low_drift' },
+        { key: 'speaker_notice_running_low_drift', params: { name: 'Kitchen' } },
         { key: 'speaker_notice_drift_turn_on_desktop' },
         { key: 'speaker_notice_restart_refills' },
       ]);
@@ -230,7 +231,7 @@ describe('speakerNoticeLines', () => {
     for (const notice of notices) {
       for (const context of contexts) {
         for (const line of speakerNoticeLines(notice, context)) {
-          expect(strings[line.key]).toBeString();
+          expect(hasEntry(strings, line.key)).toBe(true);
         }
       }
     }
@@ -240,7 +241,8 @@ describe('speakerNoticeLines', () => {
           { gapsLastMinute: 2, worstGapMs: 280, suggestedSmoothingMs },
           appType,
         );
-        expect(strings[line.key]).toBeString();
+        // The count picks a plural form, so the entry is `key` or `key_other`.
+        expect(hasEntry(strings, line.key)).toBe(true);
       }
     }
     expect(strings.speaker_notice_dismiss).toBeString();

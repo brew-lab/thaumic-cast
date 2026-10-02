@@ -254,6 +254,8 @@ export const ExtensionResponseSchema = z.object({
   success: z.boolean(),
   streamId: z.string().optional(),
   error: z.string().optional(),
+  /** Values for the placeholders in `error`'s text, when `error` is an i18n key. */
+  errorParams: z.record(z.string(), z.union([z.string(), z.number()])).optional(),
   isActive: z.boolean().optional(),
 });
 export type ExtensionResponse = z.infer<typeof ExtensionResponseSchema>;

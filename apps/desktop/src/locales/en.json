@@ -5,7 +5,10 @@
   "nav.server": "Server",
   "nav.settings": "Settings",
 
-  "speakers.summary": "{{speakers}} speakers, {{streams}} streaming",
+  "speakers.summary": "{{speakers}}, {{streams}}",
+  "speakers.summary_speakers_one": "{{count}} speaker",
+  "speakers.summary_speakers_other": "{{count}} speakers",
+  "speakers.summary_streaming": "{{count}} streaming",
   "speakers.none": "No Sonos speakers have made themselves known",
   "speakers.scan_hint": "Ensure you're on the same network as your speakers, then give it a go.",
   "speakers.manual_add_hint": "You can also <0>add a speaker manually</0> if discovery isn't cooperating.",
@@ -15,7 +18,8 @@
   "speakers.stopping": "Dispelling...",
 
   "device.coordinator": "Coordinator",
-  "device.others": "+{{count}} others",
+  "device.others_one": "+{{count}} other",
+  "device.others_other": "+{{count}} others",
   "device.streaming": "Streaming",
 
   "transport.playing": "Playing",
@@ -136,7 +140,8 @@
 
   "onboarding.speakers.title": "Discovering Speakers",
   "onboarding.speakers.subtitle": "Let's find your Sonos devices",
-  "onboarding.speakers.found": "Found {{count}} speaker(s). They seem receptive.",
+  "onboarding.speakers.found_one": "Found {{count}} speaker. They seem receptive.",
+  "onboarding.speakers.found_other": "Found {{count}} speakers. They seem receptive.",
   "onboarding.speakers.none_found": "No speakers detected",
   "onboarding.speakers.none_found_hint": "Speakers can be shy. Check that they're powered on and connected to the same network as this computer.",
   "onboarding.speakers.scan_button": "Try Again",

@@ -29,6 +29,7 @@ import { useCaptureHealth } from './hooks/useCaptureHealth';
 import { useSpeakerNotices } from './hooks/useSpeakerNotices';
 import { useIngestGaps } from './hooks/useIngestGaps';
 import type { NoticeLine } from '../lib/speaker-notices';
+import { retryLabelKey } from '../lib/popup-copy';
 import { companionTypeLabelKey, versionMismatchActionKey } from '../lib/versionCheck';
 import { Onboarding } from './components/Onboarding';
 
@@ -122,8 +123,9 @@ function MainPopup(): JSX.Element {
   );
 
   // Auto-stop notification hook
-  const { notification: autoStopNotification, message: autoStopMessage } =
-    useAutoStopNotification();
+  const { notification: autoStopNotification, message: autoStopMessage } = useAutoStopNotification(
+    (ip) => speakerGroups.getGroupName(ip) || ip,
+  );
 
   // Companion version mismatch warning
   const { companion, hasMismatch, showMismatchWarning, dismissMismatchWarning } =
@@ -213,7 +215,9 @@ function MainPopup(): JSX.Element {
       const response: ExtensionResponse = await chrome.runtime.sendMessage(msg);
 
       if (!response.success) {
-        const msg = response.error ? t(response.error) : t('error_cast_failed');
+        const msg = response.error
+          ? t(response.error, response.errorParams ?? {})
+          : t('error_cast_failed');
         setError(msg);
         throw new Error(msg);
       }
@@ -351,7 +355,7 @@ function MainPopup(): JSX.Element {
         <Alert
           variant="error"
           className={styles.alert}
-          action={connectionCanRetry ? t('retry_connection') : undefined}
+          action={connectionCanRetry ? t(retryLabelKey(connectionError)) : undefined}
           onAction={connectionCanRetry ? handleRetryConnection : undefined}
         >
           {t(connectionError, { defaultValue: connectionError })}

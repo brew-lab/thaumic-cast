@@ -2,6 +2,7 @@ import { describe, expect, it } from 'bun:test';
 
 import {
   CastAutoStoppedMessageSchema,
+  ExtensionResponseSchema,
   NetworkEventMessageSchema,
   RawMediaStateSchema,
   SpeakerIpSchema,
@@ -322,5 +323,32 @@ describe('WsConnectedMessageSchema', () => {
       null,
     );
     expect(WsConnectedMessageSchema.parse(base).companionAudio).toBeUndefined();
+  });
+});
+
+describe('ExtensionResponseSchema', () => {
+  it('should carry the values an error key needs beside the key', () => {
+    const parsed = ExtensionResponseSchema.parse({
+      success: false,
+      error: 'error_max_sessions',
+      errorParams: { max: 10, where: 'offscreen' },
+    });
+    expect(parsed.errorParams).toEqual({ max: 10, where: 'offscreen' });
+  });
+
+  it('should accept a response with no values, as every older sender gives', () => {
+    expect(ExtensionResponseSchema.parse({ success: false, error: 'error_cast_failed' })).toEqual({
+      success: false,
+      error: 'error_cast_failed',
+    });
+  });
+
+  it('should reject values that are neither text nor a number', () => {
+    const result = ExtensionResponseSchema.safeParse({
+      success: false,
+      error: 'error_max_sessions',
+      errorParams: { max: { nested: true } },
+    });
+    expect(result.success).toBe(false);
   });
 });

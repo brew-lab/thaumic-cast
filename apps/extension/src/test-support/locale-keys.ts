@@ -122,3 +122,18 @@ export function networkHealthReasons(repoRoot: string): string[] {
     ),
   ];
 }
+
+/**
+ * Lists the plural entries whose other form is missing. English needs both
+ * `_one` and `_other`; with only one of them, the other count shows the raw key.
+ * @param strings - The locale file
+ * @returns The keys that lack their counterpart
+ */
+export function unpairedPlurals(strings: Record<string, string>): string[] {
+  return Object.keys(strings).filter((key) => {
+    const match = PLURAL_SUFFIX.exec(key);
+    if (!match) return false;
+    const base = key.slice(0, match.index);
+    return !(`${base}_${match[1] === 'one' ? 'other' : 'one'}` in strings);
+  });
+}

@@ -40,6 +40,7 @@ import {
 } from './control-connection';
 import { StreamSession, activeSessions, MAX_OFFSCREEN_SESSIONS } from './stream-session';
 import { noop } from '../lib/noop';
+import { errorParamsOf } from '../lib/keyed-error';
 
 const log = createLogger('Offscreen');
 
@@ -228,7 +229,11 @@ export function setupMessageHandlers(): void {
 
         // Enforce global offscreen limit
         if (activeSessions.size >= MAX_OFFSCREEN_SESSIONS) {
-          sendResponse({ success: false, error: 'error_max_sessions' });
+          sendResponse({
+            success: false,
+            error: 'error_max_sessions',
+            errorParams: { max: MAX_OFFSCREEN_SESSIONS },
+          });
           return true;
         }
 
@@ -262,6 +267,7 @@ export function setupMessageHandlers(): void {
             sendResponse({
               success: false,
               error: err instanceof Error ? err.message : String(err),
+              errorParams: errorParamsOf(err),
             });
           });
       } catch (err) {
@@ -298,7 +304,11 @@ export function setupMessageHandlers(): void {
 
         // Enforce global offscreen limit
         if (activeSessions.size >= MAX_OFFSCREEN_SESSIONS) {
-          sendResponse({ success: false, error: 'error_max_sessions' });
+          sendResponse({
+            success: false,
+            error: 'error_max_sessions',
+            errorParams: { max: MAX_OFFSCREEN_SESSIONS },
+          });
           return true;
         }
 
@@ -350,7 +360,7 @@ export function setupMessageHandlers(): void {
               sendResponse({ success: true, streamId: session.streamId });
             } catch (err) {
               const message = err instanceof Error ? err.message : String(err);
-              sendResponse({ success: false, error: message });
+              sendResponse({ success: false, error: message, errorParams: errorParamsOf(err) });
             }
           })
           .catch((err) => {
