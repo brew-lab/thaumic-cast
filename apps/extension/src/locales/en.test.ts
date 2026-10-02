@@ -49,12 +49,6 @@ const SPEAKER_AVAILABILITIES: Record<SpeakerAvailability, true> = {
   remote_cast: true,
 };
 
-/**
- * Entries nothing uses that are left alone on purpose: they belong to the
- * settings pages, whose copy is being redesigned separately.
- */
-const KNOWN_UNUSED = ['bitrate_not_applicable'];
-
 describe('extension en.json', () => {
   it('should have a message for every error key the background and offscreen send', () => {
     const sent = FILES_THAT_SEND_ERROR_KEYS.flatMap((file) => errorKeysIn(join(SRC, file)));
@@ -109,9 +103,7 @@ describe('extension en.json', () => {
   });
 
   it('should have no entry that nothing looks up', () => {
-    expect(entriesWithoutReference(strings, scanSourceKeys(SRC)).sort()).toEqual(
-      [...KNOWN_UNUSED].sort(),
-    );
+    expect(entriesWithoutReference(strings, scanSourceKeys(SRC))).toEqual([]);
   });
 
   it('should have both forms of every plural', () => {

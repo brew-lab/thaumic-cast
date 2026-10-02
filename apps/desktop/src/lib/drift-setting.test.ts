@@ -40,12 +40,12 @@ describe('driftToggleState', () => {
     );
   });
 
-  it('should show what the environment insisted on, by name', () => {
+  it('should show what the environment variable set, by name', () => {
     const state = driftToggleState({ mode: 'on', envOverride: 'observe' }, true, translate);
     expect(state).toEqual({
       checked: false,
       disabled: true,
-      hint: { key: 'settings.drift_env', params: { label: 'Watch only' } },
+      hint: { key: 'settings.drift_env', params: { label: 'watch only' } },
     });
     const forced = driftToggleState({ mode: 'observe', envOverride: 'on' }, true, translate);
     expect(forced.checked).toBe(true);
