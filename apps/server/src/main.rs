@@ -20,48 +20,54 @@ use tokio::signal;
 
 use crate::config::ServerConfig;
 
-/// Thaumic Server - Headless browser-to-Sonos audio streaming server.
+/// Thaumic Cast Server: browser audio to Sonos speakers, for a machine with no screen.
 #[derive(Parser, Debug)]
 #[command(name = "thaumic-server")]
 #[command(author, version, about, long_about = None)]
 struct Args {
-    /// Path to the configuration file (YAML).
+    /// Configuration file, in YAML. Without one the defaults are used.
     #[arg(short, long, value_name = "FILE")]
     config: Option<PathBuf>,
 
-    /// Log level (error, warn, info, debug, trace).
+    /// How much to say in the log: error, warn, info, debug or trace.
     #[arg(short, long, default_value = "info", env = "THAUMIC_LOG_LEVEL")]
     log_level: log::LevelFilter,
 
-    /// Bind port (overrides config file).
+    /// Port to listen on (overrides bind_port). Extensions and speakers both come
+    /// to it. 0 takes the first free port from 49400 to 49410.
     #[arg(short = 'p', long, env = "THAUMIC_BIND_PORT")]
     port: Option<u16>,
 
-    /// Advertise IP address (overrides config file).
+    /// Address the speakers fetch audio from. It must be one they can reach.
+    /// Overrides advertise_ip. Left unset, it is worked out from the network.
     #[arg(short = 'a', long, env = "THAUMIC_ADVERTISE_IP")]
     advertise_ip: Option<std::net::IpAddr>,
 
-    /// Data directory for persistent state (manual speakers, etc.).
+    /// Directory for what must outlast a restart: speakers added by IP address,
+    /// and artwork.jpg if you keep one there (overrides data_dir). Without it,
+    /// speakers cannot be added by IP address.
     #[arg(short = 'd', long, env = "THAUMIC_DATA_DIR")]
     data_dir: Option<PathBuf>,
 
-    /// Seconds between topology refresh checks (overrides config file).
+    /// Seconds between checks on which speakers exist and how they are grouped
+    /// (overrides config file). 30 by default.
     #[arg(long, value_name = "SECS", env = "THAUMIC_TOPOLOGY_REFRESH_INTERVAL")]
     topology_refresh_interval: Option<u64>,
 
-    /// Custom artwork URL shown on Sonos (overrides config file; empty is ignored).
+    /// URL of the picture Sonos shows while a cast plays (overrides config file).
+    /// An empty value is ignored.
     #[arg(long, value_name = "URL", env = "THAUMIC_ARTWORK_URL")]
     artwork_url: Option<String>,
 
-    /// Refuse audio fetches from addresses the stream is not playing on
-    /// (overrides config file). Off by default: unexpected addresses are logged
-    /// and still served, because a wrongly refused fetch is silent dead air.
+    /// Refuse audio fetches from addresses the cast is not playing on (overrides
+    /// config file). Off by default: strangers are logged and served, because a
+    /// wrong refusal is silence and a wrong welcome is only a log line.
     #[arg(long, value_name = "BOOL", env = "THAUMIC_STRICT_STREAM_ACCESS")]
     strict_stream_access: Option<bool>,
 
-    /// Poll each speaker playing a stream for its playback position: on or off
-    /// (overrides config file). On by default; off polls only casts that asked
-    /// for video sync.
+    /// Speaker monitoring, on or off (overrides config file): ask each speaker that
+    /// is playing a cast how far it has got. On by default. off asks only the casts
+    /// that wanted video sync, and clock drift correction goes without.
     #[arg(
         long,
         value_name = "on|off",
@@ -70,9 +76,8 @@ struct Args {
     )]
     speaker_monitor: Option<bool>,
 
-    /// Milliseconds of audio sent to a speaker at once when it starts fetching
-    /// a PCM stream, ahead of real-time pacing, 0-2000 (overrides config file).
-    /// 500 by default; 0 turns it off.
+    /// Speaker head start in ms, 0-2000: audio sent in advance against Wi-Fi stalls
+    /// (overrides config file). 500 by default; 0 is off. PCM casts only.
     #[arg(
         long,
         value_name = "MS",
@@ -81,9 +86,9 @@ struct Args {
     )]
     pcm_connect_burst_ms: Option<u64>,
 
-    /// Clock drift correction for PCM streams: on, observe or off (overrides
-    /// config file). On by default; observe works out and logs what it
-    /// would do, leaving the audio untouched. Needs speaker monitoring.
+    /// Clock drift correction, PCM only: on, observe or off (overrides config file).
+    /// On by default. observe works out the correction, logs it, and does nothing.
+    /// Needs speaker monitoring.
     #[arg(
         long,
         value_name = "on|observe|off",
@@ -115,11 +120,11 @@ async fn main() -> Result<()> {
         .format_timestamp_millis()
         .init();
 
-    log::info!("Thaumic Server v{}", env!("CARGO_PKG_VERSION"));
+    log::info!("Thaumic Cast Server v{}", env!("CARGO_PKG_VERSION"));
 
     // Load configuration
     let mut config =
-        ServerConfig::load(args.config.as_deref()).context("Failed to load configuration")?;
+        ServerConfig::load(args.config.as_deref()).context("Could not load the configuration")?;
 
     // Apply CLI overrides
     if let Some(port) = args.port {
@@ -152,28 +157,30 @@ async fn main() -> Result<()> {
 
     // CLI/env overrides can introduce invalid values (e.g. --port 0), so
     // validate the merged configuration before anything is started.
-    config.validate().context("Invalid configuration")?;
+    config
+        .validate()
+        .context("The configuration cannot be used, and nothing was started")?;
     log::info!(
         "Speaker monitoring: {}",
         if config.speaker_monitor {
             "on"
         } else {
-            "off (video sync only)"
+            "off (casts with video sync are still asked)"
         }
     );
     if config.pcm_connect_burst_ms > 0 {
         log::info!(
-            "PCM connect burst: {}ms (each speaker starts that far ahead of real time)",
+            "Speaker head start: {} ms (pcm_connect_burst_ms; each speaker starts that far ahead)",
             config.pcm_connect_burst_ms
         );
     } else {
-        log::info!("PCM connect burst: off");
+        log::info!("Speaker head start: off (pcm_connect_burst_ms is 0)");
     }
     let speaker_monitor = thaumic_core::services::speaker_monitor_enabled(config.speaker_monitor);
     match config.drift_warning(speaker_monitor) {
         Some(warning) => log::warn!("{warning}"),
         None => log::info!(
-            "Clock drift correction: {} (PCM streams only)",
+            "Clock drift correction: {} (PCM casts only)",
             config.drift_compensation
         ),
     }
@@ -193,9 +200,8 @@ async fn main() -> Result<()> {
         );
         let detector = LocalIpDetector::arc();
         NetworkContext::auto_detect(config.bind_port, detector).context(
-            "Failed to auto-detect local IP address. \
-             Please specify --advertise-ip or set THAUMIC_ADVERTISE_IP to the IP \
-             address that Sonos speakers can reach.",
+            "Could not work out this machine's address. Set --advertise-ip or \
+             THAUMIC_ADVERTISE_IP to one the speakers can reach.",
         )?
     };
 
@@ -203,23 +209,29 @@ async fn main() -> Result<()> {
     let core_config = config.to_core_config();
     let handle = tokio::runtime::Handle::current();
     let services = bootstrap_services_with_network(&core_config, network, handle)
-        .context("Failed to bootstrap services")?;
+        .context("The services did not start")?;
 
-    log::info!("Services bootstrapped successfully");
+    log::info!("Services started");
 
     // Set data directory BEFORE starting background tasks so initial topology
     // refresh includes manual speakers. This must happen before start_background_tasks().
     if let Some(ref data_dir) = config.data_dir {
-        log::info!("Using data directory: {}", data_dir.display());
+        log::info!(
+            "Data directory: {} (speakers added by IP address are kept here)",
+            data_dir.display()
+        );
         services.discovery_service.set_app_data_dir(data_dir);
     } else {
-        log::info!("No data directory configured - manual speakers will not persist");
+        log::info!(
+            "No data_dir set: speakers cannot be added by IP address, there being nowhere \
+             to keep them. Set --data-dir or THAUMIC_DATA_DIR."
+        );
     }
 
     // Start background tasks (topology monitor will load manual speakers if data_dir set)
     services.start_background_tasks();
 
-    log::info!("Background tasks started");
+    log::info!("Asking the network for speakers");
 
     // Build app state for the HTTP server
     let app_state = AppState::new(
@@ -241,7 +253,7 @@ async fn main() -> Result<()> {
     // supervisor such as systemd sees the exit and can restart the unit.
     tokio::select! {
         _ = shutdown_signal() => {
-            log::info!("Shutdown signal received, cleaning up...");
+            log::info!("Asked to stop. Stopping every cast first.");
 
             // Graceful shutdown
             services.shutdown().await;
@@ -249,14 +261,14 @@ async fn main() -> Result<()> {
             // Abort the server task (it will have stopped when the services shut down)
             server_handle.abort();
 
-            log::info!("Shutdown complete");
+            log::info!("Stopped");
             Ok(())
         }
         result = &mut server_handle => {
             let err = match result {
-                Ok(Ok(())) => anyhow!("HTTP server exited unexpectedly"),
-                Ok(Err(e)) => anyhow::Error::new(e).context("HTTP server failed"),
-                Err(e) => anyhow::Error::new(e).context("HTTP server task failed"),
+                Ok(Ok(())) => anyhow!("The HTTP server stopped without being asked to"),
+                Ok(Err(e)) => anyhow::Error::new(e).context("The HTTP server failed"),
+                Err(e) => anyhow::Error::new(e).context("The HTTP server task failed"),
             };
             log::error!("{err:#}");
 

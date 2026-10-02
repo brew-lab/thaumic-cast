@@ -117,9 +117,9 @@ impl ServerConfig {
     pub fn load(path: Option<&Path>) -> Result<Self> {
         let config = if let Some(path) = path {
             let content = std::fs::read_to_string(path)
-                .with_context(|| format!("Failed to read config file: {}", path.display()))?;
+                .with_context(|| format!("Could not read the config file {}", path.display()))?;
             Self::from_yaml(&content)
-                .with_context(|| format!("Invalid config file: {}", path.display()))?
+                .with_context(|| format!("The config file {} cannot be used", path.display()))?
         } else {
             Self::default()
         };
@@ -130,7 +130,7 @@ impl ServerConfig {
 
     /// Parses configuration from a YAML document.
     fn from_yaml(content: &str) -> Result<Self> {
-        serde_yaml::from_str(content).context("Failed to parse YAML")
+        serde_yaml::from_str(content).context("The YAML did not parse")
     }
 
     /// Checks that all values are usable at runtime.
@@ -144,12 +144,12 @@ impl ServerConfig {
     /// `u16` is a bindable port.
     pub fn validate(&self) -> Result<()> {
         if self.topology_refresh_interval == 0 {
-            bail!("topology_refresh_interval must be at least 1 second (got 0)");
+            bail!("topology_refresh_interval is 0, and the least it can be is 1 second");
         }
         let max_burst = thaumic_core::protocol_constants::MAX_PCM_CONNECT_BURST_MS;
         if self.pcm_connect_burst_ms > max_burst {
             bail!(
-                "pcm_connect_burst_ms must be at most {max_burst} (got {})",
+                "pcm_connect_burst_ms is {}, and the longest speaker head start is {max_burst} ms",
                 self.pcm_connect_burst_ms
             );
         }
@@ -176,8 +176,9 @@ impl ServerConfig {
     pub fn drift_warning(&self, speaker_monitor: bool) -> Option<String> {
         (!speaker_monitor && self.drift_compensation != DriftMode::Off).then(|| {
             format!(
-                "drift_compensation is {} but speaker_monitor is off; clock drift correction \
-                 steers by the speaker monitor, so it runs as off",
+                "drift_compensation is {} but speaker monitoring is off. Clock drift correction \
+                 steers by what the monitoring reports and has nothing to steer by, so it runs \
+                 as off. Turn speaker_monitor on, or set drift_compensation to off.",
                 self.drift_compensation
             )
         })
