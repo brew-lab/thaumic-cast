@@ -52,8 +52,8 @@ pub struct BootstrappedServices {
     pub network: NetworkContext,
     /// Manages WebSocket connections.
     pub ws_manager: Arc<WsConnectionManager>,
-    /// Latency monitoring service.
-    pub latency_monitor: Arc<SpeakerMonitor>,
+    /// Speaker monitoring service.
+    pub speaker_monitor: Arc<SpeakerMonitor>,
     /// Dedicated high-priority runtime for HTTP streaming.
     pub streaming_runtime: Arc<StreamingRuntime>,
     /// Shared HTTP client for connection pooling.
@@ -82,7 +82,7 @@ impl BootstrappedServices {
     pub fn start_background_tasks(&self) {
         self.discovery_service.start_renewal_task();
         Arc::clone(&self.discovery_service).start_topology_monitor();
-        self.latency_monitor.start();
+        self.speaker_monitor.start();
     }
 
     /// Initiates graceful shutdown of all services.
@@ -274,7 +274,7 @@ pub(crate) fn bootstrap_services_with_speaker_port(
     let stream_coordinator = Arc::new(stream_coordinator);
 
     // Wire up latency monitor with its dependencies
-    let latency_monitor = Arc::new(SpeakerMonitor::new(
+    let speaker_monitor = Arc::new(SpeakerMonitor::new(
         Arc::clone(&sonos_impl) as Arc<dyn SonosPlayback>,
         stream_coordinator.stream_registry(),
         Arc::clone(&event_bridge) as Arc<dyn EventEmitter>,
@@ -301,7 +301,7 @@ pub(crate) fn bootstrap_services_with_speaker_port(
         refresh_notify,
         arbiter,
         Arc::clone(&mdns_advertiser),
-        Some(latency_monitor.member_change_sink()),
+        Some(speaker_monitor.member_change_sink()),
     ));
 
     // Coerce to the general SonosClient trait for storage
@@ -316,7 +316,7 @@ pub(crate) fn bootstrap_services_with_speaker_port(
         event_bridge,
         network,
         ws_manager,
-        latency_monitor,
+        speaker_monitor,
         streaming_runtime,
         http_client,
         spawner,

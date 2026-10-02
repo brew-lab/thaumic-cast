@@ -227,7 +227,7 @@ impl MemberChangeSink {
     }
 }
 
-/// Latency monitoring service.
+/// Speaker monitoring service.
 ///
 /// Measures audio playback latency by comparing stream position against
 /// Sonos-reported playback position. Uses high-frequency polling and

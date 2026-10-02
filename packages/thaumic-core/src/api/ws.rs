@@ -541,7 +541,7 @@ async fn execute_control_command(state: &AppState, command: ControlCommand) -> O
                 .await;
             for ip in stopped_ips {
                 state
-                    .latency_monitor
+                    .speaker_monitor
                     .stop_speaker(&payload.stream_id, &ip)
                     .await;
             }
@@ -1645,7 +1645,7 @@ async fn handle_stop_browser_capture(
         capture.error_rx = None;
         session.handle.stop_and_wait();
         if let Some(guard) = stream_guard.take() {
-            state.latency_monitor.stop_stream(guard.id()).await;
+            state.speaker_monitor.stop_stream(guard.id()).await;
             state
                 .stream_coordinator
                 .remove_stream_async(guard.id())
@@ -1728,7 +1728,7 @@ async fn handle_start_playback(
         for result in &results {
             if result.success {
                 state
-                    .latency_monitor
+                    .speaker_monitor
                     .start_video_sync(&stream_id, &result.speaker_ip)
                     .await;
             }
@@ -2201,7 +2201,7 @@ async fn handle_ws(
                         }
                     }
                     // Break to post-loop code for graceful async cleanup
-                    // (latency_monitor.stop_stream + remove_stream_async)
+                    // (speaker_monitor.stop_stream + remove_stream_async)
                     capture.error_rx = None;
                     if let Some(session) = capture.session.take() {
                         session.handle.stop_and_wait();
@@ -2262,7 +2262,7 @@ async fn handle_ws(
     // guard so its drop does not remove the stream (and emit `Ended`) again.
     if let Some(guard) = stream_guard.take() {
         // Stop latency monitoring for this stream
-        state.latency_monitor.stop_stream(guard.id()).await;
+        state.speaker_monitor.stop_stream(guard.id()).await;
 
         state
             .stream_coordinator
