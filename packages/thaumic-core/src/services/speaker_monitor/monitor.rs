@@ -1,10 +1,17 @@
-//! Latency monitoring service for measuring absolute audio playback delay.
+//! The speaker monitor's polling loop.
 //!
-//! This service measures the end-to-end latency between audio source and Sonos
-//! playback by polling `GetPositionInfo` and comparing against stream timing.
-//! The absolute latency is suitable for video sync applications.
+//! [`SpeakerMonitor`] watches every speaker that is fetching a stream. It polls
+//! each one's `GetPositionInfo`, compares the answer against the stream's own
+//! timing, and hands the result to the pure modules beside it in
+//! [`crate::services::speaker_monitor`], which decide what the polls mean. This
+//! file owns the I/O and the state: the sessions, the poll schedule, the
+//! timeouts and the log lines.
 //!
-//! # Measurement Strategy
+//! One of its outputs is the end-to-end latency between the audio source and
+//! Sonos playback, an absolute figure that video sync uses. The others are the
+//! reserve and clock-rate figures described below.
+//!
+//! # Latency measurement
 //!
 //! Uses epoch-based timing where each Sonos HTTP connection defines a playback epoch.
 //! Measures absolute latency: `stream_elapsed - sonos_reltime`
