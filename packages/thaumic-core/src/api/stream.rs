@@ -226,7 +226,7 @@ async fn serve_stream(
         connect_burst_ms,
         drift_compensation,
         access,
-        reader_slot,
+        mut reader_slot,
     } = admit(id, segment, &state, remote_addr)?;
 
     let FetchFraming {
@@ -236,112 +236,23 @@ async fn serve_stream(
         framing,
     } = fetch_framing(&headers, &stream_state, version, remote_ip, &id, segment);
 
-    // A PCM cast is served in segments carried by one playout per speaker,
-    // unless a field experiment's switch fixes a connection's end itself.
-    // What a fetch is to that playout is decided first, before anything
-    // treats it as a new connection or a resume: a continuation needs no
-    // prefill wait, starts no epoch and sends no resume `Play` (the speaker
-    // is between items, and a `Play` then would race its own switch).
-    let segment_layout = pcm_http
-        .as_ref()
-        .filter(|settings| settings.segments)
-        .map(|settings| SegmentLayout::new(&stream_state.audio_format, settings.segment_bytes));
-    let mut new_segment: Option<(SegmentLayout, SegmentStart)> = None;
-    if let Some(layout) = segment_layout {
-        let url_segment = segment.unwrap_or(0);
-        let range_start = range_header.as_deref().and_then(parse_range_start);
-        let route = if access.tracks_playback() {
-            stream_state
-                .playout
-                .route(remote_ip, url_segment, range_start, &layout, |body_bytes| {
-                    Arc::new(
-                        LoggingStreamGuard::new(id.to_string(), remote_ip)
-                            .with_link_probe(state.link_registry.claim(remote_addr))
-                            .with_framing(framing)
-                            .with_declared_end(Some(DeclaredEnd::new(
-                                body_bytes,
-                                layout.byte_rate().min(u64::from(u32::MAX)) as u32,
-                            ))),
-                    )
-                })
-        } else {
-            // A reader the stream is not for gets a playout of its own that
-            // ends with its connection.
-            match SegmentStart::new(url_segment, range_start, &layout) {
-                Some(start) => Route::New(NewReason::NoPlayout, start),
-                None => Route::Unsatisfiable(layout.total_bytes()),
-            }
-        };
-        let content_type = stream_state.codec.mime_type();
-        match route {
-            Route::Attach(body) => {
-                let start = body.start();
-                let guard = Arc::clone(body.guard());
-                let builder = segment_head(
-                    response_head(content_type, false, response_framing),
-                    &start,
-                    &layout,
-                );
-                let final_stream: AudioStream =
-                    Box::pin(with_delivery_record(body, guard, reader_slot));
-                return builder
-                    .body(Body::from_stream(final_stream))
-                    .map_err(|e| ThaumicError::Internal(e.to_string()));
-            }
-            Route::Side(start) => {
-                let guard = Arc::new(
-                    LoggingStreamGuard::new(id.to_string(), remote_ip).with_framing(framing),
-                );
-                let builder = segment_head(
-                    response_head(content_type, false, response_framing),
-                    &start,
-                    &layout,
-                );
-                let body = side_body(start, &layout, &stream_state.audio_format);
-                let final_stream: AudioStream =
-                    Box::pin(with_delivery_record(body, guard, reader_slot));
-                return builder
-                    .body(Body::from_stream(final_stream))
-                    .map_err(|e| ThaumicError::Internal(e.to_string()));
-            }
-            Route::Unsatisfiable(total) => {
-                log::info!(
-                    "[Stream] Range past the end of a segment: client={}, stream={}, \
-                     segment={}, range={:?}, segment_bytes={}; answering 416",
-                    remote_ip,
-                    id,
-                    url_segment,
-                    range_header.as_deref().unwrap_or(""),
-                    total
-                );
-                return Response::builder()
-                    .status(axum::http::StatusCode::RANGE_NOT_SATISFIABLE)
-                    .header(header::CONTENT_RANGE, format!("bytes */{total}"))
-                    .body(Body::empty())
-                    .map_err(|e| ThaumicError::Internal(e.to_string()));
-            }
-            Route::New(reason, start) => {
-                let level = if reason == NewReason::NoPlayout && url_segment > 0 {
-                    // No playout to continue into a later segment: this
-                    // server restarted, or the playout was dropped.
-                    log::Level::Warn
-                } else {
-                    log::Level::Info
-                };
-                log::log!(
-                    level,
-                    "[Stream] New playout: client={}, stream={}, segment={}, reason={}, \
-                     first_byte={}",
-                    remote_ip,
-                    id,
-                    url_segment,
-                    reason.label(),
-                    start.first_byte()
-                );
-                new_segment = Some((layout, start));
-            }
-        }
-    }
+    let new_segment = match route_segment(
+        pcm_http,
+        &stream_state,
+        segment,
+        &range_header,
+        access,
+        remote_ip,
+        &id,
+        &state,
+        remote_addr,
+        framing,
+        response_framing,
+        &mut reader_slot,
+    ) {
+        SegmentRouting::Answered(response) => return response,
+        SegmentRouting::Proceed(new_segment) => new_segment,
+    };
 
     // Detect resume: this specific IP had a previous HTTP connection.
     // Uses per-IP epoch tracking (not global counter) to avoid misclassifying
@@ -904,6 +815,153 @@ fn fetch_framing(
         response_framing,
         framing,
     }
+}
+
+/// What a fetch is to a segmented PCM playout. See [`route_segment`].
+enum SegmentRouting {
+    /// The fetch was answered here: a continuation of a playout, a side
+    /// fetch, or a range past the segment's end. [`serve_stream`] returns it
+    /// as it stands.
+    Answered(ThaumicResult<Response>),
+    /// The fetch goes on as a connection of its own: the segment it starts a
+    /// new playout at, or `None` for a stream that is not served in segments.
+    Proceed(Option<(SegmentLayout, SegmentStart)>),
+}
+
+/// Segment routing, the third phase of [`serve_stream`]: decides whether the
+/// fetch continues a playout, starts a new one or is neither, and answers
+/// the ones that need no connection of their own. An answer that has a body
+/// takes the unlisted-reader slot out of `reader_slot`; otherwise the slot is
+/// left where it is.
+#[allow(clippy::too_many_arguments)]
+fn route_segment(
+    pcm_http: Option<PcmHttpSettings>,
+    stream_state: &StreamState,
+    segment: Option<u32>,
+    range_header: &Option<String>,
+    access: StreamAccess,
+    remote_ip: IpAddr,
+    id: &str,
+    state: &AppState,
+    remote_addr: SocketAddr,
+    framing: BodyFraming,
+    response_framing: ResponseFraming,
+    reader_slot: &mut Option<StreamReaderSlot>,
+) -> SegmentRouting {
+    // A PCM cast is served in segments carried by one playout per speaker,
+    // unless a field experiment's switch fixes a connection's end itself.
+    // What a fetch is to that playout is decided first, before anything
+    // treats it as a new connection or a resume: a continuation needs no
+    // prefill wait, starts no epoch and sends no resume `Play` (the speaker
+    // is between items, and a `Play` then would race its own switch).
+    let segment_layout = pcm_http
+        .as_ref()
+        .filter(|settings| settings.segments)
+        .map(|settings| SegmentLayout::new(&stream_state.audio_format, settings.segment_bytes));
+    let mut new_segment: Option<(SegmentLayout, SegmentStart)> = None;
+    if let Some(layout) = segment_layout {
+        let url_segment = segment.unwrap_or(0);
+        let range_start = range_header.as_deref().and_then(parse_range_start);
+        let route = if access.tracks_playback() {
+            stream_state
+                .playout
+                .route(remote_ip, url_segment, range_start, &layout, |body_bytes| {
+                    Arc::new(
+                        LoggingStreamGuard::new(id.to_string(), remote_ip)
+                            .with_link_probe(state.link_registry.claim(remote_addr))
+                            .with_framing(framing)
+                            .with_declared_end(Some(DeclaredEnd::new(
+                                body_bytes,
+                                layout.byte_rate().min(u64::from(u32::MAX)) as u32,
+                            ))),
+                    )
+                })
+        } else {
+            // A reader the stream is not for gets a playout of its own that
+            // ends with its connection.
+            match SegmentStart::new(url_segment, range_start, &layout) {
+                Some(start) => Route::New(NewReason::NoPlayout, start),
+                None => Route::Unsatisfiable(layout.total_bytes()),
+            }
+        };
+        let content_type = stream_state.codec.mime_type();
+        match route {
+            Route::Attach(body) => {
+                let start = body.start();
+                let guard = Arc::clone(body.guard());
+                let builder = segment_head(
+                    response_head(content_type, false, response_framing),
+                    &start,
+                    &layout,
+                );
+                let final_stream: AudioStream =
+                    Box::pin(with_delivery_record(body, guard, reader_slot.take()));
+                return SegmentRouting::Answered(
+                    builder
+                        .body(Body::from_stream(final_stream))
+                        .map_err(|e| ThaumicError::Internal(e.to_string())),
+                );
+            }
+            Route::Side(start) => {
+                let guard = Arc::new(
+                    LoggingStreamGuard::new(id.to_string(), remote_ip).with_framing(framing),
+                );
+                let builder = segment_head(
+                    response_head(content_type, false, response_framing),
+                    &start,
+                    &layout,
+                );
+                let body = side_body(start, &layout, &stream_state.audio_format);
+                let final_stream: AudioStream =
+                    Box::pin(with_delivery_record(body, guard, reader_slot.take()));
+                return SegmentRouting::Answered(
+                    builder
+                        .body(Body::from_stream(final_stream))
+                        .map_err(|e| ThaumicError::Internal(e.to_string())),
+                );
+            }
+            Route::Unsatisfiable(total) => {
+                log::info!(
+                    "[Stream] Range past the end of a segment: client={}, stream={}, \
+                     segment={}, range={:?}, segment_bytes={}; answering 416",
+                    remote_ip,
+                    id,
+                    url_segment,
+                    range_header.as_deref().unwrap_or(""),
+                    total
+                );
+                return SegmentRouting::Answered(
+                    Response::builder()
+                        .status(axum::http::StatusCode::RANGE_NOT_SATISFIABLE)
+                        .header(header::CONTENT_RANGE, format!("bytes */{total}"))
+                        .body(Body::empty())
+                        .map_err(|e| ThaumicError::Internal(e.to_string())),
+                );
+            }
+            Route::New(reason, start) => {
+                let level = if reason == NewReason::NoPlayout && url_segment > 0 {
+                    // No playout to continue into a later segment: this
+                    // server restarted, or the playout was dropped.
+                    log::Level::Warn
+                } else {
+                    log::Level::Info
+                };
+                log::log!(
+                    level,
+                    "[Stream] New playout: client={}, stream={}, segment={}, reason={}, \
+                     first_byte={}",
+                    remote_ip,
+                    id,
+                    url_segment,
+                    reason.label(),
+                    start.first_byte()
+                );
+                new_segment = Some((layout, start));
+            }
+        }
+    }
+
+    SegmentRouting::Proceed(new_segment)
 }
 
 /// Adds to a PCM segment response's head what a fetch of part of the
