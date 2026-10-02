@@ -541,11 +541,12 @@ impl Drop for StreamState {
 ///
 /// [`pcm_ring_frames`]: crate::protocol_constants::pcm_ring_frames
 fn ring_frames(codec: AudioCodec, configured: usize, frame_duration_ms: u32) -> usize {
-    match codec {
-        AudioCodec::Pcm => configured.max(crate::protocol_constants::pcm_ring_frames(
+    if codec.facts().ring_floor {
+        configured.max(crate::protocol_constants::pcm_ring_frames(
             frame_duration_ms,
-        )),
-        AudioCodec::Aac | AudioCodec::Mp3 | AudioCodec::Flac => configured,
+        ))
+    } else {
+        configured
     }
 }
 

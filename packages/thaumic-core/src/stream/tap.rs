@@ -39,10 +39,7 @@ pub const WAV_HEADER_BYTES: u32 = 44;
 /// Bytes a connection of `codec` sends before its first audio byte: the WAV
 /// header for PCM, nothing for a compressed codec.
 pub fn pcm_header(codec: AudioCodec) -> u32 {
-    match codec {
-        AudioCodec::Pcm => WAV_HEADER_BYTES,
-        AudioCodec::Aac | AudioCodec::Mp3 | AudioCodec::Flac => 0,
-    }
+    codec.facts().container_header_bytes
 }
 
 /// How many registrations may wait for the monitor before new ones are
@@ -148,13 +145,12 @@ impl ConnectionTap {
         stats: Arc<ChainStats>,
         monitor: bool,
     ) -> Self {
-        let (byte_rate, header_bytes) = match codec {
-            AudioCodec::Pcm => (
-                audio_format.frame_bytes(1000).min(u32::MAX as usize) as u32,
-                pcm_header(codec),
-            ),
-            AudioCodec::Aac | AudioCodec::Mp3 | AudioCodec::Flac => (0, pcm_header(codec)),
+        let byte_rate = if codec.facts().paced {
+            audio_format.frame_bytes(1000).min(u32::MAX as usize) as u32
+        } else {
+            0
         };
+        let header_bytes = pcm_header(codec);
         Self {
             stream_id: stream_id.into(),
             speaker_ip: speaker_ip.to_canonical(),
