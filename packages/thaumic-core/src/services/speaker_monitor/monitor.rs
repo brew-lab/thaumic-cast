@@ -220,7 +220,7 @@ impl MemberChangeSink {
         };
         if let Err(mpsc::error::TrySendError::Full(_)) = self.tx.try_send(command) {
             log::debug!(
-                "[LatencyMonitor] Busy; topology change for {} not added to its timeline",
+                "[SpeakerMonitor] Busy; topology change for {} not added to its timeline",
                 speaker_ip
             );
         }
@@ -337,7 +337,7 @@ impl SpeakerMonitor {
     /// grouped slave) is never polled.
     pub async fn start_video_sync(&self, stream_id: &str, speaker_ip: &str) {
         let Ok(ip) = speaker_ip.parse::<IpAddr>() else {
-            log::warn!("[LatencyMonitor] Invalid speaker IP: {}", speaker_ip);
+            log::warn!("[SpeakerMonitor] Invalid speaker IP: {}", speaker_ip);
             return;
         };
         let _ = self
@@ -412,12 +412,12 @@ impl SpeakerMonitor {
         let mut poll_interval = tokio::time::interval(Duration::from_millis(POLL_INTERVAL_MS));
         poll_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
 
-        log::info!("[LatencyMonitor] Background task started");
+        log::info!("[SpeakerMonitor] Background task started");
 
         loop {
             tokio::select! {
                 _ = cancel.cancelled() => {
-                    log::info!("[LatencyMonitor] Shutting down");
+                    log::info!("[SpeakerMonitor] Shutting down");
                     break;
                 }
 
@@ -445,7 +445,7 @@ impl SpeakerMonitor {
                                 }
                                 None => {
                                     log::info!(
-                                        "[LatencyMonitor] Video sync requested before the speaker's \
+                                        "[SpeakerMonitor] Video sync requested before the speaker's \
                                          first fetch: stream={}, speaker={}",
                                         stream_id, speaker_ip
                                     );
@@ -461,7 +461,7 @@ impl SpeakerMonitor {
                                 session.end_connection(&stream_id, speaker_ip, now);
                                 keep_control_state(&mut kept_control, &session, now);
                                 log::info!(
-                                    "[LatencyMonitor] Stopped monitoring: stream={}, speaker={}",
+                                    "[SpeakerMonitor] Stopped monitoring: stream={}, speaker={}",
                                     stream_id, speaker_ip
                                 );
                             }
@@ -477,7 +477,7 @@ impl SpeakerMonitor {
                                 false
                             });
                             log::info!(
-                                "[LatencyMonitor] Stopped all monitoring for stream={}",
+                                "[SpeakerMonitor] Stopped all monitoring for stream={}",
                                 stream_id
                             );
                         }
@@ -579,7 +579,7 @@ impl SpeakerMonitor {
                             }
                             session.mark_stale_emitted();
                             log::warn!(
-                                "[LatencyMonitor] No valid position for {}s: stream={}, speaker={}, epoch={}",
+                                "[SpeakerMonitor] No valid position for {}s: stream={}, speaker={}, epoch={}",
                                 STALE_EPOCH_TIMEOUT_SECS,
                                 stream_id,
                                 speaker_ip,
@@ -619,7 +619,7 @@ impl SpeakerMonitor {
                         let gena = transport_view.gena_transport(&speaker_ip.to_string());
                         if session.gate.take_stale_notice(gena.as_ref(), now) {
                             log::info!(
-                                "[LatencyMonitor] {}: GENA transport state stale; using polled state",
+                                "[SpeakerMonitor] {}: GENA transport state stale; using polled state",
                                 speaker_ip
                             );
                         }
@@ -654,7 +654,7 @@ impl SpeakerMonitor {
                                 keep_control_state(&mut kept_control, &session, now);
                             }
                             log::info!(
-                                "[LatencyMonitor] Ended monitoring ({}): stream={}, speaker={}",
+                                "[SpeakerMonitor] Ended monitoring ({}): stream={}, speaker={}",
                                 reason,
                                 key.0,
                                 key.1
@@ -716,7 +716,7 @@ fn register_connection(
         "not polled: speaker monitoring is off"
     };
     log::info!(
-        "[LatencyMonitor] Connection registered: stream={}, speaker={}, epoch=#{}, {}",
+        "[SpeakerMonitor] Connection registered: stream={}, speaker={}, epoch=#{}, {}",
         tap.stream_id,
         tap.speaker_ip,
         tap.epoch().map_or(0, |e| e.id),
@@ -813,7 +813,7 @@ pub(super) fn apply_poll_result(
             session.consecutive_failures = session.consecutive_failures.saturating_add(1);
             if session.consecutive_failures == BACKOFF_AFTER_FAILURES {
                 log::info!(
-                    "[LatencyMonitor] speaker={}: {} position polls in a row failed ({}); \
+                    "[SpeakerMonitor] speaker={}: {} position polls in a row failed ({}); \
                      polling every {}s until it answers",
                     speaker_ip,
                     BACKOFF_AFTER_FAILURES,
@@ -822,7 +822,7 @@ pub(super) fn apply_poll_result(
                 );
             } else {
                 log::trace!(
-                    "[LatencyMonitor] Failed to get position from {}: {}",
+                    "[SpeakerMonitor] Failed to get position from {}: {}",
                     speaker_ip,
                     e
                 );
@@ -832,7 +832,7 @@ pub(super) fn apply_poll_result(
     };
     if session.consecutive_failures >= BACKOFF_AFTER_FAILURES {
         log::info!(
-            "[LatencyMonitor] speaker={}: answering position polls again after {} failures",
+            "[SpeakerMonitor] speaker={}: answering position polls again after {} failures",
             speaker_ip,
             session.consecutive_failures
         );
@@ -842,7 +842,7 @@ pub(super) fn apply_poll_result(
     match poll.transport {
         Some(Ok(state)) => session.gate.observe_polled(state, poll.answered_at),
         Some(Err(e)) => log::trace!(
-            "[LatencyMonitor] Failed to get transport state from {}: {}",
+            "[SpeakerMonitor] Failed to get transport state from {}: {}",
             speaker_ip,
             e
         ),
@@ -865,7 +865,7 @@ pub(super) fn apply_poll_result(
         if session.uri_mismatches >= DORMANT_AFTER_MISMATCHES {
             session.dormant = true;
             log::info!(
-                "[LatencyMonitor] stream={}, speaker={}: playing something else ({}); not polling \
+                "[SpeakerMonitor] stream={}, speaker={}: playing something else ({}); not polling \
                  it until it fetches the stream again",
                 stream_id,
                 speaker_ip,
@@ -873,7 +873,7 @@ pub(super) fn apply_poll_result(
             );
         } else {
             log::debug!(
-                "[LatencyMonitor] Waiting for stream {} (current URI: {})",
+                "[SpeakerMonitor] Waiting for stream {} (current URI: {})",
                 stream_id,
                 position.track_uri
             );
@@ -883,7 +883,7 @@ pub(super) fn apply_poll_result(
     session.uri_mismatches = 0;
 
     log::trace!(
-        "[LatencyMonitor] URI matched: {} contains {}",
+        "[SpeakerMonitor] URI matched: {} contains {}",
         position.track_uri,
         stream_id
     );
@@ -940,7 +940,7 @@ pub(super) fn apply_poll_result(
     }
 
     log::debug!(
-        "[LatencyMonitor] poll stream={}, speaker={}: rel={}ms rtt={}ms delivered={:?}..{:?}ms \
+        "[SpeakerMonitor] poll stream={}, speaker={}: rel={}ms rtt={}ms delivered={:?}..{:?}ms \
          span={}ms transport={:?} ({})",
         stream_id,
         speaker_ip,
@@ -957,7 +957,7 @@ pub(super) fn apply_poll_result(
     // RelTime stands still while the clock runs on.
     if let TransportVerdict::NotPlaying(state) = verdict {
         log::trace!(
-            "[LatencyMonitor] speaker={}: {} ({}), poll not measured",
+            "[SpeakerMonitor] speaker={}: {} ({}), poll not measured",
             speaker_ip,
             state,
             source
@@ -996,7 +996,7 @@ pub(super) fn apply_poll_result(
         session.mark_emitted();
 
         log::debug!(
-            "[LatencyMonitor] stream={}, speaker={}: latency={}ms, jitter={}ms, confidence={:.2}",
+            "[SpeakerMonitor] stream={}, speaker={}: latency={}ms, jitter={}ms, confidence={:.2}",
             stream_id,
             speaker_ip,
             session.latency_ms(),
