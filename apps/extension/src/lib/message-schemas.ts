@@ -356,8 +356,21 @@ export const SessionDisconnectedMessageSchema = z.object({
 });
 export type SessionDisconnectedMessage = z.infer<typeof SessionDisconnectedMessageSchema>;
 
-/** Capture error reasons that are valid CastAutoStopReason values. */
-const CaptureErrorReasons = ['capture_error', 'process_exited', 'device_disconnected'] as const;
+/**
+ * Capture error reasons that are valid CastAutoStopReason values.
+ * - `pcm_rate_changed`: a PCM tab cast's audio arrived at a rate other than the one declared
+ * - `pcm_rate_unsupported`: it arrived at a rate no PCM cast can declare
+ */
+const CaptureErrorReasons = [
+  'capture_error',
+  'process_exited',
+  'device_disconnected',
+  'pcm_rate_changed',
+  'pcm_rate_unsupported',
+] as const;
+
+/** Interpolation values that travel beside a reason whose message prints figures. */
+const ReasonParamsSchema = z.record(z.string(), z.union([z.string(), z.number()]));
 
 export const BrowserCaptureErrorMessageSchema = z.object({
   type: z.literal('BROWSER_CAPTURE_ERROR'),
@@ -365,6 +378,8 @@ export const BrowserCaptureErrorMessageSchema = z.object({
   error: z.string(),
   /** Structured error reason from server (avoids string matching). */
   reason: z.enum(CaptureErrorReasons).optional(),
+  /** Values the reason's message prints, such as the rates of a PCM rate stop. */
+  params: ReasonParamsSchema.optional(),
 });
 export type BrowserCaptureErrorMessage = z.infer<typeof BrowserCaptureErrorMessageSchema>;
 
@@ -434,6 +449,8 @@ export const CastAutoStoppedMessageSchema = z.object({
   tabId: TabIdSchema,
   speakerIp: SpeakerIpSchema,
   reason: CastAutoStopReasonSchema,
+  /** Values the reason's message prints beside the speaker's name. */
+  params: ReasonParamsSchema.optional(),
 });
 export type CastAutoStoppedMessage = z.infer<typeof CastAutoStoppedMessageSchema>;
 

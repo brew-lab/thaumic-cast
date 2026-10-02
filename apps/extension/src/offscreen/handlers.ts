@@ -40,7 +40,7 @@ import {
 } from './control-connection';
 import { StreamSession, activeSessions, MAX_OFFSCREEN_SESSIONS } from './stream-session';
 import { noop } from '../lib/noop';
-import { errorParamsOf } from '../lib/keyed-error';
+import { errorParamsOf, type ErrorParams } from '../lib/keyed-error';
 
 const log = createLogger('Offscreen');
 
@@ -344,6 +344,15 @@ export function setupMessageHandlers(): void {
                 .catch(noop);
             };
 
+            // A PCM cast whose audio arrives at a rate it did not declare is
+            // stopped; the background ends the cast and the popup says why.
+            const onError = (error: string, reason?: string, params?: ErrorParams): void => {
+              activeSessions.delete(tabId);
+              chrome.runtime
+                .sendMessage({ type: 'BROWSER_CAPTURE_ERROR', tabId, error, reason, params })
+                .catch(noop);
+            };
+
             const session = StreamSession.forTabCapture(
               stream,
               encoderConfig,
@@ -352,6 +361,7 @@ export function setupMessageHandlers(): void {
               {
                 keepTabAudible,
                 onHealthChanged,
+                onError,
               },
             );
             try {

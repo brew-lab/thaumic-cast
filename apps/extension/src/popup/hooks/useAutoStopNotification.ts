@@ -20,6 +20,8 @@ interface AutoStopNotification {
   reason: CastAutoStopReason;
   /** True when only this speaker left and the cast carries on with the others */
   castCarriesOn: boolean;
+  /** Values the reason's message prints beside the speaker's name */
+  params?: Record<string, string | number>;
 }
 
 /**
@@ -68,13 +70,19 @@ export function useAutoStopNotification(
    * Shows a notification and starts the auto-dismiss timer.
    */
   const showNotification = useCallback(
-    (tabId: number, speakerIp: string, reason: CastAutoStopReason, castCarriesOn: boolean) => {
+    (
+      tabId: number,
+      speakerIp: string,
+      reason: CastAutoStopReason,
+      castCarriesOn: boolean,
+      params?: Record<string, string | number>,
+    ) => {
       // Cancel previous timer before setting new notification
       if (timerRef.current) {
         clearTimeout(timerRef.current);
       }
 
-      setNotification({ tabId, speakerIp, reason, castCarriesOn });
+      setNotification({ tabId, speakerIp, reason, castCarriesOn, params });
 
       timerRef.current = setTimeout(() => {
         setNotification(null);
@@ -92,7 +100,7 @@ export function useAutoStopNotification(
     if (msg.type === 'CAST_AUTO_STOPPED') {
       const stopMsg = message as CastAutoStoppedMessage;
       if (stopMsg.reason !== 'user_removed') {
-        showNotification(stopMsg.tabId, stopMsg.speakerIp, stopMsg.reason, false);
+        showNotification(stopMsg.tabId, stopMsg.speakerIp, stopMsg.reason, false, stopMsg.params);
       }
       return;
     }
@@ -118,6 +126,7 @@ export function useAutoStopNotification(
 
   const message = notification
     ? t(autoStopMessageKey(notification.reason, notification.castCarriesOn), {
+        ...notification.params,
         name: nameFor(notification.speakerIp),
       })
     : null;

@@ -10,6 +10,7 @@
 
 import type { EncoderConfig, StreamMetadata } from '@thaumic-cast/protocol';
 import type { ErrorParams } from '../lib/keyed-error';
+import type { PcmRateStopReason } from './pcm-rate';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Inbound Messages (StreamSession → Worker)
@@ -22,7 +23,8 @@ import type { ErrorParams } from '../lib/keyed-error';
  * - **SAB path** (compressed codecs): `sab` is provided. Worker reads from SharedArrayBuffer.
  * - **MSTP path** (PCM codec): `readable` is provided. Worker reads AudioData from
  *   a transferred ReadableStream, performs Float32→Int16 conversion, sends via WebSocket.
- *   It declares the rate of the first AudioData and ignores `sampleRate` here.
+ *   It declares the rate of the first AudioData and ignores `sampleRate` here; when no
+ *   AudioData arrives in time it declares `trackSampleRate`.
  */
 export interface WorkerInitMessage {
   type: 'INIT';
@@ -43,6 +45,11 @@ export interface WorkerInitMessage {
   readable?: ReadableStream<AudioData>;
   /** Number of audio channels (MSTP path only, default 2). */
   channels?: number;
+  /**
+   * The rate the captured track's settings report, in Hz (MSTP path only).
+   * Declared only when no AudioData arrives in time to state the real rate.
+   */
+  trackSampleRate?: number;
 }
 
 /** Stops the worker and cleans up resources. */
@@ -145,6 +152,18 @@ export interface WorkerBrowserCaptureErrorMessage {
   reason: string;
 }
 
+/**
+ * A PCM tab cast's audio arrived at a rate other than the one it declared
+ * (MSTP path only). The worker has stopped sending; the session stops the cast.
+ */
+export interface WorkerCaptureRateErrorMessage {
+  type: 'CAPTURE_RATE_ERROR';
+  /** The auto-stop reason: `auto_stop_<reason>` is the message the popup shows. */
+  reason: PcmRateStopReason;
+  /** The values that message prints: `rate` and `declared`, in Hz. */
+  params: ErrorParams;
+}
+
 /** Periodic statistics from the worker. */
 export interface WorkerStatsMessage {
   type: 'STATS';
@@ -220,5 +239,6 @@ export type WorkerOutboundMessage =
   | WorkerPlaybackResultsMessage
   | WorkerPlaybackErrorMessage
   | WorkerBrowserCaptureErrorMessage
+  | WorkerCaptureRateErrorMessage
   | WorkerStatsMessage
   | WorkerMetricsDumpMessage;

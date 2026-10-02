@@ -31,7 +31,7 @@ import type {
   WorkerOutboundMessage,
 } from './worker-messages';
 import { noop } from '../lib/noop';
-import { KeyedError } from '../lib/keyed-error';
+import { KeyedError, type ErrorParams } from '../lib/keyed-error';
 
 const log = createLogger('Offscreen');
 
@@ -87,6 +87,9 @@ export class StreamSession {
   private trackProcessor: MediaStreamTrackProcessor | null = null;
   /** Audio element for keepTabAudible in MSTP mode (avoids AudioContext clock domain crossing). */
   private audibleAudio: HTMLAudioElement | null = null;
+
+  /** The rate the captured track's settings report (PCM tab capture only). */
+  private trackSampleRate?: number;
 
   /** Pending worker terminate timer (deferred to allow METRICS_DUMP delivery). */
   private workerTerminateTimer: ReturnType<typeof setTimeout> | null = null;
@@ -159,8 +162,11 @@ export class StreamSession {
   /** Callback when worker disconnects (for cleanup coordination). */
   private onDisconnected?: () => void;
 
-  /** Callback when server reports a capture error (browser capture mode only). */
-  private onError?: (error: string, reason?: string) => void;
+  /**
+   * Callback when the capture fails partway: the server reports an error
+   * (browser capture), or a PCM tab cast's audio arrives at an undeclared rate.
+   */
+  private onError?: (error: string, reason?: string, params?: ErrorParams) => void;
 
   /** Tab-capture + PCM only — no signal on other codec paths. */
   private onHealthChanged?: (health: { degraded: boolean; detectedAt: number }) => void;
@@ -192,6 +198,7 @@ export class StreamSession {
    * @param options - Additional session options
    * @param options.keepTabAudible - Play audio at low volume to prevent Chrome throttling
    * @param options.onHealthChanged - Capture-health transition callback (tab+PCM only)
+   * @param options.onError - Callback when the cast stops over its sample rate (tab+PCM only)
    * @returns A new StreamSession configured for tab audio capture
    */
   static forTabCapture(
@@ -202,6 +209,7 @@ export class StreamSession {
     options?: {
       keepTabAudible?: boolean;
       onHealthChanged?: (health: { degraded: boolean; detectedAt: number }) => void;
+      onError?: (error: string, reason?: string, params?: ErrorParams) => void;
     },
   ): StreamSession {
     return new StreamSession({
@@ -210,6 +218,7 @@ export class StreamSession {
       encoderConfig,
       baseUrl,
       onDisconnected,
+      onError: options?.onError,
       keepTabAudible: options?.keepTabAudible,
       onHealthChanged: options?.onHealthChanged,
     });
@@ -252,7 +261,7 @@ export class StreamSession {
    * @param config.encoderConfig - Audio encoder configuration
    * @param config.baseUrl - Desktop app base URL
    * @param config.onDisconnected - Optional callback when worker WebSocket disconnects
-   * @param config.onError - Optional callback when server reports a capture error
+   * @param config.onError - Optional callback when the capture fails partway
    * @param config.onHealthChanged - Capture-health transition callback (tab capture + PCM only)
    * @param config.keepTabAudible - Play audio at low volume to prevent Chrome throttling (tab capture only)
    * @param config.browserName - Browser executable name for PID lookup (browser capture only)
@@ -263,7 +272,7 @@ export class StreamSession {
     encoderConfig: EncoderConfig;
     baseUrl: string;
     onDisconnected?: () => void;
-    onError?: (error: string, reason?: string) => void;
+    onError?: (error: string, reason?: string, params?: ErrorParams) => void;
     onHealthChanged?: (health: { degraded: boolean; detectedAt: number }) => void;
     keepTabAudible?: boolean;
     browserName?: string;
@@ -365,10 +374,12 @@ export class StreamSession {
     const audioTrack = this.mediaStream!.getAudioTracks()[0];
     if (!audioTrack) throw new Error('No audio track available in MediaStream');
 
-    // The track's own report is logged for the record only. The relay worker
-    // declares the rate of the first AudioData it reads, which is the rate the
-    // capture really delivers; nothing on this path resamples.
+    // The relay worker declares the rate of the first AudioData it reads, which
+    // is the rate the capture really delivers; nothing on this path resamples.
+    // The track's own report is passed along for a tab that is silent at the
+    // start and delivers no AudioData in time to state one.
     const trackSampleRate = audioTrack.getSettings().sampleRate;
+    this.trackSampleRate = trackSampleRate;
     log.info(
       `MSTP: the track reported ${trackSampleRate ? `${trackSampleRate}Hz` : 'no sample rate'} ` +
         `(configured ${this.encoderConfig.sampleRate}Hz)`,
@@ -670,6 +681,22 @@ export class StreamSession {
           this.stop();
           break;
 
+        case 'CAPTURE_RATE_ERROR': {
+          // The cast's audio is at a rate it did not declare. A start still in
+          // flight fails with the reason; a running cast is stopped with it.
+          const key = `auto_stop_${msg.reason}`;
+          log.error(`Capture rate error: ${key} ${JSON.stringify(msg.params)}`);
+          this.playbackResultsResolver?.reject(new KeyedError(key, msg.params));
+          this.playbackResultsResolver = null;
+          if (this.onError) {
+            this.onError(key, msg.reason, msg.params);
+          } else {
+            this.onDisconnected?.();
+          }
+          this.stop();
+          break;
+        }
+
         case 'METRICS_DUMP':
           log.info('Pipeline metrics timeline', { timeline: JSON.stringify(msg.timeline) });
           this.terminateWorkerNow();
@@ -763,6 +790,7 @@ export class StreamSession {
         mode: 'encode',
         readable,
         channels: this.encoderConfig.channels,
+        trackSampleRate: this.trackSampleRate,
       };
       this.consumerWorker.postMessage(initMsg, {
         transfer: [readable as unknown as Transferable],
