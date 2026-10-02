@@ -117,7 +117,7 @@ describe('extension en.json', () => {
     expect(i18n.t('onboarding.speakers.found', { count: 1 })).toStartWith('Discovered 1 speaker.');
     expect(i18n.t('onboarding.speakers.found', { count: 2 })).toStartWith('Discovered 2 speakers.');
     expect(i18n.t('ingest_gaps_message_desktop', { count: 1, suggested: 500 })).toContain(
-      'late 1 time in the last minute',
+      'late once in the last minute',
     );
     expect(i18n.t('ingest_gaps_message_server', { count: 4, suggested: 500 })).toContain(
       'late 4 times in the last minute',
