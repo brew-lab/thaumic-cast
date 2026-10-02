@@ -365,22 +365,15 @@ async fn serve_stream(
         first_wait,
     );
 
-    // What outlives this connection: for a segmented PCM cast, the playout's
-    // statistics, which every later segment of it reports into; otherwise
-    // the connection is the whole playout. Only a speaker's playout reports
-    // audio reaching this machine late: an unlisted reader that falls behind
-    // could run its own queue dry and raise a notice about gaps no speaker
-    // heard.
-    let mut stats = ChainStats::new(id.to_string(), remote_ip);
-    if access.tracks_playback() {
-        stats = stats
-            .with_events(Arc::clone(&state.event_bridge) as Arc<dyn crate::events::EventEmitter>);
-    }
-    let stats = if new_segment.is_some() {
-        Arc::new(stats)
-    } else {
-        stats.following(&guard, pcm_header(stream_state.codec))
-    };
+    let stats = playout_stats(
+        &id,
+        remote_ip,
+        access,
+        &state,
+        &new_segment,
+        &guard,
+        &stream_state,
+    );
 
     // One-shot epoch hook for whichever pipeline is built below. None for a
     // reader that is not a speaker: its connection must not enter the
@@ -993,6 +986,36 @@ fn connection_guard(
         guard = guard.with_first_wait(wait);
     }
     Arc::new(guard)
+}
+
+/// Playout statistics, a phase of [`serve_stream`]: the statistics the
+/// connection's body reports into, which belong to the playout for a
+/// segmented PCM cast and follow the connection's guard otherwise.
+fn playout_stats(
+    id: &str,
+    remote_ip: IpAddr,
+    access: StreamAccess,
+    state: &AppState,
+    new_segment: &Option<(SegmentLayout, SegmentStart)>,
+    guard: &Arc<LoggingStreamGuard>,
+    stream_state: &StreamState,
+) -> Arc<ChainStats> {
+    // What outlives this connection: for a segmented PCM cast, the playout's
+    // statistics, which every later segment of it reports into; otherwise
+    // the connection is the whole playout. Only a speaker's playout reports
+    // audio reaching this machine late: an unlisted reader that falls behind
+    // could run its own queue dry and raise a notice about gaps no speaker
+    // heard.
+    let mut stats = ChainStats::new(id.to_string(), remote_ip);
+    if access.tracks_playback() {
+        stats = stats
+            .with_events(Arc::clone(&state.event_bridge) as Arc<dyn crate::events::EventEmitter>);
+    }
+    if new_segment.is_some() {
+        Arc::new(stats)
+    } else {
+        stats.following(guard, pcm_header(stream_state.codec))
+    }
 }
 
 /// Adds to a PCM segment response's head what a fetch of part of the
