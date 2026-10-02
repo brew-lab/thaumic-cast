@@ -279,7 +279,10 @@ pub fn get_channel_role(ht_sat_chan_map: &str, uuid: &str) -> Option<String> {
 /// * `uri` - The original stream URL (http:// or https://)
 ///
 /// # Returns
-/// The URI with the scheme replaced by `x-rincon-mp3radio://`
+/// The URI with the scheme replaced by `x-rincon-mp3radio://`. Only a
+/// leading `http://` or `https://` is replaced; one later in the URI (in a
+/// query string, say) is left alone, and a URI with neither scheme is
+/// returned as it is.
 ///
 /// # Example
 /// ```ignore
@@ -293,10 +296,12 @@ pub fn get_channel_role(ht_sat_chan_map: &str, uuid: &str) -> Option<String> {
 /// );
 /// ```
 pub fn normalize_sonos_uri(uri: &str) -> String {
-    if uri.starts_with("https://") {
-        uri.replace("https://", "x-rincon-mp3radio://")
-    } else {
-        uri.replace("http://", "x-rincon-mp3radio://")
+    match uri
+        .strip_prefix("https://")
+        .or_else(|| uri.strip_prefix("http://"))
+    {
+        Some(rest) => format!("x-rincon-mp3radio://{rest}"),
+        None => uri.to_string(),
     }
 }
 
@@ -403,4 +408,34 @@ pub fn escape_xml(s: &str) -> String {
         .replace('>', "&gt;")
         .replace('"', "&quot;")
         .replace('\'', "&apos;")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn normalize_sonos_uri_replaces_only_the_leading_scheme() {
+        assert_eq!(
+            normalize_sonos_uri("http://192.168.1.50:8080/stream"),
+            "x-rincon-mp3radio://192.168.1.50:8080/stream"
+        );
+        assert_eq!(
+            normalize_sonos_uri("https://example.com/audio"),
+            "x-rincon-mp3radio://example.com/audio"
+        );
+        assert_eq!(
+            normalize_sonos_uri("http://host/stream?from=http://other/x"),
+            "x-rincon-mp3radio://host/stream?from=http://other/x"
+        );
+        assert_eq!(
+            normalize_sonos_uri("https://host/a?b=https://c&d=http://e"),
+            "x-rincon-mp3radio://host/a?b=https://c&d=http://e"
+        );
+        assert_eq!(
+            normalize_sonos_uri("x-rincon-mp3radio://host/?u=http://x"),
+            "x-rincon-mp3radio://host/?u=http://x",
+            "a URI without an http scheme is returned as it is"
+        );
+    }
 }
