@@ -69,11 +69,11 @@
 use std::collections::VecDeque;
 use std::time::Duration;
 
-use serde::{Deserialize, Serialize};
-
 use super::clock_fit::ClockEstimate;
 use super::reserve::ReserveEstimate;
-use crate::stream::RateControl;
+
+pub use crate::model::drift::{drift_compensation_mode, DriftMode};
+pub use crate::stream::rate_adapter::drift_active;
 
 /// Environment variable that sets drift correction: `on`, `observe` or
 /// `off`. Read once at start-up (see [`crate::companion_settings`]).
@@ -236,52 +236,6 @@ const CALIB_HISTORY: usize = 16;
 /// A command this close to the cap counts as at it.
 const CAP_EPSILON_PPM: f64 = 1e-6;
 
-/// Clock drift correction for PCM streams.
-///
-/// Read once per connection, so a change never engages or releases an
-/// adapter mid-connection.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum DriftMode {
-    /// Nothing measured for correction, nothing corrected.
-    Off,
-    /// The controller runs and logs what it would command; the audio is
-    /// left exactly as captured.
-    Observe,
-    /// Every PCM connection's audio is stretched or squeezed to hold its
-    /// speaker's reserve level. The default.
-    #[default]
-    On,
-}
-
-impl DriftMode {
-    /// The mode as its config and wire string.
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Off => "off",
-            Self::Observe => "observe",
-            Self::On => "on",
-        }
-    }
-
-    /// Parses `on`, `observe` or `off` (any case, surrounding space
-    /// ignored), or `None` if it is none of them.
-    pub fn parse(value: &str) -> Option<Self> {
-        match value.trim().to_ascii_lowercase().as_str() {
-            "on" => Some(Self::On),
-            "observe" => Some(Self::Observe),
-            "off" => Some(Self::Off),
-            _ => None,
-        }
-    }
-}
-
-impl std::fmt::Display for DriftMode {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(self.as_str())
-    }
-}
-
 /// Reads a [`DRIFT_FORCE_PPM_ENV`] value: `Ok(None)` when it is empty,
 /// the ppm when it is a finite number within the adapter's
 /// ±[`crate::stream::rate_adapter::MAX_RATE_PPM`], and why not otherwise.
@@ -340,28 +294,6 @@ fn first_warning_for(warned: &std::sync::Mutex<Option<String>>, raw: &str) -> bo
     }
     *warned = Some(raw.to_string());
     true
-}
-
-/// The drift correction mode a new connection runs under, given the
-/// configured setting and whether speaker monitoring is on for it.
-///
-/// Correction steers by the speaker monitor's estimates, so with monitoring
-/// off it is off whatever the setting says. The environment plays no part
-/// here; it was settled at start-up (see [`crate::companion_settings`]).
-pub fn drift_compensation_mode(configured: DriftMode, monitor: bool) -> DriftMode {
-    if monitor {
-        configured
-    } else {
-        DriftMode::Off
-    }
-}
-
-/// Whether drift correction is actually running on a connection: made
-/// under [`DriftMode::On`], with an adapter built that follows `control`,
-/// not pinned by the net-insertion guard and not lapsed by the watchdog.
-/// A notice about drift is about what correction cannot make up only then.
-pub fn drift_active(mode: DriftMode, control: Option<&RateControl>) -> bool {
-    mode == DriftMode::On && control.is_some_and(RateControl::is_following)
 }
 
 /// What the controller keeps about one speaker across its connections and
@@ -866,29 +798,6 @@ mod tests {
     }
 
     #[test]
-    fn the_mode_parses_and_prints_its_config_strings() {
-        for mode in [DriftMode::On, DriftMode::Observe, DriftMode::Off] {
-            assert_eq!(DriftMode::parse(mode.as_str()), Some(mode));
-            assert_eq!(
-                serde_json::to_string(&mode).unwrap(),
-                format!("\"{}\"", mode.as_str())
-            );
-        }
-        assert_eq!(DriftMode::parse(" ON "), Some(DriftMode::On));
-        assert_eq!(DriftMode::parse("sometimes"), None);
-        assert_eq!(DriftMode::default(), DriftMode::On);
-    }
-
-    #[test]
-    fn no_monitor_means_off_whatever_the_setting() {
-        use DriftMode::*;
-        assert_eq!(drift_compensation_mode(Observe, true), Observe);
-        assert_eq!(drift_compensation_mode(On, true), On);
-        assert_eq!(drift_compensation_mode(On, false), Off);
-        assert_eq!(drift_compensation_mode(Observe, false), Off);
-    }
-
-    #[test]
     fn a_forced_rate_must_be_a_number_the_adapter_takes() {
         assert_eq!(parse_drift_force_ppm("150"), Ok(Some(150.0)));
         assert_eq!(parse_drift_force_ppm(" -150 "), Ok(Some(-150.0)));
@@ -1279,17 +1188,5 @@ mod tests {
             "{commands:?}"
         );
         assert_eq!(c.applied_ppm(), 0.0, "observing applies nothing");
-    }
-
-    #[test]
-    fn drift_is_active_only_when_an_engaged_adapter_follows() {
-        let control = RateControl::new();
-        assert!(!drift_active(DriftMode::On, None));
-        assert!(!drift_active(DriftMode::On, Some(&control)), "not engaged");
-        control.mark_engaged();
-        assert!(drift_active(DriftMode::On, Some(&control)));
-        assert!(!drift_active(DriftMode::Observe, Some(&control)));
-        control.pin();
-        assert!(!drift_active(DriftMode::On, Some(&control)), "pinned");
     }
 }

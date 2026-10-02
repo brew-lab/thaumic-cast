@@ -40,6 +40,7 @@ pub mod context;
 pub mod error;
 pub mod events;
 mod mdns_advertise;
+pub mod model;
 pub mod protocol_constants;
 pub mod runtime;
 pub mod services;
