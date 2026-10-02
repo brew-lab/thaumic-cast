@@ -29,14 +29,10 @@ import {
   FRAME_QUEUE_MAX_BYTES,
   AUDIO_GAP_THRESHOLD_US,
 } from './worker-base';
-import {
-  getStreamingPolicy,
-  tpdfDither,
-  INT16_MAX,
-  type EncoderConfig,
-} from '@thaumic-cast/protocol';
+import { getStreamingPolicy, type EncoderConfig } from '@thaumic-cast/protocol';
 import type { WorkerInboundMessage } from './worker-messages';
 import { exponentialBackoff } from '../lib/backoff';
+import { convertPlanarToInt16 } from './pcm-convert';
 
 const s: WorkerState = createWorkerState('AudioRelayWorker');
 
@@ -44,6 +40,8 @@ let running = false;
 let frameSizeInterleaved = 0;
 let audioReader: ReadableStreamDefaultReader<AudioData> | null = null;
 let channels = 2;
+/** Sample rate declared in the handshake, kept to compare with what capture delivers. */
+let declaredSampleRate = 0;
 
 let ch0Temp: Float32Array | null = null;
 let ch1Temp: Float32Array | null = null;
@@ -104,10 +102,11 @@ function growAccum(needed: number): void {
 }
 
 /**
- * Fused: interleave + NaN-safe clamp to [-1, 1] + TPDF dither + Int16 saturate,
- * written directly into the accumulator. Emits complete frames as they fill.
+ * Fused: interleave (or mono downmix) + NaN-safe clamp to [-1, 1] + TPDF dither +
+ * Int16 saturate, written directly into the accumulator. Emits complete frames
+ * as they fill.
  * @param srcCh0
- * @param srcCh1
+ * @param srcCh1 - Second channel plane, or null when the source is mono
  * @param count
  */
 function emitFloat32Samples(
@@ -122,34 +121,7 @@ function emitFloat32Samples(
     growAccum(accumOffset + interleavedCount);
   }
 
-  let dst = accumOffset;
-  if (channels === 1) {
-    for (let i = 0; i < count; i++) {
-      const l = srcCh0[i]!;
-      // NaN-safe clamp: NaN comparisons return false, so NaN → 0
-      const cl = l >= -1 ? (l <= 1 ? l : 1) : l === l ? -1 : 0;
-      let ql = Math.round(cl * INT16_MAX + tpdfDither());
-      if (ql < -32768) ql = -32768;
-      else if (ql > 32767) ql = 32767;
-      accum[dst++] = ql;
-    }
-  } else {
-    for (let i = 0; i < count; i++) {
-      const l = srcCh0[i]!;
-      const r = srcCh1 ? srcCh1[i]! : l;
-      const cl = l >= -1 ? (l <= 1 ? l : 1) : l === l ? -1 : 0;
-      const cr = r >= -1 ? (r <= 1 ? r : 1) : r === r ? -1 : 0;
-      let ql = Math.round(cl * INT16_MAX + tpdfDither());
-      let qr = Math.round(cr * INT16_MAX + tpdfDither());
-      if (ql < -32768) ql = -32768;
-      else if (ql > 32767) ql = 32767;
-      if (qr < -32768) qr = -32768;
-      else if (qr > 32767) qr = 32767;
-      accum[dst++] = ql;
-      accum[dst++] = qr;
-    }
-  }
-  accumOffset = dst;
+  accumOffset = convertPlanarToInt16(srcCh0, srcCh1, count, channels, accum, accumOffset);
 
   const frameBytes = frameSizeInterleaved * Int16Array.BYTES_PER_ELEMENT;
   while (accumOffset >= frameSizeInterleaved) {
@@ -190,8 +162,15 @@ function processAudioData(audioData: AudioData): void {
       s.log.info(
         `First AudioData: format=${audioData.format}, frames=${numFrames}, ` +
           `channels=${audioData.numberOfChannels}, sampleRate=${sr}, ` +
-          `duration=${audioData.duration}µs, timestamp=${ts}µs`,
+          `duration=${audioData.duration}µs, timestamp=${ts}µs, ` +
+          `declaredSampleRate=${declaredSampleRate}`,
       );
+      if (sr !== declaredSampleRate) {
+        s.log.warn(
+          `Capture rate differs from the handshake: AudioData is ${sr}Hz, ` +
+            `the handshake declared ${declaredSampleRate}Hz`,
+        );
+      }
     }
 
     if (expectedNextTimestamp >= 0 && ts > 0) {
@@ -207,7 +186,8 @@ function processAudioData(audioData: AudioData): void {
 
     ensureTempBuffers(numFrames);
     audioData.copyTo(ch0Temp!, { planeIndex: 0 });
-    const ch1 = channels >= 2 && audioData.numberOfChannels >= 2 ? ch1Temp : null;
+    // Read the second plane for mono output too: mono is a downmix of both channels.
+    const ch1 = audioData.numberOfChannels >= 2 ? ch1Temp : null;
     if (ch1) {
       audioData.copyTo(ch1!, { planeIndex: 1 });
     }
@@ -335,6 +315,7 @@ self.onmessage = async (event: MessageEvent<WorkerInboundMessage>) => {
 
       frameSizeInterleaved = initFrameSize;
       channels = msg.channels ?? 2;
+      declaredSampleRate = encoderConfig.sampleRate;
 
       s.policy = getStreamingPolicy(encoderConfig.latencyMode);
       s.log.info(

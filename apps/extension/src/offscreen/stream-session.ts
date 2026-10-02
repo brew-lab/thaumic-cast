@@ -365,6 +365,22 @@ export class StreamSession {
 
     // Override sample rate to track's native rate (MSTP bypasses AudioContext resampling)
     const trackSampleRate = audioTrack.getSettings().sampleRate;
+    if (!trackSampleRate) {
+      log.warn(
+        `MSTP: the track reported no sample rate (${String(trackSampleRate)}); ` +
+          `declaring ${this.encoderConfig.sampleRate}Hz`,
+      );
+    } else if (!isSupportedSampleRate(trackSampleRate)) {
+      log.warn(
+        `MSTP: the track reported ${trackSampleRate}Hz, which is not a supported rate; ` +
+          `declaring ${this.encoderConfig.sampleRate}Hz`,
+      );
+    } else {
+      log.info(
+        `MSTP: the track reported ${trackSampleRate}Hz ` +
+          `(configured ${this.encoderConfig.sampleRate}Hz)`,
+      );
+    }
     if (
       trackSampleRate &&
       isSupportedSampleRate(trackSampleRate) &&
