@@ -49,7 +49,7 @@ const SPEAKER_AVAILABILITIES: Record<SpeakerAvailability, true> = {
  * Entries nothing uses that are left alone on purpose: they belong to the
  * settings pages, whose copy is being redesigned separately.
  */
-const KNOWN_UNUSED = ['bitrate_not_applicable', 'volume', 'mute', 'unmute'];
+const KNOWN_UNUSED = ['bitrate_not_applicable'];
 
 describe('extension en.json', () => {
   it('should have a message for every error key the background and offscreen send', () => {
