@@ -43,8 +43,8 @@ struct Args {
     #[arg(short = 'a', long, env = "THAUMIC_ADVERTISE_IP")]
     advertise_ip: Option<std::net::IpAddr>,
 
-    /// Directory for what must outlast a restart: speakers added by IP address,
-    /// and artwork.jpg if you keep one there (overrides data_dir). Without it,
+    /// Directory for what must outlast a restart (overrides data_dir): speakers
+    /// added by IP address, and artwork.jpg if you keep one there. Without it,
     /// speakers cannot be added by IP address.
     #[arg(short = 'd', long, env = "THAUMIC_DATA_DIR")]
     data_dir: Option<PathBuf>,
@@ -123,8 +123,8 @@ async fn main() -> Result<()> {
     log::info!("Thaumic Cast Server v{}", env!("CARGO_PKG_VERSION"));
 
     // Load configuration
-    let mut config =
-        ServerConfig::load(args.config.as_deref()).context("Could not load the configuration")?;
+    let mut config = ServerConfig::load(args.config.as_deref())
+        .context("Nothing was started: the configuration could not be loaded")?;
 
     // Apply CLI overrides
     if let Some(port) = args.port {
