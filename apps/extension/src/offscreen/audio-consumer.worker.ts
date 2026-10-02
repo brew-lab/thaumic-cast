@@ -22,7 +22,11 @@ import {
 import { createEncoder, type AudioEncoder } from './encoders';
 import type { AudioCodec, EncoderConfig } from '@thaumic-cast/protocol';
 import type { WorkerInboundMessage } from './worker-messages';
-import { getStreamingPolicy, FRAME_DURATION_MS_DEFAULT } from '@thaumic-cast/protocol';
+import {
+  getStreamingPolicy,
+  toWireEncoderConfig,
+  FRAME_DURATION_MS_DEFAULT,
+} from '@thaumic-cast/protocol';
 import { exponentialBackoff } from '../lib/backoff';
 import {
   type WorkerState,
@@ -918,7 +922,7 @@ self.onmessage = async (event: MessageEvent<WorkerInboundMessage>) => {
       // Connect WebSocket (sends frame size to server in handshake)
       const id = await connectWebSocket(s, wsUrl, {
         type: 'HANDSHAKE',
-        payload: { encoderConfig: configWithFrameSize },
+        payload: { encoderConfig: toWireEncoderConfig(configWithFrameSize) },
       });
 
       running = true;
@@ -947,7 +951,10 @@ self.onmessage = async (event: MessageEvent<WorkerInboundMessage>) => {
       // server captures audio via WASAPI, Worker just manages WS lifecycle
       const id = await connectWebSocket(s, wsUrl, {
         type: 'START_BROWSER_CAPTURE',
-        payload: { browserName: browserName ?? null, encoderConfig },
+        payload: {
+          browserName: browserName ?? null,
+          encoderConfig: toWireEncoderConfig(encoderConfig),
+        },
       });
 
       running = true;

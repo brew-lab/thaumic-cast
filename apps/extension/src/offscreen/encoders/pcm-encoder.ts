@@ -106,15 +106,6 @@ export class PcmEncoder implements AudioEncoder {
   }
 
   /**
-   * No-op for PCM encoder.
-   * Latency mode reconfiguration is not applicable to format conversion.
-   * @returns Always null
-   */
-  reconfigure(): Uint8Array<ArrayBuffer> | null {
-    return null;
-  }
-
-  /**
    * No-op - no resources to release.
    */
   close(): void {
