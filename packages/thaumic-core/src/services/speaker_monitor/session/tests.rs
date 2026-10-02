@@ -1,3 +1,6 @@
+//! Tests of the session's poll schedule, and of the session driven through
+//! the monitor loop and through polls applied by hand.
+
 use super::*;
 
 mod dither {

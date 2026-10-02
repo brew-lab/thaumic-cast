@@ -1,3 +1,23 @@
+//! One speaker's session: what the monitor keeps about a speaker it watches.
+//!
+//! A [`SpeakerSession`] holds the state for one speaker fetching one stream:
+//! its connection, its poll schedule and what its polls have measured. The
+//! loop in [`crate::services::speaker_monitor::monitor`] owns the sessions and
+//! does the I/O; a [`PollResult`] is what one poll brings back to it.
+//!
+//! This file has the session's fields, its lifecycle (a connection attaching,
+//! ending, being replaced) and its poll schedule. What the session does with
+//! its measurements is in the child modules, each of which adds its own
+//! `impl SpeakerSession` block:
+//!
+//! - [`video_sync`]: the absolute latency that video sync uses, and the
+//!   wall-clock cushion line;
+//! - [`report`]: the 30 s `[SpeakerMonitor]` line and the helpers that format
+//!   it and the end-of-connection summary;
+//! - [`drift`]: stepping drift correction and handing its command to the
+//!   connection;
+//! - [`health`]: the speaker's notice and the health event sent to clients.
+
 use std::net::IpAddr;
 use std::sync::{Arc, Weak};
 use std::time::{Duration, Instant};
@@ -247,7 +267,7 @@ pub(super) struct SpeakerSession {
     /// Where the last transport verdict came from.
     pub(super) last_transport_source: TransportSource,
     /// Whether the draining warning has fired. It is re-armed only once the
-    /// projection recovers past [`DRAINING_CLEAR_SECS`] or the clock stops
+    /// projection recovers past [`report::DRAINING_CLEAR_SECS`] or the clock stops
     /// draining, not when the projection merely lapses (the estimate
     /// unlocking, an offset step, a new connection), so it does not repeat
     /// while the speaker drains on.

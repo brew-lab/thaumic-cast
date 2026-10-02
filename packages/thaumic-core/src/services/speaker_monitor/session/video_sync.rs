@@ -1,3 +1,10 @@
+//! The session's absolute latency, which video sync uses.
+//!
+//! Latency is `stream_elapsed - sonos_reltime`, smoothed, with a jitter and a
+//! confidence figure (see [`crate::services::speaker_monitor::monitor`] for
+//! how it is measured). The same figure, unsmoothed, is the wall-clock
+//! cushion whose level and trend go to the log.
+
 use std::time::{Duration, Instant};
 
 use crate::services::speaker_monitor::session::SpeakerSession;

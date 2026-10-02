@@ -1,7 +1,8 @@
 //! The speaker monitor: its polling loop and the pure building blocks it uses.
 //!
-//! The monitor loop itself lives in [`monitor`]; what it decides from its
-//! polls lives in the modules beside it, free of I/O, so each decision can be
+//! The monitor loop itself lives in [`monitor`], and what it keeps about each
+//! speaker in the private `session` module; what it decides from its
+//! polls lives in the modules beside them, free of I/O, so each decision can be
 //! tested on its own:
 //!
 //! - [`bounds`] turns one poll into bounds on the playhead and the reserve;

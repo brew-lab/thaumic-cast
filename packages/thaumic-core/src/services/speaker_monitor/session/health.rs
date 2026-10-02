@@ -1,3 +1,6 @@
+//! The session's health: the notice a report decides for the speaker, and the
+//! speaker health event that tells clients about it.
+
 use std::net::IpAddr;
 use std::time::Instant;
 

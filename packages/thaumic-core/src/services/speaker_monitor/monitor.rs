@@ -4,8 +4,9 @@
 //! each one's `GetPositionInfo`, compares the answer against the stream's own
 //! timing, and hands the result to the pure modules beside it in
 //! [`crate::services::speaker_monitor`], which decide what the polls mean. This
-//! file owns the I/O and the state: the sessions, the poll schedule, the
-//! timeouts and the log lines.
+//! file owns the I/O: the loop, the polls and their timeouts. What it keeps
+//! about each speaker, with that speaker's poll schedule and log lines, is a
+//! session, in the `session` module beside it.
 //!
 //! One of its outputs is the end-to-end latency between the audio source and
 //! Sonos playback, an absolute figure that video sync uses. The others are the
@@ -50,7 +51,8 @@
 //! more than [`SPEAKER_MONITOR_MAX_POLLS_PER_MIN`] times a minute between
 //! them. A speaker reporting another track is left alone until it fetches the
 //! stream again, and a poll taken while the speaker is known not to be
-//! playing is not measured (see [`TransportGate`]).
+//! playing is not measured (see
+//! [`TransportGate`](crate::services::speaker_monitor::TransportGate)).
 //!
 //! # Reserve and clock
 //!
