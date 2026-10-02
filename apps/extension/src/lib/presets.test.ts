@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, spyOn } from 'bun:test';
 import type { SupportedCodecsResult } from '@thaumic-cast/protocol';
 
 import { getDefaultExtensionSettings } from './settings';
-import { getResolvedConfigForDisplay, resolveAudioMode } from './presets';
+import { resolveAudioMode } from './presets';
 
 /** Codec support for a machine that can only send PCM, at both rate families. */
 const PCM_ONLY: SupportedCodecsResult = {
@@ -146,16 +146,5 @@ describe('resolveAudioMode with AAC-LC', () => {
       codec: 'aac-lc',
       bitrate: 192,
     });
-  });
-});
-
-describe('getResolvedConfigForDisplay', () => {
-  it('should show the smoothing the stream will run with', () => {
-    const config = getResolvedConfigForDisplay('mid', PCM_ONLY, custom, {
-      smoothingMs: 500,
-      frameDurationMs: 10,
-    });
-
-    expect(config?.jitterBufferMs).toBe(500);
   });
 });

@@ -25,8 +25,10 @@ import {
   isValidBitDepthForCodec,
 } from '@thaumic-cast/protocol';
 import type { ExtensionSettings, AudioMode } from '../../lib/settings';
-import { getResolvedConfigForDisplay, getDynamicPresets } from '../../lib/presets';
+import { getDynamicPresets } from '../../lib/presets';
+import { resolveAudio } from '../../lib/audio-resolver';
 import { pcmAudioRows, type PcmRowsContext } from '../../lib/pcm-audio-rows';
+import { useCombinationSupport } from '../hooks/useCombinationSupport';
 import styles from '../Options.module.css';
 
 /** Fragment the popup links to so the advanced options open in view. */
@@ -43,9 +45,11 @@ interface AudioSectionProps {
 
 /**
  * Audio quality settings section.
- * Allows user to select quality mode and custom settings. For PCM, smoothing
- * and frame size sit under Advanced in every mode, and the summary shows the
- * speaker head start the companion adds and the delay the two add together.
+ * Allows user to select quality mode and custom settings. Which controls show
+ * comes from the same resolver the cast uses: smoothing for any PCM cast, frame
+ * size for a PCM tab cast, bit depth where the codec offers a choice. For PCM
+ * the summary shows the speaker head start the companion adds and the delay
+ * the two add together.
  * @param root0
  * @param root0.settings
  * @param root0.onUpdate
@@ -65,27 +69,44 @@ export function AudioSection({
   const [advancedOpen, setAdvancedOpen] = useState(() => location.hash === ADVANCED_HASH);
   const advancedRef = useRef<HTMLDivElement>(null);
 
-  // Get resolved config for display
-  const resolvedConfig = useMemo(() => {
+  // Resolve the settings exactly as a cast would
+  const resolved = useMemo(() => {
     if (codecLoading || codecSupport.availableCodecs.length === 0) {
       return null;
     }
-    return getResolvedConfigForDisplay(
-      settings.audioMode,
-      codecSupport,
-      settings.customAudioSettings,
-      { smoothingMs: settings.pcmSmoothingMs, frameDurationMs: settings.pcmFrameDurationMs },
-    );
+    try {
+      return resolveAudio(
+        {
+          audioMode: settings.audioMode,
+          customAudioSettings: settings.customAudioSettings,
+          pcmSmoothingMs: settings.pcmSmoothingMs,
+          pcmFrameDurationMs: settings.pcmFrameDurationMs,
+          captureMode: settings.captureMode,
+        },
+        codecSupport,
+      );
+    } catch {
+      return null;
+    }
   }, [
     settings.audioMode,
     settings.customAudioSettings,
     settings.pcmSmoothingMs,
     settings.pcmFrameDurationMs,
+    settings.captureMode,
     codecSupport,
     codecLoading,
   ]);
 
+  // The summary describes the Quality choice, which is what a tab cast sends.
+  const resolvedConfig = resolved?.tabConfig ?? null;
   const isPcm = resolvedConfig?.codec === 'pcm';
+  const showSmoothing = resolved?.controls.smoothing ?? false;
+  const showFrameSize = resolved?.controls.frameSize ?? false;
+  const showBitDepth = resolved?.controls.bitDepth ?? false;
+
+  // Ask the browser about the exact combination a tab cast would encode.
+  const combinationSupported = useCombinationSupport(resolvedConfig);
 
   // Opened from the popup's smoothing advice: expand Advanced and bring it
   // into view once it exists (it waits for codec detection).
@@ -96,10 +117,10 @@ export function AudioSection({
       setAdvancedOpen(true);
       advancedRef.current?.scrollIntoView({ block: 'start' });
     };
-    if (isPcm) reveal();
+    if (showSmoothing) reveal();
     window.addEventListener('hashchange', reveal);
     return () => window.removeEventListener('hashchange', reveal);
-  }, [isPcm]);
+  }, [showSmoothing]);
 
   // Get dynamic presets for showing resolved codec/bitrate per tier
   const dynamicPresets = useMemo(() => {
@@ -412,6 +433,11 @@ export function AudioSection({
               </div>
             </div>
 
+            {/* Browser-wide capture decides the format, so say the choice above waits */}
+            {resolved?.formatForced && (
+              <Alert variant="info">{t('audio_browser_capture_note')}</Alert>
+            )}
+
             <div className={styles.divider} />
 
             {/* Resolved/Custom settings */}
@@ -535,29 +561,30 @@ export function AudioSection({
                     </div>
                   )}
 
-                  {/* Bit Depth - show supported bit depths for selected codec */}
-                  <div className={styles.field}>
-                    <label htmlFor="audio-bit-depth" className={styles.label}>
-                      {t('audio_bit_depth')}
-                    </label>
-                    <select
-                      id="audio-bit-depth"
-                      className={styles.select}
-                      value={settings.customAudioSettings.bitsPerSample}
-                      onChange={(e) =>
-                        handleBitDepthChange(
-                          Number((e.target as HTMLSelectElement).value) as BitDepth,
-                        )
-                      }
-                    >
-                      {getSupportedBitDepths(settings.customAudioSettings.codec).map((depth) => (
-                        <option key={depth} value={depth}>
-                          {depth === 16 ? t('audio_bit_depth_16') : t('audio_bit_depth_24')}
-                        </option>
-                      ))}
-                    </select>
-                    <span className={styles.hint}>{t('audio_bit_depth_hint')}</span>
-                  </div>
+                  {/* Bit Depth - only where the codec offers a choice */}
+                  {showBitDepth && (
+                    <div className={styles.field}>
+                      <label htmlFor="audio-bit-depth" className={styles.label}>
+                        {t('audio_bit_depth')}
+                      </label>
+                      <select
+                        id="audio-bit-depth"
+                        className={styles.select}
+                        value={settings.customAudioSettings.bitsPerSample}
+                        onChange={(e) =>
+                          handleBitDepthChange(
+                            Number((e.target as HTMLSelectElement).value) as BitDepth,
+                          )
+                        }
+                      >
+                        {getSupportedBitDepths(settings.customAudioSettings.codec).map((depth) => (
+                          <option key={depth} value={depth}>
+                            {depth === 16 ? t('audio_bit_depth_16') : t('audio_bit_depth_24')}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
 
                   {/* PCM summary: sample rate, smoothing, head start, added delay */}
                   {pcmRows.length > 0 && (
@@ -590,14 +617,23 @@ export function AudioSection({
               <span className={styles.hint}>{t('audio_sample_rate_follows_capture_hint')}</span>
             )}
 
-            {isPcm && settings.smoothingMigrationNotice && (
+            {/* The browser refuses this exact combination: say so before cast time */}
+            {combinationSupported === false && (
+              <Alert variant="warning">
+                {isCustomMode
+                  ? t('audio_combination_unsupported_custom')
+                  : t('audio_combination_unsupported_preset')}
+              </Alert>
+            )}
+
+            {showSmoothing && settings.smoothingMigrationNotice && (
               <Alert variant="info" onDismiss={handleDismissMigration} dismissLabel={t('dismiss')}>
                 {t('audio_smoothing_migrated', settings.smoothingMigrationNotice)}
               </Alert>
             )}
 
-            {/* Advanced: smoothing and frame size, for PCM in every mode */}
-            {isPcm && (
+            {/* Advanced: smoothing for any PCM cast, frame size for a PCM tab cast */}
+            {showSmoothing && (
               <div id="audio-advanced" ref={advancedRef} className={styles.advancedAnchor}>
                 <Disclosure
                   label={t('audio_advanced')}
@@ -628,28 +664,30 @@ export function AudioSection({
                       <span className={styles.hint}>{t('audio_smoothing_hint')}</span>
                     </div>
 
-                    <div className={styles.field}>
-                      <label htmlFor="audio-frame-size" className={styles.label}>
-                        {t('audio_frame_size')}
-                      </label>
-                      <select
-                        id="audio-frame-size"
-                        className={styles.select}
-                        value={settings.pcmFrameDurationMs}
-                        onChange={(e) =>
-                          handleFrameDurationChange(
-                            Number((e.target as HTMLSelectElement).value) as FrameDurationMs,
-                          )
-                        }
-                      >
-                        {FRAME_DURATIONS.map((ms) => (
-                          <option key={ms} value={ms}>
-                            {optionLabel(ms, FRAME_DURATION_MS_DEFAULT)}
-                          </option>
-                        ))}
-                      </select>
-                      <span className={styles.hint}>{t('audio_frame_size_hint')}</span>
-                    </div>
+                    {showFrameSize && (
+                      <div className={styles.field}>
+                        <label htmlFor="audio-frame-size" className={styles.label}>
+                          {t('audio_frame_size')}
+                        </label>
+                        <select
+                          id="audio-frame-size"
+                          className={styles.select}
+                          value={settings.pcmFrameDurationMs}
+                          onChange={(e) =>
+                            handleFrameDurationChange(
+                              Number((e.target as HTMLSelectElement).value) as FrameDurationMs,
+                            )
+                          }
+                        >
+                          {FRAME_DURATIONS.map((ms) => (
+                            <option key={ms} value={ms}>
+                              {optionLabel(ms, FRAME_DURATION_MS_DEFAULT)}
+                            </option>
+                          ))}
+                        </select>
+                        <span className={styles.hint}>{t('audio_frame_size_hint')}</span>
+                      </div>
+                    )}
                   </div>
                 </Disclosure>
               </div>

@@ -29,7 +29,8 @@ import { getSourceFromUrl } from '../../lib/url-utils';
 import { getActiveTab, getActiveTabId } from '../../lib/tab-utils';
 import { loadExtensionSettings } from '../../lib/settings';
 import { getCachedCodecSupport } from '../../lib/codec-cache';
-import { resolveAudioMode, describeEncoderConfig } from '../../lib/presets';
+import { describeEncoderConfig } from '../../lib/presets';
+import { resolveAudio } from '../../lib/audio-resolver';
 import { getCachedState, updateCache } from '../metadata-cache';
 import {
   registerSession,
@@ -112,16 +113,12 @@ export async function handleStartCast(msg: StartCastMessage): Promise<ExtensionR
       throw new Error('error_codec_detection_failed');
     }
 
-    // Resolve encoder config from audio mode settings
-    // PCM is always supported, so this will always succeed
-    const encoderConfig = resolveAudioMode(
-      settings.audioMode,
-      codecSupport,
-      settings.customAudioSettings,
-      { smoothingMs: settings.pcmSmoothingMs, frameDurationMs: settings.pcmFrameDurationMs },
-    );
+    // Resolve the config this cast sends, through the resolver the options
+    // page renders from. PCM is always supported, so this will always succeed.
+    const { config: encoderConfig } = resolveAudio(settings, codecSupport);
     log.info(
-      `Encoder config (${settings.audioMode} mode): ${describeEncoderConfig(encoderConfig)}`,
+      `Encoder config (${settings.audioMode} mode, ${settings.captureMode} capture): ` +
+        describeEncoderConfig(encoderConfig),
     );
 
     // 5. Prevent mixing capture modes (tab + browser capture cannot coexist)
