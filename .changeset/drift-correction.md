@@ -6,7 +6,7 @@
 '@thaumic-cast/protocol': patch
 ---
 
-feat(core): drive clock drift correction from the speaker monitor (observe by default)
+feat(core): drive clock drift correction from the speaker monitor
 
 No two clocks agree exactly: a Sonos Playbar in the field plays about 20 ppm faster than audio arrives, so its reserve
 drains about 1.2 ms a minute and a 500 ms speaker head start reaches the low floor after roughly five hours. The core
@@ -22,8 +22,8 @@ use the net rate (the clock less the correction applied), video sync counts the 
 `commandPpm` and `netInsertedMs`; a `drift_saturated` notice says when correction is pinned at its cap and the speaker
 will still run low, and an uncorrected drift notice now adds that turning correction on keeps the speaker topped up.
 
-The mode is `on`, `observe` or `off`, read per connection and `off` whenever speaker monitoring is. This release ships
-`observe`: the controller works out and logs what it would command while the audio goes out byte for byte as captured.
-The desktop app offers an On/Off toggle under Settings > Speakers (Off keeps observing), disabled while "Keep an eye on
+The mode is `on`, `observe` or `off`, read per connection and `off` whenever speaker monitoring is. With `observe`
+the controller works out and logs what it would command while the audio goes out byte for byte as captured; the
+default is set in the `drift-default-on` changeset. The desktop app offers an On/Off toggle under Settings > Speakers (Off keeps observing), disabled while "Keep an eye on
 speakers" is off; the server takes `drift_compensation` in its config or `--drift-compensation`, and warns at startup
 when it is set but the speaker monitor is off. `THAUMIC_DRIFT_COMPENSATION` outranks both.

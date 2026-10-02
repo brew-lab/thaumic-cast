@@ -2,9 +2,9 @@
  * Clock Drift Correction Toggle
  *
  * The settings view offers clock drift correction as a plain on/off toggle
- * over the core's three modes: on is `on`, and off saves `observe`, which
- * leaves the audio exactly as captured while the log keeps saying what
- * correction would do. `off` itself can only come from the settings file or
+ * over the core's three modes: on (the default) is `on`, and off saves
+ * `observe`, which leaves the audio exactly as captured while the log keeps
+ * saying what correction would do. `off` itself can only come from the settings file or
  * THAUMIC_DRIFT_COMPENSATION. Correction steers by the speaker monitor, so
  * the toggle is disabled while the monitor is off. Pure, so the rules are
  * testable without Tauri.

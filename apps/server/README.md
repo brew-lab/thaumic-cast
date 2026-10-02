@@ -125,7 +125,7 @@ thaumic-server --log-level debug
 | `-l, --log-level <LEVEL>`                 | `THAUMIC_LOG_LEVEL`            | Log level (error/warn/info/debug/trace)            |
 | `--speaker-monitor <on\|off>`             | `THAUMIC_SPEAKER_MONITOR`      | Keep an eye on each speaker (default `on`)         |
 | `--pcm-connect-burst-ms <MS>`             | `THAUMIC_PCM_CONNECT_BURST_MS` | Speaker head start, 0-2000 ms (default `500`)      |
-| `--drift-compensation <on\|observe\|off>` | `THAUMIC_DRIFT_COMPENSATION`   | Clock drift correction (default `observe`)         |
+| `--drift-compensation <on\|observe\|off>` | `THAUMIC_DRIFT_COMPENSATION`   | Clock drift correction (default `on`)              |
 | `--strict-stream-access <BOOL>`           | `THAUMIC_STRICT_STREAM_ACCESS` | Refuse unexpected stream fetches (default `false`) |
 
 CLI flags override environment variables, which override the config file, with two exceptions:
@@ -144,10 +144,10 @@ Three settings concern the speakers themselves. `speaker_monitor` (on by default
 much audio it has in hand, which is what drives the speaker notices clients show. `pcm_connect_burst_ms`, the speaker
 head start (500 ms by default, 0 to 2000), is audio sent to each speaker at once when it connects so it can ride out
 Wi-Fi hiccups on PCM casts; raise it if one speaker on a weak Wi-Fi link cuts out, bearing in mind that it adds that
-much delay. `drift_compensation` (`observe` by default) is clock drift correction: no two clocks agree exactly, so over a
+much delay. `drift_compensation` (`on` by default) is clock drift correction: no two clocks agree exactly, so over a
 long cast a speaker slowly uses up its head start, and `on` stretches or squeezes each speaker's PCM audio by at most
 150 ppm to hold it level. `observe` works out and logs what it would do and leaves the audio untouched; `off` does
-neither. It steers by the speaker monitor, so with `speaker_monitor` off it runs as `off` and the server says so at
+neither. A config file that leaves the key out gets `on`; one that sets it keeps what it says. It steers by the speaker monitor, so with `speaker_monitor` off it runs as `off` and the server says so at
 startup. All three apply from each speaker's next connection.
 
 ### Environment variables

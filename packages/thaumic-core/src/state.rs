@@ -188,7 +188,7 @@ pub struct Config {
     /// over long casts, `observe` works out and logs what it would do while
     /// leaving the audio byte for byte as captured, `off` does neither.
     ///
-    /// Defaults to [`DriftMode::Observe`]. Correction steers by the speaker
+    /// Defaults to [`DriftMode::On`]. Correction steers by the speaker
     /// monitor, so with [`Self::speaker_monitor`] off it is off. Read once
     /// per connection, so a change applies from each speaker's next
     /// connection; `THAUMIC_DRIFT_COMPENSATION=on|observe|off` overrides it
@@ -647,20 +647,22 @@ mod tests {
         assert_eq!(config.pcm_connect_burst_ms, 0);
     }
 
-    /// Drift correction ships observing, including for a config written
-    /// before the field existed, and a config can set it.
+    /// Drift correction ships on, including for a config written before
+    /// the field existed, and a config that sets it keeps its value.
     #[test]
-    fn drift_compensation_defaults_to_observe_when_absent() {
-        assert_eq!(Config::default().drift_compensation, DriftMode::Observe);
+    fn drift_compensation_defaults_to_on_when_absent() {
+        assert_eq!(Config::default().drift_compensation, DriftMode::On);
         let config: Config =
             serde_json::from_str(r#"{"preferred_port":0,"topology_refresh_interval":30}"#)
                 .expect("parses");
-        assert_eq!(config.drift_compensation, DriftMode::Observe);
-        let config: Config = serde_json::from_str(
-            r#"{"preferred_port":0,"topology_refresh_interval":30,"drift_compensation":"on"}"#,
-        )
-        .expect("parses");
         assert_eq!(config.drift_compensation, DriftMode::On);
+        for (saved, mode) in [("observe", DriftMode::Observe), ("off", DriftMode::Off)] {
+            let config: Config = serde_json::from_str(&format!(
+                r#"{{"preferred_port":0,"topology_refresh_interval":30,"drift_compensation":"{saved}"}}"#,
+            ))
+            .expect("parses");
+            assert_eq!(config.drift_compensation, mode);
+        }
     }
 
     #[test]
