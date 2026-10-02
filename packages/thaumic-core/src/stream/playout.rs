@@ -57,11 +57,11 @@ use tokio::time::Instant;
 
 use super::cadence::{ChainStats, LoggingStreamGuard};
 use super::pcm_http::{PcmContinuation, PcmSegmentDidl};
+use super::rate_adapter::drift_active;
 use super::tap::{ConnectionTap, WAV_HEADER_BYTES};
 use super::uri::{parse_stream_uri, segment_base_uri};
 use super::AudioFormat;
-use crate::services::speaker_monitor::control::drift_active;
-use crate::services::speaker_monitor::{PlayoutTimeline, TimelineEntry};
+use crate::model::{PlayoutTimeline, TimelineEntry};
 
 /// A body stream of audio bytes, as the cadence produces it.
 pub type PcmStream = Pin<Box<dyn Stream<Item = Result<Bytes, std::io::Error>> + Send>>;

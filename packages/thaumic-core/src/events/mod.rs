@@ -193,7 +193,7 @@ pub struct CompanionAudio {
     pub speaker_monitor: bool,
     /// The clock drift correction mode new connections run under: `off`
     /// whenever the speaker monitor is.
-    pub drift_compensation: crate::services::speaker_monitor::DriftMode,
+    pub drift_compensation: crate::model::DriftMode,
 }
 
 impl CompanionAudio {
@@ -202,8 +202,8 @@ impl CompanionAudio {
     /// where each value came from.
     pub fn from_config(config: &crate::state::Config) -> Self {
         use crate::companion_settings::SettingOrigin;
-        use crate::services::speaker_monitor::drift_compensation_mode;
-        use crate::stream::cadence::pcm_connect_burst_ms;
+        use crate::model::drift_compensation_mode;
+        use crate::model::pcm_connect_burst_ms;
         let speaker_monitor = config.speaker_monitor;
         Self {
             head_start_ms: u32::try_from(pcm_connect_burst_ms(config.pcm_connect_burst_ms))
@@ -376,7 +376,7 @@ pub enum NetworkEvent {
         /// The clock drift correction mode the connection was made under
         /// (PCM only).
         #[serde(rename = "driftMode", skip_serializing_if = "Option::is_none")]
-        drift_mode: Option<crate::services::speaker_monitor::DriftMode>,
+        drift_mode: Option<crate::model::DriftMode>,
         /// The drift correction command, in ppm (positive inserts audio):
         /// applied with `on`, what it would be with `observe`. Absent with
         /// `off`.
@@ -392,7 +392,7 @@ pub enum NetworkEvent {
         /// [`crate::services::speaker_monitor::notice`]). Repeated in every
         /// report while it stands, under the same `noticeId`.
         #[serde(skip_serializing_if = "Option::is_none")]
-        notice: Option<crate::services::speaker_monitor::SpeakerNotice>,
+        notice: Option<crate::model::SpeakerNotice>,
         /// Unix timestamp in milliseconds.
         timestamp: u64,
     },
@@ -418,7 +418,7 @@ pub enum TopologyEvent {
     /// shared by everyone casting to it.
     MemberChanged {
         /// What changed.
-        change: crate::services::speaker_monitor::MemberChange,
+        change: crate::model::MemberChange,
         /// Address of the device the change is about, when it is still in
         /// the household.
         #[serde(rename = "speakerIp", skip_serializing_if = "Option::is_none")]
@@ -557,11 +557,11 @@ mod tests {
             clock_ppm: Some(39.75),
             clock_se_ppm: Some(7.25),
             time_to_floor_s: Some(900),
-            drift_mode: Some(crate::services::speaker_monitor::DriftMode::Observe),
+            drift_mode: Some(crate::model::DriftMode::Observe),
             command_ppm: Some(38.5),
             net_inserted_ms: None,
-            notice: Some(crate::services::speaker_monitor::SpeakerNotice {
-                kind: crate::services::speaker_monitor::SpeakerNoticeKind::DriftUncorrected,
+            notice: Some(crate::model::SpeakerNotice {
+                kind: crate::model::SpeakerNoticeKind::DriftUncorrected,
                 notice_id: 2,
                 stall_ms: None,
                 left_ms: None,
@@ -690,7 +690,7 @@ mod tests {
                 head_start_ms: 750,
                 head_start_fixed: true,
                 speaker_monitor: false,
-                drift_compensation: crate::services::speaker_monitor::DriftMode::Off,
+                drift_compensation: crate::model::DriftMode::Off,
             },
             timestamp: 2,
         });
@@ -713,7 +713,7 @@ mod tests {
     #[test]
     fn member_changed_wire_shape() {
         let event = BroadcastEvent::Topology(TopologyEvent::MemberChanged {
-            change: crate::services::speaker_monitor::MemberChange::DeviceRebooted {
+            change: crate::model::MemberChange::DeviceRebooted {
                 uuid: "RINCON_B".into(),
                 from: 31,
                 to: 32,
