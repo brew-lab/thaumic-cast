@@ -232,7 +232,7 @@ async fn a_grouped_start_joins_slaves_to_the_coordinator() {
                     .calls_since(from)
                     .iter()
                     .any(|call| call.sets_uri_starting_with(slave, &join_uri)),
-                "{slave} joins with {join_uri}"
+                "{slave} joins the coordinator"
             );
             assert!(
                 sys.fake.speaker_at(slave).fetches().is_empty(),
@@ -415,7 +415,7 @@ async fn removing_the_coordinator_promotes_a_slave_and_repoints_the_rest() {
                 .calls_since(from)
                 .iter()
                 .any(|call| call.sets_uri_starting_with(&remaining_ip, &repoint_uri)),
-            "{remaining} is re-pointed to {repoint_uri}"
+            "{remaining} is re-pointed to the promoted speaker"
         );
         assert!(sys.fake.speaker_named(remaining).fetches().is_empty());
 
