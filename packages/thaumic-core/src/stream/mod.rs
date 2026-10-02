@@ -1,4 +1,5 @@
 pub mod cadence;
+pub mod delivery;
 pub mod framing;
 pub mod icy;
 pub mod ingest_gaps;
@@ -12,9 +13,12 @@ pub mod uri;
 pub mod wav;
 
 pub use cadence::{
-    create_wav_stream_with_cadence, lagged_error, parse_pcm_connect_burst_ms, pcm_connect_burst_ms,
-    CadenceConfig, ChainStats, EpochHook, FirstConnectionWait, FirstWaitWatch, LoggingStreamGuard,
-    FIRST_WAIT_SURVIVAL, PCM_CONNECT_BURST_ENV,
+    create_wav_stream_with_cadence, parse_pcm_connect_burst_ms, pcm_connect_burst_ms,
+    CadenceConfig, ChainStats, PCM_CONNECT_BURST_ENV,
+};
+pub use delivery::{
+    lagged_error, EpochHook, FirstConnectionWait, FirstWaitWatch, LoggingStreamGuard,
+    FIRST_WAIT_SURVIVAL,
 };
 pub use framing::{BodyFraming, DeclaredEnd, EndedBy};
 pub use icy::{IcyMetadataInjector, ICY_METAINT};
