@@ -172,3 +172,96 @@ impl AudioCodec {
         self.facts().mime
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Every fact, for every codec, against the literal the scattered match
+    /// arms held before the table replaced them.
+    #[test]
+    fn facts_hold_the_values_of_the_arms_they_replaced() {
+        struct Expected {
+            codec: AudioCodec,
+            name: &'static str,
+            mime: &'static str,
+            cleanup_order: CleanupOrder,
+            uri: CodecUri,
+            icy: bool,
+            container_header_bytes: u32,
+            paced: bool,
+            ring_floor: bool,
+            allows_24_bit: bool,
+        }
+        let table = [
+            Expected {
+                codec: AudioCodec::Pcm,
+                name: "pcm",
+                mime: "audio/wav",
+                cleanup_order: CleanupOrder::HttpFirst,
+                uri: CodecUri::Http { extension: ".wav" },
+                icy: false,
+                container_header_bytes: 44,
+                paced: true,
+                ring_floor: true,
+                allows_24_bit: false,
+            },
+            Expected {
+                codec: AudioCodec::Aac,
+                name: "aac",
+                mime: "audio/aac",
+                cleanup_order: CleanupOrder::SoapFirst,
+                uri: CodecUri::Mp3Radio,
+                icy: true,
+                container_header_bytes: 0,
+                paced: false,
+                ring_floor: false,
+                allows_24_bit: false,
+            },
+            Expected {
+                codec: AudioCodec::Mp3,
+                name: "mp3",
+                mime: "audio/mpeg",
+                cleanup_order: CleanupOrder::SoapFirst,
+                uri: CodecUri::Mp3Radio,
+                icy: true,
+                container_header_bytes: 0,
+                paced: false,
+                ring_floor: false,
+                allows_24_bit: false,
+            },
+            Expected {
+                codec: AudioCodec::Flac,
+                name: "flac",
+                mime: "audio/flac",
+                cleanup_order: CleanupOrder::SoapFirst,
+                uri: CodecUri::Http { extension: ".flac" },
+                icy: false,
+                container_header_bytes: 0,
+                paced: false,
+                ring_floor: false,
+                allows_24_bit: true,
+            },
+        ];
+        for want in table {
+            let codec = want.codec;
+            let facts = codec.facts();
+            assert_eq!(facts.name, want.name, "{codec:?} name");
+            assert_eq!(facts.mime, want.mime, "{codec:?} mime");
+            assert_eq!(facts.cleanup_order, want.cleanup_order, "{codec:?} cleanup");
+            assert_eq!(facts.uri, want.uri, "{codec:?} uri");
+            assert_eq!(facts.icy, want.icy, "{codec:?} icy");
+            assert_eq!(
+                facts.container_header_bytes, want.container_header_bytes,
+                "{codec:?} container header"
+            );
+            assert_eq!(facts.paced, want.paced, "{codec:?} paced");
+            assert_eq!(facts.ring_floor, want.ring_floor, "{codec:?} ring floor");
+            assert_eq!(facts.allows_24_bit, want.allows_24_bit, "{codec:?} 24-bit");
+            // The methods that predate the table return its values.
+            assert_eq!(codec.as_str(), want.name, "{codec:?} as_str");
+            assert_eq!(codec.mime_type(), want.mime, "{codec:?} mime_type");
+            assert_eq!(codec.cleanup_order(), want.cleanup_order, "{codec:?} order");
+        }
+    }
+}
