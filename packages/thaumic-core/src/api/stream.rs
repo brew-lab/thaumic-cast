@@ -39,7 +39,8 @@ use crate::stream::{
     ChainParts, ChainStats, ConnectionTap, DeclaredEnd, EpochHook, FirstConnectionWait,
     FirstWaitWatch, HeadStart, IcyMetadataInjector, LoggingStreamGuard, NewReason, PcmContinuation,
     PcmHttpFraming, PcmHttpSettings, PcmHttpSwitches, PcmSegmentDidl, PlayoutChain, RateAdapter,
-    RateControl, Route, SegmentLayout, SegmentStart, StreamState, MAX_UNLISTED_STREAM_READERS,
+    RateControl, Route, SegmentLayout, SegmentStart, StreamReaderSlot, StreamState,
+    MAX_UNLISTED_STREAM_READERS,
 };
 
 /// A single item of an audio body stream.
@@ -217,95 +218,16 @@ async fn serve_stream(
     version: Version,
     headers: HeaderMap,
 ) -> ThaumicResult<Response> {
-    let stream_state = state
-        .stream_coordinator
-        .get_stream(&id)
-        .ok_or_else(|| ThaumicError::StreamNotFound(id.clone()))?;
-    if segment.is_some() && stream_state.codec != AudioCodec::Pcm {
-        // Only PCM has a length to run out of; a segment of anything else is a
-        // URL no server hands out.
-        return Err(ThaumicError::StreamNotFound(id));
-    }
-
-    let remote_ip = remote_addr.ip();
-
-    // A stream id is not a credential — Sonos republishes the stream URL as
-    // `CurrentTrackURI` to anything on the LAN that asks — so check that this
-    // peer is one of the devices the stream is actually for. Derived per
-    // request; see `decide_stream_access`.
-    let allowed_ips = state.stream_coordinator.allowed_reader_ips(&id);
-    let (strict, speaker_monitor, connect_burst_ms, drift_compensation) = {
-        let config = state.config.read();
-        (
-            config.strict_stream_access,
-            config.speaker_monitor,
-            config.pcm_connect_burst_ms,
-            config.drift_compensation,
-        )
-    };
-    let access = decide_stream_access(
+    let Admission {
+        id,
+        stream_state,
         remote_ip,
-        &allowed_ips,
-        &state.network.get_local_ip(),
-        strict,
-    );
-
-    // `draws_unlisted_budget` matches exhaustively, so a future variant cannot
-    // quietly fall through as both allowed and uncapped.
-    let reader_slot = if access.draws_unlisted_budget() {
-        let refused = access == StreamAccess::UnlistedRefused;
-        // Once per address per stream at warn, then debug: a refused reader
-        // that retries in a loop must not be able to fill the log, and the
-        // first line already carries everything needed to judge it.
-        let verdict = if refused {
-            "refused (strict_stream_access is on)"
-        } else {
-            "serving anyway (strict_stream_access is off)"
-        };
-        if stream_state.note_unlisted_reader(remote_ip) {
-            log::warn!(
-                "[Stream] Fetch from an address this stream is not for: client={}, stream={}, \
-                 allowed={:?} — {}",
-                remote_ip,
-                id,
-                allowed_ips,
-                verdict
-            );
-        } else {
-            log::debug!(
-                "[Stream] Repeat fetch from an address this stream is not for: client={}, \
-                 stream={} — {}",
-                remote_ip,
-                id,
-                verdict
-            );
-        }
-        if refused {
-            // 404, not 403: an expired stream already answers 404, so a
-            // harvested id learns nothing about whether it was ever valid.
-            return Err(ThaumicError::StreamNotFound(id));
-        }
-
-        // Serving it, but on a budget: every reader costs a cadence pipeline,
-        // so a harvested id must not fan out without bound. Not an access
-        // decision — it is not gated on `strict_stream_access`; strict mode
-        // simply refuses these peers before they ever reach it. The slot is
-        // held by the response body below and freed when that body is dropped.
-        // 404 for the same reason a refusal is: the caller learns nothing.
-        let Some(slot) = stream_state.acquire_unlisted_reader() else {
-            log::warn!(
-                "[Stream] Refusing fetch: stream {} already has its maximum of {} readers from \
-                 addresses it is not playing on (client={})",
-                id,
-                MAX_UNLISTED_STREAM_READERS,
-                remote_ip
-            );
-            return Err(ThaumicError::StreamNotFound(id));
-        };
-        Some(slot)
-    } else {
-        None
-    };
+        speaker_monitor,
+        connect_burst_ms,
+        drift_compensation,
+        access,
+        reader_slot,
+    } = admit(id, segment, &state, remote_addr)?;
 
     let range_header = headers
         .get(header::RANGE)
@@ -808,6 +730,141 @@ async fn serve_stream(
     builder
         .body(Body::from_stream(final_stream))
         .map_err(|e| ThaumicError::Internal(e.to_string()))
+}
+
+/// A fetch that passed admission: the stream it is for, who is asking, and
+/// the settings read for it. See [`admit`].
+struct Admission {
+    /// The stream's id, handed back: a refusal takes it by value.
+    id: String,
+    /// The stream being fetched.
+    stream_state: Arc<StreamState>,
+    /// The peer's address.
+    remote_ip: IpAddr,
+    /// The speaker-monitor setting as it stood at this fetch.
+    speaker_monitor: bool,
+    /// The configured PCM connect burst, not yet resolved (see
+    /// [`pcm_connect_burst_ms`]).
+    connect_burst_ms: u64,
+    /// The drift correction setting as it stood at this fetch.
+    drift_compensation: DriftMode,
+    /// What the peer is to this stream.
+    access: StreamAccess,
+    /// The unlisted-reader budget slot, for a reader that draws on one. The
+    /// response body holds it and frees it when that body is dropped.
+    reader_slot: Option<StreamReaderSlot>,
+}
+
+/// Admission, the first phase of [`serve_stream`]: finds the stream, answers
+/// 404 for a segment of a stream that is not PCM, decides what the peer is to
+/// the stream, and for an unlisted reader logs the fetch and either refuses
+/// it or takes a slot of the unlisted-reader budget.
+fn admit(
+    id: String,
+    segment: Option<u32>,
+    state: &AppState,
+    remote_addr: SocketAddr,
+) -> ThaumicResult<Admission> {
+    let stream_state = state
+        .stream_coordinator
+        .get_stream(&id)
+        .ok_or_else(|| ThaumicError::StreamNotFound(id.clone()))?;
+    if segment.is_some() && stream_state.codec != AudioCodec::Pcm {
+        // Only PCM has a length to run out of; a segment of anything else is a
+        // URL no server hands out.
+        return Err(ThaumicError::StreamNotFound(id));
+    }
+
+    let remote_ip = remote_addr.ip();
+
+    // A stream id is not a credential — Sonos republishes the stream URL as
+    // `CurrentTrackURI` to anything on the LAN that asks — so check that this
+    // peer is one of the devices the stream is actually for. Derived per
+    // request; see `decide_stream_access`.
+    let allowed_ips = state.stream_coordinator.allowed_reader_ips(&id);
+    let (strict, speaker_monitor, connect_burst_ms, drift_compensation) = {
+        let config = state.config.read();
+        (
+            config.strict_stream_access,
+            config.speaker_monitor,
+            config.pcm_connect_burst_ms,
+            config.drift_compensation,
+        )
+    };
+    let access = decide_stream_access(
+        remote_ip,
+        &allowed_ips,
+        &state.network.get_local_ip(),
+        strict,
+    );
+
+    // `draws_unlisted_budget` matches exhaustively, so a future variant cannot
+    // quietly fall through as both allowed and uncapped.
+    let reader_slot = if access.draws_unlisted_budget() {
+        let refused = access == StreamAccess::UnlistedRefused;
+        // Once per address per stream at warn, then debug: a refused reader
+        // that retries in a loop must not be able to fill the log, and the
+        // first line already carries everything needed to judge it.
+        let verdict = if refused {
+            "refused (strict_stream_access is on)"
+        } else {
+            "serving anyway (strict_stream_access is off)"
+        };
+        if stream_state.note_unlisted_reader(remote_ip) {
+            log::warn!(
+                "[Stream] Fetch from an address this stream is not for: client={}, stream={}, \
+                 allowed={:?} — {}",
+                remote_ip,
+                id,
+                allowed_ips,
+                verdict
+            );
+        } else {
+            log::debug!(
+                "[Stream] Repeat fetch from an address this stream is not for: client={}, \
+                 stream={} — {}",
+                remote_ip,
+                id,
+                verdict
+            );
+        }
+        if refused {
+            // 404, not 403: an expired stream already answers 404, so a
+            // harvested id learns nothing about whether it was ever valid.
+            return Err(ThaumicError::StreamNotFound(id));
+        }
+
+        // Serving it, but on a budget: every reader costs a cadence pipeline,
+        // so a harvested id must not fan out without bound. Not an access
+        // decision — it is not gated on `strict_stream_access`; strict mode
+        // simply refuses these peers before they ever reach it. The slot is
+        // held by the response body below and freed when that body is dropped.
+        // 404 for the same reason a refusal is: the caller learns nothing.
+        let Some(slot) = stream_state.acquire_unlisted_reader() else {
+            log::warn!(
+                "[Stream] Refusing fetch: stream {} already has its maximum of {} readers from \
+                 addresses it is not playing on (client={})",
+                id,
+                MAX_UNLISTED_STREAM_READERS,
+                remote_ip
+            );
+            return Err(ThaumicError::StreamNotFound(id));
+        };
+        Some(slot)
+    } else {
+        None
+    };
+
+    Ok(Admission {
+        id,
+        stream_state,
+        remote_ip,
+        speaker_monitor,
+        connect_burst_ms,
+        drift_compensation,
+        access,
+        reader_slot,
+    })
 }
 
 /// Adds to a PCM segment response's head what a fetch of part of the
