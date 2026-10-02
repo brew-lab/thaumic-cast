@@ -389,56 +389,17 @@ async fn serve_stream(
         &state,
     );
 
-    // Build combined stream - PCM gets cadence-based streaming, compressed codecs don't.
-    //
-    // Why PCM-only: Sonos treats PCM/WAV as a "file" requiring continuous data flow.
-    // CPU spikes that delay delivery cause Sonos to close the connection.
-    // The cadence stream maintains 20ms output cadence, injecting silence when needed.
-    //
-    // Compressed codecs (AAC, MP3, FLAC) have their own framing and silence
-    // representation - raw zeros would corrupt the stream. These codecs also
-    // tend to be more resilient to jitter due to their buffering behavior.
-    let combined_stream: AudioStream = if stream_state.codec == AudioCodec::Pcm {
-        // PCM: fixed-cadence streaming with silence injection on underrun.
-        // Prefill frames are pre-populated in the queue to eliminate the
-        // handoff gap; `CadenceConfig::new` trims them so the initial queue
-        // does not exceed the intended buffer depth, and anchors the epoch to
-        // the first frame it keeps.
-        //
-        // The oldest frames beyond the jitter buffer, up to the configured
-        // connect burst, are sent at once so the speaker starts with that much
-        // audio in hand (see `CadenceConfig::burst_frames`). A resume gets it
-        // too: that is when a speaker's reserve starts again from nothing.
-        // The tap records the head start actually sent, which the speaker
-        // monitor sizes the speaker's low floor from.
-        pcm_cadence_stream(
-            &stream_state,
-            connect_burst_ms,
-            prefill_frames,
-            rx,
-            Arc::clone(&stats),
-            epoch_hook,
-            tap.as_deref(),
-            remote_ip,
-            is_resume,
-        )
-    } else {
-        // Compressed codecs: no silence injection, chain prefill before live.
-        // Every prefill frame is served, so the oldest one is the first.
-        let epoch_candidate = prefill_frames.first().map(|f| f.captured_at);
-        let prefill_stream = futures::stream::iter(prefill_frames.into_iter().map(|f| Ok(f.data)));
-        let live_stream = BroadcastStream::new(rx).map(|res| match res {
-            Ok(frame) => Ok(frame),
-            Err(BroadcastStreamRecvError::Lagged(n)) => Err(lagged_error(n)),
-        });
-        let raw_stream = futures::StreamExt::chain(prefill_stream, live_stream);
-
-        // Fire epoch on first non-empty frame (compressed codecs never inject silence)
-        match epoch_hook {
-            Some(hook) => Box::pin(with_epoch_hook(raw_stream, hook, epoch_candidate)),
-            None => Box::pin(raw_stream),
-        }
-    };
+    let combined_stream = body_pipeline(
+        &stream_state,
+        connect_burst_ms,
+        prefill_frames,
+        rx,
+        &stats,
+        epoch_hook,
+        &tap,
+        remote_ip,
+        is_resume,
+    );
 
     // Content-Type based on output codec
     let content_type = stream_state.codec.mime_type();
@@ -1061,6 +1022,73 @@ fn playback_hooks(
     });
 
     PlaybackHooks { tap, epoch_hook }
+}
+
+/// The body pipeline, a phase of [`serve_stream`]: turns the `subscribe()`
+/// snapshot and receiver into the connection's audio, on the cadence for PCM
+/// and as the frames arrive for a compressed codec.
+#[allow(clippy::too_many_arguments)]
+fn body_pipeline(
+    stream_state: &Arc<StreamState>,
+    connect_burst_ms: u64,
+    prefill_frames: Vec<TimestampedFrame>,
+    rx: tokio::sync::broadcast::Receiver<Bytes>,
+    stats: &Arc<ChainStats>,
+    epoch_hook: Option<EpochHook>,
+    tap: &Option<Arc<ConnectionTap>>,
+    remote_ip: IpAddr,
+    is_resume: bool,
+) -> AudioStream {
+    // Build combined stream - PCM gets cadence-based streaming, compressed codecs don't.
+    //
+    // Why PCM-only: Sonos treats PCM/WAV as a "file" requiring continuous data flow.
+    // CPU spikes that delay delivery cause Sonos to close the connection.
+    // The cadence stream maintains 20ms output cadence, injecting silence when needed.
+    //
+    // Compressed codecs (AAC, MP3, FLAC) have their own framing and silence
+    // representation - raw zeros would corrupt the stream. These codecs also
+    // tend to be more resilient to jitter due to their buffering behavior.
+    if stream_state.codec == AudioCodec::Pcm {
+        // PCM: fixed-cadence streaming with silence injection on underrun.
+        // Prefill frames are pre-populated in the queue to eliminate the
+        // handoff gap; `CadenceConfig::new` trims them so the initial queue
+        // does not exceed the intended buffer depth, and anchors the epoch to
+        // the first frame it keeps.
+        //
+        // The oldest frames beyond the jitter buffer, up to the configured
+        // connect burst, are sent at once so the speaker starts with that much
+        // audio in hand (see `CadenceConfig::burst_frames`). A resume gets it
+        // too: that is when a speaker's reserve starts again from nothing.
+        // The tap records the head start actually sent, which the speaker
+        // monitor sizes the speaker's low floor from.
+        pcm_cadence_stream(
+            stream_state,
+            connect_burst_ms,
+            prefill_frames,
+            rx,
+            Arc::clone(stats),
+            epoch_hook,
+            tap.as_deref(),
+            remote_ip,
+            is_resume,
+        )
+    } else {
+        // Compressed codecs: no silence injection, chain prefill before live.
+        // Every prefill frame is served, so the oldest one is the first.
+        let epoch_candidate = prefill_frames.first().map(|f| f.captured_at);
+        let prefill_stream = futures::stream::iter(prefill_frames.into_iter().map(|f| Ok(f.data)));
+        let live_stream = BroadcastStream::new(rx).map(|res| match res {
+            Ok(frame) => Ok(frame),
+            Err(BroadcastStreamRecvError::Lagged(n)) => Err(lagged_error(n)),
+        });
+        let raw_stream = futures::StreamExt::chain(prefill_stream, live_stream);
+
+        // Fire epoch on first non-empty frame (compressed codecs never inject silence)
+        match epoch_hook {
+            Some(hook) => Box::pin(with_epoch_hook(raw_stream, hook, epoch_candidate)),
+            None => Box::pin(raw_stream),
+        }
+    }
 }
 
 /// Adds to a PCM segment response's head what a fetch of part of the
