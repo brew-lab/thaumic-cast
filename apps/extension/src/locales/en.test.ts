@@ -114,8 +114,8 @@ describe('extension en.json', () => {
 
     expect(i18n.t('cast_to_n_speakers', { count: 1 })).toBe('Cast to 1 speaker');
     expect(i18n.t('cast_to_n_speakers', { count: 3 })).toBe('Cast to 3 speakers');
-    expect(i18n.t('onboarding.speakers.found', { count: 1 })).toStartWith('Discovered 1 speaker.');
-    expect(i18n.t('onboarding.speakers.found', { count: 2 })).toStartWith('Discovered 2 speakers.');
+    expect(i18n.t('onboarding.speakers.found', { count: 1 })).toBe('1 speaker answered.');
+    expect(i18n.t('onboarding.speakers.found', { count: 2 })).toBe('2 speakers answered.');
     expect(i18n.t('ingest_gaps_message_desktop', { count: 1, suggested: 500 })).toContain(
       'late once in the last minute',
     );
@@ -125,6 +125,6 @@ describe('extension en.json', () => {
     expect(i18n.t('onboarding.step_of_named', { current: 2, total: 4, label: 'Desktop' })).toBe(
       'Step 2 of 4: Desktop',
     );
-    expect(i18n.t('error_max_sessions', { max: 10 })).toBe(en.error_max_sessions);
+    expect(i18n.t('error_max_sessions', { max: 10 })).toStartWith('10 casts at once is the limit');
   });
 });

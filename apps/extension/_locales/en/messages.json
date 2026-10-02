@@ -4,7 +4,7 @@
     "description": "The name of the extension displayed in the browser"
   },
   "extensionDescription": {
-    "message": "Cast tab audio to Sonos over your local network. Self-hosted, fast, private. Requires the Thaumic Cast desktop app or server.",
+    "message": "Plays what your browser is playing on your Sonos speakers, over your own network. Needs the Thaumic Cast desktop app or a server.",
     "description": "A short, store-facing description shown in the browser and Chrome Web Store"
   }
 }
