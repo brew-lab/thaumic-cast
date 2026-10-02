@@ -40,7 +40,7 @@
   "error_codec_detection_failed": "Thaumic Cast could not find out which codecs this browser can encode, and cannot send audio without one. Try again.",
   "error_offscreen_unavailable": "The part of the extension that does the listening did not answer. Try again.",
   "error_unsupported_sample_rate": "Your audio device runs at {{rate}} Hz, which Thaumic Cast cannot send. Set it to 48 kHz or 44.1 kHz in the system sound settings.",
-  "error_pcm_rate_unsupported": "Chrome captured this tab at {{rate}} Hz, and PCM goes out at the rate it came in, which is not one Thaumic Cast can send. Choose another codec under Settings.",
+  "error_pcm_rate_unsupported": "Chrome captured this tab at {{rate}} Hz, a rate Thaumic Cast cannot send as PCM. Under Settings, set Quality to Bespoke and choose another codec.",
   "auto_stop_source_changed": "{{name}} started playing something else, and it only plays one thing at a time.",
   "auto_stop_stream_ended": "The cast was stopped at the companion's end, not from here.",
   "auto_stop_playback_stopped": "{{name}} stopped playing the cast, for a reason this extension has no word for. Cast again.",
