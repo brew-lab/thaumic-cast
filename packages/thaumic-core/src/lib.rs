@@ -13,7 +13,7 @@
 //! - [`services`]: orchestration: streams, speaker monitor, topology, discovery, GENA, sync groups
 //! - [`stream`]: the data plane: stream state, codec facts, PCM cadence, delivery, framing, URLs
 //! - [`sonos`]: UPnP: SOAP commands, zone topology, SSDP and mDNS discovery, GENA subscriptions
-//! - [`events`]: the events sent to clients, the [`EventEmitter`](events::EventEmitter) trait
+//! - [`events`]: the events sent to clients, the `EventEmitter` trait
 //! - [`model`]: the small value types and pure functions the layers above share
 //! - [`state`]: `Config`, `StreamingConfig`, Sonos group and transport state, manual speakers
 //! - [`companion_settings`]: resolves the three speaker settings once at start-up
@@ -34,8 +34,8 @@
 //! The crate defines several traits to decouple core logic from platform-specific
 //! implementations:
 //!
-//! - [`EventEmitter`](events::EventEmitter): Emitting domain events
-//! - [`IpDetector`](context::IpDetector): Local IP detection
+//! - [`EventEmitter`]: Emitting domain events
+//! - [`IpDetector`]: Local IP detection
 //!
 //! Each trait has default implementations suitable for the standalone server.
 //! The desktop app provides Tauri-specific implementations.

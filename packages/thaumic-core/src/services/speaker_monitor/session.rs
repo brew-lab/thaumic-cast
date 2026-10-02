@@ -267,7 +267,7 @@ pub(super) struct SpeakerSession {
     /// Where the last transport verdict came from.
     pub(super) last_transport_source: TransportSource,
     /// Whether the draining warning has fired. It is re-armed only once the
-    /// projection recovers past [`report::DRAINING_CLEAR_SECS`] or the clock stops
+    /// projection recovers past `report::DRAINING_CLEAR_SECS` or the clock stops
     /// draining, not when the projection merely lapses (the estimate
     /// unlocking, an offset step, a new connection), so it does not repeat
     /// while the speaker drains on.
@@ -606,7 +606,14 @@ impl SpeakerSession {
         (due < now + horizon).then(|| due.saturating_duration_since(now))
     }
 
-    /// Records a poll and draws the dithered interval before the next one.
+    /// As [`Self::mark_polled_at`], for a poll sent now.
+    #[cfg(test)]
+    fn mark_polled(&mut self, monitor_only_sessions: usize) {
+        self.mark_polled_at(Instant::now(), monitor_only_sessions);
+    }
+
+    /// Records a poll that will be sent at `sent_at` and draws the dithered
+    /// interval before the next one.
     ///
     /// Video sync polls every [`POLL_INTERVAL_MS`] plus up to
     /// [`POLL_DITHER_MS`]; a monitor-only speaker every
@@ -616,12 +623,6 @@ impl SpeakerSession {
     /// (see [`DitherRng`]), so it is independent of the speaker's own second
     /// boundaries and of when the monitor wakes. A speaker that has stopped
     /// answering is polled every [`BACKOFF_POLL_INTERVAL_MS`].
-    #[cfg(test)]
-    fn mark_polled(&mut self, monitor_only_sessions: usize) {
-        self.mark_polled_at(Instant::now(), monitor_only_sessions);
-    }
-
-    /// As [`Self::mark_polled`], for a poll that will be sent at `sent_at`.
     pub(super) fn mark_polled_at(&mut self, sent_at: Instant, monitor_only_sessions: usize) {
         self.last_poll = Some(sent_at);
         if self.consecutive_failures >= BACKOFF_AFTER_FAILURES {
