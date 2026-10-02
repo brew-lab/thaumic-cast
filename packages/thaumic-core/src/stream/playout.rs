@@ -55,7 +55,8 @@ use bytes::Bytes;
 use futures::Stream;
 use tokio::time::Instant;
 
-use super::cadence::{ChainStats, LoggingStreamGuard};
+use super::cadence::ChainStats;
+use super::delivery::LoggingStreamGuard;
 use super::pcm_http::{PcmContinuation, PcmSegmentDidl};
 use super::rate_adapter::drift_active;
 use super::tap::{ConnectionTap, WAV_HEADER_BYTES};

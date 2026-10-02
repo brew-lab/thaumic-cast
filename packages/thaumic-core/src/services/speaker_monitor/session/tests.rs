@@ -1097,7 +1097,7 @@ mod polling {
     /// on a link judged poor. The declared end does not cover it.
     #[test]
     fn the_field_end_reading_on_past_the_declared_end_gets_no_notice() {
-        use crate::stream::cadence::end_suffix;
+        use crate::stream::delivery::end_suffix;
         use crate::stream::EndedBy;
 
         const RATE: i64 = 192_000;
