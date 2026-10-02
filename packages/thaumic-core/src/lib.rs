@@ -6,15 +6,28 @@
 //!
 //! # Architecture
 //!
-//! The crate is organized into several modules:
+//! The top-level modules, as `docs/ARCHITECTURE.md` lists them (it also
+//! gives the rules for which may import which):
 //!
-//! - [`runtime`]: Tokio-based task spawning
-//! - [`events`]: Event system for real-time client communication
-//! - [`context`]: Network configuration and URL building
-//! - [`state`]: Core application state and configuration
-//! - [`sonos`]: Sonos speaker control and discovery (UPnP/SOAP)
-//! - [`stream`]: Audio streaming and transcoding
-//! - [`error`]: Centralized error types
+//! - [`api`]: the Axum router, REST handlers, the WebSocket handler and the stream handler
+//! - [`services`]: orchestration: streams, speaker monitor, topology, discovery, GENA, sync groups
+//! - [`stream`]: the data plane: stream state, codec facts, PCM cadence, delivery, framing, URLs
+//! - [`sonos`]: UPnP: SOAP commands, zone topology, SSDP and mDNS discovery, GENA subscriptions
+//! - [`events`]: the events sent to clients, the [`EventEmitter`](events::EventEmitter) trait
+//! - [`model`]: the small value types and pure functions the layers above share
+//! - [`state`]: `Config`, `StreamingConfig`, Sonos group and transport state, manual speakers
+//! - [`companion_settings`]: resolves the three speaker settings once at start-up
+//! - [`context`]: `NetworkContext`: the port, the advertised address, URL building
+//! - [`bootstrap`]: the composition root that builds and wires every service
+//! - [`streaming_runtime`]: a separate high-priority Tokio runtime for the HTTP server
+//! - [`capture`]: traits for a platform audio source and sink, and capture diagnostics
+//! - [`protocol_constants`]: fixed values from UPnP, GENA and the audio formats
+//! - [`artwork`]: where the album art shown on the speaker comes from
+//! - [`error`]: the crate's error types
+//! - [`runtime`]: Tokio task spawning
+//! - [`utils`]: small helpers shared across the crate
+//!
+//! The private `mdns_advertise` module advertises the server over mDNS.
 //!
 //! # Abstraction Traits
 //!
