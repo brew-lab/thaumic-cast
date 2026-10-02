@@ -42,7 +42,7 @@ taken off, for the sort of computer that is kept in a cupboard and visited twice
 - Thaumic Cast Server (Linux x64/arm64): [Latest release](../../releases/latest) (look for `thaumic-server-vX.Y.Z-linux-*.tar.gz`), setup in [`apps/server/README.md`](apps/server/README.md)
 
 > [!NOTE]
-> Desktop app releases are not signed yet, and macOS Gatekeeper and Windows SmartScreen will each say so in their own
+> Desktop app releases are not signed, and macOS Gatekeeper and Windows SmartScreen will each say so in their own
 > way. Check that your copy came from the [latest release](../../releases/latest), then let it through.
 
 ## What it does
@@ -50,16 +50,15 @@ taken off, for the sort of computer that is kept in a cupboard and visited twice
 - Casts the audio of a browser tab to Sonos speakers on your own network.
 - Sends different tabs to different speakers or groups: jazz in the kitchen, “focus noise” in the office, and neither
   room need know about the other.
-- Keeps the audio in the house. It goes from your computer to your speakers, and at no point calls in at anybody
-  else's computer on the way.
+- Keeps the audio in the house. It goes from your computer to your speakers, and that is the whole of the journey.
 - Runs as the desktop app, or as Thaumic Cast Server on a NAS, in Docker, or on anything else that has no screen.
-- Works with whatever plays in a tab: YouTube Music, the Spotify web player, Bandcamp, web radio. Thaumic Cast does not
-  ask what the audio is, only where it is going.
+- Works with whatever plays in a tab: YouTube Music, the Spotify web player, Bandcamp, web radio. Thaumic Cast is not
+  particular about what the audio is, only about where it is going.
 
 ## Documentation
 
 - [Architecture overview](docs/ARCHITECTURE.md)
-- [Headless server](apps/server/README.md)
+- [Thaumic Cast Server](apps/server/README.md)
 - [Core library](packages/thaumic-core/README.md)
 - [Privacy policy](PRIVACY.md)
 
@@ -80,7 +79,7 @@ bun run dev:desktop
 # Build extension
 bun run build:extension
 
-# Build headless server
+# Build Thaumic Cast Server
 cargo build --release -p thaumic-server
 ```
 
@@ -102,7 +101,7 @@ packages/
 | ----------------------- | ---------------------------------------------- |
 | `apps/desktop`          | Tauri + Rust + Preact desktop application      |
 | `apps/extension`        | Chrome Extension with AudioWorklet + WebCodecs |
-| `apps/server`           | Standalone headless server for NAS/Docker      |
+| `apps/server`           | Thaumic Cast Server, for NAS/Docker            |
 | `packages/thaumic-core` | Core Rust library shared by desktop and server |
 | `packages/protocol`     | TypeScript types for WebSocket protocol        |
 | `packages/shared`       | Shared TypeScript utilities (logger)           |

@@ -4,9 +4,8 @@ Thaumic Cast Server: browser audio to Sonos speakers, for a machine with no scre
 
 ## Overview
 
-`thaumic-server` is the half of Thaumic Cast that talks to the speakers, without the desktop app's window. It serves
-the same HTTP/WebSocket API as the desktop app, so the extension can cast through it from any machine on your LAN. It
-suits:
+`thaumic-server` is the half of Thaumic Cast that talks to the speakers, with no window of its own. It serves the same
+HTTP/WebSocket API as the desktop app, so the extension can cast through it from any machine on your LAN. It suits:
 
 - Home servers, NAS boxes and Proxmox containers
 - Docker containers
@@ -121,17 +120,17 @@ thaumic-server --log-level debug
 
 ### CLI options
 
-| Option                                    | Environment variable           | Description                                        |
-| ----------------------------------------- | ------------------------------ | -------------------------------------------------- |
-| `-c, --config <FILE>`                     | -                              | Path to YAML config file                           |
-| `-p, --port <PORT>`                       | `THAUMIC_BIND_PORT`            | HTTP server port (default `49400`)                 |
-| `-a, --advertise-ip <IP>`                 | `THAUMIC_ADVERTISE_IP`         | IP address to advertise to Sonos                   |
-| `-d, --data-dir <DIR>`                    | `THAUMIC_DATA_DIR`             | Directory for persistent data                      |
-| `-l, --log-level <LEVEL>`                 | `THAUMIC_LOG_LEVEL`            | Log level (error/warn/info/debug/trace)            |
-| `--speaker-monitor <on\|off>`             | `THAUMIC_SPEAKER_MONITOR`      | Speaker monitoring (default `on`)                  |
-| `--pcm-connect-burst-ms <MS>`             | `THAUMIC_PCM_CONNECT_BURST_MS` | Speaker head start, 0-2000 ms (default `500`)      |
-| `--drift-compensation <on\|observe\|off>` | `THAUMIC_DRIFT_COMPENSATION`   | Clock drift correction (default `on`)              |
-| `--strict-stream-access <BOOL>`           | `THAUMIC_STRICT_STREAM_ACCESS` | Refuse unexpected stream fetches (default `false`) |
+| Option                                    | Environment variable           | Description                                                                |
+| ----------------------------------------- | ------------------------------ | -------------------------------------------------------------------------- |
+| `-c, --config <FILE>`                     | -                              | Path to YAML config file                                                   |
+| `-p, --port <PORT>`                       | `THAUMIC_BIND_PORT`            | HTTP server port (default `49400`)                                         |
+| `-a, --advertise-ip <IP>`                 | `THAUMIC_ADVERTISE_IP`         | IP address to advertise to Sonos                                           |
+| `-d, --data-dir <DIR>`                    | `THAUMIC_DATA_DIR`             | Directory for persistent data                                              |
+| `-l, --log-level <LEVEL>`                 | `THAUMIC_LOG_LEVEL`            | Log level (error/warn/info/debug/trace)                                    |
+| `--speaker-monitor <on\|off>`             | `THAUMIC_SPEAKER_MONITOR`      | Speaker monitoring (default `on`)                                          |
+| `--pcm-connect-burst-ms <MS>`             | `THAUMIC_PCM_CONNECT_BURST_MS` | Speaker head start, 0-2000 ms (default `500`)                              |
+| `--drift-compensation <on\|observe\|off>` | `THAUMIC_DRIFT_COMPENSATION`   | Clock drift correction (default `on`)                                      |
+| `--strict-stream-access <BOOL>`           | `THAUMIC_STRICT_STREAM_ACCESS` | Refuse fetches from addresses the cast is not playing on (default `false`) |
 
 A flag overrides an environment variable, which overrides the config file. There are two exceptions.
 `THAUMIC_SPEAKER_MONITOR`, `THAUMIC_PCM_CONNECT_BURST_MS` and `THAUMIC_DRIFT_COMPENSATION` are read again each time a
@@ -143,8 +142,8 @@ speaker monitoring on whatever anything else says.
 The installer writes [`config.example.yaml`](config.example.yaml) to `/etc/thaumic-server/config.yaml`; every key is
 commented there. The defaults (port `49400`, auto-detected `advertise_ip`, no `data_dir`) are right for a host with
 one network interface. A host with several (a VPN, Docker, ...) should have `advertise_ip` set to the address the
-speakers can reach: auto-detection will pick one of them, and not always that one. Set `data_dir` if you mean to add
-speakers by IP address. That is where they are kept, and without it they cannot be added.
+speakers can reach: auto-detection has to settle on one of them, when it can settle at all, and it is not always that
+one. Set `data_dir` if you mean to add speakers by IP address. Without it they cannot be added.
 
 Three settings concern the speakers themselves, and all three take effect when a speaker next connects.
 
@@ -173,8 +172,8 @@ reports, so with `speaker_monitor` off it runs as `off`, and the server says so 
 | `THAUMIC_LOG_LEVEL`                 | Log level                                                                                    |
 | `THAUMIC_SPEAKER_MONITOR`           | `on` or `off`: poll each speaker's playback position and send speaker notices                |
 | `THAUMIC_PCM_CONNECT_BURST_MS`      | Speaker head start for PCM casts in ms, 0 (off) to 2000; adds that much delay                |
-| `THAUMIC_DRIFT_COMPENSATION`        | `on`, `observe` or `off`: clock drift correction for PCM casts; needs the speaker monitor    |
-| `THAUMIC_STRICT_STREAM_ACCESS`      | `true` refuses audio fetches from addresses a stream is not playing on                       |
+| `THAUMIC_DRIFT_COMPENSATION`        | `on`, `observe` or `off`: clock drift correction for PCM casts; needs speaker monitoring     |
+| `THAUMIC_STRICT_STREAM_ACCESS`      | `true` refuses audio fetches from addresses the cast is not playing on                       |
 | `THAUMIC_PCM_HTTP_FRAMING`          | `chunked` (default); experimental: `length` or `close`: how a PCM stream's body is delimited |
 | `THAUMIC_PCM_CONTENT_LENGTH`        | Experimental: the `Content-Length` PCM declares with `length` framing (default `4294967295`) |
 | `THAUMIC_PCM_WAV_DATA_SIZE`         | Experimental: the WAV header's data size, 0 to 4294967295 (default `4294967295`)             |
@@ -184,12 +183,12 @@ reports, so with `speaker_monitor` off it runs as `off`, and the server says so 
 | `THAUMIC_PCM_SEGMENT_DIDL`          | Experimental: `broadcast` (default) or `track`: how a queued PCM segment is described        |
 | `THAUMIC_DRIFT_FORCE_PPM`           | Test only: fix every speaker's PCM rate adapter at this many ppm, -300 to 300 (see below)    |
 
-PCM is sent chunked, with no `Content-Length`. The size in a WAV header is a length, and a speaker reads it as one, not
-as a marker for "unbounded": with 0xFFFFFFFF there, a Sonos Playbar in a field test played past 2^31 bytes, then
-stopped at exactly 2^32 bytes (6h12m50s at 48 kHz stereo), where it hung up and went to STOPPED with no reconnect. So
-a PCM cast is served in segments. Each connection's WAV header declares 4294901760 data bytes (6h12m49.28s at 48 kHz
-stereo) and its body ends there; the next segment, `/stream/{id}/live/{n}.wav`, carries on from the exact sample the
-previous one ended at, however long the speaker takes to fetch it.
+PCM is sent chunked, with no `Content-Length`. The size in a WAV header is a length, and a Playbar, at least, reads it
+as one, not as a marker for "unbounded": with 0xFFFFFFFF there, a Sonos Playbar in a field test played past 2^31
+bytes, then stopped at exactly 2^32 bytes (6h12m50s at 48 kHz stereo), where it hung up and went to STOPPED with no
+reconnect. So a PCM cast is served in segments. Each connection's WAV header declares 4294901760 data bytes
+(6h12m49.28s at 48 kHz stereo) and its body ends there; the next segment, `/stream/{id}/live/{n}.wav`, carries on from
+the exact sample the previous one ended at, however long the speaker takes to fetch it.
 
 Ten seconds after a speaker reports playing a segment, the server queues the next one as the speaker's next item
 (`SetNextAVTransportURI`, described like the cast itself). The speaker fetches it the moment the current segment's
@@ -277,11 +276,12 @@ curl -fsSL https://raw.githubusercontent.com/brew-lab/thaumic-cast/main/apps/ser
 BRIDGE=vmbr0 bash proxmox-lxc.sh
 ```
 
-Defaults: next free container id, hostname `thaumic-cast`, DHCP, 1 core, 512 MB, 4 GB on `local-lvm`, starts on
-boot. Each of these gives way to an environment variable, e.g.
-`CTID=120 IP=192.168.1.50/24 GATEWAY=192.168.1.1 VLAN=20 STORAGE=local-zfs bash proxmox-lxc.sh`. The script prints the
-container's IP and, if you did not set `PASSWORD`, the root password it made up. Update later with
-`pct exec <CTID> -- bash -c 'curl -fsSL .../install.sh | bash'` (the exact command is printed at the end).
+Defaults: next free container id, hostname `thaumic-cast`, DHCP, 1 core, 512 MB, 4 GB on `local-lvm`. Each of these
+gives way to an environment variable, e.g.
+`CTID=120 IP=192.168.1.50/24 GATEWAY=192.168.1.1 VLAN=20 STORAGE=local-zfs bash proxmox-lxc.sh`. The container starts
+on boot, and there is no variable for that. The script prints the container's IP and, if you did not set `PASSWORD`,
+the root password it made up. Update later with `pct exec <CTID> -- bash -c 'curl -fsSL .../install.sh | bash'` (the
+exact command is printed at the end).
 
 ### By hand
 
@@ -333,10 +333,10 @@ The server serves the same HTTP/WebSocket API as the desktop app:
 | `WS /ws`                             | WebSocket for real-time events and audio |
 
 The API sends no CORS headers. The extension may talk to `localhost` without asking. For a server on another machine
-it asks you once, through Chrome's own permission prompt, when you select **Connect** in its settings. Ordinary web
+it asks you once, through Chrome's own permission prompt, when you press **Connect** in its settings. Ordinary web
 pages cannot read API responses.
 
-## Shutting down
+## Graceful shutdown
 
 On `SIGINT` (Ctrl+C) or `SIGTERM` the server puts things away before it goes:
 
