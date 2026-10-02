@@ -19,7 +19,7 @@ use crate::sonos::SonosTopologyClient;
 use crate::state::SonosState;
 
 use super::gena_event_processor::GenaEventProcessor;
-use super::latency_monitor::MemberChangeSink;
+use super::speaker_monitor::monitor::MemberChangeSink;
 use super::stream_coordinator::StreamCoordinator;
 use super::topology_monitor::{TopologyMonitor, TopologyMonitorConfig};
 

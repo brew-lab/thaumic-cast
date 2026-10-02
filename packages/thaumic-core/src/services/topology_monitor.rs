@@ -29,7 +29,7 @@ use crate::error::{ThaumicError, ThaumicResult};
 use crate::events::{EventEmitter, NetworkEvent, NetworkHealth, TopologyEvent};
 use crate::mdns_advertise::{self, MdnsAdvertiserHandle};
 use crate::runtime::TokioSpawner;
-use crate::services::latency_monitor::MemberChangeSink;
+use crate::services::speaker_monitor::monitor::MemberChangeSink;
 use crate::services::speaker_monitor::topology_diff::summarize;
 use crate::services::speaker_monitor::{MemberChange, TopologyDiff};
 use crate::sonos::discovery::{probe_speaker_by_ip, Speaker};

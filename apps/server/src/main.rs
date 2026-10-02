@@ -107,7 +107,7 @@ fn parse_drift_compensation(value: &str) -> Result<thaumic_core::DriftMode, Stri
 
 /// Parses `--speaker-monitor` / `THAUMIC_SPEAKER_MONITOR`.
 fn parse_speaker_monitor(value: &str) -> Result<bool, String> {
-    thaumic_core::services::latency_monitor::parse_speaker_monitor_switch(value)
+    thaumic_core::services::parse_speaker_monitor_switch(value)
         .ok_or_else(|| format!("expected on or off, got {value:?}"))
 }
 

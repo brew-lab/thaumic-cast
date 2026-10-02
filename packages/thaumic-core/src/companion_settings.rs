@@ -17,10 +17,10 @@
 use serde::Serialize;
 
 use crate::protocol_constants::{DEFAULT_PCM_CONNECT_BURST_MS, MAX_PCM_CONNECT_BURST_MS};
-use crate::services::latency_monitor::{
+use crate::services::speaker_monitor::control::{DriftMode, DRIFT_COMPENSATION_ENV};
+use crate::services::speaker_monitor::monitor::{
     parse_speaker_monitor_switch, SPEAKER_DIAGNOSTICS_ENV, SPEAKER_MONITOR_ENV,
 };
-use crate::services::speaker_monitor::control::{DriftMode, DRIFT_COMPENSATION_ENV};
 use crate::state::Config;
 use crate::stream::cadence::{parse_pcm_connect_burst_ms, PCM_CONNECT_BURST_ENV};
 
