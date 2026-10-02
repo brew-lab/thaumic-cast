@@ -23,12 +23,14 @@ use crate::sonos::SonosClient;
 use crate::state::{Config, SonosState};
 
 pub mod http;
-pub mod link;
 pub mod response;
 mod stream;
 pub mod ws;
 pub mod ws_connection;
 
+/// The TCP link probe lives with the stream code that reads it; this keeps the
+/// `api::link` path resolving.
+pub use crate::stream::link;
 pub use ws_connection::WsConnectionManager;
 
 /// Identifies which companion process is serving the WebSocket API.
