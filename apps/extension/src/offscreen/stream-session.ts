@@ -24,8 +24,12 @@
 import { createLogger } from '@thaumic-cast/shared';
 import { createAudioRingBuffer, HEADER_SIZE } from './ring-buffer';
 import type { EncoderConfig, StreamMetadata } from '@thaumic-cast/protocol';
-import { FRAME_DURATION_MS_DEFAULT, isSupportedSampleRate } from '@thaumic-cast/protocol';
-import type { WorkerInitMessage, WorkerOutboundMessage } from './worker-messages';
+import { isSupportedSampleRate } from '@thaumic-cast/protocol';
+import type {
+  WorkerErrorMessage,
+  WorkerInitMessage,
+  WorkerOutboundMessage,
+} from './worker-messages';
 import { noop } from '../lib/noop';
 import { KeyedError } from '../lib/keyed-error';
 
@@ -83,9 +87,6 @@ export class StreamSession {
   private trackProcessor: MediaStreamTrackProcessor | null = null;
   /** Audio element for keepTabAudible in MSTP mode (avoids AudioContext clock domain crossing). */
   private audibleAudio: HTMLAudioElement | null = null;
-
-  /** Number of interleaved samples per frame (PCM encode path only). */
-  private frameSizeInterleaved?: number;
 
   /** Pending worker terminate timer (deferred to allow METRICS_DUMP delivery). */
   private workerTerminateTimer: ReturnType<typeof setTimeout> | null = null;
@@ -358,51 +359,25 @@ export class StreamSession {
   /**
    * Sets up the MSTP (MediaStreamTrackProcessor) pipeline for PCM codec.
    * Bypasses AudioContext entirely — reads raw AudioData frames from the track.
+   * The sample rate declared for the cast is settled in the relay worker.
    */
   private setupMSTPPipeline(): void {
     const audioTrack = this.mediaStream!.getAudioTracks()[0];
     if (!audioTrack) throw new Error('No audio track available in MediaStream');
 
-    // Override sample rate to track's native rate (MSTP bypasses AudioContext resampling)
+    // The track's own report is logged for the record only. The relay worker
+    // declares the rate of the first AudioData it reads, which is the rate the
+    // capture really delivers; nothing on this path resamples.
     const trackSampleRate = audioTrack.getSettings().sampleRate;
-    if (!trackSampleRate) {
-      log.warn(
-        `MSTP: the track reported no sample rate (${String(trackSampleRate)}); ` +
-          `declaring ${this.encoderConfig.sampleRate}Hz`,
-      );
-    } else if (!isSupportedSampleRate(trackSampleRate)) {
-      log.warn(
-        `MSTP: the track reported ${trackSampleRate}Hz, which is not a supported rate; ` +
-          `declaring ${this.encoderConfig.sampleRate}Hz`,
-      );
-    } else {
-      log.info(
-        `MSTP: the track reported ${trackSampleRate}Hz ` +
-          `(configured ${this.encoderConfig.sampleRate}Hz)`,
-      );
-    }
-    if (
-      trackSampleRate &&
-      isSupportedSampleRate(trackSampleRate) &&
-      trackSampleRate !== this.encoderConfig.sampleRate
-    ) {
-      log.info(
-        `MSTP: overriding sample rate ${this.encoderConfig.sampleRate}Hz → ${trackSampleRate}Hz (capture native rate)`,
-      );
-      this.encoderConfig = { ...this.encoderConfig, sampleRate: trackSampleRate };
-    }
-
-    // Compute frame size
-    const frameDurationMs = this.encoderConfig.frameDurationMs ?? FRAME_DURATION_MS_DEFAULT;
-    const perChannelSamples = Math.round(this.encoderConfig.sampleRate * (frameDurationMs / 1000));
-    this.frameSizeInterleaved = perChannelSamples * this.encoderConfig.channels;
+    log.info(
+      `MSTP: the track reported ${trackSampleRate ? `${trackSampleRate}Hz` : 'no sample rate'} ` +
+        `(configured ${this.encoderConfig.sampleRate}Hz)`,
+    );
 
     // Create MediaStreamTrackProcessor
     const maxBufferSize = 1000;
     this.trackProcessor = new MediaStreamTrackProcessor({ track: audioTrack, maxBufferSize });
-    log.info(
-      `MSTP pipeline: maxBufferSize=${maxBufferSize}, frameSizeInterleaved=${this.frameSizeInterleaved}`,
-    );
+    log.info(`MSTP pipeline: maxBufferSize=${maxBufferSize}`);
 
     // keepTabAudible: use <audio> element at near-zero volume (avoids AudioContext clock domain crossing)
     if (this.keepTabAudible) {
@@ -646,10 +621,12 @@ export class StreamSession {
           break;
 
         case 'ERROR':
-          log.error(`Worker error: ${msg.message}`);
-          this.connectionResolver?.reject(new Error(msg.message));
+          log.error(
+            `Worker error: ${msg.message}${msg.params ? ` ${JSON.stringify(msg.params)}` : ''}`,
+          );
+          this.connectionResolver?.reject(workerError(msg));
           this.connectionResolver = null;
-          this.playbackResultsResolver?.reject(new Error(msg.message));
+          this.playbackResultsResolver?.reject(workerError(msg));
           this.playbackResultsResolver = null;
           break;
 
@@ -784,7 +761,6 @@ export class StreamSession {
         encoderConfig: this.encoderConfig,
         wsUrl,
         mode: 'encode',
-        frameSizeInterleaved: this.frameSizeInterleaved,
         readable,
         channels: this.encoderConfig.channels,
       };
@@ -1006,6 +982,15 @@ export class StreamSession {
 
     return Promise.race([responsePromise, timeoutPromise]);
   }
+}
+
+/**
+ * Rebuilds the error a worker reported, keeping the values its message needs.
+ * @param msg - The worker's error message
+ * @returns A `KeyedError` when the worker sent values, otherwise a plain error
+ */
+function workerError(msg: WorkerErrorMessage): Error {
+  return msg.params ? new KeyedError(msg.message, msg.params) : new Error(msg.message);
 }
 
 /** Maximum number of parallel capture sessions allowed in offscreen. */

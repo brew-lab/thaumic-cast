@@ -21,9 +21,9 @@ use crate::events::{
     BroadcastEvent, LatencyEvent, NetworkEvent, SonosEvent, SpeakerRemovalReason, StreamEvent,
 };
 use crate::protocol_constants::{
-    DEFAULT_JITTER_BUFFER_MS, MAX_FRAME_DURATION_MS, MAX_JITTER_BUFFER_MS, MIN_FRAME_DURATION_MS,
-    MIN_JITTER_BUFFER_MS, SILENCE_FRAME_DURATION_MS, SOAP_TIMEOUT_SECS,
-    WS_HEARTBEAT_CHECK_INTERVAL_SECS, WS_HEARTBEAT_TIMEOUT_SECS,
+    DEFAULT_JITTER_BUFFER_MS, DEFAULT_SAMPLE_RATE, MAX_FRAME_DURATION_MS, MAX_JITTER_BUFFER_MS,
+    MIN_FRAME_DURATION_MS, MIN_JITTER_BUFFER_MS, SILENCE_FRAME_DURATION_MS, SOAP_TIMEOUT_SECS,
+    SUPPORTED_SAMPLE_RATES, WS_HEARTBEAT_CHECK_INTERVAL_SECS, WS_HEARTBEAT_TIMEOUT_SECS,
 };
 use crate::services::{PlaybackSession, StreamCoordinator};
 use crate::stream::{AudioCodec, AudioFormat, StreamMetadata};
@@ -144,6 +144,12 @@ impl StartPlaybackRequest {
             vec![]
         }
     }
+
+    /// Whether the request named its speaker in the legacy `speakerIp` field,
+    /// which is read only when `speakerIps` is absent.
+    fn uses_legacy_speaker_ip(&self) -> bool {
+        self.speaker_ips.is_none() && self.speaker_ip.is_some()
+    }
 }
 
 /// Request payload for starting browser-wide WASAPI capture.
@@ -203,7 +209,9 @@ struct StopPlaybackSpeakerPayload {
 #[serde(rename_all = "camelCase")]
 struct EncoderConfig {
     codec: String,
-    #[allow(dead_code)]
+    /// Bitrate the client encodes at, in kbps (0 for lossless). Core encodes
+    /// nothing, so this is logged when the stream is created and used for
+    /// nothing else.
     bitrate: Option<u32>,
     sample_rate: Option<u32>,
     channels: Option<u8>,
@@ -226,6 +234,14 @@ struct HandshakeRequest {
     /// New encoder config from extension.
     #[serde(default)]
     encoder_config: Option<EncoderConfig>,
+}
+
+impl HandshakeRequest {
+    /// Whether the handshake named its codec in the legacy top-level `codec`
+    /// field, which is read only when `encoderConfig` is absent.
+    fn uses_legacy_codec(&self) -> bool {
+        self.encoder_config.is_none() && self.codec.is_some()
+    }
 }
 
 /// Outgoing WebSocket messages.
@@ -1245,7 +1261,24 @@ fn parse_stream_config(payload: &HandshakeRequest) -> Result<StreamConfig, Strin
         .encoder_config
         .as_ref()
         .and_then(|c| c.sample_rate)
-        .unwrap_or(48000);
+        .unwrap_or(DEFAULT_SAMPLE_RATE);
+
+    // A rate outside the list has no stream that can carry it, and zero would
+    // divide the frame duration below.
+    if !SUPPORTED_SAMPLE_RATES.contains(&sample_rate) {
+        log::error!(
+            "[WS] Invalid sample rate {}, must be one of {:?}",
+            sample_rate,
+            SUPPORTED_SAMPLE_RATES
+        );
+        return Err(format!(
+            "Invalid sample rate: {}. Must be one of: {}.",
+            sample_rate,
+            SUPPORTED_SAMPLE_RATES
+                .map(|rate| rate.to_string())
+                .join(", ")
+        ));
+    }
 
     // Validate channels (1 or 2 only).
     // Multi-channel (>2) is not supported - crossfade utilities assume stereo or mono.
@@ -1320,19 +1353,45 @@ fn parse_stream_config(payload: &HandshakeRequest) -> Result<StreamConfig, Strin
     })
 }
 
+/// Formats the bitrate a handshake declared for the stream-creation log line.
+fn describe_bitrate(bitrate: Option<u32>) -> String {
+    match bitrate {
+        Some(0) => "lossless".to_string(),
+        Some(kbps) => format!("{kbps}kbps"),
+        None => "unstated".to_string(),
+    }
+}
+
 /// Handles a HANDSHAKE message: creates a stream and returns ack or error.
-fn handle_handshake(state: &AppState, payload: HandshakeRequest) -> HandshakeResult {
+fn handle_handshake(
+    state: &AppState,
+    conn: &ConnectionGuard,
+    payload: HandshakeRequest,
+) -> HandshakeResult {
+    if payload.uses_legacy_codec() {
+        log::warn!(
+            "[WS] Handshake from {} ({}) used the legacy top-level `codec` field; \
+             current clients send `encoderConfig`",
+            conn.remote_addr(),
+            conn.id()
+        );
+    }
+
     let config = match parse_stream_config(&payload) {
         Ok(c) => c,
         Err(e) => return HandshakeResult::Error(e),
     };
 
     log::info!(
-        "[WS] Creating stream: codec={:?}, format={:?}, buffer={}ms, frame={}ms",
+        "[WS] Creating stream: codec={:?}, format={:?}, bitrate={}, buffer={}ms, frame={}ms, \
+         conn={}, remote={}",
         config.codec,
         config.audio_format,
+        describe_bitrate(payload.encoder_config.as_ref().and_then(|c| c.bitrate)),
         config.jitter_buffer_ms,
-        config.frame_duration_ms
+        config.frame_duration_ms,
+        conn.id(),
+        conn.remote_addr()
     );
 
     match state.stream_coordinator.create_stream(
@@ -1626,6 +1685,14 @@ async fn handle_start_playback(
         };
     };
 
+    if payload.uses_legacy_speaker_ip() {
+        log::warn!(
+            "[WS] START_PLAYBACK for stream {} used the legacy `speakerIp` field; \
+             current clients send `speakerIps`",
+            stream_id
+        );
+    }
+
     let speaker_ips = payload.get_speaker_ips();
 
     if speaker_ips.is_empty() {
@@ -1875,7 +1942,7 @@ async fn handle_ws(
                         let parsed = serde_json::from_str::<WsIncoming>(&text);
                         match parsed {
                             Ok(WsIncoming::Handshake { payload }) => {
-                                match handle_handshake(&state, payload) {
+                                match handle_handshake(&state, &conn_guard, payload) {
                                     HandshakeResult::Success(id) => {
                                         // Replacing a live stream drops its guard
                                         // (sync removal), so let any queued command
@@ -2333,6 +2400,142 @@ mod tests {
         let config =
             parse_stream_config(&legacy).expect("a handshake without a codec is a legacy client");
         assert_eq!(config.codec, AudioCodec::Pcm);
+    }
+
+    // ─────────────────────────────────────────────────────────────────────
+    // Sample rate contract with the protocol package
+    // ─────────────────────────────────────────────────────────────────────
+
+    /// The rates the extension can declare, written by the protocol package's
+    /// tests from `SUPPORTED_SAMPLE_RATES`.
+    const PROTOCOL_SAMPLE_RATES: &str =
+        include_str!("../../../protocol/fixtures/sample-rates.json");
+
+    fn handshake_at(sample_rate: u32) -> HandshakeRequest {
+        serde_json::from_value(serde_json::json!({
+            "encoderConfig": { "codec": "pcm", "sampleRate": sample_rate, "frameSizeSamples": 960 }
+        }))
+        .expect("valid handshake")
+    }
+
+    fn refusal(request: &HandshakeRequest) -> String {
+        match parse_stream_config(request) {
+            Ok(_) => panic!("the handshake must be refused"),
+            Err(error) => error,
+        }
+    }
+
+    #[test]
+    fn core_serves_exactly_the_sample_rates_the_protocol_declares() {
+        let declared: Vec<u32> =
+            serde_json::from_str(PROTOCOL_SAMPLE_RATES).expect("sample-rates.json is a list");
+        assert!(!declared.is_empty());
+        assert_eq!(declared, SUPPORTED_SAMPLE_RATES);
+    }
+
+    #[test]
+    fn a_handshake_at_each_supported_sample_rate_is_accepted() {
+        for rate in SUPPORTED_SAMPLE_RATES {
+            let config = match parse_stream_config(&handshake_at(rate)) {
+                Ok(config) => config,
+                Err(error) => panic!("{rate} Hz must be accepted: {error}"),
+            };
+            assert_eq!(config.audio_format.sample_rate, rate);
+        }
+    }
+
+    #[test]
+    fn a_handshake_at_a_sample_rate_of_zero_is_refused_not_divided_by() {
+        let error = refusal(&handshake_at(0));
+        assert!(error.contains("Invalid sample rate: 0."), "{error}");
+    }
+
+    #[test]
+    fn a_handshake_at_a_sample_rate_outside_the_list_is_refused() {
+        let error = refusal(&handshake_at(12345));
+        assert!(error.contains("Invalid sample rate: 12345."), "{error}");
+        assert!(error.contains("48000, 44100"), "{error}");
+    }
+
+    #[test]
+    fn a_handshake_stating_no_sample_rate_gets_the_default() {
+        let config = match parse_stream_config(&handshake_for("pcm")) {
+            Ok(config) => config,
+            Err(error) => panic!("a handshake with no rate uses the default: {error}"),
+        };
+        assert_eq!(config.audio_format.sample_rate, DEFAULT_SAMPLE_RATE);
+    }
+
+    #[test]
+    fn the_browser_capture_request_shape_parses_at_the_default_rate() {
+        // START_BROWSER_CAPTURE wraps its encoder config in a handshake with no
+        // top-level codec before parsing it.
+        let request: StartBrowserCaptureRequest = serde_json::from_value(serde_json::json!({
+            "browserName": "chrome.exe",
+            "encoderConfig": { "codec": "aac-lc", "bitrate": 192, "sampleRate": 48000, "channels": 2 }
+        }))
+        .expect("valid capture request");
+        let handshake = HandshakeRequest {
+            codec: None,
+            encoder_config: request.encoder_config,
+        };
+        assert!(!handshake.uses_legacy_codec());
+        assert!(parse_stream_config(&handshake).is_ok());
+    }
+
+    // ─────────────────────────────────────────────────────────────────────
+    // Legacy fields: still read, and reported when they are
+    // ─────────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn a_legacy_top_level_codec_still_parses_and_is_reported() {
+        let legacy: HandshakeRequest =
+            serde_json::from_value(serde_json::json!({ "codec": "aac" })).unwrap();
+        assert!(legacy.uses_legacy_codec());
+        let config = match parse_stream_config(&legacy) {
+            Ok(config) => config,
+            Err(error) => panic!("the legacy codec field must still parse: {error}"),
+        };
+        assert_eq!(config.codec, AudioCodec::Aac);
+        assert_eq!(config.audio_format.sample_rate, DEFAULT_SAMPLE_RATE);
+    }
+
+    #[test]
+    fn a_handshake_with_an_encoder_config_is_not_reported_as_legacy() {
+        assert!(!handshake_for("pcm").uses_legacy_codec());
+        // The encoder config wins, so a stray top-level codec is never read.
+        let both: HandshakeRequest = serde_json::from_value(serde_json::json!({
+            "codec": "aac",
+            "encoderConfig": { "codec": "flac" }
+        }))
+        .unwrap();
+        assert!(!both.uses_legacy_codec());
+        // Nor is a handshake that names no codec at all.
+        let bare: HandshakeRequest = serde_json::from_value(serde_json::json!({})).unwrap();
+        assert!(!bare.uses_legacy_codec());
+    }
+
+    #[test]
+    fn a_legacy_single_speaker_ip_still_resolves_and_is_reported() {
+        let legacy: StartPlaybackRequest =
+            serde_json::from_value(serde_json::json!({ "speakerIp": "192.168.1.31" })).unwrap();
+        assert!(legacy.uses_legacy_speaker_ip());
+        assert_eq!(legacy.get_speaker_ips(), ["192.168.1.31"]);
+
+        let current: StartPlaybackRequest = serde_json::from_value(serde_json::json!({
+            "speakerIps": ["192.168.1.31", "192.168.1.32"],
+            "speakerIp": "192.168.1.99"
+        }))
+        .unwrap();
+        assert!(!current.uses_legacy_speaker_ip());
+        assert_eq!(current.get_speaker_ips(), ["192.168.1.31", "192.168.1.32"]);
+    }
+
+    #[test]
+    fn the_declared_bitrate_is_described_for_the_log() {
+        assert_eq!(describe_bitrate(Some(192)), "192kbps");
+        assert_eq!(describe_bitrate(Some(0)), "lossless");
+        assert_eq!(describe_bitrate(None), "unstated");
     }
 
     #[test]
