@@ -1329,10 +1329,7 @@ fn parse_stream_config(payload: &HandshakeRequest) -> Result<StreamConfig, Strin
     {
         24 if codec.facts().allows_24_bit => 24,
         24 => {
-            log::warn!(
-                "[WS] 24-bit audio requested but codec is {:?}, falling back to 16-bit",
-                codec
-            );
+            log::warn!("{}", fallback_to_16_bit_warning(codec));
             16
         }
         16 => 16,
@@ -1351,6 +1348,19 @@ fn parse_stream_config(payload: &HandshakeRequest) -> Result<StreamConfig, Strin
         jitter_buffer_ms,
         frame_duration_ms,
     })
+}
+
+/// The warning logged when a handshake asks for 24-bit audio in a codec that
+/// does not carry it ([`CodecFacts::allows_24_bit`] is false), and the stream
+/// is made 16-bit instead.
+///
+/// [`CodecFacts::allows_24_bit`]: crate::stream::codec::CodecFacts::allows_24_bit
+fn fallback_to_16_bit_warning(codec: AudioCodec) -> String {
+    format!(
+        "[WS] 24-bit audio requested with codec {:?}, but only FLAC carries 24-bit; \
+         streaming 16-bit",
+        codec
+    )
 }
 
 /// Formats the bitrate a handshake declared for the stream-creation log line.
@@ -2684,6 +2694,30 @@ mod tests {
         .unwrap();
         assert!(!current.uses_legacy_speaker_ip());
         assert_eq!(current.get_speaker_ips(), ["192.168.1.31", "192.168.1.32"]);
+    }
+
+    #[test]
+    fn the_16_bit_fallback_warning_names_flac_as_the_only_24_bit_codec() {
+        // The warning says only FLAC carries 24-bit. If another codec ever
+        // accepts 24-bit samples, this fails so the wording is changed with it.
+        for codec in [
+            AudioCodec::Pcm,
+            AudioCodec::Aac,
+            AudioCodec::Mp3,
+            AudioCodec::Flac,
+        ] {
+            assert_eq!(
+                codec.facts().allows_24_bit,
+                codec == AudioCodec::Flac,
+                "{codec:?}: the 16-bit fallback warning says only FLAC carries 24-bit"
+            );
+        }
+        let warning = fallback_to_16_bit_warning(AudioCodec::Pcm);
+        assert_eq!(
+            warning,
+            "[WS] 24-bit audio requested with codec Pcm, but only FLAC carries 24-bit; \
+             streaming 16-bit"
+        );
     }
 
     #[test]
