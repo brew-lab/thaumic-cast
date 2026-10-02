@@ -2330,9 +2330,8 @@ mod tests {
     #[test]
     fn a_handshake_naming_no_codec_is_still_pcm() {
         let legacy: HandshakeRequest = serde_json::from_value(serde_json::json!({})).unwrap();
-        let config = parse_stream_config(&legacy)
-            .ok()
-            .expect("a handshake without a codec is a legacy client");
+        let config =
+            parse_stream_config(&legacy).expect("a handshake without a codec is a legacy client");
         assert_eq!(config.codec, AudioCodec::Pcm);
     }
 

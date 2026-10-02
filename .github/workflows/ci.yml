@@ -34,6 +34,9 @@ jobs:
         id: filter
         uses: dorny/paths-filter@v3
         with:
+          # No negated patterns here: a file matches a filter when it matches ANY
+          # pattern, so a line like '!**/CHANGELOG.md' matches nearly every file
+          # and turns the filter on for every change.
           filters: |
             rust:
               - 'packages/thaumic-core/**'
@@ -45,7 +48,6 @@ jobs:
               - 'Cargo.toml'
               - 'Cargo.lock'
               - '.github/workflows/ci.yml'
-              - '!**/CHANGELOG.md'
             ts:
               - 'apps/extension/**'
               - 'apps/desktop/src/**'
@@ -61,7 +63,6 @@ jobs:
               - 'bun.lock'
               - 'tsconfig.json'
               - '.github/workflows/ci.yml'
-              - '!**/CHANGELOG.md'
 
   lint:
     name: Lint
@@ -158,10 +159,37 @@ jobs:
         run: cargo fmt --all --check
 
       - name: Run Clippy
-        run: cargo clippy --workspace --locked -- -D warnings
+        run: cargo clippy --workspace --locked --all-targets -- -D warnings
 
       - name: Run tests
         run: cargo test --workspace --locked
+
+  # The WASAPI capture crate only compiles on Windows, so the Linux job above
+  # never sees it. A plain check is enough to catch a broken build.
+  rust-check-windows:
+    name: Rust Check (Windows capture)
+    needs: changes
+    if: needs.changes.outputs.rust == 'true'
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: ${{ runner.os }}-cargo-capture-${{ hashFiles('Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-capture-
+
+      - name: Check the capture crate
+        run: cargo check -p thaumic-capture --locked --all-targets
 
   build-extension:
     name: Build Extension
