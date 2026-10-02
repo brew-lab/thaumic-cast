@@ -49,6 +49,11 @@ export interface ConnectionState {
   networkHealthReason: string | null;
   /** Which companion is connected (desktop/server). Null on pre-0.4.0 builds. */
   appType: AppType | null;
+  /**
+   * Whether the companion says it would capture the whole browser for this
+   * extension, from `/health`. Null when it does not say (older companions).
+   */
+  browserCapture: boolean | null;
   /** Companion app semver. Null on pre-0.4.0 builds. */
   appVersion: string | null;
   /** Wire-protocol semver advertised by the companion. Null on pre-0.4.0 builds. */
@@ -71,6 +76,7 @@ let state: ConnectionState = {
   networkHealth: 'ok',
   networkHealthReason: null,
   appType: null,
+  browserCapture: null,
   appVersion: null,
   protocolVersion: null,
   companionAudio: null,
@@ -99,6 +105,7 @@ const storage = persistenceManager.register<ConnectionState>(
         networkHealth: s.networkHealth ?? 'ok',
         networkHealthReason: s.networkHealthReason ?? null,
         appType: s.appType ?? null,
+        browserCapture: s.browserCapture ?? null,
         appVersion: s.appVersion ?? null,
         protocolVersion: s.protocolVersion ?? null,
         companionAudio: s.companionAudio ?? null,
@@ -147,11 +154,22 @@ export function setConnected(connected: boolean): void {
  * until `INITIAL_STATE` arrives (it'll likely be unknown there too for
  * pre-0.4.0 builds).
  *
+ * `browserCapture` is kept when the caller has no fresh `/health` answer for
+ * the same companion, and forgotten when the address changes: one companion's
+ * answer says nothing about another's.
+ *
  * @param url - The desktop app base URL
  * @param maxStreams - Maximum concurrent streams allowed
  * @param appType - Companion type from `/health`, or undefined if not reported
+ * @param browserCapture - Capture capability from `/health`, or undefined if not reported
  */
-export function setDesktopApp(url: string, maxStreams: number, appType?: AppType): void {
+export function setDesktopApp(
+  url: string,
+  maxStreams: number,
+  appType?: AppType,
+  browserCapture?: boolean,
+): void {
+  const sameCompanion = url === state.desktopAppUrl;
   state = {
     ...state,
     desktopAppUrl: url,
@@ -159,6 +177,7 @@ export function setDesktopApp(url: string, maxStreams: number, appType?: AppType
     lastDiscoveredAt: Date.now(),
     lastError: null,
     appType: appType ?? state.appType,
+    browserCapture: browserCapture ?? (sameCompanion ? state.browserCapture : null),
   };
   storage.schedule();
 }
@@ -239,6 +258,7 @@ export function clearConnectionState(): void {
     networkHealth: 'ok',
     networkHealthReason: null,
     appType: null,
+    browserCapture: null,
     appVersion: null,
     protocolVersion: null,
     companionAudio: null,

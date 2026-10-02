@@ -22,7 +22,6 @@ import { useSonosState } from './hooks/useSonosState';
 import { useAutoStopNotification } from './hooks/useAutoStopNotification';
 import { useConnectionStatus } from './hooks/useConnectionStatus';
 import { useOnboarding } from './hooks/useOnboarding';
-import { useExtensionSettingsListener } from './hooks/useExtensionSettingsListener';
 import { useSpeakerSelection } from './hooks/useSpeakerSelection';
 import { useCompanionVersion } from './hooks/useCompanionVersion';
 import { useCaptureHealth } from './hooks/useCaptureHealth';
@@ -68,7 +67,6 @@ function MainPopup(): JSX.Element {
   const [error, setError] = useState<string | null>(null);
 
   // Extension settings with live updates
-  const { videoSyncEnabled } = useExtensionSettingsListener();
 
   // Connection status with instant cached display
   const connection = useConnectionStatus();
@@ -435,7 +433,6 @@ function MainPopup(): JSX.Element {
         onControl={handleControl}
         onRemoveSpeaker={removeSpeaker}
         showDivider={!!currentTabState && !isCasting}
-        videoSyncEnabled={videoSyncEnabled}
         onSyncGroupVolumeChange={handleSyncGroupVolumeChange}
         onSyncGroupMuteToggle={handleSyncGroupMuteToggle}
       />

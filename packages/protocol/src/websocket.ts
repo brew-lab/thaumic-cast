@@ -28,6 +28,35 @@ export const AppTypeSchema = z.enum(['desktop', 'server']);
 export type AppType = z.infer<typeof AppTypeSchema>;
 
 /**
+ * The body of the companion's `GET /health`, as far as the extension reads it.
+ *
+ * Every field but `service` is optional: older companions send fewer, and a
+ * value this build does not recognise degrades to "not reported" instead of
+ * failing discovery.
+ */
+export const HealthResponseSchema = z.object({
+  /** Identifies the service that answered; `thaumic-cast` for a companion. */
+  service: z.string(),
+  /** Which companion answered. */
+  appType: AppTypeSchema.optional().catch(undefined),
+  /**
+   * Whether the companion would capture the whole browser for the client that
+   * asked: it can capture on its platform, and the client is on its machine.
+   * Absent from companions that predate the field, which means "unknown".
+   */
+  browserCapture: z.boolean().optional().catch(undefined),
+  /** The companion's limits. */
+  limits: z
+    .object({
+      /** Maximum concurrent streams, every client's included. */
+      maxStreams: z.number().int().positive().optional().catch(undefined),
+    })
+    .optional()
+    .catch(undefined),
+});
+export type HealthResponse = z.infer<typeof HealthResponseSchema>;
+
+/**
  * WebSocket Message Payloads
  */
 export const WsHandshakePayloadSchema = z.object({

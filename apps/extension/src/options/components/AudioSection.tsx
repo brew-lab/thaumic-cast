@@ -26,7 +26,7 @@ import {
 } from '@thaumic-cast/protocol';
 import type { ExtensionSettings, AudioMode } from '../../lib/settings';
 import { getDynamicPresets } from '../../lib/presets';
-import { resolveAudio } from '../../lib/audio-resolver';
+import { resolveAudio, type CompanionCapability } from '../../lib/audio-resolver';
 import { pcmAudioRows, type PcmRowsContext } from '../../lib/pcm-audio-rows';
 import { useCombinationSupport } from '../hooks/useCombinationSupport';
 import styles from '../Options.module.css';
@@ -41,6 +41,8 @@ interface AudioSectionProps {
   codecLoading: boolean;
   /** The companion's speaker-side settings and type, for the head start rows. */
   companion: PcmRowsContext;
+  /** What the connected companion can do, passed to the resolver as a cast passes it. */
+  capability: CompanionCapability;
 }
 
 /**
@@ -56,6 +58,7 @@ interface AudioSectionProps {
  * @param root0.codecSupport
  * @param root0.codecLoading
  * @param root0.companion
+ * @param root0.capability
  * @returns The audio section element
  */
 export function AudioSection({
@@ -64,6 +67,7 @@ export function AudioSection({
   codecSupport,
   codecLoading,
   companion,
+  capability,
 }: AudioSectionProps): JSX.Element {
   const { t } = useTranslation();
   const [advancedOpen, setAdvancedOpen] = useState(() => location.hash === ADVANCED_HASH);
@@ -84,6 +88,7 @@ export function AudioSection({
           captureMode: settings.captureMode,
         },
         codecSupport,
+        capability,
       );
     } catch {
       return null;
@@ -96,6 +101,7 @@ export function AudioSection({
     settings.captureMode,
     codecSupport,
     codecLoading,
+    capability,
   ]);
 
   // The summary describes the Quality choice, which is what a tab cast sends.

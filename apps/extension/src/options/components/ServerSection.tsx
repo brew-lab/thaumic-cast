@@ -32,6 +32,12 @@ export function ServerSection({ settings, onUpdate }: ServerSectionProps): JSX.E
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState<ServerTestResult | null>(null);
 
+  // Manual mode with nothing saved is not a setting that works: discovery has
+  // no address to use and goes on scanning this machine. Say so, unless a
+  // connection attempt is already saying something.
+  const addressMissing =
+    !settings.useAutoDiscover && !settings.serverUrl && !testing && !testResult;
+
   // Sync urlInput with settings.serverUrl when settings change externally
   useEffect(() => {
     setUrlInput(settings.serverUrl ?? '');
@@ -133,6 +139,8 @@ export function ServerSection({ settings, onUpdate }: ServerSectionProps): JSX.E
                 onInput={handleUrlChange}
                 onBlur={handleUrlBlur}
                 autoComplete="url"
+                aria-invalid={addressMissing}
+                aria-describedby={addressMissing ? 'server-url-missing' : undefined}
               />
               <Button
                 variant="secondary"
@@ -144,6 +152,14 @@ export function ServerSection({ settings, onUpdate }: ServerSectionProps): JSX.E
               </Button>
             </div>
             <span className={styles.hint}>{t('server_url_hint')}</span>
+
+            {/* Manual mode with no saved address */}
+            {addressMissing && (
+              <div id="server-url-missing" className={styles.status} role="alert">
+                <span className={`${styles.statusDot} ${styles.statusDotDisconnected}`} />
+                <span>{t('server_url_missing')}</span>
+              </div>
+            )}
 
             {/* Test result */}
             {testResult && (

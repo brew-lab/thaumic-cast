@@ -124,6 +124,24 @@
   color: var(--color-text-muted);
 }
 
+/* Why a control is disabled, or when it takes effect: read at full strength */
+.radio-note {
+  font-size: 0.75rem;
+}
+
+.radio-option-disabled {
+  cursor: not-allowed;
+}
+
+.radio-option-disabled:hover {
+  background: none;
+}
+
+.radio-option-disabled .radio-label,
+.radio-option-disabled .radio-desc {
+  opacity: var(--input-disabled-opacity);
+}
+
 /* Status indicator */
 .status {
   display: inline-flex;

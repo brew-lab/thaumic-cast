@@ -216,6 +216,21 @@ describe('getActiveCasts', () => {
     });
     expect(cast?.mediaState).toMatchObject({ tabId: 1, tabTitle: 'Unknown Tab', metadata: null });
   });
+
+  it('should say whether each cast was started with video sync on', () => {
+    registerSession(1, 'stream-1', [KITCHEN], ['Kitchen'], ENCODER, false, 'tab', true);
+    register(2, 'stream-2', [OFFICE]);
+
+    expect(getSession(1)?.videoSync).toBe(true);
+    expect(getActiveCasts().map((cast) => [cast.tabId, cast.videoSync])).toEqual([
+      [1, true],
+      [2, false],
+    ]);
+    expect(chromeStorageData.session.activeSessions).toEqual([
+      [1, expect.objectContaining({ videoSync: true })],
+      [2, expect.objectContaining({ videoSync: false })],
+    ]);
+  });
 });
 
 describe('restoring persisted sessions', () => {
@@ -248,9 +263,44 @@ describe('restoring persisted sessions', () => {
           startedAt: 1,
           syncSpeakers: false,
           captureMode: 'tab',
+          videoSync: false,
         },
       ],
     ]);
+  });
+
+  it('should keep the video sync flag a session was stored with', async () => {
+    registerSession(1, 'stream-1', [KITCHEN], ['Kitchen'], ENCODER, false, 'tab', true);
+
+    const restored = await persistenceManager
+      .get<[number, { videoSync: boolean }][]>('activeSessions')
+      ?.restore();
+
+    expect(restored?.[0]?.[1].videoSync).toBe(true);
+  });
+
+  it('should treat a session stored without the video sync flag as started without it', async () => {
+    chromeStorageData.session.activeSessions = [
+      [
+        5,
+        {
+          streamId: 'old-stream',
+          tabId: 5,
+          speakerIps: [KITCHEN],
+          speakerNames: ['Kitchen'],
+          encoderConfig: ENCODER,
+          startedAt: 1,
+          syncSpeakers: false,
+          captureMode: 'tab',
+        },
+      ],
+    ];
+
+    const restored = await persistenceManager
+      .get<[number, { videoSync: boolean }][]>('activeSessions')
+      ?.restore();
+
+    expect(restored?.[0]?.[1].videoSync).toBe(false);
   });
 
   it('should ignore stored data that is not a session list', async () => {

@@ -82,5 +82,11 @@ export const ActiveCastSchema = z.object({
   startedAt: z.number(),
   /** Whether synchronized multi-speaker playback is active */
   syncSpeakers: z.boolean().default(false),
+  /**
+   * Whether the cast was started with video sync on. The companion decides at
+   * the start of playback whether to measure for it, so the setting as it
+   * stands now says nothing about a cast already running.
+   */
+  videoSync: z.boolean().default(false),
 });
 export type ActiveCast = z.infer<typeof ActiveCastSchema>;

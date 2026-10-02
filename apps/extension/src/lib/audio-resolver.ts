@@ -25,8 +25,9 @@ export type AudioResolverSettings = Pick<
 >;
 
 /**
- * What the connected companion can do. Nothing here changes the result yet;
- * the parameter is in place so callers do not change when it does.
+ * What the connected companion can do. It does not change the config a cast
+ * sends: the capture mode is the user's, and only they change it. It decides
+ * whether the companion will take the cast at all.
  */
 export interface CompanionCapability {
   /** Whether the companion can capture the whole browser; undefined when unknown. */
@@ -51,6 +52,11 @@ export interface ResolvedAudio {
   tabConfig: EncoderConfig;
   /** True when browser-wide capture decides the format, whatever the Quality choice. */
   formatForced: boolean;
+  /**
+   * True when browser-wide capture is chosen and the companion is known not
+   * to capture: it will refuse this cast.
+   */
+  captureRefused: boolean;
   /** The controls that apply to this cast. */
   controls: AudioControls;
 }
@@ -68,15 +74,14 @@ export interface ResolvedAudio {
  *
  * @param settings - The stored audio settings and capture mode
  * @param codecSupport - Runtime codec support info
- * @param _companion - What the companion can do; not read yet
+ * @param companion - What the companion can do; leave out when unknown
  * @returns The effective config, the tab-cast config and the applicable controls
  * @throws Error if no supported codecs are found
  */
 export function resolveAudio(
   settings: AudioResolverSettings,
   codecSupport: SupportedCodecsResult,
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars -- kept so callers need not change
-  _companion?: CompanionCapability,
+  companion?: CompanionCapability,
 ): ResolvedAudio {
   const tabConfig = resolveAudioMode(
     settings.audioMode,
@@ -105,6 +110,7 @@ export function resolveAudio(
     config,
     tabConfig,
     formatForced: browserWide,
+    captureRefused: browserWide && companion?.browserCapture === false,
     controls: {
       smoothing: isPcm,
       frameSize: isPcm && !browserWide,

@@ -78,6 +78,12 @@ interface ActiveCastSession {
   syncSpeakers: boolean;
   /** Capture mode used for this session */
   captureMode: 'tab' | 'browser';
+  /**
+   * Whether the cast was started with video sync on. The companion latches
+   * its measuring for video sync at the start of playback, so this, not the
+   * setting as it stands now, says whether the cast's controls can work.
+   */
+  videoSync: boolean;
 }
 
 /** In-memory storage of active sessions by tab ID */
@@ -117,6 +123,11 @@ const storage = persistenceManager.register<[number, ActiveCastSession][]>(
         if (!session.captureMode) {
           session.captureMode = 'tab';
         }
+        // A session stored before this field existed says nothing about how it
+        // started, so it gets no video sync controls
+        if (session.videoSync === undefined) {
+          session.videoSync = false;
+        }
         return [tabId, session] as [number, ActiveCastSession];
       });
 
@@ -145,6 +156,7 @@ const storage = persistenceManager.register<[number, ActiveCastSession][]>(
  * @param encoderConfig - Encoder configuration used
  * @param syncSpeakers - Whether synchronized multi-speaker playback is enabled
  * @param captureMode - Whether this session uses tab or browser-wide capture
+ * @param videoSync - Whether the cast was started with video sync on
  */
 export function registerSession(
   tabId: number,
@@ -154,6 +166,7 @@ export function registerSession(
   encoderConfig: EncoderConfig,
   syncSpeakers: boolean,
   captureMode: 'tab' | 'browser' = 'tab',
+  videoSync = false,
 ): void {
   const wasEmpty = sessions.size === 0;
 
@@ -169,6 +182,7 @@ export function registerSession(
     startedAt: Date.now(),
     syncSpeakers,
     captureMode,
+    videoSync,
   });
 
   // Request keep-awake on first session to prevent system throttling
@@ -407,6 +421,7 @@ function toActiveCast(session: ActiveCastSession): ActiveCast {
     encoderConfig: session.encoderConfig,
     startedAt: session.startedAt,
     syncSpeakers: session.syncSpeakers,
+    videoSync: session.videoSync,
   };
 }
 

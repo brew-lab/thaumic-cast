@@ -27,8 +27,6 @@ interface ActiveCastsListProps {
   onRemoveSpeaker?: (tabId: number, speakerIp: string) => void;
   /** Whether to show bottom divider (when CurrentTabCard is visible below) */
   showDivider?: boolean;
-  /** Whether video sync controls should be shown (from global settings) */
-  videoSyncEnabled?: boolean;
   /** Callback when sync group volume changes (all speakers at once) */
   onSyncGroupVolumeChange: (speakerIps: string[], volume: number) => void;
   /** Callback when sync group mute is toggled (all speakers at once) */
@@ -49,7 +47,6 @@ interface ActiveCastsListProps {
  * @param props.onControl
  * @param props.onRemoveSpeaker
  * @param props.showDivider
- * @param props.videoSyncEnabled
  * @param props.onSyncGroupVolumeChange
  * @param props.onSyncGroupMuteToggle
  * @returns The rendered ActiveCastsList component or null if empty
@@ -66,7 +63,6 @@ export function ActiveCastsList({
   onControl,
   onRemoveSpeaker,
   showDivider = false,
-  videoSyncEnabled = false,
   onSyncGroupVolumeChange,
   onSyncGroupMuteToggle,
 }: ActiveCastsListProps): JSX.Element | null {
@@ -95,7 +91,6 @@ export function ActiveCastsList({
               onRemoveSpeaker={
                 onRemoveSpeaker ? (speakerIp) => onRemoveSpeaker(cast.tabId, speakerIp) : undefined
               }
-              videoSyncEnabled={videoSyncEnabled}
               onSyncGroupVolumeChange={onSyncGroupVolumeChange}
               onSyncGroupMuteToggle={onSyncGroupMuteToggle}
             />
