@@ -1,4 +1,5 @@
 pub mod cadence;
+pub mod codec;
 pub mod delivery;
 pub mod framing;
 pub mod icy;
@@ -16,6 +17,7 @@ pub use cadence::{
     create_wav_stream_with_cadence, parse_pcm_connect_burst_ms, pcm_connect_burst_ms,
     CadenceConfig, ChainStats, PCM_CONNECT_BURST_ENV,
 };
+pub use codec::{AudioCodec, CleanupOrder};
 pub use delivery::{
     lagged_error, EpochHook, FirstConnectionWait, FirstWaitWatch, LoggingStreamGuard,
     FIRST_WAIT_SURVIVAL,
@@ -23,8 +25,8 @@ pub use delivery::{
 pub use framing::{BodyFraming, DeclaredEnd, EndedBy};
 pub use icy::{IcyMetadataInjector, ICY_METAINT};
 pub use manager::{
-    AudioCodec, CleanupOrder, PlaybackEpoch, StreamMetadata, StreamReaderSlot, StreamRegistry,
-    StreamState, StreamTiming, MAX_UNLISTED_STREAM_READERS,
+    PlaybackEpoch, StreamMetadata, StreamReaderSlot, StreamRegistry, StreamState, StreamTiming,
+    MAX_UNLISTED_STREAM_READERS,
 };
 pub use pcm_http::{
     PcmContinuation, PcmHttpFraming, PcmHttpSettings, PcmHttpSwitches, PcmSegmentDidl,
