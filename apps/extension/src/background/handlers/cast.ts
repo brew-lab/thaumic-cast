@@ -24,6 +24,7 @@ import type {
   ExtensionResponse,
 } from '../../lib/messages';
 import { KeyedError, errorParamsOf } from '../../lib/keyed-error';
+import { captureDeniedError } from '../../lib/capture-denied';
 import { getSourceFromUrl } from '../../lib/url-utils';
 import { getActiveTab, getActiveTabId } from '../../lib/tab-utils';
 import { loadExtensionSettings } from '../../lib/settings';
@@ -160,8 +161,15 @@ export async function handleStartCast(msg: StartCastMessage): Promise<ExtensionR
 
       const mediaStreamId = await new Promise<string>((resolve, reject) => {
         chrome.tabCapture.getMediaStreamId({ targetTabId: tabId }, (id) => {
-          if (id) resolve(id);
-          else reject(new Error('error_capture_denied'));
+          if (id) {
+            resolve(id);
+            return;
+          }
+          // Chrome's reason is only readable inside this callback, and reading
+          // it also stops Chrome logging an unchecked lastError.
+          const reason = chrome.runtime.lastError?.message;
+          log.warn(`Tab capture refused for tab ${tabId}: ${reason ?? 'no reason given'}`);
+          reject(captureDeniedError(reason));
         });
       });
 

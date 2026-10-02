@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import i18next from 'i18next';
 import type { SpeakerAvailability } from '@thaumic-cast/protocol';
 
-import { CastAutoStopReasonSchema } from '../lib/message-schemas';
+import { CastAutoStopReasonSchema, SpeakerRemovalReasonSchema } from '../lib/message-schemas';
 import type { ServerTestErrorType } from '../lib/serverTest';
 import {
   entriesWithoutReference,
@@ -25,6 +25,7 @@ const FILES_THAT_SEND_ERROR_KEYS = [
   'background/handlers/cast.ts',
   'background/handlers/connection.ts',
   'background/discovery.ts',
+  'lib/capture-denied.ts',
   'background/connection-state.ts',
   'offscreen/handlers.ts',
   'offscreen/stream-session.ts',
@@ -58,6 +59,7 @@ describe('extension en.json', () => {
     const sent = FILES_THAT_SEND_ERROR_KEYS.flatMap((file) => errorKeysIn(join(SRC, file)));
     expect(sent).toContain('error_offscreen_unavailable');
     expect(sent).toContain('error_unsupported_sample_rate');
+    expect(sent).toContain('error_capture_denied_reason');
     expect(sent.filter((key) => !hasEntry(strings, key))).toEqual([]);
   });
 
@@ -72,6 +74,17 @@ describe('extension en.json', () => {
     const shown = CastAutoStopReasonSchema.options.filter((reason) => reason !== 'user_removed');
     for (const reason of shown) {
       expect(strings[`auto_stop_${reason}`]).toBeString();
+    }
+  });
+
+  it('should have a message for every reason a speaker leaves a cast that carries on', () => {
+    const shown = SpeakerRemovalReasonSchema.options.filter((reason) => reason !== 'user_removed');
+    for (const reason of shown) {
+      const line = strings[`speaker_removed_${reason}`];
+      expect(line).toContain('{{name}}');
+      // The cast is still running, so the line must not send the user to cast again.
+      expect(line).not.toContain('Cast again');
+      expect(line).toContain('carries on');
     }
   });
 
