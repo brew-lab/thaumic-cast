@@ -8,6 +8,7 @@ import {
   loadExtensionSettings,
   migrateAudioSettingsV2,
   migrateAudioSettingsV3,
+  migrateSettingsV4,
   nearestBitrateForCodec,
   parseStoredExtensionSettings,
   saveExtensionSettings,
@@ -502,6 +503,105 @@ describe('migrateAudioSettingsV3', () => {
   });
 });
 
+describe('migrateSettingsV4', () => {
+  it('should turn a stored English below version 4 into auto', () => {
+    const before = { audioMode: 'high', theme: 'dark', language: 'en', audioSettingsVersion: 3 };
+
+    expect(migrateSettingsV4(before)).toEqual({
+      ...before,
+      language: 'auto',
+      audioSettingsVersion: 4,
+    });
+  });
+
+  it('should leave any other stored language below version 4 alone', () => {
+    for (const language of ['auto', 'fr']) {
+      const before = { language, audioSettingsVersion: 3 };
+
+      expect(migrateSettingsV4(before)).toEqual({ language, audioSettingsVersion: 4 });
+    }
+  });
+
+  it('should only stamp the version when no language is stored', () => {
+    expect(migrateSettingsV4({ audioMode: 'high', audioSettingsVersion: 3 })).toEqual({
+      audioMode: 'high',
+      audioSettingsVersion: 4,
+    });
+  });
+
+  it('should keep English, auto and a future locale on version 4, where each is a choice', () => {
+    for (const language of ['en', 'auto', 'fr']) {
+      const current = { language, audioSettingsVersion: 4 };
+
+      expect(migrateSettingsV4(current)).toBe(current);
+    }
+  });
+});
+
+describe('loadExtensionSettings language migration', () => {
+  /** Stores a full profile with English, as every version before 4 did. */
+  function storeEnglish(overrides: { audioSettingsVersion: number; syncSpeakers?: boolean }): void {
+    storeSettings({
+      ...getDefaultExtensionSettings(),
+      language: 'en',
+      theme: 'dark',
+      ...overrides,
+    });
+  }
+
+  it('should default a fresh install to auto', () => {
+    expect(getDefaultExtensionSettings().language).toBe('auto');
+    expect(ExtensionSettingsSchema.parse({}).language).toBe('auto');
+  });
+
+  it('should move English to auto from versions 2 and 3 and store it once', async () => {
+    for (const audioSettingsVersion of [2, 3]) {
+      storeEnglish({ audioSettingsVersion, syncSpeakers: true });
+
+      const settings = await loadExtensionSettings();
+
+      expect(settings.language).toBe('auto');
+      expect(settings.audioSettingsVersion).toBe(AUDIO_SETTINGS_VERSION);
+      expect(settings).toMatchObject({ theme: 'dark', syncSpeakers: true, audioMode: 'high' });
+      expect(chromeStorageData.local[SETTINGS_KEY]).toEqual(settings);
+    }
+  });
+
+  it('should move English to auto through the whole chain from version 1', async () => {
+    storeSettings({
+      language: 'en',
+      audioMode: 'custom',
+      customAudioSettings: customAudio({ jitterBufferMs: 1000, latencyMode: 'realtime' }),
+    });
+
+    const settings = await loadExtensionSettings();
+
+    expect(settings.language).toBe('auto');
+    expect(settings.pcmSmoothingMs).toBe(500);
+    expect(settings.customAudioSettings.latencyMode).toBe('quality');
+    expect(settings.audioSettingsVersion).toBe(AUDIO_SETTINGS_VERSION);
+    expect(chromeStorageData.local[SETTINGS_KEY]).toEqual(settings);
+  });
+
+  it('should keep English chosen after the migration has run', async () => {
+    storeEnglish({ audioSettingsVersion: 3 });
+    expect((await loadExtensionSettings()).language).toBe('auto');
+
+    await saveExtensionSettings({ language: 'en' });
+
+    expect((await loadExtensionSettings()).language).toBe('en');
+    expect((await loadExtensionSettings()).language).toBe('en');
+  });
+
+  it('should keep auto on the current version and not rewrite storage', async () => {
+    storeSettings({ ...getDefaultExtensionSettings(), theme: 'dark' });
+    const stored = chromeStorageData.local[SETTINGS_KEY];
+
+    expect((await loadExtensionSettings()).language).toBe('auto');
+    expect(chromeStorageData.local[SETTINGS_KEY]).toBe(stored);
+  });
+});
+
 describe('snapToSmoothingOption', () => {
   it('should take the nearest step, going up on ties and clamping at both ends', () => {
     expect(snapToSmoothingOption(50)).toBe(100);
@@ -583,7 +683,7 @@ describe('loadExtensionSettings fall-behind migration', () => {
       latencyMode: 'quality',
     });
     expect(settings).toMatchObject({ audioMode: 'custom', theme: 'dark', pcmSmoothingMs: 300 });
-    expect(settings.audioSettingsVersion).toBe(3);
+    expect(settings.audioSettingsVersion).toBe(AUDIO_SETTINGS_VERSION);
     expect(settings.smoothingMigrationNotice).toBeNull();
     expect(chromeStorageData.local[SETTINGS_KEY]).toEqual(settings);
   });
@@ -597,7 +697,7 @@ describe('loadExtensionSettings fall-behind migration', () => {
       codec: 'aac-lc',
       latencyMode: 'realtime',
     });
-    expect(settings.audioSettingsVersion).toBe(3);
+    expect(settings.audioSettingsVersion).toBe(AUDIO_SETTINGS_VERSION);
     expect(chromeStorageData.local[SETTINGS_KEY]).toEqual(settings);
   });
 
@@ -607,11 +707,19 @@ describe('loadExtensionSettings fall-behind migration', () => {
     const settings = await loadExtensionSettings();
 
     expect(settings.customAudioSettings.latencyMode).toBe('quality');
-    expect(settings.audioSettingsVersion).toBe(3);
+    expect(settings.audioSettingsVersion).toBe(AUDIO_SETTINGS_VERSION);
   });
 
-  it('should keep Realtime on custom PCM stored on version 3 and not rewrite storage', async () => {
+  it('should keep Realtime on custom PCM stored on version 3', async () => {
     storeV2({ codec: 'pcm', bitrate: 0, latencyMode: 'realtime' }, 3);
+
+    const settings = await loadExtensionSettings();
+
+    expect(settings.customAudioSettings.latencyMode).toBe('realtime');
+  });
+
+  it('should not rewrite storage for settings on the current version', async () => {
+    storeV2({ codec: 'pcm', bitrate: 0, latencyMode: 'realtime' }, AUDIO_SETTINGS_VERSION);
     const stored = chromeStorageData.local[SETTINGS_KEY];
 
     const settings = await loadExtensionSettings();
@@ -638,7 +746,7 @@ describe('loadExtensionSettings fall-behind migration', () => {
     expect(settings.pcmFrameDurationMs).toBe(20);
     expect(settings.smoothingMigrationNotice).toEqual({ from: 1000, to: 500 });
     expect(settings.customAudioSettings.latencyMode).toBe('quality');
-    expect(settings.audioSettingsVersion).toBe(3);
+    expect(settings.audioSettingsVersion).toBe(AUDIO_SETTINGS_VERSION);
     expect(chromeStorageData.local[SETTINGS_KEY]).toEqual(settings);
   });
 

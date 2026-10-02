@@ -28,6 +28,27 @@ export type SupportedLocale = keyof typeof resources;
 export const SUPPORTED_LOCALES = Object.keys(resources) as SupportedLocale[];
 
 /**
+ * Stored language value that means "no preference: follow the browser".
+ */
+export const AUTO_LANGUAGE = 'auto';
+
+/**
+ * A stored language preference: a supported locale, or
+ * {@link AUTO_LANGUAGE} to follow the browser.
+ */
+export type LanguagePreference = SupportedLocale | typeof AUTO_LANGUAGE;
+
+/**
+ * Tells whether there is a language to choose between, which is when the
+ * Language section of the options page is worth showing.
+ * @param locales - The locales on offer (defaults to the ones that ship)
+ * @returns True when more than one locale is on offer
+ */
+export function hasLanguageChoice(locales: readonly string[] = SUPPORTED_LOCALES): boolean {
+  return locales.length > 1;
+}
+
+/**
  * Default locale for the application.
  */
 export const DEFAULT_LOCALE: SupportedLocale = 'en';
@@ -70,12 +91,13 @@ export function detectLanguage(): SupportedLocale {
 
 /**
  * Gets the initial language to use.
- * @param savedLanguage - User's saved language preference (if any)
+ * @param savedLanguage - User's saved language preference (if any);
+ *   {@link AUTO_LANGUAGE} counts as no preference
  * @returns The locale to use
  */
 export function getInitialLanguage(savedLanguage?: string | null): SupportedLocale {
-  // User preference takes priority
-  if (savedLanguage && isSupportedLocale(savedLanguage)) {
+  // An explicit choice takes priority; 'auto' is not one
+  if (savedLanguage && savedLanguage !== AUTO_LANGUAGE && isSupportedLocale(savedLanguage)) {
     return savedLanguage;
   }
 

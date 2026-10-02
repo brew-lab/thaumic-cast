@@ -11,6 +11,7 @@ import { useExtensionSettings } from './hooks/useExtensionSettings';
 import { useCodecSupport } from './hooks/useCodecSupport';
 import { useConnectionStatus } from '../popup/hooks/useConnectionStatus';
 import { companionCapability } from '../lib/capture-capability';
+import { hasLanguageChoice } from '../lib/i18n';
 import styles from './Options.module.css';
 
 /**
@@ -57,7 +58,7 @@ export function Options(): JSX.Element {
 
       <AppearanceSection settings={settings} onUpdate={updateSettings} />
 
-      <LanguageSection settings={settings} onUpdate={updateSettings} />
+      {hasLanguageChoice() && <LanguageSection settings={settings} onUpdate={updateSettings} />}
 
       <ServerSection settings={settings} onUpdate={updateSettings} />
 
