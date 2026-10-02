@@ -42,9 +42,12 @@ const AUTO_DISMISS_MS = 5000;
  *
  * Does NOT show notifications for user-initiated removals.
  *
+ * @param nameFor - Resolves a speaker IP to the name to show for it
  * @returns Notification state, localized message, and dismiss function
  */
-export function useAutoStopNotification(): AutoStopNotificationResult {
+export function useAutoStopNotification(
+  nameFor: (speakerIp: string) => string,
+): AutoStopNotificationResult {
   const { t } = useTranslation();
   const [notification, setNotification] = useState<AutoStopNotification | null>(null);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -110,7 +113,9 @@ export function useAutoStopNotification(): AutoStopNotificationResult {
     setNotification(null);
   }, []);
 
-  const message = notification ? t(`auto_stop_${notification.reason}`) : null;
+  const message = notification
+    ? t(`auto_stop_${notification.reason}`, { name: nameFor(notification.speakerIp) })
+    : null;
 
   return { notification, message, dismiss };
 }

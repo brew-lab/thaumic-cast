@@ -23,6 +23,7 @@ import type {
   RemoveSpeakerMessage,
   ExtensionResponse,
 } from '../../lib/messages';
+import { KeyedError, errorParamsOf } from '../../lib/keyed-error';
 import { getSourceFromUrl } from '../../lib/url-utils';
 import { getActiveTab, getActiveTabId } from '../../lib/tab-utils';
 import { loadExtensionSettings } from '../../lib/settings';
@@ -89,7 +90,7 @@ export async function handleStartCast(msg: StartCastMessage): Promise<ExtensionR
     //    a connect-time snapshot can't block a cast the companion would accept.
     const ownSpeakerIps = getAllSessions().flatMap((session) => session.speakerIps);
     if (getSessionCount() + countRemoteStreams(getSonosState(), ownSpeakerIps) >= app.maxStreams) {
-      throw new Error('error_max_sessions');
+      throw new KeyedError('error_max_sessions', { max: app.maxStreams });
     }
 
     // 3. Create offscreen document (needed for audio capture)
@@ -131,7 +132,7 @@ export async function handleStartCast(msg: StartCastMessage): Promise<ExtensionR
     }
 
     // 6. Branch on capture mode
-    let captureResponse: { success: boolean; streamId?: string; error?: string };
+    let captureResponse: ExtensionResponse;
     let captureMode: 'tab' | 'browser';
 
     if (settings.captureMode === 'browser') {
@@ -263,7 +264,7 @@ export async function handleStartCast(msg: StartCastMessage): Promise<ExtensionR
       }
     }
 
-    return { success: false, error: message };
+    return { success: false, error: message, errorParams: errorParamsOf(err) };
   }
 }
 

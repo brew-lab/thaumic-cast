@@ -139,7 +139,7 @@ describe('speakerNoticeLines', () => {
     };
     expect(speakerNoticeLines(low, ctx({ offerDriftCorrection: true }))).toEqual([
       { key: 'dashboard.speaker_notice_running_low', params: { name: 'Kitchen', left: 149 } },
-      { key: 'dashboard.speaker_notice_running_low_drift' },
+      { key: 'dashboard.speaker_notice_running_low_drift', params: { name: 'Kitchen' } },
       { key: 'dashboard.speaker_notice_drift_turn_on_desktop' },
       { key: 'dashboard.speaker_notice_restart_refills' },
     ]);

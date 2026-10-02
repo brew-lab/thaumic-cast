@@ -27,6 +27,7 @@ import type { EncoderConfig, StreamMetadata } from '@thaumic-cast/protocol';
 import { FRAME_DURATION_MS_DEFAULT, isSupportedSampleRate } from '@thaumic-cast/protocol';
 import type { WorkerInitMessage, WorkerOutboundMessage } from './worker-messages';
 import { noop } from '../lib/noop';
+import { KeyedError } from '../lib/keyed-error';
 
 const log = createLogger('Offscreen');
 
@@ -433,7 +434,7 @@ export class StreamSession {
           `Unsupported sample rate: ${actualSampleRate}Hz. ` +
             `Supported rates: 48000, 44100, 32000, 24000, 22050, 16000, 11025, 8000`,
         );
-        throw new Error('error_unsupported_sample_rate');
+        throw new KeyedError('error_unsupported_sample_rate', { rate: actualSampleRate });
       }
     }
 

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'bun:test';
 import { join } from 'node:path';
+import i18next from 'i18next';
 import type { SpeakerAvailability } from '@thaumic-cast/protocol';
 
 import { CastAutoStopReasonSchema } from '../lib/message-schemas';
@@ -11,6 +12,7 @@ import {
   lookupsWithoutEntry,
   networkHealthReasons,
   scanSourceKeys,
+  unpairedPlurals,
 } from '../test-support/locale-keys';
 import en from './en.json';
 
@@ -95,5 +97,34 @@ describe('extension en.json', () => {
     expect(entriesWithoutReference(strings, scanSourceKeys(SRC)).sort()).toEqual(
       [...KNOWN_UNUSED].sort(),
     );
+  });
+
+  it('should have both forms of every plural', () => {
+    expect(unpairedPlurals(strings)).toEqual([]);
+  });
+
+  it('should pick the singular for one and the plural for any other count', async () => {
+    // The same options the extension initialises i18next with.
+    const i18n = i18next.createInstance();
+    await i18n.init({
+      resources: { en: { translation: en } },
+      lng: 'en',
+      interpolation: { escapeValue: false },
+    });
+
+    expect(i18n.t('cast_to_n_speakers', { count: 1 })).toBe('Cast to 1 speaker');
+    expect(i18n.t('cast_to_n_speakers', { count: 3 })).toBe('Cast to 3 speakers');
+    expect(i18n.t('onboarding.speakers.found', { count: 1 })).toStartWith('Discovered 1 speaker.');
+    expect(i18n.t('onboarding.speakers.found', { count: 2 })).toStartWith('Discovered 2 speakers.');
+    expect(i18n.t('ingest_gaps_message_desktop', { count: 1, suggested: 500 })).toContain(
+      'late 1 time in the last minute',
+    );
+    expect(i18n.t('ingest_gaps_message_server', { count: 4, suggested: 500 })).toContain(
+      'late 4 times in the last minute',
+    );
+    expect(i18n.t('onboarding.step_of_named', { current: 2, total: 4, label: 'Desktop' })).toBe(
+      'Step 2 of 4: Desktop',
+    );
+    expect(i18n.t('error_max_sessions', { max: 10 })).toBe(en.error_max_sessions);
   });
 });

@@ -102,7 +102,10 @@ export function Speakers() {
         <div className={styles.headerLeft}>
           <h2 className={styles.pageTitle}>{t('nav.speakers')}</h2>
           <span className={styles.summary}>
-            {t('speakers.summary', { speakers: speakerCount, streams: streamCount })}
+            {t('speakers.summary', {
+              speakers: t('speakers.summary_speakers', { count: speakerCount }),
+              streams: t('speakers.summary_streaming', { count: streamCount }),
+            })}
           </span>
         </div>
         <ButtonGroup wrap grow>

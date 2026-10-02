@@ -164,7 +164,7 @@ export function speakerNoticeLines(notice: SpeakerNotice, ctx: NoticeWordingCont
       // When the clock drained it, keep the reason and the fix the drift
       // notice it replaced gave.
       if (notice.cause !== 'drift') break;
-      lines.push({ key: 'dashboard.speaker_notice_running_low_drift' });
+      lines.push({ key: 'dashboard.speaker_notice_running_low_drift', params: { name } });
       if (ctx.offerDriftCorrection) {
         lines.push({ key: 'dashboard.speaker_notice_drift_turn_on_desktop' });
       }
