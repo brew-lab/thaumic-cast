@@ -9,47 +9,52 @@
 <h1 align="center">Thaumic Cast</h1>
 
 <h3 align="center">
-  High-performance, self-hosted browser tab audio streaming to Sonos speakers: private, local, and entirely your
+  Plays what your browser is playing on your Sonos speakers, over your own network. Private, local, and entirely your
   problem.
 </h3>
 
-Thaumic Cast captures audio from your browser and streams it over your local network to Sonos speakers via UPnP. No
-accounts, no cloud, just packets.
+A Sonos speaker will play almost anything, provided fetching it was the speaker's idea. Thaumic Cast arranges for your
+browser's audio to be the speaker's idea. It does so over your own network and nobody else's. There is no account,
+because there is nobody to have an account with.
 
 ## Quick start
 
-Thaumic Cast comes in two pieces: the browser extension (it does the listening) and a local server (it does the
-speaking). The server can be the Desktop app or the headless server.
+It comes in two pieces. The extension lives in Chrome and is where you press Cast. The other piece finds the speakers
+and serves them the audio: either the desktop app, or Thaumic Cast Server, which is the same machinery with the window
+taken off, for the sort of computer that is kept in a cupboard and visited twice a year.[^1]
 
-1. Download and run the **Desktop app** from the [latest release](../../releases/latest). Prefer headless? Use the
-   server instead of the Desktop app: see [`apps/server/README.md`](apps/server/README.md).
-2. Install the **Browser extension** from the [Chrome Web Store](https://chromewebstore.google.com/detail/thaumic-cast/hpemmkbecklfacogdidaoncjmfadgedm). Prefer to load it yourself? Download
+1. Download and run the **desktop app** from the [latest release](../../releases/latest). If the computer in question
+   has no screen to show it on, run the server instead: see [`apps/server/README.md`](apps/server/README.md).
+2. Install the **extension** from the [Chrome Web Store](https://chromewebstore.google.com/detail/thaumic-cast/hpemmkbecklfacogdidaoncjmfadgedm). To load it yourself, download
    `thaumic-cast-extension-vX.Y.Z.zip` from the [latest release](../../releases/latest), unzip it, then load it via
    `chrome://extensions` → Developer mode → **Load unpacked**.
-3. Click the extension, pick a Sonos group, and start streaming.
+3. Open a tab that is playing something, click the extension, choose a speaker or a group, and press **Cast**.
 
 > [!NOTE]
-> Thaumic Cast runs a local server on `http://localhost:49400` (it may use any port in `49400–49410`). If you use a
-> firewall, open `49400–49410/tcp`.
+> The desktop app listens on `http://localhost:49400`, or on the first free port up to `49410` if that one is taken.
+> If this computer runs a firewall, open `49400–49410/tcp`: the speakers fetch the audio from this computer, and have
+> to be let in to do it.
 
 ## Downloads
 
 - Desktop app (Windows/macOS/Linux): [Latest release](../../releases/latest)
 - Chrome extension: [Chrome Web Store](https://chromewebstore.google.com/detail/thaumic-cast/hpemmkbecklfacogdidaoncjmfadgedm), or the zip from the [latest release](../../releases/latest) (look for `thaumic-cast-extension-vX.Y.Z.zip`)
-- Headless server (Linux x64/arm64): [Latest release](../../releases/latest) (look for `thaumic-server-vX.Y.Z-linux-*.tar.gz`), setup in [`apps/server/README.md`](apps/server/README.md)
+- Thaumic Cast Server (Linux x64/arm64): [Latest release](../../releases/latest) (look for `thaumic-server-vX.Y.Z-linux-*.tar.gz`), setup in [`apps/server/README.md`](apps/server/README.md)
 
 > [!NOTE]
-> Desktop app releases are currently unsigned. Your OS may warn you (macOS Gatekeeper, Windows SmartScreen). Make sure
-> you downloaded it from the [latest release](../../releases/latest).
+> Desktop app releases are not signed yet, and macOS Gatekeeper and Windows SmartScreen will each say so in their own
+> way. Check that your copy came from the [latest release](../../releases/latest), then let it through.
 
 ## What it does
 
-- Streams audio from a browser tab to Sonos speakers on your local network.
-- Sends different tabs to different rooms/groups (kitchen gets jazz, office gets “focus noise”, everyone wins).
-- Keeps things self-hosted and local: no accounts, no cloud, no “sign in to continue breathing”.
-- Runs as a Desktop app or a headless server for NAS/Docker.
-- Great for YouTube Music, Spotify Web Player, Bandcamp, and web radio. In other words, getting music onto Sonos without
-  sending it on holiday first.
+- Casts the audio of a browser tab to Sonos speakers on your own network.
+- Sends different tabs to different speakers or groups: jazz in the kitchen, “focus noise” in the office, and neither
+  room need know about the other.
+- Keeps the audio in the house. It goes from your computer to your speakers, and at no point calls in at anybody
+  else's computer on the way.
+- Runs as the desktop app, or as Thaumic Cast Server on a NAS, in Docker, or on anything else that has no screen.
+- Works with whatever plays in a tab: YouTube Music, the Spotify web player, Bandcamp, web radio. Thaumic Cast does not
+  ask what the audio is, only where it is going.
 
 ## Documentation
 
@@ -106,3 +111,5 @@ packages/
 ## License
 
 This project is licensed under the [GNU Affero General Public License v3.0](LICENSE).
+
+[^1]: The speakers play a little behind the browser. Songs do not mind. Films mind very much, which is what video sync is for.
