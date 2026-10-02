@@ -29,7 +29,8 @@ import { useCaptureHealth } from './hooks/useCaptureHealth';
 import { useSpeakerNotices } from './hooks/useSpeakerNotices';
 import { useIngestGaps } from './hooks/useIngestGaps';
 import type { NoticeLine } from '../lib/speaker-notices';
-import { retryLabelKey } from '../lib/popup-copy';
+import { captureHealthAlert, retryLabelKey } from '../lib/popup-copy';
+import { isWindowsPlatform } from '../lib/settings';
 import { companionTypeLabelKey, versionMismatchActionKey } from '../lib/versionCheck';
 import { Onboarding } from './components/Onboarding';
 
@@ -134,6 +135,8 @@ function MainPopup(): JSX.Element {
   // Capture-health alert (LoopbackStream frame drops on low-core Windows)
   const { showAlert: showCaptureHealthAlert, dismiss: dismissCaptureHealthAlert } =
     useCaptureHealth();
+
+  const frameDropAlert = captureHealthAlert(isWindowsPlatform());
 
   // Speaker notices (the companion decided a casting speaker cut out, came
   // close, or is running low, and says what would help)
@@ -380,12 +383,12 @@ function MainPopup(): JSX.Element {
         <Alert
           variant="warning"
           className={styles.alert}
-          action={t('capture_health_action_open_settings')}
-          onAction={openSettings}
+          action={frameDropAlert.hasAction ? t('capture_health_action_open_settings') : undefined}
+          onAction={frameDropAlert.hasAction ? openSettings : undefined}
           onDismiss={dismissCaptureHealthAlert}
           dismissLabel={t('dismiss')}
         >
-          {t('capture_health_frame_drops_message')}
+          {t(frameDropAlert.key)}
         </Alert>
       )}
 

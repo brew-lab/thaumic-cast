@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'bun:test';
 
 import en from '../locales/en.json';
-import { retryLabelKey } from './popup-copy';
+import { captureHealthAlert, retryLabelKey } from './popup-copy';
 
 const strings = en as Record<string, string>;
 
@@ -19,5 +19,29 @@ describe('retryLabelKey', () => {
   it('should have a string for both labels', () => {
     expect(strings.retry_connection).toBeString();
     expect(strings.retry_connection_not_found).toBeString();
+  });
+});
+
+describe('captureHealthAlert', () => {
+  it('should recommend browser-wide capture and offer settings on Windows', () => {
+    expect(captureHealthAlert(true)).toEqual({
+      key: 'capture_health_frame_drops_message',
+      hasAction: true,
+    });
+  });
+
+  it('should say only what is wrong, with no button, where the setting does not exist', () => {
+    const alert = captureHealthAlert(false);
+
+    expect(alert).toEqual({
+      key: 'capture_health_frame_drops_message_no_remedy',
+      hasAction: false,
+    });
+    expect(strings[alert.key]).not.toMatch(/browser-wide/i);
+  });
+
+  it('should have a string for both messages', () => {
+    expect(strings[captureHealthAlert(true).key]).toBeString();
+    expect(strings[captureHealthAlert(false).key]).toBeString();
   });
 });

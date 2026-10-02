@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'preact/hooks';
 import { useTranslation } from 'react-i18next';
+import { createLogger } from '@thaumic-cast/shared';
 import {
   loadExtensionSettings,
   saveExtensionSettings,
@@ -8,6 +9,8 @@ import {
 } from '../../lib/settings';
 import { useMountedRef } from '../../popup/hooks/useMountedRef';
 import { useStorageListener } from '../../popup/hooks/useStorageListener';
+
+const log = createLogger('ExtensionSettings');
 
 /**
  * Hook for loading and updating extension settings.
@@ -45,8 +48,9 @@ export function useExtensionSettings(): {
           setLoading(false);
         }
       } catch (err) {
+        log.error('Failed to load settings:', err);
         if (mountedRef.current) {
-          setError(err instanceof Error ? err.message : t('error_load_settings'));
+          setError(t('error_load_settings'));
           setLoading(false);
         }
       }
@@ -66,7 +70,8 @@ export function useExtensionSettings(): {
         const saved = await saveExtensionSettings(partial);
         setSettings(saved);
       } catch (err) {
-        setError(err instanceof Error ? err.message : t('error_save_settings'));
+        log.error('Failed to save settings:', err);
+        setError(t('error_save_settings'));
         throw err;
       }
     },

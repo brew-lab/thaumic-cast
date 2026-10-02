@@ -16,3 +16,24 @@ export function retryLabelKey(connectionError: string): string {
     ? 'retry_connection'
     : 'retry_connection_not_found';
 }
+
+/** How the popup words the alert for a tab capture that is dropping frames. */
+export interface CaptureHealthAlert {
+  /** The i18n key of the message. */
+  key: string;
+  /** Whether to offer the button that opens settings. */
+  hasAction: boolean;
+}
+
+/**
+ * Words the frame-drop alert. The remedy is browser-wide capture, which only
+ * exists on Windows; elsewhere the setting is not shown, so the alert neither
+ * recommends it nor sends the user to look for it.
+ * @param isWindows - Whether the extension is running on Windows
+ * @returns The message key and whether to offer the settings button
+ */
+export function captureHealthAlert(isWindows: boolean): CaptureHealthAlert {
+  return isWindows
+    ? { key: 'capture_health_frame_drops_message', hasAction: true }
+    : { key: 'capture_health_frame_drops_message_no_remedy', hasAction: false };
+}

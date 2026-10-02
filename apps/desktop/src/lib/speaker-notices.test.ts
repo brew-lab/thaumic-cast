@@ -162,9 +162,33 @@ describe('speakerNoticeLines', () => {
     ]);
   });
 
+  it('should not claim the stall outran the head start when drift had drained it', () => {
+    // The speaker ran out on a 300 ms stall with a 500 ms head start: part of
+    // the head start was already gone, and the core reports only the stall.
+    const drained: SpeakerNotice = { ...ranOut, stallMs: 300 };
+    const [line] = speakerNoticeLines(drained, ctx());
+
+    expect(line.key).toBe('dashboard.speaker_notice_head_start_ran_out_drained');
+    expect(line.params).toMatchObject({ stall: 300, current: 500, suggested: 750 });
+    expect((en as Record<string, string>)[line.key]).toContain('what was left of its');
+
+    // A stall at least as long as the head start keeps the plain wording, and
+    // so does a head start that is off or a close call.
+    expect(keys({ ...ranOut, stallMs: 500 })[0]).toBe(
+      'dashboard.speaker_notice_head_start_ran_out',
+    );
+    expect(keys({ ...ranOut, stallMs: 300, headStartMs: 0 })[0]).toBe(
+      'dashboard.speaker_notice_head_start_ran_out_off',
+    );
+    expect(keys({ ...ranOut, kind: 'head_start_close', stallMs: 300 })[0]).toBe(
+      'dashboard.speaker_notice_head_start_close',
+    );
+  });
+
   it('should have a string for every key it can produce', () => {
     const notices: SpeakerNotice[] = [
       ranOut,
+      { ...ranOut, stallMs: 300 },
       { ...ranOut, headStartMs: 0 },
       { ...ranOut, kind: 'head_start_close' },
       { ...ranOut, kind: 'head_start_close', headStartMs: 0 },

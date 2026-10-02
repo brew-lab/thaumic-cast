@@ -14,13 +14,14 @@ import styles from './WelcomeStep.module.css';
  */
 export function WelcomeStep(): preact.JSX.Element {
   const { t } = useTranslation();
-  const [platform, setPlatform] = useState<Platform>('windows');
+  const [platform, setPlatform] = useState<Platform | null>(null);
 
   useEffect(() => {
     getPlatform().then(setPlatform);
   }, []);
 
-  // Use platform-specific translations, fallback to windows for unknown
+  // Platform-specific translations, with windows for unknown. Null until the
+  // platform is known, so another platform's copy never flashes first.
   const platformKey = platform === 'unknown' ? 'windows' : platform;
 
   return (
@@ -29,7 +30,7 @@ export function WelcomeStep(): preact.JSX.Element {
       subtitle={t('onboarding.welcome.subtitle')}
       icon={Radio}
     >
-      <p className={styles.body}>{t(`onboarding.welcome.body_${platformKey}`)}</p>
+      {platformKey && <p className={styles.body}>{t(`onboarding.welcome.body_${platformKey}`)}</p>}
       <p className={styles.footnote}>{t('onboarding.welcome.footnote')}</p>
     </WizardStep>
   );
