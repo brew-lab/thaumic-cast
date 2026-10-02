@@ -2,6 +2,7 @@ pub mod cadence;
 pub mod framing;
 pub mod icy;
 pub mod ingest_gaps;
+pub mod link;
 pub mod manager;
 pub mod pcm_http;
 pub mod playout;
