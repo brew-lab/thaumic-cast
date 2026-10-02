@@ -150,7 +150,7 @@ impl SpeakerSession {
                     .saturating_sub(rtt_adj)
                     .saturating_sub(target_latency);
                 log::info!(
-                    "[LatencyMonitor] Track restart: reltime {} -> {}, maintaining ~{}ms latency (offset={}ms)",
+                    "[SpeakerMonitor] Track restart: reltime {} -> {}, maintaining ~{}ms latency (offset={}ms)",
                     last_reltime,
                     sonos_reltime_ms,
                     target_latency,
@@ -170,7 +170,7 @@ impl SpeakerSession {
         let latency_ms = (stream_elapsed_ms as i64) - (continuous_sonos_ms as i64);
 
         log::trace!(
-            "[LatencyMonitor] stream={}ms, sonos={}ms (continuous={}ms, offset={}ms), latency={}ms",
+            "[SpeakerMonitor] stream={}ms, sonos={}ms (continuous={}ms, offset={}ms), latency={}ms",
             stream_elapsed_ms,
             sonos_reltime_ms,
             continuous_sonos_ms,
@@ -272,7 +272,7 @@ impl SpeakerSession {
         if raw < LOW_CUSHION_MS && !self.low_cushion_warned {
             self.low_cushion_warned = true;
             log::warn!(
-                "[LatencyMonitor] stream={}, speaker={}: cushion nearly exhausted ({}ms of audio \
+                "[SpeakerMonitor] stream={}, speaker={}: cushion nearly exhausted ({}ms of audio \
                  ahead of the playhead); expect dropouts until playback is restarted",
                 stream_id,
                 speaker_ip,
@@ -301,7 +301,7 @@ impl SpeakerSession {
             None => "(no trend yet)".to_string(),
         };
         log::info!(
-            "[LatencyMonitor] stream={}, speaker={}: cushion={}ms (last {}ms, {}..{}ms since last \
+            "[SpeakerMonitor] stream={}, speaker={}: cushion={}ms (last {}ms, {}..{}ms since last \
              line, jitter {}ms), trend {}, rtt={}ms",
             stream_id,
             speaker_ip,
@@ -329,7 +329,7 @@ impl SpeakerSession {
                 if minutes_left <= TREND_WARN_HORIZON_MIN && warn_due {
                     self.last_trend_warning = Some(Instant::now());
                     log::warn!(
-                        "[LatencyMonitor] stream={}, speaker={}: cushion shrinking {:.1}\u{b1}{:.1}ms/min; \
+                        "[SpeakerMonitor] stream={}, speaker={}: cushion shrinking {:.1}\u{b1}{:.1}ms/min; \
                          at this rate the speaker runs dry in ~{:.1} min. The speaker is consuming audio \
                          faster than the source produces it (clock drift), and a live source cannot catch up.",
                         stream_id,

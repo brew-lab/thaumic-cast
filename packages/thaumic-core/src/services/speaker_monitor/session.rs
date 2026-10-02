@@ -546,7 +546,7 @@ impl SpeakerSession {
         if epoch.id != self.last_epoch_id {
             if self.last_epoch_id > 0 {
                 log::info!(
-                    "[LatencyMonitor] Epoch changed {} -> {}, resetting (seeding with {}ms)",
+                    "[SpeakerMonitor] Epoch changed {} -> {}, resetting (seeding with {}ms)",
                     self.last_epoch_id,
                     epoch.id,
                     self.ema_latency as u64
