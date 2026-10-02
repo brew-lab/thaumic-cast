@@ -24,6 +24,7 @@ pub mod notice;
 pub mod reserve;
 pub mod rollup;
 pub mod segment;
+mod session;
 pub mod topology_diff;
 pub mod tracker;
 pub mod transport_gate;
