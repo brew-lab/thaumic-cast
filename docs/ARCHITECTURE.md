@@ -94,7 +94,7 @@ only to clients on the companion's own machine.
 | `stream`             | The data plane: stream state, codec facts, the PCM cadence and playout, delivery tracking, framing, the TCP link probe, URLs                                  |
 | `sonos`              | UPnP: SOAP, playback and volume commands, zone topology, SSDP and mDNS discovery, GENA subscriptions and parsing                                              |
 | `events`             | The event types sent to clients, the `EventEmitter` trait and the bridge to the WebSocket broadcast channel                                                   |
-| `model`              | Small value types shared by all of the above: drift mode, head start setting, speaker notice, playout timeline, topology change                               |
+| `model`              | Small value types shared by all of the above: drift mode, head start and monitor settings, speaker notice, playout timeline, topology change                  |
 | `state`              | `Config`, `StreamingConfig`, `SonosState` (groups and transport states), manual speakers                                                                      |
 | `companion_settings` | Resolves the three speaker settings from flag, environment, file and default, once at start-up                                                                |
 | `context`            | `NetworkContext`: the port, the advertised address, URL building                                                                                              |
@@ -125,9 +125,10 @@ From the top down: `api`, then `services`, then `stream` and `sonos`, then `mode
   they came from, so older paths resolve.
 - **`capture`** imports only `AudioFormat` from `stream`.
 
-One import still points upwards: `companion_settings` takes the environment variable names and
-value parsers for its settings from `services::speaker_monitor` and `stream::cadence`, and `state`
-in turn names `companion_settings::SettingOrigins`.
+`companion_settings` takes the environment variable names and value parsers for its settings from
+`model`, so it imports nothing above it. It and `state` name each other: it writes the resolved
+values into `state::Config`, and `Config` records where each came from as
+`companion_settings::SettingOrigins`.
 
 ### Per-codec decisions
 

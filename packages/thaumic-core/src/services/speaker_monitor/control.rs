@@ -72,12 +72,8 @@ use std::time::Duration;
 use super::clock_fit::ClockEstimate;
 use super::reserve::ReserveEstimate;
 
-pub use crate::model::drift::{drift_compensation_mode, DriftMode};
+pub use crate::model::drift::{drift_compensation_mode, DriftMode, DRIFT_COMPENSATION_ENV};
 pub use crate::stream::rate_adapter::drift_active;
-
-/// Environment variable that sets drift correction: `on`, `observe` or
-/// `off`. Read once at start-up (see [`crate::companion_settings`]).
-pub const DRIFT_COMPENSATION_ENV: &str = "THAUMIC_DRIFT_COMPENSATION";
 
 /// Environment variable that, for blind listening tests only, fixes every
 /// monitored PCM connection's rate adapter at a number of ppm, whatever
