@@ -1,8 +1,8 @@
-//! Pure building blocks for the speaker monitor.
+//! The speaker monitor: its polling loop and the pure building blocks it uses.
 //!
-//! The monitor loop itself lives in [`crate::services::speaker_monitor::monitor`];
-//! what it decides from its polls lives here, free of I/O, so each decision
-//! can be tested on its own:
+//! The monitor loop itself lives in [`monitor`]; what it decides from its
+//! polls lives in the modules beside it, free of I/O, so each decision can be
+//! tested on its own:
 //!
 //! - [`bounds`] turns one poll into bounds on the playhead and the reserve;
 //! - [`reserve`] estimates the reserve from a window of those bounds;
