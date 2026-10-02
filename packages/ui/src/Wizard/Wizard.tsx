@@ -3,7 +3,7 @@ import { ChevronLeft } from 'lucide-preact';
 import { Button } from '../Button';
 import { ButtonGroup } from '../ButtonGroup';
 import { IconButton } from '../IconButton';
-import { StepIndicator } from './StepIndicator';
+import { StepIndicator, type StepOfLabel } from './StepIndicator';
 import styles from './Wizard.module.css';
 
 interface WizardLabels {
@@ -36,6 +36,8 @@ interface WizardProps {
   isFinal?: boolean;
   /** Optional step labels for accessibility */
   stepLabels?: string[];
+  /** Words the step indicator's accessible name (for i18n); English when omitted */
+  stepOfLabel?: StepOfLabel;
   /** Use compact layout with icon-only back button in header (for popups) */
   compact?: boolean;
 }
@@ -56,6 +58,7 @@ interface WizardProps {
  * @param props.nextDisabled
  * @param props.isFinal
  * @param props.stepLabels
+ * @param props.stepOfLabel
  * @param props.compact
  * @returns The rendered Wizard component
  */
@@ -71,6 +74,7 @@ export function Wizard({
   nextDisabled = false,
   isFinal = false,
   stepLabels,
+  stepOfLabel,
   compact = false,
 }: WizardProps): preact.JSX.Element {
   const { next = 'Next', back = 'Back', skip = 'Skip', finish = 'Finish' } = labels;
@@ -99,6 +103,7 @@ export function Wizard({
             current={currentStep}
             total={totalSteps}
             labels={stepLabels}
+            stepOfLabel={stepOfLabel}
             className={styles.indicator}
           />
         </div>
@@ -132,6 +137,7 @@ export function Wizard({
         current={currentStep}
         total={totalSteps}
         labels={stepLabels}
+        stepOfLabel={stepOfLabel}
         className={styles.indicator}
       />
 

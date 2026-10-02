@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'bun:test';
 import { join } from 'node:path';
+import type { SpeakerAvailability } from '@thaumic-cast/protocol';
 
 import { CastAutoStopReasonSchema } from '../lib/message-schemas';
 import type { ServerTestErrorType } from '../lib/serverTest';
@@ -36,6 +37,14 @@ const SERVER_TEST_ERRORS: Record<ServerTestErrorType, true> = {
   permission_denied: true,
 };
 
+/** Every availability the speaker picker can show; a new one fails to compile here. */
+const SPEAKER_AVAILABILITIES: Record<SpeakerAvailability, true> = {
+  available: true,
+  in_use: true,
+  casting: true,
+  remote_cast: true,
+};
+
 /**
  * Entries nothing uses that are left alone on purpose: they belong to the
  * settings pages, whose copy is being redesigned separately.
@@ -61,6 +70,12 @@ describe('extension en.json', () => {
     const shown = CastAutoStopReasonSchema.options.filter((reason) => reason !== 'user_removed');
     for (const reason of shown) {
       expect(strings[`auto_stop_${reason}`]).toBeString();
+    }
+  });
+
+  it('should have a label for every speaker availability', () => {
+    for (const availability of Object.keys(SPEAKER_AVAILABILITIES)) {
+      expect(strings[`speaker_availability_${availability}`]).toBeString();
     }
   });
 
