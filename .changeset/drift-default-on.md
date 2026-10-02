@@ -12,11 +12,14 @@ to hear) to keep each speaker topped up. It is now on unless you say otherwise. 
 (3 and 9.4 hours) it held each speaker's reserve within a few milliseconds of where it started, where an uncorrected
 speaker lost about 85 ms in the first hour.
 
-- **Desktop app:** "Clock drift correction" under Settings > Speakers starts ticked. If you have already changed it,
-  your choice is kept. Unticking it leaves the audio exactly as captured and keeps logging what correction would do.
+- **Desktop app:** "Clock drift correction" under Settings > Speakers starts ticked. A setting already saved in
+  the settings file is kept; no released version has one, so this only affects builds made from the main branch since
+  the option was added, where saving any speaker setting also stored the old `observe`. Unticking it leaves the audio exactly as captured and keeps logging what correction would do.
 - **Server:** a config file without `drift_compensation` now gets `on`. A config file that sets it keeps its value;
   write `drift_compensation: observe` (or `off`) to go back.
 - `THAUMIC_DRIFT_COMPENSATION` still outranks both.
 - Correction needs speaker monitoring ("Keep an eye on speakers" / `speaker_monitor`), which is also on by default.
   With monitoring off, correction is off, as before.
 - PCM casts only, as before.
+- With correction on, a PCM cast that has to restart at a segment boundary keeps up to 2 s of the pause as extra delay
+  and pays it back gradually, instead of rejoining with only its head start.
