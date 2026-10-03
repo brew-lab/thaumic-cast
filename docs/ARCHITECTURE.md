@@ -150,6 +150,16 @@ and `subscribe()` is deliberate and field-proven.
   speaker the stream is playing on, this machine, or an unlisted reader, which is served on a budget
   or refused under `strict_stream_access`. Only a speaker is monitored; a speaker or a player on
   this machine is tracked as playback (an epoch, resumes); an unlisted reader is neither.
+- **Listen route.** `/stream/{id}/listen` (also `.wav` and `.flac`, like the live routes) is for a
+  player that only hears the cast, such as VLC or a browser on this machine. `listen_audio` reuses
+  the phases above with the access `Listener`, so a listener gets no epoch, tap, playout chain,
+  continuation, link probe, events, resume or SOAP, and its cadence leaves the stream's shared
+  receive window and ingest-gap notice alone. PCM is one endless WAV per fetch, chunked, from the
+  live edge; a `Range` is ignored and answered 200 with `Accept-Ranges: none`. Every fetch is its
+  own connection, so listeners never share or retire a playout, which is what readers of
+  `live.wav` on this machine do. Other codecs are served as to any extra reader. This machine is
+  always served; any other peer follows the unlisted-reader rules (budget, or refused under
+  `strict_stream_access`), a speaker's address included.
 - **First-connection wait.** A new PCM connection is held until the stream is old enough for the
   ring to contain the jitter buffer plus the head start (`pcm_prefill_delay`). A resume, meaning the
   same address has already started an epoch on this stream, skips the wait.

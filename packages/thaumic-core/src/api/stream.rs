@@ -1,4 +1,5 @@
-//! Audio streaming handler.
+//! Audio streaming handlers: the live routes a speaker plays, and the
+//! listen route a player on this machine hears the cast through.
 //!
 //! Separated from REST handlers due to its distinct concerns:
 //! codec-specific pipeline construction, prefill delays, epoch
@@ -63,6 +64,10 @@ enum StreamAccess {
     UnlistedServed,
     /// The peer is on no list, and `strict_stream_access` is on: refuse.
     UnlistedRefused,
+    /// The peer is this machine, fetching the listen route: a player here
+    /// (VLC, a browser) that only hears the cast. Never decided for the live
+    /// routes; see [`decide_listen_access`].
+    Listener,
 }
 
 impl StreamAccess {
@@ -78,7 +83,7 @@ impl StreamAccess {
     /// flood from starving them. See [`MAX_UNLISTED_STREAM_READERS`].
     fn draws_unlisted_budget(self) -> bool {
         match self {
-            StreamAccess::Speaker | StreamAccess::CompanionHost => false,
+            StreamAccess::Speaker | StreamAccess::CompanionHost | StreamAccess::Listener => false,
             StreamAccess::UnlistedServed | StreamAccess::UnlistedRefused => true,
         }
     }
@@ -98,7 +103,9 @@ impl StreamAccess {
     fn tracks_playback(self) -> bool {
         match self {
             StreamAccess::Speaker | StreamAccess::CompanionHost => true,
-            StreamAccess::UnlistedServed | StreamAccess::UnlistedRefused => false,
+            StreamAccess::UnlistedServed
+            | StreamAccess::UnlistedRefused
+            | StreamAccess::Listener => false,
         }
     }
 
@@ -114,7 +121,8 @@ impl StreamAccess {
             StreamAccess::Speaker => true,
             StreamAccess::CompanionHost
             | StreamAccess::UnlistedServed
-            | StreamAccess::UnlistedRefused => false,
+            | StreamAccess::UnlistedRefused
+            | StreamAccess::Listener => false,
         }
     }
 
@@ -129,7 +137,8 @@ impl StreamAccess {
             StreamAccess::Speaker => true,
             StreamAccess::CompanionHost
             | StreamAccess::UnlistedServed
-            | StreamAccess::UnlistedRefused => false,
+            | StreamAccess::UnlistedRefused
+            | StreamAccess::Listener => false,
         }
     }
 }
@@ -167,6 +176,30 @@ fn decide_stream_access(
     } else if is_companion_host(local_ip, peer) {
         // Covers loopback in both forms as well as this host's LAN address.
         StreamAccess::CompanionHost
+    } else if strict {
+        StreamAccess::UnlistedRefused
+    } else {
+        StreamAccess::UnlistedServed
+    }
+}
+
+/// Decides whether `peer` may fetch a stream's listen route.
+///
+/// This machine is served as a [`StreamAccess::Listener`]. Every other peer
+/// is treated exactly as an unlisted reader of the live routes: refused when
+/// `strict_stream_access` is on, otherwise served on the stream's
+/// unlisted-reader budget. That includes a speaker the stream plays on: a
+/// speaker is only ever handed the live routes, so a fetch of this one from
+/// its address is not the speaker playing, and it must not get a speaker's
+/// exemption from the budget.
+fn decide_listen_access(
+    peer: IpAddr,
+    _speaker_ips: &[String],
+    local_ip: &str,
+    strict: bool,
+) -> StreamAccess {
+    if is_companion_host(local_ip, peer.to_canonical()) {
+        StreamAccess::Listener
     } else if strict {
         StreamAccess::UnlistedRefused
     } else {
@@ -399,6 +432,7 @@ async fn serve_stream(
         &tap,
         remote_ip,
         is_resume,
+        true,
     );
 
     assemble_response(
@@ -418,6 +452,173 @@ async fn serve_stream(
         &state,
         reader_slot,
     )
+}
+
+/// Serves `/stream/{id}/listen`, `/stream/{id}/listen.wav` and
+/// `/stream/{id}/listen.flac`: the cast's audio from its live edge, for a
+/// player that only listens.
+///
+/// A listener is not a speaker and is booked as nothing: no playback epoch,
+/// no speaker-monitor tap, no PCM playout or continuation, no link probe, no
+/// events, no resume and never a SOAP call. Each fetch is a connection of its
+/// own, so any number of players on this machine can listen at once and none
+/// of them, seeking or reconnecting, can touch another or a speaker.
+///
+/// PCM is an endless WAV: a header declaring the largest data size, then the
+/// live cadence, chunked (close-delimited for HTTP/1.0) like every default
+/// response. Not the segmented layout the live route gives a speaker: that
+/// layout exists so a speaker's later fetches can continue its playout, and a
+/// listener has none to continue. A `Range` is therefore ignored and answered
+/// `200` from the live edge, with `Accept-Ranges: none` so a player knows not
+/// to seek. AAC, FLAC and MP3 are served as to any extra reader: the codec's
+/// own subscription, with ICY metadata when asked for.
+///
+/// This machine is always served; any other peer as an unlisted reader of the
+/// live routes (see [`decide_listen_access`]). Logs one line when the listener
+/// connects and one when it goes.
+pub(super) async fn listen_audio(
+    Path(id): Path<String>,
+    State(state): State<AppState>,
+    ConnectInfo(remote_addr): ConnectInfo<SocketAddr>,
+    version: Version,
+    headers: HeaderMap,
+) -> ThaumicResult<Response> {
+    let Admission {
+        id,
+        stream_state,
+        remote_ip,
+        connect_burst_ms,
+        access,
+        reader_slot,
+        ..
+    } = admit_as(id, None, &state, remote_addr, decide_listen_access)?;
+
+    // The default framing, whatever a field experiment's PCM switches say:
+    // they study how a speaker reacts, and a listener is none.
+    let response_framing = ResponseFraming::new(version, None);
+    let framing = response_framing.framing;
+    let range = headers
+        .get(header::RANGE)
+        .and_then(|v| v.to_str().ok())
+        .map(|r| format!(", range='{r}' (ignored)"))
+        .unwrap_or_default();
+    log::info!(
+        "[Stream] Listener connected: client={}, stream={}, codec={:?}, http={:?}, \
+         framing={}{}",
+        remote_ip,
+        id,
+        stream_state.codec,
+        version,
+        framing.label(),
+        range
+    );
+    // Logs the disconnect however the listener goes, during the wait below
+    // included; the body holds it from then on.
+    let end = ListenerEnd {
+        stream_id: id.clone(),
+        client: remote_ip,
+        connected_at: Instant::now(),
+    };
+
+    // The same wait a new speaker connection gets, without its watch: the
+    // ring then holds the jitter buffer and the connect burst, so the
+    // listener starts with audio in hand rather than silence.
+    let connect_burst_ms = pcm_connect_burst_ms(connect_burst_ms);
+    if stream_state.codec.facts().paced {
+        let since_first_frame = stream_state.timing.first_frame_at().map(|t| t.elapsed());
+        let delay = pcm_prefill_delay(
+            stream_state.jitter_buffer_ms,
+            connect_burst_ms,
+            since_first_frame,
+        );
+        if !delay.is_zero() {
+            tokio::time::sleep(delay).await;
+        }
+    }
+
+    let (prefill_frames, rx) = stream_state.subscribe();
+    let no_segment = None;
+    let guard = connection_guard(
+        access,
+        &state,
+        remote_addr,
+        &stream_state,
+        &no_segment,
+        None,
+        &id,
+        remote_ip,
+        framing,
+        None,
+    );
+    let stats = playout_stats(
+        &id,
+        remote_ip,
+        access,
+        &state,
+        &no_segment,
+        &guard,
+        &stream_state,
+    );
+    let body = body_pipeline(
+        &stream_state,
+        connect_burst_ms,
+        prefill_frames,
+        rx,
+        &stats,
+        None,
+        &None,
+        remote_ip,
+        false,
+        false,
+    );
+    let body: AudioStream = Box::pin(body.map(move |item| {
+        let _end = &end;
+        item
+    }));
+
+    let mut response = assemble_response(
+        &stream_state,
+        &headers,
+        response_framing,
+        no_segment,
+        &id,
+        remote_ip,
+        body,
+        stats,
+        None,
+        guard,
+        access,
+        None,
+        connect_burst_ms,
+        &state,
+        reader_slot,
+    )?;
+    response.headers_mut().insert(
+        header::ACCEPT_RANGES,
+        axum::http::HeaderValue::from_static("none"),
+    );
+    Ok(response)
+}
+
+/// Logs a listener's disconnect when dropped (see [`listen_audio`]).
+struct ListenerEnd {
+    /// The stream it listened to.
+    stream_id: String,
+    /// The listener's address.
+    client: IpAddr,
+    /// When it connected.
+    connected_at: Instant,
+}
+
+impl Drop for ListenerEnd {
+    fn drop(&mut self) {
+        log::info!(
+            "[Stream] Listener disconnected: client={}, stream={}, after={}ms",
+            self.client,
+            self.stream_id,
+            self.connected_at.elapsed().as_millis()
+        );
+    }
 }
 
 /// A fetch that passed admission: the stream it is for, who is asking, and
@@ -453,6 +654,22 @@ fn admit(
     state: &AppState,
     remote_addr: SocketAddr,
 ) -> ThaumicResult<Admission> {
+    admit_as(id, segment, state, remote_addr, decide_stream_access)
+}
+
+/// How a route decides what a peer is to a stream, given the peer, the
+/// stream's speakers, this machine's address and `strict_stream_access`.
+type AccessDecision = fn(IpAddr, &[String], &str, bool) -> StreamAccess;
+
+/// [`admit`], with the route's own access decision: [`decide_stream_access`]
+/// for the live routes, [`decide_listen_access`] for the listen route.
+fn admit_as(
+    id: String,
+    segment: Option<u32>,
+    state: &AppState,
+    remote_addr: SocketAddr,
+    decide: AccessDecision,
+) -> ThaumicResult<Admission> {
     let stream_state = state
         .stream_coordinator
         .get_stream(&id)
@@ -479,7 +696,7 @@ fn admit(
             config.drift_compensation,
         )
     };
-    let access = decide_stream_access(
+    let access = decide(
         remote_ip,
         &allowed_ips,
         &state.network.get_local_ip(),
@@ -964,6 +1181,11 @@ fn playback_hooks(
 /// The body pipeline, a phase of [`serve_stream`]: turns the `subscribe()`
 /// snapshot and receiver into the connection's audio, on the cadence for PCM
 /// and as the frames arrive for a compressed codec.
+///
+/// `shares_stream_state` lets a PCM cadence take part in what the stream's
+/// connections share: its receive-jitter window and its one ingest-gap notice
+/// every ten minutes. A listener's cadence leaves both alone, so a player on
+/// this machine cannot use up the notice a speaker would raise.
 #[allow(clippy::too_many_arguments)]
 fn body_pipeline(
     stream_state: &Arc<StreamState>,
@@ -975,6 +1197,7 @@ fn body_pipeline(
     tap: &Option<Arc<ConnectionTap>>,
     remote_ip: IpAddr,
     is_resume: bool,
+    shares_stream_state: bool,
 ) -> AudioStream {
     // Build combined stream - PCM gets cadence-based streaming, compressed codecs don't.
     //
@@ -1008,6 +1231,7 @@ fn body_pipeline(
             tap.as_deref(),
             remote_ip,
             is_resume,
+            shares_stream_state,
         )
     } else {
         // Compressed codecs: no silence injection, chain prefill before live.
@@ -1417,6 +1641,7 @@ fn pcm_cadence_stream(
     tap: Option<&ConnectionTap>,
     remote_ip: IpAddr,
     is_resume: bool,
+    shares_stream_state: bool,
 ) -> AudioStream {
     let frame_duration_ms = stream_state.frame_duration_ms;
     let available_frames = prefill_frames.len();
@@ -1447,7 +1672,7 @@ fn pcm_cadence_stream(
         rx,
         stats,
         config,
-        Some(Arc::downgrade(stream_state)),
+        shares_stream_state.then(|| Arc::downgrade(stream_state)),
         epoch_hook,
     ))
 }
@@ -1775,6 +2000,69 @@ mod tests {
         assert_eq!(
             decide_stream_access(ip("192.168.1.51"), &allowed, LOCAL_IP, true),
             StreamAccess::Speaker
+        );
+    }
+
+    /// The listen route serves this machine, in every form its address
+    /// takes, as a listener, strict or not.
+    #[test]
+    fn this_machine_listens_as_a_listener() {
+        for strict in [false, true] {
+            for peer in ["127.0.0.1", "::1", "::ffff:127.0.0.1", LOCAL_IP] {
+                assert_eq!(
+                    decide_listen_access(ip(peer), &[], LOCAL_IP, strict),
+                    StreamAccess::Listener,
+                    "{peer} is this machine (strict={strict})"
+                );
+            }
+        }
+    }
+
+    /// Any other peer is an unlisted reader of the listen route: refused in
+    /// strict mode, served on the budget otherwise. A speaker of the stream
+    /// is no exception, as it is only ever handed the live routes.
+    #[test]
+    fn another_peer_listens_as_an_unlisted_reader() {
+        let allowed = speakers(&["192.168.1.50"]);
+        for peer in ["192.168.1.200", "192.168.1.50"] {
+            assert_eq!(
+                decide_listen_access(ip(peer), &allowed, LOCAL_IP, false),
+                StreamAccess::UnlistedServed,
+                "{peer}"
+            );
+            assert_eq!(
+                decide_listen_access(ip(peer), &allowed, LOCAL_IP, true),
+                StreamAccess::UnlistedRefused,
+                "{peer}"
+            );
+        }
+        assert!(StreamAccess::UnlistedServed.draws_unlisted_budget());
+    }
+
+    /// A listener is booked as nothing: no budget (it is this machine), no
+    /// epoch or resume, no `Play`, no speaker monitor.
+    #[test]
+    fn a_listener_is_booked_as_nothing() {
+        let listener = StreamAccess::Listener;
+        assert!(!listener.draws_unlisted_budget());
+        assert!(!listener.tracks_playback());
+        assert!(!listener.resumes_speaker());
+        assert!(!listener.monitors_playback());
+    }
+
+    /// A listener on this machine, after a player there started an epoch on
+    /// the live route, is still no resume: its connection never looks up or
+    /// starts an epoch.
+    #[test]
+    fn a_listener_is_never_a_resume() {
+        let host = ip("192.168.2.169");
+        let state = pcm_stream_with_epochs(host, ip("192.168.2.50"));
+        assert_eq!(
+            decide_resume(StreamAccess::Listener, &state, host),
+            ResumeDecision {
+                is_resume: false,
+                play_ip: None
+            }
         );
     }
 
@@ -2191,6 +2479,7 @@ mod tests {
             Some(&tap),
             remote,
             is_resume,
+            true,
         );
         let format = state.audio_format;
         let header = crate::stream::create_wav_header(

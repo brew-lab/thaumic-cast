@@ -9,5 +9,6 @@ pub(crate) mod harness;
 
 mod failure_tests;
 mod gena_tests;
+mod listen_tests;
 mod playback_tests;
 mod queue_tests;
