@@ -57,9 +57,9 @@
   text-transform: capitalize;
 }
 
-.status-playing {
-  background-color: var(--device-status-playing-bg);
-  color: var(--device-status-playing-text);
+.status-busy {
+  background-color: var(--device-status-busy-bg);
+  color: var(--device-status-busy-text);
 }
 
 .status-casting {

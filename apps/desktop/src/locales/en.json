@@ -26,6 +26,7 @@
   "transport.paused": "Paused",
   "transport.stopped": "Not playing",
   "transport.transitioning": "Loading",
+  "transport.in_use": "In use",
 
   "server.running": "Running",
   "server.address": "Address",

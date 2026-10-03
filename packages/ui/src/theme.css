@@ -289,13 +289,13 @@
     --alert-info-icon: var(--color-info);
 
     /* Device card status badges */
-    --device-status-playing-bg: light-dark(
-      oklch(65% var(--chroma-muted) var(--hue-success) / 15%),
-      oklch(45% var(--chroma-muted) var(--hue-success) / 20%)
+    --device-status-busy-bg: light-dark(
+      oklch(65% var(--chroma-muted) var(--hue-warning) / 15%),
+      oklch(45% var(--chroma-muted) var(--hue-warning) / 20%)
     );
-    --device-status-playing-text: light-dark(
-      oklch(40% var(--chroma-muted) var(--hue-success)),
-      oklch(70% var(--chroma-muted) var(--hue-success))
+    --device-status-busy-text: light-dark(
+      oklch(40% var(--chroma-muted) var(--hue-warning)),
+      oklch(70% var(--chroma-muted) var(--hue-warning))
     );
     --device-status-casting-bg: light-dark(
       oklch(60% var(--chroma-muted) var(--hue-primary) / 15%),
