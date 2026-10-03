@@ -1,0 +1,37 @@
+.listen {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-xs);
+  padding-block-start: var(--space-sm);
+  border-block-start: 1px solid var(--color-border-subtle);
+}
+
+.copy-button {
+  padding-block: var(--space-xs);
+  padding-inline: var(--space-sm);
+  font-size: 0.8rem;
+}
+
+.field {
+  inline-size: 100%;
+  font-family: var(--font-mono);
+  font-size: 0.8rem;
+}
+
+.note {
+  margin-block: 0;
+  margin-inline: 0;
+  font-size: 0.75rem;
+  color: var(--color-text-muted);
+}
+
+/* Read out by screen readers, not shown: the button and notes show the same. */
+.status {
+  position: absolute;
+  overflow: hidden;
+  inline-size: 1px;
+  block-size: 1px;
+  white-space: nowrap;
+  clip-path: inset(50%);
+}

@@ -21,6 +21,13 @@
   "device.others_one": "+{{count}} other",
   "device.others_other": "+{{count}} others",
   "device.streaming": "Casting",
+  "device.listen_url_copy": "Copy URL",
+  "device.listen_url_copied": "Copied",
+  "device.listen_url_field": "Cast URL",
+  "device.listen_url_copy_failed": "The clipboard said no. Here it is, selected, to copy by hand.",
+  "device.listen_url_unavailable": "This computer's address isn't known yet. Try again in a moment.",
+  "device.listen_url_hint": "Plays in VLC or a browser while the cast lasts. It won't keep time with the speakers.",
+  "device.listen_url_echo": "With browser-wide capture, this browser would cast it straight back. Use VLC.",
 
   "transport.playing": "Playing",
   "transport.paused": "Paused",
