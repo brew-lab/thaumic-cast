@@ -17,7 +17,7 @@ use axum::{
 use serde::Deserialize;
 use serde_json::json;
 
-use super::stream::{stream_audio, stream_audio_segment};
+use super::stream::{listen_audio, stream_audio, stream_audio_segment};
 use crate::api::response::{api_error, api_ok, api_success};
 use crate::api::ws::{is_companion_host, ws_handler};
 use crate::api::{AppState, AppType};
@@ -110,6 +110,17 @@ const STREAM_ROUTES: [&str; 3] = [
     "/stream/{id}/live.flac",
 ];
 
+/// The routes a player that only listens is served a stream under (see
+/// [`listen_audio`]): never a speaker, never booked as one. The same three
+/// spellings as [`STREAM_ROUTES`], for the same reason: a player may pick its
+/// demuxer by the extension. The handler, as there, ignores the extension and
+/// sends the codec's own `Content-Type`.
+const LISTEN_ROUTES: [&str; 3] = [
+    "/stream/{id}/listen",
+    "/stream/{id}/listen.wav",
+    "/stream/{id}/listen.flac",
+];
+
 /// The route of PCM segment `n` (n ≥ 1), `/stream/{id}/live/{n}.wav`.
 ///
 /// The whole file name is captured and parsed by the handler
@@ -146,6 +157,9 @@ pub fn create_router(state: AppState) -> Router {
         .route(STREAM_ROUTES[1], get(stream_audio))
         .route(STREAM_ROUTES[2], get(stream_audio))
         .route(STREAM_SEGMENT_ROUTE, get(stream_audio_segment))
+        .route(LISTEN_ROUTES[0], get(listen_audio))
+        .route(LISTEN_ROUTES[1], get(listen_audio))
+        .route(LISTEN_ROUTES[2], get(listen_audio))
         .route("/artwork.jpg", get(serve_artwork))
         .route("/ws", get(ws_handler))
         .with_state(state)
@@ -637,7 +651,7 @@ mod tests {
         /// matched and what it captured, and returns its address.
         async fn serve_route_table() -> SocketAddr {
             let mut app = Router::new();
-            for route in STREAM_ROUTES {
+            for route in STREAM_ROUTES.into_iter().chain(LISTEN_ROUTES) {
                 app = app.route(
                     route,
                     get(move |Path(id): Path<String>| async move { format!("{route} id={id}") }),
@@ -689,6 +703,25 @@ mod tests {
                     (200, format!("{route} id=abc-123")),
                     "{path}"
                 );
+            }
+        }
+
+        #[tokio::test]
+        async fn every_listen_url_resolves_to_a_listen_route() {
+            let addr = serve_route_table().await;
+            for (path, route) in [
+                ("/stream/abc-123/listen", "/stream/{id}/listen"),
+                ("/stream/abc-123/listen.wav", "/stream/{id}/listen.wav"),
+                ("/stream/abc-123/listen.flac", "/stream/{id}/listen.flac"),
+            ] {
+                assert_eq!(
+                    fetch(addr, path).await,
+                    (200, format!("{route} id=abc-123")),
+                    "{path}"
+                );
+            }
+            for path in ["/stream/abc-123/listen.aac", "/stream/abc-123/listen/1.wav"] {
+                assert_eq!(fetch(addr, path).await.0, 404, "{path}");
             }
         }
 
