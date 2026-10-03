@@ -2,7 +2,15 @@ import type { Speaker } from '../state/store';
 import { Speaker as SpeakerIcon } from 'lucide-preact';
 import { useTranslation } from 'react-i18next';
 import { Card } from '@thaumic-cast/ui';
+import { speakerBadge, type SpeakerBadgeTone } from '../lib/speaker-badge';
 import styles from './DeviceCard.module.css';
+
+/** The badge class for each tone; an idle badge keeps the plain style. */
+const TONE_CLASS: Record<SpeakerBadgeTone, string> = {
+  casting: styles.statusCasting,
+  busy: styles.statusBusy,
+  idle: '',
+};
 
 interface DeviceCardProps {
   /** Speaker to display */
@@ -38,11 +46,7 @@ export function DeviceCard({
 }: DeviceCardProps) {
   const { t } = useTranslation();
 
-  // Determine the display state: "Streaming" if casting, otherwise transport state
-  const isPlaying = transportState === 'Playing';
-  const displayState = isCasting && isPlaying ? t('device.streaming') : transportState;
-  const statusClass =
-    isCasting && isPlaying ? styles.statusCasting : isPlaying ? styles.statusPlaying : '';
+  const badge = speakerBadge(transportState, isCasting ?? false);
 
   return (
     <Card noPadding className={styles.container}>
@@ -58,13 +62,9 @@ export function DeviceCard({
               {memberCount > 1 && ` • ${t('device.others', { count: memberCount - 1 })}`}
             </p>
           </div>
-          {displayState && (
-            <span className={`${styles.status} ${statusClass}`}>
-              {isCasting && isPlaying
-                ? displayState
-                : t(`transport.${transportState?.toLowerCase()}`, {
-                    defaultValue: transportState,
-                  })}
+          {badge && (
+            <span className={`${styles.status} ${TONE_CLASS[badge.tone]}`}>
+              {t(badge.key, { defaultValue: badge.defaultValue })}
             </span>
           )}
         </div>
