@@ -53,28 +53,28 @@ pub fn parse_zone_group_xml(xml: &str) -> Vec<ZoneGroup> {
         match reader.read_event_into(&mut buf) {
             Ok(Event::Start(ref e)) | Ok(Event::Empty(ref e)) => {
                 match e.name().as_ref() {
-                    b"ZoneGroup" => {
+                    "ZoneGroup" => {
                         // Start of a new zone group - reset state
-                        current_group_id = get_xml_attr(e, b"ID").unwrap_or_default();
-                        current_coordinator_uuid = get_xml_attr(e, b"Coordinator");
+                        current_group_id = get_xml_attr(e, "ID").unwrap_or_default();
+                        current_coordinator_uuid = get_xml_attr(e, "Coordinator");
                         current_members.clear();
                         coordinator_ip = None;
                         coordinator_zone_name = None;
                         ht_sat_chan_map = None;
                     }
-                    b"ZoneGroupMember" | b"Satellite" => {
+                    "ZoneGroupMember" | "Satellite" => {
                         // Skip Zone Bridges - they can't play audio
-                        if get_xml_attr(e, b"IsZoneBridge").as_deref() == Some("1") {
+                        if get_xml_attr(e, "IsZoneBridge").as_deref() == Some("1") {
                             continue;
                         }
 
                         // Extract required attributes
-                        let uuid = match get_xml_attr(e, b"UUID") {
+                        let uuid = match get_xml_attr(e, "UUID") {
                             Some(u) => u,
                             None => continue,
                         };
 
-                        let location = match get_xml_attr(e, b"Location") {
+                        let location = match get_xml_attr(e, "Location") {
                             Some(l) => l,
                             None => continue,
                         };
@@ -84,7 +84,7 @@ pub fn parse_zone_group_xml(xml: &str) -> Vec<ZoneGroup> {
                             None => continue,
                         };
 
-                        let zone_name = match get_xml_attr(e, b"ZoneName") {
+                        let zone_name = match get_xml_attr(e, "ZoneName") {
                             Some(z) => z,
                             None => continue,
                         };
@@ -95,7 +95,7 @@ pub fn parse_zone_group_xml(xml: &str) -> Vec<ZoneGroup> {
                             coordinator_ip = Some(ip.clone());
                             coordinator_zone_name = Some(zone_name.clone());
                             // Get HTSatChanMapSet from coordinator for channel roles
-                            ht_sat_chan_map = get_xml_attr(e, b"HTSatChanMapSet");
+                            ht_sat_chan_map = get_xml_attr(e, "HTSatChanMapSet");
                         }
 
                         // Determine model: prefer channel role, then icon, then fallback
@@ -103,7 +103,7 @@ pub fn parse_zone_group_xml(xml: &str) -> Vec<ZoneGroup> {
                             .as_ref()
                             .and_then(|map| get_channel_role(map, &uuid))
                             .or_else(|| {
-                                get_xml_attr(e, b"Icon")
+                                get_xml_attr(e, "Icon")
                                     .map(|i| extract_model_from_icon(&i))
                                     .filter(|m| m != "unknown")
                             })
@@ -119,7 +119,7 @@ pub fn parse_zone_group_xml(xml: &str) -> Vec<ZoneGroup> {
                     _ => {}
                 }
             }
-            Ok(Event::End(ref e)) if e.name().as_ref() == b"ZoneGroup" => {
+            Ok(Event::End(ref e)) if e.name().as_ref() == "ZoneGroup" => {
                 // End of zone group - finalize if we have valid data
                 if let (Some(coord_uuid), Some(coord_ip)) =
                     (current_coordinator_uuid.take(), coordinator_ip.take())
@@ -180,20 +180,20 @@ pub fn parse_zone_group_xml(xml: &str) -> Vec<ZoneGroup> {
 /// Reads one device's attributes from a `ZoneGroupMember` or `Satellite`
 /// element. `None` without a UUID or a usable `Location`.
 fn parse_household_device(e: &BytesStart) -> Option<HouseholdDevice> {
-    let uuid = get_xml_attr(e, b"UUID")?;
-    let ip = extract_ip_from_location(&get_xml_attr(e, b"Location")?)?;
-    let number = |name: &[u8]| get_xml_attr(e, name).and_then(|v| v.trim().parse::<u32>().ok());
+    let uuid = get_xml_attr(e, "UUID")?;
+    let ip = extract_ip_from_location(&get_xml_attr(e, "Location")?)?;
+    let number = |name: &str| get_xml_attr(e, name).and_then(|v| v.trim().parse::<u32>().ok());
     Some(HouseholdDevice {
         uuid,
         ip,
-        zone_name: get_xml_attr(e, b"ZoneName").unwrap_or_default(),
-        boot_seq: number(b"BootSeq"),
-        invisible: get_xml_attr(e, b"Invisible").as_deref() == Some("1"),
+        zone_name: get_xml_attr(e, "ZoneName").unwrap_or_default(),
+        boot_seq: number("BootSeq"),
+        invisible: get_xml_attr(e, "Invisible").as_deref() == Some("1"),
         radio: RadioInfo {
-            channel_freq: number(b"ChannelFreq"),
-            wireless_mode: number(b"WirelessMode"),
-            behind_wifi_extender: number(b"BehindWifiExtender"),
-            eth_link: number(b"EthLink"),
+            channel_freq: number("ChannelFreq"),
+            wireless_mode: number("WirelessMode"),
+            behind_wifi_extender: number("BehindWifiExtender"),
+            eth_link: number("EthLink"),
         },
     })
 }
@@ -216,55 +216,55 @@ pub fn parse_household_topology(xml: &str) -> HouseholdTopology {
     loop {
         match reader.read_event_into(&mut buf) {
             // An empty `<VanishedDevices/>` has no children to collect.
-            Ok(Event::Start(ref e)) if e.name().as_ref() == b"VanishedDevices" => {
+            Ok(Event::Start(ref e)) if e.name().as_ref() == "VanishedDevices" => {
                 in_vanished = true;
             }
             Ok(Event::Start(ref e)) | Ok(Event::Empty(ref e)) => match e.name().as_ref() {
-                b"ZoneGroup" => {
+                "ZoneGroup" => {
                     group = Some(HouseholdGroup {
-                        id: get_xml_attr(e, b"ID").unwrap_or_default(),
-                        coordinator_uuid: get_xml_attr(e, b"Coordinator").unwrap_or_default(),
+                        id: get_xml_attr(e, "ID").unwrap_or_default(),
+                        coordinator_uuid: get_xml_attr(e, "Coordinator").unwrap_or_default(),
                         members: Vec::new(),
                     });
                 }
-                b"ZoneGroupMember" => {
+                "ZoneGroupMember" => {
                     if let (Some(group), Some(device)) = (group.as_mut(), parse_household_device(e))
                     {
                         group.members.push(HouseholdMember {
                             device,
-                            zone_bridge: get_xml_attr(e, b"IsZoneBridge").as_deref() == Some("1"),
-                            ht_sat_chan_map: get_xml_attr(e, b"HTSatChanMapSet")
+                            zone_bridge: get_xml_attr(e, "IsZoneBridge").as_deref() == Some("1"),
+                            ht_sat_chan_map: get_xml_attr(e, "HTSatChanMapSet")
                                 .filter(|m| !m.is_empty()),
                             satellites: Vec::new(),
                         });
                     }
                 }
-                b"Satellite" => {
+                "Satellite" => {
                     // Satellites are children of the member they are bonded to.
                     let member = group.as_mut().and_then(|g| g.members.last_mut());
                     if let (Some(member), Some(device)) = (member, parse_household_device(e)) {
                         let role = member
                             .ht_sat_chan_map
                             .clone()
-                            .or_else(|| get_xml_attr(e, b"HTSatChanMapSet"))
+                            .or_else(|| get_xml_attr(e, "HTSatChanMapSet"))
                             .and_then(|map| channels_for(&map, &device.uuid));
                         member.satellites.push(SatelliteInfo { device, role });
                     }
                 }
-                b"Device" if in_vanished => {
-                    if let Some(uuid) = get_xml_attr(e, b"UUID") {
+                "Device" if in_vanished => {
+                    if let Some(uuid) = get_xml_attr(e, "UUID") {
                         household.vanished.push(VanishedDevice {
                             uuid,
-                            zone_name: get_xml_attr(e, b"ZoneName"),
-                            reason: get_xml_attr(e, b"Reason"),
+                            zone_name: get_xml_attr(e, "ZoneName"),
+                            reason: get_xml_attr(e, "Reason"),
                         });
                     }
                 }
                 _ => {}
             },
             Ok(Event::End(ref e)) => match e.name().as_ref() {
-                b"ZoneGroup" => household.groups.extend(group.take()),
-                b"VanishedDevices" => in_vanished = false,
+                "ZoneGroup" => household.groups.extend(group.take()),
+                "VanishedDevices" => in_vanished = false,
                 _ => {}
             },
             Ok(Event::Eof) => break,

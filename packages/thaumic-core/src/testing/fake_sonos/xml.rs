@@ -92,7 +92,7 @@ pub(super) fn parse_soap_args(body: &str, action: &str) -> Vec<(String, String)>
     loop {
         match reader.read_event_into(&mut buf) {
             Ok(Event::Start(ref element)) => {
-                let local = String::from_utf8_lossy(element.local_name().as_ref()).into_owned();
+                let local = element.local_name().as_ref().to_owned();
                 if !inside_action {
                     if local == action {
                         inside_action = true;
@@ -101,18 +101,18 @@ pub(super) fn parse_soap_args(body: &str, action: &str) -> Vec<(String, String)>
                     let text = reader
                         .read_text(element.name())
                         .ok()
-                        .and_then(|t| t.decode().ok())
+                        .map(|t| t.into_inner())
                         .map(|t| html_escape::decode_html_entities(&t).into_owned())
                         .unwrap_or_default();
                     args.push((local, text));
                 }
             }
             Ok(Event::Empty(ref element)) if inside_action => {
-                let local = String::from_utf8_lossy(element.local_name().as_ref()).into_owned();
+                let local = element.local_name().as_ref().to_owned();
                 args.push((local, String::new()));
             }
             Ok(Event::End(ref element)) if inside_action => {
-                if element.local_name().as_ref() == action.as_bytes() {
+                if element.local_name().as_ref() == action {
                     break;
                 }
             }

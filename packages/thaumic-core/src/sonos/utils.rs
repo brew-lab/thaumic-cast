@@ -33,16 +33,11 @@ pub const SONOS_PORT: u16 = 1400;
 pub fn extract_xml_text(xml: &str, element_name: &str) -> Option<String> {
     let mut reader = Reader::from_str(xml);
     let mut buf = Vec::new();
-    let target_bytes = element_name.as_bytes();
 
     loop {
         match reader.read_event_into(&mut buf) {
-            Ok(Event::Start(ref e)) if e.local_name().as_ref() == target_bytes => {
-                if let Some(text) = reader
-                    .read_text(e.name())
-                    .ok()
-                    .and_then(|t| t.decode().ok())
-                {
+            Ok(Event::Start(ref e)) if e.local_name().as_ref() == element_name => {
+                if let Some(text) = reader.read_text(e.name()).ok().map(|t| t.into_inner()) {
                     let decoded = html_escape::decode_html_entities(&text);
                     return Some(decoded.to_string());
                 }
@@ -86,19 +81,14 @@ pub fn extract_empty_val_attrs(xml: &str, element_names: &[&str]) -> HashMap<Str
     let mut reader = Reader::from_str(xml);
     let mut buf = Vec::new();
 
-    // Convert to bytes for comparison
-    let targets: Vec<&[u8]> = element_names.iter().map(|s| s.as_bytes()).collect();
-
     loop {
         match reader.read_event_into(&mut buf) {
             Ok(Event::Empty(ref e)) => {
                 let local = e.local_name();
                 let local_ref = local.as_ref();
-                if let Some(&name) = targets.iter().find(|&&t| t == local_ref) {
-                    if let Some(val) = get_xml_attr(e, b"val") {
-                        // Safe: name came from element_names which are &str
-                        let key = std::str::from_utf8(name).unwrap_or_default();
-                        result.insert(key.to_string(), val);
+                if let Some(&name) = element_names.iter().find(|&&t| t == local_ref) {
+                    if let Some(val) = get_xml_attr(e, "val") {
+                        result.insert(name.to_string(), val);
                     }
                 }
             }
@@ -142,21 +132,16 @@ pub fn extract_master_channel_attrs(xml: &str, element_names: &[&str]) -> HashMa
     let mut reader = Reader::from_str(xml);
     let mut buf = Vec::new();
 
-    // Convert to bytes for comparison
-    let targets: Vec<&[u8]> = element_names.iter().map(|s| s.as_bytes()).collect();
-
     loop {
         match reader.read_event_into(&mut buf) {
             Ok(Event::Empty(ref e)) => {
                 let local = e.local_name();
                 let local_ref = local.as_ref();
-                if let Some(&name) = targets.iter().find(|&&t| t == local_ref) {
+                if let Some(&name) = element_names.iter().find(|&&t| t == local_ref) {
                     // Only process if channel="Master"
-                    if get_xml_attr(e, b"channel").as_deref() == Some("Master") {
-                        if let Some(val) = get_xml_attr(e, b"val") {
-                            // Safe: name came from element_names which are &str
-                            let key = std::str::from_utf8(name).unwrap_or_default();
-                            result.insert(key.to_string(), val);
+                    if get_xml_attr(e, "channel").as_deref() == Some("Master") {
+                        if let Some(val) = get_xml_attr(e, "val") {
+                            result.insert(name.to_string(), val);
                         }
                     }
                 }
@@ -365,18 +350,18 @@ pub fn build_sonos_url_with_port(ip: &str, port: u16, endpoint: &str) -> String 
 ///
 /// # Arguments
 /// * `elem` - The XML element to search
-/// * `attr_name` - The attribute name as bytes (e.g., `b"ZoneName"`)
+/// * `attr_name` - The attribute name (e.g., `"ZoneName"`)
 ///
 /// # Returns
 /// The decoded attribute value as a String, or None if not found.
 /// Values with entities that cannot be resolved fall back to the raw text.
-pub fn get_xml_attr(elem: &BytesStart, attr_name: &[u8]) -> Option<String> {
+pub fn get_xml_attr(elem: &BytesStart, attr_name: &str) -> Option<String> {
     elem.attributes()
         .flatten()
         .find(|a| a.key.as_ref() == attr_name)
         .map(|a| {
             a.normalized_value(XmlVersion::Implicit1_0).map_or_else(
-                |_| String::from_utf8_lossy(&a.value).into_owned(),
+                |_| a.value.clone().into_owned(),
                 std::borrow::Cow::into_owned,
             )
         })
