@@ -11,6 +11,7 @@ import {
   type SpeakerNoticeReading,
   type SpeakerStreams,
 } from '../lib/speaker-notices';
+import { castsBySpeaker, type CastCodec, type SpeakerCast } from '../lib/listen-url';
 
 const log = createLogger('Store');
 
@@ -44,7 +45,16 @@ export type TransportStates = Record<string, string>;
 export interface PlaybackSession {
   streamId: string;
   speakerIp: string;
+  /**
+   * The URL the speaker was given when the cast started. Never shown or copied:
+   * it keeps an old address after an IP change, and a grouped member's is an
+   * `x-rincon:` URI. Build a player's URL with `listenUrl` instead.
+   */
   streamUrl: string;
+  /** The codec the stream is served in. */
+  codec: CastCodec;
+  /** Whether the speaker fetches the stream or follows a coordinator. */
+  role: 'coordinator' | 'slave';
 }
 
 /** Set of speaker IPs that are currently casting our streams. */
@@ -66,6 +76,8 @@ export const transportStates = signal<TransportStates>({});
 export const castingSpeakers = signal<CastingSpeakers>(new Set());
 /** The stream each casting speaker plays, by speaker IP. */
 export const castingStreams = signal<SpeakerStreams>({});
+/** The cast each casting speaker plays, with its codec, by speaker IP. */
+export const castingCasts = signal<Record<string, SpeakerCast>>({});
 export const serverPort = signal<number>(0);
 export const isLoading = signal<boolean>(false);
 export const stats = signal<AppStats | null>(null);
@@ -165,6 +177,7 @@ export const fetchGroups = async (): Promise<void> => {
     transportStates.value = states;
     castingSpeakers.value = new Set(sessions.map((s) => s.speakerIp));
     castingStreams.value = Object.fromEntries(sessions.map((s) => [s.speakerIp, s.streamId]));
+    castingCasts.value = castsBySpeaker(sessions);
     // A notice belongs to one cast; forget those whose cast has ended.
     speakerNoticeReadings.value = currentReadings(
       speakerNoticeReadings.value,

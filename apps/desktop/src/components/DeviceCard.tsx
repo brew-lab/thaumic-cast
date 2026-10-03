@@ -3,6 +3,8 @@ import { Speaker as SpeakerIcon } from 'lucide-preact';
 import { useTranslation } from 'react-i18next';
 import { Card } from '@thaumic-cast/ui';
 import { speakerBadge, type SpeakerBadgeTone } from '../lib/speaker-badge';
+import type { SpeakerCast } from '../lib/listen-url';
+import { ListenUrl } from './ListenUrl';
 import styles from './DeviceCard.module.css';
 
 /** The badge class for each tone; an idle badge keeps the plain style. */
@@ -23,6 +25,8 @@ interface DeviceCardProps {
   transportState?: string;
   /** Whether this speaker is casting one of our streams */
   isCasting?: boolean;
+  /** The cast this speaker plays, while one runs; shows the "Copy URL" control */
+  cast?: SpeakerCast;
 }
 
 /**
@@ -35,6 +39,7 @@ interface DeviceCardProps {
  * @param props.memberCount - Number of members in the group
  * @param props.transportState - Current transport state
  * @param props.isCasting - Whether this speaker is casting one of our streams
+ * @param props.cast - The cast this speaker plays, while one runs
  * @returns The rendered DeviceCard component
  */
 export function DeviceCard({
@@ -43,6 +48,7 @@ export function DeviceCard({
   memberCount,
   transportState,
   isCasting,
+  cast,
 }: DeviceCardProps) {
   const { t } = useTranslation();
 
@@ -68,6 +74,7 @@ export function DeviceCard({
             </span>
           )}
         </div>
+        {cast && <ListenUrl cast={cast} />}
       </div>
     </Card>
   );

@@ -6,6 +6,7 @@ import {
   groups,
   transportStates,
   castingSpeakers,
+  castingCasts,
   networkHealth,
   fetchGroups,
   debouncedFetchGroups,
@@ -157,6 +158,7 @@ export function Speakers() {
               memberCount={group.members.length}
               transportState={transportStates.value[group.coordinatorIp]}
               isCasting={castingSpeakers.value.has(group.coordinatorIp)}
+              cast={castingCasts.value[group.coordinatorIp]}
             />
           ))}
         </div>
