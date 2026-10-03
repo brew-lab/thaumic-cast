@@ -1,6 +1,6 @@
 [package]
 name = "thaumic-server"
-version = "0.12.0"
+version = "0.12.1"
 edition = "2021"
 description = "Thaumic Cast Server: browser audio to Sonos speakers, for a machine with no screen."
 license = "AGPL-3.0"
