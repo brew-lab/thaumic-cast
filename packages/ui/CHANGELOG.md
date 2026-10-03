@@ -1,5 +1,42 @@
 # @thaumic-cast/ui
 
+## 4.0.0
+
+### Patch Changes
+
+- [#186](https://github.com/brew-lab/thaumic-cast/pull/186) [`c219d46`](https://github.com/brew-lab/thaumic-cast/commit/c219d4693303063d6934d3cec8d28d20b980b97e) Thanks [@skezo](https://github.com/skezo)! - feat(extension): show speaker notices instead of buffer advice
+
+  The popup warned when the path to a speaker was unstable and told the user to raise the network buffer, which cannot
+  help: that buffer only evens out how audio reaches the desktop app or server, not how it reaches the speaker. The
+  link-quality warning is gone. The popup now shows the notice the companion decided on for each speaker it is casting
+  to, worded for where the fix lives: a Wi-Fi stall that outlasted the speaker head start (or nearly did) says how much
+  audio it held back and which head start would have covered it, then where to change it: the desktop app's Settings >
+  Speakers, `pcm_connect_burst_ms` in the server's config, or the environment variable that fixes it; a stall no head
+  start covers suggests moving the speaker or using Ethernet; a speaker running low or being drained by its clock says
+  so, with restart advice only when a restart would refill it. A dismissed notice stays dismissed while the companion
+  repeats it and returns only as a new episode or an escalation, and dismissed head-start advice for a speaker is
+  remembered for 24 hours, so the next cast does not repeat it unless the advice goes higher. Separately, when audio
+  from the browser reached the companion late often enough to give every speaker a gap, the popup says so and suggests
+  the smoothing step that would cover it, with a shortcut to the audio settings, unless the capture-health warning
+  already explains it. The extension keeps the companion's speaker head start and speaker monitor settings current for
+  this wording. The protocol drops the retired link-quality event and the time to empty, and the shared Alert takes a
+  translated label for its dismiss button.
+
+- [#186](https://github.com/brew-lab/thaumic-cast/pull/186) [`a8b9c7e`](https://github.com/brew-lab/thaumic-cast/commit/a8b9c7eb726234e71a5f58888d05e0fd051b106d) Thanks [@skezo](https://github.com/skezo)! - fix(ui): restore button group spacing and let the theme change without a reload
+
+  Two faults, both a class name that never resolved. The button group built its spacing and alignment class names from
+  its props, but the build exports only camel-case keys while the stylesheet uses hyphenated names, so those lookups
+  found nothing and were dropped, leaving every wizard screen without spacing or alignment. The sidebar brand icon had
+  the same fault. Separately, the page wrote an inline colour scheme before painting, which outranks the stylesheet that
+  maps the theme attribute, so once written it never changed and choosing a theme had no visible effect until a reload.
+  The attribute alone is enough, because the style block on the same page already maps it.
+
+  Closes [#110](https://github.com/brew-lab/thaumic-cast/issues/110)
+  Closes [#114](https://github.com/brew-lab/thaumic-cast/issues/114)
+
+- Updated dependencies [[`44b237d`](https://github.com/brew-lab/thaumic-cast/commit/44b237db820faf85e1bf5eaea043888888e64386), [`644a955`](https://github.com/brew-lab/thaumic-cast/commit/644a955100483f155176286cf74fa0bb2627a400), [`dd1bf05`](https://github.com/brew-lab/thaumic-cast/commit/dd1bf057cdffa6806ee3bad2fc55a4e5c3843564), [`0a7c6b6`](https://github.com/brew-lab/thaumic-cast/commit/0a7c6b67299c159410efc4eaa8d27a1c922d653e), [`a079ad9`](https://github.com/brew-lab/thaumic-cast/commit/a079ad9f678a2ad25553e0d0b6c3c90e427989da), [`f833ba4`](https://github.com/brew-lab/thaumic-cast/commit/f833ba45fb46cddcc4802af40fc3977b907a50fa), [`ca7f19d`](https://github.com/brew-lab/thaumic-cast/commit/ca7f19dfa1385c2a4bd7cb1d18074a8d9f5215ad), [`d8efc83`](https://github.com/brew-lab/thaumic-cast/commit/d8efc833ce9a7dab677cea30d9e490fbe72c25f6), [`67f86db`](https://github.com/brew-lab/thaumic-cast/commit/67f86db9a81fc1c9ed6850af9a3c91a66c0d350d), [`c219d46`](https://github.com/brew-lab/thaumic-cast/commit/c219d4693303063d6934d3cec8d28d20b980b97e), [`09d86b0`](https://github.com/brew-lab/thaumic-cast/commit/09d86b033f9b2db0408d7066839a25a9a158db1d), [`6ed39cd`](https://github.com/brew-lab/thaumic-cast/commit/6ed39cd3c0ae72678b56fa1a2f72ee650d650674), [`602c9ee`](https://github.com/brew-lab/thaumic-cast/commit/602c9ee2ff71b41f4added085bda4a48c1d1154c)]:
+  - @thaumic-cast/protocol@0.6.0
+
 ## 3.0.0
 
 ### Minor Changes
