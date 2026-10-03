@@ -20,3 +20,9 @@ updates:
       rust-dependencies:
         patterns:
           - '*'
+    ignore:
+      # windows-core must match the windows crate's own: thaumic-capture's
+      # #[implement] COM objects are built against both. Drop this when a
+      # windows 0.100 is published.
+      - dependency-name: 'windows-core'
+        versions: ['>=0.100']

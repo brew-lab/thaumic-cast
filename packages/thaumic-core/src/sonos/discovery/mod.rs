@@ -406,13 +406,13 @@ async fn fetch_device_description(client: &Client, url: &str) -> Option<DeviceIn
 
 /// Reads an element's text content as an owned `String`.
 ///
-/// quick-xml 0.41 returns `BytesText` from `read_text`; `decode` yields the
-/// raw (still XML-escaped) text as before, honouring the document encoding.
+/// quick-xml 0.42's `BytesText` holds the raw (still XML-escaped) text as a
+/// UTF-8 string, which is what this returns.
 fn read_text_string(reader: &mut Reader<&[u8]>, name: QName<'_>) -> Option<String> {
     reader
         .read_text(name)
         .ok()
-        .and_then(|t| t.decode().ok())
+        .map(|t| t.into_inner())
         .map(|t| t.into_owned())
 }
 
@@ -432,13 +432,13 @@ fn parse_device_description(xml: &str) -> Option<DeviceInfo> {
                 let name = local_name.as_ref();
 
                 match name {
-                    b"UDN" => {
+                    "UDN" => {
                         uuid = read_text_string(&mut reader, e.name());
                     }
-                    b"friendlyName" => {
+                    "friendlyName" => {
                         friendly_name = read_text_string(&mut reader, e.name());
                     }
-                    b"modelName" => {
+                    "modelName" => {
                         model_name = read_text_string(&mut reader, e.name());
                     }
                     _ => {}
