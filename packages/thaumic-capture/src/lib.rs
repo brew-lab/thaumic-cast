@@ -16,39 +16,18 @@ pub use wasapi::WasapiSource;
 
 /// Runtime check for WASAPI process loopback availability.
 ///
-/// Checks Windows build number >= 20348 via registry query.
+/// Checks that the Windows build number is at least 20348. The build is read
+/// in-process with `RtlGetVersion`, which manifests cannot make lie, rather than
+/// by starting a program: a console program started from the desktop app
+/// flashes a window, and this is asked on every `/health` request.
 /// Always returns `false` on non-Windows platforms.
 pub fn wasapi_available() -> bool {
     #[cfg(windows)]
     {
-        check_windows_build() >= 20348
+        windows_version::OsVersion::current().build >= 20348
     }
     #[cfg(not(windows))]
     {
         false
-    }
-}
-
-#[cfg(windows)]
-fn check_windows_build() -> u32 {
-    let output = std::process::Command::new("reg")
-        .args([
-            "query",
-            r"HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion",
-            "/v",
-            "CurrentBuildNumber",
-        ])
-        .output();
-
-    match output {
-        Ok(out) => {
-            let text = String::from_utf8_lossy(&out.stdout);
-            text.lines()
-                .find(|l| l.contains("CurrentBuildNumber"))
-                .and_then(|l| l.split_whitespace().last())
-                .and_then(|s| s.parse::<u32>().ok())
-                .unwrap_or(0)
-        }
-        Err(_) => 0,
     }
 }
