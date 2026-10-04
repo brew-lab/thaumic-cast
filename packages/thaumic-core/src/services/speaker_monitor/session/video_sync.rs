@@ -120,9 +120,12 @@ impl CushionTrend {
 impl SpeakerSession {
     /// Calculates absolute end-to-end latency for video sync.
     ///
-    /// Latency = stream_elapsed - (sonos_reltime + offset)
-    /// - `stream_elapsed` = time since audio epoch (T0 for this Sonos connection)
-    /// - `sonos_reltime` = Sonos playback position (adjusted for RTT and offset)
+    /// Latency = stream_elapsed + rtt/2 - (sonos_reltime + offset)
+    /// - `stream_elapsed` = time since audio epoch (T0 for this Sonos
+    ///   connection), read just before the request went out
+    /// - `rtt/2` = how much later the speaker read its position, on average:
+    ///   the source has run on by that much since `stream_elapsed` was read
+    /// - `sonos_reltime + offset` = the speaker's continuous playback position
     ///
     /// When Sonos restarts its track position (due to metadata updates), we
     /// recalculate the offset to maintain the current latency estimate, avoiding
@@ -141,13 +144,14 @@ impl SpeakerSession {
         // This avoids accumulating errors from Sonos's 1-second precision
         if let Some(last_reltime) = self.last_sonos_reltime_ms {
             if sonos_reltime_ms < last_reltime.saturating_sub(100) {
-                // Calculate offset to maintain current EMA latency
-                // latency = stream - (sonos + offset) => offset = stream - sonos - latency
+                // Calculate offset to maintain current EMA latency:
+                // latency = stream + rtt/2 - (sonos + offset)
+                //   => offset = stream + rtt/2 - sonos - latency
                 let target_latency = self.ema_latency.max(0.0) as u64;
                 let rtt_adj = (rtt_ms / 2) as u64;
                 self.sonos_offset_ms = stream_elapsed_ms
+                    .saturating_add(rtt_adj)
                     .saturating_sub(sonos_reltime_ms)
-                    .saturating_sub(rtt_adj)
                     .saturating_sub(target_latency);
                 log::info!(
                     "[SpeakerMonitor] Track restart: reltime {} -> {}, maintaining ~{}ms latency (offset={}ms)",
@@ -160,14 +164,17 @@ impl SpeakerSession {
         }
         self.last_sonos_reltime_ms = Some(sonos_reltime_ms);
 
-        // Apply offset and RTT adjustment to get continuous Sonos position
-        let continuous_sonos_ms = sonos_reltime_ms
-            .saturating_add(self.sonos_offset_ms)
-            .saturating_add((rtt_ms / 2) as u64);
+        // Apply the offset to get the continuous Sonos position
+        let continuous_sonos_ms = sonos_reltime_ms.saturating_add(self.sonos_offset_ms);
 
-        // Absolute latency = (time since audio epoch) - (continuous Sonos position)
+        // The speaker read its position about half a round trip after
+        // `stream_elapsed_ms` was read, so the source had run on by that much.
+        let source_ms = stream_elapsed_ms.saturating_add((rtt_ms / 2) as u64);
+
+        // Absolute latency = (time since audio epoch when the speaker read
+        // its position) - (continuous Sonos position)
         // Positive = audio in pipeline waiting to be played (normal)
-        let latency_ms = (stream_elapsed_ms as i64) - (continuous_sonos_ms as i64);
+        let latency_ms = (source_ms as i64) - (continuous_sonos_ms as i64);
 
         log::trace!(
             "[SpeakerMonitor] stream={}ms, sonos={}ms (continuous={}ms, offset={}ms), latency={}ms",
@@ -418,6 +425,38 @@ mod tests {
         assert!(
             (fitted.slope_ms_per_min + 40.0).abs() > TREND_MIN_SIGMA * fitted.error_ms_per_min,
             "fixed-phase fit happened to be right: {fitted:?}"
+        );
+    }
+
+    /// The source time is read before the request goes out and the speaker
+    /// reads its position about half a round trip later, so half the round
+    /// trip is added to the source side, not to the speaker's.
+    #[test]
+    fn latency_adds_half_the_round_trip_to_the_source_side() {
+        let mut session = SpeakerSession::new(true, 1);
+        assert_eq!(session.calculate_latency(10_000, 9_000, 200), 1_100);
+        session.record_latency(1_100);
+        assert_eq!(session.calculate_latency(11_000, 10_000, 200), 1_100);
+        assert_eq!(session.calculate_latency(12_000, 11_000, 0), 1_000);
+    }
+
+    /// When RelTime goes backwards the offset is re-anchored so the latency
+    /// carries on at the smoothed figure, with half the round trip on the
+    /// source side there too; later samples measure against that offset.
+    #[test]
+    fn a_track_restart_re_anchors_with_the_round_trip_on_the_source_side() {
+        let mut session = SpeakerSession::new(true, 1);
+        let first = session.calculate_latency(10_000, 9_000, 200);
+        assert_eq!(first, 1_100);
+        session.record_latency(first);
+        // RelTime restarts from zero; the EMA is 1100.
+        assert_eq!(session.calculate_latency(20_000, 0, 200), 1_100);
+        // offset = 20000 + 100 - 0 - 1100 = 19000.
+        assert_eq!(session.sonos_offset_ms, 19_000);
+        // Next poll: elapsed - (rel + offset) + rtt/2.
+        assert_eq!(
+            session.calculate_latency(21_000, 900, 200),
+            21_000 - (900 + 19_000) + 100
         );
     }
 

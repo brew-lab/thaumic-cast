@@ -15,8 +15,11 @@
 //! # Latency measurement
 //!
 //! Uses epoch-based timing where each Sonos HTTP connection defines a playback epoch.
-//! Measures absolute latency: `stream_elapsed - sonos_reltime`
-//! - `stream_elapsed` = wall-clock time since audio epoch (T0 for this connection)
+//! Measures absolute latency: `stream_elapsed + rtt/2 - sonos_reltime`
+//! - `stream_elapsed` = wall-clock time since audio epoch (T0 for this
+//!   connection), read just before the position request goes out
+//! - `rtt/2` = how far the source runs on before the speaker reads its
+//!   position, on average
 //! - `sonos_reltime` = Sonos playback position in the track
 //! - Result = total pipeline delay (typically 0.5-2s for PCM, 15-25s for AAC)
 //!
