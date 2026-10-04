@@ -207,12 +207,15 @@ export const LatencyEventSchema = z.discriminatedUnion('type', [
     speakerIp: z.string(),
     /** Playback epoch ID (increments on Sonos reconnect) */
     epochId: z.number().int().nonnegative(),
-    /** Measured latency in milliseconds (EMA-smoothed) */
-    latencyMs: z.number().int().nonnegative(),
-    /** Measurement jitter in milliseconds (standard deviation) */
-    jitterMs: z.number().int().nonnegative(),
-    /** Confidence score from 0.0 to 1.0 (higher = more reliable) */
-    confidence: z.number().min(0).max(1),
+    /**
+     * Measured latency in milliseconds (EMA-smoothed). Unread: video sync
+     * uses `playout`. Optional so a companion may stop sending it.
+     */
+    latencyMs: z.number().int().nonnegative().optional(),
+    /** Measurement jitter in milliseconds (standard deviation). Unread, as above. */
+    jitterMs: z.number().int().nonnegative().optional(),
+    /** Confidence score from 0.0 to 1.0. Unread, as above. */
+    confidence: z.number().min(0).max(1).optional(),
     /**
      * The playout estimate, for a PCM cast whose head start and cadence queue
      * the companion knows. Absent otherwise, and from companions that predate
@@ -463,9 +466,12 @@ export interface LatencyUpdatedBroadcastEvent {
   streamId: string;
   speakerIp: string;
   epochId: number;
-  latencyMs: number;
-  jitterMs: number;
-  confidence: number;
+  /** EMA-smoothed latency; unread (video sync uses `playout`) */
+  latencyMs?: number;
+  /** Unread, as `latencyMs` */
+  jitterMs?: number;
+  /** Unread, as `latencyMs` */
+  confidence?: number;
   /** The playout estimate, when the companion sends one (see {@link PlayoutLatencySchema}) */
   playout?: PlayoutLatency;
   timestamp: number;

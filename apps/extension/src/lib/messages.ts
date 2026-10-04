@@ -158,12 +158,6 @@ export {
   type CaptureHealthChangedMessage,
   GetCaptureHealthMessageSchema,
   type GetCaptureHealthMessage,
-  LatencyUpdateMessageSchema,
-  type LatencyUpdateMessage,
-  LatencyStaleMessageSchema,
-  type LatencyStaleMessage,
-  LatencyEventMessageSchema,
-  type LatencyEventMessage,
   TopologyEventMessageSchema,
   type TopologyEventMessage,
 
@@ -188,8 +182,6 @@ export {
   type SetVideoSyncEnabledMessage,
   SetVideoSyncTrimMessageSchema,
   type SetVideoSyncTrimMessage,
-  TriggerResyncMessageSchema,
-  type TriggerResyncMessage,
   GetVideoSyncStateMessageSchema,
   type GetVideoSyncStateMessage,
   VideoSyncRearmMessageSchema,
@@ -223,7 +215,6 @@ import type {
   ControlMediaMessage,
   SetVideoSyncEnabledMessage,
   SetVideoSyncTrimMessage,
-  TriggerResyncMessage,
   GetVideoSyncStateMessage,
   WsConnectMessage,
   WsDisconnectMessage,
@@ -244,8 +235,6 @@ import type {
   SpeakerHealthChangedMessage,
   IngestGapsChangedMessage,
   CompanionAudioChangedMessage,
-  LatencyUpdateMessage,
-  LatencyStaleMessage,
   VideoSyncStateChangedMessage,
   TabMetadataUpdateMessage,
   TabOgImageMessage,
@@ -299,7 +288,6 @@ export type PopupToBackgroundType =
   | 'CONTROL_MEDIA'
   | 'SET_VIDEO_SYNC_ENABLED'
   | 'SET_VIDEO_SYNC_TRIM'
-  | 'TRIGGER_RESYNC'
   | 'GET_VIDEO_SYNC_STATE'
   | 'VIDEO_SYNC_REARM'
   | 'WS_CONNECT'
@@ -324,8 +312,6 @@ export type BackgroundToPopupType =
   | 'SPEAKER_HEALTH_CHANGED'
   | 'INGEST_GAPS_CHANGED'
   | 'COMPANION_AUDIO_CHANGED'
-  | 'LATENCY_UPDATE'
-  | 'LATENCY_STALE'
   | 'VIDEO_SYNC_STATE_CHANGED';
 
 /** Message types: Content → Background */
@@ -393,7 +379,6 @@ export type PopupToBackgroundMessage =
   | ControlMediaMessage
   | SetVideoSyncEnabledMessage
   | SetVideoSyncTrimMessage
-  | TriggerResyncMessage
   | GetVideoSyncStateMessage
   | VideoSyncRearmMessage
   | WsConnectMessage
@@ -421,8 +406,6 @@ export type BackgroundToPopupMessage =
   | SpeakerHealthChangedMessage
   | IngestGapsChangedMessage
   | CompanionAudioChangedMessage
-  | LatencyUpdateMessage
-  | LatencyStaleMessage
   | VideoSyncStateChangedMessage;
 
 /**

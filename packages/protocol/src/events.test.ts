@@ -308,6 +308,14 @@ describe('LatencyEventSchema', () => {
     expect(LatencyEventSchema.safeParse({ ...updated, latencyMs: 12.5 }).success).toBe(false);
   });
 
+  it('should accept a measurement without the old latency fields', () => {
+    const bare = { ...updated };
+    delete bare.latencyMs;
+    delete bare.jitterMs;
+    delete bare.confidence;
+    expect(LatencyEventSchema.parse(bare)).toEqual(bare);
+  });
+
   const playout: PlayoutLatency = {
     companionMs: 710,
     uncertaintyMs: 61,
