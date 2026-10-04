@@ -36,13 +36,14 @@ const CONTROL_DEBOUNCE_MS = 300;
 const VIDEO_SYNC_CHIP: Record<
   Exclude<VideoSyncPhase, 'off'>,
   {
-    variant: 'acquiring' | 'synced' | 'lost';
-    className: 'synced' | 'acquiring' | 'lost';
+    variant: 'waiting' | 'acquiring' | 'synced' | 'lost';
+    className: 'waiting' | 'synced' | 'acquiring' | 'lost';
     label: string;
   }
 > = {
   locking: { variant: 'acquiring', className: 'acquiring', label: 'video_sync_status_acquiring' },
   'in-step': { variant: 'synced', className: 'synced', label: 'video_sync_status_synced' },
+  'no-video': { variant: 'waiting', className: 'waiting', label: 'video_sync_status_no_video' },
   unavailable: { variant: 'lost', className: 'lost', label: 'video_sync_status_unavailable' },
   'turned-off': { variant: 'lost', className: 'lost', label: 'video_sync_status_turned_off' },
 };
@@ -155,6 +156,16 @@ export function ActiveCastCard({
   const videoSync = useVideoSyncState(showVideoSync ? cast.tabId : undefined);
   const trimId = `video-sync-trim-${cast.tabId}`;
   const trimSpeaker = videoSync.speakerName ?? cast.speakerNames[0] ?? '';
+  const videoSyncChip =
+    videoSync.known && videoSync.state !== 'off' ? VIDEO_SYNC_CHIP[videoSync.state] : null;
+  const videoSyncReason =
+    videoSync.known && videoSync.enabled && videoSync.reason
+      ? t(`video_sync_reason_${videoSync.reason.replace(/-/g, '_')}`)
+      : null;
+  // Read out when the state changes; the chip and reason line are not live.
+  const videoSyncAnnouncement = videoSyncChip
+    ? [t('video_sync'), t(videoSyncChip.label), videoSyncReason].filter(Boolean).join('. ')
+    : '';
 
   // Sync group volume: show group control when sync is active with multiple speakers
   const showGroupVolume = cast.syncSpeakers && cast.speakerIps.length > 1;
@@ -358,21 +369,23 @@ export function ActiveCastCard({
                 onChange={videoSync.setEnabled}
                 aria-label={t('video_sync_toggle')}
               />
-              {videoSync.state !== 'off' && (
+              {videoSyncChip && (
                 <StatusChip
-                  variant={VIDEO_SYNC_CHIP[videoSync.state].variant}
-                  className={styles[VIDEO_SYNC_CHIP[videoSync.state].className]}
+                  variant={videoSyncChip.variant}
+                  className={styles[videoSyncChip.className]}
                 >
-                  {t(VIDEO_SYNC_CHIP[videoSync.state].label)}
+                  {t(videoSyncChip.label)}
                 </StatusChip>
               )}
             </div>
 
-            {videoSync.enabled && videoSync.reason && (
+            <p role="status" className={styles.videoSyncLive}>
+              {videoSyncAnnouncement}
+            </p>
+
+            {videoSyncReason && (
               <div className={styles.videoSyncReason}>
-                <p className={styles.videoSyncReasonText}>
-                  {t(`video_sync_reason_${videoSync.reason.replace(/-/g, '_')}`)}
-                </p>
+                <p className={styles.videoSyncReasonText}>{videoSyncReason}</p>
                 {(videoSync.reason === 'reload' || videoSync.state === 'turned-off') && (
                   <Button
                     variant="link"
@@ -389,7 +402,7 @@ export function ActiveCastCard({
               </div>
             )}
 
-            {videoSync.enabled && videoSync.state !== 'unavailable' && (
+            {videoSync.known && videoSync.enabled && videoSync.state !== 'unavailable' && (
               <div className={styles.videoSyncControls}>
                 <div className={styles.videoSyncTrim}>
                   <label htmlFor={trimId} className={styles.videoSyncTrimLabel}>

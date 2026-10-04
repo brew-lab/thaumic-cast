@@ -63,6 +63,14 @@ describe('video sync trims', () => {
     expect(chromeStorageData.local[VIDEO_SYNC_TRIM_STORAGE_KEY]).toEqual({ RINCON_KITCHEN: 20 });
   });
 
+  it('should prefer a newer address entry over an older UUID entry, and move it', async () => {
+    await saveSpeakerTrim('192.168.1.20', GROUPS, 40);
+    // Saved again before the zone groups had loaded: kept under the address.
+    await saveSpeakerTrim('192.168.1.20', [], -60);
+    expect(await loadSpeakerTrim('192.168.1.20', GROUPS)).toBe(-60);
+    expect(chromeStorageData.local[VIDEO_SYNC_TRIM_STORAGE_KEY]).toEqual({ RINCON_KITCHEN: -60 });
+  });
+
   it('should drop stored entries that fail validation and keep the rest', async () => {
     chromeStorageData.local[VIDEO_SYNC_TRIM_STORAGE_KEY] = {
       RINCON_KITCHEN: 'loud',

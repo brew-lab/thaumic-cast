@@ -12,10 +12,11 @@ import {
   grantedOrigins,
   resetChromeStub,
   tabMessages,
+  tabUrls,
 } from '../../test-support/chrome-stub';
 import { VIDEO_SYNC_ORIGINS } from '../../lib/video-sync-access';
 import { notificationService } from '../notification-service';
-import { clearAllSessions, getSession, registerSession } from '../session-manager';
+import { clearAllSessions, getSession, registerSession, removeSession } from '../session-manager';
 import { setSonosState } from '../sonos-state';
 import {
   getVideoSyncStatus,
@@ -198,6 +199,7 @@ describe('video sync service', () => {
   });
 
   it('should ask for a reload when the page has no relay', async () => {
+    tabUrls.set(TAB, 'https://video.example/watch');
     cast();
     await handleVideoSyncLatency(updated({ companionMs: 700 }));
     await settle();
@@ -214,6 +216,17 @@ describe('video sync service', () => {
     );
   });
 
+  it('should not advise a reload on a page no script may enter', async () => {
+    cast();
+    await handleVideoSyncLatency(updated({ companionMs: 700 }));
+    await settle();
+    expect(await getVideoSyncStatus(TAB)).toMatchObject({ reason: 'not-web-page' });
+    tabUrls.set(TAB, 'https://chromewebstore.google.com/detail/x');
+    await handleVideoSyncLatency(updated({ companionMs: 700 }));
+    await settle();
+    expect(await getVideoSyncStatus(TAB)).toMatchObject({ reason: 'not-web-page' });
+  });
+
   it('should say access is missing when the page scripts cannot be injected', async () => {
     grantedOrigins.clear();
     cast();
@@ -225,6 +238,7 @@ describe('video sync service', () => {
   it('should store a trim for the speaker and apply it at once', async () => {
     relaysAnswer();
     cast();
+    await handleCaptureDelay(TAB, 0);
     await handleVideoSyncLatency(updated({ companionMs: 700 }));
     await settle();
     const status = await setVideoSyncTrim(TAB, -100);
@@ -259,6 +273,46 @@ describe('video sync service', () => {
     expect(leads().length).toBe(sent);
   });
 
+  it('should not let a send queued before stop go out after its lead 0', async () => {
+    cast();
+    // The relay holds the first send until released, as a slow page would.
+    let release = (): void => {};
+    const held = new Promise<void>((r) => (release = r));
+    let first = true;
+    tabs.sendMessage = async (tabId, message) => {
+      if (first) {
+        first = false;
+        await held;
+      }
+      tabMessages.push({ tabId, message });
+      return { paired: true, status: null };
+    };
+    await handleCaptureDelay(TAB, 0);
+    await handleVideoSyncLatency(updated({ companionMs: 700 }));
+    await setVideoSyncTrim(TAB, 100);
+    const stopped = stopVideoSync(TAB);
+    release();
+    await stopped;
+    await settle();
+    expect(leads().at(-1)).toEqual({ type: 'VIDEO_SYNC_LEAD', enabled: false, leadMs: 0 });
+    expect(leads()).not.toContainEqual(expect.objectContaining({ leadMs: 760 }));
+  });
+
+  it('should take the lead off when its cast ended some other way', async () => {
+    relaysAnswer();
+    cast();
+    await handleCaptureDelay(TAB, 0);
+    await handleVideoSyncLatency(updated({ companionMs: 700 }));
+    await settle();
+    expect(chromeStorageData.session.videoSyncLeads).toHaveProperty(String(TAB));
+    // Ended without stopVideoSync (disconnected, say); a stale popup then asks.
+    removeSession(TAB);
+    expect(await getVideoSyncStatus(TAB)).toBeNull();
+    await settle();
+    expect(leads().at(-1)).toEqual({ type: 'VIDEO_SYNC_LEAD', enabled: false, leadMs: 0 });
+    expect(chromeStorageData.session.videoSyncLeads).not.toHaveProperty(String(TAB));
+  });
+
   it('should keep the lead in force across a service-worker restart', async () => {
     relaysAnswer();
     cast();
@@ -277,6 +331,7 @@ describe('video sync service', () => {
     chromeStorageData.session.videoSyncLeads = {
       [String(TAB)]: { streamId: 'old-stream', leadMs: 1500, epoch: 1 },
     };
+    await handleCaptureDelay(TAB, 0);
     await handleVideoSyncLatency(updated({ companionMs: 700 }));
     await settle();
     expect(leads()).toContainEqual({ type: 'VIDEO_SYNC_LEAD', enabled: true, leadMs: 660 });

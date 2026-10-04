@@ -15,7 +15,7 @@ Stopping the cast puts the page's sound back first.
 The old video sync, which paused and nudged the page's video, is gone: the video it moved carried the very sound
 being cast, so it could never line up. The script it ran on every page is gone with it.
 
-Each cast's card shows where video sync stands (locking on, in step, can't sync, or turned off, with the reason), a
+Each cast's card shows where video sync stands (locking on, in step, cannot sync, nothing to watch, or turned off, with the reason), a
 fine-tune slider for the speaker being followed, kept per speaker, a Reload page button for pages opened before video
 sync was on, and Try again after the player turned the early sound off. Video sync needs a PCM cast from a tab and a
 companion new enough to send its estimate; otherwise the card says which is missing and nothing is moved. The

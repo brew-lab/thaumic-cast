@@ -2,6 +2,8 @@ import { describe, expect, it } from 'bun:test';
 import type { PlayoutLatency } from '@thaumic-cast/protocol';
 
 import {
+  CAPTURE_DELAY_FIRST_WAIT_MS,
+  CAPTURE_DELAY_WINDOW_MS,
   COMPANION_OLD_AFTER_EVENTS,
   LEAD_STEP_MIN_INTERVAL_MS,
   LeadController,
@@ -51,14 +53,28 @@ function frame(fields: Partial<FrameHookStatus>): FrameHookStatus {
   };
 }
 
+/** A send that reached the page's relay. */
+const REACHED = { reached: true, access: true, scriptable: true };
+
+/**
+ * Gives a controller a capture-delay sample from long ago: it has heard one,
+ * so the first lead need not wait, but the sample counts for nothing.
+ * @param c - The controller
+ * @returns The controller
+ */
+function heardCaptureDelay(c: LeadController): LeadController {
+  c.onCaptureDelay(0, -CAPTURE_DELAY_WINDOW_MS - 1);
+  return c;
+}
+
 /**
  * A controller that has been told the page has the hook.
  * @param facts - The cast's facts
  * @returns The controller
  */
 function reachedController(facts: CastFacts = PCM_TAB): LeadController {
-  const c = new LeadController(facts, KITCHEN, true);
-  c.onReach({ reached: true, access: true });
+  const c = heardCaptureDelay(new LeadController(facts, KITCHEN, true));
+  c.onReach(REACHED);
   return c;
 }
 
@@ -191,7 +207,9 @@ describe('LeadController: the lead', () => {
   });
 
   it('should keep a restored lead when the estimate agrees within 40 ms', () => {
-    const c = new LeadController(PCM_TAB, KITCHEN, true, { leadMs: 660, epoch: 3 });
+    const c = heardCaptureDelay(
+      new LeadController(PCM_TAB, KITCHEN, true, { leadMs: 660, epoch: 3 }),
+    );
     expect(c.keepAlive()).toEqual({ enabled: true, leadMs: 660 });
     c.onPlayout(playout(720, { epoch: 3 }));
     expect(c.next(0)).toBeNull();
@@ -258,12 +276,18 @@ describe('LeadController: gates', () => {
   it('should ask for a reload when no relay answered, or for access without it', () => {
     const c = new LeadController(PCM_TAB, KITCHEN, true);
     expect(c.status().state).toBe('locking');
-    c.onReach({ reached: false, access: true });
+    c.onReach({ reached: false, access: true, scriptable: true });
     expect(c.status()).toMatchObject({ state: 'unavailable', reason: 'reload' });
-    c.onReach({ reached: false, access: false });
+    c.onReach({ reached: false, access: false, scriptable: false });
     expect(c.status()).toMatchObject({ state: 'unavailable', reason: 'no-access' });
-    c.onReach({ reached: true, access: true });
+    c.onReach(REACHED);
     expect(c.status().state).toBe('locking');
+  });
+
+  it('should not advise a reload on a page no script may enter', () => {
+    const c = new LeadController(PCM_TAB, KITCHEN, true);
+    c.onReach({ reached: false, access: true, scriptable: false });
+    expect(c.status()).toMatchObject({ state: 'unavailable', reason: 'not-web-page' });
   });
 
   it('should be off when switched off, whatever else holds', () => {
@@ -332,6 +356,55 @@ describe('LeadController: states from the hook', () => {
     expect(c.status().state).toBe('in-step');
     c.onStale();
     expect(c.status().state).toBe('locking');
+  });
+
+  it('should be in step at a lead of 0, where the hook stays ready', () => {
+    const c = reachedController();
+    c.setTrim(-500);
+    c.onPlayout(playout(300));
+    expect(c.next(0)?.leadMs).toBe(0);
+    c.onFrames([frame({ state: 'ready', appliedLeadMs: 0 })]);
+    expect(c.status()).toMatchObject({ state: 'in-step', leadMs: 0 });
+  });
+
+  it('should not count ready as in step while a lead is wanted', () => {
+    const c = reachedController();
+    c.onPlayout(playout(700));
+    c.next(0);
+    c.onFrames([frame({ state: 'ready', appliedLeadMs: 0 })]);
+    expect(c.status().state).toBe('locking');
+  });
+
+  it('should say there is nothing to watch on a page with no media', () => {
+    const c = reachedController();
+    c.onFrames([frame({ state: 'no-media', playing: false })]);
+    expect(c.status().state).toBe('no-video');
+    c.onFrames([frame({ state: 'ready', playing: true })]);
+    expect(c.status().state).toBe('locking');
+  });
+
+  it('should be locking, not idle, before any frame has reported', () => {
+    expect(reachedController().status().state).toBe('locking');
+  });
+});
+
+describe('LeadController: the first capture delay', () => {
+  it('should hold the first lead until a capture delay arrives', () => {
+    const c = new LeadController(PCM_TAB, KITCHEN, true);
+    c.onReach(REACHED);
+    c.onPlayout(playout(700));
+    expect(c.next(0)).toEqual({ enabled: true, leadMs: 0 });
+    expect(c.next(1000)).toBeNull();
+    c.onCaptureDelay(80, 1500);
+    expect(c.next(1500)).toEqual({ enabled: true, leadMs: 740 });
+  });
+
+  it('should send without it once the wait is over', () => {
+    const c = new LeadController(PCM_TAB, KITCHEN, true);
+    c.onPlayout(playout(700));
+    c.next(0);
+    expect(c.next(CAPTURE_DELAY_FIRST_WAIT_MS - 1)).toBeNull();
+    expect(c.next(CAPTURE_DELAY_FIRST_WAIT_MS)).toEqual({ enabled: true, leadMs: 660 });
   });
 });
 

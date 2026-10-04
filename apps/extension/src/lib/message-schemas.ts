@@ -675,6 +675,7 @@ export const CaptureDelayMessageSchema = z.object({
   /** The delay in ms. */
   ms: z.number().nonnegative().max(60_000),
 });
+/** A capture-delay report (see {@link CaptureDelayMessageSchema}). */
 export type CaptureDelayMessage = z.infer<typeof CaptureDelayMessageSchema>;
 
 /** Popup → background query for current capture-health snapshot. */

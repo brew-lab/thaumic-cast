@@ -32,6 +32,7 @@ export const VideoSyncTrimSchema = z
 
 /** The stored trims, speaker key to ms. */
 export const VideoSyncTrimMapSchema = z.record(z.string(), VideoSyncTrimSchema);
+/** The stored trims, speaker key (UUID, or IP address) to ms. */
 export type VideoSyncTrimMap = z.infer<typeof VideoSyncTrimMapSchema>;
 
 /**
@@ -81,7 +82,9 @@ async function readTrims(): Promise<VideoSyncTrimMap> {
 }
 
 /**
- * Loads a speaker's trim.
+ * Loads a speaker's trim. A trim kept under the address is the newer one
+ * whenever the UUID is known too (saving under the UUID drops the address
+ * entry), so it wins and moves to the UUID.
  * @param speakerIp - The speaker's address
  * @param groups - The cached zone groups, to find its UUID
  * @returns The trim, in ms (0 when none is stored)
@@ -93,7 +96,17 @@ export async function loadSpeakerTrim(
   try {
     const trims = await readTrims();
     const uuid = speakerUuid(speakerIp, groups);
-    return (uuid !== undefined ? trims[uuid] : undefined) ?? trims[speakerIp] ?? 0;
+    const byIp = trims[speakerIp];
+    if (uuid === undefined) return byIp ?? 0;
+    if (byIp === undefined) return trims[uuid] ?? 0;
+    trims[uuid] = byIp;
+    delete trims[speakerIp];
+    try {
+      await chrome.storage.local.set({ [VIDEO_SYNC_TRIM_STORAGE_KEY]: trims });
+    } catch {
+      // Moved next time instead.
+    }
+    return byIp;
   } catch {
     return 0;
   }
