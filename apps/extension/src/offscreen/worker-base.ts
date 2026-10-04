@@ -140,6 +140,12 @@ export interface WorkerState {
 
   /** Whether the worker is in browser capture mode (no local audio pipeline). */
   browserCaptureMode: boolean;
+
+  /**
+   * Whether playback started with video sync on, so the worker reports how
+   * long audio waits in it (MSTP path only).
+   */
+  videoSync: boolean;
 }
 
 /**
@@ -177,6 +183,7 @@ export function createWorkerState(name: string): WorkerState {
     streamStartTime: 0,
     log: createLogger(name),
     browserCaptureMode: false,
+    videoSync: false,
   };
 }
 
@@ -810,6 +817,7 @@ export function handleCommonMessage(
 
     case 'START_PLAYBACK': {
       const { speakerIps, metadata, syncSpeakers = false, videoSyncEnabled } = msg;
+      s.videoSync = videoSyncEnabled;
       sendWsMessage(s, {
         type: 'START_PLAYBACK',
         payload: { speakerIps, metadata, syncSpeakers, videoSyncEnabled },
@@ -871,4 +879,5 @@ export function cleanupSharedState(s: WorkerState): void {
 
   s.streamId = null;
   s.policy = null;
+  s.videoSync = false;
 }

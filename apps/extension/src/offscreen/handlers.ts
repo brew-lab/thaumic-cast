@@ -353,6 +353,12 @@ export function setupMessageHandlers(): void {
                 .catch(noop);
             };
 
+            // While playback has video sync on, the worker says once a second
+            // how long audio waits in it; the background adds it to the lead.
+            const onCaptureDelay = (ms: number): void => {
+              chrome.runtime.sendMessage({ type: 'CAPTURE_DELAY', tabId, ms }).catch(noop);
+            };
+
             const session = StreamSession.forTabCapture(
               stream,
               encoderConfig,
@@ -362,6 +368,7 @@ export function setupMessageHandlers(): void {
                 keepTabAudible,
                 onHealthChanged,
                 onError,
+                onCaptureDelay,
               },
             );
             try {

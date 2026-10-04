@@ -164,6 +164,15 @@ export interface WorkerCaptureRateErrorMessage {
   params: ErrorParams;
 }
 
+/**
+ * How long audio waits in the worker before the companion has it, in ms
+ * (MSTP path only, once a second, only while playback has video sync on).
+ */
+export interface WorkerCaptureDelayMessage {
+  type: 'CAPTURE_DELAY';
+  ms: number;
+}
+
 /** Periodic statistics from the worker. */
 export interface WorkerStatsMessage {
   type: 'STATS';
@@ -241,4 +250,5 @@ export type WorkerOutboundMessage =
   | WorkerBrowserCaptureErrorMessage
   | WorkerCaptureRateErrorMessage
   | WorkerStatsMessage
+  | WorkerCaptureDelayMessage
   | WorkerMetricsDumpMessage;

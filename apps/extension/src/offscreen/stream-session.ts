@@ -181,6 +181,9 @@ export class StreamSession {
   /** Tab-capture + PCM only — no signal on other codec paths. */
   private onHealthChanged?: (health: { degraded: boolean; detectedAt: number }) => void;
 
+  /** How long audio waits in the worker, once a second (tab + PCM with video sync only). */
+  private onCaptureDelay?: (ms: number) => void;
+
   /** Whether to play audio at low volume to prevent Chrome throttling. */
   private keepTabAudible: boolean;
 
@@ -209,6 +212,8 @@ export class StreamSession {
    * @param options.keepTabAudible - Play audio at low volume to prevent Chrome throttling
    * @param options.onHealthChanged - Capture-health transition callback (tab+PCM only)
    * @param options.onError - Callback when the cast stops over its sample rate (tab+PCM only)
+   * @param options.onCaptureDelay - Callback with the audio held in the worker, in ms
+   *   (tab+PCM with video sync only)
    * @returns A new StreamSession configured for tab audio capture
    */
   static forTabCapture(
@@ -220,6 +225,7 @@ export class StreamSession {
       keepTabAudible?: boolean;
       onHealthChanged?: (health: { degraded: boolean; detectedAt: number }) => void;
       onError?: (error: string, reason?: string, params?: ErrorParams) => void;
+      onCaptureDelay?: (ms: number) => void;
     },
   ): StreamSession {
     return new StreamSession({
@@ -231,6 +237,7 @@ export class StreamSession {
       onError: options?.onError,
       keepTabAudible: options?.keepTabAudible,
       onHealthChanged: options?.onHealthChanged,
+      onCaptureDelay: options?.onCaptureDelay,
     });
   }
 
@@ -273,6 +280,7 @@ export class StreamSession {
    * @param config.onDisconnected - Optional callback when worker WebSocket disconnects
    * @param config.onError - Optional callback when the capture fails partway
    * @param config.onHealthChanged - Capture-health transition callback (tab capture + PCM only)
+   * @param config.onCaptureDelay - Audio held in the worker, in ms (tab + PCM with video sync only)
    * @param config.keepTabAudible - Play audio at low volume to prevent Chrome throttling (tab capture only)
    * @param config.browserName - Browser executable name for PID lookup (browser capture only)
    */
@@ -284,6 +292,7 @@ export class StreamSession {
     onDisconnected?: () => void;
     onError?: (error: string, reason?: string, params?: ErrorParams) => void;
     onHealthChanged?: (health: { degraded: boolean; detectedAt: number }) => void;
+    onCaptureDelay?: (ms: number) => void;
     keepTabAudible?: boolean;
     browserName?: string;
   }) {
@@ -294,6 +303,7 @@ export class StreamSession {
     this.onDisconnected = config.onDisconnected;
     this.onError = config.onError;
     this.onHealthChanged = config.onHealthChanged;
+    this.onCaptureDelay = config.onCaptureDelay;
     this.keepTabAudible = config.keepTabAudible ?? false;
     this.browserName = config.browserName;
 
@@ -714,6 +724,10 @@ export class StreamSession {
           break;
         }
 
+        case 'CAPTURE_DELAY':
+          this.onCaptureDelay?.(msg.ms);
+          break;
+
         case 'METRICS_DUMP':
           log.info('Pipeline metrics timeline', { timeline: JSON.stringify(msg.timeline) });
           this.terminateWorkerNow();
@@ -840,6 +854,7 @@ export class StreamSession {
     // tick in the 500ms window could otherwise fire a rising-edge event for
     // a session we're already replacing.
     this.onHealthChanged = undefined;
+    this.onCaptureDelay = undefined;
 
     if (this.consumerWorker) {
       this.consumerWorker.postMessage({ type: 'STOP' });
