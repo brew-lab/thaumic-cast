@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'preact/hooks';
+import { z } from 'zod';
 import { VideoSyncStatusSchema, type VideoSyncStatus } from '@thaumic-cast/protocol';
 import { VideoSyncStateChangedMessageSchema } from '../../lib/message-schemas';
 import { noop } from '../../lib/noop';
@@ -7,13 +8,22 @@ import { useChromeMessage } from './useChromeMessage';
 /** Debounce interval for the trim slider (ms). */
 const TRIM_DEBOUNCE_MS = 300;
 
-/** What the card shows until the background answers. */
-const INITIAL_STATUS: VideoSyncStatus = { enabled: true, state: 'locking', trimMs: 0 };
+/**
+ * What the card holds until the background answers, or when it answers that
+ * the cast has no video sync running: the toggle as the cast started, and
+ * no state to show.
+ */
+const UNKNOWN_STATUS: VideoSyncStatus = { enabled: true, state: 'off', trimMs: 0 };
+
+/** The background's answer to a video sync control message. */
+const StatusAnswerSchema = z.object({ status: VideoSyncStatusSchema.nullable() });
 
 /**
  * Result of the useVideoSyncState hook.
  */
 interface VideoSyncStateResult extends VideoSyncStatus {
+  /** The background has a running video sync for this cast, so its state can be shown */
+  known: boolean;
   /** Switch video sync on or off for this cast */
   setEnabled: (enabled: boolean) => void;
   /** Set the trim for the followed speaker, in ms */
@@ -25,13 +35,14 @@ interface VideoSyncStateResult extends VideoSyncStatus {
 }
 
 /**
- * Reads a status the background answered with.
+ * Reads the status the background answered with.
  * @param response - Whatever came back
- * @returns The status, or null when it is not one
+ * @returns The status, null when the cast has no video sync running, or
+ *   undefined when the answer is not one
  */
-function readStatus(response: unknown): VideoSyncStatus | null {
-  const parsed = VideoSyncStatusSchema.safeParse(response);
-  return parsed.success ? parsed.data : null;
+function readStatus(response: unknown): VideoSyncStatus | null | undefined {
+  const parsed = StatusAnswerSchema.safeParse(response);
+  return parsed.success ? parsed.data.status : undefined;
 }
 
 /**
@@ -41,8 +52,20 @@ function readStatus(response: unknown): VideoSyncStatus | null {
  * @returns Video sync status and control functions
  */
 export function useVideoSyncState(tabId: number | undefined): VideoSyncStateResult {
-  const [status, setStatus] = useState<VideoSyncStatus>(INITIAL_STATUS);
+  const [status, setStatus] = useState<VideoSyncStatus | null>(null);
   const trimDebounceRef = useRef<ReturnType<typeof setTimeout>>();
+  /** A trim the user set that the background has not answered for yet. */
+  const pendingTrimRef = useRef<number | null>(null);
+
+  /**
+   * Takes a status from the background, keeping a trim still on its way
+   * there, so the slider does not jump back mid-drag.
+   * @param next - The status, or null for no video sync running
+   */
+  const take = useCallback((next: VideoSyncStatus | null) => {
+    const pending = pendingTrimRef.current;
+    setStatus(next && pending !== null ? { ...next, trimMs: pending } : next);
+  }, []);
 
   useEffect(() => {
     if (!tabId) return;
@@ -50,10 +73,10 @@ export function useVideoSyncState(tabId: number | undefined): VideoSyncStateResu
       .sendMessage({ type: 'GET_VIDEO_SYNC_STATE', payload: { tabId } })
       .then((response: unknown) => {
         const next = readStatus(response);
-        if (next) setStatus(next);
+        if (next !== undefined) take(next);
       })
       .catch(noop);
-  }, [tabId]);
+  }, [tabId, take]);
 
   useEffect(() => () => clearTimeout(trimDebounceRef.current), []);
 
@@ -61,29 +84,33 @@ export function useVideoSyncState(tabId: number | undefined): VideoSyncStateResu
     (message) => {
       if (!tabId) return;
       const parsed = VideoSyncStateChangedMessageSchema.safeParse(message);
-      if (parsed.success && parsed.data.tabId === tabId) setStatus(parsed.data.status);
+      if (parsed.success && parsed.data.tabId === tabId) take(parsed.data.status);
     },
-    [tabId],
+    [tabId, take],
   );
 
   /**
    * Sends a control message and takes the status it answers with.
    * @param message - The message
    */
-  const send = useCallback((message: object) => {
-    chrome.runtime
-      .sendMessage(message)
-      .then((response: unknown) => {
-        const next = readStatus(response);
-        if (next) setStatus(next);
-      })
-      .catch(noop);
-  }, []);
+  const send = useCallback(
+    (message: object, onAnswer?: () => void) => {
+      chrome.runtime
+        .sendMessage(message)
+        .then((response: unknown) => {
+          onAnswer?.();
+          const next = readStatus(response);
+          if (next !== undefined) take(next);
+        })
+        .catch(onAnswer ?? noop);
+    },
+    [take],
+  );
 
   const setEnabled = useCallback(
     (enabled: boolean) => {
       if (!tabId) return;
-      setStatus((s) => ({ ...s, enabled, state: enabled ? 'locking' : 'off' }));
+      setStatus((s) => (s ? { ...s, enabled, state: enabled ? 'locking' : 'off' } : s));
       send({ type: 'SET_VIDEO_SYNC_ENABLED', payload: { tabId, enabled } });
     },
     [tabId, send],
@@ -92,10 +119,14 @@ export function useVideoSyncState(tabId: number | undefined): VideoSyncStateResu
   const setTrim = useCallback(
     (trimMs: number) => {
       if (!tabId) return;
-      setStatus((s) => ({ ...s, trimMs }));
+      pendingTrimRef.current = trimMs;
+      setStatus((s) => (s ? { ...s, trimMs } : s));
       clearTimeout(trimDebounceRef.current);
       trimDebounceRef.current = setTimeout(() => {
-        send({ type: 'SET_VIDEO_SYNC_TRIM', payload: { tabId, trimMs } });
+        send({ type: 'SET_VIDEO_SYNC_TRIM', payload: { tabId, trimMs } }, () => {
+          // A later move of the slider has its own send on the way.
+          if (pendingTrimRef.current === trimMs) pendingTrimRef.current = null;
+        });
       }, TRIM_DEBOUNCE_MS);
     },
     [tabId, send],
@@ -111,5 +142,12 @@ export function useVideoSyncState(tabId: number | undefined): VideoSyncStateResu
     chrome.tabs.reload(tabId).catch(noop);
   }, [tabId]);
 
-  return { ...status, setEnabled, setTrim, tryAgain, reloadPage };
+  return {
+    ...(status ?? UNKNOWN_STATUS),
+    known: status !== null,
+    setEnabled,
+    setTrim,
+    tryAgain,
+    reloadPage,
+  };
 }

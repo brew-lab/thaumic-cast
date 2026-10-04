@@ -17,7 +17,9 @@
  * when the estimate moves by more than {@link LEAD_STEP_THRESHOLD_MS} (at most
  * once every {@link LEAD_STEP_MIN_INTERVAL_MS}), and at once when the
  * estimate's epoch steps, the trim changes or video sync is switched on.
- * Losing the measurement keeps the lead where it is.
+ * Losing the measurement keeps the lead where it is. The first lead waits
+ * up to {@link CAPTURE_DELAY_FIRST_WAIT_MS} for a capture-delay sample, so it
+ * does not go out short and jump again a few seconds later.
  *
  * This module is pure: the caller passes the time in and sends what
  * {@link LeadController.next} and {@link LeadController.keepAlive} return.
@@ -57,6 +59,13 @@ export const CAPTURE_DELAY_WINDOW_MS = 10_000;
 export const COMPANION_OLD_AFTER_EVENTS = 15;
 
 /**
+ * How long the first lead waits for a capture-delay sample, in ms. The
+ * offscreen document reports one a second; without one the lead would go
+ * out short and then jump again once the delay arrived.
+ */
+export const CAPTURE_DELAY_FIRST_WAIT_MS = 3000;
+
+/**
  * How far the hook's applied lead may sit from the lead sent and still count
  * as the same, in ms (whole-frame rounding on encrypted audio: 900 → 896).
  */
@@ -91,7 +100,9 @@ export interface CastFacts {
  * The speaker whose delay the lead follows.
  */
 export interface FollowedSpeaker {
+  /** The speaker's address. */
   ip: string;
+  /** Its display name. */
   name: string;
   /** The user's trim for it, in ms. */
   trimMs: number;
@@ -101,6 +112,7 @@ export interface FollowedSpeaker {
  * A lead to send to every frame of the tab.
  */
 export interface LeadCommand {
+  /** Whether a lead is wanted at all; false takes it off every frame. */
   enabled: boolean;
   /** Lead in ms of wall time. */
   leadMs: number;
@@ -126,6 +138,11 @@ export interface ReachResult {
   reached: boolean;
   /** The extension holds the host permission the page scripts need. */
   access: boolean;
+  /**
+   * The page is one the scripts can enter, so a reload would give it them
+   * (not chrome://, the Web Store or a local file).
+   */
+  scriptable: boolean;
 }
 
 /**
@@ -210,6 +227,10 @@ export class LeadController {
 
   /** Capture-delay samples: [time, ms]. */
   private captureDelays: Array<[number, number]> = [];
+  /** A capture-delay sample has ever arrived. */
+  private everCaptureDelay = false;
+  /** When an estimate was first there to compute a lead from. */
+  private firstTargetAt: number | null = null;
 
   /** The lead last sent while enabled (0 before any). */
   private leadSent = 0;
@@ -303,6 +324,7 @@ export class LeadController {
    * @param now - The time now, in ms
    */
   onCaptureDelay(ms: number, now: number): void {
+    this.everCaptureDelay = true;
     this.captureDelays.push([now, ms]);
     const from = now - CAPTURE_DELAY_WINDOW_MS;
     while (this.captureDelays.length && this.captureDelays[0][0] < from) {
@@ -410,7 +432,14 @@ export class LeadController {
       return { enabled: false, leadMs: 0 };
     }
 
-    const target = this.target(now);
+    let target = this.target(now);
+    if (target !== null) {
+      this.firstTargetAt ??= now;
+      // Give the capture delay a moment to arrive, so the first lead is whole.
+      if (!this.everCaptureDelay && now - this.firstTargetAt < CAPTURE_DELAY_FIRST_WAIT_MS) {
+        target = null;
+      }
+    }
     let send = false;
     if (target !== null) {
       if (this.immediate || !this.hasSentLead) {
@@ -480,10 +509,18 @@ export class LeadController {
     const gate = this.castGate();
     if (gate) return { ...base, state: 'unavailable', reason: gate };
     if (this.reach && !this.reach.reached) {
-      return { ...base, state: 'unavailable', reason: this.reach.access ? 'reload' : 'no-access' };
+      const reason: VideoSyncReason = !this.reach.access
+        ? 'no-access'
+        : this.reach.scriptable
+          ? 'reload'
+          : 'not-web-page';
+      return { ...base, state: 'unavailable', reason };
     }
 
     const frame = pickFrame(this.frames);
+    if (!frame && this.frames.some((f) => f.state === 'no-media')) {
+      return { ...base, state: 'no-video' };
+    }
     if (frame?.state === 'unavailable' && frame.reason && HOOK_UNAVAILABLE.has(frame.reason)) {
       return { ...base, state: 'unavailable', reason: frame.reason as VideoSyncReason };
     }
@@ -492,8 +529,11 @@ export class LeadController {
     }
 
     const measured = !!this.playout && !this.stale && this.playout.source === 'reserve';
+    // A lead of 0 (the estimate clamped there) leaves the hook 'ready'.
+    const atLead = frame?.state === 'applied' || (frame?.state === 'ready' && this.leadSent === 0);
     const applied =
-      frame?.state === 'applied' &&
+      !!frame &&
+      atLead &&
       this.hasSentLead &&
       Math.abs(frame.appliedLeadMs - this.leadSent) <= LEAD_MATCH_TOLERANCE_MS;
     return { ...base, state: measured && applied ? 'in-step' : 'locking' };

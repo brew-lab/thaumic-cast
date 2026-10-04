@@ -66,8 +66,14 @@ export const scriptingCalls: { op: 'register' | 'update' | 'unregister'; ids: st
 export const grantedOrigins = new Set<string>();
 
 /**
- * Empties every storage area, recorded message list, script registration
- * and granted origin.
+ * Each tab's address as `chrome.tabs.get` reports it; a tab left out has
+ * none, as Chrome reports a page outside the granted hosts.
+ */
+export const tabUrls = new Map<number, string>();
+
+/**
+ * Empties every storage area, recorded message list, script registration,
+ * granted origin and tab address.
  * Call from `beforeEach` in tests that read the stub's state.
  */
 export function resetChromeStub(): void {
@@ -79,6 +85,7 @@ export function resetChromeStub(): void {
   registeredScripts.clear();
   scriptingCalls.length = 0;
   grantedOrigins.clear();
+  tabUrls.clear();
 }
 
 const chromeStub = {
@@ -97,6 +104,9 @@ const chromeStub = {
       tabMessages.push({ tabId, message });
     },
     async update(): Promise<void> {},
+    async get(tabId: number): Promise<{ id: number; url?: string }> {
+      return { id: tabId, url: tabUrls.get(tabId) };
+    },
   },
   scripting: {
     async getRegisteredContentScripts(filter?: {

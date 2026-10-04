@@ -6,6 +6,12 @@
  * worker already keeps: the frame accumulator (samples not yet a whole
  * frame), the frame queue (frames held back while the socket is busy) and
  * the socket's own send buffer. Reading them allocates nothing.
+ *
+ * Not counted: AudioData waiting in the track processor's own queue. When the
+ * socket backs up, the read loop's backoff stops reading for a while and
+ * audio waits there instead, so under backpressure this reads low, by up to
+ * the backoff, exactly when the delay is largest. Measuring each AudioData's
+ * age against its timestamp would cover it; it is left out for now.
  */
 
 /** Interval between capture-delay reports, in ms. */

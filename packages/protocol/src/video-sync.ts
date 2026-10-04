@@ -14,6 +14,8 @@ import { PlayoutSourceSchema } from './events.js';
  *   a lead may already be in force.
  * - `in-step`: the speaker's delay is measured and the page plays its sound
  *   that much early.
+ * - `no-video`: the page answered but nothing in it is playing through a
+ *   player video sync can work with yet.
  * - `unavailable`: this page or cast cannot be synced (see the reason).
  * - `turned-off`: the page's player turned the lead off after trouble (see
  *   the reason) until asked to try again.
@@ -22,9 +24,11 @@ export const VideoSyncPhaseSchema = z.enum([
   'off',
   'locking',
   'in-step',
+  'no-video',
   'unavailable',
   'turned-off',
 ]);
+/** Where video sync stands for one cast (see {@link VideoSyncPhaseSchema}). */
 export type VideoSyncPhase = z.infer<typeof VideoSyncPhaseSchema>;
 
 /**
@@ -39,6 +43,8 @@ export type VideoSyncPhase = z.infer<typeof VideoSyncPhaseSchema>;
  * - `browser-capture`: the cast captures the whole browser, not this tab.
  * - `reload`: the page was open before video sync was on.
  * - `no-access`: Chrome has not let video sync onto websites.
+ * - `not-web-page`: the tab shows a page no extension may enter (a browser
+ *   page, the Web Store, a local file), so a reload would not help.
  * - `freeze`: the video stuck after the sound moved, so it moved back.
  * - `live-edge`: the broadcast is too near live to play the sound early.
  */
@@ -52,9 +58,11 @@ export const VideoSyncReasonSchema = z.enum([
   'browser-capture',
   'reload',
   'no-access',
+  'not-web-page',
   'freeze',
   'live-edge',
 ]);
+/** Why video sync is unavailable or turned off (see {@link VideoSyncReasonSchema}). */
 export type VideoSyncReason = z.infer<typeof VideoSyncReasonSchema>;
 
 /**
@@ -79,4 +87,5 @@ export const VideoSyncStatusSchema = z.object({
   /** Where the companion's estimate of the speaker's delay came from */
   source: PlayoutSourceSchema.optional(),
 });
+/** Video sync status for popup display (see {@link VideoSyncStatusSchema}). */
 export type VideoSyncStatus = z.infer<typeof VideoSyncStatusSchema>;

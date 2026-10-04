@@ -78,6 +78,9 @@ const pending = new Map<number, Promise<Entry | null>>();
 /** Sends one command at a time per tab, in order. */
 const sendQueues = new Map<number, Promise<unknown>>();
 
+/** The lead that takes the lead off. */
+const LEAD_OFF: LeadCommand = { enabled: false, leadMs: 0 };
+
 /** Stops the hook-status subscription (tests). */
 let unsubscribe: (() => void) | null = null;
 
@@ -156,7 +159,9 @@ async function ensureEntry(tabId: number): Promise<Entry | null> {
   const session = getSession(tabId);
   const existing = entries.get(tabId);
   if (existing && session && existing.streamId === session.streamId) return existing;
-  if (existing) dispose(existing);
+  // The cast this entry ran for is gone (ended without stopVideoSync, say
+  // by disconnection or losing its last speaker): take its lead off first.
+  if (existing) void retire(existing);
   if (!session?.videoSync || stoppedStreams.has(session.streamId)) return null;
 
   const inFlight = pending.get(tabId);
@@ -219,27 +224,91 @@ function dispose(entry: Entry): void {
 }
 
 /**
+ * Runs a job on a tab's send queue, after every job queued before it. Every
+ * lead a tab hears goes through here, so a lead of 0 queued as a cast stops
+ * cannot be overtaken by a lead queued earlier.
+ * @param tabId - The tab
+ * @param job - The job
+ * @returns Resolves once the job has run
+ */
+function enqueue(tabId: number, job: () => Promise<void>): Promise<void> {
+  const prev = sendQueues.get(tabId) ?? Promise.resolve();
+  const run = prev.then(job);
+  const tail = run.catch(() => undefined);
+  sendQueues.set(tabId, tail);
+  void tail.then(() => {
+    if (sendQueues.get(tabId) === tail) sendQueues.delete(tabId);
+  });
+  return run;
+}
+
+/**
+ * Whether the extension could have put its scripts into a tab: a web page it
+ * holds access to. Without the tabs permission Chrome hides the address of
+ * any page outside the granted hosts, so a missing address means a page no
+ * script can enter (chrome://, the Web Store, a local file).
+ * @param tabId - The tab
+ * @returns True when the page is one a reload would give the scripts
+ */
+async function isScriptablePage(tabId: number): Promise<boolean> {
+  try {
+    const url = (await chrome.tabs.get(tabId)).url;
+    if (!url) return false;
+    const { protocol, hostname, pathname } = new URL(url);
+    if (protocol !== 'http:' && protocol !== 'https:') return false;
+    if (hostname === 'chromewebstore.google.com') return false;
+    if (hostname === 'chrome.google.com' && pathname.startsWith('/webstore')) return false;
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Sends a command to the tab, one at a time, and records whether it got there.
+ * A command queued for an entry that has since been retired is dropped.
  * @param entry - The entry
  * @param cmd - The command, or null for nothing
  * @returns Resolves once sent
  */
 function send(entry: Entry, cmd: LeadCommand | null): Promise<void> {
   if (!cmd) return Promise.resolve();
-  const prev = sendQueues.get(entry.tabId) ?? Promise.resolve();
-  const run = prev.then(async () => {
-    const res = await setTabLead(entry.tabId, cmd);
-    const access = res.reached ? true : await hasVideoSyncHostAccess();
+  return enqueue(entry.tabId, async () => {
     if (entries.get(entry.tabId) !== entry) return;
-    entry.controller.onReach({ reached: res.reached, access });
+    const res = await setTabLead(entry.tabId, cmd);
+    let access = true;
+    let scriptable = true;
+    if (!res.reached) {
+      access = await hasVideoSyncHostAccess();
+      scriptable = access && (await isScriptablePage(entry.tabId));
+    }
+    if (entries.get(entry.tabId) !== entry) return;
+    entry.controller.onReach({ reached: res.reached, access, scriptable });
     publish(entry);
   });
-  const tail = run.catch(() => undefined);
-  sendQueues.set(entry.tabId, tail);
-  void tail.then(() => {
-    if (sendQueues.get(entry.tabId) === tail) sendQueues.delete(entry.tabId);
+}
+
+/**
+ * Sends a lead of 0 to a tab through its send queue, whatever entry it has.
+ * @param tabId - The tab
+ * @returns Resolves once sent
+ */
+function sendLeadOff(tabId: number): Promise<void> {
+  return enqueue(tabId, async () => {
+    await setTabLead(tabId, LEAD_OFF);
   });
-  return run;
+}
+
+/**
+ * Ends an entry whose cast is gone: forgets it, clears its stored lead and
+ * takes the lead off the tab after anything already queued.
+ * @param entry - The entry
+ * @returns Resolves once the lead of 0 is sent
+ */
+function retire(entry: Entry): Promise<void> {
+  dispose(entry);
+  void writeLead(entry.tabId, entry.streamId, null);
+  return sendLeadOff(entry.tabId);
 }
 
 /**
@@ -248,6 +317,7 @@ function send(entry: Entry, cmd: LeadCommand | null): Promise<void> {
  * @param entry - The entry
  */
 function pump(entry: Entry): void {
+  if (entries.get(entry.tabId) !== entry) return;
   const cmd = entry.controller.next(Date.now());
   if (cmd) {
     log.info(
@@ -266,16 +336,17 @@ function pump(entry: Entry): void {
  * @param entry - The entry
  */
 async function refresh(entry: Entry): Promise<void> {
+  if (entries.get(entry.tabId) !== entry) return;
   const session = getSession(entry.tabId);
   if (!session || session.streamId !== entry.streamId) {
-    dispose(entry);
-    void writeLead(entry.tabId, entry.streamId, null);
-    await setTabLead(entry.tabId, { enabled: false, leadMs: 0 });
+    await retire(entry);
     return;
   }
   const first = firstSpeaker(session);
   if (first && first.ip !== entry.controller.followed().ip) {
     const trimMs = await loadSpeakerTrim(first.ip, getSonosState().groups);
+    // The cast may have stopped while the trim was read.
+    if (entries.get(entry.tabId) !== entry) return;
     entry.controller.follow({ ...first, trimMs });
   }
   pump(entry);
@@ -359,6 +430,8 @@ export async function setVideoSyncTrim(
   if (!entry) return null;
   const speaker: FollowedSpeaker = entry.controller.followed();
   const stored = await saveSpeakerTrim(speaker.ip, getSonosState().groups, trimMs);
+  // Kept for the speaker either way; applied only if the cast still runs.
+  if (entries.get(tabId) !== entry) return null;
   entry.controller.setTrim(stored);
   pump(entry);
   return entry.controller.status();
@@ -402,11 +475,9 @@ export async function stopVideoSync(tabId: number): Promise<void> {
     }
   }
   const entry = entries.get(tabId);
-  if (entry) {
-    dispose(entry);
-    void writeLead(tabId, entry.streamId, null);
-  }
-  await setTabLead(tabId, { enabled: false, leadMs: 0 });
+  // Retiring the entry first means any lead still queued for it is dropped,
+  // and the lead of 0 goes after whatever is already on its way.
+  await (entry ? retire(entry) : sendLeadOff(tabId));
   forgetTab(tabId);
 }
 
