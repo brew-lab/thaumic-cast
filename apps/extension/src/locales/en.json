@@ -209,6 +209,7 @@
   "video_sync_enable": "Video sync",
   "video_sync_description": "Adds a control to each cast that holds the picture back until the speakers catch up. Without it, a film's lips finish before its words start.",
   "video_sync_next_cast": "Takes effect when you next start a cast.",
+  "video_sync_needs_access": "Video sync works inside each site's own player, so Chrome has to let it onto every site. Until it does, video sync does nothing, and switching it on asks again.",
   "keep_tab_audible_enable": "Keep the tab awake",
   "keep_tab_audible_description": "Plays the tab's audio back on this computer, too quietly to hear. Chrome throttles a silent tab, and a throttled tab sends audio late. Takes effect when you next start a cast.",
   "keep_tab_audible_browser_capture_note": "Browser-wide capture is on, and it takes no audio from the tab, so there is nothing here to keep awake. The choice is kept for when browser-wide capture is off.",

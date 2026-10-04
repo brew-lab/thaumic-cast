@@ -12,6 +12,8 @@ import {
   StopCastMessageSchema,
   TabIdSchema,
   TopologyEventMessageSchema,
+  VideoSyncHookStatusMessageSchema,
+  VideoSyncLeadMessageSchema,
   VolumeSchema,
   WsConnectedMessageSchema,
   WsStateChangedMessageSchema,
@@ -350,5 +352,31 @@ describe('ExtensionResponseSchema', () => {
       errorParams: { max: { nested: true } },
     });
     expect(result.success).toBe(false);
+  });
+});
+
+describe('video sync lead and hook status', () => {
+  it('should accept a lead within 0..6000 ms and nothing extra', () => {
+    const lead = { type: 'VIDEO_SYNC_LEAD', enabled: true, leadMs: 900 };
+    expect(VideoSyncLeadMessageSchema.safeParse(lead).success).toBe(true);
+    expect(VideoSyncLeadMessageSchema.safeParse({ ...lead, rearm: true }).success).toBe(true);
+    expect(VideoSyncLeadMessageSchema.safeParse({ ...lead, leadMs: 6001 }).success).toBe(false);
+    expect(VideoSyncLeadMessageSchema.safeParse({ ...lead, leadMs: -1 }).success).toBe(false);
+    expect(VideoSyncLeadMessageSchema.safeParse({ ...lead, tabId: 4 }).success).toBe(false);
+  });
+
+  it('should accept only the states and reasons the hook knows', () => {
+    const msg = (status: Record<string, unknown>) => ({ type: 'VIDEO_SYNC_HOOK_STATUS', status });
+    const ok = { state: 'unavailable', reason: 'muxed', appliedLeadMs: 0, playing: true };
+    expect(VideoSyncHookStatusMessageSchema.safeParse(msg(ok)).success).toBe(true);
+    expect(VideoSyncHookStatusMessageSchema.safeParse(msg({ ...ok, state: 'great' })).success).toBe(
+      false,
+    );
+    expect(
+      VideoSyncHookStatusMessageSchema.safeParse(msg({ ...ok, reason: 'because' })).success,
+    ).toBe(false);
+    expect(VideoSyncHookStatusMessageSchema.safeParse(msg({ ...ok, url: 'x' })).success).toBe(
+      false,
+    );
   });
 });

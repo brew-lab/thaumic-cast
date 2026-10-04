@@ -1,11 +1,12 @@
 import type { JSX } from 'preact';
-import { useCallback } from 'preact/hooks';
+import { useCallback, useEffect, useState } from 'preact/hooks';
 import { useTranslation } from 'react-i18next';
 import type { AppType } from '@thaumic-cast/protocol';
 import { Card } from '@thaumic-cast/ui';
 import type { CompanionCapability } from '../../lib/audio-resolver';
 import { captureToggleState } from '../../lib/capture-capability';
 import { isWindowsPlatform, type ExtensionSettings } from '../../lib/settings';
+import { hasVideoSyncHostAccess, requestVideoSyncHostAccess } from '../../lib/video-sync-access';
 import styles from '../Options.module.css';
 
 interface AdvancedSectionProps {
@@ -43,8 +44,31 @@ export function AdvancedSection({
   const browserWide = settings.captureMode === 'browser';
   const captureToggle = captureToggleState(settings.captureMode, appType, capability);
 
+  // Video sync works inside each site's player, which needs the all-sites
+  // permission: asked for when it is turned on (the click is the gesture the
+  // prompt needs). Without it the setting stays off, or, when it was on
+  // before the grant was needed or was withdrawn, a note says so.
+  const [videoSyncNeedsAccess, setVideoSyncNeedsAccess] = useState(false);
+  useEffect(() => {
+    if (!settings.videoSyncEnabled) return;
+    let live = true;
+    void hasVideoSyncHostAccess().then((ok) => {
+      if (live) setVideoSyncNeedsAccess(!ok);
+    });
+    return () => {
+      live = false;
+    };
+  }, [settings.videoSyncEnabled]);
+
   const handleVideoSyncToggle = useCallback(async () => {
-    await onUpdate({ videoSyncEnabled: !settings.videoSyncEnabled });
+    if (settings.videoSyncEnabled) {
+      setVideoSyncNeedsAccess(false);
+      await onUpdate({ videoSyncEnabled: false });
+      return;
+    }
+    const granted = await requestVideoSyncHostAccess();
+    setVideoSyncNeedsAccess(!granted);
+    if (granted) await onUpdate({ videoSyncEnabled: true });
   }, [settings.videoSyncEnabled, onUpdate]);
 
   const handleKeepTabAudibleToggle = useCallback(async () => {
@@ -68,7 +92,11 @@ export function AdvancedSection({
             className={styles.radioInput}
             checked={settings.videoSyncEnabled}
             onChange={handleVideoSyncToggle}
-            aria-describedby="video-sync-desc video-sync-note"
+            aria-describedby={
+              videoSyncNeedsAccess
+                ? 'video-sync-desc video-sync-note video-sync-access'
+                : 'video-sync-desc video-sync-note'
+            }
           />
           <div className={styles.radioContent}>
             <span className={styles.radioLabel}>{t('video_sync_enable')}</span>
@@ -78,6 +106,11 @@ export function AdvancedSection({
             <span id="video-sync-note" className={styles.radioNote}>
               {t('video_sync_next_cast')}
             </span>
+            {videoSyncNeedsAccess && (
+              <span id="video-sync-access" className={styles.radioNote}>
+                {t('video_sync_needs_access')}
+              </span>
+            )}
           </div>
         </label>
 
