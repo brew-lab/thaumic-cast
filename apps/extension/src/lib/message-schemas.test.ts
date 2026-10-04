@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'bun:test';
 
 import {
+  CaptureDelayMessageSchema,
   CastAutoStoppedMessageSchema,
   ExtensionResponseSchema,
   NetworkEventMessageSchema,
@@ -14,6 +15,9 @@ import {
   TopologyEventMessageSchema,
   VideoSyncHookStatusMessageSchema,
   VideoSyncLeadMessageSchema,
+  SetVideoSyncTrimMessageSchema,
+  VideoSyncRearmMessageSchema,
+  VideoSyncStateChangedMessageSchema,
   VolumeSchema,
   WsConnectedMessageSchema,
   WsStateChangedMessageSchema,
@@ -378,5 +382,57 @@ describe('video sync lead and hook status', () => {
     expect(VideoSyncHookStatusMessageSchema.safeParse(msg({ ...ok, url: 'x' })).success).toBe(
       false,
     );
+  });
+});
+
+describe('video sync controls and status', () => {
+  it('should accept a trim on the slider range only', () => {
+    const msg = (trimMs: number) => ({
+      type: 'SET_VIDEO_SYNC_TRIM',
+      payload: { tabId: 3, trimMs },
+    });
+    expect(SetVideoSyncTrimMessageSchema.safeParse(msg(-500)).success).toBe(true);
+    expect(SetVideoSyncTrimMessageSchema.safeParse(msg(500)).success).toBe(true);
+    expect(SetVideoSyncTrimMessageSchema.safeParse(msg(510)).success).toBe(false);
+    expect(SetVideoSyncTrimMessageSchema.safeParse(msg(12.5)).success).toBe(false);
+  });
+
+  it('should accept a rearm for a tab', () => {
+    expect(
+      VideoSyncRearmMessageSchema.safeParse({ type: 'VIDEO_SYNC_REARM', payload: { tabId: 3 } })
+        .success,
+    ).toBe(true);
+  });
+
+  it('should carry the status with its tab', () => {
+    const status = {
+      enabled: true,
+      state: 'unavailable',
+      reason: 'reload',
+      speakerIp: SPEAKER,
+      speakerName: 'Kitchen',
+      trimMs: 20,
+    };
+    const msg = { type: 'VIDEO_SYNC_STATE_CHANGED', tabId: 3, status };
+    expect(VideoSyncStateChangedMessageSchema.safeParse(msg).success).toBe(true);
+    expect(
+      VideoSyncStateChangedMessageSchema.safeParse({
+        ...msg,
+        status: { ...status, state: 'locked' },
+      }).success,
+    ).toBe(false);
+    expect(
+      VideoSyncStateChangedMessageSchema.safeParse({
+        ...msg,
+        status: { ...status, reason: 'because' },
+      }).success,
+    ).toBe(false);
+  });
+
+  it('should accept a capture delay in range', () => {
+    const msg = (ms: number) => ({ type: 'CAPTURE_DELAY', tabId: 3, ms });
+    expect(CaptureDelayMessageSchema.safeParse(msg(25)).success).toBe(true);
+    expect(CaptureDelayMessageSchema.safeParse(msg(-1)).success).toBe(false);
+    expect(CaptureDelayMessageSchema.safeParse(msg(Number.POSITIVE_INFINITY)).success).toBe(false);
   });
 });

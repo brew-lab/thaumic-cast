@@ -52,6 +52,7 @@ import { noop } from '../lib/noop';
 import { syncVideoSyncScripts } from './video-sync/registration';
 import { VIDEO_SYNC_ORIGINS } from '../lib/video-sync-access';
 import { forgetTab } from './video-sync/lead-api';
+import { initVideoSyncService } from './video-sync/service';
 
 const log = createLogger('Background');
 
@@ -64,6 +65,7 @@ registerMetadataRoutes();
 registerConnectionRoutes();
 registerSonosRoutes();
 registerVideoSyncRoutes();
+initVideoSyncService();
 registerOffscreenRoutes();
 
 // ─────────────────────────────────────────────────────────────────────────────

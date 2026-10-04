@@ -1,108 +1,115 @@
 import { useState, useEffect, useCallback, useRef } from 'preact/hooks';
-import type { VideoSyncStatus } from '@thaumic-cast/protocol';
-import type { VideoSyncStateChangedMessage } from '../../lib/messages';
+import { VideoSyncStatusSchema, type VideoSyncStatus } from '@thaumic-cast/protocol';
+import { VideoSyncStateChangedMessageSchema } from '../../lib/message-schemas';
 import { noop } from '../../lib/noop';
 import { useChromeMessage } from './useChromeMessage';
 
-/** Debounce interval for trim slider (ms) */
-const TRIM_DEBOUNCE_MS = 100;
+/** Debounce interval for the trim slider (ms). */
+const TRIM_DEBOUNCE_MS = 300;
+
+/** What the card shows until the background answers. */
+const INITIAL_STATUS: VideoSyncStatus = { enabled: true, state: 'locking', trimMs: 0 };
 
 /**
  * Result of the useVideoSyncState hook.
  */
 interface VideoSyncStateResult extends VideoSyncStatus {
-  /** Enable or disable video sync */
+  /** Switch video sync on or off for this cast */
   setEnabled: (enabled: boolean) => void;
-  /** Set the trim adjustment in milliseconds */
+  /** Set the trim for the followed speaker, in ms */
   setTrim: (trimMs: number) => void;
-  /** Trigger a manual resync */
-  resync: () => void;
+  /** Ask the page's player to try the early sound again after it turned it off */
+  tryAgain: () => void;
+  /** Reload the cast's tab, so the page gets the video sync scripts */
+  reloadPage: () => void;
 }
 
 /**
- * Hook for video sync state with real-time updates.
- * Communicates with content script via background.
- * @param tabId - The tab ID to sync (undefined if no active cast)
- * @returns Video sync state and control functions
+ * Reads a status the background answered with.
+ * @param response - Whatever came back
+ * @returns The status, or null when it is not one
+ */
+function readStatus(response: unknown): VideoSyncStatus | null {
+  const parsed = VideoSyncStatusSchema.safeParse(response);
+  return parsed.success ? parsed.data : null;
+}
+
+/**
+ * Hook for a cast's video sync status, kept by the background's lead
+ * controller, with real-time updates and the card's controls.
+ * @param tabId - The cast's tab (undefined for a cast without video sync)
+ * @returns Video sync status and control functions
  */
 export function useVideoSyncState(tabId: number | undefined): VideoSyncStateResult {
-  const [state, setState] = useState<VideoSyncStatus>({
-    enabled: false,
-    trimMs: 0,
-    state: 'off',
-  });
-
+  const [status, setStatus] = useState<VideoSyncStatus>(INITIAL_STATUS);
   const trimDebounceRef = useRef<ReturnType<typeof setTimeout>>();
 
   useEffect(() => {
     if (!tabId) return;
-
     chrome.runtime
       .sendMessage({ type: 'GET_VIDEO_SYNC_STATE', payload: { tabId } })
-      .then((response: VideoSyncStatus | undefined) => {
-        if (response) setState(response);
+      .then((response: unknown) => {
+        const next = readStatus(response);
+        if (next) setStatus(next);
       })
       .catch(noop);
   }, [tabId]);
 
+  useEffect(() => () => clearTimeout(trimDebounceRef.current), []);
+
   useChromeMessage(
     (message) => {
       if (!tabId) return;
-      const msg = message as { type: string };
-      if (msg.type === 'VIDEO_SYNC_STATE_CHANGED') {
-        const stateMsg = message as VideoSyncStateChangedMessage;
-        setState({
-          enabled: stateMsg.enabled,
-          trimMs: stateMsg.trimMs,
-          state: stateMsg.state,
-          lockedLatencyMs: stateMsg.lockedLatencyMs,
-        });
-      }
+      const parsed = VideoSyncStateChangedMessageSchema.safeParse(message);
+      if (parsed.success && parsed.data.tabId === tabId) setStatus(parsed.data.status);
     },
     [tabId],
   );
 
+  /**
+   * Sends a control message and takes the status it answers with.
+   * @param message - The message
+   */
+  const send = useCallback((message: object) => {
+    chrome.runtime
+      .sendMessage(message)
+      .then((response: unknown) => {
+        const next = readStatus(response);
+        if (next) setStatus(next);
+      })
+      .catch(noop);
+  }, []);
+
   const setEnabled = useCallback(
     (enabled: boolean) => {
       if (!tabId) return;
-      // Optimistic update for immediate feedback
-      setState((s) => ({ ...s, enabled, state: enabled ? 'off' : 'off' }));
-      // Send to content script - it will broadcast the confirmed state back
-      chrome.runtime
-        .sendMessage({ type: 'SET_VIDEO_SYNC_ENABLED', payload: { tabId, enabled } })
-        .catch(() => {
-          // Revert on failure
-          setState((s) => ({ ...s, enabled: !enabled }));
-        });
+      setStatus((s) => ({ ...s, enabled, state: enabled ? 'locking' : 'off' }));
+      send({ type: 'SET_VIDEO_SYNC_ENABLED', payload: { tabId, enabled } });
     },
-    [tabId],
+    [tabId, send],
   );
 
   const setTrim = useCallback(
     (trimMs: number) => {
       if (!tabId) return;
-      // Optimistic update
-      setState((s) => ({ ...s, trimMs }));
-      // Debounce actual message (like VolumeControl)
-      if (trimDebounceRef.current) clearTimeout(trimDebounceRef.current);
+      setStatus((s) => ({ ...s, trimMs }));
+      clearTimeout(trimDebounceRef.current);
       trimDebounceRef.current = setTimeout(() => {
-        chrome.runtime
-          .sendMessage({ type: 'SET_VIDEO_SYNC_TRIM', payload: { tabId, trimMs } })
-          .catch(noop);
+        send({ type: 'SET_VIDEO_SYNC_TRIM', payload: { tabId, trimMs } });
       }, TRIM_DEBOUNCE_MS);
     },
-    [tabId],
+    [tabId, send],
   );
 
-  const resync = useCallback(() => {
+  const tryAgain = useCallback(() => {
     if (!tabId) return;
-    chrome.runtime.sendMessage({ type: 'TRIGGER_RESYNC', payload: { tabId } }).catch(noop);
+    send({ type: 'VIDEO_SYNC_REARM', payload: { tabId } });
+  }, [tabId, send]);
+
+  const reloadPage = useCallback(() => {
+    if (!tabId) return;
+    chrome.tabs.reload(tabId).catch(noop);
   }, [tabId]);
 
-  return {
-    ...state,
-    setEnabled,
-    setTrim,
-    resync,
-  };
+  return { ...status, setEnabled, setTrim, tryAgain, reloadPage };
 }

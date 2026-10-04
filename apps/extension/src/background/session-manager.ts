@@ -84,6 +84,12 @@ interface ActiveCastSession {
    * setting as it stands now, says whether the cast's controls can work.
    */
   videoSync: boolean;
+  /**
+   * Whether video sync is switched on for this cast from its card. Starts on
+   * for a cast started with video sync (the setting is the opt-in), and
+   * means nothing without {@link videoSync}.
+   */
+  videoSyncOn: boolean;
 }
 
 /** In-memory storage of active sessions by tab ID */
@@ -127,6 +133,9 @@ const storage = persistenceManager.register<[number, ActiveCastSession][]>(
         // started, so it gets no video sync controls
         if (session.videoSync === undefined) {
           session.videoSync = false;
+        }
+        if (session.videoSyncOn === undefined) {
+          session.videoSyncOn = session.videoSync;
         }
         return [tabId, session] as [number, ActiveCastSession];
       });
@@ -183,6 +192,7 @@ export function registerSession(
     syncSpeakers,
     captureMode,
     videoSync,
+    videoSyncOn: videoSync,
   });
 
   // Request keep-awake on first session to prevent system throttling
@@ -330,6 +340,22 @@ export function removeSpeakerFromSession(tabId: number, speakerIp: string): bool
   log.info(
     `Removed speaker ${speakerIp} from session for tab ${tabId}, ${session.speakerIps.length} speaker(s) remaining`,
   );
+  return true;
+}
+
+/**
+ * Switches video sync on or off for a cast, from its card.
+ * @param tabId - The tab ID of the session
+ * @param on - On or off
+ * @returns True when the session exists
+ */
+export function setVideoSyncOn(tabId: number, on: boolean): boolean {
+  const session = sessions.get(tabId);
+  if (!session) return false;
+  if (session.videoSyncOn !== on) {
+    session.videoSyncOn = on;
+    persistSessions();
+  }
   return true;
 }
 

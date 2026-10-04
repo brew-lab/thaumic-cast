@@ -192,8 +192,8 @@ export {
   type TriggerResyncMessage,
   GetVideoSyncStateMessageSchema,
   type GetVideoSyncStateMessage,
-  VideoSyncStateSchema,
-  type VideoSyncState,
+  VideoSyncRearmMessageSchema,
+  type VideoSyncRearmMessage,
   VideoSyncStateChangedMessageSchema,
   type VideoSyncStateChangedMessage,
   VideoSyncLeadMessageSchema,
@@ -251,7 +251,6 @@ import type {
   TabOgImageMessage,
   RequestMetadataMessage,
   ContentControlMediaMessage,
-  LatencyEventMessage,
   StartCaptureMessage,
   StopSessionMessage,
   StartBrowserCaptureMessage,
@@ -272,6 +271,7 @@ import type {
   SessionDisconnectedMessage,
   BrowserCaptureErrorMessage,
   CaptureDelayMessage,
+  VideoSyncRearmMessage,
   VideoSyncLeadMessage,
   VideoSyncHookStatusMessage,
 } from './message-schemas';
@@ -301,6 +301,7 @@ export type PopupToBackgroundType =
   | 'SET_VIDEO_SYNC_TRIM'
   | 'TRIGGER_RESYNC'
   | 'GET_VIDEO_SYNC_STATE'
+  | 'VIDEO_SYNC_REARM'
   | 'WS_CONNECT'
   | 'WS_DISCONNECT'
   | 'WS_RECONNECT';
@@ -324,7 +325,8 @@ export type BackgroundToPopupType =
   | 'INGEST_GAPS_CHANGED'
   | 'COMPANION_AUDIO_CHANGED'
   | 'LATENCY_UPDATE'
-  | 'LATENCY_STALE';
+  | 'LATENCY_STALE'
+  | 'VIDEO_SYNC_STATE_CHANGED';
 
 /** Message types: Content → Background */
 export type ContentToBackgroundType =
@@ -333,15 +335,7 @@ export type ContentToBackgroundType =
   | 'VIDEO_SYNC_HOOK_STATUS';
 
 /** Message types: Background → Content */
-export type BackgroundToContentType =
-  | 'REQUEST_METADATA'
-  | 'CONTROL_MEDIA'
-  | 'SET_VIDEO_SYNC_ENABLED'
-  | 'SET_VIDEO_SYNC_TRIM'
-  | 'TRIGGER_RESYNC'
-  | 'GET_VIDEO_SYNC_STATE'
-  | 'LATENCY_EVENT'
-  | 'VIDEO_SYNC_LEAD';
+export type BackgroundToContentType = 'REQUEST_METADATA' | 'CONTROL_MEDIA' | 'VIDEO_SYNC_LEAD';
 
 /** Message types: Background → Offscreen */
 export type BackgroundToOffscreenType =
@@ -373,9 +367,6 @@ export type OffscreenToBackgroundType =
   | 'BROWSER_CAPTURE_ERROR'
   | 'CAPTURE_DELAY';
 
-/** Message types: Content broadcast */
-export type ContentBroadcastType = 'VIDEO_SYNC_STATE_CHANGED';
-
 // ─────────────────────────────────────────────────────────────────────────────
 // Directional Message Union Types
 // ─────────────────────────────────────────────────────────────────────────────
@@ -404,6 +395,7 @@ export type PopupToBackgroundMessage =
   | SetVideoSyncTrimMessage
   | TriggerResyncMessage
   | GetVideoSyncStateMessage
+  | VideoSyncRearmMessage
   | WsConnectMessage
   | WsDisconnectMessage
   | WsReconnectMessage;
@@ -450,11 +442,6 @@ export type ContentToBackgroundMessage =
 export type BackgroundToContentMessage =
   | RequestMetadataMessage
   | ContentControlMediaMessage
-  | SetVideoSyncEnabledMessage
-  | SetVideoSyncTrimMessage
-  | TriggerResyncMessage
-  | GetVideoSyncStateMessage
-  | LatencyEventMessage
   | VideoSyncLeadMessage;
 
 /**
@@ -494,11 +481,6 @@ export type OffscreenToBackgroundMessage =
   | BrowserCaptureErrorMessage
   | CaptureDelayMessage;
 
-/**
- * Messages broadcast from content script (video sync state).
- */
-export type ContentBroadcastMessage = VideoSyncStateChangedMessage;
-
 // ─────────────────────────────────────────────────────────────────────────────
 // Inbound Message Types (for listeners)
 // ─────────────────────────────────────────────────────────────────────────────
@@ -510,8 +492,7 @@ export type ContentBroadcastMessage = VideoSyncStateChangedMessage;
 export type BackgroundInboundMessage =
   | PopupToBackgroundMessage
   | ContentToBackgroundMessage
-  | OffscreenToBackgroundMessage
-  | ContentBroadcastMessage;
+  | OffscreenToBackgroundMessage;
 
 /**
  * Messages that the offscreen document receives.

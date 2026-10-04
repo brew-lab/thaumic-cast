@@ -12,7 +12,8 @@ import { resetChromeStub, tabMessages } from '../test-support/chrome-stub';
 import { brokerCalls as broker, resetBrokerCalls } from '../test-support/offscreen-broker-mock';
 import { notificationService } from './notification-service';
 import { clearAllSessions, getSession, hasSession, registerSession } from './session-manager';
-import { handleSonosEvent } from './sonos-event-handlers';
+import { handleSonosEvent, stopCastForTab } from './sonos-event-handlers';
+import { resetVideoSyncService } from './video-sync/service';
 import { getSonosState, setSonosState } from './sonos-state';
 
 const ENCODER = createEncoderConfig({ codec: 'pcm' });
@@ -56,6 +57,7 @@ beforeEach(() => {
 
 afterEach(() => {
   unsubscribe();
+  resetVideoSyncService();
 });
 
 describe('stream events for other clients’ streams', () => {
@@ -429,9 +431,9 @@ describe('sonos events', () => {
 });
 
 describe('latency events', () => {
-  it('should forward measurements to the casting tab and the popup', async () => {
+  it('should turn measurements into a lead and send nothing raw to the tab or popup', async () => {
     const speakerIp = freshIp();
-    registerOwnCast(4, 'own-stream', [speakerIp]);
+    registerSession(4, 'own-stream', [speakerIp], ['Kitchen'], ENCODER, false, 'tab', true);
     const event = {
       category: 'latency' as const,
       type: 'updated' as const,
@@ -447,18 +449,11 @@ describe('latency events', () => {
 
     await handleSonosEvent(event);
 
-    expect(tabMessages).toEqual([{ tabId: 4, message: { type: 'LATENCY_EVENT', payload: event } }]);
-    expect(notifications).toEqual([
-      {
-        type: 'LATENCY_UPDATE',
-        streamId: 'own-stream',
-        speakerIp,
-        epochId: 1,
-        latencyMs: 150,
-        jitterMs: 5,
-        confidence: 0.9,
-      },
-    ]);
+    const types = tabMessages.map((m) => (m.message as { type: string }).type);
+    expect(types.every((type) => type === 'VIDEO_SYNC_LEAD')).toBe(true);
+    expect(
+      notifications.every((msg) => msg.type === 'VIDEO_SYNC_STATE_CHANGED' && msg.tabId === 4),
+    ).toBe(true);
   });
 
   it('should ignore latency events for streams it does not own', async () => {
@@ -473,5 +468,39 @@ describe('latency events', () => {
 
     expect(tabMessages).toEqual([]);
     expect(notifications).toEqual([]);
+  });
+});
+
+describe('stopCastForTab', () => {
+  type TabsWithSend = { sendMessage: (tabId: number, message: unknown) => Promise<unknown> };
+  const tabs = chrome.tabs as unknown as TabsWithSend;
+
+  it('should take the lead off every frame before it stops the capture', async () => {
+    const original = tabs.sendMessage;
+    const stopsSeenAtLeadOff: number[] = [];
+    tabs.sendMessage = async (tabId, message) => {
+      tabMessages.push({ tabId, message });
+      const m = message as { type: string; enabled?: boolean };
+      if (m.type === 'VIDEO_SYNC_LEAD' && m.enabled === false) {
+        stopsSeenAtLeadOff.push(broker.stoppedTabs.length);
+      }
+      return { paired: true, status: null };
+    };
+    try {
+      registerSession(6, 'vs-stream', [freshIp()], ['Kitchen'], ENCODER, false, 'tab', true);
+      await stopCastForTab(6);
+    } finally {
+      tabs.sendMessage = original;
+    }
+    expect(stopsSeenAtLeadOff).toEqual([0]);
+    expect(broker.stoppedTabs).toEqual([6]);
+    expect(hasSession(6)).toBe(false);
+  });
+
+  it('should send no lead for a cast without video sync', async () => {
+    registerOwnCast(7, 'plain-stream', [freshIp()]);
+    await stopCastForTab(7);
+    expect(tabMessages).toEqual([]);
+    expect(broker.stoppedTabs).toEqual([7]);
   });
 });
