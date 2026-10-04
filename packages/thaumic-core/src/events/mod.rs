@@ -452,7 +452,9 @@ pub enum PlayoutSource {
 pub struct PlayoutLatency {
     /// The queue plus the reserve (or its prior), in ms.
     pub companion_ms: u32,
-    /// About one standard deviation of `companion_ms`, in ms.
+    /// How far `companion_ms` may be off, in ms: the reserve's half-width
+    /// (a bound, never below the measurement jitter allowance) combined
+    /// with the queue's spread. A rough margin, not a standard deviation.
     pub uncertainty_ms: u32,
     /// Where the reserve figure came from.
     pub source: PlayoutSource,

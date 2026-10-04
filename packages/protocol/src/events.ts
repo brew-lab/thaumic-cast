@@ -165,7 +165,11 @@ export type PlayoutSource = z.infer<typeof PlayoutSourceSchema>;
 export const PlayoutLatencySchema = z.object({
   /** The queue plus the reserve (or its prior), in milliseconds */
   companionMs: z.number().int().nonnegative(),
-  /** About one standard deviation of `companionMs`, in milliseconds */
+  /**
+   * How far `companionMs` may be off, in milliseconds: the reserve's
+   * half-width (a bound, never below the jitter allowance) combined with the
+   * queue's spread. A rough margin, not a standard deviation.
+   */
   uncertaintyMs: z.number().int().nonnegative(),
   /** Where the reserve figure came from */
   source: PlayoutSourceSchema,

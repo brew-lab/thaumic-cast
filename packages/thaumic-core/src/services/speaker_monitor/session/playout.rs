@@ -8,7 +8,8 @@
 //! - Q is the median cadence queue over the last [`QUEUE_WINDOW`], from the
 //!   playout's pipeline snapshots, in frames times the frame length.
 //! - R is the tracker's reserve estimate once it is locked
-//!   (`source = reserve`). Until then it is the prior (`source = prior`):
+//!   (`source = reserve`) and made since the latest segment break. Until
+//!   then it is the prior (`source = prior`):
 //!   the head start the connection was sent, which is what the reserve
 //!   starts from, plus where the speaker's past connections settled
 //!   relative to it (the drift controller's calibration history), or
@@ -23,9 +24,23 @@
 //! Only a PCM connection's reserve is measured, so only a PCM connection
 //! gets an estimate.
 //!
+//! The reserve is in the tracker's reading of the speaker's position, not
+//! physical time: on a speaker that reports its position ahead of what it
+//! plays, it reads low by that offset (about 200 ms on the simulated
+//! Play:1), and the hand-off from the prior steps by as much. The epoch
+//! marks the step; the speaker's output delay and the trim absorb the
+//! constant.
+//!
 //! The estimate's `epoch` steps only when the estimate may have stepped: a
 //! new connection, a change of source, or a segment break in the tracker's
 //! measurements. Routine wobble is left to the client's own threshold.
+//!
+//! A break the tracker finds between reports (the speaker stopped playing,
+//! its position went backwards, the track changed) leaves its latest
+//! estimate standing until the next report, which is 30 s off, or longer
+//! while the speaker is paused. That estimate was made before the break, so
+//! the source falls back to the prior until a locked estimate is made after
+//! it. An epoch step alone therefore never means the figure is fresh.
 
 use std::time::{Duration, Instant};
 
@@ -64,6 +79,9 @@ pub(crate) struct PlayoutInputs<'a> {
     /// The tracker's latest reserve estimate of the current segment
     /// (carried across a continuation switch while it is measured).
     pub estimate: Option<ReserveEstimate>,
+    /// Whether `estimate` was made before the latest segment break, so says
+    /// nothing about the reserve now.
+    pub stale: bool,
     /// The median of the speaker's past connections' `target − H`, if any.
     pub bias_ms: Option<f64>,
     /// Cadence queue lengths over [`QUEUE_WINDOW`], in frames.
@@ -77,7 +95,8 @@ pub(crate) struct PlayoutInputs<'a> {
 pub(crate) struct PlayoutFigures {
     /// Q + R, in ms.
     pub companion_ms: f64,
-    /// `sqrt(u_R² + u_Q²)`, in ms.
+    /// `sqrt(u_R² + u_Q²)`, in ms: a spread figure, not a standard
+    /// deviation (see [`PlayoutLatency::uncertainty_ms`]).
     pub uncertainty_ms: f64,
     /// Where R came from.
     pub source: PlayoutSource,
@@ -110,7 +129,9 @@ pub(crate) fn estimate(inputs: &PlayoutInputs<'_>) -> Option<PlayoutFigures> {
 
     let calib_ms = inputs.bias_ms.unwrap_or(PRIOR_CALIB_MS);
     let (source, reserve_ms, u_reserve) = match inputs.estimate {
-        Some(e) if e.locked() => (PlayoutSource::Reserve, e.reserve_ms, e.half_width_ms),
+        Some(e) if e.locked() && !inputs.stale => {
+            (PlayoutSource::Reserve, e.reserve_ms, e.half_width_ms)
+        }
         _ => (
             PlayoutSource::Prior,
             f64::from(head_start.sent_ms) + calib_ms,
@@ -146,6 +167,12 @@ pub(crate) struct PlayoutTracker {
     /// The connection epoch, source and segment breaks the last estimate was
     /// made under.
     seen: Option<(u64, PlayoutSource, u32)>,
+    /// The connection epoch and segment breaks last looked at by
+    /// [`Self::stale`].
+    breaks_seen: Option<(u64, u32)>,
+    /// When the tracker's estimate standing at the latest segment break seen
+    /// was made: estimates made no later than this are from before it.
+    stale_at: Option<f64>,
     /// When the estimate was last written to the debug log.
     last_log: Option<Instant>,
 }
@@ -174,6 +201,41 @@ impl PlayoutTracker {
             reserve_ms: whole_ms(figures.reserve_ms),
             head_start_ms: figures.head_start_ms,
             calib_ms: figures.calib_ms.round() as i32,
+        }
+    }
+
+    /// Whether `estimate`, the tracker's latest, was made before a segment
+    /// break seen under connection epoch `connection_epoch` (`breaks` is
+    /// that connection's break count so far).
+    ///
+    /// A break raised between reports does not clear the tracker's estimate,
+    /// so the estimate standing when the count is first seen to move is from
+    /// before it, and so is any no newer. Only a break within a connection
+    /// counts: a new connection starts with no estimate. Looked at about once
+    /// a second, against reports every 30 s, so a report made after a break
+    /// is not mistaken for one from before it unless events stopped for a
+    /// whole report, and then only until the next report.
+    pub(crate) fn stale(
+        &mut self,
+        connection_epoch: u64,
+        breaks: u32,
+        estimate: Option<&ReserveEstimate>,
+    ) -> bool {
+        let now = (connection_epoch, breaks);
+        if self.breaks_seen != Some(now) {
+            let same_connection = self
+                .breaks_seen
+                .is_some_and(|(epoch, _)| epoch == connection_epoch);
+            self.stale_at = if same_connection {
+                estimate.map(|e| e.at)
+            } else {
+                None
+            };
+            self.breaks_seen = Some(now);
+        }
+        match (self.stale_at, estimate) {
+            (Some(at), Some(e)) => e.at <= at,
+            _ => false,
         }
     }
 
@@ -213,18 +275,28 @@ impl SpeakerSession {
             .iter()
             .map(|s| s.queue_len)
             .collect();
+        let connection_epoch = self.last_epoch_id();
+        let breaks = segment_breaks(|r| self.tracker.connection_breaks(r));
+        let last = self.tracker.last_estimate().copied();
+        // The tracker's own mark (cleared by the next locked estimate) is
+        // kept only when the report before the break had an acknowledged
+        // reserve; the break count catches the rest.
+        let stale = self.tracker.pre_break().is_some()
+            | self
+                .playout_tracker
+                .stale(connection_epoch, breaks, last.as_ref());
         let figures = estimate(&PlayoutInputs {
             pcm: self.pcm,
             head_start: tap.head_start(),
-            estimate: self.tracker.last_estimate().copied(),
+            estimate: last,
+            stale,
             bias_ms: self.drift.state().bias_ms(),
             queue_frames: &queue_frames,
             frame_ms,
         })?;
-        let breaks = segment_breaks(|r| self.tracker.connection_breaks(r));
         Some(
             self.playout_tracker
-                .step(self.last_epoch_id(), breaks, &figures),
+                .step(connection_epoch, breaks, &figures),
         )
     }
 
@@ -279,6 +351,7 @@ mod tests {
             pcm: true,
             head_start: Some(HeadStart::new(500, 500)),
             estimate: None,
+            stale: false,
             bias_ms: None,
             queue_frames: queue,
             frame_ms: 10,
@@ -360,6 +433,53 @@ mod tests {
         .expect("estimate");
         assert_eq!(f.source, PlayoutSource::Prior);
         assert_eq!(f.reserve_ms, 520.0);
+    }
+
+    #[test]
+    fn a_locked_estimate_from_before_a_break_falls_back_to_the_prior() {
+        let f = estimate(&PlayoutInputs {
+            estimate: Some(reserve(547.0, 28.0, LockReason::Tight)),
+            stale: true,
+            ..inputs(&QUEUE)
+        })
+        .expect("estimate");
+        assert_eq!(f.source, PlayoutSource::Prior);
+        assert_eq!(f.reserve_ms, 520.0);
+    }
+
+    fn reserve_at(at: f64) -> ReserveEstimate {
+        ReserveEstimate {
+            at,
+            ..reserve(547.0, 28.0, LockReason::Tight)
+        }
+    }
+
+    #[test]
+    fn an_estimate_standing_at_a_break_is_stale_until_the_next_report() {
+        let mut t = PlayoutTracker::default();
+        let before = reserve_at(30_000.0);
+        assert!(!t.stale(3, 0, Some(&before)), "no break yet");
+        assert!(!t.stale(3, 0, Some(&before)));
+        // A break between reports: the estimate standing is from before it.
+        assert!(t.stale(3, 1, Some(&before)));
+        assert!(t.stale(3, 1, Some(&before)), "while paused, say");
+        // The next report is from after it.
+        assert!(!t.stale(3, 1, Some(&reserve_at(60_000.0))));
+        // A break found by a report clears the estimate.
+        assert!(!t.stale(3, 2, None));
+        assert!(!t.stale(3, 2, Some(&reserve_at(90_000.0))));
+    }
+
+    #[test]
+    fn a_new_connection_is_never_stale() {
+        let mut t = PlayoutTracker::default();
+        assert!(!t.stale(3, 0, Some(&reserve_at(30_000.0))));
+        // A connection first looked at after breaks of its own, and the
+        // next connection, start from whatever the tracker holds.
+        assert!(!t.stale(4, 2, Some(&reserve_at(10_000.0))));
+        assert!(!t.stale(4, 2, Some(&reserve_at(10_000.0))));
+        assert!(t.stale(4, 3, Some(&reserve_at(10_000.0))));
+        assert!(!t.stale(5, 0, Some(&reserve_at(10_000.0))));
     }
 
     #[test]
