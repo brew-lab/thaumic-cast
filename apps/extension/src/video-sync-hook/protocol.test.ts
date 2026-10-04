@@ -3,9 +3,12 @@ import { describe, expect, it } from 'bun:test';
 import {
   BRIDGE_VERSION,
   LEAD_MESSAGE_TYPE,
+  LEAD_REFRESH_MS,
+  LEASE_MS,
   MAX_LEAD_MS,
   commandEventName,
   isNonce,
+  leaseExpired,
   makeNonce,
   parseJson,
   statusEventName,
@@ -109,6 +112,17 @@ describe('validateLeadMessage', () => {
       validateLeadMessage({ type: LEAD_MESSAGE_TYPE, enabled: true, leadMs: 7000 }),
     ).toBeNull();
     expect(validateLeadMessage({ type: LEAD_MESSAGE_TYPE, enabled: true })).toBeNull();
+  });
+});
+
+describe('lease', () => {
+  it('should keep a lead for the lease and let it lapse after', () => {
+    expect(leaseExpired(0, LEASE_MS)).toBe(false);
+    expect(leaseExpired(0, LEASE_MS + 1)).toBe(true);
+  });
+
+  it('should leave room for a missed refresh or two within the lease', () => {
+    expect(LEAD_REFRESH_MS * 3).toBeLessThan(LEASE_MS);
   });
 });
 

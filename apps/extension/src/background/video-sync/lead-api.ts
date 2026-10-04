@@ -5,6 +5,13 @@
  * its own frame), through the relay that runs beside the hook in each frame.
  * Each relay reports its frame's status separately, keyed here by frame ID.
  * The video sync controller drives this module.
+ *
+ * A relay holds a lead only on a lease (LEASE_MS): while a lead is wanted the
+ * controller must call {@link setTabLead} again at least every
+ * LEAD_REFRESH_MS. That also reaches frames and pages that loaded since (a
+ * relay stays silent until it hears a lead) and rebuilds statuses dropped by
+ * {@link forgetTab}. A cast that ends should still send a lead of 0 rather
+ * than rely on the lease running out.
  */
 
 import { createLogger } from '@thaumic-cast/shared';
@@ -58,7 +65,8 @@ const byTab = new Map<number, Map<number, FrameHookStatus>>();
 const listeners = new Set<HookStatusListener>();
 
 /**
- * Sends the wanted lead to every frame of a tab.
+ * Sends the wanted lead to every frame of a tab. Call it again at least
+ * every LEAD_REFRESH_MS while the lead is wanted (see the module notes).
  * @param tabId - The tab
  * @param lead - The lead
  * @returns Whether any frame's relay answered

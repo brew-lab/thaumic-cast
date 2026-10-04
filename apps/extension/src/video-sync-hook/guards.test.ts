@@ -7,6 +7,7 @@ import {
   isLive,
   liveTooClose,
   nextStarve,
+  shiftHole,
   starved,
   trackLiveEdge,
   type FreezeSample,
@@ -100,6 +101,42 @@ describe('freezeVerdict', () => {
       v = freezeVerdict({ ct: 10, since: 0 }, sample({ ...over, now: 9000 }));
       expect(v.freeze).toBe(false);
     }
+  });
+});
+
+describe('shiftHole', () => {
+  it('should not call audio that covers the playhead a hole', () => {
+    expect(shiftHole([[0, 20]], 10, 0.9)).toBe(false);
+  });
+
+  it('should call a gap with audio resuming just after the playhead a hole', () => {
+    expect(
+      shiftHole(
+        [
+          [0, 9.9],
+          [10.5, 20],
+        ],
+        10,
+        0.9,
+      ),
+    ).toBe(true);
+  });
+
+  it('should not call shifted audio that simply ran out a hole (a network stall)', () => {
+    expect(shiftHole([[0, 9.1]], 10, 0.9)).toBe(false);
+  });
+
+  it('should not call audio resuming far beyond the shift a hole', () => {
+    expect(
+      shiftHole(
+        [
+          [0, 9.9],
+          [15, 20],
+        ],
+        10,
+        0.9,
+      ),
+    ).toBe(false);
   });
 });
 

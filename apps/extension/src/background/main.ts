@@ -196,8 +196,15 @@ async function reapplyServerConfig(): Promise<void> {
  * and the host permission they need.
  */
 async function applyVideoSyncScripts(): Promise<void> {
-  const settings = await loadExtensionSettings();
-  await syncVideoSyncScripts(settings.videoSyncEnabled);
+  await syncVideoSyncScripts(readVideoSyncSetting);
+}
+
+/**
+ * Reads the video sync setting as stored now.
+ * @returns The setting
+ */
+async function readVideoSyncSetting(): Promise<boolean> {
+  return (await loadExtensionSettings()).videoSyncEnabled;
 }
 
 /**
@@ -223,7 +230,7 @@ chrome.storage.local.onChanged.addListener(async (changes) => {
   const autoDiscoverChanged = oldSettings?.useAutoDiscover !== newSettings?.useAutoDiscover;
 
   if (oldSettings?.videoSyncEnabled !== newSettings?.videoSyncEnabled) {
-    await syncVideoSyncScripts(newSettings?.videoSyncEnabled ?? false);
+    await syncVideoSyncScripts(readVideoSyncSetting);
   }
 
   if (serverUrlChanged || autoDiscoverChanged) {
@@ -241,7 +248,7 @@ async function onHostPermissionChanged(change: chrome.permissions.Permissions): 
   const settings = await loadExtensionSettings();
   // The video sync page scripts only inject with the all-sites grant.
   if (change.origins?.some((origin) => VIDEO_SYNC_ORIGINS.includes(origin))) {
-    await syncVideoSyncScripts(settings.videoSyncEnabled);
+    await syncVideoSyncScripts(readVideoSyncSetting);
   }
   if (
     !settings.useAutoDiscover &&

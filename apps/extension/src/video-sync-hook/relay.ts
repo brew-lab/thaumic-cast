@@ -9,7 +9,9 @@
  * validated status back. It stays silent towards the extension until the
  * background has sent it a command, so pages that are not being cast never
  * wake the service worker. Once the extension is gone (reloaded, disabled or
- * updated) it stops re-sending, and the hook takes the lead off by itself.
+ * updated), or the background has not sent the lead again within the lease
+ * (see LEASE_MS), it stops re-sending, and the hook takes the lead off by
+ * itself.
  */
 
 import {
@@ -19,6 +21,7 @@ import {
   HOOK_STATUS_MESSAGE_TYPE,
   RESEND_MS,
   commandEventName,
+  leaseExpired,
   makeNonce,
   parseJson,
   statusEventName,
@@ -38,6 +41,8 @@ import {
   let forwardedKey: string | null = null;
   let lastDriven = false;
   let timer = 0;
+  /** When the background last sent a lead (Date.now()). */
+  let heardAt = 0;
 
   /**
    * Whether this content script still belongs to a live extension.
@@ -82,6 +87,11 @@ import {
       stop();
       return;
     }
+    // The background owns the lead: without word from it, let it lapse.
+    if (current?.enabled && leaseExpired(heardAt, Date.now())) {
+      stop();
+      return;
+    }
     if (current) toHook({ op: 'set', enabled: current.enabled, leadMs: current.leadMs });
     if (!driven()) stop();
   };
@@ -108,7 +118,7 @@ import {
     if (!s) return;
     if (!paired) {
       paired = true;
-      window.removeEventListener(HELLO_HOOK_EVENT, onHookHello);
+      dropHello();
       resend();
     }
     status = s;
@@ -117,18 +127,26 @@ import {
   const sendHello = (): void => {
     window.dispatchEvent(new CustomEvent(HELLO_RELAY_EVENT, { detail: nonce }));
   };
+  // The hook asks for the nonce once, as it installs at document_start, in
+  // the same injection as this script. Answer one such request only, and
+  // stop listening after this task: a hook that never paired (it threw, or
+  // its install guard tripped) must not leave the nonce on offer to the page.
+  const dropHello = (): void => window.removeEventListener(HELLO_HOOK_EVENT, onHookHello);
   const onHookHello = (): void => {
+    dropHello();
     if (!paired) sendHello();
   };
 
   window.addEventListener(statusEventName(nonce), onStatus);
   window.addEventListener(HELLO_HOOK_EVENT, onHookHello);
   sendHello();
+  setTimeout(dropHello, 0);
 
   chrome.runtime.onMessage.addListener((msg: unknown, _sender, sendResponse) => {
     const lead = validateLeadMessage(msg);
     if (!lead) return false;
     current = lead;
+    heardAt = Date.now();
     resend();
     if (lead.rearm) toHook({ op: 'rearm' });
     if (!timer && driven()) timer = window.setInterval(resend, RESEND_MS);
