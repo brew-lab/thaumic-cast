@@ -23,7 +23,7 @@ export * from './src/websocket.js';
 // Sonos state types (groups, transport, sessions)
 export * from './src/sonos.js';
 
-// Event types (sonos, stream, latency, broadcast)
+// Event types (sonos, stream, latency and its playout estimate, broadcast)
 export * from './src/events.js';
 
 // Media metadata and tab state types

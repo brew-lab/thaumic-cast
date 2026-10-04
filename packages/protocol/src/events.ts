@@ -146,6 +146,47 @@ export const StreamEventSchema = z.discriminatedUnion('type', [
 export type StreamEvent = z.infer<typeof StreamEventSchema>;
 
 /**
+ * Where a playout estimate took the speaker's share of the delay from.
+ *
+ * - `prior`: not measured yet (or measured afresh): the head start sent plus
+ *   the speaker's calibration, as its past connections settled.
+ * - `reserve`: the speaker's measured reserve, locked.
+ */
+export const PlayoutSourceSchema = z.enum(['prior', 'reserve']);
+export type PlayoutSource = z.infer<typeof PlayoutSourceSchema>;
+
+/**
+ * The companion's estimate of how long audio takes from reaching it to being
+ * played by one speaker: the cadence queue it waits in plus the speaker's
+ * reserve (audio delivered and not yet played). What the browser adds before
+ * the audio arrives and the speaker's own output delay are not in it.
+ * Sent only for PCM casts, whose reserve is measured.
+ */
+export const PlayoutLatencySchema = z.object({
+  /** The queue plus the reserve (or its prior), in milliseconds */
+  companionMs: z.number().int().nonnegative(),
+  /** About one standard deviation of `companionMs`, in milliseconds */
+  uncertaintyMs: z.number().int().nonnegative(),
+  /** Where the reserve figure came from */
+  source: PlayoutSourceSchema,
+  /**
+   * Starts at 1 and steps whenever the estimate may have stepped: a new
+   * connection, a change of `source` or a break in the speaker's
+   * measurements. Never for routine wobble.
+   */
+  epoch: z.number().int().positive(),
+  /** The cadence queue, median over the last few seconds, in milliseconds */
+  queueMs: z.number().int().nonnegative(),
+  /** The reserve, or the prior used for it, in milliseconds */
+  reserveMs: z.number().int().nonnegative(),
+  /** The head start the connection was actually sent, in milliseconds */
+  headStartMs: z.number().int().nonnegative(),
+  /** The calibration the prior adds to the head start, in milliseconds */
+  calibMs: z.number().int(),
+});
+export type PlayoutLatency = z.infer<typeof PlayoutLatencySchema>;
+
+/**
  * Latency event types broadcast by desktop app.
  * Used for measuring audio playback delay from source to Sonos speaker.
  *
@@ -168,6 +209,13 @@ export const LatencyEventSchema = z.discriminatedUnion('type', [
     jitterMs: z.number().int().nonnegative(),
     /** Confidence score from 0.0 to 1.0 (higher = more reliable) */
     confidence: z.number().min(0).max(1),
+    /**
+     * The playout estimate, for a PCM cast whose head start and cadence queue
+     * the companion knows. Absent otherwise, and from companions that predate
+     * it. An estimate this build cannot read is dropped rather than failing
+     * the event.
+     */
+    playout: PlayoutLatencySchema.optional().catch(undefined),
     /** Unix timestamp in milliseconds */
     timestamp: z.number(),
   }),
@@ -402,6 +450,9 @@ export interface StreamBroadcastEvent {
   [key: string]: unknown;
 }
 
+/**
+ * A latency `updated` event as broadcast, with its category.
+ */
 export interface LatencyUpdatedBroadcastEvent {
   category: 'latency';
   type: 'updated';
@@ -411,6 +462,8 @@ export interface LatencyUpdatedBroadcastEvent {
   latencyMs: number;
   jitterMs: number;
   confidence: number;
+  /** The playout estimate, when the companion sends one (see {@link PlayoutLatencySchema}) */
+  playout?: PlayoutLatency;
   timestamp: number;
 }
 

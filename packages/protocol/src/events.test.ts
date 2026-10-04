@@ -11,7 +11,9 @@ import {
   SpeakerNoticeCauseSchema,
   SpeakerNoticeKindSchema,
   type LatencyEvent,
+  type LatencyUpdatedBroadcastEvent,
   type NetworkEvent,
+  type PlayoutLatency,
   type SonosEvent,
   type StreamEvent,
 } from './events.js';
@@ -304,6 +306,61 @@ describe('LatencyEventSchema', () => {
   it('should reject negative or fractional epoch and latency values', () => {
     expect(LatencyEventSchema.safeParse({ ...updated, epochId: -1 }).success).toBe(false);
     expect(LatencyEventSchema.safeParse({ ...updated, latencyMs: 12.5 }).success).toBe(false);
+  });
+
+  const playout: PlayoutLatency = {
+    companionMs: 710,
+    uncertaintyMs: 61,
+    source: 'prior',
+    epoch: 1,
+    queueMs: 190,
+    reserveMs: 520,
+    headStartMs: 500,
+    calibMs: 20,
+  };
+
+  it('should accept a measurement carrying a playout estimate', () => {
+    const withPlayout = { ...updated, playout };
+    expect(LatencyEventSchema.parse(withPlayout)).toEqual(withPlayout);
+    const reserve: LatencyEvent = {
+      ...updated,
+      playout: { ...playout, source: 'reserve', calibMs: -8 },
+    };
+    expect(LatencyEventSchema.parse(reserve)).toEqual(reserve);
+  });
+
+  it('should accept a measurement from a companion that sends no playout estimate', () => {
+    const parsed = LatencyEventSchema.parse(updated);
+    expect(parsed).toEqual(updated);
+    expect(parsed.type === 'updated' && parsed.playout).toBeUndefined();
+  });
+
+  it('should drop a playout estimate it cannot read and keep the event', () => {
+    for (const bad of [
+      { ...playout, source: 'guess' },
+      { ...playout, epoch: 0 },
+      { ...playout, companionMs: -1 },
+      { ...playout, queueMs: 12.5 },
+      { companionMs: 710 },
+      'soon',
+    ]) {
+      const parsed = LatencyEventSchema.parse({ ...updated, playout: bad });
+      expect(parsed.type).toBe('updated');
+      expect(parsed.type === 'updated' && parsed.playout).toBeUndefined();
+      expect(parsed.type === 'updated' && parsed.latencyMs).toBe(180);
+    }
+  });
+
+  it('should type the playout estimate on the broadcast event', () => {
+    const event: LatencyUpdatedBroadcastEvent = {
+      category: 'latency',
+      ...updated,
+      type: 'updated',
+      playout,
+    };
+    const wire: Record<string, unknown> = { ...event };
+    const parsed: Record<string, unknown> = BroadcastEventSchema.parse(wire);
+    expect(parsed).toEqual(wire);
   });
 
   it('should accept a stale event that carries no measurements', () => {
