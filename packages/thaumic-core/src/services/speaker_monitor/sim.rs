@@ -522,6 +522,7 @@ impl SimSpeaker {
                     pcm: true,
                     head_start: tracker.head_start(),
                     estimate: tracker.last_estimate().copied(),
+                    stale: tracker.pre_break().is_some(),
                     bias_ms: controller.state().bias_ms(),
                     queue_frames: &queue_frames,
                     frame_ms,
