@@ -56,8 +56,18 @@ export const runtimeMessages: unknown[] = [];
 /** Every message handed to `chrome.tabs.sendMessage`, oldest first. */
 export const tabMessages: { tabId: number; message: unknown }[] = [];
 
+/** Content scripts registered through `chrome.scripting`, by ID. */
+export const registeredScripts = new Map<string, chrome.scripting.RegisteredContentScript>();
+
+/** Every `chrome.scripting` call that changed the registrations, oldest first. */
+export const scriptingCalls: { op: 'register' | 'update' | 'unregister'; ids: string[] }[] = [];
+
+/** Host origins `chrome.permissions.contains` reports as granted. */
+export const grantedOrigins = new Set<string>();
+
 /**
- * Empties every storage area and recorded message list.
+ * Empties every storage area, recorded message list, script registration
+ * and granted origin.
  * Call from `beforeEach` in tests that read the stub's state.
  */
 export function resetChromeStub(): void {
@@ -66,6 +76,9 @@ export function resetChromeStub(): void {
   }
   runtimeMessages.length = 0;
   tabMessages.length = 0;
+  registeredScripts.clear();
+  scriptingCalls.length = 0;
+  grantedOrigins.clear();
 }
 
 const chromeStub = {
@@ -84,6 +97,41 @@ const chromeStub = {
       tabMessages.push({ tabId, message });
     },
     async update(): Promise<void> {},
+  },
+  scripting: {
+    async getRegisteredContentScripts(filter?: {
+      ids?: string[];
+    }): Promise<chrome.scripting.RegisteredContentScript[]> {
+      const all = [...registeredScripts.values()];
+      return filter?.ids ? all.filter((s) => filter.ids?.includes(s.id)) : all;
+    },
+    async registerContentScripts(
+      scripts: chrome.scripting.RegisteredContentScript[],
+    ): Promise<void> {
+      for (const s of scripts) {
+        if (registeredScripts.has(s.id)) throw new Error(`Duplicate script ID '${s.id}'`);
+      }
+      for (const s of scripts) registeredScripts.set(s.id, { ...s });
+      scriptingCalls.push({ op: 'register', ids: scripts.map((s) => s.id) });
+    },
+    async updateContentScripts(scripts: chrome.scripting.RegisteredContentScript[]): Promise<void> {
+      for (const s of scripts) {
+        const old = registeredScripts.get(s.id);
+        if (!old) throw new Error(`No script with ID '${s.id}'`);
+        registeredScripts.set(s.id, { ...old, ...s });
+      }
+      scriptingCalls.push({ op: 'update', ids: scripts.map((s) => s.id) });
+    },
+    async unregisterContentScripts(filter?: { ids?: string[] }): Promise<void> {
+      const ids = filter?.ids ?? [...registeredScripts.keys()];
+      for (const id of ids) registeredScripts.delete(id);
+      scriptingCalls.push({ op: 'unregister', ids });
+    },
+  },
+  permissions: {
+    async contains(p: { origins?: string[] }): Promise<boolean> {
+      return (p.origins ?? []).every((o) => grantedOrigins.has(o));
+    },
   },
   power: {
     requestKeepAwake(): void {},

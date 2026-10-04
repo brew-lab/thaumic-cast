@@ -24,6 +24,13 @@ import {
   SpeakerNoticeSchema,
   CompanionAudioSchema,
 } from '@thaumic-cast/protocol';
+import {
+  HOOK_REASONS,
+  HOOK_STATES,
+  HOOK_STATUS_MESSAGE_TYPE,
+  LEAD_MESSAGE_TYPE,
+  MAX_LEAD_MS,
+} from '../video-sync-hook/protocol';
 
 // Re-export SpeakerRemovalReason from protocol for convenience
 export { SpeakerRemovalReasonSchema };
@@ -829,6 +836,46 @@ export const VideoSyncStateChangedMessageSchema = z.object({
   lockedLatencyMs: z.number().optional(),
 });
 export type VideoSyncStateChangedMessage = z.infer<typeof VideoSyncStateChangedMessageSchema>;
+
+/**
+ * The audio lead the background wants in a tab (background → every frame's
+ * video sync relay). The relay checks it again without zod; see
+ * `video-sync-hook/protocol.ts`.
+ */
+export const VideoSyncLeadMessageSchema = z
+  .object({
+    type: z.literal(LEAD_MESSAGE_TYPE),
+    enabled: z.boolean(),
+    /** Lead in ms of wall time; the hook scales it by each element's playback rate. */
+    leadMs: z.number().min(0).max(MAX_LEAD_MS),
+    /** Also clear the hook's "turned off" latch. */
+    rearm: z.boolean().optional(),
+  })
+  .strict();
+export type VideoSyncLeadMessage = z.infer<typeof VideoSyncLeadMessageSchema>;
+
+/** What a frame's audio-lead hook says about itself. */
+export const VideoSyncHookStatusSchema = z
+  .object({
+    state: z.enum(HOOK_STATES),
+    reason: z.enum(HOOK_REASONS).optional(),
+    /** The lead in force, in ms of wall time, after whole-frame rounding. */
+    appliedLeadMs: z.number().min(0).max(MAX_LEAD_MS),
+    /** The frame's chosen media element is playing. */
+    playing: z.boolean(),
+  })
+  .strict();
+export type VideoSyncHookStatus = z.infer<typeof VideoSyncHookStatusSchema>;
+
+/**
+ * A frame's hook status (video sync relay → background). The tab and frame
+ * come from the sender.
+ */
+export const VideoSyncHookStatusMessageSchema = z.object({
+  type: z.literal(HOOK_STATUS_MESSAGE_TYPE),
+  status: VideoSyncHookStatusSchema,
+});
+export type VideoSyncHookStatusMessage = z.infer<typeof VideoSyncHookStatusMessageSchema>;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Simple Query Messages (no payload)

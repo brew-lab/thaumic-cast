@@ -48,6 +48,11 @@ import { offscreenBroker } from './offscreen-broker';
 import { connectWebSocket, discoverAndCache } from './handlers/connection';
 import { noop } from '../lib/noop';
 
+// Video sync page scripts
+import { syncVideoSyncScripts } from './video-sync/registration';
+import { VIDEO_SYNC_ORIGINS } from '../lib/video-sync-access';
+import { forgetTab } from './video-sync/lead-api';
+
 const log = createLogger('Background');
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -107,6 +112,7 @@ chrome.tabs.onRemoved.addListener(async (tabId) => {
 
   // Clean up metadata cache
   removeFromCache(tabId);
+  forgetTab(tabId);
 
   // Clean up active session if exists
   if (hasSession(tabId)) {
@@ -119,6 +125,8 @@ chrome.tabs.onRemoved.addListener(async (tabId) => {
  * Request fresh metadata when tab becomes audible.
  */
 chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
+  // A new page brings new frames and hooks: the old statuses mean nothing.
+  if (changeInfo.status === 'loading' && changeInfo.url) forgetTab(tabId);
   if (changeInfo.audible === true) {
     chrome.tabs.sendMessage(tabId, { type: 'REQUEST_METADATA' }).catch(noop);
   }
@@ -134,6 +142,7 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
  */
 chrome.runtime.onStartup?.addListener(async () => {
   await initPromise;
+  void applyVideoSyncScripts();
 
   const connState = getConnectionState();
   if (connState.desktopAppUrl && !connState.connected) {
@@ -182,6 +191,23 @@ async function reapplyServerConfig(): Promise<void> {
   notifyPopup({ type: 'WS_CONNECTION_LOST', reason: 'settings_changed' });
 }
 
+/**
+ * Registers or unregisters the video sync page scripts to match the setting
+ * and the host permission they need.
+ */
+async function applyVideoSyncScripts(): Promise<void> {
+  const settings = await loadExtensionSettings();
+  await syncVideoSyncScripts(settings.videoSyncEnabled);
+}
+
+/**
+ * Brings the video sync page scripts in line after an install or update
+ * (registrations persist, but the setting may have changed meanwhile).
+ */
+chrome.runtime.onInstalled.addListener(() => {
+  void applyVideoSyncScripts();
+});
+
 chrome.storage.local.onChanged.addListener(async (changes) => {
   if (!changes['extensionSettings']) return;
 
@@ -196,6 +222,10 @@ chrome.storage.local.onChanged.addListener(async (changes) => {
   const serverUrlChanged = oldSettings?.serverUrl !== newSettings?.serverUrl;
   const autoDiscoverChanged = oldSettings?.useAutoDiscover !== newSettings?.useAutoDiscover;
 
+  if (oldSettings?.videoSyncEnabled !== newSettings?.videoSyncEnabled) {
+    await syncVideoSyncScripts(newSettings?.videoSyncEnabled ?? false);
+  }
+
   if (serverUrlChanged || autoDiscoverChanged) {
     await reapplyServerConfig();
   }
@@ -203,11 +233,16 @@ chrome.storage.local.onChanged.addListener(async (changes) => {
 
 /**
  * Reconnects when a host permission for the configured custom server is
- * granted or revoked, e.g. from the extension's site-access settings.
+ * granted or revoked, e.g. from the extension's site-access settings, and
+ * re-registers the video sync page scripts when the all-sites grant changes.
  * @param change - The permissions that were added or removed
  */
 async function onHostPermissionChanged(change: chrome.permissions.Permissions): Promise<void> {
   const settings = await loadExtensionSettings();
+  // The video sync page scripts only inject with the all-sites grant.
+  if (change.origins?.some((origin) => VIDEO_SYNC_ORIGINS.includes(origin))) {
+    await syncVideoSyncScripts(settings.videoSyncEnabled);
+  }
   if (
     !settings.useAutoDiscover &&
     settings.serverUrl &&

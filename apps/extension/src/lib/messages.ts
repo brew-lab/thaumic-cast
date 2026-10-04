@@ -194,6 +194,12 @@ export {
   type VideoSyncState,
   VideoSyncStateChangedMessageSchema,
   type VideoSyncStateChangedMessage,
+  VideoSyncLeadMessageSchema,
+  type VideoSyncLeadMessage,
+  VideoSyncHookStatusSchema,
+  type VideoSyncHookStatus,
+  VideoSyncHookStatusMessageSchema,
+  type VideoSyncHookStatusMessage,
 
   // Simple query messages
   GetCastStatusMessageSchema,
@@ -263,6 +269,8 @@ import type {
   OffscreenReadyMessage,
   SessionDisconnectedMessage,
   BrowserCaptureErrorMessage,
+  VideoSyncLeadMessage,
+  VideoSyncHookStatusMessage,
 } from './message-schemas';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -316,7 +324,10 @@ export type BackgroundToPopupType =
   | 'LATENCY_STALE';
 
 /** Message types: Content → Background */
-export type ContentToBackgroundType = 'TAB_METADATA_UPDATE' | 'TAB_OG_IMAGE';
+export type ContentToBackgroundType =
+  | 'TAB_METADATA_UPDATE'
+  | 'TAB_OG_IMAGE'
+  | 'VIDEO_SYNC_HOOK_STATUS';
 
 /** Message types: Background → Content */
 export type BackgroundToContentType =
@@ -326,7 +337,8 @@ export type BackgroundToContentType =
   | 'SET_VIDEO_SYNC_TRIM'
   | 'TRIGGER_RESYNC'
   | 'GET_VIDEO_SYNC_STATE'
-  | 'LATENCY_EVENT';
+  | 'LATENCY_EVENT'
+  | 'VIDEO_SYNC_LEAD';
 
 /** Message types: Background → Offscreen */
 export type BackgroundToOffscreenType =
@@ -421,7 +433,10 @@ export type BackgroundToPopupMessage =
  * Messages sent from content script to background.
  * Used for metadata updates from web pages.
  */
-export type ContentToBackgroundMessage = TabMetadataUpdateMessage | TabOgImageMessage;
+export type ContentToBackgroundMessage =
+  | TabMetadataUpdateMessage
+  | TabOgImageMessage
+  | VideoSyncHookStatusMessage;
 
 /**
  * Messages sent from background to content script.
@@ -435,7 +450,8 @@ export type BackgroundToContentMessage =
   | SetVideoSyncTrimMessage
   | TriggerResyncMessage
   | GetVideoSyncStateMessage
-  | LatencyEventMessage;
+  | LatencyEventMessage
+  | VideoSyncLeadMessage;
 
 /**
  * Messages sent from background to offscreen document.
