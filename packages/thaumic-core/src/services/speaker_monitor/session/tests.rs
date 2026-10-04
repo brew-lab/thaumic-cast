@@ -797,6 +797,50 @@ mod polling {
         assert_eq!(elapsed_with_inserted(10, -50.0), 0);
     }
 
+    /// Keeps the latency events the monitor sends.
+    #[derive(Default)]
+    struct LatencyEvents(parking_lot::Mutex<Vec<LatencyEvent>>);
+
+    impl EventEmitter for LatencyEvents {
+        fn emit_stream(&self, _: StreamEvent) {}
+        fn emit_sonos(&self, _: SonosEvent) {}
+        fn emit_network(&self, _: NetworkEvent) {}
+        fn emit_topology(&self, _: TopologyEvent) {}
+        fn emit_latency(&self, event: LatencyEvent) {
+            self.0.lock().push(event);
+        }
+    }
+
+    /// The playout estimate rides on the video-sync latency event, which is
+    /// sent whether or not there is one: not for a compressed connection,
+    /// and not for a PCM one before its head start and cadence queue are
+    /// known (the estimate itself is tested in `playout` and `sim`).
+    #[test]
+    fn video_sync_events_carry_a_playout_estimate_only_when_one_can_be_made() {
+        for codec in [AudioCodec::Pcm, AudioCodec::Aac] {
+            let tap = started_tap_with_codec("stream", HUNG_IP, false, codec);
+            let mut session = SpeakerSession::new(true, 0);
+            session.frame_duration_ms = Some(10);
+            session.attach(&tap);
+            let epoch_id = tap.epoch().expect("started").id;
+            let events = LatencyEvents::default();
+            for poll_id in 1..=6 {
+                session.in_flight = Some(poll_id);
+                let mut answered = poll(poll_id, Ok(ours(poll_id * 1000)));
+                answered.epoch_id = epoch_id;
+                apply_poll_result(&mut session, answered, &events, None);
+            }
+            let sent = events.0.lock();
+            assert_eq!(sent.len(), 1, "{codec:?}: the first after five samples");
+            let LatencyEvent::Updated { playout, .. } = &sent[0] else {
+                panic!("{codec:?}: {:?}", sent[0]);
+            };
+            assert_eq!(*playout, None, "{codec:?}");
+            drop(sent);
+            assert!(session.playout_latency().is_none(), "{codec:?}");
+        }
+    }
+
     #[test]
     fn a_pcm_session_estimates_the_reserve_and_publishes_it() {
         use crate::services::speaker_monitor::test_support::PollGen;

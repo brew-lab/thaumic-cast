@@ -3094,6 +3094,7 @@ mod tests {
                 latency_ms: 40,
                 jitter_ms: 2,
                 confidence: 0.9,
+                playout: None,
                 timestamp: 0,
             }),
             BroadcastEvent::Latency(LatencyEvent::Stale {
