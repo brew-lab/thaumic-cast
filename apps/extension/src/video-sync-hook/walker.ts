@@ -198,16 +198,18 @@ export class SegmentWalker {
       }
       let size = rd32(hdr, 0);
       const t = typ(hdr, 4);
+      let headerLen = 8;
       if (size === 1) {
         if (hdr.length < 16) {
           this.pend = hdr.slice();
           return;
         }
         size = rd32(hdr, 8) * 4294967296 + rd32(hdr, 12);
+        headerLen = 16;
       } else if (size === 0) {
         size = had + (u8.length - o); // to the end of this append
       }
-      if (size < 8 || !/^[\x20-\x7e]{4}$/.test(t)) {
+      if (size < headerLen || !/^[\x20-\x7e]{4}$/.test(t)) {
         this.broken = true;
         return;
       }

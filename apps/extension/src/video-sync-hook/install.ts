@@ -17,6 +17,10 @@
  * operations hidden from the player and the player's own calls queued
  * meanwhile as if the buffer were busy.
  *
+ * Audio in `sequence` mode is never shifted or cached: there the browser
+ * moves the native timestampOffset at each append, so cached times and any
+ * offset the hook writes would be wrong (reported as unavailable, `format`).
+ *
  * Video is never shifted or cached. Safety checks (guards.ts) turn the lead
  * off for a MediaSource rather than seek: the hook never writes currentTime.
  *
@@ -39,6 +43,7 @@ import {
   isLive,
   liveTooClose,
   nextStarve,
+  shiftHole,
   starved,
   trackLiveEdge,
   type FreezeState,
@@ -74,6 +79,8 @@ interface Rec {
   ms: MediaSource;
   kind: BufferKind;
   fmt: BufferFormat;
+  /** The MIME type named its codecs. */
+  hasCodecs: boolean;
   /** What the player set. */
   v: { to: number; aws: number; awe: number; mode: AppendMode };
   off: number;
@@ -99,6 +106,8 @@ interface Rec {
   deferUntil: number;
   deferSince: number;
   deferKey: string | null;
+  /** The native settings still lack `off`: write them before the next append. */
+  nativeStale: boolean;
 }
 
 /** What the hook keeps per MediaSource. */
@@ -373,7 +382,15 @@ export function installHook(G: Window & typeof globalThis): HookController {
       if (!el.paused && !el.ended) return r;
       withEl ??= r;
     }
-    return withEl ?? any;
+    if (withEl ?? any) return withEl ?? any;
+    // A buffer made as plain `video/mp4` (no codecs) with no audio buffer
+    // beside it most likely carries the sound too: muxed.
+    for (const r of recs) {
+      if (r.kind !== 'video' || r.hasCodecs) continue;
+      const mi = msInfo.get(r.ms);
+      if (mi && [...mi.recs].every((x) => x.kind === 'video')) return r;
+    }
+    return null;
   }
 
   /**
@@ -416,8 +433,12 @@ export function installHook(G: Window & typeof globalThis): HookController {
       MAX_LEAD_MS,
       Math.max(0, Math.round((-r.off / (r.rateApplied || 1)) * 1000)),
     );
+    if (r.kind === 'video')
+      return { state: 'unavailable', reason: 'muxed', appliedLeadMs: 0, playing };
+    // A buffer that went to sequence mode with shifted audio in it keeps that
+    // shift (see toSequence): report it.
     if (r.unavailable)
-      return { state: 'unavailable', reason: r.unavailable, appliedLeadMs: 0, playing };
+      return { state: 'unavailable', reason: r.unavailable, appliedLeadMs: applied, playing };
     const mi = msInfo.get(r.ms);
     if (mi?.latched) return { state: 'off', reason: mi.latched, appliedLeadMs: applied, playing };
     if (r.internal) return { state: 'switching', appliedLeadMs: applied, playing };
@@ -529,10 +550,28 @@ export function installHook(G: Window & typeof globalThis): HookController {
     function syncNative(r: Rec): boolean {
       const sb = r.sb;
       if (N.updGet.call(sb)) return false;
+      // In sequence mode the browser moves the native offset by itself and a
+      // write sets the group start: leave it alone there. Write it before a
+      // change to sequence, which then starts the group where the buffer ends.
+      if (N.modeGet.call(sb) !== 'sequence') N.toSet.call(sb, r.v.to + r.off);
       if (r.v.mode !== N.modeGet.call(sb)) N.modeSet.call(sb, r.v.mode);
-      N.toSet.call(sb, r.v.to + r.off);
       setWindow(sb, Math.max(0, r.v.aws + r.off), r.v.awe + r.off);
       return true;
+    }
+
+    /**
+     * Writes a new offset to the native buffer for future appends, unless the
+     * MediaSource has ended: a timestampOffset write would reopen it (and fire
+     * a sourceopen the player never caused), so the write waits for the
+     * player's next append, which reopens it anyway.
+     * @param r - The record
+     */
+    function applyOff(r: Rec): void {
+      if (N.rsGet.call(r.ms) === 'ended') {
+        r.nativeStale = true;
+        return;
+      }
+      r.nativeStale = !syncNative(r);
     }
 
     /**
@@ -647,6 +686,27 @@ export function installHook(G: Window & typeof globalThis): HookController {
     }
 
     /**
+     * Gives up on an audio buffer the player puts in sequence mode: marks it
+     * unavailable and stops caching it. Call before the native mode changes.
+     * A buffer with nothing in it yet loses its shift at once; one that
+     * already holds shifted audio keeps its offset (the player's own
+     * timestampOffset reads and writes stay consistent with it) until its
+     * MediaSource goes, since unshifting it would need a switch the
+     * sequence-mode offsets make unsafe.
+     * @param r - The record
+     */
+    function toSequence(r: Rec): void {
+      if (r.kind !== 'audio') return;
+      markUnavailable(r, 'format');
+      r.cache = null;
+      if (r.off !== 0 && !r.internal && nat(r.sb).length === 0) {
+        r.off = 0;
+        r.everShifted = false;
+        syncNative(r);
+      }
+    }
+
+    /**
      * Makes a walker that feeds a record's init tracking and cache.
      * @param r - The record
      * @param fmt - The container
@@ -695,12 +755,15 @@ export function installHook(G: Window & typeof globalThis): HookController {
     function manage(ms: MediaSource, sb: SourceBuffer, mime: string): Rec {
       const kind = classify(mime);
       const fmt = formatOf(mime);
+      const mode = N.modeGet.call(sb);
+      const seq = kind === 'audio' && mode === 'sequence';
       const r: Rec = {
         sb,
         ms,
         kind,
         fmt,
-        v: { to: 0, aws: 0, awe: Infinity, mode: N.modeGet.call(sb) },
+        hasCodecs: /codecs\s*=/i.test(mime),
+        v: { to: 0, aws: 0, awe: Infinity, mode },
         off: 0,
         rateApplied: 1,
         internal: false,
@@ -709,16 +772,21 @@ export function installHook(G: Window & typeof globalThis): HookController {
         opWait: null,
         currentInit: null,
         nativeInit: null,
-        cache: kind === 'audio' && fmt !== 'unknown' ? createCache() : null,
+        cache: kind === 'audio' && fmt !== 'unknown' && !seq ? createCache() : null,
         walker: null,
         unavailable:
-          kind === 'muxed' ? 'muxed' : kind === 'audio' && fmt === 'unknown' ? 'format' : null,
+          kind === 'muxed'
+            ? 'muxed'
+            : kind === 'audio' && (fmt === 'unknown' || seq)
+              ? 'format'
+              : null,
         everShifted: false,
         bufSnap: null,
         fd: 0,
         deferUntil: 0,
         deferSince: 0,
         deferKey: null,
+        nativeStale: false,
       };
       if ((kind === 'audio' || kind === 'video') && fmt !== 'unknown')
         r.walker = makeWalker(r, fmt);
@@ -1080,9 +1148,11 @@ export function installHook(G: Window & typeof globalThis): HookController {
         if (!r) return N.modeSet.call(this, m);
         if (r.pendingAsync) throw domErr('InvalidStateError');
         if (r.internal) {
+          if (m === 'sequence') toSequence(r);
           if (m === 'segments' || m === 'sequence') r.v.mode = m;
           return;
         }
+        if (m === 'sequence') toSequence(r);
         N.modeSet.call(this, m);
         r.v.mode = N.modeGet.call(this);
       },
@@ -1156,6 +1226,7 @@ export function installHook(G: Window & typeof globalThis): HookController {
      * @param data - What the player passed
      */
     function playerAppend(r: Rec, u8: Uint8Array, data: BufferSource): void {
+      if (r.nativeStale) r.nativeStale = !syncNative(r);
       N.append.call(r.sb, data);
       r.walker?.feed(u8);
       if (r.off !== 0) r.everShifted = true;
@@ -1255,6 +1326,8 @@ export function installHook(G: Window & typeof globalThis): HookController {
      */
     function maybeSwitch(r: Rec): void {
       if (!recs.has(r) || r.internal || r.kind !== 'audio') return;
+      // Sequence-mode audio keeps whatever offset it has (see toSequence).
+      if (r.v.mode === 'sequence' || N.modeGet.call(r.sb) === 'sequence') return;
       r.rateApplied = rescaleRate(rateFor(r), r.rateApplied, cmd.leadS, r.off);
       let want = targetOff(r);
       // Never apply an audio lead the live edge cannot feed.
@@ -1270,7 +1343,14 @@ export function installHook(G: Window & typeof globalThis): HookController {
       }
       if (r.deferUntil && now() < r.deferUntil) return;
       if (N.rsGet.call(r.ms) === 'closed') return;
-      if (N.updGet.call(r.sb) || r.pendingAsync || (r.walker && !r.walker.atBoundary())) return;
+      if (N.updGet.call(r.sb) || r.pendingAsync) return;
+      if (r.walker && !r.walker.atBoundary()) {
+        // Appends that never end on a fragment boundary (a stream of partial
+        // fragments, WebM clusters of unknown size) leave nowhere to switch:
+        // let the status say so in time.
+        if (!r.deferSince) r.deferSince = now();
+        return;
+      }
       void doSwitch(r, want);
     }
 
@@ -1318,16 +1398,23 @@ export function installHook(G: Window & typeof globalThis): HookController {
       r.deferUntil = 0;
       r.deferSince = 0;
       r.deferKey = null;
-      if (plan.action === 'drain') {
+      // A drain, or a cut beyond the end (nothing native lies past it, and
+      // remove() would throw).
+      if (plan.action === 'drain' || !(plan.cut < N.durGet.call(r.ms))) {
         // The new offset applies to future appends only.
         r.off = newOff;
         r.everShifted = true;
-        syncNative(r);
+        applyOff(r);
         postStatusSoon();
         return;
       }
       const mi = msInfo.get(r.ms);
       const wasEnded = N.rsGet.call(r.ms) === 'ended';
+      const nonSync = !!r.cache?.nonSync;
+      /** Our remove() reopened an ended MediaSource. */
+      let reopened = false;
+      /** We ended it again. */
+      let reEnded = false;
       r.everShifted = true;
       r.bufSnap = virtualOf(r);
       r.internal = true;
@@ -1338,7 +1425,10 @@ export function installHook(G: Window & typeof globalThis): HookController {
           mi.fakeEnded = true;
         }
         setWindow(sb, 0, Infinity);
-        await nativeOp(r, () => N.remove.call(sb, plan.cut, Infinity));
+        await nativeOp(r, () => {
+          N.remove.call(sb, plan.cut, Infinity);
+          reopened = wasEnded;
+        });
         r.off = newOff;
         if (r.v.mode === 'sequence') N.modeSet.call(sb, 'segments');
         let cur = r.nativeInit;
@@ -1347,7 +1437,7 @@ export function installHook(G: Window & typeof globalThis): HookController {
         // an encrypted init, which would fire 'encrypted' again; the jump
         // back in decode time has the same effect there.
         const first = cur;
-        if (r.cache?.nonSync && plan.list.length && first && !first.encrypted) {
+        if (nonSync && plan.list.length && first && !first.encrypted) {
           await nativeOp(r, () => N.append.call(sb, first.bytes as BufferSource));
         }
         for (const e of plan.list) {
@@ -1373,16 +1463,32 @@ export function installHook(G: Window & typeof globalThis): HookController {
         if (wasEnded && mi) {
           mi.expect.sourceended++;
           N.eos.call(r.ms);
+          reEnded = true;
         }
       } catch {
         try {
           r.off = newOff;
-          syncNative(r);
+          applyOff(r);
         } catch {
           // the buffer is gone
         }
       } finally {
-        if (wasEnded && mi) mi.fakeEnded = false;
+        if (wasEnded && mi) {
+          if (!reopened) {
+            // The remove never ran: no sourceopen is coming to hide.
+            mi.expect.sourceopen = Math.max(0, mi.expect.sourceopen - 1);
+          } else if (!reEnded && N.rsGet.call(r.ms) === 'open') {
+            // A failed switch must still leave the stream ended, or the
+            // element never reaches its end.
+            mi.expect.sourceended++;
+            try {
+              N.eos.call(r.ms);
+            } catch {
+              mi.expect.sourceended = Math.max(0, mi.expect.sourceended - 1);
+            }
+          }
+          mi.fakeEnded = false;
+        }
         r.internal = false;
         r.bufSnap = null;
         r.pendingAsync = false;
@@ -1461,8 +1567,7 @@ export function installHook(G: Window & typeof globalThis): HookController {
         }
         let holeByShift = false;
         for (const r of list) {
-          if (r.off === 0) continue;
-          if (!nat(r.sb).some(([s, e]) => s <= ct + 0.05 && e > ct + 0.3)) holeByShift = true;
+          if (r.off !== 0 && shiftHole(nat(r.sb), ct, -r.off)) holeByShift = true;
         }
         const v = freezeVerdict(freezeWatch.get(el) ?? null, {
           paused: el.paused,

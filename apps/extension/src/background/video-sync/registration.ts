@@ -41,17 +41,38 @@ export function videoSyncScripts(): chrome.scripting.RegisteredContentScript[] {
   ];
 }
 
+/** The run in progress; each run waits for the one before it. */
+let queue: Promise<unknown> = Promise.resolve();
+
 /**
  * Brings the registered page scripts in line with the setting: registers
  * (or refreshes) both while video sync is on and the host permission is
  * held, and unregisters them otherwise. Safe to call any number of times.
- * @param enabled - The video sync setting
+ *
+ * Runs one call at a time, each reading the setting afresh once its turn
+ * comes, so two overlapping calls (a permission grant and the setting being
+ * saved straight after it) can never leave the older reading in force.
+ * @param readEnabled - Reads the video sync setting
  * @returns True when the scripts are registered afterwards
  */
-export async function syncVideoSyncScripts(enabled: boolean): Promise<boolean> {
+export function syncVideoSyncScripts(
+  readEnabled: () => boolean | Promise<boolean>,
+): Promise<boolean> {
+  const run = queue.then(() => applyScripts(readEnabled));
+  queue = run.catch(() => undefined);
+  return run;
+}
+
+/**
+ * One run of {@link syncVideoSyncScripts}.
+ * @param readEnabled - Reads the video sync setting
+ * @returns True when the scripts are registered afterwards
+ */
+async function applyScripts(readEnabled: () => boolean | Promise<boolean>): Promise<boolean> {
   const wanted = videoSyncScripts();
   const ids = wanted.map((s) => s.id);
   try {
+    const enabled = await readEnabled();
     const present = new Set(
       (await chrome.scripting.getRegisteredContentScripts({ ids })).map((s) => s.id),
     );

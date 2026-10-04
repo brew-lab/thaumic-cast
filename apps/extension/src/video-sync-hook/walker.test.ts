@@ -129,6 +129,14 @@ describe('SegmentWalker (mp4)', () => {
     expect(s.inits).toHaveLength(0);
   });
 
+  it('should mark itself broken on a 64-bit box size smaller than its header', () => {
+    const s = walker('mp4');
+    // size 1 = 64-bit size follows; 12 is less than the 16-byte header
+    const bad = new Uint8Array([0, 0, 0, 1, 0x6d, 0x6f, 0x6f, 0x66, 0, 0, 0, 0, 0, 0, 0, 12]);
+    expect(() => s.walker.feed(bad)).not.toThrow();
+    expect(s.walker.broken).toBe(true);
+  });
+
   it('should drop a partial box on reset, as abort() does, and carry on', () => {
     const s = walker('mp4');
     s.walker.feed(mp4Stream.subarray(0, mp4Stream.length - 5));

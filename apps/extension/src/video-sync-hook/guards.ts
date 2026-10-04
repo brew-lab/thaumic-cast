@@ -120,8 +120,33 @@ export interface FreezeSample {
   now: number;
   /** The element reports at least 0.5 s buffered at the playhead. */
   hasData: boolean;
-  /** A shifted buffer has no native data at the playhead (a hole the shift explains). */
+  /**
+   * A shifted buffer has a gap at the playhead with native audio resuming
+   * just after it (see {@link shiftHole}).
+   */
   holeByShift: boolean;
+}
+
+/** Seconds past the shift within which native audio must resume to count as a hole. */
+export const HOLE_REACH_S = 1;
+
+/**
+ * Whether a shifted buffer has a hole at the playhead: no native audio
+ * there, but native audio resuming shortly after it. Audio that simply
+ * ends is not a hole: shifted audio always runs out a lead's worth before
+ * the picture in a network stall, and that stall is the network's doing.
+ * @param native - The buffer's native ranges
+ * @param ct - The playhead
+ * @param shiftS - The shift in seconds of media time (positive)
+ * @returns True for a gap the shift may explain
+ */
+export function shiftHole(
+  native: readonly (readonly [number, number])[],
+  ct: number,
+  shiftS: number,
+): boolean {
+  if (native.some(([s, e]) => s <= ct + 0.05 && e > ct + 0.3)) return false;
+  return native.some(([s]) => s > ct && s <= ct + shiftS + HOLE_REACH_S);
 }
 
 /**

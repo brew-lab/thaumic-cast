@@ -29,6 +29,30 @@ export const HELLO_HOOK_EVENT = '__tcvs_hello_hook';
 export const RESEND_MS = 2000;
 
 /**
+ * How long the relay keeps a lead alive without hearing from the background,
+ * in ms. After that it stops re-sending, and the hook's dead-man switch takes
+ * the lead off: a background that lost its state (a service-worker restart)
+ * or missed the end of a cast can never leave a page playing its sound early.
+ */
+export const LEASE_MS = 10000;
+
+/**
+ * How often the background must send a wanted lead again, in ms, to keep
+ * the relay's lease (and to reach frames and pages that loaded since).
+ */
+export const LEAD_REFRESH_MS = 3000;
+
+/**
+ * Whether the relay's lease on a lead has run out.
+ * @param heardAt - When the background last sent a lead, in ms
+ * @param now - The time now, in ms (same clock)
+ * @returns True once more than {@link LEASE_MS} has passed
+ */
+export function leaseExpired(heardAt: number, now: number): boolean {
+  return now - heardAt > LEASE_MS;
+}
+
+/**
  * Name of the relay-to-hook command event for a nonce.
  * @param nonce - The pairing nonce
  * @returns The event name
