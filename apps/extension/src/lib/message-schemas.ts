@@ -17,7 +17,6 @@ import {
   ActiveCastSchema,
   TransportStateSchema,
   PlaybackResultSchema,
-  LatencyBroadcastEvent,
   SpeakerRemovalReasonSchema,
   NetworkEventSchema,
   SpeakerHealthStateSchema,
@@ -684,36 +683,6 @@ export const GetCaptureHealthMessageSchema = z.object({
 });
 export type GetCaptureHealthMessage = z.infer<typeof GetCaptureHealthMessageSchema>;
 
-export const LatencyUpdateMessageSchema = z.object({
-  type: z.literal('LATENCY_UPDATE'),
-  streamId: z.string(),
-  speakerIp: SpeakerIpSchema,
-  epochId: z.number().int().nonnegative(),
-  latencyMs: z.number(),
-  jitterMs: z.number(),
-  confidence: z.number().min(0).max(1),
-});
-export type LatencyUpdateMessage = z.infer<typeof LatencyUpdateMessageSchema>;
-
-export const LatencyStaleMessageSchema = z.object({
-  type: z.literal('LATENCY_STALE'),
-  streamId: z.string(),
-  speakerIp: SpeakerIpSchema,
-  epochId: z.number().int().nonnegative(),
-});
-export type LatencyStaleMessage = z.infer<typeof LatencyStaleMessageSchema>;
-
-/**
- * Latency event forwarded to content script (background → content).
- * We use the LatencyBroadcastEvent type from protocol directly since
- * it's a complex union type.
- */
-export const LatencyEventMessageSchema = z.object({
-  type: z.literal('LATENCY_EVENT'),
-  payload: z.custom<LatencyBroadcastEvent>(),
-});
-export type LatencyEventMessage = z.infer<typeof LatencyEventMessageSchema>;
-
 /** The companion's zone groups, discovered or refreshed. */
 const GroupsDiscoveredEventSchema = z.object({
   type: z.literal('groupsDiscovered'),
@@ -828,14 +797,6 @@ export const SetVideoSyncTrimMessageSchema = z.object({
   }),
 });
 export type SetVideoSyncTrimMessage = z.infer<typeof SetVideoSyncTrimMessageSchema>;
-
-export const TriggerResyncMessageSchema = z.object({
-  type: z.literal('TRIGGER_RESYNC'),
-  payload: z.object({
-    tabId: TabIdSchema,
-  }),
-});
-export type TriggerResyncMessage = z.infer<typeof TriggerResyncMessageSchema>;
 
 /**
  * Asks the page's hooks to try the lead again after they turned it off

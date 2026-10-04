@@ -29,7 +29,7 @@ export * from './src/events.js';
 // Media metadata and tab state types
 export * from './src/media.js';
 
-// Video sync state machine types
+// Video sync status (per cast, for the popup)
 export * from './src/video-sync.js';
 
 // Streaming policy configuration (buffer sizing, drop thresholds)
