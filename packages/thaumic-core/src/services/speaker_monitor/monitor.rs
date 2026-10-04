@@ -413,7 +413,10 @@ impl SpeakerMonitor {
                     // has nothing left to monitor.
                     if let Some(tap) = tap.upgrade() {
                         let uuid = transport_view.speaker_uuid(&tap.speaker_ip.to_string());
-                        register_connection(&mut sessions, &mut kept_control, &tap, uuid);
+                        let frame_ms = stream_registry
+                            .get_stream(&tap.stream_id)
+                            .map(|s| s.frame_duration_ms);
+                        register_connection(&mut sessions, &mut kept_control, &tap, uuid, frame_ms);
                     }
                 }
 
@@ -670,11 +673,14 @@ struct MonitorDeps {
 /// drift correction learned about the speaker is kept under it (under its
 /// address until then): a new session starts from what `kept` holds for it,
 /// and a session whose key has changed hands over what it had.
+///
+/// `frame_ms` is the stream's frame length, for the playout estimate.
 fn register_connection(
     sessions: &mut HashMap<SessionKey, SpeakerSession>,
     kept: &mut HashMap<String, KeptControlState>,
     tap: &Arc<ConnectionTap>,
     uuid: Option<String>,
+    frame_ms: Option<u32>,
 ) {
     let key = (tap.stream_id.clone(), tap.speaker_ip);
     let session = sessions
@@ -694,6 +700,7 @@ fn register_connection(
         session.drift = DriftController::new(state);
         session.control_key = Some(control_key);
     }
+    session.frame_duration_ms = frame_ms;
     session.attach(tap);
     let polling = if session.emit_events {
         "video sync"
@@ -970,6 +977,12 @@ pub(super) fn apply_poll_result(
 
     // Emit update if appropriate
     if session.emit_events && session.should_emit() {
+        // Read here, once per event sent, so the pipeline snapshots are
+        // copied at most once a second and only for video sync.
+        let playout = session.playout_latency();
+        if let Some(p) = &playout {
+            session.log_playout(stream_id, &speaker_ip, p);
+        }
         let event = LatencyEvent::Updated {
             stream_id: stream_id.clone(),
             speaker_ip: speaker_ip.clone(),
@@ -977,6 +990,7 @@ pub(super) fn apply_poll_result(
             latency_ms: session.latency_ms(),
             jitter_ms: session.jitter_ms(),
             confidence: session.confidence(),
+            playout,
             timestamp: now_millis(),
         };
         emitter.emit_latency(event);
@@ -1008,7 +1022,13 @@ mod tests {
         let now = Instant::now();
 
         let tap = started_tap("cast-1", "192.168.1.60", true);
-        register_connection(&mut sessions, &mut kept, &tap, Some("RINCON_A".into()));
+        register_connection(
+            &mut sessions,
+            &mut kept,
+            &tap,
+            Some("RINCON_A".into()),
+            None,
+        );
         let key = ("cast-1".to_string(), tap.speaker_ip);
         let learned = SpeakerControlState {
             integral_ppm: 18.5,
@@ -1021,13 +1041,25 @@ mod tests {
 
         // Another speaker takes the address: it learns its own clock.
         let other = started_tap("cast-2", "192.168.1.60", true);
-        register_connection(&mut sessions, &mut kept, &other, Some("RINCON_B".into()));
+        register_connection(
+            &mut sessions,
+            &mut kept,
+            &other,
+            Some("RINCON_B".into()),
+            None,
+        );
         let session = &sessions[&("cast-2".to_string(), other.speaker_ip)];
         assert_eq!(session.drift.integral_ppm(), 0.0);
 
         // The first speaker comes back from a new address.
         let moved = started_tap("cast-3", "192.168.1.61", true);
-        register_connection(&mut sessions, &mut kept, &moved, Some("RINCON_A".into()));
+        register_connection(
+            &mut sessions,
+            &mut kept,
+            &moved,
+            Some("RINCON_A".into()),
+            None,
+        );
         let session = &sessions[&("cast-3".to_string(), moved.speaker_ip)];
         assert_eq!(session.drift.state(), &learned);
         assert!(kept.is_empty(), "handed over, not copied");
@@ -1035,11 +1067,17 @@ mod tests {
         // Known by address until the topology names it, then it keeps what
         // it learned under the address.
         let unnamed = started_tap("cast-4", "192.168.1.62", true);
-        register_connection(&mut sessions, &mut kept, &unnamed, None);
+        register_connection(&mut sessions, &mut kept, &unnamed, None, None);
         let key = ("cast-4".to_string(), unnamed.speaker_ip);
         sessions.get_mut(&key).unwrap().drift = DriftController::new(learned.clone());
         let again = started_tap("cast-4", "192.168.1.62", true);
-        register_connection(&mut sessions, &mut kept, &again, Some("RINCON_C".into()));
+        register_connection(
+            &mut sessions,
+            &mut kept,
+            &again,
+            Some("RINCON_C".into()),
+            None,
+        );
         assert_eq!(sessions[&key].drift.state(), &learned);
         assert_eq!(sessions[&key].control_key.as_deref(), Some("RINCON_C"));
     }

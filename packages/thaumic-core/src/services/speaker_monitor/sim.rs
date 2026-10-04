@@ -21,6 +21,10 @@
 //! Cast in segments, the speaker moves on gaplessly from one to the next,
 //! and reports RelTime ahead of the audio on the first, as one told to play
 //! it does, so the tracker sees continuation switches as in the field.
+//!
+//! At each estimate the playout latency estimate video sync uses is made
+//! from the same tracker, controller and pipeline snapshots, as the monitor
+//! makes it.
 
 use std::hash::{Hash, Hasher};
 use std::net::IpAddr;
@@ -39,6 +43,7 @@ use super::control::{drift_active, ControlInput, DriftController, DriftMode, Spe
 use super::notice::{NoticeInput, NoticeState, SpeakerNotice};
 use super::reserve::ReserveEstimate;
 use super::segment::SegmentBreak;
+use super::session::playout::{self, PlayoutFigures, PlayoutInputs, QUEUE_WINDOW};
 use super::test_support::Lcg;
 use super::tracker::{
     PlayoutTimeline, ReserveTracker, SwitchOutcome, TimelineEntry, DRAINING_WARN_SECS,
@@ -129,6 +134,10 @@ pub(crate) struct SimSpeaker {
     /// 210 on a Play:1). On the segments it moves on to, RelTime counts from
     /// the audio.
     pub reporting_offset_ms: f64,
+    /// A source gap: from `.0` ms after the connection starts, the source
+    /// delivers nothing for `.1` ms, so the cadence queue runs dry and is
+    /// held until it refills (a rebuffer), playing silence meanwhile.
+    pub source_gap: Option<(f64, f64)>,
 }
 
 impl Default for SimSpeaker {
@@ -152,6 +161,7 @@ impl Default for SimSpeaker {
             monitor_dies_at: None,
             segment_ms: None,
             reporting_offset_ms: 0.0,
+            source_gap: None,
         }
     }
 }
@@ -198,6 +208,10 @@ pub(crate) struct SimEstimate {
     pub settling: bool,
     /// What a continuation switch came to at the estimate, if one did.
     pub switch_outcome: Option<SwitchOutcome>,
+    /// The playout estimate after the estimate, as the monitor would send it.
+    pub playout: Option<PlayoutFigures>,
+    /// The latest cadence queue snapshot, ms.
+    pub queue_now_ms: f64,
 }
 
 /// What a simulation run saw.
@@ -346,15 +360,23 @@ impl SimSpeaker {
         let mut next_estimate = ESTIMATE_EVERY_MS;
         let mut stalled_at: Option<f64> = None;
         let mut polls = 0;
+        let mut last_now = 0.0;
+        // Pipeline snapshots are taken every 50 frames; this many cover the
+        // playout estimate's queue window.
+        let snapshots_per_window =
+            (QUEUE_WINDOW.as_millis() as usize / (50 * frame_ms as usize)).max(1);
 
         let start = tokio::time::Instant::now();
         let end = minutes * 60_000.0;
         loop {
             // The source delivers one frame per frame period, just ahead of
             // the metronome tick that sends it on.
+            let source_gap = self
+                .source_gap
+                .is_some_and(|(from, len)| last_now >= from && last_now < from + len);
             if burst_left > 0 {
                 burst_left -= 1;
-            } else {
+            } else if !source_gap {
                 let _ = tx.send(audio.clone());
             }
             let Some(Ok(frame)) = stream.next().await else {
@@ -365,6 +387,7 @@ impl SimSpeaker {
                 .bytes_sent
                 .fetch_add(frame.len() as u64, Ordering::Relaxed);
             let now = start.elapsed().as_secs_f64() * 1000.0;
+            last_now = now;
             let sent_ms = tap.audio_bytes_sent() as f64 * 1000.0 / byte_rate;
             // During a stall the speaker has only what reached it before.
             let received_ms = match self.stall {
@@ -486,6 +509,26 @@ impl SimSpeaker {
                         control.set_ppm(controller.applied_ppm());
                     }
                 }
+                // The snapshots carry the real clock, which stands still
+                // here, so the window is taken from the newest instead.
+                let queue_frames: Vec<usize> = tap
+                    .recent_pipeline(Duration::MAX)
+                    .iter()
+                    .rev()
+                    .take(snapshots_per_window)
+                    .map(|s| s.queue_len)
+                    .collect();
+                let playout = playout::estimate(&PlayoutInputs {
+                    pcm: true,
+                    head_start: tracker.head_start(),
+                    estimate: tracker.last_estimate().copied(),
+                    bias_ms: controller.state().bias_ms(),
+                    queue_frames: &queue_frames,
+                    frame_ms,
+                });
+                let queue_now_ms = queue_frames
+                    .first()
+                    .map_or(0.0, |&n| n as f64 * f64::from(frame_ms));
                 let notice = notices.update(
                     notice_base + Duration::from_secs_f64(now / 1000.0),
                     &NoticeInput {
@@ -523,6 +566,8 @@ impl SimSpeaker {
                     control_hold: tracker.control_hold(),
                     settling: tracker.settling(),
                     switch_outcome,
+                    playout,
+                    queue_now_ms,
                 });
                 next_estimate += ESTIMATE_EVERY_MS;
             }
@@ -542,6 +587,7 @@ mod tests {
     use super::super::notice::SpeakerNoticeKind;
     use super::super::tracker::SwitchUnmeasured;
     use super::*;
+    use crate::events::PlayoutSource;
 
     const MINUTE: f64 = 60_000.0;
 
@@ -1381,5 +1427,165 @@ mod tests {
         let frozen = lapsed[0].net_inserted_ms;
         assert!(frozen > 0.0);
         assert!(lapsed.iter().all(|e| e.net_inserted_ms == frozen));
+    }
+
+    /// The playout estimate at each report, with the report.
+    fn playouts(report: &SimReport) -> Vec<(&SimEstimate, PlayoutFigures)> {
+        report
+            .estimates
+            .iter()
+            .map(|e| (e, e.playout.expect("a PCM connection always has one")))
+            .collect()
+    }
+
+    /// A PCM cast with a 500 ms head start and drift correction on, over ten
+    /// minutes on six seeds: the playout estimate starts from the prior
+    /// (the head start plus the default calibration, with the cadence queue
+    /// on top), hands over to the measured reserve once it locks, within the
+    /// prior's own uncertainty, and from then on the reserve it uses is
+    /// within the estimate's half-width of the true reserve.
+    #[test]
+    fn playout_hands_off_from_prior_to_reserve_within_its_uncertainty() {
+        let seeds: Vec<u64> = (71..=76).collect();
+        let reports = run_all(
+            seeds
+                .iter()
+                .map(|&seed| playbar(20.0, DriftMode::On, seed))
+                .collect(),
+            10.0,
+        );
+        for (&seed, report) in seeds.iter().zip(&reports) {
+            assert!(report.underruns.is_empty(), "seed {seed}");
+            let p = playouts(report);
+            let (first_report, first) = p[0];
+            assert_eq!(first.source, PlayoutSource::Prior, "seed {seed}");
+            assert_eq!(first.calib_ms, playout::PRIOR_CALIB_MS, "seed {seed}");
+            assert_eq!(first.head_start_ms, 500, "seed {seed}");
+            assert_eq!(first.queue_ms, first_report.queue_now_ms, "seed {seed}");
+            assert_eq!(
+                first.companion_ms,
+                first.queue_ms + 500.0 + playout::PRIOR_CALIB_MS,
+                "seed {seed}"
+            );
+
+            let handoff = p
+                .iter()
+                .position(|(_, f)| f.source == PlayoutSource::Reserve)
+                .unwrap_or_else(|| panic!("seed {seed}: the reserve never locked"));
+            assert!(handoff > 0, "seed {seed}");
+            let step = p[handoff].1.companion_ms - p[handoff - 1].1.companion_ms;
+            assert!(
+                step.abs() <= playout::PRIOR_UNCERTAINTY_MS,
+                "seed {seed}: stepped {step:+.0} ms at the hand-off"
+            );
+            for (e, f) in &p[handoff..] {
+                assert_eq!(f.source, PlayoutSource::Reserve, "seed {seed}");
+                let half_width = e.reserve.expect("locked").half_width_ms;
+                let error = f.reserve_ms - e.true_reserve_ms;
+                assert!(
+                    error.abs() <= half_width,
+                    "seed {seed}: reserve {error:+.0} ms from the truth at {:.1} min \
+                     (half-width {half_width:.0})",
+                    e.at / MINUTE
+                );
+            }
+        }
+    }
+
+    /// The Kitchen Play:1 in 600 s segments: at the first continuation
+    /// switch the estimate keeps to the reserve carried across it, so it
+    /// moves by no more than 30 ms going into the switch and stays on the
+    /// same source throughout, with no segment break; coming out, the
+    /// offset the switch absorbed is measured, and its error (up to about
+    /// 60 ms, see `minus_45ppm_in_600s_segments_converges_across_switches`)
+    /// shows as one smaller move. Falling back to the prior while the switch
+    /// settled moved it by up to 60 ms going in.
+    #[test]
+    fn playout_does_not_step_at_the_first_continuation_switch() {
+        let seeds: Vec<u64> = (41..=52).collect();
+        let reports = run_all(seeds.iter().map(|&seed| kitchen(seed)).collect(), 20.0);
+        for (&seed, report) in seeds.iter().zip(&reports) {
+            let p = playouts(report);
+            let start = p
+                .iter()
+                .position(|(e, _)| e.settling)
+                .unwrap_or_else(|| panic!("seed {seed}: no switch"));
+            let end = start
+                + p[start..]
+                    .iter()
+                    .position(|(e, _)| !e.settling)
+                    .unwrap_or_else(|| panic!("seed {seed}: the switch never settled"));
+            for (e, f) in &p[start - 1..=end] {
+                assert_eq!(f.source, PlayoutSource::Reserve, "seed {seed}");
+                assert!(e.brk.is_none(), "seed {seed}");
+            }
+            let into = p[start].1.companion_ms - p[start - 1].1.companion_ms;
+            assert!(
+                into.abs() <= 30.0,
+                "seed {seed}: stepped {into:+.0} ms into the switch"
+            );
+            let out = p[end].1.companion_ms - p[end - 1].1.companion_ms;
+            assert!(
+                out.abs() <= 45.0,
+                "seed {seed}: stepped {out:+.0} ms out of the switch"
+            );
+        }
+    }
+
+    /// A three-second source gap six minutes in: the cadence plays silence,
+    /// holds until its queue refills, and the speaker's reserve is
+    /// untouched, so by the next report the true queue plus reserve is back
+    /// within a frame of where it was (the refilled queue reads one frame
+    /// short, the frame the resuming tick sends). From then on the estimate
+    /// follows it within its uncertainty, on the same source and with no
+    /// segment break.
+    #[test]
+    fn playout_returns_after_a_source_gap() {
+        const GAP_AT: f64 = 6.0 * MINUTE;
+        let seeds: Vec<u64> = (81..=84).collect();
+        let speakers = seeds
+            .iter()
+            .map(|&seed| SimSpeaker {
+                source_gap: Some((GAP_AT, 3_000.0)),
+                ..playbar(20.0, DriftMode::On, seed)
+            })
+            .collect();
+        let reports = run_all(speakers, 10.0);
+        for (&seed, report) in seeds.iter().zip(&reports) {
+            assert!(report.underruns.is_empty(), "seed {seed}");
+            let p = playouts(report);
+            let frame_ms = 20.0;
+            let truth = |e: &SimEstimate| e.queue_now_ms + e.true_reserve_ms;
+            let (before, _) = *p
+                .iter()
+                .rfind(|(e, _)| e.at <= GAP_AT)
+                .expect("a report before the gap");
+            let (after, _) = *p
+                .iter()
+                .find(|(e, _)| e.at > GAP_AT + 10_000.0)
+                .expect("a report after the gap");
+            // Across the one report the drift moves the reserve by a
+            // millisecond or two.
+            let moved = truth(after) - truth(before);
+            assert!(
+                moved.abs() <= frame_ms + 2.0,
+                "seed {seed}: queue plus reserve moved {moved:+.0} ms across the gap"
+            );
+            for (e, f) in p.iter().filter(|(e, _)| e.at > GAP_AT + 10_000.0) {
+                assert!(
+                    (f.queue_ms - before.queue_now_ms).abs() <= frame_ms,
+                    "seed {seed}"
+                );
+                assert_eq!(f.source, PlayoutSource::Reserve, "seed {seed}");
+                assert!(e.brk.is_none(), "seed {seed}");
+                let error = f.companion_ms - truth(e);
+                assert!(
+                    error.abs() <= f.uncertainty_ms,
+                    "seed {seed}: {error:+.0} ms from the truth at {:.1} min (\u{b1}{:.0})",
+                    e.at / MINUTE,
+                    f.uncertainty_ms
+                );
+            }
+        }
     }
 }

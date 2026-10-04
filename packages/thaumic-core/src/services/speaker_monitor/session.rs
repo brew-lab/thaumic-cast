@@ -12,6 +12,7 @@
 //!
 //! - [`video_sync`]: the absolute latency that video sync uses, and the
 //!   wall-clock cushion line;
+//! - [`playout`]: the playout latency estimate sent to video sync clients;
 //! - [`report`]: the 30 s `[SpeakerMonitor]` line and the helpers that format
 //!   it and the end-of-connection summary;
 //! - [`drift`]: stepping drift correction and handing its command to the
@@ -35,6 +36,7 @@ use crate::stream::{ConnectionTap, PlaybackEpoch};
 
 mod drift;
 mod health;
+pub(super) mod playout;
 mod report;
 mod video_sync;
 
@@ -299,6 +301,11 @@ pub(super) struct SpeakerSession {
     /// What the drift controller's state is kept under between sessions:
     /// the speaker's UUID, or its address until the topology knows it.
     pub(super) control_key: Option<String>,
+    /// The stream's frame length in ms, from the stream registry when the
+    /// connection registered; `None` if the stream was already gone.
+    pub(super) frame_duration_ms: Option<u32>,
+    /// Gives the playout estimates sent to clients their epoch.
+    playout_tracker: playout::PlayoutTracker,
 }
 
 impl SpeakerSession {
@@ -357,6 +364,8 @@ impl SpeakerSession {
             drift: DriftController::default(),
             drift_origin: Instant::now(),
             control_key: None,
+            frame_duration_ms: None,
+            playout_tracker: playout::PlayoutTracker::default(),
         }
     }
 

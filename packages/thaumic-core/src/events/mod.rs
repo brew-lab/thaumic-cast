@@ -428,6 +428,49 @@ pub enum TopologyEvent {
     },
 }
 
+/// Where a [`PlayoutLatency`] took the speaker's share of the delay from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum PlayoutSource {
+    /// Not measured yet (or measured afresh): the head start sent plus the
+    /// speaker's calibration, as its past connections settled.
+    Prior,
+    /// The speaker's measured reserve, locked and not mid-switch.
+    Reserve,
+}
+
+/// The companion's estimate of how long audio takes from reaching it to
+/// being played by one speaker, for video sync.
+///
+/// It is the cadence queue the audio waits in here plus the speaker's
+/// reserve (the audio delivered to it and not yet played). What the browser
+/// adds before the audio arrives and what the speaker adds after its
+/// playhead (its output delay) are not in it. Sent only for PCM casts,
+/// whose reserve is measured.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PlayoutLatency {
+    /// The queue plus the reserve (or its prior), in ms.
+    pub companion_ms: u32,
+    /// About one standard deviation of `companion_ms`, in ms.
+    pub uncertainty_ms: u32,
+    /// Where the reserve figure came from.
+    pub source: PlayoutSource,
+    /// Starts at 1 and steps whenever the estimate may have stepped: a new
+    /// connection, a change of `source` or a break in the speaker's
+    /// measurements. Never for routine wobble.
+    pub epoch: u32,
+    /// The cadence queue, median over the last few seconds, in ms.
+    pub queue_ms: u32,
+    /// The reserve, or the prior used for it, in ms.
+    pub reserve_ms: u32,
+    /// The head start the connection was actually sent, in ms.
+    pub head_start_ms: u32,
+    /// The calibration the prior adds to the head start, in ms (what it
+    /// would add, when the source is the reserve).
+    pub calib_ms: i32,
+}
+
 /// Events related to audio latency measurement.
 #[derive(Debug, Clone, Serialize)]
 #[serde(tag = "type", rename_all = "camelCase")]
@@ -451,6 +494,10 @@ pub enum LatencyEvent {
         jitter_ms: u64,
         /// Confidence score (0.0 - 1.0).
         confidence: f32,
+        /// The playout latency estimate, for a PCM connection whose head
+        /// start and cadence queue are known; absent otherwise.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        playout: Option<PlayoutLatency>,
         /// Unix timestamp in milliseconds.
         timestamp: u64,
     },
@@ -531,6 +578,65 @@ mod tests {
         assert_eq!(
             wire(SpeakerRemovalReason::ContinuationFailed),
             "\"continuation_failed\""
+        );
+    }
+
+    /// The latency event's shape is protocol, shared with the extension's
+    /// zod schema: the playout estimate is camelCase, and left out when
+    /// there is none.
+    #[test]
+    fn latency_updated_wire_shape() {
+        let updated = |playout| {
+            BroadcastEvent::Latency(LatencyEvent::Updated {
+                stream_id: "s".into(),
+                speaker_ip: "192.168.1.31".into(),
+                epoch_id: 2,
+                latency_ms: 900,
+                jitter_ms: 12,
+                confidence: 0.5,
+                playout,
+                timestamp: 1,
+            })
+        };
+        let with = updated(Some(PlayoutLatency {
+            companion_ms: 710,
+            uncertainty_ms: 61,
+            source: PlayoutSource::Prior,
+            epoch: 1,
+            queue_ms: 190,
+            reserve_ms: 520,
+            head_start_ms: 500,
+            calib_ms: 20,
+        }));
+        assert_eq!(
+            serde_json::to_value(&with).unwrap(),
+            serde_json::json!({
+                "category": "latency",
+                "type": "updated",
+                "streamId": "s",
+                "speakerIp": "192.168.1.31",
+                "epochId": 2,
+                "latencyMs": 900,
+                "jitterMs": 12,
+                "confidence": 0.5,
+                "playout": {
+                    "companionMs": 710,
+                    "uncertaintyMs": 61,
+                    "source": "prior",
+                    "epoch": 1,
+                    "queueMs": 190,
+                    "reserveMs": 520,
+                    "headStartMs": 500,
+                    "calibMs": 20,
+                },
+                "timestamp": 1,
+            })
+        );
+        let without = serde_json::to_value(updated(None)).unwrap();
+        assert!(without.get("playout").is_none(), "{without}");
+        assert_eq!(
+            serde_json::to_value(PlayoutSource::Reserve).unwrap(),
+            serde_json::json!("reserve")
         );
     }
 
