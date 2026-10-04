@@ -152,6 +152,8 @@ export {
   type CompanionAudioChangedMessage,
   CaptureHealthEventMessageSchema,
   type CaptureHealthEventMessage,
+  CaptureDelayMessageSchema,
+  type CaptureDelayMessage,
   CaptureHealthChangedMessageSchema,
   type CaptureHealthChangedMessage,
   GetCaptureHealthMessageSchema,
@@ -269,6 +271,7 @@ import type {
   OffscreenReadyMessage,
   SessionDisconnectedMessage,
   BrowserCaptureErrorMessage,
+  CaptureDelayMessage,
   VideoSyncLeadMessage,
   VideoSyncHookStatusMessage,
 } from './message-schemas';
@@ -367,7 +370,8 @@ export type OffscreenToBackgroundType =
   | 'TOPOLOGY_EVENT'
   | 'OFFSCREEN_READY'
   | 'SESSION_DISCONNECTED'
-  | 'BROWSER_CAPTURE_ERROR';
+  | 'BROWSER_CAPTURE_ERROR'
+  | 'CAPTURE_DELAY';
 
 /** Message types: Content broadcast */
 export type ContentBroadcastType = 'VIDEO_SYNC_STATE_CHANGED';
@@ -487,7 +491,8 @@ export type OffscreenToBackgroundMessage =
   | TopologyEventMessage
   | OffscreenReadyMessage
   | SessionDisconnectedMessage
-  | BrowserCaptureErrorMessage;
+  | BrowserCaptureErrorMessage
+  | CaptureDelayMessage;
 
 /**
  * Messages broadcast from content script (video sync state).

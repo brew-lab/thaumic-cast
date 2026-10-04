@@ -663,6 +663,19 @@ export const CaptureHealthChangedMessageSchema = z.object({
 });
 export type CaptureHealthChangedMessage = z.infer<typeof CaptureHealthChangedMessageSchema>;
 
+/**
+ * How long a tab's captured audio waits in the extension before the companion
+ * has it (offscreen → background), once a second while a PCM tab cast has
+ * video sync on. Video sync adds it to the audio lead.
+ */
+export const CaptureDelayMessageSchema = z.object({
+  type: z.literal('CAPTURE_DELAY'),
+  tabId: TabIdSchema,
+  /** The delay in ms. */
+  ms: z.number().nonnegative().max(60_000),
+});
+export type CaptureDelayMessage = z.infer<typeof CaptureDelayMessageSchema>;
+
 /** Popup → background query for current capture-health snapshot. */
 export const GetCaptureHealthMessageSchema = z.object({
   type: z.literal('GET_CAPTURE_HEALTH'),

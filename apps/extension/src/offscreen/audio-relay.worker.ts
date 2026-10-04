@@ -47,6 +47,7 @@ import type { WorkerInboundMessage } from './worker-messages';
 import { exponentialBackoff } from '../lib/backoff';
 import { errorParamsOf } from '../lib/keyed-error';
 import { convertPlanarToInt16 } from './pcm-convert';
+import { CAPTURE_DELAY_INTERVAL_MS, captureDelayMs } from './capture-delay';
 import {
   PCM_FIRST_FRAME_WAIT_MS,
   pcmFrameSizeInterleaved,
@@ -97,6 +98,8 @@ let totalSamplesRead = 0;
 let droppedFrameCount = 0;
 let backpressureCycles = 0;
 let consecutiveBackpressureCycles = 0;
+/** When the capture delay was last reported (performance.now). */
+let lastCaptureDelayTime = 0;
 
 /**
  * Grows per-channel f32 extraction buffers if an AudioData delivers more samples than seen before.
@@ -246,6 +249,22 @@ function processAudioData(audioData: AudioData): void {
 }
 
 /**
+ * Reports how long audio waits here before the companion has it, once a
+ * second, while playback has video sync on. Reads counters only.
+ */
+function maybePostCaptureDelay(): void {
+  if (!s.videoSync) return;
+  const now = performance.now();
+  if (now - lastCaptureDelayTime < CAPTURE_DELAY_INTERVAL_MS) return;
+  lastCaptureDelayTime = now;
+  const ms = captureDelayMs(s.frameQueueBytes, accumOffset, s.socket?.bufferedAmount ?? 0, {
+    sampleRate: declaredSampleRate,
+    channels,
+  });
+  postToMain({ type: 'CAPTURE_DELAY', ms });
+}
+
+/**
  * Main loop: reads AudioData from the MSTP reader, handles backpressure, and posts periodic stats.
  * @param outstandingRead - A read already started and not yet consumed, taken before any new one
  */
@@ -280,6 +299,7 @@ async function consumeLoopMSTP(
         maxMs,
       );
       maybePostStats(s, null, 0, getCustomMetrics, resetCustomCounters);
+      maybePostCaptureDelay();
       await yieldMacrotask(backoffMs);
       continue;
     }
@@ -301,6 +321,7 @@ async function consumeLoopMSTP(
     wakeupCount++;
 
     maybePostStats(s, null, 0, getCustomMetrics, resetCustomCounters);
+    maybePostCaptureDelay();
   }
 
   // Stopped during a backoff with the first read still outstanding.
@@ -372,6 +393,7 @@ function cleanup(): void {
   expectedNextTimestamp = -1;
   gapCount = 0;
   gapDurationUs = 0;
+  lastCaptureDelayTime = 0;
 
   cleanupSharedState(s);
 }
