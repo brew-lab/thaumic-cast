@@ -50,6 +50,7 @@ import {
 } from '@thaumic-cast/protocol';
 import { applyIngestGapsEvent, ingestGapsBroadcast } from './ingest-gaps-state';
 import { setCompanionAudio } from './connection-state';
+import { handleVideoSyncLatency, stopVideoSync } from './video-sync/service';
 
 const log = createLogger('SonosEvents');
 
@@ -424,13 +425,8 @@ export async function stopCastForTab(tabId: number): Promise<void> {
   if (captureMode === 'tab') {
     // Re-enable auto-discardable (was disabled to prevent Memory Saver)
     chrome.tabs.update(tabId, { autoDiscardable: true }).catch(noop);
-    // Disable video sync before stopping capture
-    chrome.tabs
-      .sendMessage(tabId, {
-        type: 'SET_VIDEO_SYNC_ENABLED',
-        payload: { tabId, enabled: false },
-      })
-      .catch(noop);
+    // Put the page's sound back in step before capture stops
+    if (session?.videoSync) await stopVideoSync(tabId).catch(noop);
   }
 
   // Send stop message to offscreen (unified for both capture modes)
@@ -636,53 +632,14 @@ function handlePlaybackStopFailed(streamId: string, speakerIp: string, error: st
 }
 
 /**
- * Handles latency measurement events.
- * Routes to:
- * 1. Content script of the casting tab (for video sync)
- * 2. Popup (for latency display)
+ * Handles latency measurement events: the video sync service turns the
+ * followed speaker's playout estimate into the audio lead for the casting tab.
  * @param event - The latency event (updated or stale)
  */
 async function handleLatencyEvent(event: LatencyBroadcastEvent): Promise<void> {
-  const { streamId, speakerIp, type } = event;
-
-  // Find session to get tab ID
-  const session = getSessionByStreamId(streamId);
-
-  if (!session) {
-    log.debug(`Latency event for unknown stream ${streamId}`);
+  if (!getSessionByStreamId(event.streamId)) {
+    log.debug(`Latency event for unknown stream ${event.streamId}`);
     return;
   }
-
-  const tabId = session.tabId;
-
-  // Forward to content script for video sync
-  try {
-    await chrome.tabs.sendMessage(tabId, {
-      type: 'LATENCY_EVENT',
-      payload: event,
-    });
-  } catch {
-    // Content script may not be injected yet
-    log.debug(`Failed to send latency event to tab ${tabId}`);
-  }
-
-  // Notify popup for UI display
-  if (type === 'updated') {
-    notifyPopup({
-      type: 'LATENCY_UPDATE',
-      streamId,
-      speakerIp,
-      epochId: event.epochId,
-      latencyMs: event.latencyMs,
-      jitterMs: event.jitterMs,
-      confidence: event.confidence,
-    });
-  } else if (type === 'stale') {
-    notifyPopup({
-      type: 'LATENCY_STALE',
-      streamId,
-      speakerIp,
-      epochId: event.epochId,
-    });
-  }
+  await handleVideoSyncLatency(event);
 }

@@ -23,7 +23,9 @@ import {
   SpeakerHealthStateSchema,
   SpeakerNoticeSchema,
   CompanionAudioSchema,
+  VideoSyncStatusSchema,
 } from '@thaumic-cast/protocol';
+import { VideoSyncTrimSchema } from './video-sync-trim';
 import {
   HOOK_REASONS,
   HOOK_STATES,
@@ -801,9 +803,10 @@ export const DetectCodecsMessageSchema = z.object({
 export type DetectCodecsMessage = z.infer<typeof DetectCodecsMessageSchema>;
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Video Sync Messages (popup → background → content)
+// Video Sync Messages (popup ↔ background, background ↔ page relays)
 // ─────────────────────────────────────────────────────────────────────────────
 
+/** Switches video sync on or off for one cast (popup → background). */
 export const SetVideoSyncEnabledMessageSchema = z.object({
   type: z.literal('SET_VIDEO_SYNC_ENABLED'),
   payload: z.object({
@@ -813,11 +816,15 @@ export const SetVideoSyncEnabledMessageSchema = z.object({
 });
 export type SetVideoSyncEnabledMessage = z.infer<typeof SetVideoSyncEnabledMessageSchema>;
 
+/**
+ * Sets the trim for the speaker a cast's video sync follows (popup →
+ * background). Stored per speaker.
+ */
 export const SetVideoSyncTrimMessageSchema = z.object({
   type: z.literal('SET_VIDEO_SYNC_TRIM'),
   payload: z.object({
     tabId: TabIdSchema,
-    trimMs: z.number().int(),
+    trimMs: VideoSyncTrimSchema,
   }),
 });
 export type SetVideoSyncTrimMessage = z.infer<typeof SetVideoSyncTrimMessageSchema>;
@@ -830,6 +837,22 @@ export const TriggerResyncMessageSchema = z.object({
 });
 export type TriggerResyncMessage = z.infer<typeof TriggerResyncMessageSchema>;
 
+/**
+ * Asks the page's hooks to try the lead again after they turned it off
+ * (popup → background).
+ */
+export const VideoSyncRearmMessageSchema = z.object({
+  type: z.literal('VIDEO_SYNC_REARM'),
+  payload: z.object({
+    tabId: TabIdSchema,
+  }),
+});
+export type VideoSyncRearmMessage = z.infer<typeof VideoSyncRearmMessageSchema>;
+
+/**
+ * Asks for a cast's video sync status (popup → background). The answer is the
+ * status, or null for a cast without video sync.
+ */
 export const GetVideoSyncStateMessageSchema = z.object({
   type: z.literal('GET_VIDEO_SYNC_STATE'),
   payload: z.object({
@@ -838,15 +861,11 @@ export const GetVideoSyncStateMessageSchema = z.object({
 });
 export type GetVideoSyncStateMessage = z.infer<typeof GetVideoSyncStateMessageSchema>;
 
-export const VideoSyncStateSchema = z.enum(['off', 'acquiring', 'locked', 'stale']);
-export type VideoSyncState = z.infer<typeof VideoSyncStateSchema>;
-
+/** A cast's video sync status changed (background → popup). */
 export const VideoSyncStateChangedMessageSchema = z.object({
   type: z.literal('VIDEO_SYNC_STATE_CHANGED'),
-  enabled: z.boolean(),
-  trimMs: z.number().int(),
-  state: VideoSyncStateSchema,
-  lockedLatencyMs: z.number().optional(),
+  tabId: TabIdSchema,
+  status: VideoSyncStatusSchema,
 });
 export type VideoSyncStateChangedMessage = z.infer<typeof VideoSyncStateChangedMessageSchema>;
 

@@ -2,18 +2,50 @@ import { type JSX, type CSSProperties } from 'preact';
 import { flushSync } from 'preact/compat';
 import { useCallback, useState, useRef, useEffect, useMemo } from 'preact/hooks';
 import { useTranslation } from 'react-i18next';
-import type { ActiveCast, TransportState, MediaAction } from '@thaumic-cast/protocol';
+import type {
+  ActiveCast,
+  TransportState,
+  MediaAction,
+  VideoSyncPhase,
+} from '@thaumic-cast/protocol';
 import { getDisplayTitle, getDisplayImage, getDisplaySubtitle } from '@thaumic-cast/protocol';
-import { X, Play, Pause, SkipBack, SkipForward, RefreshCw } from 'lucide-preact';
-import { IconButton, SpeakerVolumeRow, ToggleSwitch, StatusChip, Card } from '@thaumic-cast/ui';
+import { X, Play, Pause, SkipBack, SkipForward } from 'lucide-preact';
+import {
+  Button,
+  IconButton,
+  SpeakerVolumeRow,
+  ToggleSwitch,
+  StatusChip,
+  Card,
+} from '@thaumic-cast/ui';
 import { TransportIcon } from './TransportIcon';
 import { useDominantColor } from '../hooks/useDominantColor';
 import { useVideoSyncState } from '../hooks/useVideoSyncState';
+import {
+  VIDEO_SYNC_TRIM_MAX_MS,
+  VIDEO_SYNC_TRIM_MIN_MS,
+  VIDEO_SYNC_TRIM_STEP_MS,
+} from '../../lib/video-sync-trim';
 import { useOptimisticOverlay } from '../hooks/useOptimisticOverlay';
 import styles from './ActiveCastCard.module.css';
 
 /** Debounce interval for playback control buttons (ms) */
 const CONTROL_DEBOUNCE_MS = 300;
+
+/** How each video sync state shows in its chip while video sync is on. */
+const VIDEO_SYNC_CHIP: Record<
+  Exclude<VideoSyncPhase, 'off'>,
+  {
+    variant: 'acquiring' | 'synced' | 'lost';
+    className: 'synced' | 'acquiring' | 'lost';
+    label: string;
+  }
+> = {
+  locking: { variant: 'acquiring', className: 'acquiring', label: 'video_sync_status_acquiring' },
+  'in-step': { variant: 'synced', className: 'synced', label: 'video_sync_status_synced' },
+  unavailable: { variant: 'lost', className: 'lost', label: 'video_sync_status_unavailable' },
+  'turned-off': { variant: 'lost', className: 'lost', label: 'video_sync_status_turned_off' },
+};
 
 interface ActiveCastCardProps {
   /** The active cast session */
@@ -121,6 +153,8 @@ export function ActiveCastCard({
   // Video sync state and controls, for a cast started with video sync on
   const showVideoSync = cast.videoSync;
   const videoSync = useVideoSyncState(showVideoSync ? cast.tabId : undefined);
+  const trimId = `video-sync-trim-${cast.tabId}`;
+  const trimSpeaker = videoSync.speakerName ?? cast.speakerNames[0] ?? '';
 
   // Sync group volume: show group control when sync is active with multiple speakers
   const showGroupVolume = cast.syncSpeakers && cast.speakerIps.length > 1;
@@ -314,7 +348,7 @@ export function ActiveCastCard({
           })}
         </div>
 
-        {/* Video sync controls (conditional on global setting) */}
+        {/* Video sync, for a cast started with it on */}
         {showVideoSync && (
           <div className={styles.videoSyncSection}>
             <div className={styles.videoSyncHeader}>
@@ -324,72 +358,66 @@ export function ActiveCastCard({
                 onChange={videoSync.setEnabled}
                 aria-label={t('video_sync_toggle')}
               />
-              {videoSync.enabled && (
+              {videoSync.state !== 'off' && (
                 <StatusChip
-                  variant={
-                    videoSync.state === 'locked'
-                      ? 'synced'
-                      : videoSync.state === 'acquiring'
-                        ? 'acquiring'
-                        : videoSync.state === 'stale'
-                          ? 'lost'
-                          : 'waiting'
-                  }
-                  className={
-                    videoSync.state === 'locked'
-                      ? styles.synced
-                      : videoSync.state === 'acquiring'
-                        ? styles.acquiring
-                        : videoSync.state === 'stale'
-                          ? styles.lost
-                          : undefined
-                  }
+                  variant={VIDEO_SYNC_CHIP[videoSync.state].variant}
+                  className={styles[VIDEO_SYNC_CHIP[videoSync.state].className]}
                 >
-                  {videoSync.state === 'locked'
-                    ? t('video_sync_status_synced')
-                    : videoSync.state === 'acquiring'
-                      ? t('video_sync_status_acquiring')
-                      : videoSync.state === 'stale'
-                        ? t('video_sync_status_lost')
-                        : t('video_sync_status_waiting')}
+                  {t(VIDEO_SYNC_CHIP[videoSync.state].label)}
                 </StatusChip>
-              )}{' '}
+              )}
             </div>
 
-            {videoSync.enabled && (
+            {videoSync.enabled && videoSync.reason && (
+              <div className={styles.videoSyncReason}>
+                <p className={styles.videoSyncReasonText}>
+                  {t(`video_sync_reason_${videoSync.reason.replace(/-/g, '_')}`)}
+                </p>
+                {(videoSync.reason === 'reload' || videoSync.state === 'turned-off') && (
+                  <Button
+                    variant="link"
+                    className={styles.videoSyncAction}
+                    onClick={
+                      videoSync.reason === 'reload' ? videoSync.reloadPage : videoSync.tryAgain
+                    }
+                  >
+                    {videoSync.reason === 'reload'
+                      ? t('video_sync_reload')
+                      : t('video_sync_try_again')}
+                  </Button>
+                )}
+              </div>
+            )}
+
+            {videoSync.enabled && videoSync.state !== 'unavailable' && (
               <div className={styles.videoSyncControls}>
                 <div className={styles.videoSyncTrim}>
-                  <label htmlFor="trim-slider" className={styles.videoSyncTrimLabel}>
-                    {t('video_sync_trim')}
+                  <label htmlFor={trimId} className={styles.videoSyncTrimLabel}>
+                    {t('video_sync_trim', { speaker: trimSpeaker })}
                   </label>
                   <input
-                    id="trim-slider"
+                    id={trimId}
                     type="range"
-                    min={-500}
-                    max={500}
-                    step={10}
+                    min={VIDEO_SYNC_TRIM_MIN_MS}
+                    max={VIDEO_SYNC_TRIM_MAX_MS}
+                    step={VIDEO_SYNC_TRIM_STEP_MS}
                     value={videoSync.trimMs}
-                    onChange={(e) =>
-                      videoSync.setTrim(Number((e.target as HTMLInputElement).value))
-                    }
+                    onInput={(e) => videoSync.setTrim(Number((e.target as HTMLInputElement).value))}
                     className={styles.videoSyncTrimSlider}
-                    aria-valuetext={t('video_sync_delay_ms', { delay: videoSync.trimMs })}
+                    aria-valuetext={
+                      videoSync.trimMs === 0
+                        ? t('video_sync_trim_none')
+                        : videoSync.trimMs > 0
+                          ? t('video_sync_trim_earlier', { delay: videoSync.trimMs })
+                          : t('video_sync_trim_later', { delay: -videoSync.trimMs })
+                    }
                   />
                   <span className={styles.videoSyncTrimValue}>
-                    {videoSync.trimMs > 0 ? '+' : ''}
-                    {videoSync.trimMs}ms
+                    {t('video_sync_delay_ms', {
+                      delay: `${videoSync.trimMs > 0 ? '+' : ''}${videoSync.trimMs}`,
+                    })}
                   </span>
                 </div>
-                {videoSync.state === 'stale' && (
-                  <IconButton
-                    onClick={videoSync.resync}
-                    aria-label={t('video_sync_resync')}
-                    title={t('video_sync_resync')}
-                    size="sm"
-                  >
-                    <RefreshCw size={12} />
-                  </IconButton>
-                )}
               </div>
             )}
           </div>

@@ -78,8 +78,7 @@
   --button-ghost-bg-hover: oklch(100% 0 0 / 15%);
   --button-ghost-text-hover: var(--color-text);
 
-  /* Outlined icon buttons (like the resync button) can keep solid accent look for visibility if needed, 
-     or also be adjusted. The user specifically mentioned ghost buttons. */
+  /* Outlined icon buttons keep a solid accent look for visibility. */
   --icon-button-outline-border: var(--accent);
   --icon-button-outline-border-hover: var(--accent);
   --slider-fill: var(--accent);
@@ -213,6 +212,24 @@
   color: var(--color-text-muted);
 }
 
+.video-sync-reason {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.25rem 0.5rem;
+}
+
+.video-sync-reason-text {
+  margin: 0;
+  font-size: 0.7rem;
+  line-height: 1.4;
+  color: var(--color-text-muted);
+}
+
+.video-sync-action {
+  font-size: 0.7rem;
+}
+
 .video-sync-controls {
   display: flex;
   align-items: center;
@@ -222,15 +239,20 @@
 .video-sync-trim {
   flex: 1;
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 0.5rem;
+  gap: 0.25rem 0.5rem;
   min-inline-size: 0;
 }
 
+/* On its own line: it names the speaker, and names can be long */
 .video-sync-trim-label {
+  flex: 1 0 100%;
   font-size: 0.65rem;
   color: var(--color-text-muted);
   white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .video-sync-trim-slider {
@@ -268,6 +290,11 @@
 /* Video sync on artwork cards */
 .card.has-artwork .video-sync-section {
   border-color: oklch(100% 0 0 / 15%);
+}
+
+.card.has-artwork .video-sync-action {
+  --color-link: var(--color-text);
+  --color-link-hover: var(--color-text-muted);
 }
 
 /* Status chip variants on artwork cards - WCAG AA compliant */

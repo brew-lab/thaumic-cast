@@ -20,6 +20,7 @@ import {
   registerSession,
   removeSession,
   removeSpeakerFromSession,
+  setVideoSyncOn,
 } from './session-manager';
 
 const ENCODER: EncoderConfig = createEncoderConfig({ codec: 'pcm' });
@@ -231,6 +232,18 @@ describe('getActiveCasts', () => {
       [2, expect.objectContaining({ videoSync: false })],
     ]);
   });
+
+  it('should start the card toggle on for a video sync cast and store a change', () => {
+    registerSession(1, 'stream-1', [KITCHEN], ['Kitchen'], ENCODER, false, 'tab', true);
+    expect(getSession(1)?.videoSyncOn).toBe(true);
+
+    expect(setVideoSyncOn(1, false)).toBe(true);
+    expect(getSession(1)?.videoSyncOn).toBe(false);
+    expect(chromeStorageData.session.activeSessions).toEqual([
+      [1, expect.objectContaining({ videoSyncOn: false })],
+    ]);
+    expect(setVideoSyncOn(99, true)).toBe(false);
+  });
 });
 
 describe('restoring persisted sessions', () => {
@@ -264,6 +277,7 @@ describe('restoring persisted sessions', () => {
           syncSpeakers: false,
           captureMode: 'tab',
           videoSync: false,
+          videoSyncOn: false,
         },
       ],
     ]);
@@ -301,6 +315,31 @@ describe('restoring persisted sessions', () => {
       ?.restore();
 
     expect(restored?.[0]?.[1].videoSync).toBe(false);
+  });
+
+  it('should switch on the card toggle of a stored video sync cast that predates it', async () => {
+    chromeStorageData.session.activeSessions = [
+      [
+        5,
+        {
+          streamId: 'old-stream',
+          tabId: 5,
+          speakerIps: [KITCHEN],
+          speakerNames: ['Kitchen'],
+          encoderConfig: ENCODER,
+          startedAt: 1,
+          syncSpeakers: false,
+          captureMode: 'tab',
+          videoSync: true,
+        },
+      ],
+    ];
+
+    const restored = await persistenceManager
+      .get<[number, { videoSyncOn: boolean }][]>('activeSessions')
+      ?.restore();
+
+    expect(restored?.[0]?.[1].videoSyncOn).toBe(true);
   });
 
   it('should ignore stored data that is not a session list', async () => {
