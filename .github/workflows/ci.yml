@@ -125,6 +125,44 @@ jobs:
       - name: Run tests
         run: bun run test
 
+  # The design-system catalogue (packages/ui/DESIGN.md §10 row 6): axe in both themes, and
+  # one screenshot per section. Screenshot baselines are made here only: a section with no
+  # baseline passes and writes its picture to the artifact's new-baselines/ folder, to commit
+  # under packages/ui/catalogue/tests/__screenshots__/.
+  catalogue:
+    name: Design System Catalogue
+    needs: changes
+    if: needs.changes.outputs.ts == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Install Playwright Chromium
+        working-directory: packages/ui
+        run: bunx playwright install --with-deps chromium
+
+      - name: Run axe and screenshots
+        working-directory: packages/ui
+        env:
+          DS_SCREENSHOTS: '1'
+        run: bun run test:catalogue
+
+      - name: Upload results and new baselines
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: catalogue-results
+          path: packages/ui/catalogue/test-results/
+          if-no-files-found: ignore
+
   rust-check:
     name: Rust Check
     needs: changes

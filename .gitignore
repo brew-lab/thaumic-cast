@@ -5,6 +5,10 @@ build
 .bun
 bun.lockb
 
+# Playwright (the design-system catalogue)
+test-results
+playwright-report
+
 # Logs
 *.log
 npm-debug.log*
