@@ -1,0 +1,12 @@
+{
+  "type": "START_PLAYBACK",
+  "payload": {
+    "speakerIps": ["192.168.1.10", "192.168.1.11"],
+    "syncSpeakers": false,
+    "videoSyncEnabled": false,
+    "startVolume": {
+      "limit": 30,
+      "speakers": { "192.168.1.11": 45 }
+    }
+  }
+}
