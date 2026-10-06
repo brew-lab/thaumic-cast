@@ -35,6 +35,8 @@
     "typecheck": "bun run --filter '*' typecheck",
     "lint": "eslint . && stylelint '**/*.css'",
     "lint:fix": "eslint . --fix && stylelint '**/*.css' --fix",
+    "tokens": "bun run --filter @thaumic-cast/ui tokens",
+    "tokens:check": "bun run --filter @thaumic-cast/ui tokens:check",
     "changeset": "changeset",
     "changeset:version": "changeset version && bun run sync-versions",
     "changeset:publish": "bun run build && changeset publish",

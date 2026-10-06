@@ -10,23 +10,35 @@
   "main": "src/index.ts",
   "exports": {
     ".": "./src/index.ts",
+    "./layers.css": "./src/layers.css",
+    "./tokens.css": "./src/tokens.css",
+    "./webkit-fallbacks.css": "./src/webkit-fallbacks.css",
+    "./fonts.css": "./src/fonts.css",
+    "./base.css": "./src/base.css",
+    "./motion.css": "./src/motion.css",
+    "./utilities.css": "./src/utilities.css",
     "./theme.css": "./src/theme.css"
   },
   "scripts": {
     "build": "echo 'No build step (consumed as TS source)'",
     "typecheck": "tsc --noEmit",
     "clean": "echo 'No clean'",
-    "test": "echo 'No tests yet'"
+    "test": "bun test src scripts",
+    "tokens": "bun scripts/generate-tokens.ts",
+    "tokens:check": "bun scripts/generate-tokens.ts --check"
   },
   "peerDependencies": {
     "@thaumic-cast/protocol": "workspace:*",
+    "@thaumic-cast/shared": "workspace:*",
     "lucide-preact": "^1.8.0",
     "preact": "^10.0.0"
   },
   "devDependencies": {
     "@thaumic-cast/protocol": "workspace:*",
+    "@thaumic-cast/shared": "workspace:*",
     "lucide-preact": "^1.8.0",
     "preact": "^10.0.0",
+    "prettier": "^3.7.4",
     "typescript": "^7.0.2"
   }
 }
