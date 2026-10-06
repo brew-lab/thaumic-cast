@@ -1,0 +1,32 @@
+@layer components {
+  .icon {
+    --icon-size: var(--icon-sm);
+
+    flex: none;
+    display: block;
+    inline-size: var(--icon-size);
+    block-size: var(--icon-size);
+    fill: none;
+    stroke: currentcolor;
+    stroke-width: var(--icon-stroke);
+    stroke-linecap: round;
+    stroke-linejoin: round;
+  }
+
+  .md {
+    --icon-size: var(--icon-md);
+  }
+
+  .lg {
+    --icon-size: var(--icon-lg);
+  }
+
+  .filled {
+    fill: currentcolor;
+    stroke: none;
+  }
+
+  .mirror:dir(rtl) {
+    scale: -1 1;
+  }
+}
