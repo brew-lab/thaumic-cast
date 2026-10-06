@@ -70,8 +70,18 @@
     0 0 0 4px var(--color-focus);
 }
 
-.disabled .slider {
+.disabled .slider,
+.unknown .slider {
   pointer-events: none;
+}
+
+/* Not known yet: no thumb, so the slider claims no level. */
+.unknown .slider::-webkit-slider-thumb {
+  visibility: hidden;
+}
+
+.unknown .slider::-moz-range-thumb {
+  visibility: hidden;
 }
 
 .value {
