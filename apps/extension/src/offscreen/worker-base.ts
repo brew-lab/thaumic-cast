@@ -7,7 +7,7 @@
  * (MediaStreamTrackProcessor) relay worker.
  */
 
-import type { WireEncoderConfig, WsMessage } from '@thaumic-cast/protocol';
+import type { WireEncoderConfig, WsMessage, WsStartPlaybackMessage } from '@thaumic-cast/protocol';
 import type {
   WorkerInboundMessage,
   WorkerOutboundMessage,
@@ -816,12 +816,13 @@ export function handleCommonMessage(
       return true;
 
     case 'START_PLAYBACK': {
-      const { speakerIps, metadata, syncSpeakers = false, videoSyncEnabled } = msg;
+      const { speakerIps, metadata, syncSpeakers = false, videoSyncEnabled, startVolume } = msg;
       s.videoSync = videoSyncEnabled;
-      sendWsMessage(s, {
+      const message: WsStartPlaybackMessage = {
         type: 'START_PLAYBACK',
-        payload: { speakerIps, metadata, syncSpeakers, videoSyncEnabled },
-      });
+        payload: { speakerIps, metadata, syncSpeakers, videoSyncEnabled, startVolume },
+      };
+      sendWsMessage(s, message);
       return true;
     }
 

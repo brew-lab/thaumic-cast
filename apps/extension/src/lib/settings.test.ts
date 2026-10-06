@@ -63,6 +63,29 @@ describe('loadExtensionSettings', () => {
     expect(await loadExtensionSettings()).toEqual(getDefaultExtensionSettings());
   });
 
+  it('should start casts no louder than 30 by default, for new and existing users', async () => {
+    expect(getDefaultExtensionSettings()).toMatchObject({
+      startCeilingEnabled: true,
+      startCeiling: 30,
+    });
+    // Settings stored before the limit existed have neither field.
+    storeSettings({ language: 'en', audioMode: 'low' });
+
+    expect(await loadExtensionSettings()).toMatchObject({
+      startCeilingEnabled: true,
+      startCeiling: 30,
+    });
+  });
+
+  it('should replace a start limit outside 0 to 100 with the default', async () => {
+    storeSettings({ language: 'en', startCeilingEnabled: false, startCeiling: 150 });
+
+    const settings = await loadExtensionSettings();
+
+    expect(settings.startCeilingEnabled).toBe(false);
+    expect(settings.startCeiling).toBe(30);
+  });
+
   it('should replace one invalid field with its default and keep the rest', async () => {
     storeSettings({ theme: 'neon', language: 'en', audioMode: 'low', keepTabAudible: false });
 

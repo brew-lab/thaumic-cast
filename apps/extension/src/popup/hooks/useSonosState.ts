@@ -22,8 +22,8 @@ interface SonosStateResult {
   speakerGroups: SpeakerGroupCollection;
   /** Whether initial data is loading */
   loading: boolean;
-  /** Get volume for a speaker */
-  getVolume: (speakerIp: string) => number;
+  /** Get volume for a speaker; undefined until the speaker has reported it */
+  getVolume: (speakerIp: string) => number | undefined;
   /** Get mute state for a speaker */
   getMuted: (speakerIp: string) => boolean;
   /** Get whether volume is fixed (line-level output) for a speaker */
@@ -38,6 +38,20 @@ interface SonosStateResult {
   setSyncGroupVolume: (speakerIp: string, volume: number) => Promise<void>;
   /** Set group mute for all speakers in a sync session */
   setSyncGroupMuted: (speakerIp: string, muted: boolean, allSpeakerIps: string[]) => Promise<void>;
+}
+
+/**
+ * Reads a speaker's volume from the state. A speaker that has not reported
+ * its level yet has none: callers show "…", never a made-up number.
+ * @param groupVolumes - Volumes by speaker IP, as the companion reported them
+ * @param speakerIp - The speaker to read
+ * @returns The volume, or undefined when it is not known yet
+ */
+export function readVolume(
+  groupVolumes: Readonly<Record<string, number>>,
+  speakerIp: string,
+): number | undefined {
+  return groupVolumes[speakerIp];
 }
 
 /**
@@ -100,7 +114,7 @@ export function useSonosState(): SonosStateResult {
   });
 
   const getVolume = useCallback(
-    (speakerIp: string): number => state.groupVolumes[speakerIp] ?? 50,
+    (speakerIp: string): number | undefined => readVolume(state.groupVolumes, speakerIp),
     [state.groupVolumes],
   );
 

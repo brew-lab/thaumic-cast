@@ -68,6 +68,17 @@ describe('StartCastMessageSchema', () => {
 
     expect(parsed.payload.encoderConfig).toBeUndefined();
   });
+
+  it('should accept hand-set start levels from 0 to 100 keyed by speaker address', () => {
+    const message = (startLevels: unknown) => ({
+      type: 'START_CAST',
+      payload: { speakerIps: [SPEAKER], startLevels },
+    });
+
+    expect(StartCastMessageSchema.safeParse(message({ [SPEAKER]: 45 })).success).toBe(true);
+    expect(StartCastMessageSchema.safeParse(message({ [SPEAKER]: 101 })).success).toBe(false);
+    expect(StartCastMessageSchema.safeParse(message({ kitchen: 20 })).success).toBe(false);
+  });
 });
 
 describe('StopCastMessageSchema', () => {
@@ -89,6 +100,20 @@ describe('StartPlaybackMessageSchema', () => {
 
     expect(parsed.payload.syncSpeakers).toBe(false);
     expect(parsed.payload.videoSyncEnabled).toBe(false);
+    expect(parsed.payload.startVolume).toBeUndefined();
+  });
+
+  it('should carry a start volume to the offscreen document', () => {
+    const parsed = StartPlaybackMessageSchema.parse({
+      type: 'START_PLAYBACK',
+      payload: {
+        tabId: 4,
+        speakerIps: [SPEAKER],
+        startVolume: { limit: 30, speakers: { [SPEAKER]: 45 } },
+      },
+    });
+
+    expect(parsed.payload.startVolume).toEqual({ limit: 30, speakers: { [SPEAKER]: 45 } });
   });
 });
 

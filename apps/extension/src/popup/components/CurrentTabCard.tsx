@@ -10,6 +10,7 @@ import {
   type SpeakerGroupLike,
 } from '@thaumic-cast/ui';
 import { Cast, Music } from 'lucide-preact';
+import { startLevelCaption, startLevelView } from '../../lib/start-level';
 import styles from './CurrentTabCard.module.css';
 
 interface CurrentTabCardProps<T extends SpeakerGroupLike> {
@@ -27,15 +28,20 @@ interface CurrentTabCardProps<T extends SpeakerGroupLike> {
   disabled: boolean;
   /** Whether speakers are loading */
   speakersLoading: boolean;
-  /** Function to get volume for a speaker IP */
-  getVolume: (speakerIp: string) => number;
-  /** Function to check if a speaker is muted */
-  isMuted: (speakerIp: string) => boolean;
-  /** Callback when volume changes for a speaker */
-  onVolumeChange: (speakerIp: string, volume: number) => void;
-  /** Callback when mute is toggled for a speaker */
-  onMuteToggle: (speakerIp: string) => void;
-  /** Whether volume controls should be shown */
+  /** The room's level now; undefined until the speaker reports it */
+  getVolume: (speakerIp: string) => number | undefined;
+  /** Whether a speaker's output is fixed (line level) */
+  getVolumeFixed: (speakerIp: string) => boolean;
+  /** The start limit from the settings, or undefined when it is off */
+  startLimit: number | undefined;
+  /** Start levels set by hand before Cast, keyed by speaker IP */
+  pendingStarts: Readonly<Record<string, number>>;
+  /**
+   * Called when the user moves a speaker's start slider. It only records the
+   * level for Cast: nothing is sent to the speaker before then.
+   */
+  onStartLevelChange: (speakerIp: string, level: number) => void;
+  /** Whether start levels should be shown */
   showVolumeControls: boolean;
   /** Function to get display name for a group */
   getGroupDisplayName: (group: T) => string;
@@ -56,9 +62,10 @@ interface CurrentTabCardProps<T extends SpeakerGroupLike> {
  * @param props.disabled
  * @param props.speakersLoading
  * @param props.getVolume
- * @param props.isMuted
- * @param props.onVolumeChange
- * @param props.onMuteToggle
+ * @param props.getVolumeFixed
+ * @param props.startLimit
+ * @param props.pendingStarts
+ * @param props.onStartLevelChange
  * @param props.showVolumeControls
  * @param props.getGroupDisplayName
  * @param props.getSpeakerName
@@ -74,9 +81,10 @@ export function CurrentTabCard<T extends SpeakerGroupLike>({
   disabled,
   speakersLoading,
   getVolume,
-  isMuted,
-  onVolumeChange,
-  onMuteToggle,
+  getVolumeFixed,
+  startLimit,
+  pendingStarts,
+  onStartLevelChange,
   showVolumeControls,
   getGroupDisplayName,
   getSpeakerName,
@@ -124,23 +132,29 @@ export function CurrentTabCard<T extends SpeakerGroupLike>({
             />
           )}
 
-          {/* Per-speaker Volume Controls */}
+          {/* Per-speaker start levels: held here until Cast, never sent before */}
           {showVolumeControls && selectedIps.length > 0 && (
             <div className={styles.speakerRows}>
               {selectedIps.map((ip) => {
                 const name = getSpeakerName(ip);
+                const view = startLevelView({
+                  current: getVolume(ip),
+                  fixed: getVolumeFixed(ip),
+                  limit: startLimit,
+                  pending: pendingStarts[ip],
+                });
+                const caption = startLevelCaption(view);
                 return (
                   <SpeakerVolumeRow
                     key={ip}
                     speakerName={name}
                     speakerIp={ip}
-                    volume={getVolume(ip)}
-                    muted={isMuted(ip)}
-                    onVolumeChange={(vol) => onVolumeChange(ip, vol)}
-                    onMuteToggle={() => onMuteToggle(ip)}
-                    muteLabel={t('mute_speaker', { name })}
-                    unmuteLabel={t('unmute_speaker', { name })}
-                    volumeLabel={t('volume_speaker', { name })}
+                    volume={view.kind === 'known' ? view.start : undefined}
+                    onVolumeChange={(level) => onStartLevelChange(ip, level)}
+                    volumeLabel={t('start_level_speaker', { name })}
+                    unknownLabel={t('volume_not_known')}
+                    fixedLabel={view.kind === 'fixed' ? t('volume_fixed') : undefined}
+                    caption={caption ? t(caption.key, caption.params) : undefined}
                   />
                 );
               })}

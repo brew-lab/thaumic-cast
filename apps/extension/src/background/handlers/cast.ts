@@ -28,6 +28,7 @@ import { captureDeniedError } from '../../lib/capture-denied';
 import { getSourceFromUrl } from '../../lib/url-utils';
 import { getActiveTab, getActiveTabId } from '../../lib/tab-utils';
 import { loadExtensionSettings } from '../../lib/settings';
+import { buildStartVolume } from '../../lib/start-level';
 import { getCachedCodecSupport } from '../../lib/codec-cache';
 import { describeEncoderConfig } from '../../lib/presets';
 import { resolveAudio } from '../../lib/audio-resolver';
@@ -70,7 +71,7 @@ export async function handleStartCast(msg: StartCastMessage): Promise<ExtensionR
   let tab: chrome.tabs.Tab | null | undefined;
 
   try {
-    const { speakerIps } = msg.payload;
+    const { speakerIps, startLevels } = msg.payload;
     if (!speakerIps.length) throw new Error('error_no_speakers_selected');
 
     tab = await getActiveTab();
@@ -216,12 +217,15 @@ export async function handleStartCast(msg: StartCastMessage): Promise<ExtensionR
           ? { source: cachedState.source }
           : undefined;
 
+      // Each room starts no louder than the limit, or at the level set by
+      // hand in the popup. The companion applies it before anything plays.
       const playbackResponse = await offscreenBroker.startPlayback(
         tabId,
         speakerIps,
         initialMetadata,
         settings.syncSpeakers,
         settings.videoSyncEnabled,
+        buildStartVolume(settings, speakerIps, startLevels),
       );
       if (!playbackResponse) throw new Error('error_offscreen_unavailable');
 
