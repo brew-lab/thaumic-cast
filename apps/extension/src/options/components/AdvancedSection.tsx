@@ -6,6 +6,7 @@ import { Card } from '@thaumic-cast/ui';
 import type { CompanionCapability } from '../../lib/audio-resolver';
 import { captureToggleState } from '../../lib/capture-capability';
 import { isWindowsPlatform, type ExtensionSettings } from '../../lib/settings';
+import { startCeilingChoices } from '../../lib/start-level';
 import { hasVideoSyncHostAccess, requestVideoSyncHostAccess } from '../../lib/video-sync-access';
 import styles from '../Options.module.css';
 
@@ -23,7 +24,7 @@ const isWindows = isWindowsPlatform();
 
 /**
  * Advanced settings section for experimental features.
- * Includes video sync and keep tab audible options. A control that cannot act
+ * Includes video sync, keep tab audible and the start level limit. A control that cannot act
  * is disabled and says why: keeping the tab awake under browser-wide capture,
  * and browser-wide capture against a companion that cannot capture.
  * @param props - Component props
@@ -78,6 +79,17 @@ export function AdvancedSection({
   const handleSyncSpeakersToggle = useCallback(async () => {
     await onUpdate({ syncSpeakers: !settings.syncSpeakers });
   }, [settings.syncSpeakers, onUpdate]);
+
+  const handleStartCeilingChange = useCallback(
+    async (value: string) => {
+      if (value === 'off') {
+        await onUpdate({ startCeilingEnabled: false });
+      } else {
+        await onUpdate({ startCeilingEnabled: true, startCeiling: Number(value) });
+      }
+    },
+    [onUpdate],
+  );
 
   const handleCaptureModeToggle = useCallback(async () => {
     await onUpdate({ captureMode: settings.captureMode === 'browser' ? 'tab' : 'browser' });
@@ -141,6 +153,29 @@ export function AdvancedSection({
             )}
           </div>
         </label>
+
+        <div className={styles.field}>
+          <label htmlFor="start-ceiling-select" className={styles.label}>
+            {t('start_ceiling_enable')}
+          </label>
+          <select
+            id="start-ceiling-select"
+            className={styles.select}
+            value={settings.startCeilingEnabled ? String(settings.startCeiling) : 'off'}
+            onChange={(e) => handleStartCeilingChange((e.target as HTMLSelectElement).value)}
+            aria-describedby="start-ceiling-desc"
+          >
+            {startCeilingChoices(settings.startCeiling).map((level) => (
+              <option key={level} value={String(level)}>
+                {level}
+              </option>
+            ))}
+            <option value="off">{t('start_ceiling_off')}</option>
+          </select>
+          <span id="start-ceiling-desc" className={styles.hint}>
+            {t('start_ceiling_description')}
+          </span>
+        </div>
 
         <label className={styles.radioOption}>
           <input

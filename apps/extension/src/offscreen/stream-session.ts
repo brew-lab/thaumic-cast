@@ -23,7 +23,7 @@
 
 import { createLogger } from '@thaumic-cast/shared';
 import { createAudioRingBuffer, HEADER_SIZE } from './ring-buffer';
-import type { EncoderConfig, StreamMetadata } from '@thaumic-cast/protocol';
+import type { EncoderConfig, StartVolume, StreamMetadata } from '@thaumic-cast/protocol';
 import { isSupportedSampleRate } from '@thaumic-cast/protocol';
 import type {
   WorkerErrorMessage,
@@ -998,6 +998,7 @@ export class StreamSession {
    * @param metadata - Optional initial metadata to display on Sonos
    * @param syncSpeakers - Whether to synchronize multi-speaker playback
    * @param videoSyncEnabled - Whether client has video sync enabled (gates server-side latency monitoring)
+   * @param startVolume - The level each room starts at; absent on a resume
    * @param timeoutMs - Timeout in milliseconds
    * @returns Promise resolving with per-speaker playback results
    * @throws {KeyedError} If the session stopped itself, with the reason and its values
@@ -1008,6 +1009,7 @@ export class StreamSession {
     metadata?: StreamMetadata,
     syncSpeakers: boolean = false,
     videoSyncEnabled: boolean = false,
+    startVolume?: StartVolume,
     timeoutMs = 15000,
   ): Promise<
     Array<{
@@ -1044,6 +1046,7 @@ export class StreamSession {
       metadata,
       syncSpeakers,
       videoSyncEnabled,
+      startVolume,
     });
 
     const timeoutPromise = new Promise<never>((_, reject) => {

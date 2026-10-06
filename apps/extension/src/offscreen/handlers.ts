@@ -417,6 +417,7 @@ export function setupMessageHandlers(): void {
           metadata,
           syncSpeakers = false,
           videoSyncEnabled,
+          startVolume,
         } = validated.payload;
 
         // Resolve session from either registry
@@ -433,7 +434,15 @@ export function setupMessageHandlers(): void {
 
         session
           .waitForReady()
-          .then(() => session.startPlayback(speakerIps, metadata, syncSpeakers, videoSyncEnabled))
+          .then(() =>
+            session.startPlayback(
+              speakerIps,
+              metadata,
+              syncSpeakers,
+              videoSyncEnabled,
+              startVolume,
+            ),
+          )
           .then((results) => {
             const anySuccess = results.some((r) => r.success);
             const response: StartPlaybackResponse = { success: anySuccess, results };

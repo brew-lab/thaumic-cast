@@ -5,6 +5,7 @@ import {
   createEncoderConfig,
   getStreamingPolicy,
   toWireEncoderConfig,
+  WsMessageSchema,
 } from '@thaumic-cast/protocol';
 
 import {
@@ -14,6 +15,7 @@ import {
   flushFrameQueue,
   flushQueuedFrames,
   FRAME_QUEUE_MAX_BYTES,
+  handleCommonMessage,
   FRAME_QUEUE_TARGET_BYTES,
   isWsBackpressured,
   parseServerMessage,
@@ -395,5 +397,34 @@ describe('connectWebSocket handshake', () => {
     opened.serverClose(1006);
 
     expect(streamId).rejects.toThrow('WebSocket closed during handshake: Code 1006');
+  });
+});
+
+describe('START_PLAYBACK', () => {
+  it('should send the start volume to the companion in the shape the protocol defines', () => {
+    const sent: string[] = [];
+    const state = createState('quality', socket);
+    state.socket = {
+      readyState: WebSocket.OPEN,
+      send: (text: string) => sent.push(text),
+    } as unknown as WebSocket;
+
+    const handled = handleCommonMessage(
+      state,
+      {
+        type: 'START_PLAYBACK',
+        speakerIps: ['192.168.1.10'],
+        videoSyncEnabled: false,
+        startVolume: { limit: 30, speakers: { '192.168.1.10': 45 } },
+      },
+      () => {},
+    );
+
+    expect(handled).toBe(true);
+    const message = WsMessageSchema.parse(JSON.parse(sent[0]!));
+    expect(message.type === 'START_PLAYBACK' && message.payload.startVolume).toEqual({
+      limit: 30,
+      speakers: { '192.168.1.10': 45 },
+    });
   });
 });

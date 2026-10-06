@@ -10,7 +10,7 @@ interface ActiveCastsListProps {
   /** Function to get transport state for a speaker IP */
   getTransportState?: (speakerIp: string) => TransportState | undefined;
   /** Function to get volume for a speaker IP */
-  getVolume: (speakerIp: string) => number;
+  getVolume: (speakerIp: string) => number | undefined;
   /** Function to check if a speaker is muted */
   isMuted: (speakerIp: string) => boolean;
   /** Function to check if a speaker has fixed volume (line-level output) */

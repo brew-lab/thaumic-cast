@@ -15,6 +15,7 @@ import type {
   EncoderConfig,
   SonosStateSnapshot,
   SpeakerRemovalReason,
+  StartVolume,
   StreamMetadata,
   SupportedCodecsResult,
 } from '@thaumic-cast/protocol';
@@ -118,6 +119,7 @@ class OffscreenBroker {
    * @param metadata - Optional initial metadata to display
    * @param syncSpeakers - Whether to synchronize multi-speaker playback (default: false)
    * @param videoSyncEnabled - Whether client has video sync enabled (gates server-side latency monitoring)
+   * @param startVolume - The level each room starts at; only for a new cast, never a resume
    * @returns The playback response with per-speaker results
    */
   async startPlayback(
@@ -126,11 +128,12 @@ class OffscreenBroker {
     metadata?: StreamMetadata,
     syncSpeakers: boolean = false,
     videoSyncEnabled: boolean = false,
+    startVolume?: StartVolume,
   ): Promise<StartPlaybackResponse | undefined> {
     return sendToOffscreen<StartPlaybackResponse>(
       {
         type: 'START_PLAYBACK',
-        payload: { tabId, speakerIps, metadata, syncSpeakers, videoSyncEnabled },
+        payload: { tabId, speakerIps, metadata, syncSpeakers, videoSyncEnabled, startVolume },
       },
       OFFSCREEN_LONG_OPERATION_TIMEOUT_MS,
     );

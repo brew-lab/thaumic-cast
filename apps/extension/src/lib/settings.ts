@@ -20,6 +20,7 @@ import {
   isValidBitDepthForCodec,
   getDefaultBitrate,
   getValidBitrates,
+  VolumeLevelSchema,
 } from '@thaumic-cast/protocol';
 import { createLogger } from '@thaumic-cast/shared';
 
@@ -199,6 +200,9 @@ export const SmoothingMigrationNoticeSchema = z.object({
 });
 export type SmoothingMigrationNotice = z.infer<typeof SmoothingMigrationNoticeSchema>;
 
+/** The level a cast starts no louder than, until the user changes it. */
+export const START_CEILING_DEFAULT = 30;
+
 /**
  * Global extension settings schema.
  */
@@ -251,6 +255,11 @@ export const ExtensionSettingsSchema = z.object({
   // Sync speakers: groups multiple speakers for synchronized playback (default: false)
   syncSpeakers: z.boolean().default(false),
 
+  // Start no louder than: a cast turns a louder room down to this before it
+  // plays, and never turns a room up (see StartVolume in the protocol).
+  startCeilingEnabled: z.boolean().default(true),
+  startCeiling: VolumeLevelSchema.default(START_CEILING_DEFAULT),
+
   // Capture mode: 'tab' for per-tab capture, 'browser' for browser-wide WASAPI capture
   captureMode: z.enum(['tab', 'browser']).default('tab'),
 });
@@ -279,6 +288,8 @@ const DEFAULT_EXTENSION_SETTINGS: ExtensionSettings = {
   videoSyncEnabled: false,
   keepTabAudible: true,
   syncSpeakers: false,
+  startCeilingEnabled: true,
+  startCeiling: START_CEILING_DEFAULT,
   captureMode: 'tab' as const,
 };
 

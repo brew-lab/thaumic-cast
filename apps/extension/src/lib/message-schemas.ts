@@ -23,6 +23,7 @@ import {
   SpeakerNoticeSchema,
   CompanionAudioSchema,
   VideoSyncStatusSchema,
+  StartVolumeSchema,
 } from '@thaumic-cast/protocol';
 import { VideoSyncTrimSchema } from './video-sync-trim';
 import {
@@ -86,6 +87,12 @@ export const StartCastMessageSchema = z.object({
      * based on device capabilities and past session history.
      */
     encoderConfig: EncoderConfigSchema.optional(),
+    /**
+     * Start levels set by hand in the popup before Cast, keyed by speaker IP.
+     * Nothing is sent to a speaker until Cast; the background adds the start
+     * limit from the settings.
+     */
+    startLevels: z.record(SpeakerIpSchema, VolumeSchema).optional(),
   }),
 });
 export type StartCastMessage = z.infer<typeof StartCastMessageSchema>;
@@ -153,6 +160,8 @@ export const StartPlaybackMessageSchema = z.object({
     syncSpeakers: z.boolean().default(false),
     /** Whether the client has video sync enabled (gates server-side latency monitoring). */
     videoSyncEnabled: z.boolean().default(false),
+    /** The level each room starts at; absent on a resume, which touches no volume. */
+    startVolume: StartVolumeSchema.optional(),
   }),
 });
 export type StartPlaybackMessage = z.infer<typeof StartPlaybackMessageSchema>;

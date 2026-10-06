@@ -54,7 +54,7 @@ interface ActiveCastCardProps {
   /** Function to get transport state for a speaker IP */
   getTransportState?: (speakerIp: string) => TransportState | undefined;
   /** Function to get volume for a speaker IP */
-  getVolume: (speakerIp: string) => number;
+  getVolume: (speakerIp: string) => number | undefined;
   /** Function to check if a speaker is muted */
   isMuted: (speakerIp: string) => boolean;
   /** Function to check if a speaker has fixed volume (line-level output) */
@@ -169,10 +169,14 @@ export function ActiveCastCard({
 
   // Sync group volume: show group control when sync is active with multiple speakers
   const showGroupVolume = cast.syncSpeakers && cast.speakerIps.length > 1;
+  // The average of the speakers that have reported a level; unknown until one has.
   const groupVolume = useMemo(() => {
-    if (!showGroupVolume) return 0;
-    const sum = cast.speakerIps.reduce((acc, ip) => acc + getVolume(ip), 0);
-    return Math.round(sum / cast.speakerIps.length);
+    if (!showGroupVolume) return undefined;
+    const known = cast.speakerIps
+      .map((ip) => getVolume(ip))
+      .filter((volume): volume is number => volume !== undefined);
+    if (known.length === 0) return undefined;
+    return Math.round(known.reduce((acc, volume) => acc + volume, 0) / known.length);
   }, [showGroupVolume, cast.speakerIps, getVolume]);
   const groupMuted = useMemo(() => {
     if (!showGroupVolume) return false;
@@ -323,6 +327,7 @@ export function ActiveCastCard({
               muteLabel={t('mute_speaker', { name: groupName })}
               unmuteLabel={t('unmute_speaker', { name: groupName })}
               volumeLabel={t('volume_speaker', { name: groupName })}
+              unknownLabel={t('volume_not_known')}
             />
           </div>
         )}
@@ -345,6 +350,7 @@ export function ActiveCastCard({
                 muteLabel={t('mute_speaker', { name })}
                 unmuteLabel={t('unmute_speaker', { name })}
                 volumeLabel={t('volume_speaker', { name })}
+                unknownLabel={t('volume_not_known')}
                 statusIndicator={
                   transportState ? <TransportIcon state={transportState} size={10} /> : undefined
                 }

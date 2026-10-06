@@ -12,7 +12,7 @@ import { resetChromeStub, tabMessages } from '../test-support/chrome-stub';
 import { brokerCalls as broker, resetBrokerCalls } from '../test-support/offscreen-broker-mock';
 import { notificationService } from './notification-service';
 import { clearAllSessions, getSession, hasSession, registerSession } from './session-manager';
-import { handleSonosEvent, stopCastForTab } from './sonos-event-handlers';
+import { handleSonosEvent, onSourcePlaybackStarted, stopCastForTab } from './sonos-event-handlers';
 import { resetVideoSyncService } from './video-sync/service';
 import { getSonosState, setSonosState } from './sonos-state';
 
@@ -502,5 +502,18 @@ describe('stopCastForTab', () => {
     await stopCastForTab(7);
     expect(tabMessages).toEqual([]);
     expect(broker.stoppedTabs).toEqual([7]);
+  });
+});
+
+describe('resuming a cast from the tab', () => {
+  it('should ask the companion to resume without a start volume, so no volume changes', async () => {
+    const speakerIp = freshIp();
+    registerOwnCast(7, 'stream-resume', [speakerIp]);
+
+    await onSourcePlaybackStarted(7);
+
+    expect(broker.startedPlayback).toEqual([
+      { tabId: 7, speakerIps: [speakerIp], startVolume: undefined },
+    ]);
   });
 });

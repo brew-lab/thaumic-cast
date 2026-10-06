@@ -65,7 +65,9 @@ graph TD
    (`stream/manager.rs`) stamps it with its arrival time, appends it to a bounded ring and sends it
    on a broadcast channel, both under one lock so that `subscribe()` never sees a frame twice.
 5. **Start playback.** On the first frame the client is sent `STREAM_READY` and answers with
-   `START_PLAYBACK` naming the speakers. `StreamCoordinator` (`services/stream_coordinator.rs`)
+   `START_PLAYBACK` naming the speakers. If it carries a `startVolume`, each room of each speaker
+   is first turned down to the limit or set to a level chosen by hand
+   (`services/start_volume.rs`). `StreamCoordinator` (`services/stream_coordinator.rs`) then
    gives each speaker the stream's URL (`SetAVTransportURI`, `Play`) through the `sonos` module.
    Speaker commands run on a per-connection control worker in `api/ws.rs`, so a slow SOAP call
    never holds up frame ingest.
@@ -261,12 +263,12 @@ external emitter, which the desktop shell uses for its window.
 
 ## Settings ownership
 
-| Owner     | Settings                                                                                                                | Where they live                                                                                                  | When they take effect             |
-| --------- | ----------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- | --------------------------------- |
-| Per cast  | Codec, bitrate, sample rate, channels, bit depth, smoothing (jitter buffer), frame size; speakers, sync, video sync     | Stored by the extension, resolved by `lib/audio-resolver.ts`, sent in `HANDSHAKE` and `START_PLAYBACK`           | The cast they are sent with       |
-| Companion | Speaker monitor, speaker head start, drift correction                                                                   | `core::Config`, resolved by `companion_settings.rs`                                                              | Each speaker's next connection    |
-| Companion | Port, advertised address, topology refresh, artwork, data directory, strict stream access                               | The server's config (`apps/server/src/config.rs`); the desktop app uses core's defaults                          | Start-up                          |
-| Client    | Companion address, theme, language, capture mode, keep tab audible, whether video sync controls show, dismissed notices | `chrome.storage.local` in the extension (`lib/settings.ts`); the desktop window keeps its theme in local storage | Immediately, for that client only |
+| Owner     | Settings                                                                                                                               | Where they live                                                                                                  | When they take effect             |
+| --------- | -------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- | --------------------------------- |
+| Per cast  | Codec, bitrate, sample rate, channels, bit depth, smoothing (jitter buffer), frame size; speakers, sync, video sync, start level limit | Stored by the extension, resolved by `lib/audio-resolver.ts`, sent in `HANDSHAKE` and `START_PLAYBACK`           | The cast they are sent with       |
+| Companion | Speaker monitor, speaker head start, drift correction                                                                                  | `core::Config`, resolved by `companion_settings.rs`                                                              | Each speaker's next connection    |
+| Companion | Port, advertised address, topology refresh, artwork, data directory, strict stream access                                              | The server's config (`apps/server/src/config.rs`); the desktop app uses core's defaults                          | Start-up                          |
+| Client    | Companion address, theme, language, capture mode, keep tab audible, whether video sync controls show, dismissed notices                | `chrome.storage.local` in the extension (`lib/settings.ts`); the desktop window keeps its theme in local storage | Immediately, for that client only |
 
 The three speaker settings can each come from a flag (server only), an environment variable, a file
 or the default, in that order. `CompanionSettings::load` settles them once at start-up, records

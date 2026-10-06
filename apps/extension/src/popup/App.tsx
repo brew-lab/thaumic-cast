@@ -23,6 +23,8 @@ import { useAutoStopNotification } from './hooks/useAutoStopNotification';
 import { useConnectionStatus } from './hooks/useConnectionStatus';
 import { useOnboarding } from './hooks/useOnboarding';
 import { useSpeakerSelection } from './hooks/useSpeakerSelection';
+import { useStartLimit } from './hooks/useStartLimit';
+import { pendingStartsFor, withPendingStart } from '../lib/start-level';
 import { useCompanionVersion } from './hooks/useCompanionVersion';
 import { useCaptureHealth } from './hooks/useCaptureHealth';
 import { useSpeakerNotices } from './hooks/useSpeakerNotices';
@@ -121,6 +123,14 @@ function MainPopup(): JSX.Element {
     castingSpeakerIps,
   );
 
+  // Start levels: the limit from the settings, and any level set by hand
+  // before Cast. These stay in the popup until Cast; no speaker is touched.
+  const startLimit = useStartLimit();
+  const [pendingStarts, setPendingStarts] = useState<Record<string, number>>({});
+  const handleStartLevelChange = useCallback((speakerIp: string, level: number) => {
+    setPendingStarts((prev) => withPendingStart(prev, speakerIp, level));
+  }, []);
+
   // Auto-stop notification hook
   const { notification: autoStopNotification, message: autoStopMessage } = useAutoStopNotification(
     (ip) => speakerGroups.getGroupName(ip) || ip,
@@ -211,7 +221,10 @@ function MainPopup(): JSX.Element {
     try {
       const msg: StartCastMessage = {
         type: 'START_CAST',
-        payload: { speakerIps: selectedIps },
+        payload: {
+          speakerIps: selectedIps,
+          startLevels: pendingStartsFor(selectedIps, pendingStarts),
+        },
       };
       const response: ExtensionResponse = await chrome.runtime.sendMessage(msg);
 
@@ -222,13 +235,15 @@ function MainPopup(): JSX.Element {
         setError(msg);
         throw new Error(msg);
       }
+      // Hand-set levels are for this cast only.
+      setPendingStarts({});
       // isCasting is derived from activeCasts - will auto-update via ACTIVE_CASTS_CHANGED
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       setError(message);
       throw err;
     }
-  }, [selectedIps, t]);
+  }, [selectedIps, pendingStarts, t]);
 
   /**
    * Handles mute toggle for a speaker.
@@ -448,9 +463,10 @@ function MainPopup(): JSX.Element {
           disabled={isSeeking || sonosLoading || !baseUrl}
           speakersLoading={sonosLoading || isSeeking}
           getVolume={getVolume}
-          isMuted={isMuted}
-          onVolumeChange={handleVolumeChange}
-          onMuteToggle={handleMuteToggle}
+          getVolumeFixed={getVolumeFixed}
+          startLimit={startLimit}
+          pendingStarts={pendingStarts}
+          onStartLevelChange={handleStartLevelChange}
           showVolumeControls={wsConnected && selectedIps.length > 0}
           getGroupDisplayName={getGroupDisplayName}
           getSpeakerName={(ip) => speakerGroups.getGroupName(ip)}

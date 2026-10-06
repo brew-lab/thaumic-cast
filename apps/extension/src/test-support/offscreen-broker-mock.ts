@@ -12,7 +12,14 @@
  */
 
 import { mock } from 'bun:test';
-import type { SonosStateSnapshot } from '@thaumic-cast/protocol';
+import type { SonosStateSnapshot, StartVolume } from '@thaumic-cast/protocol';
+
+/** The arguments of one `startPlayback` call. */
+export interface StartPlaybackCall {
+  tabId: number;
+  speakerIps: string[];
+  startVolume: StartVolume | undefined;
+}
 
 /** Calls the mocked broker received, oldest first. */
 export const brokerCalls = {
@@ -20,6 +27,8 @@ export const brokerCalls = {
   stoppedTabs: [] as number[],
   /** Snapshots passed to `syncSonosState`. */
   syncedStates: [] as SonosStateSnapshot[],
+  /** Calls to `startPlayback`. */
+  startedPlayback: [] as StartPlaybackCall[],
 };
 
 /**
@@ -28,6 +37,7 @@ export const brokerCalls = {
 export function resetBrokerCalls(): void {
   brokerCalls.stoppedTabs.length = 0;
   brokerCalls.syncedStates.length = 0;
+  brokerCalls.startedPlayback.length = 0;
 }
 
 mock.module('../background/offscreen-broker', () => ({
@@ -38,6 +48,15 @@ mock.module('../background/offscreen-broker', () => ({
     syncSonosState(state: SonosStateSnapshot): void {
       brokerCalls.syncedStates.push(state);
     },
-    async startPlayback(): Promise<void> {},
+    async startPlayback(
+      tabId: number,
+      speakerIps: string[],
+      _metadata?: unknown,
+      _syncSpeakers?: boolean,
+      _videoSyncEnabled?: boolean,
+      startVolume?: StartVolume,
+    ): Promise<void> {
+      brokerCalls.startedPlayback.push({ tabId, speakerIps, startVolume });
+    },
   },
 }));

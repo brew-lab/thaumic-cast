@@ -8,7 +8,7 @@
  * Outbound messages flow from Worker to StreamSession.
  */
 
-import type { EncoderConfig, StreamMetadata } from '@thaumic-cast/protocol';
+import type { EncoderConfig, StartVolume, StreamMetadata } from '@thaumic-cast/protocol';
 import type { ErrorParams } from '../lib/keyed-error';
 import type { PcmRateStopReason } from './pcm-rate';
 
@@ -66,6 +66,8 @@ export interface WorkerStartPlaybackMessage {
   syncSpeakers?: boolean;
   /** Whether the client has video sync enabled (gates server-side latency monitoring). */
   videoSyncEnabled: boolean;
+  /** The level each room starts at; absent on a resume, which touches no volume. */
+  startVolume?: StartVolume;
 }
 
 /** Updates stream metadata on all connected speakers. */
