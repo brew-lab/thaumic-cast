@@ -25,6 +25,7 @@ use crate::protocol_constants::{
     MIN_FRAME_DURATION_MS, MIN_JITTER_BUFFER_MS, SILENCE_FRAME_DURATION_MS, SOAP_TIMEOUT_SECS,
     SUPPORTED_SAMPLE_RATES, WS_HEARTBEAT_CHECK_INTERVAL_SECS, WS_HEARTBEAT_TIMEOUT_SECS,
 };
+use crate::services::start_volume::StartVolumeRequest;
 use crate::services::{PlaybackSession, StreamCoordinator};
 use crate::stream::{AudioCodec, AudioFormat, StreamMetadata};
 
@@ -131,6 +132,10 @@ struct StartPlaybackRequest {
     /// Whether the client has video sync enabled (gates latency monitoring).
     #[serde(default)]
     video_sync_enabled: bool,
+    /// The start-level limit and any levels set by hand before Cast. Absent
+    /// from older clients and from a resume, and then no volume is touched.
+    #[serde(default)]
+    start_volume: Option<StartVolumeRequest>,
 }
 
 impl StartPlaybackRequest {
@@ -1715,6 +1720,14 @@ async fn handle_start_playback(
             .update_metadata(&stream_id, metadata.clone());
     }
 
+    // Set each room's start level before anything is joined or played.
+    if let Some(ref start_volume) = payload.start_volume {
+        state
+            .stream_coordinator
+            .apply_start_volume(state.sonos.as_ref(), &stream_id, &speaker_ips, start_volume)
+            .await;
+    }
+
     // Start playback on all speakers (multi-group support)
     let artwork_url = state.artwork_metadata_url();
     let results = state
@@ -2694,6 +2707,32 @@ mod tests {
         .unwrap();
         assert!(!current.uses_legacy_speaker_ip());
         assert_eq!(current.get_speaker_ips(), ["192.168.1.31", "192.168.1.32"]);
+    }
+
+    #[test]
+    fn the_protocol_start_playback_fixture_carries_its_start_volume() {
+        // packages/protocol parses the same file, so the two sides agree on
+        // the start-volume field.
+        const PROTOCOL_START_PLAYBACK: &str =
+            include_str!("../../../protocol/fixtures/start-playback.json");
+        let message: serde_json::Value =
+            serde_json::from_str(PROTOCOL_START_PLAYBACK).expect("start-playback.json is JSON");
+        assert_eq!(message["type"], "START_PLAYBACK");
+        let request: StartPlaybackRequest =
+            serde_json::from_value(message["payload"].clone()).expect("valid START_PLAYBACK");
+
+        assert_eq!(request.get_speaker_ips(), ["192.168.1.10", "192.168.1.11"]);
+        let start = request.start_volume.expect("a start volume");
+        assert_eq!(start.limit, Some(30));
+        assert_eq!(start.speakers.get("192.168.1.11"), Some(&45));
+    }
+
+    #[test]
+    fn a_start_playback_without_a_start_volume_touches_no_volume() {
+        // Older extensions and the resume path send none.
+        let request: StartPlaybackRequest =
+            serde_json::from_value(serde_json::json!({ "speakerIps": ["192.168.1.10"] })).unwrap();
+        assert!(request.start_volume.is_none());
     }
 
     #[test]

@@ -1459,6 +1459,7 @@ mod tests {
                 ip: coordinator_ip.to_string(),
                 zone_name: format!("Room {}", coordinator_ip),
                 model: "One".to_string(),
+                invisible: false,
             }],
         }
     }
@@ -1575,6 +1576,7 @@ mod tests {
             ip: "192.168.1.11".to_string(),
             zone_name: "Kitchen".to_string(),
             model: "One".to_string(),
+            invisible: false,
         });
         let groups = vec![grouped, group("192.168.1.20", "RINCON_C")];
 

@@ -190,6 +190,10 @@ impl SonosVolumeControl for SonosClientImpl {
         volume::set_speaker_volume(&self.client, speaker_ip, self.speaker_port, volume).await
     }
 
+    async fn get_speaker_output_fixed(&self, speaker_ip: &str) -> SoapResult<bool> {
+        volume::get_speaker_output_fixed(&self.client, speaker_ip, self.speaker_port).await
+    }
+
     async fn get_speaker_mute(&self, speaker_ip: &str) -> SoapResult<bool> {
         volume::get_speaker_mute(&self.client, speaker_ip, self.speaker_port).await
     }

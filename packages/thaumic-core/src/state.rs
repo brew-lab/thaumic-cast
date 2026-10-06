@@ -690,12 +690,14 @@ mod tests {
                         ip: "192.168.1.100".to_string(),
                         zone_name: "Living Room".to_string(),
                         model: "One".to_string(),
+                        invisible: false,
                     },
                     ZoneGroupMember {
                         uuid: "RINCON_KITCHEN".to_string(),
                         ip: "192.168.1.101".to_string(),
                         zone_name: "Kitchen".to_string(),
                         model: "One".to_string(),
+                        invisible: false,
                     },
                 ],
             }];
@@ -725,6 +727,7 @@ mod tests {
                     ip: "192.168.1.100".to_string(),
                     zone_name: "Living Room".to_string(),
                     model: "One".to_string(),
+                    invisible: false,
                 }],
             }];
         }

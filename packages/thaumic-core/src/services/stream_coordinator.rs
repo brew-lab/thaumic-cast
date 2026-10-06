@@ -778,6 +778,31 @@ impl StreamCoordinator {
         }
     }
 
+    /// Sets each room's start level before a cast starts on `speaker_ips`
+    /// (see [`super::start_volume`]).
+    ///
+    /// Call it before [`Self::start_playback_multi`], so the level is in place
+    /// before any group is joined or anything plays. A speaker already playing
+    /// `stream_id` is skipped: a repeated `START_PLAYBACK` is a resume, and a
+    /// resume never changes the volume.
+    pub(crate) async fn apply_start_volume(
+        &self,
+        sonos: &dyn crate::sonos::traits::SonosVolumeControl,
+        stream_id: &str,
+        speaker_ips: &[String],
+        request: &super::start_volume::StartVolumeRequest,
+    ) {
+        if request.is_noop() {
+            return;
+        }
+        let starting: Vec<String> = speaker_ips
+            .iter()
+            .filter(|ip| self.sessions.get(stream_id, ip).is_none())
+            .cloned()
+            .collect();
+        super::start_volume::apply_start_volume(sonos, &self.sonos_state, &starting, request).await;
+    }
+
     /// Starts playback of a stream on multiple Sonos speakers.
     ///
     /// When `sync_speakers` is true and multiple speakers are selected, uses Sonos's
@@ -1681,6 +1706,7 @@ mod tests {
                         ip: ip.to_string(),
                         zone_name: format!("Room {}", ip),
                         model: "One".to_string(),
+                        invisible: false,
                     }],
                 })
                 .collect();
@@ -2119,12 +2145,14 @@ mod tests {
                             ip: "192.168.1.100".to_string(),
                             zone_name: "Kitchen".to_string(),
                             model: "One".to_string(),
+                            invisible: false,
                         },
                         ZoneGroupMember {
                             uuid: "RINCON_OFFICE".to_string(),
                             ip: "192.168.1.101".to_string(),
                             zone_name: "Office".to_string(),
                             model: "One".to_string(),
+                            invisible: false,
                         },
                     ],
                 }];

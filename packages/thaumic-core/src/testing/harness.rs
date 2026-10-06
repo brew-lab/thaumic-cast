@@ -27,6 +27,7 @@ use crate::bootstrap::{bootstrap_services_with_speaker_port, BootstrappedService
 use crate::context::NetworkContext;
 use crate::events::{BroadcastEvent, SonosEvent, StreamEvent};
 use crate::protocol_constants::SOAP_TIMEOUT_SECS;
+use crate::services::start_volume::StartVolumeRequest;
 use crate::services::{PlaybackResult, PlaybackSession, StreamCoordinator};
 use crate::sonos::utils::build_sonos_stream_uri;
 use crate::state::Config;
@@ -333,6 +334,24 @@ impl TestSystem {
     /// Starts `stream_id` on the named speakers, synced or independent.
     pub async fn start(&self, stream_id: &str, names: &[&str], sync: bool) -> Vec<PlaybackResult> {
         let ips: Vec<String> = names.iter().map(|name| self.ip(name)).collect();
+        self.coordinator()
+            .start_playback_multi(&ips, stream_id, None, &self.artwork_url(), sync)
+            .await
+    }
+
+    /// Starts `stream_id` on the named speakers the way `START_PLAYBACK`
+    /// does when it carries a start volume: start levels first, then playback.
+    pub async fn start_with_volume(
+        &self,
+        stream_id: &str,
+        names: &[&str],
+        sync: bool,
+        start_volume: &StartVolumeRequest,
+    ) -> Vec<PlaybackResult> {
+        let ips: Vec<String> = names.iter().map(|name| self.ip(name)).collect();
+        self.coordinator()
+            .apply_start_volume(self.services.sonos.as_ref(), stream_id, &ips, start_volume)
+            .await;
         self.coordinator()
             .start_playback_multi(&ips, stream_id, None, &self.artwork_url(), sync)
             .await

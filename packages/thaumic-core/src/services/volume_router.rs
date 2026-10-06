@@ -196,6 +196,9 @@ mod tests {
             self.set_speaker_volume_called.store(true, Ordering::SeqCst);
             Ok(())
         }
+        async fn get_speaker_output_fixed(&self, _: &str) -> SoapResult<bool> {
+            Ok(false)
+        }
         async fn get_speaker_mute(&self, _: &str) -> SoapResult<bool> {
             self.get_speaker_mute_called.store(true, Ordering::SeqCst);
             Ok(true)

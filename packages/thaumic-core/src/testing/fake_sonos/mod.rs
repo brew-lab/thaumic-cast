@@ -173,6 +173,8 @@ struct SpeakerState {
     coordinator_uuid: String,
     volume: u8,
     mute: bool,
+    /// Whether the output is fixed (line level): `SetVolume` is refused.
+    output_fixed: bool,
     group_volume: u8,
     group_mute: bool,
     /// Task draining the body of the current stream fetch, if one is open.
@@ -218,6 +220,7 @@ impl FakeSpeaker {
                 coordinator_uuid: String::new(),
                 volume: 25,
                 mute: false,
+                output_fixed: false,
                 group_volume: 25,
                 group_mute: false,
                 fetch: None,
@@ -256,6 +259,21 @@ impl FakeSpeaker {
 
     pub fn muted(&self) -> bool {
         self.state.lock().mute
+    }
+
+    /// Sets the speaker's own volume, as if someone turned it in the Sonos app.
+    pub fn set_volume(&self, volume: u8) {
+        self.state.lock().volume = volume;
+    }
+
+    /// Makes the output fixed (line level), like a Port on fixed line out.
+    /// A fixed speaker reports volume 100 and refuses `SetVolume`.
+    pub fn set_output_fixed(&self, fixed: bool) {
+        let mut state = self.state.lock();
+        state.output_fixed = fixed;
+        if fixed {
+            state.volume = 100;
+        }
     }
 
     /// Every stream fetch this speaker has made, oldest first.
@@ -463,8 +481,18 @@ impl FakeSpeaker {
                 pairs(&[("CurrentVolume", &self.volume().to_string())])
             }
             (SonosService::RenderingControl, "SetVolume") => {
-                self.state.lock().volume = parse_u8("DesiredVolume")?;
+                let volume = parse_u8("DesiredVolume")?;
+                let mut state = self.state.lock();
+                if state.output_fixed {
+                    // A fixed output refuses a volume change.
+                    return Err(501);
+                }
+                state.volume = volume;
                 vec![]
+            }
+            (SonosService::RenderingControl, "GetOutputFixed") => {
+                let fixed = self.state.lock().output_fixed;
+                pairs(&[("CurrentFixed", if fixed { "1" } else { "0" })])
             }
             (SonosService::RenderingControl, "GetMute") => {
                 pairs(&[("CurrentMute", if self.muted() { "1" } else { "0" })])
