@@ -22,6 +22,9 @@ export default {
     // Allow modern CSS features
     'function-no-unknown': [true, { ignoreFunctions: ['theme', 'light-dark'] }],
     'at-rule-no-unknown': [true, { ignoreAtRules: ['layer'] }],
+    // The design system's hover and focus bevel (packages/ui/DESIGN.md T-shape), always set
+    // inside @supports (corner-shape: bevel).
+    'property-no-unknown': [true, { ignoreProperties: ['corner-shape'] }],
     // Modern CSS syntax
     'length-zero-no-unit': true,
     'color-function-notation': 'modern',
