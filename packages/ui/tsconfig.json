@@ -2,7 +2,9 @@
   "extends": "../../tsconfig.json",
   "compilerOptions": {
     "jsx": "react-jsx",
-    "jsxImportSource": "preact"
+    "jsxImportSource": "preact",
+    "types": ["bun"]
   },
-  "include": ["src"]
+  "include": ["src", "scripts", "catalogue"],
+  "exclude": ["catalogue/dist"]
 }
