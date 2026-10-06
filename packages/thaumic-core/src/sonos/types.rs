@@ -78,6 +78,11 @@ pub struct ZoneGroupMember {
     /// Otherwise, it's the model name extracted from the device icon (e.g., "one", "arc").
     /// Falls back to "Speaker" if neither is available.
     pub model: String,
+    /// Whether Sonos marks this device `Invisible`: a home-theatre satellite
+    /// or the second speaker of a stereo pair. It plays as part of the room's
+    /// primary and is never controlled on its own. Not sent to clients.
+    #[serde(skip)]
+    pub invisible: bool,
 }
 
 /// A Sonos zone group (speakers playing in sync).

@@ -208,6 +208,13 @@ pub trait SonosVolumeControl: Send + Sync {
     /// * `volume` - Desired volume level (0-100, values > 100 are clamped)
     async fn set_speaker_volume(&self, speaker_ip: &str, volume: u8) -> SoapResult<()>;
 
+    /// Whether an individual speaker's output is fixed (line level), so its
+    /// volume cannot be set.
+    ///
+    /// # Arguments
+    /// * `speaker_ip` - IP address of the speaker
+    async fn get_speaker_output_fixed(&self, speaker_ip: &str) -> SoapResult<bool>;
+
     /// Gets mute state from an individual speaker.
     ///
     /// Uses the RenderingControl service to query a single speaker's mute state,

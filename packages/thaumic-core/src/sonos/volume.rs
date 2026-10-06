@@ -195,6 +195,35 @@ pub async fn set_speaker_volume(
     Ok(())
 }
 
+/// Whether an individual speaker's output is fixed (line level).
+///
+/// A Port or Connect set to fixed line out ignores `SetVolume`; the amplifier
+/// after it sets the level. Uses RenderingControl `GetOutputFixed`.
+///
+/// # Arguments
+/// * `client` - The HTTP client to use for the request
+/// * `speaker_ip` - IP address of the speaker
+/// * `port` - TCP port the speaker's UPnP services listen on (1400 on real hardware)
+pub async fn get_speaker_output_fixed(
+    client: &Client,
+    speaker_ip: &str,
+    port: u16,
+) -> SoapResult<bool> {
+    let response = soap_request(
+        client,
+        speaker_ip,
+        port,
+        SonosService::RenderingControl,
+        "GetOutputFixed",
+        &[("InstanceID", "0")],
+    )
+    .await?;
+
+    extract_xml_text(&response, "CurrentFixed")
+        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+        .ok_or(SoapError::Parse)
+}
+
 /// Gets mute state from an individual speaker.
 ///
 /// Uses the RenderingControl service to query a single speaker's mute state,

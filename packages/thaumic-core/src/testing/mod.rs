@@ -12,3 +12,4 @@ mod gena_tests;
 mod listen_tests;
 mod playback_tests;
 mod queue_tests;
+mod start_volume_tests;

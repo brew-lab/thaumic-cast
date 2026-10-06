@@ -114,6 +114,7 @@ pub fn parse_zone_group_xml(xml: &str) -> Vec<ZoneGroup> {
                             ip,
                             zone_name,
                             model,
+                            invisible: get_xml_attr(e, "Invisible").as_deref() == Some("1"),
                         });
                     }
                     _ => {}
