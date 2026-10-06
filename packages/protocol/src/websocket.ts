@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { WireEncoderConfigSchema } from './encoder.js';
 import { SpeakerRemovalReasonSchema } from './events.js';
 import { InitialStatePayloadSchema } from './sonos.js';
-import { StreamMetadataSchema } from './stream.js';
+import { StartVolumeSchema, StreamMetadataSchema } from './stream.js';
 
 /**
  * Wire-protocol version advertised by this package. The companion (desktop/server)
@@ -162,10 +162,21 @@ export type WsStreamReadyMessage = z.infer<typeof WsStreamReadyMessageSchema>;
  * Must be sent after receiving STREAM_READY.
  */
 export const WsStartPlaybackPayloadSchema = z.object({
-  /** IP address of the Sonos speaker/coordinator. */
-  speakerIp: z.string(),
+  /** IP addresses of the Sonos speakers (group coordinators) to play on. */
+  speakerIps: z.array(z.string()).optional(),
+  /** Legacy single speaker, read by the companion only when `speakerIps` is absent. */
+  speakerIp: z.string().optional(),
+  /** Initial metadata to show on the speakers. */
+  metadata: StreamMetadataSchema.optional(),
+  /** Whether to join the speakers into one Sonos group for the cast. */
+  syncSpeakers: z.boolean().default(false),
   /** Whether the client has video sync enabled (gates server-side latency monitoring). */
   videoSyncEnabled: z.boolean().default(false),
+  /**
+   * The level each room starts at. Sent with a new cast only: a repeated
+   * START_PLAYBACK that resumes a cast leaves it out and touches no volume.
+   */
+  startVolume: StartVolumeSchema.optional(),
 });
 export type WsStartPlaybackPayload = z.infer<typeof WsStartPlaybackPayloadSchema>;
 

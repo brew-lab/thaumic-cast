@@ -37,6 +37,43 @@ describe('WsMessageSchema', () => {
     expect(parsed.type === 'START_PLAYBACK' && parsed.payload.videoSyncEnabled).toBe(false);
   });
 
+  it('should accept the START_PLAYBACK message core parses, start volume included', () => {
+    // A thaumic-core test parses this same file, so both sides agree on it.
+    const fixture: unknown = JSON.parse(
+      readFileSync(join(import.meta.dir, '../fixtures/start-playback.json'), 'utf8'),
+    );
+
+    const parsed = WsMessageSchema.parse(fixture);
+
+    expect(parsed.type).toBe('START_PLAYBACK');
+    if (parsed.type !== 'START_PLAYBACK') return;
+    expect(parsed.payload.speakerIps).toEqual(['192.168.1.10', '192.168.1.11']);
+    expect(parsed.payload.startVolume).toEqual({ limit: 30, speakers: { '192.168.1.11': 45 } });
+  });
+
+  it('should leave the start volume out of a START_PLAYBACK that has none', () => {
+    const parsed = WsMessageSchema.parse({
+      type: 'START_PLAYBACK',
+      payload: { speakerIps: [SPEAKER] },
+    });
+
+    expect(parsed.type === 'START_PLAYBACK' && parsed.payload.startVolume).toBeUndefined();
+  });
+
+  it('should reject start levels outside 0 to 100', () => {
+    const message = (startVolume: unknown) => ({
+      type: 'START_PLAYBACK',
+      payload: { speakerIps: [SPEAKER], startVolume },
+    });
+
+    expect(WsMessageSchema.safeParse(message({ limit: 101 })).success).toBe(false);
+    expect(WsMessageSchema.safeParse(message({ limit: -1 })).success).toBe(false);
+    expect(WsMessageSchema.safeParse(message({ speakers: { [SPEAKER]: 30.5 } })).success).toBe(
+      false,
+    );
+    expect(WsMessageSchema.safeParse(message({ limit: 0, speakers: {} })).success).toBe(true);
+  });
+
   it('should require a message on ERROR payloads', () => {
     expect(WsMessageSchema.safeParse({ type: 'ERROR', payload: {} }).success).toBe(false);
     expect(WsMessageSchema.safeParse({ type: 'ERROR', payload: { message: 'x' } }).success).toBe(

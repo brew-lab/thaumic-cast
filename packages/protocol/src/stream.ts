@@ -41,6 +41,51 @@ export const CastStatusSchema = z.object({
 export type CastStatus = z.infer<typeof CastStatusSchema>;
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Start Volume
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * A volume level on the Sonos scale, 0 to 100.
+ */
+export const VolumeLevelSchema = z.number().int().min(0).max(100);
+export type VolumeLevel = z.infer<typeof VolumeLevelSchema>;
+
+/**
+ * The level each room starts a cast at, sent on `START_PLAYBACK`.
+ *
+ * Before playing, the companion sets every room of every target: to the
+ * hand-set level for that target when there is one (even above the limit),
+ * otherwise down to `limit` when the room is louder, never up. A room whose
+ * level cannot be read is set to `limit`; a fixed (line-level) output is never
+ * set. With no `limit` and no hand-set levels nothing is touched, which is
+ * also what an absent `startVolume` means.
+ */
+export const StartVolumeSchema = z.object({
+  /** The highest level a room may start at; absent when the limit is off. */
+  limit: VolumeLevelSchema.optional(),
+  /** Levels set by hand before Cast, keyed by target speaker IP. */
+  speakers: z.record(z.string(), VolumeLevelSchema).optional(),
+});
+export type StartVolume = z.infer<typeof StartVolumeSchema>;
+
+/**
+ * Works out the level a room will start at, the same way the companion does.
+ * @param current - The room's level now, or undefined when not known yet
+ * @param limit - The start limit, or undefined when the limit is off
+ * @param handSet - A level set by hand before Cast, if any
+ * @returns The start level, or undefined when it cannot be known until Cast
+ */
+export function plannedStartLevel(
+  current: number | undefined,
+  limit: number | undefined,
+  handSet?: number,
+): number | undefined {
+  if (handSet !== undefined) return handSet;
+  if (current === undefined) return undefined;
+  return limit === undefined ? current : Math.min(current, limit);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Multi-Group Playback Types
 // ─────────────────────────────────────────────────────────────────────────────
 
