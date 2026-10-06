@@ -1,0 +1,6 @@
+/*
+ * The cascade layer order (DESIGN.md F-layers). The first @layer statement fixes the order,
+ * so every entry imports this file first, before any component: main.tsx in each app and the
+ * catalogue. packages/ui modules are @layer components; app CSS is @layer app.
+ */
+@layer reset, tokens, base, components, app, overrides;

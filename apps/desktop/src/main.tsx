@@ -1,3 +1,10 @@
+// The cascade layer order comes first, before any component's CSS (packages/ui/DESIGN.md
+// F-layers); then the design tokens, their repeat for WebKit without light-dark() (macOS 13,
+// WebKitGTK 2.44), and the heading face.
+import '@thaumic-cast/ui/layers.css';
+import '@thaumic-cast/ui/tokens.css';
+import '@thaumic-cast/ui/webkit-fallbacks.css';
+import '@thaumic-cast/ui/fonts.css';
 import { render } from 'preact';
 import { invoke } from '@tauri-apps/api/core';
 import { createLogger } from '@thaumic-cast/shared';
