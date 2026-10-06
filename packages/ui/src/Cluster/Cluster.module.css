@@ -1,0 +1,41 @@
+@layer components {
+  .cluster {
+    --cluster-gap: var(--space-3);
+    --cluster-justify: flex-start;
+
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: var(--cluster-justify);
+    gap: var(--cluster-gap);
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+
+  .gap-2 {
+    --cluster-gap: var(--space-2);
+  }
+
+  .gap-4 {
+    --cluster-gap: var(--space-4);
+  }
+
+  .justify-end {
+    --cluster-justify: flex-end;
+  }
+
+  .justify-between {
+    --cluster-justify: space-between;
+  }
+
+  .stack {
+    container: cluster / inline-size;
+  }
+
+  @container cluster (inline-size < 25rem) {
+    .stack > * {
+      flex: 1 1 100%;
+    }
+  }
+}
