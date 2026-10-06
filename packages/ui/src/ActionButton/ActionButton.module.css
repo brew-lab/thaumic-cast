@@ -1,25 +1,27 @@
-.action-button {
-  transition:
-    background-color 0.2s ease,
-    border-color 0.2s ease;
-}
-
-.spin {
-  animation: spin 1s linear infinite;
-}
-
-@keyframes spin {
-  100% {
-    transform: rotate(360deg);
+@layer components {
+  .action-button {
+    transition:
+      background-color 0.2s ease,
+      border-color 0.2s ease;
   }
-}
 
-.success {
-  background-color: var(--color-success);
-  border-color: var(--color-success);
-}
+  .spin {
+    animation: spin 1s linear infinite;
+  }
 
-.error {
-  background-color: var(--color-error);
-  border-color: var(--color-error);
+  @keyframes spin {
+    100% {
+      transform: rotate(360deg);
+    }
+  }
+
+  .success {
+    background-color: var(--color-success);
+    border-color: var(--color-success);
+  }
+
+  .error {
+    background-color: var(--color-error);
+    border-color: var(--color-error);
+  }
 }

@@ -1,0 +1,41 @@
+/*
+ * The shared keyframes (DESIGN.md T-motion), here and nowhere else. Apps use them by
+ * animation-name only. Entrances use @starting-style, not keyframes.
+ *
+ * - clack: one Clacks shutter, open for 3 of 8 steps. Run it over 8 × --dur-step with
+ *   step-end timing and a per-shutter delay; the shutter reads --clack-open.
+ * - clack-fade: the reduced-motion Clacks, full then dimmed, one step per --dur-fade-step.
+ * - drift: the live gradient's hue, from --live-drift-from to 0, over --dur-drift,
+ *   alternating. Under reduced motion --live-drift-from is 0, so it holds.
+ */
+@layer base {
+  @keyframes clack {
+    0% {
+      --clack-open: 1;
+    }
+
+    37.5% {
+      --clack-open: 0;
+    }
+  }
+
+  @keyframes clack-fade {
+    0% {
+      opacity: 1;
+    }
+
+    50% {
+      opacity: var(--clack-dim);
+    }
+  }
+
+  @keyframes drift {
+    from {
+      --live-shift: var(--live-drift-from);
+    }
+
+    to {
+      --live-shift: 0;
+    }
+  }
+}

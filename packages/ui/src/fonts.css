@@ -1,0 +1,44 @@
+/*
+ * Geist 600, the heading face (DESIGN.md T-type). The only Geist weight shipped.
+ *
+ * fonts/geist-600.woff2 is Geist-SemiBold.woff2 from the official release, unmodified:
+ * https://github.com/vercel/geist-font/releases/tag/v1.7.2 (geist-font-v1.7.2.zip,
+ * Geist/webfonts/Geist-SemiBold.woff2; sha256 b1e6a1dd2122485d0a1f3a8d30a45443aa9453224f83018bec35f8266bc77915).
+ * It is under the SIL Open Font License 1.1: fonts/OFL.txt. Both apps bundle it; no build
+ * loads a font from a CDN.
+ *
+ * The two fallback faces are metric-matched to Geist 600 (units per em 1000, ascent 1005,
+ * descent 295, line gap 0), so a heading drawn before Geist arrives keeps its box (F-shift).
+ * Liberation Sans Bold (Linux) is metric-compatible with Arial, so it shares Arial's numbers.
+ */
+@font-face {
+  font-family: Geist;
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url('./fonts/geist-600.woff2') format('woff2');
+}
+
+@font-face {
+  font-family: 'Geist Fallback Segoe';
+  font-style: normal;
+  font-weight: 600;
+  src: local('Segoe UI Semibold'), local('SegoeUI-Semibold');
+  size-adjust: 109.7%;
+  ascent-override: 91.61%;
+  descent-override: 26.89%;
+  line-gap-override: 0%;
+}
+
+@font-face {
+  font-family: 'Geist Fallback Arial';
+  font-style: normal;
+  font-weight: 600;
+  src:
+    local('Arial Bold'), local('Arial-BoldMT'), local('Liberation Sans Bold'),
+    local('LiberationSans-Bold');
+  size-adjust: 101%;
+  ascent-override: 99.5%;
+  descent-override: 29.21%;
+  line-gap-override: 0%;
+}

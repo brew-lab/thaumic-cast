@@ -1,0 +1,32 @@
+/*
+ * The utilities (DESIGN.md F-utils). Cluster is a component (src/Cluster).
+ * - .num: numbers in text (volumes, ms, counts), tabular, end-aligned in a box of
+ *   --num-ch characters, set inline: style={{ '--num-ch': 3 }}.
+ * - .mono: machine text (addresses, URLs): left to right inside any text, breaks anywhere,
+ *   in the body face (there is no mono face).
+ * - .visually-hidden: in the accessibility tree, not on screen.
+ */
+@layer base {
+  .num {
+    font-variant-numeric: var(--num);
+    min-inline-size: calc(var(--num-ch, 0) * 1ch);
+    text-align: end;
+  }
+
+  .mono {
+    font-variant-numeric: var(--num);
+    font-variant-ligatures: none;
+    overflow-wrap: anywhere;
+    direction: ltr;
+    unicode-bidi: isolate;
+  }
+
+  .visually-hidden {
+    position: absolute;
+    inline-size: 1px;
+    block-size: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+}

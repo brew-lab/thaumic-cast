@@ -1,93 +1,95 @@
-.volume-control {
-  display: flex;
-  align-items: center;
-  gap: var(--space-sm);
-  padding-block: var(--space-xs);
-  padding-inline: var(--space-xs);
-  background: var(--color-surface);
-  border-radius: var(--radius-sm);
-  user-select: none;
-}
+@layer components {
+  .volume-control {
+    display: flex;
+    align-items: center;
+    gap: var(--space-sm);
+    padding-block: var(--space-xs);
+    padding-inline: var(--space-xs);
+    background: var(--color-surface);
+    border-radius: var(--radius-sm);
+    user-select: none;
+  }
 
-.mute-btn.muted {
-  opacity: var(--state-muted-opacity);
-}
+  .mute-btn.muted {
+    opacity: var(--state-muted-opacity);
+  }
 
-.disabled {
-  opacity: var(--input-disabled-opacity);
-  cursor: not-allowed;
-}
+  .disabled {
+    opacity: var(--input-disabled-opacity);
+    cursor: not-allowed;
+  }
 
-.slider {
-  --volume: 0%;
-  --touch-offset: calc((var(--touch-target-size) - var(--slider-track-height)) / 2);
+  .slider {
+    --volume: 0%;
+    --touch-offset: calc((var(--touch-target-size) - var(--slider-track-height)) / 2);
 
-  flex: 1;
-  block-size: var(--touch-target-size);
-  margin-block: calc(-1 * var(--touch-offset));
-  appearance: none;
-  background: linear-gradient(
-    to right,
-    var(--slider-fill) var(--volume),
-    var(--slider-track) var(--volume)
-  );
-  background-size: 100% var(--slider-track-height);
-  background-position: center;
-  background-repeat: no-repeat;
-  outline: none;
-  cursor: pointer;
-}
+    flex: 1;
+    block-size: var(--touch-target-size);
+    margin-block: calc(-1 * var(--touch-offset));
+    appearance: none;
+    background: linear-gradient(
+      to right,
+      var(--slider-fill) var(--volume),
+      var(--slider-track) var(--volume)
+    );
+    background-size: 100% var(--slider-track-height);
+    background-position: center;
+    background-repeat: no-repeat;
+    outline: none;
+    cursor: pointer;
+  }
 
-.slider::-webkit-slider-thumb {
-  appearance: none;
-  inline-size: var(--slider-thumb-size);
-  block-size: var(--slider-thumb-size);
-  background: var(--slider-thumb);
-  border-radius: 50%;
-  cursor: pointer;
-  border: none;
-}
+  .slider::-webkit-slider-thumb {
+    appearance: none;
+    inline-size: var(--slider-thumb-size);
+    block-size: var(--slider-thumb-size);
+    background: var(--slider-thumb);
+    border-radius: 50%;
+    cursor: pointer;
+    border: none;
+  }
 
-.slider:focus-visible::-webkit-slider-thumb {
-  box-shadow:
-    0 0 0 2px var(--color-bg),
-    0 0 0 4px var(--color-focus);
-}
+  .slider:focus-visible::-webkit-slider-thumb {
+    box-shadow:
+      0 0 0 2px var(--color-bg),
+      0 0 0 4px var(--color-focus);
+  }
 
-.slider::-moz-range-thumb {
-  appearance: none;
-  inline-size: var(--slider-thumb-size);
-  block-size: var(--slider-thumb-size);
-  background: var(--slider-thumb);
-  border-radius: 50%;
-  cursor: pointer;
-  border: none;
-}
+  .slider::-moz-range-thumb {
+    appearance: none;
+    inline-size: var(--slider-thumb-size);
+    block-size: var(--slider-thumb-size);
+    background: var(--slider-thumb);
+    border-radius: 50%;
+    cursor: pointer;
+    border: none;
+  }
 
-.slider:focus-visible::-moz-range-thumb {
-  box-shadow:
-    0 0 0 2px var(--color-bg),
-    0 0 0 4px var(--color-focus);
-}
+  .slider:focus-visible::-moz-range-thumb {
+    box-shadow:
+      0 0 0 2px var(--color-bg),
+      0 0 0 4px var(--color-focus);
+  }
 
-.disabled .slider,
-.unknown .slider {
-  pointer-events: none;
-}
+  .disabled .slider,
+  .unknown .slider {
+    pointer-events: none;
+  }
 
-/* Not known yet: no thumb, so the slider claims no level. */
-.unknown .slider::-webkit-slider-thumb {
-  visibility: hidden;
-}
+  /* Not known yet: no thumb, so the slider claims no level. */
+  .unknown .slider::-webkit-slider-thumb {
+    visibility: hidden;
+  }
 
-.unknown .slider::-moz-range-thumb {
-  visibility: hidden;
-}
+  .unknown .slider::-moz-range-thumb {
+    visibility: hidden;
+  }
 
-.value {
-  flex-shrink: 0;
-  font-size: 0.65rem;
-  color: var(--color-text-muted);
-  min-inline-size: 1.5rem;
-  text-align: end;
+  .value {
+    flex-shrink: 0;
+    font-size: 0.65rem;
+    color: var(--color-text-muted);
+    min-inline-size: 1.5rem;
+    text-align: end;
+  }
 }

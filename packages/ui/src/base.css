@@ -1,0 +1,65 @@
+/*
+ * The base layer (DESIGN.md F-pipeline, T-focus, F-shift, F-utils, T-motion): the theme
+ * switch, the focus ring, forced colours, reduced motion, prose links and the scrollbar.
+ * With tokens.css and webkit-fallbacks.css, one of the three files that hold raw values.
+ */
+@layer base {
+  /*
+   * The theme switch, written once. Auto follows the system; data-theme="light" or "dark"
+   * on <html> overrides it (applyTheme in theme.ts). Any other value, such as "auto",
+   * follows the system too. light-dark() in tokens.css does the rest.
+   */
+  :root {
+    color-scheme: light dark;
+    scrollbar-color: var(--outline) transparent;
+  }
+
+  :root[data-theme='light'] {
+    color-scheme: light;
+  }
+
+  :root[data-theme='dark'] {
+    color-scheme: dark;
+  }
+
+  /*
+   * The focus ring: 2 px of --focus outside a 2 px gap of --ring-gap, as a box-shadow so it
+   * traces the control's corner shape. The transparent outline is what forced colours paint.
+   */
+  :where(:focus-visible) {
+    outline: var(--line-bold) solid transparent;
+    outline-offset: var(--line-bold);
+    box-shadow:
+      0 0 0 var(--line-bold) var(--ring-gap),
+      0 0 0 calc(2 * var(--line-bold)) var(--focus);
+  }
+
+  /* Prose links, inside help or notice text. A stand-alone link is Button kind="link". */
+  :where(a:not([class])) {
+    color: var(--primary);
+    text-decoration: underline;
+  }
+
+  @media (forced-colors: active) {
+    :where(:focus-visible) {
+      outline-color: Highlight !important;
+      box-shadow: none !important;
+    }
+  }
+
+  /*
+   * Reduced motion: shapes swap without morphing, a press darkens without scaling, the live
+   * drift holds and the Clacks fade instead of walking. Components read these tokens.
+   */
+  @media (prefers-reduced-motion: reduce) {
+    :root {
+      --dur-shape: 0s;
+      --dur-spatial: 0s;
+      --press-text: 1;
+      --press-icon: 1;
+      --press-wide: 1;
+      --live-drift-from: 0;
+      --clack-animation: clack-fade;
+    }
+  }
+}
