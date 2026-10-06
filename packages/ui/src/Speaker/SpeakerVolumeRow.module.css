@@ -29,3 +29,14 @@
 .row:focus-within .remove-btn {
   opacity: 1;
 }
+
+.fixed,
+.caption {
+  font-size: 0.65rem;
+  color: var(--color-text-muted);
+}
+
+.fixed {
+  padding-block: var(--space-xs);
+  padding-inline: var(--space-xs);
+}

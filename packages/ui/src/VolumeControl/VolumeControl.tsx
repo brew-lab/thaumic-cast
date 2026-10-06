@@ -17,15 +17,18 @@ const MUTE_DEBOUNCE_MS = 200;
  */
 const INTERACTION_COOLDOWN_MS = 500;
 
+/** Shown in place of the number while the level is not known. */
+const UNKNOWN_VALUE = '…';
+
 interface VolumeControlProps {
-  /** Current volume level (0-100) */
-  volume: number;
+  /** Current volume level (0-100), or undefined while it is not known yet */
+  volume: number | undefined;
   /** Whether the speaker is muted */
-  muted: boolean;
+  muted?: boolean;
   /** Callback when volume changes */
   onVolumeChange: (volume: number) => void;
-  /** Callback when mute is toggled */
-  onMuteToggle: () => void;
+  /** Callback when mute is toggled. Without it there is no mute button. */
+  onMuteToggle?: () => void;
   /** Whether controls are disabled (e.g., fixed line-level output) */
   disabled?: boolean;
   /** Label for mute button when unmuted */
@@ -34,14 +37,18 @@ interface VolumeControlProps {
   unmuteLabel?: string;
   /** Accessible label for the volume slider */
   volumeLabel?: string;
+  /** Spoken in place of the level while it is not known yet */
+  unknownLabel?: string;
   /** Additional CSS class */
   className?: string;
 }
 
 /**
  * Compact horizontal volume control with mute button, slider, and value.
+ * While the level is not known the slider is disabled, has no thumb and the
+ * value reads "…", so a made-up level is never shown.
  * @param props - Component props
- * @param props.volume - Current volume level (0-100)
+ * @param props.volume - Current volume level (0-100), or undefined when not known
  * @param props.muted - Whether muted
  * @param props.onVolumeChange - Volume change handler
  * @param props.onMuteToggle - Mute toggle handler
@@ -49,22 +56,24 @@ interface VolumeControlProps {
  * @param props.muteLabel - Label for mute action
  * @param props.unmuteLabel - Label for unmute action
  * @param props.volumeLabel - Accessible label for the volume slider
+ * @param props.unknownLabel - Spoken in place of the level while it is not known
  * @param props.className - Additional CSS class
  * @returns The rendered VolumeControl component
  */
 export function VolumeControl({
   volume,
-  muted,
+  muted = false,
   onVolumeChange,
   onMuteToggle,
   disabled = false,
   muteLabel = 'Mute',
   unmuteLabel = 'Unmute',
   volumeLabel = 'Volume',
+  unknownLabel = 'Not known yet',
   className,
 }: VolumeControlProps): JSX.Element {
   // Local state for immediate visual feedback while dragging
-  const [localVolume, setLocalVolume] = useState(volume);
+  const [localVolume, setLocalVolume] = useState<number | undefined>(volume);
   const volumeDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const muteDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const cooldownRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -72,7 +81,7 @@ export function VolumeControl({
   // Track if user is actively interacting with the slider (or in cooldown period)
   const isInteracting = useRef(false);
   // Track external volume updates that arrive during interaction to apply after cooldown
-  const pendingExternalVolume = useRef<number | null>(null);
+  const pendingExternalVolume = useRef<number | undefined | null>(null);
 
   /**
    * Ends the interaction period and applies any pending external volume update.
@@ -117,7 +126,7 @@ export function VolumeControl({
    * Handles mute toggle with debounce to prevent rage clicking.
    */
   const handleMuteToggle = useCallback(() => {
-    if (isMuteDebouncing.current) return;
+    if (!onMuteToggle || isMuteDebouncing.current) return;
 
     isMuteDebouncing.current = true;
     onMuteToggle();
@@ -142,7 +151,7 @@ export function VolumeControl({
       isInteracting.current = true;
 
       // Unmute immediately if muted (bypass debounce for this)
-      if (muted) onMuteToggle();
+      if (muted) onMuteToggle?.();
 
       // Debounce the actual volume change callback
       if (volumeDebounceRef.current) {
@@ -192,39 +201,49 @@ export function VolumeControl({
     }
   }, [endInteraction]);
 
+  const unknown = localVolume === undefined;
+  const inactive = disabled || unknown;
+
   return (
     <div
-      className={[styles.volumeControl, disabled && styles.disabled, className]
+      className={[
+        styles.volumeControl,
+        disabled && styles.disabled,
+        unknown && styles.unknown,
+        className,
+      ]
         .filter(Boolean)
         .join(' ')}
     >
-      <IconButton
-        size="sm"
-        className={[styles.muteBtn, muted ? styles.muted : ''].filter(Boolean).join(' ')}
-        onClick={handleMuteToggle}
-        disabled={disabled}
-        title={muted ? unmuteLabel : muteLabel}
-        aria-label={muted ? unmuteLabel : muteLabel}
-      >
-        {muted ? <VolumeX size={14} /> : <Volume2 size={14} />}
-      </IconButton>
+      {onMuteToggle && (
+        <IconButton
+          size="sm"
+          className={[styles.muteBtn, muted ? styles.muted : ''].filter(Boolean).join(' ')}
+          onClick={handleMuteToggle}
+          disabled={disabled}
+          title={muted ? unmuteLabel : muteLabel}
+          aria-label={muted ? unmuteLabel : muteLabel}
+        >
+          {muted ? <VolumeX size={14} /> : <Volume2 size={14} />}
+        </IconButton>
+      )}
       <input
         type="range"
         min="0"
         max="100"
-        value={localVolume}
+        value={localVolume ?? 0}
         onChange={handleSliderChange}
         onPointerDown={handlePointerDown}
         onPointerUp={handlePointerUp}
         onPointerCancel={handlePointerUp}
-        disabled={disabled}
+        disabled={inactive}
         className={styles.slider}
-        style={{ '--volume': `${localVolume}%` } as CSSProperties}
+        style={{ '--volume': `${localVolume ?? 0}%` } as CSSProperties}
         aria-label={volumeLabel}
-        aria-valuetext={`${localVolume}%`}
+        aria-valuetext={unknown ? unknownLabel : `${localVolume}%`}
       />
       <span className={styles.value} aria-hidden="true">
-        {localVolume}
+        {unknown ? UNKNOWN_VALUE : localVolume}
       </span>
     </div>
   );
