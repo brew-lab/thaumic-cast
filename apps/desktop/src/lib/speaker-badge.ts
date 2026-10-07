@@ -41,8 +41,16 @@ export function speakerBadge(
     return { key: 'transport.in_use', defaultValue: transportState, tone: 'busy' };
   }
   return {
-    key: `transport.${transportState.toLowerCase()}`,
+    key: TRANSPORT_KEYS[transportState] ?? `transport.${transportState.toLowerCase()}`,
     defaultValue: transportState,
     tone: 'idle',
   };
 }
+
+/**
+ * Label keys for states whose wire name doesn't lowercase to one. The core
+ * sends a pause as "PAUSED_PLAYBACK", the UPnP name.
+ */
+const TRANSPORT_KEYS: Record<string, string> = {
+  PAUSED_PLAYBACK: 'transport.paused',
+};

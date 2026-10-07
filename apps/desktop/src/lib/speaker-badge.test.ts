@@ -1,3 +1,4 @@
+import { TransportStateSchema } from '@thaumic-cast/protocol';
 import { describe, expect, it } from 'bun:test';
 
 import en from '../locales/en.json';
@@ -32,15 +33,22 @@ describe('speakerBadge', () => {
   });
 
   it('should keep paused and stopped as they were when something else holds the speaker', () => {
-    expect(reading('Paused', false)).toEqual({ label: 'Paused', tone: 'idle' });
+    expect(reading('PAUSED_PLAYBACK', false)).toEqual({ label: 'Paused', tone: 'idle' });
     expect(reading('Stopped', false)).toEqual({ label: 'Not playing', tone: 'idle' });
   });
 
   it('should keep every reading of our own cast as it was', () => {
     expect(reading('Playing', true)).toEqual({ label: 'Casting', tone: 'casting' });
     expect(reading('Transitioning', true)).toEqual({ label: 'Loading', tone: 'idle' });
-    expect(reading('Paused', true)).toEqual({ label: 'Paused', tone: 'idle' });
+    expect(reading('PAUSED_PLAYBACK', true)).toEqual({ label: 'Paused', tone: 'idle' });
     expect(reading('Stopped', true)).toEqual({ label: 'Not playing', tone: 'idle' });
+  });
+
+  it('should have a label for every state the core sends', () => {
+    for (const state of TransportStateSchema.options) {
+      const badge = speakerBadge(state, false);
+      expect(badge && strings[badge.key]).toBeTruthy();
+    }
   });
 
   it('should fall back to the raw state for one with no label', () => {
