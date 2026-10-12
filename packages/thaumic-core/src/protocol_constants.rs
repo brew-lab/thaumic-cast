@@ -213,3 +213,9 @@ pub const fn pcm_ring_frames(frame_duration_ms: u32) -> usize {
     };
     (MAX_PCM_CONNECT_BURST_MS.div_ceil(frame_ms) + MAX_JITTER_BUFFER_MS.div_ceil(frame_ms)) as usize
 }
+
+/// Most frames any stream's ring may hold: the PCM ring at the shortest frame
+/// a client can ask for. The ring is allocated up front, so this bounds the
+/// memory one stream can reserve whatever a client sends or the server is
+/// configured with.
+pub const MAX_RING_FRAMES: usize = pcm_ring_frames(MIN_FRAME_DURATION_MS);

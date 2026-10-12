@@ -66,6 +66,12 @@ impl StreamingConfig {
         if self.buffer_frames == 0 {
             return Err("buffer_frames must be >= 1".to_string());
         }
+        if self.buffer_frames > crate::protocol_constants::MAX_RING_FRAMES {
+            return Err(format!(
+                "buffer_frames must be <= {}",
+                crate::protocol_constants::MAX_RING_FRAMES
+            ));
+        }
         if self.channel_capacity == 0 {
             return Err(
                 "channel_capacity must be >= 1 (broadcast::channel panics on 0)".to_string(),
@@ -590,6 +596,13 @@ mod tests {
         assert!(StreamingConfig::new(0, 50, 100).is_err());
         assert!(StreamingConfig::new(10, 0, 100).is_err());
         assert!(StreamingConfig::new(10, 50, 0).is_err());
+    }
+
+    #[test]
+    fn streaming_config_rejects_a_ring_past_the_cap() {
+        use crate::protocol_constants::MAX_RING_FRAMES;
+        assert!(StreamingConfig::new(10, MAX_RING_FRAMES, 100).is_ok());
+        assert!(StreamingConfig::new(10, MAX_RING_FRAMES + 1, 100).is_err());
     }
 
     #[test]
