@@ -57,7 +57,7 @@ async function fakeClipboard(page: Page, accept: boolean): Promise<void> {
 
 /**
  * Presses every CopyField action at rest in the light panels at once, and logs every frame
- * for `ms`.
+ * for `ms` and until every Button is still.
  * @param page - The page
  * @param ms - How long to log
  * @returns Each field's frames
@@ -116,6 +116,16 @@ async function pressAll(page: Page, ms: number): Promise<Run[]> {
       await new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(done)));
       for (const { b } of buttons) b.click();
       await new Promise((done) => setTimeout(done, ms));
+      // A loaded runner draws few frames, so the way back can end after `ms`: log on until
+      // every Button holds its width for a frame (at most 5 s more).
+      const still = (): boolean =>
+        runs.every(({ frames }) => {
+          const [a, b] = frames.slice(-2);
+          return !!a && !!b && Math.abs(a.button[2] - b.button[2]) < 0.01;
+        });
+      for (const end = performance.now() + 5000; !still() && performance.now() < end; ) {
+        await new Promise((done) => requestAnimationFrame(done));
+      }
       on = false;
       return runs;
     },

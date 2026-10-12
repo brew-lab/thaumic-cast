@@ -3,6 +3,7 @@
  * keyboard, the click-to-set slider (WCAG 2.5.7), the async Button and the Tooltip timing.
  */
 import { expect, test, type Page } from '@playwright/test';
+import { TOOLTIP_DELAY_MS } from '../../src/tokens';
 
 const light = (page: Page, id: string) => page.locator(`#${id} [data-scheme="light"]`);
 
@@ -200,10 +201,28 @@ test('the tooltip waits for the delay on hover, then stays while hovered', async
   const scheme = light(page, 'tooltip');
   const trigger = scheme.getByRole('button', { name: 'Settings' });
   const tip = scheme.locator('[role="tooltip"]', { hasText: 'Settings' });
+  // Timed in the page, from the pointer's arrival to the tip's opening, so a slow round trip
+  // from the test (a loaded runner) never reads as an early tip.
+  await tip.evaluate((el) => {
+    const w = window as unknown as { __tipTimes: { enter?: number; open?: number } };
+    w.__tipTimes = {};
+    el.parentElement!.addEventListener(
+      'pointerenter',
+      () => (w.__tipTimes.enter ??= performance.now()),
+      { once: true },
+    );
+    new MutationObserver((_, observer) => {
+      if (!el.hasAttribute('data-open')) return;
+      w.__tipTimes.open = performance.now();
+      observer.disconnect();
+    }).observe(el, { attributes: true, attributeFilter: ['data-open'] });
+  });
   await trigger.hover();
-  const shownAtOnce = await tip.evaluate((el) => el.hasAttribute('data-open'));
-  expect(shownAtOnce).toBe(false);
   await expect(tip).toBeVisible({ timeout: 5000 });
+  const { enter, open } = await page.evaluate(
+    () => (window as unknown as { __tipTimes: { enter: number; open: number } }).__tipTimes,
+  );
+  expect(open - enter).toBeGreaterThanOrEqual(TOOLTIP_DELAY_MS - 20);
   await tip.hover();
   await page.waitForTimeout(300);
   await expect(tip).toBeVisible();

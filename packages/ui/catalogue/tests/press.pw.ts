@@ -172,13 +172,20 @@ interface Sample extends Shape {
 
 /**
  * Clicks a control for 80 ms and samples its shaped part on every frame, in the page, from
- * before the press until 900 ms after it.
+ * before the press until 900 ms after it, and on until a frame draws the shape at rest (a
+ * loaded runner draws few frames, so the way back can end after the 900 ms).
  * @param page - The page
  * @param control - The control
  * @param el - The pressed element
+ * @param rest - The shape at rest
  * @returns One sample per frame
  */
-async function sampleClick(page: Page, control: Control, el: Locator): Promise<Sample[]> {
+async function sampleClick(
+  page: Page,
+  control: Control,
+  el: Locator,
+  rest: Shape,
+): Promise<Sample[]> {
   await el.evaluate((node, sel) => {
     const part = sel ? node.querySelector(sel)! : node;
     const w = window as unknown as { samples: Sample[]; sampling: boolean };
@@ -197,6 +204,16 @@ async function sampleClick(page: Page, control: Control, el: Locator): Promise<S
   await page.mouse.up();
   await page.mouse.move(1, 1);
   await page.waitForTimeout(900);
+  await expect
+    .poll(
+      () =>
+        page.evaluate(({ radius, curve }) => {
+          const last = (window as unknown as { samples: Sample[] }).samples.at(-1);
+          return last?.radius === radius && last.curve === curve;
+        }, rest),
+      { message: `${control.name} came back`, timeout: 5000 },
+    )
+    .toBe(true);
   return page.evaluate(() => {
     const w = window as unknown as { samples: Sample[]; sampling: boolean };
     w.sampling = false;
@@ -274,7 +291,7 @@ test('a quick click reaches the full bevel before it returns', async ({ page }) 
     const bevel = await forcedBevel(control, el);
     expect(bevel.curve, control.name).toBe(0);
 
-    const samples = await sampleClick(page, control, el);
+    const samples = await sampleClick(page, control, el, rest);
     const full = samples.findIndex(
       (s) => s.curve === 0 && Math.abs(s.radius - bevel.radius) < 0.01,
     );
@@ -296,7 +313,7 @@ test('a quick click that makes a control busy still plays the whole morph', asyn
     await expect(el).not.toHaveAttribute('aria-busy', 'true');
     const rest = await shapeOf(control, el);
     const bevel = await forcedBevel(control, el);
-    const samples = await sampleClick(page, control, el);
+    const samples = await sampleClick(page, control, el, rest);
     const log = `${control.name}: ${JSON.stringify(samples)}`;
     // It went busy during the click, reached the full bevel, and came back round, busy.
     expect(
@@ -319,8 +336,13 @@ test('a quick click that makes a control busy still plays the whole morph', asyn
 
     // A press while it is busy shows nothing: no hold, and the shape stays round. The
     // click's own hold ends first (headless WebKit draws few frames, so it is waited out).
+    // A loaded runner can outlast the click's busy spell, so a fresh one is started with a
+    // click from script (no pointer, so no hold) and the press lands well inside it.
     await expect(el).not.toHaveAttribute('data-pressing');
+    await expect(el).not.toHaveAttribute('aria-busy', 'true', { timeout: 5000 });
+    await el.evaluate((n: HTMLElement) => n.click());
     await expect(el).toHaveAttribute('aria-busy', 'true');
+    expect(await shapeOf(control, el), control.name).toEqual(rest);
     const box = (await el.boundingBox())!;
     await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
     await page.mouse.down();
