@@ -137,14 +137,15 @@ try {
   // with its parts on the cards' content edge, and Skip and Carry on in a bar with the Cast
   // bar's box. Measured on every step and state, compared with the main popup below.
   const onbGeo = (state) =>
-    p.eval(`const box = (e) => { const b = e.getBoundingClientRect();
+    p.eval(
+      `const box = (e) => { const b = e.getBoundingClientRect();
         return { l: b.left, r: b.right, t: b.top, b: b.bottom, h: b.height }; };
       const dialog = document.querySelector('[role=dialog]');
       const shell = dialog.querySelector('[data-scroller]');
       // A frame that is not a PopupShell with its step in a Card fails the checks below.
       const main = shell?.querySelector('main');
       if (!main || !main.firstElementChild?.querySelector('h2')) {
-        return { state: ${JSON.stringify(state)}, missing: true, vh: innerHeight,
+        return { state: args.state, missing: true, vh: innerHeight,
           h: Math.round(box(dialog).h) };
       }
       const head = shell.firstElementChild;
@@ -164,12 +165,14 @@ try {
       words.selectNodeContents(skip);
       const back = head.querySelector('button');
       const ind = box(head.querySelector('[role=progressbar]'));
-      return { state: ${JSON.stringify(state)}, vh: innerHeight, h: Math.round(box(dialog).h),
+      return { state: args.state, vh: innerHeight, h: Math.round(box(dialog).h),
         head: box(head), back: back ? box(back) : null, ind: (ind.l + ind.r) / 2, card: c, cin, parts,
         bar: { ...box(bar), pt: bs.paddingTop, pb: bs.paddingBottom, bg: bs.backgroundColor },
         go: box(go), skip: box(words), skipBox: box(skip),
         disc: step.children[0].children.length > 1 ? box(step.children[0].firstElementChild) : null,
-        title: box(card.querySelector('h2')) }`);
+        title: box(card.querySelector('h2')) }`,
+      { state },
+    );
   const frames = [await onbGeo('welcome')];
   await p.click('button', 'Carry on');
   await until(async () => (await p.text()).includes('answered'));
@@ -815,11 +818,14 @@ try {
   await o.type(longName);
   await o.key('Enter');
   await until(async () => (await setsText()).includes(longName), 3000);
-  const longRow =
-    await o.eval(`const btn = document.querySelector('button[aria-label="Remove ${longName}"]');
+  const longRow = await o.eval(
+    `const btn = [...document.querySelectorAll('button[aria-label]')].find(
+      (b) => b.getAttribute('aria-label') === 'Remove ' + args.longName);
     const row = btn.closest('li'), name = row.querySelector('span span');
     const b = btn.getBoundingClientRect(), t = name.getBoundingClientRect(), r = row.getBoundingClientRect();
-    return { beside: b.top < t.bottom, inside: t.right <= r.right + 0.5, rowW: Math.round(r.width) }`);
+    return { beside: b.top < t.bottom, inside: t.right <= r.right + 0.5, rowW: Math.round(r.width) }`,
+    { longName },
+  );
   await shot(o, '10e-sets-long-name');
   check(
     'a long set name wraps beside Rename and Remove in Settings',

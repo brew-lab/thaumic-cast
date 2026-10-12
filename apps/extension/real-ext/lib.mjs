@@ -220,17 +220,25 @@ export class Target {
   }
 
   /**
-   * Runs the body of an async function in the page.
+   * Runs the body of an async function in the page. Values reach it as `args`, a CDP call
+   * argument, so none is ever spliced into the source.
    * @param {string} body - The function body; `return` gives the value back
+   * @param {Record<string, unknown>} [args] - Values the body reads as `args.<name>`
    * @returns {Promise<any>} What it returned
    */
-  async eval(body) {
-    const r = await this.cdp.send('Runtime.evaluate', {
-      expression: `(async () => { ${body} })()`,
+  async eval(body, args = {}) {
+    const { result: global } = await this.cdp.send('Runtime.evaluate', {
+      expression: 'globalThis',
+    });
+    const r = await this.cdp.send('Runtime.callFunctionOn', {
+      functionDeclaration: `async function (args) { ${body} }`,
+      objectId: global.objectId,
+      arguments: [{ value: args }],
       awaitPromise: true,
       returnByValue: true,
       userGesture: true,
     });
+    await this.cdp.send('Runtime.releaseObject', { objectId: global.objectId });
     if (r.exceptionDetails) {
       throw new Error(
         'eval: ' + (r.exceptionDetails.exception?.description ?? r.exceptionDetails.text),
@@ -298,14 +306,17 @@ export class Target {
    * @returns {Promise<void>} Resolves a moment after the click
    */
   async click(selector, text = '') {
-    const at = await this.eval(`
-      const e = [...document.querySelectorAll(${JSON.stringify(selector)})].find((e) =>
-        (e.innerText || e.getAttribute('aria-label') || '').includes(${JSON.stringify(text)}));
+    const at = await this.eval(
+      `
+      const e = [...document.querySelectorAll(args.selector)].find((e) =>
+        (e.innerText || e.getAttribute('aria-label') || '').includes(args.text));
       if (!e) return null;
       // Instant: the page scrolls smoothly, and a box read mid-scroll misses the element.
       e.scrollIntoView({ block: 'nearest', behavior: 'instant' });
       const r = e.getBoundingClientRect();
-      return { x: r.x + r.width / 2, y: r.y + r.height / 2 };`);
+      return { x: r.x + r.width / 2, y: r.y + r.height / 2 };`,
+      { selector, text },
+    );
     if (!at) throw new Error(`click: no ${selector} with "${text}"`);
     await this.clickAt(at);
   }
@@ -316,13 +327,16 @@ export class Target {
    * @returns {Promise<void>} Resolves a moment after the click
    */
   async clickRoom(name) {
-    const at = await this.eval(`
+    const at = await this.eval(
+      `
       const l = [...document.querySelectorAll('label')].find((l) =>
-        l.innerText.split('\\n')[0].trim() === ${JSON.stringify(name)});
+        l.innerText.split('\\n')[0].trim() === args.name);
       if (!l) return null;
       l.scrollIntoView({ block: 'nearest', behavior: 'instant' });
       const r = l.getBoundingClientRect();
-      return { x: r.x + 24, y: r.y + r.height / 2 };`);
+      return { x: r.x + 24, y: r.y + r.height / 2 };`,
+      { name },
+    );
     if (!at) throw new Error(`no room ${name}`);
     await this.clickAt(at);
   }
