@@ -1,9 +1,8 @@
 import type { ComponentChildren } from 'preact';
-import { ChevronLeft } from 'lucide-preact';
 import { Button } from '../Button';
-import { ButtonGroup } from '../ButtonGroup';
+import { Cluster } from '../Cluster';
 import { IconButton } from '../IconButton';
-import { StepIndicator, type StepOfLabel } from './StepIndicator';
+import { StepIndicator, type StepOfLabel } from '../StepIndicator';
 import styles from './Wizard.module.css';
 
 interface WizardLabels {
@@ -93,39 +92,29 @@ export function Wizard({
       >
         <div className={styles.header}>
           <div className={styles.back}>
-            {showBackInHeader && (
-              <IconButton variant="ghost" size="sm" onClick={onBack} title={back} aria-label={back}>
-                <ChevronLeft size={18} />
-              </IconButton>
-            )}
+            {showBackInHeader && <IconButton glyph="chevron-start" label={back} onPress={onBack} />}
           </div>
-          <StepIndicator
-            current={currentStep}
-            total={totalSteps}
-            labels={stepLabels}
-            stepOfLabel={stepOfLabel}
-            className={styles.indicator}
-          />
+          <div class={styles.indicator}>
+            <StepIndicator
+              current={currentStep}
+              total={totalSteps}
+              labels={stepLabels}
+              stepOfLabel={stepOfLabel}
+            />
+          </div>
         </div>
         <div className={styles.content}>{children}</div>
         <div className={styles.footer}>
           <div className={styles.footerStart}>
             {showSkip && onSkip && (
-              <button type="button" className={styles.skipBtn} onClick={onSkip} aria-label={skip}>
+              <Button kind="quiet" onClick={onSkip}>
                 {skip}
-              </button>
+              </Button>
             )}
           </div>
-          <ButtonGroup>
-            <Button
-              variant="primary"
-              onClick={onNext}
-              disabled={nextDisabled}
-              className={styles.footerButton}
-            >
-              {nextLabel}
-            </Button>
-          </ButtonGroup>
+          <Button kind="filled" onClick={onNext} disabled={nextDisabled}>
+            {nextLabel}
+          </Button>
         </div>
       </div>
     );
@@ -133,40 +122,36 @@ export function Wizard({
 
   return (
     <div className={styles.wizard} role="dialog" aria-modal="true" aria-labelledby="wizard-title">
-      <StepIndicator
-        current={currentStep}
-        total={totalSteps}
-        labels={stepLabels}
-        stepOfLabel={stepOfLabel}
-        className={styles.indicator}
-      />
+      <div class={styles.indicator}>
+        <StepIndicator
+          current={currentStep}
+          total={totalSteps}
+          labels={stepLabels}
+          stepOfLabel={stepOfLabel}
+        />
+      </div>
 
       <div className={styles.content}>{children}</div>
 
       <div className={styles.footer}>
         <div className={styles.footerStart}>
           {showSkip && onSkip && (
-            <button type="button" className={styles.skipBtn} onClick={onSkip} aria-label={skip}>
+            <Button kind="quiet" onClick={onSkip}>
               {skip}
-            </button>
+            </Button>
           )}
         </div>
 
-        <ButtonGroup>
+        <Cluster gap="3">
           {!isFirstStep && onBack && (
-            <Button variant="secondary" onClick={onBack} className={styles.footerButton}>
+            <Button kind="outline" onClick={onBack}>
               {back}
             </Button>
           )}
-          <Button
-            variant="primary"
-            onClick={onNext}
-            disabled={nextDisabled}
-            className={styles.footerButton}
-          >
+          <Button kind="filled" onClick={onNext} disabled={nextDisabled}>
             {nextLabel}
           </Button>
-        </ButtonGroup>
+        </Cluster>
       </div>
     </div>
   );

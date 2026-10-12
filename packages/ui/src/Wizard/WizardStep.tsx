@@ -1,4 +1,6 @@
-import type { ComponentChildren, ComponentType } from 'preact';
+import type { ComponentChildren } from 'preact';
+import { Artwork } from '../Artwork';
+import type { GlyphName } from '../Icon/glyphs';
 import styles from './Wizard.module.css';
 
 interface WizardStepProps {
@@ -6,9 +8,8 @@ interface WizardStepProps {
   title: string;
   /** Optional subtitle/description */
   subtitle?: string;
-  /** Icon component (e.g., from lucide-preact) */
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  icon?: ComponentType<any>;
+  /** The step's glyph, drawn as a large disc Artwork */
+  glyph?: GlyphName;
   /** Step content */
   children: ComponentChildren;
 }
@@ -20,24 +21,20 @@ interface WizardStepProps {
  * @param props - Step configuration
  * @param props.title
  * @param props.subtitle
- * @param props.icon
+ * @param props.glyph
  * @param props.children
  * @returns The rendered WizardStep component
  */
 export function WizardStep({
   title,
   subtitle,
-  icon: Icon,
+  glyph,
   children,
 }: WizardStepProps): preact.JSX.Element {
   return (
     <div className={styles.step}>
       <div className={styles.stepHeader}>
-        {Icon && (
-          <div className={styles.stepIcon}>
-            <Icon size={32} />
-          </div>
-        )}
+        {glyph && <Artwork kind="disc" size="lg" glyph={glyph} />}
         <h2 className={styles.stepTitle} id="wizard-title">
           {title}
         </h2>

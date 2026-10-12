@@ -9,14 +9,16 @@ import type {
   VideoSyncPhase,
 } from '@thaumic-cast/protocol';
 import { getDisplayTitle, getDisplayImage, getDisplaySubtitle } from '@thaumic-cast/protocol';
-import { X, Play, Pause, SkipBack, SkipForward } from 'lucide-preact';
 import {
+  Artwork,
+  Badge,
   Button,
-  IconButton,
-  SpeakerVolumeRow,
-  ToggleSwitch,
-  StatusChip,
   Card,
+  IconButton,
+  Slider,
+  SpeakerVolumeRow,
+  Switch,
+  type BadgeTone,
 } from '@thaumic-cast/ui';
 import { TransportIcon } from './TransportIcon';
 import { useDominantColor } from '../hooks/useDominantColor';
@@ -32,20 +34,16 @@ import styles from './ActiveCastCard.module.css';
 /** Debounce interval for playback control buttons (ms) */
 const CONTROL_DEBOUNCE_MS = 300;
 
-/** How each video sync state shows in its chip while video sync is on. */
-const VIDEO_SYNC_CHIP: Record<
+/** How each video sync phase shows in its Badge while video sync is on (DESIGN.md A-badge). */
+const VIDEO_SYNC_BADGE: Record<
   Exclude<VideoSyncPhase, 'off'>,
-  {
-    variant: 'waiting' | 'acquiring' | 'synced' | 'lost';
-    className: 'waiting' | 'synced' | 'acquiring' | 'lost';
-    label: string;
-  }
+  { tone: BadgeTone; label: string }
 > = {
-  locking: { variant: 'acquiring', className: 'acquiring', label: 'video_sync_status_acquiring' },
-  'in-step': { variant: 'synced', className: 'synced', label: 'video_sync_status_synced' },
-  'no-video': { variant: 'waiting', className: 'waiting', label: 'video_sync_status_no_video' },
-  unavailable: { variant: 'lost', className: 'lost', label: 'video_sync_status_unavailable' },
-  'turned-off': { variant: 'lost', className: 'lost', label: 'video_sync_status_turned_off' },
+  locking: { tone: 'busy', label: 'video_sync_status_acquiring' },
+  'in-step': { tone: 'neutral', label: 'video_sync_status_synced' },
+  'no-video': { tone: 'neutral', label: 'video_sync_status_no_video' },
+  unavailable: { tone: 'warning', label: 'video_sync_status_unavailable' },
+  'turned-off': { tone: 'warning', label: 'video_sync_status_turned_off' },
 };
 
 interface ActiveCastCardProps {
@@ -154,17 +152,16 @@ export function ActiveCastCard({
   // Video sync state and controls, for a cast started with video sync on
   const showVideoSync = cast.videoSync;
   const videoSync = useVideoSyncState(showVideoSync ? cast.tabId : undefined);
-  const trimId = `video-sync-trim-${cast.tabId}`;
   const trimSpeaker = videoSync.speakerName ?? cast.speakerNames[0] ?? '';
-  const videoSyncChip =
-    videoSync.known && videoSync.state !== 'off' ? VIDEO_SYNC_CHIP[videoSync.state] : null;
+  const videoSyncBadge =
+    videoSync.known && videoSync.state !== 'off' ? VIDEO_SYNC_BADGE[videoSync.state] : null;
   const videoSyncReason =
     videoSync.known && videoSync.enabled && videoSync.reason
       ? t(`video_sync_reason_${videoSync.reason.replace(/-/g, '_')}`)
       : null;
-  // Read out when the state changes; the chip and reason line are not live.
-  const videoSyncAnnouncement = videoSyncChip
-    ? [t('video_sync'), t(videoSyncChip.label), videoSyncReason].filter(Boolean).join('. ')
+  // Read out when the state changes; the Badge and reason line are not live.
+  const videoSyncAnnouncement = videoSyncBadge
+    ? [t('video_sync'), t(videoSyncBadge.label), videoSyncReason].filter(Boolean).join('. ')
     : '';
 
   // Sync group volume: show group control when sync is active with multiple speakers
@@ -253,29 +250,27 @@ export function ActiveCastCard({
     >
       <div className={styles.cardInner}>
         <div className={styles.header}>
-          {favicon && <img src={favicon} alt="" className={styles.favicon} loading="lazy" />}
+          {favicon && <Artwork kind="favicon" size="sm" src={favicon} />}
           <span className={styles.headerSpacer} />
-          <IconButton
-            className={styles.skipBtn}
+          <Button
+            kind="tonal"
+            danger
             size="sm"
+            icon="stop"
             onClick={onStop}
-            aria-label={t('stop_cast')}
-            title={t('stop_cast')}
+            aria-label={`${t('stop_cast')}: ${title}`}
           >
-            <X size={12} />
-          </IconButton>
+            {t('stop_cast')}
+          </Button>
         </div>
 
         <div className={styles.mainRow}>
           {canPrev && onControl && (
             <IconButton
-              className={styles.skipBtn}
-              onClick={() => handleControl('previoustrack')}
-              aria-label={t('previous_track')}
-              title={t('previous_track')}
-            >
-              <SkipBack size={14} />
-            </IconButton>
+              glyph="prev"
+              label={t('previous_track')}
+              onPress={() => handleControl('previoustrack')}
+            />
           )}
 
           <div className={styles.info}>
@@ -293,24 +288,19 @@ export function ActiveCastCard({
 
           {(canPlay || canPause) && onControl && (
             <IconButton
-              variant="solid"
-              onClick={handlePlayPause}
-              aria-label={displayIsPlaying ? t('pause') : t('play')}
-              title={displayIsPlaying ? t('pause') : t('play')}
-            >
-              {displayIsPlaying ? <Pause size={14} /> : <Play size={14} />}
-            </IconButton>
+              kind="tonal"
+              glyph={displayIsPlaying ? 'pause' : 'play'}
+              label={displayIsPlaying ? t('pause') : t('play')}
+              onPress={handlePlayPause}
+            />
           )}
 
           {canNext && onControl && (
             <IconButton
-              className={styles.skipBtn}
-              onClick={() => handleControl('nexttrack')}
-              aria-label={t('next_track')}
-              title={t('next_track')}
-            >
-              <SkipForward size={14} />
-            </IconButton>
+              glyph="next"
+              label={t('next_track')}
+              onPress={() => handleControl('nexttrack')}
+            />
           )}
         </div>
 
@@ -325,9 +315,8 @@ export function ActiveCastCard({
               onVolumeChange={(vol) => onSyncGroupVolumeChange(cast.speakerIps, vol)}
               onMuteToggle={() => onSyncGroupMuteToggle(cast.speakerIps, !groupMuted)}
               muteLabel={t('mute_speaker', { name: groupName })}
-              unmuteLabel={t('unmute_speaker', { name: groupName })}
               volumeLabel={t('volume_speaker', { name: groupName })}
-              unknownLabel={t('volume_not_known')}
+              unknownText={t('volume_not_known')}
             />
           </div>
         )}
@@ -348,11 +337,10 @@ export function ActiveCastCard({
                 onVolumeChange={(vol) => onVolumeChange(ip, vol)}
                 onMuteToggle={() => onMuteToggle(ip)}
                 muteLabel={t('mute_speaker', { name })}
-                unmuteLabel={t('unmute_speaker', { name })}
                 volumeLabel={t('volume_speaker', { name })}
-                unknownLabel={t('volume_not_known')}
+                unknownText={t('volume_not_known')}
                 statusIndicator={
-                  transportState ? <TransportIcon state={transportState} size={10} /> : undefined
+                  transportState ? <TransportIcon state={transportState} /> : undefined
                 }
                 onRemove={
                   cast.speakerIps.length > 1 && onRemoveSpeaker
@@ -369,23 +357,19 @@ export function ActiveCastCard({
         {showVideoSync && (
           <div className={styles.videoSyncSection}>
             <div className={styles.videoSyncHeader}>
-              <span className={styles.videoSyncLabel}>{t('video_sync')}</span>
-              <ToggleSwitch
-                checked={videoSync.enabled}
-                onChange={videoSync.setEnabled}
-                aria-label={t('video_sync_toggle')}
-              />
-              {videoSyncChip && (
-                <StatusChip
-                  variant={videoSyncChip.variant}
-                  className={styles[videoSyncChip.className]}
-                >
-                  {t(videoSyncChip.label)}
-                </StatusChip>
+              <div className={styles.videoSyncSwitch}>
+                <Switch
+                  label={t('video_sync')}
+                  checked={videoSync.enabled}
+                  onChange={videoSync.setEnabled}
+                />
+              </div>
+              {videoSyncBadge && (
+                <Badge tone={videoSyncBadge.tone} label={t(videoSyncBadge.label)} />
               )}
             </div>
 
-            <p role="status" className={styles.videoSyncLive}>
+            <p role="status" className="visually-hidden">
               {videoSyncAnnouncement}
             </p>
 
@@ -394,8 +378,8 @@ export function ActiveCastCard({
                 <p className={styles.videoSyncReasonText}>{videoSyncReason}</p>
                 {(videoSync.reason === 'reload' || videoSync.state === 'turned-off') && (
                   <Button
-                    variant="link"
-                    className={styles.videoSyncAction}
+                    kind="quiet"
+                    size="sm"
                     onClick={
                       videoSync.reason === 'reload' ? videoSync.reloadPage : videoSync.tryAgain
                     }
@@ -410,33 +394,30 @@ export function ActiveCastCard({
 
             {videoSync.known && videoSync.enabled && videoSync.state !== 'unavailable' && (
               <div className={styles.videoSyncControls}>
-                <div className={styles.videoSyncTrim}>
-                  <label htmlFor={trimId} className={styles.videoSyncTrimLabel}>
-                    {t('video_sync_trim', { speaker: trimSpeaker })}
-                  </label>
-                  <input
-                    id={trimId}
-                    type="range"
-                    min={VIDEO_SYNC_TRIM_MIN_MS}
-                    max={VIDEO_SYNC_TRIM_MAX_MS}
-                    step={VIDEO_SYNC_TRIM_STEP_MS}
-                    value={videoSync.trimMs}
-                    onInput={(e) => videoSync.setTrim(Number((e.target as HTMLInputElement).value))}
-                    className={styles.videoSyncTrimSlider}
-                    aria-valuetext={
-                      videoSync.trimMs === 0
-                        ? t('video_sync_trim_none')
-                        : videoSync.trimMs > 0
-                          ? t('video_sync_trim_earlier', { delay: videoSync.trimMs })
-                          : t('video_sync_trim_later', { delay: -videoSync.trimMs })
-                    }
-                  />
-                  <span className={styles.videoSyncTrimValue}>
-                    {t('video_sync_delay_ms', {
-                      delay: `${videoSync.trimMs > 0 ? '+' : ''}${videoSync.trimMs}`,
-                    })}
-                  </span>
-                </div>
+                <span className={styles.videoSyncTrimLabel} aria-hidden="true">
+                  {t('video_sync_trim', { speaker: trimSpeaker })}
+                </span>
+                <Slider
+                  label={t('video_sync_trim', { speaker: trimSpeaker })}
+                  min={VIDEO_SYNC_TRIM_MIN_MS}
+                  max={VIDEO_SYNC_TRIM_MAX_MS}
+                  step={VIDEO_SYNC_TRIM_STEP_MS}
+                  centre={0}
+                  value={videoSync.trimMs}
+                  onChange={videoSync.setTrim}
+                  format={(delay) =>
+                    delay === 0
+                      ? t('video_sync_trim_none')
+                      : delay > 0
+                        ? t('video_sync_trim_earlier', { delay })
+                        : t('video_sync_trim_later', { delay: -delay })
+                  }
+                />
+                <span className={`${styles.videoSyncTrimValue} num`} aria-hidden="true">
+                  {t('video_sync_delay_ms', {
+                    delay: `${videoSync.trimMs > 0 ? '+' : ''}${videoSync.trimMs}`,
+                  })}
+                </span>
               </div>
             )}
           </div>

@@ -5,13 +5,13 @@
 .with-divider {
   margin-block-end: 1rem;
   padding-block-end: 1rem;
-  border-block-end: 1px solid var(--color-border);
+  border-block-end: 1px solid var(--outline-variant);
 }
 
 .heading {
   font-size: 0.75rem;
   font-weight: 600;
-  color: var(--color-text-muted);
+  color: var(--on-surface-variant);
   text-transform: uppercase;
   letter-spacing: 0.05em;
   margin: 0;

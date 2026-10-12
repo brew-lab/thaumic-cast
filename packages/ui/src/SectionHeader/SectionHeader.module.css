@@ -1,0 +1,82 @@
+@layer components {
+  /* A-heading. No container query: the actions wrap under the title by themselves. */
+  .header {
+    --heading-ink: light-dark(var(--brand-ink), var(--on-surface));
+    --heading-size: var(--text-5);
+    --heading-leading: var(--leading-5);
+    --heading-tracking: var(--tracking-5);
+
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-2) var(--space-4);
+    min-inline-size: 0;
+  }
+
+  .title {
+    flex: 1 1 auto;
+    min-inline-size: 0;
+    margin: 0;
+    color: var(--heading-ink);
+    font-family: var(--font-head);
+    font-size: var(--heading-size);
+    font-weight: var(--weight-head);
+    line-height: var(--heading-leading);
+    letter-spacing: var(--heading-tracking);
+  }
+
+  .live {
+    --heading-size: var(--text-7);
+    --heading-leading: var(--leading-7);
+    --heading-tracking: var(--tracking-7);
+  }
+
+  /*
+   * The live gradient, drawn once per screen: five sRGB stops first, then the OKLCH ramp
+   * with its hue drift (--live-shift runs from --live-drift-from to 0; it holds under
+   * reduced motion). The heading keeps a solid colour for forced colours.
+   */
+  .gradient {
+    color: var(--primary);
+    background-image: linear-gradient(
+      90deg,
+      var(--live-stop-1),
+      var(--live-stop-2),
+      var(--live-stop-3),
+      var(--live-stop-4),
+      var(--live-stop-5)
+    );
+    background-image: linear-gradient(
+      90deg in oklch,
+      oklch(from var(--live-from) l c calc(h + var(--live-shift))),
+      oklch(from var(--live-to) l c calc(h + var(--live-shift)))
+    );
+    background-clip: text;
+    -webkit-text-fill-color: transparent;
+    animation-name: drift;
+    animation-duration: var(--dur-drift);
+    animation-timing-function: var(--ease-effects);
+    animation-iteration-count: infinite;
+    animation-direction: alternate;
+  }
+
+  .meta {
+    margin: 0;
+    color: var(--on-surface-variant);
+    font-size: var(--text-3);
+    line-height: var(--leading-3);
+  }
+
+  .actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-3);
+  }
+
+  @media (forced-colors: active) {
+    .gradient {
+      background-image: none;
+      -webkit-text-fill-color: currentcolor;
+    }
+  }
+}

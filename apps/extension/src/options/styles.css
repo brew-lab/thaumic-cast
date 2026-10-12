@@ -1,38 +1,21 @@
+/*
+ * The options page's global CSS. The theme switch, the body defaults and the focus ring are
+ * in @thaumic-cast/ui/base.css; theme.css bridges the old variable names to the v1 tokens
+ * until the page is rebuilt as the OptionsShell.
+ */
 @import url('@thaumic-cast/ui/theme.css');
 
-/*
- * Theme mode switching via data-theme attribute on <html>
- * - auto: follows system preference (prefers-color-scheme)
- * - light: forced light mode
- * - dark: forced dark mode (default in theme.css)
- */
-:root[data-theme='auto'] {
-  color-scheme: light dark;
-}
+@layer app {
+  body {
+    display: flex;
+    justify-content: center;
+    padding: var(--space-7);
+    font-size: var(--text-4);
+    line-height: var(--leading-4);
+  }
 
-:root[data-theme='light'] {
-  color-scheme: light;
-}
-
-:root[data-theme='dark'] {
-  color-scheme: dark;
-}
-
-html {
-  font-size: 16px;
-  line-height: 1.5;
-}
-
-body {
-  min-block-size: 100dvh;
-  display: flex;
-  justify-content: center;
-  padding-block: var(--space-xl);
-  padding-inline: var(--space-xl);
-  margin: 0;
-}
-
-#app {
-  inline-size: 100%;
-  max-inline-size: 500px;
+  #app {
+    inline-size: 100%;
+    max-inline-size: var(--page-max);
+  }
 }

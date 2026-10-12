@@ -33,7 +33,6 @@
   "peerDependencies": {
     "@thaumic-cast/protocol": "workspace:*",
     "@thaumic-cast/shared": "workspace:*",
-    "lucide-preact": "^1.8.0",
     "preact": "^10.0.0"
   },
   "devDependencies": {
@@ -42,7 +41,6 @@
     "@preact/preset-vite": "^2.10.5",
     "@thaumic-cast/protocol": "workspace:*",
     "@thaumic-cast/shared": "workspace:*",
-    "lucide-preact": "^1.8.0",
     "preact": "^10.0.0",
     "prettier": "^3.7.4",
     "typescript": "^7.0.2",

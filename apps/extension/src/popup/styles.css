@@ -1,26 +1,6 @@
-@import url('@thaumic-cast/ui/theme.css');
-
 /*
- * Theme mode switching via data-theme attribute on <html>
- * - auto: follows system preference (prefers-color-scheme)
- * - light: forced light mode
- * - dark: forced dark mode (default in theme.css)
+ * The popup's global CSS. The theme switch, the body defaults and the focus ring are in
+ * @thaumic-cast/ui/base.css; theme.css bridges the old variable names to the v1 tokens
+ * until the popup is rebuilt from the design system.
  */
-:root[data-theme='auto'] {
-  color-scheme: light dark;
-}
-
-:root[data-theme='light'] {
-  color-scheme: light;
-}
-
-:root[data-theme='dark'] {
-  color-scheme: dark;
-}
-
-body {
-  margin-block: 0;
-  margin-inline: 0;
-  padding-block: 0;
-  padding-inline: 0;
-}
+@import url('@thaumic-cast/ui/theme.css');

@@ -1,0 +1,87 @@
+@layer components {
+  /* A-brand. The mark is --brand-ink in light and --primary in dark; never magenta. */
+  .brand {
+    --brand-mark: var(--icon-lg);
+    --brand-mark-ink: light-dark(var(--brand-ink), var(--primary));
+    --brand-name-ink: light-dark(var(--brand-ink), var(--on-surface));
+
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+    min-inline-size: 0;
+  }
+
+  .rail {
+    --brand-mark: calc(var(--icon-lg) + var(--space-3));
+
+    gap: var(--space-4);
+  }
+
+  .mark {
+    flex: none;
+    display: inline-grid;
+    place-items: center;
+    inline-size: var(--brand-mark);
+    block-size: var(--brand-mark);
+    color: var(--brand-mark-ink);
+  }
+
+  .mark > svg {
+    inline-size: 100%;
+    block-size: 100%;
+  }
+
+  .words {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-1);
+    min-inline-size: 0;
+  }
+
+  .name {
+    margin: 0;
+    color: var(--brand-name-ink);
+    font-family: var(--font-head);
+    font-size: var(--text-6);
+    font-weight: var(--weight-head);
+    line-height: var(--leading-6);
+    letter-spacing: var(--tracking-6);
+    white-space: nowrap;
+  }
+
+  @supports (text-box: trim-both cap alphabetic) {
+    .name {
+      text-box: trim-both cap alphabetic;
+    }
+  }
+
+  .version {
+    color: var(--on-surface-variant);
+    font-size: var(--text-2);
+    line-height: var(--leading-2);
+    text-align: start;
+  }
+
+  /* The narrow rail: the mark alone, centred; the words stay for screen readers. */
+  @container app (inline-size < 45rem) {
+    .rail {
+      justify-content: center;
+    }
+
+    .rail .words {
+      position: absolute;
+      inline-size: var(--line-hair);
+      block-size: var(--line-hair);
+      overflow: hidden;
+      clip-path: inset(50%);
+      white-space: nowrap;
+    }
+  }
+
+  @media (forced-colors: active) {
+    .mark {
+      forced-color-adjust: none;
+      color: var(--brand-mark-ink);
+    }
+  }
+}

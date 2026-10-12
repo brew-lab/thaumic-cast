@@ -1,44 +1,58 @@
 @layer components {
+  /* Deprecated: RoomRow `cast` replaces this row in Phase 3. */
   .row {
     display: flex;
     flex-direction: column;
-    gap: var(--space-xs);
+    gap: var(--space-1);
     user-select: none;
   }
 
   .header {
     display: flex;
     align-items: center;
-    gap: 0.25rem;
+    gap: var(--space-2);
+    min-block-size: var(--control-xs);
   }
 
   .name {
-    font-size: 0.65rem;
-    color: var(--color-text-muted);
+    min-inline-size: 0;
+    color: var(--on-surface);
+    font-size: var(--text-3);
+    font-weight: var(--weight-strong);
+    line-height: var(--leading-3);
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
   }
 
-  .remove-btn {
+  .remove {
     margin-inline-start: auto;
-    opacity: 0;
-    transition: var(--transition-opacity);
   }
 
-  .row:hover .remove-btn,
-  .row:focus-within .remove-btn {
-    opacity: 1;
+  .controls {
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
   }
-}
 
-.fixed,
-.caption {
-  font-size: 0.65rem;
-  color: var(--color-text-muted);
-}
+  .value {
+    min-inline-size: var(--ch-volume);
+    color: var(--on-surface);
+    font-size: var(--text-3);
+    font-weight: var(--weight-strong);
+    line-height: var(--leading-3);
+  }
 
-.fixed {
-  padding-block: var(--space-xs);
-  padding-inline: var(--space-xs);
+  .fixed {
+    color: var(--on-surface);
+    font-size: var(--text-3);
+    font-weight: var(--weight-strong);
+    line-height: var(--leading-3);
+  }
+
+  .caption {
+    color: var(--on-surface-variant);
+    font-size: var(--text-2);
+    line-height: var(--leading-2);
+  }
 }

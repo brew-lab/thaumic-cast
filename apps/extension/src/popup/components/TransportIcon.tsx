@@ -1,45 +1,32 @@
-import { Play, Pause, Square, Loader } from 'lucide-preact';
+import type { JSX } from 'preact';
 import type { TransportState } from '@thaumic-cast/protocol';
+import { Clacks, Icon, type GlyphName } from '@thaumic-cast/ui';
 import styles from './TransportIcon.module.css';
 
 interface TransportIconProps {
   /** The transport state to display */
   state: TransportState | undefined;
-  /** Icon size in pixels */
-  size?: number;
-  /** Additional CSS class */
-  className?: string;
 }
 
-/** Map of transport states to their icon components */
-const ICONS = {
-  Playing: Play,
-  PAUSED_PLAYBACK: Pause,
-  Stopped: Square,
-  Transitioning: Loader,
-} as const;
+/** The glyph for each settled transport state; a changing one shows the Clacks. */
+const GLYPHS: Record<Exclude<TransportState, 'Transitioning'>, GlyphName> = {
+  Playing: 'play',
+  PAUSED_PLAYBACK: 'pause',
+  Stopped: 'stop',
+};
 
 /**
- * Displays a transport state icon.
- * Uses lucide-preact icons for consistent styling.
+ * A speaker's transport state as a small glyph, or the Clacks while it changes.
+ * Phase 3 replaces it with Badge words in RoomRow (DESIGN.md §9).
  * @param props - Component props
  * @param props.state - Transport state to display
- * @param props.size - Icon size in pixels
- * @param props.className - Additional CSS class
- * @returns The rendered TransportIcon component or null if no state
+ * @returns The glyph, or null when there is no state
  */
-export function TransportIcon({ state, size = 16, className }: TransportIconProps) {
+export function TransportIcon({ state }: TransportIconProps): JSX.Element | null {
   if (!state) return null;
-
-  const Icon = ICONS[state];
-  const isAnimating = state === 'Transitioning';
-
   return (
-    <span
-      className={`${styles.icon} ${isAnimating ? styles.animating : ''} ${className ?? ''}`}
-      title={state}
-    >
-      <Icon size={size} />
+    <span className={styles.icon} aria-hidden="true">
+      {state === 'Transitioning' ? <Clacks size="sm" /> : <Icon glyph={GLYPHS[state]} />}
     </span>
   );
 }

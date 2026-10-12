@@ -1,6 +1,13 @@
 import { useEffect, useState, useCallback } from 'preact/hooks';
-import { WizardStep, Alert, Button, Disclosure, Input } from '@thaumic-cast/ui';
-import { Monitor, Download, RefreshCw } from 'lucide-preact';
+import {
+  WizardStep,
+  Alert,
+  Button,
+  Cluster,
+  Disclosure,
+  StatusDot,
+  TextInput,
+} from '@thaumic-cast/ui';
 import { useTranslation } from 'react-i18next';
 import { GITHUB_RELEASES_URL } from '@thaumic-cast/shared';
 import { useConnectionStatus } from '../../hooks/useConnectionStatus';
@@ -37,7 +44,6 @@ export function DesktopConnectionStep({
 
   // Manual configuration state
   const [urlInput, setUrlInput] = useState('');
-  const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState<ServerTestResult | null>(null);
 
   useEffect(() => {
@@ -52,9 +58,8 @@ export function DesktopConnectionStep({
   /**
    * Handles URL input changes.
    */
-  const handleUrlChange = useCallback((e: Event) => {
-    const target = e.target as HTMLInputElement;
-    setUrlInput(target.value);
+  const handleUrlChange = useCallback((value: string) => {
+    setUrlInput(value);
     setTestResult(null);
   }, []);
 
@@ -65,17 +70,15 @@ export function DesktopConnectionStep({
   const handleConnect = useCallback(async () => {
     const url = urlInput.trim();
     if (!url) return;
-    setTesting(true);
     setTestResult(null);
     setTestResult(await connectToServer(url));
-    setTesting(false);
   }, [urlInput]);
 
   return (
     <WizardStep
       title={t('onboarding.desktop.title')}
       subtitle={t('onboarding.desktop.subtitle')}
-      icon={Monitor}
+      glyph="monitor"
     >
       {isSeeking ? (
         <Alert variant="info">{t('onboarding.desktop.checking')}</Alert>
@@ -89,17 +92,14 @@ export function DesktopConnectionStep({
 
           <p className={styles.downloadPrompt}>{t('onboarding.desktop.download_prompt')}</p>
 
-          <div className={styles.actions}>
-            <Button variant="primary" onClick={handleDownload}>
-              <Download size={16} />
+          <Cluster stack>
+            <Button kind="filled" icon="external" onClick={handleDownload}>
               {t('onboarding.desktop.download_button')}
             </Button>
-
-            <Button variant="secondary" onClick={handleRetry} disabled={isSeeking}>
-              <RefreshCw size={16} />
+            <Button icon="refresh" onClick={handleRetry} disabled={isSeeking}>
               {t('onboarding.desktop.retry_button')}
             </Button>
-          </div>
+          </Cluster>
 
           {/* Manual configuration section */}
           <Disclosure
@@ -107,27 +107,28 @@ export function DesktopConnectionStep({
             hint={t('onboarding.desktop.manual_hint')}
           >
             <div className={styles.manualForm}>
-              <Input
-                type="url"
+              <TextInput
+                kind="address"
+                inputMode="url"
+                aria-label={t('server_url_label')}
                 placeholder={t('server_url_placeholder')}
                 value={urlInput}
                 onInput={handleUrlChange}
                 autoComplete="url"
               />
               <Button
-                variant="secondary"
-                onClick={handleConnect}
-                disabled={testing || !urlInput.trim()}
-                aria-busy={testing}
+                onAction={handleConnect}
+                labels={{ busy: t('server_testing') }}
+                disabled={!urlInput.trim()}
                 fullWidth
               >
-                {testing ? t('server_testing') : t('server_test_connection')}
+                {t('server_test_connection')}
               </Button>
             </div>
 
             {testResult && !testResult.success && (
               <div className={styles.testError}>
-                <span className={styles.errorDot} />
+                <StatusDot state="failed" />
                 <span>{t(getServerTestErrorKey(testResult) ?? 'server_test_failed')}</span>
               </div>
             )}

@@ -3,6 +3,14 @@
  * switch, the focus ring, forced colours, reduced motion, prose links and the scrollbar.
  * With tokens.css and webkit-fallbacks.css, one of the three files that hold raw values.
  */
+@layer reset {
+  *,
+  *::before,
+  *::after {
+    box-sizing: border-box;
+  }
+}
+
 @layer base {
   /*
    * The theme switch, written once. Auto follows the system; data-theme="light" or "dark"
@@ -12,6 +20,9 @@
   :root {
     color-scheme: light dark;
     scrollbar-color: var(--outline) transparent;
+    scroll-behavior: smooth;
+    interpolate-size: allow-keywords;
+    caret-color: var(--primary);
   }
 
   :root[data-theme='light'] {
@@ -22,6 +33,48 @@
     color-scheme: dark;
   }
 
+  /* The surface: the ground, its ink and the body face (T-type). */
+  body {
+    margin: 0;
+    background: var(--ground);
+    color: var(--on-surface);
+    font-family: var(--font-body);
+    font-weight: var(--weight-body);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  /* Headings use Geist 600 (DESIGN.md §1, T-type); everything else the system face. */
+  :where(h1, h2, h3, h4, h5, h6) {
+    font-family: var(--font-head);
+    font-weight: var(--weight-head);
+    text-wrap: balance;
+  }
+
+  :where(p) {
+    text-wrap: pretty;
+  }
+
+  ::selection {
+    background: var(--primary);
+    color: var(--on-primary);
+  }
+
+  :where(a[href], button, input, label, select, summary, textarea) {
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  /*
+   * F-textbox: headings and control labels are trimmed to the cap height and the baseline,
+   * so they sit optically centred. Controls keep their outer size: their block size is a
+   * token, never their line box. Components trim their own labels with the same rule.
+   */
+  @supports (text-box: trim-both cap alphabetic) {
+    :where(h1, h2, h3, h4, h5, h6) {
+      text-box: trim-both cap alphabetic;
+    }
+  }
+
   /*
    * The focus ring: 2 px of --focus outside a 2 px gap of --ring-gap, as a box-shadow so it
    * traces the control's corner shape. The transparent outline is what forced colours paint.
@@ -29,6 +82,13 @@
   :where(:focus-visible) {
     outline: var(--line-bold) solid transparent;
     outline-offset: var(--line-bold);
+    box-shadow:
+      0 0 0 var(--line-bold) var(--ring-gap),
+      0 0 0 calc(2 * var(--line-bold)) var(--focus);
+  }
+
+  /* The catalogue draws a focus-visible state without focus (DESIGN.md §10 row 6). */
+  :where([data-force='focus']) {
     box-shadow:
       0 0 0 var(--line-bold) var(--ring-gap),
       0 0 0 calc(2 * var(--line-bold)) var(--focus);
@@ -53,6 +113,8 @@
    */
   @media (prefers-reduced-motion: reduce) {
     :root {
+      scroll-behavior: auto;
+
       --dur-shape: 0s;
       --dur-spatial: 0s;
       --press-text: 1;

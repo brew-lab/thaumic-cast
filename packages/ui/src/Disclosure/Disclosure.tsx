@@ -1,6 +1,6 @@
 import type { ComponentChildren } from 'preact';
 import { useState, useCallback, useId } from 'preact/hooks';
-import { ChevronDown, ChevronUp } from 'lucide-preact';
+import { Icon } from '../Icon';
 import styles from './Disclosure.module.css';
 
 interface DisclosureProps {
@@ -61,8 +61,6 @@ export function Disclosure({
     onExpandedChange?.(newValue);
   }, [expanded, isControlled, onExpandedChange]);
 
-  const ChevronIcon = expanded ? ChevronUp : ChevronDown;
-
   return (
     <div className={styles.disclosure}>
       <button
@@ -74,7 +72,9 @@ export function Disclosure({
         aria-describedby={expanded && hint ? hintId : undefined}
       >
         <span className={styles.label}>{label}</span>
-        <ChevronIcon size={16} className={styles.chevron} aria-hidden="true" />
+        <span className={styles.chevron} data-open={expanded ? '' : undefined}>
+          <Icon glyph="chevron-down" />
+        </span>
       </button>
 
       {expanded && hint && (

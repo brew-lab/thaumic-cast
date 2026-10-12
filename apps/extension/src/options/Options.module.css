@@ -1,227 +1,114 @@
-.container {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-lg);
-}
-
-.title {
-  font-size: 1.5rem;
-  font-weight: 600;
-  margin-block: 0;
-  margin-block-end: var(--space-md);
-}
-
-.loading {
-  color: var(--color-text-muted);
-  font-size: 0.875rem;
-}
-
-.card-content {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-md);
-}
-
-/* Form elements */
-.field {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-xs);
-}
-
-.label {
-  font-size: 0.875rem;
-  color: var(--color-text-muted);
-}
-
-.hint {
-  font-size: 0.75rem;
-  color: var(--color-text-muted);
-  margin-block-start: var(--space-xs);
-}
-
-.input {
-  padding-block: var(--space-sm);
-  padding-inline: var(--space-sm);
-  background: var(--input-bg);
-  color: var(--input-text);
-  border: 1px solid var(--input-border);
-  border-radius: var(--radius-sm);
-  font-size: 1rem;
-}
-
-.input:focus {
-  outline: 2px solid var(--input-border-focus);
-  outline-offset: 2px;
-}
-
-.input:disabled {
-  opacity: var(--input-disabled-opacity);
-  cursor: not-allowed;
-}
-
-.select {
-  padding-block: var(--space-sm);
-  padding-inline: var(--space-sm);
-  background: var(--input-bg);
-  color: var(--input-text);
-  border: 1px solid var(--input-border);
-  border-radius: var(--radius-sm);
-  font-size: 1rem;
-  cursor: pointer;
-}
-
-.select:focus {
-  outline: 2px solid var(--input-border-focus);
-  outline-offset: 2px;
-}
-
-.select:disabled {
-  opacity: var(--input-disabled-opacity);
-  cursor: not-allowed;
-}
-
-/* Radio group */
-.radio-group {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-sm);
-}
-
-.radio-option {
-  display: flex;
-  align-items: flex-start;
-  gap: var(--space-sm);
-  padding-block: var(--space-sm);
-  padding-inline: var(--space-sm);
-  border-radius: var(--radius-sm);
-  cursor: pointer;
-  transition: var(--transition-bg);
-}
-
-.radio-option:hover {
-  background: var(--color-surface-hover);
-}
-
-.radio-input {
-  margin: 0;
-  margin-block-start: 0.125rem;
-}
-
-.radio-content {
-  display: flex;
-  flex-direction: column;
-  gap: 0.125rem;
-}
-
-.radio-label {
-  font-size: 0.875rem;
-  font-weight: 500;
-}
-
-.radio-desc {
-  font-size: 0.75rem;
-  color: var(--color-text-muted);
-}
-
-/* Why a control is disabled, or when it takes effect: read at full strength */
-.radio-note {
-  font-size: 0.75rem;
-}
-
-.radio-option-disabled {
-  cursor: not-allowed;
-}
-
-.radio-option-disabled:hover {
-  background: none;
-}
-
-.radio-option-disabled .radio-label,
-.radio-option-disabled .radio-desc {
-  opacity: var(--input-disabled-opacity);
-}
-
-/* Status indicator */
-.status {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-xs);
-  font-size: 0.875rem;
-}
-
-.status-dot {
-  inline-size: 0.5rem;
-  block-size: 0.5rem;
-  border-radius: 50%;
-}
-
-.status-dot-connected {
-  background-color: var(--color-success);
-}
-
-.status-dot-disconnected {
-  background-color: var(--color-error);
-}
-
-.status-dot-checking {
-  background-color: var(--color-warning);
-  animation: pulse 1.5s infinite;
-}
-
-@keyframes pulse {
-  0%,
-  100% {
-    opacity: 1;
+/* The options page, until Phase 4 rebuilds it as the OptionsShell with SettingsSections. */
+@layer app {
+  .container {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-5);
   }
 
-  50% {
-    opacity: 0.5;
+  .title {
+    margin: 0;
+    font-size: var(--text-8);
+    line-height: var(--leading-8);
+    letter-spacing: var(--tracking-8);
   }
-}
 
-/* Inline row */
-.inline-row {
-  display: flex;
-  align-items: center;
-  gap: var(--space-sm);
-}
+  .loading {
+    color: var(--on-surface-variant);
+    font-size: var(--text-4-fixed);
+  }
 
-/* Resolved settings display */
-.resolved-settings {
-  background: var(--inset-bg);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-sm);
-  padding-block: var(--space-sm);
-  padding-inline: var(--space-md);
-}
+  .card-content {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-4);
+  }
 
-.resolved-row {
-  display: flex;
-  justify-content: space-between;
-  gap: var(--space-md);
-  padding-block: var(--space-xs);
-}
+  .field {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+  }
 
-.resolved-label {
-  color: var(--color-text-muted);
-  font-size: 0.875rem;
-}
+  .label {
+    color: var(--on-surface);
+    font-size: var(--text-4-fixed);
+    font-weight: var(--weight-strong);
+    line-height: var(--leading-4);
+  }
 
-.resolved-value {
-  font-size: 0.875rem;
-  font-weight: 500;
-  text-align: end;
-}
+  .strong {
+    font-weight: var(--weight-strong);
+  }
 
-/* Advanced audio options, linked to from the popup */
-.advanced-anchor {
-  scroll-margin-block-start: var(--space-lg);
-}
+  .hint {
+    color: var(--on-surface-variant);
+    font-size: var(--text-3);
+    line-height: var(--leading-3);
+  }
 
-/* Divider */
-.divider {
-  block-size: 1px;
-  background: var(--color-border);
-  margin-block: var(--space-sm);
+  .error {
+    color: var(--danger-ink);
+    font-size: var(--text-3);
+    line-height: var(--leading-3);
+  }
+
+  .radio-group {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-1);
+  }
+
+  .status {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-2);
+    font-size: var(--text-3);
+    line-height: var(--leading-3);
+  }
+
+  .inline-row {
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+  }
+
+  .grow {
+    flex: 1;
+    min-inline-size: 0;
+  }
+
+  .resolved-settings {
+    padding-block: var(--space-3);
+    padding-inline: var(--space-4);
+    border-radius: var(--radius-control);
+    background: var(--container);
+  }
+
+  .resolved-row {
+    display: flex;
+    justify-content: space-between;
+    gap: var(--space-4);
+    padding-block: var(--space-2);
+  }
+
+  .resolved-label,
+  .resolved-value {
+    font-size: var(--text-3);
+    line-height: var(--leading-3);
+  }
+
+  .resolved-label {
+    color: var(--on-surface-variant);
+  }
+
+  .resolved-value {
+    font-weight: var(--weight-strong);
+    text-align: end;
+  }
+
+  /* Advanced audio options, linked to from the popup */
+  .advanced-anchor {
+    scroll-margin-block-start: var(--space-6);
+  }
 }

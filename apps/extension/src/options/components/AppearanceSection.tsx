@@ -1,7 +1,7 @@
 import type { JSX } from 'preact';
 import { useCallback } from 'preact/hooks';
 import { useTranslation } from 'react-i18next';
-import { Card } from '@thaumic-cast/ui';
+import { Card, SegmentedControl } from '@thaumic-cast/ui';
 import type { ExtensionSettings, ThemeMode } from '../../lib/settings';
 import { applyTheme } from '../../lib/theme';
 import styles from '../Options.module.css';
@@ -33,19 +33,16 @@ export function AppearanceSection({ settings, onUpdate }: AppearanceSectionProps
     <Card title={t('appearance_section_title')}>
       <div className={styles.cardContent}>
         <div className={styles.field}>
-          <label htmlFor="theme-select" className={styles.label}>
-            {t('appearance_theme')}
-          </label>
-          <select
-            id="theme-select"
-            className={styles.select}
+          <SegmentedControl
+            label={t('appearance_theme')}
             value={settings.theme}
-            onChange={(e) => handleThemeChange((e.target as HTMLSelectElement).value as ThemeMode)}
-          >
-            <option value="auto">{t('appearance_theme_auto')}</option>
-            <option value="light">{t('appearance_theme_light')}</option>
-            <option value="dark">{t('appearance_theme_dark')}</option>
-          </select>
+            onChange={handleThemeChange}
+            options={[
+              { value: 'auto', label: t('appearance_theme_auto'), glyph: 'contrast' },
+              { value: 'light', label: t('appearance_theme_light'), glyph: 'sun' },
+              { value: 'dark', label: t('appearance_theme_dark'), glyph: 'moon' },
+            ]}
+          />
           {settings.theme === 'auto' && (
             <span className={styles.hint}>{t('appearance_theme_auto_desc')}</span>
           )}

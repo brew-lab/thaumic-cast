@@ -1,83 +1,338 @@
 @layer components {
-  .btn {
-    padding-block: var(--space-sm);
-    padding-inline: var(--space-md);
-    border-radius: var(--radius-sm);
-    border: none;
-    cursor: pointer;
-    font-weight: 500;
-    inline-size: fit-content;
-    display: flex;
+  /*
+   * A-button. Kinds change the --btn-* tokens only; a context restyles a Button by
+   * re-pointing them (a notice points --btn-fg at its on-container ink). The state layer
+   * mixes --btn-fg into --btn-bg by --layer (T-state).
+   */
+  .button {
+    --btn-bg: var(--secondary-container);
+    --btn-fg: var(--on-secondary-container);
+    --btn-edge: transparent;
+    --btn-h: var(--control-md);
+    --btn-pad: calc(2 * var(--space-3));
+    --btn-pad-icon: calc(var(--btn-pad) - var(--space-2));
+    --btn-gap: var(--space-3);
+    --btn-icon: var(--icon-sm);
+    --btn-font: var(--text-4-fixed);
+    --btn-radius: var(--radius-control);
+    --btn-press: var(--press-text);
+    --btn-on-bg: var(--secondary-container);
+    --btn-on-fg: var(--on-secondary-container);
+    --btn-check: var(--primary);
+    --btn-failed-bg: var(--danger-container);
+    --btn-failed-fg: var(--on-danger-container);
+    --btn-hit: var(--target-min);
+    --btn-fill: color-mix(in oklch, var(--btn-fg) var(--layer), var(--btn-bg));
+    --btn-trail: var(--btn-fg);
+
+    position: relative;
+    display: inline-flex;
+    flex: none;
     align-items: center;
     justify-content: center;
-    gap: var(--space-sm);
-    transition: var(--transition-bg), var(--transition-opacity);
-    font-size: 0.9rem;
+    gap: var(--btn-gap);
+    min-block-size: var(--btn-h);
+    max-inline-size: 100%;
+    margin: 0;
+    padding-block: 0;
+    padding-inline: var(--btn-pad);
+    border: var(--line-hair) solid var(--btn-edge);
+    border-radius: var(--btn-radius);
+    background: var(--btn-fill);
+    color: var(--btn-fg);
+    font-family: var(--font-body);
+    font-size: var(--btn-font);
+    font-weight: var(--weight-strong);
+    line-height: var(--leading-3);
+    text-align: center;
+    text-decoration: none;
+    cursor: pointer;
+    user-select: none;
+    -webkit-tap-highlight-color: transparent;
+    transition:
+      --layer var(--dur-effects) var(--ease-effects),
+      border-radius var(--dur-shape) var(--ease-effects),
+      scale var(--dur-spatial) var(--ease-spatial);
   }
 
-  .full-width {
+  /* The hit area reaches the target minimum (2.75rem on the desktop) without a bigger box. */
+  .button::after {
+    content: '';
+    position: absolute;
+    inset-block: calc(min(0rem, (var(--btn-h) - var(--btn-hit)) / 2) - var(--line-hair));
+    inset-inline: calc(-1 * var(--line-hair));
+  }
+
+  .button:has(.lead) {
+    padding-inline-start: var(--btn-pad-icon);
+  }
+
+  .button:has(.trail, .check, .chevron) {
+    padding-inline-end: var(--btn-pad-icon);
+  }
+
+  /* Sizes: the density sets the px (T-target), never a container. */
+  .sm {
+    --btn-h: var(--control-sm);
+    --btn-pad: var(--space-4);
+    --btn-pad-icon: calc(var(--space-4) - var(--space-1));
+    --btn-font: var(--text-3);
+  }
+
+  :where([data-density='desktop']) .button {
+    --btn-icon: var(--icon-md);
+    --btn-font: var(--text-4-fixed);
+  }
+
+  :where([data-density='desktop']) .sm {
+    --btn-pad: calc(2 * var(--space-3));
+    --btn-pad-icon: calc(var(--btn-pad) - var(--space-2));
+  }
+
+  :where([data-density='desktop']) .md {
+    --btn-pad: calc(var(--space-4) + var(--space-3));
+  }
+
+  /* Kinds */
+  .filled {
+    --btn-bg: var(--primary);
+    --btn-fg: var(--on-primary);
+  }
+
+  .filled.danger {
+    --btn-bg: var(--danger);
+    --btn-fg: var(--on-danger);
+  }
+
+  .tonal.danger {
+    --btn-bg: var(--danger-container);
+    --btn-fg: var(--on-danger-container);
+  }
+
+  .outline {
+    --btn-bg: transparent;
+    --btn-fg: var(--primary);
+    --btn-edge: var(--outline);
+  }
+
+  .quiet {
+    --btn-bg: transparent;
+    --btn-fg: var(--primary);
+  }
+
+  .link {
+    --btn-bg: transparent;
+    --btn-fg: var(--primary);
+    --btn-h: auto;
+    --btn-pad: var(--space-1);
+    --btn-pad-icon: var(--space-1);
+    --btn-gap: var(--space-2);
+    --btn-font: inherit;
+
+    min-block-size: auto;
+    text-decoration: underline;
+    text-decoration-thickness: var(--line-hair);
+    text-underline-offset: var(--space-1);
+  }
+
+  .link::after {
+    inset-block: calc(min(0rem, (1lh - var(--btn-hit)) / 2));
+  }
+
+  .link:hover {
+    text-decoration-thickness: var(--line-bold);
+  }
+
+  /* Layout */
+  .start {
+    justify-content: flex-start;
+    text-align: start;
+  }
+
+  .full {
+    display: flex;
     inline-size: 100%;
   }
 
-  .btn:disabled {
-    opacity: var(--button-disabled-opacity);
+  .two-line {
+    padding-block: var(--space-2);
+  }
+
+  /* Parts */
+  .lead,
+  .check,
+  .chevron {
+    flex: none;
+    display: inline-grid;
+    place-items: center;
+    min-inline-size: var(--btn-icon);
+    block-size: var(--btn-icon);
+  }
+
+  .lead > svg,
+  .check > svg,
+  .chevron > svg {
+    --icon-size: var(--btn-icon);
+  }
+
+  .check {
+    color: var(--btn-check);
+  }
+
+  .chevron > svg {
+    transition: rotate var(--dur-effects) var(--ease-effects);
+  }
+
+  .button[aria-expanded='true'] .chevron > svg {
+    rotate: 180deg;
+  }
+
+  .text {
+    display: flex;
+    flex-direction: column;
+    min-inline-size: 0;
+  }
+
+  /* Every label the Button can show sits in one cell, so the width never jumps (F-shift). */
+  .labels {
+    display: grid;
+    justify-items: center;
+  }
+
+  .start .labels {
+    justify-items: start;
+  }
+
+  .label {
+    grid-area: 1 / 1;
+    white-space: nowrap;
+  }
+
+  .label:not([data-current]) {
+    visibility: hidden;
+  }
+
+  @supports (text-box: trim-both cap alphabetic) {
+    .label {
+      text-box: trim-both cap alphabetic;
+    }
+  }
+
+  .description {
+    font-size: var(--text-2);
+    font-weight: var(--weight-body);
+    line-height: var(--leading-2);
+    white-space: normal;
+  }
+
+  .trail {
+    font-weight: var(--weight-body);
+    color: var(--btn-trail);
+  }
+
+  /* States (F-grammar): hover 8 %, focus 10 %, press 12 % and the press scale. */
+  .button:is(:hover, [data-force='hover']) {
+    --layer: var(--layer-hover);
+  }
+
+  .button:is(:focus-visible, [data-force='focus']) {
+    --layer: var(--layer-focus);
+  }
+
+  .button:is(:active, [data-force='press']) {
+    --layer: var(--layer-press);
+
+    border-radius: var(--radius-pressed);
+    scale: var(--btn-press);
+    transition-duration: var(--dur-fast);
+  }
+
+  .full:is(:active, [data-force='press']) {
+    --btn-press: var(--press-wide);
+  }
+
+  /*
+   * Shapes appear only on hover, focus and press (DESIGN.md §1). Danger never reshapes, and
+   * neither does a busy or disabled Button. WebKit keeps colour, the ring and the press.
+   */
+  @supports (corner-shape: bevel) {
+    .button:not(.danger, :disabled, [aria-disabled='true']):is(
+        :hover,
+        :focus-visible,
+        [data-force='hover'],
+        [data-force='focus']
+      ) {
+      border-radius: var(--shape-bevel);
+      corner-shape: bevel;
+    }
+
+    .button:not(.danger, :disabled, [aria-disabled='true']):is(:active, [data-force='press']) {
+      border-radius: var(--radius-pressed);
+      corner-shape: round;
+    }
+  }
+
+  .danger:is(:active, [data-force='press']) {
+    border-radius: var(--btn-radius);
+  }
+
+  /* Pressed (on): calm, the secondary container and a trailing check. */
+  .button[aria-pressed='true'] {
+    --btn-bg: var(--btn-on-bg);
+    --btn-fg: var(--btn-on-fg);
+  }
+
+  /* Busy ignores hover and press; focus stays. */
+  .button[data-status='busy'] {
+    cursor: progress;
+    scale: 1;
+  }
+
+  .button[data-status='busy']:is(:hover, :active) {
+    --layer: initial;
+
+    border-radius: var(--btn-radius);
+  }
+
+  /* Failed: the danger container and "Try again". */
+  .button[data-status='failed'] {
+    --btn-bg: var(--btn-failed-bg);
+    --btn-fg: var(--btn-failed-fg);
+    --btn-edge: transparent;
+  }
+
+  /* Disabled (T-state): 38 % ink, a 12 % fill or edge, the rest shape. */
+  .button:disabled,
+  .button[aria-disabled='true']:not([data-status='busy']) {
+    --btn-fg: color-mix(in oklch, var(--on-surface) var(--disabled-ink), transparent);
+    --btn-bg: color-mix(in oklch, var(--on-surface) var(--disabled-fill), transparent);
+    --btn-check: var(--btn-fg);
+    --btn-trail: var(--btn-fg);
+    --layer: initial;
+
+    border-radius: var(--btn-radius);
+    scale: 1;
     cursor: not-allowed;
-    filter: grayscale(30%);
   }
 
-  .btn:focus-visible {
-    outline: 2px solid var(--color-focus);
-    outline-offset: 2px;
+  .outline:disabled {
+    --btn-bg: transparent;
+    --btn-edge: color-mix(in oklch, var(--on-surface) var(--disabled-fill), transparent);
   }
 
-  .primary {
-    background-color: var(--button-primary-bg);
-    color: var(--button-primary-text);
-    border: 1px solid transparent;
+  .quiet:disabled,
+  .link:disabled,
+  .link[aria-disabled='true'] {
+    --btn-bg: transparent;
   }
 
-  .primary:not(:disabled):hover {
-    background-color: var(--button-primary-bg-hover);
-  }
+  @media (forced-colors: active) {
+    .button {
+      border-color: currentcolor;
+    }
 
-  .secondary {
-    background-color: var(--button-secondary-bg);
-    color: var(--button-secondary-text);
-    border: 1px solid var(--button-secondary-border);
-  }
-
-  .secondary:not(:disabled):hover {
-    background-color: var(--button-secondary-bg-hover);
-  }
-
-  .danger {
-    background-color: var(--button-danger-bg);
-    color: var(--button-danger-text);
-    border: 1px solid transparent;
-  }
-
-  .danger:not(:disabled):hover {
-    background-color: var(--button-danger-bg-hover);
-  }
-
-  /* Inline text-link variant — for calls to action that sit alongside body
-   * text. Strips the box styling so it reads as a hyperlink. The base .btn
-   * uses flex with gap; we override to inline so the link sits with adjacent
-   * text without breaking onto its own line. */
-  .link {
-    background: none;
-    border: none;
-    padding: 0;
-    font: inherit;
-    color: var(--color-link);
-    text-decoration: underline;
-    cursor: pointer;
-    display: inline;
-    inline-size: auto;
-  }
-
-  .link:not(:disabled):hover {
-    color: var(--color-link-hover);
-    text-decoration: none;
+    .button[aria-pressed='true'] {
+      border-width: var(--line-bold);
+    }
   }
 }

@@ -1,0 +1,123 @@
+@layer components {
+  /*
+   * A-nav. --size-nav tall; current has the primary container, the 2 px primary inset edge
+   * and the strong weight, and stays calm (it still bevels on hover and focus, as every
+   * control does). The narrow rail (under a 45rem window) makes it a --size-nav square.
+   */
+  .item {
+    --nav-bg: transparent;
+    --nav-fg: var(--on-surface-variant);
+    --nav-radius: var(--radius-control);
+    --nav-edge: inset 0 0 0 var(--line-bold) var(--primary);
+    --nav-ring:
+      0 0 0 var(--line-bold) var(--ring-gap), 0 0 0 calc(2 * var(--line-bold)) var(--focus);
+    --nav-shadow: none;
+    --nav-fill: color-mix(in oklch, var(--nav-fg) var(--layer), var(--nav-bg));
+
+    display: flex;
+    align-items: center;
+    gap: var(--space-4);
+    inline-size: 100%;
+    min-block-size: var(--size-nav);
+    padding-inline: var(--space-4);
+    border-radius: var(--nav-radius);
+    background: var(--nav-fill);
+    color: var(--nav-fg);
+    box-shadow: var(--nav-shadow);
+    font-size: var(--text-4-fixed);
+    font-weight: var(--weight-body);
+    line-height: var(--leading-4);
+    text-decoration: none;
+    cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+    transition:
+      --layer var(--dur-effects) var(--ease-effects),
+      border-radius var(--dur-shape) var(--ease-effects),
+      scale var(--dur-spatial) var(--ease-spatial);
+  }
+
+  .item > svg {
+    --icon-size: var(--icon-md);
+  }
+
+  .label {
+    min-inline-size: 0;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .item[aria-current='page'] {
+    --nav-bg: var(--primary-container);
+    --nav-fg: var(--on-primary-container);
+    --nav-shadow: var(--nav-edge);
+
+    font-weight: var(--weight-strong);
+  }
+
+  .item:is(:hover, [data-force='hover']) {
+    --layer: var(--layer-hover);
+  }
+
+  .item:is(:focus-visible, [data-force='focus']) {
+    --layer: var(--layer-focus);
+    --nav-shadow: var(--nav-ring);
+  }
+
+  .item[aria-current='page']:is(:focus-visible, [data-force='focus']) {
+    --nav-shadow: var(--nav-ring), var(--nav-edge);
+  }
+
+  .item:is(:active, [data-force='press']) {
+    --layer: var(--layer-press);
+    --nav-radius: var(--radius-pressed);
+
+    scale: var(--press-wide);
+    transition-duration: var(--dur-fast);
+  }
+
+  @supports (corner-shape: bevel) {
+    .item:not(.disabled):is(:hover, :focus-visible, [data-force='hover'], [data-force='focus']) {
+      --nav-radius: var(--shape-bevel);
+
+      corner-shape: bevel;
+    }
+
+    .item:is(:active, [data-force='press']) {
+      corner-shape: round;
+    }
+  }
+
+  .disabled {
+    --nav-fg: color-mix(in oklch, var(--on-surface) var(--disabled-ink), transparent);
+    --layer: initial;
+    --nav-radius: var(--radius-control);
+
+    scale: 1;
+    cursor: not-allowed;
+  }
+
+  @container app (inline-size < 45rem) {
+    .item {
+      justify-content: center;
+      inline-size: var(--size-nav);
+      margin-inline: auto;
+      padding-inline: 0;
+    }
+
+    .label {
+      position: absolute;
+      inline-size: var(--line-hair);
+      block-size: var(--line-hair);
+      overflow: hidden;
+      clip-path: inset(50%);
+    }
+  }
+
+  @media (forced-colors: active) {
+    .item[aria-current='page'] {
+      outline: var(--line-bold) solid;
+      outline-offset: calc(-1 * var(--line-bold));
+    }
+  }
+}

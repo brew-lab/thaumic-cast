@@ -1,0 +1,11 @@
+@layer components {
+  /* A-divider: --line-hair of --divider (--outline-variant light, --container-high dark). */
+  .divider {
+    flex: none;
+    align-self: stretch;
+    block-size: 0;
+    margin: 0;
+    border: 0;
+    border-block-start: var(--line-hair) solid var(--divider);
+  }
+}

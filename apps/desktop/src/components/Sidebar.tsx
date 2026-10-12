@@ -1,62 +1,60 @@
-import { Link, useLocation } from 'wouter-preact';
-import { Speaker, Server, Settings, Radio } from 'lucide-preact';
+import { useLocation } from 'wouter-preact';
 import { useTranslation } from 'react-i18next';
 import { useSignal } from '@preact/signals';
 import { getVersion } from '@tauri-apps/api/app';
 import { useEffect } from 'preact/hooks';
+import { BrandBlock, NavItem, type GlyphName } from '@thaumic-cast/ui';
+import { castingSpeakers } from '../state/store';
 import styles from './Sidebar.module.css';
-import { clsx } from 'clsx';
 
 /**
  * Sidebar navigation component.
  *
- * Contains app branding, navigation links, and version display.
- * Automatically collapses to a compact icon mode based on available space.
+ * The brand (lit while a cast plays, with the version in the wide rail) and the
+ * navigation links. Under a 45rem window it collapses to icons, each with a
+ * tooltip. Phase 4 rebuilds it as the Rail (DESIGN.md C-rail).
  * @returns The rendered Sidebar component
  */
 export function Sidebar() {
-  const [location] = useLocation();
+  const [location, navigate] = useLocation();
   const { t } = useTranslation();
   const version = useSignal('');
 
   useEffect(() => {
     getVersion().then((v) => {
-      version.value = `v${v}`;
+      version.value = v;
     });
   }, []);
 
-  const links = [
-    { href: '/', icon: Speaker, label: t('nav.speakers') },
-    { href: '/server', icon: Server, label: t('nav.server') },
-    { href: '/settings', icon: Settings, label: t('nav.settings') },
+  const links: { href: string; icon: GlyphName; label: string }[] = [
+    { href: '/', icon: 'speaker', label: t('nav.speakers') },
+    { href: '/server', icon: 'server', label: t('nav.server') },
+    { href: '/settings', icon: 'settings', label: t('nav.settings') },
   ];
 
   return (
     <aside className={styles.sidebar}>
       <div className={styles.brand}>
-        <Radio size={24} color="var(--color-primary)" className={styles.brandIcon} />
-        <h1 className={styles.title}>{t('app.title')}</h1>
+        <BrandBlock
+          name={t('app.title')}
+          kind="rail"
+          lit={castingSpeakers.value.size > 0}
+          version={version.value ? `v${version.value}` : undefined}
+        />
       </div>
 
-      <nav className={styles.nav}>
-        {links.map(({ href, icon: Icon, label }) => {
-          const isActive = location === href;
-          return (
-            <Link
-              key={href}
-              href={href}
-              className={clsx(styles.navLink, isActive && styles.navLinkActive)}
-            >
-              <span className={styles.navIcon}>
-                <Icon size={20} />
-              </span>
-              <span className={styles.navLabel}>{label}</span>
-            </Link>
-          );
-        })}
+      <nav className={styles.nav} aria-label={t('app.title')}>
+        {links.map(({ href, icon, label }) => (
+          <NavItem
+            key={href}
+            href={href}
+            icon={icon}
+            label={label}
+            current={location === href}
+            onNavigate={navigate}
+          />
+        ))}
       </nav>
-
-      <div className={styles.version}>{version}</div>
     </aside>
   );
 }

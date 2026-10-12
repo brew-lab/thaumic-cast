@@ -1,7 +1,7 @@
 import type { JSX } from 'preact';
 import { useState, useCallback, useEffect } from 'preact/hooks';
 import { useTranslation } from 'react-i18next';
-import { Card, Button } from '@thaumic-cast/ui';
+import { Button, Card, Radio, StatusDot, TextInput, useAnnouncer } from '@thaumic-cast/ui';
 import type { ExtensionSettings } from '../../lib/settings';
 import {
   connectToServer,
@@ -38,6 +38,12 @@ export function ServerSection({ settings, onUpdate }: ServerSectionProps): JSX.E
   const addressMissing =
     !settings.useAutoDiscover && !settings.serverUrl && !testing && !testResult;
 
+  // Say the missing address once when it appears (it replaces a live region).
+  const { say } = useAnnouncer();
+  useEffect(() => {
+    if (addressMissing) say(t('server_url_missing'), { key: 'server-url-missing' });
+  }, [addressMissing, say, t]);
+
   // Sync urlInput with settings.serverUrl when settings change externally
   useEffect(() => {
     setUrlInput(settings.serverUrl ?? '');
@@ -61,9 +67,8 @@ export function ServerSection({ settings, onUpdate }: ServerSectionProps): JSX.E
   /**
    * Handles URL input change.
    */
-  const handleUrlChange = useCallback((e: Event) => {
-    const target = e.target as HTMLInputElement;
-    setUrlInput(target.value);
+  const handleUrlChange = useCallback((value: string) => {
+    setUrlInput(value);
     setTestResult(null);
   }, []);
 
@@ -92,35 +97,22 @@ export function ServerSection({ settings, onUpdate }: ServerSectionProps): JSX.E
   return (
     <Card title={t('server_section_title')}>
       <div className={styles.cardContent} role="radiogroup" aria-label={t('server_section_title')}>
-        {/* Auto-discover option */}
-        <label className={styles.radioOption}>
-          <input
-            type="radio"
-            name="serverMode"
-            className={styles.radioInput}
-            checked={settings.useAutoDiscover}
-            onChange={() => handleAutoDiscoverChange(true)}
-          />
-          <div className={styles.radioContent}>
-            <span className={styles.radioLabel}>{t('server_auto_discover')}</span>
-            <span className={styles.radioDesc}>{t('server_auto_discover_hint')}</span>
-          </div>
-        </label>
-
-        {/* Custom URL option */}
-        <label className={styles.radioOption}>
-          <input
-            type="radio"
-            name="serverMode"
-            className={styles.radioInput}
-            checked={!settings.useAutoDiscover}
-            onChange={() => handleAutoDiscoverChange(false)}
-          />
-          <div className={styles.radioContent}>
-            <span className={styles.radioLabel}>{t('server_custom_url')}</span>
-            <span className={styles.radioDesc}>{t('server_custom_url_hint')}</span>
-          </div>
-        </label>
+        <Radio
+          name="serverMode"
+          value="auto"
+          label={t('server_auto_discover')}
+          description={t('server_auto_discover_hint')}
+          checked={settings.useAutoDiscover}
+          onChange={() => handleAutoDiscoverChange(true)}
+        />
+        <Radio
+          name="serverMode"
+          value="manual"
+          label={t('server_custom_url')}
+          description={t('server_custom_url_hint')}
+          checked={!settings.useAutoDiscover}
+          onChange={() => handleAutoDiscoverChange(false)}
+        />
 
         {/* URL input (shown when custom mode) */}
         {!settings.useAutoDiscover && (
@@ -129,34 +121,34 @@ export function ServerSection({ settings, onUpdate }: ServerSectionProps): JSX.E
               {t('server_url_label')}
             </label>
             <div className={styles.inlineRow}>
-              <input
-                id="server-url"
-                type="url"
-                className={styles.input}
-                style={{ flex: 1 }}
-                placeholder={t('server_url_placeholder')}
-                value={urlInput}
-                onInput={handleUrlChange}
-                onBlur={handleUrlBlur}
-                autoComplete="url"
-                aria-invalid={addressMissing}
-                aria-describedby={addressMissing ? 'server-url-missing' : undefined}
-              />
+              <div className={styles.grow}>
+                <TextInput
+                  id="server-url"
+                  kind="address"
+                  inputMode="url"
+                  placeholder={t('server_url_placeholder')}
+                  value={urlInput}
+                  onInput={handleUrlChange}
+                  onBlur={handleUrlBlur}
+                  autoComplete="url"
+                  invalid={addressMissing}
+                  aria-describedby={addressMissing ? 'server-url-missing' : undefined}
+                />
+              </div>
               <Button
-                variant="secondary"
-                onClick={handleConnect}
-                disabled={testing || !urlInput.trim()}
-                aria-busy={testing}
+                onAction={handleConnect}
+                labels={{ busy: t('server_testing') }}
+                disabled={!urlInput.trim()}
               >
-                {testing ? t('server_testing') : t('server_test_connection')}
+                {t('server_test_connection')}
               </Button>
             </div>
             <span className={styles.hint}>{t('server_url_hint')}</span>
 
             {/* Manual mode with no saved address */}
             {addressMissing && (
-              <div id="server-url-missing" className={styles.status} role="alert">
-                <span className={`${styles.statusDot} ${styles.statusDotDisconnected}`} />
+              <div id="server-url-missing" className={styles.status}>
+                <StatusDot state="failed" />
                 <span>{t('server_url_missing')}</span>
               </div>
             )}
@@ -164,11 +156,7 @@ export function ServerSection({ settings, onUpdate }: ServerSectionProps): JSX.E
             {/* Test result */}
             {testResult && (
               <div className={styles.status}>
-                <span
-                  className={`${styles.statusDot} ${
-                    testResult.success ? styles.statusDotConnected : styles.statusDotDisconnected
-                  }`}
-                />
+                <StatusDot state={testResult.success ? 'connected' : 'failed'} />
                 {testResult.success ? (
                   <span>
                     {t('server_test_success')} (

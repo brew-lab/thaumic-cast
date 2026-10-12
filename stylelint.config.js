@@ -38,4 +38,13 @@ export default {
       { message: 'Use kebab-case for class names' },
     ],
   },
+  overrides: [
+    {
+      // The design system's modules write each control's states in the F-grammar order
+      // (rest, hover, focus, press, then on, busy, disabled; DESIGN.md §3), which is the
+      // order the cascade needs, not the order of specificity.
+      files: ['packages/ui/src/**/*.module.css'],
+      rules: { 'no-descending-specificity': null },
+    },
+  ],
 };

@@ -81,6 +81,10 @@ export default defineConfig(({ mode }) => ({
     },
   },
   build: {
+    // Chrome 125 is the floor (DESIGN.md §13, round 7). Without it the CSS minifier rewrites
+    // light-dark() inside custom properties into a polyfill that resolves at :root, so a part
+    // of a page drawn in the other scheme would keep the root's colours.
+    cssTarget: 'chrome125',
     minify: 'esbuild',
     sourcemap: false,
     rollupOptions: {

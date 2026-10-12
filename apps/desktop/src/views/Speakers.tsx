@@ -21,8 +21,7 @@ import {
 import { type NetworkHealthPayload, type TransportStatePayload } from '../lib/events';
 import { DeviceCard } from '../components/DeviceCard';
 import { SpeakerNotices } from '../components/SpeakerNotices';
-import { ActionButton, Alert, ButtonGroup } from '@thaumic-cast/ui';
-import { RefreshCw, Square } from 'lucide-preact';
+import { Alert, Button, Cluster } from '@thaumic-cast/ui';
 import styles from './Speakers.module.css';
 
 /**
@@ -109,22 +108,24 @@ export function Speakers() {
             })}
           </span>
         </div>
-        <ButtonGroup wrap grow>
-          <ActionButton
-            action={refreshTopology}
-            label={t('speakers.scan')}
-            loadingLabel={t('speakers.scanning')}
-            icon={RefreshCw}
-            variant="secondary"
-          />
-          <ActionButton
-            action={stopAll}
-            label={t('speakers.stop_all')}
-            loadingLabel={t('speakers.stopping')}
-            icon={Square}
-            variant="primary"
-          />
-        </ButtonGroup>
+        <Cluster>
+          <Button
+            icon="refresh"
+            onAction={refreshTopology}
+            labels={{ busy: t('speakers.scanning') }}
+          >
+            {t('speakers.scan')}
+          </Button>
+          <Button
+            kind="filled"
+            danger
+            icon="stop"
+            onAction={stopAll}
+            labels={{ busy: t('speakers.stopping') }}
+          >
+            {t('speakers.stop_all')}
+          </Button>
+        </Cluster>
       </div>
 
       {networkHealth.value.health === 'degraded' && (

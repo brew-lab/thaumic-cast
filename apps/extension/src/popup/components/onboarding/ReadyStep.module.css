@@ -1,12 +1,12 @@
 .intro-text {
   margin: 0;
-  line-height: 1.6;
+  line-height: var(--leading-4);
   text-wrap: pretty;
 }
 
 .performance-text {
   margin: 0;
-  line-height: 1.6;
-  color: var(--color-text-muted);
+  line-height: var(--leading-4);
+  color: var(--on-surface-variant);
   text-wrap: pretty;
 }

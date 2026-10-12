@@ -1,86 +1,81 @@
 @layer components {
+  /*
+   * Deprecated: Notice and NoticeLine replace the Alert in Phase 2. It draws the v1 status
+   * sets: the container, its on-container ink, and the glyph (in dark, the set's ink). Its
+   * Button and IconButton are re-pointed to the ink, and the ring gap to the fill.
+   */
   .alert {
+    --alert-bg: var(--info-container);
+    --alert-fg: var(--on-info-container);
+    --alert-glyph: light-dark(var(--on-info-container), var(--info-ink));
+    --ring-gap: var(--alert-bg);
+
     display: flex;
     align-items: flex-start;
-    gap: var(--space-sm);
-    padding-block: var(--space-sm);
-    padding-inline: var(--space-md);
-    border-radius: var(--radius-md);
-    font-size: 0.875rem;
-    line-height: 1.4;
+    gap: var(--space-3);
+    padding-block: var(--space-3);
+    padding-inline: var(--space-4) var(--space-3);
+    border-radius: var(--radius-notice);
+    background: var(--alert-bg);
+    color: var(--alert-fg);
+    font-size: var(--text-3);
+    line-height: var(--leading-3);
   }
 
   .icon {
-    flex-shrink: 0;
-    margin-block-start: 0.125rem;
+    flex: none;
+    display: inline-grid;
+    place-items: center;
+    block-size: calc(1lh);
+    color: var(--alert-glyph);
   }
 
   .content {
-    flex: 1;
+    display: flex;
+    flex: 1 1 auto;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-3);
     min-inline-size: 0;
+    padding-block: var(--space-1);
     text-wrap: pretty;
     user-select: text;
   }
 
-  .action {
-    display: inline;
-    margin-inline-start: 0.5em;
-    padding: 0;
-    background: none;
-    border: none;
-    color: inherit;
-    font: inherit;
-    text-decoration: underline;
-    cursor: pointer;
-    opacity: 0.9;
+  .text {
+    flex: 1 1 var(--track-option);
+    min-inline-size: 0;
   }
 
-  .action:hover {
-    opacity: 1;
+  .action > button {
+    --btn-fg: var(--alert-fg);
+    --btn-edge: var(--alert-fg);
   }
 
   .dismiss {
-    flex-shrink: 0;
-    margin-inline-start: var(--space-xs);
+    flex: none;
+    margin-block: calc(-1 * var(--space-1));
+  }
+
+  .dismiss > button {
+    --ib-fg: var(--alert-fg);
   }
 
   .warning {
-    background-color: var(--alert-warning-bg);
-    border: 1px solid var(--alert-warning-border);
-    color: var(--alert-warning-text);
-  }
-
-  .warning .icon {
-    color: var(--alert-warning-icon);
+    --alert-bg: var(--warning-container);
+    --alert-fg: var(--on-warning-container);
+    --alert-glyph: light-dark(var(--on-warning-container), var(--warning-ink));
   }
 
   .error {
-    background-color: var(--alert-error-bg);
-    border: 1px solid var(--alert-error-border);
-    color: var(--alert-error-text);
-  }
-
-  .error .icon {
-    color: var(--alert-error-icon);
+    --alert-bg: var(--danger-container);
+    --alert-fg: var(--on-danger-container);
+    --alert-glyph: light-dark(var(--on-danger-container), var(--danger-ink));
   }
 
   .success {
-    background-color: var(--alert-success-bg);
-    border: 1px solid var(--alert-success-border);
-    color: var(--alert-success-text);
-  }
-
-  .success .icon {
-    color: var(--alert-success-icon);
-  }
-
-  .info {
-    background-color: var(--alert-info-bg);
-    border: 1px solid var(--alert-info-border);
-    color: var(--alert-info-text);
-  }
-
-  .info .icon {
-    color: var(--alert-info-icon);
+    --alert-bg: var(--success-container);
+    --alert-fg: var(--on-success-container);
+    --alert-glyph: light-dark(var(--on-success-container), var(--success-ink));
   }
 }

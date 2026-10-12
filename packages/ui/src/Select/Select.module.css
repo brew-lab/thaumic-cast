@@ -1,0 +1,260 @@
+@layer components {
+  /*
+   * A-select. The <select> is the trigger; the chevron (or the Clacks) sits over its end.
+   * The trigger follows the button grammar with the wide press; open and invalid take a
+   * 2 px edge, and the padding gives it back so the value never moves.
+   */
+  .field {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+    min-inline-size: 0;
+  }
+
+  .label {
+    color: var(--on-surface);
+    font-size: var(--text-4-fixed);
+    font-weight: var(--weight-strong);
+    line-height: var(--leading-4);
+  }
+
+  .control {
+    --select-h: var(--control-md);
+    --select-bg: light-dark(var(--surface), var(--container));
+    --select-fg: var(--on-surface);
+    --select-edge: var(--outline);
+    --select-edge-w: var(--line-hair);
+    --select-radius: var(--radius-control);
+    --select-font: var(--text-3);
+    --select-glyph: var(--icon-sm);
+    --select-pad: calc(var(--space-4) - var(--select-edge-w) + var(--line-hair));
+    --listbox-bg: light-dark(var(--surface), var(--container-high));
+
+    position: relative;
+    display: inline-grid;
+    align-items: center;
+    min-inline-size: 0;
+    max-inline-size: 100%;
+  }
+
+  .sm {
+    --select-h: var(--control-sm);
+  }
+
+  :where([data-density='desktop']) .control {
+    --select-font: var(--text-4-fixed);
+    --select-glyph: var(--icon-md);
+  }
+
+  .select {
+    --select-fill: color-mix(in oklch, var(--select-fg) var(--layer), var(--select-bg));
+
+    grid-area: 1 / 1;
+    min-inline-size: 0;
+    block-size: var(--select-h);
+    margin: 0;
+    padding-block: 0;
+    padding-inline: var(--select-pad) calc(var(--select-pad) + var(--select-glyph) + var(--space-3));
+    border: var(--select-edge-w) solid var(--select-edge);
+    border-radius: var(--select-radius);
+    background: var(--select-fill);
+    color: var(--select-fg);
+    font-family: var(--font-body);
+    font-size: var(--select-font);
+    font-weight: var(--weight-body);
+    line-height: var(--leading-3);
+    text-overflow: ellipsis;
+    appearance: none;
+    cursor: pointer;
+    transition:
+      --layer var(--dur-effects) var(--ease-effects),
+      border-radius var(--dur-shape) var(--ease-effects),
+      scale var(--dur-spatial) var(--ease-spatial);
+  }
+
+  .trail {
+    grid-area: 1 / 1;
+    justify-self: end;
+    display: inline-grid;
+    place-items: center;
+    margin-inline-end: var(--space-4);
+    color: var(--on-surface-variant);
+    pointer-events: none;
+  }
+
+  .trail > svg {
+    --icon-size: var(--select-glyph);
+
+    transition: rotate var(--dur-effects) var(--ease-effects);
+  }
+
+  /* States: the button grammar, with the wide press. */
+  .select:is(:hover, [data-force='hover']) {
+    --layer: var(--layer-hover);
+  }
+
+  .select:is(:focus-visible, [data-force='focus']) {
+    --layer: var(--layer-focus);
+  }
+
+  .select:is(:active, [data-force='press']) {
+    --layer: var(--layer-press);
+
+    border-radius: var(--radius-pressed);
+    scale: var(--press-wide);
+    transition-duration: var(--dur-fast);
+  }
+
+  @supports (corner-shape: bevel) {
+    .select:not(:disabled):is(:hover, :focus-visible, [data-force='hover'], [data-force='focus']) {
+      border-radius: var(--shape-bevel);
+      corner-shape: bevel;
+    }
+
+    .select:not(:disabled):is(:active, [data-force='press']) {
+      border-radius: var(--radius-pressed);
+      corner-shape: round;
+    }
+  }
+
+  /* Open: a 2 px primary edge, the chevron turned, no ring. */
+  .control:has(.select:open) {
+    --select-edge: var(--primary);
+    --select-edge-w: var(--line-bold);
+  }
+
+  .control:has(.select:open) .trail > svg {
+    rotate: 180deg;
+  }
+
+  .invalid {
+    --select-edge: var(--danger-ink);
+    --select-edge-w: var(--line-bold);
+  }
+
+  .select[aria-busy='true'] {
+    cursor: progress;
+  }
+
+  .select:disabled {
+    --select-fg: color-mix(in oklch, var(--on-surface) var(--disabled-ink), transparent);
+    --select-edge: color-mix(in oklch, var(--on-surface) var(--disabled-fill), transparent);
+    --select-bg: transparent;
+    --layer: initial;
+
+    border-radius: var(--select-radius);
+    scale: 1;
+    cursor: not-allowed;
+  }
+
+  .control:has(.select:disabled) .trail {
+    --select-trail: color-mix(in oklch, var(--on-surface) var(--disabled-ink), transparent);
+
+    color: var(--select-trail);
+  }
+
+  /* The customisable select: a popover listbox with the overlay shadow. */
+  @supports (appearance: base-select) {
+    .select,
+    .select::picker(select) {
+      appearance: base-select;
+    }
+
+    .select {
+      display: flex;
+      align-items: center;
+    }
+
+    .select::picker-icon {
+      display: none;
+    }
+
+    .trigger {
+      display: flex;
+      align-items: center;
+      min-inline-size: 0;
+      overflow: hidden;
+      white-space: nowrap;
+    }
+
+    .trigger .option-description {
+      display: none;
+    }
+
+    .select::picker(select) {
+      min-inline-size: calc(anchor-size(inline));
+      margin-block: var(--space-2);
+      padding: var(--space-2);
+      border: 0;
+      border-radius: var(--radius-group);
+      background: var(--listbox-bg);
+      color: var(--on-surface);
+      box-shadow: var(--shadow-overlay);
+      position-try-fallbacks: flip-block;
+    }
+
+    .select option {
+      --option-bg: transparent;
+      --option-fg: var(--on-surface);
+      --option-fill: color-mix(in oklch, var(--option-fg) var(--layer), var(--option-bg));
+      --option-shadow: none;
+
+      display: flex;
+      gap: var(--space-3);
+      align-items: center;
+      min-block-size: var(--select-h);
+      padding-block: var(--space-2);
+      padding-inline: var(--space-3);
+      border-radius: var(--radius-control);
+      background: var(--option-fill);
+      color: var(--option-fg);
+      box-shadow: var(--option-shadow);
+      font-size: var(--select-font);
+      line-height: var(--leading-3);
+      cursor: pointer;
+    }
+
+    .select option:hover {
+      --layer: var(--layer-hover);
+    }
+
+    .select option:focus-visible {
+      --layer: var(--layer-focus);
+      --option-shadow: inset 0 0 0 var(--line-bold) var(--focus);
+
+      outline: var(--line-bold) solid transparent;
+    }
+
+    .select option:checked {
+      --option-bg: var(--primary-container);
+      --option-fg: var(--on-primary-container);
+
+      font-weight: var(--weight-strong);
+    }
+
+    .select option::checkmark {
+      order: 1;
+      margin-inline-start: auto;
+      color: var(--primary);
+    }
+
+    .option-text {
+      display: flex;
+      flex-direction: column;
+      gap: var(--space-1);
+    }
+
+    .option-description {
+      color: var(--on-surface-variant);
+      font-size: var(--text-2);
+      font-weight: var(--weight-body);
+      line-height: var(--leading-2);
+    }
+  }
+
+  @media (forced-colors: active) {
+    .select {
+      border-color: currentcolor;
+    }
+  }
+}

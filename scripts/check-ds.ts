@@ -25,6 +25,11 @@ export const CLEAN_PATHS = [
   /^packages\/ui\/src\/(layers|tokens|webkit-fallbacks|base|motion|utilities|fonts)\.css$/,
   /^packages\/ui\/src\/(tokens|theme)\.ts$/,
   /^packages\/ui\/src\/(Announcer|Cluster|Icon)\//,
+  // Phase 1: the atoms.
+  /^packages\/ui\/src\/(Artwork|Badge|BrandBlock|Button|Checkbox|Chip|Clacks|Divider|IconButton|Meter|NavItem|Radio|SectionHeader|SegmentedControl|Select|Slider|StatusDot|StepIndicator|Switch|TextInput|Tooltip|utils)\//,
+  // Phase 1: every app file, except the layouts Phases 3 and 4 rebuild wholesale (the cast
+  // card and its list, the app shells and the onboarding frames).
+  /^apps\/(?!desktop\/src\/App\.(css|module\.css)$)(?!desktop\/src\/views\/(Onboarding|Server)\.module\.css$)(?!extension\/src\/popup\/components\/(ActiveCastCard\.(tsx|module\.css)|ActiveCastsList\.module\.css|Onboarding\.module\.css)$)[^/]+\/src\/.*\.(tsx|css)$/,
 ];
 
 /** One finding: the check it breaks, where, and what. */

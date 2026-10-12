@@ -2,7 +2,7 @@ import type { JSX } from 'preact';
 import { useCallback, useEffect, useState } from 'preact/hooks';
 import { useTranslation } from 'react-i18next';
 import type { AppType } from '@thaumic-cast/protocol';
-import { Card } from '@thaumic-cast/ui';
+import { Card, Select, Switch } from '@thaumic-cast/ui';
 import type { CompanionCapability } from '../../lib/audio-resolver';
 import { captureToggleState } from '../../lib/capture-capability';
 import { isWindowsPlatform, type ExtensionSettings } from '../../lib/settings';
@@ -98,133 +98,67 @@ export function AdvancedSection({
   return (
     <Card title={t('advanced_section_title')}>
       <div className={styles.cardContent}>
-        <label className={styles.radioOption}>
-          <input
-            type="checkbox"
-            className={styles.radioInput}
-            checked={settings.videoSyncEnabled}
-            onChange={handleVideoSyncToggle}
-            aria-describedby={
-              videoSyncNeedsAccess
-                ? 'video-sync-desc video-sync-note video-sync-access'
-                : 'video-sync-desc video-sync-note'
-            }
-          />
-          <div className={styles.radioContent}>
-            <span className={styles.radioLabel}>{t('video_sync_enable')}</span>
-            <span id="video-sync-desc" className={styles.radioDesc}>
-              {t('video_sync_description')}
-            </span>
-            <span id="video-sync-note" className={styles.radioNote}>
-              {t('video_sync_next_cast')}
-            </span>
-            {videoSyncNeedsAccess && (
-              <span id="video-sync-access" className={styles.radioNote}>
-                {t('video_sync_needs_access')}
-              </span>
-            )}
-          </div>
-        </label>
-
-        <label
-          className={
-            browserWide ? `${styles.radioOption} ${styles.radioOptionDisabled}` : styles.radioOption
+        <Switch
+          label={t('video_sync_enable')}
+          description={t('video_sync_description')}
+          note={
+            videoSyncNeedsAccess
+              ? `${t('video_sync_next_cast')} ${t('video_sync_needs_access')}`
+              : t('video_sync_next_cast')
           }
-        >
-          <input
-            type="checkbox"
-            className={styles.radioInput}
-            checked={settings.keepTabAudible}
-            onChange={handleKeepTabAudibleToggle}
-            disabled={browserWide}
-            aria-describedby={
-              browserWide ? 'keep-tab-audible-desc keep-tab-audible-note' : 'keep-tab-audible-desc'
-            }
-          />
-          <div className={styles.radioContent}>
-            <span className={styles.radioLabel}>{t('keep_tab_audible_enable')}</span>
-            <span id="keep-tab-audible-desc" className={styles.radioDesc}>
-              {t('keep_tab_audible_description')}
-            </span>
-            {browserWide && (
-              <span id="keep-tab-audible-note" className={styles.radioNote}>
-                {t('keep_tab_audible_browser_capture_note')}
-              </span>
-            )}
-          </div>
-        </label>
+          checked={settings.videoSyncEnabled}
+          onChange={handleVideoSyncToggle}
+        />
+
+        <Switch
+          label={t('keep_tab_audible_enable')}
+          description={t('keep_tab_audible_description')}
+          note={browserWide ? t('keep_tab_audible_browser_capture_note') : undefined}
+          checked={settings.keepTabAudible}
+          onChange={handleKeepTabAudibleToggle}
+          disabled={browserWide}
+        />
 
         <div className={styles.field}>
-          <label htmlFor="start-ceiling-select" className={styles.label}>
-            {t('start_ceiling_enable')}
-          </label>
-          <select
+          <Select
             id="start-ceiling-select"
-            className={styles.select}
+            label={t('start_ceiling_enable')}
             value={settings.startCeilingEnabled ? String(settings.startCeiling) : 'off'}
-            onChange={(e) => handleStartCeilingChange((e.target as HTMLSelectElement).value)}
+            options={[
+              ...startCeilingChoices(settings.startCeiling).map((level) => ({
+                value: String(level),
+                label: String(level),
+              })),
+              { value: 'off', label: t('start_ceiling_off') },
+            ]}
+            onChange={handleStartCeilingChange}
             aria-describedby="start-ceiling-desc"
-          >
-            {startCeilingChoices(settings.startCeiling).map((level) => (
-              <option key={level} value={String(level)}>
-                {level}
-              </option>
-            ))}
-            <option value="off">{t('start_ceiling_off')}</option>
-          </select>
+          />
           <span id="start-ceiling-desc" className={styles.hint}>
             {t('start_ceiling_description')}
           </span>
         </div>
 
-        <label className={styles.radioOption}>
-          <input
-            type="checkbox"
-            className={styles.radioInput}
-            checked={settings.syncSpeakers}
-            onChange={handleSyncSpeakersToggle}
-            aria-describedby="sync-speakers-desc"
-          />
-          <div className={styles.radioContent}>
-            <span className={styles.radioLabel}>{t('sync_speakers_enable')}</span>
-            <span id="sync-speakers-desc" className={styles.radioDesc}>
-              {t('sync_speakers_description')}
-            </span>
-          </div>
-        </label>
+        <Switch
+          label={t('sync_speakers_enable')}
+          description={t('sync_speakers_description')}
+          checked={settings.syncSpeakers}
+          onChange={handleSyncSpeakersToggle}
+        />
 
         {isWindows && captureToggle.visible && (
-          <label
-            className={
-              captureToggle.disabled
-                ? `${styles.radioOption} ${styles.radioOptionDisabled}`
-                : styles.radioOption
+          <Switch
+            label={t('capture_mode_browser_enable')}
+            description={t('capture_mode_browser_description')}
+            note={
+              captureToggle.noteKeys.length > 0
+                ? captureToggle.noteKeys.map((key) => t(key)).join(' ')
+                : undefined
             }
-          >
-            <input
-              type="checkbox"
-              className={styles.radioInput}
-              checked={browserWide}
-              onChange={handleCaptureModeToggle}
-              disabled={captureToggle.disabled}
-              aria-describedby={
-                captureToggle.noteKeys.length > 0
-                  ? 'capture-mode-desc capture-mode-note'
-                  : 'capture-mode-desc'
-              }
-            />
-            <div className={styles.radioContent}>
-              <span className={styles.radioLabel}>{t('capture_mode_browser_enable')}</span>
-              <span id="capture-mode-desc" className={styles.radioDesc}>
-                {t('capture_mode_browser_description')}
-              </span>
-              {captureToggle.noteKeys.length > 0 && (
-                <span id="capture-mode-note" className={styles.radioNote}>
-                  {captureToggle.noteKeys.map((key) => t(key)).join(' ')}
-                </span>
-              )}
-            </div>
-          </label>
+            checked={browserWide}
+            onChange={handleCaptureModeToggle}
+            disabled={captureToggle.disabled}
+          />
         )}
       </div>
     </Card>

@@ -1,9 +1,14 @@
 // The cascade layer order comes first, before any component's CSS (packages/ui/DESIGN.md
-// F-layers); then the design tokens and the heading face.
+// F-layers); then the design tokens, the heading face, the base layer (the theme switch,
+// the focus ring, reduced motion), the shared keyframes and the utilities.
 import '@thaumic-cast/ui/layers.css';
 import '@thaumic-cast/ui/tokens.css';
 import '@thaumic-cast/ui/fonts.css';
+import '@thaumic-cast/ui/base.css';
+import '@thaumic-cast/ui/motion.css';
+import '@thaumic-cast/ui/utilities.css';
 import { render } from 'preact';
+import { AnnouncerProvider } from '@thaumic-cast/ui';
 import { App } from './App';
 import { initTheme } from '../lib/theme';
 import { initLanguage } from '../lib/i18n';
@@ -13,4 +18,9 @@ import './styles.css';
 initTheme();
 initLanguage();
 
-render(<App />, document.getElementById('app')!);
+render(
+  <AnnouncerProvider>
+    <App />
+  </AnnouncerProvider>,
+  document.getElementById('app')!,
+);

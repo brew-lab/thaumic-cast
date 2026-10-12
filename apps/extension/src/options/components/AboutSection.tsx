@@ -39,12 +39,12 @@ export function AboutSection({ connection }: { connection: ConnectionStatus }): 
     <Card title={t('about_section_title')}>
       <div className={styles.cardContent}>
         <div>
-          <div style={{ fontWeight: 500 }}>{t('about_extension_name')}</div>
+          <div className={styles.strong}>{t('about_extension_name')}</div>
           <div className={styles.hint}>{t('about_version', { version })}</div>
         </div>
 
         <div>
-          <div style={{ fontWeight: 500 }}>{t('about_companion_heading')}</div>
+          <div className={styles.strong}>{t('about_companion_heading')}</div>
           {companion ? (
             companion.appVersion && companion.protocolVersion ? (
               <>
@@ -54,7 +54,7 @@ export function AboutSection({ connection }: { connection: ConnectionStatus }): 
                   {mismatch && (
                     <>
                       {' · '}
-                      <Button variant="link" onClick={handleOpenReleases}>
+                      <Button kind="link" icon="external" onClick={handleOpenReleases}>
                         {t('update_available')}
                       </Button>
                     </>
@@ -70,7 +70,7 @@ export function AboutSection({ connection }: { connection: ConnectionStatus }): 
                 {mismatch && (
                   <>
                     {' · '}
-                    <Button variant="link" onClick={handleOpenReleases}>
+                    <Button kind="link" icon="external" onClick={handleOpenReleases}>
                       {t('update_available')}
                     </Button>
                   </>

@@ -1,11 +1,16 @@
 // The cascade layer order comes first, before any component's CSS (packages/ui/DESIGN.md
 // F-layers); then the design tokens, their repeat for WebKit without light-dark() (macOS 13,
-// WebKitGTK 2.44), and the heading face.
+// WebKitGTK 2.44), the heading face, the base layer (the theme switch, the focus ring, reduced
+// motion), the shared keyframes and the utilities.
 import '@thaumic-cast/ui/layers.css';
 import '@thaumic-cast/ui/tokens.css';
 import '@thaumic-cast/ui/webkit-fallbacks.css';
 import '@thaumic-cast/ui/fonts.css';
+import '@thaumic-cast/ui/base.css';
+import '@thaumic-cast/ui/motion.css';
+import '@thaumic-cast/ui/utilities.css';
 import { render } from 'preact';
+import { AnnouncerProvider } from '@thaumic-cast/ui';
 import { invoke } from '@tauri-apps/api/core';
 import { createLogger } from '@thaumic-cast/shared';
 
@@ -23,7 +28,12 @@ const log = createLogger('Main');
 initTheme();
 initLanguage();
 
-render(<App />, document.getElementById('app')!);
+render(
+  <AnnouncerProvider>
+    <App />
+  </AnnouncerProvider>,
+  document.getElementById('app')!,
+);
 
 // Show the window after frontend is initialized.
 // Window starts hidden to prevent flash of unstyled content.

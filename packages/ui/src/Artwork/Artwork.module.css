@@ -1,0 +1,66 @@
+@layer components {
+  /* A-art. Keeps aspect-ratio 1 over its placeholder (F-shift). */
+  .artwork {
+    --art-size: var(--size-art-md);
+    --art-radius: var(--radius-control);
+    --art-bg: var(--container-high);
+    --art-fg: var(--on-surface-variant);
+    --art-glyph: var(--icon-md);
+
+    position: relative;
+    isolation: isolate;
+    flex: none;
+    display: inline-grid;
+    place-items: center;
+    inline-size: var(--art-size);
+    aspect-ratio: 1;
+    overflow: hidden;
+    border-radius: var(--art-radius);
+    background: var(--art-bg);
+    color: var(--art-fg);
+  }
+
+  .sm {
+    --art-size: var(--icon-sm);
+    --art-radius: var(--radius-pressed);
+  }
+
+  .lg {
+    --art-size: var(--size-art-lg);
+    --art-glyph: var(--icon-lg);
+  }
+
+  .favicon {
+    --art-radius: var(--radius-pressed);
+    --art-bg: transparent;
+  }
+
+  .disc {
+    --art-radius: var(--radius-full);
+  }
+
+  .glyph {
+    grid-area: 1 / 1;
+    display: inline-grid;
+    place-items: center;
+  }
+
+  .glyph > svg {
+    --icon-size: var(--art-glyph);
+  }
+
+  .picture {
+    position: absolute;
+    inset: 0;
+    z-index: var(--z-raised);
+    inline-size: 100%;
+    block-size: 100%;
+    object-fit: cover;
+    opacity: 0;
+    transition: opacity var(--dur-effects) var(--ease-effects);
+  }
+
+  .picture[data-loaded] {
+    opacity: 1;
+  }
+}

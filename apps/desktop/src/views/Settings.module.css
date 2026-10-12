@@ -1,143 +1,45 @@
-.settings {
-  padding-block: var(--space-xl);
-  padding-inline: var(--space-xl);
-  max-inline-size: 38rem;
-}
+/* The Settings view, until Phase 4 rebuilds it with SettingsSections in the DesktopShell. */
+@layer app {
+  .settings {
+    max-inline-size: var(--page-max);
+    padding: var(--space-7);
+  }
 
-.page-title {
-  margin: 0;
-  margin-block-end: var(--space-lg);
-}
+  .page-title {
+    margin-block: 0 var(--space-6);
+    font-size: var(--text-8);
+    line-height: var(--leading-8);
+    letter-spacing: var(--tracking-8);
+  }
 
-.section {
-  margin-block-end: var(--space-lg);
-}
+  .section {
+    margin-block-end: var(--space-5);
+  }
 
-.section-content {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-lg);
-}
+  .section-content {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-5);
+  }
 
-.toggle {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  cursor: pointer;
-}
+  .field {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+  }
 
-.toggle-info {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-xs);
-}
+  .field-label {
+    color: var(--on-surface);
+    font-size: var(--text-4-fixed);
+    font-weight: var(--weight-strong);
+    line-height: var(--leading-4);
+  }
 
-.toggle-label {
-  margin: 0;
-  font-size: 0.85rem;
-  font-weight: 600;
-}
-
-.toggle-description {
-  margin: 0;
-  font-size: 0.85rem;
-  color: var(--color-text-muted);
-}
-
-.checkbox {
-  inline-size: 1.25rem;
-  block-size: 1.25rem;
-  cursor: pointer;
-  accent-color: var(--color-primary);
-}
-
-.field {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-sm);
-}
-
-.field-label {
-  font-size: 0.9rem;
-  color: var(--color-text-muted);
-}
-
-.select {
-  padding-block: var(--space-sm);
-  padding-inline: var(--space-md);
-  border-radius: var(--radius-sm);
-  border: 1px solid var(--input-border);
-  background-color: var(--input-bg);
-  color: var(--input-text);
-  font-size: 1rem;
-  cursor: pointer;
-}
-
-.select:focus {
-  outline: 2px solid var(--input-border-focus);
-  outline-offset: 2px;
-}
-
-.hint {
-  font-size: 0.85rem;
-  color: var(--color-text-muted);
-}
-
-/* Speaker list styles */
-.speaker-list {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-xs);
-}
-
-.speaker-item {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding-block: var(--space-sm);
-  padding-inline: var(--space-md);
-  background: var(--color-surface-inset);
-  border-radius: var(--radius-sm);
-  font-family: var(--font-mono);
-  font-size: 0.9rem;
-}
-
-.remove-button {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: var(--space-xs);
-  border: none;
-  background: transparent;
-  color: var(--color-text-muted);
-  cursor: pointer;
-  border-radius: var(--radius-sm);
-  transition:
-    background-color 0.15s,
-    color 0.15s;
-}
-
-.remove-button:hover {
-  background: var(--color-error);
-  color: oklch(100% 0 0);
-}
-
-.remove-button:focus-visible {
-  outline: 2px solid var(--color-focus);
-  outline-offset: 2px;
-}
-
-.remove-button:disabled {
-  opacity: var(--button-disabled-opacity);
-  cursor: not-allowed;
-}
-
-.empty-list {
-  margin: 0;
-  color: var(--color-text-muted);
-  font-size: 0.9rem;
-  font-style: italic;
+  .toggle-description,
+  .hint {
+    margin: 0;
+    color: var(--on-surface-variant);
+    font-size: var(--text-3);
+    line-height: var(--leading-3);
+  }
 }

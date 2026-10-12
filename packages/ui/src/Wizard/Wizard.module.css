@@ -32,32 +32,6 @@
     align-items: center;
   }
 
-  .footer-button {
-    inline-size: auto;
-    min-inline-size: 6rem;
-  }
-
-  .skip-btn {
-    background: none;
-    border: none;
-    color: var(--color-text-muted);
-    cursor: pointer;
-    font-size: 0.875rem;
-    padding: var(--space-sm);
-    text-decoration: underline;
-    text-underline-offset: 2px;
-    transition: var(--transition-color);
-  }
-
-  .skip-btn:hover {
-    color: var(--color-text);
-  }
-
-  .skip-btn:focus-visible {
-    outline: 2px solid var(--color-focus);
-    outline-offset: 2px;
-  }
-
   /* Compact wizard for popups - uses grid for stable layout */
   .compact {
     display: grid;
@@ -112,19 +86,11 @@
   }
 
   .step-header {
-    text-align: center;
-  }
-
-  .step-icon {
-    display: inline-flex;
+    display: flex;
+    flex-direction: column;
     align-items: center;
-    justify-content: center;
-    inline-size: 4rem;
-    block-size: 4rem;
-    border-radius: 50%;
-    background: var(--color-surface-hover);
-    color: var(--color-primary);
-    margin-block-end: var(--space-md);
+    gap: var(--space-3);
+    text-align: center;
   }
 
   .step-title {
@@ -149,22 +115,5 @@
 
     /* Account for focus outline (2px + 2px offset) on interactive elements */
     padding-block-end: var(--space-xs);
-  }
-
-  .dot {
-    inline-size: 0.5rem;
-    block-size: 0.5rem;
-    border-radius: 50%;
-    background-color: var(--color-border);
-    transition: var(--transition-bg);
-  }
-
-  .dot-active {
-    background-color: var(--color-primary);
-    transform: scale(1.25);
-  }
-
-  .dot-completed {
-    background-color: var(--color-success);
   }
 }

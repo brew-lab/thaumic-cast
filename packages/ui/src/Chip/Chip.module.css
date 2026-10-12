@@ -1,0 +1,125 @@
+@layer components {
+  /*
+   * A-chip. --size-chip tall on --radius-control; the × is an --icon-lg square (24 px, so
+   * 2.5.8 holds on its own) with an ::after hit area to the desktop target. The chip never
+   * reshapes; only the × does, with the small bevel.
+   */
+  .chip {
+    --chip-bg: var(--surface);
+    --chip-fg: var(--on-surface);
+    --chip-edge: var(--outline);
+    --chip-shadow: none;
+
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-2);
+    block-size: var(--size-chip);
+    padding-inline: var(--space-4) var(--space-2);
+    border: var(--line-hair) solid var(--chip-edge);
+    border-radius: var(--radius-control);
+    background: var(--chip-bg);
+    color: var(--chip-fg);
+    box-shadow: var(--chip-shadow);
+    font-size: var(--text-3);
+    line-height: var(--leading-3);
+  }
+
+  :where([data-density='desktop']) .chip {
+    font-size: var(--text-4-fixed);
+  }
+
+  .label {
+    white-space: nowrap;
+  }
+
+  .remove {
+    --chip-x-bg: transparent;
+    --chip-x-fg: var(--on-surface-variant);
+    --chip-x-radius: var(--radius-pressed);
+    --chip-x-fill: color-mix(in oklch, var(--chip-x-fg) var(--layer), var(--chip-x-bg));
+
+    position: relative;
+    flex: none;
+    display: inline-grid;
+    place-items: center;
+    inline-size: var(--icon-lg);
+    block-size: var(--icon-lg);
+    margin: 0;
+    padding: 0;
+    border: 0;
+    border-radius: var(--chip-x-radius);
+    background: var(--chip-x-fill);
+    color: var(--chip-x-fg);
+    cursor: pointer;
+    transition:
+      --layer var(--dur-effects) var(--ease-effects),
+      border-radius var(--dur-shape) var(--ease-effects),
+      scale var(--dur-spatial) var(--ease-spatial);
+  }
+
+  .remove::after {
+    content: '';
+    position: absolute;
+    inset: calc(min(0rem, (var(--icon-lg) - var(--target-min)) / 2));
+  }
+
+  /* The ring goes round the whole chip. */
+  .remove:focus-visible {
+    box-shadow: none;
+  }
+
+  .chip:is(:has(.remove:focus-visible), [data-force='focus']) {
+    --chip-shadow:
+      0 0 0 var(--line-bold) var(--ring-gap), 0 0 0 calc(2 * var(--line-bold)) var(--focus);
+
+    outline: var(--line-bold) solid transparent;
+  }
+
+  .remove:hover,
+  .chip[data-force='hover'] .remove {
+    --layer: var(--layer-hover);
+  }
+
+  .remove:focus-visible,
+  .chip[data-force='focus'] .remove {
+    --layer: var(--layer-focus);
+  }
+
+  .remove:active,
+  .chip[data-force='press'] .remove {
+    --layer: var(--layer-press);
+    --chip-x-radius: var(--radius-thumb-pressed);
+
+    scale: var(--press-icon);
+    transition-duration: var(--dur-fast);
+  }
+
+  @supports (corner-shape: bevel) {
+    .remove:not(:disabled):is(:hover, :focus-visible),
+    .chip:is([data-force='hover'], [data-force='focus']) .remove {
+      --chip-x-radius: var(--shape-bevel-small);
+
+      corner-shape: bevel;
+    }
+
+    .remove:active,
+    .chip[data-force='press'] .remove {
+      corner-shape: round;
+    }
+  }
+
+  /* Disabled, while removing: only the × is disabled; the words stay readable. */
+  .remove:disabled {
+    --chip-x-fg: color-mix(in oklch, var(--on-surface) var(--disabled-ink), transparent);
+    --layer: initial;
+
+    scale: 1;
+    cursor: not-allowed;
+  }
+
+  @media (forced-colors: active) {
+    .chip {
+      border-color: currentcolor;
+    }
+  }
+}
