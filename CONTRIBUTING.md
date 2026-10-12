@@ -138,7 +138,9 @@ When you change the wire format:
 
 ## Code Style
 
-- **Linting:** ESLint + Prettier + Stylelint run automatically on commit.
+- **Linting:** ESLint + Prettier + Stylelint run automatically on commit. `bun run lint` (and CI)
+  also runs the design-system check, `scripts/check-ds.ts`; the design-system rules are errors
+  (see `packages/ui/DESIGN.md` §10).
 - **Documentation:** JSDoc comments are required for all exported functions.
 - **CSS:** Use modern CSS with logical properties (e.g., `margin-inline` not `margin-left`).
 

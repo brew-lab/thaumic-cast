@@ -84,6 +84,9 @@ jobs:
       - name: Run Stylelint
         run: bun run stylelint '**/*.css'
 
+      - name: Run the design-system check
+        run: bun scripts/check-ds.ts
+
       - name: Check formatting
         run: bun run prettier --check .
 
