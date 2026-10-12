@@ -26,6 +26,7 @@ use crate::protocol_constants::{
     SUPPORTED_SAMPLE_RATES, WS_HEARTBEAT_CHECK_INTERVAL_SECS, WS_HEARTBEAT_TIMEOUT_SECS,
 };
 use crate::services::start_volume::StartVolumeRequest;
+use crate::services::stream_coordinator::{RoomsRequest, StartLevels};
 use crate::services::{PlaybackSession, StreamCoordinator};
 use crate::stream::{AudioCodec, AudioFormat, StreamMetadata};
 
@@ -121,12 +122,24 @@ struct StartPlaybackRequest {
     /// Legacy single speaker IP (backward compatibility).
     #[serde(default)]
     speaker_ip: Option<String>,
+    /// The rooms to play as one Sonos group, as player UUIDs of room
+    /// primaries in the order chosen; `speaker_ips` then holds each room's own
+    /// IP in the same order. Absent from older clients, which take the
+    /// speaker paths.
+    #[serde(default)]
+    rooms: Option<Vec<String>>,
+    /// Names this request; echoed on its `PLAYBACK_RESULTS` or
+    /// `PLAYBACK_ERROR` so the client can tell it from a late reply to an
+    /// earlier one.
+    #[serde(default)]
+    call_id: Option<String>,
     /// Optional initial metadata to display on Sonos.
     /// If not provided, Sonos will show default "Browser Audio".
     #[serde(default)]
     metadata: Option<StreamMetadata>,
     /// Whether to use synchronized group playback (default: false).
-    /// When true, uses x-rincon protocol to sync multiple speakers.
+    /// When true, uses x-rincon protocol to sync multiple speakers. Read only
+    /// when `rooms` is absent.
     #[serde(default)]
     sync_speakers: bool,
     /// Whether the client has video sync enabled (gates latency monitoring).
@@ -326,12 +339,18 @@ struct ErrorPayload {
 #[serde(rename_all = "camelCase")]
 struct PlaybackErrorPayload {
     message: String,
+    /// The `callId` of the `START_PLAYBACK` this answers, when it had one.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    call_id: Option<String>,
 }
 
 /// Payload for multi-group playback results.
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct PlaybackResultsPayload {
+    /// The `callId` of the `START_PLAYBACK` this answers, when it had one.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    call_id: Option<String>,
     /// Per-speaker results (success/failure for each).
     results: Vec<crate::services::PlaybackResult>,
 }
@@ -438,8 +457,9 @@ const BEST_EFFORT_SOAP_ACTION_WORST_CASE_SECS: u64 = SOAP_TIMEOUT_SECS;
 ///   best-effort actions first — `leave_group` when promoting a slave, `stop`
 ///   when the speaker is switching away from another stream — then `play_uri`,
 ///   which is two retried actions (`SetAVTransportURI` + `Play`);
-/// - slave of a group start (`join_slave_to_coordinator`): `leave_group` when
-///   the slave is re-routed, then `join_group`, also two retried actions.
+/// - room joining a cast's group (`join_room`): `leave_group` when the room
+///   leaves a group first, its start level, then `join_group`, also two
+///   retried actions.
 ///
 /// Speakers within a phase run concurrently (`join_all`), so the bound covers a
 /// whole slave phase as well. A synchronized multi-speaker start still runs the
@@ -1697,16 +1717,22 @@ async fn handle_start_playback(
         return WsOutgoing::PlaybackError {
             payload: PlaybackErrorPayload {
                 message: "No active stream on this connection".into(),
+                call_id: payload.call_id,
             },
         };
     };
 
     let speaker_ips = payload.get_speaker_ips();
+    let names_rooms = payload
+        .rooms
+        .as_ref()
+        .is_some_and(|rooms| !rooms.is_empty());
 
-    if speaker_ips.is_empty() {
+    if speaker_ips.is_empty() && !names_rooms {
         return WsOutgoing::PlaybackError {
             payload: PlaybackErrorPayload {
                 message: "No speaker IPs provided".into(),
+                call_id: payload.call_id,
             },
         };
     }
@@ -1720,26 +1746,49 @@ async fn handle_start_playback(
             .update_metadata(&stream_id, metadata.clone());
     }
 
-    // Set each room's start level before anything is joined or played.
-    if let Some(ref start_volume) = payload.start_volume {
+    let artwork_url = state.artwork_metadata_url();
+    let rooms = payload.rooms.as_deref().filter(|rooms| !rooms.is_empty());
+    let results = if let Some(rooms) = rooms {
+        // One Sonos group of exactly these rooms; each room's start level is
+        // set just before it plays or joins.
+        let start_levels = payload.start_volume.as_ref().map(|request| StartLevels {
+            volume: state.sonos.as_ref(),
+            request,
+        });
         state
             .stream_coordinator
-            .apply_start_volume(state.sonos.as_ref(), &stream_id, &speaker_ips, start_volume)
-            .await;
-    }
+            .start_rooms(
+                RoomsRequest {
+                    stream_id: &stream_id,
+                    rooms,
+                    room_ips: &speaker_ips,
+                    metadata: payload.metadata.as_ref(),
+                    artwork_url: &artwork_url,
+                },
+                start_levels,
+            )
+            .await
+    } else {
+        // Set each room's start level before anything is joined or played.
+        if let Some(ref start_volume) = payload.start_volume {
+            state
+                .stream_coordinator
+                .apply_start_volume(state.sonos.as_ref(), &stream_id, &speaker_ips, start_volume)
+                .await;
+        }
 
-    // Start playback on all speakers (multi-group support)
-    let artwork_url = state.artwork_metadata_url();
-    let results = state
-        .stream_coordinator
-        .start_playback_multi(
-            &speaker_ips,
-            &stream_id,
-            payload.metadata.as_ref(),
-            &artwork_url,
-            payload.sync_speakers,
-        )
-        .await;
+        // Start playback on all speakers (multi-group support)
+        state
+            .stream_coordinator
+            .start_playback_multi(
+                &speaker_ips,
+                &stream_id,
+                payload.metadata.as_ref(),
+                &artwork_url,
+                payload.sync_speakers,
+            )
+            .await
+    };
 
     // Which speakers are polled is decided by who fetches the stream (see
     // `api/stream.rs`), and whether a plain cast is polled at all by the
@@ -1760,7 +1809,10 @@ async fn handle_start_playback(
 
     // Reply with PLAYBACK_RESULTS carrying per-speaker outcomes
     WsOutgoing::PlaybackResults {
-        payload: PlaybackResultsPayload { results },
+        payload: PlaybackResultsPayload {
+            call_id: payload.call_id,
+            results,
+        },
     }
 }
 
@@ -2324,7 +2376,7 @@ mod tests {
             role: GroupRole::Coordinator,
             coordinator_ip: None,
             coordinator_uuid: None,
-            original_coordinator_uuid: None,
+            old_group: None,
         }
     }
 
@@ -2722,9 +2774,36 @@ mod tests {
             serde_json::from_value(message["payload"].clone()).expect("valid START_PLAYBACK");
 
         assert_eq!(request.get_speaker_ips(), ["192.168.1.10", "192.168.1.11"]);
+        assert_eq!(
+            request.rooms.as_deref(),
+            Some(
+                &[
+                    "RINCON_000E58A0B1C2D01400".to_string(),
+                    "RINCON_000E58A0B1C3D01400".to_string()
+                ][..]
+            )
+        );
+        assert_eq!(request.call_id.as_deref(), Some("4f1c2a:2"));
         let start = request.start_volume.expect("a start volume");
         assert_eq!(start.limit, Some(30));
         assert_eq!(start.rooms.get("RINCON_000E58A0B1C2D01400"), Some(&45));
+    }
+
+    #[test]
+    fn the_protocol_legacy_start_playback_fixture_still_parses() {
+        // packages/protocol parses the same file: the request an older
+        // extension sends, with no rooms and the sync flag on.
+        const LEGACY: &str = include_str!("../../../protocol/fixtures/start-playback-legacy.json");
+        let message: serde_json::Value =
+            serde_json::from_str(LEGACY).expect("start-playback-legacy.json is JSON");
+        let request: StartPlaybackRequest =
+            serde_json::from_value(message["payload"].clone()).expect("valid START_PLAYBACK");
+
+        assert_eq!(request.get_speaker_ips(), ["192.168.1.10", "192.168.1.11"]);
+        assert!(request.sync_speakers);
+        assert!(request.rooms.is_none());
+        assert!(request.call_id.is_none());
+        assert!(request.start_volume.is_none());
     }
 
     #[test]
@@ -2764,6 +2843,161 @@ mod tests {
         assert_eq!(describe_bitrate(Some(192)), "192kbps");
         assert_eq!(describe_bitrate(Some(0)), "lossless");
         assert_eq!(describe_bitrate(None), "unstated");
+    }
+
+    /// The `PLAYBACK_RESULTS` message as the protocol package's schema accepts it.
+    const PROTOCOL_PLAYBACK_RESULTS: &str =
+        include_str!("../../../protocol/fixtures/playback-results.json");
+
+    #[test]
+    fn playback_results_echo_the_call_id_as_the_protocol_reads_it() {
+        let expected: serde_json::Value =
+            serde_json::from_str(PROTOCOL_PLAYBACK_RESULTS).expect("playback-results.json is JSON");
+        let results = vec![
+            crate::services::PlaybackResult {
+                speaker_ip: "192.168.1.10".to_string(),
+                success: true,
+                stream_url: Some("http://192.168.1.2:49400/stream/4f1c2a/live".to_string()),
+                error: None,
+            },
+            crate::services::PlaybackResult {
+                speaker_ip: "192.168.1.11".to_string(),
+                success: false,
+                stream_url: None,
+                error: Some("Failed to join group: timed out".to_string()),
+            },
+        ];
+        let reply = WsOutgoing::PlaybackResults {
+            payload: PlaybackResultsPayload {
+                call_id: Some("4f1c2a:2".to_string()),
+                results,
+            },
+        };
+
+        let sent: serde_json::Value = serde_json::from_str(&json(&reply)).unwrap();
+
+        assert_eq!(sent, expected);
+    }
+
+    /// Proves: a START_PLAYBACK with `rooms` and a `callId`, handled as the
+    /// control worker does against the fake household, casts the rooms as
+    /// one Sonos group and echoes the call id; a refused one echoes it too.
+    #[tokio::test]
+    async fn start_playback_with_rooms_regroups_and_echoes_the_call_id() {
+        use crate::testing::harness::{within, TestSystem};
+
+        within("ws start playback", async {
+            let sys = TestSystem::builder()
+                .speakers(["Kitchen", "Patio", "Office"])
+                .groups(&[&["Kitchen", "Patio"]])
+                .build()
+                .await;
+            let stream = sys.new_stream();
+            let payload: StartPlaybackRequest = serde_json::from_value(serde_json::json!({
+                "speakerIps": [sys.ip("Office"), sys.ip("Patio")],
+                "rooms": [sys.uuid("Office"), sys.uuid("Patio")],
+                "callId": format!("{stream}:1"),
+                "startVolume": { "limit": 30 }
+            }))
+            .unwrap();
+
+            let reply =
+                handle_start_playback(&sys.app_state, Some(stream.clone()), false, payload).await;
+
+            let WsOutgoing::PlaybackResults { payload } = reply else {
+                panic!("expected PLAYBACK_RESULTS");
+            };
+            assert_eq!(payload.call_id, Some(format!("{stream}:1")));
+            assert!(
+                payload.results.iter().all(|r| r.success),
+                "{:?}",
+                payload.results
+            );
+            assert_eq!(sys.fake.coordinator_name_of("Patio"), "Office");
+            assert_eq!(sys.fake.coordinator_name_of("Kitchen"), "Kitchen");
+
+            let refused: StartPlaybackRequest =
+                serde_json::from_value(serde_json::json!({ "callId": "x:2" })).unwrap();
+            let reply = handle_start_playback(&sys.app_state, Some(stream), false, refused).await;
+            let WsOutgoing::PlaybackError { payload } = reply else {
+                panic!("expected PLAYBACK_ERROR");
+            };
+            assert_eq!(payload.call_id.as_deref(), Some("x:2"));
+        })
+        .await;
+    }
+
+    /// Proves: an older extension's synced START_PLAYBACK, which names group
+    /// coordinators and no rooms, regroups their whole groups through the
+    /// handler but answers only for the speakers it named; removing the named
+    /// coordinator leaves the room grouped with it in its group.
+    #[tokio::test]
+    async fn an_older_synced_start_answers_only_for_the_speakers_it_named() {
+        use crate::testing::harness::{within, TestSystem};
+
+        within("ws legacy start", async {
+            let sys = TestSystem::builder()
+                .speakers(["Kitchen", "Office", "Den"])
+                .groups(&[&["Office", "Den"]])
+                .build()
+                .await;
+            let stream = sys.new_stream();
+            let payload: StartPlaybackRequest = serde_json::from_value(serde_json::json!({
+                "speakerIps": [sys.ip("Kitchen"), sys.ip("Office")],
+                "syncSpeakers": true
+            }))
+            .unwrap();
+
+            let reply =
+                handle_start_playback(&sys.app_state, Some(stream.clone()), false, payload).await;
+
+            let WsOutgoing::PlaybackResults { payload } = reply else {
+                panic!("expected PLAYBACK_RESULTS");
+            };
+            assert_eq!(payload.call_id, None);
+            let mut answered: Vec<String> = payload
+                .results
+                .iter()
+                .map(|r| r.speaker_ip.clone())
+                .collect();
+            answered.sort();
+            let mut named = vec![sys.ip("Kitchen"), sys.ip("Office")];
+            named.sort();
+            assert_eq!(answered, named);
+            assert!(payload.results.iter().all(|r| r.success));
+            assert_eq!(sys.fake.coordinator_name_of("Kitchen"), "Office");
+            assert_eq!(sys.fake.coordinator_name_of("Den"), "Office");
+
+            sys.coordinator()
+                .stop_playback_speaker(&stream, &sys.ip("Office"), None)
+                .await;
+            assert_eq!(sys.fake.coordinator_name_of("Den"), "Office");
+            assert!(sys.session(&stream, "Den").is_none());
+            assert!(sys.session(&stream, "Kitchen").is_some());
+        })
+        .await;
+    }
+
+    #[test]
+    fn replies_to_a_request_without_a_call_id_carry_none() {
+        let reply = WsOutgoing::PlaybackResults {
+            payload: PlaybackResultsPayload {
+                call_id: None,
+                results: Vec::new(),
+            },
+        };
+        let sent: serde_json::Value = serde_json::from_str(&json(&reply)).unwrap();
+        assert!(sent["payload"].get("callId").is_none(), "{sent}");
+
+        let error = WsOutgoing::PlaybackError {
+            payload: PlaybackErrorPayload {
+                message: "No speaker IPs provided".into(),
+                call_id: Some("abc:1".into()),
+            },
+        };
+        let sent: serde_json::Value = serde_json::from_str(&json(&error)).unwrap();
+        assert_eq!(sent["type"], "PLAYBACK_ERROR");
+        assert_eq!(sent["payload"]["callId"], "abc:1");
     }
 
     #[test]

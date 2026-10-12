@@ -2,6 +2,7 @@ import { useEffect } from 'preact/hooks';
 import { WizardStep, DescriptionList, EmptyState, Notice } from '@thaumic-cast/ui';
 import { useTranslation } from 'react-i18next';
 import { useSonosState } from '../../hooks/useSonosState';
+import { useRooms } from '../../hooks/useRooms';
 
 interface SpeakerStepProps {
   /** Callback when speakers are found */
@@ -10,7 +11,8 @@ interface SpeakerStepProps {
 
 /**
  * Speaker discovery confirmation step.
- * Shows speakers discovered via the desktop app.
+ * Lists the rooms the companion found, one line each, as the room picker
+ * names them: a Sonos group's rooms are not folded into its name.
  *
  * @param props - Component props
  * @param props.onSpeakersFound
@@ -18,11 +20,12 @@ interface SpeakerStepProps {
  */
 export function SpeakerStep({ onSpeakersFound }: SpeakerStepProps): preact.JSX.Element {
   const { t } = useTranslation();
-  const { speakerGroups, loading } = useSonosState();
+  const { state, loading } = useSonosState();
+  const rooms = useRooms(state);
 
   useEffect(() => {
-    onSpeakersFound(!speakerGroups.isEmpty);
-  }, [speakerGroups.size, onSpeakersFound]);
+    onSpeakersFound(rooms.length > 0);
+  }, [rooms.length, onSpeakersFound]);
 
   return (
     <WizardStep
@@ -32,7 +35,7 @@ export function SpeakerStep({ onSpeakersFound }: SpeakerStepProps): preact.JSX.E
     >
       {loading ? (
         <EmptyState kind="searching" body={t('onboarding.speakers.loading')} />
-      ) : !speakerGroups.isEmpty ? (
+      ) : rooms.length > 0 ? (
         // The found rooms are checklist lines under the count, as on the desktop.
         <DescriptionList
           kind="checklist"
@@ -40,12 +43,12 @@ export function SpeakerStep({ onSpeakersFound }: SpeakerStepProps): preact.JSX.E
             {
               key: 'status',
               state: 'connected',
-              text: t('onboarding.speakers.found', { count: speakerGroups.size }),
+              text: t('onboarding.speakers.found', { count: rooms.length }),
             },
-            ...[...speakerGroups].map((group) => ({
-              key: group.id,
+            ...rooms.map((room) => ({
+              key: room.id,
               state: 'connected' as const,
-              text: group.isMultiSpeaker ? `${group.name} +${group.size - 1}` : group.name,
+              text: room.name,
             })),
           ]}
         />

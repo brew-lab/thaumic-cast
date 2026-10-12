@@ -25,6 +25,7 @@ use crate::services::speaker_monitor::GenaTransportView;
 use crate::services::{DiscoveryService, SpeakerMonitor, StreamCoordinator};
 use crate::sonos::gena::GenaSubscriptionManager;
 use crate::sonos::subscription_arbiter::SubscriptionArbiter;
+use crate::sonos::traits::{SonosTopology, SonosVolumeControl};
 use crate::sonos::utils::SONOS_PORT;
 use crate::sonos::{SonosClient, SonosClientImpl, SonosPlayback, SonosTopologyClient};
 use crate::state::{Config, SonosState};
@@ -270,6 +271,8 @@ pub(crate) fn bootstrap_services_with_speaker_port(
         Arc::clone(&arbiter),
     );
     stream_coordinator.set_topology_refresh(Arc::clone(&refresh_notify));
+    stream_coordinator.set_topology_source(Arc::clone(&sonos_impl) as Arc<dyn SonosTopology>);
+    stream_coordinator.set_volume_source(Arc::clone(&sonos_impl) as Arc<dyn SonosVolumeControl>);
     stream_coordinator.set_control_runtime(runtime_handle);
     let stream_coordinator = Arc::new(stream_coordinator);
 

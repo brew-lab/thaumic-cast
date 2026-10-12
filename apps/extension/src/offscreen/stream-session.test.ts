@@ -100,7 +100,9 @@ describe('StreamSession: a rate stop before STREAM_READY', () => {
   it('should fail startPlayback with the keyed error after the rate stop', async () => {
     worker.emit({ type: 'CAPTURE_RATE_ERROR', reason: 'pcm_rate_changed', params: RATE_PARAMS });
 
-    const err = await session.startPlayback(['192.168.1.20']).catch((e: unknown) => e);
+    const err = await session
+      .startPlayback({ speakerIps: ['192.168.1.20'] })
+      .catch((e: unknown) => e);
     expect(err).toBeInstanceOf(KeyedError);
     expect(errorParamsOf(err)).toEqual(RATE_PARAMS);
   });
@@ -140,12 +142,21 @@ describe('StreamSession: overlapping playback starts', () => {
       .filter((msg) => msg.type === 'START_PLAYBACK')
       .map((msg) => (msg as unknown as { speakerIps: string[] }).speakerIps);
 
-  const results = (ip: string, success: boolean): WorkerOutboundMessage =>
-    ({ type: 'PLAYBACK_RESULTS', results: [{ speakerIp: ip, success }] }) as WorkerOutboundMessage;
+  const results = (ip: string, success: boolean, callId?: string): WorkerOutboundMessage =>
+    ({
+      type: 'PLAYBACK_RESULTS',
+      callId,
+      results: [{ speakerIp: ip, success }],
+    }) as WorkerOutboundMessage;
+
+  const callIds = (): (string | undefined)[] =>
+    worker.posted
+      .filter((msg) => msg.type === 'START_PLAYBACK')
+      .map((msg) => (msg as unknown as { callId?: string }).callId);
 
   it('should send a second start only after the first has its results, and give each its own', async () => {
-    const first = session.startPlayback(['10.0.0.1']);
-    const second = session.startPlayback(['10.0.0.2']);
+    const first = session.startPlayback({ speakerIps: ['10.0.0.1'] });
+    const second = session.startPlayback({ speakerIps: ['10.0.0.2'] });
     await Promise.resolve();
     expect(starts()).toEqual([['10.0.0.1']]);
 
@@ -159,21 +170,21 @@ describe('StreamSession: overlapping playback starts', () => {
   });
 
   it("should not let an earlier call's timer drop a later call's results", async () => {
-    const first = session.startPlayback(['10.0.0.1'], undefined, false, false, undefined, 20);
+    const first = session.startPlayback({ speakerIps: ['10.0.0.1'] }, 20);
     await Promise.resolve();
     worker.emit(results('10.0.0.1', true));
     await first;
 
     // The first call's 20 ms timer would have run out by now; the add is still waiting.
-    const add = session.startPlayback(['10.0.0.2'], undefined, false, false, undefined, 1000);
+    const add = session.startPlayback({ speakerIps: ['10.0.0.2'] }, 1000);
     await new Promise((resolve) => setTimeout(resolve, 40));
     worker.emit(results('10.0.0.2', true));
     expect(await add).toEqual([{ speakerIp: '10.0.0.2', success: true }]);
   });
 
   it('should start the next call after one times out', async () => {
-    const first = session.startPlayback(['10.0.0.1'], undefined, false, false, undefined, 10);
-    const second = session.startPlayback(['10.0.0.2'], undefined, false, false, undefined, 1000);
+    const first = session.startPlayback({ speakerIps: ['10.0.0.1'] }, 10);
+    const second = session.startPlayback({ speakerIps: ['10.0.0.2'] }, 1000);
     expect(await first.catch((e: Error) => e.message)).toBe(
       'Timeout waiting for playback to start',
     );
@@ -183,12 +194,52 @@ describe('StreamSession: overlapping playback starts', () => {
   });
 
   it("should ignore a timed-out call's late results instead of handing them to the next", async () => {
-    const first = session.startPlayback(['10.0.0.1'], undefined, false, false, undefined, 10);
-    const second = session.startPlayback(['10.0.0.2'], undefined, false, false, undefined, 1000);
+    const first = session.startPlayback({ speakerIps: ['10.0.0.1'] }, 10);
+    const second = session.startPlayback({ speakerIps: ['10.0.0.2'] }, 1000);
     await first.catch(() => undefined);
     await Promise.resolve();
     worker.emit(results('10.0.0.1', true));
     worker.emit(results('10.0.0.2', false));
     expect(await second).toEqual([{ speakerIp: '10.0.0.2', success: false }]);
+  });
+
+  it('should name each call after its stream, counting up', async () => {
+    const first = session.startPlayback({ speakerIps: ['10.0.0.1'] });
+    await Promise.resolve();
+    worker.emit(results('10.0.0.1', true, 'stream-1:1'));
+    await first;
+    const second = session.startPlayback({ speakerIps: ['10.0.0.1'] });
+    await Promise.resolve();
+    expect(callIds()).toEqual(['stream-1:1', 'stream-1:2']);
+    worker.emit(results('10.0.0.1', true, 'stream-1:2'));
+    await second;
+  });
+
+  it("should ignore a late reply for the same speaker that echoes an earlier call's id", async () => {
+    // Try again on the same room: the speaker filter alone could not tell the replies apart.
+    const first = session.startPlayback({ speakerIps: ['10.0.0.1'] }, 10);
+    const retry = session.startPlayback({ speakerIps: ['10.0.0.1'] }, 1000);
+    await first.catch(() => undefined);
+    await Promise.resolve();
+    worker.emit(results('10.0.0.1', false, 'stream-1:1'));
+    worker.emit(results('10.0.0.1', true, 'stream-1:2'));
+    expect(await retry).toEqual([{ speakerIp: '10.0.0.1', success: true }]);
+  });
+
+  it("should ignore a late error that echoes an earlier call's id", async () => {
+    const first = session.startPlayback({ speakerIps: ['10.0.0.1'] }, 10);
+    const retry = session.startPlayback({ speakerIps: ['10.0.0.1'] }, 1000);
+    await first.catch(() => undefined);
+    await Promise.resolve();
+    worker.emit({ type: 'PLAYBACK_ERROR', message: 'late', callId: 'stream-1:1' });
+    worker.emit(results('10.0.0.1', true, 'stream-1:2'));
+    expect(await retry).toEqual([{ speakerIp: '10.0.0.1', success: true }]);
+  });
+
+  it("should take an error with no call id as the waiting call's, as from an older companion", async () => {
+    const call = session.startPlayback({ speakerIps: ['10.0.0.1'] }, 1000);
+    await Promise.resolve();
+    worker.emit({ type: 'PLAYBACK_ERROR', message: 'Speaker refused' });
+    expect(await call.catch((e: Error) => e.message)).toBe('Speaker refused');
   });
 });

@@ -52,6 +52,59 @@ describe('WsMessageSchema', () => {
       limit: 30,
       rooms: { RINCON_000E58A0B1C2D01400: 45 },
     });
+    expect(parsed.payload.rooms).toEqual([
+      'RINCON_000E58A0B1C2D01400',
+      'RINCON_000E58A0B1C3D01400',
+    ]);
+    expect(parsed.payload.callId).toBe('4f1c2a:2');
+  });
+
+  it('should still accept the START_PLAYBACK an older extension sends', () => {
+    // A thaumic-core test parses this same file and takes the legacy path.
+    const fixture: unknown = JSON.parse(
+      readFileSync(join(import.meta.dir, '../fixtures/start-playback-legacy.json'), 'utf8'),
+    );
+
+    const parsed = WsMessageSchema.parse(fixture);
+
+    expect(parsed.type).toBe('START_PLAYBACK');
+    if (parsed.type !== 'START_PLAYBACK') return;
+    expect(parsed.payload.rooms).toBeUndefined();
+    expect(parsed.payload.callId).toBeUndefined();
+    expect(parsed.payload.syncSpeakers).toBe(true);
+  });
+
+  it('should accept the PLAYBACK_RESULTS core serialises, call id included', () => {
+    // A thaumic-core test builds its PLAYBACK_RESULTS and compares it with
+    // this same file.
+    const fixture: unknown = JSON.parse(
+      readFileSync(join(import.meta.dir, '../fixtures/playback-results.json'), 'utf8'),
+    );
+
+    const parsed = WsMessageSchema.parse(fixture);
+
+    expect(parsed).toEqual(fixture as WsMessage);
+    expect(parsed.type === 'PLAYBACK_RESULTS' && parsed.payload.callId).toBe('4f1c2a:2');
+  });
+
+  it('should accept replies without a call id from an older companion', () => {
+    const results = WsMessageSchema.parse({
+      type: 'PLAYBACK_RESULTS',
+      payload: { results: [{ speakerIp: SPEAKER, success: true }] },
+    });
+    const error = WsMessageSchema.parse({
+      type: 'PLAYBACK_ERROR',
+      payload: { message: 'No speaker IPs provided' },
+    });
+
+    expect(results.type === 'PLAYBACK_RESULTS' && results.payload.callId).toBeUndefined();
+    expect(error.type === 'PLAYBACK_ERROR' && error.payload.callId).toBeUndefined();
+    expect(
+      WsMessageSchema.safeParse({
+        type: 'PLAYBACK_ERROR',
+        payload: { message: 'x', callId: 'abc:1' },
+      }).success,
+    ).toBe(true);
   });
 
   it('should leave the start volume out of a START_PLAYBACK that has none', () => {
@@ -169,6 +222,14 @@ describe('HealthResponseSchema', () => {
       browserCapture: true,
       limits: { maxStreams: 10 },
     });
+  });
+
+  it('should read whether the companion regroups rooms', () => {
+    const body = { status: 'ok', service: 'thaumic-cast' };
+
+    expect(HealthResponseSchema.parse({ ...body, regroup: true }).regroup).toBe(true);
+    expect(HealthResponseSchema.parse(body).regroup).toBeUndefined();
+    expect(HealthResponseSchema.parse({ ...body, regroup: 'yes' }).regroup).toBeUndefined();
   });
 
   it('should leave the capability unknown for a companion that predates it', () => {

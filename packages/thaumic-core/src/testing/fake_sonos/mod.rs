@@ -21,8 +21,25 @@
 //! groups the SOAP traffic has built.
 //!
 //! * `SetAVTransportURI` with an `x-rincon:<uuid>` URI joins that
-//!   coordinator's group; `BecomeCoordinatorOfStandaloneGroup` leaves it.
-//!   Any other URI makes the speaker its own coordinator.
+//!   coordinator's group and takes on its transport state at once, with no
+//!   `Play` needed (hardware: in the group and PLAYING 0.2 s later). Each
+//!   such join is recorded with how many speakers followed the joining one
+//!   at that moment ([`FakeSonosSystem::joins`]). Any other URI makes a
+//!   member its own coordinator; a coordinator keeps its group.
+//! * `BecomeCoordinatorOfStandaloneGroup` leaves the group. When the speaker
+//!   coordinated others, the first remaining member (in speaker order) is
+//!   promoted: it keeps the group's URI and transport state, the rest follow
+//!   it, and a playing track is recorded as restarted from 0:00
+//!   ([`FakeSonosSystem::restarts`]), as hardware does. A promoted member
+//!   does not open a fetch of a stream its old coordinator was fetching.
+//! * A household can start pre-grouped ([`FakeSonosSystem::group`]), with
+//!   music from another source playing ([`FakeSonosSystem::play_music`]),
+//!   with home-theatre satellites bonded to a primary
+//!   ([`FakeSonosSystem::bond_satellite`]: listed as an invisible
+//!   `<Satellite>` of the primary, never part of any grouping), and can be
+//!   regrouped from outside, as the Sonos app would
+//!   ([`FakeSonosSystem::regroup_externally`],
+//!   [`FakeSonosSystem::make_standalone_externally`]).
 //! * `Play` on an `http://` or `x-rincon-mp3radio://` URI fetches the stream
 //!   from the speaker's own address, as hardware does, holding the connection
 //!   open and discarding the body until `Stop`, a new URI, or teardown. The
@@ -48,7 +65,7 @@
 //!   callback for AVTransport, RenderingControl, GroupRenderingControl and
 //!   ZoneGroupTopology, built from the current model.
 //!
-//! Not modelled: satellites and bridges, group volume propagation to members,
+//! Not modelled: bridges, group volume propagation to members,
 //! transport transitions over time (a speaker that plays a stream out never
 //! reports `STOPPED` by itself, and its position does not advance), the
 //! header-only fetch a Play:1 makes of a queued item the moment it is queued,
@@ -149,6 +166,30 @@ pub(crate) struct FetchRecord {
     pub local_ip: IpAddr,
     /// HTTP status received, or 0 if the connection failed.
     pub status: u16,
+}
+
+/// One `SetAVTransportURI x-rincon:` a fake speaker received.
+#[derive(Debug, Clone)]
+pub(crate) struct JoinRecord {
+    /// Room name of the speaker that was told to join.
+    pub speaker_name: String,
+    /// UUID of the coordinator it was told to join.
+    pub coordinator_uuid: String,
+    /// How many other speakers followed the joining speaker at that moment.
+    /// Anything above 0 is a coordinator joining with its members still
+    /// attached, which Sonos does not document.
+    pub followers: usize,
+}
+
+/// A group whose track restarted from 0:00 because its coordinator left.
+#[derive(Debug, Clone)]
+pub(crate) struct Restart {
+    /// Room name of the member promoted to coordinator.
+    pub promoted: String,
+    /// Room name of the coordinator that left.
+    pub left: String,
+    /// The URI that restarted.
+    pub uri: String,
 }
 
 /// A GENA subscription a fake speaker currently holds.
@@ -259,6 +300,17 @@ impl FakeSpeaker {
 
     pub fn muted(&self) -> bool {
         self.state.lock().mute
+    }
+
+    /// The level GroupRenderingControl reports for this speaker's group.
+    pub fn group_volume(&self) -> u8 {
+        self.state.lock().group_volume
+    }
+
+    /// Sets the level GroupRenderingControl reports, as a real coordinator
+    /// keeps it in step with its members.
+    pub fn set_group_volume(&self, volume: u8) {
+        self.state.lock().group_volume = volume;
     }
 
     /// Sets the speaker's own volume, as if someone turned it in the Sonos app.
@@ -413,12 +465,28 @@ impl FakeSpeaker {
             (SonosService::AVTransport, "SetAVTransportURI") => {
                 let uri = arg("CurrentURI").to_string();
                 self.abort_fetch();
-                let mut state = self.state.lock();
-                state.transport = TransportState::Stopped;
-                state.coordinator_uuid = match uri.strip_prefix("x-rincon:") {
-                    Some(coordinator) => coordinator.to_string(),
-                    None => self.uuid.clone(),
+                let joining = uri.strip_prefix("x-rincon:").map(str::to_string);
+                if let Some(coordinator) = &joining {
+                    let refused = (self.ip_string(), coordinator.clone());
+                    if system.refused_joins.lock().contains(&refused) {
+                        return Err(800);
+                    }
+                }
+                // A member that joins a group plays what the group plays.
+                let transport = match &joining {
+                    Some(coordinator) => {
+                        system.record_join(self, coordinator);
+                        system
+                            .speakers
+                            .iter()
+                            .find(|s| &s.uuid == coordinator && s.uuid != self.uuid)
+                            .map_or(TransportState::Stopped, |s| s.transport_state())
+                    }
+                    None => TransportState::Stopped,
                 };
+                let mut state = self.state.lock();
+                state.transport = transport;
+                state.coordinator_uuid = joining.unwrap_or_else(|| self.uuid.clone());
                 state.current_uri = uri;
                 state.next_uri.clear();
                 vec![]
@@ -448,12 +516,7 @@ impl FakeSpeaker {
                 vec![]
             }
             (SonosService::AVTransport, "BecomeCoordinatorOfStandaloneGroup") => {
-                self.abort_fetch();
-                let mut state = self.state.lock();
-                state.transport = TransportState::Stopped;
-                state.coordinator_uuid = self.uuid.clone();
-                state.current_uri.clear();
-                state.next_uri.clear();
+                system.leave_group(self);
                 vec![]
             }
             (SonosService::AVTransport, "GetPositionInfo") => {
@@ -562,6 +625,14 @@ pub(crate) struct FakeSonosSystem {
     notify_seq: AtomicUsize,
     gena_timeout_secs: AtomicU64,
     fetch_observer: Mutex<Option<FetchObserver>>,
+    /// Satellite UUID to the UUID of the primary it is bonded to.
+    satellites: Mutex<HashMap<String, String>>,
+    joins: Mutex<Vec<JoinRecord>>,
+    restarts: Mutex<Vec<Restart>>,
+    /// `(speaker IP, coordinator UUID)` joins that are refused with a fault.
+    refused_joins: Mutex<Vec<(String, String)>>,
+    /// UUIDs of speakers that have dropped out of the household's topology.
+    vanished: Mutex<std::collections::HashSet<String>>,
     /// Client used to push NOTIFYs to the recorded callback URLs.
     notifier: reqwest::Client,
     /// Holds the household's port on `127.0.0.1` so no other test is handed it.
@@ -656,6 +727,11 @@ impl FakeSonosSystem {
             notify_seq: AtomicUsize::new(0),
             gena_timeout_secs: AtomicU64::new(DEFAULT_GENA_TIMEOUT_SECS),
             fetch_observer: Mutex::new(None),
+            satellites: Mutex::new(HashMap::new()),
+            joins: Mutex::new(Vec::new()),
+            restarts: Mutex::new(Vec::new()),
+            refused_joins: Mutex::new(Vec::new()),
+            vanished: Mutex::new(std::collections::HashSet::new()),
             notifier: reqwest::Client::builder()
                 .no_proxy()
                 .build()
@@ -866,6 +942,9 @@ impl FakeSonosSystem {
 
     /// The household's groups as (coordinator, members) in speaker order,
     /// derived from which coordinator each speaker follows.
+    ///
+    /// Satellites are left out: they belong to their primary, not to a group
+    /// (see [`Self::satellites_of`]).
     pub fn zone_groups(&self) -> Vec<(Arc<FakeSpeaker>, Vec<Arc<FakeSpeaker>>)> {
         let coordinator_of = |speaker: &Arc<FakeSpeaker>| -> Arc<FakeSpeaker> {
             let followed = speaker.coordinator_uuid();
@@ -878,8 +957,15 @@ impl FakeSonosSystem {
                 .unwrap_or_else(|| Arc::clone(speaker))
         };
 
+        let satellites = self.satellites.lock().clone();
+        let vanished = self.vanished.lock().clone();
         let mut groups: Vec<(Arc<FakeSpeaker>, Vec<Arc<FakeSpeaker>>)> = Vec::new();
-        for speaker in &self.speakers {
+        for speaker in self
+            .speakers
+            .iter()
+            .filter(|speaker| !satellites.contains_key(&speaker.uuid))
+            .filter(|speaker| !vanished.contains(&speaker.uuid))
+        {
             let coordinator = coordinator_of(speaker);
             match groups
                 .iter_mut()
@@ -894,7 +980,207 @@ impl FakeSonosSystem {
 
     /// The `ZoneGroupState` document describing [`Self::zone_groups`].
     pub fn zone_group_state_xml(&self) -> String {
-        xml::zone_group_state(&self.zone_groups(), self.port)
+        let satellites = |primary: &FakeSpeaker| self.satellites_of(primary);
+        xml::zone_group_state(&self.zone_groups(), &satellites, self.port)
+    }
+
+    /// The satellites bonded to `primary`, in speaker order.
+    pub fn satellites_of(&self, primary: &FakeSpeaker) -> Vec<Arc<FakeSpeaker>> {
+        let satellites = self.satellites.lock();
+        self.speakers
+            .iter()
+            .filter(|s| satellites.get(&s.uuid) == Some(&primary.uuid))
+            .cloned()
+            .collect()
+    }
+
+    // ── Grouping ────────────────────────────────────────────────────────────
+
+    /// Groups `members` under `coordinator`, as the Sonos app would, without
+    /// a SOAP call or a log entry. Each member follows the coordinator and
+    /// takes on its transport state.
+    pub fn group(&self, coordinator: &str, members: &[&str]) {
+        let coordinator = self.speaker_named(coordinator);
+        let transport = coordinator.transport_state();
+        for name in members {
+            let member = self.speaker_named(name);
+            member.abort_fetch();
+            let mut state = member.state.lock();
+            state.coordinator_uuid = coordinator.uuid.clone();
+            state.current_uri = format!("x-rincon:{}", coordinator.uuid);
+            state.next_uri.clear();
+            state.transport = transport;
+        }
+    }
+
+    /// Moves `member` into `coordinator`'s group from outside, as someone in
+    /// the Sonos app would. A coordinator that is moved hands its own group
+    /// to its first member first. Push a topology NOTIFY or refresh for the
+    /// services to see it.
+    pub fn regroup_externally(&self, member: &str, coordinator: &str) {
+        self.leave_group(self.speaker_named(member));
+        self.group(coordinator, &[member]);
+    }
+
+    /// Makes `name` standalone from outside, as someone in the Sonos app
+    /// would, promoting a member if it coordinated others.
+    pub fn make_standalone_externally(&self, name: &str) {
+        self.leave_group(self.speaker_named(name));
+    }
+
+    /// Drops `name` out of the household's topology, as a speaker that was
+    /// unplugged: it is no longer listed in any group. Its HTTP server keeps
+    /// answering, so a test can still tell what it was sent.
+    pub fn vanish(&self, name: &str) {
+        self.leave_group(self.speaker_named(name));
+        self.vanished
+            .lock()
+            .insert(self.speaker_named(name).uuid.clone());
+    }
+
+    /// Bonds `satellite` to `primary` as a home-theatre satellite: it is
+    /// listed as an invisible `<Satellite>` of the primary and takes no part
+    /// in any grouping.
+    pub fn bond_satellite(&self, primary: &str, satellite: &str) {
+        let primary = self.speaker_named(primary);
+        let satellite = self.speaker_named(satellite);
+        satellite.state.lock().coordinator_uuid = primary.uuid.clone();
+        self.satellites
+            .lock()
+            .insert(satellite.uuid.clone(), primary.uuid.clone());
+    }
+
+    /// Plays `uri` (music from another source, not a stream) on the group
+    /// `coordinator` leads: the coordinator and every member report PLAYING.
+    pub fn play_music(&self, coordinator: &str, uri: &str) {
+        let coordinator = self.speaker_named(coordinator);
+        {
+            let mut state = coordinator.state.lock();
+            state.current_uri = uri.to_string();
+            state.transport = TransportState::Playing;
+        }
+        for member in self.followers_of(coordinator) {
+            member.state.lock().transport = TransportState::Playing;
+        }
+    }
+
+    /// The speakers other than `speaker` that follow it, satellites left out.
+    fn followers_of(&self, speaker: &FakeSpeaker) -> Vec<Arc<FakeSpeaker>> {
+        let satellites = self.satellites.lock().clone();
+        self.speakers
+            .iter()
+            .filter(|s| s.uuid != speaker.uuid && !satellites.contains_key(&s.uuid))
+            .filter(|s| s.coordinator_uuid() == speaker.uuid)
+            .cloned()
+            .collect()
+    }
+
+    /// `BecomeCoordinatorOfStandaloneGroup` on `speaker`: it stops and stands
+    /// alone. If it coordinated others, the first of them is promoted with
+    /// the group's URI and transport, the rest follow it, and a playing track
+    /// is recorded as restarted.
+    fn leave_group(&self, speaker: &FakeSpeaker) {
+        let followers = self.followers_of(speaker);
+        speaker.abort_fetch();
+        let (uri, transport) = {
+            let mut state = speaker.state.lock();
+            let was = (std::mem::take(&mut state.current_uri), state.transport);
+            state.transport = TransportState::Stopped;
+            state.coordinator_uuid = speaker.uuid.clone();
+            state.next_uri.clear();
+            was
+        };
+        let Some((promoted, rest)) = followers.split_first() else {
+            return;
+        };
+        {
+            let mut state = promoted.state.lock();
+            state.coordinator_uuid = promoted.uuid.clone();
+            state.current_uri = uri.clone();
+            state.next_uri.clear();
+            state.transport = transport;
+        }
+        for member in rest {
+            let mut state = member.state.lock();
+            state.coordinator_uuid = promoted.uuid.clone();
+            state.current_uri = format!("x-rincon:{}", promoted.uuid);
+        }
+        if transport == TransportState::Playing && !uri.is_empty() {
+            self.restarts.lock().push(Restart {
+                promoted: promoted.name.clone(),
+                left: speaker.name.clone(),
+                uri,
+            });
+        }
+    }
+
+    fn record_join(&self, speaker: &FakeSpeaker, coordinator_uuid: &str) {
+        let followers = self.followers_of(speaker).len();
+        self.joins.lock().push(JoinRecord {
+            speaker_name: speaker.name.clone(),
+            coordinator_uuid: coordinator_uuid.to_string(),
+            followers,
+        });
+    }
+
+    /// Makes `speaker` refuse, with a SOAP fault, every join to
+    /// `coordinator`'s group from now on. Its other URIs, and joins to any
+    /// other group, are accepted.
+    pub fn refuse_join(&self, speaker: &str, coordinator: &str) {
+        let speaker = self.speaker_named(speaker).ip_string();
+        let coordinator = self.speaker_named(coordinator).uuid.clone();
+        self.refused_joins.lock().push((speaker, coordinator));
+    }
+
+    /// Every `x-rincon:` join received so far, in arrival order.
+    pub fn joins(&self) -> Vec<JoinRecord> {
+        self.joins.lock().clone()
+    }
+
+    /// Panics if any speaker was told to join a group while others still
+    /// followed it: the regroup always makes a room standalone first.
+    pub fn assert_no_grouped_coordinator_joined(&self) {
+        let bad: Vec<JoinRecord> = self
+            .joins()
+            .into_iter()
+            .filter(|join| join.followers > 0)
+            .collect();
+        assert!(
+            bad.is_empty(),
+            "x-rincon sent to a coordinator with members: {bad:?}\n{}",
+            self.format_log()
+        );
+    }
+
+    /// Every group whose track restarted because its coordinator left.
+    pub fn restarts(&self) -> Vec<Restart> {
+        self.restarts.lock().clone()
+    }
+
+    /// Who the speaker in room `name` follows, by room name; its own name
+    /// when it coordinates.
+    pub fn coordinator_name_of(&self, name: &str) -> String {
+        let followed = self.speaker_named(name).coordinator_uuid();
+        self.speakers
+            .iter()
+            .find(|s| s.uuid == followed)
+            .map_or(followed, |s| s.name.clone())
+    }
+
+    /// The household's groups as sorted room names, each group sorted, for
+    /// comparing whole groupings in tests. Satellites are left out.
+    pub fn grouping(&self) -> Vec<Vec<String>> {
+        let mut groups: Vec<Vec<String>> = self
+            .zone_groups()
+            .into_iter()
+            .map(|(_, members)| {
+                let mut names: Vec<String> = members.iter().map(|m| m.name.clone()).collect();
+                names.sort();
+                names
+            })
+            .collect();
+        groups.sort();
+        groups
     }
 
     // ── GENA ────────────────────────────────────────────────────────────────

@@ -10,7 +10,6 @@ import {
 import { GITHUB_RELEASES_URL } from '@thaumic-cast/shared';
 import {
   Badge,
-  Button,
   CastBar,
   Notice,
   PopupHeader,
@@ -37,11 +36,13 @@ import type {
   StartCastMessage,
 } from '../lib/messages';
 import { autoStopMessageKey } from '../lib/auto-stop-message';
-import { planCast, playsTooLine } from '../lib/cast-plan';
+import { castBarLines, planCast } from '../lib/cast-plan';
 import { castBarFailure, placeNotices, type SlotPlan, type Words } from '../lib/popup-notices';
 import {
   addableRooms,
+  barReplaceHint,
   castRows,
+  inCast,
   masterTargets,
   replaceHint,
   scaleLevels,
@@ -55,13 +56,14 @@ import { noop } from '../lib/noop';
 import { versionMismatchActionKey } from '../lib/versionCheck';
 import { useChromeMessage } from './hooks/useChromeMessage';
 import { useCurrentTabState } from './hooks/useCurrentTabState';
+import { useActiveTabId } from './hooks/useActiveTabId';
 import { useActiveCasts } from './hooks/useActiveCasts';
 import { useSonosState } from './hooks/useSonosState';
 import { useConnectionStatus } from './hooks/useConnectionStatus';
 import { useOnboarding } from './hooks/useOnboarding';
 import { useCompanionVersion } from './hooks/useCompanionVersion';
 import { useCaptureHealth } from './hooks/useCaptureHealth';
-import { useSpeakerNotices } from './hooks/useSpeakerNotices';
+import { resolveSpeakerName, useSpeakerNotices } from './hooks/useSpeakerNotices';
 import { useIngestGaps } from './hooks/useIngestGaps';
 import { useRooms } from './hooks/useRooms';
 import { useRoomChoice } from './hooks/useRoomChoice';
@@ -72,6 +74,15 @@ import { useWords } from './hooks/useWords';
 import { Onboarding } from './components/Onboarding';
 import { CastTileView } from './components/CastTileView';
 import { AwayLine } from './components/AwayLine';
+
+/**
+ * Opens the options page at one of its cards.
+ * @param id - The card's id: `audio-advanced`, `about`
+ */
+function openOptionsAt(id: string): void {
+  const page = chrome.runtime.getManifest().options_page ?? 'src/options/index.html';
+  chrome.tabs.create({ url: chrome.runtime.getURL(`${page}#${id}`) });
+}
 
 /** The TabCard's id, so Stop can move focus to its heading (P-stop). */
 const TAB_CARD_ID = 'this-tab';
@@ -167,12 +178,15 @@ function MainPopup(): JSX.Element {
   // ── Sources ────────────────────────────────────────────────────────────
   const connection = useConnectionStatus();
   const connected = connection.phase === 'connected';
+  // The companion plays the chosen rooms as one Sonos group; an older one casts whole groups.
+  const regroup = connection.regroup === true;
   const { state: currentTab } = useCurrentTabState();
-  const { casts, stopCast, removeSpeaker } = useActiveCasts();
+  const activeTabId = useActiveTabId();
+  const { casts, loading: castsLoading, stopCast, removeSpeaker } = useActiveCasts();
   const castingIps = useMemo(() => casts.flatMap((cast) => cast.speakerIps), [casts]);
   const sonos = useSonosState();
   const rooms = useRooms(sonos.state);
-  const choice = useRoomChoice(rooms, sonos.state, castingIps);
+  const choice = useRoomChoice(rooms, sonos.state, castingIps, !castsLoading);
   const start = useStartLevels();
   const { limit, captureMode } = useCastSettings();
   const { companion, hasMismatch, showMismatchWarning, dismissMismatchWarning } =
@@ -217,6 +231,9 @@ function MainPopup(): JSX.Element {
   const seenCasts = useRef(new Map<number, ActiveCast>());
   const castsNow = useRef(casts);
   castsNow.current = casts;
+  // The rooms this popup has cast to, by IP: a room it takes from another cast is the user's
+  // own doing, seen on both tiles, so that cast's tile gets no "left this cast" note for it.
+  const tookIps = useRef(new Set<string>());
 
   const rowsOf = useCallback((cast: ActiveCast) => castRows(cast, rooms), [rooms]);
   const roomsNameOf = useCallback(
@@ -235,7 +252,7 @@ function MainPopup(): JSX.Element {
       const stopped = message as CastAutoStoppedMessage;
       if (stopped.reason === 'user_removed') return;
       const cast = previous.find((c) => c.tabId === stopped.tabId);
-      const speaker = sonos.speakerGroups.getGroupName(stopped.speakerIp);
+      const speaker = resolveSpeakerName(stopped.speakerIp, sonos.speakerGroups, previous);
       const name = cast ? roomsNameOf(cast) : speaker;
       setToast({
         text: `${t('cast_ended', { name })}. ${t(autoStopMessageKey(stopped.reason, false), {
@@ -246,9 +263,13 @@ function MainPopup(): JSX.Element {
     } else if (msg.type === 'SPEAKER_REMOVED') {
       const removed = message as SpeakerRemovedMessage;
       if (removed.reason === 'user_removed') return;
+      if (removed.reason === 'speaker_taken_over' && tookIps.current.has(removed.speakerIp)) {
+        return;
+      }
       const cast = previous.find((c) => c.tabId === removed.tabId);
       const row = cast && rowsOf(cast).find((r) => r.ip === removed.speakerIp);
-      const name = row?.name ?? sonos.speakerGroups.getGroupName(removed.speakerIp);
+      const name =
+        row?.name ?? resolveSpeakerName(removed.speakerIp, sonos.speakerGroups, previous);
       setNotes((prev) => ({
         ...prev,
         [removed.tabId]: [
@@ -289,12 +310,35 @@ function MainPopup(): JSX.Element {
     }
   }, [casts]);
 
+  // Add mode closes once no room is left to add (the last one joined, or every other room
+  // went into the cast another way): "Add a room" is gone with it.
+  const addingTo = casts.find((cast) => cast.tabId === addFor);
+  const nothingToAdd =
+    addingTo !== undefined &&
+    addableRooms(
+      addingTo,
+      rooms,
+      (joining[addingTo.tabId] ?? []).map((j) => j.roomId),
+    ).length === 0;
+  useEffect(() => {
+    if (nothingToAdd) setAddFor(null);
+  }, [nothingToAdd]);
+
   // ── Notices at their source ────────────────────────────────────────────
   const frameDrops = captureHealthAlert(isWindowsPlatform());
   const placed = placeNotices({
     connection,
     casts,
     speakers: speakerNotices.notices,
+    // A row whose target is in no room of the household has dropped off the network.
+    missing:
+      connected && rooms.length > 0
+        ? casts.flatMap((cast) =>
+            rowsOf(cast)
+              .filter((row) => row.roomIds.length === 0)
+              .map((row) => ({ speakerIp: row.ip, name: row.name })),
+          )
+        : [],
     gaps: ingestGaps.notices,
     capture:
       capture.showAlert && capture.tabId !== null
@@ -313,10 +357,10 @@ function MainPopup(): JSX.Element {
   const openSettings = useCallback(() => {
     chrome.runtime.openOptionsPage();
   }, []);
-  const openAudioSettings = useCallback(() => {
-    const page = chrome.runtime.getManifest().options_page ?? 'src/options/index.html';
-    chrome.tabs.create({ url: chrome.runtime.getURL(`${page}#audio-advanced`) });
-  }, []);
+  const openAudioSettings = useCallback(() => openOptionsAt('audio-advanced'), []);
+  // While an update exists, Settings is marked and opens on About, where the update's link is.
+  const updateAvailable = hasMismatch && connected;
+  const openAbout = useCallback(() => openOptionsAt('about'), []);
   const openReleases = useCallback(() => {
     chrome.tabs.create({ url: GITHUB_RELEASES_URL });
   }, []);
@@ -339,11 +383,14 @@ function MainPopup(): JSX.Element {
       label: sayWords(item.action.label),
       onClick: item.action.kind === 'open_settings' ? openSettings : openAudioSettings,
     },
-    onDismiss: () => {
-      if (item.source.kind === 'speaker') speakerNotices.dismiss(item.source.speakerIp);
-      else if (item.source.kind === 'gaps') ingestGaps.dismiss(item.source.streamId);
-      else capture.dismiss();
-    },
+    onDismiss:
+      item.source.kind === 'missing'
+        ? undefined
+        : () => {
+            if (item.source.kind === 'speaker') speakerNotices.dismiss(item.source.speakerIp);
+            else if (item.source.kind === 'gaps') ingestGaps.dismiss(item.source.streamId);
+            else capture.dismiss();
+          },
   });
 
   // ── Actions ────────────────────────────────────────────────────────────
@@ -391,6 +438,11 @@ function MainPopup(): JSX.Element {
         [tabId]: (prev[tabId] ?? []).filter((j) => !ids.includes(j.roomId)),
       }));
       const failed = adding.filter((room) => !joined.has(room.id));
+      const arrived = adding.filter((room) => joined.has(room.id));
+      // The row said "is joining…"; say that it joined (a failure says so on its row).
+      if (arrived.length > 0) {
+        say(t('rooms_joined', { count: arrived.length, names: list(arrived.map((r) => r.name)) }));
+      }
       if (failed.length > 0) {
         setJoinFailed((prev) => ({
           ...prev,
@@ -421,6 +473,7 @@ function MainPopup(): JSX.Element {
     setCastFailure(null);
     const roomIds = choice.choice;
     if (roomIds.length === 0) return;
+    for (const room of rooms) if (roomIds.includes(room.id)) tookIps.current.add(room.ip);
     const message: StartCastMessage = {
       type: 'START_CAST',
       payload: { roomIds, startLevels: start.levelsFor(roomIds) },
@@ -433,10 +486,20 @@ function MainPopup(): JSX.Element {
       }
       // Hand-set levels are for this cast only.
       start.clear(roomIds);
+      // A room that did not start gets the row line a room that did not join gets, with Try
+      // again.
+      const { tabId, notJoined = [] } = response;
+      const missed = notJoined.flatMap((id) => rooms.find((room) => room.id === id) ?? []);
+      if (tabId !== undefined && missed.length > 0) {
+        setJoinFailed((prev) => ({
+          ...prev,
+          [tabId]: missed.map((room) => ({ roomId: room.id, name: room.name, dismissed: false })),
+        }));
+      }
     } catch {
       setCastFailure(castBarFailure(undefined));
     }
-  }, [choice.choice, start]);
+  }, [choice.choice, start, rooms]);
 
   const handleStop = useCallback(
     async (cast: ActiveCast): Promise<void> => {
@@ -482,7 +545,7 @@ function MainPopup(): JSX.Element {
                 tabId: cast.tabId,
                 ip: row.ip,
                 roomIds: row.roomIds,
-                levels: undoLevels(row, rooms, sonos.state),
+                levels: undoLevels(row, rooms, sonos.state, cast.syncSpeakers),
               }
             : undefined,
       });
@@ -517,10 +580,14 @@ function MainPopup(): JSX.Element {
   const showTabCard = !thisTabCasting && (browserMode || currentTab !== null);
 
   const pickRow = (room: Room, checked: boolean, onChecked: (on: boolean) => void): PickerRoom => {
-    const level = roomLevel(room, sonos.state);
     const availability = roomAvailability(room, sonos.state, castingIps);
-    const badge: { tone: BadgeTone; key: string } | null =
-      availability === 'in_use'
+    // A room in one of this browser's casts has its own level followed: read
+    // that, so it says what its CastTile row says.
+    const level = roomLevel(room, sonos.state, availability === 'casting');
+    // Not connected, who plays or casts where is last known, not now: no Badge says it.
+    const badge: { tone: BadgeTone; key: string } | null = !connected
+      ? null
+      : availability === 'in_use'
         ? { tone: 'warning', key: 'speaker_availability_in_use' }
         : availability === 'casting'
           ? { tone: 'casting', key: 'speaker_availability_casting' }
@@ -544,28 +611,31 @@ function MainPopup(): JSX.Element {
     };
   };
 
-  const pickerState = placed.disconnected
-    ? 'disconnected'
-    : rooms.length === 0
-      ? sonos.loading || !connected
-        ? 'loading'
-        : 'empty'
-      : choice.ready
-        ? 'ready'
-        : 'loading';
+  // The companion stopped answering (reconnecting): the rooms it listed are stale, so the
+  // picker waits as it does when not connected at all.
+  const pickerState =
+    placed.disconnected || connection.phase === 'reconnecting'
+      ? 'disconnected'
+      : rooms.length === 0
+        ? sonos.loading || !connected
+          ? 'loading'
+          : 'empty'
+        : choice.ready
+          ? 'ready'
+          : 'loading';
 
-  const plan = planCast(choice.choice, rooms);
-  const playsToo = playsTooLine(plan, list);
-  const hint = replaceHint(choice.chosen, sonos.state, castingIps);
+  const plan = planCast(choice.choice, rooms, { regroup, transport: sonos.state.transportStates });
+  const hint = barReplaceHint(plan, replaceHint(choice.chosen, sonos.state, castingIps));
   // With nothing to choose (no rooms, still asking, not connected) the picker says why.
   const castLines =
     !connected || pickerState !== 'ready'
       ? []
       : choice.choice.length === 0
         ? [t('error_no_speakers_selected')]
-        : [playsToo && t(playsToo.key, playsToo.params), hint && t(hint)].filter(
-            (line): line is string => Boolean(line),
-          );
+        : [
+            ...castBarLines(plan, list).map((line) => t(line.key, line.params)),
+            ...(hint ? [t(hint)] : []),
+          ];
 
   const tabMedia = browserMode
     ? {
@@ -620,7 +690,7 @@ function MainPopup(): JSX.Element {
     const joiningRows: GroupVolumeRoom[] = (joining[tabId] ?? [])
       .filter((j) => {
         const room = rooms.find((r) => r.id === j.roomId);
-        return !room || !cast.speakerIps.includes(room.coordinatorIp);
+        return !room || !inCast(cast, room);
       })
       .map((j) => ({
         room: { id: j.roomId, name: j.name },
@@ -632,7 +702,7 @@ function MainPopup(): JSX.Element {
       }));
     const failedRows: GroupVolumeRoom[] = (joinFailed[tabId] ?? []).flatMap((f) => {
       const room = rooms.find((r) => r.id === f.roomId);
-      if (!room || cast.speakerIps.includes(room.coordinatorIp)) return [];
+      if (!room || inCast(cast, room)) return [];
       const forget = () =>
         setJoinFailed((prev) => ({
           ...prev,
@@ -668,9 +738,9 @@ function MainPopup(): JSX.Element {
       ];
     });
 
-    // Joined into one Sonos group, the joined targets move by the group's volume; every other
-    // target (all of them on a cast that is not joined, or a room added to a joined one) moves
-    // by the same ratio here (interim, until regrouping).
+    // Played as one Sonos group, the rooms in it move by the group's volume; every other
+    // target (all of them on a cast to separate groups by an older companion, or a room still
+    // joining) moves by the same ratio here.
     const { joined, solo } = masterTargets(cast, rooms);
     const [coordinator] = joined;
     const master =
@@ -696,9 +766,15 @@ function MainPopup(): JSX.Element {
           }
         : undefined;
 
+    // Every room it could take: none, and there is no "Add a room" (no new string).
+    const addable = addableRooms(
+      cast,
+      rooms,
+      (joining[tabId] ?? []).map((j) => j.roomId),
+    );
     const addList: GroupVolumeAddRoom[] =
       addFor === tabId
-        ? addableRooms(cast, rooms).map((room) =>
+        ? addable.map((room) =>
             pickRow(room, addChoice.includes(room.id), (on) =>
               setAddChoice((prev) =>
                 on
@@ -714,16 +790,17 @@ function MainPopup(): JSX.Element {
       master,
       expanded: foldOpen[tabId] ?? false,
       onExpandedChange: (open: boolean) => setFoldOpen((prev) => ({ ...prev, [tabId]: open })),
-      add: placed.disconnected
-        ? undefined
-        : {
-            open: addFor === tabId,
-            onOpenChange: (open: boolean) => {
-              setAddChoice([]);
-              setAddFor(open ? tabId : null);
+      add:
+        placed.disconnected || addable.length === 0
+          ? undefined
+          : {
+              open: addFor === tabId,
+              onOpenChange: (open: boolean) => {
+                setAddChoice([]);
+                setAddFor(open ? tabId : null);
+              },
+              rooms: addList,
             },
-            rooms: addList,
-          },
       // The fold counts rooms, not rows: a Sonos group cast as one row is several rooms.
       strings: {
         ...words.group,
@@ -749,6 +826,7 @@ function MainPopup(): JSX.Element {
         id={`cast-${cast.tabId}`}
         cast={cast}
         roomsName={rows.map((row) => row.name).join(' + ')}
+        onItsTab={cast.tabId === activeTabId}
         open={open}
         onOpenChange={
           single ? undefined : (next) => setTileOpen((prev) => ({ ...prev, [cast.tabId]: next }))
@@ -781,12 +859,28 @@ function MainPopup(): JSX.Element {
 
   // ── The bar ───────────────────────────────────────────────────────────
   const addCount = addChoice.length;
+  // Add mode says what the rooms being added leave and restart, as Cast does.
+  const addPlan =
+    addCast &&
+    planCast(addChoice, rooms, {
+      regroup: regroup && addCast.syncSpeakers,
+      transport: sonos.state.transportStates,
+    });
+  const addHint =
+    addPlan && barReplaceHint(addPlan, replaceHint(addPlan.rooms, sonos.state, castingIps));
+  const addLines = addPlan
+    ? [
+        ...castBarLines(addPlan, list).map((line) => t(line.key, line.params)),
+        ...(addHint ? [t(addHint)] : []),
+      ]
+    : [];
   const castBar = addCast ? (
     <CastBar
       mode="add"
       label={t('start_casting')}
       busyLabel={t('starting')}
       onCast={async () => {}}
+      lines={addLines}
       disabled={addCount === 0}
       add={{
         label: addCount > 0 ? t('add_n_rooms', { count: addCount }) : t('add_room'),
@@ -917,8 +1011,9 @@ function MainPopup(): JSX.Element {
           statusText={statusText}
           description={connection.phase === 'reconnecting' ? t('warning_reconnecting') : undefined}
           live={casts.length > 0}
-          onSettings={openSettings}
+          onSettings={updateAvailable ? openAbout : openSettings}
           settingsLabel={t('settings')}
+          updateLabel={updateAvailable ? t('settings_update_available') : undefined}
         />
       }
       banner={banner}
@@ -926,13 +1021,6 @@ function MainPopup(): JSX.Element {
       bar={
         // No bar while there is nothing for it to hold (this tab casting, no Toast).
         (castBar || toastView) && <StickyActionBar toast={toastView}>{castBar}</StickyActionBar>
-      }
-      end={
-        hasMismatch && connected ? (
-          <Button kind="link" icon="external" onClick={openReleases}>
-            {t('update_available')}
-          </Button>
-        ) : undefined
       }
     >
       {casts.length > 0 && (
@@ -964,15 +1052,17 @@ function MainPopup(): JSX.Element {
                     ? t('everywhere')
                     : (set.name ?? ''),
               kind: set.kind,
-              trail:
-                set.kind === 'saved'
-                  ? t('saved_set')
-                  : t('rooms_count', { count: set.present.length }),
+              // Every set's label is its room count (owner), a saved set's too.
+              trail: t('rooms_count', { count: set.present.length }),
               pressed: set.pressed,
               description:
                 set.missing.length > 0
                   ? t('set_partial', {
-                      name: list(set.missing.map((ref) => ref.name)),
+                      count: set.present.length,
+                      missing: t('set_partial_missing', {
+                        count: set.missing.length,
+                        names: list(set.missing.map((ref) => ref.name)),
+                      }),
                       rest: list(set.present.map((room) => room.name)),
                     })
                   : undefined,

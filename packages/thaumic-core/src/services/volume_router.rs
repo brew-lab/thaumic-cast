@@ -224,7 +224,7 @@ mod tests {
                 GroupRole::Slave => Some("192.168.1.100".to_string()),
             },
             coordinator_uuid: Some("RINCON_100".to_string()),
-            original_coordinator_uuid: None,
+            old_group: None,
         }
     }
 

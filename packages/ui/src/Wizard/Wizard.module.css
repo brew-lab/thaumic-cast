@@ -1,9 +1,9 @@
 @layer components {
   /*
    * The old Wizard, until Phase 4 rebuilds it (C-wizard, L-wizard). Full form: the window's
-   * height, with the content as its one scroller (a stable gutter, the scrollbar colour from
-   * base.css). Compact form (the popup): as tall as its step, so the popup document is the
-   * only scroller (P-fold).
+   * height, with the content as its one scroller (`data-scroller`: the scrollbar and its
+   * balanced gutter come from base.css). The compact form is the popup's onboarding (L-wizard):
+   * see .frame.
    */
   .wizard {
     position: relative;
@@ -21,7 +21,6 @@
     min-block-size: 0;
     padding-inline: var(--space-6);
     overflow-y: auto;
-    scrollbar-gutter: stable;
   }
 
   .footer {
@@ -37,42 +36,54 @@
     align-items: center;
   }
 
-  /* Compact wizard for the popup: header, content and footer rows, content-tall. */
-  .compact {
-    display: grid;
-    grid-template:
-      'header' auto
-      'content' auto
-      'footer' auto / minmax(0, 1fr);
-    block-size: auto;
-  }
-
-  .compact .header {
-    grid-area: header;
-    position: relative;
+  /*
+   * The popup's onboarding (L-wizard compact): the dialog round a PopupShell `fill`, which
+   * gives it the main popup's padding, gap, gutter, block size and bar.
+   */
+  .frame {
     display: flex;
+    flex-direction: column;
+  }
+
+  /*
+   * Back, the step indicator centred, and a slot as wide as Back opposite it, in a row as
+   * tall as the PopupHeader (its min-block-size and block padding, C-popupheader), so the
+   * step's Card starts where the main popup's first card does. Back is on the content's start edge,
+   * as the BrandBlock is; its slot is kept on the first step, so nothing moves.
+   */
+  .header {
+    display: grid;
+    flex: none;
+    grid-template-columns: var(--control-sm) minmax(0, 1fr) var(--control-sm);
     align-items: center;
-    justify-content: center;
+    min-block-size: calc(var(--size-art-lg) + var(--space-3));
+    padding-block: var(--space-2-5);
   }
 
-  .compact .back {
-    position: absolute;
-    inset-inline-start: 0;
+  .back {
+    display: flex;
   }
 
-  /* Step Indicator Styles - must be before .compact .header .indicator */
   .indicator {
     display: flex;
     justify-content: center;
     gap: var(--space-3);
   }
 
-  .compact .content {
-    grid-area: content;
-    overflow: visible;
+  /* Skip at the start, Carry on at the end, inside the bar. */
+  .actions {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: var(--space-3);
   }
 
-  .compact .footer {
-    grid-area: footer;
+  /*
+   * Skip (flush quiet) pulls back only as far as the Card's inline padding, not its whole
+   * padding: its words start on the step's text edge, the edge of everything above it, and
+   * its box stays inside the bar's edge, so its focus ring keeps clear of the popup's edge.
+   */
+  .actions > :first-child > button {
+    --btn-pull: calc(var(--btn-pad-start) - var(--space-1) - var(--space-3));
   }
 }

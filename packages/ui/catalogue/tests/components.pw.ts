@@ -216,6 +216,20 @@ test('Add a room opens the add list of pick rows, with no sets', async ({ page }
   await expect(add).toHaveAttribute('aria-controls', (await list.getAttribute('id')) ?? 'none');
 });
 
+test('a flush Button inside an open fold keeps its whole surface', async ({ page }) => {
+  // "Add a room" reaches back past the text column by its pull; the fold clips only its
+  // height, so the surface's inline-start edge is still painted and still takes a press.
+  const section = light(page, 'group-volume');
+  const add = section.locator('details[open]').getByRole('button', { name: 'Add a room' });
+  await add.first().scrollIntoViewIfNeeded();
+  const b = await box(add.first());
+  const hit = await page.evaluate(
+    ({ x, y }) => document.elementFromPoint(x, y)?.closest('button')?.textContent ?? null,
+    { x: b.x + 2, y: b.y + b.height / 2 },
+  );
+  expect(hit).toContain('Add a room');
+});
+
 /* --------------------------------------------------------------- VideoSync */
 
 test('Video sync is one name with its Badge, and Fine-tune holds the trim', async ({ page }) => {
@@ -272,18 +286,24 @@ test('Try again moves focus to the Switch and says the new phase once', async ({
 
 test('the header is the h1, its status beside a dot, and Settings', async ({ page }) => {
   const section = light(page, 'popup-header');
-  await expect(section.getByRole('heading', { level: 1, name: 'Thaumic Cast' })).toHaveCount(6);
-  await expect(section.getByRole('button', { name: 'Settings' })).toHaveCount(6);
+  await expect(section.getByRole('heading', { level: 1, name: 'Thaumic Cast' })).toHaveCount(7);
+  // Six plain, and one marked for an update.
+  await expect(section.getByRole('button', { name: 'Settings', exact: true })).toHaveCount(6);
+  await expect(
+    section.getByRole('button', { name: 'Settings, update available', exact: true }),
+  ).toHaveCount(1);
   await expect(section.getByText(/^\d+$/)).toHaveCount(0);
   await expect(section.locator('[aria-live], [role="alert"], [role="status"]')).toHaveCount(0);
 });
 
-test('the CastBar reserves its line, so a line never moves the button', async ({ page }) => {
+test('the CastBar keeps no empty line: with nothing to say it ends at Cast', async ({ page }) => {
   const section = light(page, 'cast-bar');
-  const empty = section.getByRole('button', { name: 'Cast to 1 room' }).locator('xpath=..');
-  const full = section.getByRole('button', { name: 'Cast to 4 rooms' }).locator('xpath=..');
-  const [a, b] = [await box(empty), await box(full)];
-  expect(Math.abs(a.height - b.height)).toBeLessThan(1);
+  const empty = section.getByRole('button', { name: 'Cast to 1 room' });
+  const full = section.getByRole('button', { name: 'Cast to 4 rooms' });
+  const [a, barA] = [await box(empty), await box(empty.locator('xpath=..'))];
+  expect(Math.abs(barA.y + barA.height - (a.y + a.height))).toBeLessThan(1);
+  await expect(empty.locator('xpath=..').locator('p')).toHaveCount(0);
+  await expect(full.locator('xpath=..').locator('p')).toHaveCount(1);
 });
 
 test('add mode names Add with the cast, and a failure sits above Cast', async ({ page }) => {
@@ -389,8 +409,102 @@ test('a compact tile opens in place: the head and Stop stay the same elements', 
   await expect(tile.getByRole('button', { name: 'Go to tab: Mix title' })).toBeVisible();
 });
 
+test('with no band, the head row sits at one spot open and compact', async ({ page }) => {
+  const specimen = light(page, 'cast-tile').locator('[data-specimen="no-art"]');
+  // Artwork start and Stop end, from the card's own edges.
+  const insets = (title: string) =>
+    specimen.getByRole('region', { name: title }).evaluate((card) => {
+      const edge = card.getBoundingClientRect();
+      const stop = card.querySelector('button[aria-label^="Stop casting"]')!;
+      const art = card.querySelector('[class*="artwork"]')!;
+      return {
+        stop: Math.round(edge.right - stop.getBoundingClientRect().right),
+        art: Math.round(art.getBoundingClientRect().left - edge.left),
+      };
+    });
+  const open = await insets('Tone title');
+  const compact = await insets('Hum title');
+  expect(open).toEqual(compact);
+  expect(open.stop).toBeGreaterThanOrEqual(12);
+});
+
+test('the open band bleeds to the card, and its head row sits where it does compact', async ({
+  page,
+}) => {
+  const section = light(page, 'cast-tile');
+  const insets = (title: string) =>
+    section
+      .getByRole('region', { name: title })
+      .first()
+      .evaluate((card) => {
+        const edge = card.getBoundingClientRect();
+        const line = parseFloat(getComputedStyle(card).borderTopWidth);
+        const band = card.querySelector('[style*="--art-h"]')?.getBoundingClientRect();
+        const stop = card.querySelector('button[aria-label^="Stop casting"]')!;
+        const art = card.querySelector('[class*="artwork"]')!;
+        return {
+          band: band && [band.left - edge.left, band.top - edge.top, edge.right - band.right],
+          line,
+          stop: Math.round(edge.right - stop.getBoundingClientRect().right),
+          art: Math.round(art.getBoundingClientRect().left - edge.left),
+        };
+      });
+  const open = await insets('Album title');
+  const compact = await insets('Mix title');
+  expect(open.band).toEqual([open.line, open.line, open.line]);
+  expect(compact.band).toBeUndefined();
+  expect({ stop: open.stop, art: open.art }).toEqual({ stop: compact.stop, art: compact.art });
+});
+
 test('the slot line on a compact tile opens it', async ({ page }) => {
   const tile = light(page, 'cast-tile').getByRole('region', { name: 'Album title' }).last();
   await tile.getByRole('button', { name: 'Kitchen may cut out soon: open this cast' }).click();
   await expect(tile.getByRole('region', { name: 'Kitchen may cut out soon' })).toBeVisible();
+});
+
+/* ----------------------------------------------------------------- SetList */
+
+test('a set renames in place, refuses an empty name and gives focus back', async ({ page }) => {
+  const list = light(page, 'set-list').getByRole('list').first();
+  await list.getByRole('button', { name: 'Rename Downstairs' }).click();
+  const field = list.getByRole('textbox', { name: 'Name this set' });
+  await expect(field).toBeFocused();
+  await field.fill('');
+  await list.getByRole('button', { name: 'Save' }).click();
+  await expect(list.getByText('A set needs a name.')).toBeVisible();
+  await expect(field).toHaveAttribute('aria-invalid', 'true');
+  await field.fill('Ground floor');
+  await field.press('Enter');
+  await expect(list.getByRole('button', { name: 'Rename Ground floor' })).toBeFocused();
+  await expect(list.getByText('Downstairs')).toHaveCount(0);
+});
+
+test('Escape cancels Rename and gives focus back to it', async ({ page }) => {
+  const list = light(page, 'set-list').getByRole('list').first();
+  await list.getByRole('button', { name: 'Rename Downstairs' }).click();
+  const field = list.getByRole('textbox', { name: 'Name this set' });
+  await expect(field).toBeFocused();
+  await field.press('Escape');
+  await expect(field).toHaveCount(0);
+  await expect(list.getByRole('button', { name: 'Rename Downstairs' })).toBeFocused();
+});
+
+test('Remove takes a set out at once, and Undo puts it back where it was', async ({ page }) => {
+  const section = light(page, 'set-list');
+  const list = section.getByRole('list').first();
+  const names = () =>
+    list
+      .locator('li')
+      .evaluateAll((rows) => rows.map((r) => (r as HTMLElement).innerText.split('\n')[0]));
+  await list.getByRole('button', { name: 'Remove Downstairs' }).click();
+  expect(await names()).not.toContain('Downstairs');
+  await expect(section.getByText('Downstairs removed.')).toBeVisible();
+  await section.getByRole('button', { name: /^Undo/ }).click();
+  expect((await names())[1]).toBe('Downstairs');
+});
+
+test('with no sets the list is its empty state', async ({ page }) => {
+  const section = light(page, 'set-list');
+  await expect(section.getByText('No sets yet')).toHaveCount(1);
+  await expect(section.getByRole('list')).toHaveCount(1);
 });

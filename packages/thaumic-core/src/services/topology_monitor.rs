@@ -26,7 +26,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::context::{NetworkContext, NetworkError};
 use crate::error::{ThaumicError, ThaumicResult};
-use crate::events::{EventEmitter, NetworkEvent, NetworkHealth, TopologyEvent};
+use crate::events::{EventEmitter, NetworkEvent, NetworkHealth, SonosEvent, TopologyEvent};
 use crate::mdns_advertise::{self, MdnsAdvertiserHandle};
 use crate::runtime::TokioSpawner;
 use crate::services::speaker_monitor::monitor::MemberChangeSink;
@@ -39,6 +39,10 @@ use crate::sonos::types::{HouseholdTopology, ZoneGroup};
 use crate::sonos::SonosService;
 use crate::sonos::SonosTopologyClient;
 use crate::state::{ManualSpeakerConfig, SonosState};
+
+/// How long reading a newly subscribed speaker's transport state may take
+/// (see [`TopologyMonitor::correct_stale_transport`]).
+const TRANSPORT_READ_TIMEOUT: Duration = Duration::from_secs(2);
 
 /// Current network health state with reason.
 #[derive(Debug, Clone)]
@@ -1268,10 +1272,16 @@ impl TopologyMonitor {
     /// Ensures subscriptions exist for the given IPs and service.
     ///
     /// Subscribes to the specified service on any IPs that aren't already subscribed.
-    async fn ensure_subscriptions<'a, I>(&self, ips: I, service: SonosService, callback_url: &str)
+    async fn ensure_subscriptions<'a, I>(
+        &self,
+        ips: I,
+        service: SonosService,
+        callback_url: &str,
+    ) -> Vec<String>
     where
         I: Iterator<Item = &'a str>,
     {
+        let mut subscribed = Vec::new();
         for ip in ips {
             if !self.gena_manager.is_subscribed(ip, service) {
                 match self
@@ -1280,6 +1290,7 @@ impl TopologyMonitor {
                 {
                     Ok(()) => {
                         log::info!("[TopologyMonitor] Subscribed to {:?} on {}", service, ip);
+                        subscribed.push(ip.to_string());
                     }
                     Err(e) => {
                         log::error!(
@@ -1291,6 +1302,73 @@ impl TopologyMonitor {
                     }
                 }
             }
+        }
+        subscribed
+    }
+
+    /// Reads the transport state of each speaker just subscribed to
+    /// AVTransport, and reports the state it reads as GENA would when it
+    /// differs from the one recorded (or none is).
+    ///
+    /// A speaker's AVTransport subscription goes while it follows another
+    /// room, so the state recorded for it stays whatever it last reported
+    /// (a room joined to a cast reports PLAYING). When it leads again it is
+    /// subscribed afresh, and the first event that should replace that state
+    /// is lost when it reaches the callback before the subscribe reply is
+    /// handled (its SID is not known yet); Sonos then sends nothing until
+    /// the transport changes. A room removed from a cast would read as
+    /// playing, so as in use, with nothing on it.
+    ///
+    /// A room that has only ever followed another has nothing recorded, and
+    /// can lead with music of its own: a coordinator that joins a cast hands
+    /// its group's music to the room it leaves behind. With that room's first
+    /// event lost it would read as free while it plays, so it is read too.
+    ///
+    /// While nothing at all is recorded, every speaker is left to its events:
+    /// an empty cache is how a refresh tells that no event reaches us (see
+    /// [`refresh_looks_degraded`]), and a read would hide that. An event that
+    /// arrives during the read is newer, and wins.
+    async fn correct_stale_transport(&self, ips: &[String]) {
+        if self.sonos_state.transport_states.is_empty() {
+            return;
+        }
+        let reads = ips.iter().map(|ip| {
+            let recorded = self.sonos_state.transport_states.get(ip).map(|s| *s);
+            let since = self
+                .sonos_state
+                .transport_state_received
+                .get(ip)
+                .map(|t| *t);
+            async move {
+                let read = tokio::time::timeout(
+                    TRANSPORT_READ_TIMEOUT,
+                    self.sonos.read_transport_state(ip),
+                )
+                .await;
+                (ip, recorded, since, read.ok().flatten())
+            }
+        });
+        for (ip, recorded, since, read) in join_all(reads).await {
+            let Some(state) = read else { continue };
+            let now = self
+                .sonos_state
+                .transport_state_received
+                .get(ip)
+                .map(|t| *t);
+            if recorded == Some(state) || now != since {
+                continue;
+            }
+            log::info!(
+                "[TopologyMonitor] {ip} reads {state:?} after subscribing, not the {recorded:?} \
+                 recorded for it; reporting it"
+            );
+            self.gena_manager.report(SonosEvent::TransportState {
+                speaker_ip: ip.clone(),
+                state,
+                current_uri: None,
+                next_uri: None,
+                timestamp: crate::utils::now_millis(),
+            });
         }
     }
 
@@ -1318,12 +1396,14 @@ impl TopologyMonitor {
         }
 
         // Subscribe to AVTransport (playback state) on coordinators only
-        self.ensure_subscriptions(
-            coordinator_ips.iter().map(String::as_str),
-            SonosService::AVTransport,
-            callback_url,
-        )
-        .await;
+        let subscribed = self
+            .ensure_subscriptions(
+                coordinator_ips.iter().map(String::as_str),
+                SonosService::AVTransport,
+                callback_url,
+            )
+            .await;
+        self.correct_stale_transport(&subscribed).await;
 
         // Subscribe to GroupRenderingControl (volume/mute) via the arbiter,
         // which handles sync session conflicts (skips speakers with RC active).

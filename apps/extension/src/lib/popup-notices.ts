@@ -72,6 +72,11 @@ export interface NoticeInputs {
   casts: readonly { tabId: number; streamId: string; speakerIps: readonly string[] }[];
   /** The speaker notices, dismissed or not. */
   speakers: readonly NoticeSpeaker[];
+  /**
+   * The casting speakers the household no longer lists: dropped off the network (unplugged,
+   * out of reach). Empty while the household is not known.
+   */
+  missing: readonly { speakerIp: string; name: string }[];
   /** The undismissed ingest-gaps reports. */
   gaps: readonly NoticeGaps[];
   /** The undismissed capture-health notice, on the tab whose cast drops frames. */
@@ -120,6 +125,7 @@ export interface SlotPlan {
   /** What it is about, so the popup can dismiss it. */
   source:
     | { kind: 'speaker'; speakerIp: string }
+    | { kind: 'missing'; speakerIp: string }
     | { kind: 'capture' }
     | { kind: 'gaps'; streamId: string };
   /** Every slot item is a warning. */
@@ -303,7 +309,29 @@ export function placeNotices(inputs: NoticeInputs): PopupNotices {
   for (const cast of casts) {
     const ranked: { rank: number; order: number; item: SlotPlan }[] = [];
     if (perCast) {
+      // A speaker gone from the household plays nothing: the biggest problem a room can
+      // have, so it leads the slot and hides that speaker's other notices. It stands until
+      // the speaker is back or removed, so it has no X.
+      const gone = new Set<string>();
+      for (const missing of inputs.missing) {
+        const order = cast.speakerIps.indexOf(missing.speakerIp);
+        if (order === -1) continue;
+        gone.add(missing.speakerIp);
+        conditions[missing.speakerIp] = { label: { key: 'badge_not_answering' } };
+        ranked.push({
+          rank: 0,
+          order,
+          item: {
+            id: `missing:${missing.speakerIp}`,
+            source: { kind: 'missing', speakerIp: missing.speakerIp },
+            tone: 'warning',
+            lead: { key: 'speaker_lead_not_answering', params: { name: missing.name } },
+            text: { key: 'speaker_not_answering_text' },
+          },
+        });
+      }
       for (const view of inputs.speakers) {
+        if (gone.has(view.speakerIp)) continue;
         const order = cast.speakerIps.indexOf(view.speakerIp);
         if (order === -1) continue;
         const place = speakerPlace(view.notice);

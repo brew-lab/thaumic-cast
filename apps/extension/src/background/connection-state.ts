@@ -55,6 +55,12 @@ export interface ConnectionState {
    * extension, from `/health`. Null when it does not say (older companions).
    */
   browserCapture: boolean | null;
+  /**
+   * Whether the companion plays the rooms a cast names as one Sonos group and puts moved
+   * rooms back afterwards, from `/health`. Null when it does not say (older companions): a
+   * cast then goes to whole Sonos groups through their coordinators.
+   */
+  regroup: boolean | null;
   /** Companion app semver. Null on pre-0.4.0 builds. */
   appVersion: string | null;
   /** Wire-protocol semver advertised by the companion. Null on pre-0.4.0 builds. */
@@ -78,6 +84,7 @@ let state: ConnectionState = {
   networkHealthReason: null,
   appType: null,
   browserCapture: null,
+  regroup: null,
   appVersion: null,
   protocolVersion: null,
   companionAudio: null,
@@ -107,6 +114,7 @@ const storage = persistenceManager.register<ConnectionState>(
         networkHealthReason: s.networkHealthReason ?? null,
         appType: s.appType ?? null,
         browserCapture: s.browserCapture ?? null,
+        regroup: s.regroup ?? null,
         appVersion: s.appVersion ?? null,
         protocolVersion: s.protocolVersion ?? null,
         companionAudio: s.companionAudio ?? null,
@@ -157,18 +165,23 @@ export function setConnected(connected: boolean): void {
  *
  * `browserCapture` is kept when the caller has no fresh `/health` answer for
  * the same companion, and forgotten when the address changes: one companion's
- * answer says nothing about another's.
+ * answer says nothing about another's. `regroup` follows the same rule, so
+ * discovery passes `false` for a `/health` that does not say it: an older
+ * companion at the same address must never be sent a cast it would play
+ * wrongly.
  *
  * @param url - The desktop app base URL
  * @param maxStreams - Maximum concurrent streams allowed
  * @param appType - Companion type from `/health`, or undefined if not reported
  * @param browserCapture - Capture capability from `/health`, or undefined if not reported
+ * @param regroup - Whether `/health` says the companion regroups, or undefined with no answer
  */
 export function setDesktopApp(
   url: string,
   maxStreams: number,
   appType?: AppType,
   browserCapture?: boolean,
+  regroup?: boolean,
 ): void {
   const sameCompanion = url === state.desktopAppUrl;
   state = {
@@ -179,7 +192,19 @@ export function setDesktopApp(
     lastError: null,
     appType: appType ?? state.appType,
     browserCapture: browserCapture ?? (sameCompanion ? state.browserCapture : null),
+    regroup: regroup ?? (sameCompanion ? state.regroup : null),
   };
+  storage.schedule();
+}
+
+/**
+ * Records whether the companion regroups, from a fresh `/health` answer at the
+ * address already known.
+ * @param regroup - Whether `/health` says it regroups
+ */
+export function setRegroup(regroup: boolean): void {
+  if (state.regroup === regroup) return;
+  state = { ...state, regroup };
   storage.schedule();
 }
 
@@ -264,6 +289,7 @@ export function clearConnectionState(): void {
     networkHealthReason: null,
     appType: null,
     browserCapture: null,
+    regroup: null,
     appVersion: null,
     protocolVersion: null,
     companionAudio: null,

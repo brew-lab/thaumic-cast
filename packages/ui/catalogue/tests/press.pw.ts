@@ -59,6 +59,18 @@ const CONTROLS: Control[] = [
     keys: ['Space'],
   },
   {
+    name: 'checkbox-row',
+    find: (page) => section(page).locator('label[data-press]').filter({ hasText: 'Kitchen' }),
+    focus: 'input',
+    keys: ['Space'],
+  },
+  {
+    name: 'radio-option',
+    find: (page) => section(page).locator('label[data-press]').filter({ hasText: 'Low' }),
+    focus: 'input',
+    keys: ['Space'],
+  },
+  {
     name: 'segment',
     find: (page) => section(page).locator('label[data-press]').filter({ hasText: 'Light' }),
     focus: 'input',

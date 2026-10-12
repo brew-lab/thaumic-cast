@@ -30,6 +30,7 @@ function inputs(over: Partial<NoticeInputs> = {}): NoticeInputs {
     },
     casts: [{ tabId: 7, streamId: 's7', speakerIps: [KITCHEN, OFFICE] }],
     speakers: [],
+    missing: [],
     gaps: [],
     capture: null,
     oldCompanion: null,
@@ -361,5 +362,38 @@ describe('the words the rules choose', () => {
       'retry_connection_not_found',
     ];
     expect(keys.filter((key) => typeof strings[key] !== 'string')).toEqual([]);
+  });
+});
+
+describe('placeNotices: a speaker gone from the household', () => {
+  it('should lead the slot with it, badge its row and offer no X', () => {
+    const placed = placeNotices(
+      inputs({
+        missing: [{ speakerIp: OFFICE, name: 'Office' }],
+        speakers: [
+          speaker(KITCHEN, { kind: 'running_low' }),
+          speaker(OFFICE, { kind: 'running_low' }),
+        ],
+      }),
+    );
+    const slot = placed.slots[7];
+    expect(slot.map((item) => item.id)).toEqual([`missing:${OFFICE}`, `speaker:${KITCHEN}:1`]);
+    expect(slot[0]).toMatchObject({
+      source: { kind: 'missing', speakerIp: OFFICE },
+      lead: { key: 'speaker_lead_not_answering', params: { name: 'Office' } },
+      text: { key: 'speaker_not_answering_text' },
+    });
+    expect(placed.conditions[OFFICE]).toEqual({ label: { key: 'badge_not_answering' } });
+    for (const key of ['badge_not_answering', 'speaker_lead_not_answering']) {
+      expect(en).toHaveProperty(key);
+    }
+  });
+
+  it('should say nothing about it while the connection is lost', () => {
+    const placed = placeNotices(
+      inputs({ connection: lost, missing: [{ speakerIp: OFFICE, name: 'Office' }] }),
+    );
+    expect(placed.slots[7]).toEqual([]);
+    expect(placed.conditions).toEqual({});
   });
 });

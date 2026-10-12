@@ -5,7 +5,6 @@ import { WelcomeStep } from './onboarding/WelcomeStep';
 import { DesktopConnectionStep } from './onboarding/DesktopConnectionStep';
 import { SpeakerStep } from './onboarding/SpeakerStep';
 import { ReadyStep } from './onboarding/ReadyStep';
-import styles from './Onboarding.module.css';
 
 const STEP_KEYS = ['welcome', 'desktop', 'speakers', 'ready'] as const;
 
@@ -97,23 +96,21 @@ export function Onboarding({ onComplete, onSkip }: OnboardingProps): preact.JSX.
   };
 
   return (
-    <div className={styles.onboarding}>
-      <Wizard
-        currentStep={currentStep}
-        totalSteps={totalSteps}
-        onNext={handleNext}
-        onBack={handleBack}
-        onSkip={handleSkip}
-        showSkip={true}
-        labels={labels}
-        nextDisabled={isNextDisabled}
-        isFinal={isLastStep}
-        stepLabels={stepLabels}
-        stepOfLabel={stepOfLabel}
-        compact
-      >
-        {renderStep()}
-      </Wizard>
-    </div>
+    <Wizard
+      currentStep={currentStep}
+      totalSteps={totalSteps}
+      onNext={handleNext}
+      onBack={handleBack}
+      onSkip={handleSkip}
+      showSkip={true}
+      labels={labels}
+      nextDisabled={isNextDisabled}
+      isFinal={isLastStep}
+      stepLabels={stepLabels}
+      stepOfLabel={stepOfLabel}
+      compact
+    >
+      {renderStep()}
+    </Wizard>
   );
 }

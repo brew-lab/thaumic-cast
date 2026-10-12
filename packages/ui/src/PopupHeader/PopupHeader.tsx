@@ -36,14 +36,19 @@ export interface PopupHeaderProps {
   onSettings: () => void;
   /** The Settings button's name. */
   settingsLabel: string;
+  /**
+   * Set while an update exists: Settings is marked (IconButton `mark`), shows its name in a
+   * Tooltip, and is named this instead ("Settings, update available").
+   */
+  updateLabel?: string;
 }
 
 /**
  * Who is talking to the speakers, at the top of the popup (DESIGN.md C-popupheader): the
  * BrandBlock (lit while casting), the StatusDot and its words, and Settings (IconButton
- * tonal md). It scrolls away with the page and never shows a count. A change of status is
- * said once, politely, by the Announcer; nothing is said on open, and the line is not a live
- * region.
+ * tonal md), marked while an update exists. It scrolls away with the page and never shows a
+ * count. A change of status is said once, politely, by the Announcer; nothing is said on
+ * open, and the line is not a live region.
  * @param props - Component props
  * @param props.name - The product name
  * @param props.connection - The connection
@@ -52,6 +57,7 @@ export interface PopupHeaderProps {
  * @param props.live - A cast is running
  * @param props.onSettings - Opens the settings
  * @param props.settingsLabel - The Settings button's name
+ * @param props.updateLabel - Settings' name while an update exists
  * @returns The header
  */
 export function PopupHeader({
@@ -62,6 +68,7 @@ export function PopupHeader({
   live,
   onSettings,
   settingsLabel,
+  updateLabel,
 }: PopupHeaderProps): JSX.Element {
   const { say } = useAnnouncer();
   const said = useRef(statusText);
@@ -81,7 +88,14 @@ export function PopupHeader({
           {description && <span class="visually-hidden">. {description}</span>}
         </p>
       </div>
-      <IconButton kind="tonal" glyph="settings" label={settingsLabel} onPress={onSettings} />
+      <IconButton
+        kind="tonal"
+        glyph="settings"
+        label={updateLabel ?? settingsLabel}
+        mark={updateLabel !== undefined}
+        tooltip={updateLabel !== undefined}
+        onPress={onSettings}
+      />
     </header>
   );
 }

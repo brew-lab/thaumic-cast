@@ -149,8 +149,8 @@ export type RoomRowProps = RoomRowPickProps | RoomRowCastProps | RoomRowListProp
  * One row per room (DESIGN.md M-roomrow). A home theatre, a stereo pair or a zone is one
  * room. Three modes and no others: `pick` (a checkbox row, with StartLevel outside its label
  * once chosen), `cast` (a room in a running cast: its volume line, Remove, and a row line on
- * failure) and `list` (read only, inside a `<ul aria-label>`). A row never reshapes or tints
- * when chosen.
+ * failure) and `list` (read only, inside a `<ul aria-label>`). A chosen row never reshapes or
+ * tints; a `pick` row takes the bevel on focus and press, as its Checkbox does.
  * @param props - Component props: `mode` picks the kind
  * @returns The row
  */
@@ -289,16 +289,12 @@ function CastRow(props: RoomRowCastProps): JSX.Element {
             onMute={onMute}
             disabled={isJoining}
             strings={strings}
+            // The Remove slot is always there, so every row's Slider lines up.
+            slot
             trailing={
-              isJoining ? (
-                // The Remove column is kept while joining, so the slider lines up.
-                <span class={styles.reserve} aria-hidden="true" />
-              ) : (
-                removable &&
-                onRemove && (
-                  <IconButton glyph="stop" label={strings.remove(room.name)} onPress={onRemove} />
-                )
-              )
+              removable && onRemove && !isJoining ? (
+                <IconButton glyph="stop" label={strings.remove(room.name)} onPress={onRemove} />
+              ) : undefined
             }
           />
         </div>

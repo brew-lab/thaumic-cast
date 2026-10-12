@@ -22,9 +22,9 @@ export interface CheckboxProps extends DataAttributes {
 
 /**
  * The tick box (DESIGN.md A-check): a native checkbox in a label, so the row is the target
- * and takes the state layer on its corner (it never reshapes). The box rests at
- * `--radius-pressed`; hover is colour, focus-visible and a press take the small bevel, nothing
- * scales, and checking fades the check in. Off is a 2 px outline ring; on is a flat primary
+ * and takes the state layer; it rests on its corner and takes the bevel on focus-visible and
+ * press. The box rests at `--radius-pressed`; hover is colour, focus-visible and a press take
+ * the small bevel, nothing scales, and checking fades the check in. Off is a 2 px outline ring; on is a flat primary
  * fill with the check. The density sets the box's size.
  * @param props - Component props
  * @param props.checked - Ticked

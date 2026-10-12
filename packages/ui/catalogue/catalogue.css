@@ -1047,6 +1047,41 @@
     inline-size: calc(var(--popup-inline) - 2 * var(--space-4));
   }
 
+  /*
+   * "Update available", option 1, drawn for comparison only: the PopupHeader's layout
+   * (C-popupheader) with a third line under the status words.
+   */
+  .option-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-4);
+    min-block-size: calc(var(--size-art-lg) + var(--space-3));
+    padding-block: var(--space-2-5);
+  }
+
+  .option-identity {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-1);
+    min-inline-size: 0;
+  }
+
+  .option-status {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    margin: 0;
+    color: var(--on-surface-variant);
+    font-size: var(--text-2);
+    line-height: var(--leading-2);
+  }
+
+  .option-line {
+    display: flex;
+    font-size: var(--text-2);
+  }
+
   /* A popup window: the shell inside sizes itself (22rem by at most 37.5rem). */
   .popup-frame {
     display: flex;

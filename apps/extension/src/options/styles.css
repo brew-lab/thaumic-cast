@@ -2,15 +2,11 @@
  * The options page's global CSS. The theme switch, the body defaults and the focus ring are
  * in @thaumic-cast/ui/base.css.
  *
- * Until Phase 4's OptionsShell: the document is the one scroller, with a stable gutter; the
- * body is the `app` container and the page column the `content` container, so fluid type
+ * Until Phase 4's OptionsShell: the document is the one scroller (`data-scroller` on <html>,
+ * so base.css gives it the balanced stable gutter); the body is the `app` container and the page column the `content` container, so fluid type
  * and space follow the 40rem column (the page title tops out at the column, not the tab).
  */
 @layer app {
-  :root {
-    scrollbar-gutter: stable;
-  }
-
   body {
     container: app / inline-size;
     display: flex;

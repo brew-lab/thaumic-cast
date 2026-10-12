@@ -15,7 +15,7 @@
  */
 
 import { createLogger } from '@thaumic-cast/shared';
-import type { StreamMetadata } from '@thaumic-cast/protocol';
+import type { Room, StreamMetadata } from '@thaumic-cast/protocol';
 import { countRemoteStreams, roomsOf } from '@thaumic-cast/protocol';
 import type {
   StartCastMessage,
@@ -31,7 +31,7 @@ import { getSourceFromUrl } from '../../lib/url-utils';
 import { getActiveTab, getActiveTabId } from '../../lib/tab-utils';
 import { loadExtensionSettings } from '../../lib/settings';
 import { buildStartVolume } from '../../lib/start-level';
-import { planCast } from '../../lib/cast-plan';
+import { planCast, playbackTargets } from '../../lib/cast-plan';
 import { recordLastCast, refOf } from '../../lib/room-sets';
 import { getCachedCodecSupport } from '../../lib/codec-cache';
 import { describeEncoderConfig } from '../../lib/presets';
@@ -78,6 +78,22 @@ function metadataFor(tabId: number): StreamMetadata | undefined {
 }
 
 /**
+ * Names the targets that began playing, sorted by name. With a companion that regroups each
+ * target is a room's own IP, named by the room; with an older one it is a Sonos group's
+ * coordinator, named by its group.
+ * @param ips - The targets that began playing
+ * @param rooms - The rooms planned, when each target is a room's own IP
+ * @returns The targets and their names, in parallel arrays
+ */
+function namedTargets(ips: string[], rooms?: readonly Room[]): { ips: string[]; names: string[] } {
+  const speakerGroups = getSpeakerGroups();
+  const nameOf = (ip: string): string =>
+    rooms?.find((room) => room.ip === ip)?.name ?? speakerGroups.getGroupName(ip);
+  const sorted = [...ips].sort((a, b) => nameOf(a).localeCompare(nameOf(b)));
+  return { ips: sorted, names: sorted.map(nameOf) };
+}
+
+/**
  * Logic for starting a new cast session.
  *
  * @param msg - The start cast message.
@@ -94,13 +110,10 @@ export async function handleStartCast(msg: StartCastMessage): Promise<ExtensionR
   let tab: chrome.tabs.Tab | null | undefined;
 
   try {
-    // The chosen rooms play through their Sonos groups' coordinators, planned
-    // from this worker's own Sonos state so the popup's line and what is sent
-    // agree (lib/cast-plan.ts).
     const { roomIds, startLevels } = msg.payload;
-    const plan = planCast(roomIds, roomsOf(getSonosState().groups));
-    const speakerIps = plan.targets;
-    if (!speakerIps.length) throw new Error('error_no_speakers_selected');
+    if (planCast(roomIds, roomsOf(getSonosState().groups)).rooms.length === 0) {
+      throw new Error('error_no_speakers_selected');
+    }
 
     tab = await getActiveTab();
     if (!tab?.id) throw new Error('error_no_active_tab');
@@ -112,6 +125,14 @@ export async function handleStartCast(msg: StartCastMessage): Promise<ExtensionR
       clearConnectionState();
       throw new Error('error_desktop_not_found');
     }
+
+    // The chosen rooms, planned from this worker's own Sonos state so the
+    // popup's line and what is sent agree (lib/cast-plan.ts): one Sonos group
+    // of exactly these rooms with a companion that regroups (discovery has
+    // just asked it), else their whole groups through the coordinators.
+    const regroup = getConnectionState().regroup === true;
+    const plan = planCast(roomIds, roomsOf(getSonosState().groups), { regroup });
+    if (!plan.targets.length) throw new Error('error_no_speakers_selected');
 
     // 2. Check session limits. The companion's cap is global, not per-client,
     //    so other clients' streams occupy slots too - counting only our own map
@@ -238,18 +259,16 @@ export async function handleStartCast(msg: StartCastMessage): Promise<ExtensionR
 
       // Each room starts no louder than the limit, or at the level set by
       // hand in the popup. The companion applies it before anything plays.
-      const playbackResponse = await offscreenBroker.startPlayback(
-        tabId,
-        speakerIps,
-        initialMetadata,
-        settings.syncSpeakers,
-        settings.videoSyncEnabled,
-        buildStartVolume(
+      const playbackResponse = await offscreenBroker.startPlayback(tabId, {
+        ...playbackTargets(plan, regroup),
+        metadata: initialMetadata,
+        videoSyncEnabled: settings.videoSyncEnabled,
+        startVolume: buildStartVolume(
           settings,
           plan.rooms.map((room) => room.id),
           startLevels,
         ),
-      );
+      });
       if (!playbackResponse) throw new Error('error_offscreen_unavailable');
 
       const successfulResults = playbackResponse.results.filter((r) => r.success);
@@ -268,10 +287,10 @@ export async function handleStartCast(msg: StartCastMessage): Promise<ExtensionR
         log.warn(`Playback failed on ${failed.speakerIp}: ${failed.error}`);
       }
 
-      const speakerGroups = getSpeakerGroups();
-      const sortedResults = speakerGroups.sortByGroupName(successfulResults, (r) => r.speakerIp);
-      const successfulIps = sortedResults.map((r) => r.speakerIp);
-      const successfulNames = sortedResults.map((r) => speakerGroups.getGroupName(r.speakerIp));
+      const { ips: successfulIps, names: successfulNames } = namedTargets(
+        successfulResults.map((r) => r.speakerIp),
+        regroup ? plan.rooms : undefined,
+      );
 
       const source = getSourceFromUrl(tab.url);
       if (!getCachedState(tabId)) {
@@ -286,7 +305,7 @@ export async function handleStartCast(msg: StartCastMessage): Promise<ExtensionR
         successfulIps,
         successfulNames,
         encoderConfig,
-        settings.syncSpeakers,
+        regroup,
         captureMode,
         settings.videoSyncEnabled,
         {
@@ -296,7 +315,16 @@ export async function handleStartCast(msg: StartCastMessage): Promise<ExtensionR
       );
       await recordLastCast(castRooms.map(refOf));
 
-      return { success: true };
+      // A room that did not start gets its row line and Try again in the popup, or a line
+      // in the away log when the popup has shut.
+      const notJoined = plan.rooms.filter((room) => !castRooms.includes(room));
+      for (const room of notJoined) await recordJoinFailed(tabId, room.name);
+
+      return {
+        success: true,
+        tabId,
+        notJoined: notJoined.length > 0 ? notJoined.map((room) => room.id) : undefined,
+      };
     } else {
       if (disabledAutoDiscard) {
         chrome.tabs.update(tabId, { autoDiscardable: true }).catch(() => {});
@@ -405,11 +433,16 @@ export async function handleRemoveSpeaker(msg: RemoveSpeakerMessage): Promise<Ex
 /**
  * Adds rooms to a running cast.
  *
- * Until a room can join the cast's Sonos group (the regrouping work), each
- * new target plays the cast's stream on its own, as a cast to several rooms
- * does with "Play speakers as one group" off, and starts at its start level.
- * A room whose Sonos group already plays the cast is added at once. This is
- * the place to swap independent playback for a join.
+ * A cast played as one Sonos group by a companion that regroups names the new
+ * rooms (`rooms`, each by its own IP): the companion makes each one standalone,
+ * sets its start level, and joins it to the cast's group. A room already in
+ * the cast is added at once.
+ *
+ * With an older companion each new target plays the cast's stream on its own,
+ * as a cast to several rooms does with "Play speakers as one group" off, and
+ * starts at its start level; a room whose Sonos group already plays the cast
+ * is added at once. Sending such a companion a member's own IP would pull the
+ * member out of its group with nothing to put it back.
  *
  * @param msg - The add rooms message
  * @returns How each room went
@@ -419,29 +452,35 @@ export async function handleAddRooms(msg: AddRoomsMessage): Promise<AddRoomsResp
   const session = getSession(tabId);
   if (!session) return { success: false, error: 'No active session', rooms: [] };
 
-  const plan = planCast(roomIds, roomsOf(getSonosState().groups));
+  const regroup = session.syncSpeakers && getConnectionState().regroup === true;
+  const plan = planCast(roomIds, roomsOf(getSonosState().groups), { regroup });
   if (plan.rooms.length === 0) {
     return { success: false, error: 'error_no_speakers_selected', rooms: [] };
   }
-  const newTargets = plan.targets.filter((ip) => !session.speakerIps.includes(ip));
+
+  // The rooms already in the cast are added at once; the others start.
+  const playing = (room: Room): boolean =>
+    regroup
+      ? session.roomIds.includes(room.id)
+      : session.speakerIps.includes(plan.targetOf[room.id]);
+  const starting = plan.rooms.filter((room) => !playing(room));
+  const newTargets = [...new Set(starting.map((room) => plan.targetOf[room.id]))];
   const results = new Map<string, { success: boolean; error?: string }>();
 
   if (newTargets.length > 0) {
     try {
       const settings = await loadExtensionSettings();
-      const starting = plan.rooms.filter((room) => newTargets.includes(plan.targetOf[room.id]));
-      const response = await offscreenBroker.startPlayback(
-        tabId,
-        newTargets,
-        metadataFor(tabId),
-        false,
-        session.videoSync,
-        buildStartVolume(
+      const startPlan = { ...plan, rooms: starting, targets: newTargets };
+      const response = await offscreenBroker.startPlayback(tabId, {
+        ...playbackTargets(startPlan, regroup),
+        metadata: metadataFor(tabId),
+        videoSyncEnabled: session.videoSync,
+        startVolume: buildStartVolume(
           settings,
           starting.map((room) => room.id),
           startLevels,
         ),
-      );
+      });
       for (const result of response?.results ?? []) {
         results.set(result.speakerIp, { success: result.success, error: result.error });
       }
@@ -452,37 +491,31 @@ export async function handleAddRooms(msg: AddRoomsMessage): Promise<AddRoomsResp
     }
   }
 
-  const joined = (targetIp: string): boolean =>
-    session.speakerIps.includes(targetIp) || results.get(targetIp)?.success === true;
-  const added = plan.rooms.filter((room) => joined(plan.targetOf[room.id]));
+  const joined = (room: Room): boolean =>
+    playing(room) || results.get(plan.targetOf[room.id])?.success === true;
+  const added = plan.rooms.filter(joined);
   const addedTargets = newTargets.filter((ip) => results.get(ip)?.success === true);
-  const speakerGroups = getSpeakerGroups();
-  addToSession(
-    tabId,
-    addedTargets,
-    addedTargets.map((ip) => speakerGroups.getGroupName(ip)),
-    {
-      ids: added.map((room) => room.id),
-      targets: Object.fromEntries(added.map((room) => [room.id, plan.targetOf[room.id]])),
-    },
-  );
+  const named = namedTargets(addedTargets, regroup ? plan.rooms : undefined);
+  addToSession(tabId, named.ips, named.names, {
+    ids: added.map((room) => room.id),
+    targets: Object.fromEntries(added.map((room) => [room.id, plan.targetOf[room.id]])),
+  });
 
   // A popup that shut while the rooms were joining hears of a failure in its away line.
   for (const room of plan.rooms) {
-    if (!joined(plan.targetOf[room.id])) await recordJoinFailed(tabId, room.name);
+    if (!joined(room)) await recordJoinFailed(tabId, room.name);
   }
 
   return {
     success: added.length > 0,
-    rooms: plan.rooms.map((room) => {
-      const target = plan.targetOf[room.id];
-      return joined(target)
+    rooms: plan.rooms.map((room) =>
+      joined(room)
         ? { roomId: room.id, joined: true }
         : {
             roomId: room.id,
             joined: false,
-            error: results.get(target)?.error ?? 'error_playback_failed',
-          };
-    }),
+            error: results.get(plan.targetOf[room.id])?.error ?? 'error_playback_failed',
+          },
+    ),
   };
 }

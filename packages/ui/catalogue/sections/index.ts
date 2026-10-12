@@ -13,6 +13,7 @@ import {
   TypeSpecimen,
   UtilitiesSpecimen,
 } from './foundations';
+import { SetListSpecimen } from './settings';
 import {
   ArtworkSpecimen,
   BadgeSpecimen,
@@ -61,6 +62,7 @@ import {
   PopupFramesSpecimen,
   PopupShellSpecimen,
   PopupHeaderSpecimen,
+  UpdateAvailableSpecimen,
   RoomPickerSpecimen,
   RoomRowCastSpecimen,
   RoomRowListSpecimen,
@@ -532,6 +534,15 @@ export const SECTIONS: CatalogueSection[] = [
     Specimen: PopupHeaderSpecimen,
   },
   {
+    id: 'update-available',
+    wide: true,
+    title: 'Update available: two options',
+    tier: 'Tier 3 · C-popupheader, owner call 3',
+    summary:
+      'Option 2, built: a mark on Settings that opens About; nothing moves. Option 1, drawn for comparison only: a second status line.',
+    Specimen: UpdateAvailableSpecimen,
+  },
+  {
     id: 'room-picker',
     wide: true,
     title: 'RoomPicker',
@@ -574,6 +585,14 @@ export const SECTIONS: CatalogueSection[] = [
     summary:
       'One running cast, compact or open in place; the head is the same element in both. A single cast has no chevron. Stop has no busy words and no Undo.',
     Specimen: CastTileSpecimen,
+  },
+  {
+    id: 'set-list',
+    title: 'SetList',
+    tier: 'Tier 3 · C-setlist',
+    summary:
+      'The saved sets in Settings: each with Rename (in place; an empty name is an error) and Remove (at once; the Toast offers Undo). Last cast and Everywhere are not listed.',
+    Specimen: SetListSpecimen,
   },
   {
     id: 'popup-shell',

@@ -1,13 +1,16 @@
 import type { JSX } from 'preact';
-import { useMemo } from 'preact/hooks';
+import { useMemo, useState } from 'preact/hooks';
 import { useTranslation } from 'react-i18next';
-import { PageHeader } from '@thaumic-cast/ui';
+import { PageHeader, StickyActionBar, Toast } from '@thaumic-cast/ui';
 import { ServerSection } from './components/ServerSection';
 import { AudioSection } from './components/AudioSection';
 import { AppearanceSection } from './components/AppearanceSection';
 import { LanguageSection } from './components/LanguageSection';
 import { AdvancedSection } from './components/AdvancedSection';
 import { AboutSection } from './components/AboutSection';
+import { SetsSection } from './components/SetsSection';
+import { useSavedSets } from './hooks/useSavedSets';
+import type { RemovedSet } from '../lib/room-sets';
 import { useExtensionSettings } from './hooks/useExtensionSettings';
 import { useCodecSupport } from './hooks/useCodecSupport';
 import { useConnectionStatus } from '../popup/hooks/useConnectionStatus';
@@ -24,6 +27,9 @@ export function Options(): JSX.Element {
   const { t } = useTranslation();
   const { settings, updateSettings, loading: settingsLoading } = useExtensionSettings();
   const { codecSupport, loading: codecLoading } = useCodecSupport();
+  const saved = useSavedSets();
+  // The Toast after a removed set (M-toast): one at a time, never timed; Undo puts it back.
+  const [removed, setRemoved] = useState<RemovedSet | null>(null);
   const connection = useConnectionStatus();
   const companion = useMemo(
     () => ({ companionAudio: connection.companionAudio, appType: connection.appType }),
@@ -70,6 +76,8 @@ export function Options(): JSX.Element {
         capability={capability}
       />
 
+      <SetsSection saved={saved} onRemoved={setRemoved} onChange={() => setRemoved(null)} />
+
       <AdvancedSection
         settings={settings}
         onUpdate={updateSettings}
@@ -78,6 +86,25 @@ export function Options(): JSX.Element {
       />
 
       <AboutSection connection={connection} />
+
+      {removed && (
+        <StickyActionBar
+          toast={
+            <Toast
+              text={t('set_removed', { name: removed.set.name })}
+              action={{
+                label: t('undo'),
+                onAction: async () => {
+                  await saved.restore(removed);
+                  setRemoved(null);
+                },
+              }}
+              onDismiss={() => setRemoved(null)}
+              dismissLabel={t('dismiss')}
+            />
+          }
+        />
+      )}
     </div>
   );
 }

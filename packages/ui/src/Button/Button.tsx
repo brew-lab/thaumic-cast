@@ -28,7 +28,7 @@ export interface ButtonProps extends DataAttributes {
   size?: 'sm' | 'md';
   /** A glyph in the start slot. */
   icon?: GlyphName;
-  /** A short trailing word or count, such as "Saved" or "3". */
+  /** A short trailing word or count, such as "3 rooms". */
   trail?: string;
   /**
    * A toggle that stays down (the sets): `aria-pressed`, calm, with a trailing check. Its

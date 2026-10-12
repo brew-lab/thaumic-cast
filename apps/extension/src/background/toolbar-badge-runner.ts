@@ -11,7 +11,7 @@
  */
 
 import { createLogger } from '@thaumic-cast/shared';
-import { getAwayEvents, onAwayEventsChanged } from './away-log';
+import { getAwayEvents, onAwayEventsChanged, speakerNameOf } from './away-log';
 import { getCaptureHealthState } from './capture-health-state';
 import { getConnectionState } from './connection-state';
 import { getIngestGaps } from './ingest-gaps-state';
@@ -19,7 +19,6 @@ import { notificationService } from './notification-service';
 import type { BackgroundToPopupMessage } from '../lib/messages';
 import { getAllSessions } from './session-manager';
 import { getSpeakerHealth } from './speaker-health-state';
-import { getSpeakerGroups } from './sonos-state';
 import {
   TOOLBAR_DARK_KEY,
   badgeFor,
@@ -48,13 +47,12 @@ const REFRESH_DELAY_MS = 100;
  */
 export async function currentBadgeSources(): Promise<BadgeSources> {
   const connection = getConnectionState();
-  const groups = getSpeakerGroups();
   return {
     casts: getAllSessions().map(({ streamId, tabId }) => ({ streamId, tabId })),
     networkHealth: connection.networkHealth,
     networkHealthReason: connection.networkHealthReason,
     speakerHealth: getSpeakerHealth(),
-    speakerName: (speakerIp) => groups.getGroupName(speakerIp),
+    speakerName: speakerNameOf,
     ...(await readDismissals()),
     ingestGaps: getIngestGaps(),
     captureHealth: getCaptureHealthState(),

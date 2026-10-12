@@ -12,9 +12,7 @@
  * - Read and write the stored sets, tolerating a damaged entry
  * - Move the old speaker selection (by IP) into Last cast, once
  * - Decide which rooms are chosen when the popup opens
- *
- * Non-responsibilities:
- * - Renaming and removing sets (SetList, Phase 4)
+ * - Rename and remove saved sets, and put a removed one back (Settings › Saved sets)
  */
 
 import { z } from 'zod';
@@ -186,19 +184,83 @@ export function checkSetName(name: string): { name: string } | { error: SaveSetE
 
 /**
  * Saves the chosen rooms as a set.
+ *
+ * The caller shows the sets returned in place of its own: the storage change
+ * the write fires carries the same sets, and may arrive before or after this
+ * resolves, so adding the new set to the caller's copy again would show it
+ * twice.
  * @param name - The set's name
  * @param rooms - The rooms, in order
- * @returns The new set, or the reason it was not saved
+ * @returns The new set and every set as stored, or the reason it was not saved
  */
 export async function saveRoomSet(
   name: string,
   rooms: readonly RoomRef[],
-): Promise<{ set: SavedSet } | { error: SaveSetError }> {
+): Promise<{ set: SavedSet; sets: RoomSets } | { error: SaveSetError }> {
   const checked = checkSetName(name);
   if ('error' in checked) return checked;
   const set: SavedSet = { id: crypto.randomUUID(), name: checked.name, rooms: [...rooms] };
-  await updateRoomSets((sets) => ({ ...sets, saved: [...sets.saved, set] }));
-  return { set };
+  const sets = await updateRoomSets((stored) => ({ ...stored, saved: [...stored.saved, set] }));
+  return { set, sets };
+}
+
+/**
+ * Renames a saved set.
+ * @param id - The set's id
+ * @param name - The new name
+ * @returns Every set as stored, or the reason it was not renamed
+ */
+export async function renameRoomSet(
+  id: string,
+  name: string,
+): Promise<{ sets: RoomSets } | { error: SaveSetError }> {
+  const checked = checkSetName(name);
+  if ('error' in checked) return checked;
+  const sets = await updateRoomSets((stored) => ({
+    ...stored,
+    saved: stored.saved.map((set) => (set.id === id ? { ...set, name: checked.name } : set)),
+  }));
+  return { sets };
+}
+
+/** A set taken out of the list, with its place, so Undo can put it back where it was. */
+export interface RemovedSet {
+  /** The set. */
+  set: SavedSet;
+  /** Its place among the saved sets. */
+  index: number;
+}
+
+/**
+ * Removes a saved set at once (Undo puts it back; there is no confirm).
+ * @param id - The set's id
+ * @returns The set and its place, and every set as stored; no set when it was already gone
+ */
+export async function removeRoomSet(
+  id: string,
+): Promise<{ removed: RemovedSet | null; sets: RoomSets }> {
+  let removed: RemovedSet | null = null;
+  const sets = await updateRoomSets((stored) => {
+    const index = stored.saved.findIndex((set) => set.id === id);
+    if (index < 0) return stored;
+    removed = { set: stored.saved[index], index };
+    return { ...stored, saved: stored.saved.filter((set) => set.id !== id) };
+  });
+  return { removed, sets };
+}
+
+/**
+ * Puts a removed set back at its place (Undo). A set with its id already back is left alone.
+ * @param removed - The set and its place
+ * @returns Every set as stored
+ */
+export async function restoreRoomSet(removed: RemovedSet): Promise<RoomSets> {
+  return updateRoomSets((stored) => {
+    if (stored.saved.some((set) => set.id === removed.set.id)) return stored;
+    const saved = [...stored.saved];
+    saved.splice(Math.min(removed.index, saved.length), 0, removed.set);
+    return { ...stored, saved };
+  });
 }
 
 /** A set's rooms, split by whether they are here now. */
@@ -244,13 +306,17 @@ export function choiceIsSet(
 }
 
 /**
- * The rooms chosen when the popup opens: Last cast's rooms that are present;
- * with none, the first room no other client is casting to (else the first
- * room). The choice is not stored until a cast starts.
+ * The rooms chosen when the popup opens. A room another cast holds (one of
+ * this browser's other tabs, or another client) is never chosen, so one press
+ * of Cast does not quietly take it over. The choice is Last cast's rooms that
+ * are present and not held; with none, the first room that is free, alone in
+ * its Sonos group and playing nothing, so a first cast moves no group; else
+ * the first free room playing nothing, then the first free room; else
+ * nothing. The choice is not stored until a cast starts.
  * @param sets - The stored sets
  * @param rooms - The rooms present now, sorted
  * @param state - The Sonos state, for who is casting where
- * @param castingIps - The speaker IPs this client is casting to
+ * @param castingIps - The speaker IPs this browser is casting to
  * @returns The chosen room ids
  */
 export function choiceOnOpen(
@@ -259,9 +325,14 @@ export function choiceOnOpen(
   state: SonosStateSnapshot,
   castingIps: string[],
 ): RoomId[] {
-  const last = setRooms(sets.lastCast, rooms).present;
+  const availability = (room: Room) => roomAvailability(room, state, castingIps);
+  const free = rooms.filter((room) => {
+    const now = availability(room);
+    return now !== 'casting' && now !== 'remote_cast';
+  });
+  const last = setRooms(sets.lastCast, free).present;
   if (last.length > 0) return last.map((room) => room.id);
-  const free = rooms.find((room) => roomAvailability(room, state, castingIps) !== 'remote_cast');
-  const first = free ?? rooms[0];
+  const idle = free.filter((room) => availability(room) === 'available');
+  const first = idle.find((room) => room.groupedWith.length === 0) ?? idle[0] ?? free[0];
   return first ? [first.id] : [];
 }

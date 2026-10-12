@@ -48,7 +48,7 @@ export function App() {
   return (
     <div className={styles.layout}>
       <Sidebar />
-      <main className={styles.content}>
+      <main className={styles.content} data-scroller="">
         <Switch>
           <Route path="/" component={Speakers} />
           <Route path="/server" component={Server} />

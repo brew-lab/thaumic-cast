@@ -245,8 +245,9 @@ async fn start_room(
 
 /// Sets the start level of every room of every target, before playback.
 ///
-/// Runs the rooms concurrently and returns once every one has been read and,
-/// where the rule says so, set. Failures are logged; the cast goes ahead.
+/// Each target is a group coordinator and stands for every room of its Sonos
+/// group (see [`target_rooms`]); the rooms are then set as
+/// [`apply_start_volume_to_rooms`] does.
 ///
 /// # Arguments
 /// * `sonos` - Volume control for the speakers
@@ -262,14 +263,12 @@ pub(crate) async fn apply_start_volume(
     if request.is_noop() || targets.is_empty() {
         return;
     }
-    let limit = request.limit();
     let groups = sonos_state.groups.read().clone();
 
-    let mut seen: HashSet<String> = HashSet::new();
-    let mut starts: Vec<(String, Option<u8>)> = Vec::new();
+    let mut rooms: Vec<(String, String)> = Vec::new();
     for target in targets {
         // The group's own flag, from GENA, covers a group whose rooms all
-        // play at line level; each room is still asked for itself below.
+        // play at line level; each room is still asked for itself.
         if sonos_state
             .group_volume_fixed
             .get(target)
@@ -278,14 +277,41 @@ pub(crate) async fn apply_start_volume(
             log::debug!("[StartVolume] {target}: fixed output, left as it is");
             continue;
         }
-        for (uuid, ip) in target_rooms(&groups, target) {
-            let hand_set = request.hand_set(&uuid);
-            if limit.is_none() && hand_set.is_none() {
-                continue;
-            }
-            if seen.insert(ip.clone()) {
-                starts.push((ip, hand_set));
-            }
+        rooms.extend(target_rooms(&groups, target));
+    }
+    apply_start_volume_to_rooms(sonos, &rooms, request).await;
+}
+
+/// Sets the start level of each room, before it plays or joins a group.
+///
+/// `rooms` are `(uuid, ip)` of room primaries; a room listed twice is set
+/// once. Runs the rooms concurrently and returns once every one has been
+/// read and, where the rule says so, set. Failures are logged; the cast goes
+/// ahead.
+///
+/// # Arguments
+/// * `sonos` - Volume control for the speakers
+/// * `rooms` - The rooms about to start, as `(uuid, ip)`
+/// * `request` - The limit and hand-set levels the client sent
+pub(crate) async fn apply_start_volume_to_rooms(
+    sonos: &dyn SonosVolumeControl,
+    rooms: &[(String, String)],
+    request: &StartVolumeRequest,
+) {
+    if request.is_noop() || rooms.is_empty() {
+        return;
+    }
+    let limit = request.limit();
+
+    let mut seen: HashSet<&str> = HashSet::new();
+    let mut starts: Vec<(&str, Option<u8>)> = Vec::new();
+    for (uuid, ip) in rooms {
+        let hand_set = request.hand_set(uuid);
+        if limit.is_none() && hand_set.is_none() {
+            continue;
+        }
+        if seen.insert(ip.as_str()) {
+            starts.push((ip.as_str(), hand_set));
         }
     }
 

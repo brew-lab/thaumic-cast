@@ -112,3 +112,47 @@ pub async fn leave_group(client: &Client, ip: &str, port: u16) -> SoapResult<()>
 
     Ok(())
 }
+
+/// Puts a speaker back into a group without starting anything.
+///
+/// Sets the speaker's AVTransport URI to `x-rincon:<coordinator UUID>` and
+/// sends no Play: the speaker plays what the group plays on its own (on
+/// hardware it is in the group at once and PLAYING 0.2 s later). A Play sent
+/// to a member is passed on to its coordinator, which would start a group the
+/// household had paused.
+///
+/// # Arguments
+/// * `client` - The HTTP client to use for the request
+/// * `ip` - IP address of the speaker to put back
+/// * `port` - TCP port the speaker's UPnP services listen on (1400 on real hardware)
+/// * `coordinator_uuid` - UUID of the group's current coordinator (RINCON_xxx format)
+pub async fn rejoin_group(
+    client: &Client,
+    ip: &str,
+    port: u16,
+    coordinator_uuid: &str,
+) -> SoapResult<()> {
+    let group_uri = format!("x-rincon:{}", coordinator_uuid);
+    log::info!(
+        "[Sonos] Putting {} back into the group of {} (no Play)",
+        ip,
+        coordinator_uuid
+    );
+    let set_uri_args = [
+        ("InstanceID", "0"),
+        ("CurrentURI", group_uri.as_str()),
+        ("CurrentURIMetaData", ""),
+    ];
+    with_retry("SetAVTransportURI", || {
+        soap_request(
+            client,
+            ip,
+            port,
+            SonosService::AVTransport,
+            "SetAVTransportURI",
+            &set_uri_args,
+        )
+    })
+    .await?;
+    Ok(())
+}

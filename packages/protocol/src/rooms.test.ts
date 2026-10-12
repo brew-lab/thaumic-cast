@@ -117,6 +117,13 @@ describe('roomLevel', () => {
     const s = state({ groupVolumeFixed: { '192.168.1.41': true } });
     expect(roomLevel(room('Bedroom'), s).fixed).toBe(true);
   });
+
+  it("should read a regrouped cast's coordinator by its own level", () => {
+    // In a cast played as one group, the companion follows each room's own level.
+    const s = state({ groupVolumes: { '192.168.1.10': 40, '192.168.1.11': 25 } });
+    expect(roomLevel(room('Kitchen'), s, true).now).toBe(40);
+    expect(roomLevel(room('Patio'), s, true).now).toBe(25);
+  });
 });
 
 describe('roomAvailability', () => {

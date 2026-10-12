@@ -1,7 +1,7 @@
 @layer components {
   /*
    * M-roomrow. pick: the Checkbox atom is the row (its label holds the room's lines; it
-   * takes the layer on its corner and the ring, and never reshapes), with the start at the
+   * takes the layer and the ring, and the bevel on focus and press), with the start at the
    * row's end and the StartLine under it. cast: the name and Badge over one volume line.
    * list: a disc, the name and a Badge. Rows arrive in flow with the notices' entrance,
    * staggered and capped at the sixth (T-motion).
@@ -42,7 +42,7 @@
     --roomrow-min: calc(var(--control-md) + var(--space-3));
   }
 
-  /* The Checkbox row, re-pointed to the room row's size: it never reshapes. */
+  /* The Checkbox row, re-pointed to the room row's size (its states are the Checkbox's). */
   .pick > label {
     grid-area: label;
     align-items: center;
@@ -149,22 +149,30 @@
     min-inline-size: 0;
   }
 
-  /* One volume line: mute | Slider and its value | Remove. */
+  /*
+   * One volume line: mute | Slider and its value | the Remove slot. The columns are fixed
+   * tracks, the same on every row: mute and the slot are an IconButton wide (--control-sm)
+   * and the Slider takes the rest, its value in its --ch-volume box. A cast row always has
+   * the slot, holding Remove or nothing (joining, failed, or the last room, which Stop
+   * ends), so every row's Slider starts and ends at the same place whatever its state or
+   * Badge. A line with nothing after it (the master, the compact tile) has no slot.
+   */
   .controls {
-    display: flex;
+    display: grid;
+    grid-auto-columns: var(--control-sm);
+    grid-auto-flow: column;
+    grid-template-columns: var(--control-sm) minmax(0, 1fr);
     align-items: center;
     gap: var(--space-3);
     min-inline-size: 0;
   }
 
-  /* A joining row's place for Remove: an IconButton's width, empty. */
+  /* The Remove slot, empty: kept so the row lines up with its neighbours. */
   .reserve {
-    flex: none;
-    inline-size: var(--control-sm);
+    display: block;
   }
 
   .slider {
-    flex: 1 1 auto;
     min-inline-size: 0;
   }
 

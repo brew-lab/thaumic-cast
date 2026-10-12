@@ -23,7 +23,7 @@
 
 import { createLogger } from '@thaumic-cast/shared';
 import { createAudioRingBuffer, HEADER_SIZE } from './ring-buffer';
-import type { EncoderConfig, StartVolume, StreamMetadata } from '@thaumic-cast/protocol';
+import type { EncoderConfig, StreamMetadata } from '@thaumic-cast/protocol';
 import { isSupportedSampleRate } from '@thaumic-cast/protocol';
 import type {
   WorkerErrorMessage,
@@ -32,6 +32,8 @@ import type {
 } from './worker-messages';
 import { noop } from '../lib/noop';
 import { KeyedError, type ErrorParams } from '../lib/keyed-error';
+import type { PlaybackRequest } from '../lib/messages';
+import { playbackTimeoutMs } from '../lib/message-schemas';
 
 const log = createLogger('Offscreen');
 
@@ -72,7 +74,12 @@ export interface PlaybackResult {
 
 /** The resolver of the START_PLAYBACK call waiting for its results. */
 interface PlaybackResolver {
-  /** The speakers it asked for: results for others belong to a call that timed out. */
+  /** The call's id: a reply that echoes another id answers a call that timed out. */
+  callId: string;
+  /**
+   * The speakers it asked for: from a companion that echoes no call id, results for other
+   * speakers belong to a call that timed out.
+   */
   speakerIps: readonly string[];
   /** Called with the worker's results. */
   resolve: (results: PlaybackResult[]) => void;
@@ -157,10 +164,14 @@ export class StreamSession {
   } | null = null;
 
   /**
-   * The START_PLAYBACK calls on this stream, one at a time: the worker's results carry no
-   * call id, so a second call (a room added, Undo, Try again) waits for the first to settle.
+   * The START_PLAYBACK calls on this stream, one at a time: an older companion's results
+   * carry no call id, so a second call (a room added, Undo, Try again) waits for the first to
+   * settle.
    */
   private playbackQueue: Promise<unknown> = Promise.resolve();
+
+  /** How many START_PLAYBACK calls this stream has made: the next call's id counts from it. */
+  private playbackCalls = 0;
 
   /** Pending playback request resolver for multi-group results. */
   private playbackResultsResolver: PlaybackResolver | null = null;
@@ -707,7 +718,7 @@ export class StreamSession {
           log.info(
             `Playback results: ${msg.results.filter((r: { success: boolean }) => r.success).length}/${msg.results.length} speakers started`,
           );
-          if (this.playbackResultsResolver && !this.ownsResults(msg.results)) {
+          if (this.playbackResultsResolver && !this.ownsResults(msg.results, msg.callId)) {
             log.warn('Playback results for a call that already timed out; ignored');
             break;
           }
@@ -717,6 +728,10 @@ export class StreamSession {
 
         case 'PLAYBACK_ERROR':
           log.error(`Playback error: ${msg.message}`);
+          if (msg.callId !== undefined && msg.callId !== this.playbackResultsResolver?.callId) {
+            log.warn('Playback error for a call that already timed out; ignored');
+            break;
+          }
           this.playbackResultsResolver?.reject(new Error(msg.message));
           this.playbackResultsResolver = null;
           break;
@@ -1014,72 +1029,51 @@ export class StreamSession {
   }
 
   /**
-   * Whether results answer the call waiting now: each speaker in them is one it asked for.
+   * Whether results answer the call waiting now: they echo its call id, or, from a companion
+   * that echoes none, each speaker in them is one it asked for.
    * @param results - The worker's results
+   * @param callId - The call id they echo, if any
    * @returns True when they are the waiting call's (or no call waits)
    */
-  private ownsResults(results: ReadonlyArray<{ speakerIp: string }>): boolean {
+  private ownsResults(results: ReadonlyArray<{ speakerIp: string }>, callId?: string): boolean {
     const waiting = this.playbackResultsResolver;
-    return !waiting || results.every((result) => waiting.speakerIps.includes(result.speakerIp));
+    if (!waiting) return true;
+    if (callId !== undefined) return callId === waiting.callId;
+    return results.every((result) => waiting.speakerIps.includes(result.speakerIp));
   }
 
   /**
    * Starts playback on multiple Sonos speakers.
    * Must be called after the stream is ready (waitForReady resolved). Calls on one stream run
-   * one at a time, each with its own timeout, so overlapping calls never take each other's
-   * results.
+   * one at a time, each with its own timeout and its own call id, so overlapping calls never
+   * take each other's results.
    *
-   * @param speakerIps - IP addresses of the Sonos speakers
-   * @param metadata - Optional initial metadata to display on Sonos
-   * @param syncSpeakers - Whether to synchronize multi-speaker playback
-   * @param videoSyncEnabled - Whether client has video sync enabled (gates server-side latency monitoring)
-   * @param startVolume - The level each room starts at; absent on a resume
-   * @param timeoutMs - Timeout in milliseconds
+   * @param request - The speakers (and, for a regrouping companion, the rooms), the metadata,
+   *   video sync and the start levels (absent on a resume)
+   * @param timeoutMs - Timeout in milliseconds: by default longer for a call that regroups
+   *   rooms, so a slow regroup's late success is not dropped as a failure
    * @returns Promise resolving with per-speaker playback results
    * @throws {KeyedError} If the session stopped itself, with the reason and its values
    * @throws Error if all playback attempts fail or timeout
    */
   public startPlayback(
-    speakerIps: string[],
-    metadata?: StreamMetadata,
-    syncSpeakers: boolean = false,
-    videoSyncEnabled: boolean = false,
-    startVolume?: StartVolume,
-    timeoutMs = 15000,
+    request: PlaybackRequest,
+    timeoutMs = playbackTimeoutMs(request),
   ): Promise<PlaybackResult[]> {
-    const run = this.playbackQueue.then(() =>
-      this.startPlaybackNow(
-        speakerIps,
-        metadata,
-        syncSpeakers,
-        videoSyncEnabled,
-        startVolume,
-        timeoutMs,
-      ),
-    );
+    const run = this.playbackQueue.then(() => this.startPlaybackNow(request, timeoutMs));
     this.playbackQueue = run.catch(() => undefined);
     return run;
   }
 
   /**
    * Sends one START_PLAYBACK and waits for its results. Its resolver is its own: the timer
-   * clears only that resolver, and a settled call clears its timer.
-   * @param speakerIps - IP addresses of the Sonos speakers
-   * @param metadata - Optional initial metadata to display on Sonos
-   * @param syncSpeakers - Whether to synchronize multi-speaker playback
-   * @param videoSyncEnabled - Whether client has video sync enabled
-   * @param startVolume - The level each room starts at; absent on a resume
+   * clears only that resolver, and a settled call clears its timer. The call is named
+   * `${streamId}:${n}`, which a regrouping companion echoes on its reply.
+   * @param request - What to play
    * @param timeoutMs - Timeout in milliseconds
    * @returns Per-speaker playback results
    */
-  private startPlaybackNow(
-    speakerIps: string[],
-    metadata: StreamMetadata | undefined,
-    syncSpeakers: boolean,
-    videoSyncEnabled: boolean,
-    startVolume: StartVolume | undefined,
-    timeoutMs: number,
-  ): Promise<PlaybackResult[]> {
+  private startPlaybackNow(request: PlaybackRequest, timeoutMs: number): Promise<PlaybackResult[]> {
     if (this.fatalError) return Promise.reject(this.fatalError);
     const worker = this.consumerWorker;
     if (!worker) return Promise.reject(new Error('Worker not running'));
@@ -1087,13 +1081,16 @@ export class StreamSession {
       return Promise.reject(new Error('Stream not ready - call waitForReady() first'));
     }
 
+    this.playbackCalls += 1;
+    const callId = `${this.streamId ?? 'stream'}:${this.playbackCalls}`;
     return new Promise<PlaybackResult[]>((resolve, reject) => {
       const settle = (): void => {
         clearTimeout(timer);
         if (this.playbackResultsResolver === own) this.playbackResultsResolver = null;
       };
       const own: PlaybackResolver = {
-        speakerIps,
+        callId,
+        speakerIps: request.speakerIps,
         resolve: (results) => {
           settle();
           resolve(results);
@@ -1111,11 +1108,13 @@ export class StreamSession {
 
       worker.postMessage({
         type: 'START_PLAYBACK',
-        speakerIps,
-        metadata,
-        syncSpeakers,
-        videoSyncEnabled,
-        startVolume,
+        speakerIps: request.speakerIps,
+        rooms: request.rooms,
+        metadata: request.metadata,
+        syncSpeakers: request.syncSpeakers ?? false,
+        videoSyncEnabled: request.videoSyncEnabled ?? false,
+        startVolume: request.startVolume,
+        callId,
       });
     });
   }

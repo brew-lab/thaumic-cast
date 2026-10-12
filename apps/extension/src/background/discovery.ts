@@ -22,7 +22,7 @@ import {
 import { createLogger } from '@thaumic-cast/shared';
 import { hasHostPermission } from '../lib/hostPermission';
 import { loadExtensionSettings } from '../lib/settings';
-import { getConnectionState, setDesktopApp } from './connection-state';
+import { getConnectionState, setDesktopApp, setRegroup } from './connection-state';
 
 const log = createLogger('Discovery');
 
@@ -49,6 +49,11 @@ export interface DiscoveredApp {
    * Absent when the companion predates `/health` reporting it: unknown.
    */
   browserCapture?: boolean;
+  /**
+   * Whether the companion plays the rooms a cast names as one Sonos group.
+   * False when the companion predates it: casts go to whole Sonos groups.
+   */
+  regroup?: boolean;
 }
 
 /**
@@ -97,6 +102,7 @@ async function probeUrl(url: string): Promise<DiscoveredApp | null> {
           maxStreams: health.data.limits?.maxStreams ?? DEFAULT_MAX_CONCURRENT_STREAMS,
           appType: health.data.appType,
           browserCapture: health.data.browserCapture,
+          regroup: health.data.regroup ?? false,
         };
       }
     }
@@ -130,7 +136,7 @@ export async function discoverDesktopApp(force = false): Promise<DiscoveredApp |
     const app = await probeUrl(settings.serverUrl);
 
     if (app) {
-      setDesktopApp(app.url, app.maxStreams, app.appType, app.browserCapture);
+      setDesktopApp(app.url, app.maxStreams, app.appType, app.browserCapture, app.regroup);
       return app;
     }
 
@@ -150,11 +156,17 @@ export async function discoverDesktopApp(force = false): Promise<DiscoveredApp |
         });
 
         if (response.ok) {
+          // What the companion can do is read again: the one at this address may have been
+          // replaced by an older one that cannot regroup.
+          const health = HealthResponseSchema.safeParse(await response.json().catch(() => null));
+          const regroup = health.success && health.data.regroup === true;
+          setRegroup(regroup);
           return {
             url: connState.desktopAppUrl,
             maxStreams: connState.maxStreams ?? DEFAULT_MAX_CONCURRENT_STREAMS,
             appType: connState.appType ?? undefined,
             browserCapture: connState.browserCapture ?? undefined,
+            regroup,
           };
         }
       } catch {
@@ -175,7 +187,13 @@ export async function discoverDesktopApp(force = false): Promise<DiscoveredApp |
 
   if (foundApp) {
     log.info(`Desktop App discovered at: ${foundApp.url} (Limit: ${foundApp.maxStreams})`);
-    setDesktopApp(foundApp.url, foundApp.maxStreams, foundApp.appType, foundApp.browserCapture);
+    setDesktopApp(
+      foundApp.url,
+      foundApp.maxStreams,
+      foundApp.appType,
+      foundApp.browserCapture,
+      foundApp.regroup,
+    );
     return foundApp;
   }
 

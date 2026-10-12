@@ -483,8 +483,12 @@ async fn a_promotion_that_loses_the_slave_to_a_takeover_stands_down() {
 
         assert_eq!(
             av_actions_since(&sys, &office, from),
-            ["Stop", "SetAVTransportURI", "Play"],
-            "only the takeover touched the slave"
+            [
+                "BecomeCoordinatorOfStandaloneGroup",
+                "SetAVTransportURI",
+                "Play"
+            ],
+            "only the takeover touched the slave, leaving its group, not stopping it"
         );
         let sessions = sys.sessions();
         assert_eq!(sessions.len(), 1, "{sessions:?}");
@@ -615,10 +619,9 @@ async fn a_repoint_that_loses_its_slave_to_a_takeover_stands_down() {
 /// Proves: once another stream has taken a speaker, tearing the first stream
 /// down sends that speaker nothing — it keeps playing the new stream.
 ///
-/// The defensive re-check inside `stop_speakers` (a speaker whose session
-/// changed hands between reading the IP list and stopping) has no await
-/// point in front of it on any public path, so what is observable end to end
-/// is this: no SOAP reaches the taken speaker, and its fetch survives.
+/// A stop reads the speakers from the stream's sessions under the regroup
+/// lock, so what is observable end to end is this: no SOAP reaches the taken
+/// speaker, and its fetch survives.
 #[tokio::test]
 async fn tearing_down_a_replaced_stream_leaves_the_taken_speaker_alone() {
     within("stop after replacement", async {
@@ -649,41 +652,6 @@ async fn tearing_down_a_replaced_stream_leaves_the_taken_speaker_alone() {
                 matches!(event, StreamEvent::Ended { stream_id, .. } if *stream_id == stream_a)
             })
             .await;
-    })
-    .await;
-}
-
-/// Proves: `stop_speakers` given an address list that has gone stale — the
-/// speaker changed hands after the list was read, which a start on another
-/// runtime thread can do in the window before the check — sends that
-/// speaker nothing. Driven directly because no public path can hold that
-/// window open on a single-threaded test runtime.
-#[tokio::test]
-async fn stop_speakers_skips_a_speaker_another_stream_has_since_taken() {
-    within("stale stop list", async {
-        let sys = TestSystem::builder().speakers(["Kitchen"]).build().await;
-        let kitchen = sys.ip("Kitchen");
-        let stream_a = sys.new_stream();
-        let stream_b = sys.new_stream();
-        assert!(sys.start(&stream_a, &["Kitchen"], false).await[0].success);
-        assert!(sys.start(&stream_b, &["Kitchen"], false).await[0].success);
-        let from = sys.fake.next_seq();
-
-        sys.coordinator()
-            .sync_group()
-            .stop_speakers(&stream_a, std::slice::from_ref(&kitchen))
-            .await;
-
-        assert!(
-            sys.fake.calls_since(from).is_empty(),
-            "no request reached the speaker: {:?}",
-            sys.fake.calls_since(from)
-        );
-        assert_eq!(
-            sys.session(&stream_b, "Kitchen").map(|s| s.stream_id),
-            Some(stream_b)
-        );
-        assert!(sys.fake.speaker_named("Kitchen").is_fetching());
     })
     .await;
 }

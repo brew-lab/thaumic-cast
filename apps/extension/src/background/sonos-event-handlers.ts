@@ -56,13 +56,19 @@ import {
   type SpeakerRemovalReason,
 } from '@thaumic-cast/protocol';
 import { applyIngestGapsEvent, ingestGapsBroadcast } from './ingest-gaps-state';
-import { setCompanionAudio } from './connection-state';
+import { getConnectionState, setCompanionAudio } from './connection-state';
 import { handleVideoSyncLatency, stopVideoSync } from './video-sync/service';
 
 const log = createLogger('SonosEvents');
 
+/** A transport state waiting out its debounce, and its timer. */
+interface PendingTransport {
+  timer: ReturnType<typeof setTimeout>;
+  state: TransportState;
+}
+
 /** Per-speaker debounce timers for transport state changes */
-const transportDebounceTimers = new Map<string, ReturnType<typeof setTimeout>>();
+const transportDebounceTimers = new Map<string, PendingTransport>();
 const TRANSPORT_DEBOUNCE_MS = 500;
 
 /** Tracks recently removed speakers to dedupe events from multiple sources */
@@ -94,11 +100,16 @@ export async function handleSonosEvent(event: BroadcastEvent): Promise<void> {
           eventData.speakerIp as string,
           eventData.volume as number,
           eventData.fixed as boolean | undefined,
+          eventData.own === true,
         );
         break;
 
       case 'groupMute':
-        handleGroupMute(eventData.speakerIp as string, eventData.muted as boolean);
+        handleGroupMute(
+          eventData.speakerIp as string,
+          eventData.muted as boolean,
+          eventData.own === true,
+        );
         break;
 
       case 'zoneGroupsUpdated':
@@ -206,26 +217,15 @@ export function clearTabMediaActionState(tabId: number): void {
  */
 function handleTransportState(speakerIp: string, state: TransportState): void {
   // Clear existing timer for this specific speaker
-  const existingTimer = transportDebounceTimers.get(speakerIp);
-  if (existingTimer) {
-    clearTimeout(existingTimer);
+  const existing = transportDebounceTimers.get(speakerIp);
+  if (existing) {
+    clearTimeout(existing.timer);
   }
 
   // Set new timer for this speaker (debounce per-speaker, not globally)
   const timer = setTimeout(async () => {
     transportDebounceTimers.delete(speakerIp);
-    updateTransportState(speakerIp, state);
-
-    // Sync updated state to offscreen for service worker recovery
-    syncStateToOffscreen();
-
-    notifyPopup({
-      type: 'TRANSPORT_STATE_UPDATE',
-      speakerIp,
-      state,
-    });
-
-    log.info(`Transport state: ${speakerIp} → ${state}`);
+    recordTransportState(speakerIp, state);
 
     // If Sonos stopped (e.g., stream killed due to underflow), remove speaker from session
     if (state === 'Stopped') {
@@ -241,7 +241,27 @@ function handleTransportState(speakerIp: string, state: TransportState): void {
     await handleTransportMediaControl(speakerIp, state);
   }, TRANSPORT_DEBOUNCE_MS);
 
-  transportDebounceTimers.set(speakerIp, timer);
+  transportDebounceTimers.set(speakerIp, { timer, state });
+}
+
+/**
+ * Records a speaker's transport state and tells the offscreen document and the popup.
+ * @param speakerIp - The speaker IP address
+ * @param state - Its transport state
+ */
+function recordTransportState(speakerIp: string, state: TransportState): void {
+  updateTransportState(speakerIp, state);
+
+  // Sync updated state to offscreen for service worker recovery
+  syncStateToOffscreen();
+
+  notifyPopup({
+    type: 'TRANSPORT_STATE_UPDATE',
+    speakerIp,
+    state,
+  });
+
+  log.info(`Transport state: ${speakerIp} → ${state}`);
 }
 
 /**
@@ -316,7 +336,17 @@ export async function onSourcePlaybackStarted(tabId: number): Promise<void> {
 
   log.info(`Source started playing for tab ${tabId}, notifying server`);
   try {
-    await offscreenBroker.startPlayback(tabId, session.speakerIps, undefined, session.syncSpeakers);
+    // A cast played as one Sonos group by a companion that regroups names its rooms again:
+    // the companion keeps their group, and leaves alone a room someone moved elsewhere.
+    const rooms = session.roomIds.filter((id) => session.roomTargets[id] !== undefined);
+    const regrouped =
+      session.syncSpeakers && rooms.length > 0 && getConnectionState().regroup === true;
+    await offscreenBroker.startPlayback(
+      tabId,
+      regrouped
+        ? { speakerIps: rooms.map((id) => session.roomTargets[id]), rooms }
+        : { speakerIps: session.speakerIps, syncSpeakers: session.syncSpeakers },
+    );
   } catch (err) {
     // Expected when WS is disconnected; server will catch up on reconnect
     log.debug(`Failed to notify server of source playback: ${err}`);
@@ -369,9 +399,15 @@ async function handleSourceChanged(speakerIp: string, currentUri: string): Promi
  * @param speakerIp - The speaker IP address
  * @param volume - The new volume (0-100)
  * @param fixed - Whether volume is fixed (line-level output)
+ * @param own - The level is the room's own, not its group's
  */
-function handleGroupVolume(speakerIp: string, volume: number, fixed?: boolean): void {
-  updateVolume(speakerIp, volume);
+function handleGroupVolume(
+  speakerIp: string,
+  volume: number,
+  fixed: boolean | undefined,
+  own: boolean,
+): void {
+  updateVolume(speakerIp, volume, own);
 
   if (fixed !== undefined) {
     updateVolumeFixed(speakerIp, fixed);
@@ -389,9 +425,10 @@ function handleGroupVolume(speakerIp: string, volume: number, fixed?: boolean): 
  * Handles mute state change events.
  * @param speakerIp - The speaker IP address
  * @param muted - The new mute state
+ * @param own - The mute is the room's own, not its group's
  */
-function handleGroupMute(speakerIp: string, muted: boolean): void {
-  updateMute(speakerIp, muted);
+function handleGroupMute(speakerIp: string, muted: boolean, own: boolean): void {
+  updateMute(speakerIp, muted, own);
 
   notifyPopup({
     type: 'MUTE_UPDATE',
@@ -466,11 +503,15 @@ async function handleSpeakerRemoval(
   reason: SpeakerRemovalReason,
   preResolvedSession?: { tabId: number; speakerIps: string[] },
 ): Promise<void> {
-  // Clear any pending transport debounce timer for the removed speaker
-  const pendingTimer = transportDebounceTimers.get(speakerIp);
-  if (pendingTimer) {
-    clearTimeout(pendingTimer);
+  // A transport state still in its debounce is recorded now, without acting on it: the
+  // speaker is leaving the cast either way, and a later timer must not remove it from a cast
+  // it has joined since. Dropping it would leave the room's last state standing: a room
+  // removed while it stopped would read as playing, so as in use, with nothing on it.
+  const pending = transportDebounceTimers.get(speakerIp);
+  if (pending) {
+    clearTimeout(pending.timer);
     transportDebounceTimers.delete(speakerIp);
+    recordTransportState(speakerIp, pending.state);
   }
 
   // Dedupe rapid removals from multiple event sources (GENA + stream events)

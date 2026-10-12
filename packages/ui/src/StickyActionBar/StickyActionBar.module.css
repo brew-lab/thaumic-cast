@@ -22,6 +22,11 @@
     background: var(--bar-bg);
   }
 
+  /* Only a Toast, and no actions: no band of surface, the Toast on the page's ground. */
+  .bar[data-toast-only] {
+    --bar-bg: var(--ground);
+  }
+
   .rule {
     position: absolute;
     inset-block-start: 0;

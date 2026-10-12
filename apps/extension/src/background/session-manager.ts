@@ -78,7 +78,10 @@ interface ActiveCastSession {
   encoderConfig: EncoderConfig;
   /** Timestamp when cast started */
   startedAt: number;
-  /** Whether synchronized multi-speaker playback is enabled */
+  /**
+   * Whether the cast plays as one Sonos group: regrouped by a companion that regroups (or
+   * joined by an older extension's "Play speakers as one group").
+   */
   syncSpeakers: boolean;
   /** Capture mode used for this session */
   captureMode: 'tab' | 'browser';
@@ -178,7 +181,7 @@ const storage = persistenceManager.register<[number, ActiveCastSession][]>(
  * @param speakerIps - Target speaker IP addresses (multi-group support)
  * @param speakerNames - Speaker display names (parallel array)
  * @param encoderConfig - Encoder configuration used
- * @param syncSpeakers - Whether synchronized multi-speaker playback is enabled
+ * @param syncSpeakers - Whether the cast plays as one Sonos group
  * @param captureMode - Whether this session uses tab or browser-wide capture
  * @param videoSync - Whether the cast was started with video sync on
  * @param rooms - The rooms the user chose, and the target each plays through

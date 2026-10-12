@@ -1,6 +1,5 @@
 import { WizardStep } from '@thaumic-cast/ui';
 import { useTranslation } from 'react-i18next';
-import styles from './WelcomeStep.module.css';
 
 /**
  * Welcome step introducing the extension concept.
@@ -16,9 +15,9 @@ export function WelcomeStep(): preact.JSX.Element {
       title={t('onboarding.welcome.title')}
       subtitle={t('onboarding.welcome.subtitle')}
       glyph="cast"
+      note={t('onboarding.welcome.footnote')}
     >
-      <p className={styles.body}>{t('onboarding.welcome.body')}</p>
-      <p className={styles.footnote}>{t('onboarding.welcome.footnote')}</p>
+      <p>{t('onboarding.welcome.body')}</p>
     </WizardStep>
   );
 }

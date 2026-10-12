@@ -56,19 +56,22 @@ export interface RoomChoice {
 /**
  * The rooms chosen in the TabCard (P-picker). When the rooms first arrive, the
  * stored sets are read (the old speaker selection migrates into Last cast
- * once) and the choice starts as Last cast's rooms that are here, or else the
- * first room no other client casts to. The choice is popup state: Last cast
+ * once) and the choice starts as `choiceOnOpen` says, once this browser's
+ * casts are known, so a room another tab casts to is never chosen. The
+ * choice is popup state: Last cast
  * is written by the background only when a cast starts. Sets live on this
  * device and are never synced.
  * @param rooms - The rooms here now
  * @param state - The Sonos state
  * @param castingIps - The speakers this browser casts to
+ * @param castsKnown - This browser's casts have been read
  * @returns The choice, the sets and the save form
  */
 export function useRoomChoice(
   rooms: readonly Room[],
   state: SonosStateSnapshot,
   castingIps: string[],
+  castsKnown: boolean,
 ): RoomChoice {
   const [sets, setSets] = useState<RoomSets>(EMPTY_ROOM_SETS);
   const [choice, setChoice] = useState<RoomId[]>([]);
@@ -82,7 +85,7 @@ export function useRoomChoice(
   const mountedRef = useMountedRef();
 
   useEffect(() => {
-    if (started.current || rooms.length === 0) return;
+    if (started.current || rooms.length === 0 || !castsKnown) return;
     started.current = true;
     loadRoomSets(rooms).then((stored) => {
       if (!mountedRef.current) return;
@@ -90,7 +93,7 @@ export function useRoomChoice(
       setChoice(choiceOnOpen(stored, rooms, state, castingIps));
       setReady(true);
     });
-  }, [rooms]);
+  }, [rooms, castsKnown]);
 
   // Another popup or the background (Last cast) changed the sets.
   useStorageListener<unknown>(ROOM_SETS_KEY, (raw) => {
@@ -119,16 +122,27 @@ export function useRoomChoice(
     [views],
   );
 
+  // One save at a time: a second submit (Enter, then a click) before the first
+  // is stored would save the rooms twice.
+  const saving = useRef(false);
   const onSave = useCallback(() => {
-    saveRoomSet(form.name, chosen.map(refOf)).then((result) => {
-      if (!mountedRef.current) return;
-      if ('error' in result) {
-        setForm((prev) => ({ ...prev, error: result.error }));
-        return;
-      }
-      setSets((prev) => ({ ...prev, saved: [...prev.saved, result.set] }));
-      setForm({ open: false, name: '', error: null });
-    });
+    if (saving.current) return;
+    saving.current = true;
+    saveRoomSet(form.name, chosen.map(refOf))
+      .then((result) => {
+        if (!mountedRef.current) return;
+        if ('error' in result) {
+          setForm((prev) => ({ ...prev, error: result.error }));
+          return;
+        }
+        // The sets as stored, not ours plus the new one: the storage listener
+        // may already have shown it.
+        setSets(result.sets);
+        setForm({ open: false, name: '', error: null });
+      })
+      .finally(() => {
+        saving.current = false;
+      });
   }, [form.name, chosen]);
 
   const save: SaveSetForm = {

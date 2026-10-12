@@ -411,14 +411,7 @@ export function setupMessageHandlers(): void {
     if (msg.type === 'START_PLAYBACK') {
       try {
         const validated = StartPlaybackMessageSchema.parse(msg);
-        const {
-          tabId,
-          speakerIps,
-          metadata,
-          syncSpeakers = false,
-          videoSyncEnabled,
-          startVolume,
-        } = validated.payload;
+        const { tabId, ...request } = validated.payload;
 
         // Resolve session from either registry
         const session = activeSessions.get(tabId);
@@ -434,15 +427,7 @@ export function setupMessageHandlers(): void {
 
         session
           .waitForReady()
-          .then(() =>
-            session.startPlayback(
-              speakerIps,
-              metadata,
-              syncSpeakers,
-              videoSyncEnabled,
-              startVolume,
-            ),
-          )
+          .then(() => session.startPlayback(request))
           .then((results) => {
             const anySuccess = results.some((r) => r.success);
             const response: StartPlaybackResponse = { success: anySuccess, results };

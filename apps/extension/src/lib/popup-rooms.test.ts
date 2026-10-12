@@ -4,14 +4,17 @@ import { createEmptySonosState } from '@thaumic-cast/protocol';
 
 import {
   addableRooms,
+  barReplaceHint,
   canSaveSet,
   castRows,
+  inCast,
   masterTargets,
   replaceHint,
   scaleLevels,
   setViews,
   undoLevels,
 } from './popup-rooms';
+import type { CastPlan } from './cast-plan';
 import { EMPTY_ROOM_SETS, type RoomSets } from './room-sets';
 
 /**
@@ -82,6 +85,44 @@ describe('setViews', () => {
     );
     expect(all.find((view) => view.id === 'everywhere')?.pressed).toBe(true);
   });
+
+  it('should press only one set when the choice is several: Everywhere, then saved, then Last cast', () => {
+    const pressed = (sets: RoomSets, choice: string[]) =>
+      setViews(sets, ROOMS, choice)
+        .filter((view) => view.pressed)
+        .map((view) => view.id);
+    const both = [KITCHEN.id, STUDY.id];
+    const all = ROOMS.map((r) => r.id);
+    const sets = (lastCast: Room[]): RoomSets => ({
+      version: 1,
+      lastCast: lastCast.map(ref),
+      saved: [
+        { id: 'evenings', name: 'Evenings', rooms: [ref(KITCHEN), ref(STUDY)] },
+        { id: 'again', name: 'Again', rooms: [ref(STUDY), ref(KITCHEN)] },
+        { id: 'house', name: 'House', rooms: ROOMS.map(ref) },
+      ],
+    });
+
+    expect(pressed(sets([KITCHEN, STUDY]), both)).toEqual(['evenings']);
+    expect(pressed(sets(ROOMS), all)).toEqual(['everywhere']);
+    expect(pressed(sets([KITCHEN]), [KITCHEN.id])).toEqual(['last']);
+  });
+
+  it('should leave out Last cast when a saved set or Everywhere holds exactly its rooms', () => {
+    const ids = (lastCast: Room[]) =>
+      setViews(
+        {
+          version: 1,
+          lastCast: lastCast.map(ref),
+          saved: [{ id: 'evenings', name: 'Evenings', rooms: [ref(STUDY), ref(KITCHEN)] }],
+        },
+        ROOMS,
+        [],
+      ).map((view) => view.id);
+    expect(ids([KITCHEN, STUDY])).toEqual(['evenings', 'everywhere']);
+    expect(ids(ROOMS)).toEqual(['evenings', 'everywhere']);
+    expect(ids([KITCHEN])).toEqual(['last', 'evenings', 'everywhere']);
+  });
 });
 
 describe('canSaveSet', () => {
@@ -112,6 +153,27 @@ describe('replaceHint', () => {
     expect(replaceHint([STUDY], state, [])).toBe('hint_replace_source');
     expect(replaceHint([STUDY, KITCHEN], state, [KITCHEN.ip])).toBe('hint_replace_cast');
     expect(replaceHint([BEDROOM], state, [])).toBeNull();
+  });
+});
+
+describe('barReplaceHint', () => {
+  const plan = (restarting: Room[]): CastPlan => ({
+    rooms: [KITCHEN],
+    targets: [KITCHEN.ip],
+    targetOf: { [KITCHEN.id]: KITCHEN.ip },
+    extraRooms: [],
+    leaving: [KITCHEN],
+    restarting,
+  });
+
+  it('should drop "whatever plays will stop" when the bar says music starts again', () => {
+    expect(barReplaceHint(plan([STUDY]), 'hint_replace_source')).toBeNull();
+    expect(barReplaceHint(plan([]), 'hint_replace_source')).toBe('hint_replace_source');
+  });
+
+  it('should still say a cast on a chosen room ends', () => {
+    expect(barReplaceHint(plan([STUDY]), 'hint_replace_cast')).toBe('hint_replace_cast');
+    expect(barReplaceHint(plan([STUDY]), null)).toBeNull();
   });
 });
 
@@ -153,6 +215,19 @@ describe('castRows', () => {
   });
 });
 
+describe('castRows for a regrouped cast', () => {
+  it('should give a removed room no row while the topology still shows it in the group', () => {
+    const study = room('Study', STUDY.ip, ['Kitchen', KITCHEN.ip]);
+    const cast = {
+      speakerIps: [KITCHEN.ip],
+      speakerNames: ['Kitchen'],
+      roomIds: [KITCHEN.id],
+      syncSpeakers: true,
+    };
+    expect(castRows(cast, [KITCHEN, study]).map((row) => row.name)).toEqual(['Kitchen']);
+  });
+});
+
 describe('undoLevels', () => {
   const grouped = (r: Room, partner: Room): Room => ({ ...r, groupedWith: [partner.name] });
 
@@ -167,6 +242,13 @@ describe('undoLevels', () => {
     const row = { ip: KITCHEN.ip, name: 'Kitchen + Patio', roomIds: [kitchen.id, patio.id] };
     // The coordinator's own level is not known inside a bigger group: the limit rule applies.
     expect(undoLevels(row, [kitchen, patio], state)).toEqual({ [patio.id]: 70 });
+  });
+
+  it("should re-add a regrouped cast's coordinator at its own level", () => {
+    const kitchen = grouped(KITCHEN, PATIO);
+    const state = { ...createEmptySonosState(), groupVolumes: { [KITCHEN.ip]: 40 } };
+    const row = { ip: KITCHEN.ip, name: 'Kitchen', roomIds: [kitchen.id] };
+    expect(undoLevels(row, [kitchen, PATIO], state, true)).toEqual({ [kitchen.id]: 40 });
   });
 
   it('should re-add a room alone in its group at its level now', () => {
@@ -187,6 +269,17 @@ describe('masterTargets', () => {
     });
   });
 
+  it('should move every room of a regrouped cast by the group, whatever the order', () => {
+    // Regrouped into Study's group; the rows are sorted by name, so Study is not first.
+    const bedroom = room('Bedroom', BEDROOM.ip, ['Study', STUDY.ip]);
+    const kitchen = room('Kitchen', KITCHEN.ip, ['Study', STUDY.ip]);
+    const cast = { speakerIps: [BEDROOM.ip, KITCHEN.ip, STUDY.ip], syncSpeakers: true };
+    expect(masterTargets(cast, [bedroom, kitchen, PATIO, STUDY])).toEqual({
+      joined: [BEDROOM.ip, KITCHEN.ip, STUDY.ip],
+      solo: [],
+    });
+  });
+
   it('should move every target on its own when the cast is not joined', () => {
     expect(
       masterTargets({ speakerIps: [BEDROOM.ip, STUDY.ip], syncSpeakers: false }, ROOMS),
@@ -200,7 +293,35 @@ describe('masterTargets', () => {
 
 describe('addableRooms', () => {
   it('should offer every room the cast does not already play in', () => {
-    expect(addableRooms({ speakerIps: [KITCHEN.ip] }, ROOMS)).toEqual([BEDROOM, STUDY]);
+    const cast = { speakerIps: [KITCHEN.ip], roomIds: [KITCHEN.id], syncSpeakers: false };
+    expect(addableRooms(cast, ROOMS)).toEqual([BEDROOM, STUDY]);
+  });
+
+  it('should not offer a room already joining the cast', () => {
+    const cast = { speakerIps: [KITCHEN.ip], roomIds: [KITCHEN.id], syncSpeakers: false };
+    expect(addableRooms(cast, ROOMS, [BEDROOM.id])).toEqual([STUDY]);
+  });
+
+  it('should offer nothing once the cast plays in every room', () => {
+    const cast = {
+      speakerIps: ROOMS.map((room) => room.coordinatorIp),
+      roomIds: ROOMS.map((room) => room.id),
+      syncSpeakers: false,
+    };
+    expect(addableRooms(cast, ROOMS)).toEqual([]);
+  });
+
+  it("should offer a room by the cast's rooms when it plays as one group", () => {
+    // Patio is still grouped with Kitchen, but the cast played only Kitchen.
+    const cast = { speakerIps: [KITCHEN.ip], roomIds: [KITCHEN.id], syncSpeakers: true };
+    expect(addableRooms(cast, ROOMS)).toEqual([BEDROOM, PATIO, STUDY]);
+    expect(inCast(cast, KITCHEN)).toBe(true);
+    expect(inCast(cast, PATIO)).toBe(false);
+  });
+
+  it('should fall back to the Sonos group for a cast that names no rooms', () => {
+    const cast = { speakerIps: [KITCHEN.ip], roomIds: [], syncSpeakers: true };
+    expect(addableRooms(cast, ROOMS)).toEqual([BEDROOM, STUDY]);
   });
 });
 

@@ -5,7 +5,10 @@ import {
   CastAutoStoppedMessageSchema,
   ExtensionResponseSchema,
   NetworkEventMessageSchema,
+  PLAYBACK_TIMEOUT_MS,
+  playbackTimeoutMs,
   RawMediaStateSchema,
+  REGROUP_PLAYBACK_TIMEOUT_MS,
   SpeakerIpSchema,
   SpeakerRemovedMessageSchema,
   StartCastMessageSchema,
@@ -106,6 +109,26 @@ describe('StartPlaybackMessageSchema', () => {
     expect(parsed.payload.syncSpeakers).toBe(false);
     expect(parsed.payload.videoSyncEnabled).toBe(false);
     expect(parsed.payload.startVolume).toBeUndefined();
+  });
+
+  it('should carry the rooms for a companion that regroups, and leave them out otherwise', () => {
+    const parsed = StartPlaybackMessageSchema.parse({
+      type: 'START_PLAYBACK',
+      payload: { tabId: 4, speakerIps: [SPEAKER], rooms: ['RINCON_KITCHEN'] },
+    });
+    expect(parsed.payload.rooms).toEqual(['RINCON_KITCHEN']);
+    expect(
+      StartPlaybackMessageSchema.parse({
+        type: 'START_PLAYBACK',
+        payload: { tabId: 4, speakerIps: [SPEAKER] },
+      }).payload.rooms,
+    ).toBeUndefined();
+    expect(
+      StartPlaybackMessageSchema.safeParse({
+        type: 'START_PLAYBACK',
+        payload: { tabId: 4, speakerIps: [SPEAKER], rooms: [''] },
+      }).success,
+    ).toBe(false);
   });
 
   it('should carry a start volume to the offscreen document', () => {
@@ -464,5 +487,13 @@ describe('video sync controls and status', () => {
     expect(CaptureDelayMessageSchema.safeParse(msg(25)).success).toBe(true);
     expect(CaptureDelayMessageSchema.safeParse(msg(-1)).success).toBe(false);
     expect(CaptureDelayMessageSchema.safeParse(msg(Number.POSITIVE_INFINITY)).success).toBe(false);
+  });
+});
+
+describe('playbackTimeoutMs', () => {
+  it('should give a call that regroups rooms longer than a plain start', () => {
+    expect(playbackTimeoutMs({})).toBe(PLAYBACK_TIMEOUT_MS);
+    expect(playbackTimeoutMs({ rooms: ['RINCON_A'] })).toBe(REGROUP_PLAYBACK_TIMEOUT_MS);
+    expect(REGROUP_PLAYBACK_TIMEOUT_MS).toBeGreaterThan(PLAYBACK_TIMEOUT_MS);
   });
 });

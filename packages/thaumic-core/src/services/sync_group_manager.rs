@@ -1,34 +1,49 @@
 //! Sync group lifecycle management for multi-room Sonos playback.
 //!
 //! Responsibilities:
-//! - Coordinator selection for synchronized playback
-//! - Slave joining/unjoining via x-rincon protocol
+//! - Joining rooms to a cast's group via x-rincon, each standing alone first
 //! - Stop orchestration (ordered slave unjoin → coordinator stop)
 //! - Coordinator promotion (slave takeover when coordinator removed)
-//! - Original group restoration after streaming ends
+//! - Putting rooms back into the groups they left, when nothing else has
+//!   regrouped them since
 
+use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::Duration;
 
-use tokio::sync::Notify;
+use tokio::sync::{Mutex as AsyncMutex, MutexGuard as AsyncMutexGuard, Notify};
 
 use crate::context::NetworkContext;
-use crate::events::{EventEmitter, SpeakerRemovalReason, StreamEvent};
+use crate::events::{EventEmitter, SonosEvent, SpeakerRemovalReason, StreamEvent};
 use crate::sonos::subscription_arbiter::SubscriptionArbiter;
+use crate::sonos::traits::{SonosTopology, SonosVolumeControl};
+use crate::sonos::types::ZoneGroup;
 use crate::sonos::SonosPlayback;
 use crate::state::SonosState;
-use crate::stream::{AudioCodec, StreamRegistry};
+use crate::stream::{AudioCodec, CleanupOrder, StreamRegistry};
 use crate::utils::now_millis;
 
 use super::playback_session_store::{
     GroupRole, PlaybackResult, PlaybackSession, PlaybackSessionKey, PlaybackSessionStore,
 };
+use super::regroup::{plan_restore, Leaving, OldGroup};
+use super::stream_coordinator::StartLevels;
+
+/// A failed [`PlaybackResult`] for `speaker_ip`.
+fn failed(speaker_ip: &str, error: String) -> PlaybackResult {
+    PlaybackResult {
+        speaker_ip: speaker_ip.to_string(),
+        success: false,
+        stream_url: None,
+        error: Some(error),
+    }
+}
 
 /// Manages sync group lifecycle for multi-room Sonos playback.
 ///
-/// Handles the x-rincon protocol coordination: selecting coordinators,
-/// joining/unjoining slaves, promoting slaves on coordinator removal,
-/// and restoring speakers to their original groups after streaming.
+/// Handles the x-rincon protocol coordination: joining rooms to a cast's
+/// group, unjoining them, promoting a slave when the coordinator is removed,
+/// and putting rooms back into the groups they left.
 pub(crate) struct SyncGroupManager {
     sessions: Arc<PlaybackSessionStore>,
     sonos: Arc<dyn SonosPlayback>,
@@ -38,6 +53,74 @@ pub(crate) struct SyncGroupManager {
     stream_registry: Arc<StreamRegistry>,
     network: NetworkContext,
     topology_refresh: Option<Arc<Notify>>,
+    /// Where the household's grouping is read fresh before a regroup.
+    topology: Option<Arc<dyn SonosTopology>>,
+    /// Where a room's own level is read as it enters a sync session (see
+    /// [`Self::announce_own_levels`]).
+    volume: Option<Arc<dyn SonosVolumeControl>>,
+    /// One regroup at a time (see [`Self::lock_regroup`]).
+    regroup_lock: AsyncMutex<()>,
+}
+
+/// How long one fresh read of the household's grouping may take.
+const FRESH_TOPOLOGY_TIMEOUT: Duration = Duration::from_secs(3);
+
+/// How long one read of a room's own level or mute may take.
+const OWN_LEVEL_TIMEOUT: Duration = Duration::from_secs(1);
+
+/// How many times a room's own level or mute is asked for as it enters a
+/// sync session, and how long apart.
+const OWN_LEVEL_ATTEMPTS: usize = 2;
+const OWN_LEVEL_RETRY_DELAY: Duration = Duration::from_millis(300);
+
+/// Reads a room's own level or mute with `read`, asking once more after a
+/// short wait if the first answer is a fault or does not come within
+/// [`OWN_LEVEL_TIMEOUT`]: a speaker that has just joined a group can fault a
+/// request while it settles, and nothing else would ever send the level.
+async fn read_own<T, F, Fut>(read: F) -> Option<T>
+where
+    F: Fn() -> Fut,
+    Fut: std::future::Future<Output = crate::error::SoapResult<T>>,
+{
+    for attempt in 0..OWN_LEVEL_ATTEMPTS {
+        if attempt > 0 {
+            tokio::time::sleep(OWN_LEVEL_RETRY_DELAY).await;
+        }
+        if let Ok(Ok(value)) = tokio::time::timeout(OWN_LEVEL_TIMEOUT, read()).await {
+            return Some(value);
+        }
+    }
+    None
+}
+
+/// How many speakers are asked for the grouping before the cache is used.
+const FRESH_TOPOLOGY_ATTEMPTS: usize = 3;
+
+/// A room joining a cast's Sonos group (see
+/// [`SyncGroupManager::join_room`]).
+pub(crate) struct JoinRoomRequest<'a> {
+    /// The room's primary: its player UUID and IP.
+    pub room_uuid: &'a str,
+    pub room_ip: &'a str,
+    /// The room leading the cast's group.
+    pub coordinator_ip: &'a str,
+    pub coordinator_uuid: &'a str,
+    pub stream_id: &'a str,
+    pub codec: AudioCodec,
+    /// Whether the room shares a group with other rooms it must leave first.
+    pub leave_first: bool,
+    /// Start levels to set after leaving and before joining.
+    pub start_levels: Option<StartLevels<'a>>,
+    /// The group the room was in, recorded on its session.
+    pub old_group: Option<OldGroup>,
+}
+
+/// What a room's join did.
+pub(crate) struct JoinOutcome {
+    pub result: PlaybackResult,
+    /// Whether the room left a group on the way, so a failed join has a
+    /// room to put back.
+    pub left_group: bool,
 }
 
 impl SyncGroupManager {
@@ -60,7 +143,314 @@ impl SyncGroupManager {
             stream_registry,
             network,
             topology_refresh: None,
+            topology: None,
+            volume: None,
+            regroup_lock: AsyncMutex::new(()),
         }
+    }
+
+    /// Sets where the household's grouping is read fresh before a regroup.
+    /// Unset, the cached topology is used.
+    pub fn set_topology_source(&mut self, topology: Arc<dyn SonosTopology>) {
+        self.topology = Some(topology);
+    }
+
+    /// Sets where a room's own level is read as it enters a sync session.
+    /// Unset, the level comes only from the room's RenderingControl events.
+    pub fn set_volume_source(&mut self, volume: Arc<dyn SonosVolumeControl>) {
+        self.volume = Some(volume);
+    }
+
+    /// Takes the regroup lock: one regroup at a time on this companion.
+    ///
+    /// `ZoneGroupState` carries no household id, so this covers the whole
+    /// household; a second household on one companion only queues behind
+    /// the first. Taken before any speaker's start lock, and never while
+    /// holding one.
+    pub(crate) async fn lock_regroup(&self) -> AsyncMutexGuard<'_, ()> {
+        self.regroup_lock.lock().await
+    }
+
+    /// The household's grouping, read from a speaker now rather than from
+    /// the GENA cache, which can trail a change made a moment ago. Asks the
+    /// rooms in `ask_first` (the rooms at hand), then the cached
+    /// coordinators, a few at most; `None` when none of them answers. With
+    /// no topology source set, the cache. The cache itself is left to the
+    /// topology monitor, so clients still hear of every change.
+    pub(crate) async fn read_groups(&self, ask_first: &[String]) -> Option<Vec<ZoneGroup>> {
+        let cached = self.sonos_state.groups.read().clone();
+        let Some(topology) = &self.topology else {
+            return Some(cached);
+        };
+        let mut ips: Vec<String> = Vec::new();
+        for ip in ask_first
+            .iter()
+            .cloned()
+            .chain(cached.iter().map(|g| g.coordinator_ip.clone()))
+        {
+            if !ips.contains(&ip) {
+                ips.push(ip);
+            }
+        }
+        for ip in ips.iter().take(FRESH_TOPOLOGY_ATTEMPTS) {
+            match tokio::time::timeout(FRESH_TOPOLOGY_TIMEOUT, topology.get_zone_group_state(ip))
+                .await
+            {
+                Ok(Ok(snapshot)) if !snapshot.groups.is_empty() => return Some(snapshot.groups),
+                Ok(Ok(_)) => log::debug!("[Regroup] {ip} reported no groups"),
+                Ok(Err(e)) => log::debug!("[Regroup] {ip} could not report the groups: {e}"),
+                Err(_) => log::debug!("[Regroup] {ip} did not report the groups in time"),
+            }
+        }
+        None
+    }
+
+    /// [`Self::read_groups`], falling back to the cache when no speaker
+    /// answers. Only for a stop or a restore, which must go ahead: a cast
+    /// start refuses instead, since a plan made from a stale cache could
+    /// tell a room that now leads others to join.
+    async fn fresh_groups(&self, ask_first: &[String]) -> Vec<ZoneGroup> {
+        match self.read_groups(ask_first).await {
+            Some(groups) => groups,
+            None => {
+                log::warn!("[Regroup] No speaker reported the grouping; using the cached one");
+                self.sonos_state.groups.read().clone()
+            }
+        }
+    }
+
+    /// Joins one room to a cast's Sonos group: it leaves a group of other
+    /// rooms first if it is in one, its start level is set, then it is told
+    /// to join (`x-rincon:`). A room is never told to join while other
+    /// rooms follow it.
+    ///
+    /// Runs under the room's start lock, like every start on a speaker. A
+    /// room that cannot leave its group is left as it was; a room that left
+    /// and then could not join says so, so the caller can put it back.
+    pub(crate) async fn join_room(&self, request: JoinRoomRequest<'_>) -> JoinOutcome {
+        let JoinRoomRequest {
+            room_uuid,
+            room_ip,
+            coordinator_ip,
+            coordinator_uuid,
+            stream_id,
+            codec,
+            leave_first,
+            start_levels,
+            old_group,
+        } = request;
+        let _start = self.sessions.lock_speaker_start(stream_id, room_ip).await;
+        let mut left_group = false;
+
+        // A room already in this cast never gets here: the caller ends the
+        // session of one that was regrouped away instead of pulling it back.
+        if let Some((old_key, old_session)) = self.sessions.find_other_stream(room_ip, stream_id) {
+            log::info!(
+                "[Regroup] {} switching from stream {} to {}",
+                room_ip,
+                old_session.stream_id,
+                stream_id
+            );
+            self.sessions
+                .remove(&old_key.stream_id, &old_key.speaker_ip);
+            match self.sonos.leave_group(room_ip).await {
+                Ok(()) => left_group = true,
+                Err(e) => log::warn!("[Regroup] Failed to unjoin {room_ip}: {e}"),
+            }
+            self.emit_event(StreamEvent::PlaybackStopped {
+                stream_id: old_session.stream_id,
+                speaker_ip: room_ip.to_string(),
+                reason: Some(SpeakerRemovalReason::SpeakerTakenOver),
+                timestamp: now_millis(),
+            });
+        }
+
+        if leave_first && !left_group {
+            if let Err(e) = self.sonos.leave_group(room_ip).await {
+                log::warn!("[Regroup] {room_ip} could not leave its Sonos group: {e}");
+                return JoinOutcome {
+                    result: failed(room_ip, format!("Could not leave its Sonos group: {e}")),
+                    left_group: false,
+                };
+            }
+            left_group = true;
+        }
+
+        // A Sonos member keeps its own volume when it joins, so the level
+        // goes in first.
+        if let Some(levels) = start_levels {
+            levels
+                .apply(&[(room_uuid.to_string(), room_ip.to_string())])
+                .await;
+        }
+
+        match self.sonos.join_group(room_ip, coordinator_uuid).await {
+            Ok(()) => {
+                let rincon_uri = format!("x-rincon:{coordinator_uuid}");
+                self.sessions.insert(PlaybackSession {
+                    stream_id: stream_id.to_string(),
+                    speaker_ip: room_ip.to_string(),
+                    stream_url: rincon_uri.clone(),
+                    codec,
+                    role: GroupRole::Slave,
+                    coordinator_ip: Some(coordinator_ip.to_string()),
+                    coordinator_uuid: Some(coordinator_uuid.to_string()),
+                    old_group,
+                });
+                self.emit_event(StreamEvent::PlaybackStarted {
+                    stream_id: stream_id.to_string(),
+                    speaker_ip: room_ip.to_string(),
+                    stream_url: rincon_uri.clone(),
+                    timestamp: now_millis(),
+                });
+                log::info!("[Regroup] {room_ip} joined {coordinator_ip}");
+                JoinOutcome {
+                    result: PlaybackResult {
+                        speaker_ip: room_ip.to_string(),
+                        success: true,
+                        stream_url: Some(rincon_uri),
+                        error: None,
+                    },
+                    left_group,
+                }
+            }
+            Err(e) => {
+                log::warn!("[Regroup] {room_ip} could not join {coordinator_ip}: {e}");
+                JoinOutcome {
+                    result: failed(room_ip, format!("Failed to join group: {e}")),
+                    left_group,
+                }
+            }
+        }
+    }
+
+    /// Records `room_ip` as a member of the cast's group it is already in:
+    /// nothing is sent to the speaker. A room recorded already keeps its
+    /// session; one playing another stream is taken over from it.
+    pub(crate) fn adopt_room(
+        &self,
+        room_ip: &str,
+        coordinator_ip: &str,
+        coordinator_uuid: &str,
+        stream_id: &str,
+        codec: AudioCodec,
+        old_group: Option<OldGroup>,
+    ) -> PlaybackResult {
+        let rincon_uri = format!("x-rincon:{coordinator_uuid}");
+        if self.sessions.get(stream_id, room_ip).is_none() {
+            if let Some((old_key, old_session)) =
+                self.sessions.find_other_stream(room_ip, stream_id)
+            {
+                self.sessions
+                    .remove(&old_key.stream_id, &old_key.speaker_ip);
+                self.emit_event(StreamEvent::PlaybackStopped {
+                    stream_id: old_session.stream_id,
+                    speaker_ip: room_ip.to_string(),
+                    reason: Some(SpeakerRemovalReason::SpeakerTakenOver),
+                    timestamp: now_millis(),
+                });
+            }
+            self.sessions.insert(PlaybackSession {
+                stream_id: stream_id.to_string(),
+                speaker_ip: room_ip.to_string(),
+                stream_url: rincon_uri.clone(),
+                codec,
+                role: GroupRole::Slave,
+                coordinator_ip: Some(coordinator_ip.to_string()),
+                coordinator_uuid: Some(coordinator_uuid.to_string()),
+                old_group,
+            });
+            self.emit_event(StreamEvent::PlaybackStarted {
+                stream_id: stream_id.to_string(),
+                speaker_ip: room_ip.to_string(),
+                stream_url: rincon_uri.clone(),
+                timestamp: now_millis(),
+            });
+        }
+        PlaybackResult {
+            speaker_ip: room_ip.to_string(),
+            success: true,
+            stream_url: Some(rincon_uri),
+            error: None,
+        }
+    }
+
+    /// Ends the session of a room someone regrouped out of the cast, without
+    /// sending it anything: the household has taken it.
+    pub(crate) async fn drop_regrouped_room(&self, stream_id: &str, room_ip: &str) {
+        log::info!("[Regroup] {room_ip} was regrouped outside the cast; ending its session");
+        self.sessions.remove(stream_id, room_ip);
+        self.leave_sync_session(room_ip).await;
+        self.emit_event(StreamEvent::PlaybackStopped {
+            stream_id: stream_id.to_string(),
+            speaker_ip: room_ip.to_string(),
+            reason: Some(SpeakerRemovalReason::SourceChanged),
+            timestamp: now_millis(),
+        });
+    }
+
+    /// Ends the session of a speaker that switched to another source, and,
+    /// when it led the cast's group, the sessions of the rooms that follow
+    /// it: they play the new source with it now. Nothing is sent to any
+    /// speaker and nothing is put back: the household took the rooms.
+    ///
+    /// A speaker the companion is moving off the stream itself (see
+    /// [`PlaybackSessionStore::release`]) is left alone: that stop or
+    /// promotion owns its session.
+    ///
+    /// Returns the stream the speaker played, if it had a session.
+    pub(crate) fn end_after_source_change(&self, speaker_ip: &str) -> Option<String> {
+        if self.sessions.is_releasing(speaker_ip) {
+            log::debug!(
+                "Source change on {speaker_ip} ignored: the companion is moving it off the stream"
+            );
+            return None;
+        }
+        let key = self.sessions.get_key_by_speaker_ip(speaker_ip)?;
+        let stream_id = key.stream_id;
+        let session = self.sessions.remove(&stream_id, speaker_ip)?;
+        let followers: Vec<String> = if session.role == GroupRole::Coordinator {
+            self.sessions
+                .get_slaves_for_coordinator(&stream_id, speaker_ip)
+                .into_iter()
+                .map(|(key, _)| key.speaker_ip)
+                .collect()
+        } else {
+            Vec::new()
+        };
+        log::info!(
+            "Removed playback session for {} due to source change (stream: {}, {} following)",
+            speaker_ip,
+            stream_id,
+            followers.len()
+        );
+        let mut ended = vec![speaker_ip.to_string()];
+        ended.extend(followers);
+        for ip in &ended {
+            self.end_session(&stream_id, ip, Some(SpeakerRemovalReason::SourceChanged));
+        }
+        // Release their sync sessions, as a stop does, a lone room's too: left
+        // in it, its group's level would never be followed again, and the
+        // next cast to take it would not read its own.
+        ended.retain(|ip| self.arbiter.is_in_sync_session(ip));
+        if !ended.is_empty() {
+            if let Ok(runtime) = tokio::runtime::Handle::try_current() {
+                let arbiter = Arc::clone(&self.arbiter);
+                let callback_url = self.network.gena_callback_url();
+                runtime.spawn(async move {
+                    for ip in ended {
+                        arbiter.leave_sync_session(&ip, &callback_url).await;
+                    }
+                });
+            }
+        }
+        self.cleanup_stream_if_no_sessions(&stream_id);
+        Some(stream_id)
+    }
+
+    /// Enters the sync session for every speaker of `stream_id`.
+    pub(crate) async fn enter_stream_sync_session(&self, stream_id: &str) {
+        self.enter_sync_session(stream_id).await;
     }
 
     /// Sets the topology refresh notifier.
@@ -96,9 +486,64 @@ impl SyncGroupManager {
     async fn enter_sync_session(&self, stream_id: &str) {
         let callback_url = self.network.gena_callback_url();
         let speaker_ips = self.sessions.get_ips_for_stream(stream_id);
+        let entering: Vec<String> = speaker_ips
+            .iter()
+            .filter(|ip| !self.arbiter.is_in_sync_session(ip))
+            .cloned()
+            .collect();
         self.arbiter
             .enter_sync_session(&speaker_ips, &callback_url)
             .await;
+        self.announce_own_levels(entering).await;
+    }
+
+    /// Reads the own level and mute of each room that has just entered the
+    /// sync session, once they are followed, and records and broadcasts them
+    /// as its `own` events.
+    ///
+    /// A room's own level otherwise comes only from the first
+    /// RenderingControl event after subscribing, and Sonos sends nothing
+    /// more until the level changes. That first event is lost when it
+    /// reaches the callback before the subscribe reply is handled (its SID
+    /// is not known yet), so a room that joins a cast without a level change
+    /// would show no level for as long as it plays. The reads are made in
+    /// parallel and each is short, so the start waits little for them; an
+    /// event handled after them is newer and replaces what they recorded.
+    async fn announce_own_levels(&self, ips: Vec<String>) {
+        let Some(volume) = self.volume.as_deref() else {
+            return;
+        };
+        let reads = ips.iter().map(|ip| async move {
+            let (level, muted) = futures::future::join(
+                read_own(|| volume.get_speaker_volume(ip)),
+                read_own(|| volume.get_speaker_mute(ip)),
+            )
+            .await;
+            (ip, level, muted)
+        });
+        for (ip, level, muted) in futures::future::join_all(reads).await {
+            if let Some(level) = level {
+                self.sonos_state.group_volumes.insert(ip.clone(), level);
+                self.emitter.emit_sonos(SonosEvent::GroupVolume {
+                    speaker_ip: ip.clone(),
+                    volume: level,
+                    fixed: None,
+                    own: true,
+                    timestamp: now_millis(),
+                });
+            } else {
+                log::debug!("[SyncGroupManager] {ip}: could not read its own level");
+            }
+            if let Some(muted) = muted {
+                self.sonos_state.group_mutes.insert(ip.clone(), muted);
+                self.emitter.emit_sonos(SonosEvent::GroupMute {
+                    speaker_ip: ip.clone(),
+                    muted,
+                    own: true,
+                    timestamp: now_millis(),
+                });
+            }
+        }
     }
 
     /// Leaves a sync session for a single speaker.
@@ -127,300 +572,271 @@ impl SyncGroupManager {
     }
 
     // ─────────────────────────────────────────────────────────────────────────────
-    // Coordinator selection
-    // ─────────────────────────────────────────────────────────────────────────────
-
-    /// Selects a coordinator speaker for synchronized playback.
-    ///
-    /// Prefers speakers that are already Sonos group coordinators (have a coordinator UUID).
-    /// Falls back to the first speaker with any resolvable UUID.
-    ///
-    /// # Returns
-    /// Tuple of (coordinator_ip, coordinator_uuid, remaining_slave_ips), or None if
-    /// no valid coordinator can be determined (no UUIDs available).
-    pub fn select_coordinator(
-        &self,
-        speaker_ips: &[String],
-    ) -> Option<(String, String, Vec<String>)> {
-        // Try to find a speaker that's already a Sonos group coordinator
-        for ip in speaker_ips {
-            if let Some(uuid) = self.sonos_state.get_coordinator_uuid_by_ip(ip) {
-                let slaves: Vec<_> = speaker_ips.iter().filter(|s| *s != ip).cloned().collect();
-                log::info!(
-                    "[GroupSync] Selected coordinator {} (uuid={}) - existing Sonos coordinator",
-                    ip,
-                    uuid
-                );
-                return Some((ip.clone(), uuid, slaves));
-            }
-        }
-
-        // Fallback: use first speaker if we can get its UUID from member lookup
-        let first = speaker_ips.first()?;
-        let uuid = self.sonos_state.get_member_uuid_by_ip(first)?;
-        let slaves: Vec<_> = speaker_ips.iter().skip(1).cloned().collect();
-        log::info!(
-            "[GroupSync] Selected coordinator {} (uuid={}) - first speaker fallback",
-            first,
-            uuid
-        );
-        Some((first.clone(), uuid, slaves))
-    }
-
-    // ─────────────────────────────────────────────────────────────────────────────
-    // Slave joining
-    // ─────────────────────────────────────────────────────────────────────────────
-
-    /// Joins a slave speaker to an active coordinator for synchronized playback.
-    ///
-    /// This creates a playback session with `GroupRole::Slave` and uses the x-rincon
-    /// protocol to sync the slave's playback timing to the coordinator.
-    ///
-    /// The whole sequence (detect an existing stream on this speaker, unjoin it,
-    /// join the coordinator, record the session) runs under the speaker's start
-    /// lock, shared with `StreamCoordinator::start_single_playback` so the two
-    /// cannot interleave their SOAP calls on one speaker. The lock is taken
-    /// here, at the outermost point of this path: the coordinator start that
-    /// precedes a group start has already released its own guard by the time
-    /// slaves are joined, so no caller reaches this function holding a guard.
-    pub async fn join_slave_to_coordinator(
-        &self,
-        slave_ip: &str,
-        coordinator_ip: &str,
-        coordinator_uuid: &str,
-        stream_id: &str,
-        codec: AudioCodec,
-    ) -> PlaybackResult {
-        log::debug!(
-            "[GroupSync] Joining slave {} to coordinator {} (uuid={})",
-            slave_ip,
-            coordinator_ip,
-            coordinator_uuid
-        );
-
-        // Held until this function returns, on every path.
-        let _start = self.sessions.lock_speaker_start(stream_id, slave_ip).await;
-
-        // Check for existing sessions on this speaker and handle appropriately
-        if let Some(existing) = self.sessions.get(stream_id, slave_ip) {
-            // Session exists for same (stream, speaker) - check if already correctly configured
-            let dominated_correctly = existing.role == GroupRole::Slave
-                && existing.coordinator_uuid.as_deref() == Some(coordinator_uuid);
-
-            if dominated_correctly {
-                log::debug!(
-                    "[GroupSync] Slave {} already joined to coordinator {}, skipping",
-                    slave_ip,
-                    coordinator_uuid
-                );
-                return PlaybackResult {
-                    speaker_ip: slave_ip.to_string(),
-                    success: true,
-                    stream_url: Some(format!("x-rincon:{}", coordinator_uuid)),
-                    error: None,
-                };
-            }
-
-            // Coordinator changed or role changed (was Coordinator, now Slave) - need to re-join
-            log::info!(
-                "[GroupSync] Slave {} re-routing: role {:?} -> Slave, coordinator {:?} -> {}",
-                slave_ip,
-                existing.role,
-                existing.coordinator_uuid,
-                coordinator_uuid
-            );
-            self.sessions.remove(stream_id, slave_ip);
-
-            // Leave current group/stop before re-joining
-            if let Err(e) = self.sonos.leave_group(slave_ip).await {
-                log::warn!(
-                    "[GroupSync] Failed to unjoin {} before re-route: {}",
-                    slave_ip,
-                    e
-                );
-            }
-            // No PlaybackStopped event - same stream continues with new coordinator
-        } else {
-            // Check if this speaker is playing a different stream - clean up first
-            let existing_other_stream = self
-                .sessions
-                .find_other_stream(slave_ip, stream_id)
-                .map(|(key, session)| (key, session.stream_id));
-
-            if let Some((old_key, old_stream_id)) = existing_other_stream {
-                log::info!(
-                    "[GroupSync] Slave {} switching from stream {} to {} - stopping old playback",
-                    slave_ip,
-                    old_stream_id,
-                    stream_id
-                );
-
-                self.sessions
-                    .remove(&old_key.stream_id, &old_key.speaker_ip);
-
-                // Best-effort unjoin/stop - ignore errors
-                if let Err(e) = self.sonos.leave_group(slave_ip).await {
-                    log::warn!("[GroupSync] Failed to unjoin slave {}: {}", slave_ip, e);
-                }
-
-                // Tell the displaced client *why* its cast ended: another
-                // client took this speaker, exactly as on the coordinator path.
-                self.emit_event(StreamEvent::PlaybackStopped {
-                    stream_id: old_stream_id,
-                    speaker_ip: slave_ip.to_string(),
-                    reason: Some(SpeakerRemovalReason::SpeakerTakenOver),
-                    timestamp: now_millis(),
-                });
-            }
-        }
-
-        // Capture original group membership before joining the streaming group.
-        let original_coordinator_uuid = self
-            .sonos_state
-            .get_original_coordinator_for_slave(slave_ip);
-
-        // Join the slave to the coordinator
-        match self.sonos.join_group(slave_ip, coordinator_uuid).await {
-            Ok(()) => {
-                let rincon_uri = format!("x-rincon:{}", coordinator_uuid);
-
-                self.sessions.insert(PlaybackSession {
-                    stream_id: stream_id.to_string(),
-                    speaker_ip: slave_ip.to_string(),
-                    stream_url: rincon_uri.clone(),
-                    codec,
-                    role: GroupRole::Slave,
-                    coordinator_ip: Some(coordinator_ip.to_string()),
-                    coordinator_uuid: Some(coordinator_uuid.to_string()),
-                    original_coordinator_uuid,
-                });
-
-                self.emit_event(StreamEvent::PlaybackStarted {
-                    stream_id: stream_id.to_string(),
-                    speaker_ip: slave_ip.to_string(),
-                    stream_url: rincon_uri.clone(),
-                    timestamp: now_millis(),
-                });
-
-                log::info!(
-                    "[GroupSync] Slave {} joined coordinator {} successfully",
-                    slave_ip,
-                    coordinator_ip
-                );
-
-                PlaybackResult {
-                    speaker_ip: slave_ip.to_string(),
-                    success: true,
-                    stream_url: Some(rincon_uri),
-                    error: None,
-                }
-            }
-            Err(e) => {
-                log::warn!(
-                    "[GroupSync] Failed to join slave {} to coordinator {}: {}",
-                    slave_ip,
-                    coordinator_ip,
-                    e
-                );
-                PlaybackResult {
-                    speaker_ip: slave_ip.to_string(),
-                    success: false,
-                    stream_url: None,
-                    error: Some(format!("Failed to join group: {}", e)),
-                }
-            }
-        }
-    }
-
-    /// Joins multiple slaves to a coordinator concurrently.
-    ///
-    /// Parallelizes the individual `join_slave_to_coordinator` calls via `join_all`,
-    /// then enters a sync session once if any joins succeeded.
-    pub(crate) async fn join_slaves_to_coordinator(
-        &self,
-        slave_ips: &[String],
-        coordinator_ip: &str,
-        coordinator_uuid: &str,
-        stream_id: &str,
-        codec: AudioCodec,
-    ) -> Vec<PlaybackResult> {
-        let futures: Vec<_> = slave_ips
-            .iter()
-            .map(|slave_ip| {
-                self.join_slave_to_coordinator(
-                    slave_ip,
-                    coordinator_ip,
-                    coordinator_uuid,
-                    stream_id,
-                    codec,
-                )
-            })
-            .collect();
-
-        let results = futures::future::join_all(futures).await;
-
-        let any_succeeded = results.iter().any(|r| r.success);
-        if any_succeeded {
-            self.enter_sync_session(stream_id).await;
-        }
-
-        results
-    }
-
-    // ─────────────────────────────────────────────────────────────────────────────
     // Stop orchestration
     // ─────────────────────────────────────────────────────────────────────────────
 
-    /// Sends stop commands to a list of speakers (best-effort).
-    ///
-    /// For grouped playback, the order matters:
-    /// 1. Unjoin slaves first (make them standalone)
-    /// 2. Restore slaves to their original groups (best-effort)
-    /// 3. Stop coordinators
-    /// 4. Switch coordinators to queue (cleanup)
-    ///
-    /// `speaker_ips` was read from `stream_id`'s sessions a moment ago, but a
-    /// speaker can change hands in between: another client's start on the same
-    /// speaker removes this stream's session and inserts its own. A speaker
-    /// whose session now belongs to a different stream is skipped, so this
-    /// stream's teardown cannot silence a cast that has just replaced it.
-    pub async fn stop_speakers(&self, stream_id: &str, speaker_ips: &[String]) {
-        let mut coordinators: Vec<(String, Option<String>)> = Vec::new();
-        let mut slaves = Vec::new();
-        let mut slave_restoration_info: Vec<(String, String)> = Vec::new();
+    /// Session store's sessions for `stream_id`.
+    fn stream_sessions(&self, stream_id: &str) -> Vec<PlaybackSession> {
+        self.sessions
+            .get_ips_for_stream(stream_id)
+            .iter()
+            .filter_map(|ip| self.sessions.get(stream_id, ip))
+            .collect()
+    }
 
-        for ip in speaker_ips {
-            if let Some(session) = self.sessions.get_by_speaker_ip(ip) {
-                if session.stream_id != stream_id {
-                    log::info!(
-                        "[GroupSync] Not stopping {}: it now plays stream {} instead of {}",
-                        ip,
-                        session.stream_id,
-                        stream_id
-                    );
-                    continue;
-                }
-                match session.role {
-                    GroupRole::Coordinator => {
-                        coordinators.push((ip.clone(), session.original_coordinator_uuid.clone()));
-                    }
-                    GroupRole::Slave => {
-                        slaves.push(ip.clone());
-                        if let Some(ref orig_uuid) = session.original_coordinator_uuid {
-                            slave_restoration_info.push((ip.clone(), orig_uuid.clone()));
-                        }
-                    }
-                }
+    /// Room UUIDs of the speakers of `sessions`, as `seen` names them.
+    fn room_uuids(&self, seen: &Household, sessions: &[PlaybackSession]) -> HashSet<String> {
+        sessions
+            .iter()
+            .filter_map(|s| self.room_uuid(seen, &s.speaker_ip))
+            .collect()
+    }
+
+    /// The room UUID of the speaker at `ip`: from `seen`, else the cache.
+    fn room_uuid(&self, seen: &Household, ip: &str) -> Option<String> {
+        seen.uuid_of(ip)
+            .or_else(|| self.sonos_state.get_member_uuid_by_ip(ip))
+    }
+
+    /// The household as a stop sees it: read fresh when anything may need
+    /// putting back or checking, else the cache.
+    async fn household_for_stop(&self, sessions: &[PlaybackSession]) -> Household {
+        let needs_fresh = sessions
+            .iter()
+            .any(|s| s.role == GroupRole::Slave || s.old_group.is_some());
+        let ips: Vec<String> = sessions.iter().map(|s| s.speaker_ip.clone()).collect();
+        let groups = if needs_fresh {
+            self.fresh_groups(&ips).await
+        } else {
+            self.sonos_state.groups.read().clone()
+        };
+        Household { groups }
+    }
+
+    /// Splits a cast group's slaves for a stop: rooms to make leave, rooms
+    /// that stay grouped with the coordinator because they were grouped with
+    /// it before the cast, and rooms someone else has regrouped since, which
+    /// get nothing at all.
+    fn split_slaves(&self, seen: &Household, slaves: Vec<PlaybackSession>) -> SlaveSplit {
+        let mut split = SlaveSplit::default();
+        for slave in slaves {
+            if !seen.still_follows(&slave.speaker_ip, slave.coordinator_uuid.as_deref()) {
+                log::info!(
+                    "[GroupSync] {} was regrouped by someone else; leaving it alone",
+                    slave.speaker_ip
+                );
+                split.regrouped.push(slave);
+            } else if slave.old_group.as_ref().is_some_and(|g| g.kept) {
+                split.stay.push(slave);
             } else {
-                coordinators.push((ip.clone(), None));
+                split.leave.push(slave);
             }
         }
+        split
+    }
+
+    /// Whether the cast coordinator at `ip` is put back when it stops: it
+    /// left a group for the cast (or every room it kept has gone), and it
+    /// still leads a group of cast rooms only, so nobody else regrouped it.
+    fn coordinator_goes_back(
+        &self,
+        seen: &Household,
+        coordinator: &PlaybackSession,
+        cast_rooms: &HashSet<String>,
+        keeps_partners: bool,
+    ) -> bool {
+        let Some(old) = &coordinator.old_group else {
+            return false;
+        };
+        if old.kept && keeps_partners {
+            return false;
+        }
+        let ours = self
+            .room_uuid(seen, &coordinator.speaker_ip)
+            .is_some_and(|uuid| seen.leads_only(&uuid, cast_rooms));
+        if !ours {
+            log::info!(
+                "[GroupSync] {} was regrouped by someone else; not putting it back",
+                coordinator.speaker_ip
+            );
+        }
+        ours
+    }
+
+    /// A [`Leaving`] for a room that recorded its old group.
+    fn leaving(&self, seen: &Household, session: &PlaybackSession) -> Option<Leaving> {
+        let old_group = session.old_group.clone()?;
+        Some(Leaving {
+            uuid: self.room_uuid(seen, &session.speaker_ip)?,
+            ip: session.speaker_ip.clone(),
+            old_group,
+        })
+    }
+
+    /// Puts rooms that have just left a cast back into the groups they were
+    /// in (see [`plan_restore`]), with no Play. Every room of the cast that
+    /// is not being put back is listed in `other_cast_rooms`, so no room is
+    /// ever sent into a group the cast still plays in. Best effort: a room
+    /// that cannot be put back is left standing alone.
+    async fn put_back(
+        &self,
+        seen: &Household,
+        leaving: &[Leaving],
+        other_cast_rooms: &HashSet<String>,
+    ) -> usize {
+        if leaving.is_empty() {
+            return 0;
+        }
+        let rejoins = plan_restore(leaving, &seen.groups, other_cast_rooms);
+        let futures = rejoins.iter().map(|rejoin| async move {
+            match self
+                .sonos
+                .rejoin_group(&rejoin.ip, &rejoin.coordinator_uuid)
+                .await
+            {
+                Ok(()) => log::info!(
+                    "[GroupSync] Put {} back into the group of {}",
+                    rejoin.ip,
+                    rejoin.coordinator_uuid
+                ),
+                Err(e) => log::warn!(
+                    "[GroupSync] Could not put {} back into the group of {}: {} (left standing alone)",
+                    rejoin.ip,
+                    rejoin.coordinator_uuid,
+                    e
+                ),
+            }
+        });
+        futures::future::join_all(futures).await;
+        rejoins.len()
+    }
+
+    /// Puts back the rooms a failed cast start moved: called by the start
+    /// path, which already holds the regroup lock. The grouping is read
+    /// fresh, since the start itself may just have promoted a room.
+    pub(crate) async fn put_back_after_failed_start(
+        &self,
+        moved: &[(String, OldGroup)],
+        other_cast_rooms: &HashSet<String>,
+    ) {
+        if moved.is_empty() {
+            return;
+        }
+        let ips: Vec<String> = moved.iter().map(|(ip, _)| ip.clone()).collect();
+        let seen = Household {
+            groups: self.fresh_groups(&ips).await,
+        };
+        let leaving: Vec<Leaving> = moved
+            .iter()
+            .filter_map(|(ip, old_group)| {
+                Some(Leaving {
+                    uuid: self.room_uuid(&seen, ip)?,
+                    ip: ip.clone(),
+                    old_group: old_group.clone(),
+                })
+            })
+            .collect();
+        if self.put_back(&seen, &leaving, other_cast_rooms).await > 0 {
+            self.schedule_topology_refresh();
+        }
+    }
+
+    /// Stops every speaker of `streams` (best effort), puts their rooms back,
+    /// and ends the streams: their sessions are removed and their HTTP
+    /// closed, before the speaker calls for a stream whose codec needs that
+    /// ([`CleanupOrder::HttpFirst`]) and after them otherwise.
+    ///
+    /// All of it runs under the regroup lock, and the speakers are read from
+    /// the sessions only once the lock is held: a cast start still joining
+    /// rooms finishes first, so the rooms it joined are stopped and put back
+    /// too, and once the lock is released the streams are gone, so a start
+    /// queued behind it finds no stream to play.
+    ///
+    /// With `budget`, the speaker calls are cut off that long after the
+    /// lock is held (a shutdown bounds them); the streams still end. The
+    /// wait for the lock is not counted: a cast start in flight is bounded by
+    /// its own speaker timeouts, and counting it would leave rooms it joined
+    /// playing and out of their groups.
+    pub async fn stop_streams(&self, streams: &[(String, CleanupOrder)], budget: Option<Duration>) {
+        let _regroup = self.lock_regroup().await;
+        let by = budget.map(|budget| tokio::time::Instant::now() + budget);
+        // The stop switches every room to its queue, out of the group or back
+        // into an old one before the sessions are removed below: none of
+        // their NOTIFYs is a source change meanwhile.
+        let _releasing = self.sessions.release(
+            streams
+                .iter()
+                .flat_map(|(id, _)| self.sessions.get_ips_for_stream(id)),
+        );
+        for (stream_id, order) in streams {
+            if *order == CleanupOrder::HttpFirst {
+                self.stream_registry.remove_stream(stream_id);
+            }
+        }
+        let ids: Vec<String> = streams.iter().map(|(id, _)| id.clone()).collect();
+        match by {
+            Some(deadline) => {
+                if tokio::time::timeout_at(deadline, self.stop_locked(&ids))
+                    .await
+                    .is_err()
+                {
+                    log::warn!("[GroupSync] Ran out of time stopping and putting rooms back");
+                    self.schedule_topology_refresh();
+                }
+            }
+            None => self.stop_locked(&ids).await,
+        }
+        for (stream_id, order) in streams {
+            self.sessions.remove_all_for_stream(stream_id);
+            if *order == CleanupOrder::SoapFirst {
+                self.stream_registry.remove_stream(stream_id);
+            }
+        }
+    }
+
+    /// The speaker calls of [`Self::stop_streams`], under the regroup lock,
+    /// with the grouping read fresh:
+    /// 1. Slaves leave the cast's group, except rooms that were grouped with
+    ///    the coordinator before the cast (they stay with it) and rooms
+    ///    someone else has regrouped since (they are not touched).
+    /// 2. Coordinators are stopped and switched to their queue.
+    /// 3. Rooms that left a group for the cast are put back (see
+    ///    [`plan_restore`]), with no Play; the coordinator only if it still
+    ///    leads a group of cast rooms only and every slave that had to leave
+    ///    it did. A slave that could not leave stays where it is.
+    ///
+    /// A speaker whose session belongs to another stream is never touched,
+    /// so this teardown cannot silence a cast that has just replaced it.
+    async fn stop_locked(&self, stream_ids: &[String]) {
+        let mut coordinators: Vec<PlaybackSession> = Vec::new();
+        let mut slaves = Vec::new();
+        for stream_id in stream_ids {
+            for ip in self.sessions.get_ips_for_stream(stream_id) {
+                let Some(session) = self.sessions.get(stream_id, &ip) else {
+                    continue;
+                };
+                match session.role {
+                    GroupRole::Coordinator => coordinators.push(session),
+                    GroupRole::Slave => slaves.push(session),
+                }
+            }
+        }
+        if coordinators.is_empty() && slaves.is_empty() {
+            return;
+        }
+
+        let all: Vec<PlaybackSession> = coordinators.iter().chain(&slaves).cloned().collect();
+        let seen = self.household_for_stop(&all).await;
+        let any_slaves = !slaves.is_empty();
+        let split = self.split_slaves(&seen, slaves);
+        let cast_rooms = self.room_uuids(&seen, &all);
 
         log::debug!(
-            "[GroupSync] stop_speakers: {} coordinators, {} slaves, {} slaves to restore",
+            "[GroupSync] stop: {} coordinators, {} slaves leaving, {} staying, {} regrouped",
             coordinators.len(),
-            slaves.len(),
-            slave_restoration_info.len()
+            split.leave.len(),
+            split.stay.len(),
+            split.regrouped.len()
         );
 
         // Both blocks end with leave_sync_session so the arbiter clears sync_ips
@@ -428,37 +844,16 @@ impl SyncGroupManager {
         // Without this, sync_ips retains stale entries indefinitely (no GENA
         // expiry), causing TopologyMonitor to permanently skip GRC subscriptions.
 
-        // Block 1 (parallel across slaves): leave_group → restore → leave_sync_session
-        {
-            let futures: Vec<_> = slaves
-                .iter()
-                .map(|ip| {
-                    let restoration = slave_restoration_info
-                        .iter()
-                        .find(|(s, _)| s == ip)
-                        .map(|(_, uuid)| uuid.clone());
-
-                    async move {
-                        if let Err(e) = self.sonos.leave_group(ip).await {
-                            log::warn!("[GroupSync] Failed to unjoin slave {}: {}", ip, e);
-                        }
-                        if let Some(orig_uuid) = restoration {
-                            self.restore_original_group(ip, &orig_uuid).await;
-                        }
-                        self.leave_sync_session(ip).await;
-                    }
-                })
-                .collect();
-
-            futures::future::join_all(futures).await;
-        }
+        // Block 1 (parallel across slaves): leave_group → leave_sync_session
+        let stuck = self.leave_slaves(&split).await;
 
         // Block 2 (parallel across coordinators, AFTER block 1):
-        // stop → switch_to_queue → restore → leave_sync_session
+        // stop → switch_to_queue → leave_sync_session
         {
             let futures: Vec<_> = coordinators
                 .iter()
-                .map(|(ip, original_coordinator_uuid)| async move {
+                .map(|session| async move {
+                    let ip = &session.speaker_ip;
                     if let Err(e) = self.sonos.stop(ip).await {
                         log::warn!("[GroupSync] Failed to stop {}: {}", ip, e);
                     }
@@ -469,85 +864,96 @@ impl SyncGroupManager {
                         }
                     }
 
-                    if let Some(orig_uuid) = original_coordinator_uuid {
-                        self.restore_original_group(ip, orig_uuid).await;
-                    }
-
                     self.leave_sync_session(ip).await;
                 })
                 .collect();
-
             futures::future::join_all(futures).await;
         }
 
-        if !slaves.is_empty() {
+        // Block 3: put the rooms back.
+        let mut leaving: Vec<Leaving> = split
+            .leave
+            .iter()
+            .filter(|s| !stuck.contains(&s.speaker_ip))
+            .filter_map(|s| self.leaving(&seen, s))
+            .collect();
+        for session in &coordinators {
+            let ip = session.speaker_ip.as_str();
+            let follows = |s: &PlaybackSession| s.coordinator_ip.as_deref() == Some(ip);
+            if split
+                .leave
+                .iter()
+                .any(|s| follows(s) && stuck.contains(&s.speaker_ip))
+            {
+                log::warn!("[GroupSync] A room still follows {ip}; not putting {ip} back");
+                continue;
+            }
+            let keeps_partners = split.stay.iter().any(follows);
+            if self.coordinator_goes_back(&seen, session, &cast_rooms, keeps_partners) {
+                leaving.extend(self.leaving(&seen, session));
+            }
+        }
+        let gone: HashSet<&str> = leaving.iter().map(|l| l.uuid.as_str()).collect();
+        let others: HashSet<String> = cast_rooms
+            .iter()
+            .filter(|uuid| !gone.contains(uuid.as_str()))
+            .cloned()
+            .collect();
+        let restored = self.put_back(&seen, &leaving, &others).await;
+
+        if any_slaves || restored > 0 {
             self.schedule_topology_refresh();
         }
     }
 
-    /// Attempts to restore a speaker to its original Sonos group.
-    ///
-    /// Best-effort operation - if restoration fails, the speaker is left standalone.
-    pub async fn restore_original_group(&self, speaker_ip: &str, original_coordinator_uuid: &str) {
-        log::info!(
-            "[GroupSync] Restoring {} to original group (coordinator: {})",
-            speaker_ip,
-            original_coordinator_uuid
-        );
-
-        let coordinator_still_exists = self
-            .sonos_state
-            .groups
-            .read()
+    /// Makes the slaves in `split.leave` leave the cast's group, in
+    /// parallel, and releases every slave's sync session. Returns the IPs of
+    /// the slaves that could not leave: they still follow their coordinator.
+    async fn leave_slaves(&self, split: &SlaveSplit) -> HashSet<String> {
+        let leaving = split.leave.iter().map(|s| (s, true));
+        let others = split
+            .stay
             .iter()
-            .any(|g| g.coordinator_uuid == original_coordinator_uuid);
-
-        if !coordinator_still_exists {
-            log::warn!(
-                "[GroupSync] Original coordinator {} no longer exists, leaving {} standalone",
-                original_coordinator_uuid,
-                speaker_ip
-            );
-            return;
-        }
-
-        match self
-            .sonos
-            .join_group(speaker_ip, original_coordinator_uuid)
+            .chain(&split.regrouped)
+            .map(|s| (s, false));
+        let futures: Vec<_> = leaving
+            .chain(others)
+            .map(|(session, leave)| async move {
+                let ip = &session.speaker_ip;
+                let mut stuck = None;
+                if leave {
+                    if let Err(e) = self.sonos.leave_group(ip).await {
+                        log::warn!("[GroupSync] Failed to unjoin slave {}: {}", ip, e);
+                        stuck = Some(ip.clone());
+                    }
+                }
+                self.leave_sync_session(ip).await;
+                stuck
+            })
+            .collect();
+        futures::future::join_all(futures)
             .await
-        {
-            Ok(()) => {
-                log::info!(
-                    "[GroupSync] Successfully restored {} to original group {}",
-                    speaker_ip,
-                    original_coordinator_uuid
-                );
-            }
-            Err(e) => {
-                log::warn!(
-                    "[GroupSync] Failed to restore {} to original group: {} (leaving standalone)",
-                    speaker_ip,
-                    e
-                );
-            }
-        }
+            .into_iter()
+            .flatten()
+            .collect()
     }
 
-    /// Tears down a speaker from a stream: removes its session, leaves
-    /// the sync session, restores its original Sonos group, and emits
-    /// a `PlaybackStopped` event.
-    async fn teardown_speaker(
+    /// Tears down a speaker from a stream: leaves the sync session, removes
+    /// its session, and emits a `PlaybackStopped` event.
+    pub(crate) async fn teardown_speaker(
         &self,
         stream_id: &str,
         speaker_ip: &str,
-        original_coordinator_uuid: Option<&str>,
         reason: Option<SpeakerRemovalReason>,
     ) {
-        self.sessions.remove(stream_id, speaker_ip);
         self.leave_sync_session(speaker_ip).await;
-        if let Some(orig_uuid) = original_coordinator_uuid {
-            self.restore_original_group(speaker_ip, orig_uuid).await;
-        }
+        self.end_session(stream_id, speaker_ip, reason);
+    }
+
+    /// Removes a speaker's session and emits a `PlaybackStopped` event; its
+    /// sync session is left to the caller.
+    fn end_session(&self, stream_id: &str, speaker_ip: &str, reason: Option<SpeakerRemovalReason>) {
+        self.sessions.remove(stream_id, speaker_ip);
         self.emit_event(StreamEvent::PlaybackStopped {
             stream_id: stream_id.to_string(),
             speaker_ip: speaker_ip.to_string(),
@@ -556,15 +962,67 @@ impl SyncGroupManager {
         });
     }
 
+    /// Hands each running cast led by one of `taken` (rooms `stream_id` is
+    /// about to take) on to a room it keeps, so it plays on there; the caller
+    /// holds the regroup lock.
+    ///
+    /// A cast's other rooms follow its coordinator with `x-rincon`. Taking
+    /// the coordinator as it stands (stopping it, or making it leave its
+    /// group) stops them with it or leaves Sonos to promote one of them to
+    /// play the stream unseen, which the companion then reads as a source
+    /// change, ending the cast; which of those happened came down to timing.
+    /// The cast is handed on as Remove hands it on instead: one of its other
+    /// rooms takes the stream, the rest re-join it, and the taken room ends
+    /// its session there as [`SpeakerRemovalReason::SpeakerTakenOver`],
+    /// stopped and standing alone, ready for the new cast. A cast every one
+    /// of whose rooms is taken is left to the taking.
+    pub(crate) async fn hand_on_taken(&self, stream_id: &str, taken: &[String]) {
+        for ip in taken {
+            let Some((key, session)) = self.sessions.find_other_stream(ip, stream_id) else {
+                continue;
+            };
+            if session.role != GroupRole::Coordinator {
+                continue;
+            }
+            let other = key.stream_id;
+            let keeps_one = self
+                .sessions
+                .get_slaves_for_coordinator(&other, ip)
+                .iter()
+                .any(|(slave, _)| !taken.contains(&slave.speaker_ip));
+            if !keeps_one {
+                continue;
+            }
+            log::info!(
+                "[GroupSync] {ip} leads stream {other} and is taken by {stream_id}; handing {other} on"
+            );
+            let _releasing = self
+                .sessions
+                .release(self.sessions.get_ips_for_stream(&other));
+            let seen = self.household_for_stop(&self.stream_sessions(&other)).await;
+            let reason = Some(SpeakerRemovalReason::SpeakerTakenOver);
+            if let Err(e) = self
+                .promote_slave_to_coordinator(&seen, &other, ip, reason, Promotion::Taken(taken))
+                .await
+            {
+                log::warn!("[GroupSync] Could not hand {other} on ({e}); stopping it");
+                self.stop_coordinator_and_slaves(&seen, &other, ip, reason, None)
+                    .await;
+            }
+            self.schedule_topology_refresh();
+        }
+    }
+
     /// Stops a specific speaker for a stream, choosing the appropriate strategy
-    /// based on the speaker's role.
+    /// based on the speaker's role, and puts its room back where it was.
     ///
     /// - **Slave**: unjoins just this speaker; coordinator and other slaves continue.
     /// - **Coordinator with slaves**: attempts to promote a slave to coordinator;
     ///   falls back to full teardown if promotion fails.
     /// - **Coordinator without slaves**: tears down the coordinator.
     ///
-    /// Triggers a topology refresh when sync-group membership changes.
+    /// Runs under the regroup lock, with the grouping read fresh. Triggers a
+    /// topology refresh when sync-group membership changes.
     ///
     /// # Returns
     /// List of speaker IPs that were stopped. Empty if the session was not found
@@ -575,16 +1033,29 @@ impl SyncGroupManager {
         speaker_ip: &str,
         reason: Option<SpeakerRemovalReason>,
     ) -> Vec<String> {
+        let _regroup = self.lock_regroup().await;
         let session = match self.sessions.get(stream_id, speaker_ip) {
             Some(s) => s,
             None => return Vec::new(),
         };
+        // Every room of the cast may be switched to its queue, out of the
+        // group or into another below, before its session is removed or
+        // rewritten: none of their NOTIFYs is a source change meanwhile.
+        let _releasing = self
+            .sessions
+            .release(self.sessions.get_ips_for_stream(stream_id));
+        let seen = self
+            .household_for_stop(&self.stream_sessions(stream_id))
+            .await;
 
         let is_sync =
             session.role == GroupRole::Slave || self.sessions.has_slaves_for_stream(stream_id);
 
         let stopped = match session.role {
-            GroupRole::Slave => self.stop_slave_speaker(stream_id, speaker_ip, reason).await,
+            GroupRole::Slave => {
+                self.stop_slave_speaker(&seen, stream_id, speaker_ip, reason)
+                    .await
+            }
             GroupRole::Coordinator => {
                 let has_slaves = !self
                     .sessions
@@ -593,7 +1064,13 @@ impl SyncGroupManager {
 
                 if has_slaves {
                     match self
-                        .promote_slave_to_coordinator(stream_id, speaker_ip, reason)
+                        .promote_slave_to_coordinator(
+                            &seen,
+                            stream_id,
+                            speaker_ip,
+                            reason,
+                            Promotion::Removed,
+                        )
                         .await
                     {
                         Ok(stopped) => stopped,
@@ -602,12 +1079,18 @@ impl SyncGroupManager {
                                 "[GroupSync] Promotion failed ({}), falling back to teardown",
                                 e
                             );
-                            self.stop_coordinator_and_slaves(stream_id, speaker_ip, reason)
-                                .await
+                            self.stop_coordinator_and_slaves(
+                                &seen,
+                                stream_id,
+                                speaker_ip,
+                                reason,
+                                Some(session),
+                            )
+                            .await
                         }
                     }
                 } else {
-                    self.stop_coordinator_and_slaves(stream_id, speaker_ip, reason)
+                    self.stop_coordinator_and_slaves(&seen, stream_id, speaker_ip, reason, None)
                         .await
                 }
             }
@@ -620,14 +1103,18 @@ impl SyncGroupManager {
         stopped
     }
 
-    /// Stops a slave speaker by unjoining it from the group.
+    /// Stops a slave speaker by unjoining it from the group, then puts its
+    /// room back where it was.
     ///
-    /// Only affects this speaker - the coordinator and other slaves continue playing.
+    /// Only affects this speaker - the coordinator and other slaves continue
+    /// playing. A room someone else has regrouped since gets no leave and no
+    /// restore: its session simply ends.
     ///
     /// # Returns
     /// List containing the stopped speaker IP on success, empty on failure.
-    pub async fn stop_slave_speaker(
+    async fn stop_slave_speaker(
         &self,
+        seen: &Household,
         stream_id: &str,
         speaker_ip: &str,
         reason: Option<SpeakerRemovalReason>,
@@ -638,35 +1125,14 @@ impl SyncGroupManager {
             stream_id
         );
 
-        let original_coordinator = self
-            .sessions
-            .get(stream_id, speaker_ip)
-            .and_then(|s| s.original_coordinator_uuid);
+        let Some(session) = self.sessions.get(stream_id, speaker_ip) else {
+            return Vec::new();
+        };
+        let cast_rooms = self.room_uuids(seen, &self.stream_sessions(stream_id));
+        let ours = seen.still_follows(speaker_ip, session.coordinator_uuid.as_deref());
 
-        match self.sonos.leave_group(speaker_ip).await {
-            Ok(()) => {
-                self.teardown_speaker(
-                    stream_id,
-                    speaker_ip,
-                    original_coordinator.as_deref(),
-                    reason,
-                )
-                .await;
-
-                let remaining_slaves = self.sessions.has_slaves_for_stream(stream_id);
-
-                if !remaining_slaves {
-                    if let Some(coord_ip) = self.sessions.find_coordinator_ip_for_stream(stream_id)
-                    {
-                        self.leave_sync_session(&coord_ip).await;
-                    }
-                }
-
-                self.cleanup_stream_if_no_sessions(stream_id);
-
-                vec![speaker_ip.to_string()]
-            }
-            Err(e) => {
+        if ours {
+            if let Err(e) = self.sonos.leave_group(speaker_ip).await {
                 log::warn!("[GroupSync] Failed to unjoin slave {}: {}", speaker_ip, e);
                 self.emit_event(StreamEvent::PlaybackStopFailed {
                     stream_id: stream_id.to_string(),
@@ -675,25 +1141,61 @@ impl SyncGroupManager {
                     reason,
                     timestamp: now_millis(),
                 });
-                Vec::new()
+                return Vec::new();
+            }
+        } else {
+            log::info!(
+                "[GroupSync] {} was regrouped by someone else; ending its session only",
+                speaker_ip
+            );
+        }
+
+        self.teardown_speaker(stream_id, speaker_ip, reason).await;
+
+        if ours {
+            if let Some(leaving) = self.leaving(seen, &session) {
+                let others: HashSet<String> = cast_rooms
+                    .into_iter()
+                    .filter(|uuid| *uuid != leaving.uuid)
+                    .collect();
+                self.put_back(seen, &[leaving], &others).await;
             }
         }
+
+        let remaining_slaves = self.sessions.has_slaves_for_stream(stream_id);
+        if !remaining_slaves {
+            if let Some(coord_ip) = self.sessions.find_coordinator_ip_for_stream(stream_id) {
+                self.leave_sync_session(&coord_ip).await;
+            }
+        }
+
+        self.cleanup_stream_if_no_sessions(stream_id);
+
+        vec![speaker_ip.to_string()]
     }
 
-    /// Stops a coordinator speaker and all its associated slaves.
+    /// Stops a coordinator speaker and all its associated slaves, then puts
+    /// their rooms back.
     ///
     /// Cascade operation:
-    /// 1. Unjoin each slave
-    /// 2. Restore each slave to their original group
-    /// 3. Stop the coordinator
+    /// 1. Unjoin each slave (rooms that were grouped with the coordinator
+    ///    before the cast stay with it; rooms regrouped since are not touched)
+    /// 2. Stop the coordinator
+    /// 3. Put back the rooms that left a group for the cast; the coordinator
+    ///    only once no slave that had to leave still follows it
+    ///
+    /// `old_coordinator` is the coordinator's session when a failed
+    /// promotion has already ended it, so it can still be put back.
     ///
     /// # Returns
     /// List of stopped speaker IPs.
-    pub async fn stop_coordinator_and_slaves(
+    async fn stop_coordinator_and_slaves(
         &self,
+        seen: &Household,
         stream_id: &str,
         coordinator_ip: &str,
         reason: Option<SpeakerRemovalReason>,
+        old_coordinator: Option<PlaybackSession>,
     ) -> Vec<String> {
         log::info!(
             "[GroupSync] Stopping coordinator {} and its slaves from stream {}",
@@ -701,58 +1203,46 @@ impl SyncGroupManager {
             stream_id
         );
 
-        let mut stopped_ips: Vec<String> = Vec::new();
-
-        let slave_info: Vec<(PlaybackSessionKey, Option<String>)> = self
+        let in_store = self.sessions.get(stream_id, coordinator_ip);
+        let has_session = in_store.is_some();
+        let coordinator = in_store.or(old_coordinator);
+        let mut stream_sessions = self.stream_sessions(stream_id);
+        if let (false, Some(session)) = (has_session, &coordinator) {
+            stream_sessions.push(session.clone());
+        }
+        let cast_rooms = self.room_uuids(seen, &stream_sessions);
+        let slaves: Vec<PlaybackSession> = self
             .sessions
             .get_slaves_for_coordinator(stream_id, coordinator_ip)
             .into_iter()
-            .map(|(key, session)| (key, session.original_coordinator_uuid))
+            .map(|(_, session)| session)
+            .collect();
+        let split = self.split_slaves(seen, slaves);
+
+        let stuck = self.leave_slaves(&split).await;
+        let mut stopped_ips = Vec::new();
+        for session in split
+            .leave
+            .iter()
+            .chain(&split.stay)
+            .chain(&split.regrouped)
+        {
+            self.end_session(stream_id, &session.speaker_ip, reason);
+            stopped_ips.push(session.speaker_ip.clone());
+        }
+        let mut leaving: Vec<Leaving> = split
+            .leave
+            .iter()
+            .filter(|s| !stuck.contains(&s.speaker_ip))
+            .filter_map(|s| self.leaving(seen, s))
             .collect();
 
-        // Unjoin all slaves concurrently, then restore to original groups
-        let slave_futures: Vec<_> = slave_info
-            .into_iter()
-            .map(|(slave_key, original_coordinator)| async move {
-                log::debug!(
-                    "[GroupSync] Unjoining slave {} before stopping coordinator",
-                    slave_key.speaker_ip
-                );
-
-                if let Err(e) = self.sonos.leave_group(&slave_key.speaker_ip).await {
-                    log::warn!(
-                        "[GroupSync] Failed to unjoin slave {} during coordinator stop: {}",
-                        slave_key.speaker_ip,
-                        e
-                    );
-                }
-
-                self.teardown_speaker(
-                    stream_id,
-                    &slave_key.speaker_ip,
-                    original_coordinator.as_deref(),
-                    reason,
-                )
-                .await;
-
-                slave_key.speaker_ip
-            })
-            .collect();
-
-        let slave_ips = futures::future::join_all(slave_futures).await;
-        stopped_ips.extend(slave_ips);
-
-        // Get session info before removing
-        let (coordinator_uuid, original_coordinator_uuid) = self
-            .sessions
-            .get(stream_id, coordinator_ip)
-            .map(|s| (s.coordinator_uuid, s.original_coordinator_uuid))
-            .unwrap_or((None, None));
-
-        let coordinator_uuid = coordinator_uuid
+        let coordinator_uuid = coordinator
+            .as_ref()
+            .and_then(|s| s.coordinator_uuid.clone())
             .or_else(|| self.sonos_state.get_coordinator_uuid_by_ip(coordinator_ip));
 
-        match self.sonos.stop(coordinator_ip).await {
+        let stopped = match self.sonos.stop(coordinator_ip).await {
             Ok(()) => {
                 if let Some(uuid) = coordinator_uuid {
                     if let Err(e) = self.sonos.switch_to_queue(coordinator_ip, &uuid).await {
@@ -764,18 +1254,26 @@ impl SyncGroupManager {
                     }
                 }
 
-                self.teardown_speaker(
-                    stream_id,
-                    coordinator_ip,
-                    original_coordinator_uuid.as_deref(),
-                    reason,
-                )
-                .await;
-
-                self.cleanup_stream_if_no_sessions(stream_id);
-
+                if has_session {
+                    self.teardown_speaker(stream_id, coordinator_ip, reason)
+                        .await;
+                }
+                if let Some(session) = &coordinator {
+                    if !stuck.is_empty() {
+                        log::warn!(
+                            "[GroupSync] A room still follows {coordinator_ip}; not putting it back"
+                        );
+                    } else if self.coordinator_goes_back(
+                        seen,
+                        session,
+                        &cast_rooms,
+                        !split.stay.is_empty(),
+                    ) {
+                        leaving.extend(self.leaving(seen, session));
+                    }
+                }
                 stopped_ips.push(coordinator_ip.to_string());
-                stopped_ips
+                true
             }
             Err(e) => {
                 log::warn!(
@@ -790,9 +1288,22 @@ impl SyncGroupManager {
                     reason,
                     timestamp: now_millis(),
                 });
-                stopped_ips
+                false
             }
+        };
+
+        let gone: HashSet<&str> = leaving.iter().map(|l| l.uuid.as_str()).collect();
+        let others: HashSet<String> = cast_rooms
+            .iter()
+            .filter(|uuid| !gone.contains(uuid.as_str()))
+            .cloned()
+            .collect();
+        self.put_back(seen, &leaving, &others).await;
+
+        if stopped {
+            self.cleanup_stream_if_no_sessions(stream_id);
         }
+        stopped_ips
     }
 
     // ─────────────────────────────────────────────────────────────────────────────
@@ -801,17 +1312,25 @@ impl SyncGroupManager {
 
     /// Promotes a slave to coordinator when the current coordinator is removed.
     ///
-    /// Instead of tearing down the entire group, picks a slave to become the new
-    /// coordinator and re-points remaining slaves to it.
+    /// Instead of tearing down the entire group, picks a slave to become the
+    /// new coordinator: it leaves the group and is given the stream, the
+    /// remaining slaves leave and rejoin it, and then the old coordinator is
+    /// put back where it was before the cast.
+    ///
+    /// With [`Promotion::Taken`] the old coordinator is going to another
+    /// cast: it is not switched to its queue or put back, and no room that
+    /// cast takes too is picked.
     ///
     /// # Returns
     /// List of stopped speaker IPs (only the old coordinator).
     /// On failure, returns `Err` so the caller can fall back to full teardown.
-    pub async fn promote_slave_to_coordinator(
+    async fn promote_slave_to_coordinator(
         &self,
+        seen: &Household,
         stream_id: &str,
         coordinator_ip: &str,
         reason: Option<SpeakerRemovalReason>,
+        promotion: Promotion<'_>,
     ) -> Result<Vec<String>, String> {
         // 1. Gather info from coordinator session
         let coord_session = self
@@ -822,21 +1341,32 @@ impl SyncGroupManager {
         let stream_url = coord_session.stream_url.clone();
         let codec = coord_session.codec;
         let coordinator_uuid = coord_session.coordinator_uuid.clone();
-        let original_coordinator_uuid = coord_session.original_coordinator_uuid.clone();
-        drop(coord_session);
+        let cast_rooms = self.room_uuids(seen, &self.stream_sessions(stream_id));
+        let taken = match promotion {
+            Promotion::Removed => None,
+            Promotion::Taken(rooms) => Some(rooms),
+        };
+        // Decided before anything moves: whether the old coordinator still
+        // leads a group of cast rooms only. One going to another cast stays.
+        let goes_back =
+            taken.is_none() && self.coordinator_goes_back(seen, &coord_session, &cast_rooms, false);
 
         // 2. Gather slave sessions
         let slave_sessions = self
             .sessions
             .get_slaves_for_coordinator(stream_id, coordinator_ip);
 
-        if slave_sessions.is_empty() {
+        // 3. Pick the first slave to promote that is not being taken too.
+        // Every room re-forms around it, so none of them stays in a group it
+        // was in before the cast.
+        let Some(chosen) = slave_sessions
+            .iter()
+            .position(|(key, _)| !taken.is_some_and(|rooms| rooms.contains(&key.speaker_ip)))
+        else {
             return Err("No slaves found to promote".to_string());
-        }
-
-        // 3. Pick first slave to promote — preserve its original group info
-        let promoted_ip = slave_sessions[0].0.speaker_ip.clone();
-        let promoted_original_coordinator = slave_sessions[0].1.original_coordinator_uuid.clone();
+        };
+        let promoted_ip = slave_sessions[chosen].0.speaker_ip.clone();
+        let promoted_old_group = moved(slave_sessions[chosen].1.old_group.clone());
         let promoted_uuid = self
             .sonos_state
             .get_member_uuid_by_ip(&promoted_ip)
@@ -869,7 +1399,8 @@ impl SyncGroupManager {
             // Continue - the speaker may already be stopped
         }
 
-        if let Some(ref uuid) = coordinator_uuid {
+        // One going to another cast is given that cast's stream next.
+        if let (None, Some(uuid)) = (taken, &coordinator_uuid) {
             if let Err(e) = self.sonos.switch_to_queue(coordinator_ip, uuid).await {
                 log::warn!(
                     "[GroupSync] Failed to switch old coordinator {} to queue: {}",
@@ -879,13 +1410,8 @@ impl SyncGroupManager {
             }
         }
 
-        self.teardown_speaker(
-            stream_id,
-            coordinator_ip,
-            original_coordinator_uuid.as_deref(),
-            reason,
-        )
-        .await;
+        self.teardown_speaker(stream_id, coordinator_ip, reason)
+            .await;
 
         // 6. Promote the chosen slave.
         //
@@ -947,7 +1473,7 @@ impl SyncGroupManager {
             role: GroupRole::Coordinator,
             coordinator_ip: None,
             coordinator_uuid: Some(promoted_uuid.clone()),
-            original_coordinator_uuid: promoted_original_coordinator,
+            old_group: promoted_old_group,
         });
 
         drop(promoted_start);
@@ -957,10 +1483,13 @@ impl SyncGroupManager {
             promoted_ip
         );
 
-        // 7. Re-point remaining slaves to new coordinator
+        // 7. Re-point remaining slaves to new coordinator. Those the other
+        // cast takes too stay with the old coordinator, which it takes with
+        // them: they move once, with it.
         let remaining_slaves: Vec<(PlaybackSessionKey, PlaybackSession)> = slave_sessions
             .into_iter()
             .filter(|(key, _)| key.speaker_ip != promoted_ip)
+            .filter(|(key, _)| !taken.is_some_and(|rooms| rooms.contains(&key.speaker_ip)))
             .collect();
 
         let repoint_futures: Vec<_> = remaining_slaves
@@ -983,7 +1512,7 @@ impl SyncGroupManager {
                         "[GroupSync] Slave {} was taken by another stream; not re-pointing it",
                         slave_key.speaker_ip
                     );
-                    return;
+                    return Repoint::Done;
                 }
 
                 log::debug!(
@@ -998,7 +1527,7 @@ impl SyncGroupManager {
                         slave_key.speaker_ip,
                         e
                     );
-                    return;
+                    return Repoint::StillFollows;
                 }
 
                 if let Err(e) = self
@@ -1012,7 +1541,7 @@ impl SyncGroupManager {
                         promoted_ip,
                         e
                     );
-                    return;
+                    return Repoint::Stranded(slave_session.clone());
                 }
 
                 // Update session to point to new coordinator
@@ -1025,16 +1554,126 @@ impl SyncGroupManager {
                     role: GroupRole::Slave,
                     coordinator_ip: Some(promoted_ip.clone()),
                     coordinator_uuid: Some(promoted_uuid.clone()),
-                    original_coordinator_uuid: slave_session.original_coordinator_uuid.clone(),
+                    old_group: moved(slave_session.old_group.clone()),
                 });
+                Repoint::Done
             })
             .collect();
 
-        futures::future::join_all(repoint_futures).await;
+        let repoints = futures::future::join_all(repoint_futures).await;
 
-        // 8. Cleanup stream if no sessions remain (edge case)
+        // A room that left but could not join the new coordinator stands
+        // alone: its session ends, and it goes back to its old group.
+        let mut leaving: Vec<Leaving> = Vec::new();
+        for repoint in &repoints {
+            if let Repoint::Stranded(session) = repoint {
+                self.teardown_speaker(
+                    stream_id,
+                    &session.speaker_ip,
+                    Some(SpeakerRemovalReason::PlaybackStopped),
+                )
+                .await;
+                leaving.extend(self.leaving(seen, session));
+            }
+        }
+
+        // 8. Put the old coordinator back where it was before the cast, once
+        // no room that failed to leave it still follows it.
+        let still_followed = repoints.iter().any(|r| matches!(r, Repoint::StillFollows));
+        if still_followed {
+            log::warn!("[GroupSync] A room still follows {coordinator_ip}; not putting it back");
+        } else if goes_back {
+            leaving.extend(self.leaving(seen, &coord_session));
+        }
+        if !leaving.is_empty() {
+            let gone: HashSet<&str> = leaving.iter().map(|l| l.uuid.as_str()).collect();
+            let others: HashSet<String> = self
+                .room_uuids(seen, &self.stream_sessions(stream_id))
+                .into_iter()
+                .filter(|uuid| !gone.contains(uuid.as_str()))
+                .collect();
+            self.put_back(seen, &leaving, &others).await;
+        }
+
+        // 9. Cleanup stream if no sessions remain (edge case)
         self.cleanup_stream_if_no_sessions(stream_id);
 
         Ok(vec![coordinator_ip.to_string()])
+    }
+}
+
+/// Why a cast's coordinator is handed on (see
+/// [`SyncGroupManager::promote_slave_to_coordinator`]).
+#[derive(Clone, Copy)]
+enum Promotion<'a> {
+    /// It was removed from the cast, and goes back where it was.
+    Removed,
+    /// Another cast takes it, along with these rooms (by IP).
+    Taken(&'a [String]),
+}
+
+/// What re-pointing one slave to a promoted coordinator did.
+enum Repoint {
+    /// It follows the new coordinator, or another stream took it first.
+    Done,
+    /// It could not leave, so it still follows the old coordinator.
+    StillFollows,
+    /// It left but could not join the new coordinator: it stands alone.
+    Stranded(PlaybackSession),
+}
+
+/// `old` with `kept` cleared: the room has moved into a group it was not in.
+fn moved(old: Option<OldGroup>) -> Option<OldGroup> {
+    old.map(|group| OldGroup {
+        kept: false,
+        ..group
+    })
+}
+
+/// A cast group's slaves, split for a stop (see
+/// [`SyncGroupManager::split_slaves`]).
+#[derive(Default)]
+struct SlaveSplit {
+    leave: Vec<PlaybackSession>,
+    stay: Vec<PlaybackSession>,
+    regrouped: Vec<PlaybackSession>,
+}
+
+/// The household's grouping as one stop or restore read it.
+struct Household {
+    groups: Vec<ZoneGroup>,
+}
+
+impl Household {
+    /// The player UUID of the speaker at `ip`.
+    fn uuid_of(&self, ip: &str) -> Option<String> {
+        self.groups
+            .iter()
+            .flat_map(|g| &g.members)
+            .find(|m| m.ip == ip)
+            .map(|m| m.uuid.clone())
+    }
+
+    /// Whether the speaker at `ip` still follows `coordinator_uuid`. A
+    /// speaker missing from the grouping counts as following, as before.
+    fn still_follows(&self, ip: &str, coordinator_uuid: Option<&str>) -> bool {
+        match self
+            .groups
+            .iter()
+            .find(|g| g.members.iter().any(|m| m.ip == ip))
+        {
+            Some(group) => Some(group.coordinator_uuid.as_str()) == coordinator_uuid,
+            None => true,
+        }
+    }
+
+    /// Whether `uuid` leads a group whose rooms are all in `rooms`.
+    fn leads_only(&self, uuid: &str, rooms: &HashSet<String>) -> bool {
+        let Some(group) = self.groups.iter().find(|g| g.coordinator_uuid == uuid) else {
+            return false;
+        };
+        super::start_volume::rooms(std::slice::from_ref(group))
+            .iter()
+            .all(|room| rooms.contains(&room.uuid))
     }
 }

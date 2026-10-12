@@ -2,9 +2,12 @@
   /*
    * C-card. One look: --radius-card, --surface, a --line-hair --outline-variant edge in
    * light only, no shadow. It is the `card` container, and its surface is the ring's gap.
+   * In the popup its content starts where the popup's flush cards start theirs (the TabCard's
+   * and CastTile's head inset, --space-1 plus --space-3), so every card has one text edge.
    */
   .card {
     --card-pad: var(--space-4);
+    --card-pad-inline: calc(var(--space-1) + var(--space-3));
     --card-gap: var(--space-4);
     --ring-gap: var(--surface);
 
@@ -14,7 +17,7 @@
     gap: var(--card-gap);
     min-inline-size: 0;
     margin: 0;
-    padding: var(--card-pad);
+    padding: var(--card-pad) var(--card-pad-inline);
     border: var(--line-hair) solid var(--card-edge);
     border-radius: var(--radius-card);
     background: var(--surface);
@@ -23,6 +26,7 @@
 
   :where([data-density='desktop']) .card {
     --card-pad: var(--space-5);
+    --card-pad-inline: var(--card-pad);
   }
 
   /*

@@ -64,8 +64,42 @@
     line-height: var(--leading-2);
   }
 
+  /*
+   * The save offer opens in place, as the CastBar's line does (§11 call 90): its block size
+   * (and the gap above it, the margin taking it back) runs from 0 while it fades in, so a
+   * short popup's Cast eases down rather than dropping as the first room is chosen. It clips
+   * its block axis only while it opens, with a margin the size of the ring.
+   */
   .save {
+    min-block-size: 0;
     padding-inline: var(--space-3);
+    overflow: clip;
+    overflow-clip-margin: calc(2 * var(--line-bold));
+    transition:
+      opacity var(--dur-effects) var(--ease-effects),
+      block-size var(--dur-change) var(--ease-effects),
+      margin-block-start var(--dur-change) var(--ease-effects);
+  }
+
+  @starting-style {
+    .save {
+      opacity: 0;
+    }
+  }
+
+  @supports (interpolate-size: allow-keywords) {
+    @starting-style {
+      .save {
+        margin-block-start: calc(-1 * var(--space-2));
+        block-size: 0;
+      }
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .save {
+      transition: none;
+    }
   }
 
   .form {

@@ -16,6 +16,7 @@ import { Cluster } from '../../src/Cluster';
 import { Disclosure } from '../../src/Disclosure';
 import { IconButton } from '../../src/IconButton';
 import { NavItem } from '../../src/NavItem';
+import { Radio } from '../../src/Radio';
 import { SegmentedControl } from '../../src/SegmentedControl';
 import { Switch } from '../../src/Switch';
 
@@ -60,13 +61,15 @@ const BUSY_FOR_MS = 2500;
 const wait = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 
 /**
- * Press and focus: every Button kind and every other pressable atom, live and forced.
+ * Press and focus: every Button kind and every other pressable atom (rows included: the
+ * Checkbox row and the Radio option take the bevel too, §11 call 88), live and forced.
  * @returns The specimen
  */
 export function PressStatesSpecimen(): JSX.Element {
   const [on, setOn] = useState(false);
   const [checked, setChecked] = useState(false);
   const [theme, setTheme] = useState('auto');
+  const [quality, setQuality] = useState('high');
   const [iconBusy, setIconBusy] = useState(false);
   const [saving, setSaving] = useState(false);
   const [launch, setLaunch] = useState(false);
@@ -93,6 +96,20 @@ export function PressStatesSpecimen(): JSX.Element {
           <Chip label="192.168.1.47" mono removeLabel="Remove 192.168.1.47" onRemove={noop} />
           <Switch label="Video sync" checked={on} onChange={setOn} data-kind="switch" />
           <Checkbox label="Kitchen" checked={checked} onChange={setChecked} />
+          <Radio
+            name="press-quality"
+            value="high"
+            label="High"
+            checked={quality === 'high'}
+            onChange={setQuality}
+          />
+          <Radio
+            name="press-quality"
+            value="low"
+            label="Low"
+            checked={quality === 'low'}
+            onChange={setQuality}
+          />
           <SegmentedControl label="Theme" value={theme} onChange={setTheme} options={SEGMENTS} />
           <span>
             <NavItem icon="settings" label="Settings" href="#press-states" onNavigate={noop} />
@@ -158,6 +175,14 @@ export function PressStatesSpecimen(): JSX.Element {
             <Switch label={`On, ${state}`} checked onChange={noop} data-force={state} />
             <Checkbox label={`Box, ${state}`} checked={false} onChange={noop} data-force={state} />
             <Checkbox label={`Ticked, ${state}`} checked onChange={noop} data-force={state} />
+            <Radio
+              name={`press-forced-${state}`}
+              value="on"
+              label={`Option, ${state}`}
+              checked
+              onChange={noop}
+              data-force={state}
+            />
             <SegmentedControl
               label={`Theme, ${state}`}
               hideLabel

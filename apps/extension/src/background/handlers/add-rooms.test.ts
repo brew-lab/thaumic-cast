@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import { createEmptySonosState, createEncoderConfig, type ZoneGroup } from '@thaumic-cast/protocol';
 
 import { resetChromeStub } from '../../test-support/chrome-stub';
@@ -8,6 +8,7 @@ import {
   brokerReplies,
   resetBrokerCalls,
 } from '../../test-support/offscreen-broker-mock';
+import { clearConnectionState, setDesktopApp } from '../connection-state';
 import { clearAllSessions, getActiveCasts, getSession, registerSession } from '../session-manager';
 import { setSonosState } from '../sonos-state';
 import { handleAddRooms } from './cast';
@@ -59,7 +60,7 @@ beforeEach(() => {
   });
 });
 
-describe('handleAddRooms', () => {
+describe('handleAddRooms with an older companion', () => {
   it('should play an added room on its own stream, not joined, at its start level', async () => {
     brokerReplies.playbackResult = (speakerIp) => ({ speakerIp, success: true });
 
@@ -117,5 +118,83 @@ describe('handleAddRooms', () => {
       success: false,
       error: 'error_no_speakers_selected',
     });
+  });
+});
+
+describe('handleAddRooms with a companion that regroups', () => {
+  beforeEach(() => {
+    clearConnectionState();
+    setDesktopApp('http://localhost:49400', 10, 'desktop', undefined, true);
+    clearAllSessions();
+    // Kitchen and Study were cast as one Sonos group.
+    registerSession(
+      1,
+      'stream-1',
+      [KITCHEN, STUDY],
+      ['Kitchen', 'Study'],
+      ENCODER,
+      true,
+      'tab',
+      false,
+      {
+        ids: ['RINCON_KITCHEN', 'RINCON_STUDY'],
+        targets: { RINCON_KITCHEN: KITCHEN, RINCON_STUDY: STUDY },
+      },
+    );
+  });
+
+  afterEach(() => clearConnectionState());
+
+  it("should send a grouped room by its own IP and UUID, to join the cast's group", async () => {
+    brokerReplies.playbackResult = (speakerIp) => ({ speakerIp, success: true });
+
+    // Patio is in Kitchen's old Sonos group, which the cast did not take.
+    const response = await add(['RINCON_PATIO'], { RINCON_PATIO: 20 });
+
+    expect(response).toEqual({ success: true, rooms: [{ roomId: 'RINCON_PATIO', joined: true }] });
+    expect(brokerCalls.startedPlayback).toEqual([
+      {
+        tabId: 1,
+        speakerIps: [PATIO],
+        rooms: ['RINCON_PATIO'],
+        startVolume: { limit: 30, rooms: { RINCON_PATIO: 20 } },
+      },
+    ]);
+    expect(getSession(1)?.speakerIps).toEqual([KITCHEN, STUDY, PATIO]);
+    expect(getSession(1)?.speakerNames).toEqual(['Kitchen', 'Study', 'Patio']);
+    expect(getSession(1)?.roomTargets.RINCON_PATIO).toBe(PATIO);
+  });
+
+  it('should add a room already in the cast at once, and say which rooms did not join', async () => {
+    brokerReplies.playbackResult = (speakerIp) => ({
+      speakerIp,
+      success: false,
+      error: 'Failed to join group: refused',
+    });
+
+    const response = await add(['RINCON_STUDY', 'RINCON_OFFICE']);
+
+    expect(response).toEqual({
+      success: true,
+      rooms: [
+        { roomId: 'RINCON_STUDY', joined: true },
+        { roomId: 'RINCON_OFFICE', joined: false, error: 'Failed to join group: refused' },
+      ],
+    });
+    expect(brokerCalls.startedPlayback.map((call) => call.rooms)).toEqual([['RINCON_OFFICE']]);
+    expect(getSession(1)?.speakerIps).toEqual([KITCHEN, STUDY]);
+  });
+
+  it('should keep the older way for a cast that was not played as one group', async () => {
+    brokerReplies.playbackResult = (speakerIp) => ({ speakerIp, success: true });
+    clearAllSessions();
+    registerSession(1, 'stream-1', [KITCHEN], ['Kitchen'], ENCODER, false, 'tab', false, {
+      ids: ['RINCON_KITCHEN'],
+      targets: { RINCON_KITCHEN: KITCHEN },
+    });
+
+    await add(['RINCON_STUDY']);
+
+    expect(brokerCalls.startedPlayback[0].rooms).toBeUndefined();
   });
 });

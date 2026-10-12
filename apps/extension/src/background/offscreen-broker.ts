@@ -15,13 +15,18 @@ import type {
   EncoderConfig,
   SonosStateSnapshot,
   SpeakerRemovalReason,
-  StartVolume,
   StreamMetadata,
   SupportedCodecsResult,
 } from '@thaumic-cast/protocol';
-import type { ExtensionResponse, StartPlaybackResponse, WsStatusResponse } from '../lib/messages';
+import type {
+  ExtensionResponse,
+  PlaybackRequest,
+  StartPlaybackResponse,
+  WsStatusResponse,
+} from '../lib/messages';
 import { sendToOffscreen, OFFSCREEN_LONG_OPERATION_TIMEOUT_MS } from './offscreen-manager';
 import { noop } from '../lib/noop';
+import { playbackTimeoutMs } from '../lib/message-schemas';
 
 /**
  * Response from codec detection request.
@@ -113,29 +118,20 @@ class OffscreenBroker {
   // ─────────────────────────────────────────────────────────────────────────────
 
   /**
-   * Starts playback on Sonos speakers.
-   * @param tabId - The tab ID being streamed
-   * @param speakerIps - Target speaker IP addresses
-   * @param metadata - Optional initial metadata to display
-   * @param syncSpeakers - Whether to synchronize multi-speaker playback (default: false)
-   * @param videoSyncEnabled - Whether client has video sync enabled (gates server-side latency monitoring)
-   * @param startVolume - The level each room starts at; only for a new cast, never a resume
+   * Starts playback of a tab's stream on speakers.
+   * @param tabId - The cast's tab
+   * @param request - The speakers (and rooms), the metadata, video sync, and the start levels
+   *   (only for a new cast or added rooms, never a resume)
    * @returns The playback response with per-speaker results
    */
   async startPlayback(
     tabId: number,
-    speakerIps: string[],
-    metadata?: StreamMetadata,
-    syncSpeakers: boolean = false,
-    videoSyncEnabled: boolean = false,
-    startVolume?: StartVolume,
+    request: PlaybackRequest,
   ): Promise<StartPlaybackResponse | undefined> {
+    // The offscreen document times the call out itself; this only outlasts it.
     return sendToOffscreen<StartPlaybackResponse>(
-      {
-        type: 'START_PLAYBACK',
-        payload: { tabId, speakerIps, metadata, syncSpeakers, videoSyncEnabled, startVolume },
-      },
-      OFFSCREEN_LONG_OPERATION_TIMEOUT_MS,
+      { type: 'START_PLAYBACK', payload: { tabId, ...request } },
+      Math.max(OFFSCREEN_LONG_OPERATION_TIMEOUT_MS, playbackTimeoutMs(request) + 5_000),
     );
   }
 

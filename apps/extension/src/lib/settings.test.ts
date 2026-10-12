@@ -63,6 +63,14 @@ describe('loadExtensionSettings', () => {
     expect(await loadExtensionSettings()).toEqual(getDefaultExtensionSettings());
   });
 
+  it('should ignore a stored "Play speakers as one group", and drop it on the next save', async () => {
+    storeSettings({ ...getDefaultExtensionSettings(), syncSpeakers: true });
+
+    expect(await loadExtensionSettings()).not.toHaveProperty('syncSpeakers');
+    await saveExtensionSettings({ theme: 'dark' });
+    expect(chromeStorageData.local[SETTINGS_KEY]).not.toHaveProperty('syncSpeakers');
+  });
+
   it('should start casts no louder than 30 by default, for new and existing users', async () => {
     expect(getDefaultExtensionSettings()).toMatchObject({
       startCeilingEnabled: true,
@@ -563,7 +571,7 @@ describe('migrateSettingsV4', () => {
 
 describe('loadExtensionSettings language migration', () => {
   /** Stores a full profile with English, as every version before 4 did. */
-  function storeEnglish(overrides: { audioSettingsVersion: number; syncSpeakers?: boolean }): void {
+  function storeEnglish(overrides: { audioSettingsVersion: number }): void {
     storeSettings({
       ...getDefaultExtensionSettings(),
       language: 'en',
@@ -579,13 +587,13 @@ describe('loadExtensionSettings language migration', () => {
 
   it('should move English to auto from versions 2 and 3 and store it once', async () => {
     for (const audioSettingsVersion of [2, 3]) {
-      storeEnglish({ audioSettingsVersion, syncSpeakers: true });
+      storeEnglish({ audioSettingsVersion });
 
       const settings = await loadExtensionSettings();
 
       expect(settings.language).toBe('auto');
       expect(settings.audioSettingsVersion).toBe(AUDIO_SETTINGS_VERSION);
-      expect(settings).toMatchObject({ theme: 'dark', syncSpeakers: true, audioMode: 'high' });
+      expect(settings).toMatchObject({ theme: 'dark', audioMode: 'high' });
       expect(chromeStorageData.local[SETTINGS_KEY]).toEqual(settings);
     }
   });

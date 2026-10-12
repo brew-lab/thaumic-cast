@@ -119,13 +119,15 @@
   }
 
   /*
-   * Flush: a quiet Button that starts a text column pulls back by its own leading padding,
-   * so its glyph (or first letter) lines up with the text above it. A context can ask for
-   * it by setting --btn-pull: var(--btn-pad-start) on the Button, as it re-points any other
-   * --btn-* token.
+   * Flush: a quiet Button that starts a text column pulls back by its own leading padding
+   * and its (transparent) border, so its glyph (or first letter) lines up with the text
+   * above it, and with the start of a filled Button's box in the same column (the compact
+   * Wizard's Skip under Carry on's bar, as Cast). A context can ask for it by setting
+   * --btn-pull: calc(var(--btn-pad-start) + var(--line-hair)) on the Button, as it
+   * re-points any other --btn-* token.
    */
   .flush {
-    --btn-pull: var(--btn-pad-start);
+    --btn-pull: calc(var(--btn-pad-start) + var(--line-hair));
   }
 
   .button:has(.trail, .check, .chevron) {
@@ -216,6 +218,7 @@
     --btn-trail: var(--on-surface-variant);
 
     justify-content: flex-start;
+    padding-block: var(--space-2);
     text-align: start;
   }
 
@@ -295,6 +298,19 @@
 
   .start .text {
     align-items: stretch;
+  }
+
+  /*
+   * A list row's name wraps and is never cut off: a long set name grows the row, never the
+   * popup's width. Its trailing count keeps its line (it never breaks).
+   */
+  .start .unit {
+    min-inline-size: 0;
+  }
+
+  .start .label {
+    overflow-wrap: anywhere;
+    white-space: normal;
   }
 
   /*

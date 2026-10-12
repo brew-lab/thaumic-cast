@@ -44,9 +44,11 @@ export interface CastBarProps {
     onCancel: () => void;
   };
   /**
-   * The polite line, at most two sentences: what else plays (the interim "plays too"
-   * sentence; after regrouping, "leaves its Sonos group") and the replace hint, or why Cast
-   * is disabled. Its one line is always reserved, so nothing moves when it fills.
+   * The polite line, at most three sentences: which rooms leave their Sonos groups, whose
+   * music starts again from the top, and the replace hint (with an older companion, which
+   * rooms play too and the hint), or why Cast is disabled. With nothing to say there is no
+   * line and no space kept for one; a line arrives with the notices' entrance, and grows the
+   * bar only on a choice the user makes.
    */
   lines?: string[];
   /** A failure: a danger NoticeLine above the button, with X. */
@@ -60,8 +62,9 @@ export interface CastBarProps {
 /**
  * Starts the cast (DESIGN.md C-castbar). It sits in the StickyActionBar, after the rooms it
  * acts on: a failure line (danger NoticeLine with X, said urgently) above the filled
- * full-width md button, "Cast to {{count}} rooms", busy "Starting…", then one reserved polite
- * line. Add mode is Cancel (outline) and "Add {{count}} rooms" (filled, `plus`). The line is
+ * the polite line, only while it has something to say, then the
+ * full-width md button, "Cast to {{count}} rooms", busy "Starting…". The line is always
+ * above Cast, in every state. Add mode is Cancel (outline) and "Add {{count}} rooms" (filled, `plus`). The line is
  * said by the Announcer once per change, never by a live region.
  * @param props - Component props
  * @param props.mode - cast or add
@@ -87,7 +90,7 @@ export function CastBar({
   dismissLabel,
 }: CastBarProps): JSX.Element {
   const { say } = useAnnouncer();
-  const line = lines.slice(0, 2).join(' ');
+  const line = lines.slice(0, 3).join(' ');
   const said = useRef(line);
   useEffect(() => {
     if (said.current === line) return;
@@ -107,6 +110,7 @@ export function CastBar({
           urgent
         />
       )}
+      {line && <p class={styles.line}>{line}</p>}
       {mode === 'add' && add ? (
         <div class={styles.add}>
           <Button kind="outline" size="md" onClick={add.onCancel}>
@@ -140,7 +144,6 @@ export function CastBar({
           {label}
         </Button>
       )}
-      <p class={styles.line}>{line}</p>
     </div>
   );
 }

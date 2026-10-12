@@ -18,12 +18,13 @@ export interface AnnouncerProviderProps {
 /**
  * The one live region per surface (DESIGN.md A-announcer): mount it once, at the root of the
  * popup, the options page or the desktop shell. It renders two visually hidden regions at the
- * end of the surface, polite (`role="status"`) and assertive (`role="alert"`), and nothing is
- * said while the surface opens. Components never render `aria-live` or `role="alert"`
+ * start of the surface, polite (`role="status"`) and assertive (`role="alert"`), and nothing is
+ * said while the surface opens. At the start, held out of the flow, their 1px boxes sit inside
+ * the page; after it they hung a pixel below it, so the popup's document overflowed. Components never render `aria-live` or `role="alert"`
  * themselves; they call `useAnnouncer().say()`.
  * @param props - Component props
  * @param props.children - The surface
- * @returns The surface followed by the two regions
+ * @returns The two regions, then the surface
  */
 export function AnnouncerProvider({ children }: AnnouncerProviderProps): JSX.Element {
   const polite = useRef<HTMLDivElement>(null);
@@ -57,9 +58,9 @@ export function AnnouncerProvider({ children }: AnnouncerProviderProps): JSX.Ele
 
   return (
     <AnnouncerContext.Provider value={api}>
-      {children}
       <div ref={polite} role="status" class="visually-hidden" />
       <div ref={assertive} role="alert" class="visually-hidden" />
+      {children}
     </AnnouncerContext.Provider>
   );
 }

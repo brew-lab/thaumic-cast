@@ -155,12 +155,16 @@ export async function markAwaySeen(ids: readonly string[]): Promise<void> {
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
- * A speaker's room name, for the lead and the sentence.
+ * A speaker's room name, for the lead and the sentence: its group's name when it leads one,
+ * else its own (a room of a cast played as one Sonos group).
  * @param speakerIp - The speaker's IP
  * @returns Its name, or the IP when it is not known
  */
 export function speakerNameOf(speakerIp: string): string {
-  return getSpeakerGroups().getGroupName(speakerIp);
+  const group = getSpeakerGroups().findGroupContainingSpeaker(speakerIp);
+  if (!group) return speakerIp;
+  if (group.isCoordinator(speakerIp)) return group.name;
+  return group.findMember(speakerIp)?.name ?? group.name;
 }
 
 /**

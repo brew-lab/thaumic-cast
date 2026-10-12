@@ -3,7 +3,8 @@
    * M-dl. readout: quiet terms (--text-3, --on-surface-variant) and strong values. stat:
    * strong terms and --text-5 values, counts tabular and start-aligned. From a 25rem
    * `card` the pairs share one grid (terms max-content, values the rest); under it each
-   * pair stacks. checklist: a StatusDot in a --icon-md box and one sentence per line.
+   * pair stacks. checklist: a StatusDot, its own --icon-sm square on the content's edge (as
+   * the PopupHeader's status line has it), and one sentence per line.
    */
   .list {
     --dl-gap-col: var(--space-5);
@@ -126,7 +127,7 @@
     flex: none;
     display: inline-grid;
     place-items: center;
-    inline-size: var(--icon-md);
+    inline-size: var(--icon-sm);
     block-size: calc(1lh);
   }
 }

@@ -61,6 +61,8 @@ export interface WorkerStopMessage {
 export interface WorkerStartPlaybackMessage {
   type: 'START_PLAYBACK';
   speakerIps: string[];
+  /** The rooms to play as one Sonos group, for a companion that regroups. */
+  rooms?: string[];
   metadata?: StreamMetadata;
   /** Whether to synchronize multi-speaker playback (default: false). */
   syncSpeakers?: boolean;
@@ -68,6 +70,8 @@ export interface WorkerStartPlaybackMessage {
   videoSyncEnabled: boolean;
   /** The level each room starts at; absent on a resume, which touches no volume. */
   startVolume?: StartVolume;
+  /** Names the call, so its reply can be told from a late reply to an earlier one. */
+  callId?: string;
 }
 
 /** Updates stream metadata on all connected speakers. */
@@ -133,6 +137,8 @@ export interface WorkerPlaybackStartedMessage {
 /** Results of playback start attempts. */
 export interface WorkerPlaybackResultsMessage {
   type: 'PLAYBACK_RESULTS';
+  /** The call these answer, when the companion echoes it. */
+  callId?: string;
   results: Array<{
     speakerIp: string;
     success: boolean;
@@ -145,6 +151,8 @@ export interface WorkerPlaybackResultsMessage {
 export interface WorkerPlaybackErrorMessage {
   type: 'PLAYBACK_ERROR';
   message: string;
+  /** The call this answers, when the companion echoes it. */
+  callId?: string;
 }
 
 /** Server-side browser capture error (process exit, device disconnect). */

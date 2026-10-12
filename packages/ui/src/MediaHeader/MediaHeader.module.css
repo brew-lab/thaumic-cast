@@ -222,6 +222,17 @@
     background: var(--media-band-bg);
   }
 
+  /*
+   * Bled to the card's top and sides (the open CastTile): the card's inner corner, and the
+   * tile's --space-1 inset added to the padding, so the artwork, the words and Stop sit where
+   * the compact tile has them.
+   */
+  .bleed {
+    padding-block-start: calc(var(--space-2-5) + var(--space-1));
+    padding-inline: calc(var(--space-2-5) + var(--space-1)) calc(var(--space-3-5) + var(--space-1));
+    border-radius: calc(var(--radius-card) - var(--line-hair));
+  }
+
   @supports (color: oklch(from red l c h)) {
     .band {
       --np-card: oklch(from var(--seed-card) l min(c, var(--art-c)) var(--art-h));

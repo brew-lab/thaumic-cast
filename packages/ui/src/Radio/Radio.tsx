@@ -1,5 +1,6 @@
 import type { ComponentChildren, JSX } from 'preact';
 import { dataAttributes, type DataAttributes } from '../utils/cx';
+import { usePress } from '../utils/press';
 import styles from './Radio.module.css';
 
 /** Props for {@link Radio}. */
@@ -24,8 +25,8 @@ export interface RadioProps extends DataAttributes {
 
 /**
  * One option of a pick-one group (DESIGN.md A-radio): a native radio in a label, so the
- * whole option is one control. It takes the state layer on its 8 px corner and carries the
- * ring, and never reshapes; the radio is round in every state, off a 2 px outline ring, on
+ * whole option is one control. It takes the state layer and carries the ring, rests on its
+ * 8 px corner and takes the bevel on focus-visible and press (held); the radio is round in every state, off a 2 px outline ring, on
  * a primary ring and dot. Native radios give one tab stop on the chosen option and arrow
  * keys that move and choose. In v1 it is used only inside ChoiceGroup (Phase 2).
  * @param props - Component props
@@ -50,8 +51,9 @@ export function Radio({
   disabled = false,
   ...rest
 }: RadioProps): JSX.Element {
+  const press = usePress(['space']);
   return (
-    <label class={styles.option} {...dataAttributes(rest)}>
+    <label class={styles.option} {...press} {...dataAttributes(rest)}>
       <span class={styles.box}>
         <input
           type="radio"

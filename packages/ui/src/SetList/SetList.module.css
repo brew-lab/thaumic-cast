@@ -1,0 +1,77 @@
+@layer components {
+  /*
+   * C-setlist. One row per saved set: the name and its room count, then Rename and Remove
+   * (quiet Buttons sm), their hit areas --gap-target apart. Rows are divided by the hairline
+   * (--divider). The actions wrap under the words when the row is too narrow for both.
+   * Renaming puts the name field, Cancel and Save in the row's place.
+   */
+  .list {
+    display: flex;
+    flex-direction: column;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+
+  .row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-2) var(--space-4);
+    padding-block: var(--space-3);
+  }
+
+  .row + .row {
+    border-block-start: var(--line-hair) solid var(--divider);
+  }
+
+  .row:first-child {
+    padding-block-start: 0;
+  }
+
+  .row:last-child {
+    padding-block-end: 0;
+  }
+
+  /*
+   * The words take the row and the actions keep their line beside them; only a row narrower
+   * than 12rem of words and the actions puts the actions under, so a long name wraps in place
+   * as a short one sits.
+   */
+  .text {
+    display: flex;
+    flex: 1 1 12rem;
+    flex-direction: column;
+    gap: var(--space-1);
+    min-inline-size: 0;
+  }
+
+  .name {
+    overflow-wrap: anywhere;
+    color: var(--on-surface);
+    font-size: var(--text-4-fixed);
+    font-weight: var(--weight-strong);
+    line-height: var(--leading-4);
+  }
+
+  .trail {
+    color: var(--on-surface-variant);
+    font-size: var(--text-3);
+    line-height: var(--leading-3);
+  }
+
+  .actions {
+    display: flex;
+    flex: none;
+    justify-content: flex-end;
+    gap: var(--gap-target);
+  }
+
+  .form {
+    display: flex;
+    flex: 1 1 100%;
+    flex-direction: column;
+    gap: var(--space-3);
+  }
+}
