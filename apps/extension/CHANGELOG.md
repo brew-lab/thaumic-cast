@@ -1,5 +1,649 @@
 # @thaumic-cast/extension
 
+## 0.13.0
+
+### Minor Changes
+
+- [#235](https://github.com/brew-lab/thaumic-cast/pull/235) [`aa16e97`](https://github.com/brew-lab/thaumic-cast/commit/aa16e9734156a630366037fd69dcb5f5ebc857dd) Thanks [@skezo](https://github.com/skezo)! - feat(ui): build the extension and the desktop app from the design system's atoms
+
+  The design system's 23 basic parts (buttons, icon buttons, text fields, switches, checkboxes, radio buttons, the
+  theme picker, dropdowns, sliders, status badges and dots, the busy indicator, artwork, tooltips, chips, headings,
+  navigation items, the brand mark, the step dots and the reserve meter) are built, each drawn in every state in light
+  and dark on the catalogue page and checked for accessibility. The extension's popup and settings page and the
+  desktop app now use them, so both apps take the new look: the purple palette, Geist headings, the bevelled shape on
+  hover and focus, a clearer focus ring, and Stop shown as a square with the word "Stop" rather than a cross. The
+  theme in Settings is now a three-way switch (Auto, Light, Dark), the on/off settings are switches, and the desktop's
+  sidebar narrows below a smaller window width. Results such as "Copied" are read out by screen readers once, from one
+  place per screen. Nothing changes in how casting works.
+
+- [#237](https://github.com/brew-lab/thaumic-cast/pull/237) [`be8288c`](https://github.com/brew-lab/thaumic-cast/commit/be8288c8a819b6169e8451dd157aa2c959d1ab9e) Thanks [@skezo](https://github.com/skezo)! - feat(ui): build the settings pages and the notices from the design system's molecules
+
+  The design system's shared molecules are built and drawn on the catalogue page in every state, in light and
+  dark: fields, settings rows, choice groups, copy and address fields, readouts, folds, empty states, notices,
+  toasts, page titles, wizard steps and cards. The extension's settings page and the desktop app's Speakers,
+  Server and Settings views now use them: settings sit in rows with their help beside or under them, choices
+  flow into columns, and every page has one large title. The server address and speaker address tests are one
+  control that only shows busy on its button, says "Try again" when nothing answers, and now says straight away
+  when a server address cannot be right. Copy buttons say "Copied" for a moment after a copy, and
+  the Server page's copy button has a name at last. Every warning keeps its place but is read out by screen
+  readers once, from one place per screen, instead of interrupting. Nothing changes in how casting works.
+
+  Controls are now compact by default: buttons, fields and dropdowns are 32 px tall everywhere, and only the action a
+  screen exists for (Stop all casts and Ask again, the setup steps, Cast) stays large. On the desktop app and under touch
+  every control still answers a press across 44 px, so nothing got harder to hit on a touchscreen. Addresses you copy
+  are shown as plain text with a small Copy button beside them, the theme switch is the same height as everything
+  else, and the popup's Mute and Remove buttons are a little larger.
+
+- [#242](https://github.com/brew-lab/thaumic-cast/pull/242) [`8b5579f`](https://github.com/brew-lab/thaumic-cast/commit/8b5579f77bde5164366a21eb6ee31eecee0b00f5) Thanks [@skezo](https://github.com/skezo)! - feat(extension): tidy the settings page
+
+  Every setting on the settings page now lines up: in each section the switches and lists end on one
+  edge, including Theme, and a thin line divides one setting from the next. The four Quality choices
+  read two by two, from Economical to Luxurious, "Finer points" comes before "Saved sets", and "Start
+  no louder than" comes first in it. Saved sets says where sets are kept and how to make one.
+
+  When the settings cannot be saved or loaded, the page now says so at the top instead of failing
+  silently. While the settings load, the page says so with the moving dots. The "removed" message with
+  Undo keeps clear of whatever has focus.
+
+- [#239](https://github.com/brew-lab/thaumic-cast/pull/239) [`2c6fcaf`](https://github.com/brew-lab/thaumic-cast/commit/2c6fcaf8b317333dbcc09261be9f2fd077b8a6ce) Thanks [@skezo](https://github.com/skezo)! - feat(extension): rebuild the popup from the design system's components
+
+  The popup is one page that scrolls, with the Cast button stuck to its foot, and nothing in it scrolls on its own.
+  At the top, the mark lights while anything casts and a line says who the popup is talking to; "Asking the
+  companion again…" replaces the old reconnecting notice. Each running cast is a tile: this tab's is open, with the
+  artwork's colour behind what is playing, the playback controls, "Go to tab" and a Stop button with a square and
+  the word "Stop"; any other cast folds to one line and opens when pressed. Stop has no Undo, says the cast has
+  stopped, and moves the focus to the next Stop or to this tab's card.
+
+  You now choose rooms rather than speakers. This tab's card lists sets first (Last cast, any you saved, and
+  Everywhere from three rooms), then every room, with a home theatre or a stereo pair shown once. From eight rooms
+  they fold, with a search that never unticks a room. The popup opens with your last cast's rooms chosen, or the
+  first room nobody else is casting to, and two or more rooms can be saved as a set on this device. Each chosen room
+  shows the level it will start at, at most your "Start no louder than" limit, and opens a slider to change it for
+  this cast; nothing touches a speaker before Cast. The button counts rooms ("Cast to 3 rooms"), and the line under it
+  says which other rooms will play because they are grouped in Sonos with one you chose, and what a cast will
+  interrupt. A room in a bigger Sonos group shows "…" for its level until Cast.
+
+  A cast with several rooms has one volume for all of them, then a fold listing each room's level, Remove (with Undo)
+  and "Add a room", which plays the cast in the rooms you pick and shows "Joining…" until they answer. Every problem
+  sits where it happened: a lost connection or an old companion in one banner at the top, a failed Cast in a line
+  above the button, a room that would not stop or did not join on its own row, a speaker that cut out or may cut out
+  on its cast, and a room that left a cast as a note in that cast. A cast that ends by itself while the popup is open
+  says so in a toast that stays until you act, and anything that happened while the popup was shut shows once, in one
+  "While you were away" line. An older companion now only warns, and Cast stays available.
+
+  Keyboard focus never drops to the page: closing a notice or the toast, Undo, and Cancel or Add in the add mode move
+  it to the next control or back to "Add a room". Undo puts each room back at its own level, never its Sonos group's,
+  and waits for the removal to land first. A cast played as one Sonos group lists each room once, and its volume also
+  moves a room added later. Rooms added in quick succession, Undo and "Try again" no longer take each other's answers,
+  so a room that plays is never reported as not joined. Closing "No reply from the speakers" also clears the toolbar
+  badge, a room that joined another Sonos group no longer shows its old group's level, and an event seen while the
+  popup is open stays out of "While you were away" after the background restarts.
+
+- [#241](https://github.com/brew-lab/thaumic-cast/pull/241) [`d859dd1`](https://github.com/brew-lab/thaumic-cast/commit/d859dd162638a89695000a88d444021b2fe26732) Thanks [@skezo](https://github.com/skezo)! - feat(extension): cast chosen rooms as one Sonos group
+
+  With a desktop app or server that can regroup, a cast now plays exactly the rooms you chose, as one Sonos group,
+  and nothing else. A chosen room in a Sonos group with rooms you did not choose leaves that group until you stop,
+  and the companion puts it back afterwards. The line under the Cast button says so once: "Kitchen leaves its Sonos
+  group until you stop." When a chosen room leads a group that is playing, the rooms it leaves behind carry on with
+  their music from the top, and the line says that too: "Music in Patio starts again from the top." The line then
+  leaves out "Whatever the speaker is playing will stop.", which beside it would read as if Patio stopped. A cast's
+  volume
+  moves every room in its group together, and Undo after Remove puts a room back at its own level. A room that did not
+  start shows "did not join" on its row, with Try again. Resuming from the tab names the cast's rooms again, so a room
+  someone moved elsewhere is left where it is. A room of the cast is named by its room in notes and in the toolbar
+  badge's tooltip.
+
+  An older companion cannot regroup, so a cast to it still goes to the chosen rooms' whole Sonos groups, and the line
+  still says which other rooms play too. The extension learns which it is talking to from the companion's `/health`,
+  read again before every cast.
+
+### Patch Changes
+
+- [#190](https://github.com/brew-lab/thaumic-cast/pull/190) [`1934229`](https://github.com/brew-lab/thaumic-cast/commit/1934229e472080dffc758b35da25b176096822fe) Thanks [@skezo](https://github.com/skezo)! - fix(extension): label AAC streams as AAC-LC, not AAC Main
+
+  Every AAC frame the extension sends carries a small header that tells the speaker what kind of AAC follows. That
+  header named the wrong kind: AAC-LC audio was labelled AAC Main, and the HE-AAC options were labelled AAC-LTP. All AAC
+  options are now labelled AAC-LC at the stream's own sample rate and channels, because that is what the browser encodes
+  for every one of them: measured on Chrome and Edge on Windows, the HE-AAC and HE-AAC v2 options produce exactly the
+  same audio as AAC-LC at the same bitrate. How the speakers treated the old labels has not been measured.
+
+- [#239](https://github.com/brew-lab/thaumic-cast/pull/239) [`2c6fcaf`](https://github.com/brew-lab/thaumic-cast/commit/2c6fcaf8b317333dbcc09261be9f2fd077b8a6ce) Thanks [@skezo](https://github.com/skezo)! - feat(extension): add rooms to a running cast
+
+  A room can now be added to a cast that is already playing. The added room starts at its start level and plays the cast's stream on its own, as a cast to several rooms does with "Play speakers as one group" off; joining it to the cast's Sonos group waits for the regrouping work. A room grouped in Sonos with a room already in the cast is added at once. Each room says whether it joined, so the popup can show "Joining…" and then say which rooms did not.
+
+- [#206](https://github.com/brew-lab/thaumic-cast/pull/206) [`820501c`](https://github.com/brew-lab/thaumic-cast/commit/820501c0a0fe5f4ff2e06c066d9d3866652e2b4a) Thanks [@skezo](https://github.com/skezo)! - fix(extension): show each audio setting only where it does something
+
+  The Audio settings now show a control only for casts it affects. With browser-wide capture on, casts go out
+  as PCM whatever Quality is chosen, and the page now says so; the choice is kept for when browser-wide capture is off.
+  Smoothing is shown for every PCM cast, which includes any cast under browser-wide capture: it was hidden there with a
+  compressed Quality while still being applied, and the popup's link to it led nowhere. Frame size is hidden under
+  browser-wide capture, where it is fixed at 10 ms; the stored value is kept. Bit depth appears only for FLAC, the one
+  codec with more than one. When the browser will not encode the exact codec, bitrate, sample rate and channels a
+  Quality or a Bespoke choice asks for, the page says so there, instead of the cast failing to start. No stored setting
+  or default has changed, and a tab cast sends what it sent before.
+
+- [#239](https://github.com/brew-lab/thaumic-cast/pull/239) [`2c6fcaf`](https://github.com/brew-lab/thaumic-cast/commit/2c6fcaf8b317333dbcc09261be9f2fd077b8a6ce) Thanks [@skezo](https://github.com/skezo)! - feat(extension): log what happened while the popup was shut
+
+  The extension now remembers what happened to your casts while the popup was shut: a cast that ended on its own, a room that left a cast, the connection to the companion lost and found again while casts were running, and a room that would not stop or did not join after you closed the popup. It keeps the last 10, none older than a day, and forgets them when the browser quits. The popup holds a connection to the background while it is open, so anything it showed you live is never repeated. The popup will show them in one "While you were away" line.
+
+- [#186](https://github.com/brew-lab/thaumic-cast/pull/186) [`facaa7e`](https://github.com/brew-lab/thaumic-cast/commit/facaa7ee2f296c3183ba51439e18aeb09b228c44) Thanks [@skezo](https://github.com/skezo)! - fix(extension): capture the browser that is casting, not the one that started first
+
+  Browser-wide capture attaches to one browser's process tree, and the extension never said which browser it was, so
+  the companion captured whichever supported browser had the lowest process id. On a machine where another browser sat
+  in the background that was the wrong one, and the result was a perfectly timed stream of silence. The extension now
+  names its own browser, using the client-hint brands where the user agent string would disguise it, and the companion
+  falls back to auto-detection with a warning if that browser is not found, logging every candidate when it has to guess.
+
+- [#207](https://github.com/brew-lab/thaumic-cast/pull/207) [`44b237d`](https://github.com/brew-lab/thaumic-cast/commit/44b237db820faf85e1bf5eaea043888888e64386) Thanks [@skezo](https://github.com/skezo)! - fix(extension,core): disable capture, keep-awake and video sync controls where they cannot act
+
+  The companion now says whether it can capture the whole browser for the extension asking, and the Settings page uses
+  the answer. Against a server, or a desktop app on another machine, Browser-wide capture can no longer be turned on and
+  says why. If it is already on, it stays visible and can always be unticked, with a line saying a cast will not start
+  until it is. It is hidden only when it is off and the companion is a server. With no companion connected, or one too
+  old to say, the control is as it was.
+
+  Keep the tab awake is disabled under browser-wide capture, where it does nothing, and says so; the choice is kept.
+
+  Video sync controls appear in the popup only on a cast that was started with Video sync turned on. Turning
+  the setting on during a cast used to show controls that never locked; the setting now says a change applies from the
+  next cast.
+
+  Choosing "Enter the address" for the companion without a saved address now shows a line saying no address is saved and
+  that the extension is still looking on this machine, instead of nothing.
+
+  No stored setting or default has changed.
+
+- [#239](https://github.com/brew-lab/thaumic-cast/pull/239) [`2c6fcaf`](https://github.com/brew-lab/thaumic-cast/commit/2c6fcaf8b317333dbcc09261be9f2fd077b8a6ce) Thanks [@skezo](https://github.com/skezo)! - feat(protocol): say whether a running cast captures a tab or the whole browser
+
+  Each running cast the background reports to the popup now says what it captures, one tab or the whole browser,
+  so the popup can name a browser-wide cast "Whole browser" with the monitor disc instead of the title of the tab
+  that happened to start it. A cast reported by an older background is taken to capture one tab, as before.
+
+- [#233](https://github.com/brew-lab/thaumic-cast/pull/233) [`6bb6bd8`](https://github.com/brew-lab/thaumic-cast/commit/6bb6bd8c4d2f57701edf82c7a37eca6ed8b5d9dd) Thanks [@skezo](https://github.com/skezo)! - feat(core): start every cast at a safe volume
+
+  A cast used to start at whatever level the room was left at, so after a party it could start at 80 or more. Now a cast starts no louder than 30. A room that is louder is turned down to 30 just before the cast plays; a quieter room is left where it is, so Thaumic Cast never turns a room up to start. In a Sonos group each room is set on its own, so a quiet room stays quiet. If a room's level cannot be read, it starts at 30. The limit is in Settings, under "Start no louder than", where it can be changed or turned off.
+
+  Before you cast, the volume slider for each speaker no longer changes the speaker straight away, so you can no longer turn up someone else's music by accident. It now sets the level the cast will start at, and shows the room's level now beside it, for example "Now 72; starts at 30". A level you set here is used for this cast only, and can be above the limit.
+
+  A speaker shows "…" until it has reported its level, instead of a made-up 50. A speaker with a fixed line-level output, such as a Port, shows "Fixed" instead of a slider, and its volume is never changed.
+
+  The start level is set by the desktop app or server, so both behave the same. An older desktop app or server ignores it and starts casts at the room's level, as before.
+
+- [#239](https://github.com/brew-lab/thaumic-cast/pull/239) [`2c6fcaf`](https://github.com/brew-lab/thaumic-cast/commit/2c6fcaf8b317333dbcc09261be9f2fd077b8a6ce) Thanks [@skezo](https://github.com/skezo)! - feat(extension): cast to rooms
+
+  The popup now asks for a cast by room, and the background works out which speakers to send it to from its own view of the Sonos groups. Until rooms can be taken out of a Sonos group for a cast, a room casts to its whole group, as a group did before, so a room grouped with it plays too; the popup will say so in one line ("Patio plays too, as it is grouped with Kitchen."). Each cast remembers the rooms it was started for, and once a cast starts its rooms become your Last cast.
+
+- [#193](https://github.com/brew-lab/thaumic-cast/pull/193) [`644a955`](https://github.com/brew-lab/thaumic-cast/commit/644a955100483f155176286cf74fa0bb2627a400) Thanks [@skezo](https://github.com/skezo)! - fix(core): stop reporting a compressed cast's speaker as still locking
+
+  A speaker's buffer can only be measured on a PCM stream. For AAC and FLAC the companion nevertheless reported the speaker
+  as "locking" (still measuring) for the whole cast, as if a reading were on its way. It now reports "unmeasured" for those
+  streams, in its log and to the extension and desktop app, and still says when such a speaker is paused, not answering or
+  playing something else. PCM casts are reported exactly as before.
+
+- [#195](https://github.com/brew-lab/thaumic-cast/pull/195) [`e606ab8`](https://github.com/brew-lab/thaumic-cast/commit/e606ab8a9f181dbf50c39477013c8b0a9009cef1) Thanks [@skezo](https://github.com/skezo)! - fix(extension,desktop): show a proper message where a code or the wrong text showed
+
+  A few messages appeared as an internal code, such as `error_offscreen_unavailable`, when a cast failed to start. They
+  now read as sentences. Adding a speaker by IP address in the desktop app always gave the same vague line; it now says
+  whether the address could not be reached, is not a Sonos speaker, or is not an IP address at all.
+
+  On Mac and Linux the extension no longer recommends browser-wide capture when audio is dropping, since that setting
+  only exists on Windows, and the desktop app's first-run screens no longer flash the Windows wording before showing
+  your platform's. When a speaker cut out because its head start had already been used up, the notice no longer claims
+  the Wi-Fi delay was longer than the head start.
+
+  Counts now read correctly for one: "1 speaker", "+1 other", "late 1 time". The button on a connection error reads
+  "Try again" when nothing was found and "Reconnect" only when a connection was lost. The tray tooltip after Stop All
+  Streams is two plain sentences, and appears only when a cast from another machine was stopped. A settings or
+  codec-detection failure in the extension now shows its translated message, not the raw error.
+
+- [#203](https://github.com/brew-lab/thaumic-cast/pull/203) [`6d543d8`](https://github.com/brew-lab/thaumic-cast/commit/6d543d84fdc1860e532368b457e6e5d62aab218a) Thanks [@skezo](https://github.com/skezo)! - fix(extension,desktop,server): give four messages the facts they were missing
+
+  When Chrome refuses to let a tab be cast, the extension now shows the reason Chrome gave, where it gave one. Before, it
+  could only say that no reason was written down.
+
+  When one speaker drops out of a cast that is still playing on others, the extension now says the cast carries on
+  without it. It used to show the same line as when the whole cast ended, which for some reasons told you to cast again
+  while the cast was still running.
+
+  In the desktop app, a notice that tells you to turn on clock drift correction now has the "Open Settings" button, as
+  the notices about the speaker head start already did. With the button there, those notices no longer spell out where
+  in Settings to look.
+
+  Thaumic Cast Server now prints the address to enter in the extension once it is listening, for example "Listening on
+  port 49400. The extension wants http://192.168.1.20:49400".
+
+- [#198](https://github.com/brew-lab/thaumic-cast/pull/198) [`eae2ba8`](https://github.com/brew-lab/thaumic-cast/commit/eae2ba81c0347572af5f20842f8b3929ea39e233) Thanks [@skezo](https://github.com/skezo)! - feat(extension): rewrite the popup, its errors and the first-run tour
+
+  The extension's popup, error messages and first-run tour have been rewritten. The button that ends a cast says "Stop",
+  the heading over running casts says "Casting now", and an error now says what happened and what to do about it, such
+  as "Nothing answered. Thaumic Cast needs the desktop app or a server running to reach the speakers; start one, then
+  try again." When a cast stops by itself the reason names the speaker where one was involved. The settings page is unchanged.
+
+- [#197](https://github.com/brew-lab/thaumic-cast/pull/197) [`0853a4d`](https://github.com/brew-lab/thaumic-cast/commit/0853a4d580f8166865ce519afba5d7318c88644b) Thanks [@skezo](https://github.com/skezo)! - fix(extension,desktop): reword the speaker notices and the late-audio notice
+
+  The notices that appear when a speaker cuts out, nearly cuts out, runs low or has a fast clock now say what happened
+  first, with the figures, and end on what to set: "Kitchen cut out: the Wi-Fi stalled for 600 ms, and a 500 ms head
+  start lasts 500 ms. Set it to 750 ms." The notice for audio reaching the companion late is reworded the same way. The
+  unplayed audio at a speaker is called its reserve throughout, and both buttons now read "Open Settings". Nothing about
+  when a notice appears has changed.
+
+- [#213](https://github.com/brew-lab/thaumic-cast/pull/213) [`8c2e81c`](https://github.com/brew-lab/thaumic-cast/commit/8c2e81cf40eabc3930705052d24154113999212a) Thanks [@skezo](https://github.com/skezo)! - fix(extension,desktop): reword the settings pages
+
+  Every label and line of help on the extension's Settings page and in the desktop app's Settings view has been
+  rewritten. Each line of help now says what the setting does and when a change takes effect: the extension's audio,
+  video sync, keep-awake, speaker and capture settings from the next cast you start, and the desktop app's speaker
+  settings when a speaker next connects.
+
+  The settings use the same words as the notices: reserve, speaker head start, smoothing and clock drift correction.
+
+  Some labels have changed, so here is where things went:
+  - Extension: "Server" is now "Companion", with "Find it automatically" and "Enter the address". "Audio Quality" is
+    "Audio". "Here Be Dragons" is "Finer points". "Video sync controls" is "Video sync". "Synchronize speakers" is "Play
+    speakers as one group".
+  - Desktop app: "Keep an eye on speakers" is "Speaker monitoring". "Hand-added" is "Added by IP address", and its
+    button says "Remove speaker".
+
+  The Quality names (Economical, Sensible, Luxurious, Bespoke) are the same. No setting behaves differently.
+
+  The server's install script now prints "Server address", the name of the field the address goes in.
+
+- [#212](https://github.com/brew-lab/thaumic-cast/pull/212) [`dd1bf05`](https://github.com/brew-lab/thaumic-cast/commit/dd1bf057cdffa6806ee3bad2fc55a4e5c3843564) Thanks [@skezo](https://github.com/skezo)! - refactor(extension,protocol): stop sending fields the companion never reads, and remove reconfigure()
+
+  Internal tidying; nothing a listener can see or hear changes. When a cast starts, the extension no longer sends the
+  companion its frame duration and latency mode. The companion reads neither: it works the frame duration out from the
+  frame size, and the latency mode only steers the extension's own encoder. Both settings are stored and used in the
+  extension as before. An encoder method that nothing called is gone. New tests hold the extension and the companion to
+  the same smoothing, frame duration and speaker head start limits, and to the same handshake.
+
+- [#187](https://github.com/brew-lab/thaumic-cast/pull/187) [`0a7c6b6`](https://github.com/brew-lab/thaumic-cast/commit/0a7c6b67299c159410efc4eaa8d27a1c922d653e) Thanks [@skezo](https://github.com/skezo)! - feat(core): drive clock drift correction from the speaker monitor
+
+  No two clocks agree exactly: a Sonos Playbar in the field plays about 20 ppm faster than audio arrives, so its reserve
+  drains about 1.2 ms a minute and a 500 ms speaker head start reaches the low floor after roughly five hours. The core
+  now has a controller that holds each speaker's reserve at the level its head start settled at, by commanding the PCM
+  rate adapter to stretch or squeeze the audio by at most 150 ppm. It steps on every 30 s reserve estimate: a
+  proportional term beyond a deadband that follows the estimate's half-width, a gentler damping term inside it, and an
+  integral that learns the speaker's clock, is kept across reconnects and casts (by speaker UUID where the topology
+  knows it), never winds up against the cap, and is frozen on held or unlocked estimates. The command holds while the
+  estimate is unlocked and ramps to 0 after 30 minutes unlocked or 10 without answers; it is refreshed every 500 ms, so
+  if the monitor stops the cadence's watchdog drops it to 0 within 30 s. The reserve estimate and the time to the floor
+  use the net rate (the clock less the correction applied), video sync counts the audio inserted, and the 30 s
+  `[SpeakerMonitor]` line shows `cmd` (or `would_cmd`), the integral and `ins`. Speaker health reports carry `driftMode`,
+  `commandPpm` and `netInsertedMs`; a `drift_saturated` notice says when correction is pinned at its cap and the speaker
+  will still run low, and an uncorrected drift notice now adds that turning correction on keeps the speaker topped up.
+
+  The mode is `on`, `observe` or `off`, read per connection and `off` whenever speaker monitoring is. With `observe`
+  the controller works out and logs what it would command while the audio goes out byte for byte as captured; the
+  default is set in the `drift-default-on` changeset. The desktop app offers an On/Off toggle under Settings > Speakers (Off keeps observing), disabled while
+  "Speaker monitoring" is off; the server takes `drift_compensation` in its config or `--drift-compensation`, and warns at startup
+  when it is set but the speaker monitor is off. `THAUMIC_DRIFT_COMPENSATION` outranks both.
+
+- [#238](https://github.com/brew-lab/thaumic-cast/pull/238) [`08418b9`](https://github.com/brew-lab/thaumic-cast/commit/08418b9126a375f446369a34f2dfc2a4faa1bede) Thanks [@skezo](https://github.com/skezo)! - fix(ui): make the design system hold up on every browser the apps support
+
+  On the desktop app's older WebKit (macOS 13 and Linux), cards keep their edge, fields and lists keep their
+  fill, headings and warning glyphs keep their colour, and "Casting now" no longer disappears. The desktop app
+  now needs macOS 13 or later with its Safari updates, and the extension Chrome 125 or later; both are written
+  into the builds.
+
+  Settings line up: every setting's control ends in one column and its help starts at one edge, and the note
+  under a switch keeps clear of it. Pages no longer shift sideways when a scrollbar appears on Windows, and the
+  page titles and spacing follow the width of the column rather than the window. Notices and toasts arrive with a
+  short fade instead of jumping in, folds open and shut smoothly where the browser can, and a speaker's address
+  field grows with the address. Pressing a button on the desktop app no longer changes its corner where the
+  browser cannot draw the full shape, numbers that update keep their place, and the popup's setup screens are as
+  tall as their content. Nothing changes in how casting works.
+
+  A review pass on top: a pressed or open dropdown keeps showing its value, the theme switch no longer
+  covers its label in a narrow settings card, and on/off settings read like every other setting, with
+  their help in the same place and size. A paused speaker on the desktop reads "Paused", never the raw
+  state, and the badge sits beside the speaker's name. Numbers on the Server page line up with the text
+  beside them, a toast's message is never cut short, Undo can show that it is working or that it failed,
+  pressing Esc to hide a tooltip no longer dismisses a toast, controls inside a disabled group look
+  disabled, a click anywhere in a text field's box puts the cursor in it, and the popup's room list no
+  longer scrolls inside itself. "Start no louder than" shows its level.
+
+  After the owner's review: status colours are one set throughout, so every red, amber and green
+  matches its swatch, and "Stop all casts" uses the same red as the rest. Buttons keep their shape
+  when pressed, "Stop" and "Stop all casts" respond to hover, focus and press like every other
+  button, and a button that shows "Working…", "Done" or "Try again" fades between them without
+  changing size. Ticking a checkbox is one smooth movement, the Appearance switch fades between
+  choices, and the dropdown's options take the shape instead of its box. Folds open and shut
+  smoothly and the fold's heading stays still when pressed. The speaker reserve reading on the
+  desktop is a name and a value over a full-width bar, status dots line up with their words, the
+  busy badge is evenly spaced, the radio dot is centred, and the logo sits level with the name in
+  the desktop sidebar.
+
+  A last motion pass: a button's old words leave before its new ones arrive, so they never overlap,
+  and a button with an icon keeps its words centred. A button that is working keeps its shape under
+  the pointer. The Appearance switch's words change colour ahead of their fill, a switch no longer
+  stretches when pressed if reduced motion is on, and on macOS and Linux a fold's content fades in
+  with its arrow. A fold's heading now shows its hover and press layer.
+
+  The shape follows the press: buttons, switches, checkboxes and the other controls only change
+  colour when the pointer passes over them, and take their angled shape when focused from the
+  keyboard or pressed. A quick click, a tap, Enter or Space plays the whole change and back, even
+  on a button that starts working from that click, and nothing shrinks when pressed. With reduced
+  motion on, the shape changes at once. A list opened with the mouse no longer outlines its chosen
+  option.
+
+  The Copy button beside an address or a cast's URL changes to "Copied" and back in one smooth
+  movement, without a jump at either end, and is no longer a little too narrow for its words. On
+  Windows, the dropdown's open list no longer leaves an empty strip down its edge.
+
+- [#241](https://github.com/brew-lab/thaumic-cast/pull/241) [`d859dd1`](https://github.com/brew-lab/thaumic-cast/commit/d859dd162638a89695000a88d444021b2fe26732) Thanks [@skezo](https://github.com/skezo)! - feat(extension): rename and remove saved sets in Settings, and tidy the popup
+
+  Settings has a "Saved sets" section: each set you saved in the popup, with its room count, Rename
+  and Remove. Remove takes the set out at once, and Undo puts it back where it was. With no sets, the
+  section says where they come from.
+
+  The setup screens use the popup's own spacing and no longer change the popup's height from one step
+  to the next. A room row in the popup takes the angled shape when pressed or focused, like every other
+  control. A cast with every room in it no longer offers "Add a room", and the cast of the tab you are
+  on no longer offers "Go to tab". The open cast's artwork colour reaches the card's edges, and no
+  empty line sits under the Cast button.
+
+  A long set name wraps in its row instead of widening the popup, and Escape cancels a rename. The
+  Cast button no longer moves when a line appears under it. A popup that takes a room from another
+  cast no longer tells you that room left the other cast.
+
+- [#136](https://github.com/brew-lab/thaumic-cast/pull/136) [`bb3da36`](https://github.com/brew-lab/thaumic-cast/commit/bb3da36f91ad14ad55e23e5f35bddd419146cf04) Thanks [@skezo](https://github.com/skezo)! - feat(extension): ask for permission to reach a companion on another machine
+
+  When you enter a custom server URL and click Connect (previously "Test"), Chrome now prompts once to allow that address, scoped to that
+  origin only. This replaces the companion's CORS layer, which trusted every installed browser extension and wrapped the
+  API in middleware; the HTTP API no longer sends CORS headers.
+
+- [#241](https://github.com/brew-lab/thaumic-cast/pull/241) [`d859dd1`](https://github.com/brew-lab/thaumic-cast/commit/d859dd162638a89695000a88d444021b2fe26732) Thanks [@skezo](https://github.com/skezo)! - fix(extension): match playback results to the call that asked
+
+  Each request to start playback on a cast's stream now carries its own id (the stream's id and a count), and a
+  reply that echoes another id is ignored. Before, a reply that arrived after its request had timed out could be taken
+  for the answer to a Try again on the same room. An older companion echoes no id, and its replies are still matched
+  by the speakers they name.
+
+- [#186](https://github.com/brew-lab/thaumic-cast/pull/186) [`921110c`](https://github.com/brew-lab/thaumic-cast/commit/921110c2c05b2d2af9689de4d10279848e4d538d) Thanks [@skezo](https://github.com/skezo)! - fix(extension): keep audio frames in order when the connection is congested
+
+  In quality mode a newly encoded frame was sent as soon as the socket drained, even while older frames were still
+  queued, so the server could receive audio out of order. Queued frames are now always drained first, including for the
+  underflow ramp and the final flush at the end of a cast. Realtime mode is unchanged.
+
+- [#186](https://github.com/brew-lab/thaumic-cast/pull/186) [`921110c`](https://github.com/brew-lab/thaumic-cast/commit/921110c2c05b2d2af9689de4d10279848e4d538d) Thanks [@skezo](https://github.com/skezo)! - fix(extension): send each speaker command once and clean up slow cast starts
+
+  Volume and mute changes from the popup reached both the background worker and the audio document, so each command was
+  sent to the server twice. Messages intended for the audio document now carry a marker and anything else is ignored.
+  A cast start that took longer than the background timeout also left the tab captured and the speakers playing with no
+  session to stop; long operations now get a longer timeout and the failure path stops the session.
+
+- [#241](https://github.com/brew-lab/thaumic-cast/pull/241) [`d859dd1`](https://github.com/brew-lab/thaumic-cast/commit/d859dd162638a89695000a88d444021b2fe26732) Thanks [@skezo](https://github.com/skezo)! - feat(extension): join added rooms to the cast's group
+
+  A room added to a cast played as one Sonos group now joins that group, with a companion that can regroup: it
+  leaves any Sonos group it was in, starts at its start level, and plays with the rest of the cast. It shows
+  "Joining…" until it answers, and "did not join" with Try again if it did not. Removing it puts it back where it was,
+  and Undo adds it again. While rooms are being added, the line under Add says which rooms leave their Sonos groups and
+  whose music starts again from the top, as the Cast line does. With an older companion an added room still plays on
+  its own, as before.
+
+- [#241](https://github.com/brew-lab/thaumic-cast/pull/241) [`d859dd1`](https://github.com/brew-lab/thaumic-cast/commit/d859dd162638a89695000a88d444021b2fe26732) Thanks [@skezo](https://github.com/skezo)! - fix(extension): stop a room removed from a cast reading as in use
+
+  A room that stopped as it left a cast, removed or taken by another cast, could keep showing "In use" with nothing
+  playing on it. Its stop arrived a moment before the companion said it had left the cast, and the extension threw the
+  stop away with the room, so the room still read as playing. The stop is now kept.
+
+- [#241](https://github.com/brew-lab/thaumic-cast/pull/241) [`d859dd1`](https://github.com/brew-lab/thaumic-cast/commit/d859dd162638a89695000a88d444021b2fe26732) Thanks [@skezo](https://github.com/skezo)! - refactor(extension): retire "Play speakers as one group"
+
+  The setting is gone from Settings. A cast to several rooms is always one Sonos group with a companion that can
+  regroup, so there is nothing to choose; with an older companion each room plays the stream on its own. A stored
+  choice is ignored and dropped the next time settings are saved.
+
+- [#241](https://github.com/brew-lab/thaumic-cast/pull/241) [`d859dd1`](https://github.com/brew-lab/thaumic-cast/commit/d859dd162638a89695000a88d444021b2fe26732) Thanks [@skezo](https://github.com/skezo)! - fix(extension): label a saved set by its room count
+
+  A saved set in the popup now shows how many of its rooms are here ("2 rooms") at the end of its row, as Last cast
+  and Everywhere do, in place of the word "Saved".
+
+- [#186](https://github.com/brew-lab/thaumic-cast/pull/186) [`921110c`](https://github.com/brew-lab/thaumic-cast/commit/921110c2c05b2d2af9689de4d10279848e4d538d) Thanks [@skezo](https://github.com/skezo)! - fix(extension): keep valid settings when one stored value fails validation
+
+  Settings were validated as a whole, so a single value left over from an older build made the loader return defaults
+  and the next save persist them, discarding the server address, theme and audio mode. Each field is now validated on
+  its own and only invalid ones fall back, with the discarded names logged.
+
+- [#186](https://github.com/brew-lab/thaumic-cast/pull/186) [`a079ad9`](https://github.com/brew-lab/thaumic-cast/commit/a079ad9f678a2ad25553e0d0b6c3c90e427989da) Thanks [@skezo](https://github.com/skezo)! - feat(extension): recast PCM audio options around smoothing
+
+  The network buffer is now called smoothing, which is what it does: the Thaumic Cast desktop app or server holds that
+  much audio back to even out how it arrives from this browser. It does nothing for a speaker's own Wi-Fi, which the
+  speaker head start covers, and a companion on the same machine gains nothing from more of it; the notice about audio
+  arriving late says when more would help. Smoothing (100, 200, 300 or 500 ms) and frame size are now standalone PCM
+  settings under Audio > Advanced, shown in every mode rather than only in Bespoke, and the quality mode no longer
+  changes them. Existing settings move over once: a Bespoke value is kept, snapped to the nearest step (1000 ms becomes
+  500 ms); the Luxurious and Sensible presets, which ran with 500 ms, move to 300 ms; and Economical keeps 200 ms. When
+  the value changes, the options page says so once. For PCM, the sample rate select is gone, since PCM always goes out
+  at the rate the browser captures, and the summary reads "Matches the audio device". It also shows the speaker head
+  start the desktop app or server sends and the delay smoothing and head start add together. The protocol gains the
+  smoothing default and steps, and the streaming policy no longer carries a jitter buffer. The onboarding note on
+  expectations now says audio reaches the speakers about a second after the browser plays it.
+
+- [#241](https://github.com/brew-lab/thaumic-cast/pull/241) [`d859dd1`](https://github.com/brew-lab/thaumic-cast/commit/d859dd162638a89695000a88d444021b2fe26732) Thanks [@skezo](https://github.com/skezo)! - feat(extension): show an update as a mark on Settings
+
+  When a newer desktop app or server is out, the popup no longer adds a row under the Cast button, which on a long
+  popup sat below the fold. Instead the Settings button at the top carries a small dot and is named "Settings, update
+  available", with that name shown when you point at it or focus it. Pressing it opens Settings at About, where the
+  update's link is. Nothing in the popup moves when the mark appears. The popup's frame has no end row any more.
+
+- [#187](https://github.com/brew-lab/thaumic-cast/pull/187) [`f833ba4`](https://github.com/brew-lab/thaumic-cast/commit/f833ba45fb46cddcc4802af40fc3977b907a50fa) Thanks [@skezo](https://github.com/skezo)! - feat(core): restart a PCM cast at the segment boundary
+
+  A PCM cast no longer ends after its first segment (6h12m49s at 48 kHz stereo). A Sonos speaker plays a segment to the
+  length its WAV header declares, plays out what it holds and reports STOPPED, about 1.2 s after the server's end on
+  S2 86.10, without fetching anything more. Once it has stayed STOPPED on that segment for a second, and asking it
+  (`GetTransportInfo`, `GetPositionInfo`) confirms it, the server tells it to play the next segment itself, which carries
+  on the playout from where the last one ended: a short pause, with nothing for the user to do. The expected gap is the
+  1 s confirmation, two SOAP polls, `SetAVTransportURI` and `Play`, and the speaker's start-up, probably 2-3 s once
+  its reserve has run out; the field test will set the figure.
+  - **Never early, never twice.** `SetAVTransportURI` throws away whatever the speaker still holds, so nothing is sent
+    while the speaker is still playing or paused, or after a STOPPED that does not last. With no word from GENA the
+    speaker is asked once its reserve should have played out, and again every 500 ms while it says PLAYING; a STOPPED
+    found that way must also last a second and be confirmed again, and a speaker stopped with no media at all is left
+    to end the cast as before. The restart
+    goes out under the speaker's start lock, and not at all if the speaker fetched the next segment itself meanwhile or
+    a new playout took over.
+  - **No false alarms.** From 2 s before a segment's end until the speaker plays the next one, a STOPPED or
+    TRANSITIONING from the coordinator or any speaker joined to it is recorded as usual but neither broadcast nor shown in
+    snapshots (the desktop app's transport view included), so the extension (current builds included) never takes the
+    switch for the speaker giving up. Once the coordinator plays the next segment it is released; each joined speaker
+    stays held until it reports PLAYING or PAUSED itself, or for 5 s at most, since a joined speaker's own events can
+    lag the coordinator's by seconds and the STOPPED it recorded at the segment's end is not news. A pause or a
+    skip in that window ends the hold, and the Sonos TV input or another app taking a speaker over still ends the cast.
+  - **No lasting latency.** The audio produced while the speaker stopped and restarted is not all sent: unless drift
+    correction is steering the speaker, it rejoins with just its head start, the oldest audio dropped inside the pause
+    and the rest faded in, so latency does not grow by the length of the pause every segment. With drift correction on, up
+    to 2 s is kept sample for sample and paid back, and `Continuation debt repaid` is logged when it has been.
+  - **A gentle end if it cannot continue.** A speaker that does not play the next segment within 10 s is told once more;
+    after that the cast ends on it with the new stop reason `continuation_failed`, which the extension shows as a gentle
+    "cast again to carry on" message instead of the speaker having wandered off. Older extensions show their generic
+    stop message.
+
+  The test switch `THAUMIC_PCM_CONTINUATION` (`restart`, the default, or `off`, where a cast ends after its first
+  segment as before) is reported on the `[Stream] PCM HTTP switches` line. Each boundary logs `Handoff`, `Continuation
+restart` (with its trigger and rejoin policy), `Continuation joined` (with `dropped_ms` and `latency_debt_ms`) and
+  `Continuation playing` (with the audible gap). The handoff's watch runs on the main runtime, keeping its SOAP calls
+  off the streaming runtime.
+
+- [#205](https://github.com/brew-lab/thaumic-cast/pull/205) [`96fa854`](https://github.com/brew-lab/thaumic-cast/commit/96fa854a3ed9afd3cb8cb66a8f93402ec8ac0d78) Thanks [@skezo](https://github.com/skezo)! - fix(extension,core): a PCM cast declares the rate it was captured at
+
+  A PCM cast now tells the companion the sample rate Chrome really captured the tab at. It used to be able to state a
+  rate left over in the settings from another codec, and since PCM is not resampled the cast then played at the wrong
+  speed. The extension waits up to 300 ms for the tab's first audio and declares the rate of that. If Chrome captures at
+  a rate that cannot be sent, the cast does not start and the popup says which rate it was and how to choose another
+  codec under Settings. The other codecs are unchanged.
+
+  A tab that is silent or paused may deliver no audio in that time, and a cast from one still starts as before: it
+  declares the rate Chrome reports for the tab, or 48 kHz if that is not a rate it can send, and never the rate in the
+  settings. If the audio then arrives at a different rate, the cast stops and the popup gives both rates and says to
+  cast again while the tab is playing, or to choose another codec when the rate is one PCM cannot be sent at. A cast
+  whose capture changes rate partway through now stops with the same message; it used to stop without one.
+
+  The companion now refuses a cast that declares a sample rate of zero, or one it cannot serve, with a message naming
+  the rate; a rate of zero used to crash that connection. Its log line for a new stream also records the bitrate, the
+  connection, the address it came from and the client id, and it logs when an older client uses the `codec` or
+  `speakerIp` fields, saying which connection it was.
+
+- [#204](https://github.com/brew-lab/thaumic-cast/pull/204) [`47be5af`](https://github.com/brew-lab/thaumic-cast/commit/47be5afce9f53ddc4a1b72a0adf66d0ced48b15d) Thanks [@skezo](https://github.com/skezo)! - fix(extension): a mono PCM cast carries both channels
+
+  A mono PCM cast now carries both channels mixed together; it used to carry the left one only, so anything that was
+  only in the right channel went missing. Stereo casts are unchanged.
+
+  The log now records, once per PCM cast, the sample rate the capture delivers beside the rate the cast declared, and
+  warns when the two differ.
+
+- [#191](https://github.com/brew-lab/thaumic-cast/pull/191) [`ca7f19d`](https://github.com/brew-lab/thaumic-cast/commit/ca7f19dfa1385c2a4bd7cb1d18074a8d9f5215ad) Thanks [@skezo](https://github.com/skezo)! - fix: refuse a codec the companion cannot stream, and say so
+
+  If the extension asked for a codec the companion has no stream for, the companion quietly treated the audio as PCM, so
+  the speaker was handed something it could not play. The companion now refuses the cast and names the codec. Its refusals
+  also reach the extension: they were sent in a shape the extension discarded, so a refused cast only ever showed a
+  connection close code. The reason the companion gives is now what the failed cast reports, including from a companion
+  that has not been updated yet.
+
+  Ogg Vorbis is no longer offered, because the companion never had a stream for it. A custom quality setting saved with
+  Ogg Vorbis becomes AAC-LC, keeping its bitrate where AAC-LC has the same one.
+
+  Starting playback of a stream that has already gone now fails with "Stream not found" for each speaker, where it used
+  to send the speakers an AAC address on a guess.
+
+- [#194](https://github.com/brew-lab/thaumic-cast/pull/194) [`d8efc83`](https://github.com/brew-lab/thaumic-cast/commit/d8efc833ce9a7dab677cea30d9e490fbe72c25f6) Thanks [@skezo](https://github.com/skezo)! - fix(extension): remove the HE-AAC options, which were AAC-LC under another name
+
+  The HE-AAC and HE-AAC v2 choices are gone from the custom quality settings. The browser encodes plain AAC-LC whatever
+  kind of AAC it is asked for (measured on Chrome and Edge on Windows, where all three choices gave exactly the same audio
+  at the same bitrate), so they never sounded or behaved differently from AAC-LC.
+
+  AAC-LC gains 96 and 160 kbps, so a low-bitrate option is still there. A bitrate the browser cannot encode on your
+  machine is not listed (256 kbps on Windows). Choosing AAC-LC in the custom settings starts at 192 kbps, its usual
+  bitrate, not at the lowest one.
+
+  The Economical preset now says what it sends: AAC-LC at 96 kbps, where on Windows it used to say HE-AAC v2 at 96 kbps
+  for the same audio. Where it used to pick 64 kbps it now uses 96 kbps.
+
+  A custom setting saved with HE-AAC or HE-AAC v2 becomes AAC-LC at the nearest bitrate (64 kbps becomes 96 kbps), and
+  the change is saved the first time the settings are read, without dropping the connection to the companion.
+
+  The companion still accepts both HE-AAC names from an extension that has not been updated. Its only change is that the
+  message for a codec it does not know no longer lists them.
+
+- [#239](https://github.com/brew-lab/thaumic-cast/pull/239) [`2c6fcaf`](https://github.com/brew-lab/thaumic-cast/commit/2c6fcaf8b317333dbcc09261be9f2fd077b8a6ce) Thanks [@skezo](https://github.com/skezo)! - feat(extension): keep sets of rooms on this device
+
+  The rooms you last cast to ("Last cast") and the sets of rooms you save are kept by room, in this browser only, so they are never synced to another computer that may be on another network. Each room is kept with its name, so a set can still say which of its rooms is not answering. The speakers you had chosen before become your Last cast the first time the rooms load. When the popup opens, your Last cast is chosen, or else the first room nobody else is casting to; a choice is remembered only once you cast.
+
+- [#187](https://github.com/brew-lab/thaumic-cast/pull/187) [`67f86db`](https://github.com/brew-lab/thaumic-cast/commit/67f86db9a81fc1c9ed6850af9a3c91a66c0d350d) Thanks [@skezo](https://github.com/skezo)! - feat(core): say when clock drift made a speaker run low
+
+  On a long cast the drift notice came first and running low then replaced it for the rest of the cast, saying only
+  how much audio the speaker had left: the cause and the remedy were gone. A running-low notice now carries
+  `cause: "drift"` when the speaker's clock is measurably draining the reserve, net of any correction, by at least
+  5 ppm, has drained at least half of what the reserve lost since it settled, and no stall or poor link explains the
+  loss. The popup and the dashboard then add that the speaker plays slightly faster than the audio
+  arrives, offer clock drift correction where it is not on (as the drift notice does), and keep the restart advice.
+
+- [#209](https://github.com/brew-lab/thaumic-cast/pull/209) [`6a5f60c`](https://github.com/brew-lab/thaumic-cast/commit/6a5f60cfcfcbaf3fab0a01e37a2186e76e7fe993) Thanks [@skezo](https://github.com/skezo)! - feat(extension,desktop): hide the language pickers until there is a second language
+
+  The Language section in the extension's options and in the desktop app's Settings offered one choice, English. Both are
+  now hidden, and come back by themselves when a second language ships. Nothing else on either page moves.
+
+  The extension used to store English as your language even though you never picked it, which would have kept you on
+  English after a translation for your browser's language arrived. The stored language can now be "auto", meaning follow
+  the browser, and that is the default. A stored English is changed to "auto" once, when this version first loads the
+  settings. After that, English picked in the Language section is your choice and is kept. Every other setting is
+  unchanged.
+
+- [#208](https://github.com/brew-lab/thaumic-cast/pull/208) [`7107f8e`](https://github.com/brew-lab/thaumic-cast/commit/7107f8e50e39410087c411b6262ba8c846f062e4) Thanks [@skezo](https://github.com/skezo)! - feat(extension): show the fall-behind setting for PCM and reset a stale hidden value once
+
+  "Latency Mode" is now "When the connection falls behind", and its two choices say what they do: "Let delay grow (up to
+  a limit)" and "Skip ahead (brief gaps)". The setting used to be shown only for AAC and FLAC, but a Bespoke PCM cast
+  obeyed it too, so anyone who had picked the second choice for AAC and then moved to PCM was skipping audio with no
+  control on the page to say so. It now appears under Advanced for Bespoke PCM. Because nobody could have chosen it for
+  PCM before, a stored "Skip ahead" on Bespoke PCM is set back to "Let delay grow" once, when this version first loads
+  the settings. After that the choice is yours and is kept. The presets and every other setting are unchanged.
+
+- [#186](https://github.com/brew-lab/thaumic-cast/pull/186) [`c219d46`](https://github.com/brew-lab/thaumic-cast/commit/c219d4693303063d6934d3cec8d28d20b980b97e) Thanks [@skezo](https://github.com/skezo)! - feat(extension): show speaker notices instead of buffer advice
+
+  The popup warned when the path to a speaker was unstable and told the user to raise the network buffer, which cannot
+  help: that buffer only evens out how audio reaches the desktop app or server, not how it reaches the speaker. The
+  link-quality warning is gone. The popup now shows the notice the companion decided on for each speaker it is casting
+  to, worded for where the fix lives: a Wi-Fi stall that outlasted the speaker head start (or nearly did) says how much
+  audio it held back and which head start would have covered it, then where to change it: the desktop app's Settings >
+  Speakers, `pcm_connect_burst_ms` in the server's config, or the environment variable that fixes it; a stall no head
+  start covers suggests moving the speaker or using Ethernet; a speaker running low or being drained by its clock says
+  so, with restart advice only when a restart would refill it. A dismissed notice stays dismissed while the companion
+  repeats it and returns only as a new episode or an escalation, and dismissed head-start advice for a speaker is
+  remembered for 24 hours, so the next cast does not repeat it unless the advice goes higher. Separately, when audio
+  from the browser reached the companion late often enough to give every speaker a gap, the popup says so and suggests
+  the smoothing step that would cover it, with a shortcut to the audio settings, unless the capture-health warning
+  already explains it. The extension keeps the companion's speaker head start and speaker monitor settings current for
+  this wording. The protocol drops the retired link-quality event and the time to empty, and the shared Alert takes a
+  translated label for its dismiss button.
+
+- [#239](https://github.com/brew-lab/thaumic-cast/pull/239) [`2c6fcaf`](https://github.com/brew-lab/thaumic-cast/commit/2c6fcaf8b317333dbcc09261be9f2fd077b8a6ce) Thanks [@skezo](https://github.com/skezo)! - feat(core): key hand-set start levels by room
+
+  A start level set by hand before Cast now belongs to one room, named by its player UUID, rather than to every room the cast's speaker plays in. In a Sonos group, the room you set starts at your level and its grouped partners start no louder than the limit, so setting the Kitchen to 45 no longer sets the Patio beside it to 45 too. `START_PLAYBACK`'s `startVolume` carries `rooms` in place of `speakers`; neither was in a release.
+
+- [#186](https://github.com/brew-lab/thaumic-cast/pull/186) [`602c9ee`](https://github.com/brew-lab/thaumic-cast/commit/602c9ee2ff71b41f4added085bda4a48c1d1154c) Thanks [@skezo](https://github.com/skezo)! - feat(protocol): say when another client takes a speaker, and show speakers in use
+
+  Taking a speaker from another client sent a stop with no reason, so the other person saw a generic message. A distinct
+  reason is now sent and shown. The extension also never read the session list the server provides, so availability came
+  only from that browser's own casts and the automatic choice was always the first group alphabetically, meaning several
+  machines defaulted to the same speaker and each showed it as free. Speakers in use by another client are now a
+  separate state, skipped when choosing automatically and still selectable deliberately, and the concurrent stream count
+  comes from the server rather than one browser's view.
+
+- [#239](https://github.com/brew-lab/thaumic-cast/pull/239) [`2c6fcaf`](https://github.com/brew-lab/thaumic-cast/commit/2c6fcaf8b317333dbcc09261be9f2fd077b8a6ce) Thanks [@skezo](https://github.com/skezo)! - feat(extension): show a toolbar badge
+
+  The toolbar button now shows "!" when something about your casts needs a look while the popup is shut: the connection lost while casting, no speaker reachable or no reply from the speakers during a cast, a speaker that cut out or may cut out soon, gaps or missing pieces in the sound, or a cast that ended by itself for a fault. It is amber for a warning and red for a problem, in colours that read on a light or a dark toolbar, and its tooltip, which is also its spoken name, says what it is, for example "Thaumic Cast: Gaps in the sound". It never shows a count, and never for something you chose, a speaker that only nearly cut out, an update, or a companion that is simply not running. It clears when the problem ends, when you dismiss its notice, or once the popup has shown you the event.
+
+- [#186](https://github.com/brew-lab/thaumic-cast/pull/186) [`66f7a0a`](https://github.com/brew-lab/thaumic-cast/commit/66f7a0a91318092354709a5794c3b8b928487b40) Thanks [@skezo](https://github.com/skezo)! - fix(extension): ignore topology event types this build does not use
+
+  The companion now sends a memberChanged topology event when a satellite drops off or a device reboots. The extension
+  validated every topology event as a group discovery, so each new one failed validation and logged an error. Topology
+  events of other types are now accepted and ignored at debug level, as network events already were.
+
+- [#231](https://github.com/brew-lab/thaumic-cast/pull/231) [`6c13a0c`](https://github.com/brew-lab/thaumic-cast/commit/6c13a0c7889caea546f3b84458985c17c77f5390) Thanks [@skezo](https://github.com/skezo)! - feat(extension): add the audio-lead hook for video sync
+
+  Video sync needs the page's sound to play early by as much as the speakers lag, so that picture and words arrive
+  together. This adds the part that does it, inside the page's own player: a small script that moves the page's audio
+  earlier in the player's buffer and shows the player its own timeline unchanged. The picture is never touched, and the
+  script never seeks or pauses. If playback sticks, or a live broadcast is too near its edge for the sound to run
+  ahead, it puts the sound back where it was. If the extension goes away (reloaded, turned off or updated), or stops
+  asking for the early sound, the sound goes back within about twenty seconds.
+
+  The script is only placed in pages while video sync is on in Settings, and turning it on now asks Chrome for access
+  to every site, because the script has to run inside each site's player. Pages that were already open need a reload.
+  Nothing drives the script yet: a later change sets the amount from the companion's measurement. Players that keep
+  sound and picture in one stream, feed their sound in "sequence" mode, or run in a worker, cannot be adjusted and say
+  so.
+
+- [#232](https://github.com/brew-lab/thaumic-cast/pull/232) [`0a1e5cf`](https://github.com/brew-lab/thaumic-cast/commit/0a1e5cf39cfdf535d7030182a32b121660c3bbba) Thanks [@skezo](https://github.com/skezo)! - feat(extension): drive video sync from the companion's measurement of how late the speakers play
+
+  Video sync now plays the page's sound early by as much as the speakers play late, so a film's lips and words arrive
+  together. The amount is the companion's estimate of the delay for the cast's first speaker, plus the time the audio
+  spends in the extension before it leaves, less 40 ms, because sound a touch late is far less noticeable than sound
+  early. It moves in one step when the estimate moves by more than 40 ms (at most once every five seconds), and at once
+  when the estimate starts afresh or the fine-tune changes. If the measurement is lost, the sound stays where it is.
+  Stopping the cast puts the page's sound back first.
+
+  The old video sync, which paused and nudged the page's video, is gone: the video it moved carried the very sound
+  being cast, so it could never line up. The script it ran on every page is gone with it.
+
+  Each cast's card shows where video sync stands (locking on, in step, cannot sync, nothing to watch, or turned off, with the reason), a
+  fine-tune slider for the speaker being followed, kept per speaker, a Reload page button for pages opened before video
+  sync was on, and Try again after the player turned the early sound off. Video sync needs a PCM cast from a tab and a
+  companion new enough to send its estimate; otherwise the card says which is missing and nothing is moved. The
+  speaker's own output delay is not measured yet, so the fine-tune starts at zero and may need setting once per speaker.
+
+- [#186](https://github.com/brew-lab/thaumic-cast/pull/186) [`921110c`](https://github.com/brew-lab/thaumic-cast/commit/921110c2c05b2d2af9689de4d10279848e4d538d) Thanks [@skezo](https://github.com/skezo)! - fix(extension): apply the video sync offset and stop the loop fighting itself
+
+  The offset slider was stored but never used in the delay calculation. The sync loop's own seeks and pauses also
+  triggered the handlers that drop the lock, so it re-acquired repeatedly, and alignment could start again while a
+  previous one was still waiting. Programmatic adjustments are now recognised and ignored, with a seek matched against
+  where the video actually landed so a real seek by the viewer is still honoured, and alignment cannot overlap.
+
+  Known limitation: on sites that override playback rate, where the extension falls back to brief pauses, an offset
+  change that needs the video to move forward is not applied to a running lock and takes effect at the next re-sync.
+
+- Updated dependencies [[`2c6fcaf`](https://github.com/brew-lab/thaumic-cast/commit/2c6fcaf8b317333dbcc09261be9f2fd077b8a6ce), [`44b237d`](https://github.com/brew-lab/thaumic-cast/commit/44b237db820faf85e1bf5eaea043888888e64386), [`2c6fcaf`](https://github.com/brew-lab/thaumic-cast/commit/2c6fcaf8b317333dbcc09261be9f2fd077b8a6ce), [`6bb6bd8`](https://github.com/brew-lab/thaumic-cast/commit/6bb6bd8c4d2f57701edf82c7a37eca6ed8b5d9dd), [`2c6fcaf`](https://github.com/brew-lab/thaumic-cast/commit/2c6fcaf8b317333dbcc09261be9f2fd077b8a6ce), [`644a955`](https://github.com/brew-lab/thaumic-cast/commit/644a955100483f155176286cf74fa0bb2627a400), [`dd1bf05`](https://github.com/brew-lab/thaumic-cast/commit/dd1bf057cdffa6806ee3bad2fc55a4e5c3843564), [`0a7c6b6`](https://github.com/brew-lab/thaumic-cast/commit/0a7c6b67299c159410efc4eaa8d27a1c922d653e), [`aa16e97`](https://github.com/brew-lab/thaumic-cast/commit/aa16e9734156a630366037fd69dcb5f5ebc857dd), [`07d890b`](https://github.com/brew-lab/thaumic-cast/commit/07d890b7001e8f773f76865573c6c2a018af0b23), [`be8288c`](https://github.com/brew-lab/thaumic-cast/commit/be8288c8a819b6169e8451dd157aa2c959d1ab9e), [`8b5579f`](https://github.com/brew-lab/thaumic-cast/commit/8b5579f77bde5164366a21eb6ee31eecee0b00f5), [`8b5579f`](https://github.com/brew-lab/thaumic-cast/commit/8b5579f77bde5164366a21eb6ee31eecee0b00f5), [`08418b9`](https://github.com/brew-lab/thaumic-cast/commit/08418b9126a375f446369a34f2dfc2a4faa1bede), [`2c6fcaf`](https://github.com/brew-lab/thaumic-cast/commit/2c6fcaf8b317333dbcc09261be9f2fd077b8a6ce), [`d859dd1`](https://github.com/brew-lab/thaumic-cast/commit/d859dd162638a89695000a88d444021b2fe26732), [`d859dd1`](https://github.com/brew-lab/thaumic-cast/commit/d859dd162638a89695000a88d444021b2fe26732), [`a079ad9`](https://github.com/brew-lab/thaumic-cast/commit/a079ad9f678a2ad25553e0d0b6c3c90e427989da), [`d859dd1`](https://github.com/brew-lab/thaumic-cast/commit/d859dd162638a89695000a88d444021b2fe26732), [`f833ba4`](https://github.com/brew-lab/thaumic-cast/commit/f833ba45fb46cddcc4802af40fc3977b907a50fa), [`b36848b`](https://github.com/brew-lab/thaumic-cast/commit/b36848b0eeaa0d4b0c9f902debd9e55b9143a4e7), [`d859dd1`](https://github.com/brew-lab/thaumic-cast/commit/d859dd162638a89695000a88d444021b2fe26732), [`2c6fcaf`](https://github.com/brew-lab/thaumic-cast/commit/2c6fcaf8b317333dbcc09261be9f2fd077b8a6ce), [`ca7f19d`](https://github.com/brew-lab/thaumic-cast/commit/ca7f19dfa1385c2a4bd7cb1d18074a8d9f5215ad), [`d8efc83`](https://github.com/brew-lab/thaumic-cast/commit/d8efc833ce9a7dab677cea30d9e490fbe72c25f6), [`67f86db`](https://github.com/brew-lab/thaumic-cast/commit/67f86db9a81fc1c9ed6850af9a3c91a66c0d350d), [`c219d46`](https://github.com/brew-lab/thaumic-cast/commit/c219d4693303063d6934d3cec8d28d20b980b97e), [`09d86b0`](https://github.com/brew-lab/thaumic-cast/commit/09d86b033f9b2db0408d7066839a25a9a158db1d), [`6ed39cd`](https://github.com/brew-lab/thaumic-cast/commit/6ed39cd3c0ae72678b56fa1a2f72ee650d650674), [`2c6fcaf`](https://github.com/brew-lab/thaumic-cast/commit/2c6fcaf8b317333dbcc09261be9f2fd077b8a6ce), [`602c9ee`](https://github.com/brew-lab/thaumic-cast/commit/602c9ee2ff71b41f4added085bda4a48c1d1154c), [`a8b9c7e`](https://github.com/brew-lab/thaumic-cast/commit/a8b9c7eb726234e71a5f58888d05e0fd051b106d), [`d859dd1`](https://github.com/brew-lab/thaumic-cast/commit/d859dd162638a89695000a88d444021b2fe26732), [`2c6fcaf`](https://github.com/brew-lab/thaumic-cast/commit/2c6fcaf8b317333dbcc09261be9f2fd077b8a6ce), [`0a1e5cf`](https://github.com/brew-lab/thaumic-cast/commit/0a1e5cf39cfdf535d7030182a32b121660c3bbba)]:
+  - @thaumic-cast/protocol@0.6.0
+  - @thaumic-cast/ui@4.0.0
+
 ## 0.12.0
 
 ### Minor Changes
