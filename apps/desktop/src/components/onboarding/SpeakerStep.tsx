@@ -10,6 +10,7 @@ import {
   Disclosure,
   EmptyState,
   Notice,
+  RoomList,
   RoomRow,
   type AddressResult,
 } from '@thaumic-cast/ui';
@@ -30,7 +31,6 @@ import {
   type NetworkHealthPayload,
 } from '../../lib/events';
 import { addManualSpeaker, getSpeakerErrorMessage } from '../../lib/manual-speaker';
-import styles from './SpeakerStep.module.css';
 
 const log = createLogger('SpeakerStep');
 
@@ -186,7 +186,7 @@ export function SpeakerStep({ onSpeakersFound }: SpeakerStepProps): preact.JSX.E
             ]}
           />
           <Card>
-            <ul className={styles.rooms} aria-label={t('onboarding.speakers.rooms')}>
+            <RoomList label={t('onboarding.speakers.rooms')}>
               {rooms.map(({ room, badge }) => (
                 <RoomRow
                   key={room.id}
@@ -204,7 +204,7 @@ export function SpeakerStep({ onSpeakersFound }: SpeakerStepProps): preact.JSX.E
                   }
                 />
               ))}
-            </ul>
+            </RoomList>
           </Card>
         </>
       ) : (

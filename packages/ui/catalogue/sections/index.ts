@@ -501,7 +501,8 @@ export const SECTIONS: CatalogueSection[] = [
     wide: true,
     title: 'RoomRow list',
     tier: 'Tier 2 · M-roomrow',
-    summary: 'Read only: a disc, the name, a sub line and a Badge; nothing is focusable.',
+    summary:
+      'Read only, in a RoomList (a labelled list): a disc, the name, a sub line and a Badge; nothing is focusable.',
     Specimen: RoomRowListSpecimen,
   },
   {

@@ -150,6 +150,17 @@ test('a failed room shows a row line with Try again and X, and keeps its Badge',
   await expect(section.getByRole('button', { name: 'Try again' })).toHaveCount(2);
 });
 
+/* ------------------------------------------------------------ RoomRow list */
+
+test('a RoomList is a labelled list of its rows, and nothing in it is focusable', async ({
+  page,
+}) => {
+  const list = light(page, 'room-row-list').getByRole('list', { name: 'Rooms that answered' });
+  await expect(list).toHaveCount(2);
+  await expect(list.first().getByRole('listitem')).toHaveCount(4);
+  await expect(list.first().locator('button, input, a, [tabindex]')).toHaveCount(0);
+});
+
 /* ------------------------------------------------------------- MediaHeader */
 
 test('a tile head is one disclosure button named by its text', async ({ page }) => {

@@ -20,7 +20,7 @@ import { BrandBlock } from '../../src/BrandBlock';
 import { IconButton } from '../../src/IconButton';
 import { StatusDot } from '../../src/StatusDot';
 import { MediaHeader, artBand, type MediaHeaderProps } from '../../src/MediaHeader';
-import { RoomRow, type RoomRowCastProps, type RoomRowPickProps } from '../../src/RoomRow';
+import { RoomList, RoomRow, type RoomRowCastProps, type RoomRowPickProps } from '../../src/RoomRow';
 import { StartLevel } from '../../src/StartLevel';
 import type { StartLevelLevel } from '../../src/StartLevel/start';
 import { Frames } from './containers';
@@ -346,7 +346,7 @@ export function RoomRowCastSpecimen(): JSX.Element {
  */
 export function RoomRowListSpecimen(): JSX.Element {
   const rows = (
-    <ul class="bare-list" aria-label="Rooms that answered">
+    <RoomList label="Rooms that answered">
       <RoomRow mode="list" room={room('Kitchen')} />
       <RoomRow mode="list" room={room('Living Room')} sub="Home theatre" />
       <RoomRow
@@ -356,7 +356,7 @@ export function RoomRowListSpecimen(): JSX.Element {
         badge={{ tone: 'casting', label: 'Casting' }}
       />
       <RoomRow mode="list" room={room('Garden')} badge={{ tone: 'warning', label: 'No answer' }} />
-    </ul>
+    </RoomList>
   );
   return (
     <div class="popup-specimens">

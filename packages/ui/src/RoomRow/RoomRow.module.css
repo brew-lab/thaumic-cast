@@ -3,7 +3,7 @@
    * M-roomrow. pick: the Checkbox atom is the row (its label holds the room's lines; it
    * takes the layer and the ring, and the bevel on focus and press), with the start at the
    * row's end and the StartLine under it. cast: the name and Badge over one volume line.
-   * list: a disc, the name and a Badge. Rows arrive in flow with the notices' entrance,
+   * list: a disc, the name and a Badge, in a RoomList. Rows arrive in flow with the notices' entrance,
    * staggered and capped at the sixth (T-motion).
    */
   .pick,
@@ -177,6 +177,16 @@
   }
 
   /* ---------------------------------------------------------------- list */
+
+  /* RoomList: a bare list of list rows (each draws its own rule). */
+  .rooms {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-3);
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
 
   .list {
     --roomrow-list-gap: var(--space-3-5);
