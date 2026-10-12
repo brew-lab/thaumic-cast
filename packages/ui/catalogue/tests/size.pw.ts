@@ -67,6 +67,8 @@ const overlap = (a: Hit['hit'], b: Hit['hit']): boolean =>
 
 test.beforeEach(async ({ page }) => {
   await page.goto('/?theme=light');
+  // The page blurs and scrolls to the top a second after load; measure after that.
+  await expect(page.locator('html[data-ready]')).toHaveCount(1);
   await expect(page.locator('#size')).toBeVisible();
 });
 
