@@ -1,0 +1,46 @@
+@layer components {
+  /* A-step. Done: a filled dot; current: the pill; to come: a ring. */
+  .indicator {
+    --step-dot: var(--size-dot-sm);
+    --step-ink: var(--primary);
+    --step-ring: var(--outline);
+
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: var(--space-2);
+  }
+
+  :where([data-density='desktop']) .indicator {
+    --step-dot: var(--size-dot-md);
+  }
+
+  .step {
+    flex: none;
+    inline-size: var(--step-dot);
+    block-size: var(--step-dot);
+    border-radius: var(--radius-full);
+    transition: inline-size var(--dur-spatial) var(--ease-spatial);
+  }
+
+  .done {
+    background: var(--step-ink);
+  }
+
+  .current {
+    inline-size: calc(3 * var(--step-dot));
+    background: var(--step-ink);
+  }
+
+  .to-come {
+    border: var(--line-hair) solid var(--step-ring);
+  }
+
+  @media (forced-colors: active) {
+    .done,
+    .current {
+      background: var(--step-ink);
+      forced-color-adjust: none;
+    }
+  }
+}

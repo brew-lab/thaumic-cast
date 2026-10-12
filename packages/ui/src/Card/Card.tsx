@@ -1,6 +1,7 @@
 import type { ComponentChildren } from 'preact';
 import type { HTMLAttributes } from 'preact/compat';
-import type { LucideIcon } from 'lucide-preact';
+import { Icon } from '../Icon';
+import type { GlyphName } from '../Icon/glyphs';
 import styles from './Card.module.css';
 
 type HeadingLevel = 'h2' | 'h3' | 'h4' | 'h5' | 'h6';
@@ -11,7 +12,7 @@ interface CardProps extends HTMLAttributes<HTMLDivElement> {
   /** Optional card title */
   title?: string;
   /** Optional icon to display before the title */
-  icon?: LucideIcon;
+  icon?: GlyphName;
   /** Heading level for the title (default: h2). Use to maintain proper heading hierarchy. */
   titleLevel?: HeadingLevel;
   /** Remove default padding (for cards with custom internal layout) */
@@ -32,7 +33,7 @@ interface CardProps extends HTMLAttributes<HTMLDivElement> {
 export function Card({
   children,
   title,
-  icon: Icon,
+  icon,
   titleLevel = 'h2',
   className,
   noPadding,
@@ -45,7 +46,11 @@ export function Card({
     <div className={classes} {...rest}>
       {title && (
         <TitleTag className={styles.title}>
-          {Icon && <Icon size={18} fill="currentColor" className={styles.icon} />}
+          {icon && (
+            <span className={styles.icon}>
+              <Icon glyph={icon} />
+            </span>
+          )}
           <span className={styles.titleText}>{title}</span>
         </TitleTag>
       )}

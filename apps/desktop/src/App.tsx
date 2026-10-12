@@ -11,6 +11,7 @@ import { startNetworkServices, startSpeakerNoticeListener } from './state/store'
 import './App.css';
 import styles from './App.module.css';
 import { useTranslation } from 'react-i18next';
+import { Button } from '@thaumic-cast/ui';
 
 /**
  * Root application component.
@@ -55,7 +56,9 @@ export function App() {
           <Route>
             <div className={styles.notFound}>
               <h2>{t('error.page_not_found')}</h2>
-              <a href="/">{t('error.go_home')}</a>
+              <Button kind="link" href="/">
+                {t('error.go_home')}
+              </Button>
             </div>
           </Route>
         </Switch>

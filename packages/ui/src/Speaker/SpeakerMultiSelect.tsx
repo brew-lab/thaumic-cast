@@ -1,3 +1,4 @@
+import { Checkbox } from '../Checkbox';
 import styles from './SpeakerMultiSelect.module.css';
 
 /**
@@ -29,6 +30,9 @@ interface SpeakerMultiSelectProps<T extends SpeakerGroupLike> {
 /**
  * Multiple speaker selection component.
  * Allows users to select one or more speaker groups from a list.
+ *
+ * @deprecated Phase 3 replaces it with RoomPicker and RoomRow `pick` (DESIGN.md §14); until
+ * then each room is a v1 Checkbox.
  *
  * @param props - Component props
  * @param props.groups
@@ -63,21 +67,13 @@ export function SpeakerMultiSelect<T extends SpeakerGroupLike>({
           const isSelected = selectedIps.includes(group.coordinatorIp);
           const displayName = getGroupDisplayName(group);
           return (
-            <li key={group.coordinatorIp} className={styles.itemWrapper}>
-              <label
-                className={[styles.item, isSelected && styles.selected, disabled && styles.disabled]
-                  .filter(Boolean)
-                  .join(' ')}
-              >
-                <input
-                  type="checkbox"
-                  checked={isSelected}
-                  disabled={disabled}
-                  onChange={() => toggleSpeaker(group.coordinatorIp)}
-                  className={styles.checkbox}
-                />
-                <span className={styles.name}>{displayName}</span>
-              </label>
+            <li key={group.coordinatorIp}>
+              <Checkbox
+                checked={isSelected}
+                disabled={disabled}
+                onChange={() => toggleSpeaker(group.coordinatorIp)}
+                label={displayName}
+              />
             </li>
           );
         })}

@@ -1,7 +1,6 @@
 import { useEffect, useRef } from 'preact/hooks';
 import { open } from '@tauri-apps/plugin-shell';
-import { WizardStep, Alert, Button } from '@thaumic-cast/ui';
-import { Puzzle, ExternalLink, Download } from 'lucide-preact';
+import { WizardStep, Alert, Button, Cluster } from '@thaumic-cast/ui';
 import { useTranslation } from 'react-i18next';
 import { GITHUB_RELEASES_URL } from '@thaumic-cast/shared';
 import { stats, fetchStats } from '../../state/store';
@@ -51,7 +50,7 @@ export function ExtensionStep(): preact.JSX.Element {
     <WizardStep
       title={t('onboarding.extension.title')}
       subtitle={t('onboarding.extension.subtitle')}
-      icon={Puzzle}
+      glyph="puzzle"
     >
       <Alert variant={isConnected ? 'success' : 'info'}>
         {isConnected ? t('onboarding.extension.connected') : t('onboarding.extension.checking')}
@@ -59,17 +58,14 @@ export function ExtensionStep(): preact.JSX.Element {
 
       <p className={styles.body}>{t('onboarding.extension.body')}</p>
 
-      <div className={styles.buttonGroup}>
-        <Button variant="primary" onClick={handleOpenStore}>
-          <ExternalLink size={16} />
+      <Cluster>
+        <Button kind="filled" icon="external" onClick={handleOpenStore}>
           {t('onboarding.extension.chrome_link')}
         </Button>
-
-        <Button variant="secondary" onClick={handleOpenGithub}>
-          <Download size={16} />
+        <Button icon="external" onClick={handleOpenGithub}>
           {t('onboarding.extension.github_link')}
         </Button>
-      </div>
+      </Cluster>
 
       <p className={styles.skipHint}>{t('onboarding.extension.skip_hint')}</p>
     </WizardStep>

@@ -1,31 +1,30 @@
 .layout {
   /*
-   * Intrinsic sidebar with snap behavior (mobile-first).
-   * Default: collapsed (4.5rem), expands at >= 53rem.
+   * The rail: narrow below a 45rem window, wide from it (DESIGN.md C-rail).
    */
   display: grid;
-  grid-template-columns: 4.5rem 1fr;
+  grid-template-columns: var(--rail-narrow) 1fr;
   block-size: 100dvb;
   inline-size: 100vi;
-  background-color: var(--color-bg);
-  color: var(--color-text);
-  transition: grid-template-columns var(--duration-slow) var(--ease-out-3);
+  background-color: var(--ground);
+  color: var(--on-surface);
+  transition: grid-template-columns var(--dur-effects) var(--ease-effects);
 }
 
-@container app (inline-size >= 53rem) {
+@container app (inline-size >= 45rem) {
   .layout {
-    grid-template-columns: 15rem 1fr;
+    grid-template-columns: var(--rail-wide) 1fr;
   }
 }
 
 .content {
   overflow-y: auto;
   scrollbar-width: thin;
-  scrollbar-color: var(--color-primary) transparent;
+  scrollbar-color: var(--primary) transparent;
 }
 
 .not-found {
-  padding-block: var(--space-xl);
-  padding-inline: var(--space-xl);
+  padding-block: var(--space-7);
+  padding-inline: var(--space-7);
   text-align: center;
 }

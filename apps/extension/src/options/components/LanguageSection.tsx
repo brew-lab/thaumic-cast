@@ -1,7 +1,7 @@
 import type { JSX } from 'preact';
 import { useCallback } from 'preact/hooks';
 import { useTranslation } from 'react-i18next';
-import { Card } from '@thaumic-cast/ui';
+import { Card, Select } from '@thaumic-cast/ui';
 import type { ExtensionSettings, SupportedLocale } from '../../lib/settings';
 import { SUPPORTED_LOCALES, changeLanguage, getInitialLanguage } from '../../lib/i18n';
 import styles from '../Options.module.css';
@@ -37,24 +37,19 @@ export function LanguageSection({ settings, onUpdate }: LanguageSectionProps): J
     <Card title={t('language_section_title')}>
       <div className={styles.cardContent}>
         <div className={styles.field}>
-          <label htmlFor="language-select" className={styles.label}>
-            {t('language_label')}
-          </label>
-          <select
-            id="language-select"
-            className={styles.select}
+          <Select
+            label={t('language_label')}
             value={getInitialLanguage(settings.language)}
-            onChange={(e) =>
-              handleLanguageChange((e.target as HTMLSelectElement).value as SupportedLocale)
-            }
-          >
-            {SUPPORTED_LOCALES.map((locale) => (
-              <option key={locale} value={locale}>
-                {t(`language_${locale}`)}
-              </option>
-            ))}
-          </select>
-          <span className={styles.hint}>{t('language_coming_soon')}</span>
+            options={SUPPORTED_LOCALES.map((locale) => ({
+              value: locale,
+              label: t(`language_${locale}`),
+            }))}
+            onChange={handleLanguageChange}
+            aria-describedby="language-hint"
+          />
+          <span id="language-hint" className={styles.hint}>
+            {t('language_coming_soon')}
+          </span>
         </div>
       </div>
     </Card>

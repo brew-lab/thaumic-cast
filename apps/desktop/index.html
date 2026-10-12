@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" data-density="desktop">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
@@ -14,14 +14,22 @@
     <script>
       (function () {
         var theme = localStorage.getItem('thaumic-cast-theme') || 'auto';
-        // Only set the attribute. The <style> block below maps it to
-        // color-scheme, and an inline style would outrank that stylesheet
-        // forever, freezing the resolved scheme at whatever was stored on load.
+        // Only set the attribute, as applyTheme in @thaumic-cast/ui does. The
+        // <style> block below and base.css map it to color-scheme; an inline
+        // style would outrank them forever, freezing the scheme loaded first.
         document.documentElement.dataset.theme = theme;
       })();
     </script>
+    <!-- The heading face (Geist 600), so the first heading does not swap faces. -->
+    <link
+      rel="preload"
+      href="../../packages/ui/src/fonts/geist-600.woff2"
+      as="font"
+      type="font/woff2"
+      crossorigin
+    />
     <style>
-      /* Fallback theme styles - applied before main CSS loads */
+      /* The ground before the main CSS loads (the same values as --ground in tokens.css) */
       :root {
         color-scheme: light dark;
       }
@@ -33,8 +41,7 @@
       }
       body {
         margin: 0;
-        /* Uses same OKLCH values as theme.css --gray-1 and --gray-15 */
-        background-color: light-dark(oklch(95% 0.02 280), oklch(10% 0.02 280));
+        background-color: light-dark(oklch(94% 0.019 309.8), oklch(15.1% 0.022 302.3));
       }
     </style>
   </head>

@@ -1,0 +1,145 @@
+@layer components {
+  /*
+   * A-radio, drawn as the ChoiceGroup option: a label round one radio. The option takes the
+   * layer and the ring and never reshapes or scales; the radio stays round in every state.
+   */
+  .option {
+    --radio-size: var(--size-box);
+    --radio-dot: calc(var(--radio-size) / 2.25);
+    --radio-ring: var(--outline);
+    --radio-label: var(--on-surface);
+    --radio-hint: var(--on-surface-variant);
+    --radio-row-bg: color-mix(in oklch, var(--on-surface) var(--layer), transparent);
+    --radio-shadow: none;
+
+    display: flex;
+    align-items: flex-start;
+    gap: var(--space-3);
+    min-block-size: var(--target-min);
+    padding: var(--space-3);
+    border-radius: var(--radius-control);
+    background: var(--radio-row-bg);
+    color: var(--radio-label);
+    box-shadow: var(--radio-shadow);
+    cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+    transition: --layer var(--dur-effects) var(--ease-effects);
+  }
+
+  .box {
+    position: relative;
+    isolation: isolate;
+    flex: none;
+    display: grid;
+    place-items: center;
+    inline-size: var(--radio-size);
+    block-size: var(--radio-size);
+    margin-block-start: calc((1lh - var(--radio-size)) / 2);
+    font-size: var(--text-4-fixed);
+    line-height: var(--leading-4);
+  }
+
+  .input {
+    grid-area: 1 / 1;
+    inline-size: 100%;
+    block-size: 100%;
+    margin: 0;
+    border: var(--line-bold) solid var(--radio-ring);
+    border-radius: var(--radius-full);
+    background: transparent;
+    appearance: none;
+    cursor: inherit;
+  }
+
+  .input:focus-visible {
+    box-shadow: none;
+  }
+
+  .dot {
+    position: relative;
+    z-index: var(--z-raised);
+    grid-area: 1 / 1;
+    inline-size: var(--radio-dot);
+    block-size: var(--radio-dot);
+    border-radius: var(--radius-full);
+    background: var(--radio-ring);
+    pointer-events: none;
+    visibility: hidden;
+  }
+
+  .box:has(.input:checked) {
+    --radio-ring: var(--primary);
+  }
+
+  .input:checked + .dot {
+    visibility: visible;
+  }
+
+  .text {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-1);
+    min-inline-size: 0;
+  }
+
+  .label {
+    font-size: var(--text-4-fixed);
+    font-weight: var(--weight-strong);
+    line-height: var(--leading-4);
+  }
+
+  .description,
+  .note {
+    font-size: var(--text-3);
+    line-height: var(--leading-3);
+  }
+
+  .description {
+    color: var(--radio-hint);
+  }
+
+  .option:is(:hover, [data-force='hover']) {
+    --layer: var(--layer-hover);
+  }
+
+  .option:is(:hover, [data-force='hover']) .box:not(:has(.input:checked)) {
+    --radio-ring: var(--on-surface-variant);
+  }
+
+  .option:is(:has(.input:focus-visible), [data-force='focus']) {
+    --layer: var(--layer-focus);
+    --radio-shadow:
+      0 0 0 var(--line-bold) var(--ring-gap), 0 0 0 calc(2 * var(--line-bold)) var(--focus);
+
+    outline: var(--line-bold) solid transparent;
+  }
+
+  .option:is(:active, [data-force='press']) {
+    --layer: var(--layer-press);
+  }
+
+  /* Disabled: the ring stays at 38 %, as the checkbox's. */
+  .disabled {
+    --radio-ring: color-mix(in oklch, var(--on-surface) var(--disabled-ink), transparent);
+    --radio-label: color-mix(in oklch, var(--on-surface) var(--disabled-ink), transparent);
+    --radio-hint: var(--radio-label);
+    --layer: initial;
+
+    cursor: not-allowed;
+  }
+
+  .disabled .box:has(.input:checked) {
+    --radio-ring: color-mix(in oklch, var(--on-surface) var(--disabled-ink), transparent);
+  }
+
+  .disabled .note {
+    color: var(--on-surface);
+  }
+
+  @media (forced-colors: active) {
+    .dot {
+      background: var(--radio-ring);
+      forced-color-adjust: none;
+    }
+  }
+}

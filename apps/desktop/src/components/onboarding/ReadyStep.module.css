@@ -1,85 +1,42 @@
-.summary-box {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-sm);
-  padding: var(--space-md);
-  background: var(--color-surface);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-md);
-}
+@layer app {
+  .summary-box {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-3);
+    margin: 0;
+    padding: var(--space-4);
+    border: var(--line-hair) solid light-dark(var(--outline-variant), transparent);
+    border-radius: var(--radius-card);
+    background: var(--surface);
+    list-style: none;
+  }
 
-.summary-item {
-  display: flex;
-  align-items: center;
-  gap: var(--space-sm);
-}
+  .summary-item {
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+  }
 
-.check-icon {
-  color: var(--color-success);
-  flex-shrink: 0;
-}
+  .intro-text {
+    margin: 0;
+    text-wrap: pretty;
+  }
 
-.pending-icon {
-  color: var(--color-warning);
-  flex-shrink: 0;
-}
+  .section-title {
+    margin: 0;
+    font-size: var(--text-5);
+    line-height: var(--leading-5);
+  }
 
-.intro-text {
-  margin: 0;
-  line-height: 1.6;
-  text-wrap: pretty;
-}
+  .section-body {
+    margin: 0;
+    color: var(--on-surface-variant);
+  }
 
-.section-title {
-  font-size: 1rem;
-  font-weight: 600;
-  margin: 0;
-}
-
-.section-body {
-  margin: 0;
-  line-height: 1.6;
-  color: var(--color-text-muted);
-}
-
-.autostart-toggle {
-  display: flex;
-  align-items: flex-start;
-  gap: var(--space-md);
-  padding: var(--space-md);
-  background: var(--color-surface);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-md);
-  cursor: pointer;
-  transition: var(--transition-bg);
-}
-
-.autostart-toggle:hover {
-  background: var(--color-surface-hover);
-}
-
-.autostart-toggle input[type='checkbox'] {
-  margin: 0;
-  margin-block-start: 0.25rem;
-  accent-color: var(--color-primary);
-  inline-size: 1.25rem;
-  block-size: 1.25rem;
-  flex-shrink: 0;
-}
-
-.autostart-content {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-xs);
-}
-
-.autostart-label {
-  font-weight: 500;
-}
-
-.autostart-description {
-  font-size: 0.85rem;
-  color: var(--color-text-muted);
-  line-height: 1.5;
-  text-wrap: pretty;
+  .autostart {
+    padding: var(--space-4);
+    border: var(--line-hair) solid light-dark(var(--outline-variant), transparent);
+    border-radius: var(--radius-card);
+    background: var(--surface);
+  }
 }

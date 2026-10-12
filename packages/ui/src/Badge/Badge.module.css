@@ -1,0 +1,79 @@
+@layer components {
+  /* A-badge. One size in both densities; tones change the --badge-* tokens only. */
+  .badge {
+    --badge-h: var(--size-badge);
+    --badge-pad: var(--space-3);
+    --badge-gap: var(--space-2);
+    --badge-glyph: calc(var(--icon-sm) * 0.75);
+    --badge-bg: transparent;
+    --badge-fg: var(--on-surface-variant);
+    --badge-edge: var(--outline);
+    --badge-glyph-ink: currentcolor;
+    --badge-radius: var(--radius-full);
+
+    flex: none;
+    display: inline-flex;
+    align-items: center;
+    gap: var(--badge-gap);
+    block-size: var(--badge-h);
+    padding-inline: var(--badge-pad);
+    border: var(--line-hair) solid var(--badge-edge);
+    border-radius: var(--badge-radius);
+    background: var(--badge-bg);
+    color: var(--badge-fg);
+    font-family: var(--font-head);
+    font-size: var(--text-1);
+    font-weight: var(--weight-head);
+    line-height: var(--leading-1);
+    letter-spacing: var(--tracking-1);
+    text-transform: uppercase;
+    white-space: nowrap;
+    vertical-align: middle;
+  }
+
+  .badge:not(:has(> .label:first-child)) {
+    padding-inline-start: var(--space-2);
+  }
+
+  .casting {
+    --badge-bg: var(--cast-badge);
+    --badge-fg: var(--on-cast-badge);
+    --badge-edge: transparent;
+  }
+
+  .warning {
+    --badge-bg: var(--warning-container);
+    --badge-fg: var(--on-warning-container);
+    --badge-edge: transparent;
+    --badge-glyph-ink: light-dark(var(--on-warning-container), var(--warning-ink));
+  }
+
+  .danger {
+    --badge-bg: var(--danger-container);
+    --badge-fg: var(--on-danger-container);
+    --badge-edge: transparent;
+    --badge-glyph-ink: light-dark(var(--on-danger-container), var(--danger-ink));
+  }
+
+  .glyph {
+    display: inline-grid;
+    place-items: center;
+    color: var(--badge-glyph-ink);
+  }
+
+  .glyph > svg {
+    --icon-size: var(--badge-glyph);
+  }
+
+  @supports (text-box: trim-both cap alphabetic) {
+    .label {
+      text-box: trim-both cap alphabetic;
+    }
+  }
+
+  @media (forced-colors: active) {
+    .badge {
+      border-color: currentcolor;
+    }
+  }
+}

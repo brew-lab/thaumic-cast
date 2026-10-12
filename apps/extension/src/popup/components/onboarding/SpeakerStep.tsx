@@ -1,6 +1,5 @@
 import { useEffect } from 'preact/hooks';
-import { WizardStep, Alert } from '@thaumic-cast/ui';
-import { Speaker } from 'lucide-preact';
+import { WizardStep, Alert, Icon } from '@thaumic-cast/ui';
 import { useTranslation } from 'react-i18next';
 import { useSonosState } from '../../hooks/useSonosState';
 import styles from './SpeakerStep.module.css';
@@ -30,7 +29,7 @@ export function SpeakerStep({ onSpeakersFound }: SpeakerStepProps): preact.JSX.E
     <WizardStep
       title={t('onboarding.speakers.title')}
       subtitle={t('onboarding.speakers.subtitle')}
-      icon={Speaker}
+      glyph="speaker"
     >
       {loading ? (
         <Alert variant="info">{t('onboarding.speakers.loading')}</Alert>
@@ -43,10 +42,10 @@ export function SpeakerStep({ onSpeakersFound }: SpeakerStepProps): preact.JSX.E
           <div className={styles.speakerList}>
             {[...speakerGroups].map((group) => (
               <div key={group.id} className={styles.speakerItem}>
-                <Speaker size={16} />
+                <Icon glyph="speaker" />
                 <span>{group.name}</span>
                 {group.isMultiSpeaker && (
-                  <span className={styles.memberCount}>+{group.size - 1}</span>
+                  <span className={`${styles.memberCount} num`}>+{group.size - 1}</span>
                 )}
               </div>
             ))}

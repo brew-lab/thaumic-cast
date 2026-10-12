@@ -1,7 +1,6 @@
 import { useEffect, useState } from 'preact/hooks';
-import { WizardStep, Alert } from '@thaumic-cast/ui';
+import { WizardStep, Alert, StatusDot, Switch } from '@thaumic-cast/ui';
 import { DEFAULT_MAX_CONCURRENT_STREAMS } from '@thaumic-cast/protocol';
-import { Zap, Check, Timer } from 'lucide-preact';
 import { useTranslation } from 'react-i18next';
 import { groups, stats, getAutostartEnabled, setAutostartEnabled } from '../../state/store';
 import styles from './ReadyStep.module.css';
@@ -22,9 +21,7 @@ export function ReadyStep(): preact.JSX.Element {
     getAutostartEnabled().then(setAutostartState);
   }, []);
 
-  const handleAutostartChange = async (e: Event) => {
-    const target = e.target as HTMLInputElement;
-    const enabled = target.checked;
+  const handleAutostartChange = async (enabled: boolean) => {
     setAutostartState(enabled);
     await setAutostartEnabled(enabled);
   };
@@ -33,7 +30,7 @@ export function ReadyStep(): preact.JSX.Element {
     <WizardStep
       title={t('onboarding.ready.title')}
       subtitle={t('onboarding.ready.subtitle')}
-      icon={Zap}
+      glyph="check"
     >
       <p className={styles.introText}>
         {t('onboarding.ready.intro', {
@@ -41,38 +38,33 @@ export function ReadyStep(): preact.JSX.Element {
         })}
       </p>
 
-      <div className={styles.summaryBox}>
-        <div className={styles.summaryItem}>
-          <Check size={16} className={styles.checkIcon} />
+      <ul className={styles.summaryBox}>
+        <li className={styles.summaryItem}>
+          <StatusDot state="connected" size="md" />
           <span>{t('onboarding.ready.summary_app')}</span>
-        </div>
-        <div className={styles.summaryItem}>
-          <Check size={16} className={styles.checkIcon} />
+        </li>
+        <li className={styles.summaryItem}>
+          <StatusDot state="connected" size="md" />
           <span>{t('onboarding.ready.summary_speakers', { count: speakerCount })}</span>
-        </div>
-        <div className={styles.summaryItem}>
-          {connectionCount > 0 ? (
-            <Check size={16} className={styles.checkIcon} />
-          ) : (
-            <Timer size={16} className={styles.pendingIcon} />
-          )}
+        </li>
+        <li className={styles.summaryItem}>
+          <StatusDot state={connectionCount > 0 ? 'connected' : 'checking'} size="md" />
           <span>
             {connectionCount > 0
               ? t('onboarding.ready.summary_extension_connected')
               : t('onboarding.ready.summary_extension_pending')}
           </span>
-        </div>
-      </div>
+        </li>
+      </ul>
 
-      <label className={styles.autostartToggle}>
-        <input type="checkbox" checked={autostartEnabled} onChange={handleAutostartChange} />
-        <div className={styles.autostartContent}>
-          <span className={styles.autostartLabel}>{t('onboarding.ready.autostart_label')}</span>
-          <span className={styles.autostartDescription}>
-            {t('onboarding.ready.autostart_description')}
-          </span>
-        </div>
-      </label>
+      <div className={styles.autostart}>
+        <Switch
+          label={t('onboarding.ready.autostart_label')}
+          description={t('onboarding.ready.autostart_description')}
+          checked={autostartEnabled}
+          onChange={handleAutostartChange}
+        />
+      </div>
 
       <h3 className={styles.sectionTitle}>{t('onboarding.ready.performance_title')}</h3>
       <p className={styles.sectionBody}>{t('onboarding.ready.performance_body')}</p>

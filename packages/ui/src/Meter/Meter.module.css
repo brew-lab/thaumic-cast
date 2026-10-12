@@ -1,0 +1,70 @@
+@layer components {
+  /* A-meter. A native <meter> drawn on a --size-track track; the reading in a --ch-ms box. */
+  .row {
+    --meter-fill: var(--primary);
+    --meter-track: var(--track);
+    --meter-tick: var(--on-surface-variant);
+    --meter-at-low: calc(var(--meter-low) * 1%);
+
+    display: grid;
+    grid-template-columns: var(--icon-sm) minmax(0, auto) minmax(var(--track-option), 1fr) auto;
+    gap: var(--space-3);
+    align-items: center;
+    color: var(--on-surface);
+    font-size: var(--text-3);
+    line-height: var(--leading-3);
+  }
+
+  .low {
+    --meter-fill: var(--warning-ink);
+  }
+
+  .glyph {
+    display: inline-grid;
+    place-items: center;
+    color: var(--warning-ink);
+  }
+
+  .name {
+    font-weight: var(--weight-strong);
+    white-space: nowrap;
+  }
+
+  .meter {
+    inline-size: 100%;
+    block-size: var(--size-track);
+    border-radius: var(--radius-pressed);
+    background: var(--meter-track);
+    appearance: none;
+  }
+
+  .meter::-webkit-meter-inner-element {
+    display: block;
+  }
+
+  .meter::-webkit-meter-bar {
+    block-size: var(--size-track);
+    border: 0;
+    border-radius: var(--radius-pressed);
+    background-color: var(--meter-track);
+    background-image: linear-gradient(
+      to right,
+      transparent calc(var(--meter-at-low) - var(--line-hair)),
+      var(--meter-tick) calc(var(--meter-at-low) - var(--line-hair))
+        calc(var(--meter-at-low) + var(--line-hair)),
+      transparent calc(var(--meter-at-low) + var(--line-hair))
+    );
+  }
+
+  .meter::-webkit-meter-optimum-value,
+  .meter::-webkit-meter-suboptimum-value,
+  .meter::-webkit-meter-even-less-good-value {
+    border-radius: var(--radius-pressed);
+    background: var(--meter-fill);
+  }
+
+  .value {
+    min-inline-size: var(--ch-ms);
+    color: var(--on-surface-variant);
+  }
+}

@@ -1,0 +1,182 @@
+@layer components {
+  /*
+   * A-check. The row is one control (a label round one input): it takes the state layer on
+   * its 8 px corner and carries the ring, because the box is under 24 px. Only the box
+   * reshapes.
+   */
+  .row {
+    --check-size: var(--size-box);
+    --check-ring: var(--outline);
+    --check-fill: transparent;
+    --check-ink: var(--on-primary);
+    --check-radius: var(--radius-pressed);
+    --check-label: var(--on-surface);
+    --check-hint: var(--on-surface-variant);
+    --check-row-bg: color-mix(in oklch, var(--on-surface) var(--layer), transparent);
+    --check-shadow: none;
+
+    display: flex;
+    align-items: flex-start;
+    gap: var(--space-3);
+    min-block-size: var(--target-min);
+    padding: var(--space-3);
+    border-radius: var(--radius-control);
+    background: var(--check-row-bg);
+    color: var(--check-label);
+    box-shadow: var(--check-shadow);
+    cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+    transition: --layer var(--dur-effects) var(--ease-effects);
+  }
+
+  .box {
+    position: relative;
+    isolation: isolate;
+    flex: none;
+    display: grid;
+    place-items: center;
+    inline-size: var(--check-size);
+    block-size: var(--check-size);
+    margin-block-start: calc((1lh - var(--check-size)) / 2);
+    font-size: var(--text-4-fixed);
+    line-height: var(--leading-4);
+  }
+
+  .input {
+    grid-area: 1 / 1;
+    inline-size: 100%;
+    block-size: 100%;
+    margin: 0;
+    border: var(--line-bold) solid var(--check-ring);
+    border-radius: var(--check-radius);
+    background: var(--check-fill);
+    appearance: none;
+    cursor: inherit;
+    transition:
+      border-radius var(--dur-shape) var(--ease-effects),
+      scale var(--dur-spatial) var(--ease-spatial);
+  }
+
+  /* The row carries the ring. */
+  .input:focus-visible {
+    box-shadow: none;
+  }
+
+  .mark {
+    position: relative;
+    z-index: var(--z-raised);
+    grid-area: 1 / 1;
+    display: grid;
+    place-items: center;
+    color: var(--check-ink);
+    pointer-events: none;
+    visibility: hidden;
+  }
+
+  .mark > svg {
+    --icon-size: calc(var(--check-size) - var(--space-1));
+
+    stroke-width: calc(var(--icon-stroke) * 1.25);
+  }
+
+  .input:checked {
+    --check-ring: var(--primary);
+    --check-fill: var(--primary);
+  }
+
+  .input:checked + .mark {
+    visibility: visible;
+  }
+
+  .text {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-1);
+    min-inline-size: 0;
+  }
+
+  .label {
+    font-size: var(--text-4-fixed);
+    font-weight: var(--weight-strong);
+    line-height: var(--leading-4);
+  }
+
+  .description {
+    color: var(--check-hint);
+    font-size: var(--text-3);
+    line-height: var(--leading-3);
+  }
+
+  /* States: the layer on the row; hover darkens the ring; the ring is the row's. */
+  .row:is(:hover, [data-force='hover']) {
+    --layer: var(--layer-hover);
+  }
+
+  .row:is(:hover, [data-force='hover']) .input:not(:checked) {
+    --check-ring: var(--on-surface-variant);
+  }
+
+  .row:is(:has(.input:focus-visible), [data-force='focus']) {
+    --layer: var(--layer-focus);
+    --check-shadow:
+      0 0 0 var(--line-bold) var(--ring-gap), 0 0 0 calc(2 * var(--line-bold)) var(--focus);
+
+    outline: var(--line-bold) solid transparent;
+  }
+
+  .row:is(:active, [data-force='press']) {
+    --layer: var(--layer-press);
+  }
+
+  .row:is(:active, [data-force='press']) .input {
+    --check-radius: var(--radius-thumb-pressed);
+
+    scale: var(--press-icon);
+  }
+
+  @supports (corner-shape: bevel) {
+    .row:not(.disabled):is(
+        :hover,
+        :has(.input:focus-visible),
+        [data-force='hover'],
+        [data-force='focus']
+      )
+      .input {
+      --check-radius: var(--shape-bevel-small);
+
+      corner-shape: bevel;
+    }
+
+    .row:not(.disabled):is(:active, [data-force='press']) .input {
+      --check-radius: var(--radius-thumb-pressed);
+
+      corner-shape: round;
+    }
+  }
+
+  /* Disabled: the ring stays at 38 % (the one exception to the 12 % rule), the ink 38 %. */
+  .disabled {
+    --check-ring: color-mix(in oklch, var(--on-surface) var(--disabled-ink), transparent);
+    --check-label: color-mix(in oklch, var(--on-surface) var(--disabled-ink), transparent);
+    --check-hint: var(--check-label);
+    --layer: initial;
+
+    cursor: not-allowed;
+  }
+
+  .disabled .input:checked {
+    --check-ring: transparent;
+    --check-fill: color-mix(in oklch, var(--on-surface) var(--disabled-ink), transparent);
+  }
+
+  .disabled:active .input {
+    scale: 1;
+  }
+
+  @media (forced-colors: active) {
+    .input:checked {
+      background: var(--check-fill);
+      forced-color-adjust: none;
+    }
+  }
+}

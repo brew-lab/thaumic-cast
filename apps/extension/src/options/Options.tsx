@@ -45,9 +45,7 @@ export function Options(): JSX.Element {
     return (
       <div className={styles.container} aria-busy="true">
         <h1 className={styles.title}>{t('settings_title')}</h1>
-        <div className={styles.loading} role="status">
-          {t('loading_settings')}
-        </div>
+        <div className={styles.loading}>{t('loading_settings')}</div>
       </div>
     );
   }

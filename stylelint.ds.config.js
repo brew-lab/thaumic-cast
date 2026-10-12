@@ -56,6 +56,7 @@ export const RAW_VALUE_FILES = [
 export default {
   ...base,
   overrides: [
+    ...(base.overrides ?? []),
     {
       files: ['apps/**/*.css'],
       rules: { ...VALUES_FROM_TOKENS, ...APP_ONLY },

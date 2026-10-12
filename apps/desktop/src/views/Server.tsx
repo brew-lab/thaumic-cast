@@ -1,8 +1,7 @@
 import { useEffect, useState } from 'preact/hooks';
 import { stats, fetchStats, clearAllConnections, restartServer, stopAll } from '../state/store';
-import { ActionButton, Button, Card } from '@thaumic-cast/ui';
+import { Button, Card, IconButton } from '@thaumic-cast/ui';
 import { useTranslation } from 'react-i18next';
-import { Copy, Check, RefreshCcw, Unplug, Square, Circle } from 'lucide-preact';
 import styles from './Server.module.css';
 
 /** Duration to show "copied" feedback before reverting to copy icon (ms). */
@@ -43,7 +42,6 @@ export function Server() {
       {/* Status Section */}
       <Card
         title={t('server.running')}
-        icon={Circle}
         titleLevel="h3"
         className={`${styles.section} ${styles.statusCard}`}
       >
@@ -54,14 +52,12 @@ export function Server() {
               <code className={styles.statusValue}>
                 {stats.value ? `${stats.value.localIp}:${stats.value.port}` : '---'}
               </code>
-              <Button
-                variant="secondary"
-                onClick={copyAddress}
-                className={styles.copyButton}
-                title={t('server.copy_address')}
-              >
-                {copied ? <Check size={14} color="var(--color-success)" /> : <Copy size={14} />}
-              </Button>
+              <IconButton
+                glyph={copied ? 'check' : 'copy'}
+                label={t('server.copy_address')}
+                tooltip
+                onPress={copyAddress}
+              />
             </dd>
           </div>
 
@@ -85,15 +81,13 @@ export function Server() {
               <h4 className={styles.actionTitle}>{t('server.restart')}</h4>
               <p className={styles.actionDescription}>{t('server.restart_description')}</p>
             </div>
-            <ActionButton
-              action={restartServer}
-              label={t('server.restart')}
-              loadingLabel={t('server.restarting')}
-              successLabel={t('server.restarting')}
-              icon={RefreshCcw}
-              variant="secondary"
-              className={styles.actionButton}
-            />
+            <Button
+              icon="refresh"
+              onAction={restartServer}
+              labels={{ busy: t('server.restarting') }}
+            >
+              {t('server.restart')}
+            </Button>
           </div>
 
           <div className={styles.actionRow}>
@@ -101,16 +95,13 @@ export function Server() {
               <h4 className={styles.actionTitle}>{t('server.disconnect_all')}</h4>
               <p className={styles.actionDescription}>{t('server.disconnect_description')}</p>
             </div>
-            <ActionButton
-              action={async () => {
-                await clearAllConnections();
-              }}
-              label={t('server.disconnect')}
-              loadingLabel={t('server.disconnecting')}
-              icon={Unplug}
-              variant="primary"
-              className={styles.actionButton}
-            />
+            <Button
+              kind="outline"
+              onAction={clearAllConnections}
+              labels={{ busy: t('server.disconnecting') }}
+            >
+              {t('server.disconnect')}
+            </Button>
           </div>
 
           <div className={styles.actionRow}>
@@ -118,14 +109,15 @@ export function Server() {
               <h4 className={styles.actionTitle}>{t('server.stop_streams')}</h4>
               <p className={styles.actionDescription}>{t('server.stop_streams_description')}</p>
             </div>
-            <ActionButton
-              action={stopAll}
-              label={t('server.stop')}
-              loadingLabel={t('server.stopping')}
-              icon={Square}
-              variant="primary"
-              className={styles.actionButton}
-            />
+            <Button
+              kind="filled"
+              danger
+              icon="stop"
+              onAction={stopAll}
+              labels={{ busy: t('server.stopping') }}
+            >
+              {t('server.stop')}
+            </Button>
           </div>
         </div>
       </Card>

@@ -4,8 +4,14 @@ import { useTranslation } from 'react-i18next';
 import { MediaAction } from '@thaumic-cast/protocol';
 import { getSpeakerAvailability } from '@thaumic-cast/protocol';
 import { GITHUB_RELEASES_URL } from '@thaumic-cast/shared';
-import { Radio, Settings } from 'lucide-preact';
-import { Alert, Button, IconButton } from '@thaumic-cast/ui';
+import {
+  Alert,
+  BrandBlock,
+  Button,
+  IconButton,
+  StatusDot,
+  type StatusDotState,
+} from '@thaumic-cast/ui';
 import styles from './App.module.css';
 import type {
   ExtensionResponse,
@@ -293,13 +299,13 @@ function MainPopup(): JSX.Element {
   }, []);
 
   /**
-   * Resolves the CSS class for the status indicator based on current app state.
-   * @returns The appropriate CSS class name
+   * The footer's status mark: checking while seeking, failed when disconnected.
+   * @returns The StatusDot state
    */
-  const getStatusClass = useCallback(() => {
-    if (isSeeking) return styles.statusChecking;
-    if (connectionPhase === 'error' || !wsConnected) return styles.statusDisconnected;
-    return styles.statusConnected;
+  const statusDot = useCallback((): StatusDotState => {
+    if (isSeeking) return 'checking';
+    if (connectionPhase === 'error' || !wsConnected) return 'failed';
+    return 'connected';
   }, [isSeeking, connectionPhase, wsConnected]);
 
   /**
@@ -323,13 +329,8 @@ function MainPopup(): JSX.Element {
   return (
     <div className={styles.container}>
       <div className={styles.header}>
-        <div className={styles.titleGroup}>
-          <Radio size={20} color="var(--color-primary)" />
-          <h1 className={styles.title}>{t('app_name')}</h1>
-        </div>
-        <IconButton onClick={openSettings} title={t('settings')} aria-label={t('settings')}>
-          <Settings size={18} />
-        </IconButton>
+        <BrandBlock name={t('app_name')} heading lit={activeCasts.length > 0} />
+        <IconButton glyph="settings" kind="tonal" label={t('settings')} onPress={openSettings} />
       </div>
 
       {error && (
@@ -475,7 +476,8 @@ function MainPopup(): JSX.Element {
       )}
 
       <p className={styles.footer}>
-        <span className={`${styles.status} ${getStatusClass()}`}>
+        <span className={styles.status}>
+          <StatusDot state={statusDot()} />
           {isSeeking && t('connection_status_checking')}
           {connectionPhase === 'connected' &&
             t(
@@ -490,7 +492,7 @@ function MainPopup(): JSX.Element {
         {hasMismatch && wsConnected && (
           <>
             {' · '}
-            <Button variant="link" onClick={handleOpenReleases}>
+            <Button kind="link" icon="external" onClick={handleOpenReleases}>
               {t('update_available')}
             </Button>
           </>

@@ -1,0 +1,84 @@
+@layer components {
+  /*
+   * A-clacks. Each shutter reads --clack-open (registered in tokens.css), which the clack
+   * keyframes hold at 1 for three of eight steps. The delay puts each shutter at its place on
+   * the snake (--pos, set inline), so three open shutters walk the path.
+   */
+  .clacks {
+    --clack-on: currentcolor;
+    --clack-off: color-mix(in oklch, currentcolor var(--clack-dim), transparent);
+    --clack-cell: calc(var(--space-2) + var(--line-hair));
+    --clack-gap: var(--space-1);
+    --clack-step: var(--dur-step);
+    --clack-timing: step-end;
+
+    flex: none;
+    display: inline-grid;
+    grid-template-columns: repeat(4, var(--clack-cell));
+    grid-auto-rows: var(--clack-cell);
+    gap: var(--clack-gap);
+    vertical-align: middle;
+  }
+
+  :where([data-density='desktop']) .md {
+    --clack-cell: calc(var(--space-2) + var(--line-bold));
+  }
+
+  .sm {
+    --clack-cell: calc(var(--space-1) + var(--line-hair));
+    --clack-gap: var(--line-hair);
+  }
+
+  .shutter {
+    --clack-ink: color-mix(
+      in oklch,
+      var(--clack-on) calc(var(--clack-open) * 100%),
+      var(--clack-off)
+    );
+
+    display: block;
+    border-radius: var(--line-hair);
+    background: var(--clack-ink);
+    scale: 1 calc(0.4 + 0.6 * var(--clack-open));
+    animation-name: var(--clack-animation);
+    animation-duration: calc(8 * var(--clack-step));
+    animation-timing-function: var(--clack-timing);
+    animation-iteration-count: infinite;
+    animation-delay: calc((var(--pos) - 8) * var(--clack-step));
+  }
+
+  /* Answered: all eight open, in the success ink, still. */
+  .answered {
+    --clack-on: var(--success-ink);
+  }
+
+  .answered .shutter {
+    --clack-ink: var(--clack-on);
+
+    scale: 1;
+    animation-name: none;
+  }
+
+  /*
+   * Reduced motion: every shutter stands open and the walk is an opacity fade, one step per
+   * --dur-fade-step (base.css points --clack-animation at clack-fade).
+   */
+  @media (prefers-reduced-motion: reduce) {
+    .clacks {
+      --clack-step: var(--dur-fade-step);
+    }
+
+    .shutter {
+      --clack-ink: var(--clack-on);
+
+      scale: 1;
+    }
+  }
+
+  @media (forced-colors: active) {
+    .shutter {
+      background: var(--clack-on);
+      forced-color-adjust: none;
+    }
+  }
+}

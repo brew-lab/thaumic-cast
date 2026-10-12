@@ -43,6 +43,12 @@
 
   .chevron {
     flex-shrink: 0;
+    display: inline-grid;
+    transition: rotate var(--dur-effects) var(--ease-effects);
+  }
+
+  .chevron[data-open] {
+    rotate: 180deg;
   }
 
   .content {

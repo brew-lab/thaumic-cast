@@ -1,0 +1,146 @@
+@layer components {
+  /*
+   * A-slider. The input is the hit box (--control-md tall, the whole track); its track is
+   * --size-track of --track with the fill in --primary, drawn as gradients from the
+   * percentages Slider.tsx sets (--fill-start, --fill-end, --centre). The handle is a
+   * --size-handle-w × --size-handle-h bar whose --ring-gap halo paints the gaps.
+   */
+  .slider {
+    --slider-handle-w: var(--size-handle-w);
+    --slider-fill-ink: var(--primary);
+    --slider-track-ink: var(--track);
+    --slider-handle: var(--primary);
+    --slider-mark: var(--on-surface-variant);
+    --slider-dot: var(--primary);
+    --slider-gap-shadow: 0 0 0 var(--space-2) var(--ring-gap);
+    --slider-handle-shadow: var(--slider-gap-shadow);
+    --slider-at-start: calc(
+      var(--fill-start) * (100% - var(--size-handle-w)) / 100 + var(--size-handle-w) / 2 *
+        min(1, var(--fill-start))
+    );
+    --slider-at-end: calc(
+      var(--fill-end) * (100% - var(--size-handle-w)) / 100 + var(--size-handle-w) / 2
+    );
+    --slider-at-centre: calc(
+      var(--centre) * (100% - var(--size-handle-w)) / 100 + var(--size-handle-w) / 2
+    );
+
+    display: flex;
+    align-items: center;
+    min-inline-size: 0;
+    inline-size: 100%;
+    box-shadow: none;
+  }
+
+  /* The gradients run left to right, so right-to-left text mirrors the whole input. */
+  .slider:dir(rtl) .input {
+    scale: -1 1;
+  }
+
+  .input {
+    flex: 1 1 auto;
+    min-inline-size: 0;
+    block-size: var(--control-md);
+    margin: 0;
+    padding: 0;
+    background: transparent;
+    direction: ltr;
+    appearance: none;
+    cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  /* The ring belongs to the handle. */
+  .input:focus-visible {
+    box-shadow: none;
+  }
+
+  .input::-webkit-slider-runnable-track {
+    block-size: var(--size-track);
+    border-radius: var(--radius-pressed);
+    background-color: var(--slider-track-ink);
+    background-image:
+      radial-gradient(
+        circle at calc(100% - var(--space-3)) 50%,
+        var(--slider-dot) var(--space-1),
+        transparent calc(var(--space-1) + var(--line-hair))
+      ),
+      linear-gradient(
+        to right,
+        transparent calc(var(--slider-at-centre) - var(--line-hair)),
+        var(--slider-mark) calc(var(--slider-at-centre) - var(--line-hair))
+          calc(var(--slider-at-centre) + var(--line-hair)),
+        transparent calc(var(--slider-at-centre) + var(--line-hair))
+      ),
+      linear-gradient(
+        to right,
+        transparent var(--slider-at-start),
+        var(--slider-fill-ink) var(--slider-at-start) var(--slider-at-end),
+        transparent var(--slider-at-end)
+      );
+  }
+
+  .input::-webkit-slider-thumb {
+    inline-size: var(--slider-handle-w);
+    block-size: var(--size-handle-h);
+    margin-block-start: calc((var(--size-track) - var(--size-handle-h)) / 2);
+    border: 0;
+    border-radius: var(--radius-full);
+    background: var(--slider-handle);
+    box-shadow: var(--slider-handle-shadow);
+    appearance: none;
+    transition:
+      inline-size var(--dur-fast) var(--ease-effects),
+      box-shadow var(--dur-effects) var(--ease-effects);
+  }
+
+  /* Hover: a halo at 12 % primary round the gaps. */
+  .input:hover,
+  .slider[data-force='hover'] .input {
+    --slider-handle-shadow:
+      var(--slider-gap-shadow),
+      0 0 0 var(--space-3) color-mix(in oklch, var(--primary) var(--layer-press), transparent);
+  }
+
+  /* Focus: the ring on the handle, outside its gaps. */
+  .input:focus-visible,
+  .slider[data-force='focus'] .input {
+    --slider-handle-shadow:
+      var(--slider-gap-shadow), 0 0 0 calc(var(--space-2) + var(--line-bold)) var(--focus);
+  }
+
+  /* Pressed: the handle narrows. */
+  .input:active,
+  .slider[data-force='press'] .input {
+    --slider-handle-w: var(--line-bold);
+  }
+
+  /* Not known yet: no handle and no fill, so the slider claims no level. */
+  .unknown .input::-webkit-slider-thumb {
+    visibility: hidden;
+  }
+
+  .unknown .input,
+  .disabled .input {
+    cursor: not-allowed;
+  }
+
+  .disabled {
+    --slider-fill-ink: color-mix(in oklch, var(--on-surface) var(--disabled-ink), transparent);
+    --slider-handle: var(--slider-fill-ink);
+    --slider-dot: var(--slider-fill-ink);
+    --slider-track-ink: color-mix(in oklch, var(--on-surface) var(--disabled-fill), transparent);
+  }
+
+  .disabled .input:is(:hover, :active) {
+    --slider-handle-shadow: var(--slider-gap-shadow);
+    --slider-handle-w: var(--size-handle-w);
+  }
+
+  @media (forced-colors: active) {
+    .input::-webkit-slider-thumb {
+      background: var(--slider-handle);
+      forced-color-adjust: none;
+    }
+  }
+}

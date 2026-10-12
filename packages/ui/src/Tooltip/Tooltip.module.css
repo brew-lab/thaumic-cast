@@ -1,0 +1,79 @@
+@layer components {
+  /* A-tooltip. The wrapper names the anchor; the tip sits in the top layer above it. */
+  .anchor {
+    display: inline-flex;
+    anchor-name: var(--tip-anchor);
+  }
+
+  .block {
+    display: flex;
+    inline-size: 100%;
+  }
+
+  .tip {
+    --tip-bg: var(--inverse-surface);
+    --tip-fg: var(--on-inverse-surface);
+    --tip-font: var(--text-2);
+    --tip-leading: var(--leading-2);
+    --tip-x: auto;
+    --tip-y: auto;
+
+    position: fixed;
+    position-anchor: var(--tip-anchor);
+    position-area: block-start;
+    position-try-fallbacks: flip-block;
+    inset: auto;
+    max-inline-size: var(--wide-control);
+    margin: var(--space-2);
+    padding-block: var(--space-2);
+    padding-inline: var(--space-3);
+    border: 0;
+    border-radius: var(--radius-control);
+    background: var(--tip-bg);
+    color: var(--tip-fg);
+    box-shadow: var(--shadow-overlay);
+    font-family: var(--font-body);
+    font-size: var(--tip-font);
+    font-weight: var(--weight-body);
+    line-height: var(--tip-leading);
+    white-space: normal;
+    pointer-events: auto;
+    opacity: 1;
+    transition:
+      opacity var(--dur-fast) var(--ease-effects),
+      overlay var(--dur-fast) allow-discrete,
+      display var(--dur-fast) allow-discrete;
+  }
+
+  :where([data-density='desktop']) .tip {
+    --tip-font: var(--text-3);
+    --tip-leading: var(--leading-3);
+  }
+
+  .tip:not([data-open]) {
+    display: none;
+    opacity: 0;
+  }
+
+  @starting-style {
+    .tip[data-open] {
+      opacity: 0;
+    }
+  }
+
+  /* The desktop's WebKit floor has no anchor positioning: Tooltip.tsx places it. */
+  @supports not (anchor-name: --a) {
+    .tip {
+      inset-block-start: var(--tip-y);
+      inset-inline-start: var(--tip-x);
+      translate: -50% calc(-100% - var(--space-2));
+      margin: 0;
+    }
+  }
+
+  @media (forced-colors: active) {
+    .tip {
+      border: var(--line-hair) solid;
+    }
+  }
+}

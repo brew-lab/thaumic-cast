@@ -1,0 +1,71 @@
+@layer components {
+  /* A-dot. Four shapes: a dot, the Clacks, circle-x and the lamp. Never animated. */
+  .dot {
+    --dot-size: var(--size-dot-sm);
+    --dot-connected: var(--success-ink);
+    --dot-failed: var(--danger-ink);
+    --dot-live: var(--live-lamp);
+    --dot-checking: var(--on-surface-variant);
+    --dot-ring: var(--ring-gap);
+    --dot-ink: var(--dot-connected);
+    --dot-shadow: none;
+
+    flex: none;
+    display: inline-grid;
+    place-items: center;
+    vertical-align: middle;
+  }
+
+  .round {
+    inline-size: var(--dot-size);
+    block-size: var(--dot-size);
+    border-radius: var(--radius-full);
+    background: var(--dot-ink);
+    box-shadow: var(--dot-shadow);
+  }
+
+  .md {
+    --dot-size: var(--size-dot-md);
+  }
+
+  .connected {
+    --dot-ink: var(--dot-connected);
+  }
+
+  .live {
+    --dot-ink: var(--dot-live);
+  }
+
+  .on-fill {
+    --dot-shadow: 0 0 0 var(--line-bold) var(--dot-ring);
+  }
+
+  .checking {
+    color: var(--dot-checking);
+  }
+
+  /* Failed: circle-x, at the Badge glyph size (sm) or --icon-sm (md). */
+  .glyph {
+    --dot-glyph: calc(var(--icon-sm) * 0.75);
+
+    flex: none;
+    display: inline-grid;
+    place-items: center;
+    color: var(--danger-ink);
+    vertical-align: middle;
+  }
+
+  .glyph.md {
+    --dot-glyph: var(--icon-sm);
+  }
+
+  .glyph > svg {
+    --icon-size: var(--dot-glyph);
+  }
+
+  @media (forced-colors: active) {
+    .round {
+      forced-color-adjust: none;
+    }
+  }
+}

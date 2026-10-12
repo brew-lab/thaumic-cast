@@ -1056,6 +1056,14 @@ This phase depends on round 12 build steps 5 (rooms), 7 (add a room) and 9 (sets
 
 **For the apps, Phase 0 adds the layer order, the tokens and the font file, and changes nothing on screen.** They do not load `base.css`, `motion.css` or `utilities.css` yet: those change the focus ring and the theme default, so they arrive with the Phase 1 atoms, which replace `theme.css`.
 
+**Phase 1 (atoms) has landed.** What it put where:
+
+- The 23 atoms of §4, each a folder in `src/` (component, one `@layer components` module, JSDoc) with a catalogue section showing every kind and every §3 state in both themes; hover, focus-visible and press are drawn with a `data-force` attribute that the modules (and `base.css`, for the ring) honour. `src/atoms.test.ts` covers the pure parts; `catalogue/tests/atoms.pw.ts` covers the behaviour in a browser.
+- Retired and deleted: ActionButton, `useButtonAction`, ButtonGroup, Input, ToggleSwitch, VolumeControl (its timing moved to `Speaker/useVolumeControl.ts`) and StatusChip. Alert, Card, Disclosure, Wizard, SpeakerMultiSelect and SpeakerVolumeRow stay until their phases, drawing the new atoms; the Speaker ones are marked deprecated.
+- The apps load `base.css`, `motion.css` and `utilities.css`, use `applyTheme`, preload Geist and set `data-density` on `<html>` (popup; desktop for the options page and the desktop app). The extension builds CSS for Chrome 125. Headings are Geist 600 and trimmed (F-textbox). `theme.css` is a bridge of the few old names still read, mapped to the tokens. Each surface mounts one `AnnouncerProvider`. Apps no longer import `lucide-preact`.
+- Every app file is in `lint:ds`'s clean paths except the layouts Phases 3 and 4 rebuild wholesale: the cast card and its list, the app shells and the onboarding frames.
+- Decisions where this file was silent are recorded in the Phase 1 PR: the Switch thumb sits `--space-2` inside the track, as drawn (the A-switch text says `--space-1`); Switch, Radio and Checkbox take a `note` and `description`; Select and SegmentedControl render their own label (`hideLabel` hides it); Slider's `value` may be undefined for the unknown level; Button takes `onClick` as well as `onAction`; IconButton's desktop Tooltip is the `tooltip` prop.
+
 ## 15. Drawings
 
 Every item is drawn on the design canvas, Design system v1 page: six index boards (tier 0, the tokens and foundations, to tier 5, the shells and the retired list) and 23 packet boards with the full sheets. Each board passes the canvas checks: format, contrast (0 failures), overflow, accessibility (nothing unnamed, nothing under 24 px, no nested scroller; on every PopupShell frame the scroll padding is the bar plus 8 px) and the Segoe UI Variable and classic Segoe UI font runs. The older round 6 and round 7 sheets that §4 to §6 cite (R6, R7) are on the same canvas.

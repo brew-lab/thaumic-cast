@@ -1,0 +1,155 @@
+@layer components {
+  /*
+   * A-segment. The track is --radius-group with the segments --space-2 inside it, so a
+   * segment is the control height less two insets. The ring goes round the track.
+   */
+  .group {
+    min-inline-size: 0;
+    margin: 0;
+    padding: 0;
+    border: 0;
+  }
+
+  .legend {
+    margin-block-end: var(--space-2);
+    padding: 0;
+    color: var(--on-surface);
+    font-size: var(--text-4-fixed);
+    font-weight: var(--weight-strong);
+    line-height: var(--leading-4);
+  }
+
+  .track {
+    --seg-h: calc(var(--control-md) - 2 * var(--space-2));
+    --seg-shadow: none;
+
+    display: inline-grid;
+    grid-auto-columns: 1fr;
+    grid-auto-flow: column;
+    gap: var(--space-1);
+    padding: var(--space-2);
+    border-radius: var(--radius-group);
+    background: var(--container);
+    box-shadow: var(--seg-shadow);
+  }
+
+  .segment {
+    --seg-bg: transparent;
+    --seg-fg: var(--on-surface-variant);
+    --seg-radius: var(--radius-control);
+    --seg-fill: color-mix(in oklch, var(--seg-fg) var(--layer), var(--seg-bg));
+
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: var(--space-2);
+    min-block-size: var(--seg-h);
+    padding-inline: var(--space-4);
+    border-radius: var(--seg-radius);
+    background: var(--seg-fill);
+    color: var(--seg-fg);
+    font-size: var(--text-3);
+    font-weight: var(--weight-body);
+    line-height: var(--leading-3);
+    white-space: nowrap;
+    cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+    transition:
+      --layer var(--dur-effects) var(--ease-effects),
+      border-radius var(--dur-shape) var(--ease-effects),
+      scale var(--dur-spatial) var(--ease-spatial);
+  }
+
+  :where([data-density='desktop']) .segment {
+    font-size: var(--text-4-fixed);
+  }
+
+  .input {
+    position: absolute;
+    inline-size: 0;
+    block-size: 0;
+    margin: 0;
+    opacity: 0;
+    pointer-events: none;
+  }
+
+  .input:focus-visible {
+    box-shadow: none;
+  }
+
+  @supports (text-box: trim-both cap alphabetic) {
+    .label {
+      text-box: trim-both cap alphabetic;
+    }
+  }
+
+  /* Chosen: the primary fill, the strong weight and the check; calm. */
+  .segment:has(.input:checked) {
+    --seg-bg: var(--primary);
+    --seg-fg: var(--on-primary);
+
+    font-weight: var(--weight-strong);
+  }
+
+  /* States: per segment; the ring round the track. */
+  .segment:is(:hover, [data-force='hover']) {
+    --layer: var(--layer-hover);
+  }
+
+  .segment:is(:has(.input:focus-visible), [data-force='focus']) {
+    --layer: var(--layer-focus);
+  }
+
+  .track:is(:has(.input:focus-visible), [data-force='focus']) {
+    --seg-shadow:
+      0 0 0 var(--line-bold) var(--ring-gap), 0 0 0 calc(2 * var(--line-bold)) var(--focus);
+
+    outline: var(--line-bold) solid transparent;
+  }
+
+  .segment:is(:active, [data-force='press']) {
+    --layer: var(--layer-press);
+    --seg-radius: var(--radius-pressed);
+
+    scale: var(--press-text);
+    transition-duration: var(--dur-fast);
+  }
+
+  @supports (corner-shape: bevel) {
+    .segment:not(:has(.input:checked)):is(
+        :hover,
+        :has(.input:focus-visible),
+        [data-force='hover'],
+        [data-force='focus']
+      ) {
+      --seg-radius: var(--shape-bevel);
+
+      corner-shape: bevel;
+    }
+
+    .segment:is(:active, [data-force='press']) {
+      corner-shape: round;
+    }
+  }
+
+  /* Disabled */
+  .disabled .segment {
+    --seg-fg: color-mix(in oklch, var(--on-surface) var(--disabled-ink), transparent);
+    --layer: initial;
+    --seg-radius: var(--radius-control);
+
+    scale: 1;
+    cursor: not-allowed;
+  }
+
+  .disabled .segment:has(.input:checked) {
+    --seg-bg: color-mix(in oklch, var(--on-surface) var(--disabled-fill), transparent);
+  }
+
+  @media (forced-colors: active) {
+    .segment:has(.input:checked) {
+      outline: var(--line-bold) solid;
+    }
+  }
+}

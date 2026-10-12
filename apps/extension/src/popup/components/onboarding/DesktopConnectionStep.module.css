@@ -1,33 +1,23 @@
-.download-prompt {
-  margin: 0;
-  color: var(--color-text-muted);
-  font-size: 0.9rem;
-}
+@layer app {
+  .download-prompt {
+    margin: 0;
+    color: var(--on-surface-variant);
+    font-size: var(--text-3);
+    line-height: var(--leading-3);
+  }
 
-.actions {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-sm);
-}
+  .manual-form {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-3);
+  }
 
-/* Manual configuration form - vertical/intrinsic layout */
-.manual-form {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-sm);
-}
-
-.test-error {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-xs);
-  font-size: 0.875rem;
-  color: var(--color-error);
-}
-
-.error-dot {
-  inline-size: 0.5rem;
-  block-size: 0.5rem;
-  border-radius: 50%;
-  background-color: var(--color-error);
+  .test-error {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-2);
+    color: var(--danger-ink);
+    font-size: var(--text-3);
+    line-height: var(--leading-3);
+  }
 }

@@ -1,7 +1,7 @@
 import type { JSX } from 'preact';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { useTranslation } from 'react-i18next';
-import { Alert, Card, Disclosure } from '@thaumic-cast/ui';
+import { Alert, Card, Disclosure, Divider, Radio, Select } from '@thaumic-cast/ui';
 import type {
   AudioCodec,
   BitDepth,
@@ -400,21 +400,20 @@ export function AudioSection({
   // The fall-behind choice, placed once: the resolver says where.
   const fallBehindField = (
     <div className={styles.field}>
-      <label htmlFor="audio-latency-mode" className={styles.label}>
-        {t('audio_latency_mode')}
-      </label>
-      <select
+      <Select
         id="audio-latency-mode"
-        className={styles.select}
+        label={t('audio_latency_mode')}
         value={settings.customAudioSettings.latencyMode}
-        onChange={(e) =>
-          handleLatencyModeChange((e.target as HTMLSelectElement).value as LatencyMode)
-        }
-      >
-        <option value="quality">{t('audio_latency_quality')}</option>
-        <option value="realtime">{t('audio_latency_realtime')}</option>
-      </select>
-      <span className={styles.hint}>{t('audio_latency_mode_hint')}</span>
+        options={[
+          { value: 'quality', label: t('audio_latency_quality') },
+          { value: 'realtime', label: t('audio_latency_realtime') },
+        ]}
+        onChange={(mode) => handleLatencyModeChange(mode as LatencyMode)}
+        aria-describedby="audio-latency-mode-hint"
+      />
+      <span id="audio-latency-mode-hint" className={styles.hint}>
+        {t('audio_latency_mode_hint')}
+      </span>
     </div>
   );
 
@@ -426,9 +425,7 @@ export function AudioSection({
 
         {/* No codecs detected */}
         {!codecLoading && codecSupport.availableCodecs.length === 0 && (
-          <div className={styles.hint} style={{ color: 'var(--color-error)' }}>
-            {t('audio_no_codecs_detected')}
-          </div>
+          <div className={styles.error}>{t('audio_no_codecs_detected')}</div>
         )}
 
         {/* Mode selection */}
@@ -444,19 +441,15 @@ export function AudioSection({
                 aria-labelledby="audio-mode-label"
               >
                 {modeOptions.map((option) => (
-                  <label key={option.value} className={styles.radioOption}>
-                    <input
-                      type="radio"
-                      name="audioMode"
-                      className={styles.radioInput}
-                      checked={settings.audioMode === option.value}
-                      onChange={() => handleModeChange(option.value)}
-                    />
-                    <div className={styles.radioContent}>
-                      <span className={styles.radioLabel}>{option.label}</span>
-                      <span className={styles.radioDesc}>{option.desc}</span>
-                    </div>
-                  </label>
+                  <Radio
+                    key={option.value}
+                    name="audioMode"
+                    value={option.value}
+                    label={option.label}
+                    description={option.desc}
+                    checked={settings.audioMode === option.value}
+                    onChange={() => handleModeChange(option.value)}
+                  />
                 ))}
               </div>
             </div>
@@ -466,105 +459,68 @@ export function AudioSection({
               <Alert variant="info">{t('audio_browser_capture_note')}</Alert>
             )}
 
-            <div className={styles.divider} />
+            <Divider />
 
             {/* Resolved/Custom settings */}
             <div className={styles.field}>
-              <label className={styles.label}>
+              <span className={styles.label}>
                 {isCustomMode ? t('audio_settings') : t('audio_resolved_settings')}
-              </label>
+              </span>
 
               {isCustomMode ? (
                 /* Custom mode: editable settings */
                 <div className={styles.cardContent}>
                   {/* Codec */}
-                  <div className={styles.field}>
-                    <label htmlFor="audio-codec" className={styles.label}>
-                      {t('audio_codec')}
-                    </label>
-                    <select
-                      id="audio-codec"
-                      className={styles.select}
-                      value={settings.customAudioSettings.codec}
-                      onChange={(e) =>
-                        handleCodecChange((e.target as HTMLSelectElement).value as AudioCodec)
-                      }
-                    >
-                      {codecSupport.availableCodecs.map((codec) => (
-                        <option key={codec} value={codec}>
-                          {CODEC_METADATA[codec].label}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
+                  <Select
+                    id="audio-codec"
+                    label={t('audio_codec')}
+                    value={settings.customAudioSettings.codec}
+                    options={codecSupport.availableCodecs.map((codec) => ({
+                      value: codec,
+                      label: CODEC_METADATA[codec].label,
+                    }))}
+                    onChange={(codec) => handleCodecChange(codec as AudioCodec)}
+                  />
 
                   {/* Bitrate - only show if codec has bitrate options */}
                   {availableBitrates.length > 0 && (
-                    <div className={styles.field}>
-                      <label htmlFor="audio-bitrate" className={styles.label}>
-                        {t('audio_bitrate')}
-                      </label>
-                      <select
-                        id="audio-bitrate"
-                        className={styles.select}
-                        value={settings.customAudioSettings.bitrate}
-                        onChange={(e) =>
-                          handleBitrateChange(
-                            Number((e.target as HTMLSelectElement).value) as Bitrate,
-                          )
-                        }
-                      >
-                        {availableBitrates.map((bitrate) => (
-                          <option key={bitrate} value={bitrate}>
-                            {bitrate} kbps
-                          </option>
-                        ))}
-                      </select>
-                    </div>
+                    <Select
+                      id="audio-bitrate"
+                      label={t('audio_bitrate')}
+                      value={settings.customAudioSettings.bitrate}
+                      options={availableBitrates.map((bitrate) => ({
+                        value: bitrate,
+                        label: `${bitrate} kbps`,
+                      }))}
+                      onChange={(bitrate) => handleBitrateChange(bitrate as Bitrate)}
+                    />
                   )}
 
                   {/* Channels */}
-                  <div className={styles.field}>
-                    <label htmlFor="audio-channels" className={styles.label}>
-                      {t('audio_channels')}
-                    </label>
-                    <select
-                      id="audio-channels"
-                      className={styles.select}
-                      value={settings.customAudioSettings.channels}
-                      onChange={(e) =>
-                        handleChannelsChange(Number((e.target as HTMLSelectElement).value) as 1 | 2)
-                      }
-                    >
-                      <option value={2}>{t('audio_channels_stereo')}</option>
-                      <option value={1}>{t('audio_channels_mono')}</option>
-                    </select>
-                  </div>
+                  <Select
+                    id="audio-channels"
+                    label={t('audio_channels')}
+                    value={settings.customAudioSettings.channels}
+                    options={[
+                      { value: 2, label: t('audio_channels_stereo') },
+                      { value: 1, label: t('audio_channels_mono') },
+                    ]}
+                    onChange={(channels) => handleChannelsChange(channels as 1 | 2)}
+                  />
 
                   {/* Sample Rate - PCM follows the capture device, so only for compressed codecs */}
                   {settings.customAudioSettings.codec !== 'pcm' &&
                     availableSampleRates.length > 0 && (
-                      <div className={styles.field}>
-                        <label htmlFor="audio-sample-rate" className={styles.label}>
-                          {t('audio_sample_rate')}
-                        </label>
-                        <select
-                          id="audio-sample-rate"
-                          className={styles.select}
-                          value={settings.customAudioSettings.sampleRate}
-                          onChange={(e) =>
-                            handleSampleRateChange(
-                              Number((e.target as HTMLSelectElement).value) as SupportedSampleRate,
-                            )
-                          }
-                        >
-                          {availableSampleRates.map((rate) => (
-                            <option key={rate} value={rate}>
-                              {rate / 1000} kHz
-                            </option>
-                          ))}
-                        </select>
-                      </div>
+                      <Select
+                        id="audio-sample-rate"
+                        label={t('audio_sample_rate')}
+                        value={settings.customAudioSettings.sampleRate}
+                        options={availableSampleRates.map((rate) => ({
+                          value: rate,
+                          label: `${rate / 1000} kHz`,
+                        }))}
+                        onChange={(rate) => handleSampleRateChange(rate as SupportedSampleRate)}
+                      />
                     )}
 
                   {/* Falling behind - here for the codecs the browser encodes */}
@@ -572,27 +528,18 @@ export function AudioSection({
 
                   {/* Bit Depth - only where the codec offers a choice */}
                   {showBitDepth && (
-                    <div className={styles.field}>
-                      <label htmlFor="audio-bit-depth" className={styles.label}>
-                        {t('audio_bit_depth')}
-                      </label>
-                      <select
-                        id="audio-bit-depth"
-                        className={styles.select}
-                        value={settings.customAudioSettings.bitsPerSample}
-                        onChange={(e) =>
-                          handleBitDepthChange(
-                            Number((e.target as HTMLSelectElement).value) as BitDepth,
-                          )
-                        }
-                      >
-                        {getSupportedBitDepths(settings.customAudioSettings.codec).map((depth) => (
-                          <option key={depth} value={depth}>
-                            {depth === 16 ? t('audio_bit_depth_16') : t('audio_bit_depth_24')}
-                          </option>
-                        ))}
-                      </select>
-                    </div>
+                    <Select
+                      id="audio-bit-depth"
+                      label={t('audio_bit_depth')}
+                      value={settings.customAudioSettings.bitsPerSample}
+                      options={getSupportedBitDepths(settings.customAudioSettings.codec).map(
+                        (depth) => ({
+                          value: depth,
+                          label: depth === 16 ? t('audio_bit_depth_16') : t('audio_bit_depth_24'),
+                        }),
+                      )}
+                      onChange={(depth) => handleBitDepthChange(depth as BitDepth)}
+                    />
                   )}
 
                   {/* PCM summary: sample rate, smoothing, head start, added delay */}
@@ -651,50 +598,38 @@ export function AudioSection({
                 >
                   <div className={styles.cardContent}>
                     <div className={styles.field}>
-                      <label htmlFor="audio-smoothing" className={styles.label}>
-                        {t('audio_smoothing')}
-                      </label>
-                      <select
+                      <Select
                         id="audio-smoothing"
-                        className={styles.select}
+                        label={t('audio_smoothing')}
                         value={settings.pcmSmoothingMs}
-                        onChange={(e) =>
-                          handleSmoothingChange(
-                            Number((e.target as HTMLSelectElement).value) as PcmSmoothingMs,
-                          )
-                        }
-                      >
-                        {PCM_SMOOTHING_OPTIONS.map((ms) => (
-                          <option key={ms} value={ms}>
-                            {optionLabel(ms, PCM_SMOOTHING_DEFAULT_MS)}
-                          </option>
-                        ))}
-                      </select>
-                      <span className={styles.hint}>{t('audio_smoothing_hint')}</span>
+                        options={PCM_SMOOTHING_OPTIONS.map((ms) => ({
+                          value: ms,
+                          label: optionLabel(ms, PCM_SMOOTHING_DEFAULT_MS),
+                        }))}
+                        onChange={(ms) => handleSmoothingChange(ms as PcmSmoothingMs)}
+                        aria-describedby="audio-smoothing-hint"
+                      />
+                      <span id="audio-smoothing-hint" className={styles.hint}>
+                        {t('audio_smoothing_hint')}
+                      </span>
                     </div>
 
                     {showFrameSize && (
                       <div className={styles.field}>
-                        <label htmlFor="audio-frame-size" className={styles.label}>
-                          {t('audio_frame_size')}
-                        </label>
-                        <select
+                        <Select
                           id="audio-frame-size"
-                          className={styles.select}
+                          label={t('audio_frame_size')}
                           value={settings.pcmFrameDurationMs}
-                          onChange={(e) =>
-                            handleFrameDurationChange(
-                              Number((e.target as HTMLSelectElement).value) as FrameDurationMs,
-                            )
-                          }
-                        >
-                          {FRAME_DURATIONS.map((ms) => (
-                            <option key={ms} value={ms}>
-                              {optionLabel(ms, FRAME_DURATION_MS_DEFAULT)}
-                            </option>
-                          ))}
-                        </select>
-                        <span className={styles.hint}>{t('audio_frame_size_hint')}</span>
+                          options={FRAME_DURATIONS.map((ms) => ({
+                            value: ms,
+                            label: optionLabel(ms, FRAME_DURATION_MS_DEFAULT),
+                          }))}
+                          onChange={(ms) => handleFrameDurationChange(ms as FrameDurationMs)}
+                          aria-describedby="audio-frame-size-hint"
+                        />
+                        <span id="audio-frame-size-hint" className={styles.hint}>
+                          {t('audio_frame_size_hint')}
+                        </span>
                       </div>
                     )}
 

@@ -1,7 +1,6 @@
 import { useEffect, useId, useRef, useState } from 'preact/hooks';
 import { useTranslation } from 'react-i18next';
-import { Check, Copy } from 'lucide-preact';
-import { Button, Input } from '@thaumic-cast/ui';
+import { Button, TextInput, useAnnouncer } from '@thaumic-cast/ui';
 import { createLogger } from '@thaumic-cast/shared';
 import { fetchStats, getPlatform, stats, type Platform } from '../state/store';
 import { listenUrl, type SpeakerCast } from '../lib/listen-url';
@@ -122,6 +121,7 @@ export function ListenUrl({ cast }: ListenUrlProps) {
     }
   };
 
+  const { say } = useAnnouncer();
   const copied = result === 'copied';
   const announcement =
     result === 'copied'
@@ -132,26 +132,30 @@ export function ListenUrl({ cast }: ListenUrlProps) {
           ? t('device.listen_url_unavailable')
           : '';
 
+  // Each result is said once through the surface's Announcer.
+  useEffect(() => {
+    if (announcement) say(announcement);
+  }, [announcement, say]);
+
   return (
     <div className={styles.listen}>
-      <Button variant="secondary" onClick={copy} className={styles.copyButton}>
-        {copied ? <Check size={14} color="var(--color-success)" /> : <Copy size={14} />}
+      <Button size="sm" icon={copied ? 'check' : 'copy'} onClick={copy}>
         {copied ? t('device.listen_url_copied') : t('device.listen_url_copy')}
       </Button>
-      <span role="status" aria-live="polite" className={styles.status}>
-        {announcement}
-      </span>
       {manualUrl && (
         <>
-          <Input
-            ref={fieldRef}
-            readOnly
-            value={manualUrl}
-            aria-label={t('device.listen_url_field')}
-            aria-describedby={failedNoteId}
-            className={styles.field}
-            onFocus={(event) => event.currentTarget.select()}
-          />
+          <div className={styles.field}>
+            <TextInput
+              ref={fieldRef}
+              kind="address"
+              readOnly
+              value={manualUrl}
+              onInput={() => {}}
+              aria-label={t('device.listen_url_field')}
+              aria-describedby={failedNoteId}
+              onFocus={(event) => (event.currentTarget as HTMLInputElement).select()}
+            />
+          </div>
           <p id={failedNoteId} className={styles.note}>
             {t('device.listen_url_copy_failed')}
           </p>

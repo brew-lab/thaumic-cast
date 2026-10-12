@@ -1,8 +1,7 @@
 import { useEffect, useState } from 'preact/hooks';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
-import { WizardStep, Alert, Button, Disclosure } from '@thaumic-cast/ui';
+import { WizardStep, Alert, Button, Disclosure, Icon } from '@thaumic-cast/ui';
 import { createLogger } from '@thaumic-cast/shared';
-import { Speaker, RefreshCw } from 'lucide-preact';
 import { useTranslation } from 'react-i18next';
 import { groups, fetchGroups, refreshTopology, networkHealth } from '../../state/store';
 import {
@@ -133,7 +132,7 @@ export function SpeakerStep({ onSpeakersFound }: SpeakerStepProps): preact.JSX.E
     <WizardStep
       title={t('onboarding.speakers.title')}
       subtitle={t('onboarding.speakers.subtitle')}
-      icon={Speaker}
+      glyph="speaker"
     >
       {networkHealth.value.health === 'degraded' && (
         <Alert variant="warning">
@@ -170,18 +169,17 @@ export function SpeakerStep({ onSpeakersFound }: SpeakerStepProps): preact.JSX.E
           if (!coordinator) return null;
           return (
             <div key={group.coordinatorUuid} className={styles.speakerItem}>
-              <Speaker size={16} />
+              <Icon glyph="speaker" />
               <span>{coordinator.zoneName}</span>
               {group.members.length > 1 && (
-                <span className={styles.memberCount}>+{group.members.length - 1}</span>
+                <span className={`${styles.memberCount} num`}>+{group.members.length - 1}</span>
               )}
             </div>
           );
         })}
       </div>
 
-      <Button variant="secondary" onClick={handleScan} className={styles.scanButton}>
-        <RefreshCw size={16} />
+      <Button icon="refresh" onAction={handleScan}>
         {t('onboarding.speakers.scan_button')}
       </Button>
     </WizardStep>

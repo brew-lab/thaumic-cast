@@ -1,0 +1,131 @@
+@layer components {
+  /*
+   * A-text. The edge is the control's: 1 px --outline at rest, --on-surface on hover,
+   * 2 px --primary on focus (with the ring), 2 px --danger-ink when invalid. The padding
+   * gives back the extra edge, so the text never moves. It never reshapes.
+   */
+  .control {
+    --input-h: var(--control-md);
+    --input-bg: light-dark(var(--surface), var(--container));
+    --input-ro-bg: light-dark(var(--container), var(--container-high));
+    --input-edge: var(--outline);
+    --input-edge-w: var(--line-hair);
+    --input-fg: var(--on-surface);
+    --input-hint: var(--on-surface-variant);
+    --input-pad: calc(var(--space-4) - var(--input-edge-w) + var(--line-hair));
+    --input-radius: var(--radius-control);
+    --input-font: var(--text-3);
+    --input-glyph: var(--icon-sm);
+    --input-shadow: none;
+
+    position: relative;
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+    min-inline-size: 0;
+    block-size: var(--input-h);
+    padding-inline: var(--input-pad);
+    border: var(--input-edge-w) solid var(--input-edge);
+    border-radius: var(--input-radius);
+    background: var(--input-bg);
+    color: var(--input-fg);
+    box-shadow: var(--input-shadow);
+    cursor: text;
+  }
+
+  .sm {
+    --input-h: var(--control-sm);
+  }
+
+  :where([data-density='desktop']) .control {
+    --input-font: var(--text-4-fixed);
+    --input-glyph: var(--icon-md);
+  }
+
+  .input {
+    flex: 1 1 0;
+    min-inline-size: 0;
+    block-size: 100%;
+    margin: 0;
+    padding: 0;
+    border: 0;
+    outline: 0;
+    background: transparent;
+    color: inherit;
+    font-family: var(--font-body);
+    font-size: var(--input-font);
+    font-weight: var(--weight-body);
+    line-height: var(--leading-3);
+    text-overflow: ellipsis;
+  }
+
+  .input::placeholder {
+    color: var(--input-hint);
+    opacity: 1;
+  }
+
+  /* The ring is the control's, so the native one on the <input> is not drawn. */
+  .input:focus-visible {
+    box-shadow: none;
+  }
+
+  .input::-webkit-search-cancel-button {
+    appearance: none;
+  }
+
+  .lead,
+  .trail {
+    flex: none;
+    display: inline-grid;
+    place-items: center;
+    color: var(--input-hint);
+  }
+
+  .lead > svg {
+    --icon-size: var(--input-glyph);
+  }
+
+  .trail {
+    margin-inline-end: calc(-1 * var(--space-3));
+  }
+
+  /* States */
+  .control:is(:hover, [data-force='hover']):not(.read-only, .disabled) {
+    --input-edge: var(--on-surface);
+  }
+
+  .control:is(:has(.input:focus-visible), [data-force='focus']) {
+    --input-edge: var(--primary);
+    --input-edge-w: var(--line-bold);
+    --input-shadow:
+      0 0 0 var(--line-bold) var(--ring-gap), 0 0 0 calc(2 * var(--line-bold)) var(--focus);
+
+    outline: var(--line-bold) solid transparent;
+    outline-offset: var(--line-bold);
+  }
+
+  .read-only {
+    --input-bg: var(--input-ro-bg);
+  }
+
+  .invalid,
+  .invalid:hover {
+    --input-edge: var(--danger-ink);
+    --input-edge-w: var(--line-bold);
+  }
+
+  .disabled {
+    --input-edge: color-mix(in oklch, var(--on-surface) var(--disabled-fill), transparent);
+    --input-fg: color-mix(in oklch, var(--on-surface) var(--disabled-ink), transparent);
+    --input-hint: var(--input-fg);
+    --input-bg: transparent;
+
+    cursor: not-allowed;
+  }
+
+  @media (forced-colors: active) {
+    .control {
+      border-color: currentcolor;
+    }
+  }
+}

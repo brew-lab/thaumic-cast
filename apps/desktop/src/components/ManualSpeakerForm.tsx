@@ -1,6 +1,6 @@
 import { useState, useRef } from 'preact/hooks';
 import { useTranslation } from 'react-i18next';
-import { Input, Button } from '@thaumic-cast/ui';
+import { Button, TextInput } from '@thaumic-cast/ui';
 import { useAddManualSpeaker, getSpeakerErrorMessage } from '../hooks/useAddManualSpeaker';
 import styles from './ManualSpeakerForm.module.css';
 
@@ -53,25 +53,28 @@ export function ManualSpeakerForm({
   return (
     <>
       <div className={styles.form}>
-        <Input
-          ref={inputRef}
-          id={inputId}
-          type="text"
-          value={ipInput}
-          onInput={(e) => handleInputChange((e.target as HTMLInputElement).value)}
-          onKeyDown={(e) => e.key === 'Enter' && !isTesting && ipInput.trim() && handleSubmit()}
-          placeholder={t('onboarding.speakers.manual_ip_placeholder')}
-          aria-label={t('onboarding.speakers.manual_toggle')}
-          disabled={isTesting}
-        />
+        <div className={styles.input}>
+          <TextInput
+            ref={inputRef}
+            id={inputId}
+            kind="address"
+            inputMode="decimal"
+            value={ipInput}
+            onInput={handleInputChange}
+            onKeyDown={(e) => e.key === 'Enter' && !isTesting && ipInput.trim() && handleSubmit()}
+            placeholder={t('onboarding.speakers.manual_ip_placeholder')}
+            aria-label={inputId ? undefined : t('onboarding.speakers.manual_toggle')}
+            invalid={!!error}
+            readOnly={isTesting}
+          />
+        </div>
         <Button
-          variant={buttonVariant}
-          onClick={handleSubmit}
-          disabled={isTesting || !ipInput.trim()}
+          kind={buttonVariant === 'primary' ? 'filled' : 'tonal'}
+          onAction={handleSubmit}
+          labels={{ busy: t('onboarding.speakers.manual_testing') }}
+          disabled={!ipInput.trim()}
         >
-          {isTesting
-            ? t('onboarding.speakers.manual_testing')
-            : t('onboarding.speakers.manual_add')}
+          {t('onboarding.speakers.manual_add')}
         </Button>
       </div>
       {error && <div className={styles.error}>{getSpeakerErrorMessage(error, t)}</div>}

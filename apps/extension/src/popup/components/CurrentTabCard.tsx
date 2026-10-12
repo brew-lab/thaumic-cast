@@ -1,15 +1,17 @@
 import type { JSX } from 'preact';
+import { useEffect } from 'preact/hooks';
 import { useTranslation } from 'react-i18next';
 import type { TabMediaState, SpeakerAvailability } from '@thaumic-cast/protocol';
 import { getDisplayTitle, getDisplaySubtitle } from '@thaumic-cast/protocol';
 import {
-  ActionButton,
+  Artwork,
+  Button,
+  Card,
   SpeakerMultiSelect,
   SpeakerVolumeRow,
-  Card,
+  useAnnouncer,
   type SpeakerGroupLike,
 } from '@thaumic-cast/ui';
-import { Cast, Music } from 'lucide-preact';
 import { startLevelCaption, startLevelView } from '../../lib/start-level';
 import styles from './CurrentTabCard.module.css';
 
@@ -95,20 +97,27 @@ export function CurrentTabCard<T extends SpeakerGroupLike>({
   // Use metadata artwork if available, otherwise favicon (skip og:image)
   const image = state.metadata?.artwork || state.tabFavicon;
   const subtitle = getDisplaySubtitle(state);
+  const { say } = useAnnouncer();
+
+  // `remote_cast` means another client of the companion holds the speaker - taking it
+  // over interrupts them, same as any other source, and is allowed.
+  const hint =
+    selectedAvailability === 'in_use' || selectedAvailability === 'remote_cast'
+      ? t('hint_replace_source')
+      : selectedAvailability === 'casting'
+        ? t('hint_replace_cast')
+        : '';
+
+  // The hint is said once when it appears (the Announcer says nothing on open).
+  useEffect(() => {
+    if (hint) say(hint);
+  }, [hint, say]);
 
   return (
     <Card noPadding className={styles.card}>
       <div className={styles.cardInner}>
         <div className={styles.mediaRow}>
-          <div className={styles.artwork}>
-            {image ? (
-              <img src={image} alt="" className={styles.image} loading="lazy" />
-            ) : (
-              <div className={styles.placeholder} aria-hidden="true">
-                <Music size={24} />
-              </div>
-            )}
-          </div>
+          <Artwork kind={image ? 'image' : 'placeholder'} size="lg" src={image} />
           <div className={styles.info}>
             <p className={styles.title}>{title}</p>
             {subtitle && <p className={styles.subtitle}>{subtitle}</p>}
@@ -152,7 +161,7 @@ export function CurrentTabCard<T extends SpeakerGroupLike>({
                     volume={view.kind === 'known' ? view.start : undefined}
                     onVolumeChange={(level) => onStartLevelChange(ip, level)}
                     volumeLabel={t('start_level_speaker', { name })}
-                    unknownLabel={t('volume_not_known')}
+                    unknownText={t('volume_not_known')}
                     fixedLabel={view.kind === 'fixed' ? t('volume_fixed') : undefined}
                     caption={caption ? t(caption.key, caption.params) : undefined}
                   />
@@ -162,30 +171,25 @@ export function CurrentTabCard<T extends SpeakerGroupLike>({
           )}
 
           {/* Cast Button */}
-          <ActionButton
-            action={onStartCast}
-            label={
-              selectedIps.length > 1
-                ? t('cast_to_n_speakers', { count: selectedIps.length })
-                : t('start_casting')
-            }
-            loadingLabel={t('starting')}
-            errorLabel={t('cast_failed')}
-            icon={Cast}
-            disabled={disabled || selectedIps.length === 0}
-            aria-describedby="cast-hint"
+          <Button
+            kind="filled"
+            icon="cast"
             fullWidth
-          />
+            onAction={onStartCast}
+            labels={{ busy: t('starting'), failed: t('cast_failed') }}
+            disabled={disabled || selectedIps.length === 0}
+            aria-describedby={hint ? 'cast-hint' : undefined}
+          >
+            {selectedIps.length > 1
+              ? t('cast_to_n_speakers', { count: selectedIps.length })
+              : t('start_casting')}
+          </Button>
 
-          {/* Hint text - reserved space prevents layout shift */}
-          <p id="cast-hint" className={styles.castHint} aria-live="polite">
-            {/* `remote_cast` means another client of the companion holds the
-                speaker - taking it over interrupts them, same as any other
-                source, and is allowed. */}
-            {(selectedAvailability === 'in_use' || selectedAvailability === 'remote_cast') &&
-              t('hint_replace_source')}
-            {selectedAvailability === 'casting' && t('hint_replace_cast')}
-          </p>
+          {hint && (
+            <p id="cast-hint" className={styles.castHint}>
+              {hint}
+            </p>
+          )}
         </div>
       </div>
     </Card>

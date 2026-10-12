@@ -1,24 +1,23 @@
-.form {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-sm);
-  align-items: stretch;
-}
+@layer app {
+  .form {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-3);
+    align-items: center;
+  }
 
-.form > :first-child {
-  flex: 1 1 12rem;
-  inline-size: 100%;
-}
+  .input {
+    flex: 1 1 var(--track-option);
+    min-inline-size: 0;
+  }
 
-.form > :last-child {
-  flex: 1 0 auto;
-}
-
-.error {
-  margin-block-start: var(--space-sm);
-  padding: var(--space-sm);
-  background: oklch(from var(--color-error) l c h / 10%);
-  border-radius: var(--radius-sm);
-  color: var(--color-error);
-  font-size: 0.9rem;
+  .error {
+    margin-block-start: var(--space-3);
+    padding: var(--space-3) var(--space-4);
+    border-radius: var(--radius-notice);
+    background: var(--danger-container);
+    color: var(--on-danger-container);
+    font-size: var(--text-3);
+    line-height: var(--leading-3);
+  }
 }

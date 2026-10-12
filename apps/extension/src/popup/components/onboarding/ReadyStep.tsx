@@ -1,6 +1,5 @@
 import { DEFAULT_MAX_CONCURRENT_STREAMS } from '@thaumic-cast/protocol';
 import { WizardStep, Alert } from '@thaumic-cast/ui';
-import { Zap } from 'lucide-preact';
 import { useTranslation } from 'react-i18next';
 import { useConnectionStatus } from '../../hooks/useConnectionStatus';
 import styles from './ReadyStep.module.css';
@@ -19,7 +18,7 @@ export function ReadyStep(): preact.JSX.Element {
     <WizardStep
       title={t('onboarding.ready.title')}
       subtitle={t('onboarding.ready.subtitle')}
-      icon={Zap}
+      glyph="check"
     >
       <p className={styles.introText}>
         {t('onboarding.ready.intro', { maxStreams: maxStreams ?? DEFAULT_MAX_CONCURRENT_STREAMS })}

@@ -19,10 +19,9 @@ import { headStartOptions } from '../lib/speaker-notices';
 import { driftModeForToggle, driftToggleState } from '../lib/drift-setting';
 import { speakerMonitorOverrideKey } from '../lib/speaker-monitor-setting';
 import { useTranslation } from 'react-i18next';
-import { ExternalLink, X } from 'lucide-preact';
 import { getVersion } from '@tauri-apps/api/app';
 import { open } from '@tauri-apps/plugin-shell';
-import { Button, Card } from '@thaumic-cast/ui';
+import { Button, Card, Chip, Cluster, SegmentedControl, Select, Switch } from '@thaumic-cast/ui';
 import { PROTOCOL_VERSION } from '@thaumic-cast/protocol';
 import { createLogger, GITHUB_RELEASES_URL } from '@thaumic-cast/shared';
 import i18n, { resources, SupportedLocale } from '../lib/i18n';
@@ -190,19 +189,13 @@ export function Settings() {
       {/* Startup Section */}
       <Card id="startup" title={t('settings.startup')} titleLevel="h3" className={styles.section}>
         <div className={styles.sectionContent}>
-          <label className={styles.toggle}>
-            <div className={styles.toggleInfo}>
-              <h4 className={styles.toggleLabel}>{t('settings.autostart')}</h4>
-              <p className={styles.toggleDescription}>{t('settings.autostart_description')}</p>
-            </div>
-            <input
-              type="checkbox"
-              checked={autostart ?? false}
-              onChange={(e) => handleAutostartChange(e.currentTarget.checked)}
-              disabled={autostart === null}
-              className={styles.checkbox}
-            />
-          </label>
+          <Switch
+            label={t('settings.autostart')}
+            description={t('settings.autostart_description')}
+            checked={autostart ?? false}
+            onChange={handleAutostartChange}
+            disabled={autostart === null}
+          />
         </div>
       </Card>
 
@@ -215,20 +208,15 @@ export function Settings() {
           className={styles.section}
         >
           <div className={styles.sectionContent}>
-            <div className={styles.field}>
-              <label className={styles.fieldLabel}>{t('settings.display_language')}</label>
-              <select
-                value={currentLanguage}
-                onChange={(e) => handleLanguageChange(e.currentTarget.value as SupportedLocale)}
-                className={styles.select}
-              >
-                {availableLanguages.map((locale) => (
-                  <option key={locale} value={locale}>
-                    {LANGUAGE_NAMES[locale]}
-                  </option>
-                ))}
-              </select>
-            </div>
+            <Select
+              label={t('settings.display_language')}
+              value={currentLanguage}
+              options={availableLanguages.map((locale) => ({
+                value: locale,
+                label: LANGUAGE_NAMES[locale],
+              }))}
+              onChange={handleLanguageChange}
+            />
           </div>
         </Card>
       )}
@@ -242,16 +230,16 @@ export function Settings() {
       >
         <div className={styles.sectionContent}>
           <div className={styles.field}>
-            <label className={styles.fieldLabel}>{t('settings.theme')}</label>
-            <select
+            <SegmentedControl
+              label={t('settings.theme')}
               value={currentTheme}
-              onChange={(e) => handleThemeChange(e.currentTarget.value as ThemeMode)}
-              className={styles.select}
-            >
-              <option value="auto">{t('settings.theme_auto')}</option>
-              <option value="light">{t('settings.theme_light')}</option>
-              <option value="dark">{t('settings.theme_dark')}</option>
-            </select>
+              onChange={handleThemeChange}
+              options={[
+                { value: 'auto', label: t('settings.theme_auto'), glyph: 'contrast' },
+                { value: 'light', label: t('settings.theme_light'), glyph: 'sun' },
+                { value: 'dark', label: t('settings.theme_dark'), glyph: 'moon' },
+              ]}
+            />
             {currentTheme === 'auto' && (
               <span className={styles.hint}>{t('settings.theme_auto_desc')}</span>
             )}
@@ -262,50 +250,37 @@ export function Settings() {
       {/* Speakers Section */}
       <Card id="speakers" title={t('settings.speakers')} titleLevel="h3" className={styles.section}>
         <div className={styles.sectionContent}>
-          <div className={styles.field}>
-            <label className={styles.toggle}>
-              <div className={styles.toggleInfo}>
-                <h4 className={styles.toggleLabel}>{t('settings.speaker_monitor')}</h4>
-                <p className={styles.toggleDescription}>
-                  {t('settings.speaker_monitor_description')}
-                </p>
-              </div>
-              <input
-                type="checkbox"
-                checked={speakerMonitor?.envOverride ?? speakerMonitor?.enabled ?? false}
-                onChange={(e) => handleSpeakerMonitorChange(e.currentTarget.checked)}
-                disabled={speakerMonitor === null || speakerMonitor.envOverride !== null}
-                className={styles.checkbox}
-              />
-            </label>
-            {monitorOverrideKey !== null && (
-              <span className={styles.hint}>{t(monitorOverrideKey)}</span>
-            )}
-          </div>
+          <Switch
+            label={t('settings.speaker_monitor')}
+            description={t('settings.speaker_monitor_description')}
+            note={monitorOverrideKey !== null ? t(monitorOverrideKey) : undefined}
+            checked={speakerMonitor?.envOverride ?? speakerMonitor?.enabled ?? false}
+            onChange={handleSpeakerMonitorChange}
+            disabled={speakerMonitor === null || speakerMonitor.envOverride !== null}
+          />
 
           <div className={styles.field}>
-            <label htmlFor="settings-head-start" className={styles.toggleLabel}>
-              {t('settings.head_start')}
-            </label>
-            <p className={styles.toggleDescription}>{t('settings.head_start_description')}</p>
-            <select
-              id="settings-head-start"
-              value={headStartMs ?? ''}
-              onChange={(e) => handleHeadStartChange(Number(e.currentTarget.value))}
-              disabled={headStart === null || headStart.envOverride !== null}
-              className={styles.select}
-            >
-              {headStartMs !== null &&
-                headStartOptions(headStartMs).map(({ ms, custom }) => (
-                  <option key={ms} value={ms}>
-                    {custom
-                      ? t('settings.head_start_custom', { value: ms })
-                      : ms === 0
-                        ? t('settings.head_start_off')
-                        : t('settings.head_start_ms', { value: ms })}
-                  </option>
-                ))}
-            </select>
+            {headStartMs !== null && (
+              <Select
+                id="settings-head-start"
+                label={t('settings.head_start')}
+                value={headStartMs}
+                options={headStartOptions(headStartMs).map(({ ms, custom }) => ({
+                  value: ms,
+                  label: custom
+                    ? t('settings.head_start_custom', { value: ms })
+                    : ms === 0
+                      ? t('settings.head_start_off')
+                      : t('settings.head_start_ms', { value: ms }),
+                }))}
+                onChange={handleHeadStartChange}
+                disabled={headStart === null || headStart.envOverride !== null}
+                aria-describedby="settings-head-start-description"
+              />
+            )}
+            <p id="settings-head-start-description" className={styles.toggleDescription}>
+              {t('settings.head_start_description')}
+            </p>
             {headStart?.envOverride != null && (
               <span className={styles.hint}>
                 {headStart.envOverride === 0
@@ -315,43 +290,31 @@ export function Settings() {
             )}
           </div>
 
-          <div className={styles.field}>
-            <label className={styles.toggle}>
-              <div className={styles.toggleInfo}>
-                <h4 className={styles.toggleLabel}>{t('settings.drift')}</h4>
-                <p className={styles.toggleDescription}>{t('settings.drift_description')}</p>
-              </div>
-              <input
-                type="checkbox"
-                checked={driftToggle.checked}
-                onChange={(e) => handleDriftChange(e.currentTarget.checked)}
-                disabled={driftToggle.disabled}
-                className={styles.checkbox}
-              />
-            </label>
-            {driftToggle.hint && <span className={styles.hint}>{t(driftToggle.hint.key)}</span>}
-          </div>
+          <Switch
+            label={t('settings.drift')}
+            description={t('settings.drift_description')}
+            note={driftToggle.hint ? t(driftToggle.hint.key) : undefined}
+            checked={driftToggle.checked}
+            onChange={handleDriftChange}
+            disabled={driftToggle.disabled}
+          />
 
           {manualIps.length > 0 && (
             <div className={styles.field}>
-              <label className={styles.fieldLabel}>{t('settings.manual_speakers')}</label>
-              <ul className={styles.speakerList}>
+              <span className={styles.fieldLabel}>{t('settings.manual_speakers')}</span>
+              <Cluster as="ul" gap="3">
                 {manualIps.map((ip) => (
-                  <li key={ip} className={styles.speakerItem}>
-                    <span>{ip}</span>
-                    <button
-                      type="button"
-                      onClick={() => handleRemoveSpeaker(ip)}
-                      className={styles.removeButton}
-                      aria-label={t('settings.remove_speaker')}
-                      title={t('settings.remove_speaker')}
+                  <li key={ip}>
+                    <Chip
+                      label={ip}
+                      mono
+                      removeLabel={`${t('settings.remove_speaker')}: ${ip}`}
+                      onRemove={() => handleRemoveSpeaker(ip)}
                       disabled={removingIp !== null}
-                    >
-                      <X size={14} />
-                    </button>
+                    />
                   </li>
                 ))}
-              </ul>
+              </Cluster>
             </div>
           )}
 
@@ -382,10 +345,11 @@ export function Settings() {
           </div>
 
           <div className={styles.field}>
-            <Button variant="secondary" onClick={handleCheckForUpdates}>
-              <ExternalLink size={16} />
-              {t('settings.check_for_updates')}
-            </Button>
+            <div>
+              <Button icon="external" onClick={handleCheckForUpdates}>
+                {t('settings.check_for_updates')}
+              </Button>
+            </div>
             <div className={styles.hint}>{t('settings.check_for_updates_description')}</div>
           </div>
         </div>

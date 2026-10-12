@@ -67,13 +67,13 @@ export function Catalogue({ initialTheme }: CatalogueProps): JSX.Element {
           </nav>
         </header>
         <main>
-          {SECTIONS.map(({ id, title, tier, summary, Specimen }) => (
+          {SECTIONS.map(({ id, title, tier, summary, wide, Specimen }) => (
             <section key={id} id={id} class="section" aria-labelledby={`${id}-title`}>
               <h2 id={`${id}-title`} class="section-title">
                 {title} <span class="tier">{tier}</span>
               </h2>
               <p class="summary">{summary}</p>
-              <div class="schemes" data-section={id}>
+              <div class={wide ? 'schemes wide' : 'schemes'} data-section={id}>
                 {SCHEMES.map((scheme) => (
                   <div key={scheme} class="scheme" data-scheme={scheme}>
                     <p class="scheme-name">{scheme === 'light' ? 'Light' : 'Dark'}</p>

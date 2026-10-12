@@ -1,37 +1,37 @@
 .server {
-  padding-block: var(--space-xl);
-  padding-inline: var(--space-xl);
+  padding-block: var(--space-7);
+  padding-inline: var(--space-7);
   max-inline-size: 44rem;
 }
 
 .page-title {
   margin: 0;
-  margin-block-end: var(--space-lg);
+  margin-block-end: var(--space-6);
 }
 
 .section {
-  margin-block-end: var(--space-lg);
+  margin-block-end: var(--space-6);
 }
 
 .status-card h3 {
-  color: var(--color-success);
+  color: var(--success-ink);
 }
 
 .status-grid {
   display: grid;
-  gap: var(--space-md);
+  gap: var(--space-5);
   margin: 0;
 }
 
 .status-item {
   display: flex;
   flex-direction: column;
-  gap: var(--space-xs);
+  gap: var(--space-2);
 }
 
 .status-label {
   font-size: 0.85rem;
-  color: var(--color-text-muted);
+  color: var(--on-surface-variant);
 }
 
 .status-item dd {
@@ -53,33 +53,21 @@
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: var(--space-sm);
-}
-
-.copy-button {
-  padding-block: var(--space-xs);
-  padding-inline: var(--space-xs);
-  inline-size: 100%;
-}
-
-@container address-row (inline-size >= 12rem) {
-  .copy-button {
-    inline-size: auto;
-  }
+  gap: var(--space-3);
 }
 
 .action-list {
   container-type: inline-size;
   container-name: action-list;
   display: grid;
-  gap: var(--space-md);
+  gap: var(--space-5);
 }
 
 .action-row {
   display: grid;
   grid-template-columns: 1fr;
   align-items: center;
-  gap: var(--space-md);
+  gap: var(--space-5);
 }
 
 @container action-list (inline-size >= 20rem) {
@@ -91,7 +79,7 @@
 .action-info {
   display: flex;
   flex-direction: column;
-  gap: var(--space-xs);
+  gap: var(--space-2);
   min-inline-size: 0;
 }
 
@@ -104,15 +92,5 @@
 .action-description {
   margin: 0;
   font-size: 0.85rem;
-  color: var(--color-text-muted);
-}
-
-.action-button {
-  inline-size: 100%;
-}
-
-@container action-list (inline-size >= 20rem) {
-  .action-button {
-    inline-size: auto;
-  }
+  color: var(--on-surface-variant);
 }

@@ -4,17 +4,33 @@ export * from './theme';
 export * from './Announcer';
 export * from './Cluster';
 export * from './Icon';
-export * from './Alert';
+
+// Atoms (DESIGN.md §4)
+export * from './Artwork';
+export * from './Badge';
+export * from './BrandBlock';
 export * from './Button';
-export * from './ButtonGroup';
-export * from './ActionButton';
-export * from './hooks/useButtonAction';
+export * from './Checkbox';
+export * from './Chip';
+export * from './Clacks';
+export * from './Divider';
+export * from './IconButton';
+export * from './Meter';
+export * from './NavItem';
+export * from './Radio';
+export * from './SectionHeader';
+export * from './SegmentedControl';
+export * from './Select';
+export * from './Slider';
+export * from './StatusDot';
+export * from './StepIndicator';
+export * from './Switch';
+export * from './TextInput';
+export * from './Tooltip';
+
+// Rebuilt in later phases (DESIGN.md §14)
+export * from './Alert';
 export * from './Card';
 export * from './Disclosure';
-export * from './IconButton';
-export * from './Input';
 export * from './Speaker';
-export * from './StatusChip';
-export * from './ToggleSwitch';
-export * from './VolumeControl';
 export * from './Wizard';

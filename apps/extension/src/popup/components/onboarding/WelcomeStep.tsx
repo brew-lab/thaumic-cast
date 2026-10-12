@@ -1,5 +1,4 @@
 import { WizardStep } from '@thaumic-cast/ui';
-import { Radio } from 'lucide-preact';
 import { useTranslation } from 'react-i18next';
 import styles from './WelcomeStep.module.css';
 
@@ -16,7 +15,7 @@ export function WelcomeStep(): preact.JSX.Element {
     <WizardStep
       title={t('onboarding.welcome.title')}
       subtitle={t('onboarding.welcome.subtitle')}
-      icon={Radio}
+      glyph="cast"
     >
       <p className={styles.body}>{t('onboarding.welcome.body')}</p>
       <p className={styles.footnote}>{t('onboarding.welcome.footnote')}</p>

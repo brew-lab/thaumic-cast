@@ -86,6 +86,10 @@
     gap: var(--space-4);
   }
 
+  .schemes.wide {
+    grid-template-columns: 1fr;
+  }
+
   .scheme {
     container: content / inline-size;
     padding: var(--space-5);
@@ -480,5 +484,106 @@
     border: var(--line-hair) solid var(--outline);
     border-radius: var(--radius-control);
     background: var(--surface);
+  }
+
+  /* Atoms */
+  .state-grid {
+    display: grid;
+    grid-template-columns: max-content repeat(var(--cols), max-content);
+    gap: var(--space-3) var(--space-4);
+    align-items: center;
+    overflow-x: auto;
+    padding: var(--space-2);
+  }
+
+  .state-grid > .label {
+    margin: 0;
+  }
+
+  .on-card,
+  .on-container {
+    --ring-gap: var(--surface);
+
+    padding: var(--space-4);
+    border: var(--line-hair) solid light-dark(var(--outline-variant), transparent);
+    border-radius: var(--radius-card);
+    background: var(--surface);
+  }
+
+  .on-container {
+    --ring-gap: var(--container);
+
+    border: 0;
+    background: var(--container);
+  }
+
+  .badge-tone {
+    min-inline-size: var(--track-option);
+    margin: 0;
+  }
+
+  .dot-lines {
+    gap: var(--space-2);
+    font-size: var(--text-2);
+  }
+
+  .dot-lines.md {
+    font-size: var(--text-4-fixed);
+  }
+
+  .dot-lines li {
+    display: flex;
+    gap: var(--space-2);
+    align-items: center;
+  }
+
+  .fill-demo {
+    --ring-gap: var(--primary);
+
+    display: inline-flex;
+    gap: var(--space-2);
+    align-items: center;
+    align-self: start;
+    padding: var(--space-2) var(--space-4);
+    border-radius: var(--radius-control);
+    background: var(--primary);
+    color: var(--on-primary);
+    font-weight: var(--weight-strong);
+  }
+
+  .slider-row {
+    display: flex;
+    gap: var(--space-3);
+    align-items: center;
+  }
+
+  .value-box {
+    min-inline-size: var(--ch-ms);
+    white-space: nowrap;
+    font-weight: var(--weight-strong);
+  }
+
+  .plain-fieldset {
+    margin: 0;
+    padding: 0;
+    border: 0;
+  }
+
+  .nav-demo {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-1);
+    max-inline-size: var(--rail-wide);
+    padding: var(--space-3);
+  }
+
+  .tooltip-sample {
+    align-self: start;
+    padding: var(--space-2) var(--space-3);
+    border-radius: var(--radius-control);
+    background: var(--inverse-surface);
+    color: var(--on-inverse-surface);
+    box-shadow: var(--shadow-overlay);
+    font-size: var(--text-2);
   }
 }
