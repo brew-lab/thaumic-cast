@@ -541,13 +541,14 @@ impl Drop for StreamState {
 ///
 /// [`pcm_ring_frames`]: crate::protocol_constants::pcm_ring_frames
 fn ring_frames(codec: AudioCodec, configured: usize, frame_duration_ms: u32) -> usize {
-    if codec.facts().ring_floor {
+    let frames = if codec.facts().ring_floor {
         configured.max(crate::protocol_constants::pcm_ring_frames(
             frame_duration_ms,
         ))
     } else {
         configured
-    }
+    };
+    frames.min(crate::protocol_constants::MAX_RING_FRAMES)
 }
 
 /// Thread-safe registry of active audio streams.
@@ -852,6 +853,28 @@ mod tests {
         pusher.join().expect("pusher thread panicked");
     }
 
+    /// No stream's ring is allocated past [`MAX_RING_FRAMES`], whatever frame
+    /// length a client asks for or the server is configured with; the
+    /// shortest frame a client can ask for still gets its whole PCM ring.
+    #[test]
+    fn a_stream_ring_never_passes_the_cap() {
+        use crate::protocol_constants::{pcm_ring_frames, MAX_RING_FRAMES, MIN_FRAME_DURATION_MS};
+
+        assert_eq!(
+            ring_frames(AudioCodec::Pcm, 50, MIN_FRAME_DURATION_MS),
+            pcm_ring_frames(MIN_FRAME_DURATION_MS)
+        );
+        assert_eq!(ring_frames(AudioCodec::Pcm, 50, 0), MAX_RING_FRAMES);
+        assert_eq!(
+            ring_frames(AudioCodec::Aac, usize::MAX, 10),
+            MAX_RING_FRAMES
+        );
+        assert_eq!(
+            ring_frames(AudioCodec::Pcm, usize::MAX, 10),
+            MAX_RING_FRAMES
+        );
+    }
+
     /// A PCM stream's ring holds the largest connect burst plus the largest
     /// jitter buffer, so a 1000 ms jitter buffer is honoured in full with a
     /// 2000 ms burst on top. It used to be capped, silently, at the 50-frame
@@ -915,9 +938,9 @@ mod tests {
         // 2000/150 → 14, 1000/150 → 7.
         assert_eq!(pcm_ring_frames(150), 21);
         assert_eq!(
-            ring_frames(AudioCodec::Pcm, 1000, 10),
-            1000,
-            "never shrinks"
+            ring_frames(AudioCodec::Pcm, 500, 10),
+            500,
+            "never shrinks below the configured ring"
         );
         assert_eq!(ring_frames(AudioCodec::Flac, 50, 10), 50);
     }
