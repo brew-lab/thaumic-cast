@@ -88,6 +88,7 @@ export function Field({
           id={messageId}
           class={cx(styles.message, message === 'error' && styles.error)}
           data-kind={message}
+          data-tone={message === 'error' ? 'danger' : undefined}
         >
           {message === 'error' && (
             <span class={styles.glyph}>

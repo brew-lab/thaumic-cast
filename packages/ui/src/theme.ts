@@ -8,7 +8,8 @@ export type ThemePreference = 'auto' | 'light' | 'dark';
  * three words, so they keep working unchanged.
  * @param pref - The theme preference
  * @param options - Options
- * @param options.transition - Cross-fade with the View Transitions API where available
+ * @param options.transition - Cross-fade with the View Transitions API where available, unless
+ *   the user asks for reduced motion
  */
 export function applyTheme(
   pref: ThemePreference,
@@ -17,7 +18,10 @@ export function applyTheme(
   const apply = (): void => {
     document.documentElement.dataset.theme = pref;
   };
-  if (transition && typeof document.startViewTransition === 'function') {
+  // The cross-fade is motion, so reduced motion swaps the theme at once.
+  const still =
+    typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches;
+  if (transition && !still && typeof document.startViewTransition === 'function') {
     document.startViewTransition(apply);
   } else {
     apply();

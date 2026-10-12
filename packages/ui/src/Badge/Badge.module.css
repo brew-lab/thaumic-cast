@@ -4,6 +4,7 @@
     --badge-h: var(--size-badge);
     --badge-pad: var(--space-3);
     --badge-gap: var(--space-2);
+    --badge-lead: var(--space-2);
     --badge-glyph: calc(var(--icon-sm) * 0.75);
     --badge-bg: transparent;
     --badge-fg: var(--on-surface-variant);
@@ -31,8 +32,19 @@
     vertical-align: middle;
   }
 
+  /* A leading glyph sits --badge-lead from the start. */
   .badge:not(:has(> .label:first-child)) {
-    padding-inline-start: var(--space-2);
+    padding-inline-start: var(--badge-lead);
+  }
+
+  /*
+   * Busy: the Clacks fills its box to the corners, where a glyph leaves air, so it sits a
+   * little further from the start and from the words. Its shutters fade without scaling
+   * (sm), so its footprint holds still.
+   */
+  .busy {
+    --badge-lead: var(--space-2-5);
+    --badge-gap: var(--space-2-5);
   }
 
   .casting {
@@ -41,18 +53,12 @@
     --badge-edge: transparent;
   }
 
-  .warning {
-    --badge-bg: var(--warning-container);
-    --badge-fg: var(--on-warning-container);
+  /* Warning and danger: the tone on its container (data-tone sets --tone-*). */
+  .badge[data-tone] {
+    --badge-bg: var(--tone-container);
+    --badge-fg: var(--on-tone-container);
     --badge-edge: transparent;
-    --badge-glyph-ink: light-dark(var(--on-warning-container), var(--warning-ink));
-  }
-
-  .danger {
-    --badge-bg: var(--danger-container);
-    --badge-fg: var(--on-danger-container);
-    --badge-edge: transparent;
-    --badge-glyph-ink: light-dark(var(--on-danger-container), var(--danger-ink));
+    --badge-glyph-ink: var(--tone-glyph);
   }
 
   .glyph {

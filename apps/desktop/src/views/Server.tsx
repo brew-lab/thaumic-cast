@@ -118,7 +118,6 @@ export function Server() {
               danger
               icon="stop"
               onAction={stopAll}
-              labels={{ busy: t('server.stopping') }}
               aria-label={t('server.stop_streams')}
             >
               {t('server.stop')}

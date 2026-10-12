@@ -1,7 +1,6 @@
 import type { ComponentChildren, JSX } from 'preact';
 import { useId } from 'preact/hooks';
 import { Radio } from '../Radio';
-import { cx } from '../utils/cx';
 import styles from './ChoiceGroup.module.css';
 
 /** One choice in a {@link ChoiceGroup}. */
@@ -61,7 +60,7 @@ export function ChoiceGroup<T extends string>({
   const ownName = useId();
   const group = name ?? ownName;
   return (
-    <fieldset class={cx(styles.group, disabled && styles.disabled)} disabled={disabled}>
+    <fieldset class={styles.group} disabled={disabled}>
       <legend class={legendHidden ? 'visually-hidden' : styles.legend}>{legend}</legend>
       <div class={styles.options}>
         {options.map((option) => (

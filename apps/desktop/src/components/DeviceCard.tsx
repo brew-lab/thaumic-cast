@@ -59,18 +59,17 @@ export function DeviceCard({
         <div className={styles.header}>
           <Artwork kind="disc" size="md" glyph="speaker" />
           <div className={styles.info}>
-            <h3 className={styles.name}>{speaker.name}</h3>
+            <div className={styles.title}>
+              <h3 className={styles.name}>{speaker.name}</h3>
+              {badge && <Badge tone={TONE[badge.tone]} label={t(badge.key)} />}
+            </div>
             <p className={styles.model}>
-              {speaker.model} {isCoordinator ? `• ${t('device.coordinator')}` : ''}
-              {memberCount > 1 && ` • ${t('device.others', { count: memberCount - 1 })}`}
+              {/* Each separator keeps to the words after it, so it never ends a line alone. */}
+              {speaker.model}
+              {isCoordinator && ` •\u00a0${t('device.coordinator')}`}
+              {memberCount > 1 && ` •\u00a0${t('device.others', { count: memberCount - 1 })}`}
             </p>
           </div>
-          {badge && (
-            <Badge
-              tone={TONE[badge.tone]}
-              label={t(badge.key, { defaultValue: badge.defaultValue })}
-            />
-          )}
         </div>
         {cast && <ListenUrl cast={cast} />}
       </div>

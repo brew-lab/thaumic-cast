@@ -16,7 +16,7 @@
     --empty-text: var(--text-3);
     --empty-leading: var(--leading-3);
     --empty-measure: var(--track-card);
-    --empty-title-ink: light-dark(var(--brand-ink), var(--on-surface));
+    --empty-title-ink: var(--title-ink);
 
     display: grid;
     grid-template-columns: var(--empty-art) minmax(0, 1fr);

@@ -114,87 +114,85 @@ export function CurrentTabCard<T extends SpeakerGroupLike>({
   }, [hint, say]);
 
   return (
-    <div className={styles.card}>
-      <Card flush>
-        <div className={styles.cardInner}>
-          <div className={styles.mediaRow}>
-            <Artwork kind={image ? 'image' : 'placeholder'} size="lg" src={image} />
-            <div className={styles.info}>
-              <p className={styles.title}>{title}</p>
-              {subtitle && <p className={styles.subtitle}>{subtitle}</p>}
-            </div>
-          </div>
-
-          <div className={styles.controls}>
-            {/* Speaker Selection */}
-            {speakersLoading ? (
-              <p className={styles.label}>{t('loading_speakers')}</p>
-            ) : groups.length === 0 ? (
-              <p className={styles.label}>{t('no_speakers_placeholder')}</p>
-            ) : (
-              <SpeakerMultiSelect
-                groups={groups}
-                selectedIps={selectedIps}
-                onSelectionChange={onSelectSpeakers}
-                disabled={disabled}
-                getGroupDisplayName={getGroupDisplayName}
-                label={t('target_speaker')}
-              />
-            )}
-
-            {/* Per-speaker start levels: held here until Cast, never sent before */}
-            {showVolumeControls && selectedIps.length > 0 && (
-              <div className={styles.speakerRows}>
-                {selectedIps.map((ip) => {
-                  const name = getSpeakerName(ip);
-                  const view = startLevelView({
-                    current: getVolume(ip),
-                    fixed: getVolumeFixed(ip),
-                    limit: startLimit,
-                    pending: pendingStarts[ip],
-                  });
-                  const caption = startLevelCaption(view);
-                  return (
-                    <SpeakerVolumeRow
-                      key={ip}
-                      speakerName={name}
-                      speakerIp={ip}
-                      volume={view.kind === 'known' ? view.start : undefined}
-                      onVolumeChange={(level) => onStartLevelChange(ip, level)}
-                      volumeLabel={t('start_level_speaker', { name })}
-                      unknownText={t('volume_not_known')}
-                      fixedLabel={view.kind === 'fixed' ? t('volume_fixed') : undefined}
-                      caption={caption ? t(caption.key, caption.params) : undefined}
-                    />
-                  );
-                })}
-              </div>
-            )}
-
-            {/* Cast Button */}
-            <Button
-              size="md"
-              kind="filled"
-              icon="cast"
-              fullWidth
-              onAction={onStartCast}
-              labels={{ busy: t('starting'), failed: t('cast_failed') }}
-              disabled={disabled || selectedIps.length === 0}
-              aria-describedby={hint ? 'cast-hint' : undefined}
-            >
-              {selectedIps.length > 1
-                ? t('cast_to_n_speakers', { count: selectedIps.length })
-                : t('start_casting')}
-            </Button>
-
-            {hint && (
-              <p id="cast-hint" className={styles.castHint}>
-                {hint}
-              </p>
-            )}
+    <Card flush>
+      <div className={styles.cardInner}>
+        <div className={styles.mediaRow}>
+          <Artwork kind={image ? 'image' : 'placeholder'} size="lg" src={image} />
+          <div className={styles.info}>
+            <p className={styles.title}>{title}</p>
+            {subtitle && <p className={styles.subtitle}>{subtitle}</p>}
           </div>
         </div>
-      </Card>
-    </div>
+
+        <div className={styles.controls}>
+          {/* Speaker Selection */}
+          {speakersLoading ? (
+            <p className={styles.label}>{t('loading_speakers')}</p>
+          ) : groups.length === 0 ? (
+            <p className={styles.label}>{t('no_speakers_placeholder')}</p>
+          ) : (
+            <SpeakerMultiSelect
+              groups={groups}
+              selectedIps={selectedIps}
+              onSelectionChange={onSelectSpeakers}
+              disabled={disabled}
+              getGroupDisplayName={getGroupDisplayName}
+              label={t('target_speaker')}
+            />
+          )}
+
+          {/* Per-speaker start levels: held here until Cast, never sent before */}
+          {showVolumeControls && selectedIps.length > 0 && (
+            <div className={styles.speakerRows}>
+              {selectedIps.map((ip) => {
+                const name = getSpeakerName(ip);
+                const view = startLevelView({
+                  current: getVolume(ip),
+                  fixed: getVolumeFixed(ip),
+                  limit: startLimit,
+                  pending: pendingStarts[ip],
+                });
+                const caption = startLevelCaption(view);
+                return (
+                  <SpeakerVolumeRow
+                    key={ip}
+                    speakerName={name}
+                    speakerIp={ip}
+                    volume={view.kind === 'known' ? view.start : undefined}
+                    onVolumeChange={(level) => onStartLevelChange(ip, level)}
+                    volumeLabel={t('start_level_speaker', { name })}
+                    unknownText={t('volume_not_known')}
+                    fixedLabel={view.kind === 'fixed' ? t('volume_fixed') : undefined}
+                    caption={caption ? t(caption.key, caption.params) : undefined}
+                  />
+                );
+              })}
+            </div>
+          )}
+
+          {/* Cast Button */}
+          <Button
+            size="md"
+            kind="filled"
+            icon="cast"
+            fullWidth
+            onAction={onStartCast}
+            labels={{ busy: t('starting'), failed: t('cast_failed') }}
+            disabled={disabled || selectedIps.length === 0}
+            aria-describedby={hint ? 'cast-hint' : undefined}
+          >
+            {selectedIps.length > 1
+              ? t('cast_to_n_speakers', { count: selectedIps.length })
+              : t('start_casting')}
+          </Button>
+
+          {hint && (
+            <p id="cast-hint" className={styles.castHint}>
+              {hint}
+            </p>
+          )}
+        </div>
+      </div>
+    </Card>
   );
 }

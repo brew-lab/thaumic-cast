@@ -3,7 +3,9 @@
  * animation-name only. Entrances use @starting-style, not keyframes.
  *
  * - clack: one Clacks shutter, open for 3 of 8 steps. Run it over 8 × --dur-step with
- *   step-end timing and a per-shutter delay; the shutter reads --clack-open.
+ *   step-end timing and a per-shutter delay. It animates only opacity and scale (open:
+ *   full and upright; shut: --clack-dim and --clack-squash, which the shutter sets), so it
+ *   runs off the main thread.
  * - clack-fade: the reduced-motion Clacks, full then dimmed, one step per --dur-fade-step.
  * - drift: the live gradient's hue, from --live-drift-from to 0, over --dur-drift,
  *   alternating. Under reduced motion --live-drift-from is 0, so it holds.
@@ -11,11 +13,13 @@
 @layer base {
   @keyframes clack {
     0% {
-      --clack-open: 1;
+      opacity: 1;
+      scale: none;
     }
 
     37.5% {
-      --clack-open: 0;
+      opacity: var(--clack-dim);
+      scale: var(--clack-squash);
     }
   }
 

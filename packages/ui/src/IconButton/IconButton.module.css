@@ -29,9 +29,9 @@
     cursor: pointer;
     -webkit-tap-highlight-color: transparent;
     transition:
-      --layer var(--dur-effects) var(--ease-effects),
+      background-color var(--dur-effects) var(--ease-effects),
       border-radius var(--dur-shape) var(--ease-effects),
-      scale var(--dur-spatial) var(--ease-spatial);
+      corner-shape var(--dur-shape) var(--ease-effects);
   }
 
   .icon-button::after {
@@ -54,7 +54,11 @@
     --ib-bg: var(--container-high);
   }
 
-  /* States (F-grammar) */
+  /*
+   * States (F-grammar): hover is the layer only; focus-visible and a press (held for the
+   * morph, utils/press.ts) take the octagon. Nothing scales. Busy ignores a press and keeps
+   * the octagon only while focused, as a Button does; the press that made it busy plays out.
+   */
   .icon-button:is(:hover, [data-force='hover']) {
     --layer: var(--layer-hover);
   }
@@ -63,28 +67,15 @@
     --layer: var(--layer-focus);
   }
 
-  .icon-button:is(:active, [data-force='press']) {
+  .icon-button:is(:active, [data-pressing], [data-force='press']) {
     --layer: var(--layer-press);
-
-    border-radius: var(--radius-pressed);
-    scale: var(--press-icon);
-    transition-duration: var(--dur-fast);
   }
 
   @supports (corner-shape: bevel) {
-    .icon-button:not(:disabled, [aria-busy='true']):is(
-        :hover,
-        :focus-visible,
-        [data-force='hover'],
-        [data-force='focus']
-      ) {
+    .icon-button:not(:disabled):is(:focus-visible, [data-pressing], [data-force='focus']),
+    .icon-button:not(:disabled, [aria-busy='true']):is(:active, [data-force='press']) {
       border-radius: var(--ib-bevel);
       corner-shape: bevel;
-    }
-
-    .icon-button:not(:disabled, [aria-busy='true']):is(:active, [data-force='press']) {
-      border-radius: var(--radius-pressed);
-      corner-shape: round;
     }
   }
 
@@ -92,11 +83,8 @@
     cursor: progress;
   }
 
-  .icon-button[aria-busy='true']:is(:hover, :active) {
+  .icon-button[aria-busy='true']:not([data-pressing]):is(:hover, :active) {
     --layer: initial;
-
-    border-radius: var(--ib-radius);
-    scale: 1;
   }
 
   /* Disabled: a 38 % glyph and, on tonal, a 12 % fill; the rest shape. */
@@ -104,12 +92,17 @@
     --ib-fg: color-mix(in oklch, var(--on-surface) var(--disabled-ink), transparent);
     --layer: initial;
 
-    border-radius: var(--ib-radius);
-    scale: 1;
     cursor: not-allowed;
   }
 
   .tonal:disabled {
     --ib-bg: color-mix(in oklch, var(--on-surface) var(--disabled-fill), transparent);
+  }
+
+  /* Forced colours drop the tonal fill, so the tonal kind draws its edge instead. */
+  @media (forced-colors: active) {
+    .tonal {
+      border: var(--line-hair) solid ButtonText;
+    }
   }
 }

@@ -41,7 +41,10 @@ export function badgeMark(tone: BadgeTone): GlyphName | 'clacks' | null {
 export function Badge({ tone, label }: BadgeProps): JSX.Element {
   const mark = badgeMark(tone);
   return (
-    <span class={cx(styles.badge, styles[tone])}>
+    <span
+      class={cx(styles.badge, styles[tone])}
+      data-tone={tone === 'warning' || tone === 'danger' ? tone : undefined}
+    >
       {mark === 'clacks' ? (
         <Clacks size="sm" />
       ) : mark ? (

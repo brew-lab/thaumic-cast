@@ -94,7 +94,11 @@ const BUTTON_KINDS: { title: string; props: Partial<ButtonProps>; label: string 
   { title: 'tonal danger', props: { kind: 'tonal', danger: true, icon: 'stop' }, label: 'Stop' },
   { title: 'outline', props: { kind: 'outline' }, label: 'Cancel' },
   { title: 'quiet', props: { kind: 'quiet', icon: 'plus' }, label: 'Add a room' },
-  { title: 'link', props: { kind: 'link', icon: 'external' }, label: 'Update available' },
+  {
+    title: 'link',
+    props: { kind: 'link', icon: 'external', href: '#button' },
+    label: 'Update available',
+  },
 ];
 
 const FORCED: Forced[] = ['hover', 'focus', 'press'];
@@ -141,6 +145,73 @@ function ResultButton({
         {label}
       </Button>
     </span>
+  );
+}
+
+/**
+ * A Button that runs its whole cycle on a press: busy for a moment, then done (or failed,
+ * every other press for `fails`), then back to idle, so the change of state can be watched both
+ * ways and its box measured.
+ * @param props - Component props
+ * @param props.base - The kind's props
+ * @param props.label - The idle label
+ * @param props.fails - Fail every other run
+ * @returns The Button
+ */
+function CycleButton({
+  base,
+  label,
+  fails = false,
+}: {
+  base: Partial<ButtonProps>;
+  label: string;
+  fails?: boolean;
+}): JSX.Element {
+  const [reset, setReset] = useState(0);
+  const [runs, setRuns] = useState(0);
+  const action = (): Promise<void> => {
+    const fail = fails && runs % 2 === 1;
+    setRuns((n) => n + 1);
+    return new Promise<void>((resolve, reject) =>
+      setTimeout(() => {
+        // Back to idle a moment after the result shows.
+        setTimeout(() => setReset((n) => n + 1), 1600);
+        if (fail) reject(new Error('demo'));
+        else resolve();
+      }, 900),
+    );
+  };
+  return (
+    <Button
+      {...base}
+      size="sm"
+      onAction={action}
+      resetKey={reset}
+      labels={{ busy: 'Working…', done: 'Done', failed: 'Try again' }}
+      data-cycle=""
+    >
+      {label}
+    </Button>
+  );
+}
+
+/**
+ * A set Button that turns on and off: its check slot is always there, so it never resizes.
+ * @returns The Button
+ */
+function ToggleSetButton(): JSX.Element {
+  const [on, setOn] = useState(false);
+  return (
+    <Button
+      kind="quiet"
+      icon="history"
+      pressed={on}
+      trail="3"
+      onClick={() => setOn((v) => !v)}
+      data-toggle=""
+    >
+      Last cast
+    </Button>
   );
 }
 
@@ -222,6 +293,18 @@ export function ButtonSpecimen(): JSX.Element {
           )}
         </StateRow>
       </StateGrid>
+      <p class="label">
+        Press one: busy, then done (failed on every other press of the last two), then back to idle.
+        Each state is one unit in one cell, so nothing changes size.
+      </p>
+      <Cluster>
+        {BUTTON_KINDS.filter((k) => k.props.kind !== 'link').map(({ title, props, label }) => (
+          <CycleButton key={title} base={props} label={label} />
+        ))}
+        <CycleButton base={{ kind: 'tonal' }} label="Connect" fails />
+        <CycleButton base={{ kind: 'filled', icon: 'cast' }} label="Cast" fails />
+        <ToggleSetButton />
+      </Cluster>
       <p class="label">Disclosure trigger, description and full width</p>
       <Cluster>
         <Button kind="quiet" icon="plus" expanded={false} size="sm">
@@ -245,21 +328,29 @@ export function ButtonSpecimen(): JSX.Element {
           Cast to 3 rooms
         </Button>
       </div>
-      <p class="label">Sizes: popup sm and md, desktop sm and md</p>
-      <Cluster>
-        <Button icon="refresh" size="sm">
-          Ask again
-        </Button>
-        <Button icon="refresh">Ask again</Button>
-      </Cluster>
-      <div data-density="desktop">
-        <Cluster>
-          <Button icon="refresh" size="sm">
-            Ask again
-          </Button>
-          <Button icon="refresh">Ask again</Button>
-        </Cluster>
-      </div>
+      {(['popup', 'desktop'] as const).map((density) => (
+        <div key={density} class="stack" data-density={density}>
+          <p class="label">
+            {density === 'popup'
+              ? 'Sizes, popup: sm 2rem (the default) and md 2.25rem'
+              : 'Sizes, desktop: sm 2rem (the default) and md 2.75rem'}
+          </p>
+          <Cluster>
+            <Button icon="refresh" size="sm">
+              Ask again
+            </Button>
+            <Button icon="refresh" size="md">
+              Ask again
+            </Button>
+            <Button kind="filled" icon="cast" size="md">
+              Cast to 3 rooms
+            </Button>
+            <Button kind="filled" danger icon="stop" size="md">
+              Stop all casts
+            </Button>
+          </Cluster>
+        </div>
+      ))}
     </div>
   );
 }
@@ -321,9 +412,12 @@ export function IconButtonSpecimen(): JSX.Element {
           ))}
         </StateRow>
       </StateGrid>
-      <p class="label">Desktop density, sm 2.5rem and md 2.75rem, with the Tooltip</p>
+      <p class="label">
+        Desktop density: the same sm 1.75rem and md 2rem boxes, hit areas to 2.75rem, with the
+        Tooltip
+      </p>
       <div data-density="desktop">
-        <Cluster gap="4">
+        <Cluster>
           <IconButton glyph="settings" label="Settings" kind="tonal" tooltip />
           <IconButton glyph="x" label="Close" size="sm" tooltip />
           <IconButton glyph="volume" pressedGlyph="volume-off" label="Mute Kitchen" tooltip />
@@ -392,16 +486,62 @@ export function TextInputSpecimen(): JSX.Element {
           disabled
         />
       </div>
-      <p class="label">Desktop density</p>
-      <div data-density="desktop" class="narrow">
-        <TextInput
-          kind="address"
-          aria-label="Speaker address"
-          value="192.168.1.47"
-          onInput={noop}
-          inputMode="decimal"
-        />
-      </div>
+      <StateGrid kinds={['search']}>
+        <StateRow state="hover">
+          <TextInput
+            kind="search"
+            label="Find a room, hover"
+            placeholder="Find a room"
+            value=""
+            onInput={noop}
+            data-force="hover"
+          />
+        </StateRow>
+        <StateRow state="focus-visible">
+          <TextInput
+            kind="search"
+            label="Find a room, focus"
+            placeholder="Find a room"
+            value="kit"
+            clearLabel="Clear search"
+            onInput={noop}
+            data-force="focus"
+          />
+        </StateRow>
+        <StateRow state="invalid">
+          <TextInput
+            kind="search"
+            label="Find a room, invalid"
+            placeholder="Find a room"
+            value="kit"
+            clearLabel="Clear search"
+            onInput={noop}
+            invalid
+          />
+        </StateRow>
+      </StateGrid>
+      {(['popup', 'desktop'] as const).map((density) => (
+        <div key={density} class="stack narrow" data-density={density}>
+          <p class="label">
+            {density === 'popup' ? 'Popup: sm and md (2.25rem)' : 'Desktop: sm and md (2.75rem)'}
+          </p>
+          <TextInput
+            kind="address"
+            aria-label={`Speaker address, ${density}, sm`}
+            value="192.168.1.47"
+            onInput={noop}
+            inputMode="decimal"
+          />
+          <TextInput
+            kind="address"
+            size="md"
+            aria-label={`Server address, ${density}, md`}
+            value="http://192.168.1.20:49400"
+            onInput={noop}
+            inputMode="url"
+          />
+        </div>
+      ))}
     </div>
   );
 }
@@ -451,6 +591,21 @@ export function SwitchSpecimen(): JSX.Element {
         onChange={noop}
         error="The settings were not saved. Try again."
       />
+      <Switch
+        label="Clock drift correction"
+        description="Keeps each speaker's reserve level over a long cast."
+        note="Needs speaker monitoring, which is how it knows what to correct."
+        checked={false}
+        onChange={noop}
+        disabled
+      />
+      <Switch
+        label="Sync video"
+        badge={<Badge tone="neutral" label="In step" />}
+        description="With a Badge after the name; its words are part of the name."
+        checked
+        onChange={noop}
+      />
       <div data-density="desktop">
         <Switch
           label="Speaker monitoring"
@@ -492,6 +647,25 @@ export function CheckboxSpecimen(): JSX.Element {
           <Checkbox label="Kitchen" checked onChange={noop} disabled />
         </StateRow>
       </StateGrid>
+      <p class="label">Inside a disabled fieldset (the picker, not connected)</p>
+      <fieldset class="plain-fieldset narrow stack" disabled>
+        <legend class="visually-hidden">Cast to (not connected)</legend>
+        <Checkbox label="Kitchen" checked onChange={noop} />
+        <Checkbox label="Study" checked={false} onChange={noop} />
+        <Switch label="Start no louder than" checked onChange={noop} />
+        <TextInput
+          kind="search"
+          label="Find a room"
+          placeholder="Find a room"
+          value=""
+          onInput={noop}
+        />
+        <Select label="Codec" hideLabel value="aac" options={CODECS} onChange={noop} />
+        <Slider label="Kitchen volume" value={30} onChange={noop} readout={3} />
+        <Button kind="filled" icon="cast">
+          Cast to 1 room
+        </Button>
+      </fieldset>
       <div data-density="desktop" class="narrow">
         <Checkbox
           label="Living Room"
@@ -652,6 +826,16 @@ export function SelectSpecimen(): JSX.Element {
             />
           </StateRow>
         ))}
+        <StateRow state="open">
+          <Select
+            label="Codec, open"
+            hideLabel
+            value="aac"
+            options={CODECS}
+            onChange={noop}
+            data-force="open"
+          />
+        </StateRow>
         <StateRow state="disabled">
           <Select
             label="Codec, disabled"
@@ -683,17 +867,33 @@ export function SelectSpecimen(): JSX.Element {
           />
         </StateRow>
       </StateGrid>
-      <div data-density="desktop">
-        <Select
-          label="Head start (desktop)"
-          value={250}
-          options={[
-            { value: 0, label: 'Off' },
-            { value: 250, label: '250 ms' },
-          ]}
-          onChange={noop}
-        />
-      </div>
+      {(['popup', 'desktop'] as const).map((density) => (
+        <div key={density} class="stack" data-density={density}>
+          <p class="label">
+            {density === 'popup' ? 'Popup: sm and md (2.25rem)' : 'Desktop: sm and md (2.75rem)'}
+          </p>
+          <Select
+            label={`Head start (${density}, sm)`}
+            value={250}
+            options={[
+              { value: 0, label: 'Off' },
+              { value: 250, label: '250 ms' },
+            ]}
+            onChange={noop}
+          />
+          <Select
+            label={`Codec (${density}, md)`}
+            size="md"
+            value="aac"
+            options={CODECS}
+            onChange={noop}
+          />
+        </div>
+      ))}
+      <p class="label">
+        The open list is the browser's own popover: press a Select above to see it (a styled listbox
+        in Chromium, the system list in WebKit).
+      </p>
     </div>
   );
 }
@@ -707,46 +907,40 @@ export function SelectSpecimen(): JSX.Element {
 export function SliderSpecimen(): JSX.Element {
   const [volume, setVolume] = useState(30);
   const [trim, setTrim] = useState(120);
-  const row = (child: JSX.Element, value: string): JSX.Element => (
-    <div class="slider-row">
-      {child}
-      <span class="num value-box">{value}</span>
-    </div>
-  );
+  const [start, setStart] = useState(30);
+  const ms = (v: number): string => `${v > 0 ? '+' : ''}${v} ms`;
   return (
     <div class="stack narrow">
-      {row(<Slider label="Kitchen volume" value={volume} onChange={setVolume} />, String(volume))}
-      {row(
-        <Slider
-          label="Fine-tune"
-          min={-500}
-          max={500}
-          step={10}
-          centre={0}
-          value={trim}
-          onChange={setTrim}
-          format={(v) => `${v > 0 ? '+' : ''}${v} ms`}
-        />,
-        `${trim > 0 ? '+' : ''}${trim} ms`,
-      )}
+      <Slider label="Kitchen volume" value={volume} onChange={setVolume} readout={3} />
+      <Slider
+        label="Fine-tune"
+        min={-500}
+        max={500}
+        step={10}
+        centre={0}
+        value={trim}
+        onChange={setTrim}
+        format={ms}
+        readout={7}
+      />
+      <span class="label">a ghost tick at the room's level now (72), the start level at 30</span>
+      <Slider label="Kitchen start level" value={start} onChange={setStart} mark={72} readout={3} />
       {FORCED.map((f) => (
         <div key={f}>
           <span class="label">{f}</span>
-          {row(<Slider label={`Volume, ${f}`} value={46} onChange={noop} data-force={f} />, '46')}
+          <Slider label={`Volume, ${f}`} value={46} onChange={noop} data-force={f} readout={3} />
         </div>
       ))}
       <span class="label">disabled (joining)</span>
-      {row(<Slider label="Bedroom volume" value={30} onChange={noop} disabled />, '30')}
+      <Slider label="Bedroom volume" value={30} onChange={noop} disabled readout={3} />
       <span class="label">not known yet</span>
-      {row(
-        <Slider
-          label="Study volume"
-          value={undefined}
-          unknownText="Not known yet"
-          onChange={noop}
-        />,
-        '…',
-      )}
+      <Slider
+        label="Study volume"
+        value={undefined}
+        unknownText="Not known yet"
+        onChange={noop}
+        readout={3}
+      />
     </div>
   );
 }
@@ -828,19 +1022,17 @@ export function StatusDotSpecimen(): JSX.Element {
 export function ClacksSpecimen(): JSX.Element {
   return (
     <div class="stack">
-      <Cluster gap="3">
-        <Clacks /> <span>Looking for a companion…</span>
-      </Cluster>
-      <Cluster gap="3">
-        <Clacks state="answered" /> <span>Answered</span>
-      </Cluster>
-      <Cluster gap="3">
-        <Clacks size="sm" /> <span>sm, for an icon slot</span>
-      </Cluster>
-      <div data-density="desktop">
-        <Cluster gap="3">
-          <Clacks /> <span>Desktop: Asking the network for speakers…</span>
-        </Cluster>
+      <div class="clacks-grid">
+        <Clacks />
+        <span>Looking for a companion…</span>
+        <Clacks state="answered" />
+        <span>Answered</span>
+        <Clacks size="sm" />
+        <span>sm, for an icon slot</span>
+      </div>
+      <div class="clacks-grid" data-density="desktop">
+        <Clacks />
+        <span>Desktop: Asking the network for speakers…</span>
       </div>
     </div>
   );
@@ -873,6 +1065,8 @@ export function ArtworkSpecimen(): JSX.Element {
       <Artwork kind="placeholder" size="lg" />
       <Artwork kind="disc" size="md" glyph="speaker" />
       <Artwork kind="disc" size="lg" glyph="monitor" />
+      <Artwork kind="placeholder" size="sm" />
+      <Artwork kind="disc" size="sm" glyph="speaker" />
       <Artwork kind="image" size="md" src="data:image/png;base64,broken" />
     </Cluster>
   );
@@ -885,13 +1079,18 @@ export function ArtworkSpecimen(): JSX.Element {
 export function TooltipSpecimen(): JSX.Element {
   return (
     <div class="stack">
-      <Cluster gap="4">
+      <Cluster>
         <IconButton glyph="refresh" label="Measure video sync again" tooltip />
         <Tooltip content="Settings">
           <IconButton glyph="settings" label="Settings" kind="tonal" />
         </Tooltip>
       </Cluster>
-      <span class="tooltip-sample">Measure video sync again</span>
+      <span class="label">Shown (the real tooltip, opened without a hover)</span>
+      <div class="tooltip-stage">
+        <Tooltip content="Measure video sync again" defaultOpen>
+          <IconButton glyph="refresh" label="Measure video sync again" />
+        </Tooltip>
+      </div>
     </div>
   );
 }
@@ -1024,8 +1223,14 @@ export function NavItemSpecimen(): JSX.Element {
 export function StepIndicatorSpecimen(): JSX.Element {
   return (
     <div class="stack">
-      <StepIndicator current={1} total={4} labels={['Welcome', 'Companion', 'Speakers', 'Ready']} />
-      <div data-density="desktop">
+      <div class="fit">
+        <StepIndicator
+          current={1}
+          total={4}
+          labels={['Welcome', 'Companion', 'Speakers', 'Ready']}
+        />
+      </div>
+      <div data-density="desktop" class="fit">
         <StepIndicator current={2} total={5} />
       </div>
     </div>
@@ -1033,28 +1238,50 @@ export function StepIndicatorSpecimen(): JSX.Element {
 }
 
 /**
- * Meter: normal and low.
+ * Meter: a list at RoomCard width (normal, low and empty), and one at the narrowest it takes.
+ * Each is stacked, so the bars share the width and the readings end at one edge.
  * @returns The specimen
  */
 export function MeterSpecimen(): JSX.Element {
   return (
-    <div class="stack" data-density="desktop">
-      <Meter
-        name="Kitchen"
-        label="Kitchen reserve"
-        value={1240}
-        max={2000}
-        low={500}
-        valueText="1240 ms"
-      />
-      <Meter
-        name="Study"
-        label="Study reserve"
-        value={380}
-        max={2000}
-        low={500}
-        valueText="380 ms"
-      />
+    <div data-density="desktop" class="stack">
+      <div class="stack meter-list">
+        <Meter
+          name="Kitchen"
+          label="Kitchen reserve"
+          value={1240}
+          max={2000}
+          low={500}
+          valueText="1240 ms"
+        />
+        <Meter
+          name="Study"
+          label="Study reserve"
+          value={380}
+          max={2000}
+          low={500}
+          valueText="380 ms"
+        />
+        <Meter
+          name="Living room"
+          label="Living room reserve"
+          value={0}
+          max={2000}
+          low={500}
+          valueText="0 ms"
+        />
+      </div>
+      <p class="label">At its narrowest (12rem)</p>
+      <div class="meter-narrow">
+        <Meter
+          name="Downstairs bathroom"
+          label="Downstairs bathroom reserve"
+          value={1900}
+          max={2000}
+          low={500}
+          valueText="1900 ms"
+        />
+      </div>
     </div>
   );
 }

@@ -1,13 +1,15 @@
 /*
  * The utilities (DESIGN.md F-utils). Cluster is a component (src/Cluster).
  * - .num: numbers in text (volumes, ms, counts), tabular, end-aligned in a box of
- *   --num-ch characters, set inline: style={{ '--num-ch': 3 }}.
+ *   --num-ch characters, set inline: style={{ '--num-ch': 3 }}. It is an inline block, so the
+ *   box holds on a plain inline <span> as well as on a flex or grid item.
  * - .mono: machine text (addresses, URLs): left to right inside any text, breaks anywhere,
  *   in the body face (there is no mono face).
  * - .visually-hidden: in the accessibility tree, not on screen.
  */
 @layer base {
   .num {
+    display: inline-block;
     font-variant-numeric: var(--num);
     min-inline-size: calc(var(--num-ch, 0) * 1ch);
     text-align: end;

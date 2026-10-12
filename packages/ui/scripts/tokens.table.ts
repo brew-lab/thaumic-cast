@@ -45,11 +45,14 @@ export interface DensityToken {
 /** The OKLCH lightness stops of the primitive ladders (DESIGN.md T-colour). */
 export const LADDER_STOPS = [20, 30, 40, 50, 60, 76, 90, 95] as const;
 
-/** The primitive ladders: hex per stop, as drawn. Components never read these. */
+/**
+ * The primitive ladders: hex per stop, as drawn. Components never read these. The status sets
+ * are their own primitives, hand-tuned per theme (approach C), so no red, amber, green or blue
+ * ladder feeds them.
+ */
 export const LADDERS: Record<string, readonly string[]> = {
   purple: ['#22003a', '#41006a', '#620b9b', '#7f36bc', '#9d57de', '#c896ff', '#e7d5ff', '#f3eaff'],
   neutral: ['#1a1221', '#322a3a', '#4c4454', '#685f71', '#857c8e', '#b6acc0', '#e3d9ee', '#f4eaff'],
-  red: ['#320001', '#5d0005', '#8b000b', '#bb0916', '#de3c37', '#ff8b7f', '#ffd2cc', '#ffe9e6'],
   magenta: ['#2f001b', '#570036', '#820054', '#b00073', '#d72f92', '#ff7fc0', '#ffcee4', '#ffe7f1'],
 };
 
@@ -84,13 +87,16 @@ export const SEMANTIC_COLORS: TokenGroup = {
     'cast-badge': pair('#e7d5ff', '#c699f8'),
     'on-cast-badge': pair('#4b1d6b', '#2b0c44'),
     'live-lamp': pair('#d72f92', '#ea4ca4'),
-    danger: pair('#c2181d', '#f97770'),
+    /* Text on the filled danger Button, which is --danger-ink (read as --tone-ink). */
     'on-danger': pair('#ffffff', '#3d090a'),
     track: 'var(--container-high)',
   },
 };
 
-/** The status sets: container, on-container text and ink (DESIGN.md T-colour). */
+/**
+ * The status sets: container, on-container text and ink (DESIGN.md T-colour). Components never
+ * read them by name: each set is also generated as a `[data-tone]` block of `--tone-*` tokens.
+ */
 export const STATUS_SETS: Record<
   string,
   { container: ThemedToken; on: ThemedToken; ink: ThemedToken }
@@ -114,6 +120,27 @@ export const STATUS_SETS: Record<
     container: pair('#e7dcf1', '#233147'),
     on: pair('#1b1122', '#e5efff'),
     ink: pair('#4d4356', '#8db8ff'),
+  },
+};
+
+/**
+ * The pairs components read that are not one semantic token in both themes (DESIGN.md
+ * T-colour, "Component pairs"). They are generated here, never written as `light-dark()` in a
+ * module, so `webkit-fallbacks.css` repeats them for engines without `light-dark()`.
+ */
+export const COMPONENT_PAIRS: TokenGroup = {
+  title: 'T-colour: component pairs (light-dark() lives here only)',
+  tokens: {
+    /* Field and select fills: the surface in light, a step up in dark. */
+    'field-bg': pair('var(--surface)', 'var(--container)'),
+    /* The listbox lifts one step further in dark. */
+    'listbox-bg': pair('var(--surface)', 'var(--container-high)'),
+    /* Headings: the brand ink in light, the text colour in dark. */
+    'title-ink': pair('var(--brand-ink)', 'var(--on-surface)'),
+    /* The mark: the brand ink in light, the primary in dark. */
+    'mark-ink': pair('var(--brand-ink)', 'var(--primary)'),
+    /* The card edge: a hairline in light only; in dark the surface step is the edge. */
+    'card-edge': pair('var(--outline-variant)', 'transparent'),
   },
 };
 
@@ -202,7 +229,6 @@ export const PLAIN: TokenGroup[] = [
     tokens: {
       'radius-pressed': '0.25rem',
       'radius-thumb': 'var(--radius-pressed)',
-      'radius-thumb-pressed': '0.125rem',
       'radius-control': '0.5rem',
       'radius-group': '0.75rem',
       'radius-notice': 'var(--radius-group)',
@@ -226,24 +252,26 @@ export const PLAIN: TokenGroup[] = [
       'dur-effects': '268ms',
       'dur-spatial': '480ms',
       'dur-step': '120ms',
+      'dur-stagger': '40ms',
       'dur-shape': 'var(--dur-effects)',
+      /* A change of state that fades or folds: a fold, a Button's state, a choice, a check. */
+      'dur-change': 'var(--dur-effects)',
       'dur-fade-step': '500ms',
       'dur-drift': '8s',
       'ease-effects': 'cubic-bezier(0.3, 0, 0.1, 1)',
       'ease-spatial': 'cubic-bezier(0.34, 1.36, 0.64, 1)',
       'clack-animation': 'clack',
       'clack-dim': '30%',
+      /* A shut Clacks shutter's height, at md; sm shutters fade without scaling. */
+      'clack-shut': '0.4',
     },
   },
   {
-    title: 'T-state: layers, press scales and disabled',
+    title: 'T-state: layers and disabled',
     tokens: {
       'layer-hover': '8%',
       'layer-focus': '10%',
       'layer-press': '12%',
-      'press-text': '0.96',
-      'press-icon': '0.92',
-      'press-wide': '0.98',
       'disabled-ink': '38%',
       'disabled-fill': '12%',
     },
@@ -281,8 +309,8 @@ export const PLAIN: TokenGroup[] = [
       'page-max': '40rem',
       'ch-volume': '3ch',
       'ch-ms': '7ch',
-      'ch-count': '2ch',
       'ch-ip': '15ch',
+      'ch-ip-max': '20ch',
       'wide-control': '15rem',
     },
   },
@@ -337,12 +365,24 @@ export const TIMINGS = {
   COPY_CONFIRM_MS: 2000,
 } as const;
 
-/** Colours drawn by Chrome or the OS, outside CSS (DESIGN.md T-chrome). */
+const onDanger = SEMANTIC_COLORS.tokens['on-danger'] as ThemedToken;
+
+/**
+ * Colours drawn by Chrome or the OS, outside CSS (DESIGN.md T-chrome). The toolbar badge's
+ * fills are the sets' inks, read from the table, so Chrome never draws a red or an amber that
+ * the sets do not have.
+ */
 export const CHROME = {
   toolbarBadge: {
     text: '!',
-    warning: { light: { bg: '#935d00', fg: '#ffffff' }, dark: { bg: '#ffc251', fg: '#2b1d00' } },
-    danger: { light: { bg: '#8c1116', fg: '#ffffff' }, dark: { bg: '#ef5f58', fg: '#3d090a' } },
+    warning: {
+      light: { bg: STATUS_SETS.warning.ink.light, fg: '#ffffff' },
+      dark: { bg: STATUS_SETS.warning.ink.dark, fg: '#2b1d00' },
+    },
+    danger: {
+      light: { bg: STATUS_SETS.danger.ink.light, fg: onDanger.light },
+      dark: { bg: STATUS_SETS.danger.ink.dark, fg: onDanger.dark },
+    },
   },
   tray: {
     idle: { light: 'tray/idle-light.png', dark: 'tray/idle-dark.png' },

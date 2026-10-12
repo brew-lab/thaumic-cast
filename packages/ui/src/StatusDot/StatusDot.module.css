@@ -1,19 +1,30 @@
 @layer components {
-  /* A-dot. Four shapes: a dot, the Clacks, circle-x and the lamp. Never animated. */
-  .dot {
+  /*
+   * A-dot. Four shapes: a dot, the Clacks, circle-x and the lamp. Never animated. Every state
+   * draws in one --icon-sm square, its mark centred, so the words beside a column of dots
+   * start at one edge and the dots line up with Icons in the same column.
+   */
+  .slot {
     --dot-size: var(--size-dot-sm);
-    --dot-connected: var(--success-ink);
-    --dot-failed: var(--danger-ink);
+    --dot-connected: var(--tone-ink);
     --dot-live: var(--live-lamp);
     --dot-checking: var(--on-surface-variant);
     --dot-ring: var(--ring-gap);
     --dot-ink: var(--dot-connected);
     --dot-shadow: none;
+    --dot-glyph: calc(var(--icon-sm) * 0.75);
 
     flex: none;
     display: inline-grid;
     place-items: center;
+    inline-size: var(--icon-sm);
+    block-size: var(--icon-sm);
     vertical-align: middle;
+  }
+
+  .md {
+    --dot-size: var(--size-dot-md);
+    --dot-glyph: var(--icon-sm);
   }
 
   .round {
@@ -22,10 +33,6 @@
     border-radius: var(--radius-full);
     background: var(--dot-ink);
     box-shadow: var(--dot-shadow);
-  }
-
-  .md {
-    --dot-size: var(--size-dot-md);
   }
 
   .connected {
@@ -45,21 +52,11 @@
   }
 
   /* Failed: circle-x, at the Badge glyph size (sm) or --icon-sm (md). */
-  .glyph {
-    --dot-glyph: calc(var(--icon-sm) * 0.75);
-
-    flex: none;
-    display: inline-grid;
-    place-items: center;
-    color: var(--danger-ink);
-    vertical-align: middle;
+  .failed {
+    color: var(--tone-ink);
   }
 
-  .glyph.md {
-    --dot-glyph: var(--icon-sm);
-  }
-
-  .glyph > svg {
+  .failed > svg {
     --icon-size: var(--dot-glyph);
   }
 

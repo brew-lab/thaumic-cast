@@ -50,6 +50,11 @@
     --tip-leading: var(--leading-3);
   }
 
+  /* Open, unless a context hides it with --tip-shown: none (a NavItem in the wide rail). */
+  .tip[data-open] {
+    display: var(--tip-shown, block);
+  }
+
   .tip:not([data-open]) {
     display: none;
     opacity: 0;

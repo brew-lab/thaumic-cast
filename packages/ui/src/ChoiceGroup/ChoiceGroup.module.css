@@ -44,7 +44,7 @@
     }
   }
 
-  .disabled {
+  .group:disabled {
     --choice-legend-ink: color-mix(in oklch, var(--on-surface) var(--disabled-ink), transparent);
   }
 }

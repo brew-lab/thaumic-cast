@@ -1,19 +1,20 @@
 @layer components {
   /*
-   * M-noticeline. One row on the tone's container: the glyph, the words (which wrap, never
+   * M-noticeline. One row on the tone's container (data-tone): the glyph, the words (which wrap, never
    * truncate), then one trailing part and the X. Details open under a hairline in the same
    * box. Its Buttons and X are re-pointed to the ink, the ring gap to the fill.
    */
   .line {
-    --noticeline-bg: var(--container);
-    --noticeline-fg: var(--on-surface);
-    --noticeline-glyph: var(--on-surface-variant);
+    --noticeline-bg: var(--tone-container);
+    --noticeline-fg: var(--on-tone-container);
+    --noticeline-glyph: var(--tone-glyph);
     --noticeline-rule: color-mix(in oklch, var(--noticeline-fg) 22%, var(--noticeline-bg));
     --noticeline-pad-start: var(--space-3-5);
     --noticeline-pad-end: var(--space-1);
     --noticeline-shadow: none;
     --noticeline-fill: color-mix(in oklch, var(--noticeline-fg) var(--layer), transparent);
     --ring-gap: var(--noticeline-bg);
+    --line-idx: var(--i, 1);
 
     min-inline-size: 0;
     border-radius: var(--radius-notice);
@@ -21,18 +22,10 @@
     color: var(--noticeline-fg);
     font-size: var(--text-3);
     line-height: var(--leading-3);
-  }
-
-  .warning {
-    --noticeline-bg: var(--warning-container);
-    --noticeline-fg: var(--on-warning-container);
-    --noticeline-glyph: light-dark(var(--on-warning-container), var(--warning-ink));
-  }
-
-  .danger {
-    --noticeline-bg: var(--danger-container);
-    --noticeline-fg: var(--on-danger-container);
-    --noticeline-glyph: light-dark(var(--on-danger-container), var(--danger-ink));
+    transition:
+      opacity var(--dur-effects) var(--ease-effects),
+      translate var(--dur-effects) var(--ease-effects);
+    transition-delay: calc(min(var(--line-idx) - 1, 2) * var(--dur-stagger));
   }
 
   .row,
@@ -63,10 +56,14 @@
     --icon-size: var(--icon-sm);
   }
 
+  /*
+   * Plain wrapping, not pretty or balanced: a lead that fits one row stays on it, and one
+   * that does not fills its first line before it wraps (M-noticeline, §11 call 39).
+   */
   .words {
     flex: 1 1 0;
     min-inline-size: 0;
-    text-wrap: pretty;
+    text-wrap: wrap;
   }
 
   .lead {
@@ -142,6 +139,33 @@
   @media (forced-colors: active) {
     .line {
       border: var(--line-hair) solid CanvasText;
+    }
+  }
+
+  /*
+   * F-shift: it arrives in flow with an entrance that moves nothing around it (opacity and
+   * translate only). Notices in a list of notices (a parent marked
+   * data-notices, such as the NoticeSlot) stagger by --dur-stagger, capped at the third (so
+   * the rest start with it), from sibling-index() or the `index` prop (the inline --i). A
+   * notice among other things is not counted. Without @starting-style it simply appears.
+   */
+
+  @supports (order: sibling-index()) {
+    [data-notices] > .line {
+      --line-idx: sibling-index();
+    }
+  }
+
+  @starting-style {
+    .line {
+      opacity: 0;
+      translate: 0 var(--space-2);
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .line {
+      transition: none;
     }
   }
 }

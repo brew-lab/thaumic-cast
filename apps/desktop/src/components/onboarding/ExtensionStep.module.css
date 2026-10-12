@@ -1,11 +1,13 @@
-.body {
-  margin: 0;
-  line-height: var(--leading-4);
-}
+@layer app {
+  .body {
+    margin: 0;
+    line-height: var(--leading-4);
+  }
 
-.skip-hint {
-  margin: 0;
-  font-size: var(--text-3);
-  color: var(--on-surface-variant);
-  font-style: italic;
+  .skip-hint {
+    margin: 0;
+    font-size: var(--text-3);
+    color: var(--on-surface-variant);
+    font-style: italic;
+  }
 }

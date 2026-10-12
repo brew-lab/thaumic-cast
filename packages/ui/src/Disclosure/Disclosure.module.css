@@ -1,9 +1,9 @@
 @layer components {
   /*
    * M-disclosure. A quiet trigger on <summary>: no fill at rest, the label in 600, the
-   * chevron and the summary in --on-surface-variant. It takes the grammar as a wide control
-   * (bevel on hover and focus, --press-wide), and bleeds its padding so the chevron lines up
-   * with the text above. Open turns the chevron; it is not selected, so nothing fills.
+   * chevron and the summary in --on-surface-variant. It takes the grammar (the bevel on
+   * focus and press, colour on hover), and bleeds its padding so the chevron lines up with
+   * the text above. Open turns the chevron; it is not selected, so nothing fills.
    */
   .disclosure {
     --disc-h: var(--control-sm);
@@ -17,7 +17,6 @@
     --disc-hint: var(--on-surface-variant);
     --disc-radius: var(--radius-control);
     --disc-shadow: none;
-    --disc-fill: color-mix(in oklch, var(--disc-fg) var(--layer), transparent);
 
     min-inline-size: 0;
   }
@@ -34,7 +33,13 @@
     --disc-icon: var(--icon-md);
   }
 
+  /*
+   * The fill is worked out here, on the summary, because --layer does not inherit: set on
+   * the details element, the mix would read the details' 0 % and never show a state.
+   */
   .trigger {
+    --disc-fill: color-mix(in oklch, var(--disc-fg) var(--layer), transparent);
+
     position: relative;
     display: flex;
     align-items: center;
@@ -51,9 +56,9 @@
     user-select: none;
     -webkit-tap-highlight-color: transparent;
     transition:
-      --layer var(--dur-effects) var(--ease-effects),
+      background-color var(--dur-effects) var(--ease-effects),
       border-radius var(--dur-shape) var(--ease-effects),
-      scale var(--dur-spatial) var(--ease-spatial);
+      corner-shape var(--dur-shape) var(--ease-effects);
   }
 
   /* The hit area reaches --hit-min in the block direction without drawing anything. */
@@ -78,7 +83,7 @@
   .chevron > svg {
     --icon-size: var(--disc-icon);
 
-    transition: rotate var(--dur-effects) var(--ease-effects);
+    transition: rotate var(--dur-change) var(--ease-effects);
   }
 
   .disclosure[open] > .trigger .chevron > svg {
@@ -91,6 +96,13 @@
     font-size: var(--disc-label);
     font-weight: var(--weight-strong);
     line-height: var(--disc-label-leading);
+  }
+
+  /* F-textbox: the label trimmed to the cap height and the baseline, at the same outer size. */
+  @supports (text-box: trim-both cap alphabetic) {
+    .label {
+      text-box: trim-both cap alphabetic;
+    }
   }
 
   .summary {
@@ -111,7 +123,48 @@
     padding-block-start: var(--space-3);
   }
 
-  /* States (F-grammar), as a wide control. */
+  /*
+   * The content fades in and out with the chevron's turn wherever the engine has
+   * ::details-content, and the fold animates its height too where it can also size the
+   * content to auto (interpolate-size, which base.css allows; WebKit cannot, so there the
+   * height opens and shuts at once while the content still fades). The fold, the fade and
+   * the turn share --dur-change (--dur-effects, 0 under reduced motion), and
+   * content-visibility flips at the end. The clip reaches past the edge by the ring, so a
+   * focused control inside is never cut off.
+   */
+  @supports selector(::details-content) {
+    .disclosure::details-content {
+      opacity: 0;
+      transition:
+        opacity var(--dur-change) var(--ease-effects),
+        content-visibility var(--dur-change) allow-discrete;
+    }
+
+    .disclosure[open]::details-content {
+      opacity: 1;
+    }
+  }
+
+  @supports selector(::details-content) and (interpolate-size: allow-keywords) {
+    .disclosure::details-content {
+      block-size: 0;
+      overflow: clip;
+      overflow-clip-margin: calc(2 * var(--line-bold));
+      transition:
+        block-size var(--dur-change) var(--ease-effects),
+        opacity var(--dur-change) var(--ease-effects),
+        content-visibility var(--dur-change) allow-discrete;
+    }
+
+    .disclosure[open]::details-content {
+      block-size: auto;
+    }
+  }
+
+  /*
+   * States (F-grammar): hover is colour; focus-visible and a press (held, utils/press.ts)
+   * take the bevel. Nothing scales or moves.
+   */
   .trigger:is(:hover, [data-force='hover']) {
     --layer: var(--layer-hover);
   }
@@ -124,24 +177,21 @@
     outline: var(--line-bold) solid transparent;
   }
 
-  .trigger:is(:active, [data-force='press']) {
+  .trigger:is(:active, [data-pressing], [data-force='press']) {
     --layer: var(--layer-press);
-
-    border-radius: var(--radius-pressed);
-    scale: var(--press-wide);
-    transition-duration: var(--dur-fast);
   }
 
   @supports (corner-shape: bevel) {
     .disclosure:not(.disabled)
-      > .trigger:is(:hover, :focus-visible, [data-force='hover'], [data-force='focus']) {
+      > .trigger:is(
+        :focus-visible,
+        :active,
+        [data-pressing],
+        [data-force='focus'],
+        [data-force='press']
+      ) {
       border-radius: var(--shape-bevel);
       corner-shape: bevel;
-    }
-
-    .disclosure:not(.disabled) > .trigger:is(:active, [data-force='press']) {
-      border-radius: var(--radius-pressed);
-      corner-shape: round;
     }
   }
 
@@ -151,7 +201,13 @@
     --layer: initial;
 
     border-radius: var(--disc-radius);
-    scale: 1;
     cursor: not-allowed;
+  }
+
+  /* Forced colours: the quiet trigger draws an edge, as a quiet Button does. */
+  @media (forced-colors: active) {
+    .trigger {
+      border: var(--line-hair) solid ButtonText;
+    }
   }
 }

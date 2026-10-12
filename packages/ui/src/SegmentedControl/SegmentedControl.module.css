@@ -59,9 +59,10 @@
     cursor: pointer;
     -webkit-tap-highlight-color: transparent;
     transition:
-      --layer var(--dur-effects) var(--ease-effects),
+      background-color var(--dur-change) var(--ease-effects),
+      color calc(var(--dur-change) / 4) var(--ease-effects) calc(var(--dur-change) / 5),
       border-radius var(--dur-shape) var(--ease-effects),
-      scale var(--dur-spatial) var(--ease-spatial);
+      corner-shape var(--dur-shape) var(--ease-effects);
   }
 
   .segment::after {
@@ -84,13 +85,39 @@
     box-shadow: none;
   }
 
+  /*
+   * The label's cell is as wide as its strong form (F-shift): the chosen segment turns 600,
+   * and without this the track, and everything after it, would shift on every choice.
+   */
+  .label {
+    display: inline-grid;
+  }
+
+  .word,
+  .strong {
+    grid-area: 1 / 1;
+  }
+
+  .strong {
+    font-weight: var(--weight-strong);
+    visibility: hidden;
+  }
+
   @supports (text-box: trim-both cap alphabetic) {
-    .label {
+    .word,
+    .strong {
       text-box: trim-both cap alphabetic;
     }
   }
 
-  /* Chosen: the primary fill, the strong weight and the check; calm. */
+  /*
+   * Chosen: the primary fill, the strong weight and the check; calm. Choosing cross-fades
+   * both segments: the fill over --dur-change (background-color, which carries the layer too:
+   * a registered colour's transition would stop WebKit morphing the corner, §11 call 79),
+   * and the words in a quick quarter of it, a fifth in, when the fill is about
+   * half-way, so the moment a word and its fill are alike is too short to read as faint. The
+   * weight swaps at once in its reserved cell, and nothing slides.
+   */
   .segment:has(.input:checked) {
     --seg-bg: var(--primary);
     --seg-fg: var(--on-primary);
@@ -98,12 +125,15 @@
     font-weight: var(--weight-strong);
   }
 
-  /* States: per segment; the ring round the track. */
-  .segment:is(:hover, [data-force='hover']) {
+  /*
+   * States: per segment; the ring round the track. The catalogue's data-force on the control
+   * lands on the track, so a forced state draws on every segment, the chosen one too.
+   */
+  .segment:is(:hover, [data-force='hover'], [data-force='hover'] > *) {
     --layer: var(--layer-hover);
   }
 
-  .segment:is(:has(.input:focus-visible), [data-force='focus']) {
+  .segment:is(:has(.input:focus-visible), [data-force='focus'], [data-force='focus'] > *) {
     --layer: var(--layer-focus);
   }
 
@@ -114,42 +144,41 @@
     outline: var(--line-bold) solid transparent;
   }
 
-  .segment:is(:active, [data-force='press']) {
+  .segment:is(:active, [data-pressing], [data-force='press'], [data-force='press'] > *) {
     --layer: var(--layer-press);
-    --seg-radius: var(--radius-pressed);
-
-    scale: var(--press-text);
-    transition-duration: var(--dur-fast);
   }
 
   @supports (corner-shape: bevel) {
-    .segment:not(:has(.input:checked)):is(
-        :hover,
+    /*
+     * A segment takes the bevel on focus-visible and press (held, utils/press.ts), chosen or
+     * not: a press that chooses it plays the whole morph. Hover is colour, nothing scales,
+     * and the chosen segment is calm at rest.
+     */
+    .segment:not(:has(.input:disabled)):is(
         :has(.input:focus-visible),
-        [data-force='hover'],
-        [data-force='focus']
+        :active,
+        [data-pressing],
+        [data-force='focus'],
+        [data-force='focus'] > *,
+        [data-force='press'],
+        [data-force='press'] > *
       ) {
       --seg-radius: var(--shape-bevel);
 
       corner-shape: bevel;
     }
-
-    .segment:is(:active, [data-force='press']) {
-      corner-shape: round;
-    }
   }
 
-  /* Disabled */
-  .disabled .segment {
+  /* Disabled, from the native state (its own fieldset, or one round it). */
+  .segment:has(.input:disabled) {
     --seg-fg: color-mix(in oklch, var(--on-surface) var(--disabled-ink), transparent);
     --layer: initial;
     --seg-radius: var(--radius-control);
 
-    scale: 1;
     cursor: not-allowed;
   }
 
-  .disabled .segment:has(.input:checked) {
+  .segment:has(.input:disabled):has(.input:checked) {
     --seg-bg: color-mix(in oklch, var(--on-surface) var(--disabled-fill), transparent);
   }
 

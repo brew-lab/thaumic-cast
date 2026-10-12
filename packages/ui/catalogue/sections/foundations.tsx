@@ -49,7 +49,6 @@ const SEMANTIC = [
   'cast-badge',
   'on-cast-badge',
   'live-lamp',
-  'danger',
   'on-danger',
   'track',
 ];
@@ -61,7 +60,78 @@ const STATUS_GLYPH = {
   success: 'check',
   info: 'info',
 } as const;
-const LADDERS = ['purple', 'neutral', 'red', 'magenta'];
+/**
+ * What reads each status token, in the two pairs (T-colour): on its container, or the ink on a
+ * surface. A component sets data-tone and reads --tone-*; this is where each set shows up.
+ */
+const STATUS_READERS: Record<(typeof STATUS)[number], { container: string; ink: string }> = {
+  danger: {
+    container: 'Notice, NoticeLine, Badge, Button tonal danger (Stop) and failed',
+    ink: 'Button filled danger (Stop all casts), StatusDot failed, invalid and error edges and text',
+  },
+  warning: { container: 'Notice, NoticeLine, Badge', ink: 'Meter low' },
+  success: { container: 'nothing in v1', ink: 'StatusDot connected, Clacks answered' },
+  info: { container: 'Notice, NoticeLine', ink: 'nothing in v1' },
+};
+
+/**
+ * One status set in this scheme: its four tokens with their values, the container sample,
+ * the ink sample on a surface, and what reads each pair.
+ * @param props - Component props
+ * @param props.set - The set
+ * @returns The row
+ */
+function StatusSet({ set }: { set: (typeof STATUS)[number] }): JSX.Element {
+  const scheme = useScheme();
+  const hex = (name: string): string => COLORS[name as ColorName][scheme];
+  const tokens = [
+    { name: `${set}-container`, value: hex(`${set}-container`) },
+    { name: `on-${set}-container`, value: hex(`on-${set}-container`) },
+    {
+      name: `${set}-glyph`,
+      value: scheme === 'light' ? hex(`on-${set}-container`) : hex(`${set}-ink`),
+    },
+    { name: `${set}-ink`, value: hex(`${set}-ink`) },
+  ];
+  const glyph = <Icon glyph={STATUS_GLYPH[set]} />;
+  return (
+    <li class="status-set" data-tone={set}>
+      <ul class="status-tokens">
+        {tokens.map((t) => (
+          <li key={t.name} class="swatch-item">
+            <span class="swatch" style={swatch(t.name)} />
+            <span class="token-name">--{t.name}</span>
+            <span class="token-value mono">{t.value}</span>
+          </li>
+        ))}
+      </ul>
+      <div class="status-samples">
+        <p class="status-sample on-container">
+          <span class="status-glyph">{glyph}</span>
+          <span>
+            <strong>{set}</strong> on its container
+          </span>
+        </p>
+        <p class="status-sample on-surface">
+          <span class="status-glyph">{glyph}</span>
+          <span>
+            <strong>{set}</strong> ink on a surface
+          </span>
+        </p>
+      </div>
+      <p class="status-readers">
+        <span>
+          <strong>Container:</strong> {STATUS_READERS[set].container}
+        </span>
+        <span>
+          <strong>Ink:</strong> {STATUS_READERS[set].ink}
+        </span>
+      </p>
+    </li>
+  );
+}
+
+const LADDERS = ['purple', 'neutral', 'magenta'];
 const STOPS = [20, 30, 40, 50, 60, 76, 90, 95];
 
 /**
@@ -77,25 +147,12 @@ export function ColourSpecimen(): JSX.Element {
           <Swatch key={n} name={n} />
         ))}
       </ul>
-      <h3 class="label">Status sets: container, on-container text and ink</h3>
+      <h3 class="label">
+        Status sets: each read on its container or as the ink on a surface, never by name
+      </h3>
       <ul class="status-sets">
         {STATUS.map((s) => (
-          <li
-            key={s}
-            class="status-set"
-            style={{
-              '--set-bg': `var(--${s}-container)`,
-              '--set-fg': `var(--on-${s}-container)`,
-              '--set-ink': `var(--${s}-ink)`,
-            }}
-          >
-            <span class="status-glyph">
-              <Icon glyph={STATUS_GLYPH[s]} />
-            </span>
-            <span>
-              <strong>{s}</strong> --{s}-container, --on-{s}-container, --{s}-ink
-            </span>
-          </li>
+          <StatusSet key={s} set={s} />
         ))}
       </ul>
       <h3 class="label">The live gradient</h3>
@@ -175,7 +232,6 @@ export function SpaceSpecimen(): JSX.Element {
 }
 
 const RADII = [
-  'radius-thumb-pressed',
   'radius-pressed',
   'radius-control',
   'radius-group',
@@ -200,19 +256,26 @@ export function ShapeSpecimen(): JSX.Element {
           </li>
         ))}
       </ul>
-      <h3 class="label">Interaction: rest, hover and focus (bevel), press</h3>
+      <h3 class="label">
+        Interaction: rest, then hover (colour only), then focus (the bevel and the ring), then press
+        (the bevel and the 12 % layer; nothing scales)
+      </h3>
       <ul class="shapes">
         <li class="shape-item">
           <span class="shape" style={{ '--shape-radius': 'var(--radius-control)' }} />
           <span class="token-name">rest</span>
         </li>
         <li class="shape-item">
-          <span class="shape bevel" />
-          <span class="token-name">--shape-bevel</span>
+          <span class="shape hovered" style={{ '--shape-radius': 'var(--radius-control)' }} />
+          <span class="token-name">hover: 8 %</span>
         </li>
         <li class="shape-item">
-          <span class="shape" style={{ '--shape-radius': 'var(--radius-pressed)' }} />
-          <span class="token-name">press</span>
+          <span class="shape bevel focused" />
+          <span class="token-name">focus: --shape-bevel + ring</span>
+        </li>
+        <li class="shape-item">
+          <span class="shape bevel pressed" />
+          <span class="token-name">press: --shape-bevel + 12 %</span>
         </li>
       </ul>
       <h3 class="label">Lines</h3>
@@ -299,7 +362,10 @@ export function MotionSpecimen(): JSX.Element {
       <ul class="plain-list">
         {[...DURATIONS, ...EASES].map((t) => (
           <li key={t}>
-            <span class="token-name">--{t}</span>
+            <span class="token-name">--{t}</span>{' '}
+            <span class="token-value">
+              {getComputedStyle(document.documentElement).getPropertyValue(`--${t}`).trim()}
+            </span>
           </li>
         ))}
       </ul>

@@ -14,7 +14,10 @@ export interface CardProps {
   meta?: string;
   /** Actions at the end of the heading. */
   actions?: ComponentChildren;
-  /** No padding, for a card that lays out its own edge (a cast, a room). */
+  /**
+   * No padding, for a card that lays out its own edge (a cast, a room). Nothing is clipped,
+   * so focus rings stay whole; a part that paints to the edge rounds its own corners.
+   */
   flush?: boolean;
   /** The element id, for a link to the card (`#speakers`). */
   id?: string;
@@ -29,7 +32,8 @@ export interface CardProps {
  * only (in dark the surface step is the edge), and no shadow; there is no raised kind. It is
  * the `card` container its contents lay out from, and it points the focus ring's gap at its
  * surface. With a title it is a `<section>` named by a SectionHeader; without one, a plain
- * box. The density sets the padding: 12 in the popup, `--space-5` on the desktop.
+ * box. The density sets the padding: 12 in the popup, `--space-5` on the desktop. Its body is
+ * the settings grid: settings rows and Switches placed in it share one control column.
  * @param props - Component props
  * @param props.title - The heading
  * @param props.level - The heading's level
@@ -52,10 +56,16 @@ export function Card({
 }: CardProps): JSX.Element {
   const headingId = useId();
   const className = cx(styles.card, flush && styles.flush);
+  // The body is the settings grid its rows share (F-grid), with or without a heading.
+  const body = (
+    <div class={styles.body} data-settings-grid="card">
+      {children}
+    </div>
+  );
   if (!title) {
     return (
       <div id={id} class={className} aria-label={rest['aria-label']}>
-        {children}
+        {body}
       </div>
     );
   }
@@ -69,7 +79,7 @@ export function Card({
         actions={actions}
         id={headingId}
       />
-      <div class={styles.body}>{children}</div>
+      {body}
     </section>
   );
 }

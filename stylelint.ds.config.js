@@ -15,7 +15,7 @@ const VALUES_FROM_TOKENS = {
     ],
     '/^(gap|row-gap|column-gap|padding.*|margin.*|inset.*|border(-.+)?-(width|radius)|border-radius|outline-(width|offset)|(min-|max-)?(inline|block)-size|(transition|animation)-(duration|delay|timing-function))$/':
       [
-        '/^((var\\(--[\\w-]+\\)|calc\\([^;]*\\)|0|100%|auto|1fr|min-content|max-content|none|inherit)\\s*)+$/',
+        '/^((var\\(--[\\w-]+\\)|calc\\([^;]*\\)|0|100%|auto|1fr|min-content|max-content|none|inherit|100dvb)\\s*)+$/',
       ],
   },
 };

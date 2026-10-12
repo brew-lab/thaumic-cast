@@ -27,16 +27,20 @@ export interface SettingsRowProps {
   /** The control, or a function that is given the row's label id and description. */
   control: ComponentChildren | ((a11y: SettingsRowControl) => ComponentChildren);
   /**
-   * How much room the control needs. narrow: a Switch, a Select of 15rem or less, the
-   * SegmentedControl; wide: anything wider, which stacks under the help below 45rem;
-   * action: a Button, centred against the label and the help.
+   * How much room the control needs. narrow: a Switch, a Select of 15rem or less; wide:
+   * anything wider (the SegmentedControl, a long Select), which stacks under the help below
+   * 45rem; action: a Button, centred against the label and the help.
    */
   controlWidth?: 'narrow' | 'wide' | 'action';
   /** A dependent control under the row, shown by the caller while the row's Switch is on. */
   detail?: ComponentChildren;
   /** Needs another setting: the name and help at 38 %, the note at full strength. */
   disabled?: boolean;
-  /** Set by an environment variable: the info glyph on the note, the name at full strength. */
+  /**
+   * Set by an environment variable: the info glyph on the note, the name at full strength,
+   * and the row `aria-disabled`. The caller disables the control natively; the note is text
+   * in the row, read with it.
+   */
   locked?: boolean;
   /** The row's error, after a save failed: "The settings were not saved. Try again." */
   error?: string;
@@ -88,16 +92,19 @@ export function SettingsRow({
         locked && styles.locked,
       )}
       data-width={controlWidth}
+      data-setrow=""
       role={label ? 'group' : undefined}
       aria-labelledby={label ? labelId : undefined}
-      aria-disabled={label && disabled ? 'true' : undefined}
+      aria-disabled={label && (disabled || locked) ? 'true' : undefined}
     >
       {label && (
         <p id={labelId} class={styles.label}>
           {label}
         </p>
       )}
-      <div class={styles.control}>{typeof control === 'function' ? control(a11y) : control}</div>
+      <div class={styles.control} data-settings-grid={label ? undefined : 'row'}>
+        {typeof control === 'function' ? control(a11y) : control}
+      </div>
       {help && (
         <p id={`${id}-help`} class={styles.help}>
           {help}
@@ -114,7 +121,7 @@ export function SettingsRow({
         </p>
       )}
       {error && (
-        <p id={`${id}-error`} class={styles.error}>
+        <p id={`${id}-error`} class={styles.error} data-tone="danger">
           <span class={styles.glyph}>
             <Icon glyph="danger" />
           </span>

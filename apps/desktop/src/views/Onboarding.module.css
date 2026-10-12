@@ -1,7 +1,10 @@
-.onboarding {
-  display: flex;
-  flex-direction: column;
-  block-size: 100vh;
-  inline-size: 100vw;
-  background: var(--ground);
+/* The desktop onboarding frame, until Phase 4's WizardShell: the window, never wider. */
+@layer app {
+  .onboarding {
+    display: flex;
+    flex-direction: column;
+    block-size: 100dvb;
+    inline-size: 100%;
+    background: var(--ground);
+  }
 }

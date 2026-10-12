@@ -2,7 +2,8 @@ import type { JSX } from 'preact';
 import { useId } from 'preact/hooks';
 import { Icon } from '../Icon';
 import type { GlyphName } from '../Icon/glyphs';
-import { cx, dataAttributes, type DataAttributes } from '../utils/cx';
+import { dataAttributes, type DataAttributes } from '../utils/cx';
+import { usePress } from '../utils/press';
 import styles from './SegmentedControl.module.css';
 
 /** One segment. */
@@ -58,9 +59,10 @@ export function SegmentedControl<T extends string>({
   ...rest
 }: SegmentedControlProps<T>): JSX.Element {
   const name = useId();
+  const press = usePress(['space']);
   return (
     <fieldset
-      class={cx(styles.group, disabled && styles.disabled)}
+      class={styles.group}
       role="radiogroup"
       disabled={disabled}
       aria-describedby={rest['aria-describedby']}
@@ -71,7 +73,7 @@ export function SegmentedControl<T extends string>({
           const chosen = option.value === value;
           const glyph = chosen ? 'check' : option.glyph;
           return (
-            <label key={option.value} class={styles.segment}>
+            <label key={option.value} class={styles.segment} {...press}>
               <input
                 type="radio"
                 class={styles.input}
@@ -81,7 +83,13 @@ export function SegmentedControl<T extends string>({
                 onChange={() => onChange(option.value)}
               />
               {glyph && <Icon glyph={glyph} />}
-              <span class={styles.label}>{option.label}</span>
+              {/* A hidden strong copy holds the chosen width, so choosing moves nothing. */}
+              <span class={styles.label}>
+                <span class={styles.word}>{option.label}</span>
+                <span class={styles.strong} aria-hidden="true">
+                  {option.label}
+                </span>
+              </span>
             </label>
           );
         })}

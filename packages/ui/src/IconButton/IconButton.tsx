@@ -4,6 +4,7 @@ import { Icon } from '../Icon';
 import type { GlyphName } from '../Icon/glyphs';
 import { Tooltip } from '../Tooltip';
 import { cx, dataAttributes, type DataAttributes } from '../utils/cx';
+import { usePress } from '../utils/press';
 import styles from './IconButton.module.css';
 
 /** Props for {@link IconButton}. */
@@ -14,7 +15,7 @@ export interface IconButtonProps extends DataAttributes {
   label: string;
   /** quiet (no fill; the default) or tonal (`--container-high`: Settings, Play and Pause). */
   kind?: 'quiet' | 'tonal';
-  /** The density sets the box: popup 1.75 / 2rem, desktop 2.5 / 2.75rem. */
+  /** sm 1.75rem (28) or md 2rem (32), on both densities (F-size). */
   size?: 'sm' | 'md';
   /** A state that stays down (mute): `aria-pressed`, with the glyph swapped, never a fill. */
   pressed?: boolean;
@@ -37,9 +38,9 @@ export interface IconButtonProps extends DataAttributes {
 }
 
 /**
- * The icon-only action (DESIGN.md A-iconbtn). Quiet or tonal, never filled. Its box is
- * never under the target minimum, and on the desktop an `::after` hit area grows it to
- * 2.75rem. Mute keeps one name; `aria-pressed` carries its state and the glyph swaps.
+ * The icon-only action (DESIGN.md A-iconbtn). Quiet or tonal, never filled. The box is
+ * 28 or 32 on every surface, and an `::after` hit area grows it to `--hit-min` (44 in a
+ * window and under touch). Mute keeps one name; `aria-pressed` carries its state and the glyph swaps.
  * @param props - Component props
  * @param props.glyph - The glyph
  * @param props.label - The accessible name
@@ -69,6 +70,7 @@ export function IconButton({
   ...rest
 }: IconButtonProps): JSX.Element {
   const shown = pressed && pressedGlyph ? pressedGlyph : glyph;
+  const press = usePress();
   const button = (
     <button
       type="button"
@@ -85,6 +87,7 @@ export function IconButton({
         if (!busy) onPress?.(event);
       }}
       onKeyDown={onKeyDown}
+      {...press}
       {...dataAttributes(rest)}
     >
       {busy ? <Clacks size="sm" /> : <Icon glyph={shown} />}

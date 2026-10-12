@@ -1,5 +1,5 @@
 import type { ComponentChildren, JSX } from 'preact';
-import { useEffect, useRef, useState } from 'preact/hooks';
+import { useEffect, useId, useRef, useState } from 'preact/hooks';
 import { AddressField, type AddressResult } from '../../src/AddressField';
 import { Button } from '../../src/Button';
 import { Card } from '../../src/Card';
@@ -114,7 +114,7 @@ const THEME = [
  * detail slot, disabled, locked and error.
  * @returns The rows
  */
-function SettingsRows(): JSX.Element {
+export function SettingsRows(): JSX.Element {
   const [theme, setTheme] = useState<'auto' | 'light' | 'dark'>('auto');
   const [ceiling, setCeiling] = useState(true);
   const [level, setLevel] = useState(30);
@@ -122,6 +122,7 @@ function SettingsRows(): JSX.Element {
     <>
       <SettingsRow
         label="Theme"
+        controlWidth="wide"
         help="Light or dark, whichever the system is set to."
         control={(a11y) => (
           <SegmentedControl
@@ -198,6 +199,7 @@ function SettingsRows(): JSX.Element {
               step={1}
               value={level}
               onChange={setLevel}
+              readout={3}
             />
           )
         }
@@ -238,6 +240,7 @@ function SettingsRows(): JSX.Element {
       />
       <SettingsRow
         label="Theme"
+        controlWidth="wide"
         error="The settings were not saved. Try again."
         control={(a11y) => (
           <SegmentedControl
@@ -349,7 +352,7 @@ export function ChoiceGroupSpecimen(): JSX.Element {
 const URL = 'http://192.168.1.20:49400/stream/4f2a/live.flac';
 
 /**
- * CopyField: rest, copied (for COPY_CONFIRM_MS), refused (revealed and selected), unavailable, the
+ * CopyField: rest, copied (held here; in use it shows for COPY_CONFIRM_MS), refused (revealed and selected), unavailable, the
  * icon-only action under 20rem, and the reveal-on-refusal kind.
  * @returns The specimen
  */
@@ -376,9 +379,21 @@ export function CopyFieldSpecimen(): JSX.Element {
                 value="192.168.1.20:49400"
                 action="Copy address"
                 clipboard={fakeClipboard(true)}
+                confirmFor={Infinity}
                 {...words}
               />
             </Pressed>
+          </div>
+        </div>
+        <div class="stack">
+          <p class="label">copied, then back to rest after 2 s (press it)</p>
+          <div class="width-medium">
+            <CopyField
+              value="192.168.1.20:49400"
+              action="Copy address"
+              clipboard={fakeClipboard(true)}
+              {...words}
+            />
           </div>
         </div>
         <div class="stack">
@@ -683,11 +698,19 @@ export function DisclosureSpecimen(): JSX.Element {
           </Disclosure>
         </StateRow>
       </StateGrid>
-      <div data-density="desktop">
-        <Disclosure label="Advanced (desktop)" summary="Smoothing 200 ms">
-          {panel}
-        </Disclosure>
-      </div>
+      {(['popup', 'desktop'] as const).map((density) => (
+        <div key={density} class="stack" data-density={density}>
+          <p class="label">
+            {density === 'popup' ? 'Popup: sm and md (2.25rem)' : 'Desktop: sm and md (2.75rem)'}
+          </p>
+          <Disclosure label={`Advanced (${density})`} summary="Smoothing 200 ms">
+            {panel}
+          </Disclosure>
+          <Disclosure label="3 rooms" size="md" summary="Kitchen 30 · Living Room muted">
+            {panel}
+          </Disclosure>
+        </div>
+      ))}
     </div>
   );
 }
@@ -784,6 +807,25 @@ export function NoticeSpecimen(): JSX.Element {
           text="A laptop on battery may throttle the tab, and the audio with it."
         />
         <Notice tone="info" text="Browser-wide capture casts PCM, whatever Quality is chosen." />
+        <p class="label">the action busy, then failed</p>
+        <Pressed>
+          <Notice
+            tone="danger"
+            lead="Kitchen did not join"
+            action={{ label: 'Try again', onAction: never, labels: { busy: 'Trying…' } }}
+          />
+        </Pressed>
+        <Pressed>
+          <Notice
+            tone="danger"
+            lead="Kitchen did not join"
+            action={{
+              label: 'Ask again',
+              onAction: () => Promise.reject(new Error('no')),
+              labels: { failed: 'Try again' },
+            }}
+          />
+        </Pressed>
       </div>
       <div data-density="desktop" class="width-medium stack">
         <Notice
@@ -839,6 +881,27 @@ export function NoticeLineSpecimen(): JSX.Element {
         lead="Kitchen may cut out soon"
         opensTile={{ onOpen: noop, label: 'Kitchen may cut out soon: open this cast' }}
       />
+      <p class="label">row line: the action busy, then failed</p>
+      <Pressed>
+        <NoticeLine
+          tone="danger"
+          lead="Bedroom did not join"
+          action={{ label: 'Try again', onAction: never, labels: { busy: 'Trying…' } }}
+          onDismiss={noop}
+        />
+      </Pressed>
+      <Pressed>
+        <NoticeLine
+          tone="danger"
+          lead="Bedroom did not join"
+          action={{
+            label: 'Ask again',
+            onAction: () => Promise.reject(new Error('no')),
+            labels: { failed: 'Try again' },
+          }}
+          onDismiss={noop}
+        />
+      </Pressed>
       <p class="label">away line</p>
       <NoticeLine
         tone="info"
@@ -848,6 +911,36 @@ export function NoticeLineSpecimen(): JSX.Element {
         details={{ label: '2 more', content: 'Cast to Kitchen ended. Patio left this cast.' }}
         onDismiss={noop}
       />
+      <p class="label">
+        At the popup's own width: a short lead keeps to one row; a longer one wraps, whole
+      </p>
+      <div class="popup-column stack" data-density="popup" data-popup-lines="">
+        <NoticeLine
+          tone="danger"
+          lead="Bedroom did not join"
+          action={{ label: 'Try again', onClick: noop }}
+          onDismiss={noop}
+          announce={false}
+        />
+        <NoticeLine
+          tone="info"
+          glyph="history"
+          lead="Patio left"
+          srPrefix="While you were away:"
+          details={{ label: '2 more', content: 'Cast to Kitchen ended.' }}
+          onDismiss={noop}
+          announce={false}
+        />
+        <NoticeLine
+          tone="info"
+          glyph="history"
+          lead="Cast to Bedroom ended"
+          srPrefix="While you were away:"
+          details={{ label: '2 more', content: 'Cast to Kitchen ended.' }}
+          onDismiss={noop}
+          announce={false}
+        />
+      </div>
     </div>
   );
 }
@@ -855,20 +948,73 @@ export function NoticeLineSpecimen(): JSX.Element {
 /* ------------------------------------------------------------------- Toast */
 
 /**
- * Toast: with Undo, and without an action; both densities.
+ * A toast that goes on Esc or X, and a Button that brings it back without taking focus
+ * from it.
+ * @returns The specimen
+ */
+function DismissibleToast(): JSX.Element {
+  const [shown, setShown] = useState(true);
+  return (
+    <div class="stack">
+      <Button kind="quiet" onClick={() => setShown(true)}>
+        Show the toast again
+      </Button>
+      {shown && (
+        <Toast
+          text="Garden left this cast"
+          action={{ label: 'Undo', onClick: noop }}
+          onDismiss={() => setShown(false)}
+        />
+      )}
+    </div>
+  );
+}
+
+/**
+ * Toast: with Undo, and without an action; a long message wraps; Undo busy and failed; one
+ * that Esc and X really dismiss.
  * @returns The specimen
  */
 export function ToastSpecimen(): JSX.Element {
   return (
     <div class="stack width-compact">
-      <Toast text="Kitchen left this cast" action="Undo" onAction={noop} onDismiss={noop} />
+      <p class="label">Esc or X dismisses it (an Esc that hides a tooltip does not)</p>
+      <DismissibleToast />
+      <Toast
+        text="Kitchen left this cast"
+        action={{ label: 'Undo', onClick: noop }}
+        onDismiss={noop}
+      />
       <Toast
         text="Cast to Bedroom ended. The cast was stopped at the companion's end."
         onDismiss={noop}
       />
       <div data-density="desktop">
-        <Toast text="Evenings removed." action="Undo" onAction={noop} onDismiss={noop} />
+        <Toast
+          text="Evenings removed."
+          action={{ label: 'Undo', onClick: noop }}
+          onDismiss={noop}
+        />
       </div>
+      <p class="label">Undo busy, then failed</p>
+      <Pressed>
+        <Toast
+          text="Kitchen left this cast"
+          action={{ label: 'Undo', onAction: never, labels: { busy: 'Undoing…' } }}
+          onDismiss={noop}
+        />
+      </Pressed>
+      <Pressed>
+        <Toast
+          text="Kitchen left this cast"
+          action={{
+            label: 'Undo',
+            onAction: () => Promise.reject(new Error('no')),
+            labels: { failed: 'Try again' },
+          }}
+          onDismiss={noop}
+        />
+      </Pressed>
     </div>
   );
 }
@@ -880,6 +1026,7 @@ export function ToastSpecimen(): JSX.Element {
  * @returns The specimen
  */
 export function WizardStepSpecimen(): JSX.Element {
+  const id = useId();
   return (
     <div class="stack">
       <div class="width-compact">
@@ -888,8 +1035,8 @@ export function WizardStepSpecimen(): JSX.Element {
             title="The companion"
             subtitle="The half that talks to the speakers"
             glyph="monitor"
-            titleId=""
-            subtitleId=""
+            titleId={`${id}-1`}
+            subtitleId={`${id}-1d`}
           >
             <p class="label">The step's body.</p>
           </WizardStep>
@@ -900,8 +1047,8 @@ export function WizardStepSpecimen(): JSX.Element {
           title="The speakers"
           subtitle="Finding out who is in"
           glyph="speaker"
-          titleId=""
-          subtitleId=""
+          titleId={`${id}-2`}
+          subtitleId={`${id}-2d`}
         >
           <p class="label">The step's body.</p>
         </WizardStep>
@@ -967,7 +1114,7 @@ export function CardSpecimen(): JSX.Element {
           <p class="label">Popup density: 12 px padding.</p>
         </Card>
         <Card flush aria-label="Flush card">
-          <p class="label">Flush: the content lays out its own edge.</p>
+          <p class="label flush-demo">Flush: the content lays out its own edge (here, padding).</p>
         </Card>
       </div>
     </div>

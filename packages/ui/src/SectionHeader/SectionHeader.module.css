@@ -1,7 +1,7 @@
 @layer components {
   /* A-heading. No container query: the actions wrap under the title by themselves. */
   .header {
-    --heading-ink: light-dark(var(--brand-ink), var(--on-surface));
+    --heading-ink: var(--title-ink);
     --heading-size: var(--text-5);
     --heading-leading: var(--leading-5);
     --heading-tracking: var(--tracking-5);
@@ -32,9 +32,12 @@
   }
 
   /*
-   * The live gradient, drawn once per screen: five sRGB stops first, then the OKLCH ramp
-   * with its hue drift (--live-shift runs from --live-drift-from to 0; it holds under
-   * reduced motion). The heading keeps a solid colour for forced colours.
+   * The live gradient, drawn once per screen: five sRGB stops, then (where relative colour
+   * exists) the OKLCH ramp with its hue drift (--live-shift runs from --live-drift-from to
+   * 0; it holds under reduced motion). The ramp sits behind @supports because it holds
+   * var(): an engine without relative colour would parse it, find it invalid when it
+   * computes, and drop the background to none under transparent text (the desktop's WebKit
+   * floor). The heading keeps a solid colour for forced colours.
    */
   .gradient {
     color: var(--primary);
@@ -46,18 +49,23 @@
       var(--live-stop-4),
       var(--live-stop-5)
     );
-    background-image: linear-gradient(
-      90deg in oklch,
-      oklch(from var(--live-from) l c calc(h + var(--live-shift))),
-      oklch(from var(--live-to) l c calc(h + var(--live-shift)))
-    );
     background-clip: text;
     -webkit-text-fill-color: transparent;
-    animation-name: drift;
-    animation-duration: var(--dur-drift);
-    animation-timing-function: var(--ease-effects);
-    animation-iteration-count: infinite;
-    animation-direction: alternate;
+  }
+
+  @supports (color: oklch(from red l c h)) {
+    .gradient {
+      background-image: linear-gradient(
+        90deg in oklch,
+        oklch(from var(--live-from) l c calc(h + var(--live-shift))),
+        oklch(from var(--live-to) l c calc(h + var(--live-shift)))
+      );
+      animation-name: drift;
+      animation-duration: var(--dur-drift);
+      animation-timing-function: var(--ease-effects);
+      animation-iteration-count: infinite;
+      animation-direction: alternate;
+    }
   }
 
   .meta {

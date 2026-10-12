@@ -237,6 +237,7 @@ export function AddressField({
               {...control}
               kind="address"
               size={size}
+              grow={kind === 'speaker'}
               inputMode={kind === 'server' ? 'url' : 'decimal'}
               autoComplete={kind === 'server' ? 'url' : 'off'}
               placeholder={placeholder}

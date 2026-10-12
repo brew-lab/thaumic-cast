@@ -10,6 +10,7 @@
   .grid {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(min(100%, var(--track-card)), 1fr));
+    align-items: start;
     gap: var(--space-5);
   }
 }

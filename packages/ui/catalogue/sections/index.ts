@@ -53,6 +53,14 @@ import {
   WizardStepSpecimen,
 } from './molecules';
 import { SizeRuleSpecimen } from './size';
+import { ButtonStatesSpecimen } from './button-states';
+import { PressStatesSpecimen } from './press-states';
+import {
+  ContainerFieldsSpecimen,
+  ContainerFramesSpecimen,
+  FluidSpecimen,
+  RailSpecimen,
+} from './containers';
 
 /** One catalogue section: an item or a group of tokens, drawn in light and in dark. */
 export interface CatalogueSection {
@@ -175,6 +183,24 @@ export const SECTIONS: CatalogueSection[] = [
     tier: 'Tier 1 · A-button',
     summary: 'Every kind and state; done and failed hold until the next press.',
     Specimen: ButtonSpecimen,
+  },
+  {
+    id: 'button-states',
+    wide: true,
+    title: 'Button states',
+    tier: 'Tier 1 · A-button',
+    summary:
+      'A change of state: the Button fits what it shows, its width morphs, and the old words go before the new ones come. Every kind, long to short and back, then beside a field, in a row, full width and in a SettingsRow.',
+    Specimen: ButtonStatesSpecimen,
+  },
+  {
+    id: 'press-states',
+    wide: true,
+    title: 'Press and focus',
+    tier: 'Tier 0 · F-grammar',
+    summary:
+      'Hover is colour; focus-visible is the bevel and the ring; a press morphs to the bevel and back, held for the morph so a quick click or Enter shows it in full. Nothing scales. Every Button kind and every other pressable atom, live, then each state forced.',
+    Specimen: PressStatesSpecimen,
   },
   {
     id: 'icon-button',
@@ -416,5 +442,41 @@ export const SECTIONS: CatalogueSection[] = [
     tier: 'Tier 3 · C-card',
     summary: 'One look; a titled card is a section named by its SectionHeader.',
     Specimen: CardSpecimen,
+  },
+  {
+    id: 'container-frames',
+    title: 'Containers: molecules',
+    tier: 'Tier 2 · F-containers',
+    summary:
+      'Every container-query molecule in a compact (22rem), medium (36rem) and wide (52rem) frame, in the popup and desktop densities. Each frame says if the window is too narrow for it.',
+    wide: true,
+    Specimen: ContainerFramesSpecimen,
+  },
+  {
+    id: 'container-fields',
+    title: 'Containers: fields and clusters',
+    tier: 'Tier 2 · F-containers',
+    summary:
+      'AddressField, the growing IP field, CopyField and a stacking Cluster in every range, both densities.',
+    wide: true,
+    Specimen: ContainerFieldsSpecimen,
+  },
+  {
+    id: 'rail',
+    title: 'The rail, narrow and wide',
+    tier: 'Tier 1 · A-nav, A-brand',
+    summary:
+      'BrandBlock and NavItem in a window under 45rem (the mark alone, icon-only items, a Tooltip on hover and focus) and from 45rem.',
+    wide: true,
+    Specimen: RailSpecimen,
+  },
+  {
+    id: 'fluid',
+    title: 'Fluid ramp and a resizable frame',
+    tier: 'Tier 0 · F-fluid',
+    summary:
+      'The fluid type and space steps measured in 352, 640 and 960 px containers, and a frame to drag through every range.',
+    wide: true,
+    Specimen: FluidSpecimen,
   },
 ];

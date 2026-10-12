@@ -69,8 +69,9 @@ export function ReadyStep(): preact.JSX.Element {
         />
       </Card>
 
-      <h3 className={styles.sectionTitle}>{t('onboarding.ready.performance_title')}</h3>
-      <p className={styles.sectionBody}>{t('onboarding.ready.performance_body')}</p>
+      <Card title={t('onboarding.ready.performance_title')} level={3}>
+        <p className={styles.sectionBody}>{t('onboarding.ready.performance_body')}</p>
+      </Card>
 
       <Notice tone="warning" text={t('onboarding.ready.battery_warning')} />
     </WizardStep>

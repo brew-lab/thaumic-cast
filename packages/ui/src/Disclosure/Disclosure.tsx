@@ -1,6 +1,7 @@
 import type { ComponentChildren, JSX } from 'preact';
 import { Icon } from '../Icon';
 import { cx, dataAttributes, type DataAttributes } from '../utils/cx';
+import { usePress } from '../utils/press';
 import styles from './Disclosure.module.css';
 
 /** Props for {@link Disclosure}. */
@@ -33,9 +34,10 @@ export interface DisclosureProps extends DataAttributes {
  * `<summary>`, so the expanded state, Enter and Space are native and nothing in a shut panel
  * is focusable or read out. The trigger is quiet: a chevron that turns, the label in 600 and
  * an optional summary that truncates before the label does. It follows the grammar as a wide
- * control (the bevel on hover and focus, the wide press); open is not a selected state. The
- * trigger bleeds its padding past the content edge, so the chevron lines up with the text
- * above. Its size, not the density, sets its height; the hit area reaches 44 on a window.
+ * control (hover is colour; focus-visible and a press take the bevel); open is not a selected
+ * state. The trigger bleeds its padding past the content edge, so the chevron lines up with
+ * the text above. Its size, not the density, sets its height; the hit area reaches 44 on a
+ * window.
  * @param props - Component props
  * @param props.label - The trigger's name
  * @param props.summary - A summary after the label
@@ -60,6 +62,7 @@ export function Disclosure({
   children,
   ...rest
 }: DisclosureProps): JSX.Element {
+  const press = usePress();
   return (
     <details
       id={id}
@@ -77,6 +80,7 @@ export function Disclosure({
         onClick={(event) => {
           if (disabled) event.preventDefault();
         }}
+        {...press}
         {...dataAttributes(rest)}
       >
         <span class={styles.chevron}>

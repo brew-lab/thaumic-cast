@@ -2,9 +2,11 @@
   /*
    * A-select. The <select> is the trigger and the hit area; the box is drawn by the
    * control's ::before, so on a window the <select> can be --hit-min (44) tall while the box
-   * stays at its size (F-size). The chevron (or the Clacks) sits over its end. The box
-   * follows the button grammar with the wide press; open and invalid take a 2 px edge, and
-   * the padding gives it back so the value never moves.
+   * stays at its size (F-size). The chevron (or the Clacks) sits over its end. The trigger
+   * is a field: it never reshapes or scales (hover is the layer and an --on-surface edge,
+   * as TextInput); open and invalid take a 2 px edge, and the padding gives it back so the
+   * value never moves. The shape lives in the customisable list: an option takes the bevel
+   * on focus and press.
    */
   .field {
     display: flex;
@@ -22,7 +24,7 @@
 
   .control {
     --select-h: var(--control-md);
-    --select-bg: light-dark(var(--surface), var(--container));
+    --select-bg: var(--field-bg);
     --select-fg: var(--on-surface);
     --select-edge: var(--outline);
     --select-edge-w: var(--line-hair);
@@ -32,9 +34,10 @@
     --select-pad: calc(var(--space-4) - var(--select-edge-w) + var(--line-hair));
     --select-shadow: none;
     --select-fill: color-mix(in oklch, var(--select-fg) var(--layer), var(--select-bg));
-    --listbox-bg: light-dark(var(--surface), var(--container-high));
+    --select-listbox-bg: var(--listbox-bg);
 
     position: relative;
+    isolation: isolate;
     display: inline-grid;
     align-items: center;
     min-inline-size: 0;
@@ -62,13 +65,16 @@
     background: var(--select-fill);
     box-shadow: var(--select-shadow);
     pointer-events: none;
-    transition:
-      border-radius var(--dur-shape) var(--ease-effects),
-      scale var(--dur-spatial) var(--ease-spatial);
+    transition: border-color var(--dur-effects) var(--ease-effects);
   }
 
-  /* The hit area: transparent, at least --hit-min tall, centred on the box. */
+  /*
+   * The hit area: transparent, at least --hit-min tall, centred on the box. It and the
+   * chevron paint over the box, the ::before, which would otherwise cover the value and the
+   * chevron.
+   */
   .select {
+    z-index: var(--z-raised);
     grid-area: 1 / 1;
     min-inline-size: 0;
     block-size: calc(max(var(--select-h), var(--hit-min)));
@@ -96,6 +102,7 @@
   }
 
   .trail {
+    z-index: var(--z-raised);
     grid-area: 1 / 1;
     justify-self: end;
     display: inline-grid;
@@ -111,9 +118,10 @@
     transition: rotate var(--dur-effects) var(--ease-effects);
   }
 
-  /* States: the button grammar on the box, with the wide press. */
+  /* States: the layer on the box and, on hover, the --on-surface edge; it never reshapes. */
   .control:has(.select:is(:hover, [data-force='hover'])) {
     --layer: var(--layer-hover);
+    --select-edge: var(--on-surface);
   }
 
   .control:has(.select:is(:focus-visible, [data-force='focus'])) {
@@ -126,43 +134,19 @@
     --layer: var(--layer-press);
   }
 
-  .control:has(.select:is(:active, [data-force='press']))::before {
-    border-radius: var(--radius-pressed);
-    scale: var(--press-wide);
-    transition-duration: var(--dur-fast);
-  }
-
-  @supports (corner-shape: bevel) {
-    .control:has(
-        .select:not(:disabled):is(
-            :hover,
-            :focus-visible,
-            [data-force='hover'],
-            [data-force='focus']
-          )
-      )::before {
-      border-radius: var(--shape-bevel);
-      corner-shape: bevel;
-    }
-
-    .control:has(.select:not(:disabled):is(:active, [data-force='press']))::before {
-      border-radius: var(--radius-pressed);
-      corner-shape: round;
-    }
-  }
-
-  /* Open: a 2 px primary edge, the chevron turned, no ring. */
-  .control:has(.select:open) {
+  /* Open, as the catalogue draws it without a press (the real one is :open, below). */
+  .control:has(.select[data-force='open']) {
     --select-edge: var(--primary);
     --select-edge-w: var(--line-bold);
   }
 
-  .control:has(.select:open) .trail > svg {
+  .control:has(.select[data-force='open']) .trail > svg {
     rotate: 180deg;
   }
 
-  .invalid {
-    --select-edge: var(--danger-ink);
+  .invalid,
+  .invalid:has(.select:hover) {
+    --select-edge: var(--tone-ink);
     --select-edge-w: var(--line-bold);
   }
 
@@ -175,11 +159,6 @@
     --select-edge: color-mix(in oklch, var(--on-surface) var(--disabled-fill), transparent);
     --select-bg: transparent;
     --layer: initial;
-  }
-
-  .control:has(.select:disabled)::before {
-    border-radius: var(--select-radius);
-    scale: 1;
   }
 
   .select:disabled {
@@ -208,6 +187,19 @@
       display: none;
     }
 
+    /*
+     * Open: a 2 px primary edge, the chevron turned, no ring. :open arrived after base-select
+     * (Chromium 133), so this sits with it; the native fallback's OS list draws its own open.
+     */
+    .control:has(.select:open) {
+      --select-edge: var(--primary);
+      --select-edge-w: var(--line-bold);
+    }
+
+    .control:has(.select:open) .trail > svg {
+      rotate: 180deg;
+    }
+
     .trigger {
       display: flex;
       align-items: center;
@@ -226,7 +218,7 @@
       padding: var(--space-2);
       border: 0;
       border-radius: var(--radius-group);
-      background: var(--listbox-bg);
+      background: var(--select-listbox-bg);
       color: var(--on-surface);
       box-shadow: var(--shadow-overlay);
       position-try-fallbacks: flip-block;
@@ -251,17 +243,31 @@
       font-size: var(--select-font);
       line-height: var(--leading-3);
       cursor: pointer;
+      transition:
+        background-color var(--dur-effects) var(--ease-effects),
+        border-radius var(--dur-shape) var(--ease-effects),
+        corner-shape var(--dur-shape) var(--ease-effects);
     }
 
     .select option:hover {
       --layer: var(--layer-hover);
     }
 
-    .select option:focus-visible {
+    /*
+     * Chromium focuses the chosen option whenever the list opens, and matches it as
+     * :focus-visible even when a pointer opened it. A list opened by a pointer
+     * ([data-pointer], set by the Select and cleared by any key) shows no focus until a key
+     * is used, so a mouse open draws the chosen option calm (§11 call 78).
+     */
+    .select:not([data-pointer]) option:focus-visible {
       --layer: var(--layer-focus);
       --option-shadow: inset 0 0 0 var(--line-bold) var(--focus);
 
       outline: var(--line-bold) solid transparent;
+    }
+
+    .select option:active {
+      --layer: var(--layer-press);
     }
 
     .select option:checked {
@@ -283,11 +289,41 @@
       gap: var(--space-1);
     }
 
+    /* The chosen option turns 600: its label's cell already holds the strong width. */
+    .option-label {
+      display: inline-grid;
+    }
+
+    .option-label > span,
+    .option-label::after {
+      grid-area: 1 / 1;
+    }
+
+    .option-label::after {
+      content: attr(data-text);
+      font-weight: var(--weight-strong);
+      visibility: hidden;
+    }
+
     .option-description {
       color: var(--on-surface-variant);
       font-size: var(--text-2);
       font-weight: var(--weight-body);
       line-height: var(--leading-2);
+    }
+  }
+
+  /*
+   * The shape moves into the customisable list: an option takes the bevel on keyboard focus
+   * and press, chosen or not; hover is colour. The chosen option is calm at rest and when a
+   * pointer opened the list, and options never scale. A press here is not held
+   * (utils/press.ts): choosing closes the list.
+   */
+  @supports (appearance: base-select) and (corner-shape: bevel) {
+    .select:not([data-pointer]) option:not(:disabled):focus-visible,
+    .select option:not(:disabled):active {
+      border-radius: var(--shape-bevel);
+      corner-shape: bevel;
     }
   }
 

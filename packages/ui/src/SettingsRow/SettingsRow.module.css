@@ -5,6 +5,12 @@
    * the control's column. From 45rem: 'label control help' '. . note'. A wide control (over
    * --wide-control) stacks under the help until 45rem; an action control (a Button) is
    * centred against the label and the help. The row never tints.
+   *
+   * F-grid: settings rows subgrid their card. Inside a settings grid (a Card body that holds
+   * rows, later the SettingsSection) the row takes the shared tracks, so every row's control
+   * sits in one column and the help column starts at one edge. On its own, the row draws the
+   * same tracks itself. A Switch row (bare) hands the tracks on to the Switch, so its track
+   * lands in the control column and the note stays out of it.
    */
   .row {
     --setrow-gap-col: var(--space-5);
@@ -18,7 +24,7 @@
     --setrow-help-ink: var(--on-surface-variant);
 
     display: grid;
-    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-columns: minmax(min-content, 1fr) auto;
     grid-template-areas:
       'label control'
       'help help'
@@ -28,6 +34,17 @@
     align-items: center;
     gap: var(--setrow-gap-row) var(--setrow-gap-col);
     min-block-size: var(--setrow-min);
+  }
+
+  /*
+   * In a settings grid: the shared label, control (and from 45rem help) tracks. A Card body
+   * shares them from 25rem; a Switch-only row's control always does (it is the row's own).
+   */
+  @container card (inline-size >= 25rem) {
+    [data-settings-grid='card'] > .row {
+      grid-column: 1 / -1;
+      grid-template-columns: subgrid;
+    }
   }
 
   :where([data-density='desktop']) .row {
@@ -85,7 +102,7 @@
 
   .error {
     grid-area: error;
-    color: var(--danger-ink);
+    color: var(--tone-ink);
   }
 
   .glyph {
@@ -105,10 +122,15 @@
     padding-block-start: var(--space-2);
   }
 
-  /* A wide control stacks under the help, at its own width. */
+  /* A wide control stacks under the help, at its own width, across both tracks. */
   .row[data-width='wide'] {
-    grid-template-columns: minmax(0, 1fr);
-    grid-template-areas: 'label' 'help' 'control' 'note' 'error' 'detail';
+    grid-template-areas:
+      'label label'
+      'help help'
+      'control control'
+      'note note'
+      'error error'
+      'detail detail';
   }
 
   .row[data-width='wide'] .control {
@@ -126,20 +148,24 @@
       'detail detail';
   }
 
-  /* A Switch is its own row: the control spans, and the slots follow it. */
+  /*
+   * A Switch is its own row: the control spans both tracks and passes them on (the Switch
+   * places its words and its track in them), and the note and error stay in the label track,
+   * clear of the switch.
+   */
   .bare,
   .bare[data-width] {
-    grid-template-columns: minmax(0, 1fr);
-    grid-template-areas: 'control' 'note' 'error' 'detail';
+    grid-template-areas:
+      'control control'
+      'note note'
+      'error error'
+      'detail detail';
   }
 
   .bare .control {
-    display: block;
-  }
-
-  .bare .note,
-  .bare .error {
-    padding-inline-end: calc(var(--size-switch-w) + var(--setrow-gap-col));
+    display: grid;
+    grid-column: 1 / -1;
+    grid-template-columns: subgrid;
   }
 
   @container card (inline-size >= 25rem) {
@@ -151,18 +177,45 @@
         'error error'
         'detail detail';
     }
+
+    .bare,
+    .bare[data-width] {
+      grid-template-areas:
+        'control control'
+        'note .'
+        'error .'
+        'detail detail';
+    }
   }
 
   @container card (inline-size >= 45rem) {
+    .row {
+      grid-template-columns: minmax(min-content, 1fr) auto minmax(0, 1fr);
+      align-items: start;
+    }
+
+    /* The name and the help start on the control's line: their first line is centred on it. */
+    .label,
+    .help {
+      padding-block-start: calc(max(0rem, (var(--control-sm) - 1lh) / 2));
+    }
+
     .row:not(.bare),
-    .row[data-width='wide']:not(.bare) {
-      grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+    .row[data-width]:not(.bare) {
       grid-template-areas:
         'label control help'
         '. . note'
         '. . error'
         'detail detail detail';
-      align-items: start;
+    }
+
+    .bare,
+    .bare[data-width] {
+      grid-template-areas:
+        'control control control'
+        '. . note'
+        '. . error'
+        'detail detail detail';
     }
 
     .row[data-width='wide'] .control {

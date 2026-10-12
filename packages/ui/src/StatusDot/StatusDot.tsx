@@ -21,7 +21,8 @@ export interface StatusDotProps {
  * The small state mark beside words (DESIGN.md A-dot). Each state has its own shape, so no
  * state is told by colour alone, and magenta means live and nothing else. It is decorative
  * (`aria-hidden`): the words beside it are the content. It never animates, except that the
- * checking state is the Clacks.
+ * checking state is the Clacks. Every state draws centred in one `--icon-sm` square, so the
+ * words beside a column of dots start at one edge.
  * @param props - Component props
  * @param props.state - The state
  * @param props.size - sm or md
@@ -29,24 +30,25 @@ export interface StatusDotProps {
  * @returns The mark
  */
 export function StatusDot({ state, size = 'sm', onFill = false }: StatusDotProps): JSX.Element {
+  // Every state sits centred in one --icon-sm square, so the words beside it start at one x.
+  const slot = cx(styles.slot, styles[size], styles[state], onFill && styles.onFill);
   if (state === 'checking') {
     return (
-      <span class={cx(styles.dot, styles.checking)} aria-hidden="true">
+      <span class={slot} aria-hidden="true">
         <Clacks size="sm" />
       </span>
     );
   }
   if (state === 'failed') {
     return (
-      <span class={cx(styles.glyph, styles[size])} aria-hidden="true">
+      <span class={slot} data-tone="danger" aria-hidden="true">
         <Icon glyph="danger" />
       </span>
     );
   }
   return (
-    <span
-      class={cx(styles.dot, styles.round, styles[size], styles[state], onFill && styles.onFill)}
-      aria-hidden="true"
-    />
+    <span class={slot} data-tone={state === 'connected' ? 'success' : undefined} aria-hidden="true">
+      <span class={styles.round} />
+    </span>
   );
 }

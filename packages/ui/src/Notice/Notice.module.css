@@ -1,14 +1,14 @@
 @layer components {
   /*
-   * M-notice. The tone sets the container, the on-container ink and the glyph (in dark, the
-   * set's ink). The Buttons and the X are re-pointed to the ink, the ring gap to the fill.
+   * M-notice. The tone (data-tone) sets the container, the on-container ink and the glyph (in
+   * dark, the set's ink). The Buttons and the X are re-pointed to the ink, the ring gap to the fill.
    * Its own `notice` container puts the action under the text below 25rem and beside it
    * from 25rem. The density sets the padding, the glyph and the text size.
    */
   .notice {
-    --notice-bg: var(--container);
-    --notice-fg: var(--on-surface);
-    --notice-glyph: var(--on-surface-variant);
+    --notice-bg: var(--tone-container);
+    --notice-fg: var(--on-tone-container);
+    --notice-glyph: var(--tone-glyph);
     --notice-rule: color-mix(in oklch, var(--notice-fg) 22%, var(--notice-bg));
     --notice-radius: var(--radius-notice);
     --notice-pad-block: var(--space-3);
@@ -19,15 +19,13 @@
     --notice-text: var(--text-3);
     --notice-leading: var(--leading-3);
     --ring-gap: var(--notice-bg);
+    --notice-idx: var(--i, 1);
 
     container: notice / inline-size;
     display: grid;
     grid-template-columns: auto minmax(0, 1fr) auto;
-    grid-template-areas:
-      'glyph body dismiss'
-      '. details details'
-      '. also also';
-    column-gap: var(--notice-gap);
+    grid-template-areas: 'glyph body dismiss';
+    gap: var(--space-3) var(--notice-gap);
     min-inline-size: 0;
     margin: 0;
     padding-block: var(--notice-pad-block);
@@ -38,6 +36,10 @@
     font-size: var(--notice-text);
     line-height: var(--notice-leading);
     user-select: text;
+    transition:
+      opacity var(--dur-effects) var(--ease-effects),
+      translate var(--dur-effects) var(--ease-effects);
+    transition-delay: calc(min(var(--notice-idx) - 1, 2) * var(--dur-stagger));
   }
 
   :where([data-density='desktop']) .notice {
@@ -50,24 +52,6 @@
 
   .dismissible {
     --notice-pad-end: var(--space-2);
-  }
-
-  .info {
-    --notice-bg: var(--container);
-    --notice-fg: var(--on-surface);
-    --notice-glyph: var(--on-surface-variant);
-  }
-
-  .warning {
-    --notice-bg: var(--warning-container);
-    --notice-fg: var(--on-warning-container);
-    --notice-glyph: light-dark(var(--on-warning-container), var(--warning-ink));
-  }
-
-  .danger {
-    --notice-bg: var(--danger-container);
-    --notice-fg: var(--on-danger-container);
-    --notice-glyph: light-dark(var(--on-danger-container), var(--danger-ink));
   }
 
   .glyph {
@@ -125,6 +109,13 @@
     --btn-edge: var(--notice-fg);
   }
 
+  /* Under the text, a Details that starts the row lines its words up with the text. */
+  @container notice (inline-size < 25rem) {
+    .actions > [aria-expanded]:first-child {
+      --btn-pull: var(--btn-pad-start);
+    }
+  }
+
   @container notice (inline-size >= 25rem) {
     .body {
       flex-direction: row;
@@ -153,25 +144,48 @@
     --ib-fg: var(--notice-fg);
   }
 
+  /* Details and the folded-in condition take rows of their own, made only when they show. */
   .details,
   .also {
-    margin-block-start: var(--space-3);
+    grid-column: 2 / -1;
     padding-block-start: var(--space-3);
     border-block-start: var(--line-hair) solid var(--notice-rule);
   }
 
-  .details {
-    grid-area: details;
-  }
-
   .also {
-    grid-area: also;
     font-weight: var(--weight-strong);
   }
 
   @media (forced-colors: active) {
     .notice {
       border: var(--line-hair) solid CanvasText;
+    }
+  }
+
+  /*
+   * F-shift: it arrives in flow with an entrance that moves nothing around it (opacity and
+   * translate only). Notices in a list of notices (a parent marked
+   * data-notices, such as the NoticeSlot) stagger by --dur-stagger, capped at the third (so
+   * the rest start with it), from sibling-index() or the `index` prop (the inline --i). A
+   * notice among other things is not counted. Without @starting-style it simply appears.
+   */
+
+  @supports (order: sibling-index()) {
+    [data-notices] > .notice {
+      --notice-idx: sibling-index();
+    }
+  }
+
+  @starting-style {
+    .notice {
+      opacity: 0;
+      translate: 0 var(--space-2);
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .notice {
+      transition: none;
     }
   }
 }

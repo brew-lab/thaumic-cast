@@ -1,10 +1,14 @@
 import type { JSX } from 'preact';
+import { Fragment, type RefObject } from 'preact';
+import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import { Clacks } from '../Clacks';
 import { Icon } from '../Icon';
 import type { GlyphName } from '../Icon/glyphs';
 import { useAnnouncer } from '../Announcer';
 import { cx, dataAttributes, type DataAttributes } from '../utils/cx';
+import { usePress } from '../utils/press';
 import { labelFor, useAction, type ActionLabels, type ActionStatus } from './action';
+import { IN_START, OUT_END, anchorOf, heldAt, inlineSpan, parseTime } from './morph';
 import styles from './Button.module.css';
 
 /** Props for {@link Button}. */
@@ -26,7 +30,10 @@ export interface ButtonProps extends DataAttributes {
   icon?: GlyphName;
   /** A short trailing word or count, such as "Saved" or "3". */
   trail?: string;
-  /** A toggle that stays down (the sets): `aria-pressed`, calm, with a trailing check. */
+  /**
+   * A toggle that stays down (the sets): `aria-pressed`, calm, with a trailing check. Its
+   * check slot is always kept, so turning it on or off never changes the width.
+   */
   pressed?: boolean;
   /** A disclosure trigger: a trailing chevron and `aria-expanded`. */
   expanded?: boolean;
@@ -36,6 +43,11 @@ export interface ButtonProps extends DataAttributes {
   align?: 'center' | 'start';
   /** Fill the container's inline size. */
   fullWidth?: boolean;
+  /**
+   * Pull back by the leading padding, so the glyph or the first letter lines up with the
+   * text column above (a quiet Button that starts a column: Details, Skip, Copy URL).
+   */
+  flush?: boolean;
   /** An async action: busy, then done or failed, said through the Announcer. */
   onAction?: () => Promise<unknown>;
   /**
@@ -72,9 +84,10 @@ export interface ButtonProps extends DataAttributes {
 
 /**
  * The one text action (DESIGN.md A-button). It absorbs ActionButton (async states),
- * SetButton (`pressed`), the raw text buttons and the Alert's inline action. Every label it
- * can show sits in one grid cell, so its width never jumps. Shapes appear only on hover,
- * focus and press, and a danger Button never reshapes.
+ * SetButton (`pressed`), the raw text buttons and the Alert's inline action. It fits what it
+ * shows now (idle, busy, done or failed: a glyph and words); a change of state morphs its
+ * width while the old words fade out and then the new ones fade in, never both at once.
+ * Hover is colour; focus-visible and a press take the bevel, on every kind, and nothing scales.
  * @param props - Component props
  * @param props.kind - The kind
  * @param props.danger - Danger, on filled or tonal
@@ -86,6 +99,7 @@ export interface ButtonProps extends DataAttributes {
  * @param props.description - A second line
  * @param props.align - Centre or start
  * @param props.fullWidth - Fill the container
+ * @param props.flush - Line the glyph up with the text column above
  * @param props.onAction - An async action
  * @param props.onClick - A click handler, which can stop the action
  * @param props.status - A result held from outside
@@ -110,6 +124,7 @@ export function Button({
   description,
   align = 'center',
   fullWidth = false,
+  flush = false,
   onAction,
   onClick,
   status: heldStatus,
@@ -138,43 +153,56 @@ export function Button({
     if (onAction && !event.defaultPrevented) run();
   };
 
-  const lead = leadFor(status, icon);
-  const words = [children, labels?.busy, labels?.done, labels?.failed].filter(
-    (w, i, all): w is string => !!w && all.indexOf(w) === i,
-  );
-  const current = labelFor(status, children, labels);
+  // The Button fits what it shows now. A change of state morphs it (see useMorph): the box
+  // eases to its new width, the words it leaves fade up and out where they were, and the
+  // words it goes to fade in afterwards. Words that do not change stay; only the glyph fades.
+  const words = labelFor(status, children, labels);
+  const glyph = glyphKey(status, icon);
+  const morph = useMorph(status, words, glyph);
+  // A link is pressed by Enter alone; a button by Enter and Space.
+  const isLink = kind === 'link' && Boolean(href);
+  const press = usePress(isLink ? ['enter'] : undefined);
+  const leaving = morph.leaving;
 
   const className = cx(
     styles.button,
     styles[kind],
     styles[size],
     isDanger && styles.danger,
+    glyph && styles.withIcon,
     align === 'start' && styles.start,
     fullWidth && styles.full,
+    flush && styles.flush,
     description && styles.twoLine,
   );
 
   const content = (
     <>
-      {lead && <span class={styles.lead}>{lead}</span>}
       <span class={styles.text}>
-        <span class={styles.labels}>
-          {words.map((w) => (
-            <span
-              key={w}
-              class={styles.label}
-              data-current={w === current ? '' : undefined}
-              aria-hidden={w === current ? undefined : 'true'}
-            >
-              {w}
+        <span class={styles.unit} ref={morph.unitRef}>
+          {glyph && (
+            <span class={styles.lead} ref={morph.leadRef}>
+              {leaving?.glyphOnly && leaving.glyph && (
+                <Fragment key={leaving.glyph}>{leadFor(leaving.glyph)}</Fragment>
+              )}
+              <Fragment key={glyph}>{leadFor(glyph)}</Fragment>
             </span>
-          ))}
+          )}
+          <span class={styles.label}>{words}</span>
         </span>
         {description && <span class={styles.description}>{description}</span>}
       </span>
+      {leaving && !leaving.glyphOnly && (
+        <span class={styles.ghost} aria-hidden="true">
+          <span key={leaving.serial} class={styles.unit} ref={morph.ghostRef}>
+            {leaving.glyph && <span class={styles.lead}>{leadFor(leaving.glyph)}</span>}
+            <span class={styles.label}>{leaving.words}</span>
+          </span>
+        </span>
+      )}
       {trail && <span class={cx(styles.trail, 'num')}>{trail}</span>}
-      {pressed && (
-        <span class={styles.check}>
+      {pressed !== undefined && (
+        <span class={styles.check} data-on={pressed ? '' : undefined}>
           <Icon glyph="check" />
         </span>
       )}
@@ -191,16 +219,19 @@ export function Button({
     class: className,
     'data-status': status === 'idle' ? undefined : status,
     'data-size': size,
+    'data-tone': isDanger || status === 'failed' ? 'danger' : undefined,
     'aria-label': rest['aria-label'],
     'aria-describedby': rest['aria-describedby'],
     'aria-busy': busy ? ('true' as const) : undefined,
+    ...press,
     ...dataAttributes(rest),
   };
 
-  if (kind === 'link' && href) {
+  if (isLink) {
     return (
       <a
         {...common}
+        ref={morph.ref}
         href={disabled ? undefined : href}
         target={target}
         rel={target === '_blank' ? 'noreferrer' : undefined}
@@ -215,6 +246,7 @@ export function Button({
   return (
     <button
       {...common}
+      ref={morph.ref}
       type={type}
       disabled={disabled}
       aria-disabled={busy ? 'true' : undefined}
@@ -227,16 +259,288 @@ export function Button({
   );
 }
 
+/** What the start slot can hold: the idle glyph, the Clacks, the check or the danger glyph. */
+type GlyphKey = GlyphName | 'clacks';
+
 /**
- * What the start slot holds: the Clacks while busy, the check when done, the danger glyph
- * when failed, else the icon.
+ * What the start slot holds for a status: the Clacks while busy, the check when done, the
+ * danger glyph when failed, else the idle icon.
  * @param status - The action status
  * @param icon - The idle icon
- * @returns The slot's content, or null for none
+ * @returns The slot's content, or undefined for none
  */
-function leadFor(status: ActionStatus, icon: GlyphName | undefined): JSX.Element | null {
-  if (status === 'busy') return <Clacks size="sm" />;
-  if (status === 'done') return <Icon glyph="check" />;
-  if (status === 'failed') return <Icon glyph="danger" />;
-  return icon ? <Icon glyph={icon} /> : null;
+function glyphKey(status: ActionStatus, icon: GlyphName | undefined): GlyphKey | undefined {
+  if (status === 'busy') return 'clacks';
+  if (status === 'done') return 'check';
+  if (status === 'failed') return 'danger';
+  return icon;
+}
+
+/**
+ * Draws a start-slot glyph.
+ * @param key - The glyph
+ * @returns The Clacks or the icon
+ */
+function leadFor(key: GlyphKey): JSX.Element {
+  return key === 'clacks' ? <Clacks size="sm" /> : <Icon glyph={key} />;
+}
+
+/** The words and glyph a Button is leaving, drawn while they fade. */
+interface Leaving {
+  /** Counts the changes, so each one draws fresh. */
+  serial: number;
+  /** The words it leaves. */
+  words: string;
+  /** The glyph it leaves. */
+  glyph: GlyphKey | undefined;
+  /** The words stay the same, so only the glyph fades. */
+  glyphOnly: boolean;
+}
+
+/** The Button as it was just before a change: measured live, so mid-change counts. */
+interface Before {
+  /** The Button's border box. */
+  box: DOMRect;
+  /** Its start padding. */
+  pad: string;
+  /** The words and glyph. */
+  unit: DOMRect;
+  /** How visible the words were (less than 1 if they were still fading in). */
+  opacity: number;
+  /** `--dur-change` in ms. */
+  ms: number;
+  /** `--ease-effects`. */
+  ease: string;
+}
+
+/**
+ * Measures a Button just before a change, as it is on screen.
+ * @param ref - The Button
+ * @param unitRef - Its words and glyph
+ * @returns The measurements, or null when the change should be instant: `--dur-change` is 0
+ *   (reduced motion), there is no `animate`, or the Button is not laid out
+ */
+function measure(ref: RefObject<HTMLElement>, unitRef: RefObject<HTMLElement>): Before | null {
+  const el = ref.current;
+  const unit = unitRef.current;
+  if (!el || !unit || typeof el.animate !== 'function') return null;
+  // The unit's opacity transition is --dur-change and --ease-effects, resolved by the engine
+  // (a calc, a var or 0s under reduced motion all come back as a plain time).
+  const timing = getComputedStyle(unit);
+  const ms = parseTime(timing.transitionDuration);
+  const box = el.getBoundingClientRect();
+  if (!ms || box.width === 0) return null;
+  return {
+    box,
+    pad: getComputedStyle(el).paddingInlineStart,
+    unit: unit.getBoundingClientRect(),
+    opacity: Number(timing.opacity) || 0,
+    ms,
+    ease: timing.transitionTimingFunction || 'ease',
+  };
+}
+
+/**
+ * A Button's change of state (DESIGN.md A-button). The Button fits what it shows. When the
+ * status changes it measures the Button (live, so an interrupted change starts where it is),
+ * renders the new state, measures again and eases `inline-size` and `padding-inline-start`
+ * from the old values to the new over `--dur-change` with `--ease-effects`. The layout
+ * decides which edge moves; neighbours ease with it because it is layout.
+ *
+ * The words never overlap: the words it leaves fade out with a `--space-1` rise over the
+ * first 0.4 of the change, held to the edge that stays and clipped to the box; the words it
+ * goes to fade in from `--space-1` below over the second half, centred and clipped. If the
+ * words stay the same, they do not move and only the glyph fades. With `--dur-change` at 0
+ * (reduced motion), or without `animate`, the change is instant.
+ * @param status - The status shown now
+ * @param words - The words shown now
+ * @param glyph - The glyph shown now
+ * @returns The refs to attach, and what is leaving, if anything
+ */
+function useMorph(
+  status: ActionStatus,
+  words: string,
+  glyph: GlyphKey | undefined,
+): {
+  ref: RefObject<HTMLButtonElement & HTMLAnchorElement>;
+  unitRef: RefObject<HTMLSpanElement>;
+  leadRef: RefObject<HTMLSpanElement>;
+  ghostRef: RefObject<HTMLSpanElement>;
+  leaving: Leaving | null;
+} {
+  const ref = useRef<HTMLButtonElement & HTMLAnchorElement>(null);
+  const unitRef = useRef<HTMLSpanElement>(null);
+  const leadRef = useRef<HTMLSpanElement>(null);
+  const ghostRef = useRef<HTMLSpanElement>(null);
+  const running = useRef<Animation[]>([]);
+  const before = useRef<Before | null>(null);
+  const seen = useRef<{ status: ActionStatus; leaving: Leaving | null }>({
+    status,
+    leaving: null,
+  });
+  const [gone, setGone] = useState(0);
+  const count = useRef(0);
+  const shown = useRef({ words, glyph });
+
+  // Read the Button as it is on screen before the DOM changes: this render is the change.
+  if (seen.current.status !== status) {
+    const was = shown.current;
+    before.current = was.words === words && was.glyph === glyph ? null : measure(ref, unitRef);
+    count.current += 1;
+    seen.current = {
+      status,
+      leaving: before.current
+        ? {
+            serial: count.current,
+            words: was.words,
+            glyph: was.glyph,
+            glyphOnly: was.words === words,
+          }
+        : null,
+    };
+  }
+  shown.current = { words, glyph };
+  const leaving =
+    seen.current.leaving && seen.current.leaving.serial !== gone ? seen.current.leaving : null;
+
+  useLayoutEffect(() => {
+    const from = before.current;
+    before.current = null;
+    const el = ref.current;
+    const unit = unitRef.current;
+    for (const a of running.current) a.cancel();
+    running.current = [];
+    el?.removeAttribute('data-morph');
+    if (!from || !el || !unit || !seen.current.leaving) return;
+    const serial = seen.current.leaving.serial;
+    const leftBehind = seen.current.leaving;
+    try {
+      animateChange(el, unit, from, leftBehind, glyph, running.current, () => setGone(serial), {
+        lead: leadRef.current,
+        ghost: ghostRef.current,
+      });
+    } catch {
+      // A change that cannot animate is instant; it never breaks the Button.
+      for (const a of running.current) a.cancel();
+      running.current = [];
+      el.removeAttribute('data-morph');
+      setGone(serial);
+    }
+  }, [seen.current.leaving?.serial]);
+
+  useEffect(
+    () => () => {
+      for (const a of running.current) a.cancel();
+    },
+    [],
+  );
+
+  return { ref, unitRef, leadRef, ghostRef, leaving };
+}
+
+/**
+ * Runs one change of state's animations (see {@link useMorph}): the box, then the words or
+ * the glyph. Every animation it starts goes into `running`, so the next change can cancel it.
+ * @param el - The Button, already showing the new state
+ * @param unit - Its words and glyph now
+ * @param from - The Button just before the change
+ * @param leaving - What it leaves
+ * @param glyph - The glyph it shows now
+ * @param running - Collects the animations
+ * @param gone - Called when what it leaves has faded out
+ * @param parts - The start slot and the leaving words, where drawn
+ * @param parts.lead - The start slot
+ * @param parts.ghost - The leaving words
+ */
+function animateChange(
+  el: HTMLElement,
+  unit: HTMLElement,
+  from: Before,
+  leaving: Leaving,
+  glyph: GlyphKey | undefined,
+  running: Animation[],
+  gone: () => void,
+  { lead, ghost }: { lead: HTMLElement | null; ghost: HTMLElement | null },
+): void {
+  const style = getComputedStyle(el);
+  const rise = style.getPropertyValue('--space-1').trim() || '0';
+  const { ms, ease } = from;
+  const to = el.getBoundingClientRect();
+  const pad = style.paddingInlineStart;
+  const run = (target: Element, keyframes: Keyframe[], options: KeyframeAnimationOptions) => {
+    const a = target.animate(keyframes, { easing: ease, ...options });
+    running.push(a);
+    return a;
+  };
+
+  // The box: from its old width and start padding to its new ones.
+  if (Math.abs(to.width - from.box.width) >= 0.5 || pad !== from.pad) {
+    el.setAttribute('data-morph', '');
+    const box = run(
+      el,
+      [
+        { inlineSize: `${from.box.width}px`, paddingInlineStart: from.pad },
+        { inlineSize: `${to.width}px`, paddingInlineStart: pad },
+      ],
+      { duration: ms },
+    );
+    box.onfinish = () => el.removeAttribute('data-morph');
+  }
+
+  const outro = { duration: ms * OUT_END, fill: 'forwards' as const };
+  const intro = {
+    duration: ms * (1 - IN_START),
+    delay: ms * IN_START,
+    fill: 'backwards' as const,
+  };
+  const done = (a: Animation): void => {
+    a.onfinish = gone;
+  };
+
+  if (leaving.glyphOnly) {
+    // The words stay; the old glyph fades out in the slot and the new one fades in.
+    const kids = lead ? [...lead.children] : [];
+    const old = leaving.glyph && kids.length > 1 ? kids[0] : null;
+    const now = glyph ? kids.at(-1) : null;
+    if (old) done(run(old, [{ opacity: 1 }, { opacity: 0 }], outro));
+    if (now) run(now, [{ opacity: 0 }, { opacity: 1 }], intro);
+    return;
+  }
+
+  // The words it leaves: held where they were, from the edge that stays.
+  if (ghost) {
+    const rtl = style.direction === 'rtl';
+    const box = inlineSpan(from.box.left, from.box.right, rtl);
+    const border = {
+      start: parseFloat(style.borderInlineStartWidth) || 0,
+      end: parseFloat(style.borderInlineEndWidth) || 0,
+    };
+    const anchor = anchorOf(box, inlineSpan(to.left, to.right, rtl));
+    ghost.style.insetInlineStart = heldAt(
+      anchor,
+      box,
+      inlineSpan(from.unit.left, from.unit.right, rtl),
+      border,
+    );
+    ghost.style.insetBlockStart = `${from.unit.top - from.box.top - (parseFloat(style.borderBlockStartWidth) || 0)}px`;
+    done(
+      run(
+        ghost,
+        [
+          { opacity: from.opacity, translate: '0 0' },
+          { opacity: 0, translate: `0 calc(-1 * ${rise})` },
+        ],
+        outro,
+      ),
+    );
+  }
+  // The words it goes to: from below, once the old ones have gone.
+  run(
+    unit,
+    [
+      { opacity: 0, translate: `0 ${rise}` },
+      { opacity: 1, translate: '0 0' },
+    ],
+    intro,
+  );
 }

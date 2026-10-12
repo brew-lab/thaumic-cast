@@ -33,8 +33,12 @@
     container: cluster / inline-size;
   }
 
+  /*
+   * Under 25rem the items stack full width. Two classes, so a child that sets its own flex
+   * (a Button's `flex: none`) still stacks.
+   */
   @container cluster (inline-size < 25rem) {
-    .stack > * {
+    .cluster.stack > * {
       flex: 1 1 100%;
     }
   }

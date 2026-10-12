@@ -1,6 +1,21 @@
 /*
  * The popup's global CSS. The theme switch, the body defaults and the focus ring are in
- * @thaumic-cast/ui/base.css; theme.css bridges the old variable names to the v1 tokens
- * until the popup is rebuilt from the design system.
+ * @thaumic-cast/ui/base.css.
  */
-@import url('@thaumic-cast/ui/theme.css');
+
+/*
+ * Until Phase 3's PopupShell: the document is the one scroller (L-popup), with a stable
+ * gutter, and the body is the `app` container the fluid tokens resolve against. Its inline
+ * size is the popup's, set here because a container's own content no longer sizes it (Chrome
+ * sizes the popup to the body).
+ */
+@layer app {
+  :root {
+    scrollbar-gutter: stable;
+  }
+
+  body {
+    container: app / inline-size;
+    inline-size: var(--popup-inline);
+  }
+}

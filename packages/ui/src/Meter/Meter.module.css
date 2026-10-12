@@ -1,70 +1,110 @@
 @layer components {
-  /* A-meter. A native <meter> drawn on a --size-track track; the reading in a --ch-ms box. */
-  .row {
+  /*
+   * A-meter, stacked: the name and the reading on one line, a full-width bar under them.
+   * The bar is two plain spans and a tick, so it draws the same in every engine; a visually
+   * hidden native <meter> carries the semantics. Meters in a list are a stack: the bars share
+   * the width and the readings end at one edge, so nothing needs a grid.
+   */
+  .meter {
     --meter-fill: var(--primary);
     --meter-track: var(--track);
     --meter-tick: var(--on-surface-variant);
-    --meter-at-low: calc(var(--meter-low) * 1%);
 
-    display: grid;
-    grid-template-columns: var(--icon-sm) minmax(0, auto) minmax(var(--track-option), 1fr) auto;
-    gap: var(--space-3);
-    align-items: center;
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+    min-inline-size: 0;
     color: var(--on-surface);
     font-size: var(--text-3);
     line-height: var(--leading-3);
   }
 
   .low {
-    --meter-fill: var(--warning-ink);
+    --meter-fill: var(--tone-ink);
+  }
+
+  .head {
+    display: flex;
+    gap: var(--space-3);
+    align-items: center;
+    justify-content: space-between;
+    min-inline-size: 0;
+  }
+
+  /* The name is never cut off: a long one wraps before it hides. */
+  .name {
+    min-inline-size: 0;
+    font-weight: var(--weight-strong);
+    overflow-wrap: anywhere;
+  }
+
+  :where([data-density='desktop']) .name {
+    font-size: var(--text-4-fixed);
+  }
+
+  /* The glyph's slot is always there, so a low reading never moves the value. */
+  .reading {
+    flex: none;
+    display: inline-flex;
+    gap: var(--space-2);
+    align-items: center;
   }
 
   .glyph {
     display: inline-grid;
     place-items: center;
-    color: var(--warning-ink);
-  }
-
-  .name {
-    font-weight: var(--weight-strong);
-    white-space: nowrap;
-  }
-
-  .meter {
-    inline-size: 100%;
-    block-size: var(--size-track);
-    border-radius: var(--radius-pressed);
-    background: var(--meter-track);
-    appearance: none;
-  }
-
-  .meter::-webkit-meter-inner-element {
-    display: block;
-  }
-
-  .meter::-webkit-meter-bar {
-    block-size: var(--size-track);
-    border: 0;
-    border-radius: var(--radius-pressed);
-    background-color: var(--meter-track);
-    background-image: linear-gradient(
-      to right,
-      transparent calc(var(--meter-at-low) - var(--line-hair)),
-      var(--meter-tick) calc(var(--meter-at-low) - var(--line-hair))
-        calc(var(--meter-at-low) + var(--line-hair)),
-      transparent calc(var(--meter-at-low) + var(--line-hair))
-    );
-  }
-
-  .meter::-webkit-meter-optimum-value,
-  .meter::-webkit-meter-suboptimum-value,
-  .meter::-webkit-meter-even-less-good-value {
-    border-radius: var(--radius-pressed);
-    background: var(--meter-fill);
+    inline-size: var(--icon-sm);
+    block-size: var(--icon-sm);
+    color: var(--tone-ink);
   }
 
   .value {
     min-inline-size: var(--ch-ms);
     color: var(--on-surface-variant);
+    text-align: end;
+  }
+
+  /* The bar: the track, the fill from the start and a tick at the low mark. */
+  .bar {
+    position: relative;
+    display: block;
+    block-size: var(--size-track);
+    border-radius: var(--radius-full);
+    background: var(--meter-track);
+  }
+
+  .fill {
+    display: block;
+    inline-size: calc(var(--meter-pct) * 1%);
+    block-size: 100%;
+    border-radius: var(--radius-full);
+    background: var(--meter-fill);
+  }
+
+  .tick {
+    position: absolute;
+    inset-block: calc(-1 * var(--space-1));
+    inset-inline-start: calc(var(--meter-low) * 1% - var(--line-bold) / 2);
+    inline-size: var(--line-bold);
+    border-radius: var(--line-hair);
+    background: var(--meter-tick);
+  }
+
+  /* Forced colours: the track draws an edge, the fill takes the highlight. */
+  @media (forced-colors: active) {
+    .meter {
+      --meter-fill: highlight;
+      --meter-tick: canvastext;
+    }
+
+    .bar {
+      outline: var(--line-hair) solid canvastext;
+    }
+
+    .fill,
+    .tick {
+      forced-color-adjust: none;
+    }
   }
 }

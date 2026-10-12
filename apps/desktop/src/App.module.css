@@ -1,30 +1,36 @@
-.layout {
-  /*
-   * The rail: narrow below a 45rem window, wide from it (DESIGN.md C-rail).
-   */
-  display: grid;
-  grid-template-columns: var(--rail-narrow) 1fr;
-  block-size: 100dvb;
-  inline-size: 100vi;
-  background-color: var(--ground);
-  color: var(--on-surface);
-  transition: grid-template-columns var(--dur-effects) var(--ease-effects);
-}
-
-@container app (inline-size >= 45rem) {
+/*
+ * The desktop shell, until Phase 4's DesktopShell owns it: the rail and main. The rail is
+ * narrow below a 45rem window and wide from it (DESIGN.md C-rail). Main is the `content`
+ * container, so fluid type and space follow the column, not the window, and it is the one
+ * scroller, with a stable gutter. Its track is minmax(0, 1fr), so a long unbreakable string
+ * in a view cannot widen it.
+ */
+@layer app {
   .layout {
-    grid-template-columns: var(--rail-wide) 1fr;
+    display: grid;
+    grid-template-columns: var(--rail-narrow) minmax(0, 1fr);
+    block-size: 100dvb;
+    background-color: var(--ground);
+    color: var(--on-surface);
+    transition: grid-template-columns var(--dur-effects) var(--ease-effects);
   }
-}
 
-.content {
-  overflow-y: auto;
-  scrollbar-width: thin;
-  scrollbar-color: var(--primary) transparent;
-}
+  /* The one @container an app writes, until the DesktopShell takes it over (Phase 4). */
+  @container app (inline-size >= 45rem) {
+    .layout {
+      grid-template-columns: var(--rail-wide) minmax(0, 1fr);
+    }
+  }
 
-.not-found {
-  padding-block: var(--space-7);
-  padding-inline: var(--space-7);
-  text-align: center;
+  .content {
+    container: content / inline-size;
+    min-inline-size: 0;
+    overflow-y: auto;
+    scrollbar-gutter: stable;
+  }
+
+  .not-found {
+    padding: var(--space-7);
+    text-align: center;
+  }
 }

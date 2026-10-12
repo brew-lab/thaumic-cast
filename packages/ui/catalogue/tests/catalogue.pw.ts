@@ -4,11 +4,13 @@
  * axe: every section, with the page in light and in dark (each section also draws both
  * schemes side by side), against WCAG 2.2 A and AA.
  *
+ * Both run in the Chromium and the WebKit project (playwright.config.ts).
+ *
  * Screenshots: one per section (both schemes are in it). They run only with
  * DS_SCREENSHOTS=1, which CI sets; locally they are skipped. Baselines are made in CI only:
  * when a section has no baseline yet, the CI run passes and writes the picture into the
  * `catalogue-results` artifact under `new-baselines/`. Download it, copy the files into
- * `packages/ui/catalogue/tests/__screenshots__/` and commit them. From then on a changed
+ * `packages/ui/catalogue/tests/__screenshots__/<project>/` (chromium or webkit) and commit them. From then on a changed
  * section fails CI until its baseline is replaced the same way.
  */
 import { existsSync } from 'node:fs';
@@ -19,8 +21,10 @@ const THEMES = ['light', 'dark'] as const;
 
 for (const theme of THEMES) {
   test(`axe finds no violations with the page in ${theme}`, async ({ page }) => {
+    // The whole catalogue, every frame and both schemes, is one long page for axe.
+    test.setTimeout(180_000);
     await page.goto(`/?theme=${theme}`);
-    await expect(page.locator('main > section').first()).toBeVisible();
+    await expect(page.locator('html[data-ready]')).toHaveCount(1);
     const results = await new AxeBuilder({ page })
       .withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa', 'wcag22aa'])
       .analyze();
@@ -33,6 +37,8 @@ for (const theme of THEMES) {
 
 test('every section matches its screenshot', async ({ page }, testInfo) => {
   test.skip(!process.env.DS_SCREENSHOTS, 'Screenshots run in CI only (DS_SCREENSHOTS=1).');
+  // Over fifty sections, some of them several screens tall.
+  test.setTimeout(300_000);
   await page.goto('/?theme=light');
   await page.evaluate(() => document.fonts.ready);
   const ids = await page.locator('main > section').evaluateAll((els) => els.map((e) => e.id));

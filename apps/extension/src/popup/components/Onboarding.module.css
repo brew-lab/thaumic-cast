@@ -1,7 +1,9 @@
-.onboarding {
-  display: flex;
-  flex-direction: column;
-  inline-size: 352px;
-  block-size: 420px;
-  background: var(--ground);
+/* The popup's onboarding frame, until Phase 4's WizardShell: the popup's width, content-tall. */
+@layer app {
+  .onboarding {
+    display: flex;
+    flex-direction: column;
+    inline-size: 100%;
+    background: var(--ground);
+  }
 }

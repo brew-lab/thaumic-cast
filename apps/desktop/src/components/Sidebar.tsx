@@ -39,7 +39,9 @@ export function Sidebar() {
           name={t('app.title')}
           kind="rail"
           lit={castingSpeakers.value.size > 0}
-          version={version.value ? `v${version.value}` : undefined}
+          version={
+            version.value ? t('settings.about_version', { version: version.value }) : undefined
+          }
         />
       </div>
 

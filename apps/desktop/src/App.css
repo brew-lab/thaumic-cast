@@ -1,15 +1,12 @@
 /*
  * Global CSS for the desktop app. The theme switch, the box-sizing reset, the body defaults
- * and the focus ring are in @thaumic-cast/ui/base.css; theme.css bridges the old variable
- * names to the v1 tokens until the views are rebuilt in the DesktopShell.
+ * and the focus ring are in @thaumic-cast/ui/base.css. #app is the `app` container (the
+ * window) until Phase 4's DesktopShell.
  */
-@import url('@thaumic-cast/ui/theme.css');
 
 @layer app {
   #app {
+    container: app / inline-size;
     block-size: 100dvb;
-    inline-size: 100vi;
-    container-type: inline-size;
-    container-name: app;
   }
 }

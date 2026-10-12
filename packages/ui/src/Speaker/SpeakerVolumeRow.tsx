@@ -2,7 +2,6 @@ import type { JSX } from 'preact';
 import { useId } from 'preact/hooks';
 import { IconButton } from '../IconButton';
 import { Slider } from '../Slider';
-import { cx } from '../utils/cx';
 import { useVolumeControl } from './useVolumeControl';
 import styles from './SpeakerVolumeRow.module.css';
 
@@ -111,21 +110,17 @@ export function SpeakerVolumeRow({
         {fixedLabel ? (
           <span class={styles.fixed}>{fixedLabel}</span>
         ) : (
-          <>
-            <Slider
-              label={volumeLabel}
-              value={control.level}
-              unknownText={unknownText}
-              disabled={disabled}
-              onChange={control.change}
-              onPointerDown={control.pointerDown}
-              onPointerUp={control.pointerUp}
-              aria-describedby={caption ? captionId : undefined}
-            />
-            <span class={cx(styles.value, 'num')} aria-hidden="true">
-              {control.level ?? '…'}
-            </span>
-          </>
+          <Slider
+            label={volumeLabel}
+            value={control.level}
+            unknownText={unknownText}
+            readout={3}
+            disabled={disabled}
+            onChange={control.change}
+            onPointerDown={control.pointerDown}
+            onPointerUp={control.pointerUp}
+            aria-describedby={caption ? captionId : undefined}
+          />
         )}
       </div>
       {caption && (

@@ -16,8 +16,7 @@
     "./fonts.css": "./src/fonts.css",
     "./base.css": "./src/base.css",
     "./motion.css": "./src/motion.css",
-    "./utilities.css": "./src/utilities.css",
-    "./theme.css": "./src/theme.css"
+    "./utilities.css": "./src/utilities.css"
   },
   "scripts": {
     "build": "echo 'No build step (consumed as TS source)'",

@@ -10,6 +10,7 @@ import {
   scanSourceKeys,
   unpairedPlurals,
 } from '../../../extension/src/test-support/locale-keys';
+import { speakerBadge } from '../lib/speaker-badge';
 import en from './en.json';
 
 const strings = en as Record<string, string>;
@@ -17,24 +18,31 @@ const SRC = join(import.meta.dir, '..');
 const REPO = join(SRC, '../../..');
 
 /**
- * Reads the transport states the core sends from `TransportState`'s `Display`
- * in the core's source, so a state added there fails this test until it has a
- * label.
- * @returns The state names as `Display` writes them
+ * Reads the transport states the core sends from `TransportState` in the core's
+ * source, as serde writes them to the app (a `#[serde(rename)]` wins over the
+ * variant's name), so a state added there fails this test until it has a label.
+ * @returns The state names as the app receives them
  */
 function transportStates(): string[] {
   const source = readFileSync(join(REPO, 'packages/thaumic-core/src/sonos/types.rs'), 'utf8');
-  const display = /impl std::fmt::Display for TransportState \{[\s\S]*?\n\}/.exec(source);
-  if (!display) throw new Error('TransportState has no Display impl in sonos/types.rs');
-  return [...display[0].matchAll(/Self::\w+ => write!\(f, "([^"]+)"\)/g)].map((m) => m[1]!);
+  const body = /pub enum TransportState \{([\s\S]*?)\n\}/.exec(source);
+  if (!body) throw new Error('TransportState is missing from sonos/types.rs');
+  return [...body[1]!.matchAll(/(?:#\[serde\(rename = "([^"]+)"\)\]\s*)?(\w+),/g)].map(
+    (m) => m[1] ?? m[2]!,
+  );
 }
 
 describe('desktop en.json', () => {
-  it('should have a label for every transport state the core sends', () => {
+  it('should have badge words for every transport state the core sends', () => {
     const states = transportStates();
     expect(states).toContain('Playing');
+    expect(states).toContain('PAUSED_PLAYBACK');
     for (const state of states) {
-      expect(strings[`transport.${state.toLowerCase()}`]).toBeString();
+      for (const casting of [false, true]) {
+        const badge = speakerBadge(state, casting);
+        expect(badge).not.toBeNull();
+        expect(strings[badge!.key]).toBeString();
+      }
     }
   });
 

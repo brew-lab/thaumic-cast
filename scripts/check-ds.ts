@@ -6,7 +6,13 @@
  * - tokens defined in tokens.css and used nowhere are listed;
  * - glyphs.ts holds exactly the F-icons list in DESIGN.md;
  * - every packages/ui CSS module is one `@layer components` block;
- * - `@container` queries in packages/ui use only the F-grid breakpoints (20, 25, 45rem).
+ * - `@container` queries in packages/ui use only the F-grid breakpoints (20, 25, 45rem);
+ * - `light-dark()` appears only in tokens.css, so webkit-fallbacks.css covers every pair;
+ * - no component reads a status set by name (`--danger-ink`, `--on-warning-container`…): it
+ *   sets `data-tone` and reads the generated `--tone-*` tokens (DESIGN.md T-colour);
+ * - features above the floors (relative colour, sibling-index(), corner-shape, text-box,
+ *   field-sizing, ::details-content, base-select and :open) sit inside an `@supports` that
+ *   tests for them, so the floors get the written fallback (DESIGN.md §10, the floors).
  *
  * Usage: `bun scripts/check-ds.ts` (also run by `bun run lint:ds`). It prints a report and
  * exits 0, except when a file that is already built from the design system (CLEAN_PATHS)
@@ -82,6 +88,69 @@ function isOneComponentsLayer(css: string): boolean {
 }
 
 /**
+ * Features above the floors (Chrome 125, Safari 16.4, WebKitGTK 2.44), each with the text its
+ * `@supports` condition must contain. Ungated, a declaration that holds var() goes invalid at
+ * computed-value time on an engine without the feature, instead of falling back.
+ */
+export const GATED: readonly { name: string; use: RegExp; gate: string }[] = [
+  {
+    name: 'relative colour',
+    use: /\b(?:oklch|oklab|lch|lab|hsl|rgb|color)\(\s*from\b/,
+    gate: 'from',
+  },
+  { name: 'sibling-index()', use: /\bsibling-(?:index|count)\(/, gate: 'sibling-' },
+  { name: 'corner-shape', use: /\bcorner-shape\s*:/, gate: 'corner-shape' },
+  { name: 'text-box', use: /\btext-box(?:-trim|-edge)?\s*:/, gate: 'text-box' },
+  { name: 'field-sizing', use: /\bfield-sizing\s*:/, gate: 'field-sizing' },
+  { name: '::details-content', use: /::details-content\b/, gate: 'details-content' },
+  { name: 'base-select', use: /\bbase-select\b|::picker\(|:open\b/, gate: 'base-select' },
+];
+
+/**
+ * A status-set token read by name: `--{set}-container`, `--{set}-ink`, `--{set}-glyph` or
+ * `--on-{set}-container`. Only the generated token files and the catalogue's #colour read them;
+ * a component reads `--tone-*` (DESIGN.md T-colour).
+ */
+export const SET_TOKEN =
+  /var\(\s*--(?:(?:danger|warning|success|info)-(?:container|ink|glyph)|on-(?:danger|warning|success|info)-container)\b/;
+
+/**
+ * Finds the features above the floors that are used outside an `@supports` testing for them.
+ * @param css - A stylesheet's source
+ * @returns The names of the ungated features, one per use
+ */
+export function ungatedFeatures(css: string): string[] {
+  const src = stripComments(css);
+  const out: string[] = [];
+  const stack: string[] = [];
+  let start = 0;
+  const scan = (text: string): void => {
+    for (const g of GATED) {
+      if (g.use.test(text) && !stack.some((p) => p.startsWith('@supports') && p.includes(g.gate)))
+        out.push(g.name);
+    }
+  };
+  for (let i = 0; i < src.length; i++) {
+    const ch = src[i];
+    if (ch === '{') {
+      const prelude = src.slice(start, i).trim();
+      // A selector can use a gated pseudo-element or class; the at-rule itself is not a use.
+      if (!prelude.startsWith('@supports')) scan(prelude);
+      stack.push(prelude);
+      start = i + 1;
+    } else if (ch === '}') {
+      scan(src.slice(start, i));
+      stack.pop();
+      start = i + 1;
+    } else if (ch === ';') {
+      scan(src.slice(start, i));
+      start = i + 1;
+    }
+  }
+  return out;
+}
+
+/**
  * Runs every row-5 check.
  * @returns The findings
  */
@@ -100,18 +169,14 @@ export async function checkDesignSystem(): Promise<Finding[]> {
   ];
   const tokens = new Set<string>(TOKEN_NAMES);
 
-  // Every definition: tokens.css, @property, any `--x:` in packages/ui CSS (component blocks
-  // and the legacy theme.css), app CSS, and custom properties set inline from TSX.
+  // Every definition: tokens.css, @property, any `--x:` in packages/ui CSS (component
+  // blocks), app CSS, and custom properties set inline from TSX.
   const defined = new Set<string>(tokens);
-  const legacy = new Set<string>();
   const defs = (css: string): string[] =>
     [...stripComments(css).matchAll(/(?:^|[;{\s])(--[\w-]+)\s*:/g)].map((m) => m[1]);
   for (const f of [...uiCss, ...appCss]) {
     const css = await read(f);
-    for (const name of defs(css)) {
-      defined.add(name);
-      if (f === 'packages/ui/src/theme.css') legacy.add(name);
-    }
+    for (const name of defs(css)) defined.add(name);
     for (const m of css.matchAll(/@property\s+(--[\w-]+)/g)) defined.add(m[1]);
   }
   for (const f of tsx) {
@@ -130,21 +195,20 @@ export async function checkDesignSystem(): Promise<Finding[]> {
         add('undefined-var', f, `var(${name}) is not defined`);
     }
   }
-  for (const [name, where] of used) {
-    if (legacy.has(name) && !tokens.has(name)) {
-      for (const f of where) {
-        if (f !== 'packages/ui/src/theme.css')
-          add('legacy-token', f, `${name} is a theme.css token`);
-      }
-    }
-  }
 
   // Component tokens must map to a token (a keyword such as flex-start is not a design value).
+  // A registered property's resting value (`--layer: 0%`) and a tree-counting function
+  // (`sibling-index()`) are not design values either.
+  const registered = new Set<string>();
+  for (const m of (await read('packages/ui/src/tokens.css')).matchAll(/@property\s+(--[\w-]+)/g))
+    registered.add(m[1]);
   for (const f of uiModules) {
     const css = stripComments(await read(f));
     for (const m of css.matchAll(/(?:^|[;{\s])(--[\w-]+)\s*:\s*([^;]+);/g)) {
       const [, name, value] = m;
-      if (!/var\(--[\w-]+/.test(value) && !/^[a-z-]+$/.test(value.trim())) {
+      const v = value.trim();
+      if (registered.has(name) || /^sibling-(index|count)\(\)$/.test(v)) continue;
+      if (!/var\(--[\w-]+/.test(value) && !/^[a-z-]+$/.test(v)) {
         add('component-token-raw', f, `${name}: ${value.trim()} does not map to a token`);
       }
     }
@@ -152,7 +216,7 @@ export async function checkDesignSystem(): Promise<Finding[]> {
 
   // Tokens nobody reads yet (the catalogue does not count).
   const unused = TOKEN_NAMES.filter(
-    (t) => !used.has(t) && !t.match(/^--(purple|neutral|red|magenta)-/),
+    (t) => !used.has(t) && !t.match(/^--(purple|neutral|magenta)-/),
   );
   for (const t of unused) add('unused-token', 'packages/ui/src/tokens.css', `${t} is not used yet`);
 
@@ -166,6 +230,33 @@ export async function checkDesignSystem(): Promise<Finding[]> {
   }
   for (const g of glyphs.filter((n) => !listed.includes(n))) {
     add('glyphs', 'packages/ui/src/Icon/glyphs.ts', `${g} is in glyphs.ts but not in F-icons`);
+  }
+
+  // light-dark() lives in tokens.css only; the floors get each pair from webkit-fallbacks.css.
+  const catalogueCss = await files('packages/ui/catalogue/**/*.css');
+  for (const f of [...uiCss, ...appCss, ...catalogueCss]) {
+    const css = stripComments(await read(f));
+    const generated = /^packages\/ui\/src\/(tokens|webkit-fallbacks)\.css$/.test(f);
+    if (!generated && /\blight-dark\(/.test(css)) {
+      add('light-dark', f, 'writes light-dark(); generate the pair in tokens.table.ts');
+    }
+    if (generated) continue;
+    for (const name of ungatedFeatures(css)) {
+      add('ungated', f, `uses ${name} outside an @supports that tests for it`);
+    }
+  }
+
+  // Status sets are read through data-tone and --tone-*, never by name.
+  for (const f of [...uiCss, ...appCss, ...tsx]) {
+    if (/^packages\/ui\/src\/(tokens|webkit-fallbacks)\.css$/.test(f)) continue;
+    const src = f.endsWith('.css') ? stripComments(await read(f)) : await read(f);
+    const m = SET_TOKEN.exec(src);
+    if (m)
+      add(
+        'set-token',
+        f,
+        `${m[0].slice(4).trim()} is read by name; set data-tone and read --tone-*`,
+      );
   }
 
   // Layers and container breakpoints.

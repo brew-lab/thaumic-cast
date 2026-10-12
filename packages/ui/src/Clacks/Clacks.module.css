@@ -1,12 +1,17 @@
 @layer components {
   /*
-   * A-clacks. Each shutter reads --clack-open (registered in tokens.css), which the clack
-   * keyframes hold at 1 for three of eight steps. The delay puts each shutter at its place on
-   * the snake (--pos, set inline), so three open shutters walk the path.
+   * A-clacks. The clack keyframes hold each shutter open (full opacity and height) for three
+   * of eight steps; shut, it is dimmed to --clack-dim and, at md, squashed to --clack-shut
+   * (--clack-squash, which the keyframes read).
+   * Only opacity and scale animate, so the walk runs off the main thread. The delay puts
+   * each shutter at its place on the snake, so three open shutters walk the path. The place comes from the shutter's index
+   * (round 7 §7): sibling-index() where the engine has it, the inline --i otherwise, turned
+   * into the walk by one formula (1 2 3 4 along the top row, then 8 7 6 5 back along the
+   * bottom), so there is no table and no :nth-child list.
    */
   .clacks {
     --clack-on: currentcolor;
-    --clack-off: color-mix(in oklch, currentcolor var(--clack-dim), transparent);
+    --clack-squash: 1 var(--clack-shut);
     --clack-cell: calc(var(--space-2) + var(--line-hair));
     --clack-gap: var(--space-1);
     --clack-step: var(--dur-step);
@@ -24,37 +29,44 @@
     --clack-cell: calc(var(--space-2) + var(--line-bold));
   }
 
+  /* sm fades without scaling, so its footprint in a Badge, a Button or a dot holds still. */
   .sm {
     --clack-cell: calc(var(--space-1) + var(--line-hair));
     --clack-gap: var(--line-hair);
+    --clack-squash: none;
   }
 
   .shutter {
-    --clack-ink: color-mix(
-      in oklch,
-      var(--clack-on) calc(var(--clack-open) * 100%),
-      var(--clack-off)
+    --clack-idx: var(--i);
+    --clack-pos: calc(
+      var(--clack-idx) + clamp(0, var(--clack-idx) - 4, 1) * (13 - 2 * var(--clack-idx))
     );
 
     display: block;
     border-radius: var(--line-hair);
-    background: var(--clack-ink);
-    scale: 1 calc(0.4 + 0.6 * var(--clack-open));
+    background: var(--clack-on);
+    opacity: var(--clack-dim);
+    scale: var(--clack-squash);
     animation-name: var(--clack-animation);
     animation-duration: calc(8 * var(--clack-step));
     animation-timing-function: var(--clack-timing);
     animation-iteration-count: infinite;
-    animation-delay: calc((var(--pos) - 8) * var(--clack-step));
+    animation-delay: calc((var(--clack-pos) - 9) * var(--clack-step));
+  }
+
+  @supports (order: sibling-index()) {
+    .shutter {
+      --clack-idx: sibling-index();
+    }
   }
 
   /* Answered: all eight open, in the success ink, still. */
   .answered {
-    --clack-on: var(--success-ink);
+    --clack-on: var(--tone-ink);
   }
 
   .answered .shutter {
-    --clack-ink: var(--clack-on);
-
+    opacity: 1;
     scale: 1;
     animation-name: none;
   }
@@ -69,8 +81,6 @@
     }
 
     .shutter {
-      --clack-ink: var(--clack-on);
-
       scale: 1;
     }
   }

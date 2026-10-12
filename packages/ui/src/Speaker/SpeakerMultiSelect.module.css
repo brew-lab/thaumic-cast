@@ -1,5 +1,8 @@
 @layer components {
-  /* Deprecated: RoomPicker replaces this list (and its nested scroller) in Phase 3. */
+  /*
+   * Deprecated: RoomPicker replaces this list in Phase 3. It no longer scrolls inside
+   * itself: the popup document is the one scroller (L-popup), so the list runs its length.
+   */
   .container {
     display: flex;
     flex-direction: column;
@@ -20,10 +23,8 @@
     display: flex;
     flex-direction: column;
     gap: var(--space-1);
-    max-block-size: calc(4 * var(--control-md));
     margin: 0;
     padding: var(--space-1);
-    overflow-y: auto;
     border: var(--line-hair) solid var(--outline-variant);
     border-radius: var(--radius-group);
     background: var(--surface);

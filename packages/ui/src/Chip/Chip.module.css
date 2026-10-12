@@ -2,7 +2,8 @@
   /*
    * A-chip. --size-chip tall on --radius-control; the × is an --icon-lg square (24 px, so
    * 2.5.8 holds on its own) with an ::after hit area to the desktop target. The chip never
-   * reshapes; only the × does, with the small bevel.
+   * reshapes; only the × does, with IconButton's octagon (--shape-bevel-short, about 30 % of
+   * its side) on focus and press.
    */
   .chip {
     --chip-bg: var(--surface);
@@ -32,6 +33,13 @@
     white-space: nowrap;
   }
 
+  /* F-textbox: the label trimmed to the cap height and the baseline, at the same outer size. */
+  @supports (text-box: trim-both cap alphabetic) {
+    .label {
+      text-box: trim-both cap alphabetic;
+    }
+  }
+
   .remove {
     --chip-x-bg: transparent;
     --chip-x-fg: var(--on-surface-variant);
@@ -52,9 +60,9 @@
     color: var(--chip-x-fg);
     cursor: pointer;
     transition:
-      --layer var(--dur-effects) var(--ease-effects),
+      background-color var(--dur-effects) var(--ease-effects),
       border-radius var(--dur-shape) var(--ease-effects),
-      scale var(--dur-spatial) var(--ease-spatial);
+      corner-shape var(--dur-shape) var(--ease-effects);
   }
 
   .remove::after {
@@ -85,26 +93,18 @@
     --layer: var(--layer-focus);
   }
 
-  .remove:active,
+  .remove:is(:active, [data-pressing]),
   .chip[data-force='press'] .remove {
     --layer: var(--layer-press);
-    --chip-x-radius: var(--radius-thumb-pressed);
-
-    scale: var(--press-icon);
-    transition-duration: var(--dur-fast);
   }
 
+  /* The × takes the octagon on focus-visible and press (held, utils/press.ts); hover is colour. */
   @supports (corner-shape: bevel) {
-    .remove:not(:disabled):is(:hover, :focus-visible),
-    .chip:is([data-force='hover'], [data-force='focus']) .remove {
-      --chip-x-radius: var(--shape-bevel-small);
+    .remove:not(:disabled):is(:focus-visible, :active, [data-pressing]),
+    .chip:is([data-force='focus'], [data-force='press']) .remove {
+      --chip-x-radius: var(--shape-bevel-short);
 
       corner-shape: bevel;
-    }
-
-    .remove:active,
-    .chip[data-force='press'] .remove {
-      corner-shape: round;
     }
   }
 
@@ -113,7 +113,6 @@
     --chip-x-fg: color-mix(in oklch, var(--on-surface) var(--disabled-ink), transparent);
     --layer: initial;
 
-    scale: 1;
     cursor: not-allowed;
   }
 
